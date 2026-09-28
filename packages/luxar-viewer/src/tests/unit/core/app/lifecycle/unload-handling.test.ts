@@ -16,6 +16,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { installUnloadHandler } from '../../../../../core/app/lifecycle/unload-handling';
 import { EventGroup } from '../../../../../utils/cross-layer/event-group';
 import { log } from '../../../../../utils/log';
+import { OPFSStore } from '../../../../../cache/multi-level-caching-store/opfs-store';
+import { createFakeOpfsRoot } from '../../../../mocks/opfs.mock';
 
 describe('installUnloadHandler', () => {
   let events: EventGroup;
@@ -117,5 +119,75 @@ describe('installUnloadHandler', () => {
     );
 
     warnSpy.mockRestore();
+  });
+
+  describe('persistence flush on pagehide / hidden (L2 index)', () => {
+    // `beforeunload` is not fired on mobile, on a bfcache navigation, or when
+    // the tab is discarded; `pagehide` and `visibilitychange -> hidden` are
+    // the last reliable signals. The flush is best-effort and synchronous to
+    // start (the page may be frozen right after the event).
+    function setVisibility(state: 'hidden' | 'visible'): void {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: state });
+    }
+    afterEach(() => {
+      setVisibility('visible');
+      vi.unstubAllGlobals();
+    });
+
+    it('calls the flush port on pagehide without disposing', () => {
+      const flushPersistence = vi.fn();
+      installUnloadHandler({ events, dispose, flushPersistence });
+      window.dispatchEvent(new Event('pagehide'));
+      expect(flushPersistence).toHaveBeenCalledOnce();
+      expect(dispose).not.toHaveBeenCalled();
+    });
+
+    it('calls the flush port when the document becomes hidden, not when visible', () => {
+      const flushPersistence = vi.fn();
+      installUnloadHandler({ events, dispose, flushPersistence });
+      setVisibility('visible');
+      document.dispatchEvent(new Event('visibilitychange'));
+      expect(flushPersistence).not.toHaveBeenCalled();
+      setVisibility('hidden');
+      document.dispatchEvent(new Event('visibilitychange'));
+      expect(flushPersistence).toHaveBeenCalledOnce();
+    });
+
+    it('a throwing flush never escapes the event handler', () => {
+      const warnSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      installUnloadHandler({
+        events,
+        dispose,
+        flushPersistence: () => {
+          throw new Error('flush boom');
+        },
+      });
+      expect(() => window.dispatchEvent(new Event('pagehide'))).not.toThrow();
+      expect(warnSpy).toHaveBeenCalled();
+      warnSpy.mockRestore();
+    });
+
+    it("by default, pagehide writes a live OPFS store's pending index to disk", async () => {
+      const fake = createFakeOpfsRoot().install();
+      const store = new OPFSStore('unload-flush', 'https://example.com/d.zarr', 1e9);
+      await store.init();
+      await store.set('chunk/0', new Uint8Array(16));
+      await store.set('chunk/1', new Uint8Array(16));
+      // The debounced save has not fired yet: nothing indexed on disk.
+      const before = JSON.parse(fake.metaFiles.get('_cache_meta.json') ?? '{"entries":[]}');
+      expect(before.entries.length).toBe(0);
+
+      installUnloadHandler({ events, dispose });
+      window.dispatchEvent(new Event('pagehide'));
+      // Only microtasks: no debounce timer is allowed to be what saves it.
+      for (let i = 0; i < 20; i++) await Promise.resolve();
+
+      const after = JSON.parse(fake.metaFiles.get('_cache_meta.json') ?? '{"entries":[]}');
+      expect(after.entries.map((e: [string, unknown]) => e[0]).sort()).toEqual([
+        'chunk/0',
+        'chunk/1',
+      ]);
+      await store.dispose();
+    });
   });
 });

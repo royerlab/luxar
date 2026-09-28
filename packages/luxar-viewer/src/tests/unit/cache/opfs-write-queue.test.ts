@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { OpfsWriteQueue } from '../../../cache/multi-level-caching-store/opfs-write-queue';
 import { perfCounters } from '../../../profiling/perf-counters';
 
@@ -518,5 +518,116 @@ describe('OpfsWriteQueue', () => {
     expect(perfCounters.get('opfs.writesDropped')).toBe(2);
     gate.release();
     await q.drain();
+  });
+
+  describe('demand vs speculative priority', () => {
+    it('a demand arrival over budget evicts the OLDEST speculative write, not itself', async () => {
+      const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 100, maxBytes: 8 });
+      const gate = makeGate();
+      const ran: string[] = [];
+      const task = (key: string) => async () => {
+        if (key === 'busy') await gate.promise;
+        ran.push(key);
+      };
+      q.enqueue('busy', task('busy'), 1);
+      q.enqueue('s1', task('s1'), 4, 'speculative');
+      q.enqueue('s2', task('s2'), 4, 'speculative');
+      // Full (8/8). A demand write must land: the oldest speculative (s1) goes.
+      q.enqueue('d1', task('d1'), 4, 'demand');
+      expect(q.stats()).toMatchObject({ depth: 2, pendingBytes: 8, dropped: 1 });
+      expect(q.stats().droppedSpeculative).toBe(1);
+
+      gate.release();
+      await q.drain();
+      expect(ran).toEqual(['busy', 's2', 'd1']);
+    });
+
+    it('a speculative arrival never displaces a pending demand write', async () => {
+      const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 100, maxBytes: 8 });
+      const gate = makeGate();
+      const ran: string[] = [];
+      const task = (key: string) => async () => {
+        if (key === 'busy') await gate.promise;
+        ran.push(key);
+      };
+      q.enqueue('busy', task('busy'), 1);
+      q.enqueue('d1', task('d1'), 4, 'demand');
+      q.enqueue('d2', task('d2'), 4, 'demand');
+      q.enqueue('s1', task('s1'), 4, 'speculative');
+      expect(q.stats()).toMatchObject({ depth: 2, dropped: 1, droppedSpeculative: 1 });
+
+      gate.release();
+      await q.drain();
+      expect(ran).toEqual(['busy', 'd1', 'd2']);
+    });
+
+    it('demand-only overflow still drops the arrival (keeps the contiguous oldest end)', async () => {
+      const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 100, maxBytes: 8 });
+      const gate = makeGate();
+      q.enqueue('busy', () => gate.promise, 1);
+      q.enqueue('d1', async () => {}, 4, 'demand');
+      q.enqueue('d2', async () => {}, 4, 'demand');
+      q.enqueue('d3', async () => {}, 4, 'demand');
+      expect(q.stats()).toMatchObject({ depth: 2, dropped: 1, droppedSpeculative: 0 });
+      gate.release();
+      await q.drain();
+    });
+
+    it('a coalescing replacement that tips the byte cap never loses its own key', async () => {
+      // The newer write for a key replaces the older queued one. Before, a
+      // replacement that tipped the byte cap was dropped AFTER it had already
+      // deleted the task it replaced, so the key lost BOTH versions. Now the
+      // overflow evicts the oldest speculative write instead (here: `other`).
+      const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 100, maxBytes: 8 });
+      const gate = makeGate();
+      const ran: string[] = [];
+      q.enqueue('busy', () => gate.promise, 1);
+      q.enqueue('k', async () => void ran.push('k-v1'), 4, 'speculative');
+      q.enqueue('other', async () => void ran.push('other'), 4, 'speculative');
+      q.enqueue('k', async () => void ran.push('k-v2'), 6, 'speculative');
+      expect(q.stats()).toMatchObject({ depth: 1, pendingBytes: 6, dropped: 1 });
+      gate.release();
+      await q.drain();
+      expect(ran).toEqual(['k-v2']);
+    });
+
+    it('playback-shaped burst: every demand write lands and drops are all speculative', async () => {
+      // 128 KiB chunks against a 4 MiB retain, drained 4-wide at 1 task per
+      // 4 ms while arrivals come every 1 ms: the queue MUST overflow. One
+      // arrival in eight is demand, the rest speculative prefetch.
+      vi.useFakeTimers();
+      try {
+        const chunk = 128 * 1024;
+        const q = new OpfsWriteQueue({ concurrency: 4, maxDepth: 16_384, maxBytes: 32 * chunk });
+        const landed = new Set<string>();
+        const demand: string[] = [];
+        const n = 2000;
+        for (let i = 0; i < n; i++) {
+          const key = `c${i}`;
+          const isDemand = i % 8 === 0;
+          if (isDemand) demand.push(key);
+          q.enqueue(
+            key,
+            async () => {
+              await new Promise((r) => setTimeout(r, 16));
+              landed.add(key);
+            },
+            chunk,
+            isDemand ? 'demand' : 'speculative'
+          );
+          await vi.advanceTimersByTimeAsync(1);
+        }
+        await vi.advanceTimersByTimeAsync(20_000);
+        await q.drain();
+
+        const stats = q.stats();
+        expect(stats.dropped).toBeGreaterThan(0); // the burst really overflowed
+        expect(landed.size + stats.dropped).toBe(n); // never dropped silently
+        expect(stats.droppedSpeculative).toBe(stats.dropped);
+        expect(demand.filter((k) => !landed.has(k))).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

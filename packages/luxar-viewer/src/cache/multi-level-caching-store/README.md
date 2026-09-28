@@ -101,7 +101,18 @@ Key behaviours:
 - **Health counters** — `oversizedWriteSkipped`, `quotaWriteSkipped`,
   `evictions`, `writeFailures`, `corruptedEntries`,
   `metadataParseFailures`, `orphanedFilesRemoved` are surfaced via
-  `getStats()` and the cache monitor's "Errors" card.
+  `getStats()` and the cache monitor's "Errors" card (plus
+  `orphansReindexed`).
+- **Index persistence** — the index save is a 1 s debounce with a 2 s
+  ceiling, flushed on `pagehide` / hidden (`flushAllMetadata`) and on
+  `dispose()`; an open-time, per-session-budgeted orphan reconcile re-indexes
+  or deletes chunk files the index never recorded (see `../README.md`,
+  "L2 index persistence").
+- **Quota estimate cache** — `navigator.storage.estimate()` is re-run at most
+  every 30 s / 64 MB written, or when the debited cached headroom cannot cover
+  a write.
+- **No write-path copy** — `set()` writes the caller's `Uint8Array` view
+  directly (only a detached buffer, detected by a length check, is refused).
 - **External-dataset validation state** — the persisted
   `validationMode` (`content-hash` | `zattrs-hash` | `archive-etag` | `ttl` |
   `none`) and `lastValidatedAt` ride along in `_cache_meta.json` so a TTL

@@ -2882,3 +2882,41 @@ describe('MultiLevelCachingStore', () => {
     });
   });
 });
+
+describe('MultiLevelCachingStore L2 write priority', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  // The write queue evicts speculative writes before demand ones when it is
+  // over budget, so the store must tell it which is which: a chunk a caller
+  // actually asked for is `demand`; one only the prefetcher wanted
+  // (`suppressPrefetch`) is `speculative`, unless a demand caller joined it.
+  it('enqueues demand fetches as demand and prefetch-only fetches as speculative', async () => {
+    createMocks();
+    const store = new MultiLevelCachingStore('https://example.com/data.zarr', {
+      l1MaxSize: 20 * 1024 * 1024,
+      l2MaxSize: 1024 * 1024,
+    });
+    await store.init();
+    const queue = (store as unknown as { l2WriteQueue: { enqueue: (...a: unknown[]) => void } })
+      .l2WriteQueue;
+    const enqueue = vi.spyOn(queue, 'enqueue');
+
+    await store.get('chunk.demand');
+    await store.getResult('chunk.prefetch', { suppressPrefetch: true });
+    // A demand caller that joins an in-flight prefetch upgrades it to demand.
+    const prefetch = store.getResult('chunk.joined', { suppressPrefetch: true });
+    const demand = store.get('chunk.joined');
+    await Promise.all([prefetch, demand]);
+
+    const priorities = Object.fromEntries(enqueue.mock.calls.map((c) => [c[0], c[3]]));
+    expect(priorities).toEqual({
+      'chunk.demand': 'demand',
+      'chunk.prefetch': 'speculative',
+      'chunk.joined': 'demand',
+    });
+    await store.dispose();
+  });
+});

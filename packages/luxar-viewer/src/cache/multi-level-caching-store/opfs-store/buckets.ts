@@ -47,6 +47,27 @@ export function keyToFileName(key: string): string {
 }
 
 /**
+ * Inverse of {@link keyToFileName}: recover the cache key a file name encodes,
+ * or `null` when the name is not one this encoding can produce (a foreign or
+ * truncated file). Round-trips through `keyToFileName` so only a canonical
+ * encoding is accepted. Used by the orphan reconcile to re-index chunk files
+ * the persisted index never recorded.
+ */
+export function fileNameToKey(fileName: string): string | null {
+  if (fileName.length === 0 || !/^[A-Za-z0-9_-]+$/.test(fileName)) return null;
+  try {
+    const base64 = fileName.replace(/-/g, '+').replace(/_/g, '/');
+    const binary = atob(base64 + '='.repeat((4 - (base64.length % 4)) % 4));
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const key = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return keyToFileName(key) === fileName ? key : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Cached map of bucket name -> directory handle, with the
  * stale-handle recovery primitive (`invalidate`) used after a
  * concurrent clear() leaves dangling handles in memory.

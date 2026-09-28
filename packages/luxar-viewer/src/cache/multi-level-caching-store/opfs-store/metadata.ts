@@ -40,6 +40,21 @@ export interface LoadOutcome {
 
 const METADATA_FILE = '_cache_meta.json';
 
+/** Arguments of {@link OPFSMetadataManager.scheduleSave}. */
+export interface ScheduleSaveParams {
+  root: FileSystemDirectoryHandle;
+  getSnapshot: () => MetadataSnapshot;
+  /** Trailing debounce: quiet time after the last call before writing. */
+  delayMs: number;
+  /**
+   * Ceiling on how long a continuous stream of calls may postpone the write,
+   * measured from the first call since the last write. Omitted = unbounded
+   * (pure trailing debounce).
+   */
+  maxWaitMs?: number;
+  onError: (error: unknown) => void;
+}
+
 async function writeSnapshot(
   root: FileSystemDirectoryHandle,
   snapshot: MetadataSnapshot
@@ -76,6 +91,12 @@ export class OPFSMetadataManager {
 
   private timer: ReturnType<typeof setTimeout> | null = null;
   private inFlight: Promise<void> | null = null;
+  /** Latest scheduleSave() arguments not yet written (null once written/cancelled). */
+  private params: ScheduleSaveParams | null = null;
+  /** Epoch ms of the first scheduleSave() since the last write: the maxWait anchor. */
+  private firstUnsavedAt: number | null = null;
+  /** A save came due while one was in flight; write once more when it settles. */
+  private saveQueuedBehindFlight = false;
 
   /**
    * Read and parse `_cache_meta.json`. Returns null on cold start
@@ -148,9 +169,17 @@ export class OPFSMetadataManager {
       //    start, count the failure, and signal that the caller should
       //    run a best-effort orphan cleanup so files left over from
       //    the corrupt run don't take up quota indefinitely.
+      // A NotFoundError is the cold start, whatever its message says: the
+      // message-sniff below would otherwise read a message that NAMES the file
+      // (`..._cache_meta.json`) as "JSON" and count a parse failure.
+      const isNotFound =
+        typeof error === 'object' &&
+        error !== null &&
+        (error as { name?: unknown }).name === 'NotFoundError';
       const wasParseFailure =
-        error instanceof SyntaxError ||
-        (error instanceof Error && /JSON|parse|Unexpected/i.test(error.message));
+        !isNotFound &&
+        (error instanceof SyntaxError ||
+          (error instanceof Error && /JSON|parse|Unexpected/i.test(error.message)));
       if (wasParseFailure) {
         this.parseFailures++;
         log.warning(
@@ -172,29 +201,77 @@ export class OPFSMetadataManager {
   }
 
   /**
-   * Schedule a debounced metadata save. Replaces any previously-
-   * scheduled save (last writer wins on the timer). When the timer
-   * fires, `getSnapshot` is called to produce the latest state and
-   * the file is written; failures invoke `onError`.
+   * Schedule a debounced metadata save.
+   *
+   * Trailing debounce of `delayMs`, BOUNDED by `maxWaitMs`: a call re-arms the
+   * timer (last writer wins), but never past `maxWaitMs` after the first
+   * still-unsaved call. Without the ceiling a continuous write stream re-arms
+   * the timer forever — measured in real playback: 65k save attempts and zero
+   * index writes in 53 s, so an interrupted session left an index of ~40
+   * entries for ~5,000 files on disk. When the timer fires, `getSnapshot` is
+   * called to produce the latest state and the file is written; failures
+   * invoke `onError`.
+   *
+   * Index writes never overlap: a save due while the previous one is still in
+   * flight is deferred until it settles, and any number of such saves collapse
+   * into ONE follow-up write of the then-latest snapshot (two concurrent
+   * `createWritable()` streams on one file are not safe).
    */
-  scheduleSave(params: {
-    root: FileSystemDirectoryHandle;
-    getSnapshot: () => MetadataSnapshot;
-    delayMs: number;
-    onError: (error: unknown) => void;
-  }): void {
+  scheduleSave(params: ScheduleSaveParams): void {
     perfCounters.add(S_SAVE_ATTEMPTS);
+    const now = Date.now();
+    if (this.firstUnsavedAt === null) this.firstUnsavedAt = now;
+    this.params = params;
+    let delay = params.delayMs;
+    if (params.maxWaitMs !== undefined && Number.isFinite(params.maxWaitMs)) {
+      const ceiling = this.firstUnsavedAt + Math.max(0, params.maxWaitMs);
+      delay = Math.max(0, Math.min(delay, ceiling - now));
+    }
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.timer = null;
-      this.inFlight = writeSnapshot(params.root, params.getSnapshot())
-        .catch((error) => {
-          params.onError(error);
-        })
-        .finally(() => {
-          this.inFlight = null;
-        });
-    }, params.delayMs);
+      this.fire();
+    }, delay);
+  }
+
+  /**
+   * Start the scheduled save NOW instead of waiting for its timer. The
+   * page-lifecycle hook (`pagehide` / `visibilitychange → hidden`): the page
+   * may be frozen or killed right after the event, so the write is started
+   * synchronously and not awaited. A no-op when nothing is scheduled.
+   */
+  flushPending(): void {
+    if (!this.timer) return;
+    clearTimeout(this.timer);
+    this.timer = null;
+    this.fire();
+  }
+
+  /** Run (or, while a save is in flight, defer) the scheduled index write. */
+  private fire(): void {
+    const params = this.params;
+    if (!params) return;
+    if (this.inFlight) {
+      // Coalesce behind the running write; `finally` below picks it up.
+      this.saveQueuedBehindFlight = true;
+      return;
+    }
+    this.params = null;
+    this.firstUnsavedAt = null;
+    this.saveQueuedBehindFlight = false;
+    this.inFlight = writeSnapshot(params.root, params.getSnapshot())
+      .catch((error) => {
+        params.onError(error);
+      })
+      .finally(() => {
+        this.inFlight = null;
+        if (this.saveQueuedBehindFlight) {
+          this.saveQueuedBehindFlight = false;
+          // Keep `params` null-safe: a cancelPendingSave() in the meantime
+          // cleared it, and then there is nothing left to write.
+          if (this.params) this.fire();
+        }
+      });
   }
 
   /** True if a debounced save is queued and has not yet fired. */
@@ -212,6 +289,9 @@ export class OPFSMetadataManager {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    this.params = null;
+    this.firstUnsavedAt = null;
+    this.saveQueuedBehindFlight = false;
   }
 
   /** Await any save started by the timer; no-op if none. */

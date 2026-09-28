@@ -342,6 +342,88 @@ describe('OPFSMetadataManager', () => {
       expect(rootFiles.has('_cache_meta.json')).toBe(true);
     });
 
+    // A pure trailing debounce re-armed on every call never fires while the
+    // calls keep coming: measured in real playback, 65k save attempts and ZERO
+    // index writes in 53 s, so a killed/navigated-away session left ~40 index
+    // entries for ~5,000 files on disk. `maxWaitMs` bounds that starvation.
+    it('maxWait: schedule calls every 30 ms for 5 s still write the index every maxWait', async () => {
+      perfCounters.reset();
+      const { root } = mockRoot();
+      const onError = vi.fn();
+      for (let t = 0; t < 5000; t += 30) {
+        mgr.scheduleSave({ root, getSnapshot: snap, delayMs: 1000, maxWaitMs: 2000, onError });
+        await vi.advanceTimersByTimeAsync(30);
+      }
+      await mgr.awaitInFlight();
+      // 5 s of continuous activity with a 2 s ceiling -> writes at ~2 s and ~4 s.
+      expect(perfCounters.get('opfs.indexSaves')).toBeGreaterThanOrEqual(2);
+      expect(onError).not.toHaveBeenCalled();
+    });
+
+    it('maxWait: a save that is still in flight is never overlapped by the next one', async () => {
+      // Two createWritable() streams on the same file are not safe. When the
+      // ceiling fires while the previous index write is still running, the
+      // next write must wait for it and coalesce, never run alongside it.
+      let active = 0;
+      let maxActive = 0;
+      let writes = 0;
+      const slowRoot = {
+        async getFileHandle() {
+          return {
+            async createWritable() {
+              active++;
+              maxActive = Math.max(maxActive, active);
+              return {
+                async write() {
+                  await new Promise((r) => setTimeout(r, 3000));
+                },
+                async close() {
+                  active--;
+                  writes++;
+                },
+              };
+            },
+          };
+        },
+      } as unknown as FileSystemDirectoryHandle;
+      const onError = vi.fn();
+      for (let t = 0; t < 10_000; t += 30) {
+        mgr.scheduleSave({
+          root: slowRoot,
+          getSnapshot: snap,
+          delayMs: 1000,
+          maxWaitMs: 2000,
+          onError,
+        });
+        await vi.advanceTimersByTimeAsync(30);
+      }
+      await vi.advanceTimersByTimeAsync(10_000);
+      await mgr.awaitInFlight();
+      expect(maxActive).toBe(1);
+      expect(writes).toBeGreaterThanOrEqual(2);
+      expect(onError).not.toHaveBeenCalled();
+    });
+
+    it('flushPending() writes a scheduled save immediately (pagehide path)', async () => {
+      const { root, rootFiles } = mockRoot();
+      const onError = vi.fn();
+      mgr.scheduleSave({ root, getSnapshot: snap, delayMs: 1000, onError });
+      expect(rootFiles.has('_cache_meta.json')).toBe(false);
+
+      mgr.flushPending();
+      expect(mgr.hasPendingSave()).toBe(false);
+      // No timer advance: the write was started synchronously by the flush.
+      await mgr.awaitInFlight();
+      expect(rootFiles.has('_cache_meta.json')).toBe(true);
+    });
+
+    it('flushPending() is a no-op when nothing is scheduled', async () => {
+      const { rootFiles } = mockRoot();
+      mgr.flushPending();
+      await mgr.awaitInFlight();
+      expect(rootFiles.has('_cache_meta.json')).toBe(false);
+    });
+
     it('direct save() swallows errors silently (used by dispose)', async () => {
       const failingRoot = {
         async getFileHandle() {

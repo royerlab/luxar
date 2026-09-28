@@ -51,6 +51,12 @@ export interface PendingGet {
   controller: AbortController;
   waiters: number;
   prefetchTriggered: boolean;
+  /**
+   * A demand caller (not only the prefetcher) is waiting on this read. Decides
+   * the background L2 write's priority: under a full write queue a speculative
+   * write is evicted before a demand one.
+   */
+  demand: boolean;
 }
 
 /** Configuration for the memory, OPFS, and source-backed cache tiers. */
@@ -509,14 +515,17 @@ export class MultiLevelCachingStore implements AsyncReadable {
     if (!pending) {
       const controller = new AbortController();
       let entry!: PendingGet;
-      const promise = this.fetchKeyChain(key, controller.signal).finally(() => {
+      // `entry` is assigned synchronously below, before fetchKeyChain's first
+      // await, so the priority getter always reads the live entry.
+      const promise = this.fetchKeyChain(key, controller.signal, () => entry.demand).finally(() => {
         if (this.pendingGets.get(key) === entry) this.pendingGets.delete(key);
       });
-      entry = { promise, controller, waiters: 0, prefetchTriggered: false };
+      entry = { promise, controller, waiters: 0, prefetchTriggered: false, demand: false };
       this.pendingGets.set(key, entry);
       pending = entry;
     }
     pending.waiters++;
+    if (isDemand) pending.demand = true;
 
     let outcome: PendingGetOutcome;
     try {
@@ -598,7 +607,11 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * coalescer. Increments aggregate network counters once; per-caller
    * demand counters are incremented in getResult after this resolves.
    */
-  private async fetchKeyChain(key: string, sharedSignal?: AbortSignal): Promise<PendingGetOutcome> {
+  private async fetchKeyChain(
+    key: string,
+    sharedSignal?: AbortSignal,
+    isDemand: () => boolean = () => true
+  ): Promise<PendingGetOutcome> {
     // L2: OPFS check (~1ms)
     if (this.enabled && this.l2Store) {
       const l2Hit = await this.l2Store.get(key, { signal: sharedSignal });
@@ -697,7 +710,10 @@ export class MultiLevelCachingStore implements AsyncReadable {
                 log.warning(Modules.CACHE, `L2 write failed for ${key}: ${msg}`);
               }
             },
-            data.byteLength
+            data.byteLength,
+            // Read at enqueue time: a demand caller that joined a prefetch's
+            // in-flight fetch has upgraded it by now.
+            isDemand() ? 'demand' : 'speculative'
           );
         }
       }

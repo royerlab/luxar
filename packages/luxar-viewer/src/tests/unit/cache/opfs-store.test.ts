@@ -468,12 +468,13 @@ describe('OPFSStore', () => {
       expect(stats.count).toBe(1); // Still one entry
     });
 
-    it('perf counters: each write checks quota once, counts a write and a save attempt', async () => {
+    it('perf counters: a write counts a write and a save attempt; quota is estimated once, then cached', async () => {
       perfCounters.reset();
       await store.set('p1', new Uint8Array(10));
       await store.set('p2', new Uint8Array(10));
       expect(perfCounters.get('opfs.writes')).toBe(2);
-      expect(perfCounters.get('opfs.estimateCalls')).toBe(2);
+      // The second write is served from the cached estimate (see opfs-persistence.test.ts).
+      expect(perfCounters.get('opfs.estimateCalls')).toBe(1);
       expect(perfCounters.get('opfs.saveAttempts')).toBe(2);
       // Debounced: no index write has fired yet.
       expect(perfCounters.get('opfs.indexSaves')).toBe(0);

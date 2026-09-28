@@ -30,6 +30,20 @@
  * displaces several small pending writes, but a large pending write can now
  * hold off several smaller arrivals.
  *
+ * PRIORITY. Each write is `demand` (a caller actually asked for the chunk) or
+ * `speculative` (only the prefetcher wanted it). Under overflow a speculative
+ * write is always the one to go, never a demand one:
+ *  - a DEMAND arrival evicts the OLDEST pending speculative write(s) to make
+ *    room, and is itself dropped only when demand writes alone fill the queue;
+ *  - a SPECULATIVE arrival for a new key is dropped (the drop-the-arrival rule
+ *    above, which keeps the oldest end contiguous);
+ *  - a replacement for a key already pending (coalescing: the newer write wins)
+ *    evicts the oldest OTHER speculative write rather than itself, so a
+ *    coalesce can never lose the key it was updating.
+ * Every discarded write is counted in `dropped` (and in `droppedSpeculative`
+ * when it was speculative) and in `opfs.writesDropped` — none is silent. A
+ * coalesced replacement is not a drop: the key's latest bytes still land.
+ *
  * Correctness is the caller's (MultiLevelCachingStore) responsibility: the
  * enqueued task must re-check staleness (disposed / dataAbort / epoch) at drain
  * time, because clear/dispose can now interleave between enqueue and drain.
@@ -41,6 +55,18 @@ import { perfCounters } from '../../profiling/perf-counters';
 
 /** Perf counter: arrivals dropped by either overflow policy (mirrors `dropped`). */
 const S_WRITES_DROPPED = perfCounters.slot('opfs.writesDropped');
+
+/**
+ * Why a write is queued. `demand`: a caller asked for the chunk. `speculative`:
+ * only a prefetch wanted it. Overflow always discards speculative writes first.
+ */
+export type OpfsWritePriority = 'demand' | 'speculative';
+
+interface PendingWrite {
+  run: () => Promise<void>;
+  byteLength: number;
+  priority: OpfsWritePriority;
+}
 
 /**
  * Every limit here is resolved by the same clamp (finite, floored, at least 1),
@@ -66,6 +92,8 @@ export interface OpfsWriteQueueStats {
   inFlight: number;
   /** Cumulative tasks dropped by either overflow policy. */
   dropped: number;
+  /** The subset of `dropped` that were speculative (prefetch-only) writes. */
+  droppedSpeculative: number;
   /** Resolved concurrency cap. */
   concurrency: number;
   /** Resolved max pending depth. */
@@ -85,11 +113,15 @@ export class OpfsWriteQueue {
    * Pending tasks keyed by cache key. `Map` insertion order IS the FIFO order;
    * re-enqueuing a key coalesces (the latest task wins and moves to newest).
    */
-  private readonly pending = new Map<string, { run: () => Promise<void>; byteLength: number }>();
+  private readonly pending = new Map<string, PendingWrite>();
   private pendingBytes = 0;
+  /** Count and bytes of the speculative subset of `pending`. */
+  private speculativeCount = 0;
+  private speculativeBytes = 0;
   /** Currently-running task promises (for `drain()`). */
   private readonly inFlightPromises = new Set<Promise<void>>();
   private droppedCount = 0;
+  private droppedSpeculativeCount = 0;
   // Re-entrancy guard for pump(): a task's run() that synchronously calls
   // enqueue() would re-enter pump() BEFORE the current task's promise has been
   // added to inFlightPromises, letting the re-entrant call under-count and
@@ -122,11 +154,17 @@ export class OpfsWriteQueue {
   /**
    * Schedule a write. Returns synchronously; the task runs in the background
    * when a concurrency slot frees. Re-enqueuing the same key replaces its
-   * pending task (coalesce, keep-latest). Past `maxDepth` or `maxBytes`, THIS
-   * arrival is dropped and the already-pending tasks are left to drain in order
-   * (see the module docstring for why the oldest end is the one worth keeping).
+   * pending task (coalesce, keep-latest; the entry keeps the higher of the two
+   * priorities). Past `maxDepth` or `maxBytes` the overflow policy in the
+   * module docstring decides what goes: speculative writes before demand ones,
+   * and otherwise this arrival.
    */
-  enqueue(key: string, run: () => Promise<void>, byteLength: number): void {
+  enqueue(
+    key: string,
+    run: () => Promise<void>,
+    byteLength: number,
+    priority: OpfsWritePriority = 'demand'
+  ): void {
     // A size we cannot account for fails CLOSED: anything that is not a finite
     // value >= 0 is treated as over-cap and dropped before any state is
     // touched. NaN must not reach `pendingBytes` (it would disable the bound
@@ -136,38 +174,97 @@ export class OpfsWriteQueue {
     // unmeasured payload for free, past a cap whose whole job is to bound
     // retained bytes. Any already-queued task for this key survives.
     if (!Number.isFinite(byteLength) || byteLength < 0) {
-      this.droppedCount++;
-      perfCounters.add(S_WRITES_DROPPED);
+      this.countDrop(priority);
       this.pump();
       return;
     }
 
     // Coalesce: delete-then-set so the re-enqueued key becomes newest in FIFO
     // order and its task is the latest.
-    const previous = this.pending.get(key);
-    if (previous) this.pendingBytes -= previous.byteLength;
-    this.pending.delete(key);
-    const pending = { run, byteLength: Math.floor(byteLength) };
-    this.pending.set(key, pending);
-    this.pendingBytes += pending.byteLength;
-
-    // Drop-the-arrival overflow, for both caps: the oldest end is the prefix a
-    // warm revisit can use, so it drains instead of being evicted. Best-effort
-    // tier: a dropped write just isn't persisted to disk this session (L1 still
-    // holds it). ONE removal always suffices — this call added exactly one
-    // entry and both caps held before it, so deleting that entry returns
-    // `pendingBytes` to its pre-enqueue value and `pending.size` to at most
-    // `maxDepth`. A coalescing re-enqueue that overflows therefore loses BOTH
-    // the task it replaced and this arrival for that key; acceptable for the
-    // same best-effort reason.
-    if (this.pending.size > this.maxDepth || this.pendingBytes > this.maxBytes) {
-      this.pending.delete(key);
-      this.pendingBytes -= pending.byteLength;
-      this.droppedCount++;
-      perfCounters.add(S_WRITES_DROPPED);
-    }
-
+    const previous = this.takePending(key);
+    const effective: OpfsWritePriority =
+      previous?.priority === 'demand' || priority === 'demand' ? 'demand' : 'speculative';
+    this.putPending(key, { run, byteLength: Math.floor(byteLength), priority: effective });
+    this.enforceCaps(key, previous !== undefined);
     this.pump();
+  }
+
+  private overCaps(): boolean {
+    return this.pending.size > this.maxDepth || this.pendingBytes > this.maxBytes;
+  }
+
+  /**
+   * Restore both caps after `arrivalKey` was (re-)inserted. Both held before
+   * the insert, so this removes only what the arrival pushed over.
+   */
+  private enforceCaps(arrivalKey: string, replaced: boolean): void {
+    const arrival = this.pending.get(arrivalKey)!;
+    // Demand arrivals and coalescing replacements displace speculative writes
+    // (oldest first); a new speculative arrival goes itself (contiguous end).
+    const mayEvict = arrival.priority === 'demand' || replaced;
+    while (this.overCaps()) {
+      const victim = mayEvict ? this.oldestSpeculativeExcept(arrivalKey) : undefined;
+      if (victim === undefined || !this.evictionCanHelp(arrival)) {
+        this.drop(arrivalKey);
+        return;
+      }
+      this.drop(victim);
+    }
+  }
+
+  /**
+   * Whether evicting speculative writes can ever make room for `arrival`:
+   * false when the arrival plus the pending writes that are NOT evictable
+   * (every demand write, and the arrival itself) already exceed a cap. Checked
+   * first so a hopeless arrival never discards speculative work for nothing.
+   */
+  private evictionCanHelp(arrival: PendingWrite): boolean {
+    const arrivalIsSpeculative = arrival.priority === 'speculative' ? 1 : 0;
+    const keptCount = this.pending.size - this.speculativeCount + arrivalIsSpeculative;
+    const keptBytes =
+      this.pendingBytes - this.speculativeBytes + arrivalIsSpeculative * arrival.byteLength;
+    return keptCount <= this.maxDepth && keptBytes <= this.maxBytes;
+  }
+
+  private oldestSpeculativeExcept(exclude: string): string | undefined {
+    if (this.speculativeCount === 0) return undefined;
+    for (const [key, entry] of this.pending) {
+      if (entry.priority === 'speculative' && key !== exclude) return key;
+    }
+    return undefined;
+  }
+
+  private putPending(key: string, entry: PendingWrite): void {
+    this.pending.set(key, entry);
+    this.pendingBytes += entry.byteLength;
+    if (entry.priority === 'speculative') {
+      this.speculativeCount++;
+      this.speculativeBytes += entry.byteLength;
+    }
+  }
+
+  private takePending(key: string): PendingWrite | undefined {
+    const entry = this.pending.get(key);
+    if (!entry) return undefined;
+    this.pending.delete(key);
+    this.pendingBytes -= entry.byteLength;
+    if (entry.priority === 'speculative') {
+      this.speculativeCount--;
+      this.speculativeBytes -= entry.byteLength;
+    }
+    return entry;
+  }
+
+  /** Discard a pending write and count it. Best-effort tier: L1 still holds it. */
+  private drop(key: string): void {
+    const entry = this.takePending(key);
+    if (entry) this.countDrop(entry.priority);
+  }
+
+  private countDrop(priority: OpfsWritePriority): void {
+    this.droppedCount++;
+    if (priority === 'speculative') this.droppedSpeculativeCount++;
+    perfCounters.add(S_WRITES_DROPPED);
   }
 
   /** Start tasks up to the concurrency cap. */
@@ -179,9 +276,7 @@ export class OpfsWriteQueue {
     try {
       while (this.inFlightPromises.size < this.concurrency && this.pending.size > 0) {
         const key = this.pending.keys().next().value as string;
-        const pending = this.pending.get(key)!;
-        this.pending.delete(key);
-        this.pendingBytes -= pending.byteLength;
+        const pending = this.takePending(key)!;
 
         const p = (async () => {
           try {
@@ -209,6 +304,8 @@ export class OpfsWriteQueue {
   clear(): void {
     this.pending.clear();
     this.pendingBytes = 0;
+    this.speculativeCount = 0;
+    this.speculativeBytes = 0;
   }
 
   /**
@@ -232,6 +329,7 @@ export class OpfsWriteQueue {
       pendingBytes: this.pendingBytes,
       inFlight: this.inFlightPromises.size,
       dropped: this.droppedCount,
+      droppedSpeculative: this.droppedSpeculativeCount,
       concurrency: this.concurrency,
       maxDepth: this.maxDepth,
       maxBytes: this.maxBytes,

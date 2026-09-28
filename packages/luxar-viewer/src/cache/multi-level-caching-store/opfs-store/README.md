@@ -20,9 +20,11 @@ package.
 
 ```
 opfs-store/
-├── buckets.ts        # Key hashing, base64url filename encoding, bucket-handle cache
-├── metadata.ts       # _cache_meta.json load/save/orphan-cleanup lifecycle
-└── opfs-timeout.ts   # Promise.race-based timeout wrapper for OPFS I/O
+├── buckets.ts           # Key hashing, base64url filename encoding (+ inverse), bucket-handle cache
+├── metadata.ts          # _cache_meta.json load/save lifecycle (bounded debounce, flush)
+├── orphan-reconcile.ts  # Budgeted crawl for chunk files the index does not list
+├── opfs-root.ts         # The viewer's `luxar/` OPFS namespace directory
+└── opfs-timeout.ts      # Promise.race-based timeout wrapper for OPFS I/O
 ```
 
 ## Components
@@ -38,6 +40,9 @@ opfs-store/
   `../../types`) is what invalidates filenames produced by a previous
   encoding scheme — `metadata.ts` treats a version mismatch as a cold
   cache.
+- **`fileNameToKey(name)`** — the inverse of `keyToFileName`, or `null` for
+  a name that encoding cannot produce (accepted only if it round-trips). Lets
+  the orphan reconcile re-index a file whose index entry was never saved.
 - **`OPFSBucketCache`** — caches up to 256 `FileSystemDirectoryHandle`s
   so reads/writes don't re-walk the root every call.
   - `getHandle(root, bucket, create)` — memoised lookup; returns `null`
@@ -58,36 +63,55 @@ records `{baseUrl, entries, totalSize, orderCounter, contentHash,
 encodingVersion, validationMode, lastValidatedAt}`.
 
 - **`load(root)`** — read + parse. Returns:
-  - `null` on cold start (file missing).
+  - `null` on cold start (file missing — any `NotFoundError`, whatever its
+    message says).
   - A fresh empty `LoadOutcome` with `needsOrphanCleanup: false` on
     encoding-version mismatch (the on-disk filenames no longer match
     what `keyToFileName` would produce — start over).
   - A fresh empty `LoadOutcome` with `needsOrphanCleanup: true` on
-    `JSON.parse` failure. `parseFailures` is incremented and the
-    caller (`OPFSStore.init`) is expected to run `cleanupOrphans`.
+    `JSON.parse` failure. `parseFailures` is incremented; `OPFSStore`
+    then treats every file on disk as an orphan to delete (its provenance
+    is unknown).
   - The parsed index otherwise, with defensive sanitisation:
     `totalSize`/`orderCounter` are clamped to non-negative finite
     values, and `totalSize` is recomputed from the live entries when
     the persisted value disagrees with the sum by more than 1 byte.
     Entries are sorted by ascending `order` so `Map` insertion order
     equals LRU order.
-- **`scheduleSave(...)`** — debounced save. Replaces any previously-
-  scheduled timer (last-writer-wins); on fire, calls `getSnapshot()` to
-  capture the latest state and writes it. The in-flight promise is
-  tracked so `dispose()` can await it.
+- **`scheduleSave({ root, getSnapshot, delayMs, maxWaitMs?, onError })`** —
+  debounced save, BOUNDED by `maxWaitMs`: each call re-arms the timer
+  (last-writer-wins) but never past `maxWaitMs` after the first unsaved
+  call, so a continuous write stream still saves (a pure trailing debounce
+  never fired during playback). On fire, calls `getSnapshot()` to capture
+  the latest state and writes it. Writes never overlap: a save due while
+  one is in flight is coalesced into ONE follow-up write. The in-flight
+  promise is tracked so `dispose()` can await it.
+- **`flushPending()`** — start a scheduled save now (the `pagehide` /
+  hidden path); a no-op when nothing is scheduled.
 - **`hasPendingSave()` / `cancelPendingSave()` / `awaitInFlight()` /
   `save(...)`** — the four primitives `OPFSStore.dispose()` uses to
   flush cleanly: cancel the timer, optionally write a final synchronous
   snapshot, then await whatever the timer had already started.
 - **`cleanupOrphans(root, expectedFileNames)`** — iterate every
   hex-named bucket directory and delete files not in the expected set.
-  Increments `orphansRemoved`. Only runs after a metadata parse
-  failure; bounded by quota otherwise. Skips the `_cache_meta.json`
-  file itself and any non-bucket directories.
+  Increments `orphansRemoved`. Unbounded; `OPFSStore` itself now uses the
+  budgeted `orphan-reconcile.ts` crawl instead.
+
+### `orphan-reconcile.ts` — unindexed files
+
+- **`crawlOrphans(root, { expectedFileNames, maxOrphans, maxExamined,
+shouldStop, onOrphan })`** — walk the hex buckets, listing each bucket's
+  names before acting on them, and hand every name missing from the index
+  snapshot to `onOrphan` (with the decoded key, or `null`), until a budget is
+  spent or `shouldStop()`. `OPFSStore.reconcileOrphans` decides per file:
+  re-index (trusted index, key hashes to that bucket, fits under `maxSize`)
+  or delete, re-checking its live index / pending writes before each action
+  and registering deletes in the same-key delete barrier (#1073).
 
 Counters `parseFailures` and `orphansRemoved` are surfaced through
 `OPFSStore.getStats()` (mapped to `metadataParseFailures` and
-`orphanedFilesRemoved` in the public cache stats).
+`orphanedFilesRemoved` in the public cache stats), next to the store's own
+`orphansReindexed`.
 
 ### `opfs-timeout.ts` — I/O timeout
 

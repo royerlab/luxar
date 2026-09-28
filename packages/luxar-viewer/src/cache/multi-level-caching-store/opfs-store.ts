@@ -5,6 +5,7 @@ import { config } from '../../config';
 import { OPFSBucketCache, getBucket, keyToFileName } from './opfs-store/buckets';
 import { getLuxarOpfsRoot } from './opfs-store/opfs-root';
 import { OPFSMetadataManager, type MetadataSnapshot } from './opfs-store/metadata';
+import { crawlOrphans, type OrphanFile } from './opfs-store/orphan-reconcile';
 import { withTimeout } from './opfs-store/opfs-timeout';
 import { getOpfsReadGateStats, withOpfsReadGate } from './opfs-read-gate';
 import { perfCounters } from '../../profiling/perf-counters';
@@ -120,6 +121,50 @@ export class OPFSStore {
   // Owns _cache_meta.json: load/save + debounced-save timer + orphan reclaim.
   private metadata = new OPFSMetadataManager();
   private static readonly METADATA_SAVE_DELAY = 1000; // 1 second debounce
+  // Ceiling on how long a continuous write stream may postpone the index save.
+  // The debounce alone re-arms on every write, so during playback it NEVER
+  // fired (65k attempts, 0 saves in 53 s) and an interrupted session left an
+  // index of ~40 entries for ~5,000 files. Each save serializes the whole
+  // index, so this is the persistence-vs-main-thread trade: 2 s bounds what an
+  // interruption can lose without re-serializing the index per write.
+  private static readonly METADATA_SAVE_MAX_WAIT = 2000;
+
+  // Live (initialized, not yet disposed) stores, for the page-lifecycle flush
+  // (`flushAllMetadata`, wired to pagehide / visibilitychange in
+  // core/app/lifecycle/unload-handling.ts).
+  private static liveStores = new Set<OPFSStore>();
+
+  /**
+   * Per-open budget of the orphan reconcile: at most this many unindexed files
+   * are re-indexed or deleted per session (the crawl resumes next session).
+   * Bounded so a large backlog cannot turn a session's first seconds into a
+   * disk sweep; with the index saved at least every METADATA_SAVE_MAX_WAIT the
+   * backlog one interrupted session leaves is small.
+   */
+  static readonly ORPHAN_RECONCILE_MAX_ACTIONS = 4096;
+  /** Per-open cap on file names the orphan crawl examines, orphan or not. */
+  static readonly ORPHAN_RECONCILE_MAX_EXAMINED = 262_144;
+
+  // Background orphan reconcile started by init(); dispose() awaits it.
+  private pendingReconcile: Promise<void> | null = null;
+  // Whether the loaded index is trustworthy enough to RE-INDEX orphans (it
+  // parsed and carries a content hash, so the files share its provenance);
+  // otherwise every orphan is deleted.
+  private orphanReindexAllowed = false;
+  private orphansReindexed = 0;
+
+  // Quota estimate cache. `navigator.storage.estimate()` cost 2-5 ms per call
+  // and ran on EVERY write, which throttled the background write queue until
+  // it dropped 35-50% of fetched chunks during playback. The cached headroom is
+  // debited by every byte this store writes and credited by every byte it
+  // deletes; a fresh estimate is taken when the cache is 30 s old, after
+  // QUOTA_REESTIMATE_BYTES written, or whenever the cached headroom cannot
+  // cover a write (so a full disk is never papered over by a stale "plenty").
+  private static readonly QUOTA_ESTIMATE_MAX_AGE_MS = 30_000;
+  private static readonly QUOTA_REESTIMATE_BYTES = 64 * 1024 * 1024;
+  private quotaEstimate: { available: number; at: number } | null = null;
+  private quotaNetBytesSinceEstimate = 0;
+  private quotaGrossBytesSinceEstimate = 0;
 
   // Serialize concurrent writes to the same key to prevent race conditions
   private pendingWrites = new Map<string, Promise<void>>();
@@ -346,6 +391,10 @@ export class OPFSStore {
       }
       // Only a fully-initialized store may persist a snapshot on dispose.
       this.initialized = true;
+      OPFSStore.liveStores.add(this);
+      // Reconcile files the last index never recorded, in the background: it
+      // must not delay the first chunk reads. dispose() awaits it.
+      this.pendingReconcile = this.reconcileOrphans();
     } catch (error) {
       log.warning(
         Modules.CACHE,
@@ -424,19 +473,144 @@ export class OPFSStore {
     this.contentHash = outcome.contentHash;
     this.validationMode = outcome.validationMode;
     this.lastValidatedAt = outcome.lastValidatedAt;
-    if (outcome.needsOrphanCleanup) {
-      const expected = new Set<string>();
-      for (const key of this.index.keys()) {
-        expected.add(keyToFileName(key));
+    // A corrupt index yields a fresh outcome with no hash: its orphans (every
+    // file) are deleted by the reconcile, as the old parse-failure cleanup did.
+    this.orphanReindexAllowed = !outcome.needsOrphanCleanup && outcome.contentHash !== null;
+  }
+
+  /** A key some in-flight or completed operation of THIS store owns. */
+  private isKeyLive(key: string): boolean {
+    return this.index.has(key) || this.pendingWrites.has(key);
+  }
+
+  /**
+   * Reconcile chunk files the persisted index does not list (see
+   * `opfs-store/orphan-reconcile.ts`). Each orphan is RE-INDEXED when its name
+   * decodes to a key that hashes to the bucket it sits in, the loaded index is
+   * trusted (`orphanReindexAllowed`), and it fits under `maxSize`; otherwise it
+   * is DELETED. Recovered entries join the LRU head (oldest), so they are the
+   * first evicted. Bounded per session by ORPHAN_RECONCILE_MAX_ACTIONS.
+   *
+   * Runs concurrently with normal traffic, so every action re-checks against
+   * the live state: a key this store is writing or has indexed is never
+   * touched, a delete is registered in the same-key delete barrier a later
+   * set() waits on (#1073), and a clear()/dispose() (generation bump) or a
+   * breaker trip stops the crawl and discards anything not yet merged.
+   */
+  private async reconcileOrphans(): Promise<void> {
+    const root = this.opfsRoot;
+    if (!root) return;
+    const generation = this.generation;
+    const expected = new Set<string>();
+    for (const key of this.index.keys()) expected.add(keyToFileName(key));
+    const recovered = new Map<string, number>();
+    let recoveredBytes = 0;
+    const stale = (): boolean =>
+      this.disposed || this.generation !== generation || this.opfsRoot !== root;
+
+    const onOrphan = async (orphan: OrphanFile): Promise<void> => {
+      const key =
+        orphan.key !== null && getBucket(orphan.key) === orphan.bucketName ? orphan.key : null;
+      if (key !== null && (this.isKeyLive(key) || recovered.has(key))) return;
+      if (key !== null && this.orphanReindexAllowed) {
+        const size = await this.orphanSize(orphan);
+        if (stale() || this.isKeyLive(key)) return;
+        if (size !== null && this.totalSize + recoveredBytes + size <= this.maxSize) {
+          recovered.set(key, size);
+          recoveredBytes += size;
+          return;
+        }
       }
-      // The stop predicate halts the bucket crawl as soon as dispose() lands
-      // mid-cleanup (the crawl can span many awaits on a large cache).
-      await this.metadata
-        .cleanupOrphans(root, expected, () => this.disposed)
-        .catch(() => {
-          // Best-effort; ignore reclaim failures.
-        });
+      await this.removeOrphanFile(orphan, key);
+    };
+
+    try {
+      await crawlOrphans(root, {
+        expectedFileNames: expected,
+        maxOrphans: OPFSStore.ORPHAN_RECONCILE_MAX_ACTIONS,
+        maxExamined: OPFSStore.ORPHAN_RECONCILE_MAX_EXAMINED,
+        shouldStop: stale,
+        onOrphan,
+      });
+    } catch {
+      // Best-effort: a failed crawl leaves the orphans for the next session.
     }
+    if (!stale()) this.mergeRecovered(recovered);
+  }
+
+  /** Byte size of an orphan file, or null when it cannot be read in time. */
+  private async orphanSize(orphan: OrphanFile): Promise<number | null> {
+    try {
+      const file = await withTimeout(
+        (async () => (await orphan.bucket.getFileHandle(orphan.fileName)).getFile())(),
+        config.cache.opfsOperationTimeoutMs,
+        `orphan-size(${orphan.fileName})`
+      );
+      return Number.isFinite(file.size) && file.size >= 0 ? file.size : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Delete one orphan file. A decodable key's removal is registered in the
+   * same-key delete barrier, so a set() of that key arriving mid-removal waits
+   * for it instead of being clobbered by it (#1073).
+   */
+  private async removeOrphanFile(orphan: OrphanFile, key: string | null): Promise<void> {
+    if (key !== null && this.isKeyLive(key)) return;
+    const real = orphan.bucket.removeEntry(orphan.fileName).then(
+      () => true,
+      (error: unknown) => isNotFoundError(error)
+    );
+    if (key !== null)
+      this.registerPendingDelete(
+        key,
+        real.then(() => undefined)
+      );
+    try {
+      const removed = await withTimeout(
+        real,
+        config.cache.opfsOperationTimeoutMs,
+        `orphan-delete(${orphan.fileName})`
+      );
+      if (removed) this.metadata.orphansRemoved++;
+    } catch {
+      // Timed out: the removal stays registered for any same-key write.
+    }
+  }
+
+  /**
+   * Fold recovered orphans into the index as its LRU head. Synchronous, so it
+   * is atomic against every other index mutation; a key indexed meanwhile
+   * (a concurrent write) keeps its live entry.
+   */
+  private mergeRecovered(recovered: Map<string, number>): void {
+    const merged = new Map<string, { size: number; order: number }>();
+    let added = 0;
+    for (const [key, size] of recovered) {
+      if (this.isKeyLive(key)) continue;
+      merged.set(key, { size, order: 0 });
+      added += size;
+    }
+    const recoveredCount = merged.size;
+    if (recoveredCount === 0) return;
+    for (const [key, entry] of this.index) merged.set(key, entry);
+    let order = 0;
+    for (const entry of merged.values()) entry.order = order++;
+    this.index = merged;
+    this.orderCounter = order;
+    this.totalSize += added;
+    this.orphansReindexed += recoveredCount;
+    this.scheduleMetadataSave();
+  }
+
+  /**
+   * Test/diagnostic hook: resolves once this session's background orphan
+   * reconcile has finished (immediately when none is running).
+   */
+  async awaitOrphanReconcile(): Promise<void> {
+    if (this.pendingReconcile) await this.pendingReconcile;
   }
 
   private metadataSnapshot(): MetadataSnapshot {
@@ -698,21 +872,29 @@ export class OPFSStore {
     // against the backend the breaker just gave up on, which is exactly the
     // serial-stall cost the breaker exists to stop.
     if (!this.opfsRoot) return;
+    // The bytes must still be the ones sized above. A buffer transferred away
+    // (detached) while the write waited reads as zero-length; writing it would
+    // index an empty file under the old size.
+    if (data.byteLength !== size) {
+      this.writeFailures++;
+      log.warning(Modules.CACHE, `OPFSStore skipped write for ${key}: its buffer was detached`);
+      return;
+    }
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         await this.timed(
           (async () => {
             const fileHandle = await this.buckets.navigateToFile(this.opfsRoot!, key, true);
             const writable = await fileHandle.createWritable();
-            // Slice the view's portion, NOT data.buffer directly. If the Uint8Array is
-            // a view on a larger ArrayBuffer (e.g., from a sub-slice), data.buffer would
-            // write the entire underlying buffer, corrupting the stored data. slice()
-            // copies only the relevant bytes. Cast is safe: network data is never SharedArrayBuffer.
-            const bytes = data.buffer.slice(
-              data.byteOffset,
-              data.byteOffset + data.byteLength
-            ) as ArrayBuffer;
-            await writable.write(bytes);
+            // Write the VIEW itself: `write()` takes any BufferSource and writes
+            // exactly the view's bytes, so a sub-view of a larger buffer is safe
+            // without a copy (only passing `data.buffer` would write the whole
+            // backing buffer). The previous `data.buffer.slice(...)` copied every
+            // chunk once more on the write path. The view is the caller's and is
+            // shared with L1, whose entries are immutable (never written after
+            // insertion); the write only READS it. Cast is safe: network and
+            // decoded chunk data are never SharedArrayBuffer-backed.
+            await writable.write(data as Uint8Array<ArrayBuffer>);
             await writable.close();
           })(),
           `set(${key})`
@@ -745,6 +927,7 @@ export class OPFSStore {
         }
         this.index.set(key, { size, order: this.orderCounter++ });
         this.totalSize += size;
+        this.debitQuota(size - (existingEntry?.size ?? 0), size);
         this.writeCount++;
         perfCounters.add(S_OPFS_WRITES);
 
@@ -809,6 +992,28 @@ export class OPFSStore {
 
     // Register the real settlement so a later same-key set() waits for it even
     // after this caller returns on timeout (see pendingDeletesByDataset).
+    this.registerPendingDelete(key, real);
+
+    try {
+      await this.timed(real, `delete(${key})`);
+    } catch (error) {
+      // Timeout: the caller unblocks, but `real` stays outstanding in
+      // pendingDeletes and continues to gate any replacement write until the
+      // removeEntry settles. Other errors cannot reach here — doDelete never
+      // rejects.
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.startsWith('OPFS timeout')) {
+        log.warning(Modules.CACHE, msg);
+      }
+    }
+  }
+
+  /**
+   * Record an in-flight REAL removal of `key`'s file in the static same-key
+   * delete registry (see pendingDeletesByDataset); self-cleans on settlement.
+   * `real` must never reject.
+   */
+  private registerPendingDelete(key: string, real: Promise<void>): void {
     const datasetDeletes =
       OPFSStore.pendingDeletesByDataset.get(this.datasetId) ??
       new Map<string, Set<Promise<void>>>();
@@ -830,19 +1035,6 @@ export class OPFSStore {
         }
       }
     });
-
-    try {
-      await this.timed(real, `delete(${key})`);
-    } catch (error) {
-      // Timeout: the caller unblocks, but `real` stays outstanding in
-      // pendingDeletes and continues to gate any replacement write until the
-      // removeEntry settles. Other errors cannot reach here — doDelete never
-      // rejects.
-      const msg = error instanceof Error ? error.message : String(error);
-      if (msg.startsWith('OPFS timeout')) {
-        log.warning(Modules.CACHE, msg);
-      }
-    }
   }
 
   /**
@@ -893,6 +1085,7 @@ export class OPFSStore {
     if (!current) return;
     this.totalSize = Math.max(0, this.totalSize - current.size);
     this.index.delete(key);
+    this.debitQuota(-current.size, 0);
     this.scheduleMetadataSave();
   }
 
@@ -973,6 +1166,9 @@ export class OPFSStore {
     this.clobberBarrierWriteSkipped = 0;
     this.metadata.parseFailures = 0;
     this.metadata.orphansRemoved = 0;
+    this.orphansReindexed = 0;
+    // The wiped directory frees everything this store wrote: re-estimate.
+    this.quotaEstimate = null;
 
     if (this.opfsRoot) {
       try {
@@ -1030,17 +1226,44 @@ export class OPFSStore {
   }
 
   /**
-   * Check if enough storage quota is available.
+   * Check if enough storage quota is available (10% safety margin).
+   *
+   * Served from the cached estimate while it is fresh and its debited headroom
+   * covers the write; otherwise re-estimates (see `quotaEstimate`).
    */
   async checkQuota(requiredBytes: number): Promise<boolean> {
+    const needed = requiredBytes * 1.1;
+    const cached = this.quotaEstimate;
+    if (
+      cached &&
+      Date.now() - cached.at < OPFSStore.QUOTA_ESTIMATE_MAX_AGE_MS &&
+      this.quotaGrossBytesSinceEstimate < OPFSStore.QUOTA_REESTIMATE_BYTES &&
+      cached.available - this.quotaNetBytesSinceEstimate > needed
+    ) {
+      return true;
+    }
+    let available: number;
     try {
       perfCounters.add(S_OPFS_ESTIMATE_CALLS);
       const estimate = await navigator.storage.estimate();
-      const available = (estimate.quota || 0) - (estimate.usage || 0);
-      return available > requiredBytes * 1.1; // 10% safety margin
+      available = (estimate.quota || 0) - (estimate.usage || 0);
     } catch {
-      return true; // Assume OK if API unavailable
+      available = Number.POSITIVE_INFINITY; // Assume OK if API unavailable
     }
+    this.quotaEstimate = { available, at: Date.now() };
+    this.quotaNetBytesSinceEstimate = 0;
+    this.quotaGrossBytesSinceEstimate = 0;
+    return available > needed;
+  }
+
+  /**
+   * Account bytes this store put on (positive) or took off (negative) disk
+   * against the cached quota estimate. `grossBytes` counts toward the
+   * re-estimate trigger.
+   */
+  private debitQuota(netBytes: number, grossBytes: number): void {
+    this.quotaNetBytesSinceEstimate += netBytes;
+    this.quotaGrossBytesSinceEstimate += grossBytes;
   }
 
   /**
@@ -1063,6 +1286,8 @@ export class OPFSStore {
     clobberBarrierWriteSkipped: number;
     metadataParseFailures: number;
     orphanedFilesRemoved: number;
+    /** Unindexed files recovered into the index by the open-time reconcile. */
+    orphansReindexed: number;
     /**
      * S2: `true` when OPFS was reachable on init and the store is
      * still alive. `false` when init couldn't acquire a directory
@@ -1097,6 +1322,7 @@ export class OPFSStore {
       clobberBarrierWriteSkipped: this.clobberBarrierWriteSkipped,
       metadataParseFailures: this.metadata.parseFailures,
       orphanedFilesRemoved: this.metadata.orphansRemoved,
+      orphansReindexed: this.orphansReindexed,
       available: this.opfsRoot !== null && !this.disposed,
       breakerTripped: this.breakerTripped,
     };
@@ -1242,6 +1468,7 @@ export class OPFSStore {
   private async doDispose(): Promise<void> {
     this.disposed = true;
     this.generation++;
+    OPFSStore.liveStores.delete(this);
 
     this.metadata.cancelPendingSave();
 
@@ -1249,6 +1476,20 @@ export class OPFSStore {
     // errors), but keep dispose() unable to throw regardless.
     if (this.pendingInit) await this.pendingInit.catch(() => {});
     if (this.pendingClear) await this.pendingClear.catch(() => {});
+    // The orphan crawl polls `disposed` between awaits, so it stops at its next
+    // step; wait for that step (a removeEntry on the shared directory) to
+    // settle before a newer same-URL store may take the directory over.
+    if (this.pendingReconcile) {
+      try {
+        await withTimeout(
+          this.pendingReconcile,
+          config.cache.opfsOperationTimeoutMs,
+          'dispose orphan-reconcile drain'
+        );
+      } catch (error) {
+        log.warning(Modules.CACHE, getErrorMessage(error));
+      }
+    }
 
     if (this.pendingWrites.size > 0) {
       await Promise.allSettled([...this.pendingWrites.values()]);
@@ -1321,6 +1562,33 @@ export class OPFSStore {
     this.opfsRoot = null;
   }
 
+  /**
+   * Start any pending (debounced) index save NOW. Best-effort and
+   * non-blocking: the write is started synchronously and not awaited, because
+   * the page may be frozen or killed right after the lifecycle event that asks
+   * for it. A no-op when nothing is pending or the store is not live.
+   */
+  flushMetadata(): void {
+    if (this.disposed || !this.opfsRoot || !this.initialized) return;
+    this.metadata.flushPending();
+  }
+
+  /**
+   * {@link flushMetadata} for every live store. Wired to `pagehide` and
+   * `visibilitychange → hidden` (core/app/lifecycle/unload-handling.ts): the
+   * signals that still fire when `beforeunload` (and therefore dispose) does
+   * not — mobile tab switches, bfcache navigations, discarded tabs.
+   */
+  static flushAllMetadata(): void {
+    for (const store of OPFSStore.liveStores) {
+      try {
+        store.flushMetadata();
+      } catch (error) {
+        log.warning(Modules.CACHE, `OPFSStore metadata flush failed: ${getErrorMessage(error)}`);
+      }
+    }
+  }
+
   // ========== Private Methods ==========
 
   private scheduleMetadataSave(): void {
@@ -1333,6 +1601,7 @@ export class OPFSStore {
       root: this.opfsRoot,
       getSnapshot: () => this.metadataSnapshot(),
       delayMs: OPFSStore.METADATA_SAVE_DELAY,
+      maxWaitMs: OPFSStore.METADATA_SAVE_MAX_WAIT,
       onError: (error) => {
         this.writeFailures++;
         log.warning(
