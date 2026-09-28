@@ -8,7 +8,7 @@
 
 import * as zarr from '../zarr';
 import { isArrayListed } from '../loaders/optional-array-listing';
-import { log, Modules } from '../../utils/log';
+import { log, LogEmoji, Modules } from '../../utils/log';
 import { clamp } from '../../utils/clamp';
 import {
   DataLoader,
@@ -318,7 +318,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         }
       } else {
         // Chunk index loaded successfully
-        log.query(
+        log.verbose(
+          LogEmoji.QUERY,
           Modules.SPATIAL_INDEX_LOADER,
           `Chunk index loaded: ${this.chunkIndex.metadata.total_chunks} chunks, ${this.chunkIndex.metadata.total_points} points`
         );
@@ -639,7 +640,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     const loadSession = session?.begin('Load Arrays');
     try {
       if (!this._initialLoadDone) {
-        log.load(
+        log.verbose(
+          LogEmoji.LOAD,
           Modules.SPATIAL_INDEX_LOADER,
           `Loading attributes concurrently for ${ranges.length} ranges`
         );
@@ -1128,7 +1130,11 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     const totalPoints = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
 
     if (!this._initialLoadDone) {
-      log.load(Modules.SPATIAL_INDEX_LOADER, `Loading colors for ${ranges.length} ranges`);
+      log.verbose(
+        LogEmoji.LOAD,
+        Modules.SPATIAL_INDEX_LOADER,
+        `Loading colors for ${ranges.length} ranges`
+      );
     }
 
     const output = await loadColorRanges(array, ranges, this.rangeLoader, storeToUse, 'Points');
@@ -1161,7 +1167,11 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     if (!array) return null;
 
     if (!this._initialLoadDone) {
-      log.load(Modules.SPATIAL_INDEX_LOADER, `Loading ${arrayName} for ${ranges.length} ranges`);
+      log.verbose(
+        LogEmoji.LOAD,
+        Modules.SPATIAL_INDEX_LOADER,
+        `Loading ${arrayName} for ${ranges.length} ranges`
+      );
     }
 
     // Analyze array metadata

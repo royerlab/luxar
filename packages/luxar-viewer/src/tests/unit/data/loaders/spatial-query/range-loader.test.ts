@@ -385,7 +385,7 @@ describe('RangeLoader.loadBroadcasted (via loadRanges)', () => {
     expect(Array.from(output)).toEqual([0.5, 0.5, 0.5, 0.5]);
   });
 
-  it.fails("a loader's first load logs its decode detail only under verboseLog", async () => {
+  it("a loader's first load logs its decode detail only under verboseLog", async () => {
     // A fresh loader (its first load: verbose detail on) — one per partition
     // part, and a slice step can activate several.
     const fresh = new RangeLoader(new ArrayRefRegistry(), { workerThreshold: Infinity });

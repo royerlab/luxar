@@ -16,7 +16,7 @@
 
 import type * as THREE from 'three';
 import * as zarr from '../../zarr';
-import { log, Modules } from '../../../utils/log';
+import { log, LogEmoji, Modules } from '../../../utils/log';
 import { LoaderError, classifyLoaderError } from './load-leaf-error-dispatch';
 import {
   createLinesLoader as createLinesLoaderHelper,
@@ -79,15 +79,16 @@ export async function loadLinesNodeCheap(
   loc: zarr.Location<zarr.Readable>,
   ctx: NodeBuildCtx
 ): Promise<LinesCheapLoad> {
-  log.custom('📐', Modules.SCENE_LOADER, `Loading lines: ${node.path}`);
+  log.verbose('📐', Modules.SCENE_LOADER, `Loading lines: ${node.path}`);
 
   const attrs = node.attrs as unknown as LinesMetadata;
-  log.info(Modules.SCENE_LOADER, `  Segments: ${attrs.n_segments || 'unknown'}`);
-  log.info(Modules.SCENE_LOADER, `  Vertices: ${attrs.n_vertices || 'unknown'}`);
+  log.verbose(LogEmoji.INFO, Modules.SCENE_LOADER, `  Segments: ${attrs.n_segments || 'unknown'}`);
+  log.verbose(LogEmoji.INFO, Modules.SCENE_LOADER, `  Vertices: ${attrs.n_vertices || 'unknown'}`);
 
   const nAdditive = (node.attrs as { n_additive_sublods?: number }).n_additive_sublods ?? 0;
   if (nAdditive > 1) {
-    log.info(
+    log.verbose(
+      LogEmoji.INFO,
       Modules.SCENE_LOADER,
       `  Additive sub-LODs: ${nAdditive} (progressive loading enabled)`
     );

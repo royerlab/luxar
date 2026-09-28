@@ -248,7 +248,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
           `No spatial index for Lines ${this.node.path} - will load all data`
         );
       } else {
-        log.query(
+        log.verbose(
+          LogEmoji.QUERY,
           Modules.LINES_LOADER,
           `Lines index loaded: ${this.chunkIndex.vertexChunkCount} vertex chunks, ${this.chunkIndex.segmentIndex.chunkCount} segment chunks`
         );
@@ -546,7 +547,11 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
 
     // Load segment indices
     if (!this._initialLoadDone) {
-      log.load(Modules.LINES_LOADER, `Loading segments for ${segmentRanges.length} ranges`);
+      log.verbose(
+        LogEmoji.LOAD,
+        Modules.LINES_LOADER,
+        `Loading segments for ${segmentRanges.length} ranges`
+      );
     }
     let segmentData: Uint32Array;
     if (session) {
@@ -590,16 +595,19 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     const efficiency = sortedIndices.length / indexSpan;
 
     if (!this._initialLoadDone) {
-      log.load(
+      log.verbose(
+        LogEmoji.LOAD,
         Modules.LINES_LOADER,
         `Loading vertices for ${mergedVertexRanges.length} ranges (${sortedIndices.length} unique vertices)`
       );
-      log.info(
+      log.verbose(
+        LogEmoji.INFO,
         Modules.LINES_LOADER,
         `  Vertex index range: [${minIdx} - ${maxIdx}], span=${indexSpan}, efficiency=${(efficiency * 100).toFixed(1)}%`
       );
       if (mergedVertexRanges.length <= 10) {
-        log.info(
+        log.verbose(
+          LogEmoji.INFO,
           Modules.LINES_LOADER,
           `  Ranges: ${mergedVertexRanges.map((r) => `[${r.start}-${r.end})`).join(', ')}`
         );
@@ -612,8 +620,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
           .slice(-5)
           .map((r) => `[${r.start}-${r.end})`)
           .join(', ');
-        log.info(Modules.LINES_LOADER, `  First 5 ranges: ${first5}`);
-        log.info(Modules.LINES_LOADER, `  Last 5 ranges: ${last5}`);
+        log.verbose(LogEmoji.INFO, Modules.LINES_LOADER, `  First 5 ranges: ${first5}`);
+        log.verbose(LogEmoji.INFO, Modules.LINES_LOADER, `  Last 5 ranges: ${last5}`);
       }
     }
 

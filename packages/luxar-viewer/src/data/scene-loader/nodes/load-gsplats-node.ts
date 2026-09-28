@@ -13,7 +13,7 @@
 
 import type * as THREE from 'three';
 import * as zarr from '../../zarr';
-import { log, Modules } from '../../../utils/log';
+import { log, LogEmoji, Modules } from '../../../utils/log';
 import { LoaderError, classifyLoaderError } from './load-leaf-error-dispatch';
 import {
   createGSplatsLoader as createGSplatsLoaderHelper,
@@ -92,11 +92,16 @@ export async function loadGSplatsNodeCheap(
 ): Promise<GSplatsCheapLoad> {
   const attrs = node.attrs as unknown as GSplatsMetadata;
   const nAdditive = attrs.n_additive_sublods ?? 0;
-  log.custom('🔮', Modules.SCENE_LOADER, `Loading gsplats: ${node.path}`);
-  log.info(Modules.SCENE_LOADER, `  Splats: ${attrs.n_splats?.toLocaleString() || 'unknown'}`);
-  log.info(Modules.SCENE_LOADER, `  Dimensions: ${attrs.ndim || 'unknown'}D`);
+  log.verbose('🔮', Modules.SCENE_LOADER, `Loading gsplats: ${node.path}`);
+  log.verbose(
+    LogEmoji.INFO,
+    Modules.SCENE_LOADER,
+    `  Splats: ${attrs.n_splats?.toLocaleString() || 'unknown'}`
+  );
+  log.verbose(LogEmoji.INFO, Modules.SCENE_LOADER, `  Dimensions: ${attrs.ndim || 'unknown'}D`);
   if (nAdditive > 1) {
-    log.info(
+    log.verbose(
+      LogEmoji.INFO,
       Modules.SCENE_LOADER,
       `  Additive sub-LODs: ${nAdditive} (progressive loading enabled)`
     );

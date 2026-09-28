@@ -591,7 +591,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       this._lastAllResident = allResident;
 
       if (!this._initialLoadDone) {
-        log.custom(
+        log.verbose(
           LogEmoji.BROADCAST,
           Modules.LINES_LOADER,
           `LOD ${level}/${this.nLods - 1}: ${lodData.segmentCount} segments (${elapsed.toFixed(1)}ms${allResident ? '' : ', miss'})`

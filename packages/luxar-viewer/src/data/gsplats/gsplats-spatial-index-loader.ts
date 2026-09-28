@@ -463,7 +463,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
           `No spatial index for GSplats ${this.node.path} - will load all data`
         );
       } else {
-        log.query(
+        log.verbose(
+          LogEmoji.QUERY,
           Modules.GSPLATS_SPATIAL_INDEX_LOADER,
           `GSplats index loaded: ${this.chunkIndex.chunkCount} chunks`
         );
@@ -696,7 +697,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     }
 
     if (!this._initialLoadDone) {
-      log.load(
+      log.verbose(
+        LogEmoji.LOAD,
         Modules.GSPLATS_SPATIAL_INDEX_LOADER,
         `Loading ${totalSplats} gsplats from ${splatRanges.length} ranges`
       );

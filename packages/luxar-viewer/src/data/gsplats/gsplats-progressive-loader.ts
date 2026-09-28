@@ -729,7 +729,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       this._lastAllResident = allResident;
 
       if (!this._initialLoadDone) {
-        log.custom(
+        log.verbose(
           LogEmoji.BROADCAST,
           Modules.GSPLATS_SPATIAL_INDEX_LOADER,
           `LOD ${level}/${this.nLods - 1}: ${lodData.splatCount} splats (${elapsed.toFixed(1)}ms${allResident ? '' : ', miss'})`

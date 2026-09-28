@@ -13,7 +13,7 @@
 
 import type * as THREE from 'three';
 import * as zarr from '../../zarr';
-import { log, Modules } from '../../../utils/log';
+import { log, LogEmoji, Modules } from '../../../utils/log';
 import { LoaderError, classifyLoaderError } from './load-leaf-error-dispatch';
 import {
   createPointsLoader as createPointsLoaderHelper,
@@ -85,16 +85,21 @@ export async function loadPointsNodeCheap(
   loc: zarr.Location<zarr.Readable>,
   ctx: NodeBuildCtx
 ): Promise<PointsCheapLoad> {
-  log.custom('📍', Modules.SCENE_LOADER, `Loading points: ${node.path}`);
-  log.info(Modules.SCENE_LOADER, `  Has spatial index: ${node.hasSpatialIndex}`);
-  log.info(Modules.SCENE_LOADER, `  Total points: ${node.attrs.n_points || 'unknown'}`);
+  log.verbose('📍', Modules.SCENE_LOADER, `Loading points: ${node.path}`);
+  log.verbose(LogEmoji.INFO, Modules.SCENE_LOADER, `  Has spatial index: ${node.hasSpatialIndex}`);
+  log.verbose(
+    LogEmoji.INFO,
+    Modules.SCENE_LOADER,
+    `  Total points: ${node.attrs.n_points || 'unknown'}`
+  );
 
   // Progressive multi-additive-LOD Points: walks `additive_<i>/` subgroups
   // and wraps them in a `PointsProgressiveLoader`. Single-LOD nodes
   // (no `n_additive_sublods` attr) take the standard path below.
   const nAdditive = (node.attrs as { n_additive_sublods?: number }).n_additive_sublods ?? 0;
   if (nAdditive > 1) {
-    log.info(
+    log.verbose(
+      LogEmoji.INFO,
       Modules.SCENE_LOADER,
       `  Additive sub-LODs: ${nAdditive} (progressive loading enabled)`
     );
