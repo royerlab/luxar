@@ -37,6 +37,10 @@ vi.mock('../../../../../data/zarr', () => ({
 }));
 
 import { setupCaches } from '../../../../../data/scene-loader/cache/cache-setup';
+import {
+  resetRootDocumentPrefetchForTests,
+  SharedRootDocumentSource,
+} from '../../../../../cache/root-document-prefetch';
 import { deviceClassPoolBytes } from '../../../../../cache/heap-budget';
 import { config as appConfig } from '../../../../../config';
 
@@ -49,11 +53,19 @@ describe('setupCaches — cache telemetry state resolution', () => {
   beforeEach(() => {
     originalEnabled = appConfig.cache.enabled;
     originalL0Enabled = appConfig.cache.l0Enabled;
+    // setupCaches starts the shared root-document fetch; keep it off the network.
+    resetRootDocumentPrefetchForTests();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('', { status: 404 }))
+    );
   });
 
   afterEach(() => {
     appConfig.cache.enabled = originalEnabled;
     appConfig.cache.l0Enabled = originalL0Enabled;
+    resetRootDocumentPrefetchForTests();
+    vi.unstubAllGlobals();
   });
 
   it('a .zarr.zip is cached like its directory twin', async () => {
@@ -128,7 +140,7 @@ describe('setupCaches — cache telemetry state resolution', () => {
     expect(result.l0Cache).not.toBeNull();
   });
 
-  it('hands the caching store a zip SOURCE for an archive and a bare URL otherwise', async () => {
+  it('hands the caching store a zip SOURCE for an archive and a root-sharing source otherwise', async () => {
     // The two must never be interchangeable. A zipped store and its unzipped
     // twin cache the same decoded bytes but have different key namespaces, and
     // the OPFS bucket is derived from the source's identity — so passing a bare
@@ -142,9 +154,19 @@ describe('setupCaches — cache telemetry state resolution', () => {
     await setupCaches('http://example.com/scene.zarr/', {});
     const directoryArg = vi.mocked(MultiLevelCachingStore).mock.calls.at(-1)?.[0];
 
+    // A presigned source keeps the plain URL: sharing needs the query-preserving
+    // URL building the store does itself.
+    await setupCaches('http://example.com/scene.zarr/?token=abc', {});
+    const presignedArg = vi.mocked(MultiLevelCachingStore).mock.calls.at(-1)?.[0];
+
     expect(typeof zippedArg).toBe('object');
     expect(zippedArg).toHaveProperty('identity', 'http://example.com/scene.luxar.zarr.zip');
-    expect(directoryArg).toBe('http://example.com/scene.zarr/');
+    expect(zippedArg).not.toBeInstanceOf(SharedRootDocumentSource);
+    // The directory store's validation probe and root read share one fetch; its
+    // identity (the OPFS bucket key) is still the URL verbatim.
+    expect(directoryArg).toBeInstanceOf(SharedRootDocumentSource);
+    expect(directoryArg).toHaveProperty('identity', 'http://example.com/scene.zarr/');
+    expect(presignedArg).toBe('http://example.com/scene.zarr/?token=abc');
   });
 
   it('feeds the ?cacheBudgetMB pool through to the L2 write-queue byte cap', async () => {

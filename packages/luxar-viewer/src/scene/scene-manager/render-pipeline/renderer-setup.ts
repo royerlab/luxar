@@ -129,14 +129,33 @@ export interface CreatedRenderer {
   capabilities: RendererCapabilities;
 }
 
+/** Options that `createWebGLRenderer` honours. */
+export interface CreateWebGLOptions {
+  /**
+   * Debug mode (`?debug`). Keeps three's `checkShaderErrors` on, so a broken
+   * shader gets three's formatted report with the offending source lines.
+   */
+  debug?: boolean;
+}
+
 /**
  * Construct a `THREE.WebGLRenderer` from a WebGL2 context obtained
  * via `canvas.getContext('webgl2', config.webgl.context)`.
  *
+ * Outside debug mode `renderer.debug.checkShaderErrors` is turned OFF. With it
+ * on, three reads `getProgramInfoLog` and both shader logs straight after every
+ * link — a synchronous GPU round trip that defeats the driver's parallel
+ * compile and measured 15-91 ms of main-thread stall on a cold start. A broken
+ * shader still surfaces without it: the browser logs the failed link as a WebGL
+ * warning and the draw is skipped.
+ *
  * Returns the renderer plus a `RendererCapabilities` snapshot. The
  * caller wires materialManager / HDR / clear color / initial resize.
  */
-export async function createWebGLRenderer(canvas: HTMLCanvasElement): Promise<CreatedRenderer> {
+export async function createWebGLRenderer(
+  canvas: HTMLCanvasElement,
+  options: CreateWebGLOptions = {}
+): Promise<CreatedRenderer> {
   // Try to get HDR canvas context first using config values.
   //
   // Allow-list rule: a `getContext` call is permitted ONLY if it
@@ -166,6 +185,7 @@ export async function createWebGLRenderer(canvas: HTMLCanvasElement): Promise<Cr
     premultipliedAlpha: config.webgl.context.premultipliedAlpha,
     ...config.webgl.renderer,
   });
+  renderer.debug.checkShaderErrors = options.debug === true;
 
   // Tally every CPU→GPU upload for the perf counters (instrumentation only).
   installUploadCounters(renderer);

@@ -36,6 +36,8 @@ vi.mock('three', async () => {
       return canvas;
     })();
     shadowMap = { enabled: false, type: actual.PCFShadowMap };
+    // three's default; `createWebGLRenderer` sets the flag from debug mode.
+    debug = { checkShaderErrors: true, onShaderError: null };
     outputColorSpace = actual.SRGBColorSpace;
     toneMapping = actual.NoToneMapping;
 

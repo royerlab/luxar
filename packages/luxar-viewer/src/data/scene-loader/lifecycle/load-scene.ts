@@ -65,6 +65,7 @@ import { buildSceneGraph } from '../nodes/build-scene-graph';
 import { loadSceneNodes } from '../nodes/load-scene-nodes';
 import { reportLoadOutcome } from '../loaders/failure-report';
 import { SceneIdentityWatchdog, canonicalJson } from '../../scene-identity-watchdog';
+import type { RootDocumentFetch } from '../../../cache/root-document-prefetch';
 import type { NodeBuildCtx } from '../nodes/build-ctx';
 
 /**
@@ -237,6 +238,33 @@ function synthesizeSceneDimensionsFromNode(
 }
 
 /**
+ * Hand the load-time root fetch's `ETag` to the identity watchdog, so its first
+ * poll is conditional rather than a third full download of the root document.
+ *
+ * Asynchronous and non-blocking: by the time the root is open the shared fetch
+ * has settled (the open read it, or validation did), and a fetch that has not
+ * simply leaves the first poll unconditional, as before. The evidence passed is
+ * the cheapest available — the token validation already derived when there is
+ * one, else the bytes for the watchdog to check at its first probe.
+ */
+function seedWatchdogFromLoad(
+  watchdog: SceneIdentityWatchdog,
+  rootDocument: Promise<RootDocumentFetch> | null
+): void {
+  if (!rootDocument) return;
+  void rootDocument.then((result) => {
+    const served = result.served;
+    if (!served?.etag) return;
+    const token = result.peekToken();
+    watchdog.seedFromLoad(
+      token?.mode === 'content-hash'
+        ? { doc: served.doc, etag: served.etag, contentHash: token.hash }
+        : { doc: served.doc, etag: served.etag, body: served.bytes }
+    );
+  });
+}
+
+/**
  * Execute the full initial-load sequence and return the populated root
  * THREE.Group. Mutates the orchestrator's resource references via the
  * ctx setters.
@@ -345,9 +373,13 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
       expectedContentHash: typeof loadedHash === 'string' ? loadedHash : null,
       expectedAttrsJson: attrsJson,
     });
+    seedWatchdogFromLoad(watchdog, cacheResult.rootDocument);
     watchdog.start();
     ctx.setIdentityWatchdog(watchdog);
   }
+  // The root is open: validation and the store open are both past the shared
+  // load-time fetch, so let its bytes go (a later re-read reaches the server).
+  cacheResult.releaseRootDocument();
 
   // Format-version policy, shared with the Python reader (data/format-version.ts
   // mirrors typing_utils/format_version.py): a supported version loads
@@ -466,7 +498,8 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // the scene environment together with the authored `viewer_config.environment`.
   const bakedEnvironment = await loadBakedEnvironment(
     rootLoc,
-    (sceneAttrs as Record<string, unknown> | undefined)?.content_hash as string | undefined
+    (sceneAttrs as Record<string, unknown> | undefined)?.content_hash as string | undefined,
+    normalizedUrl
   );
   if (bakedEnvironment) rootGroup.userData.bakedEnvironment = bakedEnvironment;
 

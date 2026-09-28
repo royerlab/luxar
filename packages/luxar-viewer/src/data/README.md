@@ -49,6 +49,8 @@ data/
 │                                  #   address starts serving a DIFFERENT scene (a demo/dev
 │                                  #   server died and another took its port) or goes
 │                                  #   unreachable; started per dataset by load-scene.ts,
+│                                  #   which seeds its first poll's If-None-Match from the
+│                                  #   load-time root fetch's ETag (seedFromLoad);
 │                                  #   disposed by SceneLoader.dispose
 ├── scene-loader-manager.ts        # Singleton manager for SceneLoader instances
 ├── scene-loader-monitor-port.ts   # Port interface bridging SceneLoader → DataLoadingMonitor
@@ -162,15 +164,18 @@ data/
 Zipped stores go through the same L1/L2 tiers as a directory store: the caching
 store reads through a `ChunkSource` rather than building chunk URLs, so an
 archive member is reachable without one. Caching earns more here than for a
-directory store — a member costs about two requests (the zip format puts a local
-file header immediately before each member's data), and a repeat read cannot
-fall back to the browser's HTTP cache, because every member read is a `Range`
-request against a single URL.
+directory store: a repeat read cannot fall back to the browser's HTTP cache,
+because every member read is a `Range` request against a single URL — sent
+`cache: 'no-store'`, since Chrome otherwise serialises same-URL range GETs
+behind its HTTP-cache writer lock (two reads in flight on a hosted archive).
 
-Two costs the chunk cache cannot absorb, because the reader pays them below it
-rather than as chunk keys: the fixed directory preamble on every visit, and — on
-a cold read — that second request per member. See `cache/chunk-source/` for the
-port, and issue #1716 for the measurements.
+A cold member costs ONE ranged GET: `LuxarZipStore` sizes a window from the
+central directory (local header, name, extra field plus slack, compressed
+payload), so `unzipit`'s two serial reads — local header, then payload — are
+both answered from memory. Opening costs one suffix GET (`bytes=-65557`) that
+yields the archive length, the tail and usually the whole central directory,
+and it is shared with the identity probe when that runs first. See
+`cache/chunk-source/` for the port, and issue #1716 for the measurements.
 
 ### State Management Architecture
 

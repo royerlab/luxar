@@ -389,11 +389,14 @@ narrowly-scoped helpers each spatial-index loader composes:
   offsets and exact byte range, retains open array handles per node, and keeps
   decoded labels in a shared bounded LRU.
 - **`environment/environment-loader.ts`** — `loadBakedEnvironment(rootLoc,
-rootContentHash)`: reads the root-level `environment/` sidecar group a
+rootContentHash, storeKey?)`: reads the root-level `environment/` sidecar group a
   `luxar env bake` left (six half-float cube faces as `uint16` bits, named by
   digest) and hands it to the scene environment; a missing group is silent, a
   stale one (its `scene_content_hash` is not the root's) or a malformed one is
-  ignored with a warning rather than failing the load.
+  ignored with a warning rather than failing the load. On a consolidated store
+  the root index decides presence (`luxar env attach` re-consolidates), so a
+  scene without the sidecar costs NO request; an index-less store is probed
+  once and a not-found is remembered per `storeKey` for the session.
 - **`overlays/overlay-loader.ts`** — `loadOverlayConfigs(store, rootLoc)`:
   enumerates the `overlays/` group and parses each child's `.zattrs` into an
   `OverlayConfig` (text / image / html, with per-type fields). Results are

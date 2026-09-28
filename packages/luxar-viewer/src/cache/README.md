@@ -943,6 +943,14 @@ await window.__luxarDebug.cache.clearAll();
 - `chunk-source/zip-chunk-source.ts` — the zipped-store source: members read out
   of one archive, identity from a probe on the archive, and archive-level faults
   reported as `fatal` so the store rethrows instead of rendering an empty scene.
+- `root-document-prefetch.ts` — ONE load-time fetch of the dataset's root
+  document (`zarr.json`, then `.zattrs`), started by bootstrap before `app.init`
+  so it overlaps renderer init, claimed by `setupCaches`, and shared by cache
+  validation (`probeIdentityToken`, still fail-fast on `validationTimeoutMs`)
+  and the store open (the root read) through `SharedRootDocumentSource` — one
+  root request per cold load instead of two. Its `ETag` seeds the identity
+  watchdog's first `If-None-Match`. Plain http(s) directory stores only
+  (zipped / presigned URLs read as before).
 - `multi-level-caching-store.ts` — L1+L2 facade implementing zarrita's
   `AsyncReadable` with validation, prefetcher hookup, and disposal.
 - `decompressed-chunk-cache.ts` — L0 LRU of decoded TypedArrays.

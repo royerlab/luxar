@@ -46,6 +46,9 @@ import { getErrorMessage } from '../utils/format-error';
 import { codecRegistry } from '../data/zarr';
 import { computePerfSnapshot } from './app/debug/perf-snapshot';
 import { perfCounters } from '../profiling/perf-counters';
+import { prefetchRootDocument } from '../cache/root-document-prefetch';
+import { normalizeURL } from '../data/scene-loader/lifecycle/url-normalization';
+import { loadsDirectlyWithoutProbe } from './app/dataset/should-show-browser';
 
 /**
  * Options for {@link bootstrapStandalone}.
@@ -375,6 +378,17 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       ? { probe: urlParams.probe ?? undefined, resolution: urlParams.envResolution ?? undefined }
       : undefined,
   };
+
+  // Put the dataset's root document on the wire NOW, in parallel with renderer
+  // init (shader links, adapter negotiation), instead of after it: startup was
+  // serial, and the first dataset request left 155-315 ms after the bundle.
+  // The scene load claims this in-flight response, and cache validation and
+  // the store open both read it (`cache/root-document-prefetch.ts`) — one root
+  // fetch per cold load, not two. Only for a URL the loader opens without a
+  // browser probe, so a directory listing never costs a stray request.
+  if (loadsDirectlyWithoutProbe(appOptions.src)) {
+    prefetchRootDocument(normalizeURL(appOptions.src as string, window.location.origin));
+  }
 
   app = new LuxarApp();
 

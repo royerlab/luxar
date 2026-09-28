@@ -516,7 +516,9 @@ export class SceneManager extends THREE.EventDispatcher<{
   }
 
   private async setupWebGLRenderer(): Promise<void> {
-    const { renderer, capabilities } = await createWebGLRenderer(this.canvasElement);
+    const { renderer, capabilities } = await createWebGLRenderer(this.canvasElement, {
+      debug: this.debug,
+    });
     this.renderer = renderer;
     this.capabilities = capabilities;
 
