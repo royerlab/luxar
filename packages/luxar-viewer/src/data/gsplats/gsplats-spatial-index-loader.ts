@@ -427,6 +427,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       nextQueryId: () => this.nextQueryId++,
       accumulatorMemoryMB: () => this.getAccumulatorStats()?.memoryMB ?? 0,
       emit: (event) => this.emitEvent(event),
+      activeSignal: () => this._activeSignal,
     };
   }
 

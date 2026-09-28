@@ -28,11 +28,15 @@ resident and has no per-slice payload to cache.
 progressive/
 ├── concat-helpers.ts      # Generic typed-array field concatenation across LOD parts
 ├── constants.ts           # CACHE_HIT_THRESHOLD_MS — the shared streaming threshold
+├── lookahead-signal.ts    # 'lookahead'-tagged controller for the next-rung prefetch (free
+│                          # navigation only; linked to the scheduling update's abort signal)
 ├── pass-rollback.ts       # Shared retry/truncate/full-unwind decision for failed passes
 ├── streaming-policy.ts    # Per-pass LOD streaming decisions (playback / prefetch / refine)
 ├── slice-cache-helper.ts  # Shared SliceCache key/clone/restore/store logic, including separate
 │                          # logical ladder depth for folded Points/Lines/GSplats payloads; also used by plain
 │                          # spatial-index loaders caching a decoded slice as a 1-element ladder
+│                          # — plus the in-flight shadow-store handoff (beginShadowStore /
+│                          # awaitShadowStore) a foreground pass uses to adopt a running shadow
 └── view-state-equal.ts    # viewStatesEqual — the memoized-noop / generation-reset linchpin
                            # (formerly three byte-identical copies, one per geometry loader)
 ```

@@ -219,6 +219,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       nextQueryId: () => this.nextQueryId++,
       accumulatorMemoryMB: () => this.getAccumulatorStats()?.memoryMB ?? 0,
       emit: (event) => this.emitEvent(event),
+      activeSignal: () => this._activeSignal,
     };
   }
 
@@ -892,7 +893,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    * assembled, and the demand load's abort signal / residency probe are not
    * consulted (see `prefetchRangesIntoCache`).
    */
-  async prefetchChunks(viewState: LinesViewState): Promise<void> {
+  async prefetchChunks(viewState: LinesViewState, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return;
     await this._onceInit.ensure(() => this.initialize());
 
     if (!this.arrays.segments) return;
@@ -910,8 +912,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     const vertexArrays = this.prefetchVertexArrays();
 
     await Promise.all([
-      prefetchRangesIntoCache([this.arrays.segments], segmentRanges),
-      prefetchRangesIntoCache(vertexArrays, vertexRanges),
+      prefetchRangesIntoCache([this.arrays.segments], segmentRanges, signal),
+      prefetchRangesIntoCache(vertexArrays, vertexRanges, signal),
     ]);
   }
 

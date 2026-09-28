@@ -11,7 +11,12 @@
  * @module data/loaders/spatial-facade
  */
 
-import { restoreLadder, storeLadder, type SliceViewLike } from './progressive/slice-cache-helper';
+import {
+  awaitShadowStore,
+  restoreLadder,
+  storeLadder,
+  type SliceViewLike,
+} from './progressive/slice-cache-helper';
 import {
   computeLoadLatency,
   finishQueryTracking,
@@ -58,6 +63,11 @@ export interface SpatialFacadeCtx {
   accumulatorMemoryMB(): number;
   /** Emit a monitor event through the loader's listener set. */
   emit(event: MonitorEvent): void;
+  /**
+   * The current update's abort signal (the loader's `_activeSignal`), so a
+   * wait for an in-flight shadow store stops when the update is superseded.
+   */
+  activeSignal?(): AbortSignal | null;
 }
 
 /**
@@ -85,6 +95,13 @@ export async function loadSliceWithCache<TData extends object>(
   viewState: FacadeViewState,
   loadInternal: (queryId: string, startTime: number) => Promise<TData>
 ): Promise<TData> {
+  // In-flight adoption: a SlicePrefetcher shadow pass may be building this very
+  // slice; wait for its store (bounded, abortable) rather than redo it.
+  const shadowStore =
+    viewState.prefetch === true
+      ? null
+      : awaitShadowStore(ctx.sliceCache, ctx.path, viewState, ctx.activeSignal?.());
+  if (shadowStore) await shadowStore;
   const cached = restoreLadder<TData>(ctx.sliceCache, ctx.path, viewState, 1);
   if (cached) return cached[0];
 

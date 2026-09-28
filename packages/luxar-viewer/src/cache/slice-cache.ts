@@ -164,6 +164,11 @@ export class SliceCache {
   private readonly pinnedBytes = new Map<string, number>();
   private pinnedBytesTotal = 0;
 
+  // In-flight shadow stores (key -> settles when the storing pass ends). See
+  // `beginPendingStore`: the S-cache is the shadow→foreground handoff for
+  // FINISHED results, and this is the same handoff for results still landing.
+  private readonly pendingStores = new Map<string, Promise<void>>();
+
   constructor(options?: SliceCacheOptions) {
     const maxSize = options?.maxSize ?? SliceCache.defaultMaxSize();
     this.maxSize = maxSize;
@@ -263,6 +268,39 @@ export class SliceCache {
           `total: ${(this.cache.size / 1024 / 1024).toFixed(1)}MB)`
       );
     }
+  }
+
+  /**
+   * Release a prefetch pin without reading the entry (no LRU promotion, no
+   * hit/miss count). The SlicePrefetcher calls it on playback stop for every
+   * key its shadow passes may have pinned, since a pin is otherwise released
+   * only by a consuming {@link get}. Harmless when `key` is absent or unpinned.
+   */
+  unpin(key: string): void {
+    this.cache.unpin(key);
+    this.untallyPin(key);
+  }
+
+  /**
+   * Announce that a background (shadow) pass is about to store `key`. Until
+   * the returned release function is called, {@link pendingStore} hands out a
+   * promise that settles on release, so a foreground pass for the same key can
+   * wait for the shadow's result instead of re-assembling the same slice. The
+   * release is idempotent and only clears its OWN registration.
+   */
+  beginPendingStore(key: string): () => void {
+    let settle!: () => void;
+    const promise = new Promise<void>((resolve) => (settle = resolve));
+    this.pendingStores.set(key, promise);
+    return () => {
+      if (this.pendingStores.get(key) === promise) this.pendingStores.delete(key);
+      settle();
+    };
+  }
+
+  /** The in-flight shadow store for `key`, if one is running (see {@link beginPendingStore}). */
+  pendingStore(key: string): Promise<void> | undefined {
+    return this.pendingStores.get(key);
   }
 
   /** Check whether a slice is cached (without LRU promotion). */

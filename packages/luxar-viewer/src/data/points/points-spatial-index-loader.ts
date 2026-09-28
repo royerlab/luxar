@@ -239,6 +239,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       nextQueryId: () => this.nextQueryId++,
       accumulatorMemoryMB: () => this.getAccumulatorStats()?.memoryMB ?? 0,
       emit: (event) => this.emitEvent(event),
+      activeSignal: () => this._activeSignal,
     };
   }
 
@@ -866,7 +867,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * demand load's abort signal / residency probe are not consulted (see
    * `prefetchRangesIntoCache`).
    */
-  async prefetchChunks(viewState: ViewState): Promise<void> {
+  async prefetchChunks(viewState: ViewState, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) return;
     await this._onceInit.ensure(() => this.initialize());
 
     if (!this.arrays.positions) return;
@@ -882,7 +884,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     }
     if (ranges.length === 0) return;
 
-    await prefetchRangesIntoCache(this.prefetchArrays(), ranges);
+    await prefetchRangesIntoCache(this.prefetchArrays(), ranges, signal);
   }
 
   async prefetchChunkBoundary(current: ViewState, predicted: ViewState): Promise<void> {

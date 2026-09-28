@@ -27,9 +27,36 @@
  * with the foreground. The S-cache IS the handoff — the shadow's own
  * `updateView` does restore→deepen→store (it carries a `frameBudgetMs`, which
  * bounds how far one pass deepens ≈ one cold level and makes the progressive
- * loaders store the deepened prefix), and the foreground restores on the real
- * tick. Shadows are deliberately NOT monitor-connected (the factory is
- * side-effect-free by design), so shadow loads never double-count metrics.
+ * loaders store the deepened prefix ONCE, at the end of the pass), and the
+ * foreground restores on the real tick. Shadows are deliberately NOT
+ * monitor-connected (the factory is side-effect-free by design), so shadow
+ * loads never double-count metrics.
+ *
+ * ## In-flight handoff (the foreground adopts a running shadow)
+ *
+ * When the real tick for key K arrives while K's shadow pass is still running,
+ * redoing the slice in the foreground doubled the work (measured: 49% of
+ * decodes were duplicates; the shared L0 in-flight map now dedups the decode
+ * itself, but dequant + assembly would still run twice). So each shadow pass
+ * registers an in-flight store for its key in the S-cache
+ * (`beginShadowStore`), released when the pass ends; a foreground pass for K
+ * awaits it (`awaitShadowStore`, bounded, abortable by its own update signal)
+ * and then restores the shadow's stored ladder. The registration lives in the
+ * S-cache rather than on this class because the foreground loaders already
+ * hold the S-cache and compute the exact same key; they know nothing about
+ * the prefetcher.
+ *
+ * ## Pins
+ *
+ * Shadow stores are PINNED (protected from eviction until a consuming `get`),
+ * so a t+1 entry survives until its tick. A pin the foreground never consumes
+ * — a departure re-store of an already-shown frame, a skipped frame, the
+ * frame after the last tick — would otherwise stay pinned forever (measured:
+ * 513 entries / 490 MB, 29% of the S-cache, after h2afva playback stopped).
+ * The prefetcher records every key its shadows may have pinned (each shadow
+ * pass's key; a departure store's key is that shadow's PREVIOUS pass key) and
+ * unpins them all in {@link SlicePrefetcher.releaseShadows} (playback end) and
+ * {@link SlicePrefetcher.dispose}.
  *
  * ## Persisting across ticks (background deepening)
  *
@@ -48,7 +75,7 @@
  * rejection, including expected AbortErrors, is swallowed); its fetches share
  * the global 24-slot data fetch lane and are bounded by the budget + abort.
  * `abortInFlight()` / `releaseShadows()` (playback end) / `dispose()` tear it
- * down.
+ * down; only the last two release the pins.
  *
  * @module data/scene-loader/prefetch/slice-prefetcher
  */
@@ -64,6 +91,8 @@ import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-di
 import { isAbortError } from '../../loaders';
 import { tagSignalOrigin } from '../../../cache/decompressed-chunk-cache/decode-origin';
 import { isObjectLoadEligible } from '../loaders/run-loader-updates';
+import type { SliceCache } from '../../../cache/slice-cache';
+import { beginShadowStore, sliceKeyFor } from '../../loaders/progressive/slice-cache-helper';
 import type * as THREE from 'three';
 
 /** Everything the prefetcher may read off its owning SceneLoader. */
@@ -140,6 +169,14 @@ export class SlicePrefetcher {
 
   private disposed = false;
 
+  /**
+   * Every S-cache key a shadow pass may have pinned, with the cache it was
+   * pinned in (see "Pins" in the module doc). Unpinned + cleared by
+   * {@link releaseShadows}; an over-approximation is harmless because an
+   * unpin of an unpinned or absent key is a no-op.
+   */
+  private readonly pinnedKeys = new Map<string, SliceCache>();
+
   constructor(private readonly ctx: SlicePrefetcherCtx) {}
 
   /**
@@ -157,9 +194,10 @@ export class SlicePrefetcher {
    *
    * @param viewState - Full predicted view state (t+1 slice position).
    * @param budgetMs - Per-pass LOD time budget. Bounds how far a single pass
-   *   deepens (≈1 cold level); progressive loaders store each level as it
-   *   lands, so an abort (playback end / dataset switch) keeps the depth
-   *   already reached.
+   *   deepens (≈1 cold level). Progressive loaders store the deepened ladder
+   *   once, when the pass finishes; an aborted pass (playback end / dataset
+   *   switch) stores nothing, and the next pass resumes from the last stored
+   *   depth.
    */
   prefetch(viewState: ViewState, budgetMs: number, ladderDepth?: number | 'auto'): void {
     if (this.disposed) return;
@@ -203,9 +241,11 @@ export class SlicePrefetcher {
   }
 
   /**
-   * Abort the in-flight shadow batch. Called on playback end / dataset switch
-   * / dispose (NOT on every foreground tick — the batch is meant to persist so
-   * background deepening completes; see the note in `SceneLoader.updateView`).
+   * Abort the in-flight shadow batch. Called by the stall guard, and via
+   * {@link releaseShadows} on playback end / dispose (NOT on every foreground
+   * tick — the batch is meant to persist so background deepening completes).
+   * Deliberately keeps the pins: a stall-guard abort happens mid-playback,
+   * when the pinned t+1 entries are still about to be consumed.
    */
   abortInFlight(): void {
     this.controller?.abort();
@@ -214,11 +254,13 @@ export class SlicePrefetcher {
   }
 
   /**
-   * Abort + dispose all shadow loaders (frees their accumulators). Called
-   * when playback ends; shadows are rebuilt lazily on the next play.
+   * Abort + dispose all shadow loaders (frees their accumulators) and release
+   * every pin their passes placed. Called when playback ends; shadows are
+   * rebuilt lazily on the next play.
    */
   releaseShadows(): void {
     this.abortInFlight();
+    this.releasePins();
     const pending = [...this.shadows.values()];
     this.shadows.clear();
     for (const p of pending) {
@@ -232,6 +274,25 @@ export class SlicePrefetcher {
   dispose(): void {
     this.disposed = true;
     this.releaseShadows();
+  }
+
+  /** Unpin every key a shadow pass may have pinned (see {@link pinnedKeys}). */
+  private releasePins(): void {
+    for (const [key, cache] of this.pinnedKeys) cache.unpin(key);
+    this.pinnedKeys.clear();
+  }
+
+  /**
+   * Record the key a shadow pass on `path` will store (and pin) under, and
+   * announce its in-flight store so a foreground pass for that key can adopt
+   * the result. Returns the release for the in-flight registration.
+   */
+  private trackShadowStore(path: string, shadowViewState: ViewState): () => void {
+    const sliceCache = this.ctx.factoryDeps().sliceCache;
+    const key = sliceCache ? sliceKeyFor(path, shadowViewState) : null;
+    if (!sliceCache || key === null) return () => undefined;
+    this.pinnedKeys.set(key, sliceCache);
+    return beginShadowStore(sliceCache, path, shadowViewState);
   }
 
   private queueVisible(
@@ -319,9 +380,15 @@ export class SlicePrefetcher {
           this.dropShadow(path);
           return;
         }
+        // Announce the in-flight store BEFORE starting the pass, and release it
+        // however the pass ends, so a foreground pass for this key waits for
+        // the stored ladder instead of re-assembling the same slice.
+        const release = this.trackShadowStore(path, shadowViewState);
         // Structurally identical view-state shapes across the three
         // geometry loader interfaces (same cast the handlers perform).
-        return (shadow as DataLoader).updateView(shadowViewState, undefined, signal);
+        return (shadow as DataLoader)
+          .updateView(shadowViewState, undefined, signal)
+          .finally(release);
       })
       .then(() => undefined)
       .catch((err) => {

@@ -37,10 +37,19 @@ prefetch/
    They are deliberately NOT monitor-connected (no metric double-counting).
 4. **Budget + abort** — every shadow pass carries `frameBudgetMs` (which also
    makes the progressive loaders store _prefix_ ladders — the handoff would
-   silently fail without it) and a per-pass `AbortSignal`.
-   `SceneLoader.updateView` calls `abortInFlight()` at its very top, so the
-   foreground always preempts. `releaseShadows()` frees the shadow
-   accumulators when playback ends (setup.ts's non-playing branch).
+   silently fail without it; the ladder is stored once, at the end of the
+   pass) and a per-batch `AbortSignal`. The batch deliberately PERSISTS across
+   foreground ticks — a cold level outlives one frame — so a new `prefetch()`
+   is a no-op while a batch runs; only its stall guard, `releaseShadows()`
+   (playback end, setup.ts's non-playing branch) and `dispose()` abort it.
+5. **In-flight adoption** — each shadow pass registers an in-flight store for
+   its S-cache key (`beginShadowStore`); a foreground pass for the same key
+   awaits it (`awaitShadowStore`: bounded, and rejects on the foreground's own
+   abort) and then restores the shadow's ladder, instead of redoing the
+   dequant/assembly for the same slice.
+6. **Pins** — shadow stores are pinned until a consuming read. The prefetcher
+   records every key its shadows may have pinned and unpins them all in
+   `releaseShadows()` / `dispose()`, so no pin outlives playback.
 
 ## See Also
 

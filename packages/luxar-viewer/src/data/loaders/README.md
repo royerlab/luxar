@@ -494,7 +494,9 @@ src/data/loaders/
 │
 ├── progressive/                  # Shared helpers for additive-LOD progressive loaders
 │   ├── concat-helpers.ts         # Generic typed-array field concatenation across LOD parts
-│   ├── slice-cache-helper.ts     # Shared SliceCache key/snapshot/lookup helpers (S-cache)
+│   ├── lookahead-signal.ts       # 'lookahead'-tagged next-rung prefetch controller
+│   ├── slice-cache-helper.ts     # Shared SliceCache key/snapshot/lookup helpers (S-cache) +
+│   │                             # in-flight shadow-store handoff
 │   └── constants.ts              # CACHE_HIT_THRESHOLD_MS — shared streaming threshold
 │
 ├── environment/                  # Baked scene-environment loader

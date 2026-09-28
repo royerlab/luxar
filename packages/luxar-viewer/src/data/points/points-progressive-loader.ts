@@ -54,6 +54,7 @@ import {
   measureLodBytes,
   restoreLadderSnapshot,
   storeLadder,
+  awaitShadowStore,
 } from '../loaders/progressive/slice-cache-helper';
 import { planLadderRollback } from '../loaders/progressive/pass-rollback';
 import { POINT_FLOATS_PER_POINT } from '../../rendering/element-texture-layout';
@@ -65,6 +66,7 @@ import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
 import { log, Modules, LogEmoji } from '../../utils/log';
 import { timeLodStageWithResult } from '../scene-loader/lod-load-stats';
+import { createLookaheadController } from '../loaders/progressive/lookahead-signal';
 
 /**
  * Compose the levels' slot → on-disk maps into ONE map in the parent's union
@@ -382,6 +384,8 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   private _initialLoadDone = false;
   private _lastAllResident = true;
   private _disposed = false;
+  /** Controller for the in-flight next-rung lookahead (null when idle). */
+  private _lookaheadController: AbortController | null = null;
   // Memoized concatenation. Keyed on (resetGeneration, loadedLODs.length):
   // the generation bumps on every view-state reset so a reset-then-reload
   // back to the same LOD count yields a NEW reference (contents differ),
@@ -613,6 +617,8 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       isPrefetch ? concatenatePointsData([], [], 0, null) : this.concatenateMemoized(session);
 
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
+      // The old view's next rung will never be read now.
+      this.cancelLookahead();
       // DEPARTURE store: snapshot the OUTGOING view's partial ladder before
       // discarding it, keyed under the OUTGOING view (lastViewState — never
       // the incoming one). Scrubbing faster than the ladder completes would
@@ -628,6 +634,14 @@ export class PointsProgressiveLoader implements PointsDataLoader {
         });
       }
       // Try the SliceCache before discarding the ladder (see GSplats loader).
+      // IN-FLIGHT ADOPTION: a shadow (SlicePrefetcher) pass may be building
+      // this very slice right now. Wait for its store (bounded; rejects on
+      // this update's abort) and restore that, instead of redoing the same
+      // dequant/assembly — measured 49% duplicate work during playback.
+      const shadowStore = isPrefetch
+        ? null
+        : awaitShadowStore(this.sliceCache, this.path, viewState, signal);
+      if (shadowStore) await shadowStore;
       const restored = restoreLadderSnapshot<LoadedPointsData>(
         this.sliceCache,
         this.path,
@@ -787,7 +801,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       );
     }
 
-    this.prefetchNextLOD(viewState);
+    this.prefetchNextLOD(viewState, signal);
 
     // Snapshot into the SliceCache (upgrade-if-longer): full ladders always;
     // PREFIXES only while a playback budget is active. Mirrors
@@ -866,17 +880,30 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     }
   }
 
-  private prefetchNextLOD(viewState: PointsViewState): void {
+  private prefetchNextLOD(viewState: PointsViewState, updateSignal?: AbortSignal): void {
     // Same teardown race as the streaming loop: a dispose() between the
     // awaited level and this fire-and-forget clears `lodLoaders`, and
     // indexing it would TypeError before the .catch can swallow anything.
     if (this._disposed) return;
+    // Playback (frame-budgeted) and pinned-scrub passes skip the lookahead:
+    // the next pass is a different slice, so this slice's next rung is never
+    // read (measured pure waste during playback). Shadow passes carry a frame
+    // budget, so they are covered too. Mirrors GSplatsProgressiveLoader.
+    if (this._frameBudgetMs !== null || this._ladderDepth !== null) return;
     const nextLevel = this._loadedLODCount;
     if (nextLevel >= this.nLods) return;
+    this.cancelLookahead();
+    const controller = createLookaheadController(updateSignal);
+    this._lookaheadController = controller;
     // Fire-and-forget; errors ignored (network failures, aborts).
-    void this.lodLoaders[nextLevel].prefetchChunks(viewState).catch(() => {
+    void this.lodLoaders[nextLevel].prefetchChunks(viewState, controller.signal).catch(() => {
       /* ignore */
     });
+  }
+
+  private cancelLookahead(): void {
+    this._lookaheadController?.abort();
+    this._lookaheadController = null;
   }
 
   // ---- LoaderMonitor surface (delegated to ProgressiveMonitorAdapter) ----
@@ -904,6 +931,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
 
   dispose(): void {
     this._disposed = true;
+    this.cancelLookahead();
     for (const loader of this.lodLoaders) {
       loader.dispose();
     }

@@ -16,6 +16,7 @@ import {
   type SpatialFacadeCtx,
 } from '../../../../data/loaders';
 import { SliceCache } from '../../../../cache/slice-cache';
+import { beginShadowStore } from '../../../../data/loaders/progressive/slice-cache-helper';
 import type { MonitorEvent } from '../../../../types/data-monitor-types';
 
 function makeCtx(overrides: Partial<SpatialFacadeCtx> = {}): {
@@ -151,6 +152,39 @@ describe('loadSliceWithCache', () => {
     expect(result).toBe(payload);
     expect(ctx.activeQueries.size).toBe(0); // closed out
     expect(sliceCache.getStats().count).toBe(1); // stored
+  });
+
+  it('adopts an in-flight shadow store for the same key instead of re-assembling (A4b)', async () => {
+    const sliceCache = new SliceCache({ maxSize: 1024 * 1024 });
+    const { ctx } = makeCtx({ sliceCache });
+    ctx.metrics.queries = 1;
+    const shadowView = { ...hiddenDimView, prefetch: true };
+    const release = beginShadowStore(sliceCache, ctx.path, shadowView);
+
+    const internal = vi.fn(async () => ({ data: new Float32Array([1]) }));
+    const foreground = loadSliceWithCache(ctx, hiddenDimView, internal);
+    // The shadow finishes: stores its slice, then releases the registration.
+    await loadSliceWithCache(ctx, shadowView, async () => ({ data: new Float32Array([9]) }));
+    release();
+
+    const result = (await foreground) as { data: Float32Array };
+    expect(internal).not.toHaveBeenCalled();
+    expect(result.data[0]).toBe(9);
+  });
+
+  it('a foreground wait for a shadow store rejects on its own abort signal (A4b)', async () => {
+    const sliceCache = new SliceCache({ maxSize: 1024 * 1024 });
+    const controller = new AbortController();
+    const { ctx } = makeCtx({ sliceCache, activeSignal: () => controller.signal });
+    const shadowView = { ...hiddenDimView, prefetch: true };
+    const release = beginShadowStore(sliceCache, ctx.path, shadowView);
+    const internal = vi.fn(async () => ({ data: new Float32Array([1]) }));
+
+    const foreground = loadSliceWithCache(ctx, hiddenDimView, internal);
+    controller.abort();
+    await expect(foreground).rejects.toMatchObject({ name: 'AbortError' });
+    expect(internal).not.toHaveBeenCalled();
+    release();
   });
 
   it('a same-view revisit restores the cached clone without calling the internal', async () => {

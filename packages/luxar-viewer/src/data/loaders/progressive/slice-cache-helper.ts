@@ -218,6 +218,76 @@ export function deleteLadder(
 }
 
 /**
+ * Upper bound (ms) a foreground pass waits for an in-flight shadow store
+ * before assembling the slice itself. A healthy shadow pass is budget-bounded
+ * (≈ one frame budget + one level) and started a frame EARLIER than the
+ * foreground, so it lands first; this only fires when the shadow has stalled
+ * (a hung fetch has no timeout of its own). Well below the prefetcher's own
+ * 5 s stall guard, so a stuck shadow costs one visible hitch, not a freeze.
+ */
+export const SHADOW_STORE_MAX_WAIT_MS = 1000;
+
+/** The S-cache key for `view` on node `path`, or null when the view is ineligible. */
+export function sliceKeyFor(path: string, view: SliceViewLike): string | null {
+  return hasHiddenDims(view) ? SliceCache.makeKey(path, buildSliceViewSig(view)) : null;
+}
+
+/**
+ * Register an in-flight shadow store for `(path, view)` (see
+ * `SliceCache.beginPendingStore`). Returns the release function — call it when
+ * the shadow pass ends, however it ends. A no-op release when there is no
+ * cache or the view is S-cache ineligible.
+ */
+export function beginShadowStore(
+  sliceCache: SliceCache | null | undefined,
+  path: string,
+  view: SliceViewLike
+): () => void {
+  const key = sliceCache ? sliceKeyFor(path, view) : null;
+  return sliceCache && key !== null ? sliceCache.beginPendingStore(key) : () => undefined;
+}
+
+/**
+ * Wait for an in-flight shadow store of `(path, view)`, so the caller restores
+ * the shadow's result instead of re-assembling the same slice. Returns null —
+ * no await needed — when nothing is in flight. The returned promise resolves
+ * when the shadow pass ends or {@link SHADOW_STORE_MAX_WAIT_MS} elapses, and
+ * REJECTS with the signal's reason (an AbortError) when `signal` aborts first:
+ * a superseded foreground pass must stop promptly, not sit out the shadow.
+ */
+export function awaitShadowStore(
+  sliceCache: SliceCache | null | undefined,
+  path: string,
+  view: SliceViewLike,
+  signal?: AbortSignal | null,
+  maxWaitMs: number = SHADOW_STORE_MAX_WAIT_MS
+): Promise<void> | null {
+  const key = sliceCache ? sliceKeyFor(path, view) : null;
+  const pending = key !== null ? sliceCache?.pendingStore(key) : undefined;
+  if (!pending) return null;
+  if (signal?.aborted) return Promise.reject(signal.reason as Error);
+  return new Promise<void>((resolve, reject) => {
+    const done = (): void => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const onAbort = (): void => {
+      done();
+      reject(signal?.reason as Error);
+    };
+    const timer = setTimeout(() => {
+      done();
+      resolve();
+    }, maxWaitMs);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    void pending.then(() => {
+      done();
+      resolve();
+    });
+  });
+}
+
+/**
  * Store a cloned snapshot of the ladder — full or prefix — with
  * UPGRADE-IF-LONGER semantics: an existing entry is replaced only when the
  * new snapshot carries MORE logical levels (never downgraded; the depth check uses

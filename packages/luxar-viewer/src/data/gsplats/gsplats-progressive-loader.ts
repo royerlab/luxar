@@ -46,6 +46,7 @@ import {
   measureLodBytes,
   restoreLadderSnapshot,
   storeLadder,
+  awaitShadowStore,
 } from '../loaders/progressive/slice-cache-helper';
 import { planLadderRollback } from '../loaders/progressive/pass-rollback';
 import { SPLAT_FLOATS_PER_SPLAT } from '../../rendering/element-texture-layout';
@@ -68,12 +69,8 @@ function reportSpeculativeFailure(action: string, error: unknown): void {
   log.warning(Modules.GSPLATS_SPATIAL_INDEX_LOADER, `${action}: ${getErrorMessage(error)}`);
 }
 
-function resolvePrefetchDepth(
-  metadataWarmStarted: boolean,
-  hasCacheStats: boolean,
-  frameBudgetMs: number | null
-): number {
-  return metadataWarmStarted && hasCacheStats && frameBudgetMs === null ? MAX_PREFETCH_LEVELS : 1;
+function resolvePrefetchDepth(metadataWarmStarted: boolean, hasCacheStats: boolean): number {
+  return metadataWarmStarted && hasCacheStats ? MAX_PREFETCH_LEVELS : 1;
 }
 
 function readPrefetchHeadroom(loader: GSplatsSpatialIndexLoader | undefined): number | null {
@@ -567,6 +564,14 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
           totalLODCount: this.nLods,
         });
       }
+      // IN-FLIGHT ADOPTION: a shadow (SlicePrefetcher) pass may be building
+      // this very slice right now. Wait for its store (bounded; rejects on
+      // this update's abort) and restore that, instead of redoing the same
+      // dequant/assembly — measured 49% duplicate work during playback.
+      const shadowStore = isPrefetch
+        ? null
+        : awaitShadowStore(this.sliceCache, this.path, viewState, signal);
+      if (shadowStore) await shadowStore;
       const restored = restoreLadderSnapshot<LoadedGSplatsData>(
         this.sliceCache,
         this.path,
@@ -726,7 +731,8 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       );
     }
 
-    // Fire-and-forget: prefetch later unloaded LODs to warm cache.
+    // Fire-and-forget: prefetch later unloaded LODs to warm cache (free
+    // navigation only — see prefetchNextLODs).
     this.prefetchNextLODs(viewState);
 
     // Snapshot into the SliceCache (upgrade-if-longer): full ladders always
@@ -818,16 +824,19 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // awaited level and this fire-and-forget clears `lodLoaders`, and
     // indexing it would TypeError before the .catch can swallow anything.
     if (this._disposed) return;
+    // Playback (frame-budgeted) and pinned-scrub passes skip the lookahead:
+    // their next pass is a DIFFERENT slice, so the next rung of THIS slice is
+    // never read. Measured on real playback it was pure waste — 310 MB (45%
+    // of loop-0 bytes) on drosophila with no looked-ahead chunk ever read by a
+    // foreground pass, and 92% of later-loop decodes. Shadow passes carry a
+    // frame budget, so they are covered too. Free navigation keeps it.
+    if (this._frameBudgetMs !== null || this._ladderDepth !== null) return;
     const firstLevel = this._loadedLODCount;
     if (firstLevel >= this.nLods) return;
 
     const headroom = readPrefetchHeadroom(this.lodLoaders[0]);
     const controller = (this._prefetchController ??= new AbortController());
-    const maxLevels = resolvePrefetchDepth(
-      this._metadataWarmStarted,
-      headroom !== null,
-      this._frameBudgetMs
-    );
+    const maxLevels = resolvePrefetchDepth(this._metadataWarmStarted, headroom !== null);
     if (maxLevels === 1 || headroom === null || headroom <= 0) {
       this.logPrefetchDepth(1, headroom);
       this.startLookaheadPrefetch(firstLevel, viewState, controller);
