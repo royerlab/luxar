@@ -367,14 +367,19 @@ export async function runInitPipeline(
   // the stale frame until the next user input. startAnimation is
   // idempotent (early-out while animating + idle-timer re-arm), so
   // per-node calls inside an atomic sweep are harmless.
-  SceneLoaderManager.getInstance().setRequestRender(() =>
-    animationController.requestRender('geometry')
-  );
+  // A commit to a node that is not drawn (an LOD level the registry keeps
+  // hidden — during playback the eager coarse level re-commits every timepoint
+  // under a held fine level — or a hidden layer) cannot change the frame: it
+  // only keeps the loop ticking, so the registry sees it and, if it now shows
+  // that level, its visibility flip requests the redraw.
+  const onCommit = (drawn: boolean | undefined): void => {
+    if (drawn === false) animationController.requestTick();
+    else animationController.requestRender('geometry');
+  };
+  SceneLoaderManager.getInstance().setRequestRender(onCommit);
   // Belt and braces for the same moment from the node factory (pick-buffer
   // invalidation): any commit path that reaches it redraws too.
-  ports.events.add(
-    eventBus.on('geometry-committed', () => animationController.requestRender('geometry'))
-  );
+  ports.events.add(eventBus.on('geometry-committed', ({ drawn }) => onCommit(drawn)));
   SceneLoaderManager.getInstance().setKTX2TextureDecoder(
     createKTX2TextureDecoder(sceneManager.renderer)
   );

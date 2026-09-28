@@ -179,7 +179,7 @@ describe('runAtomicCommit — happy path', () => {
 });
 
 describe('runAtomicCommit — whether the pass changed the drawn frame', () => {
-  it.fails('tells markPickingDirty the frame is unchanged when every commit was undrawn', () => {
+  it('tells markPickingDirty the frame is unchanged when every commit was undrawn', () => {
     // A timelapse tick that only re-commits the hidden eager level of an LOD
     // group: the pick cache still goes stale, but nothing on screen moved.
     const ctx = makeCtx();
@@ -190,7 +190,7 @@ describe('runAtomicCommit — whether the pass changed the drawn frame', () => {
     expect(ctx.spies.markPickingDirty).toHaveBeenCalledWith(false);
   });
 
-  it.fails('reports a drawn frame when any one commit was drawn', () => {
+  it('reports a drawn frame when any one commit was drawn', () => {
     const ctx = makeCtx();
     ctx.spies.updatePointsGeometry.mockReturnValue(false);
     ctx.spies.commitGSplatsGeometry.mockReturnValue(true);
@@ -198,7 +198,7 @@ describe('runAtomicCommit — whether the pass changed the drawn frame', () => {
     expect(ctx.spies.markPickingDirty).toHaveBeenCalledWith(true);
   });
 
-  it.fails('counts a commit that threw as drawn (it may have half-written a visible node)', () => {
+  it('counts a commit that threw as drawn (it may have half-written a visible node)', () => {
     const ctx = makeCtx();
     ctx.spies.updatePointsGeometry.mockImplementation(() => {
       throw new Error('upload failed');

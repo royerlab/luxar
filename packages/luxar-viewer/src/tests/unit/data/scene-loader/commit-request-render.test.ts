@@ -237,14 +237,14 @@ describe('SceneLoader commit → requestRender says whether the frame changed', 
     ['gsplats', '/g', (l) => internals(l).commitGSplatsGeometry(makeStagedGSplats(2))],
   ];
 
-  it.fails.each(commits)('a drawn %s commit asks for a redraw', (_kind, _path, commit) => {
+  it.each(commits)('a drawn %s commit asks for a redraw', (_kind, _path, commit) => {
     const { loader, spy } = makeLoaderWithScene();
     commit(loader);
     expect(spy).toHaveBeenCalledWith(true);
     expect(spy).not.toHaveBeenCalledWith(false);
   });
 
-  it.fails.each(commits)('a hidden %s level commit wakes without a redraw', (_kind, path, commit) => {
+  it.each(commits)('a hidden %s level commit wakes without a redraw', (_kind, path, commit) => {
     const { loader, spy } = makeLoaderWithScene();
     internals(loader).rootGroup!.getObjectByName(path)!.visible = false;
     commit(loader);
@@ -252,7 +252,7 @@ describe('SceneLoader commit → requestRender says whether the frame changed', 
     expect(spy).not.toHaveBeenCalledWith(true);
   });
 
-  it.fails('a commit under a hidden ancestor wakes without a redraw', () => {
+  it('a commit under a hidden ancestor wakes without a redraw', () => {
     const { loader, spy } = makeLoaderWithScene();
     const root = internals(loader).rootGroup!;
     const layer = new THREE.Group();

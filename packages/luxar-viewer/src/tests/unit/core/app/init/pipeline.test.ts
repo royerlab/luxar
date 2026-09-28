@@ -858,7 +858,7 @@ describe('runInitPipeline', () => {
       ports.events.dispose();
     });
 
-    it.fails('an undrawn loader commit only keeps the loop ticking', async () => {
+    it('an undrawn loader commit only keeps the loop ticking', async () => {
       const { anim, onCommit, ports } = await wireCommits();
       onCommit(false);
       expect(anim.requestRender).not.toHaveBeenCalled();
@@ -866,7 +866,7 @@ describe('runInitPipeline', () => {
       ports.events.dispose();
     });
 
-    it.fails("an undrawn 'geometry-committed' only keeps the loop ticking", async () => {
+    it("an undrawn 'geometry-committed' only keeps the loop ticking", async () => {
       const { anim, ports } = await wireCommits();
       eventBus.emit('geometry-committed', { drawn: false });
       expect(anim.requestRender).not.toHaveBeenCalled();
