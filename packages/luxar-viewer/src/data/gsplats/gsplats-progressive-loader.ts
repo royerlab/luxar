@@ -56,6 +56,7 @@ import {
 } from '../scene-loader/progressive/residency-budget';
 import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
+import { setSliceCacheOrigin, type SliceCacheOrigin } from '../../cache/slice-cache-origin';
 import { tagSignalOrigin } from '../../cache/decompressed-chunk-cache/decode-origin';
 import { log, Modules, LogEmoji } from '../../utils/log';
 import { getErrorMessage } from '../../utils/format-error';
@@ -331,6 +332,11 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   // A completed pass can still fail after loading, during projection or commit.
   // Keep it schedulable for one retry even though the ladder cursor is full.
   private _retryFoldedPass = false;
+  // The S-cache entry `loadedLODs` was restored from, while `loadedLODs` still
+  // holds that entry's content and NOTHING else (cleared by any pushed level,
+  // rollback, or reset). A concatenation built under it is stamped with it, so
+  // the post-projection stage cache can recognise the revisit (#2944 B2).
+  private _restoredOrigin: SliceCacheOrigin | null = null;
   // Per-sub-LOD cumulative energy fractions e(k) (the build-time
   // `lod_stats.energy_fraction_cum` stamps), normalized at construction:
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
@@ -470,6 +476,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       this._retryFoldedPass = true;
       return 0;
     }
+    this._restoredOrigin = null;
     if (plan.action === 'unwind-restored-full') {
       this.loadedLODs = [];
       this._loadedLODCount = 0;
@@ -582,6 +589,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       // levels into loadedLODs and must never mutate the cache's payload
       // array (the elements stay shared read-only — store deep-clones).
       this.loadedLODs = restored ? [...restored.lods] : [];
+      this._restoredOrigin = restored?.origin ?? null;
       this._loadedLODCount = restored?.depth ?? 0;
       // A restored full ladder has not been committed for this pass. If its
       // concat or commit fails, unwind the whole restored snapshot rather than
@@ -665,6 +673,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       const elapsed = performance.now() - t0;
 
       this.loadedLODs.push(lodData);
+      this._restoredOrigin = null;
       this._loadedLODCount++;
       this._lastAllResident = allResident;
 
@@ -793,6 +802,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
           : null;
       const result = concatenateGSplatsData(this.loadedLODs);
       setPrefixParent(result, prevMemo);
+      if (this._restoredOrigin) setSliceCacheOrigin(result, this._restoredOrigin);
       for (let level = 0; level < this._loadedLODCount; level++) {
         this.lodLoaders[level]?.releaseAccumulator();
       }
@@ -970,6 +980,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     }
     this.lodLoaders = [];
     this.loadedLODs = [];
+    this._restoredOrigin = null;
     this._loadedLODCount = 0;
     this._retryFoldedPass = false;
     this.lastViewState = null;

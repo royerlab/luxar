@@ -14,9 +14,21 @@ This package implements a transparent caching and prefetching layer for zarr dat
   revisit) and DOWN on a small heap to avoid OOM; `config.cache.sliceCacheMaxSizeMB`
   (128MB) is the fixed fallback used where `performance.memory` is unavailable
   (Firefox/Safari). A slice revisit — e.g. scrubbing back
-  to a timepoint — skips the whole query + fetch + decode pipeline; only the
-  cheap nD→3D projection re-runs. Sits ABOVE L0; in-memory, per-session,
-  cleared on content-hash invalidation. Disable with `?noSliceCache`.
+  to a timepoint — skips the whole query + fetch + decode pipeline; the
+  nD→3D projection re-runs unless a **stage output** matches (below). Sits
+  ABOVE L0; in-memory, per-session, cleared on content-hash invalidation.
+  Disable with `?noSliceCache`.
+- **S-cache stage outputs (#2944 B2, `slice-cache.ts` + `slice-cache-origin.ts`)**:
+  a Lines/GSplats entry may also carry the PROJECTED buffers of its slice,
+  tagged by a signature of every projection input other than the slice data
+  (`data/scene-loader/process/projection-stage-cache.ts`). The data processors
+  find the entry through an origin stamp the loaders put on data restored from
+  it (payload object identity — never a content compare), so a revisit with
+  unchanged parameters skips the worker projection and a changed parameter
+  (e.g. `uTruncate`) misses and replaces it. Stage bytes count inside the
+  S-cache budget and leave with their slice, but they are admitted only into
+  SPARE budget and are shed first when a slice needs room — a saturated cache
+  (every timelapse that fills the budget) behaves exactly as without them.
 - **Eager line working set (`heap-budget.ts::computeWorkingSetBudgetBytes`)**:
   resolves from the explicit cache-pool override, measured heap, device class,
   or fixed fallback in that order. Pool- and heap-derived budgets reserve half
@@ -959,7 +971,11 @@ await window.__luxarDebug.cache.clearAll();
 - `slice-cache.ts` — `SliceCache` (S-cache): per-(node, view) byte-budget
   LRU of decoded per-slice geometry, keyed by node path +
   slice/tolerance/displayDims signature; sits above the chunk caches so
-  slice revisits skip everything but the nD→3D projection.
+  slice revisits skip everything but the nD→3D projection — and that too
+  when the entry carries a matching stage output (`getStage` / `setStage`).
+- `slice-cache-origin.ts` — WeakMap stamps tying a loaded-data object to the
+  S-cache entry it was restored from, plus the stage-output lookup/store
+  helpers the data processors call.
 - `heap-budget.ts` — `computeCacheBudgets`: derives L0/L1/S-cache byte
   ceilings from the device heap (`performance.memory`, Chrome-only;
   fixed config sizes elsewhere).

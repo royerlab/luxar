@@ -206,6 +206,30 @@ export class LRUCache<V> {
     return this.cache.has(key);
   }
 
+  /**
+   * Swap the value stored under an EXISTING key in place: its recency
+   * position, pin, and the hit/miss/eviction counters are all untouched, and
+   * NOTHING is evicted. Returns false (storing nothing) when `key` is absent
+   * or when the new size would push the cache over budget — the caller makes
+   * room first if it wants the swap to land. For callers that grow or shrink
+   * an entry without it counting as a fresh use (see `SliceCache.setStage`).
+   */
+  replace(key: string, value: V): boolean {
+    const old = this.cache.get(key);
+    if (old === undefined) return false;
+    const next = this.currentSize - this.getSize(old) + this.getSize(value);
+    if (next > this.maxSize) return false;
+    // Map.set on an existing key keeps its insertion (recency) position.
+    this.cache.set(key, value);
+    this.currentSize = next;
+    return true;
+  }
+
+  /** Iterate `[key, value]` pairs from least to most recently used (no promotion). */
+  entries(): IterableIterator<[string, V]> {
+    return this.cache.entries();
+  }
+
   delete(key: string): boolean {
     if (!this.cache.has(key)) {
       return false;

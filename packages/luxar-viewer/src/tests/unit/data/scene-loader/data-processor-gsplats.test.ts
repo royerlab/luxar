@@ -646,7 +646,7 @@ describe('projection stage cache (S-cache hit skips the worker projection)', () 
     return lods[0];
   }
 
-  it.fails('an S-cache hit with unchanged projection params triggers no worker projection', async () => {
+  it('an S-cache hit with unchanged projection params triggers no worker projection', async () => {
     const root = new THREE.Group();
     root.add(makeMesh('/g'));
     const runWithTimeout = makeCountingPool();

@@ -16,6 +16,7 @@ import type { GSplatsSpatialIndexLoader } from '../../../data/gsplats/gsplats-sp
 import type { GSplatsViewState, LoadedGSplatsData } from '../../../types/gsplats';
 import { CACHE_HIT_THRESHOLD_MS } from '../../../data/loaders/progressive/constants';
 import { SliceCache } from '../../../cache/slice-cache';
+import { getSliceCacheOrigin } from '../../../cache/slice-cache-origin';
 import { beginShadowStore } from '../../../data/loaders/progressive/slice-cache-helper';
 import {
   buildSliceViewSig,
@@ -296,6 +297,30 @@ describe('GSplatsProgressiveLoader', () => {
       expect(l.loadedLODCount).toBe(2);
       expect(restored.splatCount).toBe(150);
       expect(sc.getStats().hits).toBeGreaterThanOrEqual(1);
+    });
+
+    it('stamps a restored result with its S-cache origin, and a freshly loaded one never', async () => {
+      // The post-projection stage cache (#2944 B2) keys on this stamp: only
+      // data built from a restored entry ALONE may carry it — a fresh load
+      // aliases the sub-loaders' reused accumulators.
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const l = new GSplatsProgressiveLoader(
+        [
+          makeSubLoader(makeLodData(100, 3, { color: 'uint8' })),
+          makeSubLoader(makeLodData(50, 3, { color: 'uint8' })),
+        ] as unknown as GSplatsSpatialIndexLoader[],
+        2,
+        '/g',
+        undefined,
+        sc
+      );
+      const fresh = await l.loadGSplats(viewA);
+      expect(getSliceCacheOrigin(fresh)).toBeUndefined();
+      await l.loadGSplats(viewB);
+      const restored = await l.loadGSplats(viewA);
+      const origin = getSliceCacheOrigin(restored);
+      expect(origin?.cache).toBe(sc);
+      expect(origin && sc.peek(origin.key)?.payload).toBe(origin?.payload);
     });
 
     it('clones on store so a later accumulator overwrite cannot corrupt a cached slice', async () => {

@@ -12,6 +12,7 @@
  */
 
 import { SliceCache } from '../../../cache/slice-cache';
+import { setSliceCacheOrigin, type SliceCacheOrigin } from '../../../cache/slice-cache-origin';
 import { log, Modules } from '../../../utils/log';
 import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-dims';
 import type { DimensionMetadata } from '../../../types/dims';
@@ -65,8 +66,9 @@ export interface SliceViewLike {
  * that provably cannot change the loaded elements), so it upholds the loaders'
  * `viewStatesEqual` stale-skip contract — it cannot restore a snapshot the
  * loader would have reloaded. Nothing projection- or render-dependent enters
- * the key: projection re-runs on every hit, and a dataset content-hash change
- * clears the whole cache. `dimensions` may be undefined (each dim then keys on
+ * the key: a cached projection rides on the entry under its OWN parameter
+ * signature (`SliceCache.setStage`, #2944 B2) and simply misses when those
+ * parameters change, and a dataset content-hash change clears the whole cache. `dimensions` may be undefined (each dim then keys on
  * position/tolerance alone — deterministic).
  *
  * `name` is deliberately absent even though `viewStatesEqual` compares it:
@@ -179,6 +181,13 @@ export function restoreLadder<T>(
 export interface RestoredLadderSnapshot<T> {
   lods: T[];
   depth: number;
+  /**
+   * The entry these payloads came from. A loader that builds its returned data
+   * from `lods` ALONE (no newly loaded level) stamps that result with it, so
+   * the post-projection stage cache can recognise a revisit of the same slice
+   * data (see `cache/slice-cache-origin.ts`).
+   */
+  origin: SliceCacheOrigin;
 }
 
 /**
@@ -200,11 +209,26 @@ export function restoreLadderSnapshot<T>(
   nLods: number
 ): RestoredLadderSnapshot<T> | null {
   if (!sliceCache || nLods <= 0 || !hasHiddenDims(view)) return null;
-  const entry = sliceCache.get(SliceCache.makeKey(path, buildSliceViewSig(view)));
+  const key = SliceCache.makeKey(path, buildSliceViewSig(view));
+  const entry = sliceCache.get(key);
   if (!entry) return null;
   const lods = entry.payload as T[];
   const depth = entry.ladderDepth ?? lods.length;
-  return lods.length > 0 && depth >= lods.length && depth <= nLods ? { lods, depth } : null;
+  if (!(lods.length > 0 && depth >= lods.length && depth <= nLods)) return null;
+  const origin: SliceCacheOrigin = { cache: sliceCache, key, payload: entry.payload };
+  stampSingleElementOrigin(lods, origin);
+  return { lods, depth, origin };
+}
+
+/**
+ * A one-element payload IS the entry's whole content, so the element itself
+ * can carry the origin (the plain facade and a folded ladder hand it
+ * downstream unchanged). Multi-element payloads are stamped by the loader on
+ * the concatenation it builds from them.
+ */
+function stampSingleElementOrigin(lods: readonly unknown[], origin: SliceCacheOrigin): void {
+  const only = lods.length === 1 ? lods[0] : null;
+  if (typeof only === 'object' && only !== null) setSliceCacheOrigin(only, origin);
 }
 
 /** Remove the cached ladder snapshot for one node/view pair. */

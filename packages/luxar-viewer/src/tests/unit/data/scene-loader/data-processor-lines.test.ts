@@ -849,7 +849,7 @@ describe('per-update abort signal through the lines projection (B7)', () => {
 
 // Post-projection stage cache (#2944 B2) — the lines twin of the gsplats test.
 describe('projection stage cache (S-cache hit skips the worker projection)', () => {
-  it.fails('an S-cache hit with unchanged projection params triggers no worker projection', async () => {
+  it('an S-cache hit with unchanged projection params triggers no worker projection', async () => {
     const root = new THREE.Group();
     root.add(makeMesh('/lines'));
     const projectLinesTo3D = vi.fn(async () => makeDispatcherLinesResult(2000));

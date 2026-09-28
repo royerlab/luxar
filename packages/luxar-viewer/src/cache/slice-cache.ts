@@ -19,23 +19,34 @@
  * Invalidation: content-hash change / dataset switch clears the whole cache
  * (wired next to L0 in cache-setup.ts). The view signature in the key covers
  * slice/tolerance/displayDims; nothing projection-affecting (truncate, colormap,
- * opacity) enters the key because projection re-runs on every hit.
+ * opacity) enters the KEY — see the stage outputs below for how the projection
+ * is cached without widening it.
  *
  * PRE- vs POST-projection payloads (a deliberate, inherent asymmetry):
  * Lines/GSplats cache PRE-projection decoded data — their projection is a
- * downstream worker step owned by the scene-loader's data processors. Note the
- * projection DOES re-run on a slice REVISIT (a scrub-back bumps the progressive
- * loader's reset generation, so the memoized concat yields a NEW object
- * reference and the handlers' `isAlreadyCommitted` identity fast path does NOT
- * fire — that fast path only skips a redundant re-commit of the CURRENT view).
- * The reason projection is not cached post-hoc here is that gsplat projection
- * depends on the live `uTruncate` material uniform (it feeds
- * `project_gsplats_nd_to_3d` and changes the visible count), which is outside
- * this cache's view key — so a post-projection payload would need to key on
- * (and invalidate with) rendering controls, coupling this cache to the
- * processors. Points caches POST-projection data because its projection is
- * folded into the loader itself and consumes only key fields + node-static
- * context (no live uniform) — so a hit safely skips the WASM projection too.
+ * downstream worker step owned by the scene-loader's data processors, and it
+ * depends on inputs outside the view key (gsplats: the live `uTruncate`
+ * material uniform; lines: the membership tolerance derived from dimension
+ * metadata + `extend_to_all`). Points caches POST-projection data because its
+ * projection is folded into the loader itself and consumes only key fields +
+ * node-static context (no live uniform) — so a hit safely skips the WASM
+ * projection too.
+ *
+ * STAGE OUTPUTS (#2944 B2). A Lines/GSplats entry may additionally carry ONE
+ * derived stage output — the projected buffers the commit consumes — tagged by
+ * a caller-built signature of every projection input that is NOT the slice
+ * payload itself (`data/scene-loader/process/projection-stage-cache.ts`).
+ * Keying on the payload OBJECT (see `slice-cache-origin.ts`) plus that
+ * signature means a revisit with unchanged parameters skips the worker
+ * projection, while any parameter change simply misses and the new projection
+ * replaces the old one. The stage output shares the entry's byte count (so it
+ * lives inside this cache's budget and is released with its slice), but it is
+ * the CHEAPER thing to lose: it is admitted only into spare budget, never by
+ * evicting a slice, and when a slice store needs room the stage outputs are
+ * shed first (least recently used first; most recently used first inside a
+ * playback scan, mirroring the slices' own scan eviction). A saturated cache
+ * therefore degrades to exactly the pre-B2 behaviour rather than trading
+ * decoded slices for projections.
  *
  * @module cache/slice-cache
  */
@@ -49,22 +60,49 @@ import { perfCounters } from '../profiling/perf-counters';
 const S_PINNED_ENTRIES = perfCounters.slot('scache.pinnedEntries');
 /** Gauge: retained bytes of the currently pinned entries (all SliceCaches). */
 const S_PINNED_BYTES = perfCounters.slot('scache.pinnedBytes');
+/** Counter: stage-output lookups answered from an entry (projection skipped). */
+const S_STAGE_HITS = perfCounters.slot('scache.stage.hits');
+/** Counter: stage-output lookups on a resident payload that found no usable output. */
+const S_STAGE_MISSES = perfCounters.slot('scache.stage.misses');
+/** Counter: stage outputs that could not be admitted (no spare budget). */
+const S_STAGE_REJECTED = perfCounters.slot('scache.stage.rejected');
+/** Counter: stage outputs dropped to make room for slice data. */
+const S_STAGE_SHED = perfCounters.slot('scache.stage.shed');
+/** Gauge: bytes of stage outputs currently retained (all SliceCaches). */
+const S_STAGE_BYTES = perfCounters.slot('scache.stage.bytes');
+
+/**
+ * A derived stage output riding on a slice entry (see "STAGE OUTPUTS" above).
+ * Opaque to the cache, like `payload`; `sig` is the caller's parameter
+ * signature and `bytes` the retained size it measured.
+ */
+export interface SliceStageOutput {
+  /** Signature of every stage input other than the entry's payload. */
+  sig: string;
+  /** Opaque stage output (e.g. `ProcessedGSplatsData`); never mutated. */
+  value: unknown;
+  /** Retained bytes of `value` (sum of its distinct backing buffers). */
+  bytes: number;
+}
 
 /**
  * One cached per-slice entry.
  *
  * `payload` is opaque (the owning loader's cloned decoded-slice snapshot);
- * `bytes` is the retained size the loader measured, used for LRU accounting.
+ * `bytes` is the retained size used for LRU accounting — the payload's
+ * measured size plus the attached stage output's, when there is one.
  */
 export interface SliceCacheEntry {
   /** Opaque cloned per-slice payload; the owning loader casts it back. */
   payload: unknown;
-  /** Total retained bytes (sum of the snapshot's typed-array byteLengths). */
+  /** Total retained bytes (payload typed arrays + `stage.bytes`). */
   bytes: number;
   /** Stored additive prefix depth, when the entry represents a ladder. */
   ladderDepth?: number;
   /** Total additive ladder depth for the node that produced this entry. */
   totalLadderDepth?: number;
+  /** Derived stage output (projection), admitted only into spare budget. */
+  stage?: SliceStageOutput;
 }
 
 /**
@@ -103,6 +141,16 @@ export interface SliceCacheStats {
   fullLadderCount?: number;
   /** Cached ladder counts keyed by `storedDepth/totalDepth`. */
   ladderDepthHistogram?: Record<string, number>;
+  /** Stage-output lookups answered from a resident entry (projection skipped). */
+  stageHits?: number;
+  /** Stage-output lookups on a resident payload with no matching output. */
+  stageMisses?: number;
+  /** Stage outputs refused for lack of spare budget. */
+  stageRejected?: number;
+  /** Stage outputs dropped so slice data could be stored. */
+  stageShed?: number;
+  /** Bytes of stage outputs currently retained (included in `size`). */
+  stageBytes?: number;
 }
 
 /** Configuration options for the SliceCache. */
@@ -169,6 +217,15 @@ export class SliceCache {
   // FINISHED results, and this is the same handoff for results still landing.
   private readonly pendingStores = new Map<string, Promise<void>>();
 
+  // Stage-output bookkeeping (see "STAGE OUTPUTS" in the module doc). The
+  // byte total lets `set` skip the shedding scan entirely when nothing is
+  // attached — the common case, and the only one before the first revisit.
+  private stageBytesTotal = 0;
+  private stageHits = 0;
+  private stageMisses = 0;
+  private stageRejected = 0;
+  private stageShed = 0;
+
   constructor(options?: SliceCacheOptions) {
     const maxSize = options?.maxSize ?? SliceCache.defaultMaxSize();
     this.maxSize = maxSize;
@@ -179,7 +236,7 @@ export class SliceCache {
     this.cache = new LRUCache<SliceCacheEntry>(
       maxSize,
       (entry) => entry.bytes,
-      (key) => this.recordEviction(key)
+      (key, entry) => this.recordEviction(key, entry)
     );
 
     if (this.debug) {
@@ -240,21 +297,12 @@ export class SliceCache {
    *   working set is pinned and over budget, pinned entries are still evicted.
    */
   set(key: string, entry: SliceCacheEntry, opts?: { scan?: boolean; pin?: boolean }): void {
+    const previous = this.cache.peek(key);
+    // Stage outputs are the cheaper loss: drop them before the LRU would
+    // evict a decoded slice to make room for this one.
+    this.shedStagesFor(entry.bytes - (previous?.bytes ?? 0), key, opts?.scan === true);
     this.cache.set(key, entry, { evictMostRecent: opts?.scan });
-    if (this.cache.peek(key) === entry) {
-      if (
-        entry.ladderDepth !== undefined &&
-        entry.totalLadderDepth !== undefined &&
-        entry.totalLadderDepth > 0
-      ) {
-        this.ladderDepths.set(key, {
-          depth: entry.ladderDepth,
-          totalDepth: entry.totalLadderDepth,
-        });
-      } else {
-        this.ladderDepths.delete(key);
-      }
-    }
+    if (this.cache.peek(key) === entry) this.noteStored(key, entry, previous);
     if (opts?.pin) this.cache.pin(key);
     this.tallyPin(key, opts?.pin === true);
     // Freshly cached: a later miss on this key is only thrash if it gets
@@ -268,6 +316,170 @@ export class SliceCache {
           `total: ${(this.cache.size / 1024 / 1024).toFixed(1)}MB)`
       );
     }
+  }
+
+  /** Bookkeeping for an entry `set` actually stored (ladder depth + stage bytes). */
+  private noteStored(
+    key: string,
+    entry: SliceCacheEntry,
+    previous: SliceCacheEntry | undefined
+  ): void {
+    // A replaced entry leaves without an eviction callback, so its stage
+    // bytes are retired here (a re-set of the SAME object changes nothing).
+    if (previous !== entry) {
+      if (previous !== undefined) this.untallyStage(previous);
+      this.tallyStage(entry);
+    }
+    if (
+      entry.ladderDepth !== undefined &&
+      entry.totalLadderDepth !== undefined &&
+      entry.totalLadderDepth > 0
+    ) {
+      this.ladderDepths.set(key, {
+        depth: entry.ladderDepth,
+        totalDepth: entry.totalLadderDepth,
+      });
+    } else {
+      this.ladderDepths.delete(key);
+    }
+  }
+
+  /**
+   * The stage output attached to the entry under `key`, provided that entry
+   * still holds exactly `payload` (reference identity — the caller's proof
+   * that the stage input is this entry's slice data) and the output was
+   * produced under `sig`. A bookkeeping read: no LRU promotion, no S-cache
+   * hit/miss count (the slice lookup that produced `payload` already counted).
+   * Returns undefined when the entry is gone or was replaced, or when the
+   * attached output is missing or was produced under other parameters.
+   */
+  getStage(key: string, payload: unknown, sig: string): unknown {
+    const entry = this.cache.peek(key);
+    if (entry === undefined || entry.payload !== payload) return undefined;
+    if (entry.stage?.sig !== sig) {
+      this.stageMisses++;
+      perfCounters.add(S_STAGE_MISSES);
+      return undefined;
+    }
+    this.stageHits++;
+    perfCounters.add(S_STAGE_HITS);
+    return entry.stage.value;
+  }
+
+  /**
+   * Attach (or replace) the stage output of the entry under `key`, provided it
+   * still holds exactly `payload`. The entry keeps its recency position and
+   * pin; its byte count grows by `bytes` (minus any output it replaces).
+   *
+   * Admission never evicts a slice. Outside a scan, room is found by shedding
+   * OTHER entries' stage outputs, least recently used first. Inside a scan
+   * (`opts.scan`, dimension playback) an output is admitted only into FREE
+   * budget: under a cyclic scan every other resident output is needed sooner
+   * than the one being stored, so displacing any of them to admit it would
+   * only churn — a stable resident subset is what yields hits every loop (the
+   * same reasoning as the slices' own MRU scan eviction). A refused output
+   * returns false and leaves the entry exactly as it was, so a saturated cache
+   * keeps every decoded slice it would have kept without B2.
+   */
+  setStage(
+    key: string,
+    payload: unknown,
+    stage: SliceStageOutput,
+    opts?: { scan?: boolean }
+  ): boolean {
+    const entry = this.cache.peek(key);
+    if (entry === undefined || entry.payload !== payload) return false;
+    const next: SliceCacheEntry = {
+      ...entry,
+      stage,
+      bytes: entry.bytes - (entry.stage?.bytes ?? 0) + stage.bytes,
+    };
+    if (opts?.scan !== true) this.shedStagesFor(next.bytes - entry.bytes, key, false);
+    if (!this.cache.replace(key, next)) {
+      this.stageRejected++;
+      perfCounters.add(S_STAGE_REJECTED);
+      return false;
+    }
+    this.untallyStage(entry);
+    this.tallyStage(next);
+    this.retallyPin(key);
+    return true;
+  }
+
+  /**
+   * Whether {@link setStage} (with the same `opts`) could admit a
+   * `bytes`-sized output on `key`'s entry holding `payload`. Lets a caller skip
+   * preparing an output that would be refused; a budget refusal is counted in
+   * `stageRejected` exactly as `setStage`'s is.
+   */
+  canAdmitStage(key: string, payload: unknown, bytes: number, opts?: { scan?: boolean }): boolean {
+    const entry = this.cache.peek(key);
+    if (entry === undefined || entry.payload !== payload) return false;
+    const own = entry.stage?.bytes ?? 0;
+    const sheddable = opts?.scan === true ? 0 : this.stageBytesTotal - own;
+    if (this.cache.size - own + bytes - sheddable <= this.maxSize) return true;
+    this.stageRejected++;
+    perfCounters.add(S_STAGE_REJECTED);
+    return false;
+  }
+
+  /**
+   * Drop stage outputs from entries other than `keepKey` until `growth` more
+   * bytes fit under the budget (or none are left): least recently used first,
+   * or — inside a scan (`mostRecentFirst`) — most recently used first, for the
+   * same reason the slices themselves use MRU eviction during playback (the
+   * oldest outputs are the ones the loop reaches next). O(entries) only when
+   * the cache is actually over budget AND holds stage outputs; free otherwise.
+   */
+  private shedStagesFor(growth: number, keepKey: string, mostRecentFirst: boolean): void {
+    const excess = this.cache.size + growth - this.maxSize;
+    if (excess <= 0 || this.stageBytesTotal === 0) return;
+    // Replace AFTER choosing: mutating the Map while iterating it is legal
+    // but would make the walk order harder to reason about.
+    for (const [k, e] of this.pickStageVictims(excess, keepKey, mostRecentFirst)) {
+      const { stage, ...rest } = e;
+      this.cache.replace(k, { ...rest, bytes: e.bytes - (stage?.bytes ?? 0) });
+      this.untallyStage(e);
+      this.retallyPin(k);
+      this.stageShed++;
+      perfCounters.add(S_STAGE_SHED);
+    }
+  }
+
+  /** Entries (other than `keepKey`) whose stage outputs free `excess` bytes, in shed order. */
+  private pickStageVictims(
+    excess: number,
+    keepKey: string,
+    mostRecentFirst: boolean
+  ): Array<[string, SliceCacheEntry]> {
+    const order = [...this.cache.entries()];
+    if (mostRecentFirst) order.reverse();
+    const victims: Array<[string, SliceCacheEntry]> = [];
+    let remaining = excess;
+    for (const [k, e] of order) {
+      if (remaining <= 0) break;
+      if (k === keepKey || e.stage === undefined) continue;
+      victims.push([k, e]);
+      remaining -= e.stage.bytes;
+    }
+    return victims;
+  }
+
+  private tallyStage(entry: SliceCacheEntry): void {
+    if (entry.stage === undefined) return;
+    this.stageBytesTotal += entry.stage.bytes;
+    perfCounters.gauge(S_STAGE_BYTES, this.stageBytesTotal);
+  }
+
+  private untallyStage(entry: SliceCacheEntry): void {
+    if (entry.stage === undefined) return;
+    this.stageBytesTotal -= entry.stage.bytes;
+    perfCounters.gauge(S_STAGE_BYTES, this.stageBytesTotal);
+  }
+
+  /** Refresh a pinned entry's byte tally after an in-place size change. */
+  private retallyPin(key: string): void {
+    if (this.pinnedBytes.has(key)) this.tallyPin(key, true);
   }
 
   /**
@@ -369,6 +581,14 @@ export class SliceCache {
     this.pinnedBytesTotal = 0;
     this.publishPinGauges();
     this.thrashMisses = 0;
+    // onEvict already retired every stage output; reset the counters with
+    // the other per-dataset statistics.
+    this.stageBytesTotal = 0;
+    perfCounters.gauge(S_STAGE_BYTES, 0);
+    this.stageHits = 0;
+    this.stageMisses = 0;
+    this.stageRejected = 0;
+    this.stageShed = 0;
     if (this.debug) {
       log.custom(LogEmoji.CACHE, Modules.CACHE, 'SliceCache cleared');
     }
@@ -402,10 +622,16 @@ export class SliceCache {
       maxSize: this.maxSize,
       fullLadderCount,
       ladderDepthHistogram,
+      stageHits: this.stageHits,
+      stageMisses: this.stageMisses,
+      stageRejected: this.stageRejected,
+      stageShed: this.stageShed,
+      stageBytes: this.stageBytesTotal,
     };
   }
 
-  private recordEviction(key: string): void {
+  private recordEviction(key: string, entry: SliceCacheEntry): void {
+    this.untallyStage(entry);
     this.ladderDepths.delete(key);
     this.untallyPin(key);
     this.recordTombstone(key);

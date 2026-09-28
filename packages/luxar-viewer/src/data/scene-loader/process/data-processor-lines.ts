@@ -19,6 +19,10 @@
  *     (`workers/data-worker/projection/in-process`); any other failure —
  *     a rejection from the worker, a timeout — propagates instead, since the
  *     fallback shares the kernel and would only block the UI thread,
+ *   - a slice the loader restored from the S-cache reuses the projection
+ *     cached on its entry when every other projection input (including the
+ *     membership tolerance computed here) is unchanged — see the gsplats twin
+ *     and `projection-stage-cache.ts`,
  *   - first-update info logs are gated by `updateVersion <= 1`,
  *   - commits use the GPU buffer pool when enabled, otherwise
  *     `updateInstancedLinesMesh`.
@@ -40,8 +44,25 @@ import { getWorkerPool } from '../../../workers/worker-pool';
 import { isWorkerInfrastructureError } from '../../../workers/worker-pool/errors';
 import { projectLinesInProcess } from '../../../workers/data-worker/projection/in-process';
 import type { UpdateSession } from '../../../profiling/update-profiler';
-
+import { perfCounters } from '../../../profiling/perf-counters';
 import type { StagedNoopCommit } from '../commit/noop-commit';
+import {
+  canStoreStageOutput,
+  getSliceCacheOrigin,
+  lookupStageOutput,
+  storeStageOutput,
+} from '../../../cache/slice-cache-origin';
+import {
+  buffersIntact,
+  hasWastefulBuffers,
+  projectionStageSig,
+  retainedBufferBytes,
+} from './projection-stage-cache';
+
+/** Counter: lines projections dispatched to a worker (`runWithTimeout`). */
+const P_WORKER_CALLS = perfCounters.slot('projection.lines.worker');
+/** Counter: lines projections answered by the post-projection stage cache. */
+const P_STAGE_HITS = perfCounters.slot('projection.lines.stageHits');
 
 /** Staged data carried between async processing and the GPU commit. */
 export interface StagedLinesGeometryCommit {
@@ -394,6 +415,7 @@ export async function projectLinesTo3DUsingWorker(
     // restored slice hands the loader's cached arrays straight into projection,
     // and transferring them would neuter (detach) the cached snapshot. Do not
     // add a transfer list for the inputs here. (Mirrors the gsplats processor.)
+    perfCounters.add(P_WORKER_CALLS);
     const workerResult = await getWorkerPool().runWithTimeout(
       'projectLinesTo3D',
       'projection',
@@ -432,6 +454,76 @@ export async function projectLinesTo3DUsingWorker(
     );
     return toProcessedLines(await projectLinesInProcess(params), data);
   }
+}
+
+/** The fields of {@link ProcessedLinesData} that hold typed arrays. */
+const LINES_ARRAY_FIELDS = [
+  'startPositions',
+  'endPositions',
+  'startColors',
+  'endColors',
+  'startWidths',
+  'endWidths',
+  'startSharpness',
+  'endSharpness',
+  'startScalars',
+  'endScalars',
+  'startAlphas',
+  'endAlphas',
+  'segmentLengths',
+  'startJointCode',
+  'endJointCode',
+  'elementIds',
+] as const;
+
+/** Every typed array a lines stage output keeps alive (optional ones may be undefined). */
+function linesStageArrays(p: ProcessedLinesData): Array<ArrayBufferView | undefined> {
+  return LINES_ARRAY_FIELDS.map((field) => p[field]);
+}
+
+/**
+ * The cached projection for `data` under `sig`, if one is attached to its
+ * S-cache entry and its per-segment buffers are intact (see the gsplats twin).
+ */
+function lookupLinesStage(data: LoadedLinesData, sig: string): ProcessedLinesData | undefined {
+  const cached = lookupStageOutput(data, sig) as ProcessedLinesData | undefined;
+  if (!cached) return undefined;
+  const n = cached.segmentCount;
+  const intact = buffersIntact([
+    [cached.startPositions, n * 3],
+    [cached.endPositions, n * 3],
+    [cached.startWidths, n],
+    [cached.endWidths, n],
+  ]);
+  if (intact) perfCounters.add(P_STAGE_HITS);
+  return intact ? cached : undefined;
+}
+
+/**
+ * Offer a fresh projection to `data`'s S-cache entry; returns the retained
+ * (`sharedBuffers`) output when admitted — tight copies when the clip left
+ * worst-case buffers mostly empty — else `processed` untouched.
+ */
+function retainLinesStage(
+  data: LoadedLinesData,
+  sig: string,
+  processed: ProcessedLinesData,
+  scan: boolean
+): ProcessedLinesData {
+  const arrays = linesStageArrays(processed);
+  const tighten = hasWastefulBuffers(arrays);
+  const bytes = tighten
+    ? arrays.reduce((s, a) => s + (a?.byteLength ?? 0), 0)
+    : retainedBufferBytes(arrays);
+  if (!canStoreStageOutput(data, bytes, { scan })) return processed;
+  const shared: ProcessedLinesData = { ...processed, sharedBuffers: true };
+  if (tighten) {
+    for (const field of LINES_ARRAY_FIELDS) {
+      const a = processed[field];
+      if (a !== undefined) Object.assign(shared, { [field]: a.slice() });
+    }
+  }
+  return storeStageOutput(data, { sig, value: shared, bytes }, { scan }) ? shared : processed;
 }
 
 /**
@@ -484,8 +576,17 @@ export async function processLinesData(
   const useWorkerProjection =
     appConfig.dataLoading.performance.useWebWorkers && data.segmentCount > 1000;
 
+  // Post-projection stage cache (#2944 B2) — see the gsplats twin. The
+  // membership tolerance computed above is part of the kernel params, so a
+  // dimension-metadata or extend_to_all change rekeys the stage by itself.
+  const stageSig = getSliceCacheOrigin(data)
+    ? projectionStageSig('lines', buildLinesParams(data, viewState, tolerance))
+    : null;
+  const cached = stageSig !== null ? lookupLinesStage(data, stageSig) : undefined;
+
   let processed: ProcessedLinesData;
   const project = async () => {
+    if (cached) return cached;
     if (useWorkerProjection) {
       return projectLinesTo3DUsingWorker(data, viewState, tolerance, updateVersion, signal);
     }
@@ -507,6 +608,8 @@ export async function processLinesData(
   } else {
     processed = await project();
   }
+  if (!cached && stageSig !== null)
+    processed = retainLinesStage(data, stageSig, processed, viewState.frameBudgetMs != null);
 
   if (updateVersion <= 1) {
     log.info(

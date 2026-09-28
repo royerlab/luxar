@@ -21,6 +21,17 @@ because backend selection may await the WASM module's first load.
 | `data-processor-points.ts`  | Points pipeline. The **synchronous staging half** — the points loader already returns display-space (3D-ready) data, so there is no worker RPC and no projection output to carry. Exposes staging on its own so callers holding loader output stage it through the same `process → commit` pair lines/gsplats use; returns `StagedPointsCommit`. The no-op reference-identity fast path stays in `commitPointsGeometry`.      |
 | `data-processor-mesh.ts`    | Mesh pipeline. Runs the in-process display-space projection (`extract_3d_positions`, whole-triangle nD cull, winding post-pass). `async` **only** because backend selection (`pickBackend`) may await the WASM module's first load — not because it uses a worker; mesh projects in-process (whole-node resident). Returns `StagedMeshCommit`.                                                                                |
 
+`projection-stage-cache.ts` holds the helpers both async processors share for
+the **post-projection stage cache** (#2944 B2): when the loader restored the
+slice from the S-cache (an origin stamp, `cache/slice-cache-origin.ts`), the
+processor signs the dispatcher params with every typed array removed
+(`projectionStageSig` — complete by construction, since a kernel input has to
+be in `params` to reach the kernel) and reuses the projection stored on the
+entry under that signature; otherwise it projects and offers the result back
+(`SliceCache.setStage`, spare budget only). A reused or retained output is
+marked `sharedBuffers`: the commit must neither mutate nor transfer it, so the
+gsplats depth-sort hand-off receives a lazy copy of `centers3D`.
+
 The lines and gsplats processors also **re-export** their sibling commit
 helper (`commitLinesGeometry`, `commitGSplatsGeometry`) from
 `../commit/commit-*-geometry.ts` so callers that historically imported
