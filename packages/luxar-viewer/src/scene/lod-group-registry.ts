@@ -857,6 +857,41 @@ function updatePartitionObjectVisibility(
 }
 
 /**
+ * What one ``evaluatePerFrame`` call changed, split by kind because the two
+ * kinds mean different things downstream:
+ *
+ * - ``levelChanged`` — a ``kind=lod`` group swapped its active level. That is
+ *   a CONTENT change (a different level costs differently to render), so the
+ *   app notifies adaptive DPR, whose learned bounds described the old level.
+ * - ``cullChanged`` — a ``kind=partition`` part entered or left the frustum.
+ *   That is the same content seen from elsewhere, and it flips constantly
+ *   while the camera orbits a partitioned scene: it must redraw, but must NOT
+ *   reset adaptive-DPR learning.
+ *
+ * The returned objects are shared frozen constants, so the per-frame path
+ * allocates nothing; compare fields, not identity.
+ */
+export interface LODFrameChanges {
+  readonly levelChanged: boolean;
+  readonly cullChanged: boolean;
+}
+
+/** Nothing changed this frame (the common case). */
+export const LOD_FRAME_UNCHANGED: LODFrameChanges = Object.freeze({
+  levelChanged: false,
+  cullChanged: false,
+});
+const LOD_FRAME_LEVEL: LODFrameChanges = Object.freeze({ levelChanged: true, cullChanged: false });
+const LOD_FRAME_CULL: LODFrameChanges = Object.freeze({ levelChanged: false, cullChanged: true });
+const LOD_FRAME_BOTH: LODFrameChanges = Object.freeze({ levelChanged: true, cullChanged: true });
+
+/** The shared constant for a (level, cull) pair — no per-frame allocation. */
+function lodFrameChanges(levelChanged: boolean, cullChanged: boolean): LODFrameChanges {
+  if (levelChanged) return cullChanged ? LOD_FRAME_BOTH : LOD_FRAME_LEVEL;
+  return cullChanged ? LOD_FRAME_CULL : LOD_FRAME_UNCHANGED;
+}
+
+/**
  * Injected view-state accessors. Lets the registry stay test-friendly
  * (mock the camera, the viewport, the slice) without coupling to the
  * SceneManager singleton.
@@ -1697,23 +1732,25 @@ export class LODGroupRegistry {
    * Per-frame evaluation. Wired through
    * ``AnimationController.addPerFrameCallback`` by the app pipeline.
    *
-   * Returns ``true`` when at least one lod_group swapped its active
-   * child this frame, so the caller can refresh anything that depends
-   * on which level renders (e.g. the data-monitor's visible-element
-   * tally). Returns ``false`` on a no-op frame (the common case), which
-   * keeps the per-frame cost to the projection math alone.
+   * Reports, separately, whether at least one lod_group swapped its active
+   * child (``levelChanged``) and whether a partition part's frustum-cull
+   * visibility flipped (``cullChanged``) this frame — see
+   * {@link LODFrameChanges} for why the two must not be conflated. Either
+   * one changes what the visible-element tally counts. A no-op frame (the
+   * common case) returns {@link LOD_FRAME_UNCHANGED}, which keeps the
+   * per-frame cost to the projection math alone.
    */
-  evaluatePerFrame(): boolean {
-    if (this.entries.size === 0 && this.partitionEntries.size === 0) return false;
+  evaluatePerFrame(): LODFrameChanges {
+    if (this.entries.size === 0 && this.partitionEntries.size === 0) return LOD_FRAME_UNCHANGED;
     const displayDims = this.deps.getDisplayDims();
-    if (displayDims.length < 2) return false;
+    if (displayDims.length < 2) return LOD_FRAME_UNCHANGED;
     // The frame's view snapshot: the camera matrices as this frame renders
     // them, whichever callbacks ran before (fly controls do not refresh
     // ``matrixWorldInverse``; the snapshot derives the view itself). A collapsed
     // canvas has no viewport to select for, so the frame is skipped.
     const view = this.view();
     const viewport = view.viewportCss;
-    if (viewport === null) return false;
+    if (viewport === null) return LOD_FRAME_UNCHANGED;
     const camera = view.camera;
 
     this.tick++;
@@ -1736,7 +1773,8 @@ export class LODGroupRegistry {
     const settled =
       version == null || this.settleTracker.isSettled(this.tick, FINE_RELOAD_SETTLE_TICKS);
 
-    let changed = false;
+    let levelChanged = false;
+    let cullChanged = false;
     let anyLoading = false;
     let hasVisiblePendingResync = false;
     for (const entry of this.partitionEntries.values()) {
@@ -1749,7 +1787,7 @@ export class LODGroupRegistry {
         RISING_PARTS_SCRATCH
       );
       if ((result & PARTITION_VISIBILITY_CHANGED) !== 0) {
-        changed = true;
+        cullChanged = true;
         this.drawnStateChanged = true;
       }
       if ((result & PARTITION_BECAME_VISIBLE) !== 0) {
@@ -1766,7 +1804,7 @@ export class LODGroupRegistry {
     }
     for (const entry of this.entries.values()) {
       if (this.evaluateEntry(entry, view, viewport, displayDims, FRUSTUM_SCRATCH, settled)) {
-        changed = true;
+        levelChanged = true;
       }
       // A lazy level loading (initial or a settled fine reload) commits
       // asynchronously OUTSIDE the per-slice sweep. Keep the on-demand render
@@ -1796,7 +1834,7 @@ export class LODGroupRegistry {
     // hidden-layer (undrawable) first, then off-screen / furthest-from-camera —
     // so no per-swap release, hence no reload churn.
     this.enforceByteBudget(camera, FRUSTUM_SCRATCH, displayDims);
-    return changed;
+    return lodFrameChanges(levelChanged, cullChanged);
   }
 
   /** Keep the loop ticking (see {@link LODGroupRegistryDeps.requestTick}). */

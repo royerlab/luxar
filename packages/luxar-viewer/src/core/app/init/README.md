@@ -55,7 +55,11 @@ runInitPipeline(ports, partial)
 │                              material/refinement hooks and per-frame callback
 ├── 11. LOD-group selector    'lod-group-selector' per-frame callback that
 │                              calls evaluatePerFrame() on the current default
-│                              loader and refreshVisibleCounts() on a swap
+│                              loader → { levelChanged, cullChanged };
+│                              refreshVisibleCounts() + redraw on either,
+│                              adaptive-DPR notifyContentChanged() on a
+│                              level swap ONLY (a partition cull flip is
+│                              camera motion, not new content)
 ├── 12. AdaptiveDPRManager    wired to sceneManager + controller
 ├── 13. Load-activity         buildLoadActivityPredicate; suppress adaptive-DPR
 │                              learning while loaders/refinement are active

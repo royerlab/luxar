@@ -783,7 +783,7 @@ describe('runInitPipeline', () => {
       return { refreshVisibleCounts };
     }
 
-    it.fails('a partition cull flip redraws but does NOT reset adaptive-DPR learning', async () => {
+    it('a partition cull flip redraws but does NOT reset adaptive-DPR learning', async () => {
       // An orbit over a partitioned scene flips part visibility constantly; that
       // is the same content seen from elsewhere, not new content. Treating it as
       // a content change pulled learned floors forward and confounded every probe.
@@ -800,7 +800,7 @@ describe('runInitPipeline', () => {
       }
     });
 
-    it.fails('a level swap redraws AND notifies adaptive DPR of a content change', async () => {
+    it('a level swap redraws AND notifies adaptive DPR of a content change', async () => {
       const { tick, notify } = await wireSelector();
       try {
         const { refreshVisibleCounts } = stubRegistry({ levelChanged: true, cullChanged: false });
@@ -813,7 +813,7 @@ describe('runInitPipeline', () => {
       }
     });
 
-    it.fails('a no-op frame neither redraws nor notifies', async () => {
+    it('a no-op frame neither redraws nor notifies', async () => {
       const { tick, notify } = await wireSelector();
       try {
         const { refreshVisibleCounts } = stubRegistry({ levelChanged: false, cullChanged: false });

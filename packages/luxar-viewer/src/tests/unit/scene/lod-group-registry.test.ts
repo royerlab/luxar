@@ -45,6 +45,12 @@ import {
 import { updateCameraAspect } from '../../../utils/camera-utils';
 import { log } from '../../../utils/log';
 
+// `evaluatePerFrame` reports a level swap and a partition cull flip SEPARATELY:
+// only the first is a content change for adaptive DPR (see LODFrameChanges).
+const NO_CHANGE = { levelChanged: false, cullChanged: false };
+const LEVEL_CHANGED = { levelChanged: true, cullChanged: false };
+const CULL_CHANGED = { levelChanged: false, cullChanged: true };
+
 describe('computeEntryWorldBox', () => {
   it('reuses the caller-owned world box', () => {
     const groupObject = new THREE.Group();
@@ -677,7 +683,7 @@ describe('LODGroupRegistry — takeDrawnStateChanged (render-on-change)', () => 
     // And a stray extra visible level is hidden — no swap, still a change.
     const other = (shown + 1) % children.length;
     children[other].object.visible = true;
-    expect(reg.evaluatePerFrame()).toBe(false);
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
     expect(children[other].object.visible).toBe(false);
     expect(reg.takeDrawnStateChanged()).toBe(true);
   });
@@ -703,7 +709,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     };
 
     reg.registerPartition(entry);
-    expect(reg.evaluatePerFrame()).toBe(true);
+    expect(reg.evaluatePerFrame()).toEqual(CULL_CHANGED);
     for (const object of [first, second]) {
       expect(object.visible).toBe(false);
       expect(object.userData.partitionFrustumVisible).toBe(false);
@@ -740,7 +746,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     };
 
     reg.registerPartition(entry);
-    expect(reg.evaluatePerFrame()).toBe(true);
+    expect(reg.evaluatePerFrame()).toEqual(CULL_CHANGED);
 
     expect(visible.visible).toBe(true);
     expect(visible.userData.partitionFrustumVisible).toBe(true);
@@ -771,7 +777,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       ],
     });
 
-    expect(reg.evaluatePerFrame()).toBe(true);
+    expect(reg.evaluatePerFrame()).toEqual(CULL_CHANGED);
     expect(culled.visible).toBe(false);
     expect(culled.userData.partitionFrustumVisible).toBe(false);
     expect(unprojectable.visible).toBe(true);
@@ -806,7 +812,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       ],
     });
 
-    expect(reg.evaluatePerFrame()).toBe(true);
+    expect(reg.evaluatePerFrame()).toEqual(CULL_CHANGED);
     expect(footprintVisible.visible).toBe(true);
     expect(footprintVisible.userData.partitionFrustumVisible).toBe(true);
     expect(culled.visible).toBe(false);
@@ -1072,7 +1078,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       ],
     });
 
-    expect(reg.evaluatePerFrame()).toBe(false);
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
     for (const object of [outside, footprintVisible]) {
       expect(object.visible).toBe(true);
       expect(object.userData.partitionFrustumVisible).toBe(true);
@@ -1096,7 +1102,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       ],
     });
 
-    expect(reg.evaluatePerFrame()).toBe(false);
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
     expect(child.visible).toBe(true);
     expect(child.userData.partitionFrustumVisible).toBe(true);
   });
@@ -1128,12 +1134,12 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       ],
     });
 
-    expect(reg.evaluatePerFrame()).toBe(true);
+    expect(reg.evaluatePerFrame()).toEqual(CULL_CHANGED);
     expect(child.visible).toBe(false);
     expect(requestReprocess).not.toHaveBeenCalled();
 
     groupObject.position.x = -2.5;
-    expect(reg.evaluatePerFrame()).toBe(true);
+    expect(reg.evaluatePerFrame()).toEqual(CULL_CHANGED);
     expect(child.visible).toBe(true);
     expect(requestReprocess).toHaveBeenCalledOnce();
     // The part carries a registered node path, so the resync targets it rather
@@ -1353,7 +1359,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     });
     first.userData.partitionFrustumVisible = false;
 
-    expect(reg.evaluatePerFrame()).toBe(false);
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
     expect(first.userData.partitionFrustumVisible).toBe(true);
     expect(second.userData.partitionFrustumVisible).toBe(true);
     expect(requestReprocess).toHaveBeenCalledOnce();
@@ -1497,21 +1503,21 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.evaluatePerFrame();
     expect(child.visible).toBe(false);
     groupObject.position.x = -2.5;
-    expect(reg.evaluatePerFrame()).toBe(true);
+    expect(reg.evaluatePerFrame()).toEqual(CULL_CHANGED);
     expect(requestReprocess).not.toHaveBeenCalled();
     expect(requestRender).toHaveBeenCalledOnce();
 
     groupObject.visible = false;
     updateInProgress = false;
     requestRender.mockClear();
-    expect(reg.evaluatePerFrame()).toBe(false);
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
     expect(reg.hasVisiblePendingPartitionResync()).toBe(false);
     expect(requestReprocess).not.toHaveBeenCalled();
     expect(requestRender).not.toHaveBeenCalled();
 
     groupObject.visible = true;
     expect(reg.hasVisiblePendingPartitionResync()).toBe(true);
-    expect(reg.evaluatePerFrame()).toBe(false);
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
     expect(requestReprocess).toHaveBeenCalledOnce();
     expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
   });
@@ -1536,7 +1542,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     reg.evaluatePerFrame();
     expect(child.visible).toBe(false);
     reg.unregister('/partition');
-    expect(reg.evaluatePerFrame()).toBe(false);
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
     expect(child.visible).toBe(true);
     expect(child.userData.partitionFrustumVisible).toBeUndefined();
   });
@@ -1619,7 +1625,7 @@ describe('LODGroupRegistry — selector mode', () => {
     }).not.toThrow();
   });
 
-  it('evaluatePerFrame returns true on a level swap, false on a no-op frame', () => {
+  it('evaluatePerFrame reports levelChanged on a level swap, no change on a no-op frame', () => {
     // The per-frame callback uses this signal to refresh the monitor's
     // visible-element tally only when the rendered level actually changes
     // — otherwise the count would stay pinned to the default level.
@@ -1628,12 +1634,12 @@ describe('LODGroupRegistry — selector mode', () => {
     reg.register(makeEntry(children, 0, '/g'));
 
     reg.setSelectorMode('/g', { lockLevel: 2 });
-    expect(reg.evaluatePerFrame()).toBe(true); // 0 → 2 swap
-    expect(reg.evaluatePerFrame()).toBe(false); // already at 2, no change
+    expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED); // 0 → 2 swap
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE); // already at 2, no change
   });
 
-  it('evaluatePerFrame returns false when there are no entries', () => {
-    expect(makeRegistry().evaluatePerFrame()).toBe(false);
+  it('evaluatePerFrame reports no change when there are no entries', () => {
+    expect(makeRegistry().evaluatePerFrame()).toEqual(NO_CHANGE);
   });
 
   it('swaps atomically when the locked level changes', () => {
@@ -2818,7 +2824,7 @@ describe('LODGroupRegistry — lazy children', () => {
     reg.setSelectorMode('/g', { lockLevel: 1 });
 
     // Target not ready → no swap, current level stays visible.
-    expect(reg.evaluatePerFrame()).toBe(false);
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
     expect(children[0].object.visible).toBe(true);
     expect(children[1].object.visible).toBe(false);
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
@@ -2841,7 +2847,7 @@ describe('LODGroupRegistry — lazy children', () => {
     children[1].ready = true;
     children[1].loading = false;
 
-    expect(reg.evaluatePerFrame()).toBe(true); // now ready → swap
+    expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED); // now ready → swap
     expect(children[0].object.visible).toBe(false);
     expect(children[1].object.visible).toBe(true);
   });
@@ -2879,7 +2885,7 @@ describe('LODGroupRegistry — lazy children', () => {
     reg.register(makeEntry(children, 2, '/g'));
     reg.setSelectorMode('/g', { lockLevel: 0 });
 
-    expect(reg.evaluatePerFrame()).toBe(true); // swap 2 → 0
+    expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED); // swap 2 → 0
     // The level we left (2) and its release thunks are NOT called — retention
     // keeps every loaded level resident so swapping back is a free toggle.
     expect(children[2].release).not.toHaveBeenCalled();
@@ -3026,7 +3032,7 @@ describe('LODGroupRegistry — lazy children', () => {
     // Thunk completes.
     lazyActive.ready = true;
     lazyActive.loading = false;
-    expect(reg.evaluatePerFrame()).toBe(true); // becomes visible → changed
+    expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED); // becomes visible → changed
     expect(lazyActive.object.visible).toBe(true);
   });
 
@@ -3741,20 +3747,20 @@ describe('LODGroupRegistry — slice-aware freshness fallback', () => {
     expect(children[0].object.visible).toBe(false);
   });
 
-  it('returns changed=true on the fallback (fine→coarse) and swap-up (coarse→fine) frames', () => {
+  it('reports levelChanged on the fallback (fine→coarse) and swap-up (coarse→fine) frames', () => {
     let version = 1;
     const reg = makeRegistry([0, 1, 2], undefined, undefined, () => version);
     const children = [makeGsplatChild(0, 1), makeGsplatChild(0.5, 1)]; // both fresh@1
     reg.register(makeEntry(children, 0, '/g'));
-    expect(reg.evaluatePerFrame()).toBe(true); // swap up 0→1 (fine fresh)
+    expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED); // swap up 0→1 (fine fresh)
     expect(children[1].object.visible).toBe(true);
     // Scrub to a new view-version: both stamps now lag → stale.
     version = 2;
-    expect(reg.evaluatePerFrame()).toBe(true); // display drops fine→coarse
+    expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED); // display drops fine→coarse
     expect(children[0].object.visible).toBe(true);
     // Fine recommits for V2 → swap back up.
     (children[1].object.userData as { loadedViewVersion: number }).loadedViewVersion = 2;
-    expect(reg.evaluatePerFrame()).toBe(true); // coarse→fine
+    expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED); // coarse→fine
     expect(children[1].object.visible).toBe(true);
   });
 

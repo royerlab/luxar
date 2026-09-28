@@ -50,7 +50,9 @@ function makeSceneLoaderStub() {
   let archiveFault: Error | null = null;
   const archiveFaultListeners = new Set<(error: Error) => void>();
   return {
-    lodGroupRegistry: { evaluatePerFrame: vi.fn(() => false) },
+    lodGroupRegistry: {
+      evaluatePerFrame: vi.fn(() => ({ levelChanged: false, cullChanged: false })),
+    },
     nodeFactory: { rebuildAfterContextRestore: vi.fn() },
     isUpdateInProgress: vi.fn(() => false),
     updateView: vi.fn(),

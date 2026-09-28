@@ -447,19 +447,22 @@ export async function runInitPipeline(
     // event with no data reload), refresh the monitor's visible-element
     // tally so it reflects the level now rendering rather than staying
     // pinned to the default/coarsest level from the last updateView.
-    const swapped = registry.evaluatePerFrame();
-    if (swapped) {
-      loader.refreshVisibleCounts();
-      // A level swap changes what is being rendered — learned DPR
-      // bounds (floor/backoff) describe the old level's render cost.
-      // notifyContentChanged is internally coalesced, so per-frame
-      // swap bursts during a zoom don't spam the ledger.
-      partial.adaptiveDPRManager?.notifyContentChanged();
-    }
+    const { levelChanged, cullChanged } = registry.evaluatePerFrame();
+    // A partition part culled or restored changes the tally too.
+    if (levelChanged || cullChanged) loader.refreshVisibleCounts();
+    // A level swap changes what is being rendered — learned DPR bounds
+    // (floor/backoff) describe the old level's render cost.
+    // notifyContentChanged is internally coalesced, so per-frame swap bursts
+    // during a zoom don't spam the ledger. A partition CULL flip is NOT a
+    // content change: it is the same content seen from elsewhere, and it
+    // flips constantly during an orbit, so treating it as one would defeat
+    // adaptive DPR's learning on every partitioned scene.
+    if (levelChanged) partial.adaptiveDPRManager?.notifyContentChanged();
     // Any level shown or hidden, a cross-fade / energy-compensation opacity
     // step, a partition part culled: the frame must be redrawn. Taken every
     // tick so the flag never carries over.
-    return registry.takeDrawnStateChanged() || swapped;
+    const drawnStateChanged = registry.takeDrawnStateChanged();
+    return drawnStateChanged || levelChanged || cullChanged;
   });
 
   // Seed the pixel-ratio cap from config BEFORE anything sizes a frame.

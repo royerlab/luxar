@@ -594,7 +594,12 @@ do not block, and the signal is inert when no resync dispatcher is wired.
 
 **Wiring:** the SceneLoader instantiates one registry per scene and
 hooks `evaluatePerFrame()` into `AnimationController` alongside the
-dynamic-clipping callback. The injected `LODGroupRegistryDeps` supply
+dynamic-clipping callback. `evaluatePerFrame()` returns `LODFrameChanges`
+`{ levelChanged, cullChanged }` (shared frozen constants, no per-frame
+allocation): a level swap is a content change the app forwards to adaptive
+DPR, while a partition part's frustum-cull flip only redraws — it flips
+constantly during an orbit and must not reset adaptive-DPR learning.
+The injected `LODGroupRegistryDeps` supply
 the camera, viewport size, `displayDims`, the partition resync hooks
 (`requestReprocess`, `isUpdateInProgress`), and the optional resident
 byte budget / measurement — omitting the budget accessors yields pure
