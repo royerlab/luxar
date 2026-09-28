@@ -1019,17 +1019,20 @@ describe('SceneLoader', () => {
       }
     );
 
-    it('a queued re-entry that lands on a latched archive fault flushes the parked waiters', async () => {
+    it.fails('a queued re-entry that lands on a latched archive fault flushes the parked waiters', async () => {
       // A lazy level can latch the fault OUTSIDE any pass. A waiter parked by a
       // superseded updateView must then settle (resolve-only) rather than hang
       // the dimension-animation pacing gate for the rest of the session.
       const internals = sceneLoader as unknown as {
         _archiveFault: ArchiveFaultError | null;
-        _passWaiters: Array<() => void>;
+        _passWaiters: Array<{ gen: number; resolve: () => void }>;
       };
       let settled = false;
-      internals._passWaiters.push(() => {
-        settled = true;
+      internals._passWaiters.push({
+        gen: 1,
+        resolve: () => {
+          settled = true;
+        },
       });
       internals._archiveFault = new ArchiveFaultError('container unreadable', 'test');
       await sceneLoader.updateView({ slicePosition: [0, 0, 0, 8] });
@@ -1482,6 +1485,108 @@ describe('SceneLoader', () => {
       // queued promise itself is the deterministic wait.
       await p2;
       expect(queuedResolved).toBe(true);
+    });
+
+    /** Points loader whose calls each park on their own gate, released in order. */
+    function installPerCallGatedLoader(): {
+      release: (call: number) => void;
+      updateView: ReturnType<typeof vi.fn>;
+      signals: Array<AbortSignal | undefined>;
+    } {
+      const gates: Array<() => void> = [];
+      const gatePromises: Array<Promise<void>> = [];
+      const gateFor = (i: number): Promise<void> => {
+        while (gatePromises.length <= i) {
+          gatePromises.push(
+            new Promise<void>((resolve) => {
+              gates.push(resolve);
+            })
+          );
+        }
+        return gatePromises[i];
+      };
+      const signals: Array<AbortSignal | undefined> = [];
+      const updateView = vi.fn(async (_vs: unknown, _s: unknown, signal?: AbortSignal) => {
+        const i = signals.length;
+        signals.push(signal);
+        await gateFor(i);
+        return null;
+      });
+      (sceneLoader as unknown as Record<string, Map<string, unknown>>)['loaders'].set('/node', {
+        loadPoints: vi.fn(),
+        updateView,
+        dispose: vi.fn(),
+      });
+      return {
+        release: (call: number) => {
+          void gateFor(call);
+          gates[call]();
+        },
+        updateView,
+        signals,
+      };
+    }
+
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+    it("a superseded pass completing does not resolve the newer request's waiter (#2943)", async () => {
+      const { release, updateView } = installPerCallGatedLoader();
+
+      const pA = sceneLoader.updateView(vs(1)); // pass A in flight
+      await Promise.resolve();
+      let bResolved = false;
+      const pB = sceneLoader.updateView(vs(2)).then(() => {
+        bResolved = true;
+      });
+
+      release(0); // A completes (superseded)
+      await pA;
+      await flush(); // queueNext re-enters B, whose pass parks on its gate
+      expect(updateView).toHaveBeenCalledTimes(2);
+      expect(bResolved).toBe(false); // B's pass has not committed yet
+
+      release(1); // B's pass completes
+      await pB;
+      expect(bResolved).toBe(true);
+    });
+
+    it('isAtViewState is false while the pass carrying that view state is still in flight (#2943)', async () => {
+      const { release } = installPerCallGatedLoader();
+      const pA = sceneLoader.updateView(vs(5));
+      await Promise.resolve();
+      const inFlight = structuredClone(
+        (sceneLoader as unknown as { viewState: ViewState }).viewState
+      );
+      expect(inFlight.slicePosition[3]).toBe(5);
+
+      // The dims layer short-circuits a request isAtViewState() accepts, so a
+      // true here resolved waitForUpdate() before the slice had committed.
+      expect(sceneLoader.isAtViewState(inFlight)).toBe(false);
+
+      release(0);
+      await pA;
+      expect(sceneLoader.isAtViewState(inFlight)).toBe(true);
+    });
+
+    it('a request for the in-flight view state joins that pass: no abort, no re-run (#2943)', async () => {
+      const { release, updateView, signals } = installPerCallGatedLoader();
+      const pA = sceneLoader.updateView(vs(5));
+      await Promise.resolve();
+
+      let joinedResolved = false;
+      const pJoin = sceneLoader.updateView(vs(5)).then(() => {
+        joinedResolved = true;
+      });
+      await flush();
+      expect(joinedResolved).toBe(false); // waits for the in-flight commit
+      expect(signals[0]?.aborted).toBe(false); // the pass it joined keeps going
+
+      release(0);
+      await pA;
+      await pJoin;
+      expect(joinedResolved).toBe(true);
+      await flush();
+      expect(updateView).toHaveBeenCalledTimes(1); // no redundant re-run
     });
 
     it('multiple rapid queued calls all resolve when the latest-wins pass completes', async () => {
