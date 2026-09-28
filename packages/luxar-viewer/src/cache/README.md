@@ -68,11 +68,11 @@ Chunk request → L0 (Decompressed) → L1 (Memory) → L2 (OPFS) → Remote HTT
 \*~2ms is Blosc decompression time per chunk (skipped on L0 hit)
 
 † The three in-memory tiers are sized two-sidedly from the device heap by
-`heap-budget.ts` — the config `l0MaxSizeMB` (200) / `l1MaxSizeMB` (100) /
-`sliceCacheMaxSizeMB` (128) are ceilings/fallbacks, not fixed allocations. On a
-large heap the S-cache scales up (residual headroom, capped at `SLICE_CAP_BYTES`,
-2 GiB today); on a small heap all three scale down to stay within
-`dataLoading.memory.targetHeapUsage`.
+`heap-budget.ts` — `l0MaxSizeMB` (200) and `l1MaxSizeMB` (100) are L0/L1
+ceilings; `sliceCacheMaxSizeMB` (128) is the S-cache fallback and the cap on
+its pool-relative floor, not its ceiling. On a large heap the S-cache scales up
+(residual headroom, capped at `SLICE_CAP_BYTES`, 2 GiB today); on a small heap
+all three scale down to stay within `dataLoading.memory.targetHeapUsage`.
 L2 (OPFS/disk) is a fixed 2GB and unaffected.
 
 Heap detection uses `performance.memory`, which is **Chrome/Blink-only**. In
@@ -873,10 +873,11 @@ async function getRemoteContentHash(
 The three in-memory tiers (L0 + L1 + S-cache) are sized **two-sidedly from the
 device heap** by `heap-budget.ts::computeCacheBudgets` — up on a large heap so a
 fits-in-RAM timelapse stays fully resident, down on a small heap to stay within
-`dataLoading.memory.targetHeapUsage`. The config `l0MaxSizeMB` (200) / `l1MaxSizeMB`
-(100) / `sliceCacheMaxSizeMB` (128) are **ceilings / fallbacks**, not fixed
-allocations (the fallback applies where `performance.memory` is unavailable —
-Firefox/Safari). L2 (OPFS/disk, 2GB) is fixed and not heap-sized.
+`dataLoading.memory.targetHeapUsage`. The config `l0MaxSizeMB` (200) and
+`l1MaxSizeMB` (100) are L0/L1 ceilings; `sliceCacheMaxSizeMB` (128) is the
+S-cache fallback and the cap on its pool-relative floor, not its ceiling. The
+fixed fallback applies when no heap, explicit pool, or device-class pool is
+available. L2 (OPFS/disk, 2GB) is fixed and not heap-sized.
 
 **Typical desktop session** (4 GB heap): L0 up to ~200MB + L1 up to ~100MB +
 S-cache the residual (capped at `SLICE_CAP_BYTES`, 2 GiB today), all

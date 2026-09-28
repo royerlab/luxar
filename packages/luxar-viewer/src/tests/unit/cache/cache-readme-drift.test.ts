@@ -22,7 +22,13 @@ describe('cache README', () => {
     for (const gib of stated) expect(gib * GiB).toBe(capBytes);
   });
 
-  it('does not claim hash-less stores skip validation', () => {
-    expect(readme()).not.toContain('no `content_hash` attribute → validation skipped');
+  it('documents validation for hash-less external datasets', () => {
+    const externalDatasets = readme()
+      .split('**External datasets**')[1]
+      ?.split('## Performance')[0];
+
+    expect(externalDatasets).toBeDefined();
+    expect(externalDatasets).toContain('zattrs-hash');
+    expect(externalDatasets).not.toMatch(/validation (?:is )?skipped/);
   });
 });
