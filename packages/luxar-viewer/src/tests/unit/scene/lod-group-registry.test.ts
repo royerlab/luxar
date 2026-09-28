@@ -4950,6 +4950,115 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(fine.object.visible).toBe(true); // hard swap to the finest level
     expect(coarse.object.visible).toBe(false);
   });
+
+  // ── Time-based dissolve (config.lod.fadeMs) ──
+  // The dissolve is a function of TIME since the displayed level changed, not
+  // of the camera's distance to a threshold: a parked camera must end up
+  // drawing ONE level (#2925), whatever its coverage metric.
+  const FADE_MS = 250;
+  /** Registry whose identity camera can be zoomed by `scale` (metric = 0.5·scale). */
+  function makeTimedReg(clock: { t: number }) {
+    const camera = new THREE.Camera();
+    camera.matrixWorldInverse.identity();
+    camera.projectionMatrix.identity();
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getViewVersion: () => 2,
+      getCrossFadeEnabled: () => true,
+      now: () => clock.t,
+    });
+    const zoom = (scale: number): void => {
+      camera.projectionMatrix.makeScale(scale, scale, 1);
+    };
+    return { reg, zoom };
+  }
+  const drawn = (children: LODGroupChild[]): number[] =>
+    children.flatMap((c, i) => (c.object.visible ? [i] : []));
+  const isAnimating = (reg: LODGroupRegistry): boolean | undefined =>
+    (reg as unknown as { isAnimating?: () => boolean }).isAnimating?.();
+
+  it.fails('a parked camera draws a single level at full weight (#2925)', () => {
+    // fadeChild's box reads metric 0.5, EXACTLY the fine level's threshold: the
+    // spot where a distance-driven band blends the two levels 50/50 for as
+    // long as the camera stays there.
+    const clock = { t: 1000 };
+    const { reg } = makeTimedReg(clock);
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.5);
+    const children = [coarse, fine];
+    reg.register(makeEntry(children, 0, '/g'));
+    for (let f = 0; f < 60; f++) {
+      reg.evaluatePerFrame();
+      clock.t += 16;
+    }
+    expect(drawn(children)).toEqual([1]);
+    expect(liveOpacity(fine)).toBe(1);
+    expect(reg.get('/g')!.displayedChildIndex).toBe(1);
+  });
+
+  it.fails('a level change dissolves over fadeMs, then draws the new level alone', () => {
+    const clock = { t: 1000 };
+    const { reg, zoom } = makeTimedReg(clock);
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.9);
+    const children = [coarse, fine];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame(); // metric 0.5 < 0.9: the coarse level alone
+    expect(drawn(children)).toEqual([0]);
+    expect(isAnimating(reg)).toBe(false);
+
+    zoom(4); // metric 2.0: far past the fine threshold, no distance band anywhere near
+    clock.t += 16;
+    reg.evaluatePerFrame();
+    expect(drawn(children)).toEqual([0, 1]);
+    expect(liveOpacity(fine) + liveOpacity(coarse)).toBeCloseTo(1, 6);
+    expect(isAnimating(reg)).toBe(true);
+
+    clock.t += FADE_MS / 2;
+    reg.evaluatePerFrame();
+    expect(drawn(children)).toEqual([0, 1]);
+    expect(liveOpacity(fine)).toBeCloseTo(0.5, 2);
+    expect(liveOpacity(fine) + liveOpacity(coarse)).toBeCloseTo(1, 6);
+
+    clock.t += FADE_MS / 2;
+    reg.evaluatePerFrame();
+    expect(drawn(children)).toEqual([1]);
+    expect(liveOpacity(fine)).toBe(1);
+    expect(isAnimating(reg)).toBe(false);
+  });
+
+  it.fails('a retarget mid-dissolve starts from the current opacities (no pop)', () => {
+    const clock = { t: 1000 };
+    const { reg, zoom } = makeTimedReg(clock);
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.9);
+    const children = [coarse, fine];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    zoom(4);
+    reg.evaluatePerFrame(); // the coarse → fine dissolve starts
+    clock.t += 0.4 * FADE_MS;
+    reg.evaluatePerFrame();
+    const fineBefore = liveOpacity(fine);
+    const coarseBefore = liveOpacity(coarse);
+    expect(fineBefore).toBeGreaterThan(0.05);
+    expect(fineBefore).toBeLessThan(0.95);
+
+    zoom(1); // back below the fine threshold (past its hysteresis): coarse again
+    reg.evaluatePerFrame();
+    expect(drawn(children)).toEqual([0, 1]);
+    expect(liveOpacity(fine)).toBeCloseTo(fineBefore, 6);
+    expect(liveOpacity(coarse)).toBeCloseTo(coarseBefore, 6);
+
+    // The reversal only has to undo what the first dissolve did: it lands
+    // after 0.4·fadeMs, not a whole fadeMs.
+    clock.t += 0.4 * FADE_MS + 1;
+    reg.evaluatePerFrame();
+    expect(drawn(children)).toEqual([0]);
+    expect(liveOpacity(coarse)).toBe(1);
+  });
 });
 
 // Streaming energy compensation (ON by default; ?noLodEnergy disables) — as a
