@@ -33,7 +33,7 @@ import {
 function makeCtx(overrides: Partial<DimensionLoadingContext> = {}): DimensionLoadingContext {
   return {
     sceneManager: { scene: {} } as never,
-    animationController: { startAnimation: vi.fn() } as never,
+    animationController: { startAnimation: vi.fn(), requestTick: vi.fn() } as never,
     getAnimationManager: () => undefined,
     ...overrides,
   };
@@ -57,18 +57,22 @@ describe('updateAllNDNodes', () => {
     expect(updateSceneForDimensions).not.toHaveBeenCalled();
   });
 
-  it('forwards dims + scene to the loader and kicks the animation loop', async () => {
+  it('forwards dims + scene to the loader and keeps the loop ticking without a render', async () => {
     const dims = { ndim: 4, displayed: [0, 1, 2], currentStep: [0, 0, 0, 5], metadata: undefined };
     (sceneDimsManager.getDims as ReturnType<typeof vi.fn>).mockReturnValue(dims);
     const startAnimation = vi.fn();
-    const ctx = makeCtx({ animationController: { startAnimation } as never });
+    const requestTick = vi.fn();
+    const ctx = makeCtx({ animationController: { startAnimation, requestTick } as never });
 
     await updateAllNDNodes(ctx);
 
     expect(updateSceneForDimensions).toHaveBeenCalledWith(dims, expect.anything(), undefined, {
       frameBudgetMs: undefined,
     });
-    expect(startAnimation).toHaveBeenCalledTimes(1);
+    // The pass's commits request their own render; a trailing wake would draw
+    // a second identical frame per data step.
+    expect(requestTick).toHaveBeenCalledTimes(1);
+    expect(startAnimation).not.toHaveBeenCalled();
   });
 
   describe('t+1 shadow prefetch trigger', () => {

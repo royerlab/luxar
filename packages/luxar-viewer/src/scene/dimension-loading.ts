@@ -167,6 +167,9 @@ export async function updateAllNDNodes(ctx: DimensionLoadingContext): Promise<vo
     if (pinnedScrub) scheduleScrubSettle(ctx);
   }
 
-  // Trigger re-render after update
-  ctx.animationController.startAnimation();
+  // Keep the loop ticking after the update. Its commits already requested
+  // their own render (geometry-committed), so waking with a render here drew
+  // a second, identical frame on the next tick: about two renders per data
+  // step during playback.
+  ctx.animationController.requestTick();
 }
