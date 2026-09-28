@@ -652,6 +652,13 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // A pinned pass bounds the loop at the pinned rung count; the policy's
     // `pinned` kind disables the deadline / cold-level brakes.
     const targetLevels = this._ladderDepth ?? this.nLods;
+    // A pinned pass takes every rung up to its depth whatever they cost, so
+    // their fetches need not wait on one another (B5): start them all now,
+    // coarsest first, and commit them below in ladder order as before.
+    const pinnedLoads =
+      pass === 'pinned'
+        ? this.startLevelLoads(startLevel, targetLevels, viewState, session, signal)
+        : null;
     for (let level = startLevel; level < targetLevels; level++) {
       // A dispose() racing the awaited level below clears `lodLoaders`, so
       // the next iteration would TypeError on `this.lodLoaders[level]` — a
@@ -671,11 +678,8 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       // for a shadow prefetch pass — the same rule as `warmRemainingLODMetadata`.
       if (this._frameBudgetMs === null && !isPrefetch) this.warmLevelIndex(level + 1);
       const t0 = performance.now();
-      const { data: lodData, allResident } = await timeLodStageWithResult(
-        ({ allResident }) => `additive:gsplats:level:${level}:${allResident ? 'resident' : 'miss'}`,
-        `additive:gsplats:level:${level}:aborted`,
-        () => this.lodLoaders[level].updateViewWithResidency(viewState, session, signal)
-      );
+      const { data: lodData, allResident } = await (pinnedLoads?.[level - startLevel] ??
+        this.loadLevel(level, viewState, session, signal));
       const elapsed = performance.now() - t0;
 
       this.loadedLODs.push(lodData);
@@ -931,6 +935,42 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       Modules.GSPLATS_SPATIAL_INDEX_LOADER,
       `GSplat lookahead depth ${depth} (${headroomLabel} L0 headroom)`
     );
+  }
+
+  /** Load one rung for `viewState` (timed as `additive:gsplats:level:<n>`). */
+  private loadLevel(
+    level: number,
+    viewState: GSplatsViewState,
+    session: UpdateSession | undefined,
+    signal: AbortSignal | undefined
+  ): Promise<{ data: LoadedGSplatsData; allResident: boolean }> {
+    return timeLodStageWithResult(
+      ({ allResident }) => `additive:gsplats:level:${level}:${allResident ? 'resident' : 'miss'}`,
+      `additive:gsplats:level:${level}:aborted`,
+      () => this.lodLoaders[level].updateViewWithResidency(viewState, session, signal)
+    );
+  }
+
+  /**
+   * Start rungs `[from, to)` concurrently, coarsest first. A rung the loop never
+   * awaits (it broke out early, or an earlier rung threw) must not surface as an
+   * unhandled rejection, so each promise gets a no-op handler; the loop still
+   * awaits — and rethrows — the original.
+   */
+  private startLevelLoads(
+    from: number,
+    to: number,
+    viewState: GSplatsViewState,
+    session: UpdateSession | undefined,
+    signal: AbortSignal | undefined
+  ): Array<Promise<{ data: LoadedGSplatsData; allResident: boolean }>> {
+    const loads: Array<Promise<{ data: LoadedGSplatsData; allResident: boolean }>> = [];
+    for (let level = from; level < to; level++) {
+      const load = this.loadLevel(level, viewState, session, signal);
+      void load.catch(() => {});
+      loads.push(load);
+    }
+    return loads;
   }
 
   private warmRemainingLODMetadata(): void {

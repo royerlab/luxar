@@ -80,7 +80,7 @@ function makeLoader(rungs: ReturnType<typeof subLoader>[]): GSplatsProgressiveLo
 }
 
 describe('GSplatsProgressiveLoader — scrubbing (B5)', () => {
-  it.fails('pinned rungs are fetched concurrently, coarsest first', async () => {
+  it('pinned rungs are fetched concurrently, coarsest first', async () => {
     const rungs = [subLoader(1, true), subLoader(2, true), subLoader(4, true)];
     const loader = makeLoader(rungs);
     const started: number[] = [];
