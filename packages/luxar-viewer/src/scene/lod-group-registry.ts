@@ -813,26 +813,19 @@ function capturePartitionFootprint(
   }
 }
 
+/** `'/'` — the path segment separator {@link LODGroupRegistry.invalidatePartitionFootprint} splits on. */
+const SLASH = 0x2f;
+
 /**
- * Dirty every part the committed ``nodePath`` belongs to — the part itself, or
- * anything under it (an LOD level or an additive rung commits at a deeper path
- * than the part it renders into). Returns whether any part matched, so the
- * caller can fall back to dirtying the whole partition.
+ * One registered part, as the footprint-invalidation path index stores it: the
+ * partition it belongs to and its index in that partition's children. A part's
+ * path may be shared (duplicates) or empty (a pathless part, keyed by `''`, which
+ * is a segment prefix of every absolute path — the same match the linear rule
+ * `nodePath.startsWith(childPath + '/')` gave it).
  */
-function invalidateMatchingPartitionChildren(
-  entry: PartitionGroupEntry,
-  children: Array<{ footprintDirty: boolean }>,
-  nodePath: string
-): boolean {
-  let matched = false;
-  for (let index = 0; index < entry.children.length; index++) {
-    const childPath = entry.children[index].path;
-    if (nodePath === childPath || nodePath.startsWith(`${childPath}/`)) {
-      children[index].footprintDirty = true;
-      matched = true;
-    }
-  }
-  return matched;
+interface PartitionPartRef {
+  entryPath: string;
+  index: number;
 }
 
 function updatePartitionObjectVisibility(
@@ -1074,6 +1067,15 @@ export class LODGroupRegistry {
     }
   > = new Map();
   /**
+   * Part path → every registered part carrying it (B9c): the index that makes
+   * {@link invalidatePartitionFootprint} O(path depth) instead of a scan over
+   * every part of every partition. Maintained by ``registerPartition`` /
+   * ``unregister`` / ``clear``; ``partitionPartKeys`` remembers which keys each
+   * partition added so it can take exactly those back out.
+   */
+  private readonly partitionPartsByPath = new Map<string, PartitionPartRef[]>();
+  private readonly partitionPartKeys = new Map<string, string[]>();
+  /**
    * Per-entry register-time cache (parallel to ``entries`` by path).
    * Populated by :meth:`register`. Stored on the side so the public
    * ``LODGroupEntry`` interface stays test-friendly (callers don't
@@ -1232,7 +1234,9 @@ export class LODGroupRegistry {
 
   /** Register a partition whose children are independently frustum-gated. */
   registerPartition(entry: PartitionGroupEntry): void {
+    this.forgetPartitionParts(entry.path);
     this.partitionEntries.set(entry.path, entry);
+    this.indexPartitionParts(entry);
     this.partitionCaches.set(entry.path, {
       children: entry.children.map((child) => ({
         source: { path: entry.path, groupObject: entry.groupObject, children: [child] },
@@ -1272,14 +1276,66 @@ export class LODGroupRegistry {
    * gate separately detects transform changes.
    */
   invalidatePartitionFootprint(nodePath: string): void {
-    for (const [entryPath, cache] of this.partitionCaches) {
-      if (nodePath !== entryPath && !nodePath.startsWith(`${entryPath}/`)) continue;
-      const entry = this.partitionEntries.get(entryPath);
-      if (!entry) continue;
-      const matched = invalidateMatchingPartitionChildren(entry, cache.children, nodePath);
-      if (!matched) {
-        for (const childCache of cache.children) childCache.footprintDirty = true;
+    if (this.partitionCaches.size === 0) return;
+    // A partition or part is affected exactly when its path is ``nodePath`` or a
+    // segment prefix of it, so enumerate those prefixes (O(depth)) and look them
+    // up, instead of scanning every registered part — a commit per part on a
+    // 2000-part partition made the scan O(parts²) per pass (B9c).
+    const touched: string[] = [];
+    const hits: PartitionPartRef[] = [];
+    for (let end = nodePath.length; end >= 0; end--) {
+      if (end !== nodePath.length && nodePath.charCodeAt(end) !== SLASH) continue;
+      const prefix = nodePath.slice(0, end);
+      if (this.partitionEntries.has(prefix)) touched.push(prefix);
+      const parts = this.partitionPartsByPath.get(prefix);
+      if (parts) hits.push(...parts);
+    }
+    for (const entryPath of touched) this.dirtyPartitionParts(entryPath, hits);
+  }
+
+  /**
+   * Dirty the ``hits`` belonging to partition ``entryPath`` — or, when none
+   * does (a commit under the partition matching no registered part), every part
+   * of it, conservatively, rather than keep an under-covering stale box.
+   */
+  private dirtyPartitionParts(entryPath: string, hits: readonly PartitionPartRef[]): void {
+    const cache = this.partitionCaches.get(entryPath);
+    if (!cache) return;
+    let matched = false;
+    for (const hit of hits) {
+      if (hit.entryPath !== entryPath) continue;
+      cache.children[hit.index].footprintDirty = true;
+      matched = true;
+    }
+    if (matched) return;
+    for (const childCache of cache.children) childCache.footprintDirty = true;
+  }
+
+  /** Index a registered partition's parts by path for {@link invalidatePartitionFootprint}. */
+  private indexPartitionParts(entry: PartitionGroupEntry): void {
+    const keys = entry.children.map((child) => child.path);
+    keys.forEach((key, index) => {
+      let refs = this.partitionPartsByPath.get(key);
+      if (!refs) {
+        refs = [];
+        this.partitionPartsByPath.set(key, refs);
       }
+      refs.push({ entryPath: entry.path, index });
+    });
+    this.partitionPartKeys.set(entry.path, keys);
+  }
+
+  /** Drop a partition's parts from the path index. */
+  private forgetPartitionParts(entryPath: string): void {
+    const keys = this.partitionPartKeys.get(entryPath);
+    if (!keys) return;
+    this.partitionPartKeys.delete(entryPath);
+    for (const key of new Set(keys)) {
+      const refs = this.partitionPartsByPath.get(key);
+      if (!refs) continue;
+      const kept = refs.filter((ref) => ref.entryPath !== entryPath);
+      if (kept.length > 0) this.partitionPartsByPath.set(key, kept);
+      else this.partitionPartsByPath.delete(key);
     }
   }
 
@@ -1295,6 +1351,7 @@ export class LODGroupRegistry {
     this.caches.delete(path);
     this.partitionEntries.delete(path);
     this.partitionCaches.delete(path);
+    this.forgetPartitionParts(path);
     this.warnedNoReadyChild.delete(path);
     this.warnedEmptyLevel.delete(path);
   }
@@ -1315,6 +1372,8 @@ export class LODGroupRegistry {
     this.caches.clear();
     this.partitionEntries.clear();
     this.partitionCaches.clear();
+    this.partitionPartsByPath.clear();
+    this.partitionPartKeys.clear();
     // Reset the monotonic tick so a reused registry (shared-registry
     // refactor) starts cold rather than inheriting stale LRU ordering — and
     // the settle clock with it: it is keyed on the tick, and a leftover

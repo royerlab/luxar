@@ -152,7 +152,7 @@ describe('invalidatePartitionFootprint — dirty set', () => {
 });
 
 describe('invalidatePartitionFootprint — cost', () => {
-  it.fails('does not scan every part per call on a 2000-part partition', () => {
+  it('does not scan every part per call on a 2000-part partition', () => {
     const reg = makeRegistry();
     let pathReads = 0;
     const children: PartitionGroupChild[] = [];
