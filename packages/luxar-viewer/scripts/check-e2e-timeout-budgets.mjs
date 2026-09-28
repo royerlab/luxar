@@ -111,6 +111,7 @@ function exportedHelpers(source, file, cache, helperSources) {
   const constants = constantDeclarations(sourceFile);
   const helpers = localHelpers(sourceFile, constants);
   const exported = new Map();
+  const deferredExports = [];
   for (const statement of sourceFile.statements) {
     if (ts.isExportDeclaration(statement)) {
       const elements =
@@ -124,12 +125,7 @@ function exportedHelpers(source, file, cache, helperSources) {
       if (statement.moduleSpecifier) {
         throw new Error(`Shared helper module ${file} uses an unsupported re-export.`);
       }
-      for (const element of elements) {
-        if (element.isTypeOnly) continue;
-        const localName = element.propertyName?.text ?? element.name.text;
-        const helper = helpers.get(localName);
-        if (helper) exported.set(element.name.text, helper);
-      }
+      deferredExports.push(...elements.filter((element) => !element.isTypeOnly));
       continue;
     }
     const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) : undefined;
@@ -148,6 +144,14 @@ function exportedHelpers(source, file, cache, helperSources) {
   try {
     for (const [name, helper] of importedHelpers(sourceFile, helperSources, cache, file)) {
       helpers.set(name, helper);
+    }
+    for (const element of deferredExports) {
+      const localName = element.propertyName?.text ?? element.name.text;
+      const helper = helpers.get(localName);
+      if (!helper) {
+        throw new Error(`Shared helper module ${file} exports unresolved helper ${localName}.`);
+      }
+      exported.set(element.name.text, helper);
     }
   } catch (error) {
     cache.delete(cacheKey);

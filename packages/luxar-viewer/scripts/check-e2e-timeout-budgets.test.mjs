@@ -981,6 +981,47 @@ export async function outer(page) { await renamed(page); }`,
     ).toThrow(/re-export/);
   });
 
+  it('follows a helper imported and then exported by another helper module', () => {
+    const source = `
+      import { test } from '@playwright/test';
+      import { waitForReady } from './helpers';
+
+      test('uses the forwarded helper', async ({ page }) => {
+        await waitForReady(page);
+      });
+    `;
+    const helperSources = new Map([
+      ['./helpers', "import { wait } from './helpers/inner'; export { wait as waitForReady };"],
+      [
+        './helpers/inner',
+        'export async function wait(page) { await page.waitForTimeout(45_000); }',
+      ],
+    ]);
+
+    expect(
+      analyzeSpec(source, 'src/tests/e2e/example.spec.ts', 30_000, 60_000, helperSources)
+    ).toEqual([
+      {
+        deadlineMs: 45_000,
+        file: 'src/tests/e2e/example.spec.ts',
+        line: 5,
+        test: 'uses the forwarded helper',
+      },
+    ]);
+  });
+
+  it('fails closed when a shared-helper export names an unresolved binding', () => {
+    expect(() =>
+      analyzeSpec(
+        "import { missing } from './helpers';",
+        'src/tests/e2e/example.spec.ts',
+        30_000,
+        60_000,
+        new Map([['./helpers', 'export { missing };']])
+      )
+    ).toThrow(/missing/);
+  });
+
   it('ignores type-only shared-helper imports and re-exports', () => {
     const runtimeImport = `
       import { test } from '@playwright/test';
