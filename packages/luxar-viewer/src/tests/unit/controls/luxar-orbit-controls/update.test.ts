@@ -607,8 +607,7 @@ describe('runUpdateStep — step 2: auto-dolly', () => {
 // drags under `?renderAlways`, loop still rendering 60 fps 20 s later). The
 // state below was captured from such a drag.
 describe('runUpdateStep — damped rotation residue converges (no ULP limit cycle)', () => {
-  // Fails until the negligible-rotation gate lands (next commit).
-  it.fails('stops reporting a change once the residual rotation is negligible', () => {
+  it('stops reporting a change once the residual rotation is negligible', () => {
     const { ctx, state } = makeCtx({
       enableDamping: true,
       dampingFactor: 0.25,

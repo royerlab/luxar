@@ -30,6 +30,19 @@ import { applyToCamera } from './camera-application';
 import type { AutoRotateAxis } from '../types';
 
 const _IDENTITY_QUAT = new THREE.Quaternion();
+
+/**
+ * Sine of the half-angle below which a rotation delta is dropped (≈ 2e-12
+ * rad). Far below anything a frame can show: the whole remaining damped tail
+ * (`delta / dampingFactor`) moves a camera 1e4 units from its target by under
+ * 1e-7 units, beneath float32 resolution of the matrices the GPU receives.
+ */
+const NEGLIGIBLE_ROTATION_SIN_HALF = 1e-12;
+
+/** Whether `q` (a unit rotation) is within {@link NEGLIGIBLE_ROTATION_SIN_HALF} of the identity. */
+function isNegligibleRotation(q: THREE.Quaternion): boolean {
+  return q.x * q.x + q.y * q.y + q.z * q.z < NEGLIGIBLE_ROTATION_SIN_HALF ** 2;
+}
 const _v2 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 
@@ -141,8 +154,16 @@ export function runUpdateStep(ctx: OrbitUpdateCtx, deltaTime?: number): boolean 
     ctx.setDollyPhase(nextPhase);
   }
 
-  // 3. Apply trackball rotation with damping (local frame)
-  if (ctx.enableDamping) {
+  // 3. Apply trackball rotation with damping (local frame). A negligible
+  // residue is snapped to the identity and NOT applied, like the roll/zoom
+  // gates below: the damped delta decays geometrically and takes thousands of
+  // frames to reach the exact identity, and multiplying it in + re-normalizing
+  // every frame can flip the orientation between two ULP-apart quaternions
+  // forever — step 10's exact test then reports a change on every frame and
+  // the render loop never idles after the drag.
+  if (isNegligibleRotation(ctx.rotationDelta)) {
+    ctx.rotationDelta.identity();
+  } else if (ctx.enableDamping) {
     _q1.slerpQuaternions(_IDENTITY_QUAT, ctx.rotationDelta, ctx.dampingFactor);
     ctx.orientation.multiply(_q1);
     ctx.orientation.normalize();
