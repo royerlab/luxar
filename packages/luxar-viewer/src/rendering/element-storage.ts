@@ -591,6 +591,7 @@ function applyNextSortedIndexChunk(
   // frame — still atomic, still one upload.
   const sliceEnd = chunkedApplyEnabled ? start + sortedIndexChunkElements : state.count;
   const end = Math.min(state.count, sliceEnd, arr.length);
+  clearIdentityPrefix(attr);
   arr.set(state.ordering.subarray(start, end), start);
   state.cursor = end;
 
@@ -899,6 +900,21 @@ export function elementTexelCapacity(texture: THREE.DataTexture, floatsPerElemen
 }
 
 /**
+ * How many leading entries of an ordering buffer are known to hold the
+ * identity permutation. Order-independent (commutative) nodes write identity
+ * on every commit; without this, each commit rewrote and re-uploaded the whole
+ * prefix (4 B x count, about 6% of a playback commit's upload bytes, #2944)
+ * although the buffer already held it. Every write to an ordering buffer goes
+ * through this module, so each non-identity writer clears the entry.
+ */
+const identityPrefix = new WeakMap<THREE.BufferAttribute, number>();
+
+/** Forget that `attr` holds identity (a permutation is about to be written into it). */
+function clearIdentityPrefix(attr: THREE.BufferAttribute): void {
+  identityPrefix.delete(attr);
+}
+
+/**
  * Fill `aSortedIndex[0..count)` with identity ordering and register a
  * single collapsed prefix update range. Ranges accumulate across
  * commits while a mesh is not drawn (no backend merges them at flush),
@@ -936,8 +952,12 @@ export function writeSortedIndexIdentity(
   if (!attr) return;
   const arr = attr.array as Uint32Array;
   const n = Math.min(count, arr.length);
-  for (let i = 0; i < n; i++) arr[i] = i;
-  collapseSortedIndexRanges(attr, n);
+  const known = identityPrefix.get(attr) ?? 0;
+  // Already identity over [0, n): nothing to write, nothing to upload.
+  if (known >= n) return;
+  for (let i = known; i < n; i++) arr[i] = i;
+  identityPrefix.set(attr, n);
+  collapseSortedIndexRanges(attr, n, known);
 }
 
 /**
@@ -966,7 +986,11 @@ export function writeSortedIndexIdentityRange(
   if (!attr) return;
   const arr = attr.array as Uint32Array;
   const n = Math.min(count, arr.length);
-  for (let i = Math.max(0, from); i < n; i++) arr[i] = i;
+  const start = Math.max(0, from);
+  for (let i = start; i < n; i++) arr[i] = i;
+  // The kept [0, from) prefix is a permutation; the buffer is identity over
+  // [0, n) only if that prefix already was.
+  if ((identityPrefix.get(attr) ?? 0) >= start) identityPrefix.set(attr, n);
   collapseSortedIndexRanges(attr, n);
 }
 
@@ -1006,6 +1030,7 @@ export function writeSortedIndexOrderingLive(
   // Supersedes any in-flight chunked apply: its remaining slices belong to an
   // older sort of this same population and would land on top of this one.
   cancelSortedIndexOrderingApply(geometry);
+  clearIdentityPrefix(attr);
   arr.set(ordering.subarray(0, count), 0);
   collapseSortedIndexRanges(attr, count);
   return count;
@@ -1090,6 +1115,7 @@ export function repairSortedIndexForCount(
   // Read past `n` is deliberate on a shrink: the dropped values are exactly
   // the ones at or above the new count.
   const readEnd = Math.min(Math.max(prevCount, 0), arr.length);
+  const identityKnown = identityPrefix.get(attr) ?? 0;
   let write = 0;
   for (let i = 0; i < readEnd && write < n; i++) {
     const v = arr[i];
@@ -1106,6 +1132,10 @@ export function repairSortedIndexForCount(
     if (seen[v] === 0) arr[write++] = v;
   }
 
+  // Repairing an identity prefix yields identity (kept in order, missing
+  // values appended ascending); anything else is a real permutation.
+  if (identityKnown >= readEnd) identityPrefix.set(attr, n);
+  else clearIdentityPrefix(attr);
   collapseSortedIndexRanges(attr, n);
 }
 
@@ -1219,13 +1249,19 @@ export function writeSortedIndexOrdering(
  * fresh entries plus any still-pending ranges (see the identity writer's
  * doc comment for why ranges must never accumulate).
  */
-function collapseSortedIndexRanges(attr: THREE.InstancedBufferAttribute, n: number): void {
+function collapseSortedIndexRanges(
+  attr: THREE.InstancedBufferAttribute,
+  n: number,
+  from = 0
+): void {
+  let rangeStart = from;
   let rangeEnd = n;
   for (const range of attr.updateRanges) {
     const end = range.start + range.count;
+    if (range.start < rangeStart) rangeStart = range.start;
     if (end > rangeEnd) rangeEnd = end;
   }
   attr.clearUpdateRanges();
-  attr.addUpdateRange(0, rangeEnd);
+  attr.addUpdateRange(rangeStart, rangeEnd - rangeStart);
   attr.needsUpdate = true;
 }
