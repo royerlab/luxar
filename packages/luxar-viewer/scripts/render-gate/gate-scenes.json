@@ -437,6 +437,7 @@
           "store": "gate/tp50.luxar.zarr",
           "workload": { "kind": "playback", "fps": 10, "durationMs": 6000 },
           "metrics": [
+            { "name": "worker.misroutes", "better": "lower", "kind": "counter", "relTol": 0.05 },
             {
               "name": "ext.gpuUploadBytesBuffer",
               "better": "lower",
@@ -592,6 +593,13 @@
           "store": "gate/tp50.luxar.zarr",
           "workload": { "kind": "playback", "fps": 20, "loops": 3 },
           "metrics": [
+            { "name": "worker.misroutes", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            {
+              "name": "decode.count.lookahead",
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
             { "name": "decode.duplicates", "better": "lower", "kind": "counter" },
             { "name": "decode.count", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "scache.pinnedBytes", "better": "lower", "kind": "counter" },
