@@ -67,8 +67,12 @@ vi.mock('three', () => ({
       userData: {},
       children: [] as unknown[],
       getObjectByName: vi.fn(),
+      // The loader indexes its root group by path (utils/scene-graph-index),
+      // which listens for child add/remove events on every node it indexes.
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
       traverse: vi.fn((callback) => {
-        callback({ name: 'test' });
+        callback({ name: 'test', addEventListener: vi.fn(), removeEventListener: vi.fn() });
       }),
       position: {
         copy: vi.fn().mockReturnThis(),

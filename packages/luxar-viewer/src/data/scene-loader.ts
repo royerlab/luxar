@@ -5,6 +5,7 @@
  * loading for all points nodes and managing the THREE.js scene construction.
  */
 
+import { findObjectByName } from '../utils/scene-graph-index';
 import { bumpFailedLoadsVersion, failedLoadsVersion } from '../utils/failed-loads-version';
 import * as zarr from './zarr';
 import * as THREE from 'three';
@@ -606,7 +607,7 @@ export class SceneLoader {
         factoryDeps: () => this.factoryDeps(),
         registry: this.registry,
         applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
-        resolveObject: (path) => this.rootGroup?.getObjectByName(path),
+        resolveObject: (path) => findObjectByName(this.rootGroup, path),
       });
     }
     // Strip any rider budget off the incoming partial — the shadow pass gets
@@ -1922,7 +1923,7 @@ export class SceneLoader {
    * fresh loader → new data reference → full recommit either way.
    */
   private clearCommittedDataStamp(path: string): void {
-    const mesh = this.rootGroup?.getObjectByName(path);
+    const mesh = findObjectByName(this.rootGroup, path);
     if (mesh) {
       clearCommittedData(mesh);
     }
@@ -2120,7 +2121,7 @@ export class SceneLoader {
         // demoted level won't sort again until re-promotion re-registers it
         // (fresh commit → noteDepthSortCommit). Mirrors the coordinator's
         // empty-commit release hygiene.
-        const mesh = this.rootGroup?.getObjectByName(path);
+        const mesh = findObjectByName(this.rootGroup, path);
         if (mesh) releaseDepthSortNode(mesh as THREE.Mesh);
       },
       releaseLazyPoints: (path) => {
@@ -2132,7 +2133,7 @@ export class SceneLoader {
         this.clearCommittedDataStamp(path);
         // Drop the level's depth-sort state + worker-side centers — the
         // same demotion hygiene as the gsplats branch above.
-        const mesh = this.rootGroup?.getObjectByName(path);
+        const mesh = findObjectByName(this.rootGroup, path);
         if (mesh) releaseDepthSortNode(mesh as THREE.Mesh);
       },
       releaseLazyLines: (path) => {
@@ -2142,12 +2143,12 @@ export class SceneLoader {
         this.clearCommittedDataStamp(path);
         // Drop the level's depth-sort state + worker-side midpoints —
         // the same demotion hygiene as the gsplats/points branches above.
-        const mesh = this.rootGroup?.getObjectByName(path);
+        const mesh = findObjectByName(this.rootGroup, path);
         if (mesh) releaseDepthSortNode(mesh as THREE.Mesh);
       },
       releaseLazyMesh: (path) => {
         this.clearCommittedDataStamp(path);
-        const mesh = this.rootGroup?.getObjectByName(path);
+        const mesh = findObjectByName(this.rootGroup, path);
         if (mesh) {
           const level = mesh as THREE.Mesh;
           // Mesh is depthSortable (#1347); demotion must drop coordinator

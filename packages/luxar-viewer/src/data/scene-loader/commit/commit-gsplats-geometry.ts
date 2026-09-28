@@ -12,6 +12,7 @@
  * @module data/scene-loader/commit/commit-gsplats-geometry
  */
 
+import { findObjectByName } from '../../../utils/scene-graph-index';
 import * as THREE from 'three';
 import { updateInstancedGSplatsMesh } from '../../../rendering/gsplat-geometry';
 import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
@@ -64,7 +65,7 @@ export function commitGSplatsGeometry(
 ): void {
   if (!rootGroup) return;
 
-  const mesh = rootGroup.getObjectByName(staged.path) as THREE.Mesh;
+  const mesh = findObjectByName(rootGroup, staged.path) as THREE.Mesh;
   if (!mesh || !isGSplatsUserData(mesh.userData)) return;
 
   if (staged.noop) {

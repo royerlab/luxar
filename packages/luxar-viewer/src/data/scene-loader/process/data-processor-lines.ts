@@ -30,6 +30,7 @@
  * @module data/scene-loader/process/data-processor-lines
  */
 
+import { findObjectByName } from '../../../utils/scene-graph-index';
 import * as THREE from 'three';
 import type { LinesViewState, LoadedLinesData, ProcessedLinesData } from '../../../types/lines';
 import { isLinesUserData } from '../../../types/lines';
@@ -545,7 +546,7 @@ export async function processLinesData(
 ): Promise<StagedLinesCommit | null> {
   if (!rootGroup) return null;
 
-  const mesh = rootGroup.getObjectByName(path) as THREE.Mesh;
+  const mesh = findObjectByName(rootGroup, path) as THREE.Mesh;
   if (!mesh || !isLinesUserData(mesh.userData)) return null;
 
   // Compute base tolerance, then mutate per-dim for extend_to_all

@@ -33,6 +33,7 @@ import * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { log, Modules, LogEmoji } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
+import { attachSceneGraphIndex } from '../../../utils/scene-graph-index';
 import { getWorkerPool, warmUpDataWorkerPool } from '../../../workers/worker-pool';
 import { markLoad, noteRefinementComplete } from '../../../profiling/load-timeline';
 import type { RefinementHoldReason } from '../../../types/data-monitor-types';
@@ -338,6 +339,11 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // Create root THREE.js group
   const rootGroup = new THREE.Group();
   rootGroup.name = 'LuxarScene';
+  // Path lookups (commit / process / sweep / release hooks) resolve through this
+  // index instead of an O(scene) `getObjectByName` walk each (B9a). It maintains
+  // itself from the graph's own add/remove/rename events, so no builder below has
+  // to know about it; a dataset switch builds a fresh root and a fresh index.
+  attachSceneGraphIndex(rootGroup);
   ctx.setRootGroup(rootGroup);
 
   // Load scene metadata

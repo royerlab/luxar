@@ -55,6 +55,7 @@ utils/
 ├── object-visibility.ts     # isEffectivelyVisible (ancestor-aware scene-graph visibility)
 ├── platform.ts              # isMacPlatform()
 ├── result.ts                # Result<T, E> + ok/err/isOk/isErr/match/mapOk/mapErr/unwrap/tryAsync
+├── scene-graph-index.ts     # findObjectByName / attachSceneGraphIndex — self-maintaining path→Object3D map (exact getObjectByName semantics, O(1) for unique names)
 ├── storage-keys.ts          # luxar.* localStorage key registry
 ├── viewer-container.ts      # mount-root registry (get/set/resetViewerContainer) + containing-block promotion
 ├── wheel-delta.ts           # deltaMode normalization + opt-in Shift-axis fallback

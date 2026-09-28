@@ -12,6 +12,7 @@
  * @module data/scene-loader/commit/commit-lines-geometry
  */
 
+import { findObjectByName } from '../../../utils/scene-graph-index';
 import * as THREE from 'three';
 import { isLinesUserData } from '../../../types/lines';
 import { log, LogEmoji, Modules } from '../../../utils/log';
@@ -57,7 +58,7 @@ export function commitLinesGeometry(
 ): void {
   if (!rootGroup) return;
 
-  const mesh = rootGroup.getObjectByName(staged.path) as THREE.Mesh;
+  const mesh = findObjectByName(rootGroup, staged.path) as THREE.Mesh;
   if (!mesh || !isLinesUserData(mesh.userData)) return;
 
   if (staged.noop) {

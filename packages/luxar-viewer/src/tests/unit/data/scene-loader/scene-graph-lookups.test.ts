@@ -159,7 +159,7 @@ describe('SceneLoader update pass — name lookups (B9a)', () => {
     vi.restoreAllMocks();
   });
 
-  it.fails('a settled update pass over 40 nodes makes no getObjectByName walks', async () => {
+  it('a settled update pass over 40 nodes makes no getObjectByName walks', async () => {
     await sceneLoader.loadScene('http://localhost:8000/test.zarr');
     populate(sceneLoader, 4, 10);
     const view = (w: number) => ({

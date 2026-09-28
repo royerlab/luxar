@@ -48,6 +48,7 @@
  */
 
 import { latchChildFailure } from '../../../utils/lod-child-failure';
+import { findObjectByName } from '../../../utils/scene-graph-index';
 import * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { archiveFaultFrom } from '../../../cache/chunk-source';
@@ -618,7 +619,7 @@ export async function loadLodGroupNode(
       releaseWorkingSet();
     }
 
-    const childObject = lodThreeGroup.getObjectByName(child.path);
+    const childObject = findObjectByName(lodThreeGroup, child.path);
     if (!childObject) {
       log.warning(
         Modules.SCENE_LOADER,

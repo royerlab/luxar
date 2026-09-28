@@ -18,6 +18,7 @@
  * captured values, which would go stale on the second scene.
  */
 
+import { findObjectByName } from '../../utils/scene-graph-index';
 import * as THREE from 'three';
 import type { SceneNode } from '../../data/data-loader-types';
 import type { BlendingMode } from '../../rendering';
@@ -96,7 +97,7 @@ export class LayerApplyEngine {
   private getMesh(path: string): THREE.Object3D | null {
     const rootGroup = this.deps.getRootGroup();
     if (!rootGroup) return null;
-    return rootGroup.getObjectByName(path) ?? null;
+    return findObjectByName(rootGroup, path) ?? null;
   }
 
   /**

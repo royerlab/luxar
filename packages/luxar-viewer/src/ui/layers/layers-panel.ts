@@ -19,6 +19,7 @@
  * lives in `luxar-material.ts` and is re-exported here for existing importers.
  */
 
+import { findObjectByName } from '../../utils/scene-graph-index';
 import * as THREE from 'three';
 import type { SceneNode } from '../../data/data-loader-types';
 import type { FailedLoadsProviderPort } from '../../data/scene-loader-monitor-port';
@@ -515,7 +516,7 @@ export class LayersPanel {
   /** Row: layer verbs + appearance submenus. */
   private buildRowMenuItems(layer: LayerInfo): ContextMenuItem[] {
     const soloed = this.state.soloedPath === layer.path;
-    const obj = this.rootGroup?.getObjectByName(layer.path) ?? null;
+    const obj = findObjectByName(this.rootGroup, layer.path) ?? null;
     const items: ContextMenuItem[] = [
       {
         label: soloed ? 'Un-solo (restore visibility)' : 'Solo — hide all others',

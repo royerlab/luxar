@@ -8,6 +8,7 @@
  * archive-fault hoisting, and Promise.all are identical and live here.
  */
 
+import { findObjectByName } from '../../../utils/scene-graph-index';
 import { log, Modules } from '../../../utils/log';
 import type { UpdateProfiler, UpdateSession } from '../../../profiling/update-profiler';
 import type { ViewStateQueue } from '../view-state/view-state-queue';
@@ -40,7 +41,7 @@ export function isObjectLoadEligible(object: THREE.Object3D | null | undefined):
 
 /** Resolve a loader path and test its foreground/background load eligibility. */
 export function isLoaderPathEligible(root: THREE.Object3D | null, path: string): boolean {
-  return isObjectLoadEligible(root?.getObjectByName(path));
+  return isObjectLoadEligible(findObjectByName(root, path));
 }
 
 /**
@@ -67,7 +68,7 @@ export function resolveLoadEligibleLoaders<TLoader>(
   const eligibleLoaders = new Map<string, TLoader>();
   const objects = new Map<string, THREE.Object3D | undefined>();
   for (const [path, loader] of loaders) {
-    const object = root?.getObjectByName(path);
+    const object = findObjectByName(root, path);
     if (!isObjectLoadEligible(object)) continue;
     eligibleLoaders.set(path, loader);
     objects.set(path, object);
