@@ -25,11 +25,13 @@ a CI build stays offline and silent.
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 import shutil
 import subprocess  # noqa: S404 - fixed argv, no shell, see _say_engine
 import tempfile
+import time
 import urllib.error
 import urllib.request
 import warnings
@@ -80,6 +82,36 @@ def resolve_engine(engine: Optional[str] = None) -> Optional[str]:
     return None
 
 
+#: Attempts per clip. A long tour makes dozens of requests, and one dropped
+#: read must not throw away a build that has run for half an hour.
+OPENAI_ATTEMPTS = 3
+
+
+def _transient(error: Exception) -> bool:
+    """A failure worth retrying: a network error, a timeout, 429 or a 5xx."""
+    if isinstance(error, urllib.error.HTTPError):
+        return error.code == 429 or error.code >= 500
+    return isinstance(error, (OSError, http.client.HTTPException))
+
+
+def _post_with_retry(request: urllib.request.Request) -> bytes:
+    for attempt in range(1, OPENAI_ATTEMPTS + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=OPENAI_TIMEOUT_S) as resp:  # noqa: S310 - fixed https URL
+                return resp.read()
+        except (OSError, http.client.HTTPException) as e:
+            if attempt == OPENAI_ATTEMPTS or not _transient(e):
+                if isinstance(e, urllib.error.HTTPError):
+                    detail = e.read().decode("utf-8", "replace")[:300]
+                    raise RuntimeError(
+                        f"OpenAI TTS failed: HTTP {e.code} {detail}"
+                    ) from e
+                raise RuntimeError(f"OpenAI TTS failed: {e}") from e
+            aprint(f"  ⚠ OpenAI TTS attempt {attempt} failed ({e}); retrying")
+            time.sleep(2**attempt)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 def _openai_engine(text: str, voice: str, out_path: Path) -> None:
     key = os.environ.get("OPENAI_API_KEY")
     if not key:
@@ -101,12 +133,7 @@ def _openai_engine(text: str, voice: str, out_path: Path) -> None:
             "Content-Type": "application/json",
         },
     )
-    try:
-        with urllib.request.urlopen(request, timeout=OPENAI_TIMEOUT_S) as resp:  # noqa: S310 - fixed https URL
-            payload = resp.read()
-    except urllib.error.HTTPError as e:  # pragma: no cover - needs the live API
-        detail = e.read().decode("utf-8", "replace")[:300]
-        raise RuntimeError(f"OpenAI TTS failed: HTTP {e.code} {detail}") from e
+    payload = _post_with_retry(request)
     if not payload:
         raise RuntimeError("OpenAI TTS returned an empty body")
     out_path.write_bytes(payload)

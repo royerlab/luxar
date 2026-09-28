@@ -228,11 +228,12 @@ function callPath(node) {
   return [...callPath(node.expression), node.name.text];
 }
 
-function isBudgetStatement(node) {
+function isBudgetStatement(node, infoName = '') {
+  if (!ts.isExpressionStatement(node) || !ts.isCallExpression(node.expression)) return false;
+  const path = callPath(node.expression.expression).join('.');
   return (
-    ts.isExpressionStatement(node) &&
-    ts.isCallExpression(node.expression) &&
-    BUDGET_CALL_PATHS.has(callPath(node.expression.expression).join('.'))
+    BUDGET_CALL_PATHS.has(path) ||
+    (infoName !== '' && (path === `${infoName}.setTimeout` || path === `${infoName}.slow`))
   );
 }
 
@@ -322,6 +323,29 @@ function testBudget(statements, constants, enclosing, projectTimeoutMs) {
   return budgetMs;
 }
 
+// beforeAll/afterAll run in their own slot, initially set to the project
+// timeout. Suite and per-test declarations do not change that slot; hook-local
+// slow() triples its current value at most once.
+function allHookBudget(callback, constants, projectTimeoutMs, infoName) {
+  let budgetMs;
+  let slowApplied = false;
+  for (const call of budgetCalls(blockStatements(callback))) {
+    const path = callPath(call.expression).join('.');
+    if (path === 'test.setTimeout' || path === `${infoName}.setTimeout`) {
+      const directBudgetMs = normalizedBudget(evaluateNumber(call.arguments[0], constants));
+      if (directBudgetMs !== undefined) budgetMs = directBudgetMs;
+    } else if (
+      (path === 'test.slow' || path === `${infoName}.slow`) &&
+      !slowApplied &&
+      isUnconditionalSlow(call)
+    ) {
+      slowApplied = true;
+      budgetMs = (budgetMs ?? projectTimeoutMs) * 3;
+    }
+  }
+  return budgetMs;
+}
+
 function normalizedBudget(value) {
   if (value === 0) return Number.POSITIVE_INFINITY;
   return value !== undefined && Number.isFinite(value) && value > 0 ? value : undefined;
@@ -335,6 +359,7 @@ function deadlineCandidates(
   callback,
   constants,
   helpers,
+  infoName = '',
   values = new Map(),
   traversal = { active: new Set(), depth: 0 }
 ) {
@@ -345,7 +370,7 @@ function deadlineCandidates(
   const visit = (node) => {
     // A budget declaration is not a wait: test.setTimeout(MESH_TIMEOUT_MS)
     // would otherwise resolve its own constant into the deadline it has to beat.
-    if (isBudgetStatement(node)) return;
+    if (isBudgetStatement(node, infoName)) return;
     if (ts.isPropertyAssignment(node) && propertyName(node.name) === 'timeout') {
       include(evaluateNumber(node.initializer, constants, new Set(), values));
     }
@@ -408,7 +433,7 @@ function collectCallDeadline(call, constants, helpers, values, traversal) {
     );
   }
   include(
-    deadlineCandidates(helper, helper.constants, helper.helpers ?? new Map(), helperValues, {
+    deadlineCandidates(helper, helper.constants, helper.helpers ?? new Map(), '', helperValues, {
       active: new Set(traversal.active).add(helper),
       depth: traversal.depth + 1,
     })
@@ -429,6 +454,31 @@ function findTests(sourceFile, constants, helpers, file, projectTimeoutMs) {
           suiteScope(statements, constants, enclosing),
           Math.max(inheritedDeadlineMs, hookDeadline(statements, constants, helpers))
         );
+        return;
+      }
+      if (
+        callback &&
+        path.length === 2 &&
+        path[0] === 'test' &&
+        ['beforeAll', 'afterAll'].includes(path[1])
+      ) {
+        const testInfo = callback.parameters[1]?.name;
+        const infoName = testInfo && ts.isIdentifier(testInfo) ? testInfo.text : '';
+        const deadlineMs = Math.max(0, deadlineCandidates(callback, constants, helpers, infoName));
+        const budgetMs = allHookBudget(callback, constants, projectTimeoutMs, infoName);
+        if (deadlineMs > 0 && (budgetMs === undefined || budgetMs <= deadlineMs)) {
+          const title = node.arguments[0];
+          const suffix =
+            ts.isStringLiteral(title) || ts.isNoSubstitutionTemplateLiteral(title)
+              ? `: ${title.text}`
+              : '';
+          violations.push({
+            deadlineMs,
+            file,
+            line: sourceFile.getLineAndCharacterOfPosition(node.getStart()).line + 1,
+            test: `${path[1]}${suffix}`,
+          });
+        }
         return;
       }
       if (callback && (path.join('.') === 'test' || path.join('.') === 'test.only')) {
@@ -707,7 +757,7 @@ export function runCheck({ updateBaseline = false } = {}) {
   }
   if (baseline.regressions.length) {
     console.error(
-      'Declare test.setTimeout(...), test.slow(), or describe.configure({ timeout }); use an exact reasoned exception only when the heuristic is wrong; regenerate intentional count changes with pnpm update:e2e-timeout-budget-baseline.'
+      'Declare test.setTimeout(...), test.slow(), or describe.configure({ timeout }) for tests; beforeAll/afterAll need test.setTimeout(...), testInfo.setTimeout(...), or slow() inside the hook. Use an exact reasoned exception only when the heuristic is wrong; regenerate intentional count changes with pnpm update:e2e-timeout-budget-baseline.'
     );
   }
   if (

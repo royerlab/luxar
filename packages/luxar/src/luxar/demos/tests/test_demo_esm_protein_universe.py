@@ -420,7 +420,8 @@ def test_carried_stories_keep_their_vetted_facts() -> None:
     assert len(carried) == 7
     for s in carried:
         b = base[s.key]
-        assert s.mystery == b.mystery, s.key
+        # The viral question is re-aimed: this map is built from metagenomes.
+        assert s.mystery == b.mystery or s.key == "Viral surface proteins", s.key
         assert s.pdb_id == b.pdb_id or s.key == "Viral surface proteins", s.key
         assert len(s.facts) == len(b.facts), s.key
         unchanged = sum(f in b.facts for f in s.facts)
@@ -628,7 +629,7 @@ def test_the_scatter_story_is_the_one_family_that_is_not_a_family() -> None:
     assert story.pattern and story.pfam  # name match UNION the dedicated Pfam
     assert story.region is None  # not a map-wide predicate: a family selector
     assert story.frame_fraction >= 1.0  # pulled back to hold the whole scatter
-    assert any("never make a family of their own" in f for f in story.facts)
+    assert any("never form a family of their own" in f for f in story.facts)
     assert not story.constellation
 
 

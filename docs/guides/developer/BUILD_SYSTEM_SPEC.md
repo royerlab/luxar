@@ -1055,6 +1055,39 @@ required jobs never receive an empty `runs-on`. A multi-job candidate can add up
 long obsidian legs, so the two-candidate cap permits up to eight per window. Do not widen
 that cap without re-measuring queue pressure.
 
+### Recovering a rootless Podman runner outage
+
+If every obsidian slot logs `invalid internal status, try resetting the pause process`
+and `podman info` fails the same way, stop the regular and CUDA slot services before
+resetting Podman's rootless pause state. The supervisors otherwise retry container
+starts every few seconds and keep requesting GitHub registration tokens. On obsidian,
+run these commands in bash as the account that owns the `luxar-ci-*` user units:
+
+```bash
+systemctl --user stop luxar-ci-cuda.service luxar-ci-slot@{1..6}.service
+podman system migrate
+podman info
+gh api rate_limit --jq '.resources.core | "\(.remaining) \(.reset)"'
+```
+
+The API check needs a `gh` credential authorized for `royerlab/luxar`. Its output is
+the remaining core requests and the reset epoch; use `date -d @<reset>` to read the
+reset time. Leave the slots stopped until `podman info` succeeds and at least 50 core
+requests remain. Then restart and verify:
+
+```bash
+systemctl --user start luxar-ci-cuda.service luxar-ci-slot@{1..6}.service
+podman ps --format '{{.Names}} {{.Status}}'
+gh api repos/royerlab/luxar/actions/runners --jq .total_count
+```
+
+Confirm that the slots register and a queued job is dispatched. A failed token request
+can otherwise be passed to a container as an invalid multiline token, causing another
+retry loop. The host-side supervisors still need exponential backoff after failed
+container starts and a single-line, expected-shape token check before `podman run`;
+see the related runner-hardening work in #1069. The 2026-09-26 outage is recorded in
+#2921.
+
 ## Architecture Notes
 
 ### Why nvm Instead of System Node.js?

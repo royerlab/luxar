@@ -440,9 +440,14 @@ argument to `test.setTimeout`, `test.slow` or `describe.configure` is what the
 deadline has to beat rather than a deadline of its own.
 Helper-body traversal follows at most ten nested calls and fails closed past that
 limit; it stops when a helper is already active, so recursive helpers cannot make
-the check recurse forever.
-`beforeAll`/`afterAll` hooks remain out of scope (see #2916). Budget declarations
-inside helpers are not modelled; declare the budget in the test or enclosing suite.
+the check recurse forever. Budget declarations inside helpers are not modelled;
+declare the budget in the test or enclosing suite.
+`beforeAll` and `afterAll` are checked once at their declaration lines. Each has
+a separate timeout equal to the project timeout; suite-level
+`describe.configure`, `test.setTimeout`, and `test.slow` do not extend it.
+Declare `test.setTimeout`, `testInfo.setTimeout`, `test.slow()`, or
+`testInfo.slow()` inside the hook to give it more time. An unconditional
+hook-local `slow()` triples that hook's current timeout once.
 Sequential waits are also out of scope: deadlines are modelled as the largest
 single wait, not their total, so three sequential 40 s
 waits under a 45 s budget pass the check even though the rule above asks for

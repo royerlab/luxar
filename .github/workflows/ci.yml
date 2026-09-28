@@ -625,12 +625,9 @@ jobs:
       # stays machine-agnostic for local use.
       PYTEST_ADDOPTS: ${{ needs.pick-runner.outputs.label == 'obsidian' && '-n 2 --dist loadfile' || '' }}
     steps:
-      - name: Free disk space on hosted runners
-        # The full suite exhausts the ~14 GB GitHub-hosted runner and fails with
-        # `[Errno 28] No space left on device`, turning forced-hosted runs red
-        # (#1816). Reclaim
-        # preinstalled tooling we never use. obsidian has ample disk, so skip it
-        # there.
+      - name: Reclaim disk space
+        # The full suite can exhaust GitHub-hosted disk (#1816). Reclaim
+        # preinstalled tooling that is absent from the self-hosted container.
         if: runner.environment == 'github-hosted'
         working-directory: ${{ github.workspace }}
         run: |
@@ -639,6 +636,27 @@ jobs:
             /usr/share/dotnet /opt/ghc /usr/local/share/boost 2>/dev/null || true
           sudo docker image prune --all --force 2>/dev/null || true
           df -h /
+
+      - name: Require 25 GiB free disk
+        # Match the runner-kit host heartbeat's 25 GB danger line, below its
+        # 30 GB admission guard. Fail before the multi-gigabyte Hatch environment.
+        if: needs.changes.outputs.dom_py != 'false'
+        run: |
+          if df_output=$(df --output=avail -k / 2>&1); then
+            available_kib=$(printf '%s\n' "$df_output" | tail -n 1 | tr -d ' ')
+          else
+            available_kib=
+          fi
+          if [[ ! $available_kib =~ ^[0-9]+$ ]]; then
+            echo "$df_output"
+            echo "::error title=Disk check failed::Could not measure free root-disk space."
+            exit 1
+          fi
+          minimum_kib=$((25 * 1024 * 1024))
+          if (( available_kib < minimum_kib )); then
+            echo "::error title=Insufficient disk space::Root filesystem has ${available_kib} KiB free; 25 GiB required before Python environment setup."
+            exit 1
+          fi
 
       # LFS intentionally disabled. Payload-dependent tests detect unpulled
       # pointer stubs and skip themselves. `check-data-manifest` still catches
