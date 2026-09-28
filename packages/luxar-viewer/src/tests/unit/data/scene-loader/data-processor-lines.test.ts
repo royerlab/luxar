@@ -52,6 +52,11 @@ import {
 import type { LoadedLinesData } from '../../../../types/lines';
 import { log } from '../../../../utils/log';
 import { WorkerTimeoutError, WorkerUnavailableError } from '../../../../workers/worker-pool/errors';
+import { SliceCache } from '../../../../cache/slice-cache';
+import {
+  restoreLadder,
+  storeLadder,
+} from '../../../../data/loaders/progressive/slice-cache-helper';
 
 /**
  * Dispatcher-shaped result (keyed by `visibleSegmentCount`, plus empty
@@ -839,5 +844,49 @@ describe('per-update abort signal through the lines projection (B7)', () => {
     expect(runWithTimeout.mock.calls[0][3]).toBe(controller.signal);
     controller.abort();
     await expect(pass).rejects.toMatchObject({ name: 'WorkerAbortError' });
+  });
+});
+
+// Post-projection stage cache (#2944 B2) — the lines twin of the gsplats test.
+describe('projection stage cache (S-cache hit skips the worker projection)', () => {
+  it.fails('an S-cache hit with unchanged projection params triggers no worker projection', async () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const projectLinesTo3D = vi.fn(async () => makeDispatcherLinesResult(2000));
+    const runWithTimeout = vi.fn(
+      async (_op: string, _kind: string, fn: (api: unknown) => unknown) => fn({ projectLinesTo3D })
+    );
+    mockGetWorkerPool.mockReturnValue({ runWithTimeout });
+
+    const segmentCount = 2000;
+    const data4d: LoadedLinesData = {
+      positions: new Float32Array(segmentCount * 2 * 4),
+      segments: new Uint32Array(segmentCount * 2),
+      widths: new Float32Array(segmentCount * 2),
+      colors: null,
+      sharpness: null,
+      segmentCount,
+      vertexCount: segmentCount * 2,
+      ndim: 4,
+    };
+    const view = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 3],
+      tolerance: [0, 0, 0, 0.5],
+    };
+    const cache = new SliceCache({ maxSize: 64 * 1024 * 1024 });
+    storeLadder(cache, '/lines', view, [data4d]);
+    const hit = (): LoadedLinesData => {
+      const lods = restoreLadder<LoadedLinesData>(cache, '/lines', view, 1);
+      if (!lods) throw new Error('expected an S-cache hit');
+      return lods[0];
+    };
+
+    await processLinesData('/lines', hit(), view, root, 2);
+    expect(runWithTimeout).toHaveBeenCalledTimes(1);
+    const staged = await processLinesData('/lines', hit(), view, root, 2);
+    expect(runWithTimeout).toHaveBeenCalledTimes(1);
+    if (!staged || staged.noop) throw new Error('expected a geometry staged commit');
+    expect(staged.processed.segmentCount).toBe(2000);
   });
 });
