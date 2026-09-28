@@ -173,7 +173,10 @@ export function initDimensionSliders(ctx: DimNavSetupCtx): void {
   }
   const listener = async (): Promise<void> => {
     ctx.getDimensionSliders()?.update();
-    ctx.animationController.startAnimation();
+    // Keep the loop ticking; the slice's commits request their own render.
+    // A wake here redrew the previous slice's geometry on every playback
+    // tick before the new data committed (two renders per data step).
+    ctx.animationController.requestTick();
     await updateAllNDNodes(ctx);
   };
   ctx.setSceneDimsListener(listener);
