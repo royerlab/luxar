@@ -91,6 +91,29 @@ describe('upload-counters', () => {
       expect(calls()).toBe(8);
     });
 
+    // Fails until texture uploads are counted by region (next commit).
+    it.fails('counts a known-format typed-array upload by the region it writes, not the view', () => {
+      const gl = fakeGL();
+      wrapWebGLUploads(gl);
+      const RGBA = 0x1908;
+      const FLOAT = 0x1406;
+      const UNSIGNED_BYTE = 0x1401;
+      const whole = new Float32Array(8 * 4 * 4); // an 8x4 RGBA32F image, 512 B
+      // three's classic ranged path: one row, the WHOLE image.data, row picked
+      // by UNPACK_SKIP_ROWS — uploads 8 px * 16 B, not the 512-B view.
+      gl.texSubImage2D(1, 0, 0, 2, 8, 1, RGBA, FLOAT, whole);
+      expect(textureBytes()).toBe(8 * 16);
+      // texImage2D / 3D sized forms with a known format too.
+      gl.texImage2D(1, 0, 2, 4, 4, 0, RGBA, UNSIGNED_BYTE, new Uint8Array(1000));
+      gl.texImage3D(1, 0, 2, 2, 2, 2, 0, RGBA, FLOAT, new Float32Array(1000));
+      gl.texSubImage3D(1, 0, 0, 0, 0, 1, 1, 2, 0x1903, FLOAT, new Float32Array(1000));
+      expect(textureBytes()).toBe(8 * 16 + 64 + 128 + 8);
+      // A view SHORTER than the region still counts only what it holds.
+      perfCounters.reset();
+      gl.texSubImage2D(1, 0, 0, 0, 8, 4, RGBA, FLOAT, new Float32Array(4));
+      expect(textureBytes()).toBe(16);
+    });
+
     it('counts an undeterminable image source as a zero-byte call', () => {
       const gl = fakeGL();
       wrapWebGLUploads(gl);
@@ -124,6 +147,16 @@ describe('upload-counters', () => {
       wrapWebGPUUploads(q);
       q.writeTexture({}, new Uint8Array(100), { offset: 20 }, [5, 4]);
       expect(textureBytes()).toBe(80);
+    });
+
+    // Fails until texture uploads are counted by region (next commit).
+    it.fails('caps writeTexture at the bytesPerRow * rows region the layout describes', () => {
+      const q = fakeQueue();
+      wrapWebGPUUploads(q);
+      // Two 64-B rows written out of a 1000-B buffer.
+      q.writeTexture({}, new Uint8Array(1000), { offset: 128, bytesPerRow: 64 }, [16, 2]);
+      q.writeTexture({}, new Uint8Array(1000), { bytesPerRow: 64 }, { width: 16, height: 3 });
+      expect(textureBytes()).toBe(128 + 192);
     });
 
     it('counts copyExternalImageToTexture as texels*4', () => {
