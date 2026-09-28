@@ -344,11 +344,15 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    inflate it twice) and
    measure how much of the screen the group covers, in the units its
    `selector` attr names. A DERIVED ladder stamps `screen-area`: the
-   metric is the screen-space AABB's **area** as a fraction of the viewport area
-   (`projectBoxAreaFraction` — each NDC axis spans 2, so the fraction is
-   the product of the per-axis half-extents after clipping to the
-   viewport, viewport-size independent by construction and topping out
-   at exactly `1.0` for any finite projection; sub-pixel-thin content
+   metric is the projected **area** of the box's INSCRIBED ellipsoid as a
+   fraction of the viewport area (`projectBoxAreaFraction` — the exact
+   dual-quadric projection; the product of the image ellipse's NDC
+   semi-axes, `sqrt(det S)`, which face-on equals the rect's per-axis
+   half-extent product, so the thresholds keep their meaning, while an
+   orbit at a fixed distance no longer walks the ladder the way the
+   corner rect, up to ~1.7x larger corner-on, did; scaled by the visible
+   fraction of the ellipse's screen AABB, viewport-size independent by
+   construction and topping out at exactly `1.0`; sub-pixel-thin content
    ramps to its linear span instead, so an edge-on plane is not pinned
    to the coarsest level). Those thresholds are literal area fractions,
    so nothing is normalised: a whole-object ladder anchors its finest at
@@ -364,8 +368,9 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    `calculateCameraDistance` actually fits), so its finest anchor
    (`coverage_fraction` 1.0) is reached once the projected diagonal is
    half of the fitted screen axis. Both projections are `w`-aware: if
-   any corner is at/behind the camera near plane (camera inside or
-   straddling the box), they return `+Infinity` so the selector
+   any corner (for `screen-area`, any point of the ellipsoid) is
+   at/behind the camera plane (camera inside or straddling the box),
+   they return `+Infinity` so the selector
    saturates to the finest level — instead of the collapsed/garbage
    value an unguarded perspective divide would produce on close
    approach. Under an ORTHOGRAPHIC projection nothing degenerates (`w`

@@ -335,25 +335,35 @@ with full detail one modest zoom away. Authors who want a high-aspect
 object finest-at-opening use an explicit `coverage_fractions=[...]` list
 (legacy units).
 
-Two refinements are NORMATIVE parts of the `screen-area` metric (they decide
+Three refinements are NORMATIVE parts of the `screen-area` metric (they decide
 which end of a ladder renders, so consumers must agree on them):
 
-* **Visible occupancy.** The projected rect is intersected with the viewport
-  before the area is taken; a rect with no viewport overlap on either axis
-  reads exactly `0` (coarsest), and full coverage tops out at exactly `1.0`
-  (thresholds are satisfied inclusively, `threshold <= metric`). Under a
-  PERSPECTIVE camera, a node whose bounds reach the camera's near plane has
-  no meaningful projection (the homogeneous divide degenerates), so the
-  metric saturates to the finest level — the same near-plane guard the
-  legacy diagonal metric applies. An ORTHOGRAPHIC projection never
+* **Orientation-stable occupancy.** The bbox is measured through its
+  INSCRIBED ellipsoid (semi-axes = the bbox half-extents), projected exactly
+  (dual quadric → image conic), and the metric is the product of the image
+  ellipse's NDC semi-axes, `sqrt(det S)`. Face-on this equals the rect
+  product the thresholds were defined against (the ellipse is inscribed in
+  the face's rect), while a 3D rect would grow by up to ~1.7x as the camera
+  merely orbits to a corner-on view and walk the ladder at a fixed distance.
+  The camera plane cutting the ellipsoid (camera inside the node) saturates
+  to the finest level; an ellipsoid wholly behind the camera reads `0`.
+
+* **Visible occupancy.** The ellipse's area is scaled, per axis, by the
+  visible fraction of its screen AABB (exact for an axis-aligned ellipse); an
+  ellipse with no viewport overlap on either axis reads exactly `0`
+  (coarsest), and full coverage tops out at exactly `1.0` (thresholds are
+  satisfied inclusively, `threshold <= metric`). Under a PERSPECTIVE camera,
+  a node the eye plane cuts has no meaningful projection, so the metric
+  saturates to the finest level — the counterpart of the near-plane guard
+  the legacy diagonal metric applies to the bbox corners. An ORTHOGRAPHIC projection never
   degenerates (`w` stays 1), so no saturation applies and the plain clipped
   metric is used directly: a camera inside a large node still reads full
-  coverage naturally (its rect spans the viewport), and both selectors
+  coverage naturally (its ellipse spans the viewport), and both selectors
   behave identically here by design.
 * **Degenerate (lower-dimensional) content.** A node whose projected bounds
   are (near-)zero-thickness — an axis-aligned straight polyline, a planar
   dataset viewed edge-on — has area ~0 no matter how much screen it spans.
-  When the RAW (pre-clip) thin half-extent is at/below a sub-pixel floor
+  When the RAW (pre-clip) minor semi-axis is at/below a sub-pixel floor
   `ε` (implementations should use `ε` ≈ one pixel of the viewport axis; the
   reference viewer uses 1e-3 of the axis), the metric is
   `max(area, clippedSpan × (1 − rawThin/ε))` — a continuous ramp from the

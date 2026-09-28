@@ -9,8 +9,9 @@ import type { LodSelectorName } from './format-contract';
  * of those thresholds:
  *
  * - `'screen-area'` (what every derived ladder stamps): a threshold is a
- *   literal screen-area fraction — the group's projected bbox rect area over
- *   the viewport area. The derived whole-object ladder is [0, …, 1/8, 1/4,
+ *   literal screen-area fraction — the group's projected bbox area over the
+ *   viewport area, measured through the bbox's inscribed ellipsoid so it does
+ *   not change as the camera orbits (face-on it is the rect area). The derived whole-object ladder is [0, …, 1/8, 1/4,
  *   1/2] (full detail while the node occupies at least half the screen, one
  *   level coarser per halving of occupied area); a partition tile anchors at
  *   1.0 (the tile alone fills the screen).

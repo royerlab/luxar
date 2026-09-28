@@ -10,9 +10,9 @@
  * - {@link projectBoxDiagonalPx} — project that box through the camera to a
  *   screen-space pixel diagonal (with near-plane saturation). The legacy
  *   ``selector: 'coverage'`` metric.
- * - {@link projectBoxAreaFraction} — project that box to the fraction of the
- *   viewport AREA its screen-space rect covers (same near-plane saturation).
- *   The ``selector: 'screen-area'`` metric.
+ * - {@link projectBoxAreaFraction} — project the box's inscribed ellipsoid to
+ *   the viewport AREA its screen-space ellipse covers, in rect units (same
+ *   near-plane saturation). The ``selector: 'screen-area'`` metric.
  * - {@link pickChildWithHysteresis} — pick the level for whichever metric the
  *   group's ``selector`` names, with asymmetric downgrade hysteresis.
  *
@@ -104,57 +104,57 @@ export const DEGENERATE_RECT_HALF_EXTENT = 1e-3;
 
 /**
  * Project a world-space :type:`BoundingBox` through the camera and return the
- * fraction of the viewport AREA its screen-space AABB **visibly** covers — the
- * metric for ``selector: 'screen-area'``.
+ * fraction of the viewport AREA it **visibly** covers — the metric for
+ * ``selector: 'screen-area'``.
  *
- * **Clipped to the viewport.** The projected rect is intersected with the
- * viewport before the area is taken, so the metric reads the portion of the
- * screen ACTUALLY occupied: a node whose rect extends far off-screen but
+ * **Orientation-stable: the box's inscribed ellipsoid, not its corners.** The
+ * screen rect of a box's 8 corners grows by up to ~1.7x between a face-on and a
+ * corner-on view of the same box at the same distance, so a rect metric walks a
+ * lod ladder up and down while the camera merely orbits. The box is therefore
+ * measured through its INSCRIBED ellipsoid (semi-axes = the box half-extents),
+ * projected exactly as a dual quadric onto the image-plane conic. The metric is
+ * ``sqrt(det S)`` of that ellipse's NDC shape matrix ``S`` (the product of its
+ * semi-axes). Face-on it is exactly the legacy rect product ``halfW × halfH``,
+ * since the ellipse is inscribed in the face's rect, so stored thresholds keep
+ * their meaning (a screen-filling face still reads 1.0); for a cube it depends
+ * on distance only.
+ *
+ * **Clipped to the viewport.** The ellipse's area is scaled, per axis, by the
+ * visible fraction of its screen-space AABB, so the metric reads the portion of
+ * the screen ACTUALLY occupied: a node whose ellipse extends far off-screen but
  * clips only a corner reads that small visible fraction (and picks a coarse
- * level) instead of an arbitrarily large unclipped product — which matters
- * while panning across partition tiles. The metric therefore tops out at
- * exactly ``1.0`` (full coverage); the natural pick uses ``threshold <=
- * metric``, so the fills-screen partition threshold (1.0) is satisfied the
- * moment coverage is complete, and stays satisfied while zoomed past it. In
- * NDC each axis spans 2, so the covered fraction is the product of the
- * clipped half-extents — viewport-size independent by construction (the same
- * framing yields the same fraction on any monitor).
+ * level) — which matters while panning across partition tiles. The metric
+ * tops out at exactly ``1.0`` (full coverage); the natural pick uses
+ * ``threshold <= metric``, so the fills-screen partition threshold (1.0) is
+ * satisfied the moment coverage is complete. The scaling is exact for an
+ * axis-aligned ellipse (every face-on view) and an approximation for a tilted
+ * one. In NDC each axis spans 2, so the value is viewport-size independent by
+ * construction.
  *
- * **Degenerate (lower-dimensional) CONTENT ramps to its LINEAR span.** For a
- * rect whose RAW (pre-clip) thin half-extent is below
- * {@link DEGENERATE_RECT_HALF_EXTENT} — sub-pixel thin content: an
- * axis-aligned straight polyline, an edge-on plane — the area product reads
- * ~0 regardless of how much screen the content spans, which would pin it to
- * the coarsest level forever (the legacy diagonal metric never had this
- * failure mode — a diagonal reads the long extent). The metric is therefore
- * ``max(area, clippedSpan × (1 − rawThin/DEGENERATE_RECT_HALF_EXTENT))``: at
- * zero thickness it reads the full CLIPPED linear span (a full-width line =
- * 1.0, so the halving ladder keeps its meaning for 1D content), decays
- * CONTINUOUSLY to the plain area product as the thickness reaches the
- * sub-pixel floor — no cliff for the hysteresis to oscillate across when an
- * edge-on plane rotates through the boundary — and is exactly the area
- * product everywhere above it. A both-axes-degenerate rect (a point) still
- * reads ~0 → coarsest. The ramp is gated on the RAW thinness so it fires only
- * for intrinsically thin content — a wide 2D node whose CLIPPED sliver
- * happens to be thin (mostly panned off-screen) honestly reads its tiny
- * visible area rather than being inflated to a full linear span.
+ * **Degenerate (lower-dimensional) CONTENT ramps to its LINEAR span.** When the
+ * ellipse's RAW (pre-clip) minor semi-axis is below
+ * {@link DEGENERATE_RECT_HALF_EXTENT} — sub-pixel thin content: a straight
+ * polyline, an edge-on plane — the area reads ~0 regardless of how much screen
+ * the content spans, which would pin it to the coarsest level forever. The
+ * metric is therefore ``max(area, clippedSpan × (1 − rawThin /
+ * DEGENERATE_RECT_HALF_EXTENT))``, where ``clippedSpan`` is the larger clipped
+ * half-extent of the ellipse's AABB: at zero thickness it reads the full
+ * CLIPPED linear span (a full-width line = 1.0), decays CONTINUOUSLY to the
+ * area as the thickness reaches the sub-pixel floor, and is exactly the area
+ * everywhere above it. A point still reads ~0 → coarsest. The ramp is gated on
+ * the RAW thinness so a wide 2D node whose CLIPPED sliver happens to be thin
+ * honestly reads its tiny visible area.
  *
- * **Fully off-screen rects read exactly 0.** A clipped interval that is
- * INVERTED (no viewport overlap on that axis) zeroes the whole metric before
- * the degenerate ramp can see it — otherwise a zero-thickness clipped axis
- * would be indistinguishable from off-screen and the ramp would return the
- * other axis's span for geometry not on screen at all (the world-space
- * frustum gate catches most of these, but it is conservative near frustum
- * corners, so this function must not rely on it).
+ * **Fully off-screen reads exactly 0**, including an ellipsoid entirely
+ * behind the camera: a clipped interval that is INVERTED (no viewport overlap
+ * on that axis) zeroes the metric before the degenerate ramp can see it.
  *
- * Same near-plane saturation contract as {@link projectBoxDiagonalPx}: under
- * a PERSPECTIVE camera, bounds reaching the near plane have no meaningful
- * projection (the homogeneous divide degenerates), so the metric saturates to
- * ``+Infinity`` → finest. An ORTHOGRAPHIC projection never degenerates
- * (``w`` stays 1) so no saturation applies — the plain clipped metric is
- * already well-defined, and a camera inside a large node reads full coverage
- * naturally because its rect spans the viewport. Both selectors share this
- * contract by design (see the v3.4 spec's normative metric rules).
+ * **+Infinity when the camera plane cuts the ellipsoid** (the camera is inside
+ * it, or the node straddles the eye plane): there is no meaningful projection,
+ * so the metric saturates to the finest level. An ORTHOGRAPHIC projection
+ * never degenerates (``w`` stays 1), so no saturation applies — a camera inside
+ * a large node reads full coverage naturally because its ellipse spans the
+ * viewport. See the v3.4 spec's normative metric rules.
  *
  * Exported for unit testing.
  */
@@ -163,25 +163,94 @@ export function projectBoxAreaFraction(
   camera: THREE.Camera,
   precomputedProjView?: THREE.Matrix4
 ): number {
-  const rect = projectBoxNdcRect(box, camera, precomputedProjView);
-  if (rect === null) return Number.POSITIVE_INFINITY;
-  // Intersect with the viewport (NDC [-1, 1] per axis). Keep the SIGNED
-  // overlaps: a negative value means no viewport overlap on that axis —
-  // fully off-screen, metric 0 — and must not be conflated with a genuine
-  // zero-thickness visible interval (a line lying inside the viewport), which
-  // clamping alone would do.
-  const overlapW = Math.min(rect.maxX, 1) - Math.max(rect.minX, -1);
-  const overlapH = Math.min(rect.maxY, 1) - Math.max(rect.minY, -1);
+  // Same shared projection × view as projectBoxNdcRect (see there).
+  const m =
+    precomputedProjView ??
+    PROJ_VIEW_SCRATCH.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  const ellipse = projectInscribedEllipse(box, m.elements);
+  if (ellipse === ELLIPSE_STRADDLES) return Number.POSITIVE_INFINITY;
+  if (ellipse === ELLIPSE_BEHIND) return 0;
+  const { cx, cy, sxx, sxy, syy } = ellipse;
+  const ex = Math.sqrt(sxx);
+  const ey = Math.sqrt(syy);
+  // Visible (clipped to NDC [-1, 1]) extent of the ellipse's AABB. Keep the
+  // SIGNED overlaps: negative means no overlap on that axis — off-screen.
+  const overlapW = Math.min(cx + ex, 1) - Math.max(cx - ex, -1);
+  const overlapH = Math.min(cy + ey, 1) - Math.max(cy - ey, -1);
   if (overlapW < 0 || overlapH < 0) return 0;
-  const halfW = overlapW * 0.5;
-  const halfH = overlapH * 0.5;
-  const span = Math.max(halfW, halfH);
-  const area = halfW * halfH;
-  // Continuous degenerate ramp, gated on the RAW (pre-clip) thinness so only
-  // intrinsically thin content takes it (see the doc above).
-  const rawThin = Math.min(rect.maxX - rect.minX, rect.maxY - rect.minY) * 0.5;
+  const visibleW = ex > 0 ? Math.min(1, overlapW / (2 * ex)) : 1;
+  const visibleH = ey > 0 ? Math.min(1, overlapH / (2 * ey)) : 1;
+  const area = Math.sqrt(Math.max(0, sxx * syy - sxy * sxy)) * visibleW * visibleH;
+  // Continuous degenerate ramp, gated on the RAW minor semi-axis.
+  const halfTrace = 0.5 * (sxx + syy);
+  const halfDiff = 0.5 * (sxx - syy);
+  const minorSq = halfTrace - Math.sqrt(halfDiff * halfDiff + sxy * sxy);
+  const rawThin = Math.sqrt(Math.max(0, minorSq));
+  const span = Math.max(overlapW, overlapH) * 0.5;
   const degenerate = span * Math.max(0, 1 - rawThin / DEGENERATE_RECT_HALF_EXTENT);
   return Math.max(area, degenerate);
+}
+
+/** {@link projectInscribedEllipse}: the camera plane cuts the ellipsoid. */
+const ELLIPSE_STRADDLES = 1;
+/** {@link projectInscribedEllipse}: the ellipsoid lies wholly behind the camera. */
+const ELLIPSE_BEHIND = 2;
+
+/** Reused result object for {@link projectInscribedEllipse} (no per-call allocation). */
+const ELLIPSE_SCRATCH = { cx: 0, cy: 0, sxx: 0, sxy: 0, syy: 0 };
+
+/** Squared box half-extents for {@link weightedRowDot} (reused, no allocation). */
+const HALF_EXTENTS_SQ = [0, 0, 0];
+
+/** ``Σ h_i² a_i b_i`` over the three spatial columns of projection rows ``a`` and ``b``. */
+function weightedRowDot(e: ArrayLike<number>, a: number, b: number, h2: readonly number[]): number {
+  return h2[0] * e[a] * e[b] + h2[1] * e[a + 4] * e[b + 4] + h2[2] * e[a + 8] * e[b + 8];
+}
+
+/**
+ * Project the ellipsoid inscribed in ``box`` through the column-major
+ * projection × view ``e`` and return its image ellipse in NDC: centre
+ * ``(cx, cy)`` and shape matrix ``S`` (``sxx, sxy, syy``; the ellipse is
+ * ``{c + S^{1/2} u : |u| = 1}``).
+ *
+ * The ellipsoid's dual quadric is ``Q* = T diag(hx², hy², hz², −1) Tᵀ``
+ * (``T`` translates to the box centre); its image is the dual conic
+ * ``C* = P Q* Pᵀ`` over the x, y and w rows of the projection. Normalised so
+ * ``C*₂₂ = −1`` it reads ``[[S − ccᵀ, −c], [−cᵀ, −1]]``. ``−C*₂₂`` is
+ * ``w_c² − Σ(h_i p_{3i})²``: positive iff the eye plane misses the ellipsoid.
+ * Returns {@link ELLIPSE_STRADDLES} when it does not, {@link ELLIPSE_BEHIND}
+ * when the ellipsoid is wholly behind the eye, else the module-scope scratch
+ * (consume it before the next call).
+ */
+function projectInscribedEllipse(
+  box: BoundingBox,
+  e: ArrayLike<number>
+): typeof ELLIPSE_SCRATCH | typeof ELLIPSE_STRADDLES | typeof ELLIPSE_BEHIND {
+  const hx = 0.5 * (box.max.x - box.min.x);
+  const hy = 0.5 * (box.max.y - box.min.y);
+  const hz = 0.5 * (box.max.z - box.min.z);
+  const x = 0.5 * (box.max.x + box.min.x);
+  const y = 0.5 * (box.max.y + box.min.y);
+  const z = 0.5 * (box.max.z + box.min.z);
+  const h2 = HALF_EXTENTS_SQ;
+  h2[0] = hx * hx;
+  h2[1] = hy * hy;
+  h2[2] = hz * hz;
+  // The projected homogeneous centre (rows 0, 1 and 3 of P).
+  const u = e[0] * x + e[4] * y + e[8] * z + e[12];
+  const v = e[1] * x + e[5] * y + e[9] * z + e[13];
+  const w = e[3] * x + e[7] * y + e[11] * z + e[15];
+  const k = w * w - weightedRowDot(e, 3, 3, h2);
+  if (!(k > 0)) return ELLIPSE_STRADDLES;
+  if (w < 0) return ELLIPSE_BEHIND;
+  const cx = (u * w - weightedRowDot(e, 0, 3, h2)) / k;
+  const cy = (v * w - weightedRowDot(e, 1, 3, h2)) / k;
+  ELLIPSE_SCRATCH.cx = cx;
+  ELLIPSE_SCRATCH.cy = cy;
+  ELLIPSE_SCRATCH.sxx = (weightedRowDot(e, 0, 0, h2) - u * u) / k + cx * cx;
+  ELLIPSE_SCRATCH.sxy = (weightedRowDot(e, 0, 1, h2) - u * v) / k + cx * cy;
+  ELLIPSE_SCRATCH.syy = (weightedRowDot(e, 1, 1, h2) - v * v) / k + cy * cy;
+  return ELLIPSE_SCRATCH;
 }
 
 /** Reused result object for {@link projectBoxNdcRect} (no per-call allocation). */

@@ -464,7 +464,7 @@ describe('projectBoxDiagonalPx', () => {
       return cam;
     }
 
-    it.fails('is orientation-stable: an orbit of a cube at constant radius varies by at most 1%', () => {
+    it('is orientation-stable: an orbit of a cube at constant radius varies by at most 1%', () => {
       // The box's screen RECT grows by up to ~1.7x between a face-on and a
       // corner-on view, so a rect metric walks a lod ladder up and down during
       // one revolution at a FIXED distance. The inscribed ellipsoid of a cube
