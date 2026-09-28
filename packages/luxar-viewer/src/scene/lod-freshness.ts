@@ -127,6 +127,38 @@ export function coarsestFreshIndex(children: readonly FreshnessChild[], version:
   return -1;
 }
 
+/** Minimal structural scene-graph node {@link subtreeSweepSettled} walks. */
+export interface SweepNode {
+  userData?: FreshnessChild['object']['userData'];
+  children?: readonly SweepNode[];
+}
+
+/**
+ * Whether EVERY freshness-tracked leaf under `root` (root included, hidden
+ * descendants included) holds a commit for view `version` with a complete
+ * ladder — i.e. whether a re-sweep of the subtree at `version` would find
+ * nothing to do. `false` when the subtree has no tracked leaf at all, or any
+ * tracked leaf carries no stamp (never committed): "unknown" never counts as
+ * settled.
+ *
+ * Unlike `subtreeDisplayProgress` this ignores visibility: a hidden eager level
+ * of a nested `kind=lod` part is still swept, so it must be fresh too.
+ */
+export function subtreeSweepSettled(root: SweepNode, version: number): boolean {
+  let anyLeaf = false;
+  const stack: SweepNode[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    const ud = node.userData;
+    if (ud && isFreshnessTracked(ud.nodeType)) {
+      if (ud.loadedViewVersion !== version || ud.committedLadderComplete === false) return false;
+      anyLeaf = true;
+    }
+    if (node.children) for (const child of node.children) stack.push(child);
+  }
+  return anyLeaf;
+}
+
 /**
  * Committed visible-element count of a child's leaf mesh, or ``null`` when
  * untracked. Reads the per-type commit stamps (``visiblePointCount`` /

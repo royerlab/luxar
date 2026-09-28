@@ -568,7 +568,11 @@ re-entering parts' registered node paths (the wrapper path when a part
 has none), coalesced per wrapper across frames and held while a view
 pass is in flight or queued (`isLoadPassInProgress`; a refinement hold
 does not count — the loader parks a resync that lands during one and
-cancels the hold into a targeted pass). The loader runs that resync
+cancels the hold into a targeted pass). A re-entering part whose every
+tracked leaf (hidden levels included) is already committed for the current
+view version with a complete ladder is skipped (`subtreeSweepSettled`): it
+missed nothing while culled. A part with a stale, unfinished or never-committed
+leaf, or any part when no view version is wired, resyncs. The loader runs that resync
 under the **unchanged view version**: its `updateView` bumps `currentViewVersion`
 only when a query determinant changes (`viewStatesEqual`). Lazy fine
 levels never join the sweep and are never re-stamped by it, so a bump on

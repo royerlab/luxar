@@ -9,6 +9,7 @@ import {
   isFresh,
   isReady,
   SettleTracker,
+  subtreeSweepSettled,
   visibleElementCount,
   type FreshnessChild,
 } from '../../../scene/lod-freshness';
@@ -119,5 +120,28 @@ describe('SettleTracker', () => {
     t.observe(6, 10); // scrubbed to a new version at tick 10
     expect(t.isSettled(12, 8)).toBe(false); // clock reset → not settled yet
     expect(t.isSettled(18, 8)).toBe(true); // stable again for 8 ticks
+  });
+});
+
+describe('subtreeSweepSettled', () => {
+  const leaf = (loadedViewVersion?: number, committedLadderComplete?: boolean) => ({
+    userData: { nodeType: 'gsplats', loadedViewVersion, committedLadderComplete },
+  });
+
+  it('is settled only when every tracked leaf is fresh and complete', () => {
+    expect(subtreeSweepSettled({ children: [leaf(3, true), leaf(3)] }, 3)).toBe(true);
+    expect(subtreeSweepSettled({ children: [leaf(3, true), leaf(2, true)] }, 3)).toBe(false);
+    expect(subtreeSweepSettled({ children: [leaf(3, false)] }, 3)).toBe(false);
+  });
+
+  it('treats an uncommitted leaf, or no tracked leaf at all, as unknown (not settled)', () => {
+    expect(subtreeSweepSettled({ children: [leaf(3), leaf(undefined)] }, 3)).toBe(false);
+    expect(subtreeSweepSettled({ userData: { nodeType: 'group' }, children: [] }, 3)).toBe(false);
+  });
+
+  it('includes hidden descendants (a swept eager level is swept while hidden)', () => {
+    const hiddenStale = { ...leaf(2, true), visible: false };
+    const root = { children: [leaf(3, true), { children: [hiddenStale] }] };
+    expect(subtreeSweepSettled(root, 3)).toBe(false);
   });
 });

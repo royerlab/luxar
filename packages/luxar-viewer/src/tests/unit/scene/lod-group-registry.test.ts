@@ -1190,7 +1190,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     };
   }
 
-  it.fails('skips the rising-edge resync for a part whose leaves are all fresh and complete', () => {
+  it('skips the rising-edge resync for a part whose leaves are all fresh and complete', () => {
     const { requestReprocess, reenter } = twoPartRisingEdge([
       { loadedViewVersion: 7, committedLadderComplete: true },
       { loadedViewVersion: 7, committedLadderComplete: true },
@@ -1201,7 +1201,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect(requestReprocess).not.toHaveBeenCalled();
   });
 
-  it.fails('still resyncs exactly the stale or unfinished parts on the rising edge', () => {
+  it('still resyncs exactly the stale or unfinished parts on the rising edge', () => {
     const { requestReprocess, reenter } = twoPartRisingEdge([
       { loadedViewVersion: 7, committedLadderComplete: true }, // fresh
       { loadedViewVersion: 6, committedLadderComplete: true }, // missed a slice move

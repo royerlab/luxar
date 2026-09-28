@@ -46,7 +46,9 @@
  * loader's sweep and refinement read to skip its loaders. Because a culled part
  * misses slice updates, its RE-ENTRY requests a resync of exactly that part's
  * loaders (``deps.requestReprocess(partPaths)``, coalesced per wrapper across
- * frames and gated on ``isUpdateInProgress``). The resync re-sweeps under the
+ * frames and gated on ``isUpdateInProgress``) — unless every leaf of the part is
+ * already committed for the current view with a complete ladder, in which case
+ * nothing was missed and the re-entry only re-shows it. The resync re-sweeps under the
  * UNCHANGED view version — bumping it here would read every lazy fine level
  * scene-wide as stale and drop all groups to coarse on camera motion.
  *
@@ -79,7 +81,9 @@ import {
   isReady,
   isTrackedLeaf,
   SettleTracker,
+  subtreeSweepSettled,
   visibleElementCount,
+  type SweepNode,
 } from './lod-freshness';
 import {
   shouldHoldPreviousDisplay,
@@ -1849,7 +1853,10 @@ export class LODGroupRegistry {
         cullChanged = true;
         this.drawnStateChanged = true;
       }
-      if ((result & PARTITION_BECAME_VISIBLE) !== 0) {
+      // Only parts with something stale to resync are recorded (a settled
+      // re-entry just re-shows), so an empty set means no resync at all — never
+      // an empty-path request, which the loader would read as a FULL re-sweep.
+      if (RISING_PARTS_SCRATCH.size > 0) {
         this.notePartitionRisingEdge(entry.path, RISING_PARTS_SCRATCH);
       }
       if (this.partitionResyncPending.has(entry.path)) hasVisiblePendingResync = true;
@@ -1955,10 +1962,27 @@ export class LODGroupRegistry {
   }
 
   /**
+   * Whether a part that just re-entered the frustum has nothing to resync
+   * (B9c): every tracked leaf under it already holds a commit for the CURRENT
+   * view version with a complete ladder, so the view did not move while it was
+   * culled and a targeted re-sweep would only re-derive what is on screen.
+   * Unknown (no view-version wiring, or a leaf never committed) is NOT settled,
+   * so such a part resyncs exactly as before.
+   */
+  private partitionPartSettled(child: PartitionGroupChild): boolean {
+    const version = this.deps.getViewVersion?.();
+    if (version == null) return false;
+    return child.objects.every((object) =>
+      subtreeSweepSettled(object as unknown as SweepNode, version)
+    );
+  }
+
+  /**
    * Frustum-gate one partition's parts. Returns the ``PARTITION_*`` bit flags;
    * parts that re-entered this frame are added to ``risingParts`` by node path
    * (``child.path``), or as the WRAPPER path when a part has none so the caller
-   * resyncs the whole partition rather than missing it.
+   * resyncs the whole partition rather than missing it — unless the part is
+   * already settled for the current view ({@link partitionPartSettled}).
    */
   private evaluatePartitionEntry(
     entry: PartitionGroupEntry,
@@ -2002,7 +2026,7 @@ export class LODGroupRegistry {
       }
       const flags = updatePartitionObjectVisibility(child.objects, visible);
       result |= flags;
-      if ((flags & PARTITION_BECAME_VISIBLE) !== 0) {
+      if ((flags & PARTITION_BECAME_VISIBLE) !== 0 && !this.partitionPartSettled(child)) {
         noteRisingPart(risingParts, child.path, entry.path);
       }
     }
