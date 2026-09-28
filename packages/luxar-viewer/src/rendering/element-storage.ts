@@ -233,13 +233,16 @@ interface ElementStorageUserData {
 // identity and never receive orderings — but that is precisely the
 // population depth sorting exists for.
 //
-// WebGPU: both WebGPU backends ignore attribute update ranges and
-// re-upload the whole buffer on every `needsUpdate`, so SLICING there
-// would turn ONE full upload into `ceil(n / chunk)` full uploads (only
-// the JS memcpy would be bounded). Slicing is therefore feature-gated to
-// the classic WebGL backend via {@link configureSortedIndexChunkedApply}
-// (renderer-setup calls it with `apiSurface === 'webgl2'`); the WebGPU
-// backends write the ordering in ONE slice and flip on the next pump.
+// WebGPU: slicing is feature-gated to the classic WebGL backend via
+// {@link configureSortedIndexChunkedApply} (renderer-setup calls it with
+// `apiSurface === 'webgl2'`), because its back-pressure waits on the
+// attribute's `onUploadCallback`, which neither WebGPU backend fires. The
+// WebGPU backends write the ordering in ONE slice and flip on the next
+// pump. They DO honour attribute `updateRanges` (and clear them after the
+// upload), but three's shared attribute cache re-uploads a
+// `DynamicDrawUsage` attribute on EVERY render regardless of its version,
+// so the pair is `StaticDrawUsage` there ({@link sortedIndexUsage}): it
+// uploads only when a write bumps its version.
 // Double-buffering itself is unconditional — the atomic swap is a
 // correctness property, not a per-backend optimisation.
 // ────────────────────────────────────────────────────────────────────
@@ -267,9 +270,9 @@ export function setSortedIndexChunkElementsForTests(elements: number | null): vo
 /**
  * Session backend gate (renderer-setup, the
  * `configureElementTextureLayout` pattern): `true` on the classic
- * WebGL backend (partial attribute uploads honored), `false` on the
- * WebGPU backends (ranges ignored — chunking would multiply full
- * uploads; see the module note above). Defaults to `true`: classic
+ * WebGL backend, `false` on the WebGPU backends (no `onUploadCallback`
+ * for the slice back-pressure; see the module note above). It also picks
+ * the ordering pair's buffer usage ({@link sortedIndexUsage}). Defaults to `true`: classic
  * WebGL is the production default and headless/unit contexts have no
  * renderer to misbehave.
  */
@@ -278,6 +281,23 @@ let chunkedApplyEnabled = true;
 /** Configure whether large orderings apply chunked (classic WebGL only). */
 export function configureSortedIndexChunkedApply(enabled: boolean): void {
   chunkedApplyEnabled = enabled;
+}
+
+/**
+ * Buffer usage for the ordering pair on the current backend.
+ *
+ * WebGPU (both backends): `StaticDrawUsage`. three's shared attribute cache
+ * (`renderers/common/Attributes.js`) re-uploads a `DynamicDrawUsage`
+ * attribute on every render even when its version is unchanged, which cost
+ * a full `writeBuffer` of both buffers per node per frame (8 B x capacity:
+ * 80 MB/frame at 10M elements, #2944). Every buffer three creates there
+ * carries COPY_DST, so a static attribute still uploads on each version bump.
+ *
+ * Classic WebGL: `DynamicDrawUsage`, unchanged. There usage is only the
+ * `bufferData` hint and uploads already follow the version.
+ */
+export function sortedIndexUsage(): THREE.Usage {
+  return chunkedApplyEnabled ? THREE.DynamicDrawUsage : THREE.StaticDrawUsage;
 }
 
 /** In-flight chunked application state for one geometry. */
@@ -566,10 +586,9 @@ function applyNextSortedIndexChunk(
   const arr = attr.array as Uint32Array;
   const start = state.cursor;
   // Backend gate: on WebGL a slice bounds the per-frame memcpy+upload;
-  // the WebGPU backends ignore attribute ranges and re-upload the whole
-  // buffer per flush, so slicing there would multiply ONE upload into
-  // ceil(n / chunk). They write the ordering whole and flip next frame —
-  // still atomic, still one upload.
+  // the WebGPU backends never fire the upload callback the slice
+  // back-pressure waits on, so they write the ordering whole and flip next
+  // frame — still atomic, still one upload.
   const sliceEnd = chunkedApplyEnabled ? start + sortedIndexChunkElements : state.count;
   const end = Math.min(state.count, sliceEnd, arr.length);
   arr.set(state.ordering.subarray(start, end), start);
@@ -793,7 +812,7 @@ export function attachElementStorage(
   // already clamps at acquire time.
   capacity = clampElementCapacity(capacity, layout);
   const sortedIndex = new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
-  sortedIndex.setUsage(THREE.DynamicDrawUsage);
+  sortedIndex.setUsage(sortedIndexUsage());
   geometry.setAttribute('aSortedIndex', sortedIndex);
   // Slot B is a DISTINCT buffer from the very first frame — never an
   // alias onto slot A, and never lazily materialised.
@@ -835,7 +854,7 @@ export function attachElementStorage(
   // gsplat's 68 B/element), which is the honest price of not depending
   // on a cache-invalidation path that does not exist.
   const sortedIndexB = new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1);
-  sortedIndexB.setUsage(THREE.DynamicDrawUsage);
+  sortedIndexB.setUsage(sortedIndexUsage());
   geometry.setAttribute('aSortedIndexB', sortedIndexB);
 
   const width = getElementTextureWidth(layout);
@@ -882,9 +901,8 @@ export function elementTexelCapacity(texture: THREE.DataTexture, floatsPerElemen
 /**
  * Fill `aSortedIndex[0..count)` with identity ordering and register a
  * single collapsed prefix update range. Ranges accumulate across
- * commits while a mesh is not drawn and the WebGPU backends replay
- * them verbatim (no flush-time merge), so every write collapses the
- * pending set to one `[0, max-end)` range.
+ * commits while a mesh is not drawn (no backend merges them at flush),
+ * so every write collapses the pending set to one `[0, max-end)` range.
  *
  * Also re-homes the geometry on SLOT 0, which is what makes the split
  * ownership of the swap safe. The slot lives on the geometry (so it

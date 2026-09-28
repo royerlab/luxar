@@ -67,16 +67,14 @@ describe('ordering pair buffer usage', () => {
     expect(usageOf(geometry, 'aSortedIndexB')).toBe(THREE.DynamicDrawUsage);
   });
 
-  // Fails until the ordering pair uses StaticDraw on WebGPU (next commit).
-  it.fails('uses StaticDraw on the WebGPU renderer backends', () => {
+  it('uses StaticDraw on the WebGPU renderer backends', () => {
     configureSortedIndexChunkedApply(false);
     const geometry = makeGeometry();
     expect(usageOf(geometry, 'aSortedIndex')).toBe(THREE.StaticDrawUsage);
     expect(usageOf(geometry, 'aSortedIndexB')).toBe(THREE.StaticDrawUsage);
   });
 
-  // Fails until the ordering pair uses StaticDraw on WebGPU (next commit).
-  it.fails('on WebGPU, an unchanged ordering is not re-uploaded on later frames', async () => {
+  it('on WebGPU, an unchanged ordering is not re-uploaded on later frames', async () => {
     configureSortedIndexChunkedApply(false);
     const geometry = makeGeometry();
     writeSortedIndexIdentity(geometry, 1024);
@@ -85,8 +83,7 @@ describe('ordering pair buffer usage', () => {
     expect(await countUploads(attr, 10)).toBe(0);
   });
 
-  // Fails until the ordering pair uses StaticDraw on WebGPU (next commit).
-  it.fails('on WebGPU, a new ordering write still reaches the GPU', async () => {
+  it('on WebGPU, a new ordering write still reaches the GPU', async () => {
     configureSortedIndexChunkedApply(false);
     const geometry = makeGeometry();
     const attr = geometry.getAttribute('aSortedIndex') as THREE.BufferAttribute;
