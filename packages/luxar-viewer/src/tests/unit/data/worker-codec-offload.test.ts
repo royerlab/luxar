@@ -80,6 +80,16 @@ function injectWorkers(instances: unknown[]): void {
   pool.initPromise = Promise.resolve();
 }
 
+/** Inject workers and let their codec warm-up finish (offload needs a warm worker). */
+async function injectWarmWorkers(instances: { api: { warmCodecs: () => Promise<unknown> } }[]) {
+  injectWorkers(instances);
+  warmWorkerCodecs();
+  await vi.waitFor(() => {
+    for (const w of instances) expect(w.api.warmCodecs).toHaveBeenCalled();
+  });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 async function readGolden(name: string) {
   const store = new FileSystemStore(path.join(GOLDEN, name));
   const array = await zarr.openArray(zarr.root(store));
@@ -108,9 +118,9 @@ describe('blosc decode offload to the data-worker pool', () => {
     disposeWorkerPool();
   });
 
-  it('runs no blosc decode on the main thread when a pool worker exists', async () => {
+  it('runs no blosc decode on the main thread once a pool worker is warm', async () => {
     const fake = makeFakeWorker();
-    injectWorkers([fake.instance]);
+    await injectWarmWorkers([fake.instance]);
 
     const { data } = await readGolden('v3_u16_zstd_shuffle');
 
@@ -157,7 +167,7 @@ describe('blosc decode offload to the data-worker pool', () => {
   it('falls back to the main thread when the worker call fails', async () => {
     const fake = makeFakeWorker();
     fake.api.decodeBloscBatch.mockRejectedValueOnce(new Error('worker crashed'));
-    injectWorkers([fake.instance]);
+    await injectWarmWorkers([fake.instance]);
     const { data } = await readGolden('v3_u16_zstd_shuffle');
     expect(fake.api.decodeBloscBatch).toHaveBeenCalledTimes(1);
     expect(mainThreadDecodes).toBe(1);
@@ -166,7 +176,7 @@ describe('blosc decode offload to the data-worker pool', () => {
 
   it('a pool-wide abort does not abandon an in-flight decode', async () => {
     const fake = makeFakeWorker();
-    injectWorkers([fake.instance]);
+    await injectWarmWorkers([fake.instance]);
     const controller = new AbortController();
     getWorkerPool().setAbortSignal(controller.signal);
     const pending = readGolden('v3_u16_zstd_shuffle');
@@ -176,19 +186,29 @@ describe('blosc decode offload to the data-worker pool', () => {
     expect(fake.api.decodeBloscBatch).toHaveBeenCalledTimes(1);
   });
 
-  it('warms each worker codec and keeps the worker busy until it is warm', async () => {
+  it('the first big read decodes on the main thread while ONE worker warms', async () => {
     const fake = makeFakeWorker();
+    const other = makeFakeWorker();
     let finishWarm: () => void = () => {};
     fake.api.warmCodecs.mockImplementation(
       () => new Promise<undefined>((resolve) => (finishWarm = () => resolve(undefined)))
     );
-    injectWorkers([fake.instance]);
-    warmWorkerCodecs();
+    injectWorkers([fake.instance, other.instance]);
+
+    await readGolden('v3_u16_zstd_shuffle');
+    expect(mainThreadDecodes).toBe(1);
+    expect(fake.api.decodeBloscBatch).not.toHaveBeenCalled();
     expect(fake.api.warmCodecs).toHaveBeenCalledTimes(1);
-    expect(fake.instance.activeQueries).toBe(1);
-    expect(getWorkerPool().getIdleWorkerCount()).toBe(0);
+    // The second worker waits for the first (it will hit the HTTP cache).
+    expect(other.api.warmCodecs).not.toHaveBeenCalled();
+    // A warm-up is not a query: the warming worker still reads as idle.
+    expect(fake.instance.activeQueries).toBe(0);
+    expect(getWorkerPool().getIdleWorkerCount()).toBe(2);
+
     finishWarm();
-    await vi.waitFor(() => expect(fake.instance.activeQueries).toBe(0));
+    await vi.waitFor(() => expect(other.api.warmCodecs).toHaveBeenCalledTimes(1));
+    await readGolden('v3_u16_zstd_shuffle');
+    expect(mainThreadDecodes).toBe(1);
   });
 });
 
@@ -207,6 +227,7 @@ describe('BloscDecodeDispatcher batching', () => {
     const port: CodecPoolPort = {
       isInitialized: () => true,
       getIdleWorkerCount: () => idle,
+      ensureCodecsWarm: () => true,
       runDecode: (_op, fn) =>
         fn({
           decodeBloscBatch: async (items: Item[]) => {
@@ -236,6 +257,13 @@ describe('BloscDecodeDispatcher batching', () => {
     const { port } = makePort(4);
     const dispatcher = new BloscDecodeDispatcher({ ...port, isInitialized: () => false });
     expect(dispatcher.decode({ bytes: frame(10), delta: null })).toBeNull();
+  });
+
+  it('declines an above-floor chunk while no worker codec is warm', () => {
+    const { port, batches } = makePort(4);
+    const dispatcher = new BloscDecodeDispatcher({ ...port, ensureCodecsWarm: () => false });
+    expect(dispatcher.decode({ bytes: frame(MIN_OFFLOAD_DECODED_BYTES), delta: null })).toBeNull();
+    expect(batches).toEqual([]);
   });
 
   it('one idle worker: 20 same-microtask decodes -> 3 messages (8 + 8 + 4)', async () => {
@@ -289,6 +317,7 @@ describe('BloscDecodeDispatcher batching', () => {
     const port: CodecPoolPort = {
       isInitialized: () => true,
       getIdleWorkerCount: () => 1,
+      ensureCodecsWarm: () => true,
       runDecode: async () => [{ error: 'bad chunk' }, { data: new Uint8Array([1]) }] as never,
     };
     const dispatcher = new BloscDecodeDispatcher(port);

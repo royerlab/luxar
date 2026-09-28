@@ -12,8 +12,11 @@
  * selection, whose slot stays busy until the worker settles.
  *
  * Returns `null` (decode locally) while the pool has no usable worker — the
- * first paint must not wait for workers to spawn — and for a chunk below
- * {@link MIN_OFFLOAD_DECODED_BYTES}, whose decode is cheaper than the trip.
+ * first paint must not wait for workers to spawn — for a chunk below
+ * {@link MIN_OFFLOAD_DECODED_BYTES}, whose decode is cheaper than the trip, and
+ * while no worker's codec is warm yet. The first chunk that clears the floor is
+ * what starts that warm-up (one worker first; see `codec-warmup.ts`), so a
+ * store whose chunks are all below it never makes a worker fetch its codec.
  *
  * @module workers/worker-pool/codec-dispatch
  */
@@ -44,6 +47,8 @@ export interface CodecPoolPort {
   isInitialized(): boolean;
   /** Workers with no task in flight. */
   getIdleWorkerCount(): number;
+  /** A worker's codec is warm; if not, start warming one (decode locally meanwhile). */
+  ensureCodecsWarm(): boolean;
   /** Run `fn` on the least-busy worker (timeout-guarded, never pool-aborted). */
   runDecode<T>(op: string, fn: (api: Remote<DataWorkerAPI>) => Promise<T>): Promise<T>;
 }
@@ -91,6 +96,7 @@ export class BloscDecodeDispatcher implements BloscDecodeBackend {
   decode(request: BloscDecodeRequest): Promise<Uint8Array> | null {
     if (!this.pool.isInitialized()) return null;
     if (bloscDecodedSize(request.bytes) < MIN_OFFLOAD_DECODED_BYTES) return null;
+    if (!this.pool.ensureCodecsWarm()) return null;
     return new Promise<Uint8Array>((resolve, reject) => {
       this.queue.push({ request, resolve, reject });
       if (!this.flushScheduled) {

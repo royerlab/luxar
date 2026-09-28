@@ -39,9 +39,14 @@ import { nextRoundRobin } from './worker-pool/selection/round-robin';
 import { DispatchTracker } from './worker-pool/selection/dispatch-tracker';
 import { computeStats, computeQueueDepth, type PoolStats } from './worker-pool/stats';
 import { markLoad } from '../profiling/load-timeline';
-import { setBloscDecodeBackend, setWorkerCodecsEnabled } from '../data/codecs/worker-blosc';
+import {
+  areWorkerCodecsEnabled,
+  setBloscDecodeBackend,
+  setWorkerCodecsEnabled,
+} from '../data/codecs/worker-blosc';
 import { hasUrlFlag, URL_PARAM_KEYS } from '../config/url-params';
 import { BloscDecodeDispatcher } from './worker-pool/codec-dispatch';
+import { CodecWarmup } from './worker-pool/codec-warmup';
 
 export type { WorkerInstance };
 export {
@@ -116,6 +121,15 @@ export class WorkerPool {
   private nextWorkerIndex = 0;
   /** Worker-side in-flight accounting for the `worker.*` perf counters only. */
   private readonly dispatchTracker = new DispatchTracker();
+  /** Lazy, one-worker-first blosc codec warm-up (see `worker-pool/codec-warmup.ts`). */
+  private readonly codecWarmup = new CodecWarmup({
+    workers: () => this.workers,
+    run: (entry, call) =>
+      this.withTimeout('warmCodecs', call, this.pickTimeoutMs('decode'), entry.worker),
+    enabled: areWorkerCodecsEnabled,
+    onError: (error) =>
+      log.warning(Modules.WORKER_POOL, 'Worker codec warm-up failed (decodes will retry)', error),
+  });
   /**
    * Pool-wide abort signal. When set (by `setAbortSignal`), every
    * `runWithTimeout` call additionally races against this signal so
@@ -222,7 +236,6 @@ export class WorkerPool {
           }
           attemptWorkers.push(entry);
           this.workers.push(entry);
-          this.warmCodecsOn(entry);
           settleMyReady();
         };
 
@@ -730,31 +743,24 @@ export class WorkerPool {
   }
 
   /**
-   * Instantiate the blosc WASM inside every live worker now, so the first
-   * offloaded chunk decode does not pay the module compile. Fire-and-forget and
-   * idempotent (worker-side memoized). Each worker is marked busy while it
-   * warms, steering early decodes to workers that are already warm.
+   * True when a worker's blosc codec is warm, so a chunk decode may be
+   * offloaded. Otherwise warms ONE worker (the others follow once it finished,
+   * reading the codec chunk from the HTTP cache) and returns false: decode on
+   * the main thread meanwhile. Never warms under `?mainThreadCodecs`, and a
+   * warm-up never counts as a query. Called by the codec dispatcher for each
+   * chunk above its offload floor, so a store with no such chunk never makes a
+   * worker download its codec.
    */
-  warmCodecs(): void {
-    for (const entry of this.workers) this.warmCodecsOn(entry);
+  ensureCodecsWarm(): boolean {
+    return this.codecWarmup.ensureWarm();
   }
 
-  private warmCodecsOn(entry: WorkerInstance): void {
-    // Test doubles and legacy workers may lack the task: nothing to warm.
-    if (typeof entry.api?.warmCodecs !== 'function') return;
-    entry.activeQueries++;
-    const release = (): void => {
-      entry.activeQueries = Math.max(0, entry.activeQueries - 1);
-    };
-    this.withTimeout(
-      'warmCodecs',
-      entry.api.warmCodecs(),
-      this.pickTimeoutMs('decode'),
-      entry.worker
-    ).then(release, (error: unknown) => {
-      release();
-      log.warning(Modules.WORKER_POOL, 'Worker codec warm-up failed (decodes will retry)', error);
-    });
+  /**
+   * Start warming the workers' blosc codec now, one worker first (see
+   * {@link ensureCodecsWarm}). Fire-and-forget and idempotent.
+   */
+  warmCodecs(): void {
+    this.codecWarmup.ensureWarm();
   }
 
   /**
@@ -927,10 +933,9 @@ function installCodecBackend(pool: WorkerPool): void {
 }
 
 /**
- * Instantiate the blosc codec WASM in every live data worker (fire-and-forget).
- *
- * The pool already does this for each worker as it becomes ready, so calling
- * it is only useful to re-warm after `reinitialize()`; exposed for bootstrap.
+ * Start warming the data workers' blosc codec (fire-and-forget; one worker
+ * first, the rest once it finished). Nothing warms it eagerly: the first chunk
+ * decode above the offload floor does, so this only front-loads that.
  */
 export function warmWorkerCodecs(): void {
   workerPoolInstance?.warmCodecs();

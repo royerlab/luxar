@@ -31,6 +31,7 @@ decode/
 ├── broadcasted.ts   — Replicate a single k-vector to numPoints × k
 └── blosc.ts         — Zarr chunk DECOMPRESSION (numcodecs blosc + an optionally fused
                        luxar_delta_v1), batched; plus the warmCodecs WASM warm-up
+                       (sent lazily by the pool: see worker-pool/codec-warmup.ts)
 ```
 
 `blosc.ts` is the odd one out: it needs no `WasmCtx` (it runs numcodecs' own

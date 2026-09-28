@@ -104,6 +104,11 @@ export function setWorkerCodecsEnabled(enabled: boolean): void {
   workerCodecsEnabled = enabled;
 }
 
+/** Whether decodes may be offloaded (false under `?mainThreadCodecs`). */
+export function areWorkerCodecsEnabled(): boolean {
+  return workerCodecsEnabled;
+}
+
 /** Inject the native numcodecs Blosc loader (called once by `../zarr.ts`). */
 export function setNativeBloscLoader(loader: () => Promise<NativeBloscCtor>): void {
   nativeLoader = loader;

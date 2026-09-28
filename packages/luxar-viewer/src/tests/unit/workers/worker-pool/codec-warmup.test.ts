@@ -99,7 +99,7 @@ describe('WorkerPool — lazy, one-worker-first codec warm-up', () => {
     vi.clearAllMocks();
   });
 
-  it.fails('sends no codec warm-up to any worker when the pool comes up', async () => {
+  it('sends no codec warm-up to any worker when the pool comes up', async () => {
     const { WorkerPool, warmCalls } = await loadPool(3);
     const pool = new WorkerPool();
     await pool.initialize();
@@ -109,7 +109,7 @@ describe('WorkerPool — lazy, one-worker-first codec warm-up', () => {
     pool.dispose();
   });
 
-  it.fails('the first above-floor decode warms ONE worker; the rest only after it is warm', async () => {
+  it('the first above-floor decode warms ONE worker; the rest only after it is warm', async () => {
     const { WorkerPool, BloscDecodeDispatcher, MIN_OFFLOAD_DECODED_BYTES, warmGates, warmCalls } =
       await loadPool(3);
     const pool = new WorkerPool();
@@ -139,7 +139,7 @@ describe('WorkerPool — lazy, one-worker-first codec warm-up', () => {
     pool.dispose();
   });
 
-  it.fails('never warms a worker codec under the ?mainThreadCodecs kill switch', async () => {
+  it('never warms a worker codec under the ?mainThreadCodecs kill switch', async () => {
     const { WorkerPool, BloscDecodeDispatcher, MIN_OFFLOAD_DECODED_BYTES, blosc, warmCalls } =
       await loadPool(2);
     blosc.setWorkerCodecsEnabled(false);
@@ -161,7 +161,7 @@ describe('WorkerPool — lazy, one-worker-first codec warm-up', () => {
     }
   });
 
-  it.fails('a warm-up in flight does not count as a query (workers stay idle)', async () => {
+  it('a warm-up in flight does not count as a query (workers stay idle)', async () => {
     const { WorkerPool, warmCalls } = await loadPool(2);
     const pool = new WorkerPool();
     await pool.initialize();
