@@ -1019,7 +1019,7 @@ describe('SceneLoader', () => {
       }
     );
 
-    it.fails('a queued re-entry that lands on a latched archive fault flushes the parked waiters', async () => {
+    it('a queued re-entry that lands on a latched archive fault flushes the parked waiters', async () => {
       // A lazy level can latch the fault OUTSIDE any pass. A waiter parked by a
       // superseded updateView must then settle (resolve-only) rather than hang
       // the dimension-animation pacing gate for the rest of the session.

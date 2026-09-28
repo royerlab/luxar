@@ -535,16 +535,44 @@ export class SceneLoader {
    * winning pass has landed its commit. Latest-wins supersession keeps
    * waiters pending until the winner completes; `dispose()` flushes them
    * (resolve-only, never reject) so callers can't hang across a dataset
-   * switch.
+   * switch. Each waiter carries the request generation it was registered for
+   * and only a pass of that generation or newer settles it (#2943); a request
+   * for the view the running pass is already loading joins that pass.
    */
-  private _passWaiters: Array<() => void> = [];
+  private _passWaiters: Array<{ gen: number; resolve: () => void }> = [];
 
-  /** Resolve-and-drain all queued-update waiters (see {@link _passWaiters}). */
-  private resolvePassWaiters(): void {
+  /**
+   * Request generations (#2943). Every view request that starts or queues a
+   * pass takes the next number; a queued state carries its number (keyed on
+   * the state object, which travels unchanged through `takePending` →
+   * `reenterPending`) to the pass that eventually runs it. A waiter records
+   * the generation it asked for and is settled only by a pass of that
+   * generation or a newer one — a newer pass merges onto everything an older
+   * request set, so it covers the older waiter.
+   */
+  private _requestSeq = 0;
+  private _requestGens = new WeakMap<object, number>();
+  /** Generation of the main pass now running (0 while none is). */
+  private _passGen = 0;
+  /** Newest generation whose main pass has finished. */
+  private _completedGen = 0;
+
+  /**
+   * Settle the queued-update waiters covered by generation `upToGen` (all of
+   * them by default — the dispose / archive-fault flushes); newer waiters stay
+   * parked for the pass that carries their state.
+   */
+  private resolvePassWaiters(upToGen = Infinity): void {
     if (this._passWaiters.length === 0) return;
-    const waiters = this._passWaiters;
-    this._passWaiters = [];
-    for (const resolve of waiters) resolve();
+    const covered = this._passWaiters.filter((w) => w.gen <= upToGen);
+    if (covered.length === 0) return;
+    this._passWaiters = this._passWaiters.filter((w) => w.gen > upToGen);
+    for (const w of covered) w.resolve();
+  }
+
+  /** Settle the waiters the newest finished main pass covers. */
+  private resolveCompletedPassWaiters(): void {
+    this.resolvePassWaiters(this._completedGen);
   }
 
   /**
@@ -996,7 +1024,7 @@ export class SceneLoader {
       refinementHoldReason: (path) => this.refinementHoldReason(path),
       scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
       drainPendingViewState: () => this.viewStateQueue.drain((state) => this.reenterPending(state)),
-      resolvePassWaiters: () => this.resolvePassWaiters(),
+      resolvePassWaiters: () => this.resolveCompletedPassWaiters(),
       setDatasetAbortController: (c) => {
         this._datasetAbortController = c;
       },
@@ -1160,6 +1188,54 @@ export class SceneLoader {
   }
 
   /**
+   * The view state a pass for `viewState` would run: the request merged onto
+   * the current `this.viewState`, with the per-pass directives stripped.
+   */
+  private mergeViewState(viewState: Partial<ViewState>): ViewState {
+    // Playback frame budget / ladder depth are PER-PASS directives, never
+    // persisted, so a stale budget can't linger in `this.viewState` (which
+    // refinement/retry re-derive from) and leave the loaders capped after
+    // playback ends. They reach the loaders only via the per-type handler ctxs
+    // (buildUpdateCtxs). `prefetch` is likewise transient (set only on the
+    // SlicePrefetcher's shadow passes) and must never pin foreground stores.
+    const incomingViewState = { ...viewState };
+    delete incomingViewState.frameBudgetMs;
+    delete incomingViewState.ladderDepth;
+    delete incomingViewState.prefetch;
+    // CRITICAL: Deep copy arrays to prevent mutation during async operations
+    // The spread operator only does shallow copy - arrays must be explicitly copied
+    return {
+      ...this.viewState,
+      ...incomingViewState,
+      // Always copy arrays to prevent external mutation affecting in-flight updates
+      displayDims: viewState.displayDims
+        ? [...viewState.displayDims]
+        : [...this.viewState.displayDims],
+      slicePosition: viewState.slicePosition
+        ? [...viewState.slicePosition]
+        : [...this.viewState.slicePosition],
+      tolerance: viewState.tolerance ? [...viewState.tolerance] : [...this.viewState.tolerance],
+    };
+  }
+
+  /**
+   * Whether a request can JOIN the main pass in flight instead of superseding
+   * it (#2943): it names a slice (a dims-driven request, not a `{}` reprocess
+   * that exists to force a re-commit), nothing newer is queued, neither the
+   * request nor the running pass carries a playback directive (a budget-free
+   * refine must still re-run a budgeted pass), and it merges to exactly the
+   * view the running pass is loading.
+   */
+  private canJoinInFlightPass(viewState: Partial<ViewState>): boolean {
+    if (this._passGen === 0 || this.viewStateQueue.hasPending()) return false;
+    if (this._updateAbortController?.signal.aborted) return false;
+    if (!viewState.slicePosition || this._lastUpdateWasFrameBudgeted) return false;
+    if (viewState.frameBudgetMs !== undefined || viewState.ladderDepth !== undefined) return false;
+    if (viewState.prefetch) return false;
+    return viewStatesEqual(this.mergeViewState(viewState), this.viewState);
+  }
+
+  /**
    * Update all points and lines for a new view state.
    *
    * Uses serialized execution to prevent race conditions: only one update runs at a time.
@@ -1234,6 +1310,15 @@ export class SceneLoader {
         return;
       }
 
+      // The running pass is already loading exactly this view: wait for ITS
+      // commit rather than aborting it and loading the same slice again.
+      if (this.canJoinInFlightPass(viewState)) {
+        const gen = this._passGen;
+        return new Promise<void>((resolve) => {
+          this._passWaiters.push({ gen, resolve });
+        });
+      }
+
       // Abort the in-flight update: it has now been superseded by this newer
       // view-state, so its remaining chunk reads/decodes should bail rather
       // than run to completion. Its commit is skipped (signal.aborted), and
@@ -1246,6 +1331,8 @@ export class SceneLoader {
       // "Update queued" lines. (The queued pass's own version is decided when
       // it runs — it bumps only if the merged view actually changes.)
       const supersededPrevious = this.viewStateQueue.hasPending();
+      const gen = ++this._requestSeq;
+      this._requestGens.set(viewState, gen);
       this.viewStateQueue.setPending(viewState);
       // Whatever was stashed for a resync is now moot: this pending state (a
       // real change or an untargeted reprocess) sweeps everything.
@@ -1263,10 +1350,12 @@ export class SceneLoader {
       // first commit) — NOT immediately. This is what makes the
       // dimension-animation pacing gate real: during playback the next tick
       // is held until the frame it requested actually rendered, instead of
-      // free-running while every pass is aborted pre-commit. Waiters are
-      // resolved by queueNext (no pending left) and flushed by dispose().
+      // free-running while every pass is aborted pre-commit. The waiter
+      // records this request's generation: only a pass of that generation or
+      // a newer one settles it (#2943), never an older pass that happens to
+      // finish first. Flushed by dispose().
       return new Promise<void>((resolve) => {
-        this._passWaiters.push(resolve);
+        this._passWaiters.push({ gen, resolve });
       });
     }
 
@@ -1279,6 +1368,11 @@ export class SceneLoader {
     this._queuedResyncPaths = null;
     this._pendingIsResyncOnly = false;
     this._passCount++;
+    // This pass's request generation: the one its queued state was tagged with
+    // when it waited in the pending slot, else a fresh one (a direct call).
+    const passGen = this._requestGens.get(viewState) ?? ++this._requestSeq;
+    this._requestGens.delete(viewState);
+    this._passGen = passGen;
 
     // Fresh per-update abort controller. A superseding updateView (the
     // serialization branch above) aborts this; its signal flows to every
@@ -1297,26 +1391,8 @@ export class SceneLoader {
       // linger in `this.viewState` (which refinement/retry re-derive from)
       // and leave the loaders capped after playback ends. It flows to the
       // loaders only via the per-type handler ctxs (buildUpdateCtxs).
-      const { frameBudgetMs, ladderDepth, ...incomingViewState } = viewState;
-      // `prefetch` is likewise a transient directive (set only on the
-      // SlicePrefetcher's shadow passes); strip it too so it can never persist
-      // into `this.viewState` and pin every subsequent foreground store.
-      delete incomingViewState.prefetch;
-
-      // CRITICAL: Deep copy arrays to prevent mutation during async operations
-      // The spread operator only does shallow copy - arrays must be explicitly copied
-      const nextViewState: ViewState = {
-        ...this.viewState,
-        ...incomingViewState,
-        // Always copy arrays to prevent external mutation affecting in-flight updates
-        displayDims: viewState.displayDims
-          ? [...viewState.displayDims]
-          : [...this.viewState.displayDims],
-        slicePosition: viewState.slicePosition
-          ? [...viewState.slicePosition]
-          : [...this.viewState.slicePosition],
-        tolerance: viewState.tolerance ? [...viewState.tolerance] : [...this.viewState.tolerance],
-      };
+      const { frameBudgetMs, ladderDepth } = viewState;
+      const nextViewState = this.mergeViewState(viewState);
       // Version contract (see `_updateVersion`): bump only when a query
       // determinant changed. An unchanged view (resync / retry / depth-sort
       // re-commit) re-sweeps under the same version, so the lazy LOD levels
@@ -1484,6 +1560,15 @@ export class SceneLoader {
       // End profiling update cycle (always, even if errors)
       this.profiler?.endUpdate();
 
+      this._passGen = 0;
+      this._completedGen = Math.max(this._completedGen, passGen);
+      // A pass that committed settles the waiters it covers right away, even
+      // when a (non-superseding) resync is queued behind it. A superseded pass
+      // committed nothing: its waiters ride on to the pass that supersedes it.
+      if (!updateController.signal.aborted && !sweepArchiveFault && !this._archiveFault) {
+        this.resolvePassWaiters(passGen);
+      }
+
       // Decide what runs next — pending state, GSplats refinement, or
       // lock release. Implementation in scene-loader/update-view/queue-next.ts.
       if (this._archiveFault) {
@@ -1517,7 +1602,7 @@ export class SceneLoader {
             this._updateInProgress = v;
           },
           scheduleGSplatsRefinement: () => this.scheduleGSplatsRefinement(),
-          resolvePassWaiters: () => this.resolvePassWaiters(),
+          resolvePassWaiters: () => this.resolveCompletedPassWaiters(),
         });
       }
     }
@@ -1619,7 +1704,7 @@ export class SceneLoader {
       // state's re-entry settles them itself, at its commit — resolving here as
       // well would release the pacing gate early (see `finalReleaseLock`).
       if (!this.viewStateQueue.drain((state) => this.reenterPending(state))) {
-        this.resolvePassWaiters();
+        this.resolveCompletedPassWaiters();
       }
     });
   }
@@ -1721,7 +1806,7 @@ export class SceneLoader {
         if (this.viewStateQueue.hasPending()) {
           this.viewStateQueue.drain((state) => this.reenterPending(state));
         } else {
-          this.resolvePassWaiters();
+          this.resolveCompletedPassWaiters();
         }
       };
 
@@ -2174,9 +2259,16 @@ export class SceneLoader {
    * state — into a no-op instead of a second full pass (measured: L0 hits ==
    * misses on every 3-D scene, and ~1 s of extra main-thread work on a
    * 29.6 M-splat slide). A real slider change compares unequal and proceeds.
+   *
+   * False while a main pass is in flight: `this.viewState` already names that
+   * pass's view but nothing of it has committed, so a same-view request must
+   * go through `updateView` (which joins the running pass) instead of
+   * resolving at once and letting `waitForUpdate()` return before the slice
+   * is on screen (#2943).
    */
   isAtViewState(candidate: ViewState): boolean {
     if (this._disposed) return false;
+    if (this._passGen !== 0) return false;
     if (this._lastUpdateWasFrameBudgeted) return false;
     return viewStatesEqual(candidate, this.viewState);
   }
