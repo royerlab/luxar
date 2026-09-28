@@ -15,6 +15,7 @@
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
+import { failedLoadsVersion } from '../../../../../utils/failed-loads-version';
 
 const loadSceneNodesMock = vi.fn();
 
@@ -1065,10 +1066,12 @@ describe('loadLodGroupNode — lazy level loading', () => {
     await loadLodGroupNode(node, new THREE.Group(), makeStubLoc(), ctx, loadSceneNodesMock);
 
     const deferred = reg.get('/lod')!.children[1];
+    const beforeFailure = failedLoadsVersion();
     deferred.ensureLoaded!();
     await vi.waitFor(() => expect(deferred.failed).toBe(true));
 
     expect(deferred.permanentlyFailed).toBe(true);
+    expect(failedLoadsVersion()).toBeGreaterThan(beforeFailure);
     expect(deferred.ready).toBe(false);
     expect(deferred.loading).toBe(false);
 

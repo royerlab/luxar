@@ -205,12 +205,9 @@ export class LayersPanel {
   private pickBufferInvalidator: (() => void) | null = null;
 
   /**
-   * Cheap change-detector for the failed set (JSON of sorted `[path, reason]`
-   * pairs), mirroring DataMonitor's `lastFailedLoadsSignature`: the per-frame refresh
-   * only touches the DOM when the signature changes. `null` is the reset
-   * sentinel — no real signature (not even the empty-set `''`) can equal it, so
-   * the first comparison after `setFailedLoadsProvider` / `renderList` always
-   * falls through and re-applies (an empty set then correctly clears badges).
+   * Fallback for providers without a version. The JSON signature includes
+   * sorted `[path, reason]` pairs so reason-only changes refresh tooltips.
+   * Both detectors use null as a reset sentinel when rows or providers change.
    */
   private lastFailedLoadsSignature: string | null = null;
   private lastFailedLoadsVersion: number | null = null;
@@ -1498,11 +1495,6 @@ function bucketFailedPathsByAncestor(failedPaths: readonly string[]): Map<string
       matches.push(path);
       byAncestor.set(ancestor, matches);
       end = path.lastIndexOf('/', end - 1);
-    }
-    if (path.startsWith('/') && path !== '/') {
-      const rootMatches = byAncestor.get('/') ?? [];
-      rootMatches.push(path);
-      byAncestor.set('/', rootMatches);
     }
   }
   for (const matches of byAncestor.values()) matches.sort();

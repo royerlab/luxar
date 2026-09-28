@@ -957,6 +957,22 @@ export interface LODGroupRegistryDeps {
  * Tracks loaded ``lod_group`` and ``kind=partition`` nodes in a scene;
  * evaluates per-frame to pick the active LOD and frustum-visible parts.
  */
+function bumpIfFailedChild(child: LODGroupChild): void {
+  if (child.permanentlyFailed) bumpFailedLoadsVersion();
+}
+
+function bumpForFailedEntryReplacement(
+  previous: LODGroupEntry | undefined,
+  next: LODGroupEntry
+): void {
+  if (
+    previous?.children.some((child) => child.permanentlyFailed) ||
+    next.children.some((child) => child.permanentlyFailed)
+  ) {
+    bumpFailedLoadsVersion();
+  }
+}
+
 export class LODGroupRegistry {
   private entries: Map<string, LODGroupEntry> = new Map();
   private partitionEntries: Map<string, PartitionGroupEntry> = new Map();
@@ -1041,6 +1057,7 @@ export class LODGroupRegistry {
   /** Register a newly-loaded lod_group (called by the scene loader). */
   register(entry: LODGroupEntry): void {
     const footprintDims = entry.children[0]?.footprintDims;
+    bumpForFailedEntryReplacement(this.entries.get(entry.path), entry);
     this.entries.set(entry.path, entry);
     this.caches.set(entry.path, {
       thresholds: entry.children.map((c) => c.coverageFraction),
@@ -2649,7 +2666,7 @@ export class LODGroupRegistry {
       }
     }
     if (explicitRetry) {
-      if (child.permanentlyFailed) bumpFailedLoadsVersion();
+      bumpIfFailedChild(child);
       child.permanentlyFailed = false;
       child.failureReason = undefined;
     }

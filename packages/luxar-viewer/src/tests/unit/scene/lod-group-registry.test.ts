@@ -19,6 +19,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
+import { failedLoadsVersion } from '../../../utils/failed-loads-version';
 
 import {
   FILL_FACTOR,
@@ -565,6 +566,23 @@ function residentModel(children: readonly LODGroupChild[], perLevel = 100): () =
 }
 
 describe('LODGroupRegistry — registration', () => {
+  it('versions pre-failed children and replacement of a failed entry', () => {
+    const reg = makeRegistry();
+    const failed = makeChild(0);
+    failed.nodePath = '/g/level';
+    failed.permanentlyFailed = true;
+    failed.failureReason = 'archive fault';
+    const before = failedLoadsVersion();
+    reg.register(makeEntry([failed], 0, '/g'));
+    expect(failedLoadsVersion()).toBeGreaterThan(before);
+    expect(reg.getFailedLazyChildPaths()).toEqual(['/g/level']);
+
+    const latched = failedLoadsVersion();
+    reg.register(makeEntry([makeChild(0)], 0, '/g'));
+    expect(failedLoadsVersion()).toBeGreaterThan(latched);
+    expect(reg.getFailedLazyChildPaths()).toEqual([]);
+  });
+
   it('hides all children except the active one on register', () => {
     const reg = makeRegistry();
     const children = [makeChild(0), makeChild(0.5), makeChild(1.0)];

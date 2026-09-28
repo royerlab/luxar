@@ -3726,15 +3726,19 @@ describe('LayersPanel — per-row load-failure badge', () => {
     };
     panel.setFailedLoadsProvider(provider);
     const firstReads = getFailedPaths.mock.calls.length;
+    const badge = errorBadge(rowFor(container, 'pyramid'))!;
+    const setAttribute = vi.spyOn(badge, 'setAttribute');
     const frame = perFrameCallbacks(animationController).get('layers-lod-status')!;
     for (let i = 0; i < 10; i++) frame();
     expect(getFailedPaths).toHaveBeenCalledTimes(firstReads);
+    expect(setAttribute).not.toHaveBeenCalled();
     expect(errorBadge(rowFor(container, 'pyramid'))?.title).toContain('network 503');
 
     reason = 'decode error';
     version++;
     frame();
     expect(getFailedPaths).toHaveBeenCalledTimes(firstReads + 1);
+    expect(setAttribute).toHaveBeenCalled();
     expect(errorBadge(rowFor(container, 'pyramid'))?.title).toContain('decode error');
   });
 

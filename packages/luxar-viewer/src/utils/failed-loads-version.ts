@@ -1,4 +1,7 @@
-/** Shared version for the loader failures, lazy LOD failures, and archive fault. */
+/**
+ * Shared version for loader failures, lazy LOD failures, and archive faults.
+ * New scenes must not restart at a version a still-mounted UI already applied.
+ */
 let version = 0;
 
 export function bumpFailedLoadsVersion(): void {
