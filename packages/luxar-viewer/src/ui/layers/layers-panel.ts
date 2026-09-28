@@ -213,6 +213,7 @@ export class LayersPanel {
    * falls through and re-applies (an empty set then correctly clears badges).
    */
   private lastFailedLoadsSignature: string | null = null;
+  private lastFailedLoadsVersion: number | null = null;
 
   // State change unsubscribe handle
   private unsubscribeState: (() => void) | null = null;
@@ -388,6 +389,7 @@ export class LayersPanel {
   setFailedLoadsProvider(provider: FailedLoadsProviderPort | null): void {
     this.failedLoadsProvider = provider;
     this.lastFailedLoadsSignature = null;
+    this.lastFailedLoadsVersion = null;
     this.updateRowErrorStates();
   }
 
@@ -892,6 +894,7 @@ export class LayersPanel {
     // the old scene's loader; a subsequent load re-injects a fresh one.
     this.failedLoadsProvider = null;
     this.lastFailedLoadsSignature = null;
+    this.lastFailedLoadsVersion = null;
     this.panelEl?.remove();
     this.panelEl = null;
     this.listEl = null;
@@ -1102,6 +1105,7 @@ export class LayersPanel {
     // of early-returning on an unchanged signature (e.g. after resetAllLayers()
     // while a failure persists).
     this.lastFailedLoadsSignature = null;
+    this.lastFailedLoadsVersion = null;
     this.updateRowErrorStates();
 
     // The filter affordance only pays for itself on layer-heavy scenes.
@@ -1197,31 +1201,34 @@ export class LayersPanel {
    * A layer is in error if its own path failed OR any descendant leaf failed
    * (`failedPath === layer.path || failedPath.startsWith(layer.path + '/')`), so
    * a failure inside a kind=lod/kind=partition group lights up the group's row.
-   * Signature-gated so unchanged frames touch no DOM; the signature folds in
-   * each path's reason (JSON of sorted `[path, reason]` pairs — unambiguous
-   * even when a reason contains `:` or `|`) so a changed reason for a
-   * still-failing path re-triggers the refresh instead of stranding a stale
-   * tooltip.
+   * Version-gated for the scene loader; structural providers without a version
+   * still use a signature that includes each path's reason.
    */
   private updateRowErrorStates(): void {
+    const failedPaths = this.changedFailedPaths();
+    if (!failedPaths) return;
+    const byAncestor = bucketFailedPathsByAncestor(failedPaths);
+    for (const layer of this.state.getLayers()) {
+      const row = this.rowElements.get(layer.path);
+      if (row) this.applyRowError(row, byAncestor.get(layer.path) ?? []);
+    }
+  }
+
+  private changedFailedPaths(): string[] | null {
     const provider = this.failedLoadsProvider;
+    const version = provider?.getFailedLoadsVersion?.();
+    if (version !== undefined) {
+      if (version === this.lastFailedLoadsVersion) return null;
+      this.lastFailedLoadsVersion = version;
+      return provider?.getFailedPaths() ?? [];
+    }
     const failedPaths = provider?.getFailedPaths() ?? [];
     const signature = JSON.stringify(
       [...failedPaths].sort().map((p) => [p, provider?.getFailedReason?.(p) ?? ''])
     );
-    if (signature === this.lastFailedLoadsSignature) return;
+    if (signature === this.lastFailedLoadsSignature) return null;
     this.lastFailedLoadsSignature = signature;
-
-    for (const layer of this.state.getLayers()) {
-      const row = this.rowElements.get(layer.path);
-      if (!row) continue;
-      // Sorted so the reported reason (matches[0]) is deterministic rather than
-      // dependent on the provider's Map-insertion order.
-      const matches = failedPaths
-        .filter((fp) => fp === layer.path || fp.startsWith(layer.path + '/'))
-        .sort();
-      this.applyRowError(row, matches);
-    }
+    return failedPaths;
   }
 
   /**
@@ -1478,4 +1485,26 @@ export class LayersPanel {
   private requestRender(): void {
     this.animationController.startAnimation();
   }
+}
+
+/** Index each failed path under its exact path and slash-delimited ancestors. */
+function bucketFailedPathsByAncestor(failedPaths: readonly string[]): Map<string, string[]> {
+  const byAncestor = new Map<string, string[]>();
+  for (const path of failedPaths) {
+    let end = path.length;
+    while (end > 0) {
+      const ancestor = path.slice(0, end);
+      const matches = byAncestor.get(ancestor) ?? [];
+      matches.push(path);
+      byAncestor.set(ancestor, matches);
+      end = path.lastIndexOf('/', end - 1);
+    }
+    if (path.startsWith('/') && path !== '/') {
+      const rootMatches = byAncestor.get('/') ?? [];
+      rootMatches.push(path);
+      byAncestor.set('/', rootMatches);
+    }
+  }
+  for (const matches of byAncestor.values()) matches.sort();
+  return byAncestor;
 }

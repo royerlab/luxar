@@ -64,6 +64,7 @@
  * @module scene/lod-group-registry
  */
 
+import { bumpFailedLoadsVersion } from '../utils/failed-loads-version';
 import * as THREE from 'three';
 
 import type { BoundingBox } from './scene-manager/clipping/bounds-math';
@@ -1158,6 +1159,9 @@ export class LODGroupRegistry {
     const partition = this.partitionEntries.get(path);
     if (partition) this.restorePartitionChildren(partition);
     this.partitionResyncPending.delete(path);
+    if (this.entries.get(path)?.children.some((child) => child.permanentlyFailed)) {
+      bumpFailedLoadsVersion();
+    }
     this.entries.delete(path);
     this.caches.delete(path);
     this.partitionEntries.delete(path);
@@ -1170,6 +1174,13 @@ export class LODGroupRegistry {
   clear(): void {
     for (const partition of this.partitionEntries.values()) {
       this.restorePartitionChildren(partition);
+    }
+    if (
+      [...this.entries.values()].some((entry) =>
+        entry.children.some((child) => child.permanentlyFailed)
+      )
+    ) {
+      bumpFailedLoadsVersion();
     }
     this.entries.clear();
     this.caches.clear();
@@ -2638,6 +2649,7 @@ export class LODGroupRegistry {
       }
     }
     if (explicitRetry) {
+      if (child.permanentlyFailed) bumpFailedLoadsVersion();
       child.permanentlyFailed = false;
       child.failureReason = undefined;
     }

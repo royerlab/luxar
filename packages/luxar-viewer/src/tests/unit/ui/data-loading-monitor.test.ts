@@ -68,6 +68,39 @@ describe('DataLoadingMonitor', () => {
     monitor = new DataLoadingMonitor(container);
   });
 
+  it('skips path enumeration on stable versions and rebuilds on change', () => {
+    let version = 0;
+    const getFailedPaths = vi.fn(() => ['/cloud']);
+    monitor.setFailedLoadsProvider({
+      getFailedPaths,
+      getFailedLoadsVersion: () => version,
+      retryAll: async () => ({ succeeded: [], failed: [] }),
+    });
+    const internals = monitor as unknown as {
+      uiState: { activeTab: string };
+      updateDetailedView(): void;
+      renderTabContent(): string;
+    };
+    // The Cache tab does not render the failure banner, so any path read here
+    // comes from the signature check itself.
+    internals.uiState.activeTab = 'cache';
+    monitor.show();
+    monitor.expand();
+    internals.updateDetailedView();
+    const render = vi.spyOn(internals, 'renderTabContent');
+    getFailedPaths.mockClear();
+
+    internals.updateDetailedView();
+    internals.updateDetailedView();
+    expect(getFailedPaths).not.toHaveBeenCalled();
+    const stableRenders = render.mock.calls.length;
+
+    version++;
+    internals.updateDetailedView();
+    expect(getFailedPaths).not.toHaveBeenCalled();
+    expect(render.mock.calls.length).toBe(stableRenders + 1);
+  });
+
   describe('initialization', () => {
     it('should create monitor instance', () => {
       expect(monitor).toBeDefined();

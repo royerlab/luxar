@@ -5,6 +5,7 @@
  * loading for all points nodes and managing the THREE.js scene construction.
  */
 
+import { bumpFailedLoadsVersion, failedLoadsVersion } from '../utils/failed-loads-version';
 import * as zarr from './zarr';
 import * as THREE from 'three';
 import { normalizeURL } from './scene-loader/lifecycle/url-normalization';
@@ -632,6 +633,7 @@ export class SceneLoader {
   private reportArchiveFault(fault: ArchiveFaultError): void {
     if (this._archiveFault) return;
     this._archiveFault = fault;
+    bumpFailedLoadsVersion();
     this.releasePrefetchResources();
     this.registry.clearAllFailures();
     log.error(Modules.SCENE_LOADER, `Archive fault: ${fault.message}`);
@@ -2246,6 +2248,7 @@ export class SceneLoader {
   getFailedLoadsProvider(): FailedLoadsProviderPort {
     return {
       getFailedPaths: () => this.getMonitorFailedPaths(),
+      getFailedLoadsVersion: failedLoadsVersion,
       retryAll: () => this.retryAllFailedLoaders(),
       getFailedReason: (path) => {
         const info = this.failedLoaders.get(path);
@@ -2268,6 +2271,7 @@ export class SceneLoader {
   private clearArchiveFaultForRetry(): void {
     if (!this._archiveFault) return;
     this._archiveFault = null;
+    bumpFailedLoadsVersion();
     notifier.clearError();
   }
 

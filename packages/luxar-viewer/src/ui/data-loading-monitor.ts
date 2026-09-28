@@ -1041,8 +1041,10 @@ export class DataLoadingMonitor {
     // is part of that HTML — so any change in the failed set or the
     // retry-in-flight flag must mark the structure dirty, or the banner
     // appears/disappears/disables only on the next unrelated rebuild.
+    const provider = this.providers.failedLoadsProvider;
+    const version = provider?.getFailedLoadsVersion?.();
     const failedLoadsSignature =
-      (this.providers.failedLoadsProvider?.getFailedPaths() ?? []).join('|') +
+      (version === undefined ? (provider?.getFailedPaths() ?? []).join('|') : `v${version}`) +
       (this.retryFailedLoadsInFlight ? '#retrying' : '');
     if (failedLoadsSignature !== this.lastFailedLoadsSignature) {
       this.lastFailedLoadsSignature = failedLoadsSignature;

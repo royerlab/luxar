@@ -90,6 +90,8 @@ export interface FailedLoadsProviderPort {
    * tooltip and falls back to a generic message when absent.
    */
   getFailedReason?: (path: string) => string | undefined;
+  /** Changes when a path or its reason changes; absent on older providers. */
+  getFailedLoadsVersion?: () => number;
 }
 
 /**

@@ -1972,8 +1972,29 @@ describe('SceneLoader', () => {
     // #1055: the layers-panel error badge reads its tooltip from the provider's
     // getFailedReason, which folds error.message → classified kind → undefined.
     interface FailInternals {
-      registry: { recordFailure(path: string, error: Error, kind?: string): void };
+      registry: {
+        recordFailure(path: string, error: Error, kind?: string): void;
+        clearFailure(path: string): void;
+      };
     }
+
+    it('versions recorded, replaced and cleared failures, but not reads', () => {
+      const registry = (sceneLoader as unknown as FailInternals).registry;
+      const provider = sceneLoader.getFailedLoadsProvider();
+      const initial = provider.getFailedLoadsVersion?.();
+      expect(typeof initial).toBe('number');
+      registry.recordFailure('/points/a', new Error('network 503'));
+      const failed = provider.getFailedLoadsVersion?.();
+      expect(failed).toBeGreaterThan(initial!);
+      provider.getFailedPaths();
+      provider.getFailedReason?.('/points/a');
+      expect(provider.getFailedLoadsVersion?.()).toBe(failed);
+      registry.recordFailure('/points/a', new Error('decode error'));
+      expect(provider.getFailedLoadsVersion?.()).toBeGreaterThan(failed!);
+      const replaced = provider.getFailedLoadsVersion?.();
+      registry.clearFailure('/points/a');
+      expect(provider.getFailedLoadsVersion?.()).toBeGreaterThan(replaced!);
+    });
 
     it('reports error.message, falls back to kind, else undefined for an unknown path', () => {
       const internals = sceneLoader as unknown as FailInternals;
@@ -2015,6 +2036,8 @@ describe('SceneLoader', () => {
 
     it('surfaces and retries an archive fault with no recorded node failure', async () => {
       const archiveFault = new ArchiveFaultError('archive unavailable', '/scene.zip');
+      const provider = sceneLoader.getFailedLoadsProvider();
+      const beforeFault = provider.getFailedLoadsVersion!();
       const current = { displayDims: [0, 1, 2], slicePosition: [3], tolerance: [0] };
       const blocked = { displayDims: [0, 1, 2], slicePosition: [4], tolerance: [0] };
       const internals = sceneLoader as unknown as {
@@ -2024,13 +2047,14 @@ describe('SceneLoader', () => {
       };
       await sceneLoader.updateView(current);
       internals.reportArchiveFault(archiveFault);
+      const faultVersion = provider.getFailedLoadsVersion!();
+      expect(faultVersion).toBeGreaterThan(beforeFault);
       await sceneLoader.updateView(blocked);
       expect(internals.viewState).toMatchObject(current);
       expect(internals.viewStateQueue.hasPending()).toBe(false);
 
       const updateViewSpy = vi.spyOn(sceneLoader, 'updateView');
 
-      const provider = sceneLoader.getFailedLoadsProvider();
       expect(provider.getFailedPaths()).toEqual(['/scene.zip']);
       expect(provider.getFailedReason?.('/scene.zip')).toBe('archive unavailable');
       expect(sceneLoader.hasAutoRetryableFailures()).toBe(true);
@@ -2040,6 +2064,7 @@ describe('SceneLoader', () => {
         failed: [],
       });
       expect(sceneLoader.archiveFault).toBeNull();
+      expect(provider.getFailedLoadsVersion!()).toBeGreaterThan(faultVersion);
       expect(notifierMocks.clearError).toHaveBeenCalledOnce();
       expect(internals.viewStateQueue.hasPending()).toBe(false);
       expect(updateViewSpy).toHaveBeenCalledWith(internals.viewState);

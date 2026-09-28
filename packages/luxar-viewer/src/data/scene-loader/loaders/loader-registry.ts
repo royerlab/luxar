@@ -20,6 +20,7 @@ import type { GSplatsDataLoader } from '../../../types/gsplats';
 import type { MeshDataLoader } from '../../../types/mesh';
 
 import { log, Modules } from '../../../utils/log';
+import { FailedLoadsMap } from '../../../utils/failed-loads-version';
 import { classifyLoaderError, type LoaderErrorKind } from '../nodes/load-leaf-error-dispatch';
 
 /**
@@ -162,7 +163,7 @@ export class LoaderRegistry {
   }
 
   /** Error tracking for failed loaders */
-  readonly failedLoaders = new Map<string, FailedLoaderInfo>();
+  readonly failedLoaders = new FailedLoadsMap<string, FailedLoaderInfo>();
 
   // ---------------------------------------------------------------------------
   // Registration

@@ -3710,6 +3710,34 @@ describe('LayersPanel — per-row load-failure badge', () => {
     );
   }
 
+  it('does not read failed paths again on unchanged frames with a versioned provider', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeGroupPlusSiblingScene());
+    panel.show();
+    let version = 0;
+    let reason = 'network 503';
+    const paths = Array.from({ length: 1000 }, (_, i) => `/pyramid/tile_${i}`);
+    const getFailedPaths = vi.fn(() => paths);
+    const provider: FailedLoadsProviderPort = {
+      getFailedPaths,
+      getFailedLoadsVersion: () => version,
+      getFailedReason: () => reason,
+      retryAll: async () => ({ succeeded: [], failed: [] }),
+    };
+    panel.setFailedLoadsProvider(provider);
+    const firstReads = getFailedPaths.mock.calls.length;
+    const frame = perFrameCallbacks(animationController).get('layers-lod-status')!;
+    for (let i = 0; i < 10; i++) frame();
+    expect(getFailedPaths).toHaveBeenCalledTimes(firstReads);
+    expect(errorBadge(rowFor(container, 'pyramid'))?.title).toContain('network 503');
+
+    reason = 'decode error';
+    version++;
+    frame();
+    expect(getFailedPaths).toHaveBeenCalledTimes(firstReads + 1);
+    expect(errorBadge(rowFor(container, 'pyramid'))?.title).toContain('decode error');
+  });
+
   it('an exact-path failure lights up its row with a reason in the badge label', () => {
     const panel = new LayersPanel(container, animationController);
     panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph());
