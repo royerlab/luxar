@@ -175,6 +175,14 @@ Total Update                              [root]
 +-- [Skipped: /scene/detector]            [skip(): 0-duration, skipReason]
 ```
 
+Each finished session merges into the persistent tree by its full PATH
+(root name + every ancestor's name + its own), resolved through a
+path-keyed `Map` index. Loaders share child names (`Spatial Query`,
+`Load Arrays`, …), so a merge keyed on the parent's name alone would land
+a second loader's grandchildren under the first loader's row; the path key
+rules that out, and makes each merge O(1) instead of a tree search, so an
+update with N loaders costs O(N) to merge rather than O(N²).
+
 ## Metadata Per Entry
 
 `TimingMetadata` fields (all optional): `chunks`, `cacheHits`,
@@ -216,6 +224,12 @@ With ~20 timing entries per update:
 - ~120us for EMA + merge operations
 
 **Total: ~360us per update** (<1% of typical 50ms update cycle)
+
+Merging is linear in the number of entries. A whole steady-state update
+(sessions plus merges, 4 entries per loader) takes about 0.2 ms with 200
+loaders and 1.3 ms with 1000, measured in Node; with the per-name tree
+search this replaced it took 1.0 ms and 28 ms. The
+`profiler.mergeMs` perf counter tracks it live.
 
 ## Integration
 

@@ -258,6 +258,18 @@ function mergeMetadata(
 }
 
 /**
+ * Separator between path segments. NUL cannot appear in a timing name the
+ * pipeline builds (node paths, stage labels), so 'a' + 'b/c' and 'a/b' + 'c'
+ * can never collide the way a '/' join would.
+ */
+const PATH_SEP = '\u0000';
+
+/** Path of child `name` under the entry at `parentPath`. */
+function pathKey(parentPath: string, name: string): string {
+  return parentPath + PATH_SEP + name;
+}
+
+/**
  * Internal session implementation
  */
 class SessionImpl implements UpdateSession {
@@ -268,6 +280,13 @@ class SessionImpl implements UpdateSession {
   private readonly profiler: UpdateProfiler;
   /** Which persistent root tree this session's subtree merges into. */
   private readonly rootName: string;
+  /**
+   * Full path of this session in its tree ({@link pathKey}): the root's
+   * path is its rootName, a child's is its parent's path plus its own name.
+   * The persistent-tree merge is keyed on it, so two loaders whose children
+   * share a name ('Load Arrays', 'Decode', …) never merge into each other.
+   */
+  readonly path: string;
   /**
    * Update/pass sequence this session belongs to. Root sessions capture it
    * from the profiler at construction; children INHERIT their parent's seq
@@ -316,6 +335,7 @@ class SessionImpl implements UpdateSession {
     this.parent = parent;
     this.profiler = profiler;
     this.rootName = parent ? parent.rootName : (rootName ?? TOTAL_UPDATE_ROOT);
+    this.path = parent ? pathKey(parent.path, name) : this.rootName;
     this.seq = parent ? parent.seq : (seq ?? 0);
     // Children inherit their parent's seq (one tree = one update); only a
     // root session may defer.
@@ -376,7 +396,7 @@ class SessionImpl implements UpdateSession {
     this.entry.lastSeq = seq;
 
     // Merge into profiler's persistent state
-    this.profiler._mergeEntry(this.entry, this.parent?.entry.name, this.rootName, seq);
+    this.profiler._mergeEntry(this.entry, this.parent?.path, this.rootName, seq);
   }
 
   setMetadata(meta: Partial<TimingMetadata>): void {
@@ -461,11 +481,14 @@ const NOOP_SESSION = new NoOpSession();
  */
 export class UpdateProfiler {
   // Persistent timing state (survives across updates), one tree per root.
-  private roots = new Map<string, TimingEntry>([
-    [TOTAL_UPDATE_ROOT, UpdateProfiler.makeRoot(TOTAL_UPDATE_ROOT)],
-    [REFINEMENT_ROOT, UpdateProfiler.makeRoot(REFINEMENT_ROOT)],
-    [DEPTH_SORT_ROOT, UpdateProfiler.makeRoot(DEPTH_SORT_ROOT)],
-  ]);
+  private roots = UpdateProfiler.makeRoots();
+
+  // Every persistent entry of every tree, keyed by its full session path
+  // (see SessionImpl.path; a root is keyed by its rootName). A finished
+  // session finds its parent — and its own persistent row — in O(1) here
+  // instead of searching the tree by NAME, which both cross-attributed
+  // same-named children of different loaders and cost O(tree) per merge.
+  private index = new Map<string, TimingEntry>(this.roots);
 
   // Current active session (null when not profiling)
   private activeSession: RootSession | null = null;
@@ -513,6 +536,14 @@ export class UpdateProfiler {
       count: 0,
       children: [],
     };
+  }
+
+  private static makeRoots(): Map<string, TimingEntry> {
+    return new Map<string, TimingEntry>([
+      [TOTAL_UPDATE_ROOT, UpdateProfiler.makeRoot(TOTAL_UPDATE_ROOT)],
+      [REFINEMENT_ROOT, UpdateProfiler.makeRoot(REFINEMENT_ROOT)],
+      [DEPTH_SORT_ROOT, UpdateProfiler.makeRoot(DEPTH_SORT_ROOT)],
+    ]);
   }
 
   /**
@@ -856,11 +887,8 @@ export class UpdateProfiler {
     this.sortSeq = 0;
     this.depthSortCompletionTotal = 0;
     this.depthSortCompletions = [];
-    this.roots = new Map<string, TimingEntry>([
-      [TOTAL_UPDATE_ROOT, UpdateProfiler.makeRoot(TOTAL_UPDATE_ROOT)],
-      [REFINEMENT_ROOT, UpdateProfiler.makeRoot(REFINEMENT_ROOT)],
-      [DEPTH_SORT_ROOT, UpdateProfiler.makeRoot(DEPTH_SORT_ROOT)],
-    ]);
+    this.roots = UpdateProfiler.makeRoots();
+    this.index = new Map<string, TimingEntry>(this.roots);
     this.notifyListeners();
   }
 
@@ -884,7 +912,7 @@ export class UpdateProfiler {
    */
   _mergeEntry(
     entry: TimingEntry,
-    parentName: string | undefined,
+    parentPath: string | undefined,
     rootName: string,
     seq: number
   ): void {
@@ -892,7 +920,7 @@ export class UpdateProfiler {
     if (!root) return;
 
     const mergeStart = performance.now();
-    if (!parentName) {
+    if (parentPath === undefined) {
       // This is a root entry (update root or refinement pass root)
       this.mergeEntryValues(root, entry, seq);
       // Sweep: anything this update/pass did NOT touch is now stale. The
@@ -909,8 +937,7 @@ export class UpdateProfiler {
       perfCounters.add(S_MERGE_MS, performance.now() - mergeStart);
       this.notifyListeners();
     } else {
-      // Find parent within THIS root's tree and merge child
-      this.mergeChild(root, entry, parentName, seq);
+      this.mergeChild(entry, parentPath, seq);
       perfCounters.add(S_MERGE_MS, performance.now() - mergeStart);
     }
   }
@@ -965,65 +992,54 @@ export class UpdateProfiler {
   }
 
   /**
-   * Find parent entry and merge child into it
+   * Merge a finished child session into the persistent row at its PATH
+   * (parent path + name), found in O(1) through {@link index}.
+   *
+   * - Parent not persisted yet → drop. Sessions end innermost-first, so on
+   *   the first update a child ends before its parent has a row; the
+   *   parent's own end() then inserts its whole session subtree (this child
+   *   included) via {@link insertSubtree}.
+   * - Row exists → merge values only. Its children are NOT re-merged: each
+   *   child session merges itself through its own end(), and re-merging
+   *   here would double-increment count and double-apply the EMA.
+   * - Row missing under a persisted parent → insert the subtree.
    */
-  private mergeChild(
-    current: TimingEntry,
-    child: TimingEntry,
-    parentName: string,
-    seq: number
-  ): boolean {
-    if (current.name === parentName) {
-      this.mergeChildEntry(current.children, child, seq);
-      return true;
-    }
-
-    for (const c of current.children) {
-      if (this.mergeChild(c, child, parentName, seq)) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  /**
-   * Merge a child entry into a children array
-   */
-  private mergeChildEntry(children: TimingEntry[], entry: TimingEntry, seq: number): void {
-    // Find existing entry with same name
-    const existing = children.find((c) => c.name === entry.name);
-
+  private mergeChild(entry: TimingEntry, parentPath: string, seq: number): void {
+    const parent = this.index.get(parentPath);
+    if (!parent) return;
+    const existing = this.index.get(pathKey(parentPath, entry.name));
     if (existing) {
       this.mergeEntryValues(existing, entry, seq);
-
-      // Note: children are NOT re-merged here. Each child session merges itself
-      // via its own SessionImpl.end() → _mergeEntry path (which walks the
-      // persistent tree to find its parent). Re-merging here would
-      // double-increment count and double-apply the EMA for every descendant.
     } else {
-      // Add new entry (first time seeing this path)
-      // Deep clone to avoid reference issues
-      children.push(this.cloneEntry(entry));
+      this.insertSubtree(parent, parentPath, entry);
     }
   }
 
   /**
-   * Deep clone a timing entry
+   * Deep-clone a session entry under a persistent parent, indexing every
+   * cloned node by its path. If a session opened two same-named siblings,
+   * both rows are kept (as before) and the path resolves to the FIRST, which
+   * is the row every later merge lands in.
    */
-  private cloneEntry(entry: TimingEntry): TimingEntry {
-    return {
+  private insertSubtree(parent: TimingEntry, parentPath: string, entry: TimingEntry): void {
+    const path = pathKey(parentPath, entry.name);
+    const clone: TimingEntry = {
       name: entry.name,
       lastMs: entry.lastMs,
       avgMs: entry.avgMs,
       count: entry.count,
-      children: entry.children.map((c) => this.cloneEntry(c)),
+      children: [],
       metadata: entry.metadata ? { ...entry.metadata } : undefined,
       overBudget: entry.overBudget,
       lastSeq: entry.lastSeq,
       emaBase: entry.emaBase,
       stale: entry.stale,
     };
+    parent.children.push(clone);
+    if (!this.index.has(path)) this.index.set(path, clone);
+    for (const child of entry.children) {
+      this.insertSubtree(clone, path, child);
+    }
   }
 
   /**

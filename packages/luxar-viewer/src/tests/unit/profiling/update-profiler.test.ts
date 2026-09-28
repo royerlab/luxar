@@ -1200,7 +1200,7 @@ function mergeVisitsFor(n: number): number {
 }
 
 describe('UpdateProfiler — path-keyed merge (A5)', () => {
-  it.fails('[A5-attribution] two loaders with same-named children keep their own depth-3 timings', () => {
+  it('[A5-attribution] two loaders with same-named children keep their own depth-3 timings', () => {
     const clock = controlledClock();
     try {
       const profiler = new UpdateProfiler();
@@ -1235,7 +1235,7 @@ describe('UpdateProfiler — path-keyed merge (A5)', () => {
     }
   });
 
-  it.fails('[A5-scaling] merge work grows linearly with the number of loaders (50 vs 200)', () => {
+  it('[A5-scaling] merge work grows linearly with the number of loaders (50 vs 200)', () => {
     const v50 = mergeVisitsFor(50);
     const v200 = mergeVisitsFor(200);
     // 4x the loaders: linear merging costs ~4x, a per-merge tree scan ~16x.
