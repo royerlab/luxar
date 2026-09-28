@@ -1147,6 +1147,76 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
   });
 
+  /**
+   * Two culled parts whose leaves carry the given commit stamps, a registry at
+   * view version 7, and a helper that swings the wrapper out of and back into
+   * the frustum (B9c: skip the rising-edge resync when nothing is stale).
+   */
+  function twoPartRisingEdge(
+    stamps: Array<{ loadedViewVersion?: number; committedLadderComplete?: boolean }>
+  ): { requestReprocess: ReturnType<typeof vi.fn>; reenter: () => unknown } {
+    const requestReprocess = vi.fn();
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      () => 7,
+      undefined,
+      undefined,
+      undefined,
+      requestReprocess
+    );
+    const groupObject = new THREE.Group();
+    const children = stamps.map((stamp, index) => {
+      const partObject = new THREE.Group();
+      const leaf = new THREE.Mesh();
+      leaf.userData = { nodeType: 'points', ...stamp };
+      partObject.add(leaf);
+      groupObject.add(partObject);
+      return {
+        path: `/partition/part_${index}`,
+        objects: [partObject],
+        positionBounds: { min: [2, 0, 0], max: [3, 0.5, 0.5] },
+      };
+    });
+    reg.registerPartition({ path: '/partition', groupObject, children });
+    expect(reg.evaluatePerFrame()).toEqual(CULL_CHANGED); // both culled
+    return {
+      requestReprocess,
+      reenter: () => {
+        groupObject.position.x = -2.5;
+        return reg.evaluatePerFrame();
+      },
+    };
+  }
+
+  it.fails('skips the rising-edge resync for a part whose leaves are all fresh and complete', () => {
+    const { requestReprocess, reenter } = twoPartRisingEdge([
+      { loadedViewVersion: 7, committedLadderComplete: true },
+      { loadedViewVersion: 7, committedLadderComplete: true },
+    ]);
+    // The parts are shown again (a cull change) but nothing missed a view
+    // update while they were culled, so re-sweeping them would be pure waste.
+    expect(reenter()).toEqual(CULL_CHANGED);
+    expect(requestReprocess).not.toHaveBeenCalled();
+  });
+
+  it.fails('still resyncs exactly the stale or unfinished parts on the rising edge', () => {
+    const { requestReprocess, reenter } = twoPartRisingEdge([
+      { loadedViewVersion: 7, committedLadderComplete: true }, // fresh
+      { loadedViewVersion: 6, committedLadderComplete: true }, // missed a slice move
+      { loadedViewVersion: 7, committedLadderComplete: false }, // ladder unfinished
+      {}, // never committed
+    ]);
+    expect(reenter()).toEqual(CULL_CHANGED);
+    expect(requestReprocess).toHaveBeenCalledOnce();
+    expect(requestReprocess).toHaveBeenCalledWith([
+      '/partition/part_1',
+      '/partition/part_2',
+      '/partition/part_3',
+    ]);
+  });
+
   it('passes the re-entering part path on the rising edge', () => {
     const requestReprocess = vi.fn();
     const reg = makeRegistry(
