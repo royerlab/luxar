@@ -100,8 +100,12 @@ export function judgePerf(base, cand, floor, absTolerance = 0, { better = 'lower
   // is too small to judge either way.
   const delta = median(cand) - median(base);
   const higher = better === 'higher';
-  const worse = higher ? ci.ratio < 1 - floor : ci.ratio > 1 + floor;
-  const improved = higher ? ci.ratio > 1 + floor : ci.ratio < 1 - floor;
+  // The band is symmetric in log space, [1/(1+floor), 1+floor]. A linear
+  // 1 - floor would be unreachable once a noisy counter's floor passes 1.
+  const up = ci.ratio > 1 + floor;
+  const down = ci.ratio < 1 / (1 + floor);
+  const worse = higher ? down : up;
+  const improved = higher ? up : down;
   let verdict = 'pass';
   if (Math.abs(delta) <= absTolerance) verdict = 'pass';
   else if (worse) verdict = 'fail';

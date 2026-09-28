@@ -105,12 +105,12 @@ describe('judgePerf with a floor above 1', () => {
   const base = [126, 60, 130, 126, 118];
   const cand = [6, 5, 7, 6, 6];
 
-  it.fails('still wins a drop far beyond the band', () => {
+  it('still wins a drop far beyond the band', () => {
     expect(judgePerf(base, cand, 1.287).verdict).toBe('win');
     expect(judgePerf(cand, base, 1.287, 0, { better: 'higher' }).verdict).toBe('win');
   });
 
-  it.fails('fails the mirror-image rise', () => {
+  it('fails the mirror-image rise', () => {
     expect(judgePerf(cand, base, 1.287).verdict).toBe('fail');
     expect(judgePerf(base, cand, 1.287, 0, { better: 'higher' }).verdict).toBe('fail');
   });
