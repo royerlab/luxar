@@ -176,7 +176,9 @@ workers/
         ├── geolog-scalar.ts                    — geometric-log (reserved zero level)
         ├── perchannel.ts                       — per-column linear/log/signed-log/geolog
         ├── lut.ts                              — row + scalar LUT decode
-        └── broadcasted.ts                      — single value → N×k array
+        ├── broadcasted.ts                      — single value → N×k array
+        └── blosc.ts                            — zarr chunk decompression
+                                                  (blosc + fused luxar_delta)
 ├── sort-worker.ts                              — Depth-sort worker entry
 │                                                 (Vite ?worker target, Comlink;
 │                                                 depth-sorting Phase 2)

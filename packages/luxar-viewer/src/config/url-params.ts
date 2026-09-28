@@ -65,6 +65,9 @@ export const URL_PARAM_KEYS = {
   densityCap: 'densityCap',
   noPrefetch: 'noPrefetch',
   prefetchDebug: 'prefetchDebug',
+  // Deliberately NOT a `UrlParams` field: read once, via `hasUrlFlag`, where
+  // the worker pool installs its codec backend (`workers/worker-pool.ts`).
+  mainThreadCodecs: 'mainThreadCodecs',
   cacheStats: 'cacheStats',
   renderer: 'renderer',
   webgpuForceWebgl: 'webgpuForceWebgl',
@@ -135,6 +138,18 @@ export function hasParam(
   aliases: Readonly<Record<string, UrlParamKey>> = URL_PARAM_ALIASES
 ): boolean {
   return resolveParamKey(params, key, aliases) !== null;
+}
+
+/**
+ * Whether flag `key` is present in the page URL (or in `search`, for tests).
+ *
+ * For the rare module-scope safety valve that has no options path to receive
+ * {@link UrlParams} through (the worker pool's `?mainThreadCodecs`, whose pool
+ * is a lazily created singleton). Everything else takes the parsed snapshot.
+ */
+export function hasUrlFlag(key: UrlParamKey, search?: string): boolean {
+  const raw = search ?? (typeof window !== 'undefined' ? window.location?.search : '') ?? '';
+  return hasParam(new URLSearchParams(raw), key);
 }
 
 /**

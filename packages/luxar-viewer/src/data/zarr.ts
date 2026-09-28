@@ -11,6 +11,11 @@ import * as zarrita from 'zarrita';
 
 import { boundedConcurrencyStore, noteFetchUrl } from '../utils/fetch-concurrency';
 import { LuxarDeltaCodec } from './codecs/luxar-delta';
+import {
+  WorkerBloscCodec,
+  setNativeBloscLoader,
+  type NativeBloscCtor,
+} from './codecs/worker-blosc';
 import { isZippedStoreUrl } from './zip/entries';
 import { LuxarZipStore } from './zip/store';
 import type { AbsolutePath, AsyncReadable, GetOptions, Readable } from '@zarrita/storage';
@@ -91,6 +96,49 @@ if (typeof codecRegistry?.set === 'function') {
   const luxarDelta = () => Promise.resolve(LuxarDeltaCodec);
   codecRegistry.set('numcodecs.luxar_delta_v1', luxarDelta); // format 2
   codecRegistry.set('luxar_delta_v1', luxarDelta); // format 3
+}
+
+// zarrita's own numcodecs Blosc thunk, captured BEFORE the override below so
+// the native codec stays reachable: it is the main-thread fallback, and what a
+// data worker runs. Memoized — the registry thunk re-imports on every call.
+const nativeBloscThunk = codecRegistry?.get?.('blosc') as
+  (() => Promise<NativeBloscCtor>) | undefined;
+let nativeBlosc: Promise<NativeBloscCtor> | null = null;
+
+/**
+ * Load the native numcodecs Blosc codec class (blosc WASM, instantiated on
+ * first encode/decode). The registry's `blosc` entry is the worker-offloaded
+ * {@link WorkerBloscCodec}; this is the codec it falls back to, and the one a
+ * data worker decodes with.
+ */
+export function loadNativeBlosc(): Promise<NativeBloscCtor> {
+  if (!nativeBloscThunk) return Promise.reject(new Error('zarr: no native blosc codec'));
+  if (!nativeBlosc) {
+    const loading = nativeBloscThunk();
+    // A failed chunk import (flaky network) must not stick: the next call retries.
+    loading.catch(() => {
+      if (nativeBlosc === loading) nativeBlosc = null;
+    });
+    nativeBlosc = loading;
+  }
+  return nativeBlosc;
+}
+
+// Replace zarrita's `blosc` (format 3) and `numcodecs.blosc` (format 2) with
+// the worker-offloaded codec (see `./codecs/worker-blosc.ts`). Codecs resolve
+// per array on first decode, so module scope is early enough. The thunk also
+// starts loading the native codec, so bootstrap's `get('blosc')()` warm-up
+// still parses the main-thread fallback's WASM ahead of the first decode.
+if (nativeBloscThunk && typeof codecRegistry?.set === 'function') {
+  setNativeBloscLoader(loadNativeBlosc);
+  const workerBlosc = (): Promise<unknown> => {
+    loadNativeBlosc().catch(() => {
+      /* Surfaced by the first decode that needs the fallback. */
+    });
+    return Promise.resolve(WorkerBloscCodec);
+  };
+  codecRegistry.set('blosc', workerBlosc);
+  codecRegistry.set('numcodecs.blosc', workerBlosc);
 }
 
 /** Create the default HTTP-backed store for browser/network datasets.

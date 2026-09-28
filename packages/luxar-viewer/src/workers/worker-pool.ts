@@ -39,6 +39,9 @@ import { nextRoundRobin } from './worker-pool/selection/round-robin';
 import { DispatchTracker } from './worker-pool/selection/dispatch-tracker';
 import { computeStats, computeQueueDepth, type PoolStats } from './worker-pool/stats';
 import { markLoad } from '../profiling/load-timeline';
+import { setBloscDecodeBackend, setWorkerCodecsEnabled } from '../data/codecs/worker-blosc';
+import { hasUrlFlag, URL_PARAM_KEYS } from '../config/url-params';
+import { BloscDecodeDispatcher } from './worker-pool/codec-dispatch';
 
 export type { WorkerInstance };
 export {
@@ -219,6 +222,7 @@ export class WorkerPool {
           }
           attemptWorkers.push(entry);
           this.workers.push(entry);
+          this.warmCodecsOn(entry);
           settleMyReady();
         };
 
@@ -709,6 +713,51 @@ export class WorkerPool {
   }
 
   /**
+   * Run a chunk-decode task on the least-busy worker, timeout-guarded but NOT
+   * raced against the pool-wide abort signal: a decode is a few milliseconds
+   * of work whose result the L0 cache keeps, and abandoning it on a dataset
+   * switch would only make the codec fall back to decoding it on the main
+   * thread. Used by the blosc codec dispatcher (`worker-pool/codec-dispatch.ts`).
+   */
+  async runDecode<T>(op: string, fn: (api: Remote<DataWorkerAPI>) => Promise<T>): Promise<T> {
+    const tracked = await this.acquireTrackedWorker();
+    return this.dispatchTracked(op, 'decode', tracked, fn);
+  }
+
+  /** Workers with no task in flight (the codec dispatcher spreads batches over these). */
+  getIdleWorkerCount(): number {
+    return this.workers.reduce((n, w) => n + (w.activeQueries === 0 ? 1 : 0), 0);
+  }
+
+  /**
+   * Instantiate the blosc WASM inside every live worker now, so the first
+   * offloaded chunk decode does not pay the module compile. Fire-and-forget and
+   * idempotent (worker-side memoized). Each worker is marked busy while it
+   * warms, steering early decodes to workers that are already warm.
+   */
+  warmCodecs(): void {
+    for (const entry of this.workers) this.warmCodecsOn(entry);
+  }
+
+  private warmCodecsOn(entry: WorkerInstance): void {
+    // Test doubles and legacy workers may lack the task: nothing to warm.
+    if (typeof entry.api?.warmCodecs !== 'function') return;
+    entry.activeQueries++;
+    const release = (): void => {
+      entry.activeQueries = Math.max(0, entry.activeQueries - 1);
+    };
+    this.withTimeout(
+      'warmCodecs',
+      entry.api.warmCodecs(),
+      this.pickTimeoutMs('decode'),
+      entry.worker
+    ).then(release, (error: unknown) => {
+      release();
+      log.warning(Modules.WORKER_POOL, 'Worker codec warm-up failed (decodes will retry)', error);
+    });
+  }
+
+  /**
    * Set or clear the pool-wide abort signal. Every subsequent
    * {@link runWithTimeout} call additionally races against this
    * signal. Used by `SceneLoader.loadScene` to immediately settle
@@ -860,8 +909,31 @@ let workerPoolInstance: WorkerPool | null = null;
 export function getWorkerPool(): WorkerPool {
   if (!workerPoolInstance) {
     workerPoolInstance = new WorkerPool();
+    installCodecBackend(workerPoolInstance);
   }
   return workerPoolInstance;
+}
+
+/**
+ * Route the zarr blosc codec's chunk decodes through `pool` (see
+ * `worker-pool/codec-dispatch.ts`). The dispatcher declines — the codec then
+ * decodes on the main thread — until the pool has a usable worker, so this is
+ * safe to install before any worker exists. `?mainThreadCodecs` is the kill
+ * switch (keeps every decode on the main thread).
+ */
+function installCodecBackend(pool: WorkerPool): void {
+  setWorkerCodecsEnabled(!hasUrlFlag(URL_PARAM_KEYS.mainThreadCodecs));
+  setBloscDecodeBackend(new BloscDecodeDispatcher(pool));
+}
+
+/**
+ * Instantiate the blosc codec WASM in every live data worker (fire-and-forget).
+ *
+ * The pool already does this for each worker as it becomes ready, so calling
+ * it is only useful to re-warm after `reinitialize()`; exposed for bootstrap.
+ */
+export function warmWorkerCodecs(): void {
+  workerPoolInstance?.warmCodecs();
 }
 
 /**
@@ -907,6 +979,9 @@ export function disposeWorkerPool(): void {
       workerPoolInstance.dispose();
     } finally {
       workerPoolInstance = null;
+      // Drop the codec route with the pool: blosc decodes run on the main
+      // thread until a new pool is created.
+      setBloscDecodeBackend(null);
     }
   }
 }

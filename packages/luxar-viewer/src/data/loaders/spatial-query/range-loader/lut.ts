@@ -1,16 +1,11 @@
 import * as zarr from '../../../zarr';
-import { readArray, abortOptions } from '../../../zarr';
 import { log } from '../../../../utils/log';
 import { config as appConfig } from '../../../../config';
 import { getWorkerPool } from '../../../../workers/worker-pool';
 import { ArrayDecoder, type ArrayMetadata } from '../../../array-decoder/decoder';
 import type { LoadRange } from '../../base-types';
-import {
-  clampRangeData,
-  firstAxisRangeSlice,
-  rangeDestOffsets,
-  type ResolvedRangeLoaderConfig,
-} from './encoding-types';
+import { rangeDestOffsets, type ResolvedRangeLoaderConfig } from './encoding-types';
+import { packRanges, readRanges, scatterDecoded } from './packed-ranges';
 
 export interface LUTCtx {
   config: ResolvedRangeLoaderConfig;
@@ -18,6 +13,44 @@ export interface LUTCtx {
   decoder: ArrayDecoder;
   /** Per-update abort signal forwarded to the worker decode (see RangeLoader). */
   signal?: AbortSignal | null;
+}
+
+type LUTMetadata = NonNullable<ReturnType<typeof ArrayDecoder.getLUTMetadata>>;
+
+/** Decode LUT `indices` in the worker pool, falling back to the main thread. */
+async function decodeIndices(
+  ctx: LUTCtx,
+  lutMetadata: LUTMetadata,
+  indices: Uint8Array | Uint16Array,
+  useWorker: boolean
+): Promise<Float32Array> {
+  if (useWorker) {
+    const lut: number[] = Array.isArray(lutMetadata.lut[0])
+      ? (lutMetadata.lut as number[][]).flat()
+      : (lutMetadata.lut as number[]);
+    try {
+      return await getWorkerPool().runWithTimeout(
+        'decodeLUT',
+        'decode',
+        (api) =>
+          api.decodeLUT({
+            indices,
+            lut,
+            k: lutMetadata.k,
+            lutMode: lutMetadata.lutMode as 'row' | 'scalar',
+          }),
+        ctx.signal ?? undefined
+      );
+    } catch (error) {
+      if (error instanceof Error && error.name === 'WorkerAbortError') throw error;
+      log.warning(
+        ctx.config.logModule,
+        'Worker LUT decode failed, falling back to main thread:',
+        error
+      );
+    }
+  }
+  return ctx.decoder.decodeLUTIndices(indices, lutMetadata);
 }
 
 export async function loadLUT(
@@ -41,57 +74,24 @@ export async function loadLUT(
     );
   }
 
-  const flatLUT: number[] = Array.isArray(lutMetadata.lut[0])
-    ? (lutMetadata.lut as number[][]).flat()
-    : (lutMetadata.lut as number[]);
-
-  const shape = array.shape;
-
-  // Load + decode all ranges CONCURRENTLY: destination offsets are
-  // precomputed (row mode decodes k values per stored index) so each range
-  // writes into its own disjoint output span regardless of resolution order.
-  // Network concurrency is bounded by the global fetch gate, decode
-  // concurrency by the worker pool.
+  // Load all ranges CONCURRENTLY, then decode them as ONE pack (one worker
+  // call per attribute, see packed-ranges.ts). Destination offsets are in
+  // OUTPUT units — row mode decodes k values per stored index — so the pack
+  // places each range's indices at `offsets[i] / k`.
   const perElement = lutMetadata.lutMode === 'row' ? lutMetadata.k : 1;
-  const { offsets, counts, total } = rangeDestOffsets(shape, ranges, perElement);
-
-  await Promise.all(
-    ranges.map(async (range, i) => {
-      const sliceSpec = firstAxisRangeSlice(shape, range);
-      const chunkData = await readArray(array, sliceSpec, abortOptions(ctx.signal));
-      const indices = chunkData.data as Uint8Array | Uint16Array;
-
-      let decoded: Float32Array;
-      if (shouldUseWorkers) {
-        try {
-          decoded = await getWorkerPool().runWithTimeout(
-            'decodeLUT',
-            'decode',
-            (api) =>
-              api.decodeLUT({
-                indices,
-                lut: flatLUT,
-                k: lutMetadata.k,
-                lutMode: lutMetadata.lutMode as 'row' | 'scalar',
-              }),
-            ctx.signal ?? undefined
-          );
-        } catch (error) {
-          if (error instanceof Error && error.name === 'WorkerAbortError') throw error;
-          log.warning(
-            ctx.config.logModule,
-            'Worker LUT decode failed, falling back to main thread:',
-            error
-          );
-          decoded = ctx.decoder.decodeLUTIndices(indices, lutMetadata);
-        }
-      } else {
-        decoded = ctx.decoder.decodeLUTIndices(indices, lutMetadata);
-      }
-
-      output.set(clampRangeData(decoded, counts[i], i, ctx.config.logModule), offsets[i]);
-    })
-  );
+  const { offsets, counts, total } = rangeDestOffsets(array.shape, ranges, perElement);
+  if (total === 0) return 0;
+  const parts = await readRanges(array, ranges, ctx.signal);
+  const pack = packRanges(parts, {
+    offsets,
+    counts,
+    total,
+    perElement,
+    logModule: ctx.config.logModule,
+  });
+  const indices = pack.packed as Uint8Array | Uint16Array;
+  const decoded = await decodeIndices(ctx, lutMetadata, indices, shouldUseWorkers);
+  scatterDecoded(decoded, output, pack, offsets);
 
   return total;
 }

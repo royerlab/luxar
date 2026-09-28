@@ -1,0 +1,49 @@
+{
+  "shape": [
+    4096,
+    4
+  ],
+  "data_type": "uint8",
+  "chunk_grid": {
+    "name": "regular",
+    "configuration": {
+      "chunk_shape": [
+        4096,
+        4
+      ]
+    }
+  },
+  "chunk_key_encoding": {
+    "name": "default",
+    "configuration": {
+      "separator": "/"
+    }
+  },
+  "fill_value": 0,
+  "codecs": [
+    {
+      "name": "luxar_delta_v1",
+      "configuration": {
+        "cols": 4,
+        "bits": 8
+      }
+    },
+    {
+      "name": "bytes"
+    },
+    {
+      "name": "blosc",
+      "configuration": {
+        "typesize": 1,
+        "cname": "lz4",
+        "clevel": 5,
+        "shuffle": "bitshuffle",
+        "blocksize": 0
+      }
+    }
+  ],
+  "attributes": {},
+  "zarr_format": 3,
+  "node_type": "array",
+  "storage_transformers": []
+}

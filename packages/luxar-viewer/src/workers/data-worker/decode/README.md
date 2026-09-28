@@ -28,8 +28,16 @@ decode/
 ├── geolog-scalar.ts — Min/max-anchored geometric-log dequantization (reserved zero level)
 ├── perchannel.ts    — Per-column-scale family: linear (COORDINATE), log (Cholesky diag), signed-log (offdiag)
 ├── lut.ts           — Lookup-table decode in 'row' (k values per index) or 'scalar' mode
-└── broadcasted.ts   — Replicate a single k-vector to numPoints × k
+├── broadcasted.ts   — Replicate a single k-vector to numPoints × k
+└── blosc.ts         — Zarr chunk DECOMPRESSION (numcodecs blosc + an optionally fused
+                       luxar_delta_v1), batched; plus the warmCodecs WASM warm-up
 ```
+
+`blosc.ts` is the odd one out: it needs no `WasmCtx` (it runs numcodecs' own
+blosc WASM), takes a batch of compressed chunks and returns one
+`{ data } | { error }` per chunk (so one bad chunk falls back alone). It is the
+worker half of `data/codecs/worker-blosc.ts`; its output must be byte-identical
+to the main-thread pipeline (`tests/unit/data/worker-codec-identity.test.ts`).
 
 Each entry point takes a shared `state: WasmCtx` (defined in
 `../state.ts`) and a `params` object, calls `requireWasm(ctx)` to assert
