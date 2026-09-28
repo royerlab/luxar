@@ -9,6 +9,7 @@
  */
 
 import { getErrorStack, isGenuineError } from './format-error';
+import { perfCounters } from '../profiling/perf-counters';
 
 /**
  * One captured console call held in the interceptor's ring buffer: the
@@ -38,6 +39,16 @@ const ORIGINAL_CONSOLE = {
   error: console.error.bind(console),
   info: console.info.bind(console),
   debug: console.debug.bind(console),
+};
+
+/** Perf counters: every intercepted console call, in total and per level. */
+const S_CONSOLE_CALLS = perfCounters.slot('console.calls');
+const S_CONSOLE_CALLS_BY_LEVEL: Record<BufferedMessage['type'], number> = {
+  log: perfCounters.slot('console.calls.log'),
+  warn: perfCounters.slot('console.calls.warn'),
+  error: perfCounters.slot('console.calls.error'),
+  info: perfCounters.slot('console.calls.info'),
+  debug: perfCounters.slot('console.calls.debug'),
 };
 
 class ConsoleInterceptor {
@@ -206,6 +217,8 @@ class ConsoleInterceptor {
    * Capture a console message using ring buffer pattern
    */
   private captureMessage(type: BufferedMessage['type'], args: unknown[], stack?: string): void {
+    perfCounters.add(S_CONSOLE_CALLS);
+    perfCounters.add(S_CONSOLE_CALLS_BY_LEVEL[type]);
     const message: BufferedMessage = {
       type,
       timestamp: new Date(),

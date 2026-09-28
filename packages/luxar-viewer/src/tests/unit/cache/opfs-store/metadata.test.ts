@@ -4,6 +4,7 @@ import {
   type MetadataSnapshot,
 } from '../../../../cache/multi-level-caching-store/opfs-store/metadata';
 import { OPFS_ENCODING_VERSION } from '../../../../cache/types';
+import { perfCounters } from '../../../../profiling/perf-counters';
 
 /**
  * Minimal mock OPFS root.
@@ -229,6 +230,25 @@ describe('OPFSMetadataManager', () => {
         ...overrides,
       };
     }
+
+    it('perf counters: every schedule is a save attempt, only fired writes are index saves', async () => {
+      perfCounters.reset();
+      const { root } = mockRoot();
+      const onError = vi.fn();
+      mgr.scheduleSave({ root, getSnapshot: () => snap(), delayMs: 1000, onError });
+      mgr.scheduleSave({ root, getSnapshot: () => snap(), delayMs: 1000, onError });
+      mgr.scheduleSave({ root, getSnapshot: () => snap(), delayMs: 1000, onError });
+      expect(perfCounters.get('opfs.saveAttempts')).toBe(3);
+      expect(perfCounters.get('opfs.indexSaves')).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(1000);
+      await mgr.awaitInFlight();
+      expect(perfCounters.get('opfs.indexSaves')).toBe(1);
+
+      await mgr.save(root, snap()); // the direct (dispose) flush is a write too
+      expect(perfCounters.get('opfs.indexSaves')).toBe(2);
+      expect(perfCounters.get('opfs.saveAttempts')).toBe(3);
+    });
 
     it('debounces: rapid schedule calls produce one save with the latest snapshot', async () => {
       const { root, rootFiles } = mockRoot();

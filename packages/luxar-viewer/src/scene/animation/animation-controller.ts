@@ -13,6 +13,7 @@ import { PostProcessingManager } from '../../rendering';
 import { AdaptiveDPRManager } from '../../rendering/adaptive-dpr-manager';
 import { eventBus } from '../../utils/cross-layer/event-bus';
 import { log, Modules } from '../../utils/log';
+import { perfCounters } from '../../profiling/perf-counters';
 import { RafDriver } from './raf-driver';
 
 /**
@@ -39,6 +40,17 @@ export type FramePhase = 'camera' | 'view' | 'pre-render' | 'ui';
 
 /** Phase run order. */
 const FRAME_PHASES: readonly FramePhase[] = ['camera', 'view', 'pre-render', 'ui'];
+
+// Perf counters (always on; one typed-array store each). `render.count` is
+// every scene render this controller issues and equals the sum of the
+// `render.byReason.*` counters; `render.once` counts the renderOnce() frames
+// among them (which are also loop ticks).
+const S_RENDER_COUNT = perfCounters.slot('render.count');
+const S_RENDER_TICKS = perfCounters.slot('render.ticks');
+const S_RENDER_REASON_LOOP = perfCounters.slot('render.byReason.loop');
+const S_RENDER_REASON_IDLE_RESTORE = perfCounters.slot('render.byReason.idleRestore');
+const S_RENDER_ONCE = perfCounters.slot('render.once');
+const S_ADAPTIVE_DPR_SAMPLES = perfCounters.slot('adaptiveDpr.samples');
 
 /** A registered per-frame callback. */
 export interface PerFrameEntry {
@@ -345,6 +357,7 @@ export class AnimationController {
     // Emits on the event bus so subscribers (e.g., the
     // PerformanceMonitor UI panel) can record the start timestamp
     // without animation-controller importing UI code directly.
+    perfCounters.add(S_RENDER_TICKS);
     eventBus.emit('frame-start', {});
     try {
       this.frameWork();
@@ -376,6 +389,7 @@ export class AnimationController {
     // because pacing requires a STREAK (see PACING_SLOW_FRAME_STREAK in
     // raf-driver.ts) and an isolated slow frame is therefore never paced.
     if (this.adaptiveDPRManager && !this.isContextLost?.() && !this.shouldSkipRender?.()) {
+      perfCounters.add(S_ADAPTIVE_DPR_SAMPLES);
       this.adaptiveDPRManager.recordFrame(performance.now());
     }
 
@@ -402,6 +416,8 @@ export class AnimationController {
     // Render through HDR post-processing pipeline
     // This executes the complete chain: Scene → HDR buffer → Bloom → Tone mapping → Display
     // Includes vertex shaders, fragment shaders, HDR buffers, bloom blur, ACES tone mapping
+    perfCounters.add(S_RENDER_COUNT);
+    perfCounters.add(S_RENDER_REASON_LOOP);
     this.postProcessing.render();
   }
 
@@ -510,6 +526,8 @@ export class AnimationController {
         !this.shouldSkipRender?.() &&
         this.adaptiveDPRManager.prepareIdleFrame?.()
       ) {
+        perfCounters.add(S_RENDER_COUNT);
+        perfCounters.add(S_RENDER_REASON_IDLE_RESTORE);
         this.postProcessing.render();
       }
     }
@@ -558,7 +576,10 @@ export class AnimationController {
    * animation frame.
    */
   renderOnce(): void {
-    if (this.resumeIfStopped()) this.tick();
+    if (this.resumeIfStopped()) {
+      perfCounters.add(S_RENDER_ONCE);
+      this.tick();
+    }
     this.resetIdleTimer();
   }
 

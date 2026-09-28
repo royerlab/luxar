@@ -15,7 +15,11 @@ import type { LoaderRegistry } from './loader-registry';
 import { isAbortError } from '../../loaders/abort-error';
 import { archiveFaultFrom, type ArchiveFaultError } from '../../../cache/chunk-source';
 import { tryRollbackToPassStart } from '../../loaders/progressive/pass-rollback';
+import { perfCounters } from '../../../profiling/perf-counters';
 import type * as THREE from 'three';
+
+/** Perf counter: loaders visited by update sweeps (summed over sweeps). */
+const S_LOADERS_SWEPT = perfCounters.slot('loaders.swept');
 
 const NOOP_SESSION: UpdateSession = {
   begin: () => NOOP_SESSION,
@@ -100,6 +104,7 @@ export async function runLoaderUpdates<TLoader, TStaged>(
   }
 ): Promise<Array<{ staged: TStaged | null; session: UpdateSession }>> {
   let archiveFault: ArchiveFaultError | undefined;
+  perfCounters.add(S_LOADERS_SWEPT, loaders.size);
   const tasks = Array.from(loaders.entries()).map(async ([path, loader]) => {
     // Open a top-level session per node and keep it alive across the
     // atomic commit stage so the per-node "Update Buffers" child entry

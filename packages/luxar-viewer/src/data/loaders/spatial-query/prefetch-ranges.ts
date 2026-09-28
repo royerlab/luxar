@@ -20,6 +20,7 @@ import * as zarr from '../../zarr';
 import { abortOptions, readArray } from '../../zarr';
 import { firstAxisRangeSlice } from './range-loader/encoding-types';
 import type { LoadRange } from '../base-types';
+import { tagSignalOrigin } from '../../../cache/decompressed-chunk-cache/decode-origin';
 
 /**
  * Warm the cache for `ranges` across every array in `arrays`.
@@ -35,6 +36,10 @@ export async function prefetchRangesIntoCache(
   ranges: ReadonlyArray<LoadRange>,
   signal?: AbortSignal
 ): Promise<void> {
+  // Count this warm-up's decodes under `decode.count.prefetch` (a signal that
+  // already names its origin, e.g. a ladder lookahead's, keeps it). Without a
+  // signal there is no per-call channel, so those decodes stay 'foreground'.
+  tagSignalOrigin(signal, 'prefetch');
   const fetches: Promise<unknown>[] = [];
   for (const array of arrays) {
     const shape = array.shape;

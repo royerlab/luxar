@@ -27,7 +27,12 @@
  * retries rejoin the same queue, and every load fails together. So once a
  * plain `http:` URL is seen, both lanes shrink to fit the socket pool (see
  * {@link noteFetchUrl}).
+ *
+ * Perf counters per lane (`fetch.<lane>.requests`, `.highWater`,
+ * `.queueWaitMs`) are tallied here; see `profiling/perf-counters.ts`.
  */
+
+import { perfCounters, type PerfCounterSlot } from '../profiling/perf-counters';
 
 /**
  * Maximum chunk responses in flight across every data path at once.
@@ -58,11 +63,28 @@ interface FetchGateState {
   active: number;
   limit: number;
   readonly queue: Array<() => void>;
+  /** `fetch.<lane>.requests`: every gated call, queued or not. */
+  readonly sRequests: PerfCounterSlot;
+  /** `fetch.<lane>.highWater`: max leases in flight at once. */
+  readonly sHighWater: PerfCounterSlot;
+  /** `fetch.<lane>.queueWaitMs`: summed enqueue→start time of QUEUED calls. */
+  readonly sQueueWaitMs: PerfCounterSlot;
+}
+
+function createGate(lane: FetchLane, limit: number): FetchGateState {
+  return {
+    active: 0,
+    limit,
+    queue: [],
+    sRequests: perfCounters.slot(`fetch.${lane}.requests`),
+    sHighWater: perfCounters.slot(`fetch.${lane}.highWater`),
+    sQueueWaitMs: perfCounters.slot(`fetch.${lane}.queueWaitMs`),
+  };
 }
 
 const fetchGates: Record<FetchLane, FetchGateState> = {
-  data: { active: 0, limit: MAX_CONCURRENT_CHUNK_FETCHES, queue: [] },
-  metadata: { active: 0, limit: MAX_CONCURRENT_METADATA_FETCHES, queue: [] },
+  data: createGate('data', MAX_CONCURRENT_CHUNK_FETCHES),
+  metadata: createGate('metadata', MAX_CONCURRENT_METADATA_FETCHES),
 };
 
 let fetchProgressEpoch = 0;
@@ -130,15 +152,23 @@ export function getActiveFetchCount(lane: FetchLane): number {
 /** p-limit-style gate: never lets more than the cap run concurrently. */
 export function withFetchGate<T>(fn: () => Promise<T>, lane: FetchLane = 'data'): Promise<T> {
   const gate = fetchGates[lane];
-  const acquire =
-    gate.active < gate.limit
-      ? ((gate.active += 1), Promise.resolve())
-      : new Promise<void>((resolve) =>
-          gate.queue.push(() => {
-            gate.active += 1;
-            resolve();
-          })
-        );
+  perfCounters.add(gate.sRequests);
+  let acquire: Promise<void>;
+  if (gate.active < gate.limit) {
+    gate.active += 1;
+    perfCounters.max(gate.sHighWater, gate.active);
+    acquire = Promise.resolve();
+  } else {
+    const enqueuedAt = performance.now();
+    acquire = new Promise<void>((resolve) =>
+      gate.queue.push(() => {
+        gate.active += 1;
+        perfCounters.max(gate.sHighWater, gate.active);
+        perfCounters.add(gate.sQueueWaitMs, performance.now() - enqueuedAt);
+        resolve();
+      })
+    );
+  }
   return acquire.then(async () => {
     try {
       return await fn();

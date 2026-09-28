@@ -55,6 +55,7 @@ import {
 } from '../scene-loader/progressive/residency-budget';
 import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
+import { tagSignalOrigin } from '../../cache/decompressed-chunk-cache/decode-origin';
 import { log, Modules, LogEmoji } from '../../utils/log';
 import { getErrorMessage } from '../../utils/format-error';
 import { timeLodStageWithResult } from '../scene-loader/lod-load-stats';
@@ -872,6 +873,8 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   ): void {
     if (this._prefetchingLevels.has(level)) return;
     this._prefetchingLevels.add(level);
+    // Attribute the decodes this read triggers to `decode.count.lookahead`.
+    tagSignalOrigin(controller.signal, 'lookahead');
     const prefetch = async (): Promise<void> => {
       const ranges = plan ? (await plan).ranges : undefined;
       if (ranges) {

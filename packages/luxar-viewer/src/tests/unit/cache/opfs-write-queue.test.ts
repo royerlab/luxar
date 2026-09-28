@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { OpfsWriteQueue } from '../../../cache/multi-level-caching-store/opfs-write-queue';
+import { perfCounters } from '../../../profiling/perf-counters';
 
 /** A manually-resolvable gate for controlling task completion in tests. */
 function makeGate(): { promise: Promise<void>; release: () => void } {
@@ -503,5 +504,19 @@ describe('OpfsWriteQueue', () => {
     expect(q.stats().dropped).toBe(0);
     expect(q.stats().inFlight).toBe(0);
     expect(q.stats().depth).toBe(0);
+  });
+
+  it('mirrors every drop (overflow and unaccountable size) into opfs.writesDropped', async () => {
+    perfCounters.reset();
+    const q = new OpfsWriteQueue({ concurrency: 1, maxDepth: 1, maxBytes: 100 });
+    const gate = makeGate();
+    q.enqueue('busy', () => gate.promise, 1); // starts immediately
+    q.enqueue('a', async () => {}, 1); // pending (depth 1)
+    q.enqueue('b', async () => {}, 1); // over maxDepth: dropped
+    q.enqueue('nan', async () => {}, Number.NaN); // unaccountable: dropped
+    expect(q.stats().dropped).toBe(2);
+    expect(perfCounters.get('opfs.writesDropped')).toBe(2);
+    gate.release();
+    await q.drain();
   });
 });

@@ -245,20 +245,14 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       this.registerBounds('segments', segmentsArray);
       // Wrap with L0 cache if enabled (caches decoded chunks to avoid Blosc decompression)
       if (this.l0Cache) {
-        verticesArray = wrapWithCache(
-          verticesArray,
-          this.l0Cache,
-          `${this.node.path}/vertices`,
-          () => this._activeProbe,
-          () => this._activeSignal
-        );
-        segmentsArray = wrapWithCache(
-          segmentsArray,
-          this.l0Cache,
-          `${this.node.path}/segments`,
-          () => this._activeProbe,
-          () => this._activeSignal
-        );
+        verticesArray = wrapWithCache(verticesArray, this.l0Cache, `${this.node.path}/vertices`, {
+          getProbe: () => this._activeProbe,
+          getSignal: () => this._activeSignal,
+        });
+        segmentsArray = wrapWithCache(segmentsArray, this.l0Cache, `${this.node.path}/segments`, {
+          getProbe: () => this._activeProbe,
+          getSignal: () => this._activeSignal,
+        });
       }
       this.arrays.vertices = verticesArray;
       this.arrays.segments = segmentsArray;
@@ -276,13 +270,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         let widthsArray = await zarr.open(this.zarrLocation.resolve('widths'), { kind: 'array' });
         this.registerBounds('widths', widthsArray);
         if (this.l0Cache) {
-          widthsArray = wrapWithCache(
-            widthsArray,
-            this.l0Cache,
-            `${this.node.path}/widths`,
-            () => this._activeProbe,
-            () => this._activeSignal
-          );
+          widthsArray = wrapWithCache(widthsArray, this.l0Cache, `${this.node.path}/widths`, {
+            getProbe: () => this._activeProbe,
+            getSignal: () => this._activeSignal,
+          });
         }
         this.arrays.widths = widthsArray;
       } catch {
@@ -301,13 +292,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         // `LoadedLinesData.colorComponents` (mirrors the points loader).
         this.colorComponents = colorComponentsOf(colorsArray);
         if (this.l0Cache) {
-          colorsArray = wrapWithCache(
-            colorsArray,
-            this.l0Cache,
-            `${this.node.path}/colors`,
-            () => this._activeProbe,
-            () => this._activeSignal
-          );
+          colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`, {
+            getProbe: () => this._activeProbe,
+            getSignal: () => this._activeSignal,
+          });
         }
         this.arrays.colors = colorsArray;
       } catch {
@@ -331,8 +319,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
             sharpnessArray,
             this.l0Cache,
             `${this.node.path}/sharpnesses`,
-            () => this._activeProbe,
-            () => this._activeSignal
+            {
+              getProbe: () => this._activeProbe,
+              getSignal: () => this._activeSignal,
+            }
           );
         }
         this.arrays.sharpness = sharpnessArray;
@@ -351,13 +341,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         });
         this.registerBounds('scalars', scalarsArray);
         if (this.l0Cache) {
-          scalarsArray = wrapWithCache(
-            scalarsArray,
-            this.l0Cache,
-            `${this.node.path}/scalars`,
-            () => this._activeProbe,
-            () => this._activeSignal
-          );
+          scalarsArray = wrapWithCache(scalarsArray, this.l0Cache, `${this.node.path}/scalars`, {
+            getProbe: () => this._activeProbe,
+            getSignal: () => this._activeSignal,
+          });
         }
         this.arrays.scalars = scalarsArray;
       } catch (e: unknown) {

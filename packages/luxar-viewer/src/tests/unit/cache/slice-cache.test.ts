@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { SliceCache } from '../../../cache/slice-cache';
+import { perfCounters } from '../../../profiling/perf-counters';
 
 /** A payload of `bytes` bytes (a single typed array) for size-accounting tests. */
 function entry(bytes: number, tag = 'x') {
@@ -233,5 +234,57 @@ describe('SliceCache — markOversizedWarned (warn-once, cleared on clear)', () 
     expect(c.markOversizedWarned(k)).toBe(true);
     c.clear();
     expect(c.markOversizedWarned(k)).toBe(true); // reset by clear()
+  });
+});
+
+describe('SliceCache pinned perf gauges', () => {
+  const pinned = () => [
+    perfCounters.get('scache.pinnedEntries'),
+    perfCounters.get('scache.pinnedBytes'),
+  ];
+
+  it('tracks pin on set, release on hit, and drop on clear', () => {
+    perfCounters.reset();
+    const c = new SliceCache({ maxSize: 1024 });
+    const a = SliceCache.makeKey('/n', 'a');
+    const b = SliceCache.makeKey('/n', 'b');
+    c.set(a, entry(100), { pin: true });
+    c.set(b, entry(50), { pin: true });
+    c.set(SliceCache.makeKey('/n', 'u'), entry(10)); // unpinned: not counted
+    expect(pinned()).toEqual([2, 150]);
+
+    c.get(a); // the consuming hit releases the pin
+    expect(pinned()).toEqual([1, 50]);
+    c.get(a); // already unpinned: no change
+    expect(pinned()).toEqual([1, 50]);
+
+    c.clear();
+    expect(pinned()).toEqual([0, 0]);
+  });
+
+  it('keeps a re-set pinned key pinned at its new size (as the LRU does)', () => {
+    perfCounters.reset();
+    const c = new SliceCache({ maxSize: 1024 });
+    const a = SliceCache.makeKey('/n', 'a');
+    c.set(a, entry(100), { pin: true });
+    c.set(a, entry(300)); // replace without pin: LRU pin persists
+    expect(pinned()).toEqual([1, 300]);
+    c.delete(a);
+    expect(pinned()).toEqual([0, 0]);
+  });
+
+  it('drops a pinned entry evicted as a last resort', () => {
+    perfCounters.reset();
+    const c = new SliceCache({ maxSize: 100 });
+    c.set(SliceCache.makeKey('/n', 'a'), entry(60), { pin: true });
+    c.set(SliceCache.makeKey('/n', 'b'), entry(60), { pin: true }); // evicts pinned a
+    expect(pinned()).toEqual([1, 60]);
+  });
+
+  it('does not count a pin request for an oversized (rejected) entry', () => {
+    perfCounters.reset();
+    const c = new SliceCache({ maxSize: 100 });
+    c.set(SliceCache.makeKey('/n', 'big'), entry(500), { pin: true });
+    expect(pinned()).toEqual([0, 0]);
   });
 });

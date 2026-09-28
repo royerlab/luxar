@@ -10,6 +10,10 @@ import {
 } from '../../utils/fetch-concurrency';
 import { getErrorMessage } from '../../utils/format-error';
 import { sha256Hex } from './sha256';
+import { perfCounters } from '../../profiling/perf-counters';
+
+/** Perf counter: response-body bytes fully materialised by the network tier. */
+const S_FETCH_BYTES = perfCounters.slot('fetch.bytes');
 
 const INITIAL_RETRY_DELAY_MS = 50;
 const MAX_RETRY_DELAY_MS = 500;
@@ -160,9 +164,11 @@ async function readBodyWithStallWatchdog(
     const reader = response.body?.getReader();
     if (!reader) {
       armWatchdog();
-      return new Uint8Array(
+      const whole = new Uint8Array(
         await Promise.race([response.arrayBuffer(), abortPromise])
       ) as Uint8Array<ArrayBuffer>;
+      perfCounters.add(S_FETCH_BYTES, whole.byteLength);
+      return whole;
     }
 
     const chunks: Uint8Array[] = [];
@@ -185,6 +191,7 @@ async function readBodyWithStallWatchdog(
       reader.releaseLock();
     }
 
+    perfCounters.add(S_FETCH_BYTES, byteLength);
     return joinBodyChunks(chunks, byteLength);
   } catch (error) {
     throw new FetchBodyError(error);

@@ -2,6 +2,12 @@ import type { OPFSMetadata, CacheValidationMode } from '../../types';
 import { OPFS_ENCODING_VERSION } from '../../types';
 import { log, Modules } from '../../../utils/log';
 import { getErrorMessage } from '../../../utils/format-error';
+import { perfCounters } from '../../../profiling/perf-counters';
+
+/** Perf counter: every `scheduleSave` call (debounced or not). */
+const S_SAVE_ATTEMPTS = perfCounters.slot('opfs.saveAttempts');
+/** Perf counter: every index-file write actually issued (debounced or final). */
+const S_INDEX_SAVES = perfCounters.slot('opfs.indexSaves');
 
 type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
   keys(): AsyncIterableIterator<string>;
@@ -38,6 +44,7 @@ async function writeSnapshot(
   root: FileSystemDirectoryHandle,
   snapshot: MetadataSnapshot
 ): Promise<void> {
+  perfCounters.add(S_INDEX_SAVES);
   const metaHandle = await root.getFileHandle(METADATA_FILE, { create: true });
   const writable = await metaHandle.createWritable();
   const metadata: OPFSMetadata = {
@@ -176,6 +183,7 @@ export class OPFSMetadataManager {
     delayMs: number;
     onError: (error: unknown) => void;
   }): void {
+    perfCounters.add(S_SAVE_ATTEMPTS);
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.timer = null;

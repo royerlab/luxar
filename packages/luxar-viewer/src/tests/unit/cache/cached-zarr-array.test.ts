@@ -12,7 +12,11 @@ import {
   isCachedArray,
   unwrapCachedArray,
   cloneArrayBufferView,
+  tagSignalOrigin,
+  resetDecodeHistory,
+  DUPLICATE_DECODE_WINDOW_MS,
 } from '../../../cache/decompressed-chunk-cache/cached-zarr-array';
+import { perfCounters } from '../../../profiling/perf-counters';
 import { ResidencyAccumulator } from '../../../cache/residency-probe';
 
 // Mock zarr types for testing
@@ -451,7 +455,9 @@ describe('cached-zarr-array', () => {
     it('records a miss on cold access then a hit when warm', async () => {
       const mockArray = createMockZarrArray();
       const probe = new ResidencyAccumulator();
-      const wrapped = wrapWithCache(mockArray, cache, '/points/positions', () => probe);
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions', {
+        getProbe: () => probe,
+      });
 
       // Cold: triggers a real getChunk → miss.
       await wrapped.getChunk([0, 0, 0]);
@@ -473,7 +479,9 @@ describe('cached-zarr-array', () => {
         .mockImplementation(() => new Promise<MockChunk>((res) => (resolveChunk = res)));
       const mockArray = createMockZarrArray(slow);
       const probe = new ResidencyAccumulator();
-      const wrapped = wrapWithCache(mockArray, cache, '/points/positions', () => probe);
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions', {
+        getProbe: () => probe,
+      });
 
       const p1 = wrapped.getChunk([0, 0, 0]); // miss → starts decode
       const p2 = wrapped.getChunk([0, 0, 0]); // coalesces → hit
@@ -489,7 +497,9 @@ describe('cached-zarr-array', () => {
       const mockArray = createMockZarrArray();
       const probe = new ResidencyAccumulator();
       // Accessor returns null (e.g. prefetch traffic / no active load).
-      const wrapped = wrapWithCache(mockArray, cache, '/points/positions', () => null);
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions', {
+        getProbe: () => null,
+      });
 
       await wrapped.getChunk([0, 0, 0]);
       expect(probe.touched).toBe(false);
@@ -501,13 +511,9 @@ describe('cached-zarr-array', () => {
       const mockArray = createMockZarrArray();
       const ac = new AbortController();
       ac.abort();
-      const wrapped = wrapWithCache(
-        mockArray,
-        cache,
-        '/points/positions',
-        undefined,
-        () => ac.signal
-      );
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions', {
+        getSignal: () => ac.signal,
+      });
 
       await expect(wrapped.getChunk([0, 0, 0])).rejects.toThrow();
       // Bailed at the proxy entry — the underlying (Blosc) getChunk never ran.
@@ -517,7 +523,9 @@ describe('cached-zarr-array', () => {
     it('throws on the warm-cache HIT path too (chokepoint precedes the L0 lookup)', async () => {
       const mockArray = createMockZarrArray();
       let signal: AbortSignal | null = null;
-      const wrapped = wrapWithCache(mockArray, cache, '/points/positions', undefined, () => signal);
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions', {
+        getSignal: () => signal,
+      });
 
       // Prime L0 with a non-aborted call (same coords → same key).
       await wrapped.getChunk([0, 0, 0]);
@@ -532,13 +540,9 @@ describe('cached-zarr-array', () => {
     it('does NOT throw when a signal is present but not aborted', async () => {
       const mockArray = createMockZarrArray();
       const ac = new AbortController(); // live
-      const wrapped = wrapWithCache(
-        mockArray,
-        cache,
-        '/points/positions',
-        undefined,
-        () => ac.signal
-      );
+      const wrapped = wrapWithCache(mockArray, cache, '/points/positions', {
+        getSignal: () => ac.signal,
+      });
 
       await expect(wrapped.getChunk([0, 0, 0])).resolves.toBeDefined();
       expect(mockArray.getChunk).toHaveBeenCalledTimes(1);
@@ -562,5 +566,97 @@ describe('ResidencyAccumulator', () => {
     expect(acc.touched).toBe(true);
     acc.record(false);
     expect(acc.allResident).toBe(false);
+  });
+});
+
+describe('cached-zarr-array perf counters', () => {
+  let cache: DecompressedChunkCache;
+  let nowMs: number;
+
+  beforeEach(() => {
+    cache = new DecompressedChunkCache({ maxSize: 1024 * 1024 });
+    perfCounters.reset();
+    resetDecodeHistory();
+    nowMs = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => nowMs);
+    return () => vi.restoreAllMocks();
+  });
+
+  it('tallies hits, misses, decode bytes and clone bytes', async () => {
+    const wrapped = wrapWithCache(createMockZarrArray(), cache, '/p/positions');
+    await wrapped.getChunk([0]);
+    await wrapped.getChunk([0]);
+    expect(perfCounters.get('l0.misses')).toBe(1);
+    expect(perfCounters.get('l0.hits')).toBe(1);
+    expect(perfCounters.get('decode.count')).toBe(1);
+    expect(perfCounters.get('decode.count.foreground')).toBe(1);
+    expect(perfCounters.get('decode.bytes')).toBe(6 * 4);
+    expect(perfCounters.get('l0.cloneBytes')).toBe(6 * 4);
+    expect(perfCounters.get('decode.duplicates')).toBe(0);
+  });
+
+  it('counts a getChunk that joins an in-flight decode as coalesced', async () => {
+    let release!: (chunk: MockChunk) => void;
+    const getChunk = vi.fn(
+      () =>
+        new Promise<MockChunk>((resolve) => {
+          release = resolve;
+        })
+    );
+    const wrapped = wrapWithCache(createMockZarrArray(getChunk), cache, '/p/positions');
+    const first = wrapped.getChunk([0]);
+    const second = wrapped.getChunk([0]);
+    release({ data: new Float32Array(2), shape: [2], stride: [1] });
+    await Promise.all([first, second]);
+    expect(perfCounters.get('l0.misses')).toBe(1);
+    expect(perfCounters.get('l0.coalesced')).toBe(1);
+    expect(perfCounters.get('decode.count')).toBe(1);
+  });
+
+  it('flags a re-decode of the same chunk within the window as a duplicate', async () => {
+    const wrapped = wrapWithCache(createMockZarrArray(), cache, '/p/positions');
+    await wrapped.getChunk([0]);
+    cache.clear(); // force the next access to decode again
+    nowMs += DUPLICATE_DECODE_WINDOW_MS - 1;
+    await wrapped.getChunk([0]);
+    expect(perfCounters.get('decode.duplicates')).toBe(1);
+
+    // Past the window (measured from the LAST decode): not a duplicate.
+    cache.clear();
+    nowMs += DUPLICATE_DECODE_WINDOW_MS + 1;
+    await wrapped.getChunk([0]);
+    expect(perfCounters.get('decode.duplicates')).toBe(1);
+    expect(perfCounters.get('decode.count')).toBe(3);
+  });
+
+  it('does not treat the same path in a different L0 cache (scene) as a duplicate', async () => {
+    const other = new DecompressedChunkCache({ maxSize: 1024 * 1024 });
+    await wrapWithCache(createMockZarrArray(), cache, '/p/positions').getChunk([0]);
+    await wrapWithCache(createMockZarrArray(), other, '/p/positions').getChunk([0]);
+    expect(perfCounters.get('decode.count')).toBe(2);
+    expect(perfCounters.get('decode.duplicates')).toBe(0);
+  });
+
+  it('attributes decodes by signal tag, then the getOrigin thunk, then foreground', async () => {
+    const wrapped = wrapWithCache(createMockZarrArray(), cache, '/p/positions', {
+      getOrigin: () => 'custom-origin',
+    });
+    const shadow = new AbortController();
+    tagSignalOrigin(shadow.signal, 'shadow');
+    const lookahead = new AbortController();
+    tagSignalOrigin(lookahead.signal, 'lookahead');
+    tagSignalOrigin(lookahead.signal, 'prefetch'); // first tag wins
+
+    await wrapped.getChunk([0], { signal: shadow.signal });
+    await wrapped.getChunk([1], { signal: lookahead.signal });
+    await wrapped.getChunk([2]); // no tagged signal -> thunk
+    await wrapWithCache(createMockZarrArray(), cache, '/p/colors').getChunk([0]);
+
+    expect(perfCounters.get('decode.count.shadow')).toBe(1);
+    expect(perfCounters.get('decode.count.lookahead')).toBe(1);
+    expect(perfCounters.get('decode.count.prefetch')).toBe(0);
+    expect(perfCounters.get('decode.count.custom-origin')).toBe(1);
+    expect(perfCounters.get('decode.count.foreground')).toBe(1);
+    expect(perfCounters.get('decode.count')).toBe(4);
   });
 });

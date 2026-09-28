@@ -99,6 +99,7 @@ import {
   type WorldBoxOptions,
 } from './lod-selector-math';
 import { enforceResidentByteBudget } from './lod-eviction';
+import { perfCounters } from '../profiling/perf-counters';
 
 // The selector math (box projection + hysteresis pick) lives in
 // `lod-selector-math.ts`; re-exported here so existing importers (the
@@ -120,6 +121,32 @@ export {
  * overlapping bands. See `coverageBlendPlan`.
  */
 const CROSSFADE_BAND_FRACTION = 0.4;
+
+/** Perf counter: displayed-level changes of a lod group (one per group per frame). */
+const S_LOD_LEVEL_SWAPS = perfCounters.slot('lod.levelSwaps');
+/** Perf counter: group-frames drawing two levels cross-faded (one per group per frame). */
+const S_LOD_BLEND_FRAMES = perfCounters.slot('lod.blendFrames');
+
+/**
+ * Tally this frame's display outcome for one group (perf counters only): a
+ * level swap when the shown level differs from the last one displayed, and a
+ * blend frame when the primary and its cross-fade partner are both drawn.
+ * Must run BEFORE ``displayedChildIndex`` is updated.
+ */
+function countLodDisplay(
+  entry: LODGroupEntry,
+  displayIdx: number,
+  blendPartnerIdx: number | null
+): void {
+  const shown = displayIdx >= 0 ? entry.children[displayIdx] : undefined;
+  if (!shown || !isReady(shown)) return;
+  if (entry.displayedChildIndex !== undefined && entry.displayedChildIndex !== displayIdx) {
+    perfCounters.add(S_LOD_LEVEL_SWAPS);
+  }
+  if (blendPartnerIdx != null && isReady(entry.children[blendPartnerIdx])) {
+    perfCounters.add(S_LOD_BLEND_FRAMES);
+  }
+}
 
 /**
  * Frames the view-update version must hold steady before the registry reloads a
@@ -2289,6 +2316,7 @@ export class LODGroupRegistry {
     // pass, which must never release the level currently displayed. Only update
     // when a ready level is actually shown — otherwise keep the last shown index
     // so eviction still protects whatever the user last saw.
+    countLodDisplay(entry, displayIdx, blendPartnerIdx);
     const shown = displayIdx >= 0 ? entry.children[displayIdx] : undefined;
     if (shown && isReady(shown)) {
       shown.lastVisibleTick = this.tick;

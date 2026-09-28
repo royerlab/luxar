@@ -37,6 +37,7 @@ import { AnimationController } from '../../../scene/animation/animation-controll
 import { config } from '../../../config';
 import { log } from '../../../utils/log';
 import { eventBus } from '../../../utils/cross-layer/event-bus';
+import { perfCounters } from '../../../profiling/perf-counters';
 
 describe('AnimationController', () => {
   let controller: AnimationController;
@@ -1477,6 +1478,38 @@ describe('AnimationController', () => {
         offEnd();
         controller.stopAnimation();
       }
+    });
+  });
+
+  describe('perf counters', () => {
+    beforeEach(() => perfCounters.reset());
+
+    it('counts ticks, loop renders and adaptive-DPR samples per rendered frame', () => {
+      controller.setAdaptiveDPRManager({ recordFrame: vi.fn() } as never);
+      controller.tick();
+      controller.tick();
+
+      expect(perfCounters.get('render.ticks')).toBe(2);
+      expect(perfCounters.get('render.count')).toBe(2);
+      expect(perfCounters.get('render.byReason.loop')).toBe(2);
+      expect(perfCounters.get('adaptiveDpr.samples')).toBe(2);
+      expect(perfCounters.get('render.once')).toBe(0);
+    });
+
+    it('counts a tick but no render while the context is lost', () => {
+      controller.setContextLostPredicate(() => true);
+      controller.tick();
+
+      expect(perfCounters.get('render.ticks')).toBe(1);
+      expect(perfCounters.get('render.count')).toBe(0);
+    });
+
+    it('counts a renderOnce() frame as both a once and a loop render', () => {
+      controller.renderOnce();
+
+      expect(perfCounters.get('render.once')).toBe(1);
+      expect(perfCounters.get('render.count')).toBe(1);
+      expect(perfCounters.get('render.byReason.loop')).toBe(1);
     });
   });
 });

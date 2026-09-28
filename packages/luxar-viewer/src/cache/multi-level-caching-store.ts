@@ -13,6 +13,13 @@ import { log, Modules } from '../utils/log';
 import { config } from '../config';
 import { type Result, ok, err, isErr } from '../utils/result';
 import type { MultiLevelCacheStats } from './types';
+import { perfCounters } from '../profiling/perf-counters';
+
+/**
+ * Perf counter: demand callers served from L2 (mirrors `l2HitCount`, but
+ * resettable with the other perf counters so a render gate can diff it).
+ */
+const S_L2_HITS = perfCounters.slot('l2.hits');
 
 /**
  * Structured failure modes from {@link MultiLevelCachingStore.getResult}.
@@ -524,8 +531,10 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // network requests; the underlying network counter (incremented
     // inside fetchKeyChain) only bumped once per actual fetch.
     if (isDemand) {
-      if (outcome.source === 'l2' && outcome.result.ok) this.l2HitCount++;
-      else if (outcome.source === 'network') this.demandNetworkRequestCount++;
+      if (outcome.source === 'l2' && outcome.result.ok) {
+        this.l2HitCount++;
+        perfCounters.add(S_L2_HITS);
+      } else if (outcome.source === 'network') this.demandNetworkRequestCount++;
       // Count delivered bytes for any tier that actually returned data
       // (L2 or network). L1 hits are counted on their fast-path return
       // above; Missing/Aborted outcomes carry no bytes.

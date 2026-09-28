@@ -342,8 +342,10 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
           positionsArray,
           this.l0Cache,
           `${this.node.path}/positions`,
-          () => this._activeProbe,
-          () => this._activeSignal
+          {
+            getProbe: () => this._activeProbe,
+            getSignal: () => this._activeSignal,
+          }
         );
       }
       this.arrays.positions = positionsArray;
@@ -364,13 +366,10 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         this.registerBounds('colors', colorsArray);
         // Wrap with L0 cache if enabled
         if (this.l0Cache) {
-          colorsArray = wrapWithCache(
-            colorsArray,
-            this.l0Cache,
-            `${this.node.path}/colors`,
-            () => this._activeProbe,
-            () => this._activeSignal
-          );
+          colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`, {
+            getProbe: () => this._activeProbe,
+            getSignal: () => this._activeSignal,
+          });
         }
         this.arrays.colors = colorsArray;
         // Learn the color layout (3 = RGB, 4 = RGBA) from the zarr shape at
@@ -396,13 +395,10 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         this.registerBounds('radii', radiiArray);
         // Wrap with L0 cache if enabled
         if (this.l0Cache) {
-          radiiArray = wrapWithCache(
-            radiiArray,
-            this.l0Cache,
-            `${this.node.path}/radii`,
-            () => this._activeProbe,
-            () => this._activeSignal
-          );
+          radiiArray = wrapWithCache(radiiArray, this.l0Cache, `${this.node.path}/radii`, {
+            getProbe: () => this._activeProbe,
+            getSignal: () => this._activeSignal,
+          });
         }
         this.arrays.radii = radiiArray;
       } catch (e: unknown) {
@@ -430,8 +426,10 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
             sharpnessArray,
             this.l0Cache,
             `${this.node.path}/sharpnesses`,
-            () => this._activeProbe,
-            () => this._activeSignal
+            {
+              getProbe: () => this._activeProbe,
+              getSignal: () => this._activeSignal,
+            }
           );
         }
         this.arrays.sharpness = sharpnessArray;
@@ -455,13 +453,10 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         });
         this.registerBounds('scalars', scalarsArray);
         if (this.l0Cache) {
-          scalarsArray = wrapWithCache(
-            scalarsArray,
-            this.l0Cache,
-            `${this.node.path}/scalars`,
-            () => this._activeProbe,
-            () => this._activeSignal
-          );
+          scalarsArray = wrapWithCache(scalarsArray, this.l0Cache, `${this.node.path}/scalars`, {
+            getProbe: () => this._activeProbe,
+            getSignal: () => this._activeSignal,
+          });
         }
         this.arrays.scalars = scalarsArray;
       } catch (e: unknown) {

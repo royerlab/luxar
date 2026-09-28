@@ -13,6 +13,90 @@
 import type * as zarr from '../../data/zarr';
 import { DecompressedChunkCache, type DecompressedChunk } from '../decompressed-chunk-cache';
 import type { ResidencyProbe } from '../residency-probe';
+import { perfCounters, type PerfCounterSlot } from '../../profiling/perf-counters';
+import { signalOrigin } from './decode-origin';
+
+export { tagSignalOrigin } from './decode-origin';
+
+// ---------------------------------------------------------------------------
+// Perf counters (always-on; see profiling/perf-counters.ts). Resolved once at
+// module scope so the per-getChunk cost is one typed-array store.
+// ---------------------------------------------------------------------------
+const S_L0_HITS = perfCounters.slot('l0.hits');
+const S_L0_MISSES = perfCounters.slot('l0.misses');
+const S_L0_COALESCED = perfCounters.slot('l0.coalesced');
+const S_L0_CLONE_BYTES = perfCounters.slot('l0.cloneBytes');
+const S_DECODE_COUNT = perfCounters.slot('decode.count');
+const S_DECODE_BYTES = perfCounters.slot('decode.bytes');
+const S_DECODE_DUPLICATES = perfCounters.slot('decode.duplicates');
+
+/** Origin assumed when neither the call's signal nor `getOrigin` names one. */
+export const DEFAULT_DECODE_ORIGIN = 'foreground';
+
+/** Origins with a pre-resolved `decode.count.<origin>` slot. */
+const KNOWN_ORIGIN_SLOTS = new Map<string, PerfCounterSlot>(
+  [DEFAULT_DECODE_ORIGIN, 'shadow', 'lookahead', 'prefetch'].map((origin) => [
+    origin,
+    perfCounters.slot(`decode.count.${origin}`),
+  ])
+);
+
+/** A re-decode of the same chunk within this window counts as a duplicate. */
+export const DUPLICATE_DECODE_WINDOW_MS = 3000;
+
+/** Bound on the decode-history map (oldest-decoded entries evicted first). */
+export const DECODE_HISTORY_MAX_ENTRIES = 65_536;
+
+/**
+ * Last decode time per chunk identity (`<L0 cache id>|<L0 key>`). Insertion
+ * order == last-decode order (a re-decode is deleted and re-inserted), so the
+ * first key is always the oldest and eviction is O(1).
+ */
+const decodeHistory = new Map<string, number>();
+
+/** Per-L0-cache-instance id: the cache is one per loaded scene (= store). */
+const cacheIds = new WeakMap<DecompressedChunkCache, number>();
+let nextCacheId = 0;
+
+function cacheIdentity(cache: DecompressedChunkCache): number {
+  let id = cacheIds.get(cache);
+  if (id === undefined) {
+    id = nextCacheId++;
+    cacheIds.set(cache, id);
+  }
+  return id;
+}
+
+/** Forget the decode history (tests; perf-counter resets do not need it). */
+export function resetDecodeHistory(): void {
+  decodeHistory.clear();
+}
+
+/** Tally one completed miss decode (count, bytes, origin, duplicate check). */
+function recordDecode(historyKey: string, origin: string, bytes: number): void {
+  perfCounters.add(S_DECODE_COUNT);
+  perfCounters.add(S_DECODE_BYTES, bytes);
+  const originSlot = KNOWN_ORIGIN_SLOTS.get(origin);
+  if (originSlot === undefined) perfCounters.inc(`decode.count.${origin}`);
+  else perfCounters.add(originSlot);
+
+  const now = performance.now();
+  const last = decodeHistory.get(historyKey);
+  if (last !== undefined) {
+    if (now - last <= DUPLICATE_DECODE_WINDOW_MS) perfCounters.add(S_DECODE_DUPLICATES);
+    decodeHistory.delete(historyKey);
+  } else if (decodeHistory.size >= DECODE_HISTORY_MAX_ENTRIES) {
+    const oldest = decodeHistory.keys().next();
+    if (!oldest.done) decodeHistory.delete(oldest.value);
+  }
+  decodeHistory.set(historyKey, now);
+}
+
+/** Resolve a miss's origin: call signal tag, then the wrap's thunk, then default. */
+function resolveOrigin(callOptions: unknown, getOrigin: (() => string) | undefined): string {
+  const signal = (callOptions as { signal?: AbortSignal } | undefined)?.signal;
+  return signalOrigin(signal) ?? getOrigin?.() ?? DEFAULT_DECODE_ORIGIN;
+}
 
 /**
  * Clone an ArrayBufferView by allocating a fresh underlying buffer.
@@ -41,6 +125,39 @@ const CACHE_MARKER = Symbol('luxar.l0cache');
 const ORIGINAL_ARRAY = Symbol('luxar.originalArray');
 
 /**
+ * Optional per-wrap accessors consulted by the L0 proxy. All are thunks that
+ * read the owning loader's transient state at `getChunk` time.
+ */
+export interface CachedArrayHooks {
+  /**
+   * Accessor for the currently-active residency probe. Called on every
+   * `getChunk` to report hit/miss. Returning `null` (the default / when no
+   * load is in flight) disables reporting — this is how prefetch traffic is
+   * kept from contaminating a demand load's signal.
+   */
+  getProbe?: () => ResidencyProbe | null;
+  /**
+   * Accessor for the currently-active per-update `AbortSignal`. Called on
+   * every `getChunk`; if it returns an aborted signal the call throws
+   * (`AbortError`) BEFORE any L0 lookup, cache fetch, or Blosc decode — so a
+   * superseded `updateView` bails on the warm-cache hit path too (zarrita's
+   * own `throwIfAborted` only fires between chunks of a multi-chunk
+   * selection). Mirrors the `getProbe` thunk lifetime: it reads the owning
+   * loader's transient per-update field, so it is naturally per-caller and
+   * never aborts a coalesced chunk another live caller awaits.
+   */
+  getSignal?: () => AbortSignal | null;
+  /**
+   * Accessor naming who triggered a miss decode (`decode.count.<origin>` perf
+   * counter). Consulted only on a genuine miss, and only when the call's
+   * `AbortSignal` carries no {@link tagSignalOrigin} tag; defaults to
+   * `'foreground'`. Instrumentation only — never changes what is fetched or
+   * decoded.
+   */
+  getOrigin?: () => string;
+}
+
+/**
  * Wrap a zarr.Array with L0 decompressed chunk caching.
  *
  * The returned proxy intercepts `getChunk()` calls:
@@ -53,18 +170,8 @@ const ORIGINAL_ARRAY = Symbol('luxar.originalArray');
  * @param array - Original zarr.Array to wrap
  * @param cache - L0 decompressed chunk cache instance
  * @param arrayPath - Full path to the array (used for cache key generation)
- * @param getProbe - Optional accessor for the currently-active residency
- *   probe. Called on every `getChunk` to report hit/miss. Returning `null`
- *   (the default / when no load is in flight) disables reporting — this is
- *   how prefetch traffic is kept from contaminating a demand load's signal.
- * @param getSignal - Optional accessor for the currently-active per-update
- *   `AbortSignal`. Called on every `getChunk`; if it returns an aborted
- *   signal the call throws (`AbortError`) BEFORE any L0 lookup, cache fetch,
- *   or Blosc decode — so a superseded `updateView` bails on the warm-cache
- *   hit path too (zarrita's own `throwIfAborted` only fires between chunks
- *   of a multi-chunk selection). Mirrors the `getProbe` thunk lifetime: it
- *   reads the owning loader's transient per-update field, so it is naturally
- *   per-caller and never aborts a coalesced chunk another live caller awaits.
+ * @param hooks - Optional residency-probe / abort-signal / decode-origin
+ *   accessors (see {@link CachedArrayHooks}).
  * @returns Proxied zarr.Array with L0 caching enabled
  *
  * @example
@@ -85,13 +192,14 @@ export function wrapWithCache<D extends zarr.DataType>(
   array: zarr.Array<D, zarr.Readable>,
   cache: DecompressedChunkCache,
   arrayPath: string,
-  getProbe?: () => ResidencyProbe | null,
-  getSignal?: () => AbortSignal | null
+  hooks: CachedArrayHooks = {}
 ): zarr.Array<D, zarr.Readable> {
   // Don't double-wrap
   if (isCachedArray(array)) {
     return array;
   }
+  const { getProbe, getSignal, getOrigin } = hooks;
+  const historyPrefix = `${cacheIdentity(cache)}|`;
 
   // Same-chunk decode coalescing: concurrent getChunk(coords) calls
   // for the same key share a single underlying decompression. Without
@@ -160,6 +268,7 @@ export function wrapWithCache<D extends zarr.DataType>(
           const cached = cache.get(key);
           if (cached) {
             // Resident: served from L0 with no fresh fetch/decode.
+            perfCounters.add(S_L0_HITS);
             getProbe?.()?.record(true);
             // Return cached decompressed chunk
             return {
@@ -175,17 +284,23 @@ export function wrapWithCache<D extends zarr.DataType>(
           // caller, so treat the coalesced wait as a hit for residency.
           const pending = pendingChunks.get(key);
           if (pending) {
+            perfCounters.add(S_L0_COALESCED);
             getProbe?.()?.record(true);
             return pending;
           }
 
           // Genuine miss: a fetch + Blosc decode is about to run.
+          perfCounters.add(S_L0_MISSES);
           getProbe?.()?.record(false);
+          const origin = resolveOrigin(args[1], getOrigin);
 
           const chunkPromise = (async () => {
             try {
               // Cache miss — call original getChunk (triggers Blosc decompression)
               const chunk = await target.getChunk(...args);
+              // `?? 0`: an object-dtype chunk is a plain array (no byteLength).
+              const decodedBytes = (chunk.data as { byteLength?: number }).byteLength ?? 0;
+              recordDecode(historyPrefix + key, origin, decodedBytes);
 
               // Cache the decompressed result. Clone the data to
               // prevent callers from mutating the cached copy
@@ -198,6 +313,10 @@ export function wrapWithCache<D extends zarr.DataType>(
               // ArrayBufferView; cast through ArrayBufferView since
               // numeric chunks (the only kind we cache) always are.
               const clonedData = cloneArrayBufferView(chunk.data as unknown as ArrayBufferView);
+              perfCounters.add(
+                S_L0_CLONE_BYTES,
+                (clonedData as { byteLength?: number }).byteLength ?? 0
+              );
               const cacheEntry: DecompressedChunk = {
                 data: clonedData,
                 shape: chunk.shape.slice(),

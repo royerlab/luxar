@@ -41,6 +41,13 @@
  */
 
 import { log, Modules } from '../utils/log';
+import { perfCounters } from './perf-counters';
+
+/**
+ * Perf counter: ms spent merging finished sessions into the persistent tree
+ * (value merge + stale sweep; listener notification excluded).
+ */
+const S_MERGE_MS = perfCounters.slot('profiler.mergeMs');
 
 /** Name of the persistent root for per-frame demand updates. */
 export const TOTAL_UPDATE_ROOT = 'Total Update';
@@ -884,6 +891,7 @@ export class UpdateProfiler {
     const root = this.roots.get(rootName);
     if (!root) return;
 
+    const mergeStart = performance.now();
     if (!parentName) {
       // This is a root entry (update root or refinement pass root)
       this.mergeEntryValues(root, entry, seq);
@@ -898,10 +906,12 @@ export class UpdateProfiler {
       if (rootName === TOTAL_UPDATE_ROOT) {
         this.activeSession = null;
       }
+      perfCounters.add(S_MERGE_MS, performance.now() - mergeStart);
       this.notifyListeners();
     } else {
       // Find parent within THIS root's tree and merge child
       this.mergeChild(root, entry, parentName, seq);
+      perfCounters.add(S_MERGE_MS, performance.now() - mergeStart);
     }
   }
 

@@ -7,7 +7,8 @@ splices it onto a real zarr array without touching zarrita's source.
 
 ## Overview
 
-`wrapWithCache(array, cache, arrayPath, getProbe?, getSignal?)` returns a
+`wrapWithCache(array, cache, arrayPath, hooks?)` (hooks = `{ getProbe?,
+getSignal?, getOrigin? }`) returns a
 `Proxy<zarr.Array>` that intercepts `getChunk()`:
 
 0. **Per-update abort chokepoint** — when an optional `getSignal` accessor is
@@ -33,6 +34,14 @@ splices it onto a real zarr array without touching zarrita's source.
    misses count as misses. `getProbe` returning `null` (the default, or
    when no load is in flight) disables reporting, keeping prefetch
    traffic out of a demand load's signal.
+6. **Perf counters** (`../../profiling/perf-counters.ts`) — `l0.hits`,
+   `l0.misses`, `l0.coalesced`, `l0.cloneBytes`, and per completed miss
+   decode `decode.count`, `decode.count.<origin>`, `decode.bytes`, and
+   `decode.duplicates` (the same L0 cache instance + key decoded again within
+   3 s; a module-level history bounded to 65,536 keys). The origin is the
+   call signal's tag (`tagSignalOrigin` in `decode-origin.ts` — the shadow
+   prefetcher, ladder lookahead, and `prefetchRangesIntoCache` tag their
+   signals), else `hooks.getOrigin()`, else `'foreground'`.
 
 All other property access passes through unchanged. See
 [`../README.md`](../README.md) (the "L0 Decompressed Chunk Cache" section)
@@ -43,17 +52,19 @@ read-only chunk contract that this wrapper upholds via cloning.
 
 ```
 decompressed-chunk-cache/
-└── cached-zarr-array.ts   # Proxy wrapper, marker symbols, and clone helper
+├── cached-zarr-array.ts   # Proxy wrapper, marker symbols, and clone helper
+└── decode-origin.ts      # AbortSignal -> decode-origin tags (perf counters)
 ```
 
 ## API
 
-| Export                                                          | Purpose                                                                                                                                                                                                                                                                            |
-| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `wrapWithCache(array, cache, arrayPath, getProbe?, getSignal?)` | Wrap a `zarr.Array` with L0 caching. Idempotent — already-wrapped arrays are returned as-is. Optional `getProbe` reports hit/miss to the active `ResidencyProbe`; optional `getSignal` supplies the per-update `AbortSignal` checked at `getChunk` entry so superseded loads bail. |
-| `isCachedArray(array)`                                          | Detect the wrapper via a private `Symbol` marker.                                                                                                                                                                                                                                  |
-| `unwrapCachedArray(array)`                                      | Recover the original unwrapped array (or pass through if not wrapped).                                                                                                                                                                                                             |
-| `cloneArrayBufferView(view)` _(internal)_                       | Clone a `TypedArray` or `DataView` to a fresh underlying buffer. Exported only for unit tests.                                                                                                                                                                                     |
+| Export                                           | Purpose                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wrapWithCache(array, cache, arrayPath, hooks?)` | Wrap a `zarr.Array` with L0 caching. Idempotent — already-wrapped arrays are returned as-is. Optional `hooks.getProbe` reports hit/miss to the active `ResidencyProbe`; `hooks.getSignal` supplies the per-update `AbortSignal` checked at `getChunk` entry so superseded loads bail; `hooks.getOrigin` names a miss decode's origin for the perf counters. |
+| `tagSignalOrigin(signal, origin)`                | Attribute miss decodes of reads carrying `signal` to `decode.count.<origin>` (re-exported from `decode-origin.ts`).                                                                                                                                                                                                                                         |
+| `isCachedArray(array)`                           | Detect the wrapper via a private `Symbol` marker.                                                                                                                                                                                                                                                                                                           |
+| `unwrapCachedArray(array)`                       | Recover the original unwrapped array (or pass through if not wrapped).                                                                                                                                                                                                                                                                                      |
+| `cloneArrayBufferView(view)` _(internal)_        | Clone a `TypedArray` or `DataView` to a fresh underlying buffer. Exported only for unit tests.                                                                                                                                                                                                                                                              |
 
 ## Invariants
 

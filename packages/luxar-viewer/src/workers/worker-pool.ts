@@ -36,6 +36,7 @@ import {
 } from './worker-pool/lifecycle/error-handlers';
 import { selectLeastBusy, type TrackedWorkerHandle } from './worker-pool/selection/least-busy';
 import { nextRoundRobin } from './worker-pool/selection/round-robin';
+import { DispatchTracker } from './worker-pool/selection/dispatch-tracker';
 import { computeStats, computeQueueDepth, type PoolStats } from './worker-pool/stats';
 import { markLoad } from '../profiling/load-timeline';
 
@@ -110,6 +111,8 @@ export class WorkerPool {
   /** Settles {@link readyPromise}: no argument resolves, an error rejects. */
   private settleReady: ((error?: unknown) => void) | null = null;
   private nextWorkerIndex = 0;
+  /** Worker-side in-flight accounting for the `worker.*` perf counters only. */
+  private readonly dispatchTracker = new DispatchTracker();
   /**
    * Pool-wide abort signal. When set (by `setAbortSignal`), every
    * `runWithTimeout` call additionally races against this signal so
@@ -635,12 +638,9 @@ export class WorkerPool {
         // The abort cannot kill the WASM task, but it can settle the
         // promise immediately so the caller proceeds with whatever the
         // dataset-switch wants to do next.
-        const workerPromise = this.withTimeout(
-          op,
-          fn(tracked.api),
-          this.pickTimeoutMs(kind),
-          tracked.worker
-        );
+        const task = fn(tracked.api);
+        this.dispatchTracker.dispatch(tracked.worker, this.workers, task);
+        const workerPromise = this.withTimeout(op, task, this.pickTimeoutMs(kind), tracked.worker);
 
         if (!effectiveSignal) {
           return await workerPromise;

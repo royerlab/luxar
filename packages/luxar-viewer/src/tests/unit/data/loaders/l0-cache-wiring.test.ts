@@ -338,7 +338,7 @@ describe('L0 cache wiring (differential across the three spatial-index loaders)'
       await geometry.load(loader).catch(() => undefined);
       expect(wrapSpy).toHaveBeenCalled();
 
-      const [, , , getProbe, getSignal] = wrapSpy.mock.calls[0];
+      const [, , , { getProbe, getSignal }] = wrapSpy.mock.calls[0];
       expect(typeof getProbe).toBe('function');
       expect(typeof getSignal).toBe('function');
 
@@ -359,8 +359,8 @@ describe('L0 cache wiring (differential across the three spatial-index loaders)'
 
       // Every wrapped array must share that liveness, not just the first.
       for (const call of wrapSpy.mock.calls) {
-        expect(call[3]()).toBe(probe);
-        expect(call[4]()).toBe(controller.signal);
+        expect(call[3].getProbe()).toBe(probe);
+        expect(call[3].getSignal()).toBe(controller.signal);
       }
 
       loader.dispose();

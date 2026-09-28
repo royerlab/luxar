@@ -37,6 +37,11 @@
  * @module cache/multi-level-caching-store/opfs-write-queue
  */
 
+import { perfCounters } from '../../profiling/perf-counters';
+
+/** Perf counter: arrivals dropped by either overflow policy (mirrors `dropped`). */
+const S_WRITES_DROPPED = perfCounters.slot('opfs.writesDropped');
+
 /**
  * Every limit here is resolved by the same clamp (finite, floored, at least 1),
  * so pass a real budget: a non-positive or non-finite value becomes 1, not
@@ -132,6 +137,7 @@ export class OpfsWriteQueue {
     // retained bytes. Any already-queued task for this key survives.
     if (!Number.isFinite(byteLength) || byteLength < 0) {
       this.droppedCount++;
+      perfCounters.add(S_WRITES_DROPPED);
       this.pump();
       return;
     }
@@ -158,6 +164,7 @@ export class OpfsWriteQueue {
       this.pending.delete(key);
       this.pendingBytes -= pending.byteLength;
       this.droppedCount++;
+      perfCounters.add(S_WRITES_DROPPED);
     }
 
     this.pump();

@@ -7,6 +7,12 @@ import { getLuxarOpfsRoot } from './opfs-store/opfs-root';
 import { OPFSMetadataManager, type MetadataSnapshot } from './opfs-store/metadata';
 import { withTimeout } from './opfs-store/opfs-timeout';
 import { getOpfsReadGateStats, withOpfsReadGate } from './opfs-read-gate';
+import { perfCounters } from '../../profiling/perf-counters';
+
+/** Perf counter: successful chunk writes (mirrors `writeCount`). */
+const S_OPFS_WRITES = perfCounters.slot('opfs.writes');
+/** Perf counter: every `navigator.storage.estimate()` call (quota checks). */
+const S_OPFS_ESTIMATE_CALLS = perfCounters.slot('opfs.estimateCalls');
 
 type IterableFileSystemDirectoryHandle = FileSystemDirectoryHandle & {
   keys(): AsyncIterableIterator<string>;
@@ -740,6 +746,7 @@ export class OPFSStore {
         this.index.set(key, { size, order: this.orderCounter++ });
         this.totalSize += size;
         this.writeCount++;
+        perfCounters.add(S_OPFS_WRITES);
 
         // Compact order counters to prevent overflow after long sessions
         if (this.orderCounter > 1e12) {
@@ -1027,6 +1034,7 @@ export class OPFSStore {
    */
   async checkQuota(requiredBytes: number): Promise<boolean> {
     try {
+      perfCounters.add(S_OPFS_ESTIMATE_CALLS);
       const estimate = await navigator.storage.estimate();
       const available = (estimate.quota || 0) - (estimate.usage || 0);
       return available > requiredBytes * 1.1; // 10% safety margin

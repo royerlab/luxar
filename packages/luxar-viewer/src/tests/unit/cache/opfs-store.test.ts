@@ -8,6 +8,7 @@ import {
 } from '../../../cache/multi-level-caching-store/opfs-read-gate';
 import { OPFS_NAMESPACE_DIR } from '../../../cache/multi-level-caching-store/opfs-store/opfs-root';
 import { createFakeOpfsRoot } from '../../mocks/opfs.mock';
+import { perfCounters } from '../../../profiling/perf-counters';
 
 describe('OPFSStore', () => {
   let store: OPFSStore;
@@ -465,6 +466,17 @@ describe('OPFSStore', () => {
       const stats = store.getStats();
       expect(stats.size).toBe(1000); // Updated size
       expect(stats.count).toBe(1); // Still one entry
+    });
+
+    it('perf counters: each write checks quota once, counts a write and a save attempt', async () => {
+      perfCounters.reset();
+      await store.set('p1', new Uint8Array(10));
+      await store.set('p2', new Uint8Array(10));
+      expect(perfCounters.get('opfs.writes')).toBe(2);
+      expect(perfCounters.get('opfs.estimateCalls')).toBe(2);
+      expect(perfCounters.get('opfs.saveAttempts')).toBe(2);
+      // Debounced: no index write has fired yet.
+      expect(perfCounters.get('opfs.indexSaves')).toBe(0);
     });
 
     it('should handle nested paths', async () => {

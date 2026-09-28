@@ -43,6 +43,12 @@
 import { LRUCache } from './lru-cache';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config } from '../config';
+import { perfCounters } from '../profiling/perf-counters';
+
+/** Gauge: entries currently protected by a prefetch pin (all SliceCaches). */
+const S_PINNED_ENTRIES = perfCounters.slot('scache.pinnedEntries');
+/** Gauge: retained bytes of the currently pinned entries (all SliceCaches). */
+const S_PINNED_BYTES = perfCounters.slot('scache.pinnedBytes');
 
 /**
  * One cached per-slice entry.
@@ -150,6 +156,14 @@ export class SliceCache {
   private readonly oversizedWarned = new Set<string>();
   private readonly ladderDepths = new Map<string, { depth: number; totalDepth: number }>();
 
+  // Incremental mirror of the LRU's pinned set (key -> retained bytes) for the
+  // `scache.pinned*` perf gauges. Tracks exactly the LRU's pin lifecycle: added
+  // by a pinned `set` (and kept across a re-`set` of a pinned key, as the LRU
+  // keeps the pin), dropped on the releasing `get` hit and in `onEvict`
+  // (routine or last-resort eviction, `delete`, `clear`).
+  private readonly pinnedBytes = new Map<string, number>();
+  private pinnedBytesTotal = 0;
+
   constructor(options?: SliceCacheOptions) {
     const maxSize = options?.maxSize ?? SliceCache.defaultMaxSize();
     this.maxSize = maxSize;
@@ -185,6 +199,7 @@ export class SliceCache {
       // prefetched slice) has taken the entry — release any prefetch pin so it
       // rejoins normal eviction. Harmless when the key was never pinned.
       this.cache.unpin(key);
+      this.untallyPin(key);
     } else if (this.tombstones.has(key)) {
       // Was cached earlier, got evicted, asked for again: thrash, not cold.
       this.thrashMisses++;
@@ -236,6 +251,7 @@ export class SliceCache {
       }
     }
     if (opts?.pin) this.cache.pin(key);
+    this.tallyPin(key, opts?.pin === true);
     // Freshly cached: a later miss on this key is only thrash if it gets
     // evicted AGAIN (recordTombstone re-adds it then).
     this.tombstones.delete(key);
@@ -311,6 +327,9 @@ export class SliceCache {
     this.tombstones.clear();
     this.oversizedWarned.clear();
     this.ladderDepths.clear();
+    this.pinnedBytes.clear();
+    this.pinnedBytesTotal = 0;
+    this.publishPinGauges();
     this.thrashMisses = 0;
     if (this.debug) {
       log.custom(LogEmoji.CACHE, Modules.CACHE, 'SliceCache cleared');
@@ -350,7 +369,37 @@ export class SliceCache {
 
   private recordEviction(key: string): void {
     this.ladderDepths.delete(key);
+    this.untallyPin(key);
     this.recordTombstone(key);
+  }
+
+  /**
+   * Update the pin tally after a `set`. The LRU pins only a key it holds, and a
+   * re-`set` of an already-pinned key keeps that pin, so the stored entry is
+   * pinned iff it exists and was either just pinned or already pinned.
+   */
+  private tallyPin(key: string, requested: boolean): void {
+    const previous = this.pinnedBytes.get(key);
+    if (!requested && previous === undefined) return;
+    const stored = this.cache.peek(key);
+    if (stored === undefined) return;
+    this.pinnedBytes.set(key, stored.bytes);
+    this.pinnedBytesTotal += stored.bytes - (previous ?? 0);
+    this.publishPinGauges();
+  }
+
+  /** Drop `key` from the pin tally (no-op when it was not pinned). */
+  private untallyPin(key: string): void {
+    const bytes = this.pinnedBytes.get(key);
+    if (bytes === undefined) return;
+    this.pinnedBytes.delete(key);
+    this.pinnedBytesTotal -= bytes;
+    this.publishPinGauges();
+  }
+
+  private publishPinGauges(): void {
+    perfCounters.gauge(S_PINNED_ENTRIES, this.pinnedBytes.size);
+    perfCounters.gauge(S_PINNED_BYTES, this.pinnedBytesTotal);
   }
 
   /** Record an evicted key as a tombstone (bounded FIFO). */

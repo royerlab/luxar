@@ -62,6 +62,7 @@ import { GEOMETRY_DESCRIPTORS } from '../geometry-descriptors';
 import { deriveNodeViewState } from '../view-state/derive-node-view-state';
 import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-dims';
 import { isAbortError } from '../../loaders';
+import { tagSignalOrigin } from '../../../cache/decompressed-chunk-cache/decode-origin';
 import { isObjectLoadEligible } from '../loaders/run-loader-updates';
 import type * as THREE from 'three';
 
@@ -176,6 +177,9 @@ export class SlicePrefetcher {
 
     const controller = new AbortController();
     this.controller = controller;
+    // Shadow updates forward this signal into every read, so their miss
+    // decodes are counted under `decode.count.shadow`.
+    tagSignalOrigin(controller.signal, 'shadow');
     this.batchStartMs = performance.now();
 
     const { registry } = this.ctx;

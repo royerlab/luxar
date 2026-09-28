@@ -37,6 +37,7 @@ import { ENERGY_RELEASE_THRESHOLD } from '../lod-display-gate';
 import { log, Modules } from '../../utils/log';
 import { clamp } from '../../utils/clamp';
 import { advanceDimensionValue } from './advance-value';
+import { perfCounters } from '../../profiling/perf-counters';
 import type {
   DimensionAnimationState,
   DimensionAnimationEvents,
@@ -58,6 +59,9 @@ export interface PlayOptions {
    */
   ladderDepth?: number | 'auto' | null;
 }
+
+/** Perf counter: playback ticks that actually advanced a dimension value. */
+const S_PLAYBACK_TICKS = perfCounters.slot('playback.ticks');
 
 /**
  * Manages animation state for multiple dimensions
@@ -309,6 +313,15 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
       // Update dimension value (triggers async data loading via listeners)
       this.sceneDimsManager.setDimensionValue(dimIndex, nextValue);
+      // Perf trace: `due` is when this tick was scheduled to fire, so
+      // `t - due` is the playhead's lateness.
+      perfCounters.add(S_PLAYBACK_TICKS);
+      perfCounters.record('playback.tick', {
+        t: performance.now(),
+        dim: dimIndex,
+        value: nextValue,
+        due: state.lastUpdateTime + effectiveFrameTime,
+      });
 
       // Track completion for next frame synchronization
       // This ensures animation waits for data loading before advancing

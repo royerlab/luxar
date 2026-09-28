@@ -28,6 +28,7 @@ rendering/
 ├── node-factory.ts                     # Scene-node factories for Points / Lines / GSplats
 ├── gpu-buffer-pool.ts                  # Geometry reuse with count and byte-budget eviction
 ├── gpu-byte-budget.ts                  # Single adaptive VRAM budget (pool + LOD registry share it)
+├── upload-counters.ts                  # Counts GPU upload bytes/calls (WebGL2 + WebGPU queue) into perf counters
 ├── adaptive-dpr-manager.ts             # Adaptive resolution
 ├── pixel-ratio-cap.ts                  # The max DPR the viewer may render at (high DPR is opt-in; 2 on a phone/tablet)
 ├── colormap-textures.ts                # Built-in/custom DataTexture creation and cache disposal

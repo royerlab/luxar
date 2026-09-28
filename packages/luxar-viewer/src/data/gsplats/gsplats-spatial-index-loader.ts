@@ -449,19 +449,18 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       });
       // Wrap with L0 cache if enabled (caches decoded chunks to avoid Blosc decompression)
       if (this.l0Cache) {
-        centersArray = wrapWithCache(
-          centersArray,
-          this.l0Cache,
-          `${this.node.path}/centers`,
-          () => this._activeProbe,
-          () => this._activeSignal
-        );
+        centersArray = wrapWithCache(centersArray, this.l0Cache, `${this.node.path}/centers`, {
+          getProbe: () => this._activeProbe,
+          getSignal: () => this._activeSignal,
+        });
         amplitudesArray = wrapWithCache(
           amplitudesArray,
           this.l0Cache,
           `${this.node.path}/amplitudes`,
-          () => this._activeProbe,
-          () => this._activeSignal
+          {
+            getProbe: () => this._activeProbe,
+            getSignal: () => this._activeSignal,
+          }
         );
       }
       this.arrays.centers = centersArray;
@@ -491,13 +490,10 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
         let colorsArray = await zarr.open(this.zarrLocation.resolve('colors'), { kind: 'array' });
         this.registerBounds('colors', colorsArray);
         if (this.l0Cache) {
-          colorsArray = wrapWithCache(
-            colorsArray,
-            this.l0Cache,
-            `${this.node.path}/colors`,
-            () => this._activeProbe,
-            () => this._activeSignal
-          );
+          colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`, {
+            getProbe: () => this._activeProbe,
+            getSignal: () => this._activeSignal,
+          });
         }
         this.arrays.colors = colorsArray;
         // Layout (3 = RGB, 4 = RGBA) is a property of the dataset, read once
@@ -518,13 +514,10 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       });
       this.registerBounds('label_ids', labelIdsArray);
       if (this.l0Cache) {
-        labelIdsArray = wrapWithCache(
-          labelIdsArray,
-          this.l0Cache,
-          `${this.node.path}/label_ids`,
-          () => this._activeProbe,
-          () => this._activeSignal
-        );
+        labelIdsArray = wrapWithCache(labelIdsArray, this.l0Cache, `${this.node.path}/label_ids`, {
+          getProbe: () => this._activeProbe,
+          getSignal: () => this._activeSignal,
+        });
       }
       this.arrays.label_ids = labelIdsArray;
     }
@@ -956,13 +949,10 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       name: string
     ): zarr.Array<zarr.DataType, zarr.Readable> =>
       this.l0Cache
-        ? wrapWithCache(
-            arr,
-            this.l0Cache,
-            `${this.node.path}/${name}`,
-            () => this._activeProbe,
-            () => this._activeSignal
-          )
+        ? wrapWithCache(arr, this.l0Cache, `${this.node.path}/${name}`, {
+            getProbe: () => this._activeProbe,
+            getSignal: () => this._activeSignal,
+          })
         : arr;
 
     let diagArray: zarr.Array<zarr.DataType, zarr.Readable> | undefined;

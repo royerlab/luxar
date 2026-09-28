@@ -1,4 +1,5 @@
-import { afterEach, describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { perfCounters } from '../../../profiling/perf-counters';
 import {
   boundedConcurrencyStore,
   fetchLaneForKey,
@@ -184,5 +185,38 @@ describe('fetch-concurrency gate', () => {
     expect(peak).toBeGreaterThan(0);
     expect(peak).toBeLessThanOrEqual(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
     expect(active).toBe(0);
+  });
+});
+
+describe('fetch-concurrency perf counters', () => {
+  it('tallies metadata-lane requests, highWater and queued wait only', async () => {
+    perfCounters.reset();
+    let nowMs = 0;
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => nowMs);
+    try {
+      const releasers: Array<() => void> = [];
+      const fire = () =>
+        withFetchGate(() => new Promise<void>((resolve) => releasers.push(resolve)), 'metadata');
+      const N = MAX_CONCURRENT_METADATA_FETCHES + 2;
+      const calls = Array.from({ length: N }, fire);
+      await Promise.resolve();
+      expect(perfCounters.get('fetch.metadata.requests')).toBe(N);
+      expect(perfCounters.get('fetch.metadata.highWater')).toBe(MAX_CONCURRENT_METADATA_FETCHES);
+      expect(perfCounters.get('fetch.metadata.queueWaitMs')).toBe(0);
+
+      // The two queued calls start 7 ms after they were enqueued.
+      nowMs = 7;
+      while (releasers.length) {
+        releasers.shift()!();
+        await Promise.resolve();
+        await Promise.resolve();
+      }
+      await Promise.all(calls);
+      expect(perfCounters.get('fetch.metadata.queueWaitMs')).toBe(14);
+      expect(perfCounters.get('fetch.metadata.highWater')).toBe(MAX_CONCURRENT_METADATA_FETCHES);
+      expect(perfCounters.get('fetch.data.requests')).toBe(0);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 });

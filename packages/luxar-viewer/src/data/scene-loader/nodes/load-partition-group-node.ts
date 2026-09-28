@@ -31,6 +31,10 @@ import type { BspTreeNode, PartitionGroupMetadata } from '../../../types/partiti
 import type { NodeBuildCtx } from './build-ctx';
 import type { PartitionGroupChild } from '../../../scene/lod-group-registry';
 import { loadChildrenConcurrently, type LoadSceneChildren } from './load-children-concurrently';
+import { perfCounters } from '../../../profiling/perf-counters';
+
+/** Perf counter: partition parts whose subtree load (loader init) resolved. */
+const S_PARTS_INITIALISED = perfCounters.slot('partition.partsInitialised');
 
 interface PositionBounds {
   min: readonly number[];
@@ -301,7 +305,11 @@ export async function loadPartitionGroupNode(
     return partitionGroup;
   }
 
-  await loadChildrenConcurrently(sceneChildren, partitionGroup, parentLoc, ctx, loadChildren, {
+  const loadPart: LoadSceneChildren = async (child, parent, loc, childCtx) => {
+    await loadChildren(child, parent, loc, childCtx);
+    perfCounters.add(S_PARTS_INITIALISED);
+  };
+  await loadChildrenConcurrently(sceneChildren, partitionGroup, parentLoc, ctx, loadPart, {
     configureSlot: (slot, child, index) => {
       slot.userData.partIndex = partIndexForChild(child, index);
     },

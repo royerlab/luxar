@@ -31,6 +31,7 @@ import {
 } from '../../../rendering/renderer-capabilities';
 import { configureElementTextureLayout } from '../../../rendering/element-texture-layout';
 import { configureSortedIndexChunkedApply } from '../../../rendering/element-storage';
+import { installUploadCounters } from '../../../rendering/upload-counters';
 import { configureRenderObjectEviction } from '../../../data/scene-loader/commit/invalidate-render-object';
 import { configureHDRRenderer, logHDRCapabilities } from '../../../utils/hdr/hdr-detection';
 import { log, Modules } from '../../../utils/log';
@@ -164,6 +165,9 @@ export async function createWebGLRenderer(canvas: HTMLCanvasElement): Promise<Cr
     premultipliedAlpha: config.webgl.context.premultipliedAlpha,
     ...config.webgl.renderer,
   });
+
+  // Tally every CPU→GPU upload for the perf counters (instrumentation only).
+  installUploadCounters(renderer);
 
   const capabilities = createRendererCapabilities(renderer);
   configureElementTextureLayout(capabilities.maxTextureSize);
@@ -354,6 +358,8 @@ export async function createWebGPURenderer(
     ...(perfTimestamp ? { trackTimestamp: true } : {}),
   } as ConstructorParameters<typeof WebGPURenderer>[0]);
   await gpuRenderer.init();
+  // After init(): the backend's device / WebGL2 context exists only now.
+  installUploadCounters(gpuRenderer);
 
   const capabilities = createRendererCapabilities(gpuRenderer);
   configureElementTextureLayout(capabilities.maxTextureSize);
