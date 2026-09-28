@@ -27,6 +27,10 @@ import {
   GLSL_SORTED_INDEX,
 } from '../../materials/_shared/glsl-lib';
 import { requireTslMaterials } from '../../tsl/slot';
+import {
+  GLSL_GSPLAT_VISIBLE_FOOTPRINT,
+  GSPLAT_VISIBILITY_FLOOR,
+} from '../../materials/gsplat/math';
 
 /**
  * Picking vertex shader for gsplats.
@@ -39,6 +43,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     ${GLSL_SANITIZE_FUNCTIONS}
     ${GLSL_NEAR_FADE_FUNCTIONS}
     ${GLSL_PROJECTION_FUNCTIONS}
+    ${GLSL_GSPLAT_VISIBLE_FOOTPRINT}
 
     in vec2 aQuadCorner;
 
@@ -62,6 +67,12 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
     uniform float uPixelRatio;
     uniform float uNodeId;
     uniform int uLabelFilterIndex;
+    // Fragment-discard inputs, read here to size the quad to the visible
+    // footprint (visual-shader parity). Same precision as the fragment
+    // declarations (GLSL ES link rule).
+    uniform highp float uShiftC;
+    uniform highp float uInvOneMinusC;
+    uniform highp float uTruncateSq;
 
     flat out mediump float vAmplitude2D;
     flat out highp vec3 vL2D;
@@ -253,6 +264,18 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
             extent2 *= clampScale;
         }
 
+        // Visible-footprint tightening — visual-shader parity (shader-glsl.ts;
+        // derivation in materials/gsplat/math.ts). The pick fragment's
+        // visibility test has no gain or alpha factor, so the peak scale is
+        // just vAmplitude2D · 1/(1-C).
+        float visibleMahalSq = gsplatVisibleMahalSq(vAmplitude2D * uInvOneMinusC, uShiftC, uTruncateSq);
+        if (visibleMahalSq < 0.0) {
+            gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+            return;
+        }
+        extent1 = gsplatFootprintExtent(extent1, lambda1, visibleMahalSq);
+        extent2 = gsplatFootprintExtent(extent2, lambda2, visibleMahalSq);
+
         // Screen centre in pixels from the clip-space centre (gl_FragCoord
         // convention: origin at the viewport's bottom-left corner).
         vCenterScreen = (centerClip.xy * invW * 0.5 + 0.5) * uResolution;
@@ -309,7 +332,9 @@ export const GSPLAT_PICK_FRAGMENT_SHADER = /* glsl */ `
         if (mahalSq > uTruncateSq) discard;
 
         float intensity = vAmplitude2D * uInvOneMinusC * max(exp(-0.5 * mahalSq) - uShiftC, 0.0);
-        if (intensity < 1e-4) discard;
+        // The vertex stage sizes the quad from this exact test
+        // (gsplatVisibleMahalSq) — change both together.
+        if (intensity < ${GSPLAT_VISIBILITY_FLOOR.toExponential()}) discard;
 
         float brightness = clamp(intensity, 0.0, 1.0);
 

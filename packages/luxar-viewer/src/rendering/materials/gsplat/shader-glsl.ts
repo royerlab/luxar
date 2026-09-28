@@ -24,6 +24,7 @@ import {
   VOLUMETRIC_TAU_EPS,
 } from '../_shared/volumetric';
 import { requireTslMaterials } from '../../tsl/slot';
+import { GLSL_GSPLAT_VISIBLE_FOOTPRINT, GSPLAT_VISIBILITY_FLOOR } from './math';
 
 export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     precision highp float;
@@ -31,6 +32,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     ${GLSL_SANITIZE_FUNCTIONS}
     ${GLSL_NEAR_FADE_FUNCTIONS}
     ${GLSL_PROJECTION_FUNCTIONS}
+    ${GLSL_GSPLAT_VISIBLE_FOOTPRINT}
 
     // Quad corner attribute (static geometry)
     in vec2 aQuadCorner;  // (-1,-1), (1,-1), (-1,1), (1,1)
@@ -56,6 +58,15 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     uniform float uPixelRatio;
     uniform int uLabelColorMode;
     uniform int uLabelFilterIndex;
+    // Fragment-discard inputs, read here to size the quad to the VISIBLE
+    // footprint (see the tightening block in main). A uniform declared in
+    // both stages must carry the SAME precision (GLSL ES link rule), so
+    // these mirror the fragment declarations exactly.
+    uniform highp float uShiftC;
+    uniform highp float uInvOneMinusC;
+    uniform highp float uTruncateSq;
+    uniform mediump float uIntensity;
+    uniform lowp float uHasElementAlpha;
 
     // Colormap uniforms (only active when USE_COLORMAP is defined)
     #ifdef USE_COLORMAP
@@ -403,6 +414,32 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
             extent2 *= clampScale;
         }
 
+        // === Visible-footprint tightening (#2944 B10) ===
+        // The quad above circumscribes the T-sigma ellipse, but the fragment
+        // also discards below the visibility floor, which binds FIRST for a
+        // dim splat: its surviving fragments fill the smaller ellipse of
+        // squared radius gsplatVisibleMahalSq (exact rearrangement of that
+        // discard; derivation + margins in math.ts). Shrink each half extent
+        // to it (+1 px), never growing the legacy quad, and cull a splat none
+        // of whose fragments can pass. The peak scale below is EXACTLY the
+        // factor the fragment multiplies its falloff by before the test:
+        // vAmplitude2D · 1/(1-C) · alpha factor · max(gain, 1).
+        float splatAlpha = sanitizeAlpha(aAlpha);
+        #ifdef LUXAR_VOLUMETRIC
+        float footprintAlpha = mix(1.0, -log(1.0 - min(splatAlpha, ${ALPHA_CLAMP})), uHasElementAlpha);
+        #else
+        float footprintAlpha = splatAlpha;
+        #endif
+        float visibleMahalSq = gsplatVisibleMahalSq(
+            vAmplitude2D * uInvOneMinusC * footprintAlpha * max(uIntensity, 1.0),
+            uShiftC, uTruncateSq);
+        if (visibleMahalSq < 0.0) {
+            gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+            return;
+        }
+        extent1 = gsplatFootprintExtent(extent1, lambda1, visibleMahalSq);
+        extent2 = gsplatFootprintExtent(extent2, lambda2, visibleMahalSq);
+
         // Screen centre in pixels from the clip-space centre (gl_FragCoord
         // convention: origin at the viewport's bottom-left corner).
         vCenterScreen = (centerClip.xy * invW * 0.5 + 0.5) * uResolution;
@@ -538,7 +575,9 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         // floor (hard clipped rims + vanishing splats at gain >~ 40).
         // max(uIntensity, 1.0) keeps gain <= 1 EXACTLY at the historical
         // threshold (no overdraw change for default renders).
-        if (intensity * max(uIntensity, 1.0) < 1e-4) discard;
+        // The vertex stage sizes the quad from this exact test
+        // (gsplatVisibleMahalSq) — change both together.
+        if (intensity * max(uIntensity, 1.0) < ${GSPLAT_VISIBILITY_FLOOR.toExponential()}) discard;
 
         // Per-node GOG (Gain-Offset-Gamma) color adjustment. uIntensity (gain)
         // and uOffset apply in BOTH modes so the layer intensity/offset controls

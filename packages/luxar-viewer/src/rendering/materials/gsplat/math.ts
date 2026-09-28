@@ -138,3 +138,118 @@ export function clampTruncationRadius(radius: number): number {
   }
   return radius;
 }
+
+/**
+ * Visibility floor of the gsplat fragment shaders: a fragment whose
+ * (gain-aware, alpha-folded) shifted-Gaussian intensity falls below this is
+ * discarded (`intensity * max(uIntensity, 1) < 1e-4` in the visual shader,
+ * `intensity < 1e-4` in the pick shader). Interpolated into those discards
+ * AND the vertex footprint math, so the two cannot disagree.
+ */
+export const GSPLAT_VISIBILITY_FLOOR = 1e-4;
+
+/**
+ * Relative safety margin applied to the peak scale before the footprint
+ * radius is derived from it (see {@link gsplatVisibleMahalSq}). The fragment
+ * reads the amplitude and alpha through `mediump` varyings (fp16 on mobile
+ * GPUs: relative rounding 2^-11 ≈ 4.9e-4) and evaluates `exp`/`log` at GPU
+ * precision. The worst case is the volumetric alpha → optical-density map
+ * w = −ln(1 − a): half an fp16 ulp of `a` near `ALPHA_CLAMP` moves w by up to
+ * 2^-12·512 ≈ 0.125 of its ≈ 6.24, i.e. 2%. A 5% margin covers that with
+ * headroom, while costing only 2·ln(1.05) ≈ 0.1 in the squared radius of a
+ * splat that is dim enough to be tightened at all (bright splats keep T).
+ */
+export const GSPLAT_FOOTPRINT_PEAK_MARGIN = 1.05;
+
+/**
+ * Screen-space safety margin, in framebuffer pixels, added to each half
+ * extent of the tightened quad. Covers vertex-vs-fragment float disagreement
+ * on the ellipse (eigen extents vs the fragment's Cholesky solve and its
+ * sub-1e-6 px² floors) and multisampled coverage: every sample of a pixel
+ * lies within √2/2 px of the pixel centre at which the flat-varying fragment
+ * test is evaluated.
+ */
+export const GSPLAT_FOOTPRINT_PIXEL_MARGIN = 1.0;
+
+/**
+ * Squared Mahalanobis radius beyond which NO gsplat fragment can survive the
+ * shaders' discard tests — the CPU mirror of the vertex-stage footprint math
+ * in `shader-glsl.ts` / `shader-tsl.ts` and the two pick shaders.
+ *
+ * A fragment at squared Mahalanobis distance m survives only if
+ *   m <= T²                                   (truncation discard), and
+ *   P · (exp(−m/2) − C) >= floor              (visibility discard),
+ * where P is the per-splat peak scale (`vAmplitude2D / (1 − C)`, times the
+ * alpha factor and `max(gain, 1)` in the visual shader) and C = exp(−T²/2).
+ * The second condition rearranges EXACTLY to m <= −2·ln(C + floor/P), so the
+ * surviving set is the ellipse of squared radius min(T², −2·ln(C + floor/P)).
+ * For bright splats that is T² (unchanged); a dim splat's visible core can be
+ * far smaller, yet the quad used to be sized for T regardless.
+ *
+ * `P` is inflated by {@link GSPLAT_FOOTPRINT_PEAK_MARGIN} first, which only
+ * GROWS the returned radius (conservative).
+ *
+ * @param peakScale - P as defined above (before the margin).
+ * @param shiftC - C = exp(−T²/2) (the `uShiftC` uniform).
+ * @param truncateSq - T² (the `uTruncateSq` uniform).
+ * @returns The squared radius, or a negative number when no fragment of the
+ *   splat can pass (P <= 0, or even the peak falls below the floor) — the
+ *   shaders cull such a splat outright. A NaN P returns T² (the legacy quad).
+ */
+export function gsplatVisibleMahalSq(
+  peakScale: number,
+  shiftC: number,
+  truncateSq: number
+): number {
+  const scaled = peakScale * GSPLAT_FOOTPRINT_PEAK_MARGIN;
+  if (scaled <= 0) return -1;
+  // The 1e-30 guard keeps the quotient finite (WGSL may assume no Inf at
+  // runtime); any scale that small puts k far above 1 either way.
+  const k = shiftC + GSPLAT_VISIBILITY_FLOOR / Math.max(scaled, 1e-30);
+  if (k >= 1) return -1;
+  return k > 0 && k < 1 ? Math.min(truncateSq, -2 * Math.log(k)) : truncateSq;
+}
+
+/**
+ * GLSL twin of {@link gsplatVisibleMahalSq}, shared by the visual and pick
+ * vertex shaders (the TSL twin is `gsplatVisibleMahalSqTSL` in
+ * `shader-tsl.ts`). Constants are interpolated from this module; the floor
+ * is spelled `1e-4` exactly as the fragment discards spell it.
+ */
+export const GLSL_GSPLAT_VISIBLE_FOOTPRINT = /* glsl */ `
+    // Squared Mahalanobis radius beyond which no fragment can pass the
+    // truncation + visibility discards; < 0 = no fragment can pass at all.
+    // CPU mirror, derivation and margins: materials/gsplat/math.ts.
+    float gsplatVisibleMahalSq(float peakScale, float shiftC, float truncateSq) {
+        float scaled = peakScale * ${String(GSPLAT_FOOTPRINT_PEAK_MARGIN)};
+        if (scaled <= 0.0) return -1.0;
+        float k = shiftC + ${GSPLAT_VISIBILITY_FLOOR.toExponential()} / max(scaled, 1e-30);
+        if (k >= 1.0) return -1.0;
+        return (k > 0.0 && k < 1.0) ? min(truncateSq, -2.0 * log(k)) : truncateSq;
+    }
+
+    // Tightened half extent along one eigen-axis (never above the legacy one).
+    float gsplatFootprintExtent(float legacyExtent, float lambda, float visibleMahalSq) {
+        return min(legacyExtent, sqrt(visibleMahalSq * lambda) + ${GSPLAT_FOOTPRINT_PIXEL_MARGIN.toFixed(1)});
+    }
+`;
+
+/**
+ * Tightened quad half-extent along one covariance eigen-axis: the visible
+ * ellipse's semi-axis √(R²·λ) plus {@link GSPLAT_FOOTPRINT_PIXEL_MARGIN},
+ * never larger than the legacy (already viewport-clamped) extent. Both
+ * rectangles are centred and share the eigen axes, so the result is their
+ * intersection — a subset of the old quad that still contains every fragment
+ * of it that can pass the discard tests.
+ *
+ * @param legacyExtent - The pre-existing `T·√λ` extent after the max-extent clamp (px).
+ * @param lambda - The eigenvalue of Σ_2D along this axis (px²).
+ * @param visibleMahalSq - A non-negative {@link gsplatVisibleMahalSq} result.
+ */
+export function gsplatFootprintExtent(
+  legacyExtent: number,
+  lambda: number,
+  visibleMahalSq: number
+): number {
+  return Math.min(legacyExtent, Math.sqrt(visibleMahalSq * lambda) + GSPLAT_FOOTPRINT_PIXEL_MARGIN);
+}

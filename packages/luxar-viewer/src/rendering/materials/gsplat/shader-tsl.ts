@@ -3,9 +3,10 @@
  * GLSL3 shaders in `shader-glsl.ts`.
  *
  * Renders each Gaussian splat as an oriented quad in screen space.
- * Per-vertex `aQuadCorner` (±1) scaled by the 2D covariance eigen-
- * vectors gives an axis-aligned bounding quad of the Gaussian's
- * truncation extent.
+ * Per-vertex `aQuadCorner` (±1) scaled along the 2D covariance eigen-
+ * vectors gives an eigen-aligned bounding rectangle of the Gaussian's
+ * VISIBLE extent: the truncation ellipse, shrunk for dim splats to the
+ * ellipse the visibility discard leaves (`gsplatVisibleMahalSqTSL`).
  *
  * Per-splat data comes from the RGBA32F splat texture (`uSplatTex`,
  * 4 texels/splat — layout in `rendering/element-texture-layout.ts`),
@@ -101,6 +102,11 @@ import {
   VOLUMETRIC_SERIES_C1,
   VOLUMETRIC_SERIES_C2_DIVISOR,
 } from '../_shared/volumetric';
+import {
+  GSPLAT_FOOTPRINT_PEAK_MARGIN,
+  GSPLAT_FOOTPRINT_PIXEL_MARGIN,
+  GSPLAT_VISIBILITY_FLOOR,
+} from './math';
 
 // Type-erased constructor aliases. TSL's typed `vec2`/`vec3`/`vec4`/`mat3`
 // overloads reject many valid combinations of intermediate `Node<…>`
@@ -113,6 +119,45 @@ const vec3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _vec3 as TSLNod
 const vec4: (a?: TSLNode, b?: TSLNode, c?: TSLNode, d?: TSLNode) => TSLNode = _vec4 as TSLNode;
 const mat3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _mat3 as TSLNode;
 const ivec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _ivec2 as TSLNode;
+
+/**
+ * TSL twin of `gsplatVisibleMahalSq` (CPU mirror + derivation in `./math`;
+ * GLSL twin `GLSL_GSPLAT_VISIBLE_FOOTPRINT`): the squared Mahalanobis radius
+ * beyond which no fragment can pass the truncation + visibility discards,
+ * or -1 when no fragment of the splat can pass at all. Shared with the pick
+ * factory (`picking/gsplat/pick.tsl.ts`). `.select` evaluates both lanes, so
+ * the quotient is guarded finite and the log's unselected lane is harmless.
+ */
+export function gsplatVisibleMahalSqTSL(
+  peakScale: TSLNode,
+  shiftC: TSLNode,
+  truncateSq: TSLNode
+): TSLNode {
+  const scaled: TSLNode = peakScale.mul(GSPLAT_FOOTPRINT_PEAK_MARGIN).toVar();
+  const k: TSLNode = shiftC
+    .add(float(GSPLAT_VISIBILITY_FLOOR).div(max(scaled, float(1e-30))))
+    .toVar();
+  const noneVisible: TSLNode = scaled.lessThanEqual(0.0).or(k.greaterThanEqual(1.0));
+  const inRange: TSLNode = k.greaterThan(0.0).and(k.lessThan(1.0));
+  const radiusSq: TSLNode = inRange.select(min(truncateSq, k.log().mul(-2.0)), truncateSq);
+  return noneVisible.select(float(-1.0), radiusSq);
+}
+
+/**
+ * TSL twin of `gsplatFootprintExtent` (`./math`): the tightened half extent
+ * along one eigen-axis, never above the legacy extent. `visibleMahalSq` is
+ * clamped at 0 so a culled splat's (unused) lane stays NaN-free.
+ */
+export function gsplatFootprintExtentTSL(
+  legacyExtent: TSLNode,
+  lambda: TSLNode,
+  visibleMahalSq: TSLNode
+): TSLNode {
+  return min(
+    legacyExtent,
+    sqrt(max(visibleMahalSq, float(0.0)).mul(lambda)).add(GSPLAT_FOOTPRINT_PIXEL_MARGIN)
+  );
+}
 
 export interface GSplatTSLConfig {
   readonly useColormap?: boolean;
@@ -253,6 +298,9 @@ export function gsplatWebGPUFactory(
   const uTruncateSq = nodes.uTruncateSq;
   const uLabelColorMode = nodes.uLabelColorMode;
   const uLabelFilterIndex = nodes.uLabelFilterIndex;
+  // Volumetric maps alpha into optical density — read by BOTH the vertex
+  // footprint (below) and the fragment's alpha factor, which must agree.
+  const volumetricGraph = isVolumetricMode(config.blendingMode ?? 'additive');
 
   // ---- Vertex computation ----
   //
@@ -553,9 +601,10 @@ export function gsplatWebGPUFactory(
       vAmplitude2DVal = aAmplitude
         .mul(rayIntegrationBoost)
         .mul(nearFade)
-        .mul(dilationCompensation!);
+        .mul(dilationCompensation!)
+        .toVar();
     } else {
-      vAmplitude2DVal = aAmplitude.mul(nearFade);
+      vAmplitude2DVal = aAmplitude.mul(nearFade).toVar();
     }
 
     // Eigendecomposition of Σ_2D (symmetric 2×2). Every shared value
@@ -589,8 +638,32 @@ export function gsplatWebGPUFactory(
       .greaterThan(maxExtentPx)
       .select(maxExtentPx.div(largestExtent), float(1.0))
       .toVar();
-    const extent1: TSLNode = extent1Raw.mul(clampScale);
-    const extent2: TSLNode = extent2Raw.mul(clampScale);
+    const extent1Legacy: TSLNode = extent1Raw.mul(clampScale);
+    const extent2Legacy: TSLNode = extent2Raw.mul(clampScale);
+
+    // Visible-footprint tightening (#2944 B10; GLSL twin carries the full
+    // rationale, math.ts the derivation). The peak scale is EXACTLY the
+    // factor the fragment multiplies its falloff by before the visibility
+    // test: vAmplitude2D · 1/(1-C) · alpha factor · max(gain, 1).
+    const splatAlpha: TSLNode = sanitizeAlpha(aAlpha).toVar();
+    const footprintAlpha: TSLNode = volumetricGraph
+      ? mix(
+          float(1.0),
+          min(splatAlpha, float(ALPHA_CLAMP)).oneMinus().log().negate(),
+          uHasElementAlpha
+        )
+      : splatAlpha;
+    const visibleMahalSq: TSLNode = gsplatVisibleMahalSqTSL(
+      vAmplitude2DVal
+        .mul(uInvOneMinusC)
+        .mul(footprintAlpha)
+        .mul(max(uIntensity, float(1.0))),
+      uShiftC,
+      uTruncateSq
+    ).toVar();
+    const footprintCulled: TSLNode = visibleMahalSq.lessThan(0.0);
+    const extent1: TSLNode = gsplatFootprintExtentTSL(extent1Legacy, lambda1, visibleMahalSq);
+    const extent2: TSLNode = gsplatFootprintExtentTSL(extent2Legacy, lambda2, visibleMahalSq);
 
     // Screen centre in pixels from the clip-space centre.
     const vCenterScreenVal: TSLNode = centerClip.xy
@@ -632,7 +705,8 @@ export function gsplatWebGPUFactory(
       .or(invalidAmp)
       .or(invalidCov)
       .or(labelRejected)
-      .or(densityDropped);
+      .or(densityDropped)
+      .or(footprintCulled);
 
     // Per-instance colour (LUT or attribute). aAmplitude doubles as
     // the colormap scalar — matches the GLSL `(aAmplitude - uScalarMin)`
@@ -661,7 +735,7 @@ export function gsplatWebGPUFactory(
     // Sanitized like the GLSL twin: NaN/Inf route to the 1.0 opaque
     // identity, finite values clamp to [0, 1] (alpha is load-bearing and
     // feeds optical depth under volumetric).
-    vAlpha.assign(sanitizeAlpha(aAlpha));
+    vAlpha.assign(splatAlpha);
     vAmplitude2D.assign(vAmplitude2DVal);
     vL2D.assign(vL2DVal);
     vCenterScreen.assign(vCenterScreenVal);
@@ -716,7 +790,6 @@ export function gsplatWebGPUFactory(
     // (GLSL twin; clamp = ALPHA_CLAMP from ../_shared/volumetric and sits INSIDE the
     // expression — mix evaluates both lanes, so the log argument must be
     // NaN-free even when the gate is 0).
-    const volumetricGraph = isVolumetricMode(config.blendingMode ?? 'additive');
     const alphaFactor: TSLNode = volumetricGraph
       ? mix(float(1.0), min(vAlpha, float(ALPHA_CLAMP)).oneMinus().log().negate(), uHasElementAlpha)
       : vAlpha;
@@ -726,7 +799,9 @@ export function gsplatWebGPUFactory(
     // * color, so a high gain must relax the visibility floor —
     // max(uIntensity, 1) keeps gain <= 1 exactly at the historical
     // threshold. See shader-glsl.ts for the full rationale.
-    Discard(intensity.mul(max(uIntensity, float(1.0))).lessThan(1e-4));
+    // The vertex stage sizes the quad from this exact test
+    // (gsplatVisibleMahalSqTSL) — change both together.
+    Discard(intensity.mul(max(uIntensity, float(1.0))).lessThan(GSPLAT_VISIBILITY_FLOOR));
 
     // GOG. Colormap mode bypasses color GOG — gamma + display-range
     // shaped the scalar VALUE (amplitude) pre-LUT (vertex stage).
