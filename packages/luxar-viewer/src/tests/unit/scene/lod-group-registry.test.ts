@@ -613,6 +613,17 @@ function makeRegistry(
 }
 
 /**
+ * A registry clock that advances one 60 Hz frame per read. The registry reads
+ * it once per ``evaluatePerFrame`` (plus the stale-hold budget, when one runs),
+ * so a loop of evaluations spans real-looking time for the ms-based settle
+ * debounce without each test threading its own clock.
+ */
+function frameClock(): () => number {
+  let t = 0;
+  return () => (t += 1000 / 60);
+}
+
+/**
  * A gsplats LOD child stamped with the view-version its (ready) geometry was
  * committed for — what ``commitGSplatsGeometry`` writes. The registry's
  * slice-aware fallback reads ``object.userData.{nodeType,loadedViewVersion}``;
@@ -4122,7 +4133,7 @@ describe('LODGroupRegistry — group-typed LOD child freshness', () => {
 // ────────────────────────────────────────────────────────────────────────
 // Settle-gated reload of a stale fine level (B2 decoupling). A lazy fine level
 // that has left the per-slice sweep is reloaded by the REGISTRY — but only once
-// the scrub has settled (the view version held steady for FINE_RELOAD_SETTLE_TICKS
+// the scrub has settled (the view version held steady for FINE_RELOAD_SETTLE_MS
 // frames), so active scrubbing shows only the cheap coarse level.
 // ────────────────────────────────────────────────────────────────────────
 
@@ -4159,12 +4170,12 @@ describe('LODGroupRegistry — settle-gated fine reload', () => {
   it('reloads the stale fine level exactly once after the scrub settles', () => {
     const ensureLoaded = vi.fn();
     const children = [makeGsplatChild(0, 2), makeStaleLazyFine(0.5, 1, ensureLoaded)];
-    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2); // version fixed at 2
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2, undefined, frameClock()); // version fixed at 2
     reg.register(makeEntry(children, 0, '/g'));
     // A few frames: not yet settled → no reload.
     for (let i = 0; i < 4; i++) reg.evaluatePerFrame();
     expect(ensureLoaded).not.toHaveBeenCalled();
-    // Hold steady long enough to settle (FINE_RELOAD_SETTLE_TICKS ~ 8).
+    // Hold steady long enough to settle (FINE_RELOAD_SETTLE_MS = 130).
     for (let i = 0; i < 10; i++) reg.evaluatePerFrame();
     // Fired once; the loading guard prevents re-firing every subsequent frame.
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
@@ -4201,7 +4212,7 @@ describe('LODGroupRegistry — settle-gated fine reload', () => {
 
   it('clear() resets the settle clock so a reused registry reloads promptly after a dataset switch', () => {
     const first = vi.fn();
-    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2, undefined, frameClock());
     reg.register(makeEntry([makeGsplatChild(0, 2), makeStaleLazyFine(0.5, 1, first)], 0, '/a'));
     for (let i = 0; i < 40; i++) reg.evaluatePerFrame(); // settle clock seeded at tick 1, tick now 40
     expect(first).toHaveBeenCalledTimes(1);
@@ -4295,7 +4306,7 @@ describe('LODGroupRegistry — playback aspiration', () => {
     return { reg, state, children, frame };
   }
 
-  it.fails('a playing timelapse keeps its fine level instead of collapsing to the coarsest', () => {
+  it('a playing timelapse keeps its fine level instead of collapsing to the coarsest', () => {
     const { reg, frame } = playbackHarness([30]);
     for (let f = 0; f < 20; f++) frame(); // warm-up: the first reloads
     let fine = 0;
@@ -4307,7 +4318,7 @@ describe('LODGroupRegistry — playback aspiration', () => {
     expect(fine / frames).toBeGreaterThanOrEqual(0.9);
   });
 
-  it.fails('aspires to the finest level whose reload fits the playback period, and to the finest again once paused', () => {
+  it('aspires to the finest level whose reload fits the playback period, and to the finest again once paused', () => {
     // mid reloads in 20 ms, fine in 150 ms: at a 100 ms period only mid can
     // keep up (the budget is 0.8 × the period).
     const { reg, state, frame } = playbackHarness([20, 150]);
@@ -4399,7 +4410,7 @@ describe('LODGroupRegistry — progressive refinement of a lazy level', () => {
     fine.ensureLoaded = ensureLoaded;
     fine.hasMoreLODs = () => more;
     const children = [makeGsplatChild(0, 2), fine];
-    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2, undefined, frameClock());
     reg.register(makeEntry(children, 0, '/g'));
 
     // Settle (~8 frames) then several refinement passes.
@@ -4726,7 +4737,7 @@ describe('LODGroupRegistry — never-downgrade display gate', () => {
   });
 
   it('keeps advancing the held aspiration ladder while the previous level stays visible', () => {
-    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2, undefined, frameClock());
     const coarse = makeCountedChild(0, 2, 100);
     const fine = makeStreamingChild(0.5, 2, 10);
     fine.ensureLoaded = vi.fn(() => {
@@ -5481,7 +5492,14 @@ describe('LODGroupRegistry — blending-mode-switch stamp-clear recovery (depth-
     // display must never blank meanwhile (a brief coarse fallback is the
     // documented staleness behavior, same as any re-slice).
     const version = 1;
-    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => version);
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      () => version,
+      undefined,
+      frameClock()
+    );
     const coarse = makeCountedChild(0, version, 100); // eager, complete
     const ensureLoaded = vi.fn();
     const fine = makeCountedChild(0.5, version, 1000); // resident lazy level

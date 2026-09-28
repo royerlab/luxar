@@ -16,8 +16,10 @@
  *
  * **Settle** is the debounce that drives deferred reloads: while the view
  * version changes every frame (active scrub) we want to show only the cheap
- * coarse level; once it has been stable for a few frames we reload the fine
- * level. `SettleTracker` answers "has the version been stable for N ticks?".
+ * coarse level; once it has been stable for a short while we reload the fine
+ * level. `SettleTracker` answers "has the version been stable for N ms?".
+ * Milliseconds, not frames, so the debounce means the same on a 60 Hz and a
+ * 165 Hz display.
  *
  * The **never-downgrade display gate** built on these primitives lives in
  * the sibling module `lod-display-gate.ts` (`shouldHoldPreviousDisplay`,
@@ -200,34 +202,34 @@ export function countFromUserData(ud: FreshnessChild['object']['userData']): num
 }
 
 /**
- * Tracks when the (global) view-update version last changed, in registry ticks,
+ * Tracks when the (global) view-update version last changed, in milliseconds,
  * so the selector can tell whether the view has "settled" (stopped scrubbing).
  * Single instance per registry — the version is global (one `getViewVersion`).
  */
 export class SettleTracker {
   private lastVersion = Number.NaN;
-  private lastChangeTick = 0;
+  private lastChangeMs = Number.NEGATIVE_INFINITY;
 
-  /** Record the current version at `tick`; resets the settle clock on change. */
-  observe(version: number, tick: number): void {
+  /** Record the current version at `nowMs`; resets the settle clock on change. */
+  observe(version: number, nowMs: number): void {
     if (version !== this.lastVersion) {
       this.lastVersion = version;
-      this.lastChangeTick = tick;
+      this.lastChangeMs = nowMs;
     }
   }
 
-  /** True once the version has been unchanged for ≥ `settleTicks` frames. */
-  isSettled(tick: number, settleTicks: number): boolean {
-    return tick - this.lastChangeTick >= settleTicks;
+  /** True once the version has been unchanged for ≥ `settleMs` milliseconds. */
+  isSettled(nowMs: number, settleMs: number): boolean {
+    return nowMs - this.lastChangeMs >= settleMs;
   }
 
   /**
-   * Forget the observed version and clock — for a registry that restarts its
-   * tick at 0 (`clear()`), so the first observation of the new scene re-seeds
-   * the clock instead of comparing against a tick from the old one.
+   * Forget the observed version and clock — for a registry reused across a
+   * dataset switch (`clear()`), so the first observation of the new scene
+   * re-seeds the clock instead of inheriting the old scene's.
    */
   reset(): void {
     this.lastVersion = Number.NaN;
-    this.lastChangeTick = 0;
+    this.lastChangeMs = Number.NEGATIVE_INFINITY;
   }
 }

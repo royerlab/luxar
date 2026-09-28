@@ -402,7 +402,15 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    whichever units step 4's `selector` names) is satisfied by that
    metric, with 10% asymmetric, spacing-aware hysteresis on the
    downgrade direction to suppress threshold-edge flicker
-   (`pickChildWithHysteresis`).
+   (`pickChildWithHysteresis`). **During playback**
+   (`getPlaybackPeriodMs` non-null) that pick is capped at the finest
+   level whose measured load+commit time (`LODGroupChild.loadEwmaMs`, an
+   EWMA of fire → `loading` cleared) is at most 0.8 × the period; an eager
+   or not-yet-measured level counts as fitting. The capped aspiration is
+   reloaded on every timepoint without the settle debounce
+   (`FINE_RELOAD_SETTLE_MS` = 130 ms, which a playing timelapse never
+   satisfies), and the stale hold keeps it on screen while its own reload
+   is in flight, so playback no longer collapses to the coarsest level.
 7. Swap visibility when the desired child differs — for a blendable
    (additive / luminous / volumetric) group as a DISSOLVE over
    `config.lod.fadeMs` (250 ms): the incoming level at

@@ -196,13 +196,31 @@ function countLodDisplay(
 }
 
 /**
- * Frames the view-update version must hold steady before the registry reloads a
- * stale fine level (the settle debounce — see `maybeKickReload`). While the
- * user is actively scrubbing (version changes every frame) only the cheap
- * coarse level shows; the fine level reloads once they pause for ~this many
- * frames. ~8 frames ≈ 130 ms at 60 fps.
+ * Milliseconds the view-update version must hold steady before the registry
+ * reloads a stale fine level (the settle debounce — see `maybeKickReload`).
+ * While the user is actively scrubbing (version changes every frame) only the
+ * cheap coarse level shows; the fine level reloads once they pause this long.
+ * In milliseconds, like `STALE_HOLD_MS`, so it means the same on any display
+ * (it was 8 frames: 130 ms at 60 Hz, 48 ms at 165 Hz).
+ *
+ * Playback does not wait for it (see {@link PLAYBACK_LOAD_BUDGET_FRACTION}): a
+ * playing timelapse bumps the version every period, so it never settles.
  */
-const FINE_RELOAD_SETTLE_TICKS = 8;
+const FINE_RELOAD_SETTLE_MS = 130;
+
+/**
+ * During playback the registry aspires to the finest level whose measured
+ * load+commit time (``LODGroupChild.loadEwmaMs``) is at most this fraction of
+ * the playback period, and reloads it on every timepoint without waiting for
+ * the settle debounce. A level the period cannot carry would be stale on
+ * every frame and drop the display to the coarsest fresh level; the finest
+ * one that CAN keep up is what a video player's "auto quality" would pick.
+ * An unmeasured lazy level counts as fitting, so it gets measured.
+ */
+const PLAYBACK_LOAD_BUDGET_FRACTION = 0.8;
+
+/** Weight of a new sample in ``LODGroupChild.loadEwmaMs``. */
+const LOAD_EWMA_ALPHA = 0.3;
 
 /**
  * Milliseconds the registry will keep a STALE previously-displayed level on screen,
@@ -223,12 +241,12 @@ const FINE_RELOAD_SETTLE_TICKS = 8;
  * committing) exhausts it once and then shows live coarse geometry exactly as
  * before.
  *
- * In MILLISECONDS, deliberately, unlike the frame-counted debounce above: this
- * is a tolerance for how long a viewer may show the previous slice, which is a
- * wall-clock judgement, not a "has the user stopped moving" one. Sizing it in
- * frames makes it display-dependent — the first version of this fix used 8
- * frames and worked on a 60 Hz panel while still flashing on a 165 Hz one,
- * where 8 frames is 48 ms and the re-commit needs ~70.
+ * In MILLISECONDS, deliberately, like the settle debounce above: this is a
+ * tolerance for how long a viewer may show the previous slice, which is a
+ * wall-clock judgement. Sizing it in frames makes it display-dependent — the
+ * first version of this fix used 8 frames and worked on a 60 Hz panel while
+ * still flashing on a 165 Hz one, where 8 frames is 48 ms and the re-commit
+ * needs ~70.
  *
  * 250 ms is comfortably above the ~70 ms a warm re-slice takes on a 1.6 M-splat
  * timelapse and well below the point where a frozen frame reads as a hang.
@@ -478,6 +496,17 @@ export interface LODGroupChild {
   ready?: boolean;
   /** Set by the registry when it fires ``ensureLoaded``; cleared by the thunk. */
   loading?: boolean;
+  /**
+   * Registry clock (ms) at which the in-flight ``ensureLoaded`` was fired, until
+   * the registry observes ``loading`` cleared. Registry-owned.
+   */
+  loadStartMs?: number;
+  /**
+   * Exponentially weighted mean of this level's measured load+commit time, in
+   * ms (fire → ``loading`` cleared, failures excluded). Registry-owned; during
+   * playback it decides which level can keep up with the period.
+   */
+  loadEwmaMs?: number;
   /** Set by the thunk on load failure to stop per-frame retry storms. */
   failed?: boolean;
   /**
@@ -1140,6 +1169,15 @@ export interface LODGroupRegistryDeps {
    */
   getCrossFadeEnabled?: () => boolean;
   /**
+   * The period (ms) of the fastest dimension currently PLAYING, or ``null``
+   * when nothing plays (`DimensionAnimationManager.getPlaybackPeriodMs`).
+   * While non-null, lazy levels reload on every timepoint without the settle
+   * debounce and the aspiration is capped at the finest level whose measured
+   * load time fits (see `PLAYBACK_LOAD_BUDGET_FRACTION`). Omitted ⇒ never
+   * playing — identical to the pre-feature behaviour.
+   */
+  getPlaybackPeriodMs?: () => number | null;
+  /**
    * Whether streaming brightness compensation is enabled: as a blendable
    * (additive/luminous/volumetric)
    * leaf's ladder streams in, scale its opacity by `1/e(k)` so the partial prefix
@@ -1270,6 +1308,11 @@ export class LODGroupRegistry {
   private drawnStateChanged = false;
   /** In-flight level dissolves, by group path (see {@link levelFade}). */
   private readonly fades = new Map<string, LevelFade>();
+  /** This frame's clock reading and playback period (see ``evaluatePerFrame``). */
+  private readonly frame: { nowMs: number; playbackPeriodMs: number | null } = {
+    nowMs: 0,
+    playbackPeriodMs: null,
+  };
   /**
    * Partition rising edges waiting for their wrapper to be visible and the
    * loader to be idle: wrapper path → the re-entering PART paths. A set that
@@ -1716,9 +1759,8 @@ export class LODGroupRegistry {
     this.partitionPartKeys.clear();
     // Reset the monotonic tick so a reused registry (shared-registry
     // refactor) starts cold rather than inheriting stale LRU ordering — and
-    // the settle clock with it: it is keyed on the tick, and a leftover
-    // `lastChangeTick` from the old scene would read "not settled" for that
-    // many frames, freezing every stale reload after a dataset switch.
+    // the settle clock with it, so the new scene's first observed version
+    // starts its own debounce instead of inheriting the old scene's.
     this.tick = 0;
     this.settleTracker.reset();
     this.warnedNoReadyChild.clear();
@@ -2173,10 +2215,12 @@ export class LODGroupRegistry {
     // Track whether the (global) view version has settled, to gate deferred
     // fine-level reloads (see ``evaluateEntry``). ``undefined`` view version
     // (no wiring / tests) ⇒ treat as settled so the trigger is inert.
+    this.frame.nowMs = this.nowMs();
+    this.frame.playbackPeriodMs = this.deps.getPlaybackPeriodMs?.() ?? null;
     const version = this.deps.getViewVersion?.();
-    if (version != null) this.settleTracker.observe(version, this.tick);
+    if (version != null) this.settleTracker.observe(version, this.frame.nowMs);
     const settled =
-      version == null || this.settleTracker.isSettled(this.tick, FINE_RELOAD_SETTLE_TICKS);
+      version == null || this.settleTracker.isSettled(this.frame.nowMs, FINE_RELOAD_SETTLE_MS);
 
     let levelChanged = false;
     let cullChanged = false;
@@ -2219,15 +2263,8 @@ export class LODGroupRegistry {
       // loop alive so the per-frame swap-up to the fresh level fires when the
       // load lands, rather than waiting for the next user interaction. Plain
       // loop (not ``.some``) to preserve this file's no-per-frame-allocation
-      // hot-path invariant.
-      if (!anyLoading) {
-        for (const c of entry.children) {
-          if (c.loading) {
-            anyLoading = true;
-            break;
-          }
-        }
-      }
+      // hot-path invariant. The same walk times the loads that just landed.
+      if (this.observeLoads(entry)) anyLoading = true;
     }
     if (anyLoading) this.keepTicking();
     // A dissolve is a function of TIME, so the loop must keep drawing until it
@@ -2264,6 +2301,50 @@ export class LODGroupRegistry {
       this.fades.delete(path);
     }
     return false;
+  }
+
+  /**
+   * Whether any child of ``entry`` is loading, and — for each child whose
+   * ``ensureLoaded`` has finished since it was fired — fold the measured
+   * load+commit time into its ``loadEwmaMs`` (a failure is not a timing).
+   */
+  private observeLoads(entry: LODGroupEntry): boolean {
+    let anyLoading = false;
+    for (const c of entry.children) {
+      if (c.loading) anyLoading = true;
+      else this.foldLoadTime(c);
+    }
+    return anyLoading;
+  }
+
+  /** Fold a finished (``loading`` cleared) timed load of ``c`` into ``loadEwmaMs``. */
+  private foldLoadTime(c: LODGroupChild): void {
+    if (c.loadStartMs === undefined || c.loading === true) return;
+    if (c.failed !== true) {
+      const ms = this.frame.nowMs - c.loadStartMs;
+      c.loadEwmaMs =
+        c.loadEwmaMs === undefined ? ms : c.loadEwmaMs + LOAD_EWMA_ALPHA * (ms - c.loadEwmaMs);
+    }
+    c.loadStartMs = undefined;
+  }
+
+  /**
+   * During playback, the finest level at or below ``desired`` that can reload
+   * within ``PLAYBACK_LOAD_BUDGET_FRACTION`` of the period: an eager level
+   * (no ``ensureLoaded`` — the per-slice sweep carries it), an unmeasured one,
+   * or one whose ``loadEwmaMs`` fits. ``desired`` unchanged when not playing,
+   * locked, or forced finest.
+   */
+  private playbackAspiration(entry: LODGroupEntry, desired: number): number {
+    const period = this.frame.playbackPeriodMs;
+    if (period === null || entry.selectorMode !== 'auto') return desired;
+    if (this.deps.getForceFinestLOD?.() === true) return desired;
+    const budget = PLAYBACK_LOAD_BUDGET_FRACTION * period;
+    for (let i = desired; i > 0; i--) {
+      const c = entry.children[i];
+      if (!c.ensureLoaded || c.loadEwmaMs === undefined || c.loadEwmaMs <= budget) return i;
+    }
+    return 0;
   }
 
   /** Keep the loop ticking (see {@link LODGroupRegistryDeps.requestTick}). */
@@ -2560,6 +2641,9 @@ export class LODGroupRegistry {
       }
     }
 
+    // During playback, no finer than what can reload within the period.
+    desired = this.playbackAspiration(entry, desired);
+
     // Record what the selector WANTS this frame, before any of the ready /
     // freshness gates below can veto it. Read by ``isCaptureQuiescent`` only —
     // see ``LODGroupEntry.desiredChildIndex`` for why the aspiration index
@@ -2785,7 +2869,11 @@ export class LODGroupRegistry {
       aspirationReady &&
       aspiration!.deferredGroup !== true &&
       (!aspirationFresh || (aspiration!.hasMoreLODs?.() ?? false));
-    if (settled && needsReloadOrRefine && aspiration!.ensureLoaded) {
+    // During playback a STALE aspiration reloads on every timepoint (the
+    // version never settles there, and playbackAspiration kept it to a level
+    // that fits the period); refinement of a fresh one still waits.
+    const playingStale = this.frame.playbackPeriodMs !== null && !aspirationFresh;
+    if ((settled || playingStale) && needsReloadOrRefine && aspiration!.ensureLoaded) {
       this.maybeKickReload(entry, aspiration!);
     }
 
@@ -3182,7 +3270,11 @@ export class LODGroupRegistry {
 
     const now = this.deps.now?.() ?? performance.now();
     if (entry.staleHoldSinceMs == null) entry.staleHoldSinceMs = now;
-    if (now - entry.staleHoldSinceMs >= STALE_HOLD_MS) {
+    // During playback the held level's own reload for the new timepoint is in
+    // flight: keep it until that replacement lands rather than dropping to a
+    // token of the new frame for the rest of the wait.
+    const replacementInFlight = this.frame.playbackPeriodMs !== null && prev.loading === true;
+    if (!replacementInFlight && now - entry.staleHoldSinceMs >= STALE_HOLD_MS) {
       entry.staleHoldExhausted = true;
       entry.staleHoldSinceMs = undefined;
       return undefined;
@@ -3333,7 +3425,10 @@ export class LODGroupRegistry {
     if (explicitRetry) {
       clearChildFailure(child);
     }
+    // A load that finished this frame, before the post-evaluation walk saw it.
+    this.foldLoadTime(child);
     child.loading = true;
+    child.loadStartMs = this.frame.nowMs;
     child.ensureLoaded();
     return true;
   }

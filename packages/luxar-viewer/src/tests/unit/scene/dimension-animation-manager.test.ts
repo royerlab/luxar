@@ -306,6 +306,19 @@ describe('DimensionAnimationManager', () => {
     });
   });
 
+  describe('playback period (getPlaybackPeriodMs)', () => {
+    it('is null when nothing is playing, else the FASTEST playing dimension’s frame period', () => {
+      expect(manager.getPlaybackPeriodMs()).toBeNull();
+      manager.play(3, { targetFPS: 10 });
+      expect(manager.getPlaybackPeriodMs()).toBeCloseTo(100, 9);
+      manager.play(4, { targetFPS: 25 });
+      expect(manager.getPlaybackPeriodMs()).toBeCloseTo(40, 9);
+      manager.pause(3);
+      manager.pause(4);
+      expect(manager.getPlaybackPeriodMs()).toBeNull();
+    });
+  });
+
   describe('playback frame budget (getFrameBudgetMs)', () => {
     it('is null when nothing is playing', () => {
       expect(manager.getFrameBudgetMs()).toBeNull();

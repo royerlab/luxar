@@ -333,6 +333,12 @@ export async function runInitPipeline(
       // a hard swap (blendable modes only: additive/luminous/volumetric).
       // Read once at wiring time.
       getCrossFadeEnabled: () => lodCrossFadeEnabled,
+      // Playback period of the fastest playing dimension, or null: lazy LOD
+      // levels reload every timepoint while playing, capped at the finest one
+      // whose measured load fits the period. The input handler (and its
+      // animation manager) is built later in this function, hence the lazy read.
+      getPlaybackPeriodMs: () =>
+        partial.inputHandler?.getAnimationManager()?.getPlaybackPeriodMs() ?? null,
       // Streaming brightness compensation (ON by default; ?noLodEnergy disables):
       // scale a streaming additive/luminous/volumetric leaf's opacity by 1/e(k) so its
       // partial ladder prefix renders at full-level brightness (no brightening

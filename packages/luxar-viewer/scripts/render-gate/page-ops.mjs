@@ -610,6 +610,10 @@ export async function idle({ ms = 1000 }) {
  * `durationMs`, or with `loops` until the value has wrapped that many times.
  *
  * Returns:
+ * - `lodLevelMean` / `lodCoarsestFrac`: over every frame and every lod group
+ *   with two or more levels, the mean DISPLAYED level as a fraction of the
+ *   finest (0 = coarsest, 1 = finest) and the share of samples at the
+ *   coarsest level (null without lod groups) — whether playback keeps detail.
  * - `ticks`: value advances (from `playback.tick` records when the build has
  *   them, else the observed changes of the dimension's value per frame);
  * - `achievedFps`: ticks per second over the first..last tick;
@@ -649,6 +653,18 @@ export async function playback({ dim, fps = 10, durationMs = 6000, loops, timeou
     return original.apply(this, args);
   };
   const eps = Math.max(1e-9, Math.abs(hi - lo) * 1e-6);
+  const lod = { sum: 0, coarsest: 0, n: 0 };
+  const sampleLod = () => {
+    const reg = dbg.getSceneLoader?.()?.getDefaultLoader?.()?.lodGroupRegistry;
+    for (const e of reg?.list?.() ?? []) {
+      const levels = e.children?.length ?? 0;
+      const shown = e.displayedChildIndex;
+      if (levels < 2 || typeof shown !== 'number' || shown < 0) continue;
+      lod.sum += shown / (levels - 1);
+      if (shown === 0) lod.coarsest++;
+      lod.n++;
+    }
+  };
   const observed = [];
   let last = valueOf();
   let wraps = 0;
@@ -658,6 +674,7 @@ export async function playback({ dim, fps = 10, durationMs = 6000, loops, timeou
   try {
     for (;;) {
       await frame();
+      sampleLod();
       const v = valueOf();
       if (v !== last) {
         observed.push({ t: performance.now(), value: v });
@@ -683,6 +700,8 @@ export async function playback({ dim, fps = 10, durationMs = 6000, loops, timeou
     rendersPerTick: ticks > 0 ? renders / ticks : null,
     lastTimepointShown: sawMax || records.some((r) => Math.abs(r.value - hi) <= eps) ? 1 : 0,
     wraps,
+    lodLevelMean: lod.n > 0 ? lod.sum / lod.n : null,
+    lodCoarsestFrac: lod.n > 0 ? lod.coarsest / lod.n : null,
     durationMs: performance.now() - t0,
     tickSource: records.length > 0 ? 'records' : 'observed',
   };

@@ -106,20 +106,27 @@ describe('visibleElementCount', () => {
 });
 
 describe('SettleTracker', () => {
-  it('reports settled only after the version has held steady for >= settleTicks', () => {
+  it('reports settled only after the version has held steady for >= settleMs', () => {
     const t = new SettleTracker();
-    t.observe(5, 0); // version first seen at tick 0
-    expect(t.isSettled(3, 8)).toBe(false); // only 3 ticks stable
-    expect(t.isSettled(8, 8)).toBe(true); // 8 ticks stable → settled
+    t.observe(5, 1000); // version first seen at t = 1000 ms
+    expect(t.isSettled(1050, 130)).toBe(false); // only 50 ms stable
+    expect(t.isSettled(1130, 130)).toBe(true); // 130 ms stable → settled
   });
 
   it('resets the settle clock when the version changes', () => {
     const t = new SettleTracker();
     t.observe(5, 0);
-    expect(t.isSettled(10, 8)).toBe(true);
-    t.observe(6, 10); // scrubbed to a new version at tick 10
-    expect(t.isSettled(12, 8)).toBe(false); // clock reset → not settled yet
-    expect(t.isSettled(18, 8)).toBe(true); // stable again for 8 ticks
+    expect(t.isSettled(200, 130)).toBe(true);
+    t.observe(6, 200); // scrubbed to a new version at 200 ms
+    expect(t.isSettled(250, 130)).toBe(false); // clock reset → not settled yet
+    expect(t.isSettled(330, 130)).toBe(true); // stable again for 130 ms
+  });
+
+  it('a version never observed reads settled (reset clock)', () => {
+    const t = new SettleTracker();
+    expect(t.isSettled(0, 130)).toBe(true);
+    t.reset();
+    expect(t.isSettled(0, 130)).toBe(true);
   });
 });
 
