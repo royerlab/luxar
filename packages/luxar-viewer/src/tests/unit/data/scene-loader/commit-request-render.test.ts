@@ -223,6 +223,48 @@ describe('SceneLoader commit → requestRender funnel', () => {
   });
 });
 
+// A commit to a node the frame does not draw (an LOD level the registry keeps
+// hidden, a node under a hidden layer) cannot change the picture: the loop must
+// still WAKE (the registry polls per frame and may decide to show the level it
+// just committed), but it must not redraw. During timelapse playback with a
+// held fine level, every timepoint also re-commits the hidden eager coarse
+// level; redrawing for it cost one wasted render per tick (#2944 C3).
+describe('SceneLoader commit → requestRender says whether the frame changed', () => {
+  type Commit = (loader: SceneLoader) => void;
+  const commits: [string, string, Commit][] = [
+    ['points', '/p', (l) => internals(l).updatePointsGeometry('/p', makePointsData(2))],
+    ['lines', '/lines', (l) => internals(l).commitLinesGeometry(makeStagedLines(2))],
+    ['gsplats', '/g', (l) => internals(l).commitGSplatsGeometry(makeStagedGSplats(2))],
+  ];
+
+  it.fails.each(commits)('a drawn %s commit asks for a redraw', (_kind, _path, commit) => {
+    const { loader, spy } = makeLoaderWithScene();
+    commit(loader);
+    expect(spy).toHaveBeenCalledWith(true);
+    expect(spy).not.toHaveBeenCalledWith(false);
+  });
+
+  it.fails.each(commits)('a hidden %s level commit wakes without a redraw', (_kind, path, commit) => {
+    const { loader, spy } = makeLoaderWithScene();
+    internals(loader).rootGroup!.getObjectByName(path)!.visible = false;
+    commit(loader);
+    expect(spy).toHaveBeenCalledWith(false);
+    expect(spy).not.toHaveBeenCalledWith(true);
+  });
+
+  it.fails('a commit under a hidden ancestor wakes without a redraw', () => {
+    const { loader, spy } = makeLoaderWithScene();
+    const root = internals(loader).rootGroup!;
+    const layer = new THREE.Group();
+    layer.visible = false;
+    layer.add(root.getObjectByName('/p')!);
+    root.add(layer);
+    internals(loader).updatePointsGeometry('/p', makePointsData(2));
+    expect(spy).toHaveBeenCalledWith(false);
+    expect(spy).not.toHaveBeenCalledWith(true);
+  });
+});
+
 describe('SceneLoaderManager requestRender wire-through', () => {
   afterEach(() => {
     SceneLoaderManager.getInstance().setRequestRender(null);

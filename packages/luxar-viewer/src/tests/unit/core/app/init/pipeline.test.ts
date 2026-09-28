@@ -22,6 +22,7 @@ import {
   type InitPipelinePorts,
 } from '../../../../../core/app/init/pipeline';
 import { EventGroup } from '../../../../../utils/cross-layer/event-group';
+import { eventBus } from '../../../../../utils/cross-layer/event-bus';
 import type { DimensionSlidersConfig } from '../../../../../input/input-handler/panel-capabilities';
 import type { SliderConfig } from '../../../../../ui/dimension-sliders';
 
@@ -824,6 +825,55 @@ describe('runInitPipeline', () => {
       } finally {
         vi.mocked(getSceneLoader).mockReturnValue(null as never);
       }
+    });
+  });
+
+  describe('geometry-commit render requests', () => {
+    // A commit to a node the frame does not draw (the hidden eager level of an
+    // LOD group re-committed every playback tick) must keep the loop ticking,
+    // since the registry may now show that level, but must not force a render
+    // of an unchanged frame (#2944 C3: 2 renders per playback tick).
+    async function wireCommits() {
+      const { factories } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+      await runInitPipeline(ports, {});
+      const anim = factories.animationController.mock.results[0].value as {
+        requestRender: ReturnType<typeof vi.fn>;
+        requestTick: ReturnType<typeof vi.fn>;
+      };
+      const manager = SceneLoaderManager.getInstance() as unknown as {
+        setRequestRender: ReturnType<typeof vi.fn>;
+      };
+      const onCommit = manager.setRequestRender.mock.calls.at(-1)![0] as (drawn: boolean) => void;
+      anim.requestRender.mockClear();
+      anim.requestTick.mockClear();
+      return { anim, onCommit, ports };
+    }
+
+    it('a drawn loader commit requests a render', async () => {
+      const { anim, onCommit, ports } = await wireCommits();
+      onCommit(true);
+      expect(anim.requestRender).toHaveBeenCalledWith('geometry');
+      ports.events.dispose();
+    });
+
+    it.fails('an undrawn loader commit only keeps the loop ticking', async () => {
+      const { anim, onCommit, ports } = await wireCommits();
+      onCommit(false);
+      expect(anim.requestRender).not.toHaveBeenCalled();
+      expect(anim.requestTick).toHaveBeenCalled();
+      ports.events.dispose();
+    });
+
+    it.fails("an undrawn 'geometry-committed' only keeps the loop ticking", async () => {
+      const { anim, ports } = await wireCommits();
+      eventBus.emit('geometry-committed', { drawn: false });
+      expect(anim.requestRender).not.toHaveBeenCalled();
+      expect(anim.requestTick).toHaveBeenCalled();
+      eventBus.emit('geometry-committed', { drawn: true });
+      expect(anim.requestRender).toHaveBeenCalledWith('geometry');
+      ports.events.dispose();
     });
   });
 
