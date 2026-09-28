@@ -1484,7 +1484,11 @@ export class LayersPanel {
   }
 }
 
-/** Index each failed path under its exact path and slash-delimited ancestors. */
+/**
+ * Index failed paths under their exact path and slash-delimited ancestors.
+ * Layer and failed paths share absolute `/`-rooted paths. Descendant failures
+ * do not produce a `/` bucket; a failure at `/` itself remains an exact match.
+ */
 function bucketFailedPathsByAncestor(failedPaths: readonly string[]): Map<string, string[]> {
   const byAncestor = new Map<string, string[]>();
   for (const path of failedPaths) {
