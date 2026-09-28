@@ -106,4 +106,19 @@ describe('GSplatsProgressiveLoader — scrubbing (B5)', () => {
     expect(result.splatCount).toBe(7);
     expect(loader.hasMoreLODs).toBe(false);
   });
+
+  it.fails('a progressive loader gets predictive read-ahead of its coarse rung (±1 slice)', async () => {
+    const rungs = [subLoader(3, false), subLoader(3, false)];
+    const loader = makeLoader(rungs);
+    await loader.updateView(viewAt(4));
+    rungs[0].stub.prefetchChunks.mockClear();
+
+    await loader.updateView(viewAt(5));
+
+    await vi.waitFor(() => expect(rungs[0].stub.prefetchChunks).toHaveBeenCalledTimes(2));
+    const slices = rungs[0].stub.prefetchChunks.mock.calls
+      .map((call) => (call[0] as GSplatsViewState).slicePosition[3])
+      .sort();
+    expect(slices).toEqual([4, 6]);
+  });
 });
