@@ -174,20 +174,21 @@ function parseChunkIndices(key: string): number[] | null {
 
 ```typescript
 /**
- * Generate adjacent chunk keys (±1 in each dimension).
+ * Generate adjacent chunk keys (±1 in each dimension) using the chunk counts
+ * looked up from registerArrayBounds for this array path.
  *
  * @example
- * getAdjacentChunks('points/positions/1.2.3')
+ * getAdjacentChunks('points/positions/1.2.3', [4, 5, 5])
  * → ['points/positions/0.2.3', 'points/positions/2.2.3',
  *    'points/positions/1.1.3', 'points/positions/1.3.3',
  *    'points/positions/1.2.2', 'points/positions/1.2.4']
  */
-function getAdjacentChunks(key: string): string[] {
+function getAdjacentChunks(key: string, maxIndices: number[] | undefined): string[] {
   const indices = parseChunkIndices(key);
-  if (!indices) return [];
+  if (!indices || !maxIndices) return [];
 
   // Extract base path (everything before the indices)
-  const isV3 = key.includes('/c/');
+  const isV3 = /\/c\/\d+(\/\d+)*$/.test(key);
   const basePath = isV3
     ? key.replace(/\/c\/[\d/]+$/, '')
     : key.replace(/\/[\d.]+$/, '');
@@ -195,12 +196,15 @@ function getAdjacentChunks(key: string): string[] {
   const adjacent: string[] = [];
 
   for (let dim = 0; dim < indices.length; dim++) {
+    if (dim < maxIndices.length && maxIndices[dim] <= 1) continue;
     for (const delta of [-1, 1]) {
       const newIndices = [...indices];
       newIndices[dim] += delta;
 
       // Skip negative indices
       if (newIndices[dim] < 0) continue;
+      // Skip indices at or beyond the registered upper bound
+      if (dim < maxIndices.length && newIndices[dim] >= maxIndices[dim]) continue;
 
       // Generate key in same format as input
       const indexStr = isV3
