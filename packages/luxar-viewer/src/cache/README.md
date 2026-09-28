@@ -70,8 +70,9 @@ Chunk request → L0 (Decompressed) → L1 (Memory) → L2 (OPFS) → Remote HTT
 † The three in-memory tiers are sized two-sidedly from the device heap by
 `heap-budget.ts` — the config `l0MaxSizeMB` (200) / `l1MaxSizeMB` (100) /
 `sliceCacheMaxSizeMB` (128) are ceilings/fallbacks, not fixed allocations. On a
-large heap the S-cache scales up (residual headroom, capped at 1 GiB); on a
-small heap all three scale down to stay within `dataLoading.memory.targetHeapUsage`.
+large heap the S-cache scales up (residual headroom, capped at `SLICE_CAP_BYTES`,
+2 GiB today); on a small heap all three scale down to stay within
+`dataLoading.memory.targetHeapUsage`.
 L2 (OPFS/disk) is a fixed 2GB and unaffected.
 
 Heap detection uses `performance.memory`, which is **Chrome/Blink-only**. In
@@ -848,8 +849,12 @@ async function getRemoteContentHash(
 
 **External datasets** (non-Luxar):
 
-- If no `content_hash` attribute → validation skipped
-- Cache remains functional but won't auto-invalidate
+- A directory store without `content_hash` is validated in `zattrs-hash` mode:
+  the SHA-256 of its raw root metadata document (`.zattrs` or `zarr.json`)
+  becomes an implicit token, prefixed `zattrs:`. The cache auto-invalidates
+  when that document changes. Zip archives use `archive-etag` instead.
+- If the root document is unreachable and no hash was cached, validation falls
+  back to `ttl` or `none` mode. See [Cache health and validation modes](#cache-health-and-validation-modes).
 
 ## Performance
 
@@ -874,9 +879,9 @@ allocations (the fallback applies where `performance.memory` is unavailable —
 Firefox/Safari). L2 (OPFS/disk, 2GB) is fixed and not heap-sized.
 
 **Typical desktop session** (4 GB heap): L0 up to ~200MB + L1 up to ~100MB +
-S-cache the residual (capped at 1 GiB), all demand-filled — so actual footprint
-tracks the working set, not the ceilings. On a small mobile heap the same tiers
-shrink proportionally to avoid OOM.
+S-cache the residual (capped at `SLICE_CAP_BYTES`, 2 GiB today), all
+demand-filled — so actual footprint tracks the working set, not the ceilings.
+On a small mobile heap the same tiers shrink proportionally to avoid OOM.
 
 ## Browser Support
 
