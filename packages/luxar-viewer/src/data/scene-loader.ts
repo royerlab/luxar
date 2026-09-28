@@ -235,6 +235,16 @@ import {
 } from '../profiling/load-timeline';
 import { viewStatesEqual } from './loaders/progressive/view-state-equal';
 import { computeWorldNdTransform } from './transforms/nd-transform';
+
+/**
+ * Longest a superseding view may keep aborting in-flight passes without one
+ * committing (B5): past it, the pass in flight — whose streaming policy stops
+ * at the first cold rung, so it is the coarsest data for its slice — commits
+ * before the newer view runs. Settled frames are unaffected (the last view
+ * always runs to completion); only how often a drag shows an intermediate
+ * slice changes.
+ */
+export const DRAG_COMMIT_INTERVAL_MS = 150;
 import {
   RefinementResidencyBudget,
   RefinementResidencyReporter,
@@ -334,6 +344,8 @@ export class SceneLoader {
   private viewState: ViewState;
   /** See {@link committedViewState}; `null` until a load or pass commits. */
   private _committedViewState: ViewState | null = null;
+  /** `performance.now()` of the last committed pass (B5 commit guarantee). */
+  private _lastCommitAt = 0;
   private config: LoaderConfig;
   private rootGroup: THREE.Group | null = null;
   /**
@@ -814,6 +826,15 @@ export class SceneLoader {
    * The view the drawn geometry was last committed for (B4) — set when a load
    * starts and by every committed pass. Before the first commit, the live view.
    */
+  /**
+   * Whether a superseding view must let the in-flight VIEW pass commit rather
+   * than abort it (B5): nothing has committed for {@link DRAG_COMMIT_INTERVAL_MS}.
+   * A refinement run is aborted as before — it only deepens what is shown.
+   */
+  private inFlightPassOwesCommit(): boolean {
+    return !this._refining && performance.now() - this._lastCommitAt >= DRAG_COMMIT_INTERVAL_MS;
+  }
+
   get committedViewState(): ViewState {
     return this._committedViewState ?? this.viewState;
   }
@@ -1353,8 +1374,11 @@ export class SceneLoader {
       // Abort the in-flight update: it has now been superseded by this newer
       // view-state, so its remaining chunk reads/decodes should bail rather
       // than run to completion. Its commit is skipped (signal.aborted), and
-      // queueNext re-enters updateView with the pending (winning) state.
-      this._updateAbortController?.abort();
+      // queueNext re-enters updateView with the pending (winning) state —
+      // unless nothing has committed for DRAG_COMMIT_INTERVAL_MS (B5): then the
+      // in-flight pass is let through to commit first, so a continuous drag
+      // whose passes outlast its event interval still shows progress.
+      if (!this.inFlightPassOwesCommit()) this._updateAbortController?.abort();
 
       // Store the latest pending state (supersedes any previous pending
       // state). Log supersedes so rapid slider drags surface as
@@ -1597,6 +1621,7 @@ export class SceneLoader {
         // This view is now what is drawn: re-gate partition parts on its slice
         // before anything renders or refinement reads the stamps (B4).
         this._committedViewState = this.viewState;
+        this._lastCommitAt = performance.now();
         this.lodGroupRegistry?.applyCommittedSlice();
 
         // Update monitor with total visible segments across all lines nodes
@@ -2148,7 +2173,10 @@ export class SceneLoader {
     // dataset is no longer live and skip committing into a stale scene.
     const ctrl = this._datasetAbortController;
     // The eager load commits for the view it is built under (B4).
-    this._committedViewState ??= this.viewState;
+    if (this._committedViewState === null) {
+      this._committedViewState = this.viewState;
+      this._lastCommitAt = performance.now();
+    }
     return {
       registry: this.registry,
       lineWorkingSetGate: this.lineWorkingSetGate,

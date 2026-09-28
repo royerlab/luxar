@@ -1338,7 +1338,7 @@ describe('SceneLoader', () => {
       vi.restoreAllMocks();
     });
 
-    it.fails('a 3 s drag keeps committing: no supersede aborts a pass 150 ms after the last commit', async () => {
+    it('a 3 s drag keeps committing: no supersede aborts a pass 150 ms after the last commit', async () => {
       let now = 0;
       vi.spyOn(performance, 'now').mockImplementation(() => now);
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
