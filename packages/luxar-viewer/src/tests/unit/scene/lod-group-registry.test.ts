@@ -4230,6 +4230,105 @@ describe('LODGroupRegistry — settle-gated fine reload', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
+// Playback aspiration. A playing timelapse bumps the view version every
+// period, so a frame-counted "has the user stopped scrubbing" debounce never
+// fires: the lazy fine level is never reloaded for the new timepoint, the
+// stale hold runs out, and the display collapses to the coarsest level for
+// the rest of the playback. During playback the registry instead aspires to
+// the finest level whose measured reload fits the period, and reloads it
+// every step.
+// ────────────────────────────────────────────────────────────────────────
+
+describe('LODGroupRegistry — playback aspiration', () => {
+  const FRAME_MS = 1000 / 60;
+
+  /**
+   * A lod group whose coarse level is eager (the sweep re-stamps it every
+   * step) and whose finer levels are lazy, committed, and take `reloadMs[i]`
+   * to reload for a new timepoint. `frame()` advances the clock one display
+   * frame, steps the timepoint every `periodMs` while playing, lands due
+   * reloads for the timepoint they were started on, then evaluates.
+   */
+  function playbackHarness(reloadMs: number[], periodMs = 100) {
+    const state = { t: 1000, version: 1, playing: true, nextStepAt: 1000 + periodMs };
+    const coarse = makeGsplatChild(0, 1);
+    coarse.object.userData.visibleSplatCount = 10;
+    const children: LODGroupChild[] = [coarse];
+    const pending = new Map<LODGroupChild, { due: number; version: number }>();
+    reloadMs.forEach((ms, i) => {
+      const child = makeGsplatChild((i + 1) / (reloadMs.length + 1), 1);
+      child.object.userData.visibleSplatCount = 1000 * (i + 1);
+      child.ready = true;
+      child.ensureLoaded = () => {
+        pending.set(child, { due: state.t + ms, version: state.version });
+      };
+      children.push(child);
+    });
+    const camera = new THREE.Camera();
+    camera.matrixWorldInverse.identity();
+    camera.projectionMatrix.identity();
+    const deps = {
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getViewVersion: () => state.version,
+      now: () => state.t,
+      getPlaybackPeriodMs: () => (state.playing ? periodMs : null),
+    } as ConstructorParameters<typeof LODGroupRegistry>[0];
+    const reg = new LODGroupRegistry(deps);
+    reg.register(makeEntry(children, 0, '/g'));
+    const frame = (): void => {
+      state.t += FRAME_MS;
+      if (state.playing && state.t >= state.nextStepAt) {
+        state.version++;
+        state.nextStepAt += periodMs;
+        coarse.object.userData.loadedViewVersion = state.version; // sweep-driven
+      }
+      for (const [child, job] of pending) {
+        if (state.t < job.due) continue;
+        pending.delete(child);
+        child.loading = false;
+        child.object.userData.loadedViewVersion = job.version;
+      }
+      reg.evaluatePerFrame();
+    };
+    return { reg, state, children, frame };
+  }
+
+  it.fails('a playing timelapse keeps its fine level instead of collapsing to the coarsest', () => {
+    const { reg, frame } = playbackHarness([30]);
+    for (let f = 0; f < 20; f++) frame(); // warm-up: the first reloads
+    let fine = 0;
+    const frames = 90; // 1.5 s, 15 timepoints
+    for (let f = 0; f < frames; f++) {
+      frame();
+      if (reg.get('/g')!.displayedChildIndex === 1) fine++;
+    }
+    expect(fine / frames).toBeGreaterThanOrEqual(0.9);
+  });
+
+  it.fails('aspires to the finest level whose reload fits the playback period, and to the finest again once paused', () => {
+    // mid reloads in 20 ms, fine in 150 ms: at a 100 ms period only mid can
+    // keep up (the budget is 0.8 × the period).
+    const { reg, state, frame } = playbackHarness([20, 150]);
+    for (let f = 0; f < 40; f++) frame(); // warm-up: both reload times measured
+    let mid = 0;
+    const frames = 90;
+    for (let f = 0; f < frames; f++) {
+      frame();
+      expect(reg.get('/g')!.activeChildIndex).toBe(1);
+      if (reg.get('/g')!.displayedChildIndex === 1) mid++;
+    }
+    expect(mid / frames).toBeGreaterThanOrEqual(0.9);
+
+    state.playing = false; // pause: the timepoint stops changing
+    for (let f = 0; f < 30; f++) frame(); // settle + the 150 ms fine reload
+    expect(reg.get('/g')!.activeChildIndex).toBe(2);
+    expect(reg.get('/g')!.displayedChildIndex).toBe(2);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
 // Render-loop keep-alive while a lazy level loads (B2). The viewer is
 // on-demand and idles after ~2s; a deferred fine reload commits OUTSIDE the
 // per-slice sweep and can outlast the idle timeout, so the registry must keep
