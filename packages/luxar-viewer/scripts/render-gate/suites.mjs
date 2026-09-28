@@ -92,7 +92,7 @@ export function meetsExpectation(want, judged, kind) {
 /**
  * Judge one declared metric over the three arms.
  *
- * @param {{ name: string, better?: 'lower'|'higher', kind?: 'counter'|'timing', tol?: number }} m
+ * @param {{ name: string, better?: 'lower'|'higher', kind?: 'counter'|'timing', tol?: number, relTol?: number }} m
  * @param {{ base: object[], base2: object[], cand: object[] }} samples
  */
 export function judgeMetric(m, samples) {
@@ -104,7 +104,7 @@ export function judgeMetric(m, samples) {
   const cand = pick('cand');
   const common = { kind, better };
   if (kind === 'counter')
-    return { ...common, ...judgeCounter(base, cand, base2, { better, tol: m.tol ?? 0 }) };
+    return { ...common, ...judgeCounter(base, cand, base2, { better, tol: m.tol ?? 0, relTol: m.relTol ?? 0 }) };
   if (anyMissing(base, cand, base2)) return { ...common, verdict: 'n/a' };
   return {
     ...common,

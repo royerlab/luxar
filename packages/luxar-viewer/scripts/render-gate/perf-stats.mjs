@@ -142,10 +142,14 @@ export function anyMissing(...arms) {
  *   candMedian?: number, ratio?: number, exact?: boolean, floor?: number,
  *   lo?: number, hi?: number }}
  */
-export function judgeCounter(base, cand, base2, { better = 'lower', tol = 0 } = {}) {
+export function judgeCounter(base, cand, base2, { better = 'lower', tol = 0, relTol = 0 } = {}) {
   if (anyMissing(base, cand, base2)) return { verdict: 'n/a' };
   const baseMedian = median(base);
   const candMedian = median(cand);
+  // A timing-driven count (renders or decodes over a timed workload) jitters
+  // by a frame or two between arms even when the build is identical, so a
+  // relative tolerance scales with the count instead of a fixed number.
+  tol = Math.max(tol, relTol * Math.abs(baseMedian));
   const first = base[0];
   if ([...base, ...base2].every((v) => v === first)) {
     const delta = candMedian - baseMedian;

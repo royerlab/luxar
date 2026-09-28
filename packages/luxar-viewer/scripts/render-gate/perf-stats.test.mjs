@@ -171,3 +171,19 @@ describe('anyMissing', () => {
     expect(anyMissing([])).toBe(true);
   });
 });
+
+describe('judgeCounter relTol', () => {
+  it('treats a timing-driven count within the relative tolerance as unchanged', () => {
+    // Same build, one frame of jitter in a 189-render workload (seen in an A/A run).
+    const base = [189, 189];
+    const cand = [189, 190];
+    expect(judgeCounter(base, cand, base).verdict).toBe('fail');
+    expect(judgeCounter(base, cand, base, { relTol: 0.05 }).verdict).toBe('pass');
+  });
+
+  it('still reports a real change beyond the relative tolerance', () => {
+    const base = [181, 181];
+    expect(judgeCounter(base, [40, 41], base, { relTol: 0.05 }).verdict).toBe('win');
+    expect(judgeCounter(base, [200, 201], base, { relTol: 0.05 }).verdict).toBe('fail');
+  });
+});

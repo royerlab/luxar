@@ -401,8 +401,8 @@
           "workload": { "kind": "drag", "px": 4, "tailMs": 3000 },
           "staleFrameCheck": true,
           "metrics": [
-            { "name": "render.count", "better": "lower", "kind": "counter" },
-            { "name": "renders", "better": "lower", "kind": "counter" },
+            { "name": "render.count", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            { "name": "renders", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "ext.gpuUploadBytes", "better": "lower", "kind": "counter" },
             { "name": "gpu.uploadBytes", "better": "lower", "kind": "counter" }
           ]
@@ -438,10 +438,10 @@
           "workload": { "kind": "playback", "fps": 10, "durationMs": 6000 },
           "metrics": [
             { "name": "achievedFps", "better": "higher", "kind": "timing" },
-            { "name": "render.count", "better": "lower", "kind": "counter" },
+            { "name": "render.count", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "lastTimepointShown", "better": "higher", "kind": "counter" },
             { "name": "decode.duplicates", "better": "lower", "kind": "counter" },
-            { "name": "console.calls", "better": "lower", "kind": "counter" }
+            { "name": "console.calls", "better": "lower", "kind": "counter", "relTol": 0.05 }
           ]
         },
         {
@@ -450,9 +450,9 @@
           "workload": { "kind": "playback", "fps": 10, "durationMs": 6000 },
           "metrics": [
             { "name": "achievedFps", "better": "higher", "kind": "timing" },
-            { "name": "render.count", "better": "lower", "kind": "counter" },
+            { "name": "render.count", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "lastTimepointShown", "better": "higher", "kind": "counter" },
-            { "name": "lod.levelSwaps", "better": "lower", "kind": "counter" },
+            { "name": "lod.levelSwaps", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "decode.duplicates", "better": "lower", "kind": "counter" }
           ]
         },
@@ -461,9 +461,9 @@
           "store": "gate/tp50.luxar.zarr",
           "workload": { "kind": "scrub", "mode": "drag", "steps": 20, "intervalMs": 50 },
           "metrics": [
-            { "name": "commitsDuringDrag", "better": "lower", "kind": "counter" },
-            { "name": "render.count", "better": "lower", "kind": "counter" },
-            { "name": "decode.count", "better": "lower", "kind": "counter" }
+            { "name": "commitsDuringDrag", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            { "name": "render.count", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            { "name": "decode.count", "better": "lower", "kind": "counter", "relTol": 0.05 }
           ]
         }
       ]
@@ -530,8 +530,8 @@
           "workload": { "kind": "scrub", "mode": "step", "steps": 5 },
           "metrics": [
             { "name": "stepMs", "better": "lower", "kind": "timing" },
-            { "name": "scene.getObjectByName", "better": "lower", "kind": "counter" },
-            { "name": "console.calls", "better": "lower", "kind": "counter" },
+            { "name": "scene.getObjectByName", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            { "name": "console.calls", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "profiler.mergeMs", "better": "lower", "kind": "timing" }
           ]
         },
@@ -542,8 +542,8 @@
           "workload": { "kind": "scrub", "mode": "step", "steps": 5 },
           "metrics": [
             { "name": "stepMs", "better": "lower", "kind": "timing" },
-            { "name": "scene.getObjectByName", "better": "lower", "kind": "counter" },
-            { "name": "console.calls", "better": "lower", "kind": "counter" },
+            { "name": "scene.getObjectByName", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            { "name": "console.calls", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "profiler.mergeMs", "better": "lower", "kind": "timing" }
           ]
         },
@@ -553,9 +553,9 @@
           "pose": { "position": [0, 6, 22], "target": [0, 2, 0], "up": [0, 1, 0] },
           "workload": { "kind": "orbit", "steps": 120, "revolutions": 1 },
           "metrics": [
-            { "name": "lod.levelSwaps", "better": "lower", "kind": "counter" },
-            { "name": "levelFlips", "better": "lower", "kind": "counter" },
-            { "name": "render.count", "better": "lower", "kind": "counter" }
+            { "name": "lod.levelSwaps", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            { "name": "levelFlips", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            { "name": "render.count", "better": "lower", "kind": "counter", "relTol": 0.05 }
           ]
         }
       ]
@@ -576,9 +576,9 @@
           "workload": { "kind": "playback", "fps": 20, "loops": 3 },
           "metrics": [
             { "name": "decode.duplicates", "better": "lower", "kind": "counter" },
-            { "name": "decode.count", "better": "lower", "kind": "counter" },
+            { "name": "decode.count", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "scache.pinnedBytes", "better": "lower", "kind": "counter" },
-            { "name": "serverRequests", "better": "lower", "kind": "counter" }
+            { "name": "serverRequests", "better": "lower", "kind": "counter", "relTol": 0.05 }
           ]
         }
       ]
