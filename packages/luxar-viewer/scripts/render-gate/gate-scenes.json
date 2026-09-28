@@ -457,6 +457,13 @@
           "store": "gate/lod_timelapse.luxar.zarr",
           "workload": { "kind": "playback", "fps": 10, "durationMs": 6000 },
           "metrics": [
+            { "name": "gpu.uploadBytes", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            {
+              "name": "gpu.uploadBytes.texture",
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
             { "name": "achievedFps", "better": "higher", "kind": "timing" },
             { "name": "render.count", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "lastTimepointShown", "better": "higher", "kind": "counter" },
