@@ -145,11 +145,18 @@ Key behaviours:
   at a 16 KiB/s aggregate floor shared across at most eight active leases, or
   eight stall windows shared across at most four leases when the length is
   unavailable. Metadata probes use a separate lane from data bodies: the caps
-  are 24 data + 4 metadata in TLS-only sessions, and shrink to 4 data + 2
-  metadata once an `http:` URL is seen. A caller-aborted signal exits immediately
-  without consuming retry budget.
-  The consumer runs inside its fetch-gate lease and may call `readBody()` once;
-  returning without reading cancels the body before release.
+  are 24 data + 4 metadata in TLS-only sessions, with the data lane widened to 96
+  for an origin whose resource timing shows it negotiated h2/h3, and both lanes
+  shrink to 4 data + 2 metadata once an `http:` URL is seen (HTTP/1.1's six
+  sockets). `priority` (`demand` > `refinement` > `speculative`, or a
+  `FetchPriorityCell` a coalescing caller may raise) orders the gate's queue;
+  speculative requests never hold more than a quarter of a lane. The store
+  passes `speculative` for prefetcher reads and raises a pending read to
+  `demand` when a demand caller joins it. `cache` forwards a `RequestCache` mode
+  (the zip range reader sends `no-store`). A caller-aborted signal exits
+  immediately without consuming retry budget. The consumer runs inside its
+  fetch-gate lease and may call `readBody()` once; returning without reading
+  cancels the body before release.
 
 ### `bandwidth-window.ts` — sliding-window throughput
 

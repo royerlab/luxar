@@ -183,3 +183,66 @@ describe('MultiLevelCachingStore with an injected ChunkSource', () => {
     await store.dispose();
   });
 });
+
+describe('MultiLevelCachingStore — fetch priority reaches the source', () => {
+  /** A source whose reads stay open until released, recording the priority. */
+  function gatedSource() {
+    const seen: { key: string; priority: () => string | undefined }[] = [];
+    const release: Array<() => void> = [];
+    const { source } = fakeSource({
+      async get(key, _signal, options): Promise<ChunkFetchOutcome> {
+        seen.push({ key, priority: () => options?.priority?.value });
+        await new Promise<void>((resolve) => release.push(resolve));
+        return { kind: 'ok', data: new Uint8Array([1]), bytesOverWire: 1 };
+      },
+    });
+    return { source, seen, release };
+  }
+
+  it('labels a demand read `demand` and a prefetcher read `speculative`', async () => {
+    const { source, seen, release } = gatedSource();
+    const store = new MultiLevelCachingStore(source, { noOpfs: true });
+
+    const demand = store.get('points/c/0/0');
+    const prefetch = store.getResult('points/c/0/1', { suppressPrefetch: true });
+    await vi.waitFor(() => expect(seen).toHaveLength(2));
+
+    expect(seen[0].priority()).toBe('demand');
+    expect(seen[1].priority()).toBe('speculative');
+    release.forEach((r) => r());
+    await Promise.all([demand, prefetch]);
+    await store.dispose();
+  });
+
+  it('honours an explicit `refinement` priority from the caller', async () => {
+    const { source, seen, release } = gatedSource();
+    const store = new MultiLevelCachingStore(source, { noOpfs: true });
+
+    const read = store.get('points/c/0/0', { priority: 'refinement' });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen[0].priority()).toBe('refinement');
+    release.forEach((r) => r());
+    await read;
+    await store.dispose();
+  });
+
+  it('RAISES an in-flight speculative read to demand when a demand caller joins it', async () => {
+    // Otherwise a first-frame chunk the prefetcher happened to ask for first
+    // waits behind every demand request, capped at the speculative share.
+    const { source, seen, release } = gatedSource();
+    const store = new MultiLevelCachingStore(source, { noOpfs: true });
+
+    const prefetch = store.getResult('points/c/0/0', { suppressPrefetch: true });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen[0].priority()).toBe('speculative');
+
+    const demand = store.get('points/c/0/0');
+    await Promise.resolve();
+    expect(seen).toHaveLength(1); // coalesced, not refetched
+    expect(seen[0].priority()).toBe('demand');
+
+    release.forEach((r) => r());
+    await Promise.all([prefetch, demand]);
+    await store.dispose();
+  });
+});

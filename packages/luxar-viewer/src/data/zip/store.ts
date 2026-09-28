@@ -29,11 +29,73 @@
  */
 
 import ZipFileStore from '@zarrita/storage/zip';
-import type { AbsolutePath, AsyncReadable } from '@zarrita/storage';
+import type { AbsolutePath, AsyncReadable, GetOptions } from '@zarrita/storage';
 
 import { ArchiveFaultError } from '../../cache/chunk-source';
+import type { ChunkSourceGetOptions } from '../../cache/chunk-source';
 import { normalizeZipEntries } from './entries';
 import { LuxarHttpRangeReader } from './range-reader';
+
+/**
+ * Bytes of slack added to a member's one-GET window beyond what the CENTRAL
+ * directory says its local header needs.
+ *
+ * The local header repeats the name but may carry a DIFFERENT extra field:
+ * Info-ZIP's extended timestamp is 9 bytes centrally and 13 locally, ZIP64
+ * adds a 20-byte local block. 64 covers the common writers; a larger local
+ * extra field costs one extra payload GET, never a wrong read.
+ */
+export const LOCAL_HEADER_SLACK_BYTES = 64;
+
+/** Size of a zip local file header before its name and extra field. */
+const LOCAL_HEADER_FIXED_BYTES = 30;
+
+/** The central-directory fields a one-GET member window is sized from. */
+interface RawZipEntry {
+  relativeOffsetOfLocalHeader: number;
+  fileNameLength: number;
+  extraFieldLength: number;
+  compressedSize: number;
+  generalPurposeBitFlag: number;
+}
+
+/**
+ * `unzipit`'s parsed central-directory record for an entry, if its private
+ * `_rawEntry` still has the shape we rely on (`@zarrita/storage`'s own
+ * `getRange` depends on the same field). Anything else returns `undefined` and
+ * the read falls back to `unzipit`'s own two-request path.
+ */
+function rawZipEntry(entry: unknown): RawZipEntry | undefined {
+  const raw = (entry as { _rawEntry?: Record<string, unknown> } | null)?._rawEntry;
+  if (!raw || typeof raw !== 'object') return undefined;
+  const fields = [
+    'relativeOffsetOfLocalHeader',
+    'fileNameLength',
+    'extraFieldLength',
+    'compressedSize',
+    'generalPurposeBitFlag',
+  ] as const;
+  for (const field of fields) {
+    if (typeof raw[field] !== 'number') return undefined;
+  }
+  return raw as unknown as RawZipEntry;
+}
+
+/** One ranged window covering a member's local header AND its payload. */
+function memberWindow(entry: unknown): { offset: number; size: number } | undefined {
+  const raw = rawZipEntry(entry);
+  // Encrypted members are refused by `unzipit` before it reads a byte.
+  if (!raw || raw.generalPurposeBitFlag & 0x1) return undefined;
+  return {
+    offset: raw.relativeOffsetOfLocalHeader,
+    size:
+      LOCAL_HEADER_FIXED_BYTES +
+      raw.fileNameLength +
+      raw.extraFieldLength +
+      LOCAL_HEADER_SLACK_BYTES +
+      raw.compressedSize,
+  };
+}
 
 /**
  * The options `ZipFileStore` is constructed with, in one place so the store and
@@ -52,6 +114,8 @@ export function createZipStoreOptions(
 export class LuxarZipStore implements AsyncReadable {
   #store: ZipFileStore | undefined;
   #opening: Promise<ZipFileStore> | undefined;
+  /** The normalized entry table, captured as `ZipFileStore` builds it. */
+  #entries: Record<string, unknown> | undefined;
   #disposed = false;
   readonly #reader: LuxarHttpRangeReader;
   readonly #abort = new AbortController();
@@ -85,7 +149,20 @@ export class LuxarZipStore implements AsyncReadable {
     if (this.#disposed) throw new Error(`Zipped store already disposed: ${this.url}`);
 
     this.#opening ??= (async () => {
-      const store = new ZipFileStore(this.#reader, createZipStoreOptions(this.url));
+      // ONE suffix GET for length + tail (a no-op when the identity probe
+      // already made it), so the directory read below touches the network only
+      // for a central directory larger than the tail window.
+      await this.#reader.primeTail();
+      const options = createZipStoreOptions(this.url);
+      const normalize = options.transformEntries;
+      const store = new ZipFileStore(this.#reader, {
+        ...options,
+        transformEntries: (entries) => {
+          const normalized = normalize ? normalize(entries) : entries;
+          this.#entries = normalized;
+          return normalized;
+        },
+      });
       // Retain the ranges the DIRECTORY read touches, and only those: unzipit
       // reads a fixed 65,557-byte tail and then re-reads the central directory
       // that mostly sits inside it. Member payloads are cached a layer up, by
@@ -115,8 +192,29 @@ export class LuxarZipStore implements AsyncReadable {
     return this.#opening;
   }
 
-  async get(key: string): Promise<Uint8Array | undefined> {
-    return (await this.#open()).get(key as AbsolutePath);
+  /**
+   * Read one member with ONE ranged GET (header + payload, sized from the
+   * central directory) instead of `unzipit`'s two serial ones.
+   *
+   * @param _signal - Advisory only (see `ArchiveByteReader.get`); zarrita, which
+   *   also reads this store directly, passes its `GetOptions` here instead.
+   * @param options - `priority` classes the member's window fetch in the gate.
+   */
+  async get(
+    key: string,
+    _signal?: AbortSignal | GetOptions,
+    options?: ChunkSourceGetOptions
+  ): Promise<Uint8Array | undefined> {
+    const store = await this.#open();
+    // `@zarrita/storage`'s `stripPrefix` is literally `key.slice(1)`.
+    const window = memberWindow(this.#entries?.[key.slice(1)]);
+    if (!window) return store.get(key as AbsolutePath);
+    return this.#reader.readMember(
+      window.offset,
+      window.size,
+      () => store.get(key as AbsolutePath),
+      options?.priority
+    );
   }
 
   async has(key: string): Promise<boolean> {
@@ -135,5 +233,6 @@ export class LuxarZipStore implements AsyncReadable {
     this.#abort.abort();
     this.#store = undefined;
     this.#opening = undefined;
+    this.#entries = undefined;
   }
 }

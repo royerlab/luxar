@@ -24,10 +24,39 @@
  * @module data/zarr/zip-range-reader
  */
 
-/** Thrown when the server cannot (or will not) serve HTTP range requests. */
 import { ArchiveFaultError } from '../../cache/chunk-source';
 import { fetchWithRetry } from '../../cache/multi-level-caching-store/fetch-retry';
+import type { FetchPriority, FetchPriorityCell } from '../../utils/fetch-concurrency';
+import { perfCounters } from '../../profiling/perf-counters';
 
+/** Perf counter shared with the network tier: response-body bytes materialised. */
+const S_FETCH_BYTES = perfCounters.slot('fetch.bytes');
+
+/**
+ * Bytes `unzipit` reads off the END of an archive to find the
+ * end-of-central-directory record: the 22-byte record plus the largest
+ * possible (65,535-byte) comment. Opening fetches exactly this window.
+ */
+export const ZIP_TAIL_BYTES = 65_557;
+
+/** Parse `Content-Range: bytes a-b/...` into its window, or `null`. */
+function parseContentRangeWindow(header: string | null): { start: number; end: number } | null {
+  const match = header ? /^\s*bytes\s+(\d+)-(\d+)\/(?:\d+|\*)\s*$/i.exec(header) : null;
+  return match ? { start: Number(match[1]), end: Number(match[2]) } : null;
+}
+
+/** Identity token from response headers; `null` means "cannot tell". */
+function identityToken(response: Response, total: number | null): string | null {
+  const etag = response.headers.get('etag');
+  if (etag) return `etag:${etag}`;
+  const modified = response.headers.get('last-modified');
+  if (modified && total !== null && Number.isFinite(total) && total > 0) {
+    return `mtime:${modified}:${total}`;
+  }
+  return null;
+}
+
+/** Thrown when the server cannot (or will not) serve HTTP range requests. */
 export class RangeUnsupportedError extends ArchiveFaultError {
   constructor(url: string, detail: string) {
     super(
@@ -118,6 +147,16 @@ export class LuxarHttpRangeReader {
   #retained: { offset: number; bytes: Uint8Array }[] = [];
   #retaining = false;
   #retainedBytes = 0;
+  /** The archive tail is retained (by the identity probe or {@link primeTail}). */
+  #tailRetained = false;
+
+  /**
+   * Transient per-member windows ({@link readMember}): each lives exactly as
+   * long as the one member read it was fetched for, so it can answer the local
+   * header AND the payload read `unzipit` issues for that member without either
+   * becoming a request of its own.
+   */
+  #windows: { offset: number; bytes: Uint8Array }[] = [];
 
   /**
    * Backstop so a pathological archive (a huge comment, a colossal directory)
@@ -143,9 +182,9 @@ export class LuxarHttpRangeReader {
     this.#retaining = on;
   }
 
-  /** Serve `[offset, offset+size)` entirely from a retained buffer, if one covers it. */
+  /** Serve `[offset, offset+size)` entirely from a held buffer, if one covers it. */
   #fromRetained(offset: number, size: number): Uint8Array<ArrayBuffer> | undefined {
-    for (const buffer of this.#retained) {
+    for (const buffer of [...this.#windows, ...this.#retained]) {
       const start = offset - buffer.offset;
       if (start >= 0 && start + size <= buffer.bytes.length) {
         // `slice` copies, so a caller cannot mutate the retained buffer.
@@ -187,11 +226,141 @@ export class LuxarHttpRangeReader {
     return undefined;
   }
 
-  #retain(offset: number, bytes: Uint8Array): void {
-    if (!this.#retaining) return;
+  #retain(offset: number, bytes: Uint8Array, force = false): void {
+    if (!this.#retaining && !force) return;
     if (this.#retainedBytes + bytes.length > LuxarHttpRangeReader.MAX_RETAINED_BYTES) return;
     this.#retained.push({ offset, bytes });
     this.#retainedBytes += bytes.length;
+  }
+
+  /** Is `[offset, offset+size)` already held in memory, without copying it? */
+  #covered(offset: number, size: number): boolean {
+    return [...this.#windows, ...this.#retained].some(
+      (buffer) => offset >= buffer.offset && offset + size <= buffer.offset + buffer.bytes.length
+    );
+  }
+
+  /**
+   * Keep a validated tail response: `[total - n, total)` with `n` bytes.
+   *
+   * Validation is strict because these bytes answer every structural read that
+   * follows — a window that is not really the tail would be parsed as the
+   * end-of-central-directory record.
+   */
+  #acceptTail(contentRange: string | null, bytes: Uint8Array, total: number): boolean {
+    const window = parseContentRangeWindow(contentRange);
+    const expectedStart = Math.max(0, total - ZIP_TAIL_BYTES);
+    if (!window || window.start !== expectedStart || window.end !== total - 1) return false;
+    if (bytes.length !== total - expectedStart) return false;
+    if (!this.#tailRetained) {
+      this.#retain(expectedStart, bytes, true);
+      this.#tailRetained = true;
+    }
+    return true;
+  }
+
+  /**
+   * Fetch the archive tail with ONE suffix GET (`bytes=-65557`), taking the
+   * total length from `Content-Range`.
+   *
+   * Opening used to cost three serial round trips — `HEAD` for identity, a
+   * length lookup, then the fixed 65,557-byte tail — before the first member
+   * could be named. The suffix range answers all three: `Content-Range` carries
+   * the total, the body IS the tail `unzipit` reads next (and, for all but huge
+   * archives, the central directory inside it), and when the identity probe
+   * already did this GET there is nothing left to fetch at all.
+   *
+   * Anything but a valid tail `206` — a `416` (empty archive, or suffix ranges
+   * refused), a `200`, a window that is not the tail — falls back to the
+   * `getLength` + explicit-offset path rather than failing, so only a host that
+   * really cannot serve ranges is reported as one, by the checks that already
+   * word that precisely. Missing/denied archives still fail here, as they would
+   * there.
+   */
+  async primeTail(): Promise<void> {
+    if (this.#tailRetained) return;
+    const result = await fetchWithRetry(
+      this.url,
+      {
+        signal: this.lifetime,
+        headers: { Range: `bytes=-${ZIP_TAIL_BYTES}` },
+        cache: 'no-store',
+        // Structural, tiny, and in front of everything: never behind chunk bodies.
+        lane: 'metadata',
+      },
+      async ({ response, readBody }) => {
+        // 416: an empty archive, or a host refusing SUFFIX ranges specifically.
+        if (response.status === 416) return 'fallback' as const;
+        if (!response.ok) throw archiveHttpError(this.url, response, ' for the archive tail');
+        // A 200 (or a window that is not the tail) says only that THIS form of
+        // Range failed; the explicit-offset path below decides whether the host
+        // serves ranges at all, and reports it precisely if not. The unread
+        // body is cancelled by `fetchWithRetry`.
+        if (response.status !== 206) return 'fallback' as const;
+        const contentRange = response.headers.get('content-range');
+        const total = this.#totalFromRange(contentRange);
+        const bytes = await readBody();
+        return this.#acceptTail(contentRange, bytes, total)
+          ? ('ok' as const)
+          : ('fallback' as const);
+      }
+    );
+    if (result === undefined) this.#throwExhausted('the archive tail request', true);
+  }
+
+  /** The archive total from a 206's `Content-Range`, cross-checked against a known length. */
+  #totalFromRange(contentRange: string | null): number {
+    const total = parseContentRangeTotal(contentRange);
+    if (total === null) {
+      throw new RangeUnsupportedError(
+        this.url,
+        'the 206 response carried no usable Content-Range; cross-origin servers must include ' +
+          '`Content-Range` in `Access-Control-Expose-Headers`'
+      );
+    }
+    if (this.#length !== undefined && total !== this.#length) {
+      throw new RangeUnsupportedError(
+        this.url,
+        `the archive changed size during the read (${this.#length} → ${total} bytes)`
+      );
+    }
+    this.#length = total;
+    return total;
+  }
+
+  /**
+   * Read ONE member with a single ranged GET, then run `body` — the `unzipit`
+   * member read — against it.
+   *
+   * `unzipit` reads a member in two strictly serial requests: the 30-byte local
+   * header (to learn where the payload starts), then the payload. On a 100 ms
+   * RTT host that doubled the cost of every chunk. The caller sizes one window
+   * from the CENTRAL directory — local header, name, extra field plus slack,
+   * compressed payload — so both reads are answered from memory. A local extra
+   * field that outgrows the slack simply misses the window for the payload read,
+   * which then goes to the network as before: slower, never wrong.
+   *
+   * @param priority - Gate class for the window fetch (the member's caller knows
+   *   whether a frame is waiting on it; `unzipit`'s own reads do not).
+   */
+  async readMember<T>(
+    offset: number,
+    size: number,
+    body: () => Promise<T>,
+    priority?: FetchPriority | FetchPriorityCell
+  ): Promise<T> {
+    const end = this.#length === undefined ? offset + size : Math.min(offset + size, this.#length);
+    const windowSize = end - offset;
+    if (windowSize <= 0 || this.#covered(offset, windowSize)) return body();
+    const bytes = await this.#fetchRange(offset, windowSize, undefined, priority);
+    const window = { offset, bytes };
+    this.#windows.push(window);
+    try {
+      return await body();
+    } finally {
+      const at = this.#windows.indexOf(window);
+      if (at >= 0) this.#windows.splice(at, 1);
+    }
   }
 
   /**
@@ -218,61 +387,98 @@ export class LuxarHttpRangeReader {
     // paint — this probe sits in front of it, via `init()` → `validateCache`.
     const perAttempt = timeoutMs === undefined ? undefined : Math.max(1, Math.ceil(timeoutMs / 2));
 
-    const fromHead = await this.#probeVia({ method: 'HEAD' }, false, signal, perAttempt);
-    if (fromHead) return fromHead;
+    // The TAIL suffix GET first: a 206 carries `ETag` / `Last-Modified` just as
+    // a HEAD does, `Content-Range` carries the total the mtime token needs, and
+    // its body is the first thing opening the archive reads — so on a working
+    // host identity, length and tail cost ONE round trip together. It is also a
+    // GET, which HEAD-hostile static hosts and signed-URL schemes allow.
+    const viaTail = await this.#probeViaTail(signal, perAttempt);
+    if (viaTail.answered) return viaTail.token;
 
-    // Fall back to a one-byte ranged GET, for the same reason `getLength` does:
-    // some static hosts and signed-URL schemes allow only `GET`. Without this a
-    // HEAD-hostile host yields no token at all, which lands in the no-token
-    // branch → validation mode `none` → the archive is never re-checked and a
-    // replaced one keeps serving stale chunks. A 206 carries `ETag` /
-    // `Last-Modified` just as a HEAD does.
-    return this.#probeVia({ headers: { Range: 'bytes=0-0' } }, true, signal, perAttempt);
+    // No usable answer (network error, timeout, non-OK): try HEAD. Without a
+    // second route a flaky first probe yields no token → validation mode `none`
+    // → the archive is never re-checked and a replaced one keeps serving stale
+    // chunks.
+    return this.#probeViaHead(signal, perAttempt);
   }
 
   /**
-   * One identity probe, cache-bypassing; `null` means "cannot tell".
+   * Identity from the tail suffix GET, retaining the tail when it validates.
    *
-   * `ranged` matters for correctness, not tidiness: on a 206 `Content-Length` is
-   * the length of the RANGE (one byte here), so trusting it would overwrite a
-   * correct archive length with 1 — after which every read fails the
-   * size-change cross-check and blames the server for a change it never made.
-   * A total may only come from `Content-Range`, which is not CORS-safelisted and
-   * so is often absent; absent means "unknown", not "one".
+   * `answered` is true for any OK response, token or not: a host whose GET
+   * carries no identity headers will not grow them on a HEAD.
    */
-  async #probeVia(
-    init: RequestInit,
-    ranged: boolean,
-    signal?: AbortSignal,
-    timeoutMs?: number
-  ): Promise<string | null> {
+  async #probeViaTail(
+    signal: AbortSignal | undefined,
+    timeoutMs: number | undefined
+  ): Promise<{ answered: boolean; token: string | null }> {
     const timeout = timeoutMs === undefined ? undefined : new AbortController();
     const timer = timeout === undefined ? undefined : setTimeout(() => timeout.abort(), timeoutMs);
     const merged = timeout === undefined ? signal : mergeProbeSignals(signal, timeout.signal);
     let response: Response | undefined;
     try {
-      response = await fetch(this.url, { ...init, cache: 'no-store', signal: merged });
-      if (!response.ok) return null;
+      response = await fetch(this.url, {
+        headers: { Range: `bytes=-${ZIP_TAIL_BYTES}` },
+        cache: 'no-store',
+        signal: merged,
+      });
+      if (!response.ok) return { answered: false, token: null };
 
-      const total = ranged
-        ? parseContentRangeTotal(response.headers.get('content-range'))
-        : Number(response.headers.get('content-length'));
-      if (total !== null && Number.isFinite(total) && total > 0) this.seedLength(total);
+      // On a 206 `Content-Length` is the RANGE length; only `Content-Range`
+      // says the total (and it is not CORS-safelisted, so may be absent —
+      // absent means "unknown", not the range length). A 200 ignored the Range
+      // and its `Content-Length` IS the total.
+      const contentRange = response.headers.get('content-range');
+      const total =
+        response.status === 206
+          ? parseContentRangeTotal(contentRange)
+          : Number(response.headers.get('content-length'));
+      const knownTotal = total !== null && Number.isFinite(total) && total > 0 ? total : null;
+      if (knownTotal !== null) this.seedLength(knownTotal);
+      const token = identityToken(response, knownTotal);
 
-      const etag = response.headers.get('etag');
-      if (etag) return `etag:${etag}`;
-
-      const modified = response.headers.get('last-modified');
-      if (modified && total !== null && Number.isFinite(total) && total > 0) {
-        return `mtime:${modified}:${total}`;
+      if (response.status === 206 && knownTotal !== null && !this.#tailRetained) {
+        try {
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          perfCounters.add(S_FETCH_BYTES, bytes.length);
+          this.#acceptTail(contentRange, bytes, knownTotal);
+        } catch {
+          // The identity still stands; opening will fetch the tail itself.
+        }
       }
-      return null;
+      return { answered: true, token };
     } catch {
-      return null;
+      return { answered: false, token: null };
     } finally {
       if (timer !== undefined) clearTimeout(timer);
       // On a host that ignores `Range`, this body is the WHOLE archive and we
       // read none of it. Left alone, the server keeps streaming it.
+      releaseProbeBody(response);
+    }
+  }
+
+  /**
+   * The HEAD identity probe, cache-bypassing; `null` means "cannot tell".
+   *
+   * A HEAD answers with the whole resource's headers, so its `Content-Length`
+   * IS the archive total (unlike a 206's, which is the range length).
+   */
+  async #probeViaHead(signal?: AbortSignal, timeoutMs?: number): Promise<string | null> {
+    const timeout = timeoutMs === undefined ? undefined : new AbortController();
+    const timer = timeout === undefined ? undefined : setTimeout(() => timeout.abort(), timeoutMs);
+    const merged = timeout === undefined ? signal : mergeProbeSignals(signal, timeout.signal);
+    let response: Response | undefined;
+    try {
+      response = await fetch(this.url, { method: 'HEAD', cache: 'no-store', signal: merged });
+      if (!response.ok) return null;
+      const total = Number(response.headers.get('content-length'));
+      const knownTotal = Number.isFinite(total) && total > 0 ? total : null;
+      if (knownTotal !== null) this.seedLength(knownTotal);
+      return identityToken(response, knownTotal);
+    } catch {
+      return null;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
       releaseProbeBody(response);
     }
   }
@@ -376,7 +582,8 @@ export class LuxarHttpRangeReader {
   async #fetchRange(
     offset: number,
     size: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    priority?: FetchPriority | FetchPriorityCell
   ): Promise<Uint8Array<ArrayBuffer>> {
     const end = offset + size - 1;
     const bytes = await fetchWithRetry(
@@ -384,6 +591,13 @@ export class LuxarHttpRangeReader {
       {
         signal: signal ?? this.lifetime,
         headers: { Range: `bytes=${offset}-${end}` },
+        // Every member read is a Range GET on ONE URL. Under the default cache
+        // mode Chrome serialises those behind its HTTP-cache writer lock, which
+        // held a hosted archive at TWO reads in flight (CT zip: first frame
+        // 88.3 s -> 5.9 s with this alone). The chunk cache a layer up is what
+        // makes repeats free, so the HTTP cache has nothing to add here.
+        cache: 'no-store',
+        ...(priority ? { priority } : {}),
       },
       async ({ response, readBody }) => {
         if (!response.ok) {
@@ -437,31 +651,37 @@ export class LuxarHttpRangeReader {
       }
     );
     if (!bytes) {
-      // The live signal is the lifetime one unless a caller supplied its own —
-      // and none do today, so testing `signal` alone never fired.
-      if ((signal ?? this.lifetime)?.aborted) {
-        throw new DOMException('Archive read aborted', 'AbortError');
-      }
-      // Retry exhaustion during the DIRECTORY read really is a container fault:
-      // without the index nothing in the archive is readable. Exhaustion on a
-      // member read is not — it is one flaky chunk, and reporting it as an
-      // archive fault would fail the whole load and tell the user to run
-      // `luxar serve` about a transient 5xx. `#retaining` is true exactly for
-      // the directory phase, which makes it the discriminator.
-      const detail = `the request for bytes ${offset}-${end} exhausted its retries`;
-      // Fatal during the directory read, because without the index nothing in
-      // the archive is readable — but NOT a `RangeUnsupportedError`: the server
-      // answered 206s and then started failing, so telling the user to serve it
-      // differently or unpack it is advice for a problem they do not have.
-      throw this.#retaining
-        ? new ArchiveFaultError(
-            `Cannot read the zipped store at ${this.url}: ${detail} while reading the ` +
-              'archive index, so no part of it can be read. This looks transient — retry, ' +
-              'or check the server.',
-            this.url
-          )
-        : new Error(`Cannot read the zipped store at ${this.url}: ${detail}`);
+      this.#throwExhausted(`the request for bytes ${offset}-${end}`, this.#retaining, signal);
     }
     return bytes;
+  }
+
+  /**
+   * Report a ranged request that gave up (abort or retry exhaustion).
+   *
+   * @param structural - The request was for the archive INDEX (tail or central
+   *   directory). Exhaustion there really is a container fault: without the
+   *   index nothing in the archive is readable. Exhaustion on a member read is
+   *   not — it is one flaky chunk, and reporting it as an archive fault would
+   *   fail the whole load and tell the user to run `luxar serve` about a
+   *   transient 5xx.
+   */
+  #throwExhausted(what: string, structural: boolean, signal?: AbortSignal): never {
+    // The live signal is the lifetime one unless a caller supplied its own.
+    if ((signal ?? this.lifetime)?.aborted) {
+      throw new DOMException('Archive read aborted', 'AbortError');
+    }
+    const detail = `${what} exhausted its retries`;
+    // Fatal for the index, but NOT a `RangeUnsupportedError`: the server
+    // answered 206s and then started failing, so telling the user to serve it
+    // differently or unpack it is advice for a problem they do not have.
+    throw structural
+      ? new ArchiveFaultError(
+          `Cannot read the zipped store at ${this.url}: ${detail} while reading the ` +
+            'archive index, so no part of it can be read. This looks transient — retry, ' +
+            'or check the server.',
+          this.url
+        )
+      : new Error(`Cannot read the zipped store at ${this.url}: ${detail}`);
   }
 }

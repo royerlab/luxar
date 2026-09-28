@@ -14,6 +14,7 @@ import { config } from '../config';
 import { type Result, ok, err, isErr } from '../utils/result';
 import type { MultiLevelCacheStats } from './types';
 import { perfCounters } from '../profiling/perf-counters';
+import { FetchPriorityCell, type FetchPriority } from '../utils/fetch-concurrency';
 
 /**
  * Perf counter: demand callers served from L2 (mirrors `l2HitCount`, but
@@ -57,6 +58,24 @@ export interface PendingGet {
    * write is evicted before a demand one.
    */
   demand: boolean;
+  /**
+   * Fetch-gate class of the shared source read. Raised (never lowered) as more
+   * urgent callers join, so a prefetch a frame is now waiting on stops queuing
+   * behind every other demand read at the speculative share.
+   */
+  priority: FetchPriorityCell;
+}
+
+/** Per-call options of {@link MultiLevelCachingStore.get}. */
+export interface CachingStoreGetOptions {
+  signal?: AbortSignal;
+  /**
+   * Fetch-gate class of a network read this call triggers. Defaults to
+   * `demand`, or `speculative` for a `suppressPrefetch` (prefetcher) read. A
+   * caller loading a finer level of something already on screen passes
+   * `refinement`.
+   */
+  priority?: FetchPriority;
 }
 
 /** Configuration for the memory, OPFS, and source-backed cache tiers. */
@@ -425,7 +444,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    * @see {@link init} for cache initialization and validation
    * @see {@link setPrefetcher} for enabling automatic adjacent chunk loading
    */
-  async get(key: string, options?: { signal?: AbortSignal }): Promise<Uint8Array | undefined> {
+  async get(key: string, options?: CachingStoreGetOptions): Promise<Uint8Array | undefined> {
     // zarrita interprets undefined as "key missing" and decodes the chunk as
     // fill values. Only a real Missing result may keep that contract: network
     // failures and live aborts must reject so loaders record a retryable failure
@@ -467,7 +486,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    */
   async getResult(
     key: string,
-    options?: { signal?: AbortSignal; suppressPrefetch?: boolean }
+    options?: CachingStoreGetOptions & { suppressPrefetch?: boolean }
   ): Promise<Result<Uint8Array, CacheError>> {
     // Disposed-store fast path: bail before touching any tier. Avoids
     // late writes against a torn-down L2 and lets a dataset switch
@@ -483,6 +502,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // (a successful prefetch would look identical to a successful
     // user demand).
     const isDemand = !options?.suppressPrefetch;
+    const priority: FetchPriority = options?.priority ?? (isDemand ? 'demand' : 'speculative');
 
     // L1: Memory check (fastest, ~1μs). Stays direct (no coalescing
     // needed — synchronous, no I/O cost to share).
@@ -517,15 +537,26 @@ export class MultiLevelCachingStore implements AsyncReadable {
       let entry!: PendingGet;
       // `entry` is assigned synchronously below, before fetchKeyChain's first
       // await, so the priority getter always reads the live entry.
-      const promise = this.fetchKeyChain(key, controller.signal, () => entry.demand).finally(() => {
-        if (this.pendingGets.get(key) === entry) this.pendingGets.delete(key);
-      });
-      entry = { promise, controller, waiters: 0, prefetchTriggered: false, demand: false };
+      const cell = new FetchPriorityCell(priority);
+      const promise = this.fetchKeyChain(key, controller.signal, () => entry.demand, cell).finally(
+        () => {
+          if (this.pendingGets.get(key) === entry) this.pendingGets.delete(key);
+        }
+      );
+      entry = {
+        promise,
+        controller,
+        waiters: 0,
+        prefetchTriggered: false,
+        demand: false,
+        priority: cell,
+      };
       this.pendingGets.set(key, entry);
       pending = entry;
     }
     pending.waiters++;
     if (isDemand) pending.demand = true;
+    pending.priority.raise(priority);
 
     let outcome: PendingGetOutcome;
     try {
@@ -610,7 +641,8 @@ export class MultiLevelCachingStore implements AsyncReadable {
   private async fetchKeyChain(
     key: string,
     sharedSignal?: AbortSignal,
-    isDemand: () => boolean = () => true
+    isDemand: () => boolean = () => true,
+    priority: FetchPriorityCell = new FetchPriorityCell('demand')
   ): Promise<PendingGetOutcome> {
     // L2: OPFS check (~1ms)
     if (this.enabled && this.l2Store) {
@@ -641,7 +673,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // when invalidated or when every caller waiting on this key has cancelled.
     const fetchAbort = mergeAbortSignals(this.dataAbort.signal, sharedSignal);
     try {
-      const outcome = await this.source.get(key, fetchAbort.signal);
+      const outcome = await this.source.get(key, fetchAbort.signal, { priority });
 
       if (this.disposed || this.dataAbort.signal.aborted || sharedSignal?.aborted) {
         return { result: err({ kind: 'Aborted' }), source: 'network' };

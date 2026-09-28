@@ -915,3 +915,55 @@ describe('fetchWithRetry', () => {
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });
+
+describe('fetchWithRetry — request shape and gate priority', () => {
+  it('forwards a `cache` mode to fetch', async () => {
+    // The zip range reader needs `no-store`: Chrome serialises same-URL Range
+    // GETs through the HTTP-cache writer lock otherwise.
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => mockResponse(200, 'ok'));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await fetchWithRetryScoped(
+      'https://example.com/archive.zip',
+      { cache: 'no-store' },
+      async ({ response }) => response
+    );
+
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ cache: 'no-store' });
+  });
+
+  it('queues by priority: a demand request overtakes an earlier speculative one', async () => {
+    const release: Array<() => void> = [];
+    const held = Array.from({ length: MAX_CONCURRENT_CHUNK_FETCHES }, () =>
+      withFetchGate(() => new Promise<void>((resolve) => release.push(resolve)))
+    );
+    const started: string[] = [];
+    global.fetch = vi.fn(async (url: string) => {
+      started.push(url);
+      return mockResponse(200, 'ok');
+    }) as unknown as typeof fetch;
+    try {
+      const speculative = fetchWithRetryScoped(
+        'https://example.com/speculative',
+        { priority: 'speculative' },
+        async ({ response }) => response
+      );
+      const demand = fetchWithRetryScoped(
+        'https://example.com/demand',
+        { priority: 'demand' },
+        async ({ response }) => response
+      );
+      await Promise.resolve();
+
+      release.shift()!();
+      await vi.waitFor(() => expect(started.length).toBeGreaterThan(0));
+      expect(started[0]).toBe('https://example.com/demand');
+
+      release.forEach((r) => r());
+      await Promise.all([speculative, demand]);
+    } finally {
+      release.forEach((r) => r());
+      await Promise.all(held);
+    }
+  });
+});
