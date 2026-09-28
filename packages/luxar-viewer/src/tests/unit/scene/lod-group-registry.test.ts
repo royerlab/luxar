@@ -453,6 +453,76 @@ describe('projectBoxDiagonalPx', () => {
       const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
       expect(projectBoxAreaFraction(box, orthoAtOrigin())).toBeCloseTo(0.25, 6);
     });
+
+    /** Perspective camera at `position`, looking at the origin. */
+    function perspectiveLookingAtOrigin(x: number, y: number, z: number): THREE.PerspectiveCamera {
+      const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+      cam.position.set(x, y, z);
+      cam.lookAt(0, 0, 0);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      return cam;
+    }
+
+    it.fails('is orientation-stable: an orbit of a cube at constant radius varies by at most 1%', () => {
+      // The box's screen RECT grows by up to ~1.7x between a face-on and a
+      // corner-on view, so a rect metric walks a lod ladder up and down during
+      // one revolution at a FIXED distance. The inscribed ellipsoid of a cube
+      // is a sphere, whose projection depends only on the distance.
+      const cube: BoundingBox = { min: { x: -1, y: -1, z: -1 }, max: { x: 1, y: 1, z: 1 } };
+      const radius = 8;
+      const values: number[] = [];
+      for (const elevation of [0, Math.PI / 5]) {
+        for (let k = 0; k < 24; k++) {
+          const azimuth = (k / 24) * 2 * Math.PI;
+          const cam = perspectiveLookingAtOrigin(
+            radius * Math.cos(elevation) * Math.sin(azimuth),
+            radius * Math.sin(elevation),
+            radius * Math.cos(elevation) * Math.cos(azimuth)
+          );
+          values.push(projectBoxAreaFraction(cube, cam));
+        }
+      }
+      const lo = Math.min(...values);
+      const hi = Math.max(...values);
+      expect(lo).toBeGreaterThan(0);
+      expect((hi - lo) / hi).toBeLessThanOrEqual(0.01);
+    });
+
+    it('face-on it equals the legacy rect product, so derived thresholds keep their meaning', () => {
+      // A flat quad parallel to the image plane, off-centre: its screen rect
+      // spans NDC x in [-0.1, 0.3] and y in [-0.2, 0.2] (half-extents 0.2 and
+      // 0.2) → the legacy rect product 0.04.
+      const quad: BoundingBox = { min: { x: -0.5, y: -1, z: 0 }, max: { x: 1.5, y: 1, z: 0 } };
+      const cam = new THREE.PerspectiveCamera(90, 1, 0.1, 1000);
+      cam.position.set(0, 0, 5);
+      cam.lookAt(0, 0, -1);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      expect(projectBoxAreaFraction(quad, cam)).toBeCloseTo(0.04, 9);
+    });
+
+    it('reads exactly 0 for a box entirely off-screen under a perspective camera', () => {
+      const cam = perspectiveLookingAtOrigin(0, 0, 10);
+      const box: BoundingBox = { min: { x: 40, y: -1, z: -1 }, max: { x: 42, y: 1, z: 1 } };
+      expect(projectBoxAreaFraction(box, cam)).toBe(0);
+    });
+
+    it('saturates to +Infinity when the camera is inside the box, looking in any direction', () => {
+      const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
+      for (const [x, y, z] of [
+        [1, 0.5, 0],
+        [0, 1, 1],
+        [-1, -1, 2],
+      ]) {
+        const cam = new THREE.PerspectiveCamera(50, 1.5, 0.1, 1000);
+        cam.position.set(0.5, -0.5, 0.25);
+        cam.lookAt(x, y, z);
+        cam.updateMatrixWorld(true);
+        cam.updateProjectionMatrix();
+        expect(projectBoxAreaFraction(box, cam)).toBe(Number.POSITIVE_INFINITY);
+      }
+    });
   });
 });
 
