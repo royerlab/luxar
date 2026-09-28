@@ -169,6 +169,24 @@ describe('loadGSplatsNode — registration only after the initial load settles',
     expect(ctx.registry.gsplatLoaders.get('/scene/g')).toBe(loader);
   });
 
+  it.fails('registerOnly: an activated partition part logs nothing (per-node detail is ?verboseLog)', async () => {
+    createGSplatsLoaderMock.mockReturnValue(makeGSplatsLoader(vi.fn()));
+    const ctx = Object.assign(makeCtx(), { registerOnly: true });
+    const consoleLog = vi.spyOn(console, 'log');
+    try {
+      await loadGSplatsNode(
+        makeSceneNode({ n_additive_sublods: 1 }),
+        new THREE.Group(),
+        {} as never,
+        ctx
+      );
+      // A slice step can activate several parts: nothing per part on the console.
+      expect(consoleLog).not.toHaveBeenCalled();
+    } finally {
+      consoleLog.mockRestore();
+    }
+  });
+
   it('registers even when the initial load FAILS (loader stays retryable)', async () => {
     createGSplatsLoaderMock.mockReturnValue(
       makeGSplatsLoader(vi.fn().mockRejectedValue(new Error('network down')) as never)
