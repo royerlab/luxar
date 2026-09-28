@@ -1539,8 +1539,7 @@ describe('SceneLoader', () => {
       });
 
       release(0); // A completes (superseded)
-      await flush(); // queueNext re-enters B, whose pass parks on its gate
-      expect(updateView).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => expect(updateView).toHaveBeenCalledTimes(2));
       expect(bResolved).toBe(false); // B's pass has not committed yet
 
       release(1); // B's pass completes
@@ -1558,8 +1557,7 @@ describe('SceneLoader', () => {
       const replacement = sceneLoader.updateView({});
 
       release(0);
-      await flush();
-      expect(updateView).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => expect(updateView).toHaveBeenCalledTimes(2));
       expect(firstResolved).toBe(false);
 
       release(1);
@@ -1582,8 +1580,7 @@ describe('SceneLoader', () => {
 
         expect(signals[0]?.aborted).toBe(true);
         release(0);
-        await flush();
-        expect(updateView).toHaveBeenCalledTimes(2);
+        await vi.waitFor(() => expect(updateView).toHaveBeenCalledTimes(2));
 
         release(1);
         await Promise.all([first, next]);
