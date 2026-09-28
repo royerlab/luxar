@@ -527,17 +527,13 @@ export class SceneLoader {
 
   /**
    * Waiters for "the requested-or-newer view-state completed a main pass".
-   * Created ONLY in `updateView`'s queued/supersede branch: instead of
-   * resolving immediately (which made `sceneDimsManager.waitForUpdate()` —
-   * and with it the dimension-animation pacing gate — meaningless during
-   * playback), the queued caller's promise parks here and resolves when
-   * `queueNext` finds no pending state left, i.e. when the latest-wins
-   * winning pass has landed its commit. Latest-wins supersession keeps
-   * waiters pending until the winner completes; `dispose()` flushes them
-   * (resolve-only, never reject) so callers can't hang across a dataset
-   * switch. Each waiter carries the request generation it was registered for
-   * and only a pass of that generation or newer settles it (#2943); a request
-   * for the view the running pass is already loading joins that pass.
+   * Created by the queued/supersede branch, a same-view join, or a superseded
+   * direct pass awaiting its replacement. Each waiter carries the generation
+   * it needs; a committing pass of that generation or newer settles it. If no
+   * pass remains pending, queueNext drains waiters covered by the last pass.
+   * This keeps `sceneDimsManager.waitForUpdate()` and the dimension-animation
+   * pacing gate tied to a completed view. `dispose()` and archive faults flush
+   * waiters (resolve-only, never reject) so callers cannot hang.
    */
   private _passWaiters: Array<{ gen: number; resolve: () => void }> = [];
 
