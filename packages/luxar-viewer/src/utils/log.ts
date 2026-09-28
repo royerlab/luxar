@@ -88,6 +88,21 @@ export function formatLog(emoji: string, module: string, message: string): strin
   return `[${emoji}] [${module}] ${message}`;
 }
 
+let verboseLogging = false;
+
+/**
+ * Enable or disable `log.verbose` output (per-query / per-part detail).
+ * Set once at bootstrap from `?verboseLog` or `localStorage['luxar.verboseLog']`.
+ */
+export function setVerboseLogging(enabled: boolean): void {
+  verboseLogging = enabled;
+}
+
+/** Whether `log.verbose` currently prints. */
+export function isVerboseLogging(): boolean {
+  return verboseLogging;
+}
+
 /**
  * Quick logging functions that maintain consistent format
  * These work directly with console methods so the interceptor captures them
@@ -130,6 +145,23 @@ export const log = {
   // Custom emoji logging
   custom: (emoji: string, module: string, message: string, ...args: unknown[]) => {
     console.log(`[${emoji}] [${module}] ${message}`, ...args);
+  },
+
+  /**
+   * Detail line printed only under `?verboseLog`. Use for anything emitted
+   * per spatial query, per partition part or per rung: those run thousands
+   * of times per slice step on large trees. Pass a thunk when building the
+   * message is not free; it is only called when verbose logging is on.
+   */
+  verbose: (
+    emoji: string,
+    module: string,
+    message: string | (() => string),
+    ...args: unknown[]
+  ) => {
+    if (!verboseLogging) return;
+    const text = typeof message === 'function' ? message() : message;
+    console.log(`[${emoji}] [${module}] ${text}`, ...args);
   },
 
   // Raw console access (already formatted)

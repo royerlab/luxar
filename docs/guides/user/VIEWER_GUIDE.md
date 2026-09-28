@@ -206,6 +206,7 @@ Append parameters to the viewer URL to control startup behavior.
 | `panel` | module URL | On the `control.html` panel page, load an alternative same-origin control-panel module. Cross-origin modules are rejected. |
 | `kiosk` | flag | Force kiosk mode on as a hard operator override. It can lock a scene but cannot unlock authored kiosk mode. |
 | `debug` | flag | Enable the debug interface (developer use). |
+| `verboseLog` | flag | Print per-query and per-part detail log lines (developer use; very chatty on large scenes). |
 | `noCache` | flag | Disable ALL caching tiers (S-cache + L0/L1/L2). |
 | `noSliceCache` | flag | Disable only the SliceCache (per-slice decoded-geometry reuse); L0/L1/L2 stay on. |
 | `noOpfs` | flag | Disable only the L2 persistent (OPFS) tier; L0/L1/S-cache stay on. For environments whose OPFS stalls — the deterministic sibling of the automatic circuit breaker. |

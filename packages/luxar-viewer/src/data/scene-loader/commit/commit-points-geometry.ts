@@ -42,7 +42,7 @@ import {
 } from '../../../types/committed-data';
 import { getPrefixParent, setPrefixParent } from '../../../types/prefix-lineage';
 import { clampPointCapacity } from '../../../rendering/element-texture-layout';
-import { log, Modules } from '../../../utils/log';
+import { log, LogEmoji, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import type { NodeFactory } from '../../../rendering/node-factory';
@@ -53,6 +53,15 @@ import { DEFAULT_POINT_RADIUS } from '../../../config/constants';
 // Re-export so callers can import this name from the commit module while
 // the implementation lives in the rendering layer.
 export { syncPointMaterialWithGeometry };
+
+/** Per-part detail line (hot on time-partitioned stores): `?verboseLog` only. */
+function logClearedPoints(path: string): void {
+  log.verbose(
+    LogEmoji.INFO,
+    Modules.SCENE_LOADER,
+    `Clearing points for ${path} (no visible points at current slice)`
+  );
+}
 
 /**
  * Synchronous GPU commit step for a points node. Same behavior as the
@@ -359,12 +368,7 @@ export function commitPointsGeometry(
     // clears any previous commit's.
     setElementIdMap(points, data.elementIds);
 
-    if (pointCount === 0) {
-      log.info(
-        Modules.SCENE_LOADER,
-        `Clearing points for ${path} (no visible points at current slice)`
-      );
-    }
+    if (pointCount === 0) logClearedPoints(path);
 
     // Depth-sorting (points integration): every non-noop commit bumps
     // the node's sort generation; order-dependent (effective `normal`)

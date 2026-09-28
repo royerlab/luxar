@@ -46,6 +46,7 @@ export const URL_PARAM_KEYS = {
   controlAllowCrossOrigin: 'controlAllowCrossOrigin',
   panel: 'panel',
   debug: 'debug',
+  verboseLog: 'verboseLog',
   kiosk: 'kiosk',
   noCache: 'noCache',
   noSliceCache: 'noSliceCache',
@@ -420,6 +421,12 @@ export interface UrlParams {
   /** Enable the `window.__luxarDebug` interface (`?debug`). */
   debug: boolean;
   /**
+   * `?verboseLog` — also print per-query / per-part detail lines
+   * (`log.verbose`). Off by default: on huge partition trees they reach tens
+   * of thousands of console calls per slice step.
+   */
+  verboseLog: boolean;
+  /**
    * `?kiosk` — lock this display down for unattended public use.
    *
    * A hard override over the scene's authored `ui.kiosk` block, because this
@@ -688,6 +695,7 @@ export function readUrlParams(search?: string, origin?: ControlSocketOrigin): Ur
     controlAllowCrossOrigin: allowCrossOriginControl,
     panel: normalizePanelModuleUrl(get(K.panel), pageOrigin),
     debug: has(K.debug),
+    verboseLog: has(K.verboseLog),
     kiosk: has(K.kiosk),
     noCache: has(K.noCache),
     noSliceCache: has(K.noSliceCache),

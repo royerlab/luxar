@@ -18,7 +18,7 @@ import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
 import { clampSplatCapacity } from '../../../rendering/element-texture-layout';
 import { syncGSplatMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import { isGSplatsUserData } from '../../../types/gsplats';
-import { log, Modules } from '../../../utils/log';
+import { log, LogEmoji, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
@@ -311,7 +311,8 @@ export function commitGSplatsGeometry(
     }
 
     if (splatCount === 0) {
-      log.info(
+      log.verbose(
+        LogEmoji.INFO,
         Modules.SCENE_LOADER,
         `Clearing gsplats for ${staged.path} (no visible splats at current slice)`
       );

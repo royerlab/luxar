@@ -1,4 +1,4 @@
-import { describe, it, expect, test, vi } from 'vitest';
+import { afterEach, describe, it, expect, test, vi } from 'vitest';
 import * as fc from 'fast-check';
 import {
   SpatialQueryBuilder,
@@ -14,6 +14,7 @@ import {
 import type { LoadRange } from '../../../../../data/loaders';
 import type { DimensionMetadata } from '../../../../../types/dims';
 import * as toleranceComputer from '../../../../../data/loaders/spatial-query/tolerance-computer';
+import { setVerboseLogging } from '../../../../../utils/log';
 
 // ============================================================================
 // buildQueryPosition
@@ -522,5 +523,48 @@ describe('SpatialQueryBuilder', () => {
 
       expect(ranges).toEqual([{ start: 0, end: 250 }]);
     });
+  });
+});
+
+// ============================================================================
+// Hot-path logging: a spatial query runs once per loader per rung per slice
+// step (tens of thousands of times on a 2000-part partition), so its detail
+// lines must stay silent unless `?verboseLog` is on.
+// ============================================================================
+
+describe('SpatialQueryBuilder logging', () => {
+  const index: ChunkSpatialIndex = {
+    chunkBounds: new Float32Array([0, 100, 0, 100, 0, 100]),
+    chunkCount: 1,
+    metadata: { ndim: 3, chunk_size: 1000 },
+  };
+  const viewState: BaseViewState = {
+    displayDims: [0, 1, 2],
+    slicePosition: [50, 50, 50],
+    tolerance: [],
+  };
+
+  afterEach(() => {
+    setVerboseLogging(false);
+    vi.restoreAllMocks();
+  });
+
+  it('prints nothing by default', async () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await new SpatialQueryBuilder(index, viewState, {
+      geometryType: 'gsplats',
+      totalElements: 1000,
+    }).execute();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('prints its detail lines under verbose logging', async () => {
+    setVerboseLogging(true);
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await new SpatialQueryBuilder(index, viewState, {
+      geometryType: 'gsplats',
+      totalElements: 1000,
+    }).execute();
+    expect(spy.mock.calls.map((c) => String(c[0])).join('\n')).toMatch(/Query: pos=/);
   });
 });

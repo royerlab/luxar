@@ -41,7 +41,7 @@ import { showSceneIdentityBanner, hideSceneIdentityBanner } from '../ui/scene-id
 import { setNotifierBackend } from '../utils/cross-layer/notifier';
 import { ThemeManager } from '../themes/theme-manager';
 import { consoleInterceptor } from '../utils/console-interceptor';
-import { log, Modules, LogEmoji } from '../utils/log';
+import { log, Modules, LogEmoji, setVerboseLogging } from '../utils/log';
 import { getErrorMessage } from '../utils/format-error';
 import { codecRegistry } from '../data/zarr';
 import { computePerfSnapshot } from './app/debug/perf-snapshot';
@@ -300,6 +300,13 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     /* Storage disabled — debug mode then comes only from `?debug`. */
   }
   const isDebugMode = urlParams.debug || storedDebug === 'true';
+  let storedVerbose: string | null = null;
+  try {
+    storedVerbose = localStorage.getItem(StorageKeys.verboseLog);
+  } catch {
+    /* Storage disabled — verbose logging then comes only from `?verboseLog`. */
+  }
+  setVerboseLogging(urlParams.verboseLog || storedVerbose === 'true');
 
   const appOptions: LuxarAppOptions = {
     canvas: opts.canvas,

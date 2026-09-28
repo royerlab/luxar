@@ -14,7 +14,7 @@
 
 import * as THREE from 'three';
 import { isLinesUserData } from '../../../types/lines';
-import { log, Modules } from '../../../utils/log';
+import { log, LogEmoji, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { updateInstancedLinesMesh } from '../../../rendering/line-geometry';
@@ -259,7 +259,8 @@ export function commitLinesGeometry(
     setElementIdMap(mesh, staged.processed.elementIds);
 
     if (segmentCount === 0) {
-      log.info(
+      log.verbose(
+        LogEmoji.INFO,
         Modules.SCENE_LOADER,
         `Clearing lines for ${staged.path} (no visible segments at current slice)`
       );

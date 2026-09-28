@@ -20,7 +20,7 @@
  * @module data/loaders/spatial-query-builder
  */
 
-import { log, Modules } from '../../../utils/log';
+import { log, LogEmoji, Modules } from '../../../utils/log';
 import { computeTolerance, type ToleranceOptions } from './tolerance-computer';
 import type { GeometryKind } from '../../data-loader-types';
 import type { BaseViewState, LoadRange } from '../base-types';
@@ -124,7 +124,11 @@ export function executeSpatialQuery(
     }
   }
 
-  log.query(logModule, `Query: ${matchingChunks.length}/${numChunks} chunks match`);
+  log.verbose(
+    LogEmoji.QUERY,
+    logModule,
+    () => `Query: ${matchingChunks.length}/${numChunks} chunks match`
+  );
   return matchingChunks;
 }
 
@@ -310,15 +314,27 @@ export class SpatialQueryBuilder {
    */
   async execute(): Promise<LoadRange[]> {
     if (shouldExtendVisibility(this.extendDims, this.viewState)) {
-      log.query(this.logModule, `Extending visibility across: ${this.extendDims?.join(', ')}`);
+      log.verbose(
+        LogEmoji.QUERY,
+        this.logModule,
+        () => `Extending visibility across: ${this.extendDims?.join(', ')}`
+      );
       return createLoadAllRange(this.totalElements);
     }
 
     const queryPosition = buildQueryPosition(this.viewState, this.ndim);
     const queryTolerance = this.resolveTolerance();
 
-    log.query(this.logModule, `Query: pos=[${queryPosition.map((p) => p.toFixed(2)).join(', ')}]`);
-    log.info(this.logModule, `Query: tol=[${queryTolerance.map(formatTolerance).join(', ')}]`);
+    log.verbose(
+      LogEmoji.QUERY,
+      this.logModule,
+      () => `Query: pos=[${queryPosition.map((p) => p.toFixed(2)).join(', ')}]`
+    );
+    log.verbose(
+      LogEmoji.INFO,
+      this.logModule,
+      () => `Query: tol=[${queryTolerance.map(formatTolerance).join(', ')}]`
+    );
 
     const chunkIndices = executeSpatialQuery(
       {

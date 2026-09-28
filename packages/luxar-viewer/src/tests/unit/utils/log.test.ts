@@ -7,7 +7,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { log, formatLog, createModuleLogger, LogEmoji, Modules } from '../../../utils/log';
+import {
+  log,
+  formatLog,
+  createModuleLogger,
+  isVerboseLogging,
+  LogEmoji,
+  Modules,
+  setVerboseLogging,
+} from '../../../utils/log';
 
 describe('formatLog', () => {
   it('produces "[emoji] [Module] message"', () => {
@@ -164,5 +172,35 @@ describe('createModuleLogger', () => {
     const ml = createModuleLogger(Modules.LUXAR);
     ml.info('hi');
     expect(logSpy.mock.calls[0][0] as string).toContain('[Luxar]');
+  });
+});
+
+describe('log.verbose', () => {
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    setVerboseLogging(false);
+    logSpy.mockRestore();
+  });
+
+  it('is off by default and never builds a thunk message', () => {
+    expect(isVerboseLogging()).toBe(false);
+    const build = vi.fn(() => 'expensive');
+    log.verbose(LogEmoji.QUERY, 'Mod', build);
+    log.verbose(LogEmoji.QUERY, 'Mod', 'plain');
+    expect(build).not.toHaveBeenCalled();
+    expect(logSpy).not.toHaveBeenCalled();
+  });
+
+  it('prints string and thunk messages when enabled', () => {
+    setVerboseLogging(true);
+    log.verbose(LogEmoji.QUERY, 'Mod', () => 'from thunk');
+    log.verbose(LogEmoji.INFO, 'Mod', 'plain', 42);
+    expect(logSpy).toHaveBeenNthCalledWith(1, `[${LogEmoji.QUERY}] [Mod] from thunk`);
+    expect(logSpy).toHaveBeenNthCalledWith(2, `[${LogEmoji.INFO}] [Mod] plain`, 42);
   });
 });

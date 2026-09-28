@@ -712,13 +712,15 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // Log LOD loading summary (compact, always shown for progressive loaders)
     const totalSplats = this.loadedLODs.reduce((s, d) => s + d.splatCount, 0);
     if (this._loadedLODCount < this.nLods) {
-      log.info(
+      log.verbose(
+        LogEmoji.INFO,
         Modules.GSPLATS_SPATIAL_INDEX_LOADER,
         `Progressive: ${this._loadedLODCount}/${this.nLods} LODs loaded (${totalSplats} splats) — refining`
       );
     } else if (startLevel < this.nLods) {
       // Only log "all loaded" when we actually loaded something new this call
-      log.info(
+      log.verbose(
+        LogEmoji.INFO,
         Modules.GSPLATS_SPATIAL_INDEX_LOADER,
         `Progressive: ${this.nLods}/${this.nLods} LODs loaded (${totalSplats} splats) — complete`
       );

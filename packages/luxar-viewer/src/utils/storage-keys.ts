@@ -30,6 +30,8 @@ export const StorageKeys = Object.freeze({
   theme: 'luxar.theme',
   /** Persisted debug-mode toggle (mirrors `?debug` URL parameter). */
   debug: 'luxar.debug',
+  /** `'true'` enables `log.verbose` detail lines (mirrors `?verboseLog`). */
+  verboseLog: 'luxar.verboseLog',
   /** Global viewer preferences (Settings popover) — see config/user-settings.ts. */
   settings: 'luxar.settings',
   /** Listener audio preferences (rail mute + master gain) — see audio/audio-prefs.ts. */
