@@ -41,6 +41,7 @@
 import * as THREE from 'three';
 import {
   Fn,
+  If,
   uniform,
   attribute,
   varying,
@@ -85,7 +86,7 @@ import {
   type TSLNode,
   sortedIndexNode,
   densityDroppedNode,
-  densityAlphaNode,
+  densityThinnedAlphaNode,
 } from '../_shared/tsl-helpers';
 import {
   applyBlendingStateToMaterial,
@@ -854,15 +855,18 @@ export function gsplatWebGPUFactory(
       }
       // Density-guard thinning of an alpha-over node (GLSL twin in
       // shader-glsl.ts): coverage → 1 − (1 − c)^(1/keep), RGB scaled with
-      // it; the identity exponent selects the untouched pair.
+      // it; the identity exponent leaves the untouched pair. ONE guarded
+      // branch rewrites both, so an unthinned node pays a single uniform
+      // test and computes finalColor once.
       const coverage: TSLNode = clamp(intensity.mul(uOpacity), float(0.0), float(1.0)).toVar();
-      const thinned: TSLNode = densityAlphaNode(coverage, alphaExp).toVar();
-      const thin: TSLNode = float(alphaExp).greaterThan(1.0);
-      const rgb: TSLNode = thin.select(
-        finalColor.mul(thinned.div(max(coverage, 1e-6))),
-        finalColor
-      );
-      return vec4(rgb, thinned);
+      const outAlpha: TSLNode = float(coverage).toVar();
+      const rgb: TSLNode = vec3(finalColor).toVar();
+      const e: TSLNode = float(alphaExp);
+      If(e.greaterThan(1.0), () => {
+        outAlpha.assign(densityThinnedAlphaNode(coverage, e));
+        rgb.assign(rgb.mul(outAlpha.div(max(coverage, 1e-6))));
+      });
+      return vec4(rgb, outAlpha);
     }
     if (volumetric && tau) {
       // 'volumetric': emission–absorption (GLSL LUXAR_VOLUMETRIC twin).

@@ -103,10 +103,9 @@ float nodeVar11;
 vec3 nodeVar13;
 float nodeVar14;
 float nodeVar15;
-float nodeVar16;
-vec3 nodeVar17;
+vec3 nodeVar16;
 vec4 Output;
-vec4 nodeVar18;
+vec4 nodeVar17;
 
 // codes
 
@@ -185,35 +184,23 @@ void main() {
 	}
 
 	nodeVar14 = clamp( ( nodeVar11 * nodeUniform11 ), 0.0, 1.0 );
+	nodeVar15 = nodeVar14;
+	nodeVar16 = ( ( pow( nodeVar13, vec3( nodeUniform12 ) ) * vec3( nodeVar11 ) ) * vec3( nodeUniform11 ) );
 
-	if ( ( nodeUniform12 > 1.0 ) ) {
+	if ( ( nodeUniform13 > 1.0 ) ) {
 
-		nodeVar15 = ( 1.0 - pow( max( ( 1.0 - nodeVar14 ), 0.0 ), nodeUniform12 ) );
+		nodeVar15 = ( 1.0 - pow( max( ( 1.0 - nodeVar14 ), 0.0 ), nodeUniform13 ) );
+		nodeVar16 = ( nodeVar16 * vec3( ( nodeVar15 / max( nodeVar14, 0.000001 ) ) ) );
 
-	} else {
-
-		nodeVar15 = nodeVar14;
-
-	}
-
-	nodeVar16 = nodeVar15;
-
-	if ( ( nodeUniform12 > 1.0 ) ) {
-
-		nodeVar17 = ( ( ( pow( nodeVar13, vec3( nodeUniform13 ) ) * vec3( nodeVar11 ) ) * vec3( nodeUniform11 ) ) * vec3( ( nodeVar16 / max( nodeVar14, 0.000001 ) ) ) );
-
-	} else {
-
-		nodeVar17 = ( ( pow( nodeVar13, vec3( nodeUniform13 ) ) * vec3( nodeVar11 ) ) * vec3( nodeUniform11 ) );
 
 	}
 
-	DiffuseColor = vec4( nodeVar17, nodeVar16 );
+	DiffuseColor = vec4( nodeVar16, nodeVar15 );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform14 );
-	nodeVar18 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar18;
+	nodeVar17 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar17;
 
 	// result
-	fragColor = nodeVar18;
+	fragColor = nodeVar17;
 
 }

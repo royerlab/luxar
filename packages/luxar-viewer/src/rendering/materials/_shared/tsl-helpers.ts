@@ -131,8 +131,16 @@ export function densityDroppedNode(uDensityDrop: TSLNode, sortedIndex: TSLNode):
  */
 export function densityAlphaNode(alpha: TSLNode, uDensityAlphaExp: TSLNode): TSLNode {
   const e: TSLNode = float(uDensityAlphaExp);
-  const thinned: TSLNode = float(1.0).sub(pow(max(float(1.0).sub(alpha), 0.0), e));
-  return e.greaterThan(1.0).select(thinned, alpha);
+  return e.greaterThan(1.0).select(densityThinnedAlphaNode(alpha, e), alpha);
+}
+
+/**
+ * The thinned branch of {@link densityAlphaNode} alone, `1 − (1 − a)^e`, for a
+ * caller that already guards on `e > 1` and scales more than alpha under the
+ * same branch (the gsplat `normal` premultiplied RGB).
+ */
+export function densityThinnedAlphaNode(alpha: TSLNode, e: TSLNode): TSLNode {
+  return float(1.0).sub(pow(max(float(1.0).sub(alpha), 0.0), e));
 }
 
 /** Sanitise a non-negative scalar. Mirrors GLSL `sanitizeNonNegative`. */
