@@ -217,6 +217,11 @@ export async function loadGSplatsNode(
   ctx: NodeBuildCtx
 ): Promise<THREE.Mesh | null> {
   const { placeholder, loader } = await loadGSplatsNodeCheap(node, parentThree, loc, ctx);
+  // A registry-activated partition part: the activating pass sweeps it (B4).
+  if (ctx.registerOnly) {
+    ctx.registry.registerGSplatsLoader(node.path, loader);
+    return placeholder;
+  }
   try {
     await loadGSplatsNodeExpensive(node, ctx, loader);
   } finally {

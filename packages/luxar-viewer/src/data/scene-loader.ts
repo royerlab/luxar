@@ -265,6 +265,21 @@ import {
  */
 const REFINEMENT_KICK_RECHECK_MS = 100;
 
+/** The per-type handler ctxs of one pass (see `build-update-ctxs.ts`). */
+type UpdateCtxs = ReturnType<typeof buildUpdateCtxs>;
+
+/** Join two stage-1 sweeps of one pass, type by type (points, lines, gsplats, mesh). */
+function concatSweeps<A, B, C, D>(
+  first: [A[], B[], C[], D[]],
+  second: [A[], B[], C[], D[]]
+): [A[], B[], C[], D[]] {
+  return [
+    [...first[0], ...second[0]],
+    [...first[1], ...second[1]],
+    [...first[2], ...second[2]],
+    [...first[3], ...second[3]],
+  ];
+}
 /**
  * Main scene loader that handles the complete loading pipeline.
  *
@@ -641,7 +656,7 @@ export class SceneLoader {
     // Deferred partition parts the next slice needs (B4) are activated ahead of
     // it, so its foreground pass finds them registered (a shadow can only warm
     // a registered node). Fire-and-forget: it never rejects.
-    void this.lodGroupRegistry?.activatePartitionParts(predicted);
+    void this.lodGroupRegistry?.activatePartitionParts(predicted, undefined, false);
     this._slicePrefetcher.prefetch(predicted, budgetMs, ladderDepth);
   }
 
@@ -1187,6 +1202,87 @@ export class SceneLoader {
   }
 
   /**
+   * Stage 1 of a pass for every loader `pick` keeps: load + process each, one
+   * {@link runLoaderUpdates} per geometry type, nothing committed.
+   */
+  private sweepLoaders(
+    ctxs: UpdateCtxs,
+    onArchiveFault: (fault: ArchiveFaultError) => void,
+    pick: <T>(loaders: Map<string, T>) => Map<string, T>,
+    resyncPaths?: ReadonlySet<string>
+  ) {
+    const { pointsCtx, linesCtx, gsplatsCtx, meshCtx } = ctxs;
+    return Promise.all([
+      this.runLoaderUpdates(
+        pick(this.loaders),
+        pointsLabel,
+        (path, loader, session) => pointsLoadAndStage(path, loader, session, pointsCtx),
+        onArchiveFault,
+        resyncPaths
+      ),
+      this.runLoaderUpdates(
+        pick(this.linesLoaders),
+        linesLabel,
+        (path, loader, session) => linesLoadAndStage(path, loader, session, linesCtx),
+        onArchiveFault,
+        resyncPaths
+      ),
+      this.runLoaderUpdates(
+        pick(this.gsplatLoaders),
+        gsplatsLabel,
+        (path, loader, session) => gsplatsLoadAndStage(path, loader, session, gsplatsCtx),
+        onArchiveFault,
+        resyncPaths
+      ),
+      this.runLoaderUpdates(
+        pick(this.meshLoaders),
+        meshLabel,
+        (path, loader, session) => meshLoadAndStage(path, loader, session, meshCtx),
+        onArchiveFault,
+        resyncPaths
+      ),
+    ]);
+  }
+
+  /** Every registered loader path, of every geometry type. */
+  private registeredLoaderPaths(): Set<string> {
+    return new Set([
+      ...this.loaders.keys(),
+      ...this.linesLoaders.keys(),
+      ...this.gsplatLoaders.keys(),
+      ...this.meshLoaders.keys(),
+    ]);
+  }
+
+  /**
+   * Activate the deferred partition parts this pass's view needs (B4) and, once
+   * their loaders are registered, sweep those loaders as part of THIS pass —
+   * the ones `alreadySwept` (the main sweep's) does not hold. `null` when no
+   * part was activated. Must be called synchronously with the main sweep, so
+   * the activation reads the pass's own view.
+   */
+  private async sweepActivatedParts(
+    ctxs: UpdateCtxs,
+    onArchiveFault: (fault: ArchiveFaultError) => void,
+    resyncPaths: ReadonlySet<string> | undefined,
+    alreadySwept: ReadonlySet<string>
+  ): Promise<Awaited<ReturnType<SceneLoader['sweepLoaders']>> | null> {
+    const registry = this.lodGroupRegistry;
+    if (!registry) return null;
+    const parts = await registry.activatePartitionParts(this.viewState, resyncPaths);
+    if (parts.length === 0) return null;
+    const targets = new Set(parts);
+    const pick = <T>(loaders: Map<string, T>): Map<string, T> => {
+      const fresh = new Map<string, T>();
+      for (const [path, loader] of loaders) {
+        if (!alreadySwept.has(path) && isUnderAny(path, targets)) fresh.set(path, loader);
+      }
+      return fresh;
+    };
+    return this.sweepLoaders(ctxs, onArchiveFault, pick);
+  }
+
+  /**
    * Re-run the current view state without blocking the caller. With ``paths``
    * (the partition parts that just re-entered the frustum) the sweep is
    * restricted to loaders at/under them; otherwise every loader re-runs. Either
@@ -1522,53 +1618,19 @@ export class SceneLoader {
         deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       });
 
-      const pointsTask = this.runLoaderUpdates(
-        this.loaders,
-        pointsLabel,
-        (path, loader, session) => pointsLoadAndStage(path, loader, session, pointsCtx),
-        onArchiveFault,
-        resyncPaths
-      );
-
-      const linesTask = this.runLoaderUpdates(
-        this.linesLoaders,
-        linesLabel,
-        (path, loader, session) => linesLoadAndStage(path, loader, session, linesCtx),
-        onArchiveFault,
-        resyncPaths
-      );
-
-      const gsplatsTask = this.runLoaderUpdates(
-        this.gsplatLoaders,
-        gsplatsLabel,
-        (path, loader, session) => gsplatsLoadAndStage(path, loader, session, gsplatsCtx),
-        onArchiveFault,
-        resyncPaths
-      );
-
-      const meshTask = this.runLoaderUpdates(
-        this.meshLoaders,
-        meshLabel,
-        (path, loader, session) => meshLoadAndStage(path, loader, session, meshCtx),
-        onArchiveFault,
-        resyncPaths
-      );
-
-      // Deferred partition parts this view needs (B4) load alongside the sweep:
-      // their loaders register once loaded, so this pass does not sweep them,
-      // and they are hidden until this pass commits (`applyCommittedSlice`).
-      const activationTask =
-        this.lodGroupRegistry?.activatePartitionParts(this.viewState, resyncPaths) ??
-        Promise.resolve();
-
-      // Wait for ALL loaders to complete (load + process)
-      const [pointsStaged, linesStaged, gsplatsStaged, meshStaged] = await Promise.all([
-        pointsTask,
-        linesTask,
-        gsplatsTask,
-        meshTask,
-        activationTask,
+      const ctxs = { pointsCtx, linesCtx, gsplatsCtx, meshCtx };
+      // Deferred partition parts this view needs (B4) are activated alongside
+      // the sweep. An activation only REGISTERS their loaders; this pass sweeps
+      // them itself, with its own directives, and commits them with everything
+      // else. They stay hidden until the commit (`applyCommittedSlice`).
+      const sweptPaths = this.registeredLoaderPaths();
+      const [swept, activated] = await Promise.all([
+        this.sweepLoaders(ctxs, onArchiveFault, (loaders) => loaders, resyncPaths),
+        this.sweepActivatedParts(ctxs, onArchiveFault, resyncPaths, sweptPaths),
       ]);
+      const [pointsStaged, linesStaged, gsplatsStaged, meshStaged] = activated
+        ? concatSweeps(swept, activated)
+        : swept;
 
       if (sweepArchiveFault) {
         this.reportArchiveFault(sweepArchiveFault);

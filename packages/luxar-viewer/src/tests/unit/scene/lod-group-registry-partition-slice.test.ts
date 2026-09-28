@@ -159,7 +159,7 @@ describe('LODGroupRegistry — partition slice gating (B4)', () => {
     expect(slot.visible).toBe(true);
   });
 
-  it.fails('an activation changes nothing drawn: the commit of its pass does', async () => {
+  it('an activation changes nothing drawn: the commit of its pass does', async () => {
     const reg = makeRegistry(() => viewAt(0));
     const groupObject = new THREE.Group();
     const slot = new THREE.Group();

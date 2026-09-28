@@ -957,7 +957,7 @@ describe('loadPartitionGroupNode — gated loading (B4)', () => {
     expect(registerPartition.mock.calls[0][0].children).toHaveLength(3);
   });
 
-  it.fails('a registry activation registers the deferred part without loading its data', async () => {
+  it('a registry activation registers the deferred part without loading its data', async () => {
     attachStubChildren();
     const registerPartition = vi.fn();
 

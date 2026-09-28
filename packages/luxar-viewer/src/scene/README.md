@@ -608,10 +608,17 @@ frustum of the current camera — unless it sees none of the partition, i.e. has
 not been framed on it yet — and in the slice), nearest first; the rest keep an
 empty slot and register as deferred (`PartitionGroupChild.activate`). A
 deferred part is activated inside a loader pass (`activatePartitionParts`): a
-view change activates every deferred part its slice needs, awaited with the
-sweep and hidden until the commit; a deferred part that enters the frustum and
-the committed slice asks for a targeted resync, which activates it; the t+1
-slice prefetch activates the next slice's parts ahead of it.
+view change activates every deferred part its slice needs; a deferred part that
+enters the frustum and the committed slice asks for a targeted resync, which
+activates it; the t+1 slice prefetch activates the next slice's parts ahead of
+it. An activation only attaches the part's placeholders and REGISTERS its
+loaders (`NodeBuildCtx.registerOnly`) — it loads no data and changes nothing
+drawn. The pass that awaited it sweeps the new loaders itself, with its own
+directives (playback budget, pinned rungs: no initial-load lookahead), and
+commits them with the rest of the pass — one commit, one render per step. A
+part activated ahead by the prefetch is simply found registered by its slice's
+pass; only an unclaimed activation for a part the committed view already shows
+asks for a resync.
 
 `hasVisiblePendingPartitionResync()` publishes the held set to the wide
 load-activity and perf-settle predicates: a pending edge blocks settling only

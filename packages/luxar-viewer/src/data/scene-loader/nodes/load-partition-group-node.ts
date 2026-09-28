@@ -340,13 +340,20 @@ function planPartitionLoad(job: PartitionLoadJob): PartitionLoadPlan {
   return { deferred, order: ranking?.order };
 }
 
-/** One idempotent activation thunk per deferred part: load its subtree into its slot. */
+/**
+ * One idempotent activation thunk per deferred part: load its subtree into its
+ * slot. `registerOnly` (the registry's activators) attaches and registers the
+ * part's loaders without loading their data — the loader pass that activates
+ * the part sweeps them (see `NodeBuildCtx.registerOnly`).
+ */
 function deferredActivators(
   job: PartitionLoadJob,
   slots: THREE.Group[],
-  deferred: ReadonlySet<number>
+  deferred: ReadonlySet<number>,
+  registerOnly: boolean
 ): Map<number, () => Promise<void>> {
-  const { children, ctx, parentLoc, loadPart } = job;
+  const { children, parentLoc, loadPart } = job;
+  const ctx = registerOnly ? { ...job.ctx, registerOnly: true } : job.ctx;
   const activators = new Map<number, () => Promise<void>>();
   for (const index of deferred) {
     const child = children[index];
@@ -449,10 +456,13 @@ async function loadAndRegisterParts(job: PartitionLoadJob): Promise<void> {
       order: plan.order,
     }
   );
-  const activators = plan.deferred.size > 0 ? deferredActivators(job, slots, plan.deferred) : null;
-  // Registration is what activates a deferred part; without it, load them now.
+  const activators =
+    plan.deferred.size > 0 ? deferredActivators(job, slots, plan.deferred, true) : null;
+  // Registration is what activates a deferred part; without it, load them now
+  // (fully: no pass will sweep them for their first data).
   if (!registerPartitionParts(job, activators) && activators) {
-    await Promise.all([...activators.values()].map((activate) => activate()));
+    const eager = deferredActivators(job, slots, plan.deferred, false);
+    await Promise.all([...eager.values()].map((activate) => activate()));
   }
 }
 

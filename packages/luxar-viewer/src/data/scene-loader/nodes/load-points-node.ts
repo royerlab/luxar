@@ -219,6 +219,11 @@ export async function loadPointsNode(
   ctx: NodeBuildCtx
 ): Promise<THREE.Mesh | null> {
   const { placeholder, loader } = await loadPointsNodeCheap(node, parentThree, loc, ctx);
+  // A registry-activated partition part: the activating pass sweeps it (B4).
+  if (ctx.registerOnly) {
+    ctx.registry.registerPointsLoader(node.path, loader);
+    return placeholder;
+  }
   try {
     await loadPointsNodeExpensive(node, ctx, loader);
   } finally {

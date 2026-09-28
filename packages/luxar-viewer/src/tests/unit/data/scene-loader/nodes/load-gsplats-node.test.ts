@@ -155,7 +155,7 @@ describe('loadGSplatsNode — registration only after the initial load settles',
     expect(ctx.registry.gsplatLoaders.has('/scene/g')).toBe(true);
   });
 
-  it.fails('registerOnly: registers the loader without fetching or committing', async () => {
+  it('registerOnly: registers the loader without fetching or committing', async () => {
     const loadGSplats = vi.fn();
     const loader = makeGSplatsLoader(loadGSplats);
     createGSplatsLoaderMock.mockReturnValue(loader);

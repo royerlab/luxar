@@ -191,6 +191,11 @@ export async function loadLinesNode(
   ctx: NodeBuildCtx
 ): Promise<THREE.Mesh | null> {
   const { placeholder, loader } = await loadLinesNodeCheap(node, parentThree, loc, ctx);
+  // A registry-activated partition part: the activating pass sweeps it (B4).
+  if (ctx.registerOnly) {
+    ctx.registry.registerLinesLoader(node.path, loader);
+    return placeholder;
+  }
   try {
     await loadLinesNodeExpensive(node, ctx, loader);
   } finally {

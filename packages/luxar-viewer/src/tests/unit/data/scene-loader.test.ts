@@ -1112,7 +1112,7 @@ describe('SceneLoader', () => {
       });
     });
 
-    it.fails('the pass that moves the slice sweeps the part it activates, once, with its directives', async () => {
+    it('the pass that moves the slice sweeps the part it activates, once, with its directives', async () => {
       const { internals, reg, next } = setup(async (register) => register());
       reg.evaluatePerFrame();
       const passes = internals._passCount;
@@ -1127,7 +1127,7 @@ describe('SceneLoader', () => {
       expect(internals._passCount - passes).toBe(1);
     });
 
-    it.fails('a part activated ahead of its slice joins that slice’s pass without a resync pass', async () => {
+    it('a part activated ahead of its slice joins that slice’s pass without a resync pass', async () => {
       let release!: () => void;
       const gate = new Promise<void>((resolve) => (release = resolve));
       const { internals, reg, next } = setup(async (register) => {

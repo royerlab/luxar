@@ -187,6 +187,11 @@ export async function loadMeshNode(
   ctx: NodeBuildCtx
 ): Promise<THREE.Object3D | null> {
   const { placeholder, loader } = await loadMeshNodeCheap(node, parentThree, loc, ctx);
+  // A registry-activated partition part: the activating pass sweeps it (B4).
+  if (ctx.registerOnly) {
+    ctx.registry.registerMeshLoader(node.path, loader);
+    return placeholder;
+  }
   try {
     await loadMeshNodeExpensive(node, ctx, loader);
   } finally {

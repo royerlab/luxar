@@ -79,6 +79,17 @@ export interface NodeBuildCtx {
    */
   getSliceView?(): ViewState;
   /**
+   * `true` ⇒ each leaf attaches its placeholder and registers its loader but
+   * does NOT load its first data. Set for a partition part activated by the LOD
+   * registry (B4): the loader pass that activated it sweeps the new loaders
+   * itself, with that pass's directives (playback budget, pinned rungs), and
+   * commits them with the rest of the pass — one commit, no initial-load
+   * lookahead, and nothing loaded for a view the pass is not showing. A
+   * `kind=lod` group clears it for its subtree (its lazy levels load outside
+   * any pass). Absent ⇒ the leaf loads eagerly.
+   */
+  registerOnly?: boolean;
+  /**
    * Whether `path`'s world `nd_transform` chain (root → node) is non-empty. A
    * transformed part's bounds do not live in the space of the world slice, so
    * the partition loader never slice-gates it. Optional: absent ⇒ `false`.

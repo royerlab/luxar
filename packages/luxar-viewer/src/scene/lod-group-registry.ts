@@ -885,6 +885,13 @@ interface LazyPartState {
   requested: boolean;
   /** The in-flight activation, if one is running. */
   running: Promise<void> | null;
+  /**
+   * A loader pass awaits the running activation and sweeps the part's loaders
+   * itself once it settles (see {@link LODGroupRegistry.activatePartitionParts}).
+   * `false` ⇒ started ahead of any pass (`prefetchSlice`): the next pass for
+   * its slice finds the loaders registered.
+   */
+  claimed: boolean;
 }
 
 /** Per-part per-frame state of a registered partition (parallel to its children). */
@@ -1344,7 +1351,7 @@ export class LODGroupRegistry {
         footprintMatrixWorld: new Array<number>(child.objects.length * 16).fill(0),
         footprintDirty: true,
         inFrustum: true,
-        lazy: child.activate ? { requested: false, running: null } : null,
+        lazy: child.activate ? { requested: false, running: null, claimed: false } : null,
       })),
     });
     for (const child of entry.children) {
@@ -1483,22 +1490,34 @@ export class LODGroupRegistry {
    * Activate the deferred parts a loader pass for `view` needs (B4): every
    * deferred part in the padded frustum (last evaluation), under an effectively
    * visible wrapper and in `view`'s slice — restricted to `targets` (a targeted
-   * resync) when given. Resolves once every activation it started has settled;
-   * the pass awaits it with its sweep, so the parts commit before the pass
-   * does. A deferred part under `targets` that does not qualify has its request
-   * cleared, so the per-frame gate asks again while it is still wanted.
+   * resync) when given. An activation attaches and REGISTERS the part's
+   * loaders without loading their data: resolves, once every activation it
+   * started (or joined) has settled, with the keys of those parts, whose new
+   * loaders the pass then sweeps itself and commits with everything else.
+   * `forPass: false` (`prefetchSlice`, activating ahead of the next slice)
+   * claims nothing: that slice's pass finds the loaders registered. A deferred
+   * part under `targets` that does not qualify has its request cleared, so the
+   * per-frame gate asks again while it is still wanted.
    */
-  activatePartitionParts(view: PartitionSliceView, targets?: ReadonlySet<string>): Promise<void> {
+  activatePartitionParts(
+    view: PartitionSliceView,
+    targets?: ReadonlySet<string>,
+    forPass = true
+  ): Promise<string[]> {
     const runs: Promise<void>[] = [];
+    const keys: string[] = [];
     for (const entry of this.partitionEntries.values()) {
       const cache = this.partitionCaches.get(entry.path);
       if (!cache) continue;
       for (let index = 0; index < entry.children.length; index++) {
         const run = this.activatePart(entry, index, cache.children[index], view, targets);
-        if (run) runs.push(run);
+        if (!run) continue;
+        runs.push(run.promise);
+        keys.push(run.key);
+        if (forPass) run.lazy.claimed = true;
       }
     }
-    return runs.length === 0 ? Promise.resolve() : Promise.all(runs).then(() => undefined);
+    return runs.length === 0 ? Promise.resolve(keys) : Promise.all(runs).then(() => keys);
   }
 
   private activatePart(
@@ -1507,7 +1526,7 @@ export class LODGroupRegistry {
     childCache: PartitionChildCache,
     view: PartitionSliceView,
     targets: ReadonlySet<string> | undefined
-  ): Promise<void> | null {
+  ): { promise: Promise<void>; key: string; lazy: LazyPartState } | null {
     const child = entry.children[index];
     const lazy = childCache.lazy;
     if (!lazy || !child.activate) return null;
@@ -1516,8 +1535,8 @@ export class LODGroupRegistry {
     if (!lazy.running) lazy.requested = false;
     if (!this.partActivationWanted(entry, child, childCache, view)) return null;
     // Already loading (activated ahead of this view): the caller still waits for it.
-    lazy.running ??= this.runActivation(entry.path, partKey, child, childCache, lazy);
-    return lazy.running;
+    lazy.running ??= this.runActivation(entry, partKey, child, childCache, lazy);
+    return { promise: lazy.running, key: partKey, lazy };
   }
 
   /** In the padded frustum (last evaluation), in `view`'s slice, under a visible wrapper. */
@@ -1535,25 +1554,30 @@ export class LODGroupRegistry {
   }
 
   private runActivation(
-    entryPath: string,
+    entry: PartitionGroupEntry,
     partKey: string,
     child: PartitionGroupChild,
     childCache: PartitionChildCache,
     lazy: LazyPartState
   ): Promise<void> {
     const activate = child.activate as () => Promise<void>;
-    const startVersion = this.deps.getViewVersion?.();
     const settle = (): void => {
-      // Loaded (or failed — its leaves record their own retryable failures):
-      // never activate the same slot twice.
+      // Registered (or failed — its leaves record their own retryable
+      // failures): never activate the same slot twice. Nothing drawn changed —
+      // its placeholders are empty until a pass commits them.
       child.activate = undefined;
       if (childCache.lazy === lazy) childCache.lazy = null;
       childCache.footprintDirty = true;
-      this.drawnStateChanged = true;
-      // It loaded for the view current when it STARTED; its loaders joined the
-      // sweep only now, so a pass for a newer view skipped them — resync it.
-      if (startVersion !== this.deps.getViewVersion?.()) {
-        this.notePartitionRisingEdge(entryPath, new Set([partKey]));
+      // No pass awaited it, and the COMMITTED view already shows it (the pass
+      // that moved there ran before its loaders registered): resync it.
+      const committed = this.deps.getCommittedViewState?.();
+      if (
+        !lazy.claimed &&
+        childCache.inFrustum &&
+        partitionChildInSlice(child, committed) &&
+        isEffectivelyVisible(entry.groupObject)
+      ) {
+        this.notePartitionRisingEdge(entry.path, new Set([partKey]));
         this.keepTicking();
       }
     };
