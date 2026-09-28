@@ -2260,15 +2260,14 @@ export class SceneLoader {
    * misses on every 3-D scene, and ~1 s of extra main-thread work on a
    * 29.6 M-splat slide). A real slider change compares unequal and proceeds.
    *
-   * False while a main pass is in flight: `this.viewState` already names that
-   * pass's view but nothing of it has committed, so a same-view request must
-   * go through `updateView` (which joins the running pass) instead of
-   * resolving at once and letting `waitForUpdate()` return before the slice
-   * is on screen (#2943).
+   * False while a requested main pass has not finished: `this.viewState`
+   * names a pass's view as soon as it starts. This also covers the frame
+   * boundary between a superseded pass and its queued replacement, when no
+   * main pass is running but the old view never committed (#2943).
    */
   isAtViewState(candidate: ViewState): boolean {
     if (this._disposed) return false;
-    if (this._passGen !== 0) return false;
+    if (this._requestSeq > this._completedGen) return false;
     if (this._lastUpdateWasFrameBudgeted) return false;
     return viewStatesEqual(candidate, this.viewState);
   }

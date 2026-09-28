@@ -1568,6 +1568,36 @@ describe('SceneLoader', () => {
       expect(sceneLoader.isAtViewState(inFlight)).toBe(true);
     });
 
+    it('does not report an aborted view as settled while its replacement waits for a frame', async () => {
+      const { release } = installPerCallGatedLoader();
+      const frames: Array<() => void> = [];
+      const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+        frames.push(() => callback(0));
+        return frames.length;
+      });
+
+      try {
+        const pA = sceneLoader.updateView(vs(1));
+        await Promise.resolve();
+        const interrupted = structuredClone(
+          (sceneLoader as unknown as { viewState: ViewState }).viewState
+        );
+        const pB = sceneLoader.updateView(vs(2));
+        release(0);
+        await pA;
+        expect(frames).toHaveLength(1);
+        expect(sceneLoader.isAtViewState(interrupted)).toBe(false);
+
+        frames[0]();
+        release(1);
+        await pB;
+      } finally {
+        hidden.mockRestore();
+        vi.unstubAllGlobals();
+      }
+    });
+
     it('a request for the in-flight view state joins that pass: no abort, no re-run (#2943)', async () => {
       const { release, updateView, signals } = installPerCallGatedLoader();
       const pA = sceneLoader.updateView(vs(5));
