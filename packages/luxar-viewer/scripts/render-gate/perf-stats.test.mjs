@@ -97,6 +97,36 @@ describe('judgePerf better=higher', () => {
   });
 });
 
+describe('judgePerf with a floor above 1', () => {
+  // A noisy counter (126 duplicate decodes in one baseline arm, far fewer in
+  // the other) can span an A/A floor above 1. Judged linearly, a lower-is-
+  // better win then needs a negative ratio, so even a 95% drop reads `pass`.
+  // The band is symmetric in log space: win below 1 / (1 + floor).
+  const base = [126, 60, 130, 126, 118];
+  const cand = [6, 5, 7, 6, 6];
+
+  it.fails('still wins a drop far beyond the band', () => {
+    expect(judgePerf(base, cand, 1.287).verdict).toBe('win');
+    expect(judgePerf(cand, base, 1.287, 0, { better: 'higher' }).verdict).toBe('win');
+  });
+
+  it.fails('fails the mirror-image rise', () => {
+    expect(judgePerf(cand, base, 1.287).verdict).toBe('fail');
+    expect(judgePerf(base, cand, 1.287, 0, { better: 'higher' }).verdict).toBe('fail');
+  });
+
+  it('passes a ratio inside the log-symmetric band', () => {
+    // 0.5 is inside [1/2.287, 2.287].
+    expect(
+      judgePerf(
+        base,
+        base.map((v) => v * 0.5),
+        1.287
+      ).verdict
+    ).toBe('pass');
+  });
+});
+
 describe('judgeCounter', () => {
   const flat = [100, 100, 100, 100, 100];
 
