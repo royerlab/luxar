@@ -107,7 +107,7 @@ describe('GSplatsProgressiveLoader — scrubbing (B5)', () => {
     expect(loader.hasMoreLODs).toBe(false);
   });
 
-  it.fails('a progressive loader gets predictive read-ahead of its coarse rung (±1 slice)', async () => {
+  it('a progressive loader gets predictive read-ahead of its coarse rung (±1 slice)', async () => {
     const rungs = [subLoader(3, false), subLoader(3, false)];
     const loader = makeLoader(rungs);
     await loader.updateView(viewAt(4));

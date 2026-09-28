@@ -12,6 +12,8 @@
  *   refinement fetch priority; after first paint, initializes the rest
  * - Prefetches up to three unloaded LODs when the L0 cache has headroom
  * - Keeps playback/shadow prefetch at one rung to avoid abandoned-slice waste
+ * - A pinned (`ladderDepth`) pass fetches its rungs concurrently, coarsest first
+ * - After a hidden-dim slice step, reads ahead rung 0 of the neighbouring slices
  *
  * LODs are additive: LOD 0 contains the coarsest (highest-amplitude) splats,
  * and each subsequent LOD adds residual detail. The loader concatenates all
@@ -27,6 +29,7 @@ import type {
   GSplatsSpatialIndexLoader,
 } from './gsplats-spatial-index-loader';
 import type { UpdateSession } from '../../profiling/update-profiler';
+import { tagSignalPriority } from '../../utils/fetch-concurrency';
 import type {
   LoaderMetrics,
   MonitorEventListener,
@@ -294,6 +297,39 @@ export function concatenateGSplatsData(parts: LoadedGSplatsData[]): LoadedGSplat
   };
 }
 
+/** Hidden dimensions whose slice position differs between two views. */
+function scrubbedHiddenDims(previous: GSplatsViewState, next: GSplatsViewState): number[] {
+  const dims: number[] = [];
+  for (let d = 0; d < next.slicePosition.length; d++) {
+    if (next.displayDims.includes(d)) continue;
+    if (previous.slicePosition[d] !== next.slicePosition[d]) dims.push(d);
+  }
+  return dims;
+}
+
+/** The in-range slice values one step either side of dimension `d`'s current one. */
+function neighbourValues(viewState: GSplatsViewState, d: number): number[] {
+  const meta = viewState.dimensions?.[d];
+  const step = meta?.step;
+  if (step === undefined || !(step > 0)) return [];
+  const at = viewState.slicePosition[d];
+  const range = meta?.range;
+  return [at - step, at + step].filter((v) => !range || (v >= range[0] && v <= range[1]));
+}
+
+/** One step either way along each of `dims` (stepped dims only, inside their range). */
+function neighbourSlices(viewState: GSplatsViewState, dims: readonly number[]): GSplatsViewState[] {
+  const out: GSplatsViewState[] = [];
+  for (const d of dims) {
+    for (const value of neighbourValues(viewState, d)) {
+      const slicePosition = [...viewState.slicePosition];
+      slicePosition[d] = value;
+      out.push({ ...viewState, slicePosition });
+    }
+  }
+  return out;
+}
+
 /**
  * Progressive GSplats loader for multi-LOD datasets.
  *
@@ -348,6 +384,10 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   private readonly sliceCache: SliceCache | null;
   private _metadataWarmStarted = false;
   private _prefetchController: AbortController | null = null;
+  /** Speculative ±1-slice read-ahead of rung 0 (B5); aborted on a view change. */
+  private _readAheadController: AbortController | null = null;
+  /** Hidden dims whose slice moved into the current view (read-ahead axes). */
+  private _scrubDims: number[] = [];
   private _prefetchPlanning = false;
   private readonly _prefetchingLevels = new Set<number>();
   private _lastLoggedPrefetchDepth: number | null = null;
@@ -560,6 +600,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // `loadedLODs` outright (so `hasMoreLODs` reads false and the refinement
     // loop never re-streams), skipping the whole load+decode.
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
+      this._scrubDims = this.lastViewState ? scrubbedHiddenDims(this.lastViewState, viewState) : [];
       if (this.lastViewState) this.cancelLookaheadPrefetch();
       // DEPARTURE store: snapshot the outgoing view's partial ladder under
       // the OUTGOING key before discarding — scrub-back stays warm even when
@@ -753,6 +794,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // Fire-and-forget: prefetch later unloaded LODs to warm cache (free
     // navigation only — see prefetchNextLODs).
     this.prefetchNextLODs(viewState);
+    if (!isPrefetch) this.readAheadNeighbourSlices(viewState);
 
     // Snapshot into the SliceCache (upgrade-if-longer): full ladders always
     // (instant revisit restore); PREFIXES only while a playback budget is
@@ -994,7 +1036,34 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       .catch((error: unknown) => reportSpeculativeFailure('GSplat metadata warming failed', error));
   }
 
+  /**
+   * Predictive read-ahead for a scrub (B5): once a pass for a view reached by
+   * moving a hidden-dimension slice has run, warm the COARSE rung (rung 0) of
+   * the neighbouring slices, one step either way along each moved axis, so the
+   * next drag step's first commit is a cache hit. Speculative priority,
+   * aborted by the next view change. Free navigation only — playback has the
+   * t+1 SlicePrefetcher, which already warms whole ladders ahead — and once per
+   * view.
+   */
+  private readAheadNeighbourSlices(viewState: GSplatsViewState): void {
+    const dims = this._scrubDims;
+    this._scrubDims = [];
+    if (dims.length === 0 || this.nLods < 2 || this._disposed) return;
+    if (this._frameBudgetMs !== null || this._ladderDepth !== null) return;
+    const controller = (this._readAheadController ??= new AbortController());
+    tagSignalPriority(controller.signal, 'speculative');
+    for (const neighbour of neighbourSlices(viewState, dims)) {
+      void this.lodLoaders[0]
+        .prefetchChunks(neighbour, controller.signal)
+        .catch((error: unknown) =>
+          reportSpeculativeFailure('GSplat slice read-ahead failed', error)
+        );
+    }
+  }
+
   private cancelLookaheadPrefetch(): void {
+    this._readAheadController?.abort();
+    this._readAheadController = null;
     this._prefetchController?.abort();
     this._prefetchController = null;
     this._prefetchPlanning = false;
