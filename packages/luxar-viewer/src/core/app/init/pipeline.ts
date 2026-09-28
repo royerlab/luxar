@@ -299,6 +299,9 @@ export async function runInitPipeline(
       // A view PASS in flight or queued — not a refinement hold, which the
       // loader parks a resync through (see `LODGroupRegistryOwner`).
       isUpdateInProgress: () => owner.isLoadPassInProgress(),
+      // The view the drawn geometry was committed for: partition parts that miss
+      // its hidden-dim slice are hidden and kept out of refinement (B4).
+      getCommittedViewState: () => owner.committedViewState,
       // Resident-byte budget for loaded LOD geometry = the single,
       // adaptive GPU-geometry budget shared with the buffer pool (one VRAM
       // authority). Read dynamically so context-loss backoff applies live.

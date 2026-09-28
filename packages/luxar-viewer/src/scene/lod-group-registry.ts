@@ -73,7 +73,7 @@ import * as THREE from 'three';
 import type { BoundingBox } from './scene-manager/clipping/bounds-math';
 import { ViewContextProvider, type ViewContext } from './view-context';
 import { log, Modules } from '../utils/log';
-import { isEffectivelyVisible } from '../utils/object-visibility';
+import { isEffectivelyVisible, isPartitionFrustumCulled } from '../utils/object-visibility';
 import type { LODGroupSelectorMode } from '../types/lod-group';
 import type { LodSelectorName } from '../types/format-contract';
 import {
@@ -104,6 +104,13 @@ import {
 } from './lod-selector-math';
 import { enforceResidentByteBudget } from './lod-eviction';
 import { perfCounters } from '../profiling/perf-counters';
+import {
+  partBoundsIntersectSlice,
+  type PartitionSliceView,
+} from '../data/scene-loader/view-state/partition-slice-gate';
+
+/** Perf counter: deferred partition parts initialised on activation (B4). */
+const S_PARTS_ACTIVATED = perfCounters.slot('partition.partsActivated');
 
 // The selector math (box projection + hysteresis pick) lives in
 // `lod-selector-math.ts`; re-exported here so existing importers (the
@@ -624,6 +631,20 @@ export interface PartitionGroupChild {
   path: string;
   objects: THREE.Object3D[];
   positionBounds: { min: readonly number[]; max: readonly number[] };
+  /**
+   * Deferred part (B4): the part's subtree has NOT been loaded — `objects` is
+   * the empty slot it will load into. The registry runs this once, inside a
+   * loader pass ({@link LODGroupRegistry.activatePartitionParts}), when the
+   * part is in the padded frustum and in the pass's slice. Absent ⇒ loaded.
+   */
+  activate?: () => Promise<void>;
+  /**
+   * `true` ⇒ never slice-gate this part (its bounds are not in the space of the
+   * world slice, e.g. an `nd_transform` on its path). See `partition-slice-gate.ts`.
+   */
+  sliceExempt?: boolean;
+  /** Names of the dimensions the part extends across (`extend_to_all`): never gated. */
+  extendDims?: readonly string[];
 }
 
 export interface PartitionGroupEntry {
@@ -754,6 +775,28 @@ const PARTITION_BECAME_VISIBLE = 2;
 // ``evaluatePartitionEntry`` and merged into ``partitionResyncPending`` only
 // on a rising edge (rare), so the steady-state per-frame path allocates nothing.
 const RISING_PARTS_SCRATCH = new Set<string>();
+/** Scratch for {@link LODGroupRegistry.rankPartitionPartsForLoad} (load time, not per frame). */
+const LOAD_RANK_LOCAL_BOX: BoundingBox = { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } };
+const LOAD_RANK_OPTIONS: WorldBoxOptions = {
+  worldBoxScratch: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
+};
+
+/**
+ * Whether a resync naming `targets` covers the part keyed `partKey` of the
+ * partition at `wrapperPath`: the wrapper itself, the part, or an ancestor of
+ * the part (a nested partition's outer part). Node paths are `/`-separated.
+ */
+function isPartTargeted(
+  partKey: string,
+  wrapperPath: string,
+  targets: ReadonlySet<string>
+): boolean {
+  if (targets.has(wrapperPath) || targets.has(partKey)) return true;
+  for (const target of targets) {
+    if (partKey.startsWith(target.endsWith('/') ? target : `${target}/`)) return true;
+  }
+  return false;
+}
 
 /**
  * Record a part that just re-entered the frustum, by its registered node path
@@ -832,15 +875,64 @@ interface PartitionPartRef {
   index: number;
 }
 
+/**
+ * A deferred part's activation state (B4). `requested` is set when the
+ * per-frame gate asked the loader for a pass to activate it (a pending
+ * resync), `running` while that pass's activation is in flight; both clear
+ * when the pass declines it, so a part still wanted is asked for again.
+ */
+interface LazyPartState {
+  requested: boolean;
+  /** The in-flight activation, if one is running. */
+  running: Promise<void> | null;
+}
+
+/** Per-part per-frame state of a registered partition (parallel to its children). */
+interface PartitionChildCache {
+  source: PartitionGroupEntry;
+  localBoxScratch: BoundingBox;
+  worldBoxOptions: WorldBoxOptions;
+  footprintBox: THREE.Box3;
+  /**
+   * World transforms ``footprintBox`` was captured at — one flattened
+   * 16-element block per object of the part, in ``children[i].objects`` order.
+   */
+  footprintMatrixWorld: number[];
+  footprintDirty: boolean;
+  /** Last frustum test (`true` until the first evaluation). */
+  inFrustum: boolean;
+  /** Deferred part state (B4): see {@link PartitionGroupChild.activate}. */
+  lazy: LazyPartState | null;
+}
+
+/** Whether a part can draw anything for `view` (always, when there is no view). */
+function partitionChildInSlice(
+  child: PartitionGroupChild,
+  view: PartitionSliceView | undefined
+): boolean {
+  if (!view || child.sliceExempt === true) return true;
+  return partBoundsIntersectSlice(child.positionBounds, view, child.extendDims);
+}
+
+/**
+ * Stamp one part's objects. `partitionFrustumVisible` (what draws, and what
+ * refinement / capture read) is `inFrustum && inSlice`; `partitionInFrustum`
+ * is the frustum test alone, which a view pass reads with its OWN slice.
+ * Returns the ``PARTITION_*`` flags; a rising edge is a FRUSTUM re-entry only —
+ * a slice entry is committed by the pass that moved the slice, which swept it.
+ */
 function updatePartitionObjectVisibility(
   objects: readonly THREE.Object3D[],
-  visible: boolean
+  inFrustum: boolean,
+  inSlice: boolean
 ): number {
+  const visible = inFrustum && inSlice;
   // Any previously culled object makes the whole part a rising edge.
-  let wasVisible = true;
+  let wasInFrustum = true;
   let changed = false;
   for (const object of objects) {
-    if (object.userData.partitionFrustumVisible === false) wasVisible = false;
+    if (isPartitionFrustumCulled(object)) wasInFrustum = false;
+    object.userData.partitionInFrustum = inFrustum;
     object.userData.partitionFrustumVisible = visible;
     if (object.visible !== visible) {
       object.visible = visible;
@@ -849,7 +941,7 @@ function updatePartitionObjectVisibility(
   }
   return (
     (changed ? PARTITION_VISIBILITY_CHANGED : 0) |
-    (visible && !wasVisible ? PARTITION_BECAME_VISIBLE : 0)
+    (inFrustum && !wasInFrustum ? PARTITION_BECAME_VISIBLE : 0)
   );
 }
 
@@ -973,6 +1065,16 @@ export interface LODGroupRegistryDeps {
    */
   requestReprocess?: (paths: readonly string[]) => void;
   /**
+   * The view the drawn geometry was last COMMITTED for (the owning loader's
+   * last committed pass). Partition parts whose bounds miss its hidden-dim
+   * slice draw nothing, so they are hidden and kept out of refinement (B4) —
+   * against the COMMITTED view, not the requested one, so a part leaving the
+   * slice disappears in the same frame its successors are committed rather
+   * than when the pass that replaces it starts. Omitted / `undefined` ⇒ no
+   * slice gating (every part is in slice — the pre-B4 behaviour).
+   */
+  getCommittedViewState?: () => PartitionSliceView | undefined;
+  /**
    * Whether the owning loader has a view PASS in flight or queued. Rising edges
    * are held (and coalesced) while this is true so a resync never lands on top
    * of a pass. A refinement hold deliberately does NOT count: the loader parks
@@ -1053,23 +1155,7 @@ function bumpForFailedEntryReplacement(
 export class LODGroupRegistry {
   private entries: Map<string, LODGroupEntry> = new Map();
   private partitionEntries: Map<string, PartitionGroupEntry> = new Map();
-  private partitionCaches: Map<
-    string,
-    {
-      children: Array<{
-        source: PartitionGroupEntry;
-        localBoxScratch: BoundingBox;
-        worldBoxOptions: WorldBoxOptions;
-        footprintBox: THREE.Box3;
-        /**
-         * World transforms ``footprintBox`` was captured at — one flattened
-         * 16-element block per object of the part, in ``children[i].objects`` order.
-         */
-        footprintMatrixWorld: number[];
-        footprintDirty: boolean;
-      }>;
-    }
-  > = new Map();
+  private partitionCaches: Map<string, { children: PartitionChildCache[] }> = new Map();
   /**
    * Part path → every registered part carrying it (B9c): the index that makes
    * {@link invalidatePartitionFootprint} O(path depth) instead of a scan over
@@ -1257,6 +1343,8 @@ export class LODGroupRegistry {
         footprintBox: new THREE.Box3(),
         footprintMatrixWorld: new Array<number>(child.objects.length * 16).fill(0),
         footprintDirty: true,
+        inFrustum: true,
+        lazy: child.activate ? { requested: false, running: null } : null,
       })),
     });
     for (const child of entry.children) {
@@ -1343,6 +1431,190 @@ export class LODGroupRegistry {
     }
   }
 
+  /**
+   * Re-stamp every partition part against the committed view NOW (B4). The
+   * owning loader calls this right after a pass commits, so a part that left
+   * the slice is hidden, and one that entered it is shown and refinable, in
+   * the same frame as the commit — not one evaluation later (refinement,
+   * scheduled at the pass tail, reads these stamps before the next frame).
+   * The frustum half is the last evaluation's; nothing here is a rising edge.
+   */
+  applyCommittedSlice(): void {
+    const committed = this.deps.getCommittedViewState?.();
+    for (const entry of this.partitionEntries.values()) {
+      const cache = this.partitionCaches.get(entry.path);
+      if (!cache) continue;
+      for (let index = 0; index < entry.children.length; index++) {
+        const child = entry.children[index];
+        const inSlice = partitionChildInSlice(child, committed);
+        const flags = updatePartitionObjectVisibility(
+          child.objects,
+          cache.children[index].inFrustum,
+          inSlice
+        );
+        if ((flags & PARTITION_VISIBILITY_CHANGED) !== 0) this.drawnStateChanged = true;
+      }
+    }
+  }
+
+  /**
+   * Whether the loader at `path` can draw anything for `view` — `false` when
+   * any partition part enclosing it is provably empty on a discrete hidden
+   * dimension (see `partition-slice-gate.ts`). A view pass skips such loaders:
+   * the part is hidden from the commit on ({@link applyCommittedSlice}), so its
+   * previous geometry is never drawn for `view`. O(path depth).
+   */
+  isPathInPartitionSlice(path: string, view: PartitionSliceView): boolean {
+    if (this.partitionPartsByPath.size === 0) return true;
+    for (let end = path.length; end >= 0; end--) {
+      if (end !== path.length && path.charCodeAt(end) !== SLASH) continue;
+      const refs = this.partitionPartsByPath.get(path.slice(0, end));
+      if (refs && !refs.every((ref) => this.partRefInSlice(ref, view))) return false;
+    }
+    return true;
+  }
+
+  private partRefInSlice(ref: PartitionPartRef, view: PartitionSliceView): boolean {
+    const child = this.partitionEntries.get(ref.entryPath)?.children[ref.index];
+    return child === undefined || partitionChildInSlice(child, view);
+  }
+
+  /**
+   * Activate the deferred parts a loader pass for `view` needs (B4): every
+   * deferred part in the padded frustum (last evaluation), under an effectively
+   * visible wrapper and in `view`'s slice — restricted to `targets` (a targeted
+   * resync) when given. Resolves once every activation it started has settled;
+   * the pass awaits it with its sweep, so the parts commit before the pass
+   * does. A deferred part under `targets` that does not qualify has its request
+   * cleared, so the per-frame gate asks again while it is still wanted.
+   */
+  activatePartitionParts(view: PartitionSliceView, targets?: ReadonlySet<string>): Promise<void> {
+    const runs: Promise<void>[] = [];
+    for (const entry of this.partitionEntries.values()) {
+      const cache = this.partitionCaches.get(entry.path);
+      if (!cache) continue;
+      for (let index = 0; index < entry.children.length; index++) {
+        const run = this.activatePart(entry, index, cache.children[index], view, targets);
+        if (run) runs.push(run);
+      }
+    }
+    return runs.length === 0 ? Promise.resolve() : Promise.all(runs).then(() => undefined);
+  }
+
+  private activatePart(
+    entry: PartitionGroupEntry,
+    index: number,
+    childCache: PartitionChildCache,
+    view: PartitionSliceView,
+    targets: ReadonlySet<string> | undefined
+  ): Promise<void> | null {
+    const child = entry.children[index];
+    const lazy = childCache.lazy;
+    if (!lazy || !child.activate) return null;
+    const partKey = child.path || entry.path;
+    if (targets && !isPartTargeted(partKey, entry.path, targets)) return null;
+    if (!lazy.running) lazy.requested = false;
+    if (!this.partActivationWanted(entry, child, childCache, view)) return null;
+    // Already loading (activated ahead of this view): the caller still waits for it.
+    lazy.running ??= this.runActivation(entry.path, partKey, child, childCache, lazy);
+    return lazy.running;
+  }
+
+  /** In the padded frustum (last evaluation), in `view`'s slice, under a visible wrapper. */
+  private partActivationWanted(
+    entry: PartitionGroupEntry,
+    child: PartitionGroupChild,
+    childCache: PartitionChildCache,
+    view: PartitionSliceView
+  ): boolean {
+    return (
+      childCache.inFrustum &&
+      partitionChildInSlice(child, view) &&
+      isEffectivelyVisible(entry.groupObject)
+    );
+  }
+
+  private runActivation(
+    entryPath: string,
+    partKey: string,
+    child: PartitionGroupChild,
+    childCache: PartitionChildCache,
+    lazy: LazyPartState
+  ): Promise<void> {
+    const activate = child.activate as () => Promise<void>;
+    const startVersion = this.deps.getViewVersion?.();
+    const settle = (): void => {
+      // Loaded (or failed — its leaves record their own retryable failures):
+      // never activate the same slot twice.
+      child.activate = undefined;
+      if (childCache.lazy === lazy) childCache.lazy = null;
+      childCache.footprintDirty = true;
+      this.drawnStateChanged = true;
+      // It loaded for the view current when it STARTED; its loaders joined the
+      // sweep only now, so a pass for a newer view skipped them — resync it.
+      if (startVersion !== this.deps.getViewVersion?.()) {
+        this.notePartitionRisingEdge(entryPath, new Set([partKey]));
+        this.keepTicking();
+      }
+    };
+    return activate().then(
+      () => {
+        perfCounters.add(S_PARTS_ACTIVATED);
+        settle();
+      },
+      (error: unknown) => {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `partition part ${child.path} failed to activate: ${String(error)}`
+        );
+        settle();
+      }
+    );
+  }
+
+  /**
+   * Load-time ranking of a partition's parts against the CURRENT camera (B4):
+   * which intersect the padded partition frustum, and a nearest-first load
+   * order. `null` when there is no usable view, or when no part is in the
+   * frustum at all — a camera that sees none of a partition has not been framed
+   * on it yet (the scene frames the camera after the load), so gating on it
+   * would defer everything the opening view is about to show.
+   */
+  rankPartitionPartsForLoad(
+    groupObject: THREE.Object3D,
+    bounds: readonly { min: readonly number[]; max: readonly number[] }[]
+  ): { inFrustum: boolean[]; order: number[] } | null {
+    const displayDims = this.deps.getDisplayDims();
+    const view = this.view();
+    if (displayDims.length < 2 || view.viewportCss === null) return null;
+    PARTITION_FRUSTUM_MATRIX_SCRATCH.copy(view.projView).premultiply(PARTITION_FRUSTUM_SCALE);
+    PARTITION_FRUSTUM_SCRATCH.setFromProjectionMatrix(PARTITION_FRUSTUM_MATRIX_SCRATCH);
+    groupObject.updateWorldMatrix(true, false);
+    const inFrustum: boolean[] = [];
+    const distance: number[] = [];
+    for (const positionBounds of bounds) {
+      const box = computeEntryWorldBox(
+        { groupObject, children: [{ positionBounds }] },
+        displayDims,
+        LOAD_RANK_LOCAL_BOX,
+        this.matrixScratch,
+        LOAD_RANK_OPTIONS
+      );
+      if (!box) {
+        inFrustum.push(true);
+        distance.push(0);
+        continue;
+      }
+      WORLD_BOX3_SCRATCH.min.set(box.min.x, box.min.y, box.min.z);
+      WORLD_BOX3_SCRATCH.max.set(box.max.x, box.max.y, box.max.z);
+      inFrustum.push(PARTITION_FRUSTUM_SCRATCH.intersectsBox(WORLD_BOX3_SCRATCH));
+      distance.push(WORLD_BOX3_SCRATCH.distanceToPoint(view.cameraWorldPosition));
+    }
+    if (!inFrustum.some(Boolean)) return null;
+    const order = bounds.map((_, i) => i).sort((a, b) => distance[a] - distance[b] || a - b);
+    return { inFrustum, order };
+  }
+
   /** Drop an lod_group from the registry (called on scene teardown). */
   unregister(path: string): void {
     const partition = this.partitionEntries.get(path);
@@ -1397,6 +1669,7 @@ export class LODGroupRegistry {
       for (const object of child.objects) {
         object.visible = true;
         delete object.userData.partitionFrustumVisible;
+        delete object.userData.partitionInFrustum;
       }
     }
   }
@@ -1978,11 +2251,13 @@ export class LODGroupRegistry {
   }
 
   /**
-   * Frustum-gate one partition's parts. Returns the ``PARTITION_*`` bit flags;
-   * parts that re-entered this frame are added to ``risingParts`` by node path
-   * (``child.path``), or as the WRAPPER path when a part has none so the caller
-   * resyncs the whole partition rather than missing it — unless the part is
-   * already settled for the current view ({@link partitionPartSettled}).
+   * Frustum- and slice-gate one partition's parts. Returns the ``PARTITION_*``
+   * bit flags; parts that re-entered the frustum this frame are added to
+   * ``risingParts`` by node path (``child.path``), or as the WRAPPER path when a
+   * part has none so the caller resyncs the whole partition rather than missing
+   * it — unless the part is already settled for the current view
+   * ({@link partitionPartSettled}). A deferred part that is in the frustum and
+   * the committed slice is added too: the resync pass is what activates it.
    */
   private evaluatePartitionEntry(
     entry: PartitionGroupEntry,
@@ -1992,45 +2267,76 @@ export class LODGroupRegistry {
   ): number {
     const cache = this.partitionCaches.get(entry.path);
     if (!cache) return 0;
+    const committed = this.deps.getCommittedViewState?.();
     let result = 0;
     for (let index = 0; index < entry.children.length; index++) {
       const child = entry.children[index];
       const childCache = cache.children[index];
-      const worldBox = computeEntryWorldBox(
-        childCache.source,
-        displayDims,
-        childCache.localBoxScratch,
-        this.matrixScratch,
-        childCache.worldBoxOptions
-      );
-      let visible = true;
-      if (worldBox) {
-        WORLD_BOX3_SCRATCH.min.set(worldBox.min.x, worldBox.min.y, worldBox.min.z);
-        WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
-        for (const object of child.objects) object.updateWorldMatrix(false, false);
-        if (
-          childCache.footprintDirty ||
-          partitionFootprintMatricesDiffer(child.objects, childCache.footprintMatrixWorld)
-        ) {
-          capturePartitionFootprint(
-            child.objects,
-            childCache.footprintBox,
-            childCache.footprintMatrixWorld
-          );
-          childCache.footprintDirty = false;
-        }
-        if (!childCache.footprintBox.isEmpty()) {
-          WORLD_BOX3_SCRATCH.union(childCache.footprintBox);
-        }
-        visible = frustum.intersectsBox(WORLD_BOX3_SCRATCH);
-      }
-      const flags = updatePartitionObjectVisibility(child.objects, visible);
+      childCache.inFrustum = this.partitionPartInFrustum(child, childCache, displayDims, frustum);
+      const inSlice = partitionChildInSlice(child, committed);
+      const flags = updatePartitionObjectVisibility(child.objects, childCache.inFrustum, inSlice);
       result |= flags;
-      if ((flags & PARTITION_BECAME_VISIBLE) !== 0 && !this.partitionPartSettled(child)) {
+      if (childCache.lazy) {
+        const wanted = childCache.inFrustum && inSlice;
+        this.requestLazyActivation(risingParts, entry.path, child, childCache.lazy, wanted);
+      } else if ((flags & PARTITION_BECAME_VISIBLE) !== 0 && !this.partitionPartSettled(child)) {
         noteRisingPart(risingParts, child.path, entry.path);
       }
     }
     return result;
+  }
+
+  /** Frustum test of one part: its stored bounds united with its rendered footprint. */
+  private partitionPartInFrustum(
+    child: PartitionGroupChild,
+    childCache: PartitionChildCache,
+    displayDims: readonly number[],
+    frustum: THREE.Frustum
+  ): boolean {
+    const worldBox = computeEntryWorldBox(
+      childCache.source,
+      displayDims,
+      childCache.localBoxScratch,
+      this.matrixScratch,
+      childCache.worldBoxOptions
+    );
+    if (!worldBox) return true;
+    WORLD_BOX3_SCRATCH.min.set(worldBox.min.x, worldBox.min.y, worldBox.min.z);
+    WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
+    for (const object of child.objects) object.updateWorldMatrix(false, false);
+    if (
+      childCache.footprintDirty ||
+      partitionFootprintMatricesDiffer(child.objects, childCache.footprintMatrixWorld)
+    ) {
+      capturePartitionFootprint(
+        child.objects,
+        childCache.footprintBox,
+        childCache.footprintMatrixWorld
+      );
+      childCache.footprintDirty = false;
+    }
+    if (!childCache.footprintBox.isEmpty()) {
+      WORLD_BOX3_SCRATCH.union(childCache.footprintBox);
+    }
+    return frustum.intersectsBox(WORLD_BOX3_SCRATCH);
+  }
+
+  /**
+   * Ask for a pass that activates a deferred part — once, while it is `wanted`
+   * (in the frustum and the committed slice) and no activation is requested or
+   * running. The request rides the rising-edge resync: the targeted pass it
+   * triggers calls {@link activatePartitionParts} for the part.
+   */
+  private requestLazyActivation(
+    risingParts: Set<string>,
+    entryPath: string,
+    child: PartitionGroupChild,
+    lazy: LazyPartState,
+    wanted: boolean
+  ): void {
+    if (!wanted || lazy.requested || lazy.running) return;
+    lazy.requested = true;
+    noteRisingPart(risingParts, child.path, entryPath);
   }
 
   /** Returns ``true`` if this entry's displayed child changed. */

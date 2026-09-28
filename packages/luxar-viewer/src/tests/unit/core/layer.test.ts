@@ -389,6 +389,7 @@ describe('LuxarLayer', () => {
       expect(Object.keys(deps).sort()).toEqual(
         [
           'getCamera',
+          'getCommittedViewState',
           'getCrossFadeEnabled',
           'getDisplayDims',
           'getEnergyCompEnabled',

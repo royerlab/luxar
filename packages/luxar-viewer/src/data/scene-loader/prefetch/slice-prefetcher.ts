@@ -90,7 +90,7 @@ import { deriveNodeViewState } from '../view-state/derive-node-view-state';
 import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-dims';
 import { isAbortError } from '../../loaders';
 import { tagSignalOrigin } from '../../../cache/decompressed-chunk-cache/decode-origin';
-import { isObjectLoadEligible } from '../loaders/run-loader-updates';
+import { isObjectViewEligible } from '../loaders/run-loader-updates';
 import type { SliceCache } from '../../../cache/slice-cache';
 import { beginShadowStore, sliceKeyFor } from '../../loaders/progressive/slice-cache-helper';
 import type * as THREE from 'three';
@@ -309,7 +309,7 @@ export class SlicePrefetcher {
   ): void {
     for (const path of loaders.keys()) {
       const object = resolveObject(path);
-      if (!isObjectLoadEligible(object)) {
+      if (!isObjectViewEligible(object)) {
         this.dropShadow(path);
         continue;
       }
@@ -376,7 +376,7 @@ export class SlicePrefetcher {
     return this.getShadow(path, kind, node)
       .then((shadow) => {
         if (signal.aborted || this.disposed) return;
-        if (!isObjectLoadEligible(object)) {
+        if (!isObjectViewEligible(object)) {
           this.dropShadow(path);
           return;
         }

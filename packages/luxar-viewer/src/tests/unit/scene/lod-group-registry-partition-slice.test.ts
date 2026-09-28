@@ -8,7 +8,7 @@
  * `getCommittedViewState` dependency (the scene loader's last committed view).
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 
 import { LODGroupRegistry, type LODGroupRegistryDeps } from '../../../scene/lod-group-registry';
@@ -71,7 +71,7 @@ function registerTimeParts(reg: LODGroupRegistry) {
 }
 
 describe('LODGroupRegistry — partition slice gating (B4)', () => {
-  it.fails('an out-of-slice part is not frustum-visible', () => {
+  it('an out-of-slice part is not frustum-visible', () => {
     const reg = makeRegistry(() => viewAt(0));
     const { now, later } = registerTimeParts(reg);
 
@@ -87,7 +87,7 @@ describe('LODGroupRegistry — partition slice gating (B4)', () => {
     expect(isObjectLoadEligible(later)).toBe(false);
   });
 
-  it.fails('a part entering the committed slice becomes visible again', () => {
+  it('a part entering the committed slice becomes visible again', () => {
     let t = 0;
     const reg = makeRegistry(() => viewAt(t));
     const { now, later } = registerTimeParts(reg);
@@ -99,6 +99,98 @@ describe('LODGroupRegistry — partition slice gating (B4)', () => {
     expect(now.visible).toBe(false);
     expect(later.visible).toBe(true);
     expect(later.userData.partitionFrustumVisible).toBe(true);
+  });
+
+  it('a pass skips loaders under a part outside ITS slice, whatever is committed', () => {
+    const reg = makeRegistry(() => viewAt(0));
+    registerTimeParts(reg);
+    expect(reg.isPathInPartitionSlice('/partition/part_1/leaf', viewAt(0))).toBe(false);
+    expect(reg.isPathInPartitionSlice('/partition/part_1/leaf', viewAt(3))).toBe(true);
+    expect(reg.isPathInPartitionSlice('/partition/part_0', viewAt(0))).toBe(true);
+    expect(reg.isPathInPartitionSlice('/elsewhere', viewAt(0))).toBe(true);
+  });
+
+  it('applyCommittedSlice re-gates parts at once, without waiting for a frame', () => {
+    let t = 0;
+    const reg = makeRegistry(() => viewAt(t));
+    const { now, later } = registerTimeParts(reg);
+    reg.evaluatePerFrame();
+    t = 3;
+    reg.applyCommittedSlice();
+    expect(now.visible).toBe(false);
+    expect(later.visible).toBe(true);
+    expect(isObjectLoadEligible(later)).toBe(true);
+  });
+
+  it('activates a deferred part once, for a pass whose slice holds it', async () => {
+    let committed = 0;
+    const reg = makeRegistry(() => viewAt(committed));
+    const groupObject = new THREE.Group();
+    const slot = new THREE.Group();
+    groupObject.add(slot);
+    let activations = 0;
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [slot],
+          positionBounds: { min: [-0.5, -0.5, -0.5, 2], max: [0.5, 0.5, 0.5, 2] },
+          activate: async () => {
+            activations++;
+            slot.add(new THREE.Group());
+          },
+        },
+      ],
+    });
+    reg.evaluatePerFrame();
+
+    await reg.activatePartitionParts(viewAt(0));
+    expect(activations).toBe(0);
+
+    await reg.activatePartitionParts(viewAt(2));
+    await reg.activatePartitionParts(viewAt(2));
+    expect(activations).toBe(1);
+    // Hidden until the pass that needed it commits its view.
+    expect(slot.visible).toBe(false);
+    committed = 2;
+    reg.applyCommittedSlice();
+    expect(slot.visible).toBe(true);
+  });
+
+  it('asks for a resync pass for a deferred part in the frustum and committed slice', () => {
+    const requestReprocess = vi.fn();
+    const camera = new THREE.Camera();
+    const deps: LODGroupRegistryDeps & { getCommittedViewState: () => ViewState } = {
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getCommittedViewState: () => viewAt(0),
+      requestReprocess,
+      isUpdateInProgress: () => false,
+    };
+    const reg = new LODGroupRegistry(deps);
+    const groupObject = new THREE.Group();
+    const slot = new THREE.Group();
+    groupObject.add(slot);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [slot],
+          positionBounds: { min: [-0.5, -0.5, -0.5, 0], max: [0.5, 0.5, 0.5, 0] },
+          activate: () => Promise.resolve(),
+        },
+      ],
+    });
+
+    reg.evaluatePerFrame();
+    reg.evaluatePerFrame();
+    expect(requestReprocess).toHaveBeenCalledOnce();
+    expect(requestReprocess).toHaveBeenCalledWith(['/partition/part_0']);
   });
 
   it('keeps a part whose bounds lie within half a step of the slice (renderer membership)', () => {

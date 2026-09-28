@@ -933,7 +933,7 @@ describe('loadPartitionGroupNode — gated loading (B4)', () => {
     });
   }
 
-  it.fails('out-of-slice parts do not initialise their higher rungs', async () => {
+  it('out-of-slice parts do not initialise their higher rungs', async () => {
     attachStubChildren();
     const registerPartition = vi.fn();
     const children = [timePart(0, 0), timePart(1, 1), timePart(2, 2)];

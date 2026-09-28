@@ -71,6 +71,20 @@ export interface NodeBuildCtx {
    */
   viewState: ViewState;
   /**
+   * The orchestrator's LIVE view state (not the snapshot above). The partition
+   * loader gates its parts on the current hidden-dim slice with it (B4); a
+   * nested partition can be loaded long after this ctx was built (a deferred
+   * part's activation), when `viewState` is stale. Optional: absent ⇒ the
+   * snapshot is used.
+   */
+  getSliceView?(): ViewState;
+  /**
+   * Whether `path`'s world `nd_transform` chain (root → node) is non-empty. A
+   * transformed part's bounds do not live in the space of the world slice, so
+   * the partition loader never slice-gates it. Optional: absent ⇒ `false`.
+   */
+  pathHasNdTransform?(path: string): boolean;
+  /**
    * The orchestrator's CURRENT view-update version (live, not the snapshot). A
    * deferred / registry-driven reload captures this at derive-time and stamps
    * the committed geometry with it (see the commit callbacks below) so the LOD

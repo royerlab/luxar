@@ -115,6 +115,12 @@ export interface LODGroupRegistryOwner {
    * streaming (minutes on a slow link).
    */
   isLoadPassInProgress(): boolean;
+  /**
+   * The view the owning loader last COMMITTED geometry for (B4): partition
+   * parts that miss its hidden-dim slice are hidden and kept out of refinement.
+   * Optional so a narrow owner (a test double) may omit it ⇒ no slice gating.
+   */
+  readonly committedViewState?: ViewState;
 }
 
 /** Per-call directives for {@link SceneLoader.updateView}. */
@@ -204,7 +210,7 @@ import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader
 import { SlicePrefetcher } from './scene-loader/prefetch/slice-prefetcher';
 import {
   resolveLoadEligibleLoaders,
-  isLoaderPathEligible,
+  isObjectViewEligible,
   isUnderAny,
   runLoaderUpdates as runLoaderUpdatesHelper,
 } from './scene-loader/loaders/run-loader-updates';
@@ -228,6 +234,7 @@ import {
   noteRefinementStarted,
 } from '../profiling/load-timeline';
 import { viewStatesEqual } from './loaders/progressive/view-state-equal';
+import { computeWorldNdTransform } from './transforms/nd-transform';
 import {
   RefinementResidencyBudget,
   RefinementResidencyReporter,
@@ -325,6 +332,8 @@ export class SceneLoader {
   }
 
   private viewState: ViewState;
+  /** See {@link committedViewState}; `null` until a load or pass commits. */
+  private _committedViewState: ViewState | null = null;
   private config: LoaderConfig;
   private rootGroup: THREE.Group | null = null;
   /**
@@ -616,7 +625,12 @@ export class SceneLoader {
     const incoming = { ...viewState };
     delete incoming.frameBudgetMs;
     delete incoming.ladderDepth;
-    this._slicePrefetcher.prefetch({ ...this.viewState, ...incoming }, budgetMs, ladderDepth);
+    const predicted = { ...this.viewState, ...incoming };
+    // Deferred partition parts the next slice needs (B4) are activated ahead of
+    // it, so its foreground pass finds them registered (a shadow can only warm
+    // a registered node). Fire-and-forget: it never rejects.
+    void this.lodGroupRegistry?.activatePartitionParts(predicted);
+    this._slicePrefetcher.prefetch(predicted, budgetMs, ladderDepth);
   }
 
   /**
@@ -794,6 +808,14 @@ export class SceneLoader {
    */
   get currentViewVersion(): number {
     return this._updateVersion;
+  }
+
+  /**
+   * The view the drawn geometry was last committed for (B4) — set when a load
+   * starts and by every committed pass. Before the first commit, the live view.
+   */
+  get committedViewState(): ViewState {
+    return this._committedViewState ?? this.viewState;
   }
 
   /**
@@ -1134,7 +1156,11 @@ export class SceneLoader {
       viewStateQueue: this.viewStateQueue,
       registry: this.registry,
       onArchiveFault,
-      shouldUpdatePath: (path) => isLoaderPathEligible(this.rootGroup, path),
+      // A pass runs for its OWN view: frustum + layer gate only, then its slice
+      // (B4) — a part outside it is hidden from this pass's commit on.
+      shouldUpdatePath: (path) =>
+        isObjectViewEligible(findObjectByName(this.rootGroup, path)) &&
+        this.lodGroupRegistry?.isPathInPartitionSlice(path, this.viewState) !== false,
       isResyncTarget: resyncPaths ? (path) => isUnderAny(path, resyncPaths) : undefined,
     });
   }
@@ -1504,12 +1530,20 @@ export class SceneLoader {
         resyncPaths
       );
 
+      // Deferred partition parts this view needs (B4) load alongside the sweep:
+      // their loaders register once loaded, so this pass does not sweep them,
+      // and they are hidden until this pass commits (`applyCommittedSlice`).
+      const activationTask =
+        this.lodGroupRegistry?.activatePartitionParts(this.viewState, resyncPaths) ??
+        Promise.resolve();
+
       // Wait for ALL loaders to complete (load + process)
       const [pointsStaged, linesStaged, gsplatsStaged, meshStaged] = await Promise.all([
         pointsTask,
         linesTask,
         gsplatsTask,
         meshTask,
+        activationTask,
       ]);
 
       if (sweepArchiveFault) {
@@ -1560,6 +1594,11 @@ export class SceneLoader {
       // mid-attribute) — skip the monitor refresh and the failed-loader
       // warning; the winning update runs both with correct state.
       if (!updateController.signal.aborted && !sweepArchiveFault) {
+        // This view is now what is drawn: re-gate partition parts on its slice
+        // before anything renders or refinement reads the stamps (B4).
+        this._committedViewState = this.viewState;
+        this.lodGroupRegistry?.applyCommittedSlice();
+
         // Update monitor with total visible segments across all lines nodes
         this.updateVisibleCountsInMonitor();
 
@@ -2108,12 +2147,18 @@ export class SceneLoader {
     // this dataset can detect (via identity + aborted flag) that its
     // dataset is no longer live and skip committing into a stale scene.
     const ctrl = this._datasetAbortController;
+    // The eager load commits for the view it is built under (B4).
+    this._committedViewState ??= this.viewState;
     return {
       registry: this.registry,
       lineWorkingSetGate: this.lineWorkingSetGate,
       lodGroupRegistry: this.lodGroupRegistry ?? undefined,
       nodeFactory: this.nodeFactory,
       viewState: this.viewState,
+      getSliceView: () => this.viewState,
+      pathHasNdTransform: (path) =>
+        this._sceneGraph !== null &&
+        Object.keys(computeWorldNdTransform(this._sceneGraph, path)).length > 0,
       factoryDeps: this.factoryDeps(),
       isDatasetLive: () => this._datasetAbortController === ctrl && ctrl?.signal.aborted !== true,
       releaseLazyGSplats: (path) => {
@@ -2719,6 +2764,7 @@ export class SceneLoader {
     // new registry instance per loader, but clearing here protects
     // against future refactors that share registries across scenes.
     this.lodGroupRegistry?.clear();
+    this._committedViewState = null;
 
     // Strip every mesh's `committedData` no-op stamp. The stamp holds the
     // loader-returned source arrays (for gsplats, the full memoized LOD

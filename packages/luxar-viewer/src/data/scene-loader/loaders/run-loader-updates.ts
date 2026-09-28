@@ -17,6 +17,7 @@ import { isAbortError } from '../../loaders/abort-error';
 import { archiveFaultFrom, type ArchiveFaultError } from '../../../cache/chunk-source';
 import { tryRollbackToPassStart } from '../../loaders/progressive/pass-rollback';
 import { perfCounters } from '../../../profiling/perf-counters';
+import { isPartitionFrustumCulled } from '../../../utils/object-visibility';
 import type * as THREE from 'three';
 
 /** Perf counter: loaders visited by update sweeps (summed over sweeps). */
@@ -42,6 +43,22 @@ export function isObjectLoadEligible(object: THREE.Object3D | null | undefined):
 /** Resolve a loader path and test its foreground/background load eligibility. */
 export function isLoaderPathEligible(root: THREE.Object3D | null, path: string): boolean {
   return isObjectLoadEligible(findObjectByName(root, path));
+}
+
+/**
+ * Eligibility for work that runs for a view OTHER than the committed one — a
+ * view pass (its own slice is tested separately, see
+ * `LODGroupRegistry.isPathInPartitionSlice`) and the t+1 slice prefetch. Only
+ * the FRUSTUM half of a partition part's gate applies (B4): a part hidden
+ * because it misses the COMMITTED slice may be exactly what the new view shows.
+ */
+export function isObjectViewEligible(object: THREE.Object3D | null | undefined): boolean {
+  while (object) {
+    if (isPartitionFrustumCulled(object)) return false;
+    if (object.userData.layerVisible === false) return false;
+    object = object.parent;
+  }
+  return true;
 }
 
 /**

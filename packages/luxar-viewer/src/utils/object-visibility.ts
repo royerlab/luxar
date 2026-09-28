@@ -53,3 +53,18 @@ export function isEffectivelyVisible(node: VisibilityNode | null | undefined): b
   }
   return true;
 }
+
+/**
+ * Whether a `kind=partition` part object was frustum-culled at the LOD
+ * registry's last evaluation — the FRUSTUM half only (B4). The registry stamps
+ * `partitionInFrustum` (frustum alone) next to `partitionFrustumVisible`
+ * (frustum AND the committed hidden-dim slice, i.e. what draws). An object
+ * stamped only with the combined flag (before its first evaluation, or by an
+ * older caller) counts as culled when that flag is `false`.
+ */
+export function isPartitionFrustumCulled(node: { userData: Record<string, unknown> }): boolean {
+  const inFrustum = node.userData.partitionInFrustum as boolean | undefined;
+  return inFrustum === undefined
+    ? node.userData.partitionFrustumVisible === false
+    : inFrustum === false;
+}

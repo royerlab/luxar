@@ -142,6 +142,14 @@ export interface LoadChildrenOptions {
   configureSlot?: (slot: THREE.Group, child: SceneNode, index: number) => void;
   /** Configure each loaded object immediately before it replaces the slot. */
   configureLoadedChild?: (object: THREE.Object3D, child: SceneNode, index: number) => void;
+  /**
+   * Children (by index) NOT to load now. Each keeps its slot, attached in
+   * authored order and empty, for the caller to load into later — it is never
+   * flattened and never removed.
+   */
+  deferred?: ReadonlySet<number>;
+  /** Start order (indices into the children); default authored order. */
+  order?: readonly number[];
 }
 
 function replaceSlot(
@@ -168,7 +176,7 @@ export async function loadChildrenConcurrently(
   ctx: NodeBuildCtx,
   loadChild: LoadSceneChildren,
   options: LoadChildrenOptions = {}
-): Promise<void> {
+): Promise<THREE.Group[]> {
   // Slots reserve authored sibling order before any async work starts. They
   // stay attached while loading so commit paths that search from the scene
   // root can still find placeholders created under them. Each slot is
@@ -181,13 +189,17 @@ export async function loadChildrenConcurrently(
     return slot;
   });
 
+  const deferred = options.deferred;
+  const queue = (options.order ?? sceneChildren.map((_, index) => index)).filter(
+    (index) => !deferred?.has(index)
+  );
   let nextIndex = 0;
   let failed = false;
   let firstError: unknown;
   const worker = async (): Promise<void> => {
     while (!failed) {
-      const index = nextIndex++;
-      if (index >= sceneChildren.length) return;
+      if (nextIndex >= queue.length) return;
+      const index = queue[nextIndex++];
       const child = sceneChildren[index];
       const slot = slots[index];
       const releaseWorkingSet = await acquireEagerWorkingSet(child, ctx);
@@ -210,14 +222,16 @@ export async function loadChildrenConcurrently(
     }
   };
 
-  const workerCount = Math.min(EAGER_CHILD_LOAD_CONCURRENCY, sceneChildren.length);
+  const workerCount = Math.min(EAGER_CHILD_LOAD_CONCURRENCY, queue.length);
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
   // An unexpected error stops new work but lets already-started siblings
   // settle. Remove slots for children that were never started before
   // rethrowing, so a failed load cannot leave synthetic groups behind.
-  for (const slot of slots) {
-    if (slot.parent === parentThree) parentThree.remove(slot);
-  }
+  // Deferred slots are the caller's (it loads into them later).
+  slots.forEach((slot, index) => {
+    if (slot.parent === parentThree && !deferred?.has(index)) parentThree.remove(slot);
+  });
   if (failed) throw firstError;
+  return slots;
 }

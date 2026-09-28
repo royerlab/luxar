@@ -559,8 +559,8 @@ so a cold part preloads just before it enters). A part outside it is
 hidden and stamped `userData.partitionFrustumVisible = false` — on
 EVERY object the part emitted, since one part node may produce several,
 and a part counts as re-entering when any of them was culled; the
-scene loader's sweep, refinement, and predictive slice prefetch
-(`isLoaderPathEligible`) skip its
+scene loader's sweep and predictive slice prefetch (`isObjectViewEligible`)
+and its refinement (`isObjectLoadEligible`) skip its
 loaders, dropping their predictive-prefetch baseline. Because a culled
 part misses slice updates, its RE-ENTRY requests a resync of exactly
 that part's loaders — `deps.requestReprocess(partPaths)` with the
@@ -590,6 +590,28 @@ currently selected, and those levels must remain eligible to refine.
 Only the Layers panel's `LayerApplyEngine.applyVisibility` writes the stamp;
 calling `LuxarLayer.setVisible` directly changes only `object.visible` and does
 not cull background loading.
+
+**Partition slice gating + gated loading (B4):** a part whose stored bounds
+miss the hidden-dim slice on a DISCRETE hidden dimension draws nothing (every
+renderer gates such a dimension by membership on the element's own coordinate;
+the margin is `max(0.5, 0.75 × step)`, see
+`data/scene-loader/view-state/partition-slice-gate.ts`), so it is treated like
+a frustum-culled part. Two stamps: `partitionFrustumVisible` (what draws; read
+by refinement and capture quiescence) is frustum AND the COMMITTED slice
+(`deps.getCommittedViewState`), and `partitionInFrustum` is the frustum alone,
+which a view pass combines with its OWN slice (`isPathInPartitionSlice`) —
+parts outside it are not swept, and the pass's commit hides them
+(`applyCommittedSlice`) in the same frame its successors appear. A part under
+an `nd_transform`, or a dimension a part extends across, is never gated. At
+load, `load-partition-group-node` loads only the ACTIVE parts (in the padded
+frustum of the current camera — unless it sees none of the partition, i.e. has
+not been framed on it yet — and in the slice), nearest first; the rest keep an
+empty slot and register as deferred (`PartitionGroupChild.activate`). A
+deferred part is activated inside a loader pass (`activatePartitionParts`): a
+view change activates every deferred part its slice needs, awaited with the
+sweep and hidden until the commit; a deferred part that enters the frustum and
+the committed slice asks for a targeted resync, which activates it; the t+1
+slice prefetch activates the next slice's parts ahead of it.
 
 `hasVisiblePendingPartitionResync()` publishes the held set to the wide
 load-activity and perf-settle predicates: a pending edge blocks settling only
