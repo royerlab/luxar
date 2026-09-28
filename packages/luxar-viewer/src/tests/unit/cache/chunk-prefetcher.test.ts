@@ -53,6 +53,25 @@ describe('ChunkPrefetcher - Unit Tests', () => {
     vi.restoreAllMocks();
   });
 
+  describe('Boundary handling', () => {
+    async function prefetchedFor(key: string): Promise<string[]> {
+      prefetcher.onAccess(key);
+      await waitFor(() => {
+        const stats = prefetcher.getStats();
+        return stats.inFlight === 0 && stats.queued === 0;
+      });
+      return mockStore.getResult.mock.calls.map((call: any[]) => call[0]);
+    }
+
+    it('skips the registered upper bound and single-chunk dimensions', async () => {
+      expect(await prefetchedFor('test/9.0')).toEqual(['test/8.0']);
+    });
+
+    it('does not prefetch adjacent chunks without registered bounds', async () => {
+      expect(await prefetchedFor('unregistered/array/3.3')).toEqual([]);
+    });
+  });
+
   describe('Chunk Index Parsing', () => {
     it('should parse zarr v2 chunk keys (dot notation)', async () => {
       // Register bounds so prefetcher knows valid chunk range (large enough for all neighbors)

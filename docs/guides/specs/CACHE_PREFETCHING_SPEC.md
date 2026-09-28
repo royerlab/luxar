@@ -1,7 +1,7 @@
 # Cache Prefetching Specification
 
-**Version**: 1.2.0
-**Last Updated**: 2026-07-13
+**Version**: 1.2.1
+**Last Updated**: 2026-09-28
 **Status**: Implemented
 
 > **Current architecture (2026-07).** The store class is
@@ -123,9 +123,24 @@ Adjacent: [1, 3, 1], [3, 3, 1],  // ±1 in dim 0
 
 ### Boundary Handling
 
-- Negative indices are skipped (no chunk at [-1, 0, 0])
-- Upper bounds are NOT checked (let HTTP 404 handle non-existent chunks)
-- This avoids needing to know array shape at prefetch time
+Adjacency prefetch requires a loader to register the array's chunk grid with
+`ChunkPrefetcher.registerArrayBounds(arrayPath, shape, chunks)`. Invalid or
+missing shape/chunk metadata skips registration without failing the load.
+
+- An array without registered bounds gets no adjacency prefetch.
+- Negative indices are skipped (no chunk at [-1, 0, 0]).
+- Indices at or beyond `ceil(shape / chunks)` in each dimension are skipped.
+- Dimensions containing only one chunk have no adjacent chunks to prefetch.
+
+The points, lines, and gsplats spatial-index loaders register element arrays
+through `registerPointsArrayBounds`, `registerLinesArrayBounds`, and
+`registerGSplatsArrayBounds` in their respective `chunk-index-loader.ts` files.
+Points register `positions`, `colors`, `radii`, `sharpnesses`, and `scalars`;
+lines register `vertices`, `segments`, `widths`, `colors`, `sharpnesses`, and
+`scalars`; gsplats register `centers`, `amplitudes`, `colors`, `label_ids`, and
+the Cholesky arrays. Optional arrays are registered only when present. Mesh
+arrays, `chunk_bounds`, and colormap LUTs are not registered and therefore get
+no adjacency prefetch. The loader call sites are the authoritative list.
 
 ### Chunk Index Parsing
 
