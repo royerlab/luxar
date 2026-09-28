@@ -1043,6 +1043,118 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('updateView — partition parts entering the slice (B4)', () => {
+    // A timelapse partition: one part per timepoint. Stepping the hidden dim
+    // brings a deferred part into the slice; its activation must ride the pass
+    // that moved the slice — swept by it, with its directives, and committed
+    // with it — not load on its own and then ask for a second pass.
+    const DIMS = [
+      { name: 'x', unit: 'um', scale: 1 },
+      { name: 'y', unit: 'um', scale: 1 },
+      { name: 'z', unit: 'um', scale: 1 },
+      { name: 'time', unit: 'frame', scale: 1, discrete: true, step: 1 },
+    ];
+    type Internals = {
+      _passCount: number;
+      loaders: Map<string, unknown>;
+      lodGroupRegistry: LODGroupRegistry | null;
+    };
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    function setup(activate: (register: () => void) => Promise<void>) {
+      const internals = sceneLoader as unknown as Internals;
+      const camera = new THREE.Camera();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        getCommittedViewState: () => sceneLoader.committedViewState,
+        getViewVersion: () => sceneLoader.currentViewVersion,
+        isUpdateInProgress: () => sceneLoader.isLoadPassInProgress(),
+        requestReprocess: (paths) => sceneLoader.requestReprocess(paths),
+      });
+      internals.lodGroupRegistry = reg;
+      const makeLoader = () => ({ updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() });
+      const now = makeLoader();
+      const next = makeLoader();
+      internals.loaders.set('/tiled/part_0', now);
+      const groupObject = new THREE.Group();
+      const slot0 = new THREE.Group();
+      const slot1 = new THREE.Group();
+      groupObject.add(slot0, slot1);
+      reg.registerPartition({
+        path: '/tiled',
+        groupObject,
+        children: [
+          {
+            path: '/tiled/part_0',
+            objects: [slot0],
+            positionBounds: { min: [-0.5, -0.5, -0.5, 3], max: [0.5, 0.5, 0.5, 3] },
+          },
+          {
+            path: '/tiled/part_1',
+            objects: [slot1],
+            positionBounds: { min: [-0.5, -0.5, -0.5, 4], max: [0.5, 0.5, 0.5, 4] },
+            activate: () => activate(() => internals.loaders.set('/tiled/part_1', next)),
+          },
+        ],
+      });
+      return { internals, reg, now, next };
+    }
+
+    beforeEach(async () => {
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      await sceneLoader.updateView({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 3],
+        tolerance: [0, 0, 0, 0],
+        dimensions: DIMS,
+      });
+    });
+
+    it.fails('the pass that moves the slice sweeps the part it activates, once, with its directives', async () => {
+      const { internals, reg, next } = setup(async (register) => register());
+      reg.evaluatePerFrame();
+      const passes = internals._passCount;
+
+      await sceneLoader.updateView({ slicePosition: [0, 0, 0, 4], ladderDepth: 2 });
+      await flush();
+      reg.evaluatePerFrame();
+      await flush();
+
+      expect(next.updateView).toHaveBeenCalledTimes(1);
+      expect(next.updateView.mock.calls[0][0].ladderDepth).toBe(2);
+      expect(internals._passCount - passes).toBe(1);
+    });
+
+    it.fails('a part activated ahead of its slice joins that slice’s pass without a resync pass', async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const { internals, reg, next } = setup(async (register) => {
+        await gate;
+        register();
+      });
+      reg.evaluatePerFrame();
+      const passes = internals._passCount;
+
+      // What `prefetchSlice` does for the predicted next slice (playback).
+      const ahead = reg.activatePartitionParts({
+        ...sceneLoader.committedViewState,
+        slicePosition: [0, 0, 0, 4],
+      });
+      const pass = sceneLoader.updateView({ slicePosition: [0, 0, 0, 4], ladderDepth: 2 });
+      release();
+      await Promise.all([ahead, pass]);
+      await flush();
+      reg.evaluatePerFrame();
+      await flush();
+
+      expect(next.updateView).toHaveBeenCalledTimes(1);
+      expect(next.updateView.mock.calls[0][0].ladderDepth).toBe(2);
+      expect(internals._passCount - passes).toBe(1);
+    });
+  });
+
   describe('updateView — dispose race', () => {
     it('resolves (does not hang) when called after dispose while the update lock is held', async () => {
       // Reproduce the dispose race: a refinement pass holds the update lock

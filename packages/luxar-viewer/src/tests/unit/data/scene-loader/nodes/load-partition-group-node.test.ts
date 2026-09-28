@@ -957,6 +957,30 @@ describe('loadPartitionGroupNode — gated loading (B4)', () => {
     expect(registerPartition.mock.calls[0][0].children).toHaveLength(3);
   });
 
+  it.fails('a registry activation registers the deferred part without loading its data', async () => {
+    attachStubChildren();
+    const registerPartition = vi.fn();
+
+    await loadPartitionGroupNode(
+      makePartitionGroupNode([timePart(0, 0), timePart(1, 1)], { display_type: 'gsplats' }),
+      new THREE.Group(),
+      makeStubLoc(),
+      timeCtx(registerPartition, TIME_DIMS),
+      loadSceneNodesMock
+    );
+    const deferred = registerPartition.mock.calls[0][0].children[0];
+    expect(deferred.activate).toBeTypeOf('function');
+    await deferred.activate();
+
+    // The pass that activates a part sweeps its loaders itself, with the
+    // pass's own directives, and commits them with everything else: the
+    // activation only attaches and registers them.
+    expect(loadSceneNodesMock).toHaveBeenCalledTimes(2);
+    const [node, , , activationCtx] = loadSceneNodesMock.mock.calls[1];
+    expect(node.path).toBe('/partition/part_0');
+    expect(activationCtx.registerOnly).toBe(true);
+  });
+
   it('loads every part when the scene has no discrete hidden dimension', async () => {
     attachStubChildren();
     const continuous = TIME_DIMS.map((dim) => ({ ...dim, discrete: false }));

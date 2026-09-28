@@ -159,6 +159,36 @@ describe('LODGroupRegistry — partition slice gating (B4)', () => {
     expect(slot.visible).toBe(true);
   });
 
+  it.fails('an activation changes nothing drawn: the commit of its pass does', async () => {
+    const reg = makeRegistry(() => viewAt(0));
+    const groupObject = new THREE.Group();
+    const slot = new THREE.Group();
+    groupObject.add(slot);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: [
+        {
+          path: '/partition/part_0',
+          objects: [slot],
+          positionBounds: { min: [-0.5, -0.5, -0.5, 2], max: [0.5, 0.5, 0.5, 2] },
+          // Attaches the part's (still empty) placeholder, as a registration does.
+          activate: async () => {
+            slot.add(new THREE.Group());
+          },
+        },
+      ],
+    });
+    reg.evaluatePerFrame();
+    reg.takeDrawnStateChanged();
+
+    await reg.activatePartitionParts(viewAt(2));
+
+    // A frame requested here would redraw the committed scene unchanged, and
+    // the pass's commit then requests its own: two renders for one step.
+    expect(reg.takeDrawnStateChanged()).toBe(false);
+  });
+
   it('asks for a resync pass for a deferred part in the frustum and committed slice', () => {
     const requestReprocess = vi.fn();
     const camera = new THREE.Camera();

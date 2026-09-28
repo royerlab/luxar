@@ -155,6 +155,20 @@ describe('loadGSplatsNode — registration only after the initial load settles',
     expect(ctx.registry.gsplatLoaders.has('/scene/g')).toBe(true);
   });
 
+  it.fails('registerOnly: registers the loader without fetching or committing', async () => {
+    const loadGSplats = vi.fn();
+    const loader = makeGSplatsLoader(loadGSplats);
+    createGSplatsLoaderMock.mockReturnValue(loader);
+    const ctx = Object.assign(makeCtx(), { registerOnly: true });
+
+    await loadGSplatsNode(makeSceneNode(), new THREE.Group(), {} as never, ctx);
+
+    // A partition part activated by a loader pass: that pass sweeps it.
+    expect(loadGSplats).not.toHaveBeenCalled();
+    expect(ctx.spies.commitGSplatsGeometry).not.toHaveBeenCalled();
+    expect(ctx.registry.gsplatLoaders.get('/scene/g')).toBe(loader);
+  });
+
   it('registers even when the initial load FAILS (loader stays retryable)', async () => {
     createGSplatsLoaderMock.mockReturnValue(
       makeGSplatsLoader(vi.fn().mockRejectedValue(new Error('network down')) as never)
