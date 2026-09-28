@@ -14,6 +14,7 @@
  */
 
 import type { LoopMode, AnimationDirection } from '../../types/animation';
+import { snapDiscreteValue } from '../scene-dims-manager';
 
 /** Inputs for one playback advance step. */
 export interface AdvanceArgs {
@@ -25,6 +26,14 @@ export interface AdvanceArgs {
   max: number;
   /** Step size for discrete dimensions; null = continuous. */
   step: number | null;
+  /**
+   * The dimension's own discrete grid step (its authored `step`), or
+   * null/undefined for a continuous dimension. When `max` is off that grid,
+   * the last grid point below it is the effective end of the range: the
+   * dims manager snaps every write onto the grid, so clamping onto `max`
+   * would land back on the current value and freeze playback there.
+   */
+  gridStep?: number | null;
   /** Current playback direction. */
   direction: AnimationDirection;
   /** Boundary behavior: once | loop | bounce. */
@@ -47,14 +56,42 @@ export interface AdvanceResult {
   directionChanged: boolean;
 }
 
+/** The reachable end of the range: `max`, or the last grid point below it. */
+function effectiveMax(min: number, max: number, gridStep: number | null | undefined): number {
+  return gridStep != null && gridStep > 0 ? snapDiscreteValue(max, gridStep, min, max) : max;
+}
+
+/**
+ * Loop / once handling for a step that reached or passed the end it is moving
+ * toward (`end`, with `start` the opposite end). The endpoint is a FRAME to
+ * show: a step that arrives at or overshoots it lands ON it, and only a step
+ * taken FROM the endpoint wraps (loop) or completes (once).
+ */
+function wrapOrStop(
+  current: number,
+  end: number,
+  start: number,
+  loopMode: 'once' | 'loop',
+  eps: number
+): { value: number; shouldStop: boolean } {
+  const atEnd = Math.abs(current - end) <= eps;
+  if (!atEnd) return { value: end, shouldStop: false };
+  return loopMode === 'once'
+    ? { value: end, shouldStop: true }
+    : { value: start, shouldStop: false };
+}
+
 /**
  * Compute the next playback value for a dimension — pure, no state mutation.
  *
  * Discrete dimensions step by `±step` on the range-min-anchored grid;
- * continuous dimensions advance by
- * `range / traverseTime × frameTime`. Boundaries follow the loop mode:
- * `once` clamps and stops, `loop` wraps to the opposite end, `bounce`
- * clamps and flips the returned direction.
+ * continuous dimensions advance by `range / traverseTime × frameTime`.
+ * Boundaries follow the loop mode. For `loop` and `once` the range ends are
+ * shown: a step that reaches or overshoots `max` (forward) or `min`
+ * (backward) lands on it, and the NEXT step — taken from the endpoint —
+ * wraps to the opposite end (`loop`) or stops (`once`). `bounce` clamps and
+ * flips the returned direction on arrival, which already shows the endpoint
+ * exactly once.
  */
 export function advanceDimensionValue(args: AdvanceArgs): AdvanceResult {
   const { current, min, max, step, loopMode, targetFPS, continuousTraverseMs } = args;
@@ -71,39 +108,21 @@ export function advanceDimensionValue(args: AdvanceArgs): AdvanceResult {
     value = current + sign * increment;
   }
 
+  const top = effectiveMax(min, max, args.gridStep);
+  const eps = 1e-9 * Math.max(1, Math.abs(max - min));
   let shouldStop = false;
   let directionChanged = false;
 
-  if (args.direction === 'forward' && value >= max) {
-    switch (loopMode) {
-      case 'once':
-        value = max;
-        shouldStop = true;
-        break;
-      case 'loop':
-        value = min;
-        break;
-      case 'bounce':
-        value = max;
-        direction = 'backward';
-        directionChanged = true;
-        break;
-    }
-  } else if (args.direction === 'backward' && value <= min) {
-    switch (loopMode) {
-      case 'once':
-        value = min;
-        shouldStop = true;
-        break;
-      case 'loop':
-        value = max;
-        break;
-      case 'bounce':
-        value = min;
-        direction = 'forward';
-        directionChanged = true;
-        break;
-    }
+  const forwardHit = args.direction === 'forward' && value >= top - eps;
+  const backwardHit = args.direction === 'backward' && value <= min + eps;
+  if (loopMode === 'bounce' && (forwardHit || backwardHit)) {
+    value = forwardHit ? top : min;
+    direction = forwardHit ? 'backward' : 'forward';
+    directionChanged = true;
+  } else if (loopMode !== 'bounce' && forwardHit) {
+    ({ value, shouldStop } = wrapOrStop(current, top, min, loopMode, eps));
+  } else if (loopMode !== 'bounce' && backwardHit) {
+    ({ value, shouldStop } = wrapOrStop(current, min, top, loopMode, eps));
   }
 
   return { value, direction, shouldStop, directionChanged };

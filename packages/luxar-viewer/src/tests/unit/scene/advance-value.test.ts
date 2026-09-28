@@ -79,7 +79,7 @@ describe('advanceDimensionValue — boundaries', () => {
   // Previously `value >= max` wrapped on arrival, so the last timepoint of a
   // [0, 50] axis was never displayed in loop or once mode (49 -> 0, once
   // stopped at 49 as "complete"), and backward playback skipped min.
-  it.fails('loop forward VISITS max before wrapping (49 -> 50, then 50 -> 0)', () => {
+  it('loop forward VISITS max before wrapping (49 -> 50, then 50 -> 0)', () => {
     const toMax = advanceDimensionValue(args({ current: 49, min: 0, max: 50, step: 1 }));
     expect(toMax).toEqual({
       value: 50,
@@ -92,7 +92,7 @@ describe('advanceDimensionValue — boundaries', () => {
     expect(wrap.shouldStop).toBe(false);
   });
 
-  it.fails('loop backward VISITS min before wrapping (1 -> 0, then 0 -> 50)', () => {
+  it('loop backward VISITS min before wrapping (1 -> 0, then 0 -> 50)', () => {
     const toMin = advanceDimensionValue(
       args({ current: 1, min: 0, max: 50, step: 1, direction: 'backward' })
     );
@@ -104,7 +104,7 @@ describe('advanceDimensionValue — boundaries', () => {
     expect(wrap.value).toBe(50);
   });
 
-  it.fails('once forward SHOWS max (49 -> 50, not stopped), then completes from max', () => {
+  it('once forward SHOWS max (49 -> 50, not stopped), then completes from max', () => {
     const toMax = advanceDimensionValue(
       args({ current: 49, min: 0, max: 50, step: 1, loopMode: 'once' })
     );
@@ -117,7 +117,7 @@ describe('advanceDimensionValue — boundaries', () => {
     expect(done.shouldStop).toBe(true);
   });
 
-  it.fails('once backward SHOWS min (1 -> 0, not stopped), then completes from min', () => {
+  it('once backward SHOWS min (1 -> 0, not stopped), then completes from min', () => {
     const toMin = advanceDimensionValue(
       args({ current: 1, min: 0, max: 50, step: 1, loopMode: 'once', direction: 'backward' })
     );
@@ -129,14 +129,14 @@ describe('advanceDimensionValue — boundaries', () => {
     expect(done.shouldStop).toBe(true);
   });
 
-  it.fails('a step that OVERSHOOTS max clamps onto max instead of wrapping', () => {
+  it('a step that OVERSHOOTS max clamps onto max instead of wrapping', () => {
     // step 3 on [0, 50]: 48 -> 51 overshoots; show 50 first.
     const r = advanceDimensionValue(args({ current: 48, min: 0, max: 50, step: 3 }));
     expect(r.value).toBe(50);
     expect(r.shouldStop).toBe(false);
   });
 
-  it.fails('continuous: an overshooting increment clamps onto max, the next tick wraps', () => {
+  it('continuous: an overshooting increment clamps onto max, the next tick wraps', () => {
     // range 99, 10 fps, 10 s traverse: +0.99 per tick.
     const toMax = advanceDimensionValue(args({ current: 98.5, step: null }));
     expect(toMax.value).toBe(99);
@@ -144,7 +144,7 @@ describe('advanceDimensionValue — boundaries', () => {
     expect(wrap.value).toBe(0);
   });
 
-  it.fails('a max OFF the discrete grid: the last grid point counts as the boundary', () => {
+  it('a max OFF the discrete grid: the last grid point counts as the boundary', () => {
     // Grid 0, 3, 6, 9 on [0, 10]: clamping 9 + 3 onto 10 would snap straight
     // back to 9 and freeze playback, so 9 is the endpoint and the step wraps.
     const r = advanceDimensionValue(args({ current: 9, min: 0, max: 10, step: 3, gridStep: 3 }));

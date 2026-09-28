@@ -1173,21 +1173,21 @@ describe('DimensionAnimationManager', () => {
       vi.restoreAllMocks();
     });
 
-    it.fails('loop forward visits max before wrapping: 9 -> 10 -> 0', async () => {
+    it('loop forward visits max before wrapping: 9 -> 10 -> 0', async () => {
       sceneDimsManager.setDimensionValue(3, 9);
       manager.play(3, { targetFPS: 10, loopMode: 'loop', direction: 'forward' });
       expect(await tick()).toBe(10);
       expect(await tick()).toBe(0);
     });
 
-    it.fails('loop backward visits min before wrapping: 1 -> 0 -> 10', async () => {
+    it('loop backward visits min before wrapping: 1 -> 0 -> 10', async () => {
       sceneDimsManager.setDimensionValue(3, 1);
       manager.play(3, { targetFPS: 10, loopMode: 'loop', direction: 'backward' });
       expect(await tick()).toBe(0);
       expect(await tick()).toBe(10);
     });
 
-    it.fails('once forward shows max, then completes on the next tick', async () => {
+    it('once forward shows max, then completes on the next tick', async () => {
       const complete = vi.fn();
       manager.addEventListener('complete', complete);
       sceneDimsManager.setDimensionValue(3, 9);
@@ -1202,7 +1202,7 @@ describe('DimensionAnimationManager', () => {
       expect(complete).toHaveBeenCalledTimes(1);
     });
 
-    it.fails('once backward shows min, then completes on the next tick', async () => {
+    it('once backward shows min, then completes on the next tick', async () => {
       const complete = vi.fn();
       manager.addEventListener('complete', complete);
       sceneDimsManager.setDimensionValue(3, 1);
@@ -1216,7 +1216,7 @@ describe('DimensionAnimationManager', () => {
       expect(complete).toHaveBeenCalledTimes(1);
     });
 
-    it.fails('peekNextValue predicts the endpoint the playhead will show (t+1 prefetch parity)', () => {
+    it('peekNextValue predicts the endpoint the playhead will show (t+1 prefetch parity)', () => {
       sceneDimsManager.setDimensionValue(3, 9);
       manager.play(3, { loopMode: 'loop' });
       expect(manager.peekNextValue(3)).toBe(10);
@@ -1284,11 +1284,11 @@ describe('DimensionAnimationManager', () => {
       return 1000 / (num / den);
     };
 
-    it.fails('a 10 fps target achieves 10 ticks/s on a 60 Hz display (not ~9.2)', async () => {
+    it('a 10 fps target achieves 10 ticks/s on a 60 Hz display (not ~9.2)', async () => {
       expect(Math.abs((await achievedRate(10)) - 10)).toBeLessThanOrEqual(0.05);
     });
 
-    it.fails('a 30 fps target achieves 30 ticks/s on a 60 Hz display (not ~23)', async () => {
+    it('a 30 fps target achieves 30 ticks/s on a 60 Hz display (not ~23)', async () => {
       expect(Math.abs((await achievedRate(30)) - 30)).toBeLessThanOrEqual(0.05);
     });
 

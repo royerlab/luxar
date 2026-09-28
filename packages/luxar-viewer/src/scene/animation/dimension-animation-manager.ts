@@ -63,6 +63,17 @@ export interface PlayOptions {
 /** Perf counter: playback ticks that actually advanced a dimension value. */
 const S_PLAYBACK_TICKS = perfCounters.slot('playback.ticks');
 
+/** Frame deltas above this are loop gaps, not vsync intervals. */
+const MAX_FRAME_INTERVAL_MS = 100;
+
+/** Smoothing factor of the frame-interval EWMA. */
+const FRAME_EWMA_ALPHA = 0.1;
+
+/** A discrete dimension's own grid step (the snap grid), else null. */
+function gridStepOf(metadata: { discrete?: boolean; step?: number } | undefined): number | null {
+  return metadata?.discrete ? metadata.step || 1.0 : null;
+}
+
 /**
  * Manages animation state for multiple dimensions
  */
@@ -79,6 +90,12 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   /** The detail a fresh dimension state starts with (see {@link setDefaultLadderDepth}). */
   private defaultLadderDepth: number | 'auto' | null =
     config.dimensionAnimation.defaults.ladderDepth;
+
+  /** Timestamp of the previous animation frame (for the frame-interval EWMA). */
+  private lastFrameTime: number | null = null;
+
+  /** EWMA of rAF frame intervals in ms; 0 until two frames have been seen. */
+  private frameIntervalMs = 0;
 
   /** Per-dimension update tracking — prevents advancing faster than data loads */
   private pendingUpdates = new Set<number>();
@@ -152,12 +169,52 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     log.info(Modules.ANIMATION, 'Registered with AnimationController');
   }
 
+  /** The tick period for a dimension, floored at the configured minimum frame time. */
+  private tickPeriodMs(state: DimensionAnimationState): number {
+    return Math.max(1000 / state.targetFPS, config.dimensionAnimation.timing.minFrameTimeMs);
+  }
+
+  /**
+   * Track the display's frame interval (an EWMA of rAF deltas). Deltas above
+   * {@link MAX_FRAME_INTERVAL_MS} are gaps (a stopped loop, a hidden tab), not
+   * vsync, and are ignored.
+   */
+  private noteFrameInterval(now: number): void {
+    const last = this.lastFrameTime;
+    this.lastFrameTime = now;
+    if (last === null) return;
+    const dt = now - last;
+    if (dt <= 0 || dt > MAX_FRAME_INTERVAL_MS) return;
+    this.frameIntervalMs =
+      this.frameIntervalMs === 0
+        ? dt
+        : this.frameIntervalMs + FRAME_EWMA_ALPHA * (dt - this.frameIntervalMs);
+  }
+
+  /**
+   * Schedule-based tick gate (#2944 A7). Ticks are due on a fixed grid
+   * (`nextDue += period`) rather than "one period after the frame that last
+   * ticked": the old elapsed-since-last-tick gate drifted by up to a vsync per
+   * tick, so 10 fps achieved ~9.2 and 30 fps ~23 on a 60 Hz display. A frame
+   * within half a vsync of the due time takes the tick (the nearest frame
+   * wins). When the playhead is more than a period late — a data stall, or a
+   * pending update that held the gate — the schedule resyncs from now instead
+   * of bursting catch-up ticks. Advances the schedule when it returns true.
+   */
+  private isTickDue(state: DimensionAnimationState, now: number): boolean {
+    if (now < state.nextDue - 0.5 * this.frameIntervalMs) return false;
+    const period = this.tickPeriodMs(state);
+    state.nextDue = now - state.nextDue > period ? now + period : state.nextDue + period;
+    return true;
+  }
+
   /**
    * Per-frame callback - update all active animations
    * Called by AnimationController on each animation frame (~60 FPS)
    */
   private onFrame(): void {
     const currentTime = performance.now();
+    this.noteFrameInterval(currentTime);
 
     // Update each active animation
     for (const [dimIndex, state] of this.animationStates) {
@@ -191,16 +248,9 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
         return;
       }
 
-      // Check if enough time has elapsed for target FPS
-      const targetFrameTime = 1000 / state.targetFPS;
-      const minFrameTime = config.dimensionAnimation.timing.minFrameTimeMs;
-      const effectiveFrameTime = Math.max(targetFrameTime, minFrameTime);
-      const elapsed = currentTime - state.lastUpdateTime;
-
-      if (elapsed < effectiveFrameTime) {
-        // Not enough time elapsed, skip this frame
-        return;
-      }
+      // Schedule gate: is this frame the one nearest the tick's due time?
+      const due = state.nextDue;
+      if (!this.isTickDue(state, currentTime)) return;
 
       // Update FPS measurement
       state.frameCount++;
@@ -287,6 +337,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
         loopMode: state.loopMode,
         targetFPS: state.targetFPS,
         continuousTraverseMs: config.dimensionAnimation.timing.continuousTraverseSeconds * 1000,
+        gridStep: gridStepOf(metadata),
       });
       const nextValue = result.value;
 
@@ -320,7 +371,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
         t: performance.now(),
         dim: dimIndex,
         value: nextValue,
-        due: state.lastUpdateTime + effectiveFrameTime,
+        due,
       });
 
       // Track completion for next frame synchronization
@@ -334,9 +385,6 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
           log.error(Modules.ANIMATION, 'Dimension update failed', error);
           this.pendingUpdates.delete(dimIndex);
         });
-
-      // Update last update time
-      state.lastUpdateTime = currentTime;
     } catch (error) {
       log.error(Modules.ANIMATION, `Failed to update dimension ${dimIndex}`, error);
       this.pause(dimIndex);
@@ -373,6 +421,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
       loopMode: state.loopMode,
       targetFPS: state.targetFPS,
       continuousTraverseMs: config.dimensionAnimation.timing.continuousTraverseSeconds * 1000,
+      gridStep: gridStepOf(metadata),
     });
     if (result.shouldStop) return null;
     // Predict the EXACT landing: setDimensionValue snaps a discrete dim to
@@ -461,7 +510,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
       // Start animation
       state.isPlaying = true;
-      state.lastUpdateTime = performance.now();
+      state.nextDue = performance.now() + this.tickPeriodMs(state);
       state.frameCount = 0;
       state.lastFPSMeasurementTime = performance.now();
 
@@ -692,6 +741,11 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     // Clamp to valid range
     const { customMin, customMax } = config.dimensionAnimation.presets;
     state.targetFPS = clamp(fps, customMin, customMax);
+    // A faster rate takes effect on the next frame rather than after the old,
+    // longer period has run out.
+    if (state.isPlaying) {
+      state.nextDue = Math.min(state.nextDue, performance.now() + this.tickPeriodMs(state));
+    }
 
     this.dispatchEvent({ type: 'speedChange', dimIndex, fps: state.targetFPS });
     log.info(Modules.ANIMATION, `Set dimension ${dimIndex} speed to ${state.targetFPS} FPS`);
@@ -757,7 +811,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
       direction: config.dimensionAnimation.defaults.direction,
       stepSize: config.dimensionAnimation.defaults.stepSize,
       ladderDepth: this.defaultLadderDepth,
-      lastUpdateTime: currentTime,
+      nextDue: currentTime,
       frameCount: 0,
       lastFPSMeasurementTime: currentTime,
       actualFPS: 0,

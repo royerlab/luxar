@@ -86,13 +86,14 @@ export function missedPollEvents(totalEvents, capturedEvents) {
 export function resolveStartCoordinate(range, step, requestedStart) {
   const epsilon = step * 1e-9;
   const coordinateAt = (index) => range[0] + index * step;
-  let stopIndex = Math.max(0, Math.ceil((range[1] - range[0]) / step) - 1);
-  while (coordinateAt(stopIndex) + step < range[1]) stopIndex += 1;
-  while (stopIndex > 0 && coordinateAt(stopIndex - 1) + step >= range[1]) stopIndex -= 1;
-  if (stopIndex < 1) {
+  // Once mode SHOWS the last grid point (the last coordinate <= max) and stops
+  // on the next tick, so exactly one applied advance starts one grid step
+  // before it.
+  const lastIndex = Math.floor((range[1] - range[0]) / step + 1e-9);
+  if (lastIndex < 1) {
     throw new Error(`time range [${range}] has no reachable transition in once mode`);
   }
-  const expectedStart = coordinateAt(stopIndex - 1);
+  const expectedStart = coordinateAt(lastIndex - 1);
   if (requestedStart !== null && Math.abs(requestedStart - expectedStart) > epsilon) {
     throw new Error(
       `start ${requestedStart} must equal ${expectedStart} to leave one reachable advance in once mode`

@@ -179,13 +179,21 @@ per-frame callback, or call `requestRender` / `startAnimation` from its event.
   energy is below the display threshold. Logging is warning-level while frames
   are still filling (or quality is unknown), informational when enough content
   is visible and only cadence slipped. It never throttles or stops animation.
-- **Boundary semantics.** `handleBoundary` clamps to `[min, max]`,
-  not past them — `once` clamps and stops, `loop` wraps to the
-  opposite end, `bounce` clamps and flips `state.direction`. The
-  discrete-vs-continuous distinction lives in `calculateNextValue`:
-  discrete dims advance by `metadata.step`, continuous dims by
-  `range / continuousTraverseSeconds` scaled to the current target
-  FPS.
+- **Cadence is schedule-based.** Ticks fall due on a fixed grid
+  (`state.nextDue += period`), and the frame within half a vsync (an EWMA of
+  rAF deltas) of the due time takes the tick, so a 10 or 30 fps target is met
+  on a 60 Hz display rather than drifting by up to a vsync per tick. A playhead
+  more than a period late (a data stall) resyncs from now instead of bursting
+  catch-up ticks.
+- **Boundary semantics** (`advance-value.ts`). The range ends are frames to
+  show: in `loop` and `once` a step that reaches or overshoots `max` (forward)
+  or `min` (backward) lands ON it, and only the next step, taken from the
+  endpoint, wraps (`loop`) or completes (`once`). `bounce` clamps and flips the
+  direction on arrival. On a discrete dim whose `max` is off its grid, the last
+  grid point is the endpoint. Discrete dims advance by `metadata.step` (or the
+  step override), continuous dims by `range / continuousTraverseSeconds`
+  scaled to the current target FPS. `peekNextValue` runs the same function, so
+  the t+1 prefetch predicts the endpoint frame too.
 
 ## Events
 

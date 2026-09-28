@@ -27,8 +27,12 @@ export interface DimensionAnimationState {
   loopMode: LoopMode;
   /** Current animation direction */
   direction: AnimationDirection;
-  /** Last update timestamp (ms since epoch) */
-  lastUpdateTime: number;
+  /**
+   * When the next playback tick is due (a `performance.now()` timestamp).
+   * Advanced by one period per tick, so the cadence holds the target rate
+   * instead of drifting by a vsync per tick; resynced after a stall.
+   */
+  nextDue: number;
   /** Frame counter for FPS measurement */
   frameCount: number;
   /** Time of last FPS measurement */
