@@ -530,15 +530,18 @@ describe('DimensionAnimationManager', () => {
       manager.play(3, { targetFPS: 10 }); // 100ms frame time
       const initialValue = sceneDimsManager.getDims()!.currentStep[3];
 
-      // Three consecutive frames each < 100ms apart → all skipped.
-      for (const dt of [30, 30, 30]) {
-        mockTime += dt; // cumulative 30, 60, 90 ms — all below 100ms
+      // Three consecutive frames each < 100ms apart → all skipped. The gate
+      // grants half a frame interval of slack (the frame NEAREST the due time
+      // takes the tick, #2944 A7): at 25 ms frames that is 12.5 ms, so the
+      // last skipped frame (75 ms) is still clearly early.
+      for (const dt of [25, 25, 25]) {
+        mockTime += dt; // cumulative 25, 50, 75 ms — all below 100ms - slack
         perFrameCallback?.();
         expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(initialValue);
       }
 
       // Cross the 100ms threshold → advances.
-      mockTime += 20; // now 110ms since last update
+      mockTime += 35; // now 110ms since play
       perFrameCallback?.();
       expect(sceneDimsManager.getDims()!.currentStep[3]).toBeGreaterThan(initialValue);
     });
@@ -1146,6 +1149,175 @@ describe('DimensionAnimationManager', () => {
 
       expect(events[0].committedEnergyFraction).toBeNull();
       expect(pacingMessages(warn)).toHaveLength(1);
+    });
+  });
+
+  describe('endpoints are shown, not skipped (#2944 A7)', () => {
+    // Dim 3 = 'time', range [0, 10], step 1, discrete. Ticks are a full
+    // 200 ms apart (past the 100 ms window) and the instant data update is
+    // settled before the next frame.
+    let mockTime: number;
+    const tick = async (): Promise<number> => {
+      mockTime += 200;
+      perFrameCallback?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return sceneDimsManager.getDims()!.currentStep[3];
+    };
+
+    beforeEach(() => {
+      mockTime = 1000;
+      vi.spyOn(performance, 'now').mockImplementation(() => mockTime);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it.fails('loop forward visits max before wrapping: 9 -> 10 -> 0', async () => {
+      sceneDimsManager.setDimensionValue(3, 9);
+      manager.play(3, { targetFPS: 10, loopMode: 'loop', direction: 'forward' });
+      expect(await tick()).toBe(10);
+      expect(await tick()).toBe(0);
+    });
+
+    it.fails('loop backward visits min before wrapping: 1 -> 0 -> 10', async () => {
+      sceneDimsManager.setDimensionValue(3, 1);
+      manager.play(3, { targetFPS: 10, loopMode: 'loop', direction: 'backward' });
+      expect(await tick()).toBe(0);
+      expect(await tick()).toBe(10);
+    });
+
+    it.fails('once forward shows max, then completes on the next tick', async () => {
+      const complete = vi.fn();
+      manager.addEventListener('complete', complete);
+      sceneDimsManager.setDimensionValue(3, 9);
+      manager.play(3, { targetFPS: 10, loopMode: 'once', direction: 'forward' });
+
+      expect(await tick()).toBe(10);
+      expect(manager.isAnimating(3)).toBe(true);
+      expect(complete).not.toHaveBeenCalled();
+
+      expect(await tick()).toBe(10);
+      expect(manager.isAnimating(3)).toBe(false);
+      expect(complete).toHaveBeenCalledTimes(1);
+    });
+
+    it.fails('once backward shows min, then completes on the next tick', async () => {
+      const complete = vi.fn();
+      manager.addEventListener('complete', complete);
+      sceneDimsManager.setDimensionValue(3, 1);
+      manager.play(3, { targetFPS: 10, loopMode: 'once', direction: 'backward' });
+
+      expect(await tick()).toBe(0);
+      expect(manager.isAnimating(3)).toBe(true);
+
+      await tick();
+      expect(manager.isAnimating(3)).toBe(false);
+      expect(complete).toHaveBeenCalledTimes(1);
+    });
+
+    it.fails('peekNextValue predicts the endpoint the playhead will show (t+1 prefetch parity)', () => {
+      sceneDimsManager.setDimensionValue(3, 9);
+      manager.play(3, { loopMode: 'loop' });
+      expect(manager.peekNextValue(3)).toBe(10);
+      manager.setLoopMode(3, 'once');
+      expect(manager.peekNextValue(3)).toBe(10); // max is still to be shown
+      sceneDimsManager.setDimensionValue(3, 10);
+      expect(manager.peekNextValue(3)).toBeNull(); // the next tick completes
+    });
+  });
+
+  describe('playback cadence tracks the target rate (#2944 A7)', () => {
+    let mockTime: number;
+
+    beforeEach(() => {
+      mockTime = 1000;
+      vi.spyOn(performance, 'now').mockImplementation(() => mockTime);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    /** Let the instant data update's `.then` clear the pacing gate. */
+    const settle = async (): Promise<void> => {
+      await Promise.resolve();
+      await Promise.resolve();
+    };
+
+    /**
+     * Drive ~3 s of 60 Hz rAF frames (with up to ±1 ms of timestamp jitter,
+     * deterministic) against instant data, and return the achieved tick rate:
+     * the least-squares slope of tick time against tick index, so the answer
+     * is not quantized by where the window happens to start and end.
+     */
+    const achievedRate = async (targetFPS: number): Promise<number> => {
+      const tickTimes: number[] = [];
+      const record = (): void => {
+        tickTimes.push(mockTime);
+      };
+      manager.play(3, { targetFPS, loopMode: 'loop', direction: 'forward' });
+      sceneDimsManager.addListener(record);
+
+      const start = mockTime;
+      let seed = 12345;
+      const jitter = (): number => {
+        seed = (seed * 1103515245 + 12345) % 2147483648;
+        return (seed / 2147483648) * 2 - 1; // [-1, 1) ms
+      };
+      for (let k = 1; k <= 180; k++) {
+        mockTime = start + k * (1000 / 60) + jitter();
+        perFrameCallback?.();
+        await settle();
+      }
+      sceneDimsManager.removeListener(record);
+
+      const n = tickTimes.length;
+      const meanI = (n - 1) / 2;
+      const meanT = tickTimes.reduce((a, b) => a + b, 0) / n;
+      let num = 0;
+      let den = 0;
+      tickTimes.forEach((t, i) => {
+        num += (i - meanI) * (t - meanT);
+        den += (i - meanI) ** 2;
+      });
+      return 1000 / (num / den);
+    };
+
+    it.fails('a 10 fps target achieves 10 ticks/s on a 60 Hz display (not ~9.2)', async () => {
+      expect(Math.abs((await achievedRate(10)) - 10)).toBeLessThanOrEqual(0.05);
+    });
+
+    it.fails('a 30 fps target achieves 30 ticks/s on a 60 Hz display (not ~23)', async () => {
+      expect(Math.abs((await achievedRate(30)) - 30)).toBeLessThanOrEqual(0.05);
+    });
+
+    it('after a data stall playback resyncs instead of bursting catch-up ticks', async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const wfu = vi.spyOn(sceneDimsManager, 'waitForUpdate').mockImplementation(() => gate);
+      manager.play(3, { targetFPS: 10, loopMode: 'loop', direction: 'forward' });
+      mockTime += 100;
+      perFrameCallback?.(); // first tick, then the data stalls for a second
+      const afterFirst = sceneDimsManager.getDims()!.currentStep[3];
+      for (let k = 0; k < 60; k++) {
+        mockTime += 1000 / 60;
+        perFrameCallback?.();
+      }
+      wfu.mockImplementation(() => Promise.resolve());
+      release();
+      await settle();
+
+      // The frames right after the stall carry ONE tick, not the ten the old
+      // schedule would "owe".
+      for (let k = 0; k < 3; k++) {
+        mockTime += 1000 / 60;
+        perFrameCallback?.();
+        await settle();
+      }
+      expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(afterFirst + 1);
     });
   });
 });
