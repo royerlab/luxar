@@ -162,7 +162,8 @@ export interface NodeBuildCtx {
     path: string,
     data: LoadedLinesData,
     viewState: LinesViewState,
-    session?: UpdateSession
+    session?: UpdateSession,
+    signal?: AbortSignal
   ): Promise<StagedLinesCommit | null>;
   commitLinesGeometry(
     staged: StagedLinesCommit,
@@ -173,7 +174,8 @@ export interface NodeBuildCtx {
     path: string,
     data: LoadedGSplatsData,
     viewState: GSplatsViewState,
-    session?: UpdateSession
+    session?: UpdateSession,
+    signal?: AbortSignal
   ): Promise<StagedGSplatsCommit | null>;
   commitGSplatsGeometry(
     staged: StagedGSplatsCommit,

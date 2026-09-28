@@ -361,12 +361,18 @@ function toProcessedLines(
  *
  * `updateVersion` gates the first-update info logs to avoid noisy long
  * sessions.
+ *
+ * `signal` is the per-update abort signal: a superseded pass rejects promptly
+ * with a WorkerAbortError instead of holding the update lock through a whole
+ * projection (50-150 ms at 1-3M elements). The worker still finishes the
+ * abandoned task; the pool keeps that worker's slot busy until it does.
  */
 export async function projectLinesTo3DUsingWorker(
   data: LoadedLinesData,
   viewState: LinesViewState,
   tolerance: readonly number[],
-  updateVersion: number
+  updateVersion: number,
+  signal?: AbortSignal
 ): Promise<ProcessedLinesData> {
   // Per-vertex scalars (colormap-mode Lines) ride the worker path:
   // they are forwarded as a transferable typed-array and the worker
@@ -391,7 +397,8 @@ export async function projectLinesTo3DUsingWorker(
     const workerResult = await getWorkerPool().runWithTimeout(
       'projectLinesTo3D',
       'projection',
-      (api) => api.projectLinesTo3D(params)
+      (api) => api.projectLinesTo3D(params),
+      signal
     );
 
     if (updateVersion <= 1) {
@@ -432,7 +439,8 @@ export async function projectLinesTo3DUsingWorker(
  * `extend_to_all` if any, project to 3D (worker or main thread), and
  * return staged commit data — without mutating any mesh geometry. The
  * SceneLoader collects these stages, then runs all commits together so
- * the frame is atomic.
+ * the frame is atomic. `signal` (the per-update abort signal) reaches the
+ * worker projection so a superseded pass rejects promptly.
  */
 export async function processLinesData(
   path: string,
@@ -440,7 +448,8 @@ export async function processLinesData(
   viewState: LinesViewState,
   rootGroup: THREE.Group | null,
   updateVersion: number,
-  session?: UpdateSession
+  session?: UpdateSession,
+  signal?: AbortSignal
 ): Promise<StagedLinesCommit | null> {
   if (!rootGroup) return null;
 
@@ -478,7 +487,7 @@ export async function processLinesData(
   let processed: ProcessedLinesData;
   const project = async () => {
     if (useWorkerProjection) {
-      return projectLinesTo3DUsingWorker(data, viewState, tolerance, updateVersion);
+      return projectLinesTo3DUsingWorker(data, viewState, tolerance, updateVersion, signal);
     }
     // Non-worker path (useWebWorkers off or small data): run the same
     // dispatcher in-process rather than a separate main-thread copy.

@@ -121,7 +121,8 @@ export async function loadAndStage(
     linesViewState,
     ctx.rootGroup,
     ctx.updateVersion,
-    session
+    session,
+    ctx.signal
   );
   markPathHealthy();
   session.setMetadata({ segments: data.segments ? data.segments.length / 2 : 0 });

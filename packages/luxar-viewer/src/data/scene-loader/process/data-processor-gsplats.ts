@@ -213,12 +213,18 @@ function readTruncate(mesh: THREE.Mesh): number {
  * already evicted the wedged worker, so a retry gets a fresh one.
  *
  * `updateVersion` gates the first-update info logs.
+ *
+ * `signal` is the per-update abort signal: a superseded pass rejects promptly
+ * with a WorkerAbortError instead of holding the update lock through a whole
+ * projection (50-150 ms at 1-3M elements). The worker still finishes the
+ * abandoned task; the pool keeps that worker's slot busy until it does.
  */
 export async function projectGSplatsTo3DUsingWorker(
   data: LoadedGSplatsData,
   viewState: GSplatsViewState,
   truncate: number,
-  updateVersion: number
+  updateVersion: number,
+  signal?: AbortSignal
 ): Promise<ProcessedGSplatsData> {
   const params = buildGSplatsParams(data, viewState, truncate);
   try {
@@ -238,7 +244,8 @@ export async function projectGSplatsTo3DUsingWorker(
     const workerResult = await getWorkerPool().runWithTimeout(
       'projectGSplatsTo3D',
       'projection',
-      (api) => api.projectGSplatsTo3D(params)
+      (api) => api.projectGSplatsTo3D(params),
+      signal
     );
 
     if (updateVersion <= 1) {
@@ -277,7 +284,8 @@ export async function projectGSplatsTo3DUsingWorker(
 /**
  * Async process step for a single gsplats node: project nD → 3D
  * (worker or main thread) and return staged commit data — without
- * mutating any mesh geometry.
+ * mutating any mesh geometry. `signal` (the per-update abort signal) reaches
+ * the worker projection so a superseded pass rejects promptly.
  */
 export async function processGSplatsData(
   path: string,
@@ -285,7 +293,8 @@ export async function processGSplatsData(
   viewState: GSplatsViewState,
   rootGroup: THREE.Group | null,
   updateVersion: number,
-  session?: UpdateSession
+  session?: UpdateSession,
+  signal?: AbortSignal
 ): Promise<StagedGSplatsCommit | null> {
   if (!rootGroup) return null;
 
@@ -318,7 +327,7 @@ export async function processGSplatsData(
 
   const project = async () => {
     if (useWorkerProjection) {
-      return projectGSplatsTo3DUsingWorker(data, viewState, truncate, updateVersion);
+      return projectGSplatsTo3DUsingWorker(data, viewState, truncate, updateVersion, signal);
     }
     // Non-worker path (useWebWorkers off, small, or 3D-only data): run
     // the same dispatcher in-process. The standard-3D fast path inside

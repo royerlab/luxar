@@ -119,7 +119,8 @@ export async function loadAndStage(
     gsplatsViewState,
     ctx.rootGroup,
     ctx.updateVersion,
-    session
+    session,
+    ctx.signal
   );
   markPathHealthy();
   session.setMetadata({ splats: data.splatCount });

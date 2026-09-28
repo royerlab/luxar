@@ -45,11 +45,13 @@ export interface LinesRefinementCtx {
     attrs: LinesMetadata | undefined,
     opts: { applyPartialExtendTolerance: boolean }
   ): { skip: false; viewState: ViewState };
+  /** `signal` is the refinement run's abort signal (a superseded run rejects promptly). */
   processLines(
     path: string,
     data: LoadedLinesData,
     viewState: LinesViewState,
-    session?: UpdateSession
+    session?: UpdateSession,
+    signal?: AbortSignal
   ): Promise<StagedLinesCommit | null>;
   commitLines(staged: StagedLinesCommit, session?: UpdateSession): void;
   /**
@@ -125,7 +127,7 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
           if (data) {
             let committed = false;
             try {
-              const staged = await ctx.processLines(path, data, linesVS, session);
+              const staged = await ctx.processLines(path, data, linesVS, session, ctx.signal);
               // Superseded/disposed while we were loading + processing: an abort
               // landing during the async process round-trip is not a throw (so
               // the AbortError catch below misses it). Skip the commit so no

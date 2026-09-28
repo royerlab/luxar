@@ -786,3 +786,58 @@ describe('projectLinesTo3DUsingWorker', () => {
     expect(mockBuildInstanceBuffers).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * A pool whose `runWithTimeout` honours the caller's signal the way the real
+ * pool does (rejects with a WorkerAbortError when it aborts) and otherwise
+ * never settles — a projection that would hold the update lock for its whole
+ * 50-150 ms run at 1-3M elements.
+ */
+function makeAbortablePool() {
+  const runWithTimeout = vi.fn(
+    (_op: string, _kind: string, _fn: unknown, signal?: AbortSignal) =>
+      new Promise((_, reject) => {
+        signal?.addEventListener('abort', () => {
+          const error = new Error('aborted by caller signal');
+          error.name = 'WorkerAbortError';
+          reject(error);
+        });
+      })
+  );
+  mockGetWorkerPool.mockReturnValue({ runWithTimeout });
+  return runWithTimeout;
+}
+
+describe('per-update abort signal through the lines projection (B7)', () => {
+  const vs = { displayDims: [0, 1, 2], slicePosition: [0, 0, 0], tolerance: [0, 0, 0] };
+
+  it('projectLinesTo3DUsingWorker passes the signal to runWithTimeout and rejects on abort', async () => {
+    const runWithTimeout = makeAbortablePool();
+    const controller = new AbortController();
+    const pass = projectLinesTo3DUsingWorker(makeData(), vs, [1, 1, 1], 1, controller.signal);
+    expect(runWithTimeout.mock.calls[0][3]).toBe(controller.signal);
+    controller.abort();
+    await expect(pass).rejects.toMatchObject({ name: 'WorkerAbortError' });
+    expect(mockBuildInstanceBuffers).not.toHaveBeenCalled();
+  });
+
+  it('processLinesData forwards the signal so a superseded pass rejects promptly', async () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    const runWithTimeout = makeAbortablePool();
+    const controller = new AbortController();
+    const pass = processLinesData(
+      '/lines',
+      makeData(2000),
+      vs,
+      root,
+      1,
+      undefined,
+      controller.signal
+    );
+    await vi.waitFor(() => expect(runWithTimeout).toHaveBeenCalledTimes(1));
+    expect(runWithTimeout.mock.calls[0][3]).toBe(controller.signal);
+    controller.abort();
+    await expect(pass).rejects.toMatchObject({ name: 'WorkerAbortError' });
+  });
+});

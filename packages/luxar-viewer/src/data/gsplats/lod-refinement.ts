@@ -62,11 +62,13 @@ export interface GSplatsRefinementCtx {
     attrs: GSplatsMetadata | undefined,
     opts: { applyPartialExtendTolerance: boolean }
   ): { skip: false; viewState: ViewState };
+  /** `signal` is the refinement run's abort signal (a superseded run rejects promptly). */
   processGSplats(
     path: string,
     data: LoadedGSplatsData,
     viewState: GSplatsViewState,
-    session?: UpdateSession
+    session?: UpdateSession,
+    signal?: AbortSignal
   ): Promise<StagedGSplatsCommit | null>;
   commitGSplats(staged: StagedGSplatsCommit, session?: UpdateSession): void;
   /**
@@ -157,7 +159,13 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
           if (data) {
             let committed = false;
             try {
-              const staged = await ctx.processGSplats(path, data, gsplatsViewState, session);
+              const staged = await ctx.processGSplats(
+                path,
+                data,
+                gsplatsViewState,
+                session,
+                ctx.signal
+              );
               // Superseded/disposed while we were loading + processing: an abort
               // landing during the async process round-trip is not a throw (so
               // the AbortError catch below misses it). Skip the commit so no

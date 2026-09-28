@@ -291,6 +291,22 @@ describe('gsplats handler — no-op commit skip', () => {
       }),
     });
 
+    it('forwards the per-update abort signal to the projection (B7)', async () => {
+      vi.mocked(processGSplatsData).mockResolvedValueOnce(null);
+      const root = new THREE.Group();
+      const mesh = makeGSplatsMesh('/g');
+      (mesh.userData as { committedData?: unknown }).committedData = { other: true };
+      root.add(mesh);
+      const ac = new AbortController();
+
+      await loadAndStage('/g', makeLoaderReturning(data), makeSession(), {
+        ...makeCtx(vi.fn(), root),
+        signal: ac.signal,
+      });
+
+      expect(vi.mocked(processGSplatsData).mock.lastCall?.[6]).toBe(ac.signal);
+    });
+
     it('does NOT clear the failure record when projection fails after the fetch', async () => {
       vi.mocked(processGSplatsData).mockRejectedValueOnce(new Error('projection boom'));
       const root = new THREE.Group();

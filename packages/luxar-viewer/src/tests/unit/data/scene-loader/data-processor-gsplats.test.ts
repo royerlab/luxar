@@ -555,3 +555,62 @@ describe('projectGSplatsTo3DUsingWorker', () => {
     expect(mockProcessGSplats).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * A pool whose `runWithTimeout` honours the caller's signal the way the real
+ * pool does (rejects with a WorkerAbortError when it aborts) and otherwise
+ * never settles — a projection that would hold the update lock for its whole
+ * 50-150 ms run at 1-3M elements.
+ */
+function makeAbortablePool() {
+  const runWithTimeout = vi.fn(
+    (_op: string, _kind: string, _fn: unknown, signal?: AbortSignal) =>
+      new Promise((_, reject) => {
+        signal?.addEventListener('abort', () => {
+          const error = new Error('aborted by caller signal');
+          error.name = 'WorkerAbortError';
+          reject(error);
+        });
+      })
+  );
+  mockGetWorkerPool.mockReturnValue({ runWithTimeout });
+  return runWithTimeout;
+}
+
+describe('per-update abort signal through the gsplat projection (B7)', () => {
+  it('projectGSplatsTo3DUsingWorker passes the signal to runWithTimeout and rejects on abort', async () => {
+    const runWithTimeout = makeAbortablePool();
+    const controller = new AbortController();
+    const pass = projectGSplatsTo3DUsingWorker(
+      makeData(),
+      makeViewState(),
+      3.0,
+      1,
+      controller.signal
+    );
+    expect(runWithTimeout.mock.calls[0][3]).toBe(controller.signal);
+    controller.abort();
+    await expect(pass).rejects.toMatchObject({ name: 'WorkerAbortError' });
+    expect(mockProcessGSplats).not.toHaveBeenCalled();
+  });
+
+  it('processGSplatsData forwards the signal so a superseded pass rejects promptly', async () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+    const runWithTimeout = makeAbortablePool();
+    const controller = new AbortController();
+    const pass = processGSplatsData(
+      '/g',
+      makeData(2000, 4),
+      makeViewState(),
+      root,
+      1,
+      undefined,
+      controller.signal
+    );
+    await vi.waitFor(() => expect(runWithTimeout).toHaveBeenCalledTimes(1));
+    expect(runWithTimeout.mock.calls[0][3]).toBe(controller.signal);
+    controller.abort();
+    await expect(pass).rejects.toMatchObject({ name: 'WorkerAbortError' });
+  });
+});

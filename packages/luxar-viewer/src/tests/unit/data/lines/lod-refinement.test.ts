@@ -94,6 +94,7 @@ describe('runLinesRefinement — Lines-specific behaviour', () => {
     const staged = { foo: 'commit' } as unknown as StagedLinesCommit;
     const processLines = vi.fn().mockResolvedValue(staged);
     const commitLines = vi.fn();
+    const run = new AbortController();
 
     await runLinesRefinement({
       objects: new Map(),
@@ -105,12 +106,20 @@ describe('runLinesRefinement — Lines-specific behaviour', () => {
       updateVisibleCountsInMonitor: vi.fn(),
       releaseLock: vi.fn(),
       retriggerUpdate: vi.fn(),
+      signal: run.signal,
     });
 
     expect(loader.updateView).toHaveBeenCalledTimes(1);
     expect(processLines).toHaveBeenCalledTimes(1);
-    // Trailing arg is the profiler pass session — undefined when no profiler is wired.
-    expect(processLines).toHaveBeenCalledWith('/l', refinedData, expect.any(Object), undefined);
+    // The profiler pass session (undefined when no profiler is wired), then the
+    // run's abort signal so a superseded projection rejects promptly (B7).
+    expect(processLines).toHaveBeenCalledWith(
+      '/l',
+      refinedData,
+      expect.any(Object),
+      undefined,
+      run.signal
+    );
     expect(commitLines).toHaveBeenCalledTimes(1);
     expect(commitLines).toHaveBeenCalledWith(staged, undefined);
   });

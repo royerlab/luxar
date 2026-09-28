@@ -585,8 +585,11 @@ export class SceneLoader {
 
   /**
    * Fire one background prefetch pass for the PREDICTED next view (t+1
-   * during playback). Fire-and-forget: returns immediately; the shadow pass
-   * is aborted by the next foreground `updateView`. The partial is merged
+   * during playback). Fire-and-forget: returns immediately. The shadow pass
+   * deliberately persists across foreground ticks (a cold level outlives one
+   * frame); it is aborted only on playback end / dispose / its stall guard,
+   * and a foreground pass for the same slice waits for it rather than
+   * re-assembling that slice (see slice-prefetcher.ts). The partial is merged
    * onto a COPY of the current view state — never persisted (a prefetch
    * must not move the real view; see the stuck-display hazard in
    * slice-prefetcher.ts).
@@ -1826,8 +1829,8 @@ export class SceneLoader {
         viewStateQueue: this.viewStateQueue,
         ...resolveLoadEligibleLoaders(this.rootGroup, this.gsplatLoaders),
         deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
-        processGSplats: (path, data, viewState, session) =>
-          this.processGSplatsData(path, data, viewState, session),
+        processGSplats: (path, data, viewState, session, signal) =>
+          this.processGSplatsData(path, data, viewState, session, signal),
         commitGSplats: (staged, session) => this.commitGSplatsGeometry(staged, session),
         updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
         releaseLock: noopReleaseLock,
@@ -1861,8 +1864,8 @@ export class SceneLoader {
         ...resolveLoadEligibleLoaders(this.rootGroup, this.linesLoaders),
         deriveNodeViewState: (path, attrs, opts) =>
           this.deriveNodeViewState(path, attrs as never, opts) as never,
-        processLines: (path, data, viewState, session) =>
-          this.processLinesData(path, data, viewState, session),
+        processLines: (path, data, viewState, session, signal) =>
+          this.processLinesData(path, data, viewState, session, signal),
         commitLines: (staged, session) => this.commitLinesGeometry(staged, session),
         updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
         releaseLock: noopReleaseLock,
@@ -1957,7 +1960,8 @@ export class SceneLoader {
     path: string,
     data: LoadedLinesData,
     viewState: LinesViewState,
-    session?: UpdateSession
+    session?: UpdateSession,
+    signal?: AbortSignal
   ): Promise<StagedLinesCommit | null> {
     return processLinesDataHelper(
       path,
@@ -1965,7 +1969,8 @@ export class SceneLoader {
       viewState,
       this.rootGroup,
       this._updateVersion,
-      session
+      session,
+      signal
     );
   }
 
@@ -2004,7 +2009,8 @@ export class SceneLoader {
     path: string,
     data: LoadedGSplatsData,
     viewState: GSplatsViewState,
-    session?: UpdateSession
+    session?: UpdateSession,
+    signal?: AbortSignal
   ): Promise<StagedGSplatsCommit | null> {
     return processGSplatsDataHelper(
       path,
@@ -2012,7 +2018,8 @@ export class SceneLoader {
       viewState,
       this.rootGroup,
       this._updateVersion,
-      session
+      session,
+      signal
     );
   }
 
@@ -2170,12 +2177,12 @@ export class SceneLoader {
       processPointsData: (path, data) => this.processPointsData(path, data),
       commitPointsGeometry: (staged, session, loadedViewVersion) =>
         this.commitPointsGeometry(staged, session, loadedViewVersion),
-      processLinesData: (path, data, viewState, session) =>
-        this.processLinesData(path, data, viewState, session),
+      processLinesData: (path, data, viewState, session, signal) =>
+        this.processLinesData(path, data, viewState, session, signal),
       commitLinesGeometry: (staged, session, loadedViewVersion) =>
         this.commitLinesGeometry(staged, session, loadedViewVersion),
-      processGSplatsData: (path, data, viewState, session) =>
-        this.processGSplatsData(path, data, viewState, session),
+      processGSplatsData: (path, data, viewState, session, signal) =>
+        this.processGSplatsData(path, data, viewState, session, signal),
       commitGSplatsGeometry: (staged, session, loadedViewVersion) =>
         this.commitGSplatsGeometry(staged, session, loadedViewVersion),
       processMeshData: (path, data, viewState, attrs) =>
