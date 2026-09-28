@@ -26,6 +26,10 @@ import type { DepthSortConfig } from './sections/depth-sort/types';
 /** Depth-sort configuration type. */
 export type { DepthSortConfig };
 
+import type { LodConfig } from './sections/lod/types';
+/** LOD display-policy configuration type. */
+export type { LodConfig };
+
 import type { DimensionAnimationConfig } from './sections/dimension-animation/types';
 /** Dimension-animation configuration type. */
 export type { DimensionAnimationConfig };
@@ -103,6 +107,7 @@ export interface AppConfig {
   adaptiveDPR: AdaptiveDPRConfig;
   densityGuard: DensityGuardConfig;
   depthSort: DepthSortConfig;
+  lod: LodConfig;
   scene: SceneConfig;
   shader: ShaderConfig;
   ui: UIConfig;

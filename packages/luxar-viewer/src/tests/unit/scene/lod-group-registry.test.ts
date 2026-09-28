@@ -4642,15 +4642,15 @@ describe('LODGroupRegistry — never-downgrade display gate', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// Coverage-band cross-fade (on by default; ?noLodFade disables) — two adjacent
-// blendable (additive/luminous/volumetric) levels
-// render with complementary opacity as the DISTANCE (coverage metric) crosses
-// their boundary. Distance-driven, independent of streaming. Off / non-blendable
+// Level dissolve (on by default; ?noLodFade disables) — when a blendable
+// (additive/luminous/volumetric) group changes its displayed level, the
+// outgoing and incoming levels render with complementary opacity for
+// config.lod.fadeMs (time-driven, independent of streaming). Off / non-blendable
 // / off-screen ⇒ the byte-identical hard swap. A small tile
 // ([0,0,0]–[0.3,0.3,0.3]) under the identity test camera (800×600 viewport,
 // fitted axis 600) projects to a coverage metric of exactly 0.5
-// (150 px diagonal ÷ (FILL_FACTOR·600) = 150/300), so placing
-// the finer level's threshold at/near 0.5 lands the metric in its blend band.
+// (150 px diagonal ÷ (FILL_FACTOR·600) = 150/300); scaling the projection
+// matrix by k scales it to 0.5·k.
 // ────────────────────────────────────────────────────────────────────────
 
 describe('LODGroupRegistry — coverage-band cross-fade', () => {
@@ -4714,12 +4714,8 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
   const liveOpacity = (c: LODGroupChild): number =>
     ((c.object as THREE.Mesh).material as unknown as FadeMatStub).getOpacity();
 
-  it('blends the two levels 50/50 exactly at the boundary (metric == threshold)', () => {
-    const reg = makeReg(true);
-    const coarse = fadeChild(0); // threshold 0
-    const fine = fadeChild(0.5); // boundary at 0.5 == the metric
-    reg.register(makeEntry([coarse, fine], 0, '/g'));
-    reg.evaluatePerFrame();
+  it('draws the two levels 50/50 halfway through a dissolve', () => {
+    const { coarse, fine } = dissolveHalfway('additive');
     expect(coarse.object.visible).toBe(true);
     expect(fine.object.visible).toBe(true);
     expect(liveOpacity(fine)).toBeCloseTo(0.5, 6);
@@ -4729,28 +4725,19 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
   });
 
   it('does not blend a held-stale aspiration with a fresh partner', () => {
-    const state = { version: 2, clock: 0 };
-    const reg = makeReg(
-      true,
-      () => state.version,
-      () => state.clock
-    );
-    const coarse = fadeChild(0);
-    const fine = fadeChild(0.5);
-    (coarse.object.userData as { visibleSplatCount: number }).visibleSplatCount = 10;
-    reg.register(makeEntry([coarse, fine], 0, '/g'));
-
-    reg.evaluatePerFrame();
+    const state = { version: 2 };
+    const { reg, coarse, fine } = dissolveHalfway('additive', {
+      getViewVersion: () => state.version,
+    });
     expect(coarse.object.visible).toBe(true);
     expect(fine.object.visible).toBe(true);
-    expect(liveOpacity(coarse)).toBeCloseTo(0.5, 6);
     expect(liveOpacity(fine)).toBeCloseTo(0.5, 6);
 
+    // A new slice: the coarse level has already committed it, the fine one
+    // has not — the fine level is held on screen, stale, and must not be
+    // dissolved against the fresh coarse one.
     state.version = 3;
-    Object.assign(coarse.object.userData, {
-      loadedViewVersion: 3,
-      visibleSplatCount: 10,
-    });
+    Object.assign(coarse.object.userData, { loadedViewVersion: 3, visibleSplatCount: 10 });
     reg.evaluatePerFrame();
 
     expect(reg.get('/g')!.displayedChildIndex).toBe(1);
@@ -4759,19 +4746,11 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(liveOpacity(fine)).toBe(1);
   });
 
-  it('weights shift with the metric position in the band (finer boundary just above the metric ⇒ coarse dominant)', () => {
-    // Proportional band: boundary 0.625, gap 0.625 → half-width 0.4·0.625=0.25,
-    // band [0.375,0.875]. metric 0.5 → finer weight smoothstep(0.375,0.875,0.5)=0.15625.
-    const reg = makeReg(true);
-    const coarse = fadeChild(0);
-    const fine = fadeChild(0.625);
-    reg.register(makeEntry([coarse, fine], 0, '/g'));
-    reg.evaluatePerFrame();
-    expect(coarse.object.visible).toBe(true);
-    expect(fine.object.visible).toBe(true);
-    expect(liveOpacity(fine)).toBeCloseTo(0.15625, 5);
-    expect(liveOpacity(coarse)).toBeCloseTo(0.84375, 5);
-    expect(liveOpacity(fine) + liveOpacity(coarse)).toBeCloseTo(1, 6);
+  it('the dissolve weight depends on time only, not on how far past the threshold the camera is', () => {
+    const near = dissolveHalfway('additive', {}, 2);
+    const far = dissolveHalfway('additive', {}, 8);
+    expect(liveOpacity(near.fine)).toBeCloseTo(liveOpacity(far.fine), 9);
+    expect(liveOpacity(near.coarse)).toBeCloseTo(liveOpacity(far.coarse), 9);
   });
 
   it('shows a single level (no partner) when the metric is outside every band', () => {
@@ -4811,12 +4790,8 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(liveOpacity(coarse)).toBe(1);
   });
 
-  it('volumetric mode ⇒ blends 50/50 at the boundary (opacity scales τ, so the fade is well-behaved)', () => {
-    const reg = makeReg(true);
-    const coarse = fadeChild(0, { mode: 'volumetric' });
-    const fine = fadeChild(0.5, { mode: 'volumetric' });
-    reg.register(makeEntry([coarse, fine], 0, '/g'));
-    reg.evaluatePerFrame();
+  it('volumetric mode ⇒ dissolves too (opacity scales τ, so the fade is well-behaved)', () => {
+    const { coarse, fine } = dissolveHalfway('volumetric');
     expect(coarse.object.visible).toBe(true);
     expect(fine.object.visible).toBe(true);
     expect(liveOpacity(fine)).toBeCloseTo(0.5, 6);
@@ -4835,7 +4810,7 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(liveOpacity(coarse)).toBe(1);
   });
 
-  it('brightness invariance: the two levels’ opacities always sum to 1 across the band', () => {
+  it('brightness invariance: the two levels’ opacities always sum to 1 through the dissolve', () => {
     // The physics guarantee (additive shader = energy·opacity, mass-conserved
     // levels ⇒ equal integrated E): blendedDC = E·(1−w) + E·w = E for all w. The
     // JS-side invariant underwriting it is exactly-complementary opacities.
@@ -4845,19 +4820,23 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     // between the two levels' absorptions, EXACT only where both present the
     // same per-ray τ. See the volumetric-math suite for the general case; the
     // JS-side complementary-weight invariant is what this test pins.)
-    for (const boundary of [0.4, 0.45, 0.5, 0.55, 0.6]) {
-      const reg = makeReg(true);
-      const coarse = fadeChild(0);
-      const fine = fadeChild(boundary);
-      reg.register(makeEntry([coarse, fine], 0, '/g'));
+    const clock = { t: 1000 };
+    const { reg, zoom } = makeTimedReg(clock);
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.9);
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    zoom(4);
+    for (let f = 0; f < 20; f++) {
       reg.evaluatePerFrame();
       if (coarse.object.visible && fine.object.visible) {
         expect(liveOpacity(coarse) + liveOpacity(fine)).toBeCloseTo(1, 6);
       }
+      clock.t += 16;
     }
   });
 
-  it('kicks the finer level’s load (no blend yet) when it is not resident, so the next crossing blends', () => {
+  it('kicks the finer level’s load (no blend yet) when it is not resident', () => {
     const reg = makeReg(true);
     const coarse = fadeChild(0);
     let loaded = false;
@@ -4867,8 +4846,8 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     };
     reg.register(makeEntry([coarse, fine], 0, '/g'));
     reg.evaluatePerFrame();
-    // Partner (finer) not resident → no two-level blend this frame, but its load
-    // is kicked so a subsequent crossing can fade against it.
+    // The finer level is selected but not resident: its load is kicked, and the
+    // coarse level stays on screen alone until it lands (then dissolves).
     expect(loaded).toBe(true);
     expect(fine.object.visible).toBe(false);
   });
@@ -4880,9 +4859,6 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     // ordinary candidate and got released MID-FADE — half the dissolve
     // vanished and a visible-but-not-ready level was left behind. The evictor
     // must never release anything on screen (``object.visible === true``).
-    const camera = new THREE.Camera();
-    camera.matrixWorldInverse.identity();
-    camera.projectionMatrix.identity();
     let budget = 1e15;
     const relMid = vi.fn(() => {
       mid.ready = false;
@@ -4890,25 +4866,27 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     const relFine = vi.fn(() => {
       fine.ready = false;
     });
-    // fadeChild's 0.3-box bounds → coverage metric 0.5 = the 1↔2 boundary of
-    // thresholds [0, 0.25, 0.5] (gap 0.25 → band [0.4, 0.6]) → exact 50/50 blend.
     const coarse = fadeChild(0); // eager fallback: no release, never evictable
     const mid = fadeChild(0.25);
     mid.release = relMid as () => void;
     const fine = fadeChild(0.5);
     fine.release = relFine as () => void;
     const children = [coarse, mid, fine];
-    const reg = new LODGroupRegistry({
-      getCamera: () => camera,
-      getViewportSize: () => ({ width: 800, height: 600 }),
-      getDisplayDims: () => [0, 1, 2],
-      getViewVersion: () => 2,
-      getCrossFadeEnabled: () => true,
+    const clock = { t: 1000 };
+    const { reg, zoom } = makeTimedReg(clock, {
       getResidentByteBudget: () => budget,
       getResidentBytes: () => children.reduce((s, c) => s + (c.ready !== false ? 100 : 0), 0),
     });
     reg.register(makeEntry(children, 0, '/g'));
-    reg.evaluatePerFrame(); // steady blend: [mid, fine] visible at 50/50
+    zoom(0.6); // metric 0.3: the mid level
+    reg.evaluatePerFrame();
+    clock.t += FADE_MS; // let the coarse → mid dissolve land
+    reg.evaluatePerFrame();
+    expect(drawn(children)).toEqual([1]);
+    zoom(4); // the fine level: the mid → fine dissolve starts
+    reg.evaluatePerFrame();
+    clock.t += FADE_MS / 2;
+    reg.evaluatePerFrame(); // mid-dissolve: [mid, fine] visible at 50/50
     expect(mid.object.visible).toBe(true);
     expect(fine.object.visible).toBe(true);
 
@@ -4926,24 +4904,13 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     // restore branch (``manageFade === false``) and stranded opacity 0.5
     // forever. The falling-edge restore must return every faded leaf to its
     // authored opacity on the next frame.
-    const camera = new THREE.Camera();
-    camera.matrixWorldInverse.identity();
-    camera.projectionMatrix.identity();
-    let crossFade = true;
-    const reg = new LODGroupRegistry({
-      getCamera: () => camera,
-      getViewportSize: () => ({ width: 800, height: 600 }),
-      getDisplayDims: () => [0, 1, 2],
-      getViewVersion: () => 2,
-      getCrossFadeEnabled: () => crossFade,
+    const flags = { crossFade: true };
+    const { reg, coarse, fine } = dissolveHalfway('additive', {
+      getCrossFadeEnabled: () => flags.crossFade,
     });
-    const coarse = fadeChild(0);
-    const fine = fadeChild(0.5); // boundary at fadeChild's metric 0.5 → 50/50
-    reg.register(makeEntry([coarse, fine], 0, '/g'));
-    reg.evaluatePerFrame();
     expect(liveOpacity(fine)).toBeCloseTo(0.5, 6); // mid-fade
 
-    crossFade = false; // both anti-popping flags now off
+    flags.crossFade = false; // both anti-popping flags now off
     for (let f = 0; f < 3; f++) reg.evaluatePerFrame();
     expect(liveOpacity(fine)).toBe(1); // authored opacity restored, not stranded
     expect(liveOpacity(coarse)).toBe(1);
@@ -4957,7 +4924,10 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
   // drawing ONE level (#2925), whatever its coverage metric.
   const FADE_MS = 250;
   /** Registry whose identity camera can be zoomed by `scale` (metric = 0.5·scale). */
-  function makeTimedReg(clock: { t: number }) {
+  function makeTimedReg(
+    clock: { t: number },
+    deps: Partial<ConstructorParameters<typeof LODGroupRegistry>[0]> = {}
+  ) {
     const camera = new THREE.Camera();
     camera.matrixWorldInverse.identity();
     camera.projectionMatrix.identity();
@@ -4968,18 +4938,40 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
       getViewVersion: () => 2,
       getCrossFadeEnabled: () => true,
       now: () => clock.t,
+      ...deps,
     });
     const zoom = (scale: number): void => {
       camera.projectionMatrix.makeScale(scale, scale, 1);
     };
     return { reg, zoom };
   }
+  /**
+   * A coarse → fine change (fine threshold 0.9; metric 0.5 → 0.5·`zoomTo`),
+   * evaluated half a dissolve after it started.
+   */
+  function dissolveHalfway(
+    mode: string,
+    deps: Partial<ConstructorParameters<typeof LODGroupRegistry>[0]> = {},
+    zoomTo = 4
+  ) {
+    const clock = { t: 1000 };
+    const { reg, zoom } = makeTimedReg(clock, deps);
+    const coarse = fadeChild(0, { mode });
+    const fine = fadeChild(0.9, { mode });
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    zoom(zoomTo);
+    reg.evaluatePerFrame();
+    clock.t += FADE_MS / 2;
+    reg.evaluatePerFrame();
+    return { reg, coarse, fine, clock };
+  }
   const drawn = (children: LODGroupChild[]): number[] =>
     children.flatMap((c, i) => (c.object.visible ? [i] : []));
   const isAnimating = (reg: LODGroupRegistry): boolean | undefined =>
     (reg as unknown as { isAnimating?: () => boolean }).isAnimating?.();
 
-  it.fails('a parked camera draws a single level at full weight (#2925)', () => {
+  it('a parked camera draws a single level at full weight (#2925)', () => {
     // fadeChild's box reads metric 0.5, EXACTLY the fine level's threshold: the
     // spot where a distance-driven band blends the two levels 50/50 for as
     // long as the camera stays there.
@@ -4998,7 +4990,7 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(reg.get('/g')!.displayedChildIndex).toBe(1);
   });
 
-  it.fails('a level change dissolves over fadeMs, then draws the new level alone', () => {
+  it('a level change dissolves over fadeMs, then draws the new level alone', () => {
     const clock = { t: 1000 };
     const { reg, zoom } = makeTimedReg(clock);
     const coarse = fadeChild(0);
@@ -5029,7 +5021,7 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(isAnimating(reg)).toBe(false);
   });
 
-  it.fails('a retarget mid-dissolve starts from the current opacities (no pop)', () => {
+  it('a retarget mid-dissolve starts from the current opacities (no pop)', () => {
     const clock = { t: 1000 };
     const { reg, zoom } = makeTimedReg(clock);
     const coarse = fadeChild(0);
@@ -5058,6 +5050,73 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     reg.evaluatePerFrame();
     expect(drawn(children)).toEqual([0]);
     expect(liveOpacity(coarse)).toBe(1);
+  });
+
+  it('reports the dissolve landing as a level change, so the monitor recounts', () => {
+    // The outgoing level leaves ALONE when the dissolve lands (its partner
+    // has been on screen since the dissolve started): the visible tally
+    // changes then, not only when the incoming level first showed.
+    const clock = { t: 1000 };
+    const { reg, zoom } = makeTimedReg(clock);
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.9);
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    zoom(4);
+    expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED); // the incoming level shows
+    clock.t += FADE_MS / 2;
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE); // mid-dissolve
+    clock.t += FADE_MS;
+    expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED); // the outgoing level leaves
+    expect(coarse.object.visible).toBe(false);
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
+  });
+
+  it('a retarget to a third level keeps the more opaque level, at its current opacity', () => {
+    const clock = { t: 1000 };
+    const { reg, zoom } = makeTimedReg(clock);
+    const coarse = fadeChild(0);
+    const mid = fadeChild(0.25);
+    const fine = fadeChild(0.5);
+    const children = [coarse, mid, fine];
+    reg.register(makeEntry(children, 0, '/g'));
+    zoom(0.2); // metric 0.1: the coarse level
+    reg.evaluatePerFrame();
+    zoom(0.6); // metric 0.3: coarse → mid starts
+    reg.evaluatePerFrame();
+    clock.t += 0.2 * FADE_MS;
+    reg.evaluatePerFrame();
+    const coarseBefore = liveOpacity(coarse);
+    expect(coarseBefore).toBeGreaterThan(0.5); // mid is still the fainter one
+
+    zoom(4); // the fine level, mid-dissolve: coarse stays as the outgoing level
+    reg.evaluatePerFrame();
+    expect(drawn(children)).toEqual([0, 2]);
+    expect(liveOpacity(coarse)).toBeCloseTo(coarseBefore, 6);
+    expect(liveOpacity(coarse) + liveOpacity(fine)).toBeCloseTo(1, 6);
+  });
+
+  it('isCaptureQuiescent waits out a dissolve in flight (wall time is not capture time)', () => {
+    const { reg, clock } = dissolveHalfway('additive');
+    expect(reg.isAnimating()).toBe(true);
+    expect(reg.isCaptureQuiescent()).toBe(false);
+    clock.t += FADE_MS;
+    reg.evaluatePerFrame();
+    expect(reg.isAnimating()).toBe(false);
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('keeps the loop ticking while a dissolve is in flight, and stops when it lands', () => {
+    const ticks = { n: 0 };
+    const { reg, clock } = dissolveHalfway('additive', { requestTick: () => ticks.n++ });
+    ticks.n = 0;
+    reg.evaluatePerFrame();
+    expect(ticks.n).toBeGreaterThan(0);
+    clock.t += FADE_MS;
+    reg.evaluatePerFrame(); // lands: the frame that hides the outgoing level
+    ticks.n = 0;
+    reg.evaluatePerFrame();
+    expect(ticks.n).toBe(0);
   });
 });
 
@@ -5193,13 +5252,30 @@ describe('LODGroupRegistry — streaming energy compensation', () => {
   });
 
   it('composes with the cross-fade so rendered energy stays E (opacity·e sums to 1)', () => {
-    // Both flags on. Boundary 0.5, metric 0.5 ⇒ 50/50 coverage. The finer level's
-    // prefix carries e=0.5, so its opacity = 0.5 (coverage) × 2 (1/e) = 1.0; the
-    // complete coarse = 0.5 × 1 = 0.5. Rendered energy 1.0·0.5 + 0.5·1.0 = 1.0 = E.
-    const reg = makeReg(true, true);
+    // Both flags on, halfway through a coarse → fine dissolve (50/50). The finer
+    // level's prefix carries e=0.5, so its opacity = 0.5 (dissolve) × 2 (1/e) =
+    // 1.0; the complete coarse = 0.5 × 1 = 0.5. Rendered energy 1.0·0.5 + 0.5·1.0
+    // = 1.0 = E.
+    const clock = { t: 1000 };
+    const camera = new THREE.Camera();
+    camera.matrixWorldInverse.identity();
+    camera.projectionMatrix.identity();
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getViewVersion: () => 2,
+      getCrossFadeEnabled: () => true,
+      getEnergyCompEnabled: () => true,
+      now: () => clock.t,
+    });
     const coarse = fadeChild(0); // complete (e = 1)
-    const fine = fadeChild(0.5, { energy: 0.5 });
+    const fine = fadeChild(0.9, { energy: 0.5 });
     reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    camera.projectionMatrix.makeScale(4, 4, 1);
+    reg.evaluatePerFrame();
+    clock.t += 125; // half of config.lod.fadeMs
     reg.evaluatePerFrame();
     expect(coarse.object.visible).toBe(true);
     expect(fine.object.visible).toBe(true);

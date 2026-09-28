@@ -90,7 +90,8 @@ import {
   subtreeDisplayProgress,
   type ProgressNode,
 } from './lod-display-gate';
-import { coverageBlendPlan } from './lod-blend';
+import { smoothstep } from './lod-blend';
+import { config } from '../config';
 import { applyLodFade, FADE_EPSILON, isBlendableSubtree } from './lod-fade';
 import {
   computeEntryWorldBox,
@@ -122,16 +123,51 @@ export {
 } from './lod-selector-math';
 
 /**
- * Cross-fade band half-width as a FRACTION of the local inter-level gap. The two
- * levels straddling a boundary blend while the coverage metric is within
- * `±fraction·min(adjacent gaps)` of it; outside, a single level renders. Because
- * the `coverage_fraction` thresholds are geometrically spaced, a proportional
- * band keeps the dissolve the same fraction of a step at every level (a constant
- * width would be over-wide at the coarse end). ~0.4 → the middle ~20% of each
- * step is crisp single-level, the rest a dissolve; `< 0.5` guarantees no
- * overlapping bands. See `coverageBlendPlan`.
+ * An in-flight dissolve between two levels of one group (see
+ * ``LODGroupRegistry.levelFade``). ``progress`` ∈ [0, 1) is the INCOMING level's
+ * share of the dissolve; its opacity is ``smoothstep(progress)`` and the
+ * outgoing level's the complement. It advances at ``1 / config.lod.fadeMs`` per
+ * millisecond from ``startProgress`` at ``startMs``.
  */
-const CROSSFADE_BAND_FRACTION = 0.4;
+interface LevelFade {
+  /** The outgoing level (drawn at the complement weight). */
+  fromIdx: number;
+  /** The incoming level — the one displayed. */
+  toIdx: number;
+  startMs: number;
+  startProgress: number;
+  progress: number;
+}
+
+/**
+ * The dissolve that starts when the displayed level becomes ``toIdx`` (the
+ * previous frame displayed ``prevIdx``), given the dissolve in flight, if any.
+ * It starts from what is on screen. With nothing in flight, from ``prevIdx`` at
+ * progress 0. Reversing an in-flight dissolve (back to its outgoing level)
+ * starts at ``1 − progress``, so each level keeps exactly its current opacity
+ * and the reversal only undoes what happened. Retargeting to a THIRD level
+ * keeps the more opaque of the two as the outgoing level, at its current
+ * opacity (the other one, at most half-weight, drops out).
+ */
+function retargetedFade(
+  inFlight: LevelFade | null,
+  prevIdx: number,
+  toIdx: number,
+  startMs: number
+): LevelFade {
+  let fromIdx = prevIdx;
+  let start = 0;
+  if (inFlight !== null && inFlight.toIdx === prevIdx) {
+    const p = inFlight.progress;
+    if (toIdx !== inFlight.fromIdx && p < 0.5) {
+      fromIdx = inFlight.fromIdx; // still the more opaque one, at 1 − w(p) = w(1 − p)
+      start = p;
+    } else {
+      start = 1 - p; // the incoming-so-far becomes outgoing, at w(p) = 1 − w(1 − p)
+    }
+  }
+  return { fromIdx, toIdx, startMs, startProgress: start, progress: start };
+}
 
 /** Perf counter: displayed-level changes of a lod group (one per group per frame). */
 const S_LOD_LEVEL_SWAPS = perfCounters.slot('lod.levelSwaps');
@@ -1092,13 +1128,13 @@ export interface LODGroupRegistryDeps {
   /**
    * Whether the LOD cross-fade is enabled (ON by default; `?noLodFade`
    * disables). When true and a blendable (additive/luminous/volumetric — see
-   * `BLENDABLE_MODES` in `scene/lod-fade.ts`) group is zooming across a LOD
-   * boundary, the registry
-   * blends the two straddling levels' opacity — the finer at
-   * `smoothstep(coverage metric across a ±band around the boundary)`, the
-   * coarser at the complement — instead of a hard visibility swap. Distance-
-   * driven (a function of the coverage metric), independent of additive
-   * streaming. Omitted / false ⇒ the pre-cross-fade hard swap, byte-identical.
+   * `BLENDABLE_MODES` in `scene/lod-fade.ts`) group changes its displayed
+   * level, the registry dissolves from the outgoing level to the incoming one
+   * over `config.lod.fadeMs` — the incoming at `smoothstep(elapsed / fadeMs)`,
+   * the outgoing at the complement — instead of a hard visibility swap.
+   * Time-driven, so a parked camera always settles on ONE level, and
+   * independent of additive streaming. Omitted / false ⇒ the hard swap,
+   * byte-identical.
    * Read live so the flag applies without a reload. The default for unit tests
    * (off).
    */
@@ -1232,6 +1268,8 @@ export class LODGroupRegistry {
    * signal to redraw.
    */
   private drawnStateChanged = false;
+  /** In-flight level dissolves, by group path (see {@link levelFade}). */
+  private readonly fades = new Map<string, LevelFade>();
   /**
    * Partition rising edges waiting for their wrapper to be visible and the
    * loader to be idle: wrapper path → the re-entering PART paths. A set that
@@ -1654,6 +1692,7 @@ export class LODGroupRegistry {
     this.forgetPartitionParts(path);
     this.warnedNoReadyChild.delete(path);
     this.warnedEmptyLevel.delete(path);
+    this.fades.delete(path);
   }
 
   /** Clear all entries (called on full scene tear-down). */
@@ -1670,6 +1709,7 @@ export class LODGroupRegistry {
     }
     this.entries.clear();
     this.caches.clear();
+    this.fades.clear();
     this.partitionEntries.clear();
     this.partitionCaches.clear();
     this.partitionPartsByPath.clear();
@@ -1833,6 +1873,10 @@ export class LODGroupRegistry {
    *   non-progressive loader) carries no signal and counts as complete.
    * - No child of the entry may be ``loading`` — an in-flight commit can change
    *   what renders on a later frame.
+   * - No level dissolve may be in flight ({@link isAnimating}). The dissolve
+   *   is driven by WALL time, which an offline capture does not follow, so
+   *   filming one mid-way would make each exported frame depend on how long
+   *   the previous one took to render. Waiting turns it into a clean cut.
    *
    * An empty registry (and an entry-free scene) is quiescent: there is nothing
    * to wait for.
@@ -1848,6 +1892,7 @@ export class LODGroupRegistry {
    * object per entry. That cost is genuinely irrelevant here.
    */
   isCaptureQuiescent(): boolean {
+    if (this.isAnimating()) return false;
     // Wired to SceneLoader.isLoadPassInProgress: any pass can still change a
     // visible partition part before this fixed-pose capture frame is exported.
     if (this.anyVisiblePartitionPart() && this.deps.isUpdateInProgress?.() === true) return false;
@@ -2185,6 +2230,10 @@ export class LODGroupRegistry {
       }
     }
     if (anyLoading) this.keepTicking();
+    // A dissolve is a function of TIME, so the loop must keep drawing until it
+    // lands even when nothing else moves (each step writes a new opacity,
+    // which marks the frame dirty through ``takeDrawnStateChanged``).
+    if (this.isAnimating()) this.keepTicking();
     // Record whether fade management was ON this frame — the falling-edge
     // detector behind ``evaluateEntry``'s one-shot residual-opacity restore
     // (see ``fadeWasManaged``). Written AFTER the entry loop so every entry in
@@ -2198,6 +2247,23 @@ export class LODGroupRegistry {
     // so no per-swap release, hence no reload churn.
     this.enforceByteBudget(camera, FRUSTUM_SCRATCH, displayDims);
     return lodFrameChanges(levelChanged, cullChanged);
+  }
+
+  /**
+   * Whether a level dissolve is still in flight: the frames it spans are
+   * animation frames, drawn although neither the camera nor the data moves.
+   * A dissolve whose group stopped being evaluated (hidden layer) counts until
+   * its own end time, so this never holds the loop awake indefinitely.
+   */
+  isAnimating(): boolean {
+    if (this.fades.size === 0) return false;
+    const fadeMs = config.lod.fadeMs;
+    const now = this.nowMs();
+    for (const [path, fade] of this.fades) {
+      if (fade.startMs + (1 - fade.startProgress) * fadeMs > now) return true;
+      this.fades.delete(path);
+    }
+    return false;
   }
 
   /** Keep the loop ticking (see {@link LODGroupRegistryDeps.requestTick}). */
@@ -2375,9 +2441,9 @@ export class LODGroupRegistry {
     // Pick the desired child index.
     let desired: number;
     // The dimensionless coverage metric for this frame (projected diagonal ÷
-    // FILL_FACTOR·fittedAxisPx), hoisted so the coverage-band cross-fade below
-    // can blend around a boundary. -1 ⇒ not computed (locked / off-screen).
-    let coverageMetric = -1;
+    // FILL_FACTOR·fittedAxisPx, or the screen-area fraction). Only computed
+    // on the auto path.
+    let coverageMetric: number;
     let usedFootprintSelection = false;
     if (entry.selectorMode !== 'auto') {
       // Explicit lock bypasses the off-screen gate: a user who pins a level
@@ -2620,7 +2686,7 @@ export class LODGroupRegistry {
     // failure, or the previous level losing freshness. Bypassed for an explicit
     // lock and while off-screen. This is a STREAMING/loading concern (WHEN a
     // just-loaded level is good enough to show) — orthogonal to the
-    // distance-driven cross-fade below, and stays a hard hold.
+    // time-driven level dissolve below, and stays a hard hold.
     if (
       displayIdx === entry.activeChildIndex &&
       entry.selectorMode === 'auto' &&
@@ -2650,82 +2716,50 @@ export class LODGroupRegistry {
       }
     }
 
-    // ── Coverage-band cross-fade (distance-driven) ──
-    // As the camera zooms across a LOD boundary, blend the two levels straddling
-    // it — coarser at (1−w), finer at w = smoothstep of the coverage metric
-    // across a ±band around the boundary — so the substitutive switch dissolves
-    // instead of popping. Purely a function of DISTANCE (the coverage metric),
-    // independent of additive streaming; brightness is preserved by the levels'
-    // build-time mass conservation (both integrate to the same DC). Blendable
-    // modes only (BLENDABLE_MODES = additive/luminous/volumetric — energy sums
-    // linearly, or opacity linearly scales optical depth τ so the pair
-    // interpolates monotonically between the two levels' absorptions; see that
-    // set's doc for what volumetric does NOT guarantee). For two mid-fade
+    // ── Level dissolve (time-driven) ──
+    // When the DISPLAYED level changes, dissolve from the outgoing level to the
+    // incoming one over ``config.lod.fadeMs`` — incoming at w = smoothstep of
+    // the elapsed fraction, outgoing at (1−w) — so the substitutive switch
+    // dissolves instead of popping. A function of TIME since the change, never
+    // of the camera's distance to a threshold: a parked camera always settles
+    // on ONE level at full weight (#2925 — a distance band drew two levels for
+    // as long as the camera stayed inside it). Brightness is preserved by the
+    // levels' build-time mass conservation (both integrate to the same DC).
+    // Blendable modes only (BLENDABLE_MODES = additive/luminous/volumetric —
+    // energy sums linearly, or opacity linearly scales optical depth τ so the
+    // pair interpolates monotonically between the two levels' absorptions; see
+    // that set's doc for what volumetric does NOT guarantee). For two mid-fade
     // volumetric siblings the mesh draw order may come from the render-order
     // containment rule (near-identical bounds); acceptable because combined
-    // TRANSMITTANCE is order-independent (transmittances multiply), so occlusion
-    // of content behind the pair is exact at every weight. If strict containment
-    // does not fire for near-co-located siblings, the view-z fallback chooses
-    // their order; in the thick regime camera motion can therefore flip the
-    // mid-fade draw order and emission result. Emission's ordering residual is
-    // the product of the levels' w/(1−w)-scaled per-fragment alphas and their
-    // local radiance difference: always first order in that difference, and
-    // second order in the alphas only in the optically thin regime. Individually
-    // thick fragments can saturate both alphas and remove that suppression, but
-    // the residual magnitude remains bounded by the local inter-level radiance
-    // difference, not by the rendered hard-swap pop.
-    // Off / non-blendable /
-    // off-screen / locked / a held-stale display ⇒ no blend (byte-identical hard
-    // swap). The finer partner must be resident to fade against; if it is not,
-    // kick its load so the NEXT crossing blends (the first hard-swaps meanwhile).
+    // TRANSMITTANCE is order-independent (transmittances multiply), so
+    // occlusion of content behind the pair is exact at every weight. The
+    // emission ordering residual stays bounded by the local inter-level
+    // radiance difference, not by the rendered hard-swap pop.
+    // Off / non-blendable / off-screen / locked / a held-stale display ⇒ no
+    // dissolve (byte-identical hard swap).
     let blendPartnerIdx: number | null = null;
     let primaryWeight = 1;
-    if (
+    const fadeEligible =
       this.deps.getCrossFadeEnabled?.() === true &&
       entry.selectorMode === 'auto' &&
       !entry.offScreen &&
       aspirationFresh &&
       displayIdx === entry.activeChildIndex &&
-      !usedFootprintSelection &&
-      coverageMetric >= 0
-    ) {
-      const cache = this.caches.get(entry.path);
-      const plan = cache
-        ? coverageBlendPlan(cache.thresholds, coverageMetric, CROSSFADE_BAND_FRACTION)
-        : null;
-      if (
-        plan &&
-        plan.hiWeight > FADE_EPSILON &&
-        plan.hiWeight < 1 - FADE_EPSILON &&
-        (displayIdx === plan.lo || displayIdx === plan.hi)
-      ) {
-        const partnerIdx = displayIdx === plan.hi ? plan.lo : plan.hi;
-        const partner = entry.children[partnerIdx];
-        const partnerFresh = version == null || this.childFreshAndCount(partner, version).fresh;
-        const aspBlendable = this.isBlendable(aspiration!);
-        if (
-          partner &&
-          isReady(partner) &&
-          partnerFresh &&
-          aspBlendable &&
-          this.isBlendable(partner)
-        ) {
-          blendPartnerIdx = partnerIdx;
-          // primaryWeight is the OPACITY of the primary (displayIdx); the plan's
-          // hiWeight is the FINER level's opacity, mapped to whichever is primary.
-          primaryWeight = displayIdx === plan.hi ? plan.hiWeight : 1 - plan.hiWeight;
-          // Keep both warm in the eviction LRU (both are on screen). The blend
-          // weight is a function of the coverage metric (camera distance), so
-          // camera motion already keeps the on-demand loop awake through the
-          // band; a parked camera settles on the correct static blended frame.
-          partner.lastVisibleTick = this.tick;
-          aspiration!.lastVisibleTick = this.tick;
-        } else if (partner && !isReady(partner) && aspBlendable) {
-          // Approaching a not-yet-resident finer level: load it so the next
-          // crossing can blend (this crossing hard-swaps while it loads).
-          this.maybeKickLoad(entry, partner);
-        }
-      }
+      !usedFootprintSelection;
+    // Last frame's outgoing level, if a dissolve was in flight (see the hide
+    // edge in the visibility pass below).
+    const fadingFromIdx = this.fades.get(entry.path)?.fromIdx ?? -1;
+    const fade = fadeEligible ? this.levelFade(entry, displayIdx, version ?? null) : null;
+    if (fade) {
+      blendPartnerIdx = fade.fromIdx;
+      // primaryWeight is the OPACITY of the primary (displayIdx = the incoming
+      // level); the outgoing level gets the complement.
+      primaryWeight = smoothstep(0, 1, fade.progress);
+      // Keep both warm in the eviction LRU (both are on screen).
+      entry.children[fade.fromIdx].lastVisibleTick = this.tick;
+      aspiration!.lastVisibleTick = this.tick;
+    } else {
+      this.fades.delete(entry.path);
     }
 
     // ── Settle-gated reload / progressive refinement of the lazy aspiration ──
@@ -2764,7 +2798,7 @@ export class LODGroupRegistry {
     // tally, which counts the displayed level, not the aspiration.
     let changed = false;
     // Opacity is managed only while at least one anti-popping feature is on: the
-    // coverage cross-fade (blends the two levels straddling a distance boundary)
+    // level dissolve (blends the outgoing and incoming level after a change)
     // and/or the streaming energy compensation (per-leaf `1/e(k)` on the displayed
     // streaming level). When BOTH are off, `manageFade` is false and this reduces
     // to the original single-level visibility swap with no material writes —
@@ -2785,7 +2819,14 @@ export class LODGroupRegistry {
       if (child.object.visible !== shouldShow) {
         child.object.visible = shouldShow;
         this.drawnStateChanged = true;
-        if (shouldShow) changed = true; // a new level became visible
+        if (shouldShow) {
+          changed = true; // a new level became visible
+        } else {
+          // A dissolve's outgoing level leaving on its own (its partner has
+          // been on screen since the dissolve started) changes the visible
+          // tally, so the monitor must recount — like the swap it completes.
+          if (i === fadingFromIdx) changed = true;
+        }
       }
       if (manageFade) {
         if (shouldShow) {
@@ -2999,6 +3040,65 @@ export class LODGroupRegistry {
    * registry's ``registerMaterial`` dep so a clone-on-first-fade material
    * keeps receiving per-frame camera-uniform updates.
    */
+  /**
+   * Advance (or start) the dissolve of ``entry`` toward ``displayIdx`` and
+   * return it, or ``null`` when the group should draw ``displayIdx`` alone.
+   *
+   * A dissolve STARTS when the displayed level differs from the one displayed
+   * last frame. It starts from what is on screen: when the previous level was
+   * itself still dissolving in (a retarget mid-dissolve), the new one begins at
+   * ``1 − progress``, which keeps the previous level at exactly the opacity it
+   * had, so reversing a change only has to undo the part that happened. It
+   * ENDS once ``progress`` reaches 1, or as soon as the outgoing level can no
+   * longer be drawn against the incoming one (released, stale for the current
+   * slice, or not blendable).
+   */
+  private levelFade(
+    entry: LODGroupEntry,
+    displayIdx: number,
+    version: number | null
+  ): LevelFade | null {
+    const fadeMs = config.lod.fadeMs;
+    const now = this.nowMs();
+    let fade = this.fades.get(entry.path) ?? null;
+    const prev = entry.displayedChildIndex;
+    if (prev !== undefined && prev !== displayIdx && fadeMs > 0) {
+      fade = retargetedFade(fade, prev, displayIdx, now);
+      this.fades.set(entry.path, fade);
+    }
+    if (fade === null || fade.toIdx !== displayIdx) return null;
+    fade.progress = Math.min(1, fade.startProgress + (now - fade.startMs) / fadeMs);
+    // The last few percent end the dissolve: applyLodFade treats a weight within
+    // FADE_EPSILON of 1 as the authored opacity, so the complement would be drawn
+    // on top of a full-weight level.
+    if (
+      smoothstep(0, 1, fade.progress) >= 1 - FADE_EPSILON ||
+      !this.canDissolve(entry, fade.fromIdx, displayIdx, version)
+    ) {
+      return null;
+    }
+    return fade;
+  }
+
+  /** The registry's wall clock, in milliseconds (``deps.now`` in tests). */
+  private nowMs(): number {
+    return this.deps.now?.() ?? performance.now();
+  }
+
+  /** Whether ``fromIdx`` can be drawn dissolving against ``toIdx`` this frame. */
+  private canDissolve(
+    entry: LODGroupEntry,
+    fromIdx: number,
+    toIdx: number,
+    version: number | null
+  ): boolean {
+    const from = entry.children[fromIdx];
+    const to = entry.children[toIdx];
+    if (!from || !to || !isReady(from)) return false;
+    if (version != null && !this.childFreshAndCount(from, version).fresh) return false;
+    return this.isBlendable(from) && this.isBlendable(to);
+  }
+
   private applyChildFade(child: LODGroupChild, weight: number | null, energyComp: boolean): void {
     if (applyLodFade(child.object, weight, energyComp, this.deps.registerMaterial)) {
       this.drawnStateChanged = true;

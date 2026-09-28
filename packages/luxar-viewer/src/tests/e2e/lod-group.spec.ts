@@ -69,19 +69,14 @@ test.describe('lod_group node', () => {
     expect(await getWebGLErrors(page)).toEqual([]);
   });
 
-  test('auto mode shows the active level, plus at most its cross-fade partner', async ({
-    page,
-  }) => {
+  test('auto mode settles on exactly one level once the dissolve lands', async ({ page }) => {
     // HISTORY: this test used to assert "exactly one visible child" and
-    // FLAKED under parallel runs — a different assertion failing each run.
-    // That premise predates the coverage CROSS-FADE (lod-blend.ts): in the
-    // blend band the registry deliberately shows TWO ADJACENT levels with
-    // blended opacities, and this fixture's default view sits in the
-    // level-0/1 band, settling on {child_0, child_1} a few frames after
-    // load. The old test only passed by sampling before the fade engaged;
-    // one-shot reads under CPU load landed after it. The real invariant:
-    // the visible set is {active} or {active, active+1} — never a
-    // non-adjacent pair, never all three, never empty.
+    // FLAKED under parallel runs, because the coverage cross-fade of the time
+    // was DISTANCE-driven: this fixture's default view sat in the level-0/1
+    // band and settled on {child_0, child_1} for as long as the camera stayed
+    // there (#2925). The dissolve is now time-driven (`config.lod.fadeMs`), so
+    // a parked camera ends on ONE level; two may be visible only while a
+    // dissolve is in flight, which the wait below outlasts.
     await page.waitForFunction(
       () => {
         const debug = (
@@ -101,20 +96,14 @@ test.describe('lod_group node', () => {
           .filter(([, v]) => v)
           .map(([k]) => Number(k))
           .sort((a, b) => a - b);
-        // Settled: ≥1 visible, ≤2 visible, and if 2 they are adjacent.
-        return (
-          Object.keys(vis).length >= 3 &&
-          idxs.length >= 1 &&
-          idxs.length <= 2 &&
-          (idxs.length === 1 || idxs[1] === idxs[0] + 1)
-        );
+        // Settled: exactly one level visible.
+        return Object.keys(vis).length >= 3 && idxs.length === 1;
       },
       null,
       { timeout: 10000 }
     );
-    // Pin the settled shape: at most two adjacent levels are visible (a single
-    // level, or a cross-fading pair). Which level that is depends on the framing
-    // and the FILL_FACTOR anchor, so the assertions below stay level-agnostic.
+    // Pin the settled shape: one level. Which level that is depends on the
+    // framing and the FILL_FACTOR anchor, so the assertion stays level-agnostic.
     const visibleIdxs = await page.evaluate(() => {
       const debug = (window as Window & typeof globalThis & { __luxarDebug?: { scene?: unknown } })
         .__luxarDebug;
@@ -132,11 +121,7 @@ test.describe('lod_group node', () => {
         .map(([k]) => Number(k))
         .sort((a, b) => a - b);
     });
-    expect(visibleIdxs.length).toBeGreaterThanOrEqual(1);
-    expect(visibleIdxs.length).toBeLessThanOrEqual(2);
-    if (visibleIdxs.length === 2) {
-      expect(visibleIdxs[1]).toBe(visibleIdxs[0] + 1); // cross-fade partners are adjacent
-    }
+    expect(visibleIdxs).toHaveLength(1);
   });
 
   test('debug snapshot reports the lod_group with its active level', async ({ page }) => {
@@ -145,14 +130,13 @@ test.describe('lod_group node', () => {
     // multires group, that exactly one level is active, and that the
     // reported activeLevel matches the visible child index.
     type LodGroupInfo = { name: string; levelCount: number; activeLevel: number };
-    // HISTORY: this test used to demand a single visible child equal to
-    // activeLevel and FLAKED under parallel runs — the coverage cross-fade
-    // (lod-blend.ts) deliberately shows the active level's ADJACENT partner
-    // in the blend band, so the real contract is: activeLevel is AMONG the
-    // visible children and every visible child is activeLevel or its +1
-    // partner. Poll until the snapshot and scene agree on that settled
-    // shape before pinning details (one-shot reads catch mid-selection
-    // states under CPU load).
+    // HISTORY: this test used to FLAKE under parallel runs because the
+    // cross-fade of the time was distance-driven and kept the active level's
+    // partner drawn for as long as the camera sat in a blend band (#2925).
+    // The dissolve is now time-driven, so a parked camera settles on the
+    // active level ALONE. Poll until the snapshot and scene agree on that
+    // settled shape before pinning details (one-shot reads catch
+    // mid-selection states under CPU load).
     await page.waitForFunction(
       () => {
         const debug = (
@@ -176,12 +160,7 @@ test.describe('lod_group node', () => {
           .filter(([, v]) => v)
           .map(([k]) => Number(k))
           .sort((a, b) => a - b);
-        return (
-          idxs.length >= 1 &&
-          idxs.length <= 2 &&
-          idxs[0] === g.activeLevel &&
-          (idxs.length === 1 || idxs[1] === g.activeLevel + 1)
-        );
+        return idxs.length === 1 && idxs[0] === g.activeLevel;
       },
       { timeout: 10000 }
     );
@@ -214,13 +193,8 @@ test.describe('lod_group node', () => {
     const multires = lodGroups.find((g) => g.name === '/multires');
     expect(multires).toBeDefined();
     expect(multires!.levelCount).toBe(3);
-    // The active level is the PRIMARY visible child; any second visible
-    // child is its cross-fade partner (active + 1).
-    expect(visibleIdxs[0]).toBe(multires!.activeLevel);
-    expect(visibleIdxs.length).toBeLessThanOrEqual(2);
-    if (visibleIdxs.length === 2) {
-      expect(visibleIdxs[1]).toBe(multires!.activeLevel + 1);
-    }
+    // The active level is the only visible child once the camera is parked.
+    expect(visibleIdxs).toEqual([multires!.activeLevel]);
     expect(multires!.activeLevel).toBeGreaterThanOrEqual(0);
   });
 
@@ -375,8 +349,10 @@ const LOD_GROUP_NAME = '/multires';
 /**
  * Steps in the cross-fade distance sweep (inclusive, so 61 samples over the
  * 0.15× → ~15× span). Each step multiplies the distance by 10^(1/30) ≈ 1.08, so
- * the coverage metric moves ~8% per step — several samples inside a
- * `CROSSFADE_BAND_FRACTION = 0.4` band, which is ±40% of the local threshold gap.
+ * the coverage metric moves ~8% per step. The dissolve itself is time-driven
+ * (`config.lod.fadeMs`, 250 ms): each boundary crossing dissolves over the
+ * steps sampled during the following 250 ms, so the per-step pacing (two
+ * frames) must stay well below that for a band to be observed.
  */
 const SWEEP_STEPS = 60;
 
@@ -956,16 +932,18 @@ test.describe('lod_group node — volumetric blendable', () => {
         `LOD boundaries:\n${report}`
     ).toBeGreaterThan(Math.sqrt(requestedSpan));
 
-    // Every observed cross-fade obeys the coverage-band contract: an ADJACENT
-    // pair, both weights strictly partial, complementary to 1.
+    // Every observed cross-fade obeys the dissolve contract: two levels, both
+    // weights strictly partial, complementary to 1. Usually an ADJACENT pair;
+    // a second boundary crossed before the first dissolve lands retargets it
+    // and can pair the outgoing level with one two steps away.
     for (const b of blends) {
       expect(b.levels).toHaveLength(2);
-      expect(b.levels[1].idx).toBe(b.levels[0].idx + 1);
+      expect(b.levels[1].idx).toBeGreaterThan(b.levels[0].idx);
       for (const lvl of b.levels) {
         expect(lvl.opacity).toBeGreaterThan(0.02);
         expect(lvl.opacity).toBeLessThan(0.98);
       }
-      // Complementary weights — the coverage-band invariant (w + (1−w) = 1).
+      // Complementary weights — the dissolve invariant (w + (1−w) = 1).
       expect(b.sum).toBeCloseTo(1, 5);
     }
 

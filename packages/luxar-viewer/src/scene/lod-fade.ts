@@ -41,7 +41,7 @@ function isFadeable(mat: THREE.Material): mat is FadeableMaterial {
 
 /**
  * Blend modes where opacity is a well-behaved linear knob on the composited
- * result, so both LOD anti-popping mechanisms — the coverage cross-fade
+ * result, so both LOD anti-popping mechanisms — the level dissolve
  * (mass-conserved levels) and the streaming energy compensation (`1/e(k)`) —
  * are physically sound:
  *

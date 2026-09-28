@@ -168,7 +168,7 @@ export function enforceResidentByteBudget<E extends EvictableEntry>(opts: {
       // the two guards below circular.
       const ancestorsVisible = isEffectivelyVisible(child.object?.parent);
       // Never evict a level that is ON SCREEN this frame (``object.visible``):
-      // during a coverage-band cross-fade TWO levels render — the displayed
+      // during a level dissolve TWO levels render — the displayed
       // primary and its blend partner — and only the primary is
       // ``displayedChildIndex``. Releasing the visible partner would drop half
       // the dissolve mid-fade (and leave a visible-but-not-ready level behind).

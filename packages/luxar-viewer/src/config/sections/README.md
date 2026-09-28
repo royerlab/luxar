@@ -22,6 +22,7 @@ sections/
 ├── depth-sort/            # GSplat camera-motion re-sort scheduling thresholds
 ├── dimension-animation/   # FPS-based playback through dimension ranges
 ├── input/                 # Sensitivity + keyboard shortcuts + fly/dim keys
+├── lod/                   # LOD display policy: the level-change dissolve (fadeMs)
 ├── rendering-controls/    # User-adjustable rendering settings (single source of truth)
 ├── scene/                 # Background color, fit ratio, ShaderConfig placeholder
 ├── ui/                    # z-index, timings, spinner, debug console, components
@@ -39,6 +40,7 @@ sections/
 - **[depth-sort/](depth-sort/README.md)** — depth-sort scheduling: the master `enabled` switch (URL escape hatch `?depthSort=0`), camera-motion re-sort thresholds (`angleThresholdDeg`, `translationFraction`), SortWorker startup deadline (`workerInitTimeoutMs`), and synchronous first-sort frame budget (`syncSortMaxElements`).
 - **[dimension-animation/](dimension-animation/README.md)** — defaults and presets for FPS-based playback through dimension ranges, including loop mode (`once` / `loop` / `bounce`), direction, frame-time floors, and target-vs-actual FPS feedback.
 - **[input/](input/README.md)** — default adjustment sensitivity and the global keyboard shortcut map.
+- **[lod/](lod/README.md)** — LOD display policy: `fadeMs`, the duration of the time-based dissolve between the outgoing and incoming level of a blendable `kind=lod` group (a parked camera settles on one level).
 - **[rendering-controls/](rendering-controls/README.md)** — the single source of truth for user-adjustable rendering settings: camera FOV/clipping, bloom, global EOG, anti-aliasing, tone mapping, vignette, detector noise, lens distortion, navigation mode, and adaptive-DPR toggles.
 - **[scene/](scene/README.md)** — canvas background color, default fit-to-bounds framing ratio, and a forward-compatible `ShaderConfig` placeholder reserved for future per-geometry shader knobs.
 - **[ui/](ui/README.md)** — z-index layering, timing constants for transient UI, loading-spinner geometry, debug-console panel/style settings, the scale-bar overlay, and per-component border-radius/padding tokens.

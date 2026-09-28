@@ -535,6 +535,9 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
           } | null;
           return loader?.lodGroupRegistry?.isAnyLevelLoading() ?? false;
         },
+        isAnyLodFadeInFlight: () =>
+          SceneLoaderManager.getInstance().getDefaultLoader()?.lodGroupRegistry?.isAnimating() ??
+          false,
         hasVisiblePendingPartitionResync: () =>
           SceneLoaderManager.getInstance()
             .getDefaultLoader()

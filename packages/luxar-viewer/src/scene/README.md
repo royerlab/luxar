@@ -32,7 +32,7 @@ scene/
 ├── view-context.ts                 # The frame's camera snapshot (view, projection, frustum, sizes), built once per frame
 ├── lod-group-registry.ts           # Per-frame LOD-group selector (policy/state machine)
 ├── lod-selector-math.ts            # Selector math: world-box fold, box→area/diagonal projections, hysteresis pick
-├── lod-blend.ts                    # Pure opacity math: coverage cross-fade + energy compensation
+├── lod-blend.ts                    # Pure opacity math: level-dissolve curve + energy compensation
 ├── lod-fade.ts                     # Material-level fade appliers (clone-on-first-fade)
 ├── lod-eviction.ts                 # VRAM-budget LRU eviction policy for LOD levels
 ├── lod-display-gate.ts             # Never-downgrade display gate (energy-threshold release)
@@ -391,8 +391,7 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    `coverage_fractions` ladders. Per-tile `adaptive` ladders are stamped, so
    footprint selection supersedes their partition-bound occupancy anchor;
    `overview` ladders are intentionally incomplete and remain on occupancy.
-   Footprint-selected switches are hard swaps even when `lodFade` is enabled;
-   occupancy cross-fade bands are not reused with mismatched units.
+   Footprint-selected switches are hard swaps even when `lodFade` is enabled.
    The #2685 corpus sweep retained both the 1.5 px limit and bias on this path:
    for bias ≥ 1 it is inert when a stamped ladder is already finest, but it still
    advances a non-saturated stamped ladder. Bias below 1 can coarsen the selected
@@ -404,12 +403,20 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    metric, with 10% asymmetric, spacing-aware hysteresis on the
    downgrade direction to suppress threshold-edge flicker
    (`pickChildWithHysteresis`).
-7. Swap visibility atomically when the desired child differs; lazy
-   targets that are not yet committed kick `ensureLoaded()` and swap
-   on a later frame once `ready` flips true — unless the
+7. Swap visibility when the desired child differs — for a blendable
+   (additive / luminous / volumetric) group as a DISSOLVE over
+   `config.lod.fadeMs` (250 ms): the incoming level at
+   `smoothstep(elapsed / fadeMs)`, the outgoing at the complement. The
+   dissolve is a function of time since the change, never of the distance
+   to a threshold, so a parked camera always settles on ONE level (#2925),
+   and a retarget mid-dissolve continues from the current opacities.
+   `isAnimating()` keeps the render loop ticking while one is in flight
+   (`getPerf().settle.lodFadeInFlight`), and `isCaptureQuiescent` waits it
+   out. Lazy targets that are not yet committed kick `ensureLoaded()` and
+   swap on a later frame once `ready` flips true — unless the
    **hidden-layer load gate** vetoes it (below).
-8. **Hidden-layer load gate**: no deferred load (initial, settled
-   reload, or cross-fade partner pre-load) is _started_ while the
+8. **Hidden-layer load gate**: no deferred load (initial, or a settled
+   reload) is _started_ while the
    group is not effectively visible — its own `visible` flag or any
    ancestor's is `false` (`isEffectivelyVisible` in
    `utils/object-visibility.ts`). A layer authored `visible=false`, or
