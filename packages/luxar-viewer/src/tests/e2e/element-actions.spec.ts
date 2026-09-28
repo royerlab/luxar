@@ -101,8 +101,8 @@ test.describe('element actions — click to open a link', () => {
     await page.mouse.up();
     const popup = await popupPromise;
 
-    // Percent-encoded, proving the value went through encodeURIComponent
-    // rather than being interpolated raw into the template.
+    // The request and popup reach the resolved link. The element-click payload
+    // assertion below checks encoding before the browser normalizes the URL.
     await expect.poll(() => requestedUrls).toEqual([EXPECTED_URL]);
     await popup.waitForURL(EXPECTED_URL);
     expect(popup.url()).toBe(EXPECTED_URL);
