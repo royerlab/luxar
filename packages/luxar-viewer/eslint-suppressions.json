@@ -595,9 +595,6 @@
   "src/data/scene-loader/progressive/refinement.ts": {
     "complexity": {
       "count": 1
-    },
-    "max-depth": {
-      "count": 1
     }
   },
   "src/data/scene-loader/update-view/atomic-commit.ts": {

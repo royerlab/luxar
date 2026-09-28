@@ -152,7 +152,11 @@ Key behaviours:
   `FetchPriorityCell` a coalescing caller may raise) orders the gate's queue;
   speculative requests never hold more than a quarter of a lane. The store
   passes `speculative` for prefetcher reads and raises a pending read to
-  `demand` when a demand caller joins it. `cache` forwards a `RequestCache` mode
+  `demand` when a demand caller joins it. A read whose abort signal carries a
+  class (`tagSignalPriority` — the refinement loop tags its run's signal
+  `refinement`) is fetched at that class unless the call names one; the L0
+  chunk proxy copies the class onto its shared decode's signal and lifts it
+  when a more urgent caller joins. `cache` forwards a `RequestCache` mode
   (the zip range reader sends `no-store`). A caller-aborted signal exits
   immediately without consuming retry budget. The consumer runs inside its
   fetch-gate lease and may call `readBody()` once; returning without reading

@@ -127,6 +127,49 @@ export class FetchPriorityCell {
   }
 }
 
+/** Priority classes carried on abort signals — see {@link tagSignalPriority}. */
+const SIGNAL_PRIORITIES = new WeakMap<AbortSignal, FetchPriorityCell>();
+
+/**
+ * Give every gated read made under `signal` the priority `priority` (B9c).
+ *
+ * The abort signal is the one per-request value that already travels from a
+ * loader's `updateView` through zarrita and the L0 chunk proxy down to the
+ * store, so a whole class of reads (a refinement run's) can be classed without
+ * threading a priority argument through every loader. The store, the L0
+ * proxy's shared decode, and {@link boundedConcurrencyStore} consult
+ * {@link signalPriority}; an untagged signal keeps its old default (`demand`).
+ * The same pattern `tagSignalOrigin` uses for decode attribution.
+ *
+ * @returns The cell now attached to `signal` (an existing one is reused and
+ *   raised, never lowered).
+ */
+export function tagSignalPriority(
+  signal: AbortSignal,
+  priority: FetchPriority | FetchPriorityCell
+): FetchPriorityCell {
+  const existing = SIGNAL_PRIORITIES.get(signal);
+  if (priority instanceof FetchPriorityCell) {
+    if (existing === undefined) SIGNAL_PRIORITIES.set(signal, priority);
+    else existing.raise(priority.value);
+    return existing ?? priority;
+  }
+  if (existing !== undefined) {
+    existing.raise(priority);
+    return existing;
+  }
+  const cell = new FetchPriorityCell(priority);
+  SIGNAL_PRIORITIES.set(signal, cell);
+  return cell;
+}
+
+/** The priority cell {@link tagSignalPriority} attached to `signal`, if any. */
+export function signalPriority(
+  signal: AbortSignal | null | undefined
+): FetchPriorityCell | undefined {
+  return signal ? SIGNAL_PRIORITIES.get(signal) : undefined;
+}
+
 /**
  * Growable ring-buffer FIFO: O(1) push and shift.
  *
@@ -505,6 +548,18 @@ export function withFetchGate<T>(
 }
 
 /**
+ * The abort signal of a zarr store `get(key, opts)` / `getRange(key, range,
+ * opts)` call: the last object argument carrying one.
+ */
+function signalOfStoreArgs(args: readonly unknown[]): AbortSignal | undefined {
+  for (let i = args.length - 1; i >= 1; i--) {
+    const signal = (args[i] as { signal?: unknown } | null | undefined)?.signal;
+    if (signal instanceof AbortSignal) return signal;
+  }
+  return undefined;
+}
+
+/**
  * Wrap a zarr store so its `get` / `getRange` go through {@link withFetchGate}.
  * A `Proxy` keeps the store's full surface intact (consolidated-metadata and
  * caching wrappers, `contents()`, etc.) while throttling only the two
@@ -519,7 +574,8 @@ export function boundedConcurrencyStore<S extends object>(store: S): S {
           return (...args: unknown[]) =>
             withFetchGate(
               () => (orig as (...a: unknown[]) => Promise<unknown>).apply(target, args),
-              typeof args[0] === 'string' ? fetchLaneForKey(args[0]) : 'data'
+              typeof args[0] === 'string' ? fetchLaneForKey(args[0]) : 'data',
+              signalPriority(signalOfStoreArgs(args)) ?? 'demand'
             );
         }
       }

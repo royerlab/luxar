@@ -6,6 +6,7 @@
  */
 
 import { findObjectByName } from '../utils/scene-graph-index';
+import { tagSignalPriority } from '../utils/fetch-concurrency';
 import { bumpFailedLoadsVersion, failedLoadsVersion } from '../utils/failed-loads-version';
 import * as zarr from './zarr';
 import * as THREE from 'three';
@@ -1784,6 +1785,10 @@ export class SceneLoader {
       // catches treat the resulting AbortError as cancellation (no failure
       // recorded); the loop's next-pass pending check performs the hand-off.
       const refinementController = new AbortController();
+      // Every read of the run rides this signal, so it also carries the run's
+      // fetch class: a finer level of something already on screen queues behind
+      // every `demand` read (a frame waiting), ahead of speculation (B9c).
+      tagSignalPriority(refinementController.signal, 'refinement');
       this._updateAbortController = refinementController;
       // ONE budget for the whole run, shared by all four geometry phases and
       // seeded from every sweep-registered ladder. Completed loaders return

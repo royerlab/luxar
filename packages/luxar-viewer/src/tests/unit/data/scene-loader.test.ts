@@ -38,6 +38,7 @@ import {
 import type { NodeBuildCtx } from '../../../data/scene-loader/nodes/build-ctx';
 import { getLoadTimeline, resetLoadTimeline } from '../../../profiling/load-timeline';
 import * as gsplatsRefinement from '../../../data/gsplats/lod-refinement';
+import { signalPriority } from '../../../utils/fetch-concurrency';
 import { log, Modules } from '../../../utils/log';
 import { failedLoadsVersion } from '../../../utils/failed-loads-version';
 
@@ -2136,6 +2137,30 @@ describe('SceneLoader', () => {
         updateView.mockRestore();
         errorLog.mockRestore();
         vi.useRealTimers();
+        internals._updateInProgress = false;
+      }
+    });
+  });
+
+  describe('refinement fetch class (B9c)', () => {
+    it("runs refinement under a signal carrying the 'refinement' fetch priority", async () => {
+      let seen: AbortSignal | undefined;
+      const runRefinement = vi
+        .spyOn(gsplatsRefinement, 'runGSplatsRefinement')
+        .mockImplementation(async (ctx) => {
+          seen = ctx.signal;
+        });
+      const internals = sceneLoader as unknown as {
+        _updateInProgress: boolean;
+        scheduleGSplatsRefinement(): Promise<void>;
+      };
+      internals._updateInProgress = true;
+      try {
+        await internals.scheduleGSplatsRefinement();
+        expect(seen).toBeDefined();
+        expect(signalPriority(seen)?.value).toBe('refinement');
+      } finally {
+        runRefinement.mockRestore();
         internals._updateInProgress = false;
       }
     });

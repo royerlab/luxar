@@ -38,6 +38,16 @@ import { noteRefinementPass } from '../../../profiling/load-timeline';
 export const MAX_CONSECUTIVE_REFINEMENT_FAILURES = 3;
 
 /**
+ * Loader steps one refinement pass keeps in flight at once (B9c). The serial
+ * loop left the network idle while each step decoded, projected and committed,
+ * so a scene of many small laddered nodes (a partition's parts) refined one
+ * round trip at a time. Four overlaps those round trips without letting
+ * refinement crowd the fetch gate: its reads queue in the `refinement` priority
+ * class, behind every `demand` read (see `utils/fetch-concurrency.ts`).
+ */
+export const MAX_CONCURRENT_REFINEMENT_STEPS = 4;
+
+/**
  * Consecutive-failure bookkeeping shared by the four per-geometry refinement
  * wrappers (Points / Lines / GSplats / Mesh). Each loader owns one tracker and:
  *
@@ -208,10 +218,7 @@ export async function runProgressiveRefinement<TLoader>(
       // kicked fire-and-forget.
       try {
         const progressBefore = collectProgress(ctx);
-        const successfulPaths = new Set<string>();
-        for (const [path, loader] of ctx.loaders) {
-          if (await ctx.processLoader(path, loader)) successfulPaths.add(path);
-        }
+        const successfulPaths = await processLoadersBounded(ctx);
 
         noteRefinementPass(successfulPaths.size);
 
@@ -244,6 +251,47 @@ export async function runProgressiveRefinement<TLoader>(
       ctx.releaseLock();
     }
   }
+}
+
+/**
+ * Run one pass's `processLoader` steps with at most
+ * {@link MAX_CONCURRENT_REFINEMENT_STEPS} in flight (B9c). Each loader still
+ * gets exactly one step per pass and a loader's own steps stay serial (passes
+ * are sequential), so every ladder settles to the same levels as the serial
+ * loop did; only the INTERLEAVING of different nodes' fetches and commits
+ * changes, and those commits touch disjoint nodes. Workers pull from the live
+ * map iterator, as the serial `for…of` did, so a loader registered mid-pass is
+ * still visited.
+ *
+ * A throw escaping `processLoader` (the wrappers catch their own) stops the
+ * workers from starting further steps; the steps already in flight are awaited,
+ * then the first error is rethrown to the pass's catch.
+ */
+async function processLoadersBounded<TLoader>(
+  ctx: ProgressiveRefinementCtx<TLoader>
+): Promise<Set<string>> {
+  const successfulPaths = new Set<string>();
+  const entries = ctx.loaders.entries();
+  let failure: { error: unknown } | null = null;
+  const worker = async (): Promise<void> => {
+    while (failure === null) {
+      const next = entries.next();
+      if (next.done === true) return;
+      const [path, loader] = next.value;
+      try {
+        if (await ctx.processLoader(path, loader)) successfulPaths.add(path);
+      } catch (error) {
+        failure ??= { error };
+      }
+    }
+  };
+  const workers = Math.max(1, Math.min(MAX_CONCURRENT_REFINEMENT_STEPS, ctx.loaders.size));
+  await Promise.all(Array.from({ length: workers }, worker));
+  // `failure` is written only inside `worker`, so read it through a widening
+  // cast — control-flow analysis still has it as the `null` it was initialised to.
+  const failed = failure as { error: unknown } | null;
+  if (failed !== null) throw failed.error;
+  return successfulPaths;
 }
 
 function collectProgress<TLoader>(

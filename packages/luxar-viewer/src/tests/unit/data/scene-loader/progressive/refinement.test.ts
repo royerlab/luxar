@@ -334,7 +334,7 @@ describe('runProgressiveRefinement — bounded concurrency (B9c)', () => {
     return { committed, peak };
   }
 
-  it.fails('keeps up to 4 loader steps in flight, never more', async () => {
+  it('keeps up to 4 loader steps in flight, never more', async () => {
     const { peak } = await runLadders();
     expect(peak).toBe(4);
   });
