@@ -44,11 +44,13 @@ function nextBoundaryRow(edge: number, chunkRows: number, forward: boolean): num
     : Math.floor(edge / chunkRows) * chunkRows - 1;
 }
 
-/** Select the leading visible row edge in playback direction. */
+/** Select the leading visible row edge without spreading an unbounded range list. */
 function rangeEdge(ranges: readonly LoadRange[], forward: boolean): number {
-  return forward
-    ? Math.max(...ranges.map((range) => range.end))
-    : Math.min(...ranges.map((range) => range.start));
+  let edge = forward ? -Infinity : Infinity;
+  for (const range of ranges) {
+    edge = forward ? Math.max(edge, range.end) : Math.min(edge, range.start);
+  }
+  return edge;
 }
 
 /** Validate and return the row count and first-axis chunk size. */
