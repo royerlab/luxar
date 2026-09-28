@@ -100,6 +100,7 @@ export class GSplatTSLMaterial
     uOffset: TSLNode;
     uSortedIndexSlot: TSLNode;
     uDensityDrop: TSLNode;
+    uDensityAlphaExp: TSLNode;
     uGlassPartition: TSLNode;
     uGlassDepth: TSLNode;
     uNearCull: TSLNode;
@@ -166,6 +167,7 @@ export class GSplatTSLMaterial
       uOffset: uniform(materialConfig.offset ?? 0.0),
       uSortedIndexSlot: uniform(0),
       uDensityDrop: uniform(0),
+      uDensityAlphaExp: uniform(1),
       // Refraction split: mode 0 outside the split; the shared glass depth texture.
       ...glassPartitionNodes(),
       uNearCull: uniform(0.1),
@@ -271,6 +273,7 @@ export class GSplatTSLMaterial
       uOffset: proxyIUniform(this.tslNodes.uOffset),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
+      uDensityAlphaExp: proxyIUniform(this.tslNodes.uDensityAlphaExp),
       uGlassPartition: proxyIUniform(this.tslNodes.uGlassPartition),
       uGlassDepth: proxyIUniform(this.tslNodes.uGlassDepth),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),

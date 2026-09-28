@@ -10,6 +10,7 @@ import {
   GLSL_NEAR_FADE_FUNCTIONS,
   GLSL_PROJECTION_FUNCTIONS,
   GLSL_SORTED_INDEX,
+  GLSL_DENSITY_ALPHA,
 } from '../_shared/glsl-lib';
 import {
   GLSL_GLASS_PARTITION_GUARD,
@@ -501,6 +502,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
 export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
     ${GLSL_GLASS_PARTITION_UNIFORMS}
+    ${GLSL_DENSITY_ALPHA}
 
     // All varyings use flat - no interpolation needed (constant per instance)
     // OPTIMIZATION: flat qualifier skips GPU interpolation hardware
@@ -638,6 +640,15 @@ export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
         // (intensity·opacity << 1) occlude proportionally little — an
         // emitter-with-occlusion model, deliberate for HDR scientific data.
         float coverage = clamp(intensity * uOpacity, 0.0, 1.0);
+        // Density-guard thinning of an alpha-over node: raise the coverage
+        // to 1 − (1 − c)^(1/keep) and the premultiplied RGB with it, so the
+        // kept fraction occludes and emits what the whole node did. Skipped
+        // (bit-identical) at the identity exponent.
+        if (uDensityAlphaExp > 1.0) {
+          float thinned = luxarDensityAlpha(coverage);
+          finalColor *= thinned / max(coverage, 1e-6);
+          coverage = thinned;
+        }
         fragColor = vec4(finalColor, coverage);
         #elif defined(LUXAR_VOLUMETRIC)
         // 'volumetric' mode: emission–absorption (Max 1995). RGB carries

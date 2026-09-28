@@ -681,10 +681,16 @@ ordering-resolved storage index falls below the dropped fraction
 quantised ladder (1, 1/2, 1/4, … `config.densityGuard.minKeepFraction`) with
 hysteresis (`enterRatio` / `leaveRatio` around `capElementsPerPixel`), and
 every step change is reported to the adaptive-DPR controller as a content
-change. Only the blendable modes (additive / luminous / volumetric) are
-thinned, and `applyLodFade` multiplies the node's opacity by `1/keep`
+change. The blendable modes (additive / luminous / volumetric) are thinned
+with `applyLodFade` multiplying the node's opacity by `1/keep`
 (`densityCompensation`) so the composited brightness stays at the unthinned
-aggregate; `max` / `normal` / `opaque` nodes are never thinned. The pick pass
+aggregate. Sorted alpha-over `normal` nodes are thinned too, compensated in
+ALPHA: `uDensityAlphaExp = 1/keep` makes each survivor's alpha
+`1 − (1 − α)^(1/keep)` (`luxarDensityAlpha` / `densityAlphaNode`), so the kept
+fraction transmits what the whole node did; the exponent is 1 (identity,
+bit-identical) whenever `keep` is 1. `max` / `opaque` nodes are never
+thinned, and the guard releases every node for the whole of an offline
+capture (`DensityGuard.setCaptureActive`). The pick pass
 mirrors the visual material's drop per node so a thinned-away element cannot
 be picked. `?noDensityGuard` disables both the walker and the ladder for a
 session.

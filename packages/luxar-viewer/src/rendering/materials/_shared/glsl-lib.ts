@@ -213,6 +213,24 @@ bool luxarDensityDropped() {
 `;
 
 /**
+ * Fragment-stage companion of the density thinning above, for alpha-over
+ * (`normal`) nodes: the density guard drops a `1 − keep` fraction of the
+ * elements and sets `uDensityAlphaExp = 1/keep`, so a survivor's alpha
+ * `1 − (1 − α)^(1/keep)` makes `keep·N` survivors transmit what `N` did. At
+ * an exponent ≤ 1 — every unthinned node, and a material that never set the
+ * uniform (reads 0) — the helper returns `a` untouched, so such a node draws
+ * bit-identically. Sum-projected modes compensate through opacity instead
+ * (`applyLodFade`) and always carry the identity exponent.
+ */
+export const GLSL_DENSITY_ALPHA = `
+uniform float uDensityAlphaExp;
+float luxarDensityAlpha(float a) {
+  if (!(uDensityAlphaExp > 1.0)) return a;
+  return 1.0 - pow(max(1.0 - a, 0.0), uDensityAlphaExp);
+}
+`;
+
+/**
  * Line joint-code helpers, shared by the visual and picking GLSL vertex stages
  * (both build the same screen-space quad, so both must read the code the same
  * way — see `rendering/line-geometry.ts` for the texel layout and

@@ -21,6 +21,7 @@ import {
   GLSL_NEAR_FADE_FUNCTIONS,
   GLSL_PROJECTION_FUNCTIONS,
   GLSL_SORTED_INDEX,
+  GLSL_DENSITY_ALPHA,
 } from '../_shared/glsl-lib';
 import {
   GLSL_GLASS_PARTITION_GUARD,
@@ -225,6 +226,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
 export const POINT_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
     ${GLSL_GLASS_PARTITION_UNIFORMS}
+    ${GLSL_DENSITY_ALPHA}
 
     uniform float uPixelRatio;
     uniform mediump float uOpacity;
@@ -386,7 +388,9 @@ export const POINT_FRAGMENT_SHADER = /* glsl */ `
       fragColor = vec4(finalColor * alpha, alpha);
       #else
       // Output final color with alpha for AdditiveBlending (SrcAlpha, One)
-      fragColor = vec4(finalColor, alpha);
+      // and for normal's SrcAlpha / OneMinusSrcAlpha, whose alpha carries the
+      // density guard's thinning compensation (identity unless thinned).
+      fragColor = vec4(finalColor, luxarDensityAlpha(alpha));
       #endif
     }
   `;

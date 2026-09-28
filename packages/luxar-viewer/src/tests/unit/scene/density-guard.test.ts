@@ -229,7 +229,7 @@ describe('DensityGuard.observe', () => {
     expect(unconfigured.takeChanged()).toBe(false);
   });
 
-  it.fails('thins an over-dense normal node, compensating ALPHA through the exponent, not opacity', () => {
+  it('thins an over-dense normal node, compensating ALPHA through the exponent, not opacity', () => {
     // Alpha-over has no linear brightness knob, so the 1/keep opacity boost
     // the sum modes get would be wrong; instead each survivor's alpha becomes
     // 1 − (1 − α)^(1/keep), so keep·N survivors transmit what N elements did.
@@ -272,7 +272,7 @@ describe('DensityGuard.observe', () => {
     expect(mat.uniforms.uDensityAlphaExp.value).toBe(1);
   });
 
-  it.fails('stays off during an offline capture, and resumes after it', () => {
+  it('stays off during an offline capture, and resumes after it', () => {
     const { g } = guard();
     const setCaptureActive = (g as unknown as { setCaptureActive?: (on: boolean) => void })
       .setCaptureActive;

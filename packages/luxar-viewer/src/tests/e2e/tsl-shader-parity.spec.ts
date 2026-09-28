@@ -1709,6 +1709,28 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(3.0);
   });
 
+  test('gsplat-normal-thinned: the density-guard alpha-over compensation matches its TSL twin', async ({
+    page,
+  }) => {
+    await bootHarness(page);
+
+    const glslPixels = await runGLSL(page, 'gsplat-normal-thinned');
+    const tslResult = await runTSL(page, 'gsplat-normal-thinned');
+    assertBothRendered(glslPixels, tslResult.pixels, 'gsplat-normal-thinned');
+    expect(
+      meanAbsDiffPerCoveredPixel(glslPixels, tslResult.pixels),
+      'gsplat-normal-thinned: per-covered-pixel parity (footprint-invariant)'
+    ).toBeLessThan(2.0);
+    expect(meanAbsDiff(glslPixels, tslResult.pixels)).toBeLessThan(3.0);
+
+    // The compensation actually ran: the thinned splat's centre is more
+    // opaque than the unthinned one's (1 − (1 − c)^4 > c for 0 < c < 1).
+    const plain = await runGLSL(page, 'gsplat-normal-premult');
+    const centre = (px: number[]) => px[(32 * 64 + 32) * 4 + 3];
+    expect(centre(glslPixels)).toBeGreaterThan(centre(plain));
+    expect(centre(tslResult.pixels)).toBeGreaterThan(centre(plain));
+  });
+
   test('gsplat-volumetric: LUXAR_VOLUMETRIC emission–absorption matches TSL volumetric branch', async ({
     page,
   }) => {

@@ -41,6 +41,7 @@ import {
   max,
   min,
   modelViewMatrix,
+  pow,
   smoothstep,
   sqrt,
   vec2,
@@ -120,6 +121,18 @@ export function densityDroppedNode(uDensityDrop: TSLNode, sortedIndex: TSLNode):
   return float(uDensityDrop)
     .greaterThan(0.0)
     .and(unit.lessThan(float(uDensityDrop)));
+}
+
+/**
+ * Alpha-over density compensation. Mirrors GLSL `luxarDensityAlpha()`
+ * (glsl-lib.ts): `1 − (1 − a)^uDensityAlphaExp` when the exponent exceeds 1
+ * (a thinned `normal` node, exponent `1/keep`), else `a` untouched. Only the
+ * `normal` graphs call it, so every other graph's generated code is unchanged.
+ */
+export function densityAlphaNode(alpha: TSLNode, uDensityAlphaExp: TSLNode): TSLNode {
+  const e: TSLNode = float(uDensityAlphaExp);
+  const thinned: TSLNode = float(1.0).sub(pow(max(float(1.0).sub(alpha), 0.0), e));
+  return e.greaterThan(1.0).select(thinned, alpha);
 }
 
 /** Sanitise a non-negative scalar. Mirrors GLSL `sanitizeNonNegative`. */

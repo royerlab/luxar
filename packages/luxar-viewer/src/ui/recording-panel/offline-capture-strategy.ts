@@ -60,6 +60,7 @@
  */
 
 import { log, Modules } from '../../utils/log';
+import { getDensityGuard } from '../../scene/density-guard';
 import { showToast } from '../toast';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { AnimationController } from '../../scene/animation/animation-controller';
@@ -200,6 +201,9 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
     }
     session.isRecording = true;
     session.isOfflineCaptureActive = true;
+    // An export is a quality render: no projected-density thinning in it
+    // (released again by runCaptureTeardown).
+    getDensityGuard().setCaptureActive(true);
     session.recordingStartTime = Date.now();
     session.showRecordingIndicator();
 

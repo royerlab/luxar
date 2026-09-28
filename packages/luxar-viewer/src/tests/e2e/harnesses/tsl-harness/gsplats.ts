@@ -672,6 +672,41 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
     },
     buildMesh: buildGSplatInstancedMesh,
   },
+  // The same alpha-over splat as a density-guard-thinned node (keep 1/4): the
+  // GLSL luxarDensityAlpha branch and the TSL densityAlphaNode twin.
+  'gsplat-normal-thinned': {
+    source: GSPLAT_SOURCE,
+    buildUniforms: () => ({
+      uSplatTex: { value: buildGSplatSplatDataTexture() },
+      uResolution: { value: new THREE.Vector2(64, 64) },
+      uTruncate: { value: 3.0 },
+      uTruncateSq: { value: 9.0 },
+      uRayIntegralFactor: { value: 2.433 },
+      uProjectionMode: { value: 1 }, // peak projection (normal = surface)
+      uNearCull: { value: 0.01 },
+      uMaxExtentFactor: { value: 1.0 },
+      uOpacity: { value: 0.6 },
+      uInvGamma: { value: 1.0 / 2.2 },
+      uIntensity: { value: 1.0 },
+      uOffset: { value: 0.0 },
+      uShiftC: { value: Math.exp(-0.5 * 9) },
+      uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 9)) },
+      // Density-guard thinning at keep 1/4: coverage → 1 − (1 − c)^4.
+      uDensityAlphaExp: { value: 4 },
+    }),
+    buildDefines: () => ({ LUXAR_NORMAL_PREMULT: '' }),
+    buildTSLMaterial: (uniforms) => {
+      const m = gsplatWebGPUFactory(buildGSplatTSLNodesFromUniforms(uniforms), {
+        blendingMode: 'normal',
+      }) as unknown as THREE.Material;
+      // The harness compares raw fragment output — override the
+      // factory-applied blend state exactly like the other variants.
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+    buildMesh: buildGSplatInstancedMesh,
+  },
   // GSplat 'opaque' — a SURFACE mode like max/normal (usesPeakProjection),
   // so the TSL factory emits the peak-projection graph (no Σ⁻¹
   // ray-integral block) while the fragment keeps the alpha=1.0 contract

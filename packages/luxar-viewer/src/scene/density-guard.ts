@@ -8,8 +8,15 @@
  * makes the vertex stage discard every element whose hashed storage index
  * falls below `1 − keep`, and `applyLodFade` multiplies the node's opacity
  * by `1/keep` so the composited brightness stays at the unthinned aggregate.
- * Non-blendable modes (`max`, `normal`, `opaque`) are never thinned — a
- * max-projection or an alpha-over surface has no linear brightness knob.
+ * Sorted alpha-over (`normal`) nodes are thinned too, compensated in ALPHA
+ * rather than opacity: `uDensityAlphaExp = 1/keep` raises each survivor's
+ * alpha to `1 − (1 − α)^(1/keep)`, so `keep·N` survivors transmit what `N`
+ * elements did (exact for a stack of equal-alpha layers; the colour of what
+ * shows through is the surviving elements'). `max` and `opaque` are never
+ * thinned — a max-projection or an opaque surface has no such knob.
+ * The guard stays OFF for the whole of an offline capture
+ * (`setCaptureActive`): an export is a quality render, and its frames must
+ * not depend on what the interactive framing happened to thin.
  * Shaded triangle meshes are excluded: they tile a surface rather than stack
  * emissive energy, and their materials do not carry `uDensityDrop`.
  *
@@ -36,6 +43,7 @@ import type * as THREE from 'three';
 import {
   getDensityDrop,
   hasDensityDrop,
+  setDensityAlphaExp,
   setDensityDrop,
 } from '../rendering/materials/_shared/density-drop';
 import { applyLodFade, isBlendableMode } from './lod-fade';
@@ -99,13 +107,33 @@ function supportsDensityGuard(
   return Boolean(material && !Array.isArray(material) && hasDensityDrop(material));
 }
 
+/**
+ * Whether the guard may thin a node drawn in `mode`: the sum-projected modes
+ * (opacity compensation) and sorted alpha-over `normal` (alpha compensation).
+ */
+function isThinnableMode(mode: string | undefined): boolean {
+  return isBlendableMode(mode) || mode === 'normal';
+}
+
 /** Owns the per-node keep ladder; driven by the tracker's `onVisit` hook. */
 export class DensityGuard {
   private deps: DensityGuardDeps | null = null;
   private changed = false;
+  private captureActive = false;
 
   configure(deps: DensityGuardDeps): void {
     this.deps = deps;
+  }
+
+  /**
+   * Suspend the guard for an offline capture (`true`) or resume it
+   * (`false`). While suspended every visited node is released to keep 1 —
+   * an export renders the whole node, whatever the view's density.
+   */
+  setCaptureActive(active: boolean): void {
+    if (this.captureActive === active) return;
+    this.captureActive = active;
+    this.changed = true;
   }
 
   /**
@@ -120,10 +148,9 @@ export class DensityGuard {
     if (!deps || !supportsDensityGuard(material)) return;
     const ud = mesh.userData as GuardUserData;
     const current = ud.densityKeep ?? 1;
-    const blendable = isBlendableMode(material.userData?.blendingMode as string | undefined);
-    let next = current;
-    if (!blendable) next = 1;
-    else if (rec.onScreen) next = nextKeepFraction(current, rec.elementsPerPixel, deps.config());
+    const mode = material.userData?.blendingMode as string | undefined;
+    const blendable = isBlendableMode(mode);
+    const next = this.desiredKeep(current, mode, rec, deps);
     if (next !== current) {
       ud.densityKeep = next;
       // Brightness first: applyLodFade may clone-on-first-fade, and the
@@ -132,10 +159,28 @@ export class DensityGuard {
       this.changed = true;
     }
     rec.keep = next;
+    // The refinement rung gate's cap choice: `normal` keeps the non-blendable cap.
     rec.blendable = blendable;
     // Idempotent re-assertion (returns true only on drift, e.g. a material
     // rebuilt with the default 0 while the node is thinned).
     if (setDensityDrop(mesh.material, 1 - next)) this.changed = true;
+    const alphaExp = mode === 'normal' && next < 1 ? 1 / next : 1;
+    if (setDensityAlphaExp(mesh.material, alphaExp)) this.changed = true;
+  }
+
+  /**
+   * The keep fraction for this frame: 1 while an offline capture runs or for a
+   * mode the guard never thins; the held step while off-screen; otherwise the
+   * hysteresis ladder.
+   */
+  private desiredKeep(
+    current: number,
+    mode: string | undefined,
+    rec: NodeDensity,
+    deps: DensityGuardDeps
+  ): number {
+    if (this.captureActive || !isThinnableMode(mode)) return 1;
+    return rec.onScreen ? nextKeepFraction(current, rec.elementsPerPixel, deps.config()) : current;
   }
 
   /**
@@ -154,6 +199,7 @@ export class DensityGuard {
       this.changed = true;
     }
     if (setDensityDrop(mesh.material, 0)) this.changed = true;
+    if (setDensityAlphaExp(mesh.material, 1)) this.changed = true;
   }
 
   /** True once since the last call if any node changed step (or drifted). */

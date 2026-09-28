@@ -29,7 +29,7 @@ const setAlphaExp = helpers.setDensityAlphaExp as
 const getAlphaExp = helpers.getDensityAlphaExp as ((material: unknown) => number) | undefined;
 
 describe('uDensityAlphaExp', () => {
-  it.fails('every visual leaf material declares it at the identity exponent, and the helpers write it', () => {
+  it('every visual leaf material declares it at the identity exponent, and the helpers write it', () => {
     const materials: [string, () => unknown][] = [
       ['PointMaterial', () => new PointMaterial({})],
       ['LineMaterial', () => new LineMaterial({})],
@@ -47,14 +47,14 @@ describe('uDensityAlphaExp', () => {
     }
   });
 
-  it.fails('the shared GLSL helper is the identity at an exponent ≤ 1 (an unset uniform reads 0)', () => {
+  it('the shared GLSL helper is the identity at an exponent ≤ 1 (an unset uniform reads 0)', () => {
     const chunk = (glslLib as unknown as Record<string, unknown>).GLSL_DENSITY_ALPHA;
     expect(typeof chunk).toBe('string');
     expect(chunk as string).toContain('uniform float uDensityAlphaExp;');
     expect(chunk as string).toContain('if (!(uDensityAlphaExp > 1.0)) return a;');
   });
 
-  it.fails('every GLSL fragment shader routes its alpha-over output through luxarDensityAlpha', () => {
+  it('every GLSL fragment shader routes its alpha-over output through luxarDensityAlpha', () => {
     const sources: [string, string][] = [
       ['point', POINT_FRAGMENT_SHADER],
       ['line', LINE_FRAGMENT_SHADER],

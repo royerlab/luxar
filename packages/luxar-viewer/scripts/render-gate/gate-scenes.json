@@ -299,6 +299,15 @@
       }
     },
     {
+      "id": "perf-splats-10m-normal",
+      "synthetic": {
+        "type": "gsplats",
+        "count": 10000000,
+        "seed": 5,
+        "blending": "normal"
+      }
+    },
+    {
       "id": "perf-splats-5m-volumetric",
       "synthetic": {
         "type": "gsplats",

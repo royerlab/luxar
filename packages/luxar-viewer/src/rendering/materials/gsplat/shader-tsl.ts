@@ -85,6 +85,7 @@ import {
   type TSLNode,
   sortedIndexNode,
   densityDroppedNode,
+  densityAlphaNode,
 } from '../_shared/tsl-helpers';
 import {
   applyBlendingStateToMaterial,
@@ -223,6 +224,11 @@ export interface GSplatTSLNodes {
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
   readonly uDensityDrop: TSLNode;
+  /**
+   * Alpha-over compensation exponent of a thinned `normal` node (1 = identity;
+   * absent on graphs that never read it, e.g. picking).
+   */
+  readonly uDensityAlphaExp?: TSLNode;
   /** Refraction split (glass-partition-tsl.ts): mode + shared glass depth texture. */
   readonly uGlassPartition: GlassPartitionTSLNodes['uGlassPartition'];
   readonly uGlassDepth: GlassPartitionTSLNodes['uGlassDepth'];
@@ -842,8 +848,21 @@ export function gsplatWebGPUFactory(
       // carries a CLAMPED coverage term for the One/OneMinusSrcAlpha
       // state below. Never via material.premultipliedAlpha — NodeMaterial
       // would auto-inject a second RGB×alpha on this path.
-      const coverage: TSLNode = clamp(intensity.mul(uOpacity), float(0.0), float(1.0));
-      return vec4(finalColor, coverage);
+      const alphaExp = nodes.uDensityAlphaExp;
+      if (!alphaExp) {
+        return vec4(finalColor, clamp(intensity.mul(uOpacity), float(0.0), float(1.0)));
+      }
+      // Density-guard thinning of an alpha-over node (GLSL twin in
+      // shader-glsl.ts): coverage → 1 − (1 − c)^(1/keep), RGB scaled with
+      // it; the identity exponent selects the untouched pair.
+      const coverage: TSLNode = clamp(intensity.mul(uOpacity), float(0.0), float(1.0)).toVar();
+      const thinned: TSLNode = densityAlphaNode(coverage, alphaExp).toVar();
+      const thin: TSLNode = float(alphaExp).greaterThan(1.0);
+      const rgb: TSLNode = thin.select(
+        finalColor.mul(thinned.div(max(coverage, 1e-6))),
+        finalColor
+      );
+      return vec4(rgb, thinned);
     }
     if (volumetric && tau) {
       // 'volumetric': emission–absorption (GLSL LUXAR_VOLUMETRIC twin).
@@ -929,6 +948,7 @@ export function buildGSplatTSLNodesFromUniforms(
     uProjectionMode: uniform((uniforms.uProjectionMode?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
+    uDensityAlphaExp: uniform((uniforms.uDensityAlphaExp?.value as number) ?? 1),
     ...glassPartitionNodesFromUniforms(uniforms),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 1.0),
