@@ -10,8 +10,8 @@
  * Deliberately NOT a `RangeLoader.loadDirectTyped` call. Prefetch warms FUTURE
  * frames. Callers may supply their own speculative-work signal (for example a
  * ladder lookahead cancelled by a view change); it is intentionally distinct
- * from the active demand update's signal. Keeping it separate is what makes the three loaders'
- * prefetch paths a single shared helper instead of three copies.
+ * from the active demand update's signal. Keeping it separate makes the three
+ * loaders' prefetch paths a single shared helper instead of three copies.
  *
  * @module data/loaders/spatial-query/prefetch-ranges
  */
