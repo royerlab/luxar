@@ -748,6 +748,85 @@ describe('runInitPipeline', () => {
     });
   });
 
+  describe("'lod-group-selector' per-frame callback", () => {
+    async function wireSelector() {
+      const { factories } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+      const partial: Partial<InitPipelineResult> = {};
+      await runInitPipeline(ports, partial);
+      const anim = factories.animationController.mock.results[0].value as {
+        addPerFrameCallback: ReturnType<typeof vi.fn>;
+      };
+      const entry = anim.addPerFrameCallback.mock.calls.find(
+        (call) => call[0] === 'lod-group-selector'
+      );
+      if (!entry) throw new Error("'lod-group-selector' was never registered");
+      const tick = entry[1] as () => boolean;
+      const notify = (
+        partial.adaptiveDPRManager as unknown as { notifyContentChanged: ReturnType<typeof vi.fn> }
+      ).notifyContentChanged;
+      return { tick, notify };
+    }
+
+    function stubRegistry(frame: { levelChanged: boolean; cullChanged: boolean }) {
+      const refreshVisibleCounts = vi.fn();
+      vi.mocked(getSceneLoader).mockReturnValue({
+        refreshVisibleCounts,
+        lodGroupRegistry: {
+          evaluatePerFrame: vi.fn(() => frame),
+          // False on purpose: the redraw must follow from the frame's own
+          // report, not from a drawn-state flag the stub happens to raise.
+          takeDrawnStateChanged: vi.fn(() => false),
+        },
+      } as never);
+      return { refreshVisibleCounts };
+    }
+
+    it.fails('a partition cull flip redraws but does NOT reset adaptive-DPR learning', async () => {
+      // An orbit over a partitioned scene flips part visibility constantly; that
+      // is the same content seen from elsewhere, not new content. Treating it as
+      // a content change pulled learned floors forward and confounded every probe.
+      const { tick, notify } = await wireSelector();
+      try {
+        const { refreshVisibleCounts } = stubRegistry({ levelChanged: false, cullChanged: true });
+        const drew = tick();
+        expect(notify).not.toHaveBeenCalled();
+        expect(drew).toBe(true);
+        // The visible tally still tracks the parts actually drawn.
+        expect(refreshVisibleCounts).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.mocked(getSceneLoader).mockReturnValue(null as never);
+      }
+    });
+
+    it.fails('a level swap redraws AND notifies adaptive DPR of a content change', async () => {
+      const { tick, notify } = await wireSelector();
+      try {
+        const { refreshVisibleCounts } = stubRegistry({ levelChanged: true, cullChanged: false });
+        const drew = tick();
+        expect(notify).toHaveBeenCalledTimes(1);
+        expect(drew).toBe(true);
+        expect(refreshVisibleCounts).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.mocked(getSceneLoader).mockReturnValue(null as never);
+      }
+    });
+
+    it.fails('a no-op frame neither redraws nor notifies', async () => {
+      const { tick, notify } = await wireSelector();
+      try {
+        const { refreshVisibleCounts } = stubRegistry({ levelChanged: false, cullChanged: false });
+        const drew = tick();
+        expect(notify).not.toHaveBeenCalled();
+        expect(drew).toBe(false);
+        expect(refreshVisibleCounts).not.toHaveBeenCalled();
+      } finally {
+        vi.mocked(getSceneLoader).mockReturnValue(null as never);
+      }
+    });
+  });
+
   describe('context-loss listener wiring', () => {
     it("wires the SceneManager 'change' event to startAnimation (repaint after idle-time context restore)", async () => {
       // The context-restore path ends with SceneManager dispatching
