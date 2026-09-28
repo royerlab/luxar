@@ -52,7 +52,7 @@ async function flush(): Promise<void> {
 }
 
 describe('WorkerPool — slot accounting follows the worker, not the caller', () => {
-  it.fails('an aborted call keeps its slot busy until the worker settles', async () => {
+  it('an aborted call keeps its slot busy until the worker settles', async () => {
     const w0 = makeFakeWorker('A');
     const task = deferred<string>();
     w0.api.handle.mockReturnValue(task.promise);
@@ -99,7 +99,7 @@ describe('WorkerPool — slot accounting follows the worker, not the caller', ()
     expect(w0.activeQueries).toBe(0);
   });
 
-  it.fails('the dispatch after an aborted call goes to an idle worker, not the one still running', async () => {
+  it('the dispatch after an aborted call goes to an idle worker, not the one still running', async () => {
     const w0 = makeFakeWorker('A');
     const w1 = makeFakeWorker('B');
     w0.api.handle.mockReturnValue(new Promise(() => {})); // abandoned task keeps running
@@ -121,7 +121,7 @@ describe('WorkerPool — slot accounting follows the worker, not the caller', ()
     expect(w0.api.handle).toHaveBeenCalledTimes(1);
   });
 
-  it.fails('concurrent dispatches spread across idle workers (the slot is taken at selection)', async () => {
+  it('concurrent dispatches spread across idle workers (the slot is taken at selection)', async () => {
     const w0 = makeFakeWorker('A');
     const w1 = makeFakeWorker('B');
     const pool = makePool([w0, w1]);

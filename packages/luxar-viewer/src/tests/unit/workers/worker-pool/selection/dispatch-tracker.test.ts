@@ -105,7 +105,7 @@ describe('WorkerPool dispatch counters', () => {
     vi.restoreAllMocks();
   });
 
-  it.fails('no misroute after a caller abort: the slot stays busy until the worker settles (B7)', async () => {
+  it('no misroute after a caller abort: the slot stays busy until the worker settles (B7)', async () => {
     const a = makeInstance('A');
     const b = makeInstance('B');
     const pool = new WorkerPool() as unknown as Record<string, unknown>;

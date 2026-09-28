@@ -624,45 +624,88 @@ export class WorkerPool {
       // selected. The previous round-robin via nextWorkerInstance had
       // no load awareness, so a slow worker received every Nth call
       // until each call timed out individually — head-of-line blocking.
-      const tracked = await this.getWorkerWithTracking();
+      // The slot is taken AT SELECTION (same synchronous step), so concurrent
+      // dispatches see each other's load instead of all reading index 0 idle.
+      const tracked = await this.acquireTrackedWorker();
 
       // Second-chance abort check: the await above may have yielded long
       // enough for the caller's dataset-switch to fire. Don't even start.
       if (effectiveSignal?.aborted) {
+        tracked.markQueryEnd();
         throw new WorkerAbortError(op);
       }
 
-      tracked.markQueryStart();
+      // Race the worker call against the timeout AND the abort signal.
+      // The abort cannot kill the WASM task, but it can settle the
+      // promise immediately so the caller proceeds with whatever the
+      // dataset-switch wants to do next.
+      const workerPromise = this.dispatchTracked(op, kind, tracked, fn);
+
+      if (!effectiveSignal) {
+        return await workerPromise;
+      }
+
+      let onAbort: (() => void) | undefined;
+      const abortPromise = new Promise<never>((_, reject) => {
+        onAbort = (): void => reject(new WorkerAbortError(op));
+        effectiveSignal.addEventListener('abort', onAbort, { once: true });
+      });
+
       try {
-        // Race the worker call against the timeout AND the abort signal.
-        // The abort cannot kill the WASM task, but it can settle the
-        // promise immediately so the caller proceeds with whatever the
-        // dataset-switch wants to do next.
-        const task = fn(tracked.api);
-        this.dispatchTracker.dispatch(tracked.worker, this.workers, task);
-        const workerPromise = this.withTimeout(op, task, this.pickTimeoutMs(kind), tracked.worker);
-
-        if (!effectiveSignal) {
-          return await workerPromise;
-        }
-
-        let onAbort: (() => void) | undefined;
-        const abortPromise = new Promise<never>((_, reject) => {
-          onAbort = (): void => reject(new WorkerAbortError(op));
-          effectiveSignal.addEventListener('abort', onAbort, { once: true });
-        });
-
-        try {
-          return await Promise.race([workerPromise, abortPromise]);
-        } finally {
-          if (onAbort) effectiveSignal.removeEventListener('abort', onAbort);
-        }
+        return await Promise.race([workerPromise, abortPromise]);
       } finally {
-        tracked.markQueryEnd();
+        if (onAbort) effectiveSignal.removeEventListener('abort', onAbort);
       }
     } finally {
       abortScope?.dispose();
     }
+  }
+
+  /**
+   * Select the least-busy worker AND mark its slot busy in one synchronous
+   * step after the usability await. Marking later (after the caller resumes)
+   * let every concurrent dispatch read the same worker as idle.
+   */
+  private async acquireTrackedWorker(): Promise<TrackedWorkerHandle> {
+    await this.whenUsable();
+    if (this.workers.length === 0) {
+      throw new WorkerUnavailableError('[WorkerPool] No workers available after initialization');
+    }
+    // No await between selection and marking — see the method doc.
+    const tracked = selectLeastBusy(this.workers);
+    tracked.markQueryStart();
+    return tracked;
+  }
+
+  /**
+   * Start `fn` on an already-acquired worker and release its slot when the
+   * WORKER'S OWN (timeout-guarded) promise settles — not when the caller's
+   * abort race settles. An aborted caller walks away, but the worker keeps
+   * running the abandoned task; freeing the slot early made least-busy
+   * routing send the next dispatch to a busy worker while others idled. The
+   * release path swallows the rejection (the caller observes it through the
+   * returned promise, or has already moved on after an abort).
+   */
+  private dispatchTracked<T>(
+    op: string,
+    kind: TimeoutKind,
+    tracked: TrackedWorkerHandle,
+    fn: (api: Remote<DataWorkerAPI>) => Promise<T>
+  ): Promise<T> {
+    let workerPromise: Promise<T>;
+    try {
+      const task = fn(tracked.api);
+      this.dispatchTracker.dispatch(tracked.worker, this.workers, task);
+      workerPromise = this.withTimeout(op, task, this.pickTimeoutMs(kind), tracked.worker);
+    } catch (error) {
+      tracked.markQueryEnd();
+      throw error;
+    }
+    workerPromise.then(
+      () => tracked.markQueryEnd(),
+      () => tracked.markQueryEnd()
+    );
+    return workerPromise;
   }
 
   /**
