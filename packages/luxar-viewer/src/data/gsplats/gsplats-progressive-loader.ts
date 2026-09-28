@@ -8,7 +8,8 @@
  * Loading strategy:
  * - On each updateView() call, loads LODs sequentially starting from LOD 0
  * - Stops at the first LOD whose load takes longer than the cache-hit threshold
- * - After first paint, initializes the remaining spatial indexes concurrently
+ * - Requests rung k+1's spatial index (`chunk_bounds`) while rung k loads, at
+ *   refinement fetch priority; after first paint, initializes the rest
  * - Prefetches up to three unloaded LODs when the L0 cache has headroom
  * - Keeps playback/shadow prefetch at one rung to avoid abandoned-slice waste
  *
@@ -664,6 +665,11 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       if (shouldStopBeforeLevel(pass, level, startLevel, performance.now(), budgetDeadline)) {
         break;
       }
+      // Rung level+1's chunk_bounds is fetched WHILE this rung's data loads
+      // (B6), not after the pass: the next refinement step then starts with
+      // its index in hand. Not under a playback budget (one rung per tick) nor
+      // for a shadow prefetch pass — the same rule as `warmRemainingLODMetadata`.
+      if (this._frameBudgetMs === null && !isPrefetch) this.warmLevelIndex(level + 1);
       const t0 = performance.now();
       const { data: lodData, allResident } = await timeLodStageWithResult(
         ({ allResident }) => `additive:gsplats:level:${level}:${allResident ? 'resident' : 'miss'}`,
@@ -931,12 +937,21 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     if (this._metadataWarmStarted || this._disposed) return;
     this._metadataWarmStarted = true;
     for (let level = 1; level < this.nLods; level++) {
-      void this.lodLoaders[level]
-        .ensureInitialized()
-        .catch((error: unknown) =>
-          reportSpeculativeFailure('GSplat metadata warming failed', error)
-        );
+      this.warmLevelIndex(level);
     }
+  }
+
+  /**
+   * Request rung `level`'s spatial index (its `chunk_bounds`) at REFINEMENT
+   * priority (B6): a finer rung of something already on screen queues behind
+   * every demand read but no longer waits for the rung before it to finish.
+   * Idempotent — the sub-loader initialises once.
+   */
+  private warmLevelIndex(level: number): void {
+    if (this._disposed || level >= this.nLods) return;
+    void this.lodLoaders[level]
+      .ensureInitialized('refinement')
+      .catch((error: unknown) => reportSpeculativeFailure('GSplat metadata warming failed', error));
   }
 
   private cancelLookaheadPrefetch(): void {

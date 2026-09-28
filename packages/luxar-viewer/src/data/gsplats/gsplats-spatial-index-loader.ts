@@ -11,6 +11,11 @@
  */
 
 import * as zarr from '../zarr';
+import {
+  tagSignalPriority,
+  type FetchPriority,
+  type FetchPriorityCell,
+} from '../../utils/fetch-concurrency';
 import { log, LogEmoji, Modules } from '../../utils/log';
 import type {
   GSplatsMetadata,
@@ -273,6 +278,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   private zarrLocation: zarr.Location<zarr.Readable>;
   private node: SceneNode;
   private _onceInit = new OnceInit();
+  /** Priority cell of an in-flight PRIORITISED initialisation (see `ensureInitialized`). */
+  private _initPriority: FetchPriorityCell | null = null;
   private rangeLoader: RangeLoader;
   private zarrStore: zarr.Readable | null = null;
 
@@ -443,12 +450,12 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   /**
    * Initialize the loader by loading spatial index and opening arrays
    */
-  async initialize(): Promise<void> {
+  async initialize(signal?: AbortSignal): Promise<void> {
     const attrs = this.node.attrs as unknown as GSplatsMetadata;
 
     // Load spatial index
     try {
-      this.chunkIndex = await this.loadChunkBounds(attrs);
+      this.chunkIndex = await this.loadChunkBounds(attrs, signal);
 
       if (!this.chunkIndex) {
         log.info(
@@ -585,9 +592,22 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     }
   }
 
-  /** Initialize metadata once without loading any attribute payload chunks. */
-  async ensureInitialized(): Promise<void> {
-    await this._onceInit.ensure(() => this.initialize());
+  /**
+   * Initialize metadata once without loading any attribute payload chunks.
+   *
+   * `priority` classes the `chunk_bounds` read of an initialisation THIS call
+   * starts (B6: the progressive loader warms rung k+1 at `'refinement'` while
+   * rung k loads). A later call without one needs the index now, so it raises
+   * an in-flight warm to `demand` — no priority inversion behind a warm.
+   */
+  async ensureInitialized(priority?: FetchPriority): Promise<void> {
+    if (priority === undefined) this._initPriority?.raise('demand');
+    await this._onceInit.ensure(() => {
+      if (priority === undefined) return this.initialize();
+      const signal = new AbortController().signal;
+      this._initPriority = tagSignalPriority(signal, priority);
+      return this.initialize(signal);
+    });
   }
 
   /**
@@ -889,8 +909,11 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
    * wrapper here exists for symmetry with the points + lines facades,
    * which follow the same pattern.
    */
-  private async loadChunkBounds(attrs: GSplatsMetadata): Promise<ChunkSpatialIndex | null> {
-    return loadGSplatsChunkIndex(this.zarrLocation, attrs);
+  private async loadChunkBounds(
+    attrs: GSplatsMetadata,
+    signal?: AbortSignal
+  ): Promise<ChunkSpatialIndex | null> {
+    return loadGSplatsChunkIndex(this.zarrLocation, attrs, signal);
   }
 
   /**

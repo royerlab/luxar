@@ -55,7 +55,7 @@ function gatedSubLoader() {
 }
 
 describe('GSplatsProgressiveLoader — chunk_bounds ordering (B6)', () => {
-  it.fails("requests rung k+1's chunk_bounds before rung k's data completes", async () => {
+  it("requests rung k+1's chunk_bounds before rung k's data completes", async () => {
     const rungs = [gatedSubLoader(), gatedSubLoader(), gatedSubLoader()];
     const loader = new GSplatsProgressiveLoader(
       rungs.map((r) => r.stub) as unknown as GSplatsSpatialIndexLoader[],

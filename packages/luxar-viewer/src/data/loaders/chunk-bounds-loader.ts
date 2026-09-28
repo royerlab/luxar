@@ -15,7 +15,7 @@
  */
 
 import * as zarr from '../zarr';
-import { readArray } from '../zarr';
+import { abortOptions, readArray } from '../zarr';
 import { log } from '../../utils/log';
 
 /**
@@ -52,16 +52,21 @@ function isNotFoundError(message: string): boolean {
  *                  ``"vertex_chunk_bounds"``, ``"segment_chunk_bounds"``).
  * @param logModule Log-module label used by the loader (geometry-specific).
  * @param notFoundMessage Friendly message logged when the array is absent.
+ * @param signal    Optional signal the chunk read rides — it carries the read's
+ *                  fetch priority (`tagSignalPriority`); never aborted by callers.
  */
 export async function fetchChunkBoundsArray(
   location: zarr.Location<zarr.Readable>,
   arrayName: string,
   logModule: string,
-  notFoundMessage: string
+  notFoundMessage: string,
+  signal?: AbortSignal
 ): Promise<ChunkBoundsArray | null> {
   try {
     const boundsArray = await zarr.open(location.resolve(arrayName), { kind: 'array' });
-    const boundsData = await readArray(boundsArray);
+    const boundsData = signal
+      ? await readArray(boundsArray, undefined, abortOptions(signal))
+      : await readArray(boundsArray);
     const data = new Float32Array(boundsData.data as ArrayBuffer | ArrayLike<number>);
     return { data, shape: Array.from(boundsArray.shape) };
   } catch (error: unknown) {
