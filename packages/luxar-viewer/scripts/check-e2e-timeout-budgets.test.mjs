@@ -1019,7 +1019,57 @@ export async function outer(page) { await renamed(page); }`,
         60_000,
         new Map([['./helpers', 'export { missing };']])
       )
-    ).toThrow(/missing/);
+    ).toThrow('Shared helper module ./helpers exports missing, which is not declared or imported.');
+  });
+
+  it('ignores a clause export of a local non-helper', () => {
+    const source =
+      "import { go } from './helpers';\ntest('local constant', async ({ page }) => { await go(page); });";
+    const helpers = new Map([
+      [
+        './helpers',
+        'const LIMIT = 5_000; class Page {} export async function go(page) { await page.waitForTimeout(45_000); } export { LIMIT, Page };',
+      ],
+    ]);
+
+    expect(analyzeSpec(source, 'example.spec.ts', 30_000, 60_000, helpers)).toEqual([
+      { deadlineMs: 45_000, file: 'example.spec.ts', line: 2, test: 'local constant' },
+    ]);
+  });
+
+  it('forwards a helper beside an imported non-helper', () => {
+    const source =
+      "import { go } from './helpers';\ntest('mixed exports', async ({ page }) => { await go(page); });";
+    const helpers = new Map([
+      ['./helpers', "import { LIMIT, go } from './helpers/inner'; export { LIMIT, go };"],
+      [
+        './helpers/inner',
+        'export const LIMIT = 5_000; export async function go(page) { await page.waitForTimeout(45_000); }',
+      ],
+    ]);
+
+    expect(analyzeSpec(source, 'example.spec.ts', 30_000, 60_000, helpers)).toEqual([
+      { deadlineMs: 45_000, file: 'example.spec.ts', line: 2, test: 'mixed exports' },
+    ]);
+  });
+
+  it('publishes local clause exports before resolving a helper import cycle', () => {
+    const source =
+      "import { go } from './helpers';\ntest('cycle', async ({ page }) => { await go(page); });";
+    const helpers = new Map([
+      [
+        './helpers',
+        "import { go } from './helpers/inner'; async function w(page) { await page.waitForTimeout(45_000); } export { w, go };",
+      ],
+      [
+        './helpers/inner',
+        "import { w } from '../helpers'; export async function go(page) { await w(page); }",
+      ],
+    ]);
+
+    expect(analyzeSpec(source, 'example.spec.ts', 30_000, 60_000, helpers)).toEqual([
+      { deadlineMs: 45_000, file: 'example.spec.ts', line: 2, test: 'cycle' },
+    ]);
   });
 
   it('ignores type-only shared-helper imports and re-exports', () => {
