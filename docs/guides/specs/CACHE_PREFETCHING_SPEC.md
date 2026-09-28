@@ -124,8 +124,9 @@ Adjacent: [1, 3, 1], [3, 3, 1],  // ±1 in dim 0
 ### Boundary Handling
 
 Adjacency prefetch requires a loader to register the array's chunk grid with
-`ChunkPrefetcher.registerArrayBounds(arrayPath, shape, chunks)`. Invalid or
-missing shape/chunk metadata skips registration without failing the load.
+`ChunkPrefetcher.registerArrayBounds(arrayPath, shape, chunks)`. Missing arrays,
+mismatched ranks, or nonpositive/nonfinite chunk sizes skip registration
+without failing the load.
 
 - An array without registered bounds gets no adjacency prefetch.
 - Negative indices are skipped (no chunk at [-1, 0, 0]).
