@@ -50,11 +50,12 @@ const FULL_UPLOAD_ROW_FRACTION = 0.75;
  * Range discipline mirrors {@link collapseSortedIndexRanges}:
  * - Units are FLOAT elements of `image.data` (three's texture-range API is
  *   float-indexed with an implicit RGBA `componentStride` of 4).
- * - Ranges accumulate across commits while a mesh is hidden, and BOTH
- *   WebGPU backends (native + WebGL2-fallback) replay them verbatim and
- *   never clear them — only the classic WebGLRenderer consumes+clears at
- *   flush. So every call collapses the pending set into one contiguous
- *   span and re-splits it (a superset upload is always correct, never
+ * - Ranges accumulate across commits while a mesh is hidden (they are
+ *   consumed only when the texture is actually uploaded: by the classic
+ *   WebGLRenderer at flush, and on both WebGPU backends by
+ *   `./element-texture-row-upload`). So every call collapses the pending
+ *   set into one contiguous span and re-splits it (a superset upload is
+ *   always correct, never
  *   stale; our writers only ever register a `[0, n)` prefix or an append
  *   suffix contiguous with it).
  * - An element is exactly `floatsPerElement` floats and the texture width
@@ -63,9 +64,10 @@ const FULL_UPLOAD_ROW_FRACTION = 0.75;
  *   path uploads every range with `height = 1` and would reject a
  *   row-straddling range with INVALID_VALUE).
  *
- * On the WebGPU backends this still sets `needsUpdate`; they ignore the
- * ranges and re-upload the whole image (correct, just not yet partial —
- * see the Phase-4 spec's Stage 3).
+ * three's WebGPU backends (native + WebGL2-fallback) ignore texture
+ * update ranges; `./element-texture-row-upload` wraps their
+ * `updateTexture` so element textures upload exactly the rows these
+ * ranges cover there too (#2944).
  */
 /**
  * Textures with a FULL-image upload pending (encoded to three as
@@ -73,14 +75,45 @@ const FULL_UPLOAD_ROW_FRACTION = 0.75;
  * invisible to the range fold below — without this set, a later append
  * would register only its own span and silently DOWNGRADE the pending
  * full upload to a partial one, leaving the prefix rendering the
- * previous commit's texels on the classic WebGL backend (found by
- * model-based fuzzing; deterministic repro: full write ≥75% of rows →
- * append before any flush). Cleared by `texture.onUpdate`, which the
- * classic renderer invokes after it actually consumes the upload (the
- * WebGPU backends may never call it — harmless, they full-upload on
- * every needsUpdate anyway).
+ * previous commit's texels (found by model-based fuzzing; deterministic
+ * repro: full write ≥75% of rows → append before any flush). Cleared by
+ * `texture.onUpdate`, which the classic renderer and three's common
+ * `Textures.updateTexture` (both WebGPU backends) invoke after they
+ * actually consume the upload.
  */
 const pendingFullUpload = new WeakSet<THREE.DataTexture>();
+
+/**
+ * Every texture {@link attachElementStorage} allocated. The WebGPU row
+ * upload (`./element-texture-row-upload`) acts ONLY on these — every
+ * write to them registers its dirty span here, which is what makes a
+ * rows-only upload equal to a full one.
+ */
+const elementTextures = new WeakSet<THREE.Texture>();
+
+/** True for a texture allocated by {@link attachElementStorage}. */
+export function isElementTexture(texture: THREE.Texture): texture is THREE.DataTexture {
+  return elementTextures.has(texture);
+}
+
+/** True while a FULL image upload is pending on an element texture. */
+export function hasPendingElementTextureFullUpload(texture: THREE.DataTexture): boolean {
+  return pendingFullUpload.has(texture);
+}
+
+/**
+ * Element textures some renderer has consumed an upload of (its
+ * `onUpdate` fired). Until then the pending ranges cover every texel
+ * ever written since {@link attachElementStorage} zero-filled the
+ * backing store, so a ranged FIRST upload into zero-initialised GPU
+ * storage equals a full one — what the classic renderer already does.
+ */
+const uploadedOnce = new WeakSet<THREE.DataTexture>();
+
+/** True once any renderer has consumed an upload of this element texture. */
+export function hasElementTextureBeenUploaded(texture: THREE.DataTexture): boolean {
+  return uploadedOnce.has(texture);
+}
 
 /**
  * Mark an element texture as needing a FULL image upload (context
@@ -871,14 +904,20 @@ export function attachElementStorage(
   texture.minFilter = THREE.NearestFilter;
   texture.generateMipmaps = false;
   texture.flipY = false;
-  // The classic renderer invokes onUpdate after consuming an upload —
-  // the observable "flush happened" signal that ends a pending FULL
-  // upload (see pendingFullUpload). Wired once here; nothing else sets
-  // onUpdate on element textures. (No pending-full mark at attach: a
-  // fresh texture's GPU storage is zero-initialized and only written
-  // texels are ever read, so a ranged first upload is sufficient.)
-  texture.onUpdate = () => pendingFullUpload.delete(texture);
+  // Every renderer (classic, and three's common Textures for both WebGPU
+  // backends) invokes onUpdate after consuming an upload — the observable
+  // "flush happened" signal that ends a pending FULL upload (see
+  // pendingFullUpload) and records the first upload (see uploadedOnce).
+  // Wired once here; nothing else sets onUpdate on element textures. (No
+  // pending-full mark at attach: a fresh texture's GPU storage is
+  // zero-initialized and only written texels are ever read, so a ranged
+  // first upload is sufficient.)
+  texture.onUpdate = () => {
+    pendingFullUpload.delete(texture);
+    uploadedOnce.add(texture);
+  };
   texture.needsUpdate = true;
+  elementTextures.add(texture);
 
   (geometry.userData as ElementStorageUserData).elementTexture = texture;
   geometry.addEventListener('dispose', () => texture.dispose());

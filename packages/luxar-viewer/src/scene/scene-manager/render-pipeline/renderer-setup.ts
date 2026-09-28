@@ -32,6 +32,7 @@ import {
 import { configureElementTextureLayout } from '../../../rendering/element-texture-layout';
 import { configureSortedIndexChunkedApply } from '../../../rendering/element-storage';
 import { installUploadCounters } from '../../../rendering/upload-counters';
+import { installElementTextureRowUploads } from '../../../rendering/element-texture-row-upload';
 import { configureRenderObjectEviction } from '../../../data/scene-loader/commit/invalidate-render-object';
 import { configureHDRRenderer, logHDRCapabilities } from '../../../utils/hdr/hdr-detection';
 import { log, Modules } from '../../../utils/log';
@@ -360,6 +361,9 @@ export async function createWebGPURenderer(
   await gpuRenderer.init();
   // After init(): the backend's device / WebGL2 context exists only now.
   installUploadCounters(gpuRenderer);
+  // Both WebGPU backends ignore texture update ranges; upload only the
+  // dirty rows of element textures there (#2944).
+  installElementTextureRowUploads(gpuRenderer);
 
   const capabilities = createRendererCapabilities(gpuRenderer);
   configureElementTextureLayout(capabilities.maxTextureSize);
