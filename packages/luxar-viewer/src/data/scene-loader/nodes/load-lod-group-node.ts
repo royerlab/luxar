@@ -47,7 +47,7 @@
  * @module data/scene-loader/nodes/load-lod-group-node
  */
 
-import { bumpFailedLoadsVersion } from '../../../utils/failed-loads-version';
+import { latchChildFailure } from '../../../scene/lod-child-failure';
 import * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { archiveFaultFrom } from '../../../cache/chunk-source';
@@ -160,9 +160,7 @@ function attachLazyChild(
         entryChild.failed = true;
         const archiveFault = archiveFaultFrom(error);
         if (archiveFault) {
-          entryChild.permanentlyFailed = true;
-          entryChild.failureReason = archiveFault.message;
-          bumpFailedLoadsVersion();
+          latchChildFailure(entryChild, archiveFault.message);
           entryChild.failedTick = undefined;
           // A container fault makes the whole archive unreadable, not just this lazy level.
           if (ctx.isDatasetLive()) ctx.reportArchiveFault(archiveFault);
@@ -595,9 +593,7 @@ export async function loadLodGroupNode(
           const reason =
             `lod_group deferred child ${lazyChild.path} retry refused: ` +
             'placeholder already has attached children';
-          entryChild.permanentlyFailed = true;
-          entryChild.failureReason = reason;
-          bumpFailedLoadsVersion();
+          latchChildFailure(entryChild, reason);
           throw new Error(reason);
         }
         await loadChildren(lazyChild, placeholder, childLoc, ctx);

@@ -39,6 +39,7 @@ import type { NodeBuildCtx } from '../../../data/scene-loader/nodes/build-ctx';
 import { getLoadTimeline, resetLoadTimeline } from '../../../profiling/load-timeline';
 import * as gsplatsRefinement from '../../../data/gsplats/lod-refinement';
 import { log, Modules } from '../../../utils/log';
+import { failedLoadsVersion } from '../../../utils/failed-loads-version';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
 // Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
@@ -3045,9 +3046,11 @@ describe('SceneLoader', () => {
       await sceneLoader.updateView({ displayDims: [0, 1, 2] });
       expect(sceneLoader.hasFailures()).toBe(true);
 
+      const beforeClear = failedLoadsVersion();
       sceneLoader.clearFailures();
       expect(sceneLoader.hasFailures()).toBe(false);
       expect(sceneLoader.getFailedLoaders().size).toBe(0);
+      expect(failedLoadsVersion()).toBe(beforeClear + 1);
     });
 
     it('should warn user when multiple loaders fail', async () => {

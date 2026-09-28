@@ -804,8 +804,10 @@ describe('loadLodGroupNode — lazy level loading', () => {
       expect(groupChild.object.children).toHaveLength(1);
       expect(groupLoads).toBe(1);
 
+      const beforeRetry = failedLoadsVersion();
       expect(reg.retryLazyChildByNodePath('/lod/child_1')).toBe(true);
       await vi.waitFor(() => expect(groupChild.loading).toBe(false));
+      expect(failedLoadsVersion()).toBe(beforeRetry + 2);
       expect(groupLoads).toBe(1);
       expect(groupChild.object.children).toHaveLength(1);
       expect(groupChild.ready).toBe(false);

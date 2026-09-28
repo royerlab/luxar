@@ -31,6 +31,9 @@ import type { AnimationController } from '../../../../scene/animation/animation-
 import type { FailedLoadsProviderPort } from '../../../../data/scene-loader-monitor-port';
 import { MESH_DEFAULTS } from '../../../../rendering/materials/mesh/appearance';
 import { PhysicalMeshMaterial } from '../../../../rendering/materials/mesh-physical/material-glsl';
+import { clearChildFailure } from '../../../../scene/lod-child-failure';
+import type { LODGroupChild } from '../../../../scene/lod-group-registry';
+import { failedLoadsVersion } from '../../../../utils/failed-loads-version';
 
 // `showToast` lives in src/ui/toast; mock so the empty-scene branch
 // is observable.
@@ -3716,7 +3719,7 @@ describe('LayersPanel — per-row load-failure badge', () => {
     panel.show();
     let version = 0;
     let reason = 'network 503';
-    const paths = Array.from({ length: 1000 }, (_, i) => `/pyramid/tile_${i}`);
+    let paths = Array.from({ length: 1000 }, (_, i) => `/pyramid/tile_${i}`);
     const getFailedPaths = vi.fn(() => paths);
     const provider: FailedLoadsProviderPort = {
       getFailedPaths,
@@ -3740,6 +3743,38 @@ describe('LayersPanel — per-row load-failure badge', () => {
     expect(getFailedPaths).toHaveBeenCalledTimes(firstReads + 1);
     expect(setAttribute).toHaveBeenCalled();
     expect(errorBadge(rowFor(container, 'pyramid'))?.title).toContain('decode error');
+
+    paths = [];
+    version++;
+    frame();
+    expect(errorBadge(rowFor(container, 'pyramid'))).toBeNull();
+  });
+
+  it('clears a versioned lazy-child badge on explicit retry', async () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), makeGroupPlusSiblingScene());
+    panel.show();
+    const child = {
+      nodePath: '/pyramid/lod_1',
+      permanentlyFailed: true,
+      failureReason: 'archive fault',
+    } as LODGroupChild;
+    const provider: FailedLoadsProviderPort = {
+      getFailedPaths: () => (child.permanentlyFailed ? [child.nodePath!] : []),
+      getFailedLoadsVersion: failedLoadsVersion,
+      getFailedReason: () => child.failureReason,
+      retryAll: async () => {
+        clearChildFailure(child);
+        return { succeeded: [child.nodePath!], failed: [] };
+      },
+    };
+    panel.setFailedLoadsProvider(provider);
+    expect(errorBadge(rowFor(container, 'pyramid'))?.title).toContain('archive fault');
+
+    await provider.retryAll();
+    perFrameCallbacks(animationController).get('layers-lod-status')!();
+    expect(errorBadge(rowFor(container, 'pyramid'))).toBeNull();
+    expect(rowFor(container, 'pyramid')?.classList.contains('luxar-layer-row--error')).toBe(false);
   });
 
   it('an exact-path failure lights up its row with a reason in the badge label', () => {

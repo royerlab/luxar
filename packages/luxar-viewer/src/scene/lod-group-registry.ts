@@ -65,6 +65,7 @@
  */
 
 import { bumpFailedLoadsVersion } from '../utils/failed-loads-version';
+import { clearChildFailure } from './lod-child-failure';
 import * as THREE from 'three';
 
 import type { BoundingBox } from './scene-manager/clipping/bounds-math';
@@ -953,14 +954,6 @@ export interface LODGroupRegistryDeps {
   registerMaterial?: (material: THREE.Material) => void;
 }
 
-/**
- * Tracks loaded ``lod_group`` and ``kind=partition`` nodes in a scene;
- * evaluates per-frame to pick the active LOD and frustum-visible parts.
- */
-function bumpIfFailedChild(child: LODGroupChild): void {
-  if (child.permanentlyFailed) bumpFailedLoadsVersion();
-}
-
 function bumpForFailedEntryReplacement(
   previous: LODGroupEntry | undefined,
   next: LODGroupEntry
@@ -973,6 +966,10 @@ function bumpForFailedEntryReplacement(
   }
 }
 
+/**
+ * Tracks loaded ``lod_group`` and ``kind=partition`` nodes in a scene;
+ * evaluates per-frame to pick the active LOD and frustum-visible parts.
+ */
 export class LODGroupRegistry {
   private entries: Map<string, LODGroupEntry> = new Map();
   private partitionEntries: Map<string, PartitionGroupEntry> = new Map();
@@ -2666,9 +2663,7 @@ export class LODGroupRegistry {
       }
     }
     if (explicitRetry) {
-      bumpIfFailedChild(child);
-      child.permanentlyFailed = false;
-      child.failureReason = undefined;
+      clearChildFailure(child);
     }
     child.loading = true;
     child.ensureLoaded();
