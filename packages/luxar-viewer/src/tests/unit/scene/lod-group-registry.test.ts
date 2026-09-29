@@ -553,7 +553,7 @@ describe('projectBoxDiagonalPx', () => {
       expect(swing(legacy)).toBeGreaterThan(2 * swing(values));
     });
 
-    it.fails('face-on in perspective it tracks the legacy rect for boxes of any thickness', () => {
+    it('face-on in perspective it tracks the legacy rect for boxes of any thickness', () => {
       // The ellipse outline sits near the box's MIDDLE plane while the legacy
       // rect is set by its NEAR face, so an unsized ellipse of a thick box
       // close to the camera read far less than the rect. Sized at the nearest
@@ -578,7 +578,7 @@ describe('projectBoxDiagonalPx', () => {
       }
     });
 
-    it.fails('hosted zebrafish endoderm at its opening view reads the legacy rect coverage and picks child_2', () => {
+    it('hosted zebrafish endoderm at its opening view reads the legacy rect coverage and picks child_2', () => {
       // gsplats_4d_zebrafish_timelapse: /endoderm is a kind=lod screen-area
       // ladder [0, 0.125, 0.25, 0.5] whose box is ~0.4 times as deep as it is
       // wide, 7 half-depths from the opening camera. The legacy corner rect
@@ -600,7 +600,7 @@ describe('projectBoxDiagonalPx', () => {
       expect(pickChildWithHysteresis([0, 0.125, 0.25, 0.5], 0, metric)).toBe(2);
     });
 
-    it.fails('saturates to +Infinity when the eye plane cuts a box corner but misses its ellipsoid', () => {
+    it('saturates to +Infinity when the eye plane cuts a box corner but misses its ellipsoid', () => {
       // The nearest corner is behind the eye, so no finite near depth exists —
       // the same saturation the legacy corner rect applied.
       const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };

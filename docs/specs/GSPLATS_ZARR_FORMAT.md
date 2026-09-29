@@ -338,15 +338,26 @@ object finest-at-opening use an explicit `coverage_fractions=[...]` list
 Three refinements are NORMATIVE parts of the `screen-area` metric (they decide
 which end of a ladder renders, so consumers must agree on them):
 
-* **Orientation-stable occupancy.** The bbox is measured through its
-  INSCRIBED ellipsoid (semi-axes = the bbox half-extents), projected exactly
-  (dual quadric → image conic), and the metric is the product of the image
-  ellipse's NDC semi-axes, `sqrt(det S)`. Face-on this equals the rect
-  product the thresholds were defined against (the ellipse is inscribed in
-  the face's rect), while a 3D rect would grow by up to ~1.7x as the camera
-  merely orbits to a corner-on view and walk the ladder at a fixed distance.
-  The camera plane cutting the ellipsoid (camera inside the node) saturates
-  to the finest level; an ellipsoid wholly behind the camera reads `0`.
+* **Orientation-stable occupancy, sized at the near corner.** The bbox is
+  measured through its INSCRIBED ellipsoid (semi-axes = the bbox
+  half-extents), projected exactly (dual quadric → image conic). Under a
+  perspective camera the image ellipse's NDC shape matrix `S` is then scaled
+  by `w_far / w_near`, the ratio of the largest to the smallest clip-space `w`
+  (view depth) over the 8 bbox corners, leaving its centre in place: the
+  projected ellipsoid reads at the geometric-mean depth `sqrt(w_near·w_far)`,
+  and this resizes it to the depth of the box's nearest corner, where the
+  box's near face sets its screen coverage. The metric is the product of the
+  sized ellipse's NDC semi-axes, `sqrt(det S)`. A box seen face-on on the view
+  axis therefore reads exactly the rect product the thresholds were defined
+  against (the ellipse is inscribed in the near face's rect) at any
+  thickness, and off-axis within a few percent; an orthographic camera has
+  constant `w`, so no scaling applies. A 3D rect grows by up to ~1.7x as the
+  camera merely orbits to a corner-on view; the sized ellipse of a cube
+  varies only with its corner depths (~14% at 10 half-extents), though an
+  elongated box seen close up and end-on swings nearly as much as its rect.
+  The eye plane cutting the bbox (nearest corner at `w <= 1e-6`: camera
+  inside or beside the node) saturates to the finest level; a bbox wholly
+  behind the camera reads `0`.
 
 * **Visible occupancy.** The ellipse's area is scaled, per axis, by the
   visible fraction of its screen AABB (exact for an axis-aligned ellipse); an

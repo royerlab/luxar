@@ -10,9 +10,9 @@
  * - {@link projectBoxDiagonalPx} — project a box through its box-to-clip
  *   matrix to a screen-space pixel diagonal (with near-plane saturation). The legacy
  *   ``selector: 'coverage'`` metric.
- * - {@link projectBoxAreaFraction} — project the box's inscribed ellipsoid to
- *   the viewport AREA its screen-space ellipse covers, in rect units (same
- *   near-plane saturation). The ``selector: 'screen-area'`` metric.
+ * - {@link projectBoxAreaFraction} — project the box's inscribed ellipsoid,
+ *   sized at the box's nearest-corner depth, to the viewport AREA its
+ *   screen-space ellipse covers, in rect units (same near-plane saturation). The ``selector: 'screen-area'`` metric.
  * - {@link pickChildWithHysteresis} — pick the level for whichever metric the
  *   group's ``selector`` names, with asymmetric downgrade hysteresis.
  *
@@ -118,12 +118,24 @@ export const DEGENERATE_RECT_HALF_EXTENT = 1e-3;
  * corner-on view of the same box at the same distance, so a rect metric walks a
  * lod ladder up and down while the camera merely orbits. The box is therefore
  * measured through its INSCRIBED ellipsoid (semi-axes = the box half-extents),
- * projected exactly as a dual quadric onto the image-plane conic. The metric is
- * ``sqrt(det S)`` of that ellipse's NDC shape matrix ``S`` (the product of its
- * semi-axes). Face-on it is exactly the legacy rect product ``halfW × halfH``,
- * since the ellipse is inscribed in the face's rect, so stored thresholds keep
- * their meaning (a screen-filling face still reads 1.0); for a cube it depends
- * on distance only.
+ * projected exactly as a dual quadric onto the image-plane conic, and then
+ * SIZED at the depth of the box's nearest corner (see
+ * {@link projectNearDepthEllipse}): in perspective the bare ellipse outline
+ * sits near the box's middle plane while its screen coverage is set by the near
+ * face, so a thick box close to the camera would otherwise read too small. The
+ * metric is ``sqrt(det S)`` of the sized ellipse's NDC shape matrix ``S`` (the
+ * product of its semi-axes). For a flat box face-on, or under an orthographic
+ * camera, it is exactly the legacy rect product ``halfW × halfH`` (the ellipse
+ * is inscribed in the face's rect); a thick box face-on in perspective reads
+ * its near-face rect exactly on the view axis and within a few percent off it,
+ * so stored thresholds keep their meaning (a screen-filling face still reads
+ * 1.0). For a cube at a fixed distance only the corner depths move with
+ * orientation — face-on the nearest is 1 half-extent in front of the centre,
+ * corner-on ``sqrt(3)`` — so an orbit at 10 half-extents swings the metric by
+ * ~14% (the bare ellipsoid: ~0%; the corner rect: ~50%). The price is paid on
+ * boxes seen close up and end-on: a flat card turned 30° reads ~7% MORE than
+ * face-on (the rect ~3% less), and an elongated box orbited at a few of its
+ * lengths swings nearly as much as its rect.
  *
  * **Clipped to the viewport.** The ellipse's area is scaled, per axis, by the
  * visible fraction of its screen-space AABB, so the metric reads the portion of
@@ -151,13 +163,15 @@ export const DEGENERATE_RECT_HALF_EXTENT = 1e-3;
  * the RAW thinness so a wide 2D node whose CLIPPED sliver happens to be thin
  * honestly reads its tiny visible area.
  *
- * **Fully off-screen reads exactly 0**, including an ellipsoid entirely
- * behind the camera: a clipped interval that is INVERTED (no viewport overlap
- * on that axis) zeroes the metric before the degenerate ramp can see it.
+ * **Fully off-screen reads exactly 0**, including a box entirely behind the
+ * camera: a clipped interval that is INVERTED (no viewport overlap on that
+ * axis) zeroes the metric before the degenerate ramp can see it.
  *
- * **+Infinity when the camera plane cuts the ellipsoid** (the camera is inside
- * it, or the node straddles the eye plane): there is no meaningful projection,
- * so the metric saturates to the finest level. An ORTHOGRAPHIC projection
+ * **+Infinity when the camera plane cuts the box** (the camera is inside it,
+ * or the node straddles the eye plane — including a corner poking behind the
+ * eye while the inscribed ellipsoid stays in front): there is no finite
+ * near-corner depth to size the ellipse at, so the metric saturates to the
+ * finest level, like the corner-rect metrics. An ORTHOGRAPHIC projection
  * never degenerates (``w`` stays 1), so no saturation applies — a camera inside
  * a large node reads full coverage naturally because its ellipse spans the
  * viewport. See the v3.4 spec's normative metric rules.
@@ -174,7 +188,7 @@ export function projectBoxAreaFraction(
   const m =
     boxToClip ??
     PROJ_VIEW_SCRATCH.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-  const ellipse = projectInscribedEllipse(box, m.elements);
+  const ellipse = projectNearDepthEllipse(box, m.elements);
   if (ellipse === ELLIPSE_STRADDLES) return Number.POSITIVE_INFINITY;
   if (ellipse === ELLIPSE_BEHIND) return 0;
   const { cx, cy, sxx, sxy, syy } = ellipse;
@@ -217,10 +231,67 @@ function viewportInsideEllipse(ellipse: typeof ELLIPSE_SCRATCH, det: number): bo
   return true;
 }
 
-/** {@link projectInscribedEllipse}: the camera plane cuts the ellipsoid. */
+/** {@link projectNearDepthEllipse}: the camera plane cuts the box (or its ellipsoid). */
 const ELLIPSE_STRADDLES = 1;
-/** {@link projectInscribedEllipse}: the ellipsoid lies wholly behind the camera. */
+/** {@link projectNearDepthEllipse}: the box lies wholly behind the camera. */
 const ELLIPSE_BEHIND = 2;
+
+/**
+ * The box's inscribed-ellipsoid image ({@link projectInscribedEllipse}) SIZED
+ * at the depth of the box's nearest corner. The ellipsoid's outline lies well
+ * behind the box's near face, while what the box covers on screen is set by
+ * that near face, so in perspective the bare ellipse of a thick box close to the
+ * camera reads less than the box covers (the hosted zebrafish endoderm read
+ * 25% below its corner rect and dropped a whole level at its opening view).
+ * The ellipse is therefore resized to the depth of the nearest corner.
+ *
+ * ``w`` is clip-space ``w``, i.e. view depth along the camera axis, in the
+ * frame of ``e`` (so a box-to-clip matrix carrying the group's world transform
+ * is measured consistently); ``w_near`` / ``w_far`` are its extremes over the 8
+ * corners. The projected ellipsoid does NOT sit at the centre depth: on the
+ * axis, an ellipsoid with semi-axis ``a`` across and ``c`` along the view at
+ * depth ``D`` has silhouette half-width ``f·a / sqrt(D² − c²)``, i.e. it
+ * already reads at the geometric-mean depth ``sqrt(w_near · w_far)``. Resizing
+ * it to ``w_near`` is the linear factor ``sqrt(w_far / w_near)`` per semi-axis,
+ * so ``S`` scales by ``w_far / w_near`` — which makes a box seen face-on on the
+ * axis read EXACTLY its near-face rect (the legacy corner-rect value), at any
+ * thickness. (Scaling by ``w_centre / w_near`` instead, the naive "centre to
+ * near" ratio, double-counts that depth: it overshoots the rect by 12% for a
+ * box whose centre is three half-depths away, and made orbit LOD flips worse
+ * than the corner rect.) The ellipse CENTRE is
+ * not moved, only its size; everything downstream (the viewport clip overlap,
+ * the full-coverage test, the degenerate ramp) reads the sized ellipse. An
+ * orthographic projection has constant ``w``, so the factor is exactly 1.
+ *
+ * Returns {@link ELLIPSE_BEHIND} when every corner is behind the eye and
+ * {@link ELLIPSE_STRADDLES} when the nearest corner is at/behind
+ * {@link W_EPSILON} — the eye plane cuts the box, the same saturation rule as
+ * the corner-rect metrics — even if it misses the inscribed ellipsoid.
+ */
+function projectNearDepthEllipse(
+  box: BoundingBox,
+  e: ArrayLike<number>
+): typeof ELLIPSE_SCRATCH | typeof ELLIPSE_STRADDLES | typeof ELLIPSE_BEHIND {
+  let wNear = Infinity;
+  let wFar = -Infinity;
+  for (let i = 0; i < 8; i++) {
+    const x = i & 1 ? box.max.x : box.min.x;
+    const y = i & 2 ? box.max.y : box.min.y;
+    const z = i & 4 ? box.max.z : box.min.z;
+    const w = e[3] * x + e[7] * y + e[11] * z + e[15];
+    wNear = Math.min(wNear, w);
+    wFar = Math.max(wFar, w);
+  }
+  if (!(wFar > 0)) return ELLIPSE_BEHIND;
+  if (!(wNear > W_EPSILON)) return ELLIPSE_STRADDLES;
+  const ellipse = projectInscribedEllipse(box, e);
+  if (ellipse === ELLIPSE_STRADDLES || ellipse === ELLIPSE_BEHIND) return ellipse;
+  const areaScale = wFar / wNear;
+  ellipse.sxx *= areaScale;
+  ellipse.sxy *= areaScale;
+  ellipse.syy *= areaScale;
+  return ellipse;
+}
 
 /** Reused result object for {@link projectInscribedEllipse} (no per-call allocation). */
 const ELLIPSE_SCRATCH = { cx: 0, cy: 0, sxx: 0, sxy: 0, syy: 0 };

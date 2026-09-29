@@ -346,11 +346,14 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    `selector` attr names. A DERIVED ladder stamps `screen-area`: the
    metric is the projected **area** of the box's INSCRIBED ellipsoid as a
    fraction of the viewport area (`projectBoxAreaFraction` — the exact
-   dual-quadric projection; the product of the image ellipse's NDC
-   semi-axes, `sqrt(det S)`, which face-on equals the rect's per-axis
-   half-extent product, so the thresholds keep their meaning, while an
-   orbit at a fixed distance no longer walks the ladder the way the
-   corner rect, up to ~1.7x larger corner-on, did; scaled by the visible
+   dual-quadric projection, SIZED at the depth of the box's nearest corner
+   by scaling its shape by `w_far / w_near` over the corners, so a thick
+   box close to the camera reads what its near face covers; the product of
+   the sized ellipse's NDC semi-axes, `sqrt(det S)`, which face-on on the
+   view axis equals the near face's per-axis half-extent product at any
+   thickness, so the thresholds keep their meaning, while a cube orbited at
+   a fixed distance swings only with its corner depths (~14% at 10
+   half-extents) rather than the corner rect's up to ~1.7x; scaled by the visible
    fraction of the ellipse's screen AABB, viewport-size independent by
    construction and topping out at exactly `1.0`; sub-pixel-thin content
    ramps to its linear span instead, so an edge-on plane is not pinned
