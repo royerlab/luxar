@@ -238,7 +238,6 @@ Every ordering uses the same staged-apply path; orderings larger than one 1M-ind
 
 **Skips**:
 
-- Pending view updates (`isLoadInProgress()` — the commit will sort anyway)
 - In-flight sorts (the resolve is at most a frame away). In-flight chunked ordering applies do NOT skip — a fresher sort streams into the inactive buffer concurrently
 - Invisible meshes (`isEffectivelyVisible` checks all ancestors — an LOD level can be a hidden GROUP)
 - Demoted meshes (`!hasCommittedData(mesh)`)
@@ -255,7 +254,7 @@ Every ordering uses the same staged-apply path; orderings larger than one 1M-ind
    - Derive `modelView = inverse(camera.matrixWorld) × mesh.matrixWorld`
    - **Collect cross-mesh order slot** (see render-order.ts below)
    - **Within-mesh re-sort trigger**:
-     - Skip while a load is in progress or when the mesh is demoted (`!hasCommittedData(mesh)`)
+     - Skip when the mesh is demoted (`!hasCommittedData(mesh)`). NOT skipped while the loader is busy: `isLoadInProgress()` stays true through the whole progressive-refinement drain, and gating on it left an orbit answered only by rung commits (measured up to 176° of sort-axis lag on the hosted h2afva timelapse). A re-sort racing a commit is dropped by the generation check, and the commit's own sort queues behind it via `resortQueued`. `isLoadInProgress()` now gates only the starved-worker init retry
      - Skip if a sort is in flight; an apply-pending ordering does not block a fresher dispatch because it streams into the inactive buffer
      - If `!lastSortAxis && registered`: first commit raced a null camera; recover with one dispatch now
      - Compare live axis/offset against `lastSortAxis` / `lastSortOffset`:

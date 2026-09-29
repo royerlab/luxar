@@ -2600,24 +2600,7 @@ describe('depth-sort scheduler (Phase 3)', () => {
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
   });
 
-  it('skips dispatch while a view update is in flight (pending-load signal)', async () => {
-    const coord = await loadCoordinator();
-    const camera = makeCamera();
-    let loading = false;
-    await sortedSetup(coord, camera, { isLoadInProgress: () => loading });
-
-    loading = true;
-    camera.rotateY(Math.PI / 2);
-    coord.evaluateDepthSortPerFrame();
-    expect(mockApi.sort).toHaveBeenCalledTimes(1);
-
-    // Load settles → the very next frame dispatches.
-    loading = false;
-    coord.evaluateDepthSortPerFrame();
-    expect(mockApi.sort).toHaveBeenCalledTimes(2);
-  });
-
-  it.fails('keeps re-sorting a moving camera while the loader stays busy (refinement drain / view pass)', async () => {
+  it('keeps re-sorting a moving camera while the loader stays busy (refinement drain / view pass)', async () => {
     // The loader's busy flag stays true through the WHOLE progressive-
     // refinement drain, which on a hosted laddered scene lasts seconds — and a
     // view pass can be running while the user drags. Nothing about a pending
@@ -2642,7 +2625,7 @@ describe('depth-sort scheduler (Phase 3)', () => {
     expect(mockApi.sort).toHaveBeenCalledTimes(3);
   });
 
-  it.fails('re-sorts for the auto-framed pose even while the loader is still refining', async () => {
+  it('re-sorts for the auto-framed pose even while the loader is still refining', async () => {
     // The first commit sorts from the PRE-framing camera (loadScene commits
     // before autoFrameCamera runs). The framing move must trigger a re-sort on
     // the next frame even though refinement keeps the loader busy, or a still

@@ -325,9 +325,9 @@ export async function runInitPipeline(
     requestReprocess: () => {
       void getSceneLoader('default')?.updateView({});
     },
-    // Phase 3: the per-frame scheduler skips dispatching while a view
-    // update is in flight — the pending commit sorts from the
-    // then-current pose anyway (same signal the refinement loop reads).
+    // Gates only the starved-SortWorker init retry (a retry into a busy
+    // loader spends an attempt on a guaranteed miss). Camera re-sorts are
+    // NOT gated on it: this stays true through the whole refinement drain.
     isLoadInProgress: () => getSceneLoader('default')?.isUpdateInProgress() ?? false,
     // Sort round-trips show up as the monitor's 'Depth Sort' line.
     getProfiler: () => SceneLoaderManager.getInstance().getProfiler(),

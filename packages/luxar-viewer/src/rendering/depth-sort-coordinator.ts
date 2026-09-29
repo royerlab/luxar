@@ -338,10 +338,14 @@ export function configureDepthSort(options: {
    */
   requestReprocess?: () => void;
   /**
-   * True while a view-update sweep is in flight (the same signal the
-   * refinement loop consults). The per-frame scheduler skips dispatching
-   * camera-motion re-sorts during loads — the pending commit will sort
-   * from the then-current pose anyway.
+   * True while the loader is doing work of any kind (a view-update sweep or
+   * its progressive-refinement drain). Gates ONLY the starved-worker init
+   * retry — a retry fired into that main-thread saturation spends an attempt
+   * on a guaranteed miss. Camera-motion re-sorts are deliberately NOT gated
+   * on it: the refinement drain holds this true for seconds on a hosted
+   * laddered scene, and a gated orbit left the drawn order up to ~180 deg
+   * stale until the next rung commit. A re-sort racing a commit is safe —
+   * the commit bumps the generation, so the stale result is dropped.
    */
   isLoadInProgress?: () => boolean;
   /**
@@ -1764,15 +1768,15 @@ function pumpChunkedOrderingApplies(): void {
  * fresh pose, so a triggered node goes quiet until the camera moves past
  * the threshold AGAIN. Frames between dispatch and resolve render the
  * previous order — bounded staleness, standard 3DGS behavior. Skips:
- * pending view updates (the commit will sort anyway), in-flight sorts
+ * in-flight sorts
  * (the resolve is at most a frame away), invisible/demoted meshes, and
  * nodes whose live mode is no longer order-dependent. A streaming
  * chunked apply does NOT skip — a fresher sort fills the inactive
  * buffer concurrently.
  *
  * Work is tiered by dependency: frame-state cleanup runs above every gate,
- * pure main-thread cross-node ordering runs above the loader gate, and only
- * work that touches the SortWorker stays below that gate.
+ * and the only thing the loader-busy signal gates is the starved-worker init
+ * retry. Cross-node ordering and within-mesh re-sorts both run during loads.
  */
 export function evaluateDepthSortPerFrame(): void {
   syncSortElementsRemaining = Math.max(0, syncSortElementLimit());
@@ -1876,9 +1880,14 @@ export function evaluateDepthSortPerFrame(): void {
     if (!orderDependent) continue;
 
     // Everything below dispatches or evaluates a within-mesh worker sort.
-    // Keep that work paused during a loader sweep, but do not pause the
-    // pure-main-thread cross-mesh ordering collected above.
-    if (loadInProgress) continue;
+    // NOT paused while the loader is busy. "The pending commit will sort
+    // anyway" holds only for the nodes a pass actually re-commits, and only
+    // once it lands: through a progressive-refinement drain (seconds on a
+    // hosted scene) and through a view pass that leaves a node untouched,
+    // the orbit would otherwise be answered only by rung commits — measured
+    // at up to 176 deg of sort-axis lag. Racing a commit is safe: it bumps
+    // the generation (the resolve drops the stale ordering) and the commit's
+    // own sort queues behind this one via `resortQueued`.
     // Mode switches and late-worker re-registration deliberately invalidate
     // commit stamps while the existing geometry stays visible. Those meshes
     // still receive their cross-mesh rank above, but cannot dispatch a worker
