@@ -2257,7 +2257,7 @@ describe('GSplatsProgressiveLoader — no pin after the shadow pass is torn down
     );
   }
 
-  it.fails('stores no pin when the last level resolves after the abort', async () => {
+  it('stores no pin when the last level resolves after the abort', async () => {
     const { loader, sc, release, entered } = gatedPair();
     const controller = new AbortController();
     const pins = await pinnedStores(sc, async () => {
@@ -2270,7 +2270,7 @@ describe('GSplatsProgressiveLoader — no pin after the shadow pass is torn down
     expect(pins).toBe(0);
   });
 
-  it.fails('stores no pin when the loader is disposed during the last level', async () => {
+  it('stores no pin when the loader is disposed during the last level', async () => {
     const { loader, sc, release, entered } = gatedPair();
     const pins = await pinnedStores(sc, async () => {
       const pending = loader.updateView(shadowView);
