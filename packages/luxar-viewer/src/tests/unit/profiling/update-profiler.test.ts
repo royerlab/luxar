@@ -922,7 +922,7 @@ describe('UpdateProfiler — refinement passes (beginPass)', () => {
     expect(findChild(profiler.getTimings(), 'Points (/p)')!.lastMs).toBe(5);
   });
 
-  it.fails('keeps a concurrent pass that finishes after a later-started one (B9c)', () => {
+  it('keeps a concurrent pass that finishes after a later-started one (B9c)', () => {
     // Up to four refinement steps run at once, each its own pass. A pass that
     // started first but finished last used to carry the older seq and was
     // dropped as stale by the root merge — so the slowest node, the one most
