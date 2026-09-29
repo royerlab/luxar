@@ -407,8 +407,8 @@ export class LuxarHttpRangeReader {
   /**
    * Identity from the tail suffix GET, retaining the tail when it validates.
    *
-   * A 206 without a usable token may lack the total because Content-Range is
-   * hidden by CORS; HEAD can still supply it for a Last-Modified token.
+   * A 206 with Last-Modified but no usable total may have Content-Range
+   * hidden by CORS; HEAD can still supply the total for its identity token.
    */
   async #probeViaTail(
     signal: AbortSignal | undefined,
@@ -448,7 +448,14 @@ export class LuxarHttpRangeReader {
           // The identity still stands; opening will fetch the tail itself.
         }
       }
-      return { answered: response.status !== 206 || token !== null, token };
+      return {
+        answered:
+          response.status !== 206 ||
+          token !== null ||
+          knownTotal !== null ||
+          !response.headers.get('last-modified'),
+        token,
+      };
     } catch {
       return { answered: false, token: null };
     } finally {

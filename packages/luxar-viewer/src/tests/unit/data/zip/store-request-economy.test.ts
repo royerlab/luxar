@@ -125,6 +125,19 @@ describe('LuxarZipStore — opening', () => {
     expect(seen[0]).toMatchObject({ range: `bytes=-${TAIL}`, cache: 'no-store' });
   });
 
+  it('costs ONE request for identity probe + open without identity headers', async () => {
+    const { archive } = bigArchive();
+    const { fetchMock, seen } = serve(archive, {});
+    vi.stubGlobal('fetch', fetchMock);
+
+    const store = new LuxarZipStore(URL_);
+    expect(await store.probeIdentity(undefined, 5_000)).toBeNull();
+    expect(await store.has('/zarr.json')).toBe(true);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ method: 'GET', range: `bytes=-${TAIL}` });
+  });
+
   it('keeps the mtime+size identity when a host sends no ETag', async () => {
     const { archive } = bigArchive();
     const { fetchMock } = serve(archive, { 'last-modified': 'Mon, 01 Jan 2035 00:00:00 GMT' });
@@ -152,6 +165,16 @@ describe('LuxarZipStore — opening', () => {
 });
 
 describe('LuxarZipStore — opening on imperfect hosts', () => {
+  it('does not use HEAD for a tokenless probe when Content-Range is hidden', async () => {
+    const { archive } = bigArchive();
+    const { fetchMock, seen } = serve(archive, {}, false);
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(await new LuxarZipStore(URL_).probeIdentity(undefined, 5_000)).toBeNull();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ method: 'GET', range: `bytes=-${TAIL}` });
+  });
+
   it('opens and reads a member when Content-Range is hidden', async () => {
     const { archive, big } = bigArchive();
     const { fetchMock, seen } = serve(archive, undefined, false);
