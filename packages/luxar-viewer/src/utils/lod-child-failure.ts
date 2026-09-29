@@ -6,7 +6,8 @@
  */
 import { bumpFailedLoadsVersion } from './failed-loads-version';
 
-interface LazyChildFailureState {
+/** Failure-latch fields shared by lazy LOD children. */
+export interface LazyChildFailureState {
   permanentlyFailed?: boolean;
   failureReason?: string;
 }
