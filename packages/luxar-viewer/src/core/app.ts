@@ -471,8 +471,8 @@ export class LuxarApp {
    * outside the live window, and both are torn down through {@link events}.
    */
   private setupEmbedderHooks(canvas: HTMLCanvasElement): void {
-    const dimsListener = (): void => {
-      if (this.isInitialized) {
+    const dimsListener = (changed = true): void => {
+      if (this.isInitialized && changed) {
         this.embedderEvents.emit('dimensions-changed', this.getDimensions());
       }
     };
@@ -1194,8 +1194,8 @@ export class LuxarApp {
 
   /**
    * Set the slice position of a single (non-displayed) dimension. Clamped and
-   * quantized by the scene-dims manager; triggers a data update and emits
-   * `dimensions-changed`. Await {@link awaitDimensionUpdate} for the load.
+   * quantized by the scene-dims manager; a changed position triggers a data
+   * update and emits `dimensions-changed`. Await {@link awaitDimensionUpdate} for the load.
    *
    * @throws if the app has not been initialised yet.
    */

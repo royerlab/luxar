@@ -93,7 +93,7 @@ export class SceneDimsManager {
   private dimensionRanges: Array<[number, number]> | null = null;
 
   /** Observer callbacks that react to dimension changes (can be async) */
-  private listeners: Set<() => void | Promise<void>> = new Set();
+  private listeners: Set<(changed?: boolean) => void | Promise<void>> = new Set();
 
   /** Promise tracking pending listener completion (for animation synchronization) */
   private pendingUpdatePromise: Promise<void> | null = null;
@@ -289,12 +289,13 @@ export class SceneDimsManager {
    * 2. Clamp value to valid range for this dimension
    * 3. Quantize discrete dimensions to their step size
    * 4. Update internal state
-   * 5. Notify all observers (triggers UI updates and re-slicing)
+   * 5. Notify observers only when the resulting value changes, unless forced
    *
    * @param dimIndex - Index of dimension to update
    * @param value - New position value in dimension units
+   * @param options.force - Re-notify listeners at the current value to refine a pinned slice
    */
-  setDimensionValue(dimIndex: number, value: number): void {
+  setDimensionValue(dimIndex: number, value: number, options: { force?: boolean } = {}): void {
     if (!this.dims || dimIndex < 0 || dimIndex >= this.dims.ndim) {
       return;
     }
@@ -323,8 +324,10 @@ export class SceneDimsManager {
       value = snapDiscreteValue(value, dimMeta.step || 1.0, min, max);
     }
 
+    const changed = value !== this.dims.currentStep[dimIndex];
+    if (!changed && !options.force) return;
     this.dims.currentStep[dimIndex] = value;
-    this.notifyListeners(); // Trigger reactive updates throughout the system
+    this.notifyListeners(changed); // Trigger reactive updates throughout the system
   }
 
   /**
@@ -352,12 +355,15 @@ export class SceneDimsManager {
    */
   resetPositions(): void {
     if (!this.dims || !this.dimensionRanges) return;
+    let changed = false;
     for (let i = 0; i < this.dims.ndim; i++) {
       const meta = this.dims.metadata?.[i];
       if (!meta) continue;
-      this.dims.currentStep[i] = SceneDimsManager.defaultPosition(meta, this.dimensionRanges[i]);
+      const value = SceneDimsManager.defaultPosition(meta, this.dimensionRanges[i]);
+      changed ||= value !== this.dims.currentStep[i];
+      this.dims.currentStep[i] = value;
     }
-    this.notifyListeners();
+    this.notifyListeners(changed);
     log.info(Modules.SCENE_DIMS, 'Dimension positions reset to defaults');
   }
 
@@ -370,9 +376,10 @@ export class SceneDimsManager {
    *
    * Callbacks can be async — their completion can be awaited via waitForUpdate().
    *
-   * @param callback - Function to call when dimensions change (can return Promise)
+   * @param callback - Function to call on a change or forced refresh (can return Promise).
+   * Receives false for a refresh that leaves the slice position unchanged.
    */
-  addListener(callback: () => void | Promise<void>): void {
+  addListener(callback: (changed?: boolean) => void | Promise<void>): void {
     this.listeners.add(callback);
   }
 
@@ -383,7 +390,7 @@ export class SceneDimsManager {
    *
    * @param callback - Previously registered callback function
    */
-  removeListener(callback: () => void | Promise<void>): void {
+  removeListener(callback: (changed?: boolean) => void | Promise<void>): void {
     this.listeners.delete(callback);
   }
 
@@ -396,12 +403,12 @@ export class SceneDimsManager {
    *
    * @private
    */
-  private notifyListeners(): void {
+  private notifyListeners(changed = true): void {
     const promises: Promise<void>[] = [];
 
     this.listeners.forEach((callback) => {
       try {
-        const result = callback();
+        const result = callback(changed);
         if (result instanceof Promise) {
           promises.push(
             result.catch((error) => {

@@ -405,8 +405,8 @@ describe('SceneDimsManager', () => {
       expect(listener).not.toHaveBeenCalled();
 
       // Sanity: a valid value after still works and notifies.
-      manager.setDimensionValue(3, 5);
-      expect(manager.getDims()!.currentStep[3]).toBe(5);
+      manager.setDimensionValue(3, 6);
+      expect(manager.getDims()!.currentStep[3]).toBe(6);
       expect(listener).toHaveBeenCalledTimes(1);
     });
   });
@@ -486,7 +486,7 @@ describe('SceneDimsManager', () => {
       const listener = vi.fn();
       manager.addListener(listener);
 
-      manager.setDimensionValue(3, 5);
+      manager.setDimensionValue(3, 6);
 
       expect(listener).toHaveBeenCalled();
     });
@@ -536,7 +536,7 @@ describe('SceneDimsManager', () => {
       manager.addListener(listener1);
       manager.addListener(listener2);
 
-      manager.setDimensionValue(3, 5);
+      manager.setDimensionValue(3, 6);
 
       // M7: pin the exact call count (once each) — `toHaveBeenCalled()` alone
       // would survive a mutant that fired a listener twice or registered it
@@ -553,14 +553,14 @@ describe('SceneDimsManager', () => {
       // M8: call twice after removal. A no-op removeListener would let the
       // listener fire; asserting zero across two updates makes that survive
       // only if removal genuinely unregistered the callback.
-      manager.setDimensionValue(3, 5);
       manager.setDimensionValue(3, 6);
+      manager.setDimensionValue(3, 7);
 
       expect(listener).not.toHaveBeenCalled();
 
       // Re-adding the same callback after removal must work again.
       manager.addListener(listener);
-      manager.setDimensionValue(3, 7);
+      manager.setDimensionValue(3, 8);
       expect(listener).toHaveBeenCalledTimes(1);
     });
 
@@ -578,23 +578,33 @@ describe('SceneDimsManager', () => {
       manager.addListener(throwing);
       manager.addListener(survivor);
 
-      expect(() => manager.setDimensionValue(3, 5)).not.toThrow();
+      expect(() => manager.setDimensionValue(3, 6)).not.toThrow();
       expect(throwing).toHaveBeenCalledTimes(1);
       expect(survivor).toHaveBeenCalledTimes(1);
       expect(order).toContain('survivor');
     });
 
-    it('still notifies listeners even when setDimensionValue is given the current value', () => {
-      // The implementation does not dedupe identical-value writes; listeners
-      // fire on every setDimensionValue call regardless of whether the value
-      // changed. This test pins that contract so we notice if dedup is added.
+    it('notifies only when the clamped and snapped value changes, unless forced', () => {
       const listener = vi.fn();
       manager.addListener(listener);
 
       const currentValue = manager.getDims()!.currentStep[3];
       manager.setDimensionValue(3, currentValue);
+      expect(listener).not.toHaveBeenCalled();
 
+      manager.setDimensionValue(3, 10);
       expect(listener).toHaveBeenCalledTimes(1);
+      manager.setDimensionValue(3, 100); // clamps back to the current maximum
+      expect(listener).toHaveBeenCalledTimes(1);
+
+      manager.setDimensionValue(4, 1);
+      expect(listener).toHaveBeenCalledTimes(2);
+      manager.setDimensionValue(4, 1.4); // snaps back to the current cell
+      expect(listener).toHaveBeenCalledTimes(2);
+
+      manager.setDimensionValue(4, 1, { force: true });
+      expect(listener).toHaveBeenCalledTimes(3);
+      expect(listener).toHaveBeenLastCalledWith(false);
     });
   });
 
