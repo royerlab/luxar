@@ -174,3 +174,48 @@ describe('TODO #4 — L2 eviction vs. browser quota', () => {
     expect(store.getStats().evictions).toBe(0);
   }, 5000);
 });
+
+describe('L2 quota estimate vs. a write the disk refused', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.fails('re-estimates after a QuotaExceededError instead of trusting the cached estimate', async () => {
+    // The browser's estimate says there is ample room, but the disk is
+    // actually full: the write itself throws QuotaExceededError. The cached
+    // (30 s) estimate must not keep admitting writes that cannot land.
+    const estimate = vi.fn(async () => ({ quota: 10e9, usage: 1e9 }));
+    const fake = createFakeOpfsRoot({ estimate }).install();
+    const store = new OPFSStore('quota-exceeded', 'https://example.com', 1e9);
+    await store.init();
+
+    // Chunk bytes hit a full disk; string files (metadata) still land.
+    const dir = fake.datasetDir;
+    const realGetFileHandle = dir.getFileHandle;
+    dir.getFileHandle = async (name: string, opts?: { create?: boolean }) => {
+      const handle = await realGetFileHandle(name, opts);
+      return {
+        ...handle,
+        async createWritable() {
+          const writable = await handle.createWritable();
+          return {
+            ...writable,
+            async write(data: unknown) {
+              if (typeof data === 'string') return writable.write(data);
+              throw new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+            },
+          };
+        },
+      };
+    };
+
+    estimate.mockClear();
+    await store.set('chunk-a', new Uint8Array(100));
+    expect(estimate).toHaveBeenCalledTimes(1);
+    expect(store.getStats().writeFailures).toBe(1);
+
+    // Well inside the 30 s estimate lifetime: the next write re-estimates.
+    await store.set('chunk-b', new Uint8Array(100));
+    expect(estimate).toHaveBeenCalledTimes(2);
+  });
+});
