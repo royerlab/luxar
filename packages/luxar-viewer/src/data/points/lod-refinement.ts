@@ -90,7 +90,7 @@ export async function runPointsRefinement(ctx: PointsRefinementCtx): Promise<voi
       // typed as plain `PointsDataLoader`: single-shot PointsSpatialIndexLoader
       // has no ladder. `admitRefinementCandidate` gates on `hasMoreLODs`.
       const progressiveLoader = loader as PointsDataLoader & RefinableLoader;
-      const admission = admitRefinementCandidate(
+      const admission = await admitRefinementCandidate(
         path,
         progressiveLoader,
         ctx.residencyBudget,

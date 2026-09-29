@@ -127,7 +127,7 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
       // typed as plain `GSplatsDataLoader`: a non-progressive loader has no
       // ladder. `admitRefinementCandidate` gates on `hasMoreLODs`.
       const progressiveLoader = loader as GSplatsDataLoader & RefinableLoader;
-      const admission = admitRefinementCandidate(
+      const admission = await admitRefinementCandidate(
         path,
         progressiveLoader,
         ctx.residencyBudget,

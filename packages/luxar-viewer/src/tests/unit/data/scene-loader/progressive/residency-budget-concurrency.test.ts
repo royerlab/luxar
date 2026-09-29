@@ -100,7 +100,7 @@ describe('residency ceiling with concurrent refinement steps', () => {
   });
   afterEach(() => warn.mockRestore());
 
-  it.fails('crosses the ceiling by at most one rung, as the serial loop did', async () => {
+  it('crosses the ceiling by at most one rung, as the serial loop did', async () => {
     // Serial: /n0 and /n1 each climb to 400 and the scene stops at exactly
     // 1000. Admitting all four on the mean estimate climbed to 1600.
     const { peak } = await runLadders(1000, 4, 3);
@@ -115,7 +115,7 @@ describe('residency ceiling with concurrent refinement steps', () => {
     expect(final).toBe(4 * 800);
   });
 
-  it.fails('defers, rather than declines, a step that only fails to fit beside the in-flight ones', () => {
+  it('defers, rather than declines, a step that only fails to fit beside the in-flight ones', () => {
     const budget = new RefinementResidencyBudget(
       1000,
       new Map([

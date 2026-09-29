@@ -116,15 +116,39 @@ export interface RefinementErrorPresentation {
  * @param path Node path, used as the key for backoff and admission state.
  * @param loader The loader being offered.
  * @param residencyBudget Shared residency ceiling; absent means unbounded.
+ * Asynchronous because the budget can answer `in-flight` — the step fits
+ * alone but not beside the concurrent steps still loading (B9c). That is a
+ * wait, not a refusal, so this re-asks each time one of them records. The
+ * wait always ends: `in-flight` is only answered while another admitted step
+ * is outstanding, and every admitted step records in its `finally`.
+ *
+ * @param path Node path, used as the key for backoff and admission state.
+ * @param loader The loader being offered.
+ * @param residencyBudget Shared residency ceiling; absent means unbounded.
  * @param isPathVisible Live culling/layer-visibility predicate.
  * @returns Whether to proceed, and the byte allowance if one was granted.
  */
-export function admitRefinementCandidate(
+export async function admitRefinementCandidate(
   path: string,
   loader: RefinableLoader,
   residencyBudget?: RefinementResidencyBudget,
   isPathVisible?: (path: string) => boolean
-): RefinementAdmissionDecision {
+): Promise<RefinementAdmissionDecision> {
+  let decision = admitNow(path, loader, residencyBudget, isPathVisible);
+  while (decision === 'wait') {
+    await residencyBudget?.whenStepSettles();
+    decision = admitNow(path, loader, residencyBudget, isPathVisible);
+  }
+  return decision;
+}
+
+/** One synchronous admission attempt; `'wait'` for an `in-flight` verdict. */
+function admitNow(
+  path: string,
+  loader: RefinableLoader,
+  residencyBudget?: RefinementResidencyBudget,
+  isPathVisible?: (path: string) => boolean
+): RefinementAdmissionDecision | 'wait' {
   if (cannotRefine(path, loader, isPathVisible)) return { admitted: false };
   // Declining here is not sufficient on its own: `anyHasMoreLODs` and
   // `getLoaderProgress` must exclude declined paths too, or the loop re-offers
@@ -132,8 +156,10 @@ export function admitRefinementCandidate(
   // both live in this module.
   const residency = loader.ladderResidency?.();
   const admission = residency ? residencyBudget?.admit(path, residency) : undefined;
-  if (admission?.admitted === false) return { admitted: false };
-  return { admitted: true, allowanceBytes: admission?.allowanceBytes ?? undefined };
+  if (!admission) return { admitted: true };
+  if (admission.reason === 'in-flight') return 'wait';
+  if (!admission.admitted) return { admitted: false };
+  return { admitted: true, allowanceBytes: admission.allowanceBytes ?? undefined };
 }
 
 /**
