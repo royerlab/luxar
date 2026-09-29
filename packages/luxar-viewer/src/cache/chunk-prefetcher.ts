@@ -255,6 +255,7 @@ export class ChunkPrefetcher {
 
   /**
    * Generate adjacent chunk keys (±1 in each dimension).
+   * Returns [] unless bounds are registered for the key's array path.
    *
    * @example
    * getAdjacentChunks('points/positions/1.2.3')
