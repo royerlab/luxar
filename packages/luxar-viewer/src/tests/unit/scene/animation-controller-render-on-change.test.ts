@@ -207,10 +207,10 @@ describe('AnimationController render-on-change', () => {
     expect(renders()).toBe(2);
   });
 
-  it('a per-frame callback returning true renders; void or false does not', () => {
+  it('a per-frame callback returning true renders; false does not', () => {
     let changed = false;
     controller.addPerFrameCallback('lod-group-selector', () => changed);
-    controller.addPerFrameCallback('quiet', () => {});
+    controller.addPerFrameCallback('quiet', () => false);
     controller.startAnimation();
     runFrames(3);
     expect(renders()).toBe(1);
@@ -222,6 +222,27 @@ describe('AnimationController render-on-change', () => {
 
     expect(renders()).toBe(2);
     expect(perfCounters.get('render.byReason.cb:lod-group-selector')).toBe(1);
+  });
+
+  it('a callback must state whether it changed what is drawn (compile-time)', () => {
+    // The return is required: a callback that mutates drawn state and returns
+    // nothing would leave a stale frame. These directives ARE the assertion —
+    // if PerFrameCallback ever accepts `void` again, `pnpm typecheck` fails
+    // on the unused @ts-expect-error.
+    let mutated = 0;
+    // @ts-expect-error a callback returning nothing does not say whether it changed the frame
+    controller.addPerFrameCallback('forgot', () => {});
+    // @ts-expect-error nor does one that mutates state and returns nothing
+    controller.addPerFrameCallback('forgot-mutating', () => {
+      mutated++;
+    });
+    controller.addPerFrameCallback('explicit', () => false);
+    controller.startAnimation();
+    runFrames(2);
+
+    // At runtime a stray `undefined` (an untyped caller) still counts as "no change".
+    expect(mutated).toBe(2);
+    expect(renders()).toBe(1);
   });
 
   it('every callback still runs after one reports a change', () => {
@@ -244,7 +265,7 @@ describe('AnimationController render-on-change', () => {
   });
 
   it('a renderEveryFrame keep-alive (real-time recording) renders every tick', () => {
-    controller.addPerFrameCallback('recording-keep-alive', () => {}, {
+    controller.addPerFrameCallback('recording-keep-alive', () => false, {
       continuous: true,
       renderEveryFrame: true,
     });
@@ -259,8 +280,8 @@ describe('AnimationController render-on-change', () => {
 
   it('re-registering a renderEveryFrame callback does not double-count it', () => {
     const options = { continuous: true, renderEveryFrame: true };
-    controller.addPerFrameCallback('rec', () => {}, options);
-    controller.addPerFrameCallback('rec', () => {}, options);
+    controller.addPerFrameCallback('rec', () => false, options);
+    controller.addPerFrameCallback('rec', () => false, options);
     controller.removePerFrameCallback('rec');
     controller.startAnimation();
     runFrames(3);

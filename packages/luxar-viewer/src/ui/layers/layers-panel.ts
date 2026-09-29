@@ -1079,6 +1079,8 @@ export class LayersPanel {
         // signature build every frame — a real cost when a batch-fit leaves
         // thousands of failed tile paths. show() refreshes when the panel opens.
         if (this.visible) this.updateRowErrorStates();
+        // DOM readouts only: nothing the canvas draws.
+        return false;
       },
       { phase: 'ui' }
     );
