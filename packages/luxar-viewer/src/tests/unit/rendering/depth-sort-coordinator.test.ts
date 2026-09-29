@@ -5879,3 +5879,134 @@ describe('depth-sort coordinator — layer_order bands', () => {
     ).toBe(true);
   });
 });
+
+describe('depth-sort coordinator — held append draws', () => {
+  // A gsplat append HOLDS its draw at the previous population until the grown
+  // population's ordering lands (element-storage `holdSortedIndexDrawForAppend`).
+  // The coordinator owns the other exit: every path on which that ordering
+  // will never arrive must release the hold, or the node would stay short of
+  // its committed population.
+  const centers = (n: number): Float32Array =>
+    new Float32Array(Array.from({ length: n * 3 }, (_, i) => (i % 3 === 2 ? -1 - i : i)));
+
+  /** A 6-slot mesh drawing 4 elements in a sorted order, then appended to 6. */
+  async function heldMesh(mode: string): Promise<THREE.Mesh> {
+    const storage = await import('../../../rendering/element-storage');
+    const mesh = makeGSplatsMesh(6, mode);
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    (storage.getActiveSortedIndexAttribute(geometry)!.array as Uint32Array).set([3, 2, 1, 0]);
+    geometry.instanceCount = storage.holdSortedIndexDrawForAppend(geometry, 4, 6);
+    expect(geometry.instanceCount).toBe(4);
+    return mesh;
+  }
+  const drawnCount = (mesh: THREE.Mesh): number =>
+    (mesh.geometry as THREE.InstancedBufferGeometry).instanceCount;
+  const isPermutation = (mesh: THREE.Mesh, n: number): boolean => {
+    const values = Array.from(drawnOrdering(mesh).subarray(0, n));
+    return new Set(values).size === n && values.every((v) => v < n);
+  };
+
+  it('raises the draw on the flip of the grown population ordering', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = await heldMesh('normal');
+    coord.noteDepthSortCommit(mesh, centers(6), 6);
+    await flush();
+    expect(drawnCount(mesh)).toBe(4);
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([5, 4, 3, 2, 1, 0]),
+    });
+    await flush();
+    expect(drawnCount(mesh)).toBe(4); // staged, not yet flipped
+    await applyStagedOrdering(mesh);
+    expect(drawnCount(mesh)).toBe(6);
+    expect(Array.from(drawnOrdering(mesh).subarray(0, 6))).toEqual([5, 4, 3, 2, 1, 0]);
+  });
+
+  it('an order-independent commit releases the hold at once', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = await heldMesh('additive');
+    coord.noteDepthSortCommit(mesh, centers(6), 6);
+    expect(drawnCount(mesh)).toBe(6);
+    expect(isPermutation(mesh, 6)).toBe(true);
+  });
+
+  it('a failed sort RPC releases the hold', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = await heldMesh('normal');
+    coord.noteDepthSortCommit(mesh, centers(6), 6);
+    await flush();
+    sortRejectors[0](new Error('worker crashed'));
+    await flush();
+    expect(drawnCount(mesh)).toBe(6);
+    expect(isPermutation(mesh, 6)).toBe(true);
+  });
+
+  it('a null (unregistered) result for the current population releases the hold', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = await heldMesh('normal');
+    coord.noteDepthSortCommit(mesh, centers(6), 6);
+    await flush();
+    sortResolvers[0](null);
+    await flush();
+    expect(drawnCount(mesh)).toBe(6);
+  });
+
+  it('a STALE result keeps the hold: the newer commit sort is queued behind it', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = await heldMesh('normal');
+    coord.noteDepthSortCommit(mesh, centers(6), 6);
+    await flush();
+    const staleGeneration = mockApi.sort.mock.calls[0][0].generation as number;
+    // A second commit of the same grown population lands mid-sort.
+    coord.noteDepthSortCommit(mesh, centers(6), 6);
+    await flush();
+    sortResolvers[0]({ generation: staleGeneration, ordering: new Uint32Array(6) });
+    await flush();
+    expect(drawnCount(mesh)).toBe(4);
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+    sortResolvers[1]({
+      generation: mockApi.sort.mock.calls[1][0].generation as number,
+      ordering: new Uint32Array([0, 1, 2, 3, 4, 5]),
+    });
+    await flush();
+    await applyStagedOrdering(mesh);
+    expect(drawnCount(mesh)).toBe(6);
+  });
+
+  it('switching the layer to a commutative mode releases the hold', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = await heldMesh('normal');
+    coord.noteDepthSortCommit(mesh, centers(6), 6);
+    await flush();
+    (mesh.material as THREE.Material).userData.blendingMode = 'additive';
+    coord.noteDepthSortBlendingModeSwitch(mesh, 'additive', 'normal');
+    expect(drawnCount(mesh)).toBe(6);
+    expect(isPermutation(mesh, 6)).toBe(true);
+  });
+
+  it('releasing the node releases the hold', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = await heldMesh('normal');
+    coord.noteDepthSortCommit(mesh, centers(6), 6);
+    await flush();
+    coord.releaseDepthSortNode(mesh);
+    expect(drawnCount(mesh)).toBe(6);
+  });
+
+  it('the synchronous first sort raises the draw inside the commit', async () => {
+    const coord = await loadCoordinator(1_000);
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = await heldMesh('normal');
+    coord.noteDepthSortCommit(mesh, centers(6), 6);
+    expect(drawnCount(mesh)).toBe(6);
+    expect(isPermutation(mesh, 6)).toBe(true);
+  });
+});

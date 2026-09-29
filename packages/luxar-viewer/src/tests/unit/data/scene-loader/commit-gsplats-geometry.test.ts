@@ -771,7 +771,10 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     const a = new Uint32Array(capacity);
     a.set(ordering);
     g.setAttribute('aSortedIndex', new THREE.InstancedBufferAttribute(a, 1));
-    g.setAttribute('aSortedIndexB', new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1));
+    g.setAttribute(
+      'aSortedIndexB',
+      new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1)
+    );
     g.instanceCount = ordering.length;
     return g;
   };
@@ -782,7 +785,7 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     return opts.seedOrdering ? Array.from(opts.seedOrdering) : undefined;
   };
 
-  it.fails('a grow that extends the drawn population seeds the new geometry with its drawn order', () => {
+  it('a grow that extends the drawn population seeds the new geometry with its drawn order', () => {
     const root = new THREE.Group();
     root.add(makeMesh('/g'));
     const pool = makePool(sortedGeometry([3, 2, 1, 0]));

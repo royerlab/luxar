@@ -16,6 +16,7 @@ import * as THREE from 'three';
 import { updateInstancedGSplatsMesh } from '../../../rendering/gsplat-geometry';
 import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
 import { clampSplatCapacity } from '../../../rendering/element-texture-layout';
+import { getActiveSortedIndexAttribute } from '../../../rendering/element-storage';
 import { syncGSplatMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import { isGSplatsUserData } from '../../../types/gsplats';
 import { log, Modules } from '../../../utils/log';
@@ -45,6 +46,30 @@ function readTruncate(mesh: THREE.Mesh): number {
     (mesh.material as { uniforms?: { uTruncate?: { value: number } } })?.uniforms?.uTruncate
       ?.value ?? GSPLAT_DEFAULT_TRUNCATION_RADIUS
   );
+}
+
+/**
+ * The permutation `prevGeometry` is DRAWING right now (its active ordering over
+ * `[0, instanceCount)`), or `undefined` when it has none worth keeping. Read
+ * for a pool GROW: the grown geometry's first `instanceCount` elements are the
+ * same splats when the commit extends the committed population, so this is an
+ * exact ordering of them (see `holdSortedIndexDrawFromSeed`). A view onto the
+ * released geometry's CPU array, consumed synchronously by the update below.
+ */
+function drawnOrderingSeed(
+  prevGeometry: THREE.BufferGeometry,
+  nextGeometry: THREE.BufferGeometry
+): Uint32Array | undefined {
+  // Same geometry = not a grow (the append path, or a full in-place rewrite).
+  if (prevGeometry === nextGeometry) return undefined;
+  const geometry = prevGeometry as THREE.InstancedBufferGeometry;
+  if (!geometry.isInstancedBufferGeometry) return undefined;
+  const attr = getActiveSortedIndexAttribute(geometry);
+  const drawn = geometry.instanceCount;
+  if (!attr || !Number.isInteger(drawn) || drawn <= 0 || drawn > attr.array.length) {
+    return undefined;
+  }
+  return (attr.array as Uint32Array).subarray(0, drawn);
 }
 
 /**
@@ -169,15 +194,26 @@ export function commitGSplatsGeometry(
       // GSplat loader requires every concatenated level to agree on label
       // presence and vocabulary. A valid append therefore preserves both
       // optional channels across the proven prefix lineage.
-      const canAppend =
+      const extendsCommitted =
         hadCommittedData &&
-        !attributesRebuilt &&
-        geometry === prevGeometry &&
-        mesh.userData.gpuPrefixIntact === true &&
         splatCount > (prevCount ?? 0) &&
         getPrefixParent(staged.sourceData) !== undefined &&
         getPrefixParent(staged.sourceData) === getCommittedData(mesh) &&
         mesh.userData.committedTruncate === truncationRadius;
+      const canAppend =
+        extendsCommitted &&
+        !attributesRebuilt &&
+        geometry === prevGeometry &&
+        mesh.userData.gpuPrefixIntact === true;
+      // A GROW (the pool handed back a fresh geometry — every ladder rung that
+      // doubles crosses the 1.5x capacity headroom) cannot append, but the
+      // same lineage proof makes the previous geometry's DRAWN permutation an
+      // exact ordering of the new geometry's prefix. The adapter holds the draw
+      // on it instead of drawing the grown node in storage order until the
+      // worker's sort lands.
+      const seedOrdering =
+        extendsCommitted && !canAppend ? drawnOrderingSeed(prevGeometry, geometry) : undefined;
+      const fromInstance = canAppend ? (prevCount ?? 0) : 0;
       // Consume-and-clear (see prefix-lineage.ts retention contract): the
       // lineage entry existed solely for the gate check above — clearing it
       // unpins the parent concat's CPU arrays. A retry after a throwing
@@ -197,7 +233,7 @@ export function commitGSplatsGeometry(
           },
           splatCount,
           truncationRadius,
-          { preserveOrdering, repairFromCount, fromInstance: canAppend ? (prevCount ?? 0) : 0 }
+          { preserveOrdering, repairFromCount, fromInstance, seedOrdering }
         );
       } catch (err) {
         // Defense-in-depth: a throwing write leaves the buffer content

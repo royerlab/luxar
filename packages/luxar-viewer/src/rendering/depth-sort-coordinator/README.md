@@ -225,6 +225,10 @@ Every ordering uses the same staged-apply path; orderings larger than one 1M-ind
 
 **Bounded per node, not globally**: several large nodes resolving simultaneously each add one slice's cost to a frame (simultaneous 10M-scale resolves are already serialized by the per-node single-in-flight sort rule).
 
+### Held Append Draws
+
+A gsplat append commit — or a pool GROW that extends the drawn population, seeded with the previous geometry's drawn permutation — HOLDS its draw at the previous population (see `holdSortedIndexDrawForAppend` / `holdSortedIndexDrawFromSeed` in `element-storage.ts`): the suffix texels are uploaded but `instanceCount` stays at the drawn count until an ordering of the WHOLE grown population is installed — the slot flip of the worker's ordering, or the synchronous first sort's live write. So every frame is an exact back-to-front draw of some population instead of storage order for the 75-225 ms a large sort takes. The coordinator owns the other exit, `releaseHeldDraw` (a repaired full permutation, all elements drawn), on every path where that ordering will not arrive: an order-independent / depth-sort-off / empty commit, a missing API, a failed `registerNode`, a commit that cannot reach the worker, a `scheduleSort` that cannot dispatch, a current-generation sort that stages nothing (null result, rejected write), a failed sort RPC, a switch to a commutative mode, and node release. A STALE result does not release: the newer commit's sort is queued behind it.
+
 ### Per-Frame Camera Re-Sort Scheduler (Phase 3)
 
 `evaluateDepthSortPerFrame()` runs as the `'depth-sort-scheduler'` per-frame callback (registered beside `'lod-group-selector'`). For each order-dependent node with a completed dispatch on record, compares the live model-view z-row against the pose the last sort was dispatched from and dispatches a re-sort when either:
