@@ -348,7 +348,7 @@ describe('runInitPipeline', () => {
     expect(views().cameraWorldPosition.x).toBe(5);
   });
 
-  it.fails('a read outside the frame loop sees the camera as it is now', async () => {
+  it('a read outside the frame loop sees the camera as it is now', async () => {
     // A load-time consumer (no per-frame callback between the camera move and
     // its read) must not get the last tick's pose.
     const ports = makePorts();

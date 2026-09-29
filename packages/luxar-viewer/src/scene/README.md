@@ -29,7 +29,7 @@ scene/
 ├── dims/                           # Pure nD step and dimension-selection helpers
 ├── scene-dims-manager.ts           # nD dimension coordination
 ├── dimension-loading.ts            # Current-slice loading + playback prefetch
-├── view-context.ts                 # The frame's camera snapshot (view, projection, frustum, sizes), built once per frame
+├── view-context.ts                 # The camera snapshot (view, projection, frustum, sizes); rebuilt on a camera change or per-frame invalidate
 ├── lod-group-registry.ts           # Per-frame LOD-group selector (policy/state machine)
 ├── lod-selector-math.ts            # Selector math: world-box fold, box→area/diagonal projections, hysteresis pick
 ├── lod-blend.ts                    # Pure opacity math: coverage cross-fade + energy compensation

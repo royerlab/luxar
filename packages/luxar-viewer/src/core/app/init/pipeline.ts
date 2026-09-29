@@ -214,7 +214,8 @@ export async function runInitPipeline(
   // Uses unique ID so it won't conflict with other per-frame callbacks (e.g., dimension animation)
   animationController.addPerFrameCallback('dynamic-clipping', () => {
     // The first 'view' callback invalidates every frame, even if clipping
-    // throws. Later view callbacks build the snapshot with the updated near/far.
+    // throws, so the canvas sizes are re-read once per frame. A camera move or
+    // near/far change rebuilds the snapshot on read regardless (view-context.ts).
     viewContext.invalidate();
     sceneManager.updateDynamicClippingPlanes();
   });

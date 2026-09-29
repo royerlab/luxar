@@ -99,7 +99,7 @@ describe('ViewContextProvider', () => {
     expect(second.viewportCss).toEqual({ width: 400, height: 225 });
   });
 
-  it.fails('follows a camera move or projection change without an invalidate', () => {
+  it('follows a camera move or projection change without an invalidate', () => {
     // A read outside the frame loop (e.g. a load-time consumer) must not see
     // the pose of the last tick.
     const camera = perspectiveAt(new THREE.Vector3(0, 0, 10), new THREE.Vector3());
