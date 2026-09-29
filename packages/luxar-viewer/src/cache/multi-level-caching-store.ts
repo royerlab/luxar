@@ -186,6 +186,14 @@ export class MultiLevelCachingStore implements AsyncReadable {
   // Invalidation callbacks (e.g., L0 DecompressedChunkCache clearing on L1/L2 invalidation)
   private invalidationCallbacks: (() => void)[] = [];
 
+  /**
+   * Root-level keys (the root document; a format-2 `.zmetadata`) this store
+   * answered from L2. L2 revalidates only by the root `content_hash`, which an
+   * attrs-only sidecar edit (`luxar env attach`) leaves unchanged, so such an
+   * index may predate the edit; see {@link servedRootMetadataFromL2}.
+   */
+  private readonly rootKeysFromL2 = new Set<string>();
+
   // Network I/O tracking
   private networkBytesTransferred = 0;
   private networkRequestCount = 0;
@@ -649,6 +657,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
       const l2Hit = await this.l2Store.get(key, { signal: sharedSignal });
       if (l2Hit) {
         this.log(`L2 hit: ${key}`, 'info');
+        if (!key.replace(/^\/+/, '').includes('/')) this.rootKeysFromL2.add(key);
         // CRIT-5: if validateCache aborted this in-flight get during the
         // L2 read (content-hash mismatch), do NOT promote stale bytes to
         // a just-cleared L1.
@@ -914,6 +923,15 @@ export class MultiLevelCachingStore implements AsyncReadable {
    */
   async listDatasets(): Promise<CachedDatasetSummary[]> {
     return OPFSStore.listAll();
+  }
+
+  /**
+   * Whether a root-level metadata document was served from the persistent L2
+   * tier rather than the network — i.e. the consolidated index the store opened
+   * with may be older than the dataset (an edit that kept `content_hash`).
+   */
+  servedRootMetadataFromL2(): boolean {
+    return this.rootKeysFromL2.size > 0;
   }
 
   /**

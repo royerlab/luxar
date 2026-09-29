@@ -496,10 +496,13 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // A baked environment map (`luxar env attach`), if the store carries one that
   // matches this scene's digest. Parked on the root; `load-dataset.ts` hands it to
   // the scene environment together with the authored `viewer_config.environment`.
+  // The index's silence is trusted only when it came from the network: `env
+  // attach` keeps content_hash, so a warm L2 may still hold the pre-attach index.
   const bakedEnvironment = await loadBakedEnvironment(
     rootLoc,
     (sceneAttrs as Record<string, unknown> | undefined)?.content_hash as string | undefined,
-    normalizedUrl
+    normalizedUrl,
+    cacheResult.rootIndexFromNetwork()
   );
   if (bakedEnvironment) rootGroup.userData.bakedEnvironment = bakedEnvironment;
 

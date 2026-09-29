@@ -3,8 +3,10 @@
  * not cost a scene without one any requests.
  *
  * Every Luxar store carries a consolidated index, and `luxar env attach`
- * re-consolidates after writing the group — so when the index exists it is the
- * authoritative answer to "is there an environment node?". Probing anyway cost 3
+ * re-consolidates after writing the group — so when the index was fetched from the
+ * network this load it is the authoritative answer to "is there an environment
+ * node?". A CACHED index is not (attach keeps `content_hash`, so a warm L2 keeps
+ * the pre-attach index): that case probes. Probing anyway cost 3
  * requests (`environment/zarr.json`, `.zattrs`, `.zgroup` — all 404) that
  * `sceneLoaded` waited on, serially over a real network.
  *
@@ -68,15 +70,21 @@ function facesArrayMeta(): Record<string, unknown> {
   };
 }
 
-/** A format-3 store with a consolidated root index; `withEnvironment` adds the sidecar. */
-function consolidatedStore(withEnvironment: boolean): RecordingStore {
+/**
+ * A format-3 store with a consolidated root index; `withEnvironment` adds the sidecar.
+ * `listed = false` with the sidecar present models a root index cached from BEFORE
+ * `luxar env attach` (which leaves `content_hash` alone, so a warm cache keeps it).
+ */
+function consolidatedStore(withEnvironment: boolean, listed = withEnvironment): RecordingStore {
   const metadata: Record<string, unknown> = {
     points: { zarr_format: 3, node_type: 'group', attributes: { type: 'points' } },
   };
   const entries = new Map<string, Uint8Array>();
-  if (withEnvironment) {
+  if (listed) {
     metadata.environment = environmentGroupMeta();
     metadata['environment/faces-0a1b'] = facesArrayMeta();
+  }
+  if (withEnvironment) {
     entries.set('/environment/zarr.json', json(environmentGroupMeta()));
     entries.set('/environment/faces-0a1b/zarr.json', json(facesArrayMeta()));
     const data = new Uint16Array(6 * RES * RES * 4).fill(0x3c00);
@@ -118,10 +126,10 @@ describe('loadBakedEnvironment request budget', () => {
     vi.spyOn(log, 'info').mockImplementation(() => {});
   });
 
-  it('makes NO environment request on a consolidated store that lists no environment node', async () => {
+  it('makes NO environment request when a FRESH consolidated index lists no environment node', async () => {
     const raw = consolidatedStore(false);
     const rootLoc = await rootOf(raw);
-    expect(await loadBakedEnvironment(rootLoc, HASH)).toBeNull();
+    expect(await loadBakedEnvironment(rootLoc, HASH, undefined, true)).toBeNull();
     expect(raw.environmentKeys()).toEqual([]);
   });
 
@@ -129,6 +137,15 @@ describe('loadBakedEnvironment request budget', () => {
     const raw = consolidatedStore(true);
     const rootLoc = await rootOf(raw);
     const env = await loadBakedEnvironment(rootLoc, HASH);
+    expect(env).not.toBeNull();
+    expect(env?.resolution).toBe(RES);
+  });
+
+  it("probes when the index is not this load's network copy, and finds a sidecar attached after it", async () => {
+    // A warm cache serves a root index from before `luxar env attach`; the
+    // content_hash matched, so nothing revalidated it. Absence from it proves nothing.
+    const raw = consolidatedStore(true, false);
+    const env = await loadBakedEnvironment(await rootOf(raw), HASH, 'http://h/stale.zarr/');
     expect(env).not.toBeNull();
     expect(env?.resolution).toBe(RES);
   });
