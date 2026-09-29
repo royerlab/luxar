@@ -356,7 +356,10 @@ async function runFetchAttempt<T>(
     },
     lane,
     options?.priority ?? 'demand',
-    originOfUrl(url)
+    originOfUrl(url),
+    // An abort while still queued frees the queue place (a dead read-ahead
+    // must not hold one ahead of live speculative requests).
+    options?.signal
   );
 }
 

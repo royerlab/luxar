@@ -94,6 +94,13 @@ export interface CacheSetupResult {
    * reach the server as before. Idempotent.
    */
   releaseRootDocument: () => void;
+  /**
+   * True when the root metadata the store opened with came from the network this
+   * load (no cache tier served it), so its consolidated index is current. False
+   * when L2 served it: L2 revalidates by `content_hash` alone, which a sidecar
+   * edit such as `luxar env attach` leaves unchanged.
+   */
+  rootIndexFromNetwork: () => boolean;
 }
 
 /**
@@ -283,6 +290,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
     budgets,
     rootDocument,
     releaseRootDocument,
+    rootIndexFromNetwork: () => !(cachingStore?.servedRootMetadataFromL2() ?? false),
   };
 }
 
