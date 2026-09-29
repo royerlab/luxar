@@ -1573,7 +1573,7 @@ describe('SceneLoader', () => {
       expect(Math.max(...gaps)).toBeLessThanOrEqual(150 + PASS_MS + 50);
     });
 
-    it.fails('a displayDims change aborts an overdue pass instead of letting it commit', async () => {
+    it('a displayDims change aborts an overdue pass instead of letting it commit', async () => {
       // The guarantee is for a DRAG: an intermediate slice is still a truthful
       // frame. A pass for the OLD display axes is not — letting it commit puts
       // at least one frame of geometry projected for the wrong axes on screen.

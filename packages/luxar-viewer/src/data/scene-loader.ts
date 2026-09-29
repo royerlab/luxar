@@ -880,8 +880,16 @@ export class SceneLoader {
    * than abort it (B5): this pass chain has gone
    * {@link DRAG_COMMIT_INTERVAL_MS} without a commit.
    * A refinement run is aborted as before — it only deepens what is shown.
+   * So is a pass superseded by a `displayDims` change: an intermediate SLICE
+   * is a truthful frame of a drag, but geometry projected for the old display
+   * axes is not, so it must never be let through to commit.
    */
-  private inFlightPassOwesCommit(): boolean {
+  private inFlightPassOwesCommit(superseding: Partial<ViewState>): boolean {
+    const next = superseding.displayDims;
+    const current = this.viewState.displayDims;
+    if (next && (next.length !== current.length || next.some((d, i) => d !== current[i]))) {
+      return false;
+    }
     return (
       !this._refining &&
       performance.now() - Math.max(this._lastCommitAt, this._passChainStartedAt) >=
@@ -1521,7 +1529,7 @@ export class SceneLoader {
       // unless this pass chain has gone DRAG_COMMIT_INTERVAL_MS without a commit: then the
       // in-flight pass is let through to commit first, so a continuous drag
       // whose passes outlast its event interval still shows progress.
-      if (!this.inFlightPassOwesCommit()) this._updateAbortController?.abort();
+      if (!this.inFlightPassOwesCommit(viewState)) this._updateAbortController?.abort();
 
       // Store the latest pending state (supersedes any previous pending
       // state). Log supersedes so rapid slider drags surface as
