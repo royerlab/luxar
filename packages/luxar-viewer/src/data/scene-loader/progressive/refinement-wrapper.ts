@@ -113,9 +113,6 @@ export interface RefinementErrorPresentation {
  * especially important for meshes, where that is the overwhelmingly common
  * case and whole-node loaders do not expose a ladder.
  *
- * @param path Node path, used as the key for backoff and admission state.
- * @param loader The loader being offered.
- * @param residencyBudget Shared residency ceiling; absent means unbounded.
  * Asynchronous because the budget can answer `in-flight` — the step fits
  * alone but not beside the concurrent steps still loading (B9c). That is a
  * wait, not a refusal, so this re-asks each time one of them records. The
