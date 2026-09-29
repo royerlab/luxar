@@ -400,6 +400,52 @@ describe('initPicking', () => {
     });
   });
 
+  describe('deferred partition parts (B4)', () => {
+    it.fails('provisions picking for labels declared only on parts not yet built', async () => {
+      // A labelled timelapse partition with no part in the opening slice: its
+      // parts are empty slots, so no THREE object carries their attrs yet.
+      const sceneLoader = {
+        ...makeSceneLoader({ hasStore: true }),
+        sceneGraph: {
+          path: '/',
+          type: 'group',
+          attrs: {},
+          hasSpatialIndex: false,
+          children: [
+            {
+              path: '/tracks',
+              type: 'group',
+              attrs: { kind: 'partition' },
+              hasSpatialIndex: false,
+              children: [
+                {
+                  path: '/tracks/part_0',
+                  type: 'gsplats',
+                  attrs: { has_labels: true, link: 'https://example.org/{hover_index}' },
+                  hasSpatialIndex: false,
+                  children: [],
+                },
+              ],
+            },
+          ],
+        },
+      };
+      (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(sceneLoader);
+      const scene = new THREE.Scene();
+      scene.add(makeLuxarRoot());
+
+      const result = await initPicking({
+        sceneManager: makeSceneManager(scene) as never,
+        pickingEvents,
+        previous: makePreviousEmpty(),
+        getOverlayManager: () => undefined,
+      });
+
+      expect(result.pickingSystem).toBeDefined();
+      expect(result.labelLoader).toBeDefined();
+    });
+  });
+
   describe('success path — categorical-label-only scene', () => {
     it('constructs picking without allocating string label loaders', async () => {
       (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
