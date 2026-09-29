@@ -63,6 +63,9 @@ PostProcessingManager (class)
   branch of `captureHDRPixels` snapshot `renderer.getRenderTarget()` and
   `autoClear` in a `try/finally` so a caller invoking pipeline / capture
   while another target is bound doesn't get clobbered.
+- **Capture render exclusion.** `PostProcessingManager` suppresses frame-loop
+  draws during pixel readback, including `luxar env bake`. The injected
+  render-skip predicate also excludes those draw-free ticks from adaptive DPR.
 - **Capture mode contract** (see `capture.ts::CaptureMode`):
   - `raw-scene-hdr` — scene-only render, no bloom, no mega-shader.
   - `hdr-effects-pre-tone` — bloom kept (HDR-space), EOG / tone / vignette /
