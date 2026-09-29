@@ -147,8 +147,8 @@ export class WindowEventHandler {
 
     requestAnimationFrame(() => {
       this.sceneManager.updateSize();
-      // updateSize schedules the actual resize for the next frame. That
-      // resize wakes the loop, which repaints at the new size.
+      // updateSize schedules the actual resize for the next frame. Arm the
+      // loop after it so that frame repaints at the new size.
       this.animationController.startAnimation();
     });
   }
