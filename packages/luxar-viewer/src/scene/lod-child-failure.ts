@@ -1,3 +1,9 @@
+/**
+ * Keep every lazy-child failure transition paired with status invalidation.
+ * Separate from the registry so the node loader needs no runtime registry import.
+ *
+ * @module scene/lod-child-failure
+ */
 import type { LODGroupChild } from './lod-group-registry';
 import { bumpFailedLoadsVersion } from '../utils/failed-loads-version';
 

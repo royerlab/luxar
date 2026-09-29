@@ -35,7 +35,7 @@ describe('failed-loads version', () => {
     expect(failedLoadsVersion()).toBe(before + 1);
   });
 
-  it('versions explicit archive-fault and lazy-child transitions', () => {
+  it('bumpFailedLoadsVersion increments the shared version', () => {
     const before = failedLoadsVersion();
     bumpFailedLoadsVersion();
     expect(failedLoadsVersion()).toBe(before + 1);

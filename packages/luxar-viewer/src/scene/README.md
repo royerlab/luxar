@@ -30,6 +30,7 @@ scene/
 ├── scene-dims-manager.ts           # nD dimension coordination
 ├── dimension-loading.ts            # Current-slice loading + playback prefetch
 ├── lod-group-registry.ts           # Per-frame LOD-group selector (policy/state machine)
+├── lod-child-failure.ts            # Lazy-child failure latch and clear with status invalidation
 ├── lod-selector-math.ts            # Selector math: world-box fold, box→area/diagonal projections, hysteresis pick
 ├── lod-blend.ts                    # Pure opacity math: coverage cross-fade + energy compensation
 ├── lod-fade.ts                     # Material-level fade appliers (clone-on-first-fade)
