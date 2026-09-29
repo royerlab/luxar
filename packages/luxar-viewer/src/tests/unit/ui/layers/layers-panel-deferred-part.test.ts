@@ -37,11 +37,16 @@ import { computeScalarRangeUniforms } from '../../../../rendering/materials/_sha
 import { loadSceneNodes } from '../../../../data/scene-loader/nodes/load-scene-nodes';
 import { applyEffectiveAttrs } from '../../../../data/scene-loader/view-state/effective-attrs';
 import { findObjectByName } from '../../../../utils/scene-graph-index';
+import { log } from '../../../../utils/log';
 import { makeTestNodeBuildCtx } from '../../../helpers/make-test-node-build-ctx';
 import type { NodeBuildCtx } from '../../../../data/scene-loader/nodes/build-ctx';
 import type { SceneNode } from '../../../../data/data-loader-types';
 import type { AnimationController } from '../../../../scene/animation/animation-controller';
 import type { PartitionGroupChild } from '../../../../scene/lod-group-registry';
+import type { PointsMetadata } from '../../../../types/points';
+import type { LinesMetadata, LinesDataLoader } from '../../../../types/lines';
+import type { MeshMetadata, MeshDataLoader } from '../../../../types/mesh';
+import type { DataLoader } from '../../../../data/data-loader-types';
 
 const AMPLITUDE_RANGE: [number, number] = [5.409804826328468e-10, 0.06948927677778476];
 
@@ -229,6 +234,105 @@ describe('LayersPanel — a partition part activated after the panel initialised
     expect(fresh.uScalarScale.value / expected.scalarScale).toBeCloseTo(1, 6);
     expect(appearance(fresh)).toEqual(appearance(eager));
   });
+
+  it.each(['points', 'lines', 'mesh'] as const)(
+    'replays a panel-selected colormap to a late %s leaf before its first data commit',
+    (type) => {
+      const makeLeaf = (index: number): SceneNode => ({
+        path: `/nuclei/part_${index}`,
+        type,
+        attrs: {
+          type,
+          has_scalars: true,
+          scalar_data_range: [0, 10],
+          n_points: 1,
+          n_segments: 1,
+          n_vertices: 3,
+          n_faces: 1,
+          ndim: 4,
+          max_width: 1,
+        } as SceneNode['attrs'],
+        hasSpatialIndex: false,
+        children: [],
+      });
+      const leaves = [makeLeaf(0), makeLeaf(1)];
+      const wrapper: SceneNode = {
+        path: '/nuclei',
+        type: 'group',
+        attrs: {
+          type: 'group',
+          kind: 'partition',
+          layer: true,
+          display_type: type,
+        } as SceneNode['attrs'],
+        hasSpatialIndex: false,
+        children: leaves,
+      };
+      const graph: SceneNode = {
+        path: '/',
+        type: 'scene',
+        attrs: {} as SceneNode['attrs'],
+        hasSpatialIndex: false,
+        children: [wrapper],
+      };
+      const root = new THREE.Group();
+      root.name = 'LuxarScene';
+      const factory = new NodeFactory();
+      const loader = { dispose: vi.fn() };
+      const create = (leaf: SceneNode): THREE.Mesh => {
+        const attrs = applyEffectiveAttrs(graph, leaf);
+        if (type === 'points') {
+          return factory.createEmptyPointsNode(
+            leaf.path,
+            attrs as unknown as PointsMetadata,
+            loader as unknown as DataLoader
+          );
+        }
+        if (type === 'lines') {
+          return factory.createEmptyLinesNode(
+            leaf.path,
+            attrs,
+            attrs as unknown as LinesMetadata,
+            loader as unknown as LinesDataLoader
+          );
+        }
+        return factory.createEmptyMeshNode(
+          leaf.path,
+          attrs as unknown as MeshMetadata,
+          loader as unknown as MeshDataLoader
+        );
+      };
+      const eager = create(leaves[1]);
+      const colormapActive = (mesh: THREE.Mesh): boolean =>
+        'USE_COLORMAP' in ((mesh.material as THREE.ShaderMaterial).defines ?? {});
+      // The eager leaf's geometry has received its scalar data. The late
+      // leaf will still have only its placeholder when the panel replays.
+      eager.geometry.userData.hasScalars = true;
+      root.add(eager);
+      const container = document.createElement('div');
+      const panel = new LayersPanel(container, makeAnimationController());
+      panel.initFromScene(root, graph);
+      panel.setLayer('/nuclei', { colormap: 'viridis' });
+      expect(colormapActive(eager)).toBe(true);
+
+      const late = create(leaves[0]);
+      root.add(late);
+      const warning = vi.spyOn(log, 'warning');
+      panel.applyLayerStateToNewLeaf(graph, leaves[0].path, late);
+
+      expect(colormapActive(late)).toBe(true);
+      expect(warning).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('Scalar colormap suppressed')
+      );
+      const fresh = uniformsOf(root, leaves[0].path);
+      const existing = uniformsOf(root, leaves[1].path);
+      expect(fresh.uScalarMin.value).toBeCloseTo(existing.uScalarMin.value, 9);
+      expect(fresh.uScalarScale.value).toBeCloseTo(existing.uScalarScale.value, 6);
+      warning.mockRestore();
+      panel.dispose();
+    }
+  );
 
   it('a leaf of a DIFFERENT scene graph is left alone (stale panel / dataset switch)', async () => {
     const h = await loadAndInitPanel();

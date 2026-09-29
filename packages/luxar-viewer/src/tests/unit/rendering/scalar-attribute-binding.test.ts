@@ -79,7 +79,7 @@ describe('scalar attribute binding', () => {
     // the colormap was never re-enabled once the real scalars arrived —
     // leaving scalar+colormap points rendering white. createEmptyPointsNode
     // declares an empty `scalars` field when the node has
-    // has_scalars + colormap, which createPointsGeometry turns into the
+    // has_scalars, which createPointsGeometry turns into the
     // userData.hasScalars stamp, so the guard passes and the material is
     // built colormap-enabled up front.
     it('placeholder enables colormap when attrs declare has_scalars + colormap', () => {
@@ -104,7 +104,7 @@ describe('scalar attribute binding', () => {
       expect(material.defines && 'USE_COLORMAP' in material.defines).toBe(true);
     });
 
-    it('placeholder does NOT stamp hasScalars when no colormap is declared', () => {
+    it('placeholder declares scalars before a panel-selected colormap exists', () => {
       const factory = new NodeFactory();
       const attrs = {
         n_points: 3,
@@ -114,8 +114,11 @@ describe('scalar attribute binding', () => {
       const loader = { dispose: vi.fn() } as unknown as DataLoader;
 
       const placeholder = factory.createEmptyPointsNode('/spiral', attrs, loader);
-      expect(placeholder.geometry.userData.hasScalars).toBe(false);
-      expect(supportsScalarColormap('points', placeholder.geometry)).toBe(false);
+      expect(placeholder.geometry.userData.hasScalars).toBe(true);
+      expect(supportsScalarColormap('points', placeholder.geometry)).toBe(true);
+      expect('USE_COLORMAP' in ((placeholder.material as THREE.ShaderMaterial).defines ?? {})).toBe(
+        false
+      );
     });
   });
 
@@ -158,7 +161,7 @@ describe('scalar attribute binding', () => {
     // never re-enabled once real scalars streamed in (commit writes into the
     // existing placeholder geometry) — leaving colormapped lines white.
     // createEmptyLinesNode declares empty start/end scalars when the node
-    // declares colormap + has_scalars, which createInstancedLinesMesh turns
+    // declares has_scalars, which createInstancedLinesMesh turns
     // into the userData.hasScalars stamp, so the guard passes and the
     // per-node material is colormap-enabled up front.
     it('placeholder enables colormap when attrs declare has_scalars + colormap', () => {
@@ -190,7 +193,7 @@ describe('scalar attribute binding', () => {
       expect(material.defines && 'USE_COLORMAP' in material.defines).toBe(true);
     });
 
-    it('placeholder does NOT stamp hasScalars when no colormap is declared', () => {
+    it('placeholder declares scalars before a panel-selected colormap exists', () => {
       const factory = new NodeFactory();
       const nodeAttrs = { has_scalars: true };
       const attrs = {
@@ -206,8 +209,11 @@ describe('scalar attribute binding', () => {
       const loader = { dispose: vi.fn() } as unknown as LinesDataLoader;
 
       const placeholder = factory.createEmptyLinesNode('/streamlines', nodeAttrs, attrs, loader);
-      expect(placeholder.geometry.userData.hasScalars).toBe(false);
-      expect(supportsScalarColormap('lines', placeholder.geometry)).toBe(false);
+      expect(placeholder.geometry.userData.hasScalars).toBe(true);
+      expect(supportsScalarColormap('lines', placeholder.geometry)).toBe(true);
+      expect('USE_COLORMAP' in ((placeholder.material as THREE.ShaderMaterial).defines ?? {})).toBe(
+        false
+      );
     });
 
     it('does NOT stamp hasScalars when only one side is supplied (fail-closed)', () => {
