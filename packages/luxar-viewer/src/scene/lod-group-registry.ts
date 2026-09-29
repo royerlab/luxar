@@ -1326,6 +1326,8 @@ export class LODGroupRegistry {
   private drawnStateChanged = false;
   /** In-flight level dissolves, by group path (see {@link levelFade}). */
   private readonly fades = new Map<string, LevelFade>();
+  /** Outgoing levels whose dissolve was dropped before its visibility pass. */
+  private readonly droppedFadeFrom = new Map<string, number>();
   /** This frame's clock reading and playback period (see ``evaluatePerFrame``). */
   private readonly frame: { nowMs: number; playbackPeriodMs: number | null } = {
     nowMs: 0,
@@ -1754,6 +1756,7 @@ export class LODGroupRegistry {
     this.warnedNoReadyChild.delete(path);
     this.warnedEmptyLevel.delete(path);
     this.fades.delete(path);
+    this.droppedFadeFrom.delete(path);
   }
 
   /** Clear all entries (called on full scene tear-down). */
@@ -1771,6 +1774,7 @@ export class LODGroupRegistry {
     this.entries.clear();
     this.caches.clear();
     this.fades.clear();
+    this.droppedFadeFrom.clear();
     this.partitionEntries.clear();
     this.partitionCaches.clear();
     this.partitionPartsByPath.clear();
@@ -2311,6 +2315,7 @@ export class LODGroupRegistry {
    * (the next evaluated frame then draws each group's level alone).
    */
   private skipFrame(): LODFrameChanges {
+    for (const [path, fade] of this.fades) this.droppedFadeFrom.set(path, fade.fromIdx);
     this.fades.clear();
     return LOD_FRAME_UNCHANGED;
   }
@@ -2893,6 +2898,7 @@ export class LODGroupRegistry {
     // Last frame's outgoing level, if a dissolve was in flight (see the hide
     // edge in the visibility pass below).
     const fadingFromIdx = this.fades.get(entry.path)?.fromIdx ?? -1;
+    const droppedFromIdx = this.droppedFadeFrom.get(entry.path) ?? -1;
     const fade = fadeEligible ? this.levelFade(entry, displayIdx, version ?? null) : null;
     if (fade) {
       blendPartnerIdx = fade.fromIdx;
@@ -2973,7 +2979,7 @@ export class LODGroupRegistry {
           // A dissolve's outgoing level leaving on its own (its partner has
           // been on screen since the dissolve started) changes the visible
           // tally, so the monitor must recount — like the swap it completes.
-          if (i === fadingFromIdx) changed = true;
+          if (i === fadingFromIdx || i === droppedFromIdx) changed = true;
         }
       }
       if (manageFade) {
@@ -2997,6 +3003,7 @@ export class LODGroupRegistry {
         this.applyChildFade(child, null, false);
       }
     }
+    this.droppedFadeFrom.delete(entry.path);
     // Mark the on-screen level most-recently-used and record it for the eviction
     // pass, which must never release the level currently displayed. Only update
     // when a ready level is actually shown — otherwise keep the last shown index
@@ -3226,6 +3233,8 @@ export class LODGroupRegistry {
    * longer dissolving). Returns ``false``: no level change this frame.
    */
   private dropFade(entry: LODGroupEntry): false {
+    const fade = this.fades.get(entry.path);
+    if (fade) this.droppedFadeFrom.set(entry.path, fade.fromIdx);
     this.fades.delete(entry.path);
     return false;
   }

@@ -5354,6 +5354,36 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED);
   });
 
+  it('recounts when a skipped frame drops a dissolve before its landing', () => {
+    let viewport = { width: 800, height: 600 };
+    const { reg, coarse } = dissolveHalfway('additive', { getViewportSize: () => viewport });
+    viewport = { width: 0, height: 0 };
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
+    expect(reg.isAnimating()).toBe(false);
+    expect(coarse.object.visible).toBe(true);
+
+    viewport = { width: 800, height: 600 };
+    expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED);
+    expect(coarse.object.visible).toBe(false);
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
+  });
+
+  it('recounts when missing bounds drop a dissolve before its landing', () => {
+    const { reg, coarse, fine } = dissolveHalfway('additive');
+    const coarseBounds = coarse.positionBounds;
+    const fineBounds = fine.positionBounds;
+    coarse.positionBounds = fine.positionBounds = { min: [], max: [] };
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
+    expect(reg.isAnimating()).toBe(false);
+    expect(coarse.object.visible).toBe(true);
+
+    coarse.positionBounds = coarseBounds;
+    fine.positionBounds = fineBounds;
+    expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED);
+    expect(coarse.object.visible).toBe(false);
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
+  });
+
   it('a retarget to a third level keeps the more opaque level, at its current opacity', () => {
     const clock = { t: 1000 };
     const { reg, zoom } = makeTimedReg(clock);
