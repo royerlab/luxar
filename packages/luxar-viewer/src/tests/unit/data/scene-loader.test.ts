@@ -1572,6 +1572,50 @@ describe('SceneLoader', () => {
       const gaps = commits.map((at, i) => at - (i === 0 ? 0 : commits[i - 1]));
       expect(Math.max(...gaps)).toBeLessThanOrEqual(150 + PASS_MS + 50);
     });
+
+    it.fails('a displayDims change aborts an overdue pass instead of letting it commit', async () => {
+      // The guarantee is for a DRAG: an intermediate slice is still a truthful
+      // frame. A pass for the OLD display axes is not — letting it commit puts
+      // at least one frame of geometry projected for the wrong axes on screen.
+      let now = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => now);
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      now = 10_000;
+      const signals: Array<AbortSignal | undefined> = [];
+      const mockLoader = {
+        loadGSplats: vi.fn(),
+        updateView: vi.fn((_vs: unknown, _session: unknown, signal?: AbortSignal) => {
+          signals.push(signal);
+          return new Promise<null>((_resolve, reject) => {
+            signal?.addEventListener('abort', () =>
+              reject(new DOMException('Superseded', 'AbortError'))
+            );
+          });
+        }),
+        dispose: vi.fn(),
+      };
+      (sceneLoader as unknown as Record<string, Map<string, unknown>>).gsplatLoaders.set(
+        '/node',
+        mockLoader
+      );
+
+      void sceneLoader.updateView({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 1],
+        tolerance: [0, 0, 0, 0],
+      });
+      await vi.waitFor(() => expect(signals).toHaveLength(1));
+      // Well past the drag interval, with nothing committed in this chain.
+      now += 400;
+      void sceneLoader.updateView({
+        displayDims: [0, 1, 3],
+        slicePosition: [0, 0, 0, 1],
+        tolerance: [0, 0, 0, 0],
+      });
+      await Promise.resolve();
+
+      expect(signals[0]?.aborted).toBe(true);
+    });
   });
 
   describe('updateView — superseded loads abort (per-update AbortSignal)', () => {
