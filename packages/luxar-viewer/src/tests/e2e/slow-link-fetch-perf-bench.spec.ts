@@ -15,7 +15,8 @@ const HOSTED_CHUNKS = [
 ] as const;
 const LOCAL_TARGET = `${PERF_SLOW_DATA_BASE}/__luxar_slow_wave__`;
 const HOSTED_REQUESTS = 24;
-const LOCAL_REQUESTS = 6;
+// One HTTP/1.1 data-lane cohort: later queued requests miss the streaming leader.
+const LOCAL_REQUESTS = 4;
 const DEFAULT_PROFILES: NetworkProfile[] = ['slow100k', 'slow1m', 'slow3m'];
 const profiles = (process.env.LUXAR_SLOW_LINK_PROFILES?.split(',').filter(Boolean) ??
   DEFAULT_PROFILES) as NetworkProfile[];
