@@ -1516,6 +1516,7 @@ describe('SceneLoader', () => {
     beforeEach(async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
     });
+    afterEach(() => vi.restoreAllMocks());
 
     // Three-geometry symmetry: the same supersede→abort contract must hold for
     // Points, Lines, and GSplats. Each registers its fake loader in the
@@ -1527,9 +1528,16 @@ describe('SceneLoader', () => {
       { type: 'gsplats', map: 'gsplatLoaders' },
     ] as const;
 
-    it.each(cases)(
-      'aborts the in-flight $type load when a newer view-state supersedes it; no false failure',
-      async ({ map }) => {
+    it.each(
+      cases.flatMap((testCase) => [
+        { ...testCase, idleMs: 0 },
+        { ...testCase, idleMs: 5000 },
+      ])
+    )(
+      'aborts the in-flight $type load after $idleMs ms idle when a newer view supersedes it',
+      async ({ map, idleMs }) => {
+        let now = (sceneLoader as unknown as { _lastCommitAt: number })._lastCommitAt + idleMs;
+        vi.spyOn(performance, 'now').mockImplementation(() => now);
         let capturedSignal: AbortSignal | undefined;
         let releaseFirst!: () => void;
         const firstGate = new Promise<void>((resolve) => {
@@ -1573,6 +1581,7 @@ describe('SceneLoader', () => {
           tolerance: [0, 0, 0, 0],
         });
         await Promise.resolve();
+        now += 10;
 
         // Second update supersedes the in-flight one → must abort its signal.
         // Do NOT await it yet: the queued promise now resolves only when the
