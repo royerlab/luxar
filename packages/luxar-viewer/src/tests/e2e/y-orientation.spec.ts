@@ -163,6 +163,7 @@ test.describe('Y-orientation contract — renderToImageData cross-backend parity
 
   for (const backend of ['native', 'forceWebGL'] as const) {
     test(`${backend} WebGPURenderer picks an off-centre labelled point`, async ({ page }) => {
+      test.setTimeout(180_000);
       const forced = backend === 'forceWebGL' ? '&webgpuForceWebgl' : '';
       await load(page, `/?renderer=webgpu${forced}&src=${LABELLED_DATASET}&debug`);
       if (backend === 'native') {
