@@ -279,10 +279,16 @@ export class CameraFlight {
       // The `camera` phase: the step moves the camera before clipping, depth
       // sort and LOD read it, so each flight frame renders with its own
       // near/far rather than the previous frame's.
-      this.deps.animationController.addPerFrameCallback(FLIGHT_CALLBACK_ID, () => this.step(), {
-        continuous: true,
-        phase: 'camera',
-      });
+      // Returns false: a flight frame moves only the camera (pose, near/far,
+      // fov/zoom), which the loop's view signature already detects.
+      this.deps.animationController.addPerFrameCallback(
+        FLIGHT_CALLBACK_ID,
+        () => {
+          this.step();
+          return false;
+        },
+        { continuous: true, phase: 'camera' }
+      );
       this.deps.animationController.startAnimation();
     });
   }
