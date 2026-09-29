@@ -122,7 +122,7 @@ describe('GSplatsProgressiveLoader — scrubbing (B5)', () => {
     expect(slices).toEqual([4, 6]);
   });
 
-  it.fails('stepping onto a slice being read ahead keeps that read alive for the pass to join', async () => {
+  it('stepping onto a slice being read ahead keeps that read alive for the pass to join', async () => {
     // The warm is the ONLY waiter on its chunk fetch until the new pass's
     // level-0 read joins it, so aborting it at the start of that pass cancelled
     // the shared fetch and the demand read refetched: read-ahead helped only a

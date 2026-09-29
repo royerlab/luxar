@@ -384,8 +384,12 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   private readonly sliceCache: SliceCache | null;
   private _metadataWarmStarted = false;
   private _prefetchController: AbortController | null = null;
-  /** Speculative ±1-slice read-ahead of rung 0 (B5); aborted on a view change. */
-  private _readAheadController: AbortController | null = null;
+  /**
+   * Speculative ±1-slice read-ahead of rung 0 (B5), one controller per
+   * neighbour slice. A view change aborts every one EXCEPT the slice it moved
+   * onto: that warm is what the new pass's level-0 reads join.
+   */
+  private _readAheads: Array<{ view: GSplatsViewState; controller: AbortController }> = [];
   /** Hidden dims whose slice moved into the current view (read-ahead axes). */
   private _scrubDims: number[] = [];
   private _prefetchPlanning = false;
@@ -601,7 +605,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // loop never re-streams), skipping the whole load+decode.
     if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
       this._scrubDims = this.lastViewState ? scrubbedHiddenDims(this.lastViewState, viewState) : [];
-      if (this.lastViewState) this.cancelLookaheadPrefetch();
+      if (this.lastViewState) this.cancelLookaheadPrefetch(viewState);
       // DEPARTURE store: snapshot the outgoing view's partial ladder under
       // the OUTGOING key before discarding — scrub-back stays warm even when
       // ladders never complete between navigations. Mirrors Points/Lines.
@@ -1043,16 +1047,18 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    * next drag step's first commit is a cache hit. Speculative priority,
    * aborted by the next view change. Free navigation only — playback has the
    * t+1 SlicePrefetcher, which already warms whole ladders ahead — and once per
-   * view.
+   * view. Each neighbour gets its own controller, so the step that lands on
+   * one keeps its read (see {@link cancelLookaheadPrefetch}).
    */
   private readAheadNeighbourSlices(viewState: GSplatsViewState): void {
     const dims = this._scrubDims;
     this._scrubDims = [];
     if (dims.length === 0 || this.nLods < 2 || this._disposed) return;
     if (this._frameBudgetMs !== null || this._ladderDepth !== null) return;
-    const controller = (this._readAheadController ??= new AbortController());
-    tagSignalPriority(controller.signal, 'speculative');
     for (const neighbour of neighbourSlices(viewState, dims)) {
+      const controller = new AbortController();
+      tagSignalPriority(controller.signal, 'speculative');
+      this._readAheads.push({ view: neighbour, controller });
       void this.lodLoaders[0]
         .prefetchChunks(neighbour, controller.signal)
         .catch((error: unknown) =>
@@ -1061,9 +1067,22 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     }
   }
 
-  private cancelLookaheadPrefetch(): void {
-    this._readAheadController?.abort();
-    this._readAheadController = null;
+  /**
+   * Abort the speculative reads of the view being left. `keepFor` is the view
+   * being entered: a read-ahead of exactly that slice is KEPT, because until
+   * the new pass's level-0 read joins it the warm is the only waiter on its
+   * chunk fetches, and aborting it there cancels the shared fetch and makes
+   * the demand read refetch from scratch. The kept warm is aborted by the
+   * next view change, by which time the demand read holds the fetch itself.
+   */
+  private cancelLookaheadPrefetch(keepFor?: GSplatsViewState): void {
+    const kept = this._readAheads.filter(
+      ({ view }) => keepFor !== undefined && viewStatesEqual(view, keepFor)
+    );
+    for (const entry of this._readAheads) {
+      if (!kept.includes(entry)) entry.controller.abort();
+    }
+    this._readAheads = kept;
     this._prefetchController?.abort();
     this._prefetchController = null;
     this._prefetchPlanning = false;
