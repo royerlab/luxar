@@ -3639,6 +3639,70 @@ describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
     expect(child.loadEwmaMs).toBe(20);
   });
 
+  // A load is timed to when it RESOLVED. The fold used to run at the first
+  // evaluated frame after ``loading`` cleared, so a hidden tab (no frames) or
+  // a skipped evaluate (collapsed canvas) counted idle time as load time and
+  // capped playback coarse for ~19 s.
+  it.fails('times a load to its resolution, not to the next evaluated frame', () => {
+    const state = { clock: 0 };
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => state.clock
+    );
+    const child = makeLazyChild(0.5, () => {});
+    // What the loader's thunk does when its load settles.
+    const finish = (): void => {
+      child.loading = false;
+      (child as { onLoadSettled?: () => void }).onLoadSettled?.();
+    };
+    child.nodePath = '/g/child_1';
+    child.failed = true;
+    reg.register(makeEntry([makeChild(0), child], 0, '/g'));
+    reg.evaluatePerFrame();
+    state.clock = 1_000;
+    expect(reg.retryLazyChildByNodePath(child.nodePath)).toBe(true);
+    state.clock += 30;
+    finish();
+    state.clock += 5_000; // the tab was hidden: no frame ran
+    reg.evaluatePerFrame();
+    expect(child.loadEwmaMs).toBe(30);
+  });
+
+  it.fails('never folds a negative sample when a retry lands between evaluates', () => {
+    const state = { clock: 0 };
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => state.clock
+    );
+    const child = makeLazyChild(0.5, () => {});
+    // What the loader's thunk does when its load settles.
+    const finish = (): void => {
+      child.loading = false;
+      (child as { onLoadSettled?: () => void }).onLoadSettled?.();
+    };
+    child.nodePath = '/g/child_1';
+    child.failed = true;
+    reg.register(makeEntry([makeChild(0), child], 0, '/g'));
+    reg.evaluatePerFrame(); // the frame clock reads 0 from here on
+    state.clock = 60_000;
+    expect(reg.retryLazyChildByNodePath(child.nodePath)).toBe(true);
+    state.clock += 20;
+    finish();
+    // A second retry before any evaluate folds the first load on the spot.
+    state.clock += 1_000;
+    child.failed = true;
+    expect(reg.retryLazyChildByNodePath(child.nodePath)).toBe(true);
+    expect(child.loadEwmaMs).toBe(20);
+  });
+
   it('clears the failure cooldown and re-kicks ensureLoaded for a named lazy leaf', () => {
     const reg = makeRegistry();
     const ensureLoaded = vi.fn();
@@ -4399,6 +4463,29 @@ describe('LODGroupRegistry — playback aspiration', () => {
     for (let f = 0; f < 30; f++) frame(); // settle + the 150 ms fine reload
     expect(reg.get('/g')!.activeChildIndex).toBe(2);
     expect(reg.get('/g')!.displayedChildIndex).toBe(2);
+  });
+
+  it.fails('pausing while the held level reloads does not flash the coarse level', () => {
+    // The reload was measured fast (so playback aspires to it) but this one
+    // takes 400 ms: the stale hold outlives STALE_HOLD_MS under the playback
+    // exemption. Pausing ends the exemption; the hold's budget must count from
+    // there, not from when the hold started, or the first paused frame drops
+    // to the 10-splat coarse level.
+    const { reg, state, children, frame } = playbackHarness([400]);
+    children[1].loadEwmaMs = 30;
+    const shown: number[] = [];
+    while (state.t < 1_400) {
+      frame();
+      shown.push(reg.get('/g')!.displayedChildIndex ?? -1);
+    }
+    expect(shown.every((d) => d === 1)).toBe(true); // held through playback
+    state.playing = false;
+    const paused: number[] = [];
+    for (let f = 0; f < 5; f++) {
+      frame();
+      paused.push(reg.get('/g')!.displayedChildIndex ?? -1);
+    }
+    expect(paused).toEqual([1, 1, 1, 1, 1]);
   });
 });
 
