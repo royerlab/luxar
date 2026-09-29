@@ -1155,13 +1155,15 @@ describe('LuxarApp', () => {
       mockAnimationController.startAnimation.mockClear();
       (document as any).hidden = false;
 
-      // Find the visibilitychange handler
-      const visibilityHandler = mockAddEventListener.mock.calls.find(
-        (call) => call[0] === 'visibilitychange'
-      )?.[1];
+      // Fire every visibilitychange handler: the unload handler registers
+      // its own (the L2 index flush on hidden) ahead of the render one, so
+      // picking the first registration would test the wrong listener.
+      const visibilityHandlers = mockAddEventListener.mock.calls
+        .filter((call) => call[0] === 'visibilitychange')
+        .map((call) => call[1]);
 
-      expect(visibilityHandler).toBeDefined();
-      visibilityHandler?.();
+      expect(visibilityHandlers.length).toBeGreaterThan(0);
+      for (const handler of visibilityHandlers) handler();
 
       expect(mockAnimationController.startAnimation).toHaveBeenCalled();
     });
@@ -1171,13 +1173,15 @@ describe('LuxarApp', () => {
       mockAnimationController.stopAnimation.mockClear();
       (document as any).hidden = true;
 
-      // Find the visibilitychange handler
-      const visibilityHandler = mockAddEventListener.mock.calls.find(
-        (call) => call[0] === 'visibilitychange'
-      )?.[1];
+      // Fire every visibilitychange handler: the unload handler registers
+      // its own (the L2 index flush on hidden) ahead of the render one, so
+      // picking the first registration would test the wrong listener.
+      const visibilityHandlers = mockAddEventListener.mock.calls
+        .filter((call) => call[0] === 'visibilitychange')
+        .map((call) => call[1]);
 
-      expect(visibilityHandler).toBeDefined();
-      visibilityHandler?.();
+      expect(visibilityHandlers.length).toBeGreaterThan(0);
+      for (const handler of visibilityHandlers) handler();
 
       // Should stop animation when hidden (saves resources)
       expect(mockAnimationController.stopAnimation).toHaveBeenCalled();
