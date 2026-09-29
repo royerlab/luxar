@@ -98,7 +98,7 @@ jobs:
         # LUXAR_CI_HATCH_BASE is a dedicated, per-runner volume. Refresh the
         # dependency resolution weekly and expire keys unused for seven days.
         # Hosted runners leave the variable unset, so this script is a no-op.
-        run: bash scripts/ci_hatch_env_cache.sh "${{ hashFiles('pyproject.toml') }}"
+        run: bash "$GITHUB_WORKSPACE/scripts/ci_hatch_env_cache.sh" "${{ hashFiles('pyproject.toml') }}"
       - name: Install Hatch
         # Install Hatch ON the 3.12 interpreter so the hatch env is really 3.12
         # (a plain `pipx install hatch` would pin whatever pipx picked; see #839).

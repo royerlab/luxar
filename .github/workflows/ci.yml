@@ -691,7 +691,7 @@ jobs:
         # dependency resolution weekly and expire keys unused for seven days.
         # Hosted runners leave the variable unset, so this script is a no-op.
         if: needs.changes.outputs.dom_py != 'false'
-        run: bash scripts/ci_hatch_env_cache.sh "${{ hashFiles('pyproject.toml') }}"
+        run: bash "$GITHUB_WORKSPACE/scripts/ci_hatch_env_cache.sh" "${{ hashFiles('pyproject.toml') }}"
       - name: Install Hatch
         if: needs.changes.outputs.dom_py != 'false'
         # Install Hatch ON the matrix interpreter. Hatch builds an environment
@@ -977,7 +977,7 @@ jobs:
         # dependency resolution weekly and expire keys unused for seven days.
         # Hosted runners leave the variable unset, so this script is a no-op.
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
-        run: bash scripts/ci_hatch_env_cache.sh "${{ hashFiles('pyproject.toml') }}"
+        run: bash "$GITHUB_WORKSPACE/scripts/ci_hatch_env_cache.sh" "${{ hashFiles('pyproject.toml') }}"
       - name: Install Hatch
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         run: pipx install --python "${{ steps.setup-python.outputs.python-path }}" hatch
