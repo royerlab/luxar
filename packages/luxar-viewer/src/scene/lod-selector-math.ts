@@ -178,9 +178,14 @@ export function projectBoxAreaFraction(
   const overlapW = Math.min(cx + ex, 1) - Math.max(cx - ex, -1);
   const overlapH = Math.min(cy + ey, 1) - Math.max(cy - ey, -1);
   if (overlapW < 0 || overlapH < 0) return 0;
+  const det = sxx * syy - sxy * sxy;
+  // The AABB clip undercounts a tilted ellipse even when it contains the
+  // entire viewport. A convex ellipse covers the square iff all four corners
+  // are inside its conic.
+  if (viewportInsideEllipse(ellipse, det)) return 1;
   const visibleW = ex > 0 ? Math.min(1, overlapW / (2 * ex)) : 1;
   const visibleH = ey > 0 ? Math.min(1, overlapH / (2 * ey)) : 1;
-  const area = Math.sqrt(Math.max(0, sxx * syy - sxy * sxy)) * visibleW * visibleH;
+  const area = Math.sqrt(Math.max(0, det)) * visibleW * visibleH;
   // Continuous degenerate ramp, gated on the RAW minor semi-axis.
   const halfTrace = 0.5 * (sxx + syy);
   const halfDiff = 0.5 * (sxx - syy);
@@ -189,6 +194,20 @@ export function projectBoxAreaFraction(
   const span = Math.max(overlapW, overlapH) * 0.5;
   const degenerate = span * Math.max(0, 1 - rawThin / DEGENERATE_RECT_HALF_EXTENT);
   return Math.max(area, degenerate);
+}
+
+/** A convex ellipse contains the viewport iff it contains all four corners. */
+function viewportInsideEllipse(ellipse: typeof ELLIPSE_SCRATCH, det: number): boolean {
+  if (!(det > 0) || !Number.isFinite(det)) return false;
+  const { cx, cy, sxx, sxy, syy } = ellipse;
+  for (let x = -1; x <= 1; x += 2) {
+    for (let y = -1; y <= 1; y += 2) {
+      const dx = x - cx;
+      const dy = y - cy;
+      if (!(syy * dx * dx - 2 * sxy * dx * dy + sxx * dy * dy <= det)) return false;
+    }
+  }
+  return true;
 }
 
 /** {@link projectInscribedEllipse}: the camera plane cuts the ellipsoid. */

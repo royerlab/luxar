@@ -351,8 +351,9 @@ which end of a ladder renders, so consumers must agree on them):
 * **Visible occupancy.** The ellipse's area is scaled, per axis, by the
   visible fraction of its screen AABB (exact for an axis-aligned ellipse); an
   ellipse with no viewport overlap on either axis reads exactly `0`
-  (coarsest), and full coverage tops out at exactly `1.0` (thresholds are
-  satisfied inclusively, `threshold <= metric`). Under a PERSPECTIVE camera,
+  (coarsest). When all four viewport corners lie inside the ellipse's image
+  conic, full coverage reads exactly `1.0` even for a tilted ellipse
+  (thresholds are satisfied inclusively, `threshold <= metric`). Under a PERSPECTIVE camera,
   a node the eye plane cuts has no meaningful projection, so the metric
   saturates to the finest level — the counterpart of the near-plane guard
   the legacy diagonal metric applies to the bbox corners. An ORTHOGRAPHIC projection never

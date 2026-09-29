@@ -347,6 +347,34 @@ describe('projectBoxDiagonalPx', () => {
       expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(1.0, 6);
     });
 
+    it('reaches exactly 1 for an off-axis perspective ellipse containing the viewport', () => {
+      const box: BoundingBox = {
+        min: { x: 0, y: 0, z: -100 },
+        max: { x: 1000, y: 1000, z: 100 },
+      };
+      const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 2000);
+      cam.position.set(200, 200, 260);
+      cam.lookAt(300, 300, 0);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      expect(projectBoxAreaFraction(box, cam)).toBe(1);
+    });
+
+    it('does not treat a tilted ellipse AABB as full viewport coverage', () => {
+      const box: BoundingBox = {
+        min: { x: -2, y: -0.2, z: 0 },
+        max: { x: 2, y: 0.2, z: 0 },
+      };
+      const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
+      cam.position.set(0, 0, 5);
+      cam.rotation.z = Math.PI / 4;
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      const coverage = projectBoxAreaFraction(box, cam);
+      expect(coverage).toBeGreaterThan(0);
+      expect(coverage).toBeLessThan(1);
+    });
+
     it('clips to the viewport: a huge rect intersecting only a screen corner reads its small VISIBLE fraction', () => {
       // Rect spans NDC [0.5, 10] on both axes — enormous unclipped (~22.5 area
       // units) but only the [0.5, 1]² corner is on screen: visible fraction =
