@@ -5245,6 +5245,28 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
   });
 
+  // Only ``evaluatePerFrame`` retires a dissolve, on the one end rule it draws
+  // by. A poll between evaluates (the offline capture drain, the debug settle
+  // probe) used to delete a fade whose wall-clock end had passed, while the
+  // DRAWN frame still showed both levels.
+  it.fails('stays capture-unquiescent until an evaluate lands the dissolve, however late the poll', () => {
+    const { reg, coarse, clock } = dissolveHalfway('additive');
+    clock.t += FADE_MS; // over by the clock, but no evaluate has drawn the landing
+    expect(coarse.object.visible).toBe(true);
+    expect(reg.isAnimating()).toBe(true);
+    expect(reg.isCaptureQuiescent()).toBe(false);
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(false);
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it.fails('a poll of isAnimating between evaluates keeps the landing recount', () => {
+    const { reg, clock } = dissolveHalfway('additive');
+    clock.t += FADE_MS;
+    reg.isAnimating(); // e.g. the capture drain or the debug settle probe
+    expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED);
+  });
+
   it('a retarget to a third level keeps the more opaque level, at its current opacity', () => {
     const clock = { t: 1000 };
     const { reg, zoom } = makeTimedReg(clock);
