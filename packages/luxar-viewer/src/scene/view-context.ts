@@ -1,15 +1,18 @@
 /**
  * The frame's view: one snapshot of the camera that the view-dependent
- * per-frame work (LOD selection, projected density, depth sort) reads instead
+ * per-frame work (LOD selection, projected density) reads instead
  * of each re-deriving it from the live camera.
  *
- * Built lazily, on the first `get()` after an `invalidate()`. The frame loop
- * invalidates it at the start of every frame, and the camera writers that run
- * inside the `view` phase (dynamic clipping rewrites near/far) invalidate it
- * after they write, so a consumer never sees a projection older than the one
- * the frame renders with. A snapshot is only valid for the frame it was taken
- * in: the returned object and its matrices are reused, so a consumer must not
- * keep references across frames.
+ * Built lazily and cached. `get()` rebuilds when the snapshot was
+ * `invalidate()`d or when the camera no longer matches it — another camera
+ * object, a moved pose (`matrixWorld` after `updateMatrixWorld()`) or a new
+ * projection matrix — so a read in the earlier `camera` phase, a read after a
+ * failed callback, or a load-time read outside the frame loop always sees the
+ * camera as it is now. The canvas sizes are only re-read on a rebuild: the
+ * `dynamic-clipping` callback (the first `view`-phase callback) invalidates
+ * every frame so a resize is picked up at least once per frame (depth sort
+ * deliberately reads the camera directly). The returned object and its
+ * matrices are reused, so consumers must not keep references across frames.
  *
  * The view matrix is `inverse(camera.matrixWorld)`, derived here rather than
  * read from `camera.matrixWorldInverse`, which three builds with the scale
@@ -84,6 +87,8 @@ export class ViewContextProvider {
   private readonly ctx: MutableViewContext;
   private readonly cssScratch: ViewSize = { width: 0, height: 0 };
   private readonly bufferScratch: ViewSize = { width: 0, height: 0 };
+  /** `camera.matrixWorld` as of the last build (the view matrix is its inverse). */
+  private readonly builtWorld = new THREE.Matrix4();
   private valid = false;
 
   constructor(private readonly deps: ViewContextDeps) {
@@ -101,22 +106,31 @@ export class ViewContextProvider {
     };
   }
 
-  /** Mark the snapshot stale; the next `get()` rebuilds it. */
+  /** Mark the snapshot stale (sizes included); the next `get()` rebuilds it. */
   invalidate(): void {
     this.valid = false;
   }
 
-  /** The current frame's snapshot, built now if stale. */
+  /** The current snapshot, rebuilt now if invalidated or the camera changed. */
   get(): ViewContext {
-    if (!this.valid) this.build();
+    const camera = this.deps.getCamera();
+    camera.updateMatrixWorld();
+    if (!this.valid || !this.matches(camera)) this.build(camera);
     return this.ctx;
   }
 
-  private build(): void {
+  private matches(camera: THREE.Camera): boolean {
+    return (
+      camera === this.ctx.camera &&
+      camera.matrixWorld.equals(this.builtWorld) &&
+      camera.projectionMatrix.equals(this.ctx.projectionMatrix)
+    );
+  }
+
+  private build(camera: THREE.Camera): void {
     const ctx = this.ctx;
-    const camera = this.deps.getCamera();
     ctx.camera = camera;
-    camera.updateMatrixWorld();
+    this.builtWorld.copy(camera.matrixWorld);
     ctx.viewMatrix.copy(camera.matrixWorld).invert();
     ctx.cameraWorldPosition.setFromMatrixPosition(camera.matrixWorld);
     const e = camera.matrixWorld.elements;

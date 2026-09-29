@@ -35,7 +35,8 @@ export interface RefTargetWrapper {
   epoch(): number;
 }
 
-interface MemoEntry {
+/** One resolved target for a cache generation. */
+export interface MemoEntry {
   epoch: number;
   promise: Promise<ResolvedRefTarget>;
 }

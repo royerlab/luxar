@@ -44,6 +44,12 @@ def _manifest_store_names() -> set[str]:
     stores = [
         c["store"] for c in _MANIFEST["exact"] + _MANIFEST["perf"] if "store" in c
     ]
+    stores.extend(
+        c["store"]
+        for suite in _MANIFEST["suites"].values()
+        for c in suite["cases"]
+        if "store" in c
+    )
     by_file = {gate_scenes.store_filename(n): n for n in gate_scenes.ALL_SCENE_NAMES}
     names = set()
     for store in stores:
@@ -59,9 +65,22 @@ def test_every_scene_name_has_a_writer() -> None:
 
 
 def test_manifest_names_only_generated_stores() -> None:
-    # A subset, not equality: new default stores land in the generator before
-    # the manifest cases that use them, and heavy stores are opt-in.
+    # Some generated stores are used only by ad-hoc audits in POSES.json.
     assert _manifest_store_names() <= set(gate_scenes.ALL_SCENE_NAMES)
+    direct_stores = {
+        c["store"] for c in _MANIFEST["exact"] + _MANIFEST["perf"] if "store" in c
+    }
+    assert {
+        f"gate/{name}.luxar.zarr"
+        for name in (
+            "mixed",
+            "env_splats",
+            "partition_normal",
+            "glass",
+            "lod_ladder",
+            "tiny_units_ortho",
+        )
+    } <= direct_stores
 
 
 def test_heavy_scenes_are_not_in_the_default_set() -> None:

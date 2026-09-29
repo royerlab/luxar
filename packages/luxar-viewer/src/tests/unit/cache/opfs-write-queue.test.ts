@@ -573,7 +573,7 @@ describe('OpfsWriteQueue', () => {
       await q.drain();
     });
 
-    it('a coalescing replacement that tips the byte cap never loses its own key', async () => {
+    it('a coalescing replacement evicts other speculative writes first', async () => {
       // The newer write for a key replaces the older queued one. Before, a
       // replacement that tipped the byte cap was dropped AFTER it had already
       // deleted the task it replaced, so the key lost BOTH versions. Now the

@@ -625,7 +625,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       // otherwise store nothing at all (completion never happens), making
       // scrub-back — the S-cache's headline case — always cold. One clone
       // per slice-leave; upgrade-if-longer makes re-departures cheap no-ops.
-      if (this.lastViewState && this._loadedLODCount > 0) {
+      if (this.lastViewState && this._loadedLODCount > 0 && !this.tornDown(signal)) {
         storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
           scan: this._frameBudgetMs !== null,
           pin: viewState.prefetch === true,
@@ -807,6 +807,10 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     // PREFIXES only while a playback budget is active. Mirrors
     // GSplatsProgressiveLoader.
     const result = finish();
+    // A pass aborted or disposed mid-level must not store: releaseShadows()
+    // has already unpinned this key, so a late pinned store would outlive
+    // playback with nothing left to release it.
+    if (this.tornDown(signal)) return result;
     if (
       this._loadedLODCount === this.nLods ||
       this._frameBudgetMs !== null ||
@@ -821,6 +825,11 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     }
 
     return result;
+  }
+
+  /** True once this pass was aborted or the loader disposed: no more cache stores. */
+  private tornDown(signal?: AbortSignal): boolean {
+    return signal?.aborted === true || this._disposed;
   }
 
   /**

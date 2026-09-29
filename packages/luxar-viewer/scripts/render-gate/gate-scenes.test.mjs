@@ -14,6 +14,7 @@ describe('render-gate scene manifest', () => {
       [...list[1].matchAll(/^\s+"([^"]+)",?$/gm)].map((match) => match[1])
     );
     expect(generated.length).toBeGreaterThan(0);
+    expect(new Set(generated).size).toBe(generated.length);
     const zipScenes = generator.match(/^ZIP_SCENES = frozenset\(\{(.+)\}\)$/m)?.[1];
     expect(zipScenes).toBeDefined();
     const zipped = new Set([...zipScenes.matchAll(/"([^"]+)"/g)].map((match) => match[1]));
@@ -21,12 +22,25 @@ describe('render-gate scene manifest', () => {
       generated.map((name) => `gate/${name}.luxar.zarr${zipped.has(name) ? '.zip' : ''}`)
     );
 
-    const suites = Object.values(manifest.suites ?? {}).flatMap((suite) => suite.cases ?? []);
-    const stores = [...manifest.exact, ...manifest.perf, ...suites]
+    const directStores = [...manifest.exact, ...manifest.perf]
       .filter((scene) => scene.store !== undefined)
       .map((scene) => scene.store);
+    const suiteStores = Object.values(manifest.suites ?? {}).flatMap((suite) =>
+      (suite.cases ?? []).filter((scene) => scene.store !== undefined).map((scene) => scene.store)
+    );
+    const stores = [...directStores, ...suiteStores];
     expect(stores.length).toBeGreaterThan(0);
     for (const store of stores) expect(generatedStores.has(store)).toBe(true);
+    // The six original exact/perf stores stay referenced directly.
+    for (const name of [
+      'mixed',
+      'env_splats',
+      'partition_normal',
+      'glass',
+      'lod_ladder',
+      'tiny_units_ortho',
+    ])
+      expect(directStores).toContain(`gate/${name}.luxar.zarr`);
   });
 
   it('has a unique id for every case', () => {
