@@ -33,7 +33,13 @@
  * then `speculative` (the prefetcher guessing) — FIFO within a class, and
  * speculative requests never hold more than {@link MAX_SPECULATIVE_FETCH_SHARE}
  * of the lane. A queued request's class can be RAISED after it queued (a demand
- * caller joining a prefetch) through a {@link FetchPriorityCell}.
+ * caller joining a prefetch) through a {@link FetchPriorityCell}, and a request
+ * whose caller aborts while it waits leaves the queue at once.
+ *
+ * Each class is queued per lane WIDTH (the default origins, and the multiplexed
+ * ones with the wider lane), so a head held only by its own origin's width never
+ * holds back a waiter of the same class that an h2/h3 origin's wider lane could
+ * start; FIFO holds across the two by enqueue order.
  *
  * The data lane is {@link MAX_CONCURRENT_CHUNK_FETCHES} wide by default and
  * {@link MAX_CONCURRENT_MULTIPLEXED_CHUNK_FETCHES} for an origin that resource
@@ -215,9 +221,11 @@ class Deque<T> {
   }
 }
 
-/** One queued request. A promoted waiter leaves a dead entry behind. */
+/** One queued request. A promoted or aborted waiter leaves a dead entry behind. */
 interface QueueEntry {
   readonly waiter: Waiter;
+  /** Enqueue order, for FIFO across a class's width tiers. */
+  readonly seq: number;
   live: boolean;
 }
 
@@ -227,6 +235,13 @@ interface Waiter {
   readonly start: () => void;
   entry: QueueEntry | undefined;
 }
+
+/**
+ * Width tiers per class: 0 = the lane's default width, 1 = an origin known to
+ * multiplex (the wide data lane). Decided at enqueue; admission re-checks the
+ * origin's live width, so a tier only decides who may be passed, never a cap.
+ */
+const WIDTH_TIERS = 2;
 
 const ZARR_METADATA_KEYS = new Set(['zarr.json', '.zarray', '.zattrs', '.zgroup', '.zmetadata']);
 
@@ -239,6 +254,7 @@ interface FetchGateState {
    */
   limit: number;
   speculativeActive: number;
+  /** One FIFO per (priority class, width tier): index `rank * WIDTH_TIERS + tier`. */
   readonly queues: Deque<QueueEntry>[];
   /** `fetch.<lane>.requests`: every gated call, queued or not. */
   readonly sRequests: PerfCounterSlot;
@@ -254,7 +270,7 @@ function createGate(lane: FetchLane): FetchGateState {
     active: 0,
     limit: lane === 'data' ? MAX_CONCURRENT_CHUNK_FETCHES : MAX_CONCURRENT_METADATA_FETCHES,
     speculativeActive: 0,
-    queues: Array.from({ length: PRIORITY_CLASSES }, () => new Deque<QueueEntry>()),
+    queues: Array.from({ length: PRIORITY_CLASSES * WIDTH_TIERS }, () => new Deque<QueueEntry>()),
     sRequests: perfCounters.slot(`fetch.${lane}.requests`),
     sHighWater: perfCounters.slot(`fetch.${lane}.highWater`),
     sQueueWaitMs: perfCounters.slot(`fetch.${lane}.queueWaitMs`),
@@ -422,17 +438,28 @@ function admissible(gate: FetchGateState, origin: string | undefined, rank: numb
   return gate.speculativeActive < Math.max(1, Math.floor(limit * MAX_SPECULATIVE_FETCH_SHARE));
 }
 
-/** Does any LIVE waiter of `rank` or more urgent sit in the queue? */
-function hasQueuedAtOrAbove(gate: FetchGateState, rank: number): boolean {
+/** Width tier of a request from `origin` (see {@link WIDTH_TIERS}). */
+function tierOf(gate: FetchGateState, origin: string | undefined): number {
+  return laneLimit(gate, origin) > gate.limit ? 1 : 0;
+}
+
+/**
+ * Does any LIVE waiter of `rank` or more urgent sit in `tier`'s queues? Under the
+ * HTTP/1.1 cap every origin has one width, so every tier counts (a waiter queued
+ * wide before the cap landed must not be passed).
+ */
+function hasQueuedAtOrAbove(gate: FetchGateState, rank: number, tier: number): boolean {
   for (let r = 0; r <= rank; r++) {
-    if (liveHead(gate, r)) return true;
+    for (let t = 0; t < WIDTH_TIERS; t++) {
+      if ((t === tier || http1Origin) && liveHead(gate, r * WIDTH_TIERS + t)) return true;
+    }
   }
   return false;
 }
 
-/** Head of one class's queue, discarding entries left dead by a promotion. */
-function liveHead(gate: FetchGateState, rank: number): QueueEntry | undefined {
-  const queue = gate.queues[rank];
+/** Head of one queue, discarding entries left dead by a promotion or an abort. */
+function liveHead(gate: FetchGateState, index: number): QueueEntry | undefined {
+  const queue = gate.queues[index];
   let head = queue.peek();
   while (head && !head.live) {
     queue.shift();
@@ -441,26 +468,45 @@ function liveHead(gate: FetchGateState, rank: number): QueueEntry | undefined {
   return head;
 }
 
+let nextSeq = 0;
+
 function enqueue(gate: FetchGateState, waiter: Waiter): void {
-  const entry: QueueEntry = { waiter, live: true };
+  const entry: QueueEntry = { waiter, seq: nextSeq++, live: true };
   waiter.entry = entry;
-  gate.queues[rankOf(waiter.priority)].push(entry);
+  const index = rankOf(waiter.priority) * WIDTH_TIERS + tierOf(gate, waiter.origin);
+  gate.queues[index].push(entry);
+}
+
+/** The queue index of `rank`'s earliest-enqueued admissible head, or -1. */
+function admissibleHead(gate: FetchGateState, rank: number): number {
+  let best = -1;
+  let bestSeq = Infinity;
+  for (let tier = 0; tier < WIDTH_TIERS; tier++) {
+    const index = rank * WIDTH_TIERS + tier;
+    const head = liveHead(gate, index);
+    if (head && head.seq < bestSeq && admissible(gate, head.waiter.origin, rank)) {
+      best = index;
+      bestSeq = head.seq;
+    }
+  }
+  return best;
 }
 
 /**
  * Start every queued waiter that may start now, most urgent class first.
  *
- * Each class is inspected at its HEAD only, so this is O(1) per start: a
+ * Each queue is inspected at its HEAD only, so this is O(1) per start: a
  * speculative head blocked by its share does not stop a demand head, and a head
- * blocked by the lane width (mixed origins) stops only its own class.
+ * blocked by its origin's lane width (mixed origins) stops only its own width
+ * tier — a multiplexed origin's waiter of the same class still starts.
  */
 function dispatch(gate: FetchGateState): void {
   for (;;) {
     let started = false;
     for (let rank = 0; rank < PRIORITY_CLASSES && !started; rank++) {
-      const head = liveHead(gate, rank);
-      if (!head || !admissible(gate, head.waiter.origin, rank)) continue;
-      gate.queues[rank].shift();
+      const index = admissibleHead(gate, rank);
+      const head = index < 0 ? undefined : gate.queues[index].shift();
+      if (!head) continue;
       head.live = false;
       head.waiter.entry = undefined;
       head.waiter.start();
@@ -468,6 +514,59 @@ function dispatch(gate: FetchGateState): void {
     }
     if (!started) return;
   }
+}
+
+/** Why a waiter left the queue unstarted: the signal's reason, or an AbortError. */
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException('Fetch gate wait aborted', 'AbortError');
+}
+
+/** Still queued: move to the tail of its (raised) class and start it if there is room. */
+function requeue(gate: FetchGateState, waiter: Waiter): void {
+  if (!waiter.entry?.live) return;
+  waiter.entry.live = false;
+  enqueue(gate, waiter);
+  dispatch(gate);
+}
+
+/**
+ * Queue a request until {@link dispatch} starts it (`onStart` takes the lease),
+ * or reject once `signal` aborts first — leaving a dead entry, not a queue place.
+ */
+function waitForSlot(
+  gate: FetchGateState,
+  origin: string | undefined,
+  priority: FetchPriority | FetchPriorityCell,
+  signal: AbortSignal | undefined,
+  onStart: () => void
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const cleanups: Array<() => void> = [];
+    const settle = (): void => cleanups.forEach((cleanup) => cleanup());
+    const waiter: Waiter = {
+      origin,
+      priority,
+      entry: undefined,
+      start: () => {
+        settle();
+        onStart();
+        resolve();
+      },
+    };
+    enqueue(gate, waiter);
+    // A speculative cap may no longer bind once raised: see requeue().
+    if (typeof priority !== 'string') cleanups.push(priority.onRaise(() => requeue(gate, waiter)));
+    if (!signal) return;
+    const onAbort = (): void => {
+      if (!waiter.entry?.live) return;
+      waiter.entry.live = false;
+      waiter.entry = undefined;
+      settle();
+      reject(abortReason(signal));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    cleanups.push(() => signal.removeEventListener('abort', onAbort));
+  });
 }
 
 /**
@@ -479,12 +578,16 @@ function dispatch(gate: FetchGateState): void {
  *   may be raised while the request waits. Defaults to `demand`.
  * @param origin - The request's origin, which picks the data-lane width
  *   (multiplexed origins get the wide lane). Omitted = the default width.
+ * @param signal - The caller's abort signal: aborting while the request still
+ *   waits for a slot rejects it with the signal's reason and frees its queue
+ *   place. Once started, `fn` owns the signal.
  */
 export function withFetchGate<T>(
   fn: () => Promise<T>,
   lane: FetchLane = 'data',
   priority: FetchPriority | FetchPriorityCell = 'demand',
-  origin?: string
+  origin?: string,
+  signal?: AbortSignal
 ): Promise<T> {
   const gate = fetchGates[lane];
   perfCounters.add(gate.sRequests);
@@ -502,35 +605,17 @@ export function withFetchGate<T>(
 
   let acquire: Promise<void>;
   const rank = rankOf(priority);
-  if (!hasQueuedAtOrAbove(gate, rank) && admissible(gate, origin, rank)) {
+  const tier = tierOf(gate, origin);
+  if (signal?.aborted) {
+    acquire = Promise.reject(abortReason(signal));
+  } else if (!hasQueuedAtOrAbove(gate, rank, tier) && admissible(gate, origin, rank)) {
     take();
     acquire = Promise.resolve();
   } else {
     const enqueuedAt = performance.now();
-    acquire = new Promise<void>((resolve) => {
-      let unsubscribe: (() => void) | undefined;
-      const waiter: Waiter = {
-        origin,
-        priority,
-        entry: undefined,
-        start: () => {
-          unsubscribe?.();
-          take();
-          perfCounters.add(gate.sQueueWaitMs, performance.now() - enqueuedAt);
-          resolve();
-        },
-      };
-      enqueue(gate, waiter);
-      if (typeof priority !== 'string') {
-        unsubscribe = priority.onRaise(() => {
-          // Still queued: move to the tail of its new class and let it start
-          // at once if that class has room (a speculative cap no longer binds).
-          if (!waiter.entry?.live) return;
-          waiter.entry.live = false;
-          enqueue(gate, waiter);
-          dispatch(gate);
-        });
-      }
+    acquire = waitForSlot(gate, origin, priority, signal, () => {
+      take();
+      perfCounters.add(gate.sQueueWaitMs, performance.now() - enqueuedAt);
     });
   }
   return acquire.then(async () => {

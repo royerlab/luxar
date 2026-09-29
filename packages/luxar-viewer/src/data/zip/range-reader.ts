@@ -298,6 +298,7 @@ export class LuxarHttpRangeReader {
         // body is cancelled by `fetchWithRetry`.
         if (response.status !== 206) return 'fallback' as const;
         const contentRange = response.headers.get('content-range');
+        if (parseContentRangeTotal(contentRange) === null) return 'fallback' as const;
         const total = this.#totalFromRange(contentRange);
         const bytes = await readBody();
         return this.#acceptTail(contentRange, bytes, total)
@@ -395,7 +396,8 @@ export class LuxarHttpRangeReader {
     const viaTail = await this.#probeViaTail(signal, perAttempt);
     if (viaTail.answered) return viaTail.token;
 
-    // No usable answer (network error, timeout, non-OK): try HEAD. Without a
+    // No usable answer (network error, timeout, non-OK, or an incomplete
+    // Last-Modified token): try HEAD. Without a
     // second route a flaky first probe yields no token → validation mode `none`
     // → the archive is never re-checked and a replaced one keeps serving stale
     // chunks.
@@ -405,8 +407,8 @@ export class LuxarHttpRangeReader {
   /**
    * Identity from the tail suffix GET, retaining the tail when it validates.
    *
-   * `answered` is true for any OK response, token or not: a host whose GET
-   * carries no identity headers will not grow them on a HEAD.
+   * A 206 with Last-Modified but no usable total may have Content-Range
+   * hidden by CORS; HEAD can still supply the total for its identity token.
    */
   async #probeViaTail(
     signal: AbortSignal | undefined,
@@ -446,7 +448,14 @@ export class LuxarHttpRangeReader {
           // The identity still stands; opening will fetch the tail itself.
         }
       }
-      return { answered: true, token };
+      return {
+        answered:
+          response.status !== 206 ||
+          token !== null ||
+          knownTotal !== null ||
+          !response.headers.get('last-modified'),
+        token,
+      };
     } catch {
       return { answered: false, token: null };
     } finally {

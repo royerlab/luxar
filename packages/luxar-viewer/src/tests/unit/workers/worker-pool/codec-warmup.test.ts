@@ -139,6 +139,38 @@ describe('WorkerPool — lazy, one-worker-first codec warm-up', () => {
     pool.dispose();
   });
 
+  it('offloads only to WARM workers: one still fetching its codec gets no decode', async () => {
+    const {
+      WorkerPool,
+      BloscDecodeDispatcher,
+      MIN_OFFLOAD_DECODED_BYTES,
+      warmGates,
+      warmCalls,
+      decodeCalls,
+    } = await loadPool(3);
+    const pool = new WorkerPool();
+    await pool.initialize();
+    const dispatcher = new BloscDecodeDispatcher(pool);
+    const big = () => dispatcher.decode({ bytes: frame(MIN_OFFLOAD_DECODED_BYTES), delta: null });
+
+    expect(big()).toBeNull(); // starts warming ONE worker
+    await flush();
+    const first = warmCalls[0];
+    warmGates[first].resolve(undefined);
+    await flush();
+    // The other two are warming now; their gates stay open (codec still downloading).
+    expect(warmCalls).toHaveLength(3);
+
+    // A burst the dispatcher spreads over "idle" workers: every batch must still
+    // land on the one warm worker, not queue behind a codec download.
+    const jobs = Array.from({ length: 6 }, big);
+    expect(jobs.every((job) => job !== null)).toBe(true);
+    await Promise.all(jobs.filter((job) => job !== null));
+    expect(decodeCalls.length).toBeGreaterThan(0);
+    expect(new Set(decodeCalls)).toEqual(new Set([first]));
+    pool.dispose();
+  });
+
   it('never warms a worker codec under the ?mainThreadCodecs kill switch', async () => {
     const { WorkerPool, BloscDecodeDispatcher, MIN_OFFLOAD_DECODED_BYTES, blosc, warmCalls } =
       await loadPool(2);
