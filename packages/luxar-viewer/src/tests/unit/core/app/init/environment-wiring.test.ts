@@ -97,14 +97,18 @@ describe('wireSceneEnvironment', () => {
     window.dispatchEvent(new CustomEvent('luxar-layers-changed'));
     expect(h.environment.markStale).toHaveBeenCalledTimes(2);
     // The dims manager notifies its listeners on a value change.
-    (sceneDimsManager as unknown as { notifyListeners: () => void }).notifyListeners();
+    (
+      sceneDimsManager as unknown as { notifyListeners: (changed: boolean) => void }
+    ).notifyListeners(true);
     expect(h.environment.markStale).toHaveBeenCalledTimes(3);
 
     // Disposing the event group unhooks everything.
     h.events.dispose();
     eventBus.emit('geometry-committed', {});
     window.dispatchEvent(new CustomEvent('luxar-layers-changed'));
-    (sceneDimsManager as unknown as { notifyListeners: () => void }).notifyListeners();
+    (
+      sceneDimsManager as unknown as { notifyListeners: (changed: boolean) => void }
+    ).notifyListeners(true);
     expect(h.environment.markStale).toHaveBeenCalledTimes(3);
     expect(h.callbacks.size).toBe(0);
   });

@@ -63,8 +63,8 @@ export function wireSceneEnvironment(deps: EnvironmentWiringDeps): void {
 
   const markStale = (): void => sceneManager.environment?.markStale();
   events.add(eventBus.on('geometry-committed', markStale));
-  const markStaleOnSliceChange = (changed?: boolean): void => {
-    if (changed !== false) markStale();
+  const markStaleOnSliceChange = (changed: boolean): void => {
+    if (changed) markStale();
   };
   sceneDimsManager.addListener(markStaleOnSliceChange);
   events.add(() => sceneDimsManager.removeListener(markStaleOnSliceChange));

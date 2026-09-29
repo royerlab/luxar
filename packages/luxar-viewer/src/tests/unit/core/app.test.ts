@@ -1988,7 +1988,7 @@ describe('LuxarApp', () => {
       const onDims = vi.fn();
       app.on('dimensions-changed', onDims);
 
-      listener(); // simulate a slice-position change notification
+      listener(true); // simulate a slice-position change notification
 
       expect(onDims).toHaveBeenCalledTimes(1);
       expect(onDims.mock.calls[0][0]).toMatchObject({ ndim: expect.any(Number) });
@@ -2030,7 +2030,7 @@ describe('LuxarApp', () => {
       app.on('dimensions-changed', onDims);
 
       app.dispose();
-      listener(); // isInitialized is false → guarded no-op
+      listener(true); // isInitialized is false → guarded no-op
 
       expect(onDims).not.toHaveBeenCalled();
     });

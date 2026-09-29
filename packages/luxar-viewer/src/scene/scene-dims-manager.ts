@@ -103,7 +103,7 @@ export class SceneDimsManager {
   private dimensionRanges: Array<[number, number]> | null = null;
 
   /** Observer callbacks that react to dimension changes (can be async) */
-  private listeners: Set<(changed?: boolean) => void | Promise<void>> = new Set();
+  private listeners: Set<(changed: boolean) => void | Promise<void>> = new Set();
 
   /** Promise tracking pending listener completion (for animation synchronization) */
   private pendingUpdatePromise: Promise<void> | null = null;
@@ -353,7 +353,8 @@ export class SceneDimsManager {
    * Reset every dimension back to its initial default position (same policy
    * as {@link initFromScene}) and notify listeners — sliders, slicing, and
    * status displays all refresh reactively. Used by the rail Home popover's
-   * "Reset dimensions" action. No-op before initialization.
+   * "Reset dimensions" action. A reset still notifies when every dimension is
+   * already at its default, with changed=false. No-op before initialization.
    */
   resetPositions(): void {
     if (!this.dims || !this.dimensionRanges) return;
@@ -381,7 +382,7 @@ export class SceneDimsManager {
    * @param callback - Function to call on a change or forced refresh (can return Promise).
    * Receives false for a refresh that leaves the slice position unchanged.
    */
-  addListener(callback: (changed?: boolean) => void | Promise<void>): void {
+  addListener(callback: (changed: boolean) => void | Promise<void>): void {
     this.listeners.add(callback);
   }
 
@@ -392,7 +393,7 @@ export class SceneDimsManager {
    *
    * @param callback - Previously registered callback function
    */
-  removeListener(callback: (changed?: boolean) => void | Promise<void>): void {
+  removeListener(callback: (changed: boolean) => void | Promise<void>): void {
     this.listeners.delete(callback);
   }
 
@@ -405,7 +406,7 @@ export class SceneDimsManager {
    *
    * @private
    */
-  private notifyListeners(changed = true): void {
+  private notifyListeners(changed: boolean): void {
     const promises: Promise<void>[] = [];
 
     this.listeners.forEach((callback) => {

@@ -471,7 +471,7 @@ export class LuxarApp {
    * outside the live window, and both are torn down through {@link events}.
    */
   private setupEmbedderHooks(canvas: HTMLCanvasElement): void {
-    const dimsListener = (changed = true): void => {
+    const dimsListener = (changed: boolean): void => {
       if (this.isInitialized && changed) {
         this.embedderEvents.emit('dimensions-changed', this.getDimensions());
       }
