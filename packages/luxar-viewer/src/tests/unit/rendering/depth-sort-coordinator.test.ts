@@ -2617,6 +2617,52 @@ describe('depth-sort scheduler (Phase 3)', () => {
     expect(mockApi.sort).toHaveBeenCalledTimes(2);
   });
 
+  it.fails('keeps re-sorting a moving camera while the loader stays busy (refinement drain / view pass)', async () => {
+    // The loader's busy flag stays true through the WHOLE progressive-
+    // refinement drain, which on a hosted laddered scene lasts seconds — and a
+    // view pass can be running while the user drags. Nothing about a pending
+    // commit makes a camera re-sort unsafe (generation + committed-data guards
+    // drop a superseded result), so an orbit must be answered the same way it
+    // is once the scene is idle, not only on the next rung commit.
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    await sortedSetup(coord, camera, { isLoadInProgress: () => true });
+
+    camera.rotateY(Math.PI / 2);
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+
+    sortResolvers[1]({
+      generation: mockApi.sort.mock.calls[1][0].generation as number,
+      ordering: new Uint32Array([1, 0]),
+    });
+    await flush();
+    camera.rotateY(Math.PI / 2);
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(3);
+  });
+
+  it.fails('re-sorts for the auto-framed pose even while the loader is still refining', async () => {
+    // The first commit sorts from the PRE-framing camera (loadScene commits
+    // before autoFrameCamera runs). The framing move must trigger a re-sort on
+    // the next frame even though refinement keeps the loader busy, or a still
+    // camera shows the pre-framing order until the next rung lands.
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    await sortedSetup(coord, camera, { isLoadInProgress: () => true });
+
+    camera.position.set(40, 25, 30);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld();
+    coord.evaluateDepthSortPerFrame();
+    expect(mockApi.sort).toHaveBeenCalledTimes(2);
+    const framed = new THREE.Matrix4().fromArray(
+      mockApi.sort.mock.calls[1][0].modelView as Float32Array
+    );
+    const expected = camera.matrixWorld.clone().invert();
+    expect(framed.elements[14]).toBeCloseTo(expected.elements[14], 4);
+  });
+
   it('skips invisible, LOD-demoted, and mode-switched-away nodes', async () => {
     const coord = await loadCoordinator();
     const camera = makeCamera();
