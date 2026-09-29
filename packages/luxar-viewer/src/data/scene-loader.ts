@@ -663,11 +663,29 @@ export class SceneLoader {
     delete incoming.frameBudgetMs;
     delete incoming.ladderDepth;
     const predicted = { ...this.viewState, ...incoming };
-    // Deferred partition parts the next slice needs (B4) are activated ahead of
-    // it, so its foreground pass finds them registered (a shadow can only warm
-    // a registered node). Fire-and-forget: it never rejects.
-    void this.lodGroupRegistry?.activatePartitionParts(predicted, undefined, false);
     this._slicePrefetcher.prefetch(predicted, budgetMs, ladderDepth);
+    this.activateAndWarmNextSlice(predicted, budgetMs, ladderDepth);
+  }
+
+  /**
+   * Deferred partition parts the predicted slice needs (B4) are activated ahead
+   * of it, so its foreground pass finds them registered — and, once they are, a
+   * targeted shadow pass warms them: a shadow can only warm a REGISTERED node,
+   * so the batch `prefetchSlice` just started cannot reach them. Fire-and-forget:
+   * the activation never rejects.
+   */
+  private activateAndWarmNextSlice(
+    predicted: ViewState,
+    budgetMs: number,
+    ladderDepth: number | 'auto' | undefined
+  ): void {
+    const registry = this.lodGroupRegistry;
+    if (!registry) return;
+    const graph = this._sceneGraph;
+    void registry.activatePartitionParts(predicted, undefined, false).then((parts) => {
+      if (parts.length === 0 || this._disposed || this._sceneGraph !== graph) return;
+      this._slicePrefetcher?.prefetchTargets(predicted, budgetMs, ladderDepth, new Set(parts));
+    });
   }
 
   /**
@@ -863,8 +881,16 @@ export class SceneLoader {
    * than abort it (B5): this pass chain has gone
    * {@link DRAG_COMMIT_INTERVAL_MS} without a commit.
    * A refinement run is aborted as before — it only deepens what is shown.
+   * So is a pass superseded by a `displayDims` change: an intermediate SLICE
+   * is a truthful frame of a drag, but geometry projected for the old display
+   * axes is not, so it must never be let through to commit.
    */
-  private inFlightPassOwesCommit(): boolean {
+  private inFlightPassOwesCommit(superseding: Partial<ViewState>): boolean {
+    const next = superseding.displayDims;
+    const current = this.viewState.displayDims;
+    if (next && (next.length !== current.length || next.some((d, i) => d !== current[i]))) {
+      return false;
+    }
     return (
       !this._refining &&
       performance.now() - Math.max(this._lastCommitAt, this._passChainStartedAt) >=
@@ -1307,17 +1333,21 @@ export class SceneLoader {
    * their loaders are registered, sweep those loaders as part of THIS pass —
    * the ones `alreadySwept` (the main sweep's) does not hold. `null` when no
    * part was activated. Must be called synchronously with the main sweep, so
-   * the activation reads the pass's own view.
+   * the activation reads the pass's own view. The pass's `signal` is its claim
+   * on the activations: a superseded pass withdraws it, so an activation that
+   * outlives it resyncs its part rather than waiting on a sweep that never
+   * commits.
    */
   private async sweepActivatedParts(
     ctxs: UpdateCtxs,
     onArchiveFault: (fault: ArchiveFaultError) => void,
     resyncPaths: ReadonlySet<string> | undefined,
-    alreadySwept: ReadonlySet<string>
+    alreadySwept: ReadonlySet<string>,
+    signal: AbortSignal
   ): Promise<Awaited<ReturnType<SceneLoader['sweepLoaders']>> | null> {
     const registry = this.lodGroupRegistry;
     if (!registry) return null;
-    const parts = await registry.activatePartitionParts(this.viewState, resyncPaths);
+    const parts = await registry.activatePartitionParts(this.viewState, resyncPaths, signal);
     if (parts.length === 0) return null;
     const targets = new Set(parts);
     const pick = <T>(loaders: Map<string, T>): Map<string, T> => {
@@ -1522,7 +1552,7 @@ export class SceneLoader {
       // unless this pass chain has gone DRAG_COMMIT_INTERVAL_MS without a commit: then the
       // in-flight pass is let through to commit first, so a continuous drag
       // whose passes outlast its event interval still shows progress.
-      if (!this.inFlightPassOwesCommit()) this._updateAbortController?.abort();
+      if (!this.inFlightPassOwesCommit(viewState)) this._updateAbortController?.abort();
 
       // Store the latest pending state (supersedes any previous pending
       // state). Log supersedes so rapid slider drags surface as
@@ -1683,7 +1713,13 @@ export class SceneLoader {
       const sweptPaths = this.registeredLoaderPaths();
       const [swept, activated] = await Promise.all([
         this.sweepLoaders(ctxs, onArchiveFault, (loaders) => loaders, resyncPaths),
-        this.sweepActivatedParts(ctxs, onArchiveFault, resyncPaths, sweptPaths),
+        this.sweepActivatedParts(
+          ctxs,
+          onArchiveFault,
+          resyncPaths,
+          sweptPaths,
+          updateController.signal
+        ),
       ]);
       const [pointsStaged, linesStaged, gsplatsStaged, meshStaged] = activated
         ? concatSweeps(swept, activated)

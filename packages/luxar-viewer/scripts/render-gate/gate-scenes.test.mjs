@@ -5,28 +5,42 @@ const manifest = JSON.parse(readFileSync(new URL('./gate-scenes.json', import.me
 const generator = readFileSync(new URL('./generate_gate_scenes.py', import.meta.url), 'utf8');
 
 describe('render-gate scene manifest', () => {
-  it('references only generated stores across all suites', () => {
-    const sceneNames = generator.match(/SCENE_NAMES = \(\n([\s\S]*?)\n\)/)?.[1];
-    expect(sceneNames).toBeDefined();
-    const heavySceneNames = generator.match(/HEAVY_SCENE_NAMES = \(\n([\s\S]*?)\n\)/)?.[1];
-    expect(heavySceneNames).toBeDefined();
-    const generated = [sceneNames, heavySceneNames].flatMap((names) =>
-      [...names.matchAll(/^\s+"([^"]+)",?$/gm)].map((match) => match[1])
+  it('references only generated stores with the correct archive extension', () => {
+    const sceneLists = [
+      ...generator.matchAll(/^(?:SCENE_NAMES|HEAVY_SCENE_NAMES) = \(\n([\s\S]*?)\n\)/gm),
+    ];
+    expect(sceneLists).toHaveLength(2);
+    const generated = sceneLists.flatMap((list) =>
+      [...list[1].matchAll(/^\s+"([^"]+)",?$/gm)].map((match) => match[1])
     );
     expect(generated.length).toBeGreaterThan(0);
+    expect(new Set(generated).size).toBe(generated.length);
+    const zipScenes = generator.match(/^ZIP_SCENES = frozenset\(\{(.+)\}\)$/m)?.[1];
+    expect(zipScenes).toBeDefined();
+    const zipped = new Set([...zipScenes.matchAll(/"([^"]+)"/g)].map((match) => match[1]));
+    const generatedStores = new Set(
+      generated.map((name) => `gate/${name}.luxar.zarr${zipped.has(name) ? '.zip' : ''}`)
+    );
 
-    const stores = [
-      ...manifest.exact,
-      ...manifest.perf,
-      ...Object.values(manifest.suites).flatMap((suite) => suite.cases),
-    ]
+    const directStores = [...manifest.exact, ...manifest.perf]
       .filter((scene) => scene.store !== undefined)
       .map((scene) => scene.store);
+    const suiteStores = Object.values(manifest.suites ?? {}).flatMap((suite) =>
+      (suite.cases ?? []).filter((scene) => scene.store !== undefined).map((scene) => scene.store)
+    );
+    const stores = [...directStores, ...suiteStores];
     expect(stores.length).toBeGreaterThan(0);
-    for (const store of stores) {
-      expect(store).toMatch(/^gate\/.+\.luxar\.zarr(\.zip)?$/);
-      expect(generated).toContain(store.slice(5).replace(/\.luxar\.zarr(\.zip)?$/, ''));
-    }
+    for (const store of stores) expect(generatedStores.has(store)).toBe(true);
+    // The six original exact/perf stores stay referenced directly.
+    for (const name of [
+      'mixed',
+      'env_splats',
+      'partition_normal',
+      'glass',
+      'lod_ladder',
+      'tiny_units_ortho',
+    ])
+      expect(directStores).toContain(`gate/${name}.luxar.zarr`);
   });
 
   it('has a unique id for every case', () => {

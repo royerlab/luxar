@@ -981,6 +981,54 @@ describe('loadPartitionGroupNode — gated loading (B4)', () => {
     expect(activationCtx.registerOnly).toBe(true);
   });
 
+  it('a failed activation records a retryable failure on its part and can run again', async () => {
+    attachStubChildren();
+    const registerPartition = vi.fn();
+    const ctx = timeCtx(registerPartition, TIME_DIMS);
+    await loadPartitionGroupNode(
+      makePartitionGroupNode([timePart(0, 0), timePart(1, 1)], { display_type: 'gsplats' }),
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+    const deferred = registerPartition.mock.calls[0][0].children[0];
+    // Building the part's loader failed (a metadata fetch, not a LoaderError).
+    loadSceneNodesMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    await expect(deferred.activate()).rejects.toThrow('Failed to fetch');
+    // Retry lists it (the registry re-arms it by this path).
+    expect(ctx.registry.failedLoaders.get('/partition/part_0')?.kind).toBe('Network');
+
+    await deferred.activate();
+    expect(loadSceneNodesMock).toHaveBeenCalledTimes(3);
+    expect(ctx.registry.failedLoaders.has('/partition/part_0')).toBe(false);
+  });
+
+  it('an activation for a dataset that is no longer live loads nothing', async () => {
+    attachStubChildren();
+    const registerPartition = vi.fn();
+    let live = true;
+    const ctx = makeTestNodeBuildCtx({
+      ...timeCtx(registerPartition, TIME_DIMS),
+      isDatasetLive: () => live,
+    });
+    await loadPartitionGroupNode(
+      makePartitionGroupNode([timePart(0, 0), timePart(1, 1)], { display_type: 'gsplats' }),
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+    const deferred = registerPartition.mock.calls[0][0].children[0];
+    // e.g. started by the t+1 prefetch just before a dataset switch.
+    live = false;
+
+    await deferred.activate();
+
+    expect(loadSceneNodesMock).toHaveBeenCalledTimes(1);
+  });
+
   it('loads every part when the scene has no discrete hidden dimension', async () => {
     attachStubChildren();
     const continuous = TIME_DIMS.map((dim) => ({ ...dim, discrete: false }));

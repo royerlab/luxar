@@ -41,6 +41,7 @@ import * as gsplatsRefinement from '../../../data/gsplats/lod-refinement';
 import { signalPriority } from '../../../utils/fetch-concurrency';
 import { log, Modules } from '../../../utils/log';
 import { failedLoadsVersion } from '../../../utils/failed-loads-version';
+import { SlicePrefetcher } from '../../../data/scene-loader/prefetch/slice-prefetcher';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
 // Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
@@ -1155,6 +1156,67 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('prefetchSlice — partition parts entering the next slice (B4)', () => {
+    it('warms a part activated for the predicted slice once its loader is registered', async () => {
+      const DIMS = [
+        { name: 'x', unit: 'um', scale: 1 },
+        { name: 'y', unit: 'um', scale: 1 },
+        { name: 'z', unit: 'um', scale: 1 },
+        { name: 'time', unit: 'frame', scale: 1, discrete: true, step: 1 },
+      ];
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      await sceneLoader.updateView({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 3],
+        tolerance: [0, 0, 0, 0],
+        dimensions: DIMS,
+      });
+      const internals = sceneLoader as unknown as {
+        loaders: Map<string, unknown>;
+        lodGroupRegistry: LODGroupRegistry | null;
+      };
+      const camera = new THREE.Camera();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        getCommittedViewState: () => sceneLoader.committedViewState,
+      });
+      internals.lodGroupRegistry = reg;
+      const groupObject = new THREE.Group();
+      const slot = new THREE.Group();
+      groupObject.add(slot);
+      reg.registerPartition({
+        path: '/tiled',
+        groupObject,
+        children: [
+          {
+            path: '/tiled/part_1',
+            objects: [slot],
+            positionBounds: { min: [-0.5, -0.5, -0.5, 4], max: [0.5, 0.5, 0.5, 4] },
+            activate: async () => {
+              await Promise.resolve();
+              internals.loaders.set('/tiled/part_1', { updateView: vi.fn(), dispose: vi.fn() });
+            },
+          },
+        ],
+      });
+      reg.evaluatePerFrame();
+      const warmed = vi.spyOn(
+        SlicePrefetcher.prototype as unknown as { prefetchNode: (path: string) => Promise<void> },
+        'prefetchNode'
+      );
+
+      // Playback at t=3 prefetches t=4, where the deferred part lives.
+      sceneLoader.prefetchSlice({ slicePosition: [0, 0, 0, 4] }, 50);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // A shadow can only warm a registered loader: the part must be warmed
+      // after its activation registered it, or the first loop loads it cold.
+      expect(warmed.mock.calls.map(([path]) => path)).toContain('/tiled/part_1');
+    });
+  });
+
   describe('updateView — dispose race', () => {
     it('resolves (does not hang) when called after dispose while the update lock is held', async () => {
       // Reproduce the dispose race: a refinement pass holds the update lock
@@ -1509,6 +1571,50 @@ describe('SceneLoader', () => {
       expect(commits.length).toBeGreaterThanOrEqual(12);
       const gaps = commits.map((at, i) => at - (i === 0 ? 0 : commits[i - 1]));
       expect(Math.max(...gaps)).toBeLessThanOrEqual(150 + PASS_MS + 50);
+    });
+
+    it('a displayDims change aborts an overdue pass instead of letting it commit', async () => {
+      // The guarantee is for a DRAG: an intermediate slice is still a truthful
+      // frame. A pass for the OLD display axes is not — letting it commit puts
+      // at least one frame of geometry projected for the wrong axes on screen.
+      let now = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => now);
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      now = 10_000;
+      const signals: Array<AbortSignal | undefined> = [];
+      const mockLoader = {
+        loadGSplats: vi.fn(),
+        updateView: vi.fn((_vs: unknown, _session: unknown, signal?: AbortSignal) => {
+          signals.push(signal);
+          return new Promise<null>((_resolve, reject) => {
+            signal?.addEventListener('abort', () =>
+              reject(new DOMException('Superseded', 'AbortError'))
+            );
+          });
+        }),
+        dispose: vi.fn(),
+      };
+      (sceneLoader as unknown as Record<string, Map<string, unknown>>).gsplatLoaders.set(
+        '/node',
+        mockLoader
+      );
+
+      void sceneLoader.updateView({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 1],
+        tolerance: [0, 0, 0, 0],
+      });
+      await vi.waitFor(() => expect(signals).toHaveLength(1));
+      // Well past the drag interval, with nothing committed in this chain.
+      now += 400;
+      void sceneLoader.updateView({
+        displayDims: [0, 1, 3],
+        slicePosition: [0, 0, 0, 1],
+        tolerance: [0, 0, 0, 0],
+      });
+      await Promise.resolve();
+
+      expect(signals[0]?.aborted).toBe(true);
     });
   });
 

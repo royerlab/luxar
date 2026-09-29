@@ -151,9 +151,12 @@ export class LayerApplyEngine {
    *
    * Replays the last push of each kind on the leaf's ancestry in edit order,
    * then the innermost layer's composed state. An outer layer edited after an
-   * inner layer also overwrote the existing leaves last. Visibility of a leaf
-   * that is itself a hidden layer is stamped too; a hidden ANCESTOR hides it
-   * through the scene graph already.
+   * inner layer also overwrote the existing leaves last. A hidden layer on the
+   * way up whose object is as new as the leaf (the leaf itself, or a group
+   * built with it inside the same deferred part) is stamped hidden too: the
+   * panel's visibility push skipped it for having no object yet. An older
+   * hidden ancestor was stamped when it was hidden, and hides the leaf through
+   * the scene graph.
    */
   applyToNewLeaf(leafPath: string, obj: THREE.Object3D): void {
     const target = this.resolveNewLeaf(leafPath);
@@ -164,11 +167,8 @@ export class LayerApplyEngine {
       pickDirty = this.replayPushedToLeaf(kind, layer, leaf, obj, sceneGraph) || pickDirty;
     }
     const owner = layers[layers.length - 1];
-    this.applyComposedToLeaf(owner, leaf, obj, ancestors);
-    if (owner.path === leafPath && !owner.visible) {
-      obj.userData.layerVisible = false;
-      obj.visible = false;
-    }
+    this.applyComposedToLeaf(owner, leaf, obj, ancestors, true);
+    hideHiddenLayerObjects(obj, layers);
     if (pickDirty) this.deps.invalidatePickBuffer?.();
     this.deps.requestRender();
   }
@@ -673,13 +673,17 @@ export class LayerApplyEngine {
    * The per-leaf body of {@link applyComposed}: push `layer`'s composed state
    * into ONE leaf's material. Shared with {@link applyToNewLeaf}, so a leaf that
    * materialises after the panel initialised is styled by exactly the code an
-   * edit uses. `ancestors` is the leaf's root→leaf chain.
+   * edit uses. `ancestors` is the leaf's root→leaf chain. `uncommitted`: the
+   * leaf has received no data yet (a fresh placeholder), so its first commit
+   * registers it with the depth sorter under the live mode and no blending
+   * switch needs reporting.
    */
   private applyComposedToLeaf(
     layer: LayerInfo,
     leaf: SceneNode,
     obj: THREE.Object3D,
-    ancestors: readonly SceneNode[]
+    ancestors: readonly SceneNode[],
+    uncommitted = false
   ): void {
     const mat = this.getLeafMaterial(obj);
     if (!mat) return;
@@ -768,7 +772,7 @@ export class LayerApplyEngine {
     // kept for external/future materials): that arm never stamps
     // `userData.blendingMode`, so reading the material alone would leave the
     // value unchanged and silently make this hook a no-op for such a node.
-    if (isDepthSortable(obj.userData?.nodeType)) {
+    if (!uncommitted && isDepthSortable(obj.userData?.nodeType)) {
       const resolvedMode = isPhysicalMeshMaterial(mat)
         ? 'opaque'
         : ((mat.userData?.blendingMode as BlendingMode | undefined) ?? blendingMode);
@@ -1093,5 +1097,20 @@ export class LayerApplyEngine {
     // scalar-range drags, even when the colormap define hadn't
     // toggled.
     return inEffect ? 'colormap' : 'direct';
+  }
+}
+
+/**
+ * Stamp hidden every object on `obj`'s parent chain (itself included) that is a
+ * hidden layer of `layers` and not yet stamped — the ones built after the panel
+ * pushed that layer's visibility (see `LayerApplyEngine.applyToNewLeaf`).
+ */
+function hideHiddenLayerObjects(obj: THREE.Object3D, layers: readonly LayerInfo[]): void {
+  const hidden = new Set(layers.filter((layer) => !layer.visible).map((layer) => layer.path));
+  if (hidden.size === 0) return;
+  for (let node: THREE.Object3D | null = obj; node; node = node.parent) {
+    if (!hidden.has(node.name) || node.userData.layerVisible === false) continue;
+    node.userData.layerVisible = false;
+    node.visible = false;
   }
 }

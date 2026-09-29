@@ -83,7 +83,13 @@ export type RefinementAdmissionReason =
   /** Fits now, but the next rung would cross the ceiling. */
   | 'next-rung-would-exceed'
   /** Fits in bytes, but the node already projects denser than its screen cap (`density-gate.ts`). */
-  | 'density-cap';
+  | 'density-cap'
+  /**
+   * Fits alone, but not beside the steps still in flight: WAIT, not a refusal.
+   * Never sticky and never reported; the caller asks again once a step records
+   * (`RefinementResidencyBudget.whenStepSettles`).
+   */
+  | 'in-flight';
 
 /** The verdict for one loader's refinement pass. */
 export interface RefinementAdmission {
@@ -110,10 +116,11 @@ export interface RefinementPassAdmission extends RefinementAdmission {
  *
  * Rule 2's input comes from {@link estimateNextRungBytes}, which under-estimates
  * on purpose for the ladder shape that actually hurts. A geometric ladder may
- * cross the ceiling by one level before its pass stops. Admissions reserve
- * their estimate immediately, and measured post-pass bytes replace it before
- * the next loader is considered. Over-estimating here would stop equal-count
- * ladders several rungs early, degrading scenes that were never in danger.
+ * cross the ceiling by one level before its pass stops. Over-estimating here
+ * would stop equal-count ladders several rungs early, degrading scenes that
+ * were never in danger. That one-level overshoot is bounded only while ONE
+ * step at a time is admitted on this estimate; the concurrent refinement loop
+ * (B9c) is held to it by `RefinementResidencyBudget.admit`'s in-flight rule.
  *
  * Production construction supplies a device-class fallback when
  * `performance.memory` is unavailable, so Firefox and Safari are budgeted too.
@@ -375,6 +382,9 @@ export class RefinementResidencyReporter {
 export class RefinementResidencyBudget {
   private readonly perPath = new Map<string, number>();
   private readonly declined = new Set<string>();
+  /** Admitted and not yet recorded: path -> pessimistic bytes beyond its reservation. */
+  private readonly inFlight = new Map<string, number>();
+  private readonly settleWaiters: Array<() => void> = [];
 
   constructor(
     readonly budgetBytes: number,
@@ -439,19 +449,37 @@ export class RefinementResidencyBudget {
    * Record `path`'s current footprint and return whether it may refine plus its
    * per-pass `allowanceBytes`. A refusal is sticky for the rest of the run:
    * re-offering the same loader every pass would re-measure, re-refuse and
-   * re-log without making progress. An admission immediately reserves only its
-   * estimated next rung. Concurrent steps see earlier reservations at admission.
-   * The larger per-pass allowance divides remaining headroom by tracked
-   * eligible paths, including the other active workers when the sweep maps
-   * were seeded, so their allowances fit within that headroom together.
-   * `record()` replaces each estimate with its measured footprint on completion.
+   * re-log without making progress. An admission immediately reserves its
+   * estimated next rung, and `record()` replaces that estimate with the
+   * measured footprint when the step completes. The per-pass allowance divides
+   * remaining headroom by tracked eligible paths, including the other active
+   * workers when the sweep maps were seeded.
+   *
+   * CONCURRENT STEPS (B9c). Up to `MAX_CONCURRENT_REFINEMENT_STEPS` steps are
+   * admitted before any of them has recorded, and each can spend its whole
+   * allowance and then overshoot by one level of unknown size. The mean
+   * estimate is safe for ONE such step only: four admitted on it crossed the
+   * ceiling by four rungs. So a step admitted with nothing in flight is judged
+   * on the estimate alone, exactly as the serial loop was (and may cross by one
+   * rung, as it could); a step admitted while another is still in flight must
+   * ALSO fit a pessimistic reservation for itself and for every in-flight step:
+   * its allowance plus a next level as large as the node's whole current
+   * footprint (the `stream:C` doubling shape), with its allowance carved from
+   * the headroom those in-flight reservations leave. One that does not fit is
+   * `in-flight`: not admitted, not declined, not reported. Its caller waits on
+   * {@link whenStepSettles} and asks again. Far from the ceiling that check
+   * passes and the steps overlap; near it the loop falls back to serial
+   * admission.
    */
   admit(path: string, residency: LadderResidency): RefinementPassAdmission {
     const accounted = ladderResidentBytes(residency);
     const nextRungBytes = estimateNextRungBytes(accounted, residency.loadedRungs);
     this.perPath.set(path, accounted);
+    this.inFlight.delete(path);
     const verdict = planRefinementAdmission(this.residentBytes, nextRungBytes, this.budgetBytes);
-    const headroomBytes = Math.max(0, this.budgetBytes - verdict.residentBytes);
+    // Headroom net of what the in-flight steps may still spend, so a concurrent
+    // step's share is carved from what they leave (identical when none is).
+    const headroomBytes = Math.max(0, this.budgetBytes - this.committedBytes());
     const eligiblePathCount = Math.max(1, this.perPath.size - this.declined.size);
     const allowanceBytes =
       this.budgetBytes > 0
@@ -462,6 +490,12 @@ export class RefinementResidencyBudget {
       this.reporter.reportOnce(path, verdict);
       return { ...verdict, allowanceBytes };
     }
+    // Pessimistic spend beyond the reserved estimate: the whole allowance, then
+    // one more level as large as everything the node already holds.
+    const worstExtraBytes = Math.max(0, (allowanceBytes ?? 0) + accounted - nextRungBytes);
+    if (allowanceBytes !== null && !this.fitsBesideInFlight(nextRungBytes + worstExtraBytes)) {
+      return { ...verdict, admitted: false, reason: 'in-flight', allowanceBytes };
+    }
     // Bytes fit; now the screen. A density refusal retires the loader for this
     // run exactly like a byte refusal (same `declined` set, same closures), but
     // it is the gate's to report and it reserves nothing.
@@ -471,11 +505,40 @@ export class RefinementResidencyBudget {
       return { ...verdict, admitted: false, reason: 'density-cap', allowanceBytes };
     }
     this.perPath.set(path, accounted + nextRungBytes);
+    if (allowanceBytes !== null) this.inFlight.set(path, worstExtraBytes);
     return { ...verdict, allowanceBytes };
+  }
+
+  /** Tracked bytes plus the pessimistic extra every in-flight step may still spend. */
+  private committedBytes(): number {
+    let committed = this.residentBytes;
+    for (const extra of this.inFlight.values()) committed += extra;
+    return committed;
+  }
+
+  /**
+   * Whether a step reserving `worstBytes` fits beside the steps in flight. With
+   * none in flight it always does: the serial rule already admitted it.
+   */
+  private fitsBesideInFlight(worstBytes: number): boolean {
+    if (this.inFlight.size === 0) return true;
+    return this.committedBytes() + worstBytes <= this.budgetBytes;
+  }
+
+  /**
+   * Resolves at the next `record()` of an in-flight step, which is when an
+   * `in-flight` verdict should be asked again. Resolves at once when nothing
+   * is in flight, so a waiter never outlives the steps it waits on.
+   */
+  whenStepSettles(): Promise<void> {
+    if (this.inFlight.size === 0) return Promise.resolve();
+    return new Promise((resolve) => this.settleWaiters.push(resolve));
   }
 
   /** Replace an admission estimate with the loader's measured post-pass footprint. */
   record(path: string, residency: LadderResidency): void {
     this.perPath.set(path, ladderResidentBytes(residency));
+    if (!this.inFlight.delete(path)) return;
+    for (const resolve of this.settleWaiters.splice(0)) resolve();
   }
 }

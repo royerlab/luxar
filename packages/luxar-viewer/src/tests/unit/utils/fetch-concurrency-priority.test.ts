@@ -251,6 +251,81 @@ describe('fetch gate adaptive lane size', () => {
     await Promise.all(calls.map((h) => h.done));
   });
 
+  it("a waiter held by ITS origin's lane width does not hold back a multiplexed origin", async () => {
+    // Mixed-origin scene: an h2 CDN plus a host of unknown protocol. The default
+    // (24-wide) origin's queued demand head must not cap the h2 origin at 24 too.
+    const h2 = 'https://cdn.example';
+    noteOriginProtocol(h2, 'h2');
+    const busy = Array.from({ length: 30 }, () => holder('demand', h2));
+    await flush();
+    expect(busy.filter((h) => h.started)).toHaveLength(30);
+
+    const other = holder('demand', 'https://other.example');
+    const next = holder('demand', h2);
+    await flush();
+    expect(other.started).toBe(false); // 30 in flight >= its 24
+    expect(next.started).toBe(true); // 31 <= 96: the h2 origin has room
+
+    for (const h of [...busy, next]) h.release();
+    await flush();
+    expect(other.started).toBe(true);
+    other.release();
+    await Promise.all([...busy, next, other].map((h) => h.done));
+  });
+
+  it('hands a freed slot past a width-blocked head to a same-class multiplexed waiter', async () => {
+    const h2 = 'https://cdn.example';
+    noteOriginProtocol(h2, 'h2');
+    const busy = Array.from({ length: MAX_CONCURRENT_MULTIPLEXED_CHUNK_FETCHES }, () =>
+      holder('demand', h2)
+    );
+    await flush();
+    const other = holder('demand', 'https://other.example'); // queued FIRST
+    const next = holder('demand', h2); // queued behind it (the lane is full)
+    await flush();
+    expect(next.started).toBe(false);
+
+    busy[0].release(); // 95 in flight: still too many for `other`, room for `next`
+    await flush();
+    expect(other.started).toBe(false);
+    expect(next.started).toBe(true);
+
+    for (const h of [...busy, next]) h.release();
+    await flush();
+    other.release();
+    await Promise.all([...busy, next, other].map((h) => h.done));
+  });
+
+  it('an aborted waiter leaves the queue at once and never runs', async () => {
+    noteFetchUrl('http://localhost:8000/scene.luxar.zarr/zarr.json');
+    const busy = Array.from({ length: HTTP1_MAX_CONCURRENT_CHUNK_FETCHES }, () => holder());
+    await flush();
+    const controller = new AbortController();
+    let deadRan = false;
+    const dead = withFetchGate(
+      async () => {
+        deadRan = true;
+      },
+      'data',
+      'speculative',
+      undefined,
+      controller.signal
+    );
+    let deadError: unknown;
+    dead.catch((error: unknown) => (deadError = error));
+    const live = holder('speculative');
+    controller.abort();
+    await flush();
+    expect((deadError as { name?: string } | undefined)?.name).toBe('AbortError');
+
+    busy[0].release();
+    await flush();
+    expect(deadRan).toBe(false);
+    expect(live.started).toBe(true);
+    for (const h of [...busy, live]) h.release();
+    await Promise.all([...busy, live].map((h) => h.done));
+  });
+
   it('learns the protocol from resource timing (nextHopProtocol)', async () => {
     vi.resetModules();
     let callback: ((list: { getEntries: () => unknown[] }) => void) | undefined;

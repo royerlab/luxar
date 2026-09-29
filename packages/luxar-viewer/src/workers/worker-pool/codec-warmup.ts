@@ -14,7 +14,8 @@
  * the chunk from the HTTP cache instead of the network.
  *
  * A warm-up is NOT a query: it never touches a worker's `activeQueries`, so it
- * cannot make a worker look busy to dispatch or to the pool's stats.
+ * cannot make a worker look busy to the pool's stats. Decode dispatch instead asks
+ * {@link CodecWarmup.isWarm}: a worker still warming gets no decode.
  *
  * @module workers/worker-pool/codec-warmup
  */
@@ -58,6 +59,15 @@ export class CodecWarmup {
       if (first) this.start(first);
     }
     return false;
+  }
+
+  /**
+   * Whether `entry`'s codec is warm. A decode goes only to such a worker: one
+   * still WARMING is downloading the codec chunk / compiling its WASM — tens to
+   * hundreds of ms — for a chunk the main thread decodes in about one.
+   */
+  isWarm(entry: WorkerInstance): boolean {
+    return this.stateOf(entry) === 'warm';
   }
 
   /** A worker without the task (a test double, a legacy worker) needs no warm-up. */

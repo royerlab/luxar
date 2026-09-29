@@ -175,7 +175,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
   /**
    * Track the display's frame interval (an EWMA of rAF deltas). Deltas above
-   * {@link MAX_FRAME_INTERVAL_MS} are gaps (a stopped loop, a hidden tab), not
+   * `MAX_FRAME_INTERVAL_MS` are gaps (a stopped loop, a hidden tab), not
    * vsync, and are ignored.
    */
   private noteFrameInterval(now: number): void {

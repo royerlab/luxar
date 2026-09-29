@@ -1,9 +1,8 @@
 /**
  * Worker dispatch perf counters (`worker.dispatches`, `worker.busyMs`,
  * `worker.misroutes`): the pure {@link DispatchTracker}, plus one WorkerPool
- * integration case showing the misroute the counter exists to expose — a
- * caller abort settles `activeQueries` while the worker is still busy, so the
- * least-busy picker re-selects it although another worker is idle.
+ * integration case showing that a caller abort keeps `activeQueries` busy
+ * until the worker settles, avoiding a misroute to that worker.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

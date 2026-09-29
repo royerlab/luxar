@@ -299,12 +299,19 @@ class SessionImpl implements UpdateSession {
    * Draw the sequence at end() (in COMPLETION order) rather than at
    * construction (dispatch order). Used by depth-sort passes, which end
    * when their ordering is APPLIED — many frames after dispatch and out of
-   * dispatch order relative to superseded/abandoned siblings. A
-   * dispatch-time seq would let a later-completing-but-lower-seq applied
-   * pass be dropped by mergeEntryValues' stale-guard (issue #713). Only
-   * ever set on a root (leaf) session — depth-sort passes have no children.
+   * dispatch order relative to superseded/abandoned siblings, and by
+   * refinement passes, up to four of which run at once (B9c) and finish in
+   * any order. A dispatch-time seq would let a later-completing-but-lower-seq
+   * pass be dropped by mergeEntryValues' stale-guard (issue #713). Only ever
+   * set on a root session. Its children end BEFORE it, so the tree's seq is
+   * drawn once, at the FIRST end() anywhere in it, and shared by the rest
+   * ({@link resolveSeq}) — one tree still accounts to one pass.
    */
   private readonly deferSeqUntilEnd: boolean;
+  /** The root of this session's tree (itself for a root). */
+  private readonly root: SessionImpl;
+  /** A deferred root's seq, once drawn. */
+  private drawnSeq: number | null = null;
   // Set by markSkipped() so end() bypasses duration measurement + EMA.
   // Without this flag, skipped entries still record the begin→markSkipped→end
   // overhead because markSkipped() zeroes lastMs/avgMs BEFORE end() runs them.
@@ -340,6 +347,7 @@ class SessionImpl implements UpdateSession {
     // Children inherit their parent's seq (one tree = one update); only a
     // root session may defer.
     this.deferSeqUntilEnd = parent ? false : deferSeqUntilEnd;
+    this.root = parent ? parent.root : this;
     this.generation = profiler._currentGeneration();
 
     // Add to parent's children if we have a parent
@@ -388,15 +396,22 @@ class SessionImpl implements UpdateSession {
     }
 
     // Stamp the owning update so the persistent-tree merge can decide
-    // between sum-within-update, rollover, and stale-drop. Depth-sort passes
-    // draw their seq HERE (completion order) so a late-completing applied
-    // pass is never dropped as stale by a superseded sibling that ended
-    // first (issue #713); all other sessions use their construction-time seq.
-    const seq = this.deferSeqUntilEnd ? this.profiler._nextSortSeq() : this.seq;
+    // between sum-within-update, rollover, and stale-drop. Depth-sort and
+    // refinement trees draw their seq at their first end() (completion order)
+    // so a late-completing pass is never dropped as stale by a sibling that
+    // ended first (issue #713, B9c); updates use their construction-time seq.
+    const seq = this.root.resolveSeq();
     this.entry.lastSeq = seq;
 
     // Merge into profiler's persistent state
     this.profiler._mergeEntry(this.entry, this.parent?.path, this.rootName, seq);
+  }
+
+  /** This (root) session's seq: the construction-time one, or drawn once on first use. */
+  private resolveSeq(): number {
+    if (!this.deferSeqUntilEnd) return this.seq;
+    this.drawnSeq ??= this.profiler._nextDeferredSeq(this.rootName);
+    return this.drawnSeq;
   }
 
   setMetadata(meta: Partial<TimingMetadata>): void {
@@ -502,12 +517,12 @@ export class UpdateProfiler {
   // Uses AsyncLocalStorage-like pattern: each sync execution path has its own context
   private currentSessionContext: UpdateSession | null = null;
 
-  // Per-update sequence for the 'Total Update' tree (bumped in beginUpdate)
-  // and per-pass sequence for the 'LOD Refinement' tree (bumped in
-  // beginPass); those sessions capture their seq at (root) construction. The
-  // 'Depth Sort' tree uses `sortSeq` differently: a pass draws its seq at
-  // end() (COMPLETION order) via _nextSortSeq(), because a pass ends when
-  // its ordering is applied — out of dispatch order (issue #713). The merge
+  // Per-update sequence for the 'Total Update' tree (bumped in beginUpdate),
+  // captured at root construction. The 'LOD Refinement' (`passSeq`) and
+  // 'Depth Sort' (`sortSeq`) trees draw theirs at end() (COMPLETION order)
+  // via _nextDeferredSeq(): a sort pass ends when its ordering is applied —
+  // out of dispatch order (issue #713) — and refinement passes run up to four
+  // at once (B9c), finishing in any order. The merge
   // uses the seq to sum same-update siblings, roll over on a new update, and
   // DROP merges that arrive late from a superseded update.
   private updateSeq = 0;
@@ -557,13 +572,13 @@ export class UpdateProfiler {
   }
 
   /**
-   * Internal: draw the next depth-sort sequence number. Called by a
-   * deferred-seq `SessionImpl` (a depth-sort pass) at end() so its seq
-   * reflects COMPLETION order, not dispatch order (issue #713). NOT a
-   * public API.
+   * Internal: draw the next sequence number of a deferred-seq tree. Called by
+   * a deferred-seq `SessionImpl` (a depth-sort or refinement pass) at its
+   * tree's first end() so its seq reflects COMPLETION order, not dispatch
+   * order (issue #713, B9c). NOT a public API.
    */
-  _nextSortSeq(): number {
-    return ++this.sortSeq;
+  _nextDeferredSeq(rootName: string): number {
+    return rootName === REFINEMENT_ROOT ? ++this.passSeq : ++this.sortSeq;
   }
 
   // Listeners for UI updates
@@ -608,8 +623,9 @@ export class UpdateProfiler {
    * per-node top-level sessions.
    */
   beginPass(): UpdateSession {
-    this.passSeq++;
-    return new SessionImpl(REFINEMENT_ROOT, null, this, REFINEMENT_ROOT, this.passSeq);
+    // Seq drawn at end(), as for depth sort below: concurrent refinement
+    // steps (B9c) each open a pass and finish in any order.
+    return new SessionImpl(REFINEMENT_ROOT, null, this, REFINEMENT_ROOT, 0, true);
   }
 
   /**

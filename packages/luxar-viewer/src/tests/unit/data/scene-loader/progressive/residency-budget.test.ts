@@ -174,11 +174,14 @@ describe('RefinementResidencyBudget', () => {
   it('sums footprints across nodes, which is the whole point', () => {
     // Laniakea's shape: each node is individually affordable and the scene is
     // collectively fatal. A per-node budget would admit all ten.
+    // Each step records before the next is admitted — serial steps; steps that
+    // overlap are the concurrency suite's (residency-budget-concurrency.test.ts).
     const budget = new RefinementResidencyBudget(100 * MB);
     for (let i = 0; i < 4; i++) {
       expect(budget.admit(`/node${i}`, residency(20 * MB, 20)).admitted).toBe(true);
+      budget.record(`/node${i}`, residency(21 * MB, 21));
     }
-    // Four measured 20 MiB ladders plus one 1 MiB reservation apiece.
+    // Four 20 MiB ladders that each measured one 1 MiB rung more.
     expect(budget.residentBytes).toBe(84 * MB);
     // The fifth crosses the ceiling collectively, though it is the same size.
     expect(budget.admit('/node4', residency(20 * MB, 20))).toMatchObject({

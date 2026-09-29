@@ -38,11 +38,17 @@ import { computeScalarRangeUniforms } from '../../../../rendering/materials/_sha
 import { loadSceneNodes } from '../../../../data/scene-loader/nodes/load-scene-nodes';
 import { applyEffectiveAttrs } from '../../../../data/scene-loader/view-state/effective-attrs';
 import { findObjectByName } from '../../../../utils/scene-graph-index';
+import { log } from '../../../../utils/log';
 import { makeTestNodeBuildCtx } from '../../../helpers/make-test-node-build-ctx';
 import type { NodeBuildCtx } from '../../../../data/scene-loader/nodes/build-ctx';
 import type { SceneNode } from '../../../../data/data-loader-types';
 import type { AnimationController } from '../../../../scene/animation/animation-controller';
 import type { PartitionGroupChild } from '../../../../scene/lod-group-registry';
+import type { PointsMetadata } from '../../../../types/points';
+import type { LinesMetadata, LinesDataLoader } from '../../../../types/lines';
+import type { MeshMetadata, MeshDataLoader } from '../../../../types/mesh';
+import type { DataLoader } from '../../../../data/data-loader-types';
+import { configureDepthSort, disposeDepthSort } from '../../../../rendering/depth-sort-coordinator';
 
 const AMPLITUDE_RANGE: [number, number] = [5.409804826328468e-10, 0.06948927677778476];
 
@@ -131,7 +137,7 @@ interface Harness {
  * panel on the result — the order the app uses (`loadDataset` hydrates the
  * panel after `loadSceneData` resolves).
  */
-async function loadAndInitPanel(graph = sceneGraph()): Promise<Harness> {
+async function loadAndInitPanel(graph: SceneNode = sceneGraph()): Promise<Harness> {
   const root = new THREE.Group();
   root.name = 'LuxarScene';
   const container = document.createElement('div');
@@ -265,6 +271,154 @@ describe('LayersPanel — a partition part activated after the panel initialised
     const fresh = uniformsOf(h.root, '/outer/n/part_0').uColormapTex.value;
     expect(eager).toBe(getColormapTexture('viridis'));
     expect(fresh).toBe(eager);
+  });
+
+  it.each(['points', 'lines', 'mesh'] as const)(
+    'replays a panel-selected colormap to a late %s leaf before its first data commit',
+    (type) => {
+      const makeLeaf = (index: number): SceneNode => ({
+        path: `/nuclei/part_${index}`,
+        type,
+        attrs: {
+          type,
+          has_scalars: true,
+          scalar_data_range: [0, 10],
+          n_points: 1,
+          n_segments: 1,
+          n_vertices: 3,
+          n_faces: 1,
+          ndim: 4,
+          max_width: 1,
+        } as SceneNode['attrs'],
+        hasSpatialIndex: false,
+        children: [],
+      });
+      const leaves = [makeLeaf(0), makeLeaf(1)];
+      const wrapper: SceneNode = {
+        path: '/nuclei',
+        type: 'group',
+        attrs: {
+          type: 'group',
+          kind: 'partition',
+          layer: true,
+          display_type: type,
+        } as SceneNode['attrs'],
+        hasSpatialIndex: false,
+        children: leaves,
+      };
+      const graph: SceneNode = {
+        path: '/',
+        type: 'scene',
+        attrs: {} as SceneNode['attrs'],
+        hasSpatialIndex: false,
+        children: [wrapper],
+      };
+      const root = new THREE.Group();
+      root.name = 'LuxarScene';
+      const factory = new NodeFactory();
+      const loader = { dispose: vi.fn() };
+      const create = (leaf: SceneNode): THREE.Mesh => {
+        const attrs = applyEffectiveAttrs(graph, leaf);
+        if (type === 'points') {
+          return factory.createEmptyPointsNode(
+            leaf.path,
+            attrs as unknown as PointsMetadata,
+            loader as unknown as DataLoader
+          );
+        }
+        if (type === 'lines') {
+          return factory.createEmptyLinesNode(
+            leaf.path,
+            attrs,
+            attrs as unknown as LinesMetadata,
+            loader as unknown as LinesDataLoader
+          );
+        }
+        return factory.createEmptyMeshNode(
+          leaf.path,
+          attrs as unknown as MeshMetadata,
+          loader as unknown as MeshDataLoader
+        );
+      };
+      const eager = create(leaves[1]);
+      const colormapActive = (mesh: THREE.Mesh): boolean =>
+        'USE_COLORMAP' in ((mesh.material as THREE.ShaderMaterial).defines ?? {});
+      // The eager leaf's geometry has received its scalar data. The late
+      // leaf will still have only its placeholder when the panel replays.
+      eager.geometry.userData.hasScalars = true;
+      root.add(eager);
+      const container = document.createElement('div');
+      const panel = new LayersPanel(container, makeAnimationController());
+      panel.initFromScene(root, graph);
+      panel.setLayer('/nuclei', { colormap: 'viridis' });
+      expect(colormapActive(eager)).toBe(true);
+
+      const late = create(leaves[0]);
+      root.add(late);
+      const warning = vi.spyOn(log, 'warning');
+      panel.applyLayerStateToNewLeaf(graph, leaves[0].path, late);
+
+      expect(colormapActive(late)).toBe(true);
+      expect(warning).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.stringContaining('Scalar colormap suppressed')
+      );
+      const fresh = uniformsOf(root, leaves[0].path);
+      const existing = uniformsOf(root, leaves[1].path);
+      expect(fresh.uScalarMin.value).toBeCloseTo(existing.uScalarMin.value, 9);
+      expect(fresh.uScalarScale.value).toBeCloseTo(existing.uScalarScale.value, 6);
+      warning.mockRestore();
+      panel.dispose();
+    }
+  );
+
+  it('a part activated after a switch INTO a sorted mode asks for no extra pass', async () => {
+    // Its first commit registers it with the sorter under the LIVE mode; a
+    // switch hook on the empty placeholder would only queue a full re-sweep
+    // for every part a playback step activates.
+    const requestReprocess = vi.fn();
+    configureDepthSort({ getCamera: () => null, requestRender: vi.fn(), requestReprocess });
+    try {
+      const graph = sceneGraph();
+      graph.children![0].attrs.blending_mode = 'additive';
+      const h = await loadAndInitPanel(graph);
+      h.panel.setLayer('/nuclei', { blendingMode: 'normal' });
+      requestReprocess.mockClear();
+
+      await h.deferred.activate!();
+
+      const fresh = findObjectByName(h.root, '/nuclei/part_0') as THREE.Mesh;
+      expect((fresh.material as THREE.Material).userData.blendingMode).toBe('normal');
+      expect(requestReprocess).not.toHaveBeenCalled();
+    } finally {
+      disposeDepthSort();
+    }
+  });
+
+  it('a nested layer hidden before its part was activated stays hidden', async () => {
+    const graph = sceneGraph();
+    const wrapper = graph.children![0];
+    const leaf = { ...part(0), path: '/nuclei/part_0/splats' };
+    wrapper.children![0] = {
+      path: '/nuclei/part_0',
+      type: 'group',
+      attrs: {
+        type: 'group',
+        layer: true,
+        child_index: 0,
+        position_bounds: { min: [0, 0, 0, 0], max: [1, 1, 1, 0] },
+      } as SceneNode['attrs'],
+      hasSpatialIndex: false,
+      children: [leaf],
+    };
+    const h = await loadAndInitPanel(graph);
+    h.panel.setLayer('/nuclei/part_0', { visible: false });
+
+    await h.deferred.activate!();
+
+    const group = findObjectByName(h.root, '/nuclei/part_0')!;
+    expect(group.visible).toBe(false);
+    expect(group.userData.layerVisible).toBe(false);
   });
 
   it('a leaf of a DIFFERENT scene graph is left alone (stale panel / dataset switch)', async () => {

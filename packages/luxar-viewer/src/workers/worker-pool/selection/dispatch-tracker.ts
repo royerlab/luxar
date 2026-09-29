@@ -1,12 +1,11 @@
 /**
  * Real in-flight accounting for worker dispatches — instrumentation only.
  *
- * `activeQueries` (see `least-busy.ts`) is decremented when the CALLER's race
- * settles, which includes an abort that settles long before the worker is
- * done: the WASM task keeps running. This tracker instead counts a task from
- * dispatch until the WORKER's own promise settles, per worker, alongside (not
- * replacing) `activeQueries`. It never influences selection; it only feeds the
- * perf counters:
+ * `activeQueries` (see `least-busy.ts`) holds a slot until the worker's
+ * timeout-guarded promise settles, even if the caller has already aborted.
+ * This tracker counts from dispatch until the worker's own task promise
+ * settles, per worker, alongside (not replacing) `activeQueries`. It never
+ * influences selection; it only feeds the perf counters:
  *
  * - `worker.dispatches` — every task sent to a worker.
  * - `worker.busyMs` — summed dispatch→worker-settle time of every task.
@@ -24,6 +23,7 @@ const S_DISPATCHES = perfCounters.slot('worker.dispatches');
 const S_BUSY_MS = perfCounters.slot('worker.busyMs');
 const S_MISROUTES = perfCounters.slot('worker.misroutes');
 
+/** Records worker-side dispatch lifetimes for routing diagnostics. */
 export class DispatchTracker {
   /** Real (worker-side) in-flight task count per worker; absent means 0. */
   private readonly realInFlight = new Map<Worker, number>();

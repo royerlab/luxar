@@ -759,11 +759,13 @@ function reregisterAfterLateWorkerInit(): void {
   // `requestReprocess` is `SceneLoader.updateView({})`, and by now a view
   // sweep may well be in flight — the retry is only dispatched from a frame
   // where none was, and the init it awaited took real time. That is not a lost
-  // call: the loader's serialization branch ABORTS the in-flight pass (its
-  // commit is skipped), parks this state as pending, and re-enters
-  // `updateView` with it as the aborted pass unwinds, so the re-commit these
-  // stamp-less nodes need always happens. The accepted cost is the aborted
-  // pass's fetch/decode work, which the winning pass redoes. Gating on
+  // call: the loader's serialization branch parks this state as pending and
+  // re-enters `updateView` with it once the in-flight pass unwinds, so the
+  // re-commit these stamp-less nodes need always happens. The in-flight pass
+  // is usually ABORTED first (its commit skipped); only one that has gone
+  // `DRAG_COMMIT_INTERVAL_MS` without a commit is let through to commit
+  // before the parked state runs. The accepted cost of the abort is the
+  // aborted pass's fetch/decode work, which the winning pass redoes. Gating on
   // `isLoadInProgress` instead would be the worse trade: the stamps are
   // already cleared at this point, so a skipped reprocess leaves the nodes
   // stamp-less and unsorted indefinitely — the bug itself.
@@ -1964,7 +1966,8 @@ export function evaluateDepthSortPerFrame(): boolean {
     if (moved) scheduleSort(mesh, nodeId);
   }
 
-  return assignGlobalRenderOrder() || takeDrawnStateChanged();
+  const ordered = assignGlobalRenderOrder();
+  return takeDrawnStateChanged() || ordered;
 }
 
 /** Read and clear {@link drawnStateChanged}. */

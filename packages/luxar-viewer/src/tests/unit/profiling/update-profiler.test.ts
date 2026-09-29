@@ -922,6 +922,37 @@ describe('UpdateProfiler — refinement passes (beginPass)', () => {
     expect(findChild(profiler.getTimings(), 'Points (/p)')!.lastMs).toBe(5);
   });
 
+  it('keeps a concurrent pass that finishes after a later-started one (B9c)', () => {
+    // Up to four refinement steps run at once, each its own pass. A pass that
+    // started first but finished last used to carry the older seq and was
+    // dropped as stale by the root merge — so the slowest node, the one most
+    // worth seeing, vanished from the tree.
+    const profiler = new UpdateProfiler();
+    for (const path of ['/a', '/b']) {
+      const warm = profiler.beginPass();
+      warm.begin(`GSplats (${path})`).end();
+      warm.end();
+    }
+
+    const a = profiler.beginPass();
+    const aNode = a.begin('GSplats (/a)');
+    const b = profiler.beginPass();
+    const bNode = b.begin('GSplats (/b)');
+    clock.advance(10);
+    bNode.end();
+    b.end();
+    clock.advance(40);
+    aNode.end();
+    a.end();
+
+    const refinement = profiler.getRefinementTimings();
+    expect(refinement.count).toBe(4);
+    expect(refinement.lastMs).toBe(50);
+    const aRow = findChild(refinement, 'GSplats (/a)')!;
+    expect(aRow.lastMs).toBe(50);
+    expect(aRow.stale).toBe(false);
+  });
+
   it('reset clears the refinement tree and pass counter', () => {
     const profiler = new UpdateProfiler();
     const pass = profiler.beginPass();

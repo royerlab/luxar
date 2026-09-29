@@ -195,7 +195,11 @@ export async function loadMeshNode(
   const { placeholder, loader } = await loadMeshNodeCheap(node, parentThree, loc, ctx);
   // A registry-activated partition part: the activating pass sweeps it (B4).
   if (ctx.registerOnly) {
-    ctx.registry.registerMeshLoader(node.path, loader);
+    // Built after a dataset switch (the activation is fire-and-forget): the
+    // loader registry outlives the dataset, so a dead dataset's loader is
+    // disposed, never registered where the next dataset's passes sweep.
+    if (ctx.isDatasetLive()) ctx.registry.registerMeshLoader(node.path, loader);
+    else loader.dispose();
     return placeholder;
   }
   try {

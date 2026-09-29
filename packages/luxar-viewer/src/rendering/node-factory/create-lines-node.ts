@@ -205,16 +205,15 @@ export function createEmptyLinesNode(
     endJointCode: new Float32Array(0),
     segmentCount: 0,
   };
-  // When the node carries a scalar field + colormap, declare empty
+  // When the node carries a scalar field, declare empty
   // scalar arrays on the placeholder so `createInstancedLinesMesh`
   // stamps `userData.hasScalars = true` and the fail-closed colormap
   // guard in `createLinesNode` passes at material-creation time.
   // Without them the guard sees no scalars, logs "Colormap suppressed",
   // and nothing ever re-enables the LUT once real scalars stream in.
-  // Gate on the SAME `nodeAttrs` fields the colormap-application path
-  // above reads, so the placeholder matches exactly when colormap will
-  // apply. Mirrors `create-points-node.ts::createEmptyPointsNode`.
-  if (nodeAttrs.colormap && nodeAttrs.has_scalars) {
+  // A colormap selected later in the Layers panel must pass that guard
+  // before data streams in. Mirrors `create-points-node.ts::createEmptyPointsNode`.
+  if (nodeAttrs.has_scalars) {
     emptyConfig.startScalars = new Float32Array(0);
     emptyConfig.endScalars = new Float32Array(0);
   }

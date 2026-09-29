@@ -226,7 +226,7 @@ describe('BloscDecodeDispatcher batching', () => {
     const batches: Item[][] = [];
     const port: CodecPoolPort = {
       isInitialized: () => true,
-      getIdleWorkerCount: () => idle,
+      getIdleWarmWorkerCount: () => idle,
       ensureCodecsWarm: () => true,
       runDecode: (_op, fn) =>
         fn({
@@ -316,7 +316,7 @@ describe('BloscDecodeDispatcher batching', () => {
   it('rejects only the chunk the worker reported an error for', async () => {
     const port: CodecPoolPort = {
       isInitialized: () => true,
-      getIdleWorkerCount: () => 1,
+      getIdleWarmWorkerCount: () => 1,
       ensureCodecsWarm: () => true,
       runDecode: async () => [{ error: 'bad chunk' }, { data: new Uint8Array([1]) }] as never,
     };

@@ -7,9 +7,10 @@
  * selection's chunks together; a warm L1 hands many back at once) are queued
  * and flushed as batches of at most {@link MAX_BATCH_CHUNKS} chunks /
  * {@link MAX_BATCH_BYTES} decoded bytes. A flush is split so the chunks spread
- * over the IDLE workers first (one batch per idle worker, sized evenly) rather
- * than piling onto one — every batch still goes through the pool's least-busy
- * selection, whose slot stays busy until the worker settles.
+ * over the IDLE WARM workers first (one batch per such worker, sized evenly)
+ * rather than piling onto one — every batch still goes through the pool's
+ * least-busy selection among warm workers, whose slot stays busy until the
+ * worker settles. A worker still warming its codec gets no batch.
  *
  * Returns `null` (decode locally) while the pool has no usable worker — the
  * first paint must not wait for workers to spawn — for a chunk below
@@ -45,11 +46,11 @@ export const MIN_OFFLOAD_DECODED_BYTES = 16 * 1024;
 export interface CodecPoolPort {
   /** At least one worker is usable right now. */
   isInitialized(): boolean;
-  /** Workers with no task in flight. */
-  getIdleWorkerCount(): number;
+  /** WARM workers with no task in flight (the ones a batch may go to). */
+  getIdleWarmWorkerCount(): number;
   /** A worker's codec is warm; if not, start warming one (decode locally meanwhile). */
   ensureCodecsWarm(): boolean;
-  /** Run `fn` on the least-busy worker (timeout-guarded, never pool-aborted). */
+  /** Run `fn` on the least-busy WARM worker (timeout-guarded, never pool-aborted). */
   runDecode<T>(op: string, fn: (api: Remote<DataWorkerAPI>) => Promise<T>): Promise<T>;
 }
 
@@ -111,8 +112,8 @@ export class BloscDecodeDispatcher implements BloscDecodeBackend {
     const items = this.queue;
     this.queue = [];
     if (items.length === 0) return;
-    // Spread over the idle workers: one batch each, evenly sized, capped.
-    const idle = Math.max(1, this.pool.getIdleWorkerCount());
+    // Spread over the idle WARM workers: one batch each, evenly sized, capped.
+    const idle = Math.max(1, this.pool.getIdleWarmWorkerCount());
     const perBatch = Math.min(MAX_BATCH_CHUNKS, Math.ceil(items.length / idle));
     for (const batch of splitBatches(items, perBatch)) this.dispatch(batch);
   }

@@ -29,7 +29,7 @@ scene/
 ├── dims/                           # Pure nD step and dimension-selection helpers
 ├── scene-dims-manager.ts           # nD dimension coordination
 ├── dimension-loading.ts            # Current-slice loading + playback prefetch
-├── view-context.ts                 # The frame's camera snapshot (view, projection, frustum, sizes), built once per frame
+├── view-context.ts                 # The camera snapshot (view, projection, frustum, sizes); rebuilt on a camera change or per-frame invalidate
 ├── lod-group-registry.ts           # Per-frame LOD-group selector (policy/state machine)
 ├── lod-selector-math.ts            # Selector math: world-box fold, box→area/diagonal projections, hysteresis pick
 ├── lod-blend.ts                    # Pure opacity math: level-dissolve curve + energy compensation
@@ -636,14 +636,20 @@ deferred part is activated inside a loader pass (`activatePartitionParts`): a
 view change activates every deferred part its slice needs; a deferred part that
 enters the frustum and the committed slice asks for a targeted resync, which
 activates it; the t+1 slice prefetch activates the next slice's parts ahead of
-it. An activation only attaches the part's placeholders and REGISTERS its
-loaders (`NodeBuildCtx.registerOnly`) — it loads no data and changes nothing
-drawn. The pass that awaited it sweeps the new loaders itself, with its own
-directives (playback budget, pinned rungs: no initial-load lookahead), and
-commits them with the rest of the pass — one commit, one render per step. A
-part activated ahead by the prefetch is simply found registered by its slice's
-pass; only an unclaimed activation for a part the committed view already shows
-asks for a resync.
+it, and shadow-warms their loaders once they are registered
+(`SlicePrefetcher.prefetchTargets`). An activation only attaches the part's
+placeholders and REGISTERS its loaders (`NodeBuildCtx.registerOnly`) — it
+loads no data and changes nothing drawn; one that settles after its dataset
+was switched away registers nothing (its loaders are disposed). The pass that
+awaited it sweeps the new loaders itself, with its own directives (playback
+budget, pinned rungs: no initial-load lookahead), and commits them with the
+rest of the pass — one commit, one render per step. That claim is the pass's
+abort signal: a part activated ahead by the prefetch is simply found
+registered by its slice's pass, and an activation settling with NO live claim
+(unclaimed, or every pass that awaited it was superseded) asks for a resync
+when the committed view shows the part. A rejected activation records a
+retryable failure on the part's path and is not re-requested by itself; Retry
+(`retryLazyChildByNodePath`) re-arms it.
 
 `hasVisiblePendingPartitionResync()` publishes the held set to the wide
 load-activity and perf-settle predicates: a pending edge blocks settling only

@@ -363,7 +363,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   async planPrefetch(viewState: GSplatsViewState): Promise<GSplatsPrefetchPlan> {
     const fallback = this.prefetchByteUpperBound;
     try {
-      await this.ensureInitialized();
+      await this.ensureInitialized('speculative');
       const ranges = await this.queryVisibleSplatRanges(viewState);
       return {
         bytes: this.prefetchArrays().reduce(
@@ -599,7 +599,11 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
    * `priority` classes the `chunk_bounds` read of an initialisation THIS call
    * starts (B6: the progressive loader warms rung k+1 at `'refinement'` while
    * rung k loads). A later call without one needs the index now, so it raises
-   * an in-flight warm to `demand` — no priority inversion behind a warm.
+   * an in-flight warm to `demand` — no priority inversion behind a warm. So
+   * the speculative entry points (`planPrefetch`, `prefetchChunks`,
+   * `prefetchChunkBoundary`) pass `'speculative'`: they are not a frame
+   * waiting on the index, and an untagged call from them would raise a
+   * refinement-class warm to demand.
    */
   async ensureInitialized(priority?: FetchPriority): Promise<void> {
     if (priority === undefined) this._initPriority?.raise('demand');
@@ -1303,7 +1307,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     plannedRanges?: readonly SplatRange[]
   ): Promise<void> {
     if (signal?.aborted) return;
-    await this.ensureInitialized();
+    await this.ensureInitialized('speculative');
 
     if (!this.arrays.centers) return;
 
@@ -1331,7 +1335,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     current: GSplatsViewState,
     predicted: GSplatsViewState
   ): Promise<void> {
-    await this.ensureInitialized();
+    await this.ensureInitialized('speculative');
     if (!this.chunkIndex || !this.arrays.centers) {
       await this.prefetchChunks(predicted);
       return;

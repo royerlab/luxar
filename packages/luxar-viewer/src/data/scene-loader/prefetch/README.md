@@ -42,6 +42,11 @@ prefetch/
    foreground ticks — a cold level outlives one frame — so a new `prefetch()`
    is a no-op while a batch runs; only its stall guard, `releaseShadows()`
    (playback end, setup.ts's non-playing branch) and `dispose()` abort it.
+   `prefetchTargets(viewState, …, targets)` instead JOINS the running batch
+   for the loaders at/under `targets`: the partition parts `prefetchSlice`
+   activates for the predicted slice (B4) register only after the batch
+   enumerated its nodes, so they would otherwise be warmed a tick late. One
+   shadow pass per node runs at a time, whichever call queued it.
 5. **In-flight adoption** — each shadow pass registers an in-flight store for
    its S-cache key (`beginShadowStore`); a foreground pass for the same key
    awaits it (`awaitShadowStore`: bounded, and rejects on the foreground's own

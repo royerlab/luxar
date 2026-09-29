@@ -7,8 +7,8 @@
  *
  * - {@link computeEntryWorldBox} — fold a group's per-child nD raw or robust
  *   bounds into one world-space box via ``displayDims`` + ``matrixWorld``.
- * - {@link projectBoxDiagonalPx} — project that box through the camera to a
- *   screen-space pixel diagonal (with near-plane saturation). The legacy
+ * - {@link projectBoxDiagonalPx} — project a box through its box-to-clip
+ *   matrix to a screen-space pixel diagonal (with near-plane saturation). The legacy
  *   ``selector: 'coverage'`` metric.
  * - {@link projectBoxAreaFraction} — project the box's inscribed ellipsoid to
  *   the viewport AREA its screen-space ellipse covers, in rect units (same
@@ -32,9 +32,8 @@ import { type BoundingBox, transformBoundingBox } from './scene-manager/clipping
 const HYSTERESIS_RATIO = 0.1;
 
 /**
- * Module-scope scratch for ``projectBoxDiagonalPx``'s projection × view
- * product. Single-threaded — ``evaluatePerFrame`` is the only per-frame entry
- * point, so reusing one matrix across all entries within a frame is safe.
+ * Module-scope scratch for standalone callers' projection × view product.
+ * Calls consume it synchronously before the next projection overwrites it.
  */
 const PROJ_VIEW_SCRATCH = new THREE.Matrix4();
 
@@ -51,8 +50,11 @@ const PROJ_VIEW_SCRATCH = new THREE.Matrix4();
 const W_EPSILON = 1e-6;
 
 /**
- * Project a world-space :type:`BoundingBox` through the camera and
+ * Project a :type:`BoundingBox` through its box-to-clip matrix and
  * return the diagonal of the screen-space AABB in pixels.
+ * The box and matrix must use the same coordinate frame: the registry passes
+ * group-local bounds with projection × view × group-world, while callers that
+ * omit the matrix pass world bounds and use projection × matrixWorldInverse.
  *
  * Treats the bbox's 8 corners independently (works for both
  * perspective and orthographic projection without a closed-form
@@ -60,7 +62,7 @@ const W_EPSILON = 1e-6;
  * renderer canvas.
  *
  * **Near-plane saturation.** Projects with an explicit homogeneous ``w`` (the
- * combined ``projectionMatrix * matrixWorldInverse``, not THREE's
+ * supplied box-to-clip matrix (or projection × matrixWorldInverse), not THREE's
  * ``Vector3.project`` which divides by ``w`` unguarded). If any corner has
  * ``w <= W_EPSILON`` — i.e. the camera is inside or straddling the box — the
  * group fills the screen, so we return ``+Infinity`` to saturate the selector
@@ -76,9 +78,9 @@ export function projectBoxDiagonalPx(
   box: BoundingBox,
   camera: THREE.Camera,
   viewport: { width: number; height: number },
-  precomputedProjView?: THREE.Matrix4
+  boxToClip?: THREE.Matrix4
 ): number {
-  const rect = projectBoxNdcRect(box, camera, precomputedProjView);
+  const rect = projectBoxNdcRect(box, camera, boxToClip);
   if (rect === null) return Number.POSITIVE_INFINITY;
   const widthPx = rect.halfW * viewport.width;
   const heightPx = rect.halfH * viewport.height;
@@ -103,9 +105,13 @@ export function projectBoxDiagonalPx(
 export const DEGENERATE_RECT_HALF_EXTENT = 1e-3;
 
 /**
- * Project a world-space :type:`BoundingBox` through the camera and return the
+ * Project a :type:`BoundingBox` through its box-to-clip matrix and return the
  * fraction of the viewport AREA it **visibly** covers — the metric for
  * ``selector: 'screen-area'``.
+ * As with {@link projectBoxDiagonalPx}, bounds are group-local when the
+ * registry supplies projection × view × group-world, or world-space when the
+ * matrix is omitted and projection × matrixWorldInverse is used; the inscribed
+ * ellipsoid below is taken in that same frame.
  *
  * **Orientation-stable: the box's inscribed ellipsoid, not its corners.** The
  * screen rect of a box's 8 corners grows by up to ~1.7x between a face-on and a
@@ -161,11 +167,12 @@ export const DEGENERATE_RECT_HALF_EXTENT = 1e-3;
 export function projectBoxAreaFraction(
   box: BoundingBox,
   camera: THREE.Camera,
-  precomputedProjView?: THREE.Matrix4
+  boxToClip?: THREE.Matrix4
 ): number {
-  // Same shared projection × view as projectBoxNdcRect (see there).
+  // The box-to-clip matrix when the registry supplies one (group-local
+  // bounds), else the shared projection × view (world-space bounds).
   const m =
-    precomputedProjView ??
+    boxToClip ??
     PROJ_VIEW_SCRATCH.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
   const ellipse = projectInscribedEllipse(box, m.elements);
   if (ellipse === ELLIPSE_STRADDLES) return Number.POSITIVE_INFINITY;
@@ -288,17 +295,14 @@ const NDC_RECT_SCRATCH = { halfW: 0, halfH: 0, minX: 0, maxX: 0, minY: 0, maxY: 
 function projectBoxNdcRect(
   box: BoundingBox,
   camera: THREE.Camera,
-  precomputedProjView?: THREE.Matrix4
+  boxToClip?: THREE.Matrix4
 ): { halfW: number; halfH: number; minX: number; maxX: number; minY: number; maxY: number } | null {
-  // Combined projection × view. ``evaluatePerFrame`` already builds this product
-  // once per frame (``FRUSTUM_MATRIX_SCRATCH``) and passes it in via
-  // ``precomputedProjView`` so we don't recompute the 4×4 per group. Standalone
-  // callers (unit tests) omit it and we fall back to a module-scope scratch (no
-  // per-call allocation). Unlike THREE's ``Vector3.project`` this exposes ``w``
-  // so we can guard the near plane. ``evaluatePerFrame`` is the single per-frame
-  // entry point, so sharing the scratch is safe.
+  // The registry passes projection × view × group-world for group-local bounds.
+  // Standalone callers omit it and use projection × matrixWorldInverse with world
+  // bounds. Unlike THREE's ``Vector3.project`` this exposes ``w`` so we can
+  // guard the near plane. The module scratch has no per-call allocation.
   const m =
-    precomputedProjView ??
+    boxToClip ??
     PROJ_VIEW_SCRATCH.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
   const e = m.elements; // THREE.Matrix4 is column-major flat[16]
   let minX = Infinity;

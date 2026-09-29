@@ -379,14 +379,14 @@ export function createEmptyPointsNode(
       dtypes: {},
     },
   };
-  // When the node carries a scalar field + colormap, stamp an empty
-  // scalars field on the placeholder data. `createPointsGeometry` turns
+  // When the node carries a scalar field, stamp an empty scalars field
+  // on the placeholder data. `createPointsGeometry` turns
   // field presence into the `userData.hasScalars` stamp that the
   // fail-closed colormap guard (`supportsScalarColormap`) reads at
   // material-creation time — the texture-storage analog of the
-  // interleaved era's empty `aScalar` pre-bind, so scalar+colormap
-  // nodes are built colormap-enabled before real data streams in.
-  if (attrs.has_scalars && attrs.colormap) {
+  // interleaved era's empty `aScalar` pre-bind. A colormap selected later
+  // in the Layers panel must pass the same guard before data streams in.
+  if (attrs.has_scalars) {
     emptyData.scalars = new Float32Array(0) as LoadedPointsData['scalars'];
   }
   return createPointsNode(
