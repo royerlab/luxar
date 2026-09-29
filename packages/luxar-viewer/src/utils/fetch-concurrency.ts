@@ -35,7 +35,8 @@
  * 24 keeps enough HTTP/2 streams ready to fill ordinary broadband while
  * bounding a representative 500 KiB chunk wave to about 12 MiB. Shared
  * globally — the cap is on total concurrency through response-body
- * consumption, not per store or per node. Metadata has its own four-slot lane.
+ * consumption, not per store or per node. Metadata has its own lane (four
+ * slots normally, two after a plain `http:` URL is seen).
  */
 export const MAX_CONCURRENT_CHUNK_FETCHES = 24;
 export const MAX_CONCURRENT_METADATA_FETCHES = 4;

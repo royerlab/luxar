@@ -133,10 +133,10 @@ Key behaviours:
   deadline starts when body reading begins and is derived from `Content-Length`
   at a 16 KiB/s aggregate floor shared across at most eight active leases, or
   eight stall windows shared across at most four leases when the length is
-  unavailable. Metadata probes use a separate four-slot lane from the 24
-  data-body slots; this prevents lane-level starvation on multiplexed transports,
-  while HTTP/1.1 can still queue both lanes on the browser's per-origin socket
-  pool. A caller-aborted signal exits immediately without consuming retry budget.
+  unavailable. Metadata probes use a separate lane from data bodies: the caps
+  are 24 data + 4 metadata in TLS-only sessions, and shrink to 4 data + 2
+  metadata once an `http:` URL is seen. A caller-aborted signal exits immediately
+  without consuming retry budget.
   The consumer runs inside its fetch-gate lease and may call `readBody()` once;
   returning without reading cancels the body before release.
 

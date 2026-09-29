@@ -29,11 +29,13 @@ precomputes every range's destination offset up front (`rangeDestOffsets` —
 element counts are deterministic per range) and issues all `zarr.get()` calls
 concurrently via `Promise.all`; ranges write into disjoint output spans, so
 resolution order doesn't matter. Network concurrency stays bounded by the
-global data fetch lane (`utils/fetch-concurrency.ts`, 24 slots) and decode
-concurrency by the worker pool. A decoded chunk whose length mismatches the
-precomputed span is clamped with a warning (`clampRangeData`) — over-long data
-is truncated (never corrupts a neighbour's span), short data leaves the tail
-of its span zeroed, mirroring the historical graceful-fallback behavior.
+global fetch gate (`utils/fetch-concurrency.ts`, 24 data + 4 metadata slots in
+TLS-only sessions, shrinking to 4 data + 2 metadata once an `http:` URL is
+seen) and decode concurrency by the worker pool. A decoded chunk whose length
+mismatches the precomputed span is clamped with a warning (`clampRangeData`) —
+over-long data is truncated (never corrupts a neighbour's span), short data
+leaves the tail of its span zeroed, mirroring the historical graceful-fallback
+behavior.
 
 CPU-heavy decodes (broadcast replication, LUT lookup, dequantization) are
 offloaded to the worker pool when `config.dataLoading.performance.useWebWorkers`
