@@ -3455,7 +3455,7 @@ export class LODGroupRegistry {
     // A load that finished this frame, before the post-evaluation walk saw it.
     this.foldLoadTime(child);
     child.loading = true;
-    child.loadStartMs = this.frame.nowMs;
+    child.loadStartMs = this.nowMs();
     child.ensureLoaded();
     return true;
   }

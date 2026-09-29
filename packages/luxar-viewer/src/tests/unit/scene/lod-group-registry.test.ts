@@ -3615,6 +3615,30 @@ function makeCountedChild(
 }
 
 describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
+  it('starts an explicit retry at the current clock time, not the last frame', () => {
+    const state = { clock: 0 };
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => state.clock
+    );
+    const child = makeLazyChild(0.5, () => {});
+    child.nodePath = '/g/child_1';
+    child.failed = true;
+    reg.register(makeEntry([makeChild(0), child], 0, '/g'));
+    reg.evaluatePerFrame();
+    state.clock = 60_000;
+    expect(reg.retryLazyChildByNodePath(child.nodePath)).toBe(true);
+    expect(child.loadStartMs).toBe(60_000);
+    state.clock += 20;
+    child.loading = false;
+    reg.evaluatePerFrame();
+    expect(child.loadEwmaMs).toBe(20);
+  });
+
   it('clears the failure cooldown and re-kicks ensureLoaded for a named lazy leaf', () => {
     const reg = makeRegistry();
     const ensureLoaded = vi.fn();
