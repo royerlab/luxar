@@ -65,6 +65,8 @@ runInitPipeline(ports, partial)
 │                              learning while loaders/refinement are active
 ├── 14. Scene environment     wireSceneEnvironment with the inverse settled
 │                              predicate for capture/refresh/bake scheduling
+│                              (buildEnvironmentSettledPredicate: also waits
+│                              out a LOD level dissolve)
 ├── 15. ResolutionIndicator   targetFPS = ceil(maxFPS/5)*5; show/reset
 │                              on DPR change callback (shown value is
 │                              dpr/nativeDPR — percent of native)

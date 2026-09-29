@@ -5249,7 +5249,7 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
   // by. A poll between evaluates (the offline capture drain, the debug settle
   // probe) used to delete a fade whose wall-clock end had passed, while the
   // DRAWN frame still showed both levels.
-  it.fails('stays capture-unquiescent until an evaluate lands the dissolve, however late the poll', () => {
+  it('stays capture-unquiescent until an evaluate lands the dissolve, however late the poll', () => {
     const { reg, coarse, clock } = dissolveHalfway('additive');
     clock.t += FADE_MS; // over by the clock, but no evaluate has drawn the landing
     expect(coarse.object.visible).toBe(true);
@@ -5260,7 +5260,7 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(reg.isCaptureQuiescent()).toBe(true);
   });
 
-  it.fails('a poll of isAnimating between evaluates keeps the landing recount', () => {
+  it('a poll of isAnimating between evaluates keeps the landing recount', () => {
     const { reg, clock } = dissolveHalfway('additive');
     clock.t += FADE_MS;
     reg.isAnimating(); // e.g. the capture drain or the debug settle probe

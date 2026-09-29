@@ -40,7 +40,7 @@ import { resolveFactories, type AppFactories } from '../factories';
 import type { LuxarAppOptions } from '../options';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import { wireDensityGuard } from './density-guard-wiring';
-import { buildLoadActivityPredicate } from './load-activity';
+import { buildEnvironmentSettledPredicate, buildLoadActivityPredicate } from './load-activity';
 import { wireSceneEnvironment } from './environment-wiring';
 import { getInputProfile } from '../../../utils/input-capabilities';
 import { eventBus } from '../../../utils/cross-layer/event-bus';
@@ -513,21 +513,22 @@ export async function runInitPipeline(
   // learning for those samples. Same predicate the perf probes read as
   // `getPerf().isSettled`, inverted.
   // TRUE while load activity is in flight (the adaptive-DPR manager's sense).
-  const isLoadActive = buildLoadActivityPredicate({
+  const loadActivitySources = {
     getDefaultLoader: () => getSceneLoader('default'),
     isAnyLoadPassInProgress: () => SceneLoaderManager.getInstance().isAnyLoadPassInProgress(),
-  });
+  };
+  const isLoadActive = buildLoadActivityPredicate(loadActivitySources);
   adaptiveDPRManager.setLoadActivityPredicate(isLoadActive);
 
   // The scene environment's live behaviour (re-capture on commit / slice /
-  // appearance change once SETTLED — the same predicate, inverted) and the
-  // `?bakeEnv` one-shot.
+  // appearance change once SETTLED — the same predicate, inverted, that also
+  // waits out a LOD level dissolve) and the `?bakeEnv` one-shot.
   wireSceneEnvironment({
     sceneManager,
     animationController,
     events: ports.events,
     options: ports.options,
-    isSettled: () => !isLoadActive(),
+    isSettled: buildEnvironmentSettledPredicate(loadActivitySources, isLoadActive),
   });
 
   // Dataset/layer changes invalidate the learned DPR bounds (the floor

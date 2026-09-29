@@ -2195,14 +2195,14 @@ export class LODGroupRegistry {
   evaluatePerFrame(): LODFrameChanges {
     if (this.entries.size === 0 && this.partitionEntries.size === 0) return LOD_FRAME_UNCHANGED;
     const displayDims = this.deps.getDisplayDims();
-    if (displayDims.length < 2) return LOD_FRAME_UNCHANGED;
+    if (displayDims.length < 2) return this.skipFrame();
     // The frame's view snapshot: the camera matrices as this frame renders
     // them, whichever callbacks ran before (fly controls do not refresh
     // ``matrixWorldInverse``; the snapshot derives the view itself). A collapsed
     // canvas has no viewport to select for, so the frame is skipped.
     const view = this.view();
     const viewport = view.viewportCss;
-    if (viewport === null) return LOD_FRAME_UNCHANGED;
+    if (viewport === null) return this.skipFrame();
     const camera = view.camera;
 
     this.tick++;
@@ -2292,20 +2292,32 @@ export class LODGroupRegistry {
   }
 
   /**
+   * A frame the registry cannot select for (fewer than two display dims, a
+   * collapsed canvas). No group is evaluated, so no dissolve can land: drop
+   * them all rather than leave {@link isAnimating} true until the view returns
+   * (the next evaluated frame then draws each group's level alone).
+   */
+  private skipFrame(): LODFrameChanges {
+    this.fades.clear();
+    return LOD_FRAME_UNCHANGED;
+  }
+
+  /**
    * Whether a level dissolve is still in flight: the frames it spans are
    * animation frames, drawn although neither the camera nor the data moves.
-   * A dissolve whose group stopped being evaluated (hidden layer) counts until
-   * its own end time, so this never holds the loop awake indefinitely.
+   *
+   * Read-only. Only ``evaluatePerFrame`` retires a dissolve, on the one end
+   * rule it draws by (``levelFade``), so "not animating" means the last
+   * evaluated frame drew one level. A poll between evaluates (the offline
+   * capture drain through {@link isCaptureQuiescent}, the debug settle probe)
+   * used to delete a fade whose wall-clock end had passed while the drawn frame
+   * still showed both levels — releasing the capture on a mid-dissolve frame
+   * and swallowing the landing's ``levelChanged``. Every evaluated entry reaches
+   * ``levelFade`` or drops its fade, so an entry that stops dissolving never
+   * holds this true.
    */
   isAnimating(): boolean {
-    if (this.fades.size === 0) return false;
-    const fadeMs = config.lod.fadeMs;
-    const now = this.nowMs();
-    for (const [path, fade] of this.fades) {
-      if (fade.startMs + (1 - fade.startProgress) * fadeMs > now) return true;
-      this.fades.delete(path);
-    }
-    return false;
+    return this.fades.size > 0;
   }
 
   /**
@@ -2564,7 +2576,7 @@ export class LODGroupRegistry {
       if (!cache) return false; // shouldn't happen — register() populates this.
 
       const worldBox = this.computeWorldBox(entry, displayDims);
-      if (!worldBox) return false;
+      if (!worldBox) return this.dropFade(entry);
 
       // Off-screen gate: if the group's world bounds are entirely outside the
       // camera frustum, hold it at the coarsest *ready* level instead of
@@ -2688,7 +2700,7 @@ export class LODGroupRegistry {
       // `undefined` when a lock index outlives its children (an empty entry is
       // registered on purpose and `setSelectorMode` skips clamping for it):
       // nothing to aspire to, nothing to kick — never throw per frame.
-      if (!target) return false;
+      if (!target) return this.dropFade(entry);
       if (isReady(target)) {
         entry.activeChildIndex = desired;
       } else {
@@ -3186,6 +3198,16 @@ export class LODGroupRegistry {
       return null;
     }
     return fade;
+  }
+
+  /**
+   * Forget ``entry``'s dissolve on an ``evaluateEntry`` path that returns before
+   * ``levelFade`` (so {@link isAnimating} cannot stay true for a group that is no
+   * longer dissolving). Returns ``false``: no level change this frame.
+   */
+  private dropFade(entry: LODGroupEntry): false {
+    this.fades.delete(entry.path);
+    return false;
   }
 
   /** The registry's wall clock, in milliseconds (``deps.now`` in tests). */
