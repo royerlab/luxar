@@ -38,7 +38,11 @@ function noise(length: number, seed = 1): Uint8Array {
 }
 
 /** A strict range server: HEAD, `bytes=a-b`, `bytes=a-`, and suffix `bytes=-n`. */
-function serve(archive: Uint8Array, headers: Record<string, string> = { etag: '"v1"' }) {
+function serve(
+  archive: Uint8Array,
+  headers: Record<string, string> = { etag: '"v1"' },
+  exposeContentRange = true
+) {
   const seen: Served[] = [];
   const fetchMock = vi.fn(async (_url: string, init: RequestInit = {}) => {
     const range = (init.headers as Record<string, string> | undefined)?.Range ?? null;
@@ -68,7 +72,10 @@ function serve(archive: Uint8Array, headers: Record<string, string> = { etag: '"
     }
     return new Response(archive.slice(start, end + 1), {
       status: 206,
-      headers: { 'content-range': `bytes ${start}-${end}/${size}`, ...headers },
+      headers: {
+        ...(exposeContentRange ? { 'content-range': `bytes ${start}-${end}/${size}` } : {}),
+        ...headers,
+      },
     });
   });
   return { fetchMock, seen };
@@ -145,6 +152,33 @@ describe('LuxarZipStore — opening', () => {
 });
 
 describe('LuxarZipStore — opening on imperfect hosts', () => {
+  it('opens and reads a member when Content-Range is hidden', async () => {
+    const { archive, big } = bigArchive();
+    const { fetchMock, seen } = serve(archive, undefined, false);
+    vi.stubGlobal('fetch', fetchMock);
+
+    const store = new LuxarZipStore(URL_);
+    expect(await store.has('/zarr.json')).toBe(true);
+    expect(await store.get('/points/c/0/0')).toEqual(big);
+    expect(seen.some((request) => request.method === 'HEAD')).toBe(true);
+  });
+
+  it('uses HEAD for mtime identity when Content-Range is hidden', async () => {
+    const { archive } = bigArchive();
+    const { fetchMock, seen } = serve(
+      archive,
+      { 'last-modified': 'Mon, 01 Jan 2035 00:00:00 GMT' },
+      false
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const store = new LuxarZipStore(URL_);
+    expect(await store.probeIdentity(undefined, 5_000)).toBe(
+      `mtime:Mon, 01 Jan 2035 00:00:00 GMT:${archive.length}`
+    );
+    expect(seen.map((request) => request.method)).toEqual(['GET', 'HEAD']);
+  });
+
   it('falls back to explicit ranges when a host refuses SUFFIX ranges (416)', async () => {
     const { archive, big } = bigArchive();
     const strict = serve(archive);
