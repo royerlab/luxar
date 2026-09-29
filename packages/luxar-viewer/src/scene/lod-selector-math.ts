@@ -242,10 +242,11 @@ const ELLIPSE_BEHIND = 2;
  * The ellipse is therefore resized to the depth of its near view-axis point.
  *
  * ``w`` is clip-space ``w``, i.e. view depth along the camera axis, in the
- * frame of ``e`` (so a box-to-clip matrix carrying the group's world transform
- * is measured consistently). The projected ellipsoid does NOT sit at the
- * centre depth: on the axis, an ellipsoid with semi-axis ``a`` across and
- * ``c`` along the view at depth ``D`` has silhouette half-width
+ * frame of ``e``. The view direction is the cross product of the clip x/y
+ * rows in the box frame, so an anisotropic group scale does not change the
+ * chord of an otherwise identical world-space box. The projected ellipsoid
+ * does NOT sit at the centre depth: on the axis, an ellipsoid with semi-axis
+ * ``a`` across and ``c`` along the view at depth ``D`` has silhouette half-width
  * ``f·a / sqrt(D² − c²)``, i.e. it
  * already reads at the geometric-mean depth ``sqrt((w_c − c)(w_c + c))``, where
  * ``w_c`` is centre depth and ``c`` is the ellipsoid's view-axis half-chord.
@@ -292,7 +293,7 @@ function projectNearDepthEllipse(
   return ellipse;
 }
 
-/** Half-chord of the ellipsoid along clip-space w, zero for a tilted flat axis. */
+/** Half-chord along the camera axis, measured in clip-space w units. */
 function ellipsoidViewChord(box: BoundingBox, e: ArrayLike<number>): number {
   const hx = 0.5 * (box.max.x - box.min.x);
   const hy = 0.5 * (box.max.y - box.min.y);
@@ -301,15 +302,21 @@ function ellipsoidViewChord(box: BoundingBox, e: ArrayLike<number>): number {
   h2[0] = hx * hx;
   h2[1] = hy * hy;
   h2[2] = hz * hz;
-  let gradientSq = 0;
+  // The cross product of the clip x/y rows points along the camera axis in
+  // box coordinates. The w gradient alone changes direction under scale.
+  const v = VIEW_AXIS_SCRATCH;
+  v[0] = e[4] * e[9] - e[8] * e[5];
+  v[1] = e[8] * e[1] - e[0] * e[9];
+  v[2] = e[0] * e[5] - e[4] * e[1];
+  let depthAlongAxis = 0;
   let inverseRadiusSq = 0;
   for (let i = 0; i < 3; i++) {
     const g = e[3 + 4 * i];
-    if (h2[i] === 0 && g !== 0) return 0;
-    gradientSq += g * g;
-    if (h2[i] > 0) inverseRadiusSq += (g * g) / h2[i];
+    if (h2[i] === 0 && v[i] !== 0) return 0;
+    depthAlongAxis += g * v[i];
+    if (h2[i] > 0) inverseRadiusSq += (v[i] * v[i]) / h2[i];
   }
-  return inverseRadiusSq > 0 ? gradientSq / Math.sqrt(inverseRadiusSq) : 0;
+  return inverseRadiusSq > 0 ? Math.abs(depthAlongAxis) / Math.sqrt(inverseRadiusSq) : 0;
 }
 
 /** Reused result object for {@link projectInscribedEllipse} (no per-call allocation). */
@@ -317,6 +324,9 @@ const ELLIPSE_SCRATCH = { cx: 0, cy: 0, sxx: 0, sxy: 0, syy: 0 };
 
 /** Squared box half-extents for projection and view-chord math (reused, no allocation). */
 const HALF_EXTENTS_SQ = [0, 0, 0];
+
+/** Camera-axis direction in the box frame (reused, no per-call allocation). */
+const VIEW_AXIS_SCRATCH = [0, 0, 0];
 
 /** ``Σ h_i² a_i b_i`` over the three spatial columns of projection rows ``a`` and ``b``. */
 function weightedRowDot(e: ArrayLike<number>, a: number, b: number, h2: readonly number[]): number {

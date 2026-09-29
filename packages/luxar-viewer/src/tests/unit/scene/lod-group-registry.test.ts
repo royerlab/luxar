@@ -375,6 +375,33 @@ describe('projectBoxDiagonalPx', () => {
       expect(coverage).toBeLessThan(1);
     });
 
+    it('gives the same coverage when anisotropic scale moves from bounds to the group transform', () => {
+      const worldBox: BoundingBox = {
+        min: { x: -256, y: -256, z: -200 },
+        max: { x: 256, y: 256, z: 200 },
+      };
+      const localBox: BoundingBox = {
+        min: { x: -256, y: -256, z: -50 },
+        max: { x: 256, y: 256, z: 50 },
+      };
+      const scale = new THREE.Matrix4().makeScale(1, 1, 4);
+      const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 3000);
+      for (const degrees of [0, 40, 60]) {
+        const radians = THREE.MathUtils.degToRad(degrees);
+        cam.position.set(1400 * Math.sin(radians), 0, 1400 * Math.cos(radians));
+        cam.lookAt(0, 0, 0);
+        cam.updateMatrixWorld(true);
+        cam.updateProjectionMatrix();
+        const boxToClip = new THREE.Matrix4()
+          .multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
+          .multiply(scale);
+        expect(projectBoxAreaFraction(localBox, cam, boxToClip)).toBeCloseTo(
+          projectBoxAreaFraction(worldBox, cam),
+          6
+        );
+      }
+    });
+
     it('clips to the viewport: a huge rect intersecting only a screen corner reads its small VISIBLE fraction', () => {
       // Rect spans NDC [0.5, 10] on both axes — enormous unclipped (~22.5 area
       // units) but only the [0.5, 1]² corner is on screen: visible fraction =

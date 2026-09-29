@@ -344,9 +344,12 @@ which end of a ladder renders, so consumers must agree on them):
   perspective camera the image ellipse's NDC shape matrix `S` is then scaled
   by `(w_c + c) / (w_c - c)`, where `w_c` is its centre's clip-space `w`
   (view depth) and `c` is its half-chord along that axis, leaving its centre
-  in place. In the bbox frame, with `g` the spatial gradient of `w` and `h`
-  the bbox half-extents, `c = |g|² / sqrt(Σ g_i² / h_i²)`; if a zero
-  half-extent has a nonzero `g_i`, or `g` is zero, then `c = 0`. The
+  in place. In the bbox frame, let `g` be the spatial gradient of `w`, `h`
+  the bbox half-extents, and `v` the cross product of the clip `x` and `y`
+  row gradients (the camera-axis direction in that frame). Then
+  `c = |g·v| / sqrt(Σ v_i² / h_i²)`; if a zero half-extent has a nonzero
+  `v_i`, or `v` is zero, then `c = 0`. This remains the same when an
+  anisotropic scale is moved between the bbox and its group transform. The
   projected ellipsoid reads at the geometric-mean depth
   `sqrt((w_c - c)·(w_c + c))`, and this resizes it to the nearer view-axis
   point. The metric is the product of the sized ellipse's NDC semi-axes,
