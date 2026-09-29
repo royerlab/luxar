@@ -98,6 +98,7 @@ import {
   MAX_MEDIAN_FOOTPRINT_PX,
   pickChildByFootprintWithHysteresis,
   pickChildWithHysteresis,
+  preloadNeighbourIndex,
   projectBoxAreaFraction,
   projectBoxDiagonalPx,
   projectWorldRadiusPx,
@@ -170,6 +171,27 @@ function retargetedFade(
 }
 
 /** Perf counter: displayed-level changes of a lod group (one per group per frame). */
+/**
+ * Band preload (see ``LODGroupRegistry.preloadNeighbour``): the level a group is
+ * making resident, hidden, while its selector metric sits in the band of the
+ * threshold between it and the displayed level. ``sawReady`` records that it
+ * landed during this visit, so a release under VRAM pressure is not followed by
+ * a reload while the camera stays put (load → evict → load …).
+ */
+interface PreloadVisit {
+  idx: number;
+  sawReady: boolean;
+}
+
+/**
+ * Exit half-width of the preload band, as a fraction of the smaller adjacent
+ * inter-threshold gap: a visit ends only once the metric leaves this band, which
+ * is wider than the entry band (``config.lod.preloadBandFraction``) so a camera
+ * hovering at the entry edge does not start a new visit (and a reload) per
+ * wobble. 0.5 is the widest band that cannot reach a neighbouring threshold's.
+ */
+const PRELOAD_EXIT_BAND_FRACTION = 0.5;
+
 const S_LOD_LEVEL_SWAPS = perfCounters.slot('lod.levelSwaps');
 /** Perf counter: group-frames drawing two levels cross-faded (one per group per frame). */
 const S_LOD_BLEND_FRAMES = perfCounters.slot('lod.blendFrames');
@@ -1337,6 +1359,8 @@ export class LODGroupRegistry {
   private readonly fades = new Map<string, LevelFade>();
   /** Outgoing levels whose dissolve was dropped before its visibility pass. */
   private readonly droppedFadeFrom = new Map<string, number>();
+  /** Band preloads in progress, by group path (see {@link preloadNeighbour}). */
+  private readonly preloads = new Map<string, PreloadVisit>();
   /** This frame's clock reading and playback period (see ``evaluatePerFrame``). */
   private readonly frame: { nowMs: number; playbackPeriodMs: number | null } = {
     nowMs: 0,
@@ -1787,6 +1811,7 @@ export class LODGroupRegistry {
     this.warnedEmptyLevel.delete(path);
     this.fades.delete(path);
     this.droppedFadeFrom.delete(path);
+    this.preloads.delete(path);
   }
 
   /** Clear all entries (called on full scene tear-down). */
@@ -1805,6 +1830,7 @@ export class LODGroupRegistry {
     this.caches.clear();
     this.fades.clear();
     this.droppedFadeFrom.clear();
+    this.preloads.clear();
     this.partitionEntries.clear();
     this.partitionCaches.clear();
     this.partitionPartsByPath.clear();
@@ -2642,6 +2668,9 @@ export class LODGroupRegistry {
     // on the auto path.
     let coverageMetric: number;
     let usedFootprintSelection = false;
+    // The metric the threshold pick used, for the band preload; stays null on
+    // every other path (lock, off-screen, force-finest, footprint pick).
+    let preloadMetric: number | null = null;
     if (entry.selectorMode !== 'auto') {
       // Explicit lock bypasses the off-screen gate: a user who pins a level
       // keeps it whether or not the group is on screen.
@@ -2749,6 +2778,7 @@ export class LODGroupRegistry {
             entry.activeChildIndex,
             coverageMetric
           );
+          if (!forceFinest) preloadMetric = coverageMetric;
         } else {
           desired = footprintDesired;
           usedFootprintSelection = true;
@@ -2993,6 +3023,7 @@ export class LODGroupRegistry {
     if ((settled || playingStale) && needsReloadOrRefine && aspiration!.ensureLoaded) {
       this.maybeKickReload(entry, aspiration!);
     }
+    this.preloadNeighbour(entry, desired, preloadMetric, version ?? null, settled);
 
     // ── Apply visibility (single owner) ──
     // At most the display child plus its cross-fade partner is visible
@@ -3086,6 +3117,132 @@ export class LODGroupRegistry {
     }
 
     return changed;
+  }
+
+  /**
+   * **Band preload.** While the selector metric sits within
+   * ``config.lod.preloadBandFraction`` of the smaller adjacent inter-threshold
+   * gap from a threshold of the selected level (``desired``), make the level
+   * across that threshold resident in the background, WITHOUT drawing it: the
+   * visibility pass shows only the displayed level and its dissolve partner,
+   * so a preloaded level stays hidden, at its authored opacity, and outside
+   * every drawn tally until the selector picks it. Crossing the threshold then
+   * finds it ready and the dissolve starts that frame, instead of after its
+   * load (the band the retired distance cross-fade DREW both levels in).
+   *
+   * It drives the same ``ensureLoaded`` the selection would, through the same
+   * gates (hidden layer, archive fault, failure cooldown, one load in flight),
+   * and the same settle-gated reload / ladder refinement the aspiration gets,
+   * so a level that becomes the aspiration is already as far along as it would
+   * have been. It never runs:
+   *   - with the dissolve off (``?noLodFade``) — a hard swap was never
+   *     preceded by a band, and that mode stays byte-identical;
+   *   - during playback, where ``playbackAspiration`` alone decides what fits;
+   *   - while the selected level is not ready yet, so the load being waited
+   *     for is not slowed by a speculative one;
+   *   - for a deferred GROUP level, whose activation attaches a subtree
+   *     (``loadChildren``) with loaders of its own;
+   *   - off-screen, under a lock, or for a footprint- or force-finest pick
+   *     (``metric`` null), or while the group's layer is hidden.
+   * Any of these ends the visit. The fetches ride the same fetch class as any
+   * lazy level load; a load in flight when the camera leaves the band simply
+   * lands hidden, as one does when the selection moves away mid-load.
+   *
+   * Residency is otherwise left to the byte budget: a preloaded level is an
+   * ordinary hidden eviction candidate. Once it has landed, a release is not
+   * followed by a reload until the metric leaves the wider exit band
+   * (``PRELOAD_EXIT_BAND_FRACTION``) and comes back, so VRAM pressure cannot
+   * turn a parked camera into a load/evict loop.
+   */
+  private preloadNeighbour(
+    entry: LODGroupEntry,
+    desired: number,
+    metric: number | null,
+    version: number | null,
+    settled: boolean
+  ): void {
+    const thresholds = metric === null ? null : this.preloadThresholds(entry, desired);
+    const visit =
+      thresholds === null || metric === null
+        ? this.endPreload(entry.path)
+        : this.preloadVisit(entry.path, thresholds, desired, metric);
+    if (visit) this.advancePreload(entry, entry.children[visit.idx], visit, version, settled);
+  }
+
+  /**
+   * The group's thresholds when a band preload may run this frame (see
+   * {@link preloadNeighbour} for the conditions), else ``null``.
+   */
+  private preloadThresholds(entry: LODGroupEntry, desired: number): readonly number[] | null {
+    if (this.deps.getCrossFadeEnabled?.() !== true) return null;
+    if (this.frame.playbackPeriodMs !== null || desired !== entry.activeChildIndex) return null;
+    const selected = entry.children[desired];
+    if (!selected || !isReady(selected)) return null;
+    // A hidden layer ends the visit: nothing starts loading under it anyway
+    // (``kickDeferredLoadIfVisible``), and a level released while it was hidden
+    // must be preloadable again once it is shown.
+    if (!isEffectivelyVisible(entry.groupObject)) return null;
+    return this.caches.get(entry.path)?.thresholds ?? null;
+  }
+
+  /** Forget a group's preload visit; always ``null`` (nothing to advance). */
+  private endPreload(path: string): null {
+    this.preloads.delete(path);
+    return null;
+  }
+
+  /**
+   * The preload visit to advance this frame, or ``null``. A metric inside the
+   * entry band of the neighbour already being preloaded continues that visit;
+   * inside another neighbour's band starts a new one; between the entry and
+   * the exit band of the current visit keeps it without advancing it; anywhere
+   * else ends it.
+   */
+  private preloadVisit(
+    path: string,
+    thresholds: readonly number[],
+    desired: number,
+    metric: number
+  ): PreloadVisit | null {
+    const visit = this.preloads.get(path);
+    const idx = preloadNeighbourIndex(thresholds, desired, metric, config.lod.preloadBandFraction);
+    if (idx >= 0 && visit?.idx === idx) return visit;
+    if (idx < 0) {
+      const exitIdx = preloadNeighbourIndex(
+        thresholds,
+        desired,
+        metric,
+        PRELOAD_EXIT_BAND_FRACTION
+      );
+      return visit !== undefined && exitIdx === visit.idx ? null : this.endPreload(path);
+    }
+    const started: PreloadVisit = { idx, sawReady: false };
+    this.preloads.set(path, started);
+    return started;
+  }
+
+  /**
+   * One frame of a preload visit: load the level if it is not resident (unless
+   * it already landed this visit and was released since — no reload loop);
+   * once resident, reload it for a new slice or advance its ladder on the same
+   * settle gate as the aspiration. Deferred GROUP levels are never preloaded.
+   */
+  private advancePreload(
+    entry: LODGroupEntry,
+    child: LODGroupChild,
+    visit: PreloadVisit,
+    version: number | null,
+    settled: boolean
+  ): void {
+    if (child.deferredGroup === true || !child.ensureLoaded) return;
+    if (!isReady(child)) {
+      if (!visit.sawReady) this.maybeKickLoad(entry, child);
+      return;
+    }
+    visit.sawReady = true;
+    if (!settled) return;
+    const stale = version !== null && !this.childFreshAndCount(child, version).fresh;
+    if (stale || child.hasMoreLODs?.() === true) this.maybeKickReload(entry, child);
   }
 
   /**

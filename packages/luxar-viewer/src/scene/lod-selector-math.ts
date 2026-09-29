@@ -487,6 +487,57 @@ export function pickChildWithHysteresis(
 }
 
 /**
+ * The neighbour of level ``currentIdx`` worth making resident ahead of a switch,
+ * or ``-1``: the level across whichever of ``currentIdx``'s two boundaries lies
+ * within a band of ``metric``. Boundary ``b`` is the activation threshold of
+ * level ``b`` (``thresholds[b]``, between levels ``b − 1`` and ``b``); its band
+ * half-width is ``fraction · min(gap below, gap above)`` — the gap above the
+ * finest boundary is taken equal to the gap below — so the band is the same
+ * share of a step at every level of a geometrically spaced ladder and, for
+ * ``fraction ≤ 0.5``, no two bands overlap. When the metric is inside the bands
+ * of both boundaries (possible only for ``fraction > 0.5``), the nearer wins.
+ *
+ * This is the band the retired coverage cross-fade DREW both levels in; the
+ * registry now only LOADS the neighbour there (``LODGroupRegistry.preloadNeighbour``).
+ * Returns ``-1`` for ``fraction <= 0``, an out-of-range ``currentIdx`` or a
+ * degenerate (zero-width) band. Allocation-free: it runs per group per frame.
+ */
+export function preloadNeighbourIndex(
+  thresholds: readonly number[],
+  currentIdx: number,
+  metric: number,
+  fraction: number
+): number {
+  const n = thresholds.length;
+  if (!(fraction > 0) || currentIdx < 0 || currentIdx >= n) return -1;
+  const finerDist = bandDistance(thresholds, currentIdx + 1, metric, fraction);
+  const coarserDist = bandDistance(thresholds, currentIdx, metric, fraction);
+  if (finerDist < 0 && coarserDist < 0) return -1;
+  if (coarserDist < 0 || (finerDist >= 0 && finerDist <= coarserDist)) return currentIdx + 1;
+  return currentIdx - 1;
+}
+
+/**
+ * ``|metric − thresholds[b]|`` when the metric lies inside boundary ``b``'s band
+ * (see {@link preloadNeighbourIndex}), else ``-1``. Boundary ``0`` (the coarsest
+ * level's floor) and ``b >= thresholds.length`` do not exist.
+ */
+function bandDistance(
+  thresholds: readonly number[],
+  b: number,
+  metric: number,
+  fraction: number
+): number {
+  const n = thresholds.length;
+  if (b < 1 || b >= n) return -1;
+  const gapBelow = thresholds[b] - thresholds[b - 1];
+  const gapAbove = b + 1 < n ? thresholds[b + 1] - thresholds[b] : gapBelow;
+  const half = fraction * Math.min(gapBelow, gapAbove);
+  const dist = Math.abs(metric - thresholds[b]);
+  return half > 0 && dist < half ? dist : -1;
+}
+
+/**
  * Current viewer median-sigma limit in logical CSS pixels. GSplats draw to about
  * 3σ, so 1.5 px corresponds to a typical rendered blob about 9 px across. The
  * #2685 sweep retained this policy.

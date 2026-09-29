@@ -431,6 +431,19 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    out. Lazy targets that are not yet committed kick `ensureLoaded()` and
    swap on a later frame once `ready` flips true — unless the
    **hidden-layer load gate** vetoes it (below).
+   **Band preload** (`preloadNeighbour`): so that crossing a threshold does
+   not wait for that load, a blendable group whose metric sits within
+   `config.lod.preloadBandFraction` (0.4) of the smaller adjacent
+   inter-threshold gap from a threshold of the selected level loads the
+   level across it in the background — hidden, at its authored opacity,
+   never drawn, blended or counted until the selector picks it — and
+   advances its ladder on the aspiration's settle gate. The dissolve then
+   starts on the crossing frame (zebrafish timelapse, child_2 → child_3:
+   about 1.3 s after the crossing before, on the crossing frame after). Off with
+   the dissolve (`?noLodFade`), during playback, while the selected level
+   is itself loading, and for deferred GROUP levels; a preloaded level
+   released under VRAM pressure is not reloaded until the metric leaves
+   the wider exit band (0.5 × gap) and returns.
 8. **Hidden-layer load gate**: no deferred load (initial, or a settled
    reload) is _started_ while the
    group is not effectively visible — its own `visible` flag or any

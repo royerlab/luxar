@@ -50,7 +50,7 @@ config/
 │   ├── animation/          {data,types}.ts
 │   ├── adaptive-dpr/       {data,types,validate}.ts
 │   ├── depth-sort/         {data,types,validate}.ts
-│   ├── lod/                {data,types,validate}.ts   # LOD display policy (fadeMs)
+│   ├── lod/                {data,types,validate}.ts   # LOD display policy (fadeMs, preloadBandFraction)
 │   ├── scene/              {data,types,validate}.ts   # includes ShaderConfig
 │   ├── ui/                 {data,types}.ts            # includes DebugConsoleConfig, UIComponentsConfig
 │   ├── rendering-controls/ {data,types,validate}.ts   # includes RenderingSettings, validateBloomConsistency

@@ -130,7 +130,7 @@ const opacity = (c: LODGroupChild): number =>
   ((c.object as THREE.Mesh).material as unknown as FadeMatStub).getOpacity();
 
 describe('LODGroupRegistry — band preload of the neighbouring level', () => {
-  it.fails('parked inside the band below a finer threshold: loads the finer level without drawing it', () => {
+  it('parked inside the band below a finer threshold: loads the finer level without drawing it', () => {
     // Thresholds [0, 0.7]: band half-width 0.4 × 0.7 = 0.28 → [0.42, 0.98].
     // Metric 0.5 sits inside it, below the threshold, so the coarse level is
     // the one selected and displayed.
@@ -187,7 +187,7 @@ describe('LODGroupRegistry — band preload of the neighbouring level', () => {
     expect(ensureLoaded).not.toHaveBeenCalled();
   });
 
-  it.fails('crossing the threshold after the preload starts the dissolve on that frame', () => {
+  it('crossing the threshold after the preload starts the dissolve on that frame', () => {
     const reg = makeReg();
     const coarse = eagerChild(0);
     const { child: fine, ensureLoaded } = lazyChild(0.7);
@@ -209,7 +209,7 @@ describe('LODGroupRegistry — band preload of the neighbouring level', () => {
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
   });
 
-  it.fails('parked inside the band above a coarser threshold: loads the coarser level', () => {
+  it('parked inside the band above a coarser threshold: loads the coarser level', () => {
     // Thresholds [0, 0.3, 0.45]; metric 0.5 selects the finest. Its boundary
     // 0.45 has a band of 0.4 × min(0.15, 0.15) = 0.06 → [0.39, 0.51].
     const reg = makeReg();
@@ -223,7 +223,7 @@ describe('LODGroupRegistry — band preload of the neighbouring level', () => {
     expect(mid.object.visible).toBe(false);
   });
 
-  it.fails('does not reload a preloaded level evicted while the group stays parked', () => {
+  it('does not reload a preloaded level evicted while the group stays parked', () => {
     const reg = makeReg();
     const coarse = eagerChild(0);
     const { child: fine, ensureLoaded } = lazyChild(0.7);
@@ -247,7 +247,7 @@ describe('LODGroupRegistry — band preload of the neighbouring level', () => {
     expect(ensureLoaded).toHaveBeenCalledTimes(2);
   });
 
-  it.fails('a level released while its layer was hidden is preloaded again once the layer is shown', () => {
+  it('a level released while its layer was hidden is preloaded again once the layer is shown', () => {
     const reg = makeReg();
     const coarse = eagerChild(0);
     const { child: fine, ensureLoaded } = lazyChild(0.7);
