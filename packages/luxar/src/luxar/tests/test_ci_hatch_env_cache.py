@@ -98,7 +98,8 @@ def test_persistent_jobs_use_one_cache_script(
         if step.get("name") == "Reuse Hatch env on persistent runners"
     )
     assert setup["run"] == (
-        "bash scripts/ci_hatch_env_cache.sh \"${{ hashFiles('pyproject.toml') }}\""
+        'bash "$GITHUB_WORKSPACE/scripts/ci_hatch_env_cache.sh" '
+        "\"${{ hashFiles('pyproject.toml') }}\""
     )
     install = next(step for step in steps if step.get("name") == "Install Hatch")
     assert setup.get("if") == install.get("if")
