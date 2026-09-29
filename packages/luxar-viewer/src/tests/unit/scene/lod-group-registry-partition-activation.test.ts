@@ -147,7 +147,7 @@ describe('LODGroupRegistry — partition part activation (B4)', () => {
     expect(activate).toHaveBeenCalledTimes(2);
   });
 
-  it.fails('an activation settling after the registry was cleared asks for nothing', async () => {
+  it('an activation settling after the registry was cleared asks for nothing', async () => {
     const requestReprocess = vi.fn<RequestReprocess>();
     const reg = makeRegistry(requestReprocess);
     let resolveActivation!: () => void;

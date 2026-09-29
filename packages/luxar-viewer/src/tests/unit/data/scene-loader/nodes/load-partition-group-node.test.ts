@@ -1005,7 +1005,7 @@ describe('loadPartitionGroupNode — gated loading (B4)', () => {
     expect(ctx.registry.failedLoaders.has('/partition/part_0')).toBe(false);
   });
 
-  it.fails('an activation for a dataset that is no longer live loads nothing', async () => {
+  it('an activation for a dataset that is no longer live loads nothing', async () => {
     attachStubChildren();
     const registerPartition = vi.fn();
     let live = true;

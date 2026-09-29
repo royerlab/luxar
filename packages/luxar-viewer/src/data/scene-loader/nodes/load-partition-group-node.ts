@@ -372,7 +372,8 @@ function deferredActivators(
 }
 
 /**
- * Load one deferred part into its slot. A failure — the
+ * Load one deferred part into its slot, unless its dataset is no longer live
+ * (a fire-and-forget activation can outlive a dataset switch). A failure — the
  * part's loader construction, which is not a leaf `LoaderError` — is recorded
  * on the part's path so Retry lists it, after discarding whatever the part had
  * attached or registered, so a re-run starts clean.
@@ -385,9 +386,11 @@ async function activateDeferredPart(
 ): Promise<void> {
   const releaseWorkingSet = await acquireEagerWorkingSet(child, ctx);
   try {
+    if (!ctx.isDatasetLive()) return;
     await job.loadPart(child, slot, job.parentLoc.resolve(child.path.slice(1)), ctx);
     if (ctx.registerOnly) ctx.registry.clearFailure(child.path);
   } catch (error) {
+    if (!ctx.isDatasetLive()) return;
     discardPartialPart(slot, ctx, child.path);
     ctx.registry.recordFailure(
       child.path,

@@ -62,7 +62,7 @@ function registeredPaths(ctx: NodeBuildCtx): string[] {
 }
 
 describe('register-only leaves of a dead dataset register nothing', () => {
-  it.fails.each(CASES)('%s', async (type, load) => {
+  it.each(CASES)('%s', async (type, load) => {
     const node: SceneNode = {
       path: '/partition/part_0',
       type,

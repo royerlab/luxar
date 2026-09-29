@@ -1598,7 +1598,9 @@ export class LODGroupRegistry {
    * Nothing drawn changed — its placeholders are empty until a pass commits
    * them. With no LIVE claim (started ahead of any pass, or every pass that
    * awaited it was superseded) and the COMMITTED view showing it, nothing else
-   * will sweep the new loaders for that view: resync it.
+   * will sweep the new loaders for that view: resync it. A part of a
+   * registration that has since been cleared or replaced (dataset switch) is
+   * left alone.
    */
   private settleActivation(
     entry: PartitionGroupEntry,
@@ -1610,6 +1612,7 @@ export class LODGroupRegistry {
     child.activate = undefined;
     if (childCache.lazy === lazy) childCache.lazy = null;
     childCache.footprintDirty = true;
+    if (this.partitionEntries.get(entry.path) !== entry) return;
     const claimLive = lazy.claims.some((claim) => claim === true || !claim.aborted);
     const committed = this.deps.getCommittedViewState?.();
     if (
