@@ -2337,8 +2337,9 @@ export class LODGroupRegistry {
    * During playback, the finest level at or below ``desired`` that can reload
    * within ``PLAYBACK_LOAD_BUDGET_FRACTION`` of the period: an eager level
    * (no ``ensureLoaded`` — the per-slice sweep carries it), an unmeasured one,
-   * or one whose ``loadEwmaMs`` fits. ``desired`` unchanged when not playing,
-   * locked, or forced finest.
+   * or one whose ``loadEwmaMs`` fits. Once per second, the next finer capped
+   * level is probed for a warm-load sample. ``desired`` is unchanged when not
+   * playing, locked, or forced finest.
    */
   private playbackAspiration(entry: LODGroupEntry, desired: number): number {
     const period = this.frame.playbackPeriodMs;

@@ -410,9 +410,9 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    reloaded on every timepoint without the settle debounce
    (`FINE_RELOAD_SETTLE_MS` = 130 ms, which a playing timelapse never
    satisfies). Once per second the next finer capped level gets one reload
-   to re-measure it after a cold first load. The stale hold keeps the target
-   on screen while its own reload is in flight, so playback no longer
-   collapses to the coarsest level.
+   to re-measure it after a cold first load. The stale hold keeps the
+   previously displayed level on screen while its reload is in flight, so
+   playback no longer collapses to the coarsest level.
 7. Swap visibility when the desired child differs — for a blendable
    (additive / luminous / volumetric) group as a DISSOLVE over
    `config.lod.fadeMs` (250 ms): the incoming level at
