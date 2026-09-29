@@ -440,9 +440,11 @@ export class RefinementResidencyBudget {
    * per-pass `allowanceBytes`. A refusal is sticky for the rest of the run:
    * re-offering the same loader every pass would re-measure, re-refuse and
    * re-log without making progress. An admission immediately reserves only its
-   * estimated next rung. `runProgressiveRefinement` awaits loaders serially, so
-   * the wrapper's measured `record()` replaces that estimate before the next
-   * loader is admitted and the gap to the larger allowance is never observed.
+   * estimated next rung. Concurrent steps see earlier reservations at admission.
+   * The larger per-pass allowance divides remaining headroom by tracked
+   * eligible paths, including the other active workers when the sweep maps
+   * were seeded, so their allowances fit within that headroom together.
+   * `record()` replaces each estimate with its measured footprint on completion.
    */
   admit(path: string, residency: LadderResidency): RefinementPassAdmission {
     const accounted = ladderResidentBytes(residency);
