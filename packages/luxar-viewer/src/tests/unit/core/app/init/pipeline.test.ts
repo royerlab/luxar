@@ -622,7 +622,7 @@ describe('runInitPipeline', () => {
   });
 
   describe('recording-panel predicate wiring', () => {
-    it('the render-skip predicate follows the loop-render-suppression flag, never real-time recording', async () => {
+    it('the render-skip predicate follows offline capture and pending readbacks', async () => {
       const { factories } = makeFactoryOverrides();
       const ports = makePorts();
       ports.options.factories = factories as never;
@@ -661,6 +661,8 @@ describe('runInitPipeline', () => {
       };
       sceneManager.postProcessing.isCaptureInProgress = true;
       expect(predicate()).toBe(true);
+      sceneManager.postProcessing.isCaptureInProgress = false;
+      expect(predicate()).toBe(false);
     });
 
     it('the pacing-suspend predicate follows the BROAD recording flag, not loop-render suppression', async () => {

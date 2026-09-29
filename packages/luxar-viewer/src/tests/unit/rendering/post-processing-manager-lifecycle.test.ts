@@ -121,6 +121,32 @@ function peek(mgr: PostProcessingManager): ManagerInternals {
   return mgr as unknown as ManagerInternals;
 }
 
+describe('PostProcessingManager → capture guard', () => {
+  it('keeps draws suppressed until every capture settles, including after a rejection', async () => {
+    const mgr = makeManager();
+    let finishFirst!: () => void;
+    const first = mgr.suspendFrameRendersDuring(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirst = resolve;
+        })
+    );
+    expect(mgr.isCaptureInProgress).toBe(true);
+
+    await expect(
+      mgr.suspendFrameRendersDuring(async () => {
+        throw new Error('readback failed');
+      })
+    ).rejects.toThrow('readback failed');
+    expect(mgr.isCaptureInProgress).toBe(true);
+
+    finishFirst();
+    await first;
+    expect(mgr.isCaptureInProgress).toBe(false);
+    mgr.dispose();
+  });
+});
+
 describe('PostProcessingManager → dispose lifecycle', () => {
   beforeEach(() => {
     materialManager.setCaps(mockCaps('webgl2'));
