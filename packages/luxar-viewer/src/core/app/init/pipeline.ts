@@ -620,6 +620,12 @@ export async function runInitPipeline(
   animationController.setRenderSkipPredicate(
     () => recordingPanel.isLoopRenderSuppressed() || sceneManager.postProcessing.isCaptureInProgress
   );
+  // Skipped ticks can let the loop reach its idle timeout during a slow readback.
+  // Repaint once the final capture releases, including a camera or chunk change
+  // that arrived while draws were suppressed.
+  sceneManager.postProcessing.setCaptureReleasedCallback(() =>
+    animationController.startAnimation()
+  );
   // Frame pacing must stay off for the whole of a capture, because both
   // capture families depend on the loop's untouched cadence: the real-time
   // MediaRecorder path records the canvas the loop paints (a paced gap is a

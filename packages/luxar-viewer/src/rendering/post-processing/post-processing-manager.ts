@@ -108,6 +108,7 @@ export class PostProcessingManager {
 
   private disposed = false;
   private captureDepth = 0;
+  private onCaptureReleased: (() => void) | null = null;
 
   // Wall-clock timestamp of the previous render() call, used to derive
   // the inter-frame delta for detector-noise time advancement. 0 means
@@ -866,6 +867,11 @@ export class PostProcessingManager {
     return this.captureDepth > 0;
   }
 
+  /** Request a loop frame after the last pending readback releases its target. */
+  setCaptureReleasedCallback(callback: (() => void) | null): void {
+    this.onCaptureReleased = callback;
+  }
+
   /** Keep the frame loop from drawing over a capture target during readback. */
   async suspendFrameRendersDuring<T>(capture: () => Promise<T>): Promise<T> {
     this.captureDepth++;
@@ -873,6 +879,7 @@ export class PostProcessingManager {
       return await capture();
     } finally {
       this.captureDepth--;
+      if (this.captureDepth === 0 && !this.disposed) this.onCaptureReleased?.();
     }
   }
 
@@ -1017,6 +1024,7 @@ export class PostProcessingManager {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.onCaptureReleased = null;
     this.disposeTransientResources();
     log.info(Modules.POST_PROCESSING, 'PostProcessingManager disposed');
   }

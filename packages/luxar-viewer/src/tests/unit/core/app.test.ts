@@ -200,7 +200,7 @@ describe('LuxarApp', () => {
         dispatchEvent: vi.fn(),
         isAutoRotateActive: vi.fn(() => false),
       },
-      postProcessing: {},
+      postProcessing: { setCaptureReleasedCallback: vi.fn() },
       // Embedder-API delegation targets.
       resizeToCanvas: vi.fn(),
       centerCameraOnScene: vi.fn(),

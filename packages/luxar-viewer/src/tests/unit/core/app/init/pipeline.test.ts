@@ -37,7 +37,7 @@ function makeSceneStub(opts: { initThrows?: boolean } = {}) {
       if (opts.initThrows) throw new Error('sceneManager.init failed');
     }),
     controls: { kind: 'controls' },
-    postProcessing: { kind: 'pp', isCaptureInProgress: false },
+    postProcessing: { kind: 'pp', isCaptureInProgress: false, setCaptureReleasedCallback: vi.fn() },
     isWebGLContextLost: vi.fn().mockReturnValue(false),
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
@@ -631,6 +631,7 @@ describe('runInitPipeline', () => {
 
       const animation = factories.animationController.mock.results[0].value as {
         setRenderSkipPredicate: ReturnType<typeof vi.fn>;
+        startAnimation: ReturnType<typeof vi.fn>;
       };
       const panel = factories.recordingPanel.mock.results[0].value as {
         isCurrentlyRecording: ReturnType<typeof vi.fn>;
@@ -663,6 +664,16 @@ describe('runInitPipeline', () => {
       expect(predicate()).toBe(true);
       sceneManager.postProcessing.isCaptureInProgress = false;
       expect(predicate()).toBe(false);
+
+      const postProcessing = factories.sceneManager.mock.results[0].value.postProcessing as {
+        setCaptureReleasedCallback: ReturnType<typeof vi.fn>;
+      };
+      expect(postProcessing.setCaptureReleasedCallback).toHaveBeenCalledTimes(1);
+      const onCaptureReleased = postProcessing.setCaptureReleasedCallback.mock
+        .calls[0][0] as () => void;
+      animation.startAnimation.mockClear();
+      onCaptureReleased();
+      expect(animation.startAnimation).toHaveBeenCalledTimes(1);
     });
 
     it('the pacing-suspend predicate follows the BROAD recording flag, not loop-render suppression', async () => {

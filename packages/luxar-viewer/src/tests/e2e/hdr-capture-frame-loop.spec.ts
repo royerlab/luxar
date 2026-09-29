@@ -38,3 +38,33 @@ test('HDR readback suspends background draws on a dense scene', async ({ page })
   // The capture's scene draw is the only renderer.render() during readback.
   expect(result.frames).toBe(1);
 });
+
+test('a long capture resumes rendering after the loop idles', async ({ page }) => {
+  await page.goto('/?debug&dpr=1&renderer=webgl');
+  await page.waitForFunction(() => (window as any).__luxarDebug?.app?.isInitialized === true);
+  const result = await page.evaluate(async () => {
+    const dbg = (window as any).__luxarDebug;
+    const pp = dbg.app.sceneManager.postProcessing;
+    const animation = dbg.app.animationController;
+    const renderer = dbg.renderer;
+    const before = renderer.info.render.frame as number;
+    const capture = pp.suspendFrameRendersDuring(
+      () => new Promise<void>((resolve) => setTimeout(resolve, 2500))
+    );
+    dbg.renderOnce();
+    await new Promise((resolve) => setTimeout(resolve, 2200));
+    const during = renderer.info.render.frame as number;
+    const activeAtRelease = animation.isActive as boolean;
+    await capture;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    return {
+      framesDuringHold: during - before,
+      activeAtRelease,
+      framesAfterRelease: (renderer.info.render.frame as number) - during,
+    };
+  });
+
+  expect(result.framesDuringHold).toBe(0);
+  expect(result.activeAtRelease).toBe(false);
+  expect(result.framesAfterRelease).toBeGreaterThan(0);
+});
