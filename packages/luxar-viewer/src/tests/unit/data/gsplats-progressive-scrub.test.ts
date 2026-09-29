@@ -121,4 +121,35 @@ describe('GSplatsProgressiveLoader — scrubbing (B5)', () => {
       .sort();
     expect(slices).toEqual([4, 6]);
   });
+
+  it.fails('stepping onto a slice being read ahead keeps that read alive for the pass to join', async () => {
+    // The warm is the ONLY waiter on its chunk fetch until the new pass's
+    // level-0 read joins it, so aborting it at the start of that pass cancelled
+    // the shared fetch and the demand read refetched: read-ahead helped only a
+    // user who paused. Only the neighbour the view did NOT step onto is stale.
+    const rungs = [subLoader(3, false), subLoader(3, false)];
+    const loader = makeLoader(rungs);
+    const warmSignals = new Map<number, AbortSignal>();
+    rungs[0].stub.prefetchChunks.mockImplementation(
+      (view: GSplatsViewState, signal: AbortSignal) => {
+        warmSignals.set(view.slicePosition[3], signal);
+        return new Promise<void>(() => undefined);
+      }
+    );
+    await loader.updateView(viewAt(3));
+    await loader.updateView(viewAt(4));
+    await vi.waitFor(() => expect([...warmSignals.keys()].sort()).toEqual([3, 5]));
+
+    let signalsAtDemandRead: { t3: boolean; t5: boolean } | null = null;
+    rungs[0].stub.updateViewWithResidency.mockImplementationOnce(async () => {
+      signalsAtDemandRead = {
+        t3: warmSignals.get(3)!.aborted,
+        t5: warmSignals.get(5)!.aborted,
+      };
+      return { data: lodData(3), allResident: true };
+    });
+    await loader.updateView(viewAt(5));
+
+    expect(signalsAtDemandRead).toEqual({ t3: true, t5: false });
+  });
 });
