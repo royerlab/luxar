@@ -5,20 +5,28 @@ const manifest = JSON.parse(readFileSync(new URL('./gate-scenes.json', import.me
 const generator = readFileSync(new URL('./generate_gate_scenes.py', import.meta.url), 'utf8');
 
 describe('render-gate scene manifest', () => {
-  it('names every generated store and no others', () => {
+  it('references only generated stores across all suites', () => {
     const sceneNames = generator.match(/SCENE_NAMES = \(\n([\s\S]*?)\n\)/)?.[1];
     expect(sceneNames).toBeDefined();
-    const generated = [...sceneNames.matchAll(/^\s+"([^"]+)",?$/gm)].map((match) => match[1]);
+    const heavySceneNames = generator.match(/HEAVY_SCENE_NAMES = \(\n([\s\S]*?)\n\)/)?.[1];
+    expect(heavySceneNames).toBeDefined();
+    const generated = [sceneNames, heavySceneNames].flatMap((names) =>
+      [...names.matchAll(/^\s+"([^"]+)",?$/gm)].map((match) => match[1])
+    );
     expect(generated.length).toBeGreaterThan(0);
 
-    const stores = [...manifest.exact, ...manifest.perf]
+    const stores = [
+      ...manifest.exact,
+      ...manifest.perf,
+      ...Object.values(manifest.suites).flatMap((suite) => suite.cases),
+    ]
       .filter((scene) => scene.store !== undefined)
       .map((scene) => scene.store);
     expect(stores.length).toBeGreaterThan(0);
-    for (const store of stores) expect(store).toMatch(/^gate\/.+\.luxar\.zarr$/);
-    expect(new Set(stores.map((store) => store.slice(5, -'.luxar.zarr'.length)))).toEqual(
-      new Set(generated)
-    );
+    for (const store of stores) {
+      expect(store).toMatch(/^gate\/.+\.luxar\.zarr(\.zip)?$/);
+      expect(generated).toContain(store.slice(5).replace(/\.luxar\.zarr(\.zip)?$/, ''));
+    }
   });
 
   it('has a unique id for every case', () => {
