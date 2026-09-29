@@ -222,6 +222,9 @@ const PLAYBACK_LOAD_BUDGET_FRACTION = 0.8;
 /** Weight of a new sample in ``LODGroupChild.loadEwmaMs``. */
 const LOAD_EWMA_ALPHA = 0.3;
 
+/** Retry the next capped playback level once per second to measure warm loads. */
+const PLAYBACK_PROBE_INTERVAL_MS = 1000;
+
 /**
  * Milliseconds the registry will keep a STALE previously-displayed level on screen,
  * rather than dropping to a much coarser fresh one, while the aspiration
@@ -507,6 +510,8 @@ export interface LODGroupChild {
    * playback it decides which level can keep up with the period.
    */
   loadEwmaMs?: number;
+  /** Last playback probe of a level whose measured reload exceeded the budget. */
+  lastPlaybackProbeMs?: number;
   /** Set by the thunk on load failure to stop per-frame retry storms. */
   failed?: boolean;
   /**
@@ -2340,11 +2345,33 @@ export class LODGroupRegistry {
     if (period === null || entry.selectorMode !== 'auto') return desired;
     if (this.deps.getForceFinestLOD?.() === true) return desired;
     const budget = PLAYBACK_LOAD_BUDGET_FRACTION * period;
+    const affordable = this.affordablePlaybackLevel(entry, desired, budget);
+    return this.probedPlaybackLevel(entry, desired, affordable);
+  }
+
+  /** Finest level whose measured reload fits this playback period. */
+  private affordablePlaybackLevel(entry: LODGroupEntry, desired: number, budget: number): number {
     for (let i = desired; i > 0; i--) {
       const c = entry.children[i];
       if (!c.ensureLoaded || c.loadEwmaMs === undefined || c.loadEwmaMs <= budget) return i;
     }
     return 0;
+  }
+
+  /** Periodically re-measure the next finer capped level after a cold load. */
+  private probedPlaybackLevel(entry: LODGroupEntry, desired: number, affordable: number): number {
+    const next = entry.children[affordable + 1];
+    if (affordable < desired && next?.loadEwmaMs !== undefined) {
+      const now = this.frame.nowMs;
+      if (
+        now - (next.lastPlaybackProbeMs ?? Number.NEGATIVE_INFINITY) >=
+        PLAYBACK_PROBE_INTERVAL_MS
+      ) {
+        next.lastPlaybackProbeMs = now;
+        return affordable + 1;
+      }
+    }
+    return affordable;
   }
 
   /** Keep the loop ticking (see {@link LODGroupRegistryDeps.requestTick}). */

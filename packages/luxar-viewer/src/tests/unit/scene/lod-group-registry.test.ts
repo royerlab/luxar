@@ -4346,6 +4346,18 @@ describe('LODGroupRegistry — playback aspiration', () => {
     expect(fine / frames).toBeGreaterThanOrEqual(0.9);
   });
 
+  it('re-probes a level capped by a cold load and recovers after warm reloads', () => {
+    const { reg, children, frame } = playbackHarness([30]);
+    children[1].loadEwmaMs = 500;
+    let fineInLastSecond = 0;
+    for (let f = 0; f < 600; f++) {
+      frame();
+      if (f >= 540 && reg.get('/g')!.displayedChildIndex === 1) fineInLastSecond++;
+    }
+    expect(children[1].loadEwmaMs).toBeLessThan(80);
+    expect(fineInLastSecond).toBeGreaterThan(50);
+  });
+
   it('aspires to the finest level whose reload fits the playback period, and to the finest again once paused', () => {
     // mid reloads in 20 ms, fine in 150 ms: at a 100 ms period only mid can
     // keep up (the budget is 0.8 × the period).
@@ -4355,7 +4367,6 @@ describe('LODGroupRegistry — playback aspiration', () => {
     const frames = 90;
     for (let f = 0; f < frames; f++) {
       frame();
-      expect(reg.get('/g')!.activeChildIndex).toBe(1);
       if (reg.get('/g')!.displayedChildIndex === 1) mid++;
     }
     expect(mid / frames).toBeGreaterThanOrEqual(0.9);
