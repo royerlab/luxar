@@ -22,7 +22,7 @@ export interface WarmChunkOptions {
   signal?: AbortSignal;
   /**
    * `decode.count.<origin>` attribution for a miss decode. Defaults to the
-   * signal's {@link tagSignalOrigin} tag, else {@link WARM_CHUNK_DEFAULT_ORIGIN}.
+   * signal's `tagSignalOrigin` tag, else {@link WARM_CHUNK_DEFAULT_ORIGIN}.
    */
   origin?: string;
 }

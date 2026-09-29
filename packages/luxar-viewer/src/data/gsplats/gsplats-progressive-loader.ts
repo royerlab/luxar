@@ -609,7 +609,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       // DEPARTURE store: snapshot the outgoing view's partial ladder under
       // the OUTGOING key before discarding — scrub-back stays warm even when
       // ladders never complete between navigations. Mirrors Points/Lines.
-      if (this.lastViewState && this._loadedLODCount > 0) {
+      if (this.lastViewState && this._loadedLODCount > 0 && !this.tornDown(signal)) {
         storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
           scan: this._frameBudgetMs !== null,
           pin: viewState.prefetch === true,
@@ -807,6 +807,10 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     // Gating prefixes on the budget keeps the non-play cost profile (a
     // store per refinement pass would clone O(N²) bytes per slice).
     const result = finish();
+    // A pass aborted or disposed mid-level must not store: releaseShadows()
+    // has already unpinned this key, so a late pinned store would outlive
+    // playback with nothing left to release it.
+    if (this.tornDown(signal)) return result;
     if (
       this._loadedLODCount === this.nLods ||
       this._frameBudgetMs !== null ||
@@ -821,6 +825,11 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     }
 
     return result;
+  }
+
+  /** True once this pass was aborted or the loader disposed: no more cache stores. */
+  private tornDown(signal?: AbortSignal): boolean {
+    return signal?.aborted === true || this._disposed;
   }
 
   /**

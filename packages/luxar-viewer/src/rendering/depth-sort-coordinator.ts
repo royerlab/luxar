@@ -1966,7 +1966,8 @@ export function evaluateDepthSortPerFrame(): boolean {
     if (moved) scheduleSort(mesh, nodeId);
   }
 
-  return assignGlobalRenderOrder() || takeDrawnStateChanged();
+  const ordered = assignGlobalRenderOrder();
+  return takeDrawnStateChanged() || ordered;
 }
 
 /** Read and clear {@link drawnStateChanged}. */

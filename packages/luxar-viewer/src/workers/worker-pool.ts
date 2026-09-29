@@ -585,7 +585,7 @@ export class WorkerPool {
    * indefinitely (Comlink's onerror handler can't settle an in-flight
    * promise). Production code MUST go through {@link runWithTimeout}
    * instead — it routes the call through {@link withTimeout} on a
-   * round-robin-selected worker. This direct `getWorker()` accessor is
+   * least-busy worker. This direct `getWorker()` accessor is
    * intentionally retained for tests and low-level worker-pool
    * unit tests that need raw access; lint-grep for new production
    * uses periodically.
@@ -605,7 +605,7 @@ export class WorkerPool {
   }
 
   /**
-   * Run a worker call through {@link withTimeout} on a round-robin-selected
+   * Run a worker call through {@link withTimeout} on a least-busy
    * worker. The single production entry point for any Comlink-routed call
    * that needs a hang-detection guard — direct `await` against a worker
    * `Remote` lets a dead worker hang the caller forever (the `onerror`
@@ -636,7 +636,7 @@ export class WorkerPool {
         throw new WorkerAbortError(op);
       }
 
-      // Route through getWorkerWithTracking so a stalled worker (one
+      // Route through acquireTrackedWorker so a stalled worker (one
       // whose activeQueries has grown past the others) stops being
       // selected. The previous round-robin via nextWorkerInstance had
       // no load awareness, so a slow worker received every Nth call
@@ -819,11 +819,8 @@ export class WorkerPool {
    * eviction-on-timeout), and callbacks to mark query start/end so
    * the active-queries counter reflects in-flight load.
    *
-   * Used by {@link runWithTimeout} to route hot-path calls to the
-   * least-loaded worker. A stalled worker stops being selected once
-   * its activeQueries grows past the others — without this, the
-   * round-robin fallback would queue new calls on the stalled worker
-   * until it timed out individually.
+   * For callers that manage their own slot accounting. Hot-path calls use
+   * {@link runWithTimeout}, which selects and marks in one synchronous step.
    */
   async getWorkerWithTracking(): Promise<TrackedWorkerHandle> {
     await this.whenUsable();

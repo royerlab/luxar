@@ -5759,6 +5759,26 @@ describe('depth-sort coordinator — layer_order bands', () => {
     expect(mesh.renderOrder).toBe(0);
   });
 
+  it('clears the drawn-state latch when global ranks change in the same pass', async () => {
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const removed = makeGSplatsMesh(2, 'additive');
+    const remaining = makeGSplatsMesh(2, 'additive');
+    setLevel(removed, 9);
+    setLevel(remaining, 10);
+    for (const mesh of [removed, remaining]) {
+      coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -1]), 1);
+    }
+    await flush();
+    expect(coord.evaluateDepthSortPerFrame()).toBe(true);
+    expect([removed.renderOrder, remaining.renderOrder]).toEqual([1, 2]);
+
+    removed.userData.layerOrder = undefined;
+    expect(coord.evaluateDepthSortPerFrame()).toBe(true);
+    expect([removed.renderOrder, remaining.renderOrder]).toEqual([0, 1]);
+    expect(coord.evaluateDepthSortPerFrame()).toBe(false);
+  });
+
   // D3's precise wording: it is a DIFFERENCE in order that overrides
   // containment, not the act of authoring one. The obvious paraphrase ("an
   // explicit order wins over containment") is wrong, and this is the case that
