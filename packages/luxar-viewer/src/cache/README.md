@@ -68,10 +68,11 @@ Chunk request → L0 (Decompressed) → L1 (Memory) → L2 (OPFS) → Remote HTT
 \*~2ms is Blosc decompression time per chunk (skipped on L0 hit)
 
 † The three in-memory tiers are sized two-sidedly from the device heap by
-`heap-budget.ts` — the config `l0MaxSizeMB` (200) / `l1MaxSizeMB` (100) /
-`sliceCacheMaxSizeMB` (128) are ceilings/fallbacks, not fixed allocations. On a
-large heap the S-cache scales up (residual headroom, capped at 1 GiB); on a
-small heap all three scale down to stay within `dataLoading.memory.targetHeapUsage`.
+`heap-budget.ts` — `l0MaxSizeMB` (200) and `l1MaxSizeMB` (100) are L0/L1
+ceilings; `sliceCacheMaxSizeMB` (128) is the S-cache fallback and the cap on
+its pool-relative floor, not its ceiling. On a large heap the S-cache scales up
+(residual headroom, capped at `SLICE_CAP_BYTES`, 2 GiB today); on a small heap
+all three scale down to stay within `dataLoading.memory.targetHeapUsage`.
 L2 (OPFS/disk) is a fixed 2GB and unaffected.
 
 Heap detection uses `performance.memory`, which is **Chrome/Blink-only**. In
@@ -626,7 +627,7 @@ use.
 
 **`registerArrayBounds(arrayPath: string, shape: number[], chunks: number[]): void`**
 
-Register array shape and chunk sizes for bounds checking during prefetch. When registered, adjacent chunk generation skips indices beyond valid bounds, preventing 404s for small arrays.
+Register array shape and chunk sizes to enable adjacency prefetch. Unregistered arrays get no adjacency prefetch. For registered arrays, negative and out-of-range neighbors and dimensions with only one chunk are skipped.
 
 ```typescript
 prefetcher.registerArrayBounds('gsplats_t0023/centers', [2096, 4], [1024, 4]);
@@ -848,8 +849,12 @@ async function getRemoteContentHash(
 
 **External datasets** (non-Luxar):
 
-- If no `content_hash` attribute → validation skipped
-- Cache remains functional but won't auto-invalidate
+- A directory store without `content_hash` is validated in `zattrs-hash` mode:
+  the SHA-256 of its raw root metadata document (`.zattrs` or `zarr.json`)
+  becomes an implicit token, prefixed `zattrs:`. The cache auto-invalidates
+  when that document changes. Zip archives use `archive-etag` instead.
+- If the root document is unreachable and no hash was cached, validation falls
+  back to `ttl` or `none` mode. See [Cache health and validation modes](#cache-health-and-validation-modes).
 
 ## Performance
 
@@ -868,15 +873,16 @@ async function getRemoteContentHash(
 The three in-memory tiers (L0 + L1 + S-cache) are sized **two-sidedly from the
 device heap** by `heap-budget.ts::computeCacheBudgets` — up on a large heap so a
 fits-in-RAM timelapse stays fully resident, down on a small heap to stay within
-`dataLoading.memory.targetHeapUsage`. The config `l0MaxSizeMB` (200) / `l1MaxSizeMB`
-(100) / `sliceCacheMaxSizeMB` (128) are **ceilings / fallbacks**, not fixed
-allocations (the fallback applies where `performance.memory` is unavailable —
-Firefox/Safari). L2 (OPFS/disk, 2GB) is fixed and not heap-sized.
+`dataLoading.memory.targetHeapUsage`. The config `l0MaxSizeMB` (200) and
+`l1MaxSizeMB` (100) are L0/L1 ceilings; `sliceCacheMaxSizeMB` (128) is the
+S-cache fallback and the cap on its pool-relative floor, not its ceiling. The
+fixed fallback applies when no heap, explicit pool, or device-class pool is
+available. L2 (OPFS/disk, 2GB) is fixed and not heap-sized.
 
 **Typical desktop session** (4 GB heap): L0 up to ~200MB + L1 up to ~100MB +
-S-cache the residual (capped at 1 GiB), all demand-filled — so actual footprint
-tracks the working set, not the ceilings. On a small mobile heap the same tiers
-shrink proportionally to avoid OOM.
+S-cache the residual (capped at `SLICE_CAP_BYTES`, 2 GiB today), all
+demand-filled — so actual footprint tracks the working set, not the ceilings.
+On a small mobile heap the same tiers shrink proportionally to avoid OOM.
 
 ## Browser Support
 

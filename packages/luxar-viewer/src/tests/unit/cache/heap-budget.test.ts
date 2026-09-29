@@ -130,7 +130,7 @@ describe('computeCacheBudgets', () => {
   it('explicit pool override (WKWebView/Safari path) splits the pool and reports source=explicit', () => {
     // The native launcher / ?cacheBudgetMB= supplies a pool where the heap is
     // unmeasurable. Precedence over any heap arg. Pool 1536MB → L0/L1 ceilings,
-    // S-cache the residual (capped at 1 GiB).
+    // S-cache the residual (capped at SLICE_CAP_BYTES, 2 GiB).
     const b = computeCacheBudgets(undefined, 1536 * MB);
     expect(b.source).toBe('explicit');
     expect(b.heapAware).toBe(true);
@@ -161,7 +161,7 @@ describe('computeCacheBudgets', () => {
     const pool = heap * target * 0.6;
     expect(b.l0Bytes).toBe(l0Ceil);
     expect(b.l1Bytes).toBe(l1Ceil);
-    // residual = pool - 300MB, within (128MB, 1GiB)
+    // residual = pool - 300MB, above 128MB and below SLICE_CAP_BYTES (2 GiB)
     expect(b.sliceBytes).toBe(Math.floor(pool - l0Ceil - l1Ceil));
     expect(b.sliceBytes).toBeGreaterThan(sliceConfig);
     expect(b.sliceBytes).toBeLessThan(SLICE_CAP);

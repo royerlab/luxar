@@ -36,17 +36,18 @@ export interface EvictorCtx {
   readonly maxPoolBytes: number;
   readonly maxPoolSize: number;
   /**
-   * Same-frame grace for ACQUIRE-triggered sweeps: buffers whose
-   * `lastUsedFrame` equals this value are exempt from the byte pass.
-   * Without it, a release followed by same-frame acquires would dispose
+   * Same-commit grace for ACQUIRE-triggered sweeps: buffers whose
+   * `lastUsedCommit` equals this value are exempt from the byte pass.
+   * (The pool's clock counts atomic commits, not rendered frames — #2939.)
+   * Without it, a release followed by same-commit acquires would dispose
    * the just-released buffers before those acquires can best-fit them —
    * alloc/dispose churn replacing free reuse. `releaseGeometry` stamps
-   * `lastUsedFrame` with the release frame so the grace actually matches
-   * (an acquire-time stamp alone would carry a stale frame into the
+   * `lastUsedCommit` with the release commit so the grace actually matches
+   * (an acquire-time stamp alone would carry a stale commit into the
    * release). Release-triggered sweeps pass -1 (never matches) — byte
    * enforcement on release is unconditional, which is also the backstop
-   * bounding the grace: if the frame counter is not advancing (no render
-   * loop), acquire sweeps may keep sparing released buffers, but every
+   * bounding the grace: if the commit counter is not advancing (no
+   * commits), acquire sweeps may keep sparing released buffers, but every
    * release re-enforces the budget without grace.
    *
    * THIS GRACE IS VESTIGIAL AS FAR AS ANYONE HAS BEEN ABLE TO MEASURE.
@@ -66,16 +67,16 @@ export interface EvictorCtx {
    *    budget: re-promotion allocates fresh either way (alloc +1,
    *    reuses +0, with and without the post-grow sweep). The demoted
    *    buffer is already gone — `releaseGeometry`'s own sweep runs at
-   *    graceFrame -1 and takes it at demotion time — so the grace never
+   *    graceCommit -1 and takes it at demotion time — so the grace never
    *    gets the chance to protect it.
    *
    * KEPT ANYWAY, DELIBERATELY. "Protects no case we could construct" is
-   * not "protects nothing": some unmeasured same-frame release-then-
+   * not "protects nothing": some unmeasured same-commit release-then-
    * reacquire may still rely on it, and proving that negative is its own
    * piece of work. Removal is a separate, optional cleanup — do not
    * delete this on the strength of the paragraph above.
    */
-  readonly graceFrame: number;
+  readonly graceCommit: number;
   /** Per-type eviction counters; mutated as buffers dispose. */
   readonly typeEvictionCounters: {
     points: { evictions: number };
@@ -98,8 +99,8 @@ export function evictUntilUnderByteBudget(
     for (const [bucket, arr] of pool.entries()) {
       for (let i = 0; i < arr.length; i++) {
         const buffer = arr[i];
-        // Same-frame grace — see EvictorCtx.graceFrame.
-        if (buffer.lastUsedFrame === ctx.graceFrame) continue;
+        // Same-commit grace — see EvictorCtx.graceCommit.
+        if (buffer.lastUsedCommit === ctx.graceCommit) continue;
         refs.push({
           pool,
           bucket,

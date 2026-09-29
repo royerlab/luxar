@@ -10,7 +10,7 @@ import type { PooledGeometryType } from '../../types/data-monitor-types';
 
 /**
  * A pooled THREE geometry, plus the metadata the pool needs to decide
- * reuse, eviction, and frame accounting.
+ * reuse, eviction, and commit-age accounting.
  *
  * (The former `attributeTypes?: PointsAttributeTypes` dtype snapshot is
  * gone: points moved to the fixed 3-texel texture layout, so any pooled
@@ -30,7 +30,7 @@ export interface PooledBuffer {
    */
   type: PooledGeometryType;
   inUse: boolean;
-  lastUsedFrame: number;
+  lastUsedCommit: number;
 }
 
 /** Per-type buffer pool statistics. */
@@ -62,9 +62,9 @@ export interface PoolStats {
    * Number of pooled buffers whose eviction was deferred past the
    * current `evictUnused()` call because the per-call batch cap
    * (`evictBatchSize`, default 5) was hit. Diagnostic only — these
-   * buffers will be picked up on the next frame's eviction sweep.
+   * buffers will be picked up on the next eviction sweep.
    * Useful for spotting "user paused for 5 min then resumed and the
-   * eviction queue is stretching across many frames" scenarios.
+   * eviction queue is stretching across many sweeps" scenarios.
    */
   deferredEvictions: number;
   /**

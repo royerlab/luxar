@@ -898,7 +898,7 @@ export class SceneLoader {
       // eviction time and honors the context-loss backoff.
       this._gpuBufferPool = new GPUBufferPool(
         appConfig.dataLoading.performance.gpuPoolMaxSize,
-        appConfig.dataLoading.performance.gpuPoolEvictionFrames,
+        appConfig.dataLoading.performance.gpuPoolEvictionCommits,
         appConfig.dataLoading.performance.gpuPoolEvictBatchSize,
         () => getGpuByteBudget()
       );
@@ -909,7 +909,7 @@ export class SceneLoader {
         Modules.GPU_BUFFER_POOL,
         `GPU buffer pool enabled (max size: ${appConfig.dataLoading.performance.gpuPoolMaxSize}, ` +
           `byte budget: ${mb} MB (live), ` +
-          `eviction: ${appConfig.dataLoading.performance.gpuPoolEvictionFrames} frames, ` +
+          `eviction: ${appConfig.dataLoading.performance.gpuPoolEvictionCommits} commits, ` +
           `batch cap: ${appConfig.dataLoading.performance.gpuPoolEvictBatchSize})`
       );
     }

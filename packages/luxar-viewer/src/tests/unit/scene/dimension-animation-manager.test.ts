@@ -354,7 +354,7 @@ describe('DimensionAnimationManager', () => {
       // CURRENT value so the loaders refine the paused frame to full quality.
       const current = sceneDimsManager.getDims()!.currentStep[3];
       expect(spy).toHaveBeenCalledTimes(1);
-      expect(spy).toHaveBeenCalledWith(3, current);
+      expect(spy).toHaveBeenCalledWith(3, current, { force: true });
     });
 
     it('pause with ANOTHER dim still playing does NOT re-trigger (budget still active)', () => {

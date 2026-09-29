@@ -494,13 +494,14 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     // dim still playing this would inject a spurious mid-play update),
     // re-trigger ONE update at the current position; the budget-free pass
     // lets the loaders resume from their prefix and refinement completes the
-    // ladder. Suppressed during dispose (torn-down scene). setDimensionValue
-    // notifies listeners unconditionally, so a same-value write still fires
-    // the update.
+    // ladder. Suppressed during dispose (torn-down scene). Force the refresh
+    // because the current slice position has not changed.
     if (!this._disposing && this.getFrameBudgetMs() === null) {
       const dims = this.sceneDimsManager.getDims();
       if (dims && dimIndex < dims.ndim) {
-        this.sceneDimsManager.setDimensionValue(dimIndex, dims.currentStep[dimIndex]);
+        this.sceneDimsManager.setDimensionValue(dimIndex, dims.currentStep[dimIndex], {
+          force: true,
+        });
       }
     }
 

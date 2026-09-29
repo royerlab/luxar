@@ -5,7 +5,7 @@
  *   1. Every opened profiler session is end()ed EXACTLY ONCE on the
  *      happy path (via the per-iteration `finally`) and AT LEAST ONCE
  *      on every path (per-node catches isolate commit faults; the
- *      outer `finally` sweep covers beginFrame throws) —
+ *      outer `finally` sweep covers beginCommit throws) —
  *      idempotent end() lets these overlap safely. This is the "belt-
  *      and-braces" guard the inline comment names.
  *   2. `markPickingDirty()` runs ONLY if at least one of the four
@@ -13,8 +13,9 @@
  *      otherwise a no-op cost. It ALSO runs on a partially-failing
  *      pass (successful sibling commits changed geometry) before the
  *      AggregateError re-surfaces.
- *   3. `gpuBufferPool.beginFrame()` runs once per cycle (not per
- *      acquire) so eviction timing reflects actual rendered frames.
+ *   3. `gpuBufferPool.beginCommit()` runs once per cycle (not per
+ *      acquire): it is the pool's only clock, so LRU ageing is counted
+ *      in atomic commits, not rendered frames (#2939).
  *      Skipped when the pool is null.
  */
 
@@ -100,7 +101,7 @@ function makeCtx(overrides: Partial<AtomicCommitCtx> = {}): AtomicCommitCtx & {
     commitMeshGeometry: ReturnType<typeof vi.fn>;
     onCommitFailed: ReturnType<typeof vi.fn>;
     markPickingDirty: ReturnType<typeof vi.fn>;
-    beginFrame: ReturnType<typeof vi.fn>;
+    beginCommit: ReturnType<typeof vi.fn>;
   };
 } {
   const updatePointsGeometry = vi.fn();
@@ -109,10 +110,10 @@ function makeCtx(overrides: Partial<AtomicCommitCtx> = {}): AtomicCommitCtx & {
   const commitMeshGeometry = vi.fn();
   const onCommitFailed = vi.fn();
   const markPickingDirty = vi.fn();
-  const beginFrame = vi.fn();
+  const beginCommit = vi.fn();
 
   const ctx: AtomicCommitCtx = {
-    gpuBufferPool: { beginFrame } as unknown as AtomicCommitCtx['gpuBufferPool'],
+    gpuBufferPool: { beginCommit } as unknown as AtomicCommitCtx['gpuBufferPool'],
     nodeFactory: { markPickingDirty } as unknown as AtomicCommitCtx['nodeFactory'],
     updatePointsGeometry,
     commitLinesGeometry,
@@ -129,7 +130,7 @@ function makeCtx(overrides: Partial<AtomicCommitCtx> = {}): AtomicCommitCtx & {
       commitMeshGeometry,
       onCommitFailed,
       markPickingDirty,
-      beginFrame,
+      beginCommit,
     },
   });
 }
@@ -139,7 +140,7 @@ function makeCtx(overrides: Partial<AtomicCommitCtx> = {}): AtomicCommitCtx & {
 // ============================================================================
 
 describe('runAtomicCommit — happy path', () => {
-  it('runs every commit, beginFrame once, markPickingDirty once', () => {
+  it('runs every commit, beginCommit once, markPickingDirty once', () => {
     const points = makePointsStaged(3);
     const lines = makeLinesStaged(2);
     const gsplats = makeGSplatsStaged(1);
@@ -148,7 +149,7 @@ describe('runAtomicCommit — happy path', () => {
 
     runAtomicCommit(points, lines, gsplats, mesh, ctx);
 
-    expect(ctx.spies.beginFrame).toHaveBeenCalledTimes(1);
+    expect(ctx.spies.beginCommit).toHaveBeenCalledTimes(1);
     expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledTimes(3);
     expect(ctx.spies.commitLinesGeometry).toHaveBeenCalledTimes(2);
     expect(ctx.spies.commitGSplatsGeometry).toHaveBeenCalledTimes(1);
@@ -178,13 +179,13 @@ describe('runAtomicCommit — happy path', () => {
 });
 
 describe('runAtomicCommit — gpuBufferPool null', () => {
-  it('skips beginFrame but still runs commits and markPickingDirty', () => {
+  it('skips beginCommit but still runs commits and markPickingDirty', () => {
     const ctx = makeCtx({ gpuBufferPool: null });
     const points = makePointsStaged(1);
 
     runAtomicCommit(points, [], [], [], ctx);
 
-    expect(ctx.spies.beginFrame).not.toHaveBeenCalled();
+    expect(ctx.spies.beginCommit).not.toHaveBeenCalled();
     expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledTimes(1);
     expect(ctx.spies.markPickingDirty).toHaveBeenCalledTimes(1);
   });
@@ -195,8 +196,8 @@ describe('runAtomicCommit — empty input arrays', () => {
     const ctx = makeCtx();
     runAtomicCommit([], [], [], [], ctx);
     expect(ctx.spies.markPickingDirty).not.toHaveBeenCalled();
-    // beginFrame still fires (no guard around it in the helper).
-    expect(ctx.spies.beginFrame).toHaveBeenCalledTimes(1);
+    // beginCommit still fires (no guard around it in the helper).
+    expect(ctx.spies.beginCommit).toHaveBeenCalledTimes(1);
   });
 
   it('calls markPickingDirty when ONLY mesh is staged (pins the meshStaged.length clause)', () => {
@@ -332,11 +333,11 @@ describe('runAtomicCommit — synchronous throw mid-commit', () => {
   });
 });
 
-describe('runAtomicCommit — gpuBufferPool.beginFrame throws', () => {
-  it('propagates the throw but still ends every opened session (beginFrame is inside the try/finally)', () => {
-    // SOURCE ORDERING: `ctx.gpuBufferPool.beginFrame()` runs as the first
+describe('runAtomicCommit — gpuBufferPool.beginCommit throws', () => {
+  it('propagates the throw but still ends every opened session (beginCommit is inside the try/finally)', () => {
+    // SOURCE ORDERING: `ctx.gpuBufferPool.beginCommit()` runs as the first
     // statement INSIDE the outer try/finally that sweeps sessions. So a
-    // throw out of beginFrame propagates to the caller, but the
+    // throw out of beginCommit propagates to the caller, but the
     // session-sweeping finally still runs first — every already-opened
     // session is end()ed exactly once, never leaked. (Commits never run
     // because the throw happens before the loops; markPickingDirty never
@@ -344,14 +345,14 @@ describe('runAtomicCommit — gpuBufferPool.beginFrame throws', () => {
     const points = makePointsStaged(2);
     const lines = makeLinesStaged(1);
     const gsplats = makeGSplatsStaged(1);
-    const beginFrame = vi.fn(() => {
-      throw new Error('beginFrame boom');
+    const beginCommit = vi.fn(() => {
+      throw new Error('beginCommit boom');
     });
     const ctx = makeCtx({
-      gpuBufferPool: { beginFrame } as unknown as AtomicCommitCtx['gpuBufferPool'],
+      gpuBufferPool: { beginCommit } as unknown as AtomicCommitCtx['gpuBufferPool'],
     });
 
-    expect(() => runAtomicCommit(points, lines, gsplats, [], ctx)).toThrow('beginFrame boom');
+    expect(() => runAtomicCommit(points, lines, gsplats, [], ctx)).toThrow('beginCommit boom');
 
     // No commits ran (the throw preceded the per-type loops).
     expect(ctx.spies.updatePointsGeometry).not.toHaveBeenCalled();
@@ -404,7 +405,7 @@ describe('runAtomicCommit — session.end idempotency contract', () => {
 });
 
 describe('runAtomicCommit — superseded (signal aborted)', () => {
-  it('skips beginFrame, all commits, and markPickingDirty but STILL ends every session (G5)', () => {
+  it('skips beginCommit, all commits, and markPickingDirty but STILL ends every session (G5)', () => {
     const points = makePointsStaged(3);
     const lines = makeLinesStaged(2);
     const gsplats = makeGSplatsStaged(1);
@@ -416,7 +417,7 @@ describe('runAtomicCommit — superseded (signal aborted)', () => {
     runAtomicCommit(points, lines, gsplats, mesh, ctx);
 
     // No geometry mutation reaches the GPU for a superseded update.
-    expect(ctx.spies.beginFrame).not.toHaveBeenCalled();
+    expect(ctx.spies.beginCommit).not.toHaveBeenCalled();
     expect(ctx.spies.updatePointsGeometry).not.toHaveBeenCalled();
     expect(ctx.spies.commitLinesGeometry).not.toHaveBeenCalled();
     expect(ctx.spies.commitGSplatsGeometry).not.toHaveBeenCalled();
@@ -447,7 +448,7 @@ describe('runAtomicCommit — superseded (signal aborted)', () => {
 
     runAtomicCommit(points, [], [], [], ctx);
 
-    expect(ctx.spies.beginFrame).toHaveBeenCalledTimes(1);
+    expect(ctx.spies.beginCommit).toHaveBeenCalledTimes(1);
     expect(ctx.spies.updatePointsGeometry).toHaveBeenCalledTimes(2);
     expect(ctx.spies.markPickingDirty).toHaveBeenCalledTimes(1);
   });
@@ -463,7 +464,7 @@ describe('runAtomicCommit — discarded sweep', () => {
 
     runAtomicCommit(points, lines, gsplats, mesh, ctx);
 
-    expect(ctx.spies.beginFrame).not.toHaveBeenCalled();
+    expect(ctx.spies.beginCommit).not.toHaveBeenCalled();
     expect(ctx.spies.updatePointsGeometry).not.toHaveBeenCalled();
     expect(ctx.spies.commitLinesGeometry).not.toHaveBeenCalled();
     expect(ctx.spies.commitGSplatsGeometry).not.toHaveBeenCalled();

@@ -204,7 +204,7 @@ describe('scrub pinning (not playing)', () => {
     // The settle pass re-notifies at the current position once the scrub is quiet,
     // through the first NON-displayed dimension (3 here), never a displayed axis.
     vi.advanceTimersByTime(SCRUB_SETTLE_MS + 1);
-    expect(setValue).toHaveBeenCalledWith(3, 5);
+    expect(setValue).toHaveBeenCalledWith(3, 5, { force: true });
   });
 
   it('a settle pass carries no directive (the listener runs while the settle flag is set)', async () => {

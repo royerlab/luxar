@@ -35,7 +35,7 @@ function makePooled(targetBytes: number, type: PooledBuffer['type']): PooledBuff
     capacity: 1,
     type,
     inUse: false,
-    lastUsedFrame: 0,
+    lastUsedCommit: 0,
   };
 }
 
@@ -49,9 +49,9 @@ function makeCtx(
     gsplatBuffers: new Map(),
     maxPoolBytes: opts.maxPoolBytes,
     maxPoolSize: opts.maxPoolSize ?? 100,
-    // -1 = no same-frame grace (matches release-triggered sweeps; the
+    // -1 = no same-commit grace (matches release-triggered sweeps; the
     // acquire-path grace has its own dedicated test below).
-    graceFrame: -1,
+    graceCommit: -1,
     typeEvictionCounters: {
       points: { evictions: 0 },
       lines: { evictions: 0 },
@@ -209,26 +209,26 @@ describe('throwing dispose listener (splice-before-dispose contract)', () => {
   });
 });
 
-describe('same-frame grace (acquire-triggered sweeps)', () => {
-  it('exempts buffers released this frame when graceFrame matches; evicts them otherwise', () => {
+describe('same-commit grace (acquire-triggered sweeps)', () => {
+  it('exempts buffers released this commit when graceCommit matches; evicts them otherwise', () => {
     const buf = makePooled(500_000, 'points'); // over a 100k budget on its own
-    buf.lastUsedFrame = 7;
+    buf.lastUsedCommit = 7;
     const pools = new Map([[0, [buf]]]);
 
-    // graceFrame === lastUsedFrame → exempt (dataset-switch churn guard).
+    // graceCommit === lastUsedCommit → exempt (dataset-switch churn guard).
     const graced: EvictorCtx = {
       ...makeCtx({ maxPoolBytes: 100_000 }),
       pointBuffers: pools,
-      graceFrame: 7,
+      graceCommit: 7,
     };
     expect(evictUntilUnderByteBudget(graced, { emitted: true })).toBe(0);
     expect(pools.get(0)!.length).toBe(1);
 
-    // Release-style sweep (graceFrame -1) → evicted as before.
+    // Release-style sweep (graceCommit -1) → evicted as before.
     const strict: EvictorCtx = {
       ...makeCtx({ maxPoolBytes: 100_000 }),
       pointBuffers: pools,
-      graceFrame: -1,
+      graceCommit: -1,
     };
     expect(evictUntilUnderByteBudget(strict, { emitted: true })).toBe(1);
     expect(pools.get(0)?.length ?? 0).toBe(0); // empty buckets may be pruned

@@ -367,9 +367,9 @@ narrowly-scoped helpers each spatial-index loader composes:
   duplicate-free and the strict-ascent guard would fail it closed.
 - **`spatial-query/prefetch-ranges.ts`** — `prefetchRangesIntoCache(arrays, ranges)`:
   shared cache-warming read for the three loaders' `prefetchChunks`.
-  Fires a `get()` per (array × range) and discards the result. Deliberately
-  separate from `RangeLoader.loadDirectTyped` — prefetch warms future frames,
-  so it allocates no typed output and carries no per-update abort signal.
+  Fires a `readArray()` per (array × range), assembling and discarding each
+  output selection. Deliberately separate from `RangeLoader.loadDirectTyped`:
+  it warms future frames without using the active demand update's abort signal.
 - **`extend-to-all-preflight.ts`** — `warnExtendToAllNoDimensions` (warns when
   `extend_to_all` is set but the view state has no resolved dimensions) +
   `announceExtendToAllOnce` (one-shot BROADCAST emoji log on first load).

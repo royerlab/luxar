@@ -30,13 +30,13 @@ export interface AtomicCommitInput<TStaged> {
 }
 
 export interface AtomicCommitCtx {
-  /** Optional GPU buffer pool — frame counter is bumped once per cycle. */
+  /** Optional GPU buffer pool — its commit counter is bumped once per cycle. */
   gpuBufferPool: GPUBufferPool | null;
   /** Pickable-state invalidator (cached pick buffer goes stale on geometry change). */
   nodeFactory: NodeFactory;
   /**
    * Per-update abort signal. When `aborted`, this update was superseded:
-   * SKIP every geometry mutation (beginFrame / commits / markPickingDirty)
+   * SKIP every geometry mutation (beginCommit / commits / markPickingDirty)
    * so no stale or partial frame reaches the GPU — but STILL end every
    * profiler session below (the sessions were opened in `runLoaderUpdates`
    * and must be closed exactly once regardless of commit). See Guards G5/G6.
@@ -72,13 +72,13 @@ export function runAtomicCommit(
   // the staged === null case (loader failed or marked skipped) so
   // every opened session is closed exactly once.
   //
-  // Belt-and-braces: if a commit (or beginFrame) throws synchronously,
+  // Belt-and-braces: if a commit (or beginCommit) throws synchronously,
   // the remaining iterations and the later geometry-type loops never
   // run, leaving their sessions un-ended. The outer `finally` sweeps
   // every staged session afterwards. `SessionImpl.end()` is idempotent
   // (no-ops on already-ended sessions), so this is safe to overlay on
   // the per-iteration end() calls that record accurate per-node timings
-  // on the happy path. beginFrame() is inside the try so a future
+  // on the happy path. beginCommit() is inside the try so a future
   // throwing implementation can't leak the already-opened sessions.
   // Superseded or explicitly discarded: skip all geometry mutations, but the
   // session-end sweep below MUST still run (G5/G6). The shared predicate keeps
@@ -109,10 +109,12 @@ export function runAtomicCommit(
   };
 
   try {
-    // Advance GPU buffer pool frame counter once per update cycle
-    // (not per-acquire) so eviction timing reflects actual frames.
+    // Advance the GPU buffer pool's commit counter once per atomic commit
+    // (not per-acquire). This is the pool's ONLY clock, so its LRU ageing
+    // (`evictionCommits`) is measured in commits, not rendered frames: an
+    // idle or orbiting view runs no commit and ages nothing (#2939).
     if (ctx.gpuBufferPool && !discard) {
-      ctx.gpuBufferPool.beginFrame();
+      ctx.gpuBufferPool.beginCommit();
     }
 
     for (const { staged, session } of pointsStaged) {

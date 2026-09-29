@@ -141,10 +141,8 @@ export async function loadPointsChunkIndex(
 }
 
 /**
- * Register a Points child array's shape with the prefetcher so
- * subsequent range fetches that exceed the array's bounds can be
- * short-circuited (no spurious 404s). No-op when no prefetcher is
- * wired up.
+ * Register a Points child array's shape to enable adjacency prefetch
+ * within its chunk bounds. No-op when no prefetcher is wired up.
  *
  * The path normalization mirrors the original inline call site: the
  * leading `/` (if present) is stripped from the node path, then

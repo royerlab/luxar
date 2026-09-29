@@ -205,7 +205,7 @@ Each item names the mechanism, the evidence, and the expected effect. "Verified"
 14. RGBA32F → RGBA16F element textures (planned in `gpu-byte-budget.ts:27-41`), halves resident GPU bytes and the `texSubImage2D` share.
 15. Free the LDR half-float target when FXAA is off (`resource-lifecycle.ts:71,118`); don't `dispose()` the HDR target on DPR steps when sample count is unchanged; coalesce adaptive-DPR resizes.
 16. Partition frustum bounds: the loaded-geometry footprint is now cached per part and dirtied by geometry commits, while transformed authored boxes reuse caller-owned storage (#2605). An h2afva-shaped 44-part / 4,448-node selector microbenchmark (300 static frames, five runs) dropped the median registry pass from 2.93 ms/frame and 44 `Box3.setFromObject` subtree walks/frame to 0.061 ms/frame and zero steady-state walks. The O(groups²) containment relation scan remains in `src/rendering/depth-sort-coordinator/render-order.ts:781-827`, while its per-frame sphere and graph scratch allocations are removed (#2636).
-17. `gpuBufferPool.beginFrame()` is per commit cycle, not per frame (`gpu-buffer-pool.ts:172` vs `atomic-commit.ts:115`), so `evictionFrames` is mis-unit'd.
+17. Resolved (#2939, #2958): the pool's `beginCommit()` clock advances once per atomic commit, and its `evictionCommits` threshold and timestamps now name that unit. Idle and orbiting views do not age pooled buffers.
 18. WebGPU backend ignores `updateRanges` (full re-upload) — parity gap for streaming scenes.
 19. `get()` returns `undefined` after exhausted retries → zarrita fills silently (`multi-level-caching-store.ts:403,413`).
 20. Console volume: 4 717 console lines for the 100-node load (47 per node), all through the interceptor. Cheap here, but it scales with node count.

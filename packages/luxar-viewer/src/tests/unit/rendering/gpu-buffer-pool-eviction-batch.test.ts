@@ -42,7 +42,7 @@ describe('GPUBufferPool eviction batch cap', () => {
     // Big maxPoolSize so we never enter the "must evict" path.
     const pool = new GPUBufferPool(
       /* maxPoolSize */ 100,
-      /* evictionFrames */ 10,
+      /* evictionCommits */ 10,
       /* evictBatchSize */ 3
     );
 
@@ -52,8 +52,8 @@ describe('GPUBufferPool eviction batch cap', () => {
 
     // Advance past the eviction threshold so every pooled buffer is
     // eligible.
-    for (let frame = 0; frame < 50; frame++) {
-      pool.beginFrame();
+    for (let commit = 0; commit < 50; commit++) {
+      pool.beginCommit();
     }
 
     // First sweep: caps at evictBatchSize=3.
@@ -76,40 +76,41 @@ describe('GPUBufferPool eviction batch cap', () => {
     // Tiny maxPoolSize forces `mustEvict = true` immediately.
     const pool = new GPUBufferPool(
       /* maxPoolSize */ 2,
-      /* evictionFrames */ 10,
+      /* evictionCommits */ 300,
       /* evictBatchSize */ 1
     );
 
     // Acquire 8 geometries; release each so they accumulate in the pool.
     fillPool(pool, 8);
 
-    // Advance past 60 frames (the over-limit-but-recent threshold) so
-    // mustEvict + framesSinceUse > 60 fires for every buffer.
-    for (let frame = 0; frame < 75; frame++) {
-      pool.beginFrame();
+    // The over-limit grace is strict: nothing is evicted at 60 commits.
+    for (let commit = 0; commit < 60; commit++) {
+      pool.beginCommit();
     }
+    expect(pool.evictUnused()).toBe(0);
+    pool.beginCommit();
 
-    // Single sweep evicts everything qualifying — bypasses the cap of 1.
+    // At 61 commits, a single sweep evicts all 8 despite the cap of 1.
     const evicted = pool.evictUnused();
-    expect(evicted).toBeGreaterThan(1);
+    expect(evicted).toBe(8);
   });
 
   it('clamps evictBatchSize to ≥ 1 even if 0 / negative passed', () => {
     const pool = new GPUBufferPool(
       /* maxPoolSize */ 100,
-      /* evictionFrames */ 5,
+      /* evictionCommits */ 5,
       /* evictBatchSize */ 0
     );
     fillPool(pool, 3);
-    for (let frame = 0; frame < 20; frame++) pool.beginFrame();
+    for (let commit = 0; commit < 20; commit++) pool.beginCommit();
     expect(pool.evictUnused()).toBe(1);
   });
 
   it('default constructor uses evictBatchSize=5', () => {
     // 6 unused entries → first sweep evicts 5, second sweep 1.
-    const pool = new GPUBufferPool(/* maxPoolSize */ 100, /* evictionFrames */ 5);
+    const pool = new GPUBufferPool(/* maxPoolSize */ 100, /* evictionCommits */ 5);
     fillPool(pool, 6);
-    for (let frame = 0; frame < 20; frame++) pool.beginFrame();
+    for (let commit = 0; commit < 20; commit++) pool.beginCommit();
     expect(pool.evictUnused()).toBe(5);
     expect(pool.evictUnused()).toBe(1);
   });

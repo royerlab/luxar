@@ -1266,7 +1266,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
     if (splatRanges.length === 0) return;
 
     // Warm every array over the visible ranges. The reads populate L0/L1/L2 as
-    // a side-effect and are discarded — no output buffers allocated.
+    // a side-effect; their assembled output selections are discarded.
     const arrays = this.prefetchArrays();
 
     await prefetchRangesIntoCache(arrays, splatRanges, signal);

@@ -84,7 +84,7 @@ export class ChunkPrefetcher {
 
     // Prevent unbounded memory growth — evict oldest half when limit reached.
     // Do NOT clear maxChunkIndices: they're registered once per array and losing
-    // them causes out-of-range prefetch requests (404s) until arrays re-register.
+    // them disables adjacency prefetch until arrays re-register.
     if (this.seen.size > ChunkPrefetcher.MAX_SEEN_SIZE) {
       const evictCount = Math.floor(ChunkPrefetcher.MAX_SEEN_SIZE / 2);
       let count = 0;
@@ -108,7 +108,7 @@ export class ChunkPrefetcher {
 
     const adjacent = this.getAdjacentChunks(key);
     if (adjacent.length === 0) {
-      // Not a chunk file (metadata), skip prefetching
+      // Not a chunk file, no registered bounds, or no valid neighbors.
       return;
     }
 
@@ -221,20 +221,19 @@ export class ChunkPrefetcher {
   }
 
   /**
-   * Register array shape and chunk sizes for bounds checking during prefetch.
-   * When registered, getAdjacentChunks will skip indices beyond valid bounds.
+   * Register array shape and chunk sizes to enable adjacency prefetch.
+   * Neighbors outside the array's chunk grid are skipped.
    *
    * @param arrayPath - Base path of the array (e.g., 'gsplats_t0023/centers')
    * @param shape - Array shape (e.g., [2096, 4])
    * @param chunks - Chunk sizes (e.g., [1024, 4])
    */
   registerArrayBounds(arrayPath: string, shape: number[], chunks: number[]): void {
-    // Bounds registration is a BEST-EFFORT prefetch optimization: when present
-    // it lets getAdjacentChunks skip out-of-range indices (avoiding spurious
-    // 404s). It must NEVER abort a load. If shape/chunks are absent or malformed
+    // Bounds registration enables adjacency prefetch for this array, but must
+    // never abort a load. If shape/chunks are absent or malformed
     // (a partial/streaming array, an unusual store, mismatched ranks, or a zero
-    // chunk size that would divide to Infinity), skip registration silently —
-    // the prefetcher simply runs without bounds.
+    // chunk size that would divide to Infinity), skip registration silently;
+    // adjacency prefetch stays disabled for this array.
     if (
       !Array.isArray(shape) ||
       !Array.isArray(chunks) ||
@@ -256,6 +255,7 @@ export class ChunkPrefetcher {
 
   /**
    * Generate adjacent chunk keys (±1 in each dimension).
+   * Returns [] unless bounds are registered for the key's array path.
    *
    * @example
    * getAdjacentChunks('points/positions/1.2.3')

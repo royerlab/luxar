@@ -1988,10 +1988,38 @@ describe('LuxarApp', () => {
       const onDims = vi.fn();
       app.on('dimensions-changed', onDims);
 
-      listener(); // simulate a slice-position change notification
+      listener(true); // simulate a slice-position change notification
 
       expect(onDims).toHaveBeenCalledTimes(1);
       expect(onDims.mock.calls[0][0]).toMatchObject({ ndim: expect.any(Number) });
+    });
+
+    it('emits dimensions-changed only for real slice changes, not refreshes', async () => {
+      const fakeScene = {
+        userData: {
+          sceneDimensions: {
+            dimensions: [
+              { name: 'time', unit: '', range: [0, 3], step: 1, display: false, discrete: true },
+            ],
+          },
+        },
+        children: [],
+        getObjectByName: () => undefined,
+      } as unknown as Parameters<typeof sceneDimsManager.initFromScene>[0];
+      sceneDimsManager.initFromScene(fakeScene);
+      await app.init({ canvas: mockCanvas, src: SRC });
+      const onDims = vi.fn();
+      app.on('dimensions-changed', onDims);
+      const current = sceneDimsManager.getDims()!.currentStep[0];
+
+      app.setDimensionValue(0, current);
+      expect(onDims).not.toHaveBeenCalled();
+
+      app.setDimensionValue(0, current + 1);
+      expect(onDims).toHaveBeenCalledTimes(1);
+
+      sceneDimsManager.setDimensionValue(0, current + 1, { force: true });
+      expect(onDims).toHaveBeenCalledTimes(1);
     });
 
     it('does not emit dimensions-changed after dispose', async () => {
@@ -2002,7 +2030,7 @@ describe('LuxarApp', () => {
       app.on('dimensions-changed', onDims);
 
       app.dispose();
-      listener(); // isInitialized is false → guarded no-op
+      listener(true); // isInitialized is false → guarded no-op
 
       expect(onDims).not.toHaveBeenCalled();
     });

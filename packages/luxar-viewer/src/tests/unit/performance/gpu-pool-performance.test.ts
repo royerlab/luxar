@@ -165,7 +165,7 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
     });
 
     it('should evict old geometries to prevent unbounded growth', () => {
-      const shortEvictionPool = new GPUBufferPool(20, 5); // Evict after 5 frames
+      const shortEvictionPool = new GPUBufferPool(20, 5); // Evict after 5 commits
 
       // Acquire and release many geometries with different sizes
       for (let i = 0; i < 30; i++) {
@@ -174,9 +174,9 @@ describe('GPU Buffer Pool Performance Regression Tests', () => {
         shortEvictionPool.releasePointsGeometry(`node${i}`);
       }
 
-      // Advance frames by acquiring active geometries
+      // Advance commits by acquiring active geometries
       for (let i = 0; i < 10; i++) {
-        shortEvictionPool.beginFrame();
+        shortEvictionPool.beginCommit();
         shortEvictionPool.acquirePointsGeometry(`active${i}`, 5000);
       }
 
