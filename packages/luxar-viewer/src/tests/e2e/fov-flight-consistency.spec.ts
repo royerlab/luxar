@@ -51,8 +51,8 @@ async function bootSynthetic(page: Page, type: 'points' | 'gsplats'): Promise<vo
     // landing between the renders being compared.
     const result = await dbg.injectSyntheticScene({
       type: t,
-      // The FOV check needs visible geometry, not a 20k-element GPU stress scene.
-      // Large captures can stall readback on slower renderers.
+      // Keep below the measured SwiftShader capture-cost cliff: flat at 10k,
+      // minutes by 12k (#2970). Restore 20k when that issue is fixed.
       count: 5000,
       seed: 7,
       blending: 'additive',
