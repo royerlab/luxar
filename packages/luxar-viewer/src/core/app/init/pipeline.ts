@@ -248,10 +248,11 @@ export async function runInitPipeline(
   // Set up per-frame callback for dynamic clipping plane updates
   // Uses unique ID so it won't conflict with other per-frame callbacks (e.g., dimension animation)
   animationController.addPerFrameCallback('dynamic-clipping', () => {
-    const changed = sceneManager.updateDynamicClippingPlanes();
-    // The first 'view' callback, and the only camera write inside the phase
-    // (near/far): every view callback after it reads this frame's snapshot.
+    // The first 'view' callback invalidates every frame, even if clipping
+    // throws, so the canvas sizes are re-read once per frame. A camera move or
+    // near/far change rebuilds the snapshot on read regardless (view-context.ts).
     viewContext.invalidate();
+    const changed = sceneManager.updateDynamicClippingPlanes();
     // A near/far change is also a projection change the view signature would
     // catch; returning it keeps the callback's own contract honest.
     return changed;
