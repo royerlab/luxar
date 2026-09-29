@@ -63,8 +63,11 @@ export function wireSceneEnvironment(deps: EnvironmentWiringDeps): void {
 
   const markStale = (): void => sceneManager.environment?.markStale();
   events.add(eventBus.on('geometry-committed', markStale));
-  sceneDimsManager.addListener(markStale);
-  events.add(() => sceneDimsManager.removeListener(markStale));
+  const markStaleOnSliceChange = (changed?: boolean): void => {
+    if (changed !== false) markStale();
+  };
+  sceneDimsManager.addListener(markStaleOnSliceChange);
+  events.add(() => sceneDimsManager.removeListener(markStaleOnSliceChange));
   window.addEventListener('luxar-layers-changed', markStale);
   events.add(() => window.removeEventListener('luxar-layers-changed', markStale));
 

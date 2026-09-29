@@ -109,6 +109,27 @@ describe('wireSceneEnvironment', () => {
     expect(h.callbacks.size).toBe(0);
   });
 
+  it('marks stale for a changed slice but not a forced same-slice refresh', () => {
+    const h = makeHarness();
+    h.sceneManager.scene.userData.sceneDimensions = {
+      dimensions: [{ name: 'time', range: [0, 2], step: 1, discrete: true, display: false }],
+    };
+    sceneDimsManager.initFromScene(h.sceneManager.scene);
+
+    sceneDimsManager.setDimensionValue(0, 0, { force: true });
+    expect(h.environment.markStale).not.toHaveBeenCalled();
+
+    sceneDimsManager.setDimensionValue(0, 1);
+    expect(h.environment.markStale).toHaveBeenCalledTimes(1);
+    sceneDimsManager.setDimensionValue(0, 1, { force: true });
+    expect(h.environment.markStale).toHaveBeenCalledTimes(1);
+
+    eventBus.emit('geometry-committed', {});
+    expect(h.environment.markStale).toHaveBeenCalledTimes(2);
+    h.events.dispose();
+    sceneDimsManager.reset();
+  });
+
   it('under ?bakeEnv, bakes once after the loader stays settled for the grace window', async () => {
     const h = makeHarness({ bakeEnvironment: { probe: 'node:shell', resolution: 32 } });
     const bake = h.callbacks.get('environment-bake')!;
