@@ -1610,13 +1610,10 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     expect(ctx.registry.registerMeshLoader).not.toHaveBeenCalled();
   });
 
-  it('gives a deferred mesh level a release thunk, even though it has no pooled buffer', async () => {
-    // The asymmetry worth pinning: a mesh is `pooled: false`, so this release
-    // hands nothing back to the evictable pool — which is exactly why it was
-    // originally omitted. It is needed anyway because mesh is `depthSortable`
-    // (#1347): `releaseLazyMesh` drops the demoted level's depth-sort state and
-    // its worker-side centroids. Assert the thunk EXISTS and is wired, so the
-    // "no pooled buffer" reasoning cannot re-delete it.
+  it('gives a deferred mesh level a release thunk that resets its load state', async () => {
+    // A mesh is not pooled, but releaseLazyMesh disposes its committed geometry
+    // and depth-sort state. The thunk must also reset readiness so selection
+    // loads and commits the level again after demotion.
     attachStubChildren();
     const reg = makeReg();
     const ctx = makeCtx(reg);

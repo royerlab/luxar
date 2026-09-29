@@ -606,6 +606,11 @@ export function createMeshGeometry(input: MeshGeometryConfig): THREE.BufferGeome
  * One-vertex, no-index geometry for a new or demoted mesh node. The optional
  * attribute set comes from metadata so a later commit can fill its buffers
  * without changing the layout after WebGPU has seen the node.
+ * One vertex keeps every attribute's count nonzero and gives a real bounding
+ * sphere. Three r184 handles zero-position buffers with radius 0 and absent
+ * positions with radius -1 (not NaN); the single vertex is conservative, not
+ * a workaround for NaN bounds. Optional attributes need stubs from birth
+ * because WebGPU caches the vertex layout on first draw.
  */
 export function createEmptyMeshGeometry(
   attrs: Pick<MeshMetadata, 'has_normals' | 'has_scalars' | 'has_uvs'>

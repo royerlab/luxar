@@ -2141,10 +2141,14 @@ export class SceneLoader {
         const mesh = this.rootGroup?.getObjectByName(path);
         if (mesh) {
           const level = mesh as THREE.Mesh;
+          // Mesh is depthSortable (#1347); demotion must drop coordinator
+          // state and worker-side centroids along with its geometry.
           releaseDepthSortNode(level);
           level.geometry.dispose();
           // The geometry owns the uploaded texture's disposal hook. Forget its
           // cached identity so the next commit creates a live texture again.
+          // Materials retain the disposed texture while this level is hidden;
+          // recommit replaces it before the level can be shown again.
           delete level.userData.meshTexture;
           delete level.userData.meshTextureSource;
           level.geometry = createEmptyMeshGeometry(level.userData.attrs as MeshMetadata);

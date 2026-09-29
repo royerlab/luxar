@@ -185,11 +185,11 @@ because a whole-node loader genuinely differs, not because a number is missing:
 - **Performance tab** — mesh sessions aggregate into one `Mesh` row like the
   other three (`NODE_TYPE_COUNTERS` in `timing-panel.ts`) and carry a typed
   `triangles` count that SUMS across a multi-layer row.
-- **Memory tab** — mesh is deliberately ABSENT from the GPU-pool and
-  accumulator tables. Those are keyed by `POOLED_GEOMETRY_TYPES` (the
-  instanced-quad element-texture path); a mesh uploads its own
-  `BufferGeometry` and keeps no per-slice working set, so it has no row to
-  show there. Its resident bytes appear in the loader totals instead.
+- **Memory tab** — mesh has no per-type GPU-pool or accumulator row. Those
+  rows are keyed by `POOLED_GEOMETRY_TYPES` (the instanced-quad element-texture
+  path); a mesh uploads its own `BufferGeometry` and keeps no per-slice working
+  set. Its resident bytes appear in the loader totals and the pool's
+  `activeBytes` / `totalBytes` totals, though not in the pool's per-type rows.
 
 ## Failed-load recovery surface
 
