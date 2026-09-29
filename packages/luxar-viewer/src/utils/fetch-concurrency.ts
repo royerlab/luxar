@@ -16,8 +16,17 @@
  *
  * Data and metadata use separate lanes. Body-sized chunk reads stay bounded,
  * and on multiplexed transports a root `zarr.json` / `.zattrs` probe does not
- * wait behind every active chunk body. HTTP/1.1 can still queue both lanes on
- * the browser's smaller per-origin socket pool.
+ * wait behind every active chunk body.
+ *
+ * The caps must never exceed what the browser will actually put on the wire,
+ * because `fetch-retry.ts` starts each attempt's header timer when the gate
+ * admits it. Over HTTP/1.1 a browser opens only six sockets per origin; a gate
+ * wider than that parks the surplus in the browser's own invisible queue with
+ * the timer already running. Under a steady stream (a large backdrop still
+ * loading while the view changes) those parked requests time out, their
+ * retries rejoin the same queue, and every load fails together. So once a
+ * plain `http:` URL is seen, both lanes shrink to fit the socket pool (see
+ * {@link noteFetchUrl}).
  */
 
 /**
@@ -31,13 +40,22 @@
 export const MAX_CONCURRENT_CHUNK_FETCHES = 24;
 export const MAX_CONCURRENT_METADATA_FETCHES = 4;
 
+/**
+ * Lane caps on an HTTP/1.1 origin: together they equal the six sockets every
+ * current browser opens per origin, so an admitted request is a dispatched
+ * request. Metadata keeps two sockets of its own so a scene-graph probe is not
+ * stuck behind four chunk bodies.
+ */
+export const HTTP1_MAX_CONCURRENT_CHUNK_FETCHES = 4;
+export const HTTP1_MAX_CONCURRENT_METADATA_FETCHES = 2;
+
 export type FetchLane = 'data' | 'metadata';
 
 const ZARR_METADATA_KEYS = new Set(['zarr.json', '.zarray', '.zattrs', '.zgroup', '.zmetadata']);
 
 interface FetchGateState {
   active: number;
-  readonly limit: number;
+  limit: number;
   readonly queue: Array<() => void>;
 }
 
@@ -47,6 +65,41 @@ const fetchGates: Record<FetchLane, FetchGateState> = {
 };
 
 let fetchProgressEpoch = 0;
+let http1Origin = false;
+
+/**
+ * Record a URL about to be fetched. Browsers speak HTTP/2 and HTTP/3 only over
+ * TLS, so a plain `http:` URL is HTTP/1.1 for certain: the local kiosk and
+ * `luxar serve`, on localhost or a LAN. The first one shrinks both lanes to the
+ * HTTP/1.1 caps for the rest of the session; the gate is global, and a mixed
+ * scene only pays a narrower gate on its TLS origins. An `https:` origin that
+ * happens to be HTTP/1.1 is not detected and keeps the wide caps.
+ */
+export function noteFetchUrl(url: string): void {
+  if (http1Origin) return;
+  let protocol: string;
+  try {
+    protocol = new URL(url, globalThis.location?.href).protocol;
+  } catch {
+    return;
+  }
+  if (protocol !== 'http:') return;
+  http1Origin = true;
+  fetchGates.data.limit = HTTP1_MAX_CONCURRENT_CHUNK_FETCHES;
+  fetchGates.metadata.limit = HTTP1_MAX_CONCURRENT_METADATA_FETCHES;
+}
+
+/** Current cap of one lane. */
+export function getFetchLaneLimit(lane: FetchLane): number {
+  return fetchGates[lane].limit;
+}
+
+/** Restore the wide caps between isolated tests. */
+export function resetFetchTransport(): void {
+  http1Origin = false;
+  fetchGates.data.limit = MAX_CONCURRENT_CHUNK_FETCHES;
+  fetchGates.metadata.limit = MAX_CONCURRENT_METADATA_FETCHES;
+}
 
 export function fetchLaneForKey(key: string): FetchLane {
   const basename = key.slice(key.lastIndexOf('/') + 1);
@@ -90,8 +143,9 @@ export function withFetchGate<T>(fn: () => Promise<T>, lane: FetchLane = 'data')
       return await fn();
     } finally {
       gate.active -= 1;
-      const next = gate.queue.shift(); // hand the freed slot to the next waiter
-      if (next) next();
+      // Hand freed slots to waiters, but only below the cap: after the cap
+      // shrinks, leases already in flight must drain before new ones start.
+      while (gate.active < gate.limit && gate.queue.length > 0) gate.queue.shift()!();
     }
   });
 }

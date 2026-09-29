@@ -1,8 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
 import {
   boundedConcurrencyStore,
   fetchLaneForKey,
+  getFetchLaneLimit,
+  noteFetchUrl,
+  resetFetchTransport,
   withFetchGate,
+  HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
+  HTTP1_MAX_CONCURRENT_METADATA_FETCHES,
   MAX_CONCURRENT_CHUNK_FETCHES,
   MAX_CONCURRENT_METADATA_FETCHES,
 } from '../../../utils/fetch-concurrency';
@@ -13,6 +18,8 @@ import {
  * the cap + the pass-through surface; fails on the pre-fix unbounded path.
  */
 describe('fetch-concurrency gate', () => {
+  afterEach(() => resetFetchTransport());
+
   it('classifies nested zarr documents into the metadata lane only', () => {
     for (const key of ['zarr.json', 'group/.zattrs', 'a/b/.zarray', '.zgroup', '.zmetadata']) {
       expect(fetchLaneForKey(key)).toBe('metadata');
@@ -131,5 +138,51 @@ describe('fetch-concurrency gate', () => {
     }
     await Promise.all(requests);
     expect(peak).toBe(MAX_CONCURRENT_METADATA_FETCHES);
+  });
+
+  it('fits both lanes into the six HTTP/1.1 sockets once an http: URL is seen', () => {
+    expect(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES + HTTP1_MAX_CONCURRENT_METADATA_FETCHES).toBe(6);
+    noteFetchUrl('https://cdn.example.org/scene.luxar.zarr/zarr.json');
+    expect(getFetchLaneLimit('data')).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
+    noteFetchUrl('http://10.0.0.55:8001/data/Backdrop/part_3/zarr.json');
+    expect(getFetchLaneLimit('data')).toBe(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
+    expect(getFetchLaneLimit('metadata')).toBe(HTTP1_MAX_CONCURRENT_METADATA_FETCHES);
+    // Never widens again within the session.
+    noteFetchUrl('https://cdn.example.org/other/zarr.json');
+    expect(getFetchLaneLimit('data')).toBe(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
+  });
+
+  it('drains in-flight leases down to a cap that shrank under them', async () => {
+    let active = 0;
+    let peak = 0;
+    const release: Array<() => void> = [];
+    const fire = () =>
+      withFetchGate(() => {
+        active += 1;
+        peak = Math.max(peak, active);
+        return new Promise<void>((resolve) =>
+          release.push(() => {
+            active -= 1;
+            resolve();
+          })
+        );
+      });
+    const calls = Array.from({ length: MAX_CONCURRENT_CHUNK_FETCHES * 2 }, fire);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(active).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
+
+    noteFetchUrl('http://localhost:8005/scene.luxar.zarr/zarr.json');
+    peak = 0;
+    while (release.length) {
+      release.shift()!();
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+    await Promise.all(calls);
+    // Leases started after the shrink never pushed concurrency past the new cap.
+    expect(peak).toBeGreaterThan(0);
+    expect(peak).toBeLessThanOrEqual(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
+    expect(active).toBe(0);
   });
 });

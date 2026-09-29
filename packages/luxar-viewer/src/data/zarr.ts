@@ -9,7 +9,7 @@
 
 import * as zarrita from 'zarrita';
 
-import { boundedConcurrencyStore } from '../utils/fetch-concurrency';
+import { boundedConcurrencyStore, noteFetchUrl } from '../utils/fetch-concurrency';
 import { LuxarDeltaCodec } from './codecs/luxar-delta';
 import { isZippedStoreUrl } from './zip/entries';
 import { LuxarZipStore } from './zip/store';
@@ -100,6 +100,7 @@ if (typeof codecRegistry?.set === 'function') {
  * tier in `cache/multi-level-caching-store/fetch-retry.ts`). See
  * {@link withFetchGate} for why. */
 export function createFetchStore(url: string): FetchStore {
+  noteFetchUrl(url);
   return boundedConcurrencyStore(new zarrita.FetchStore(url));
 }
 

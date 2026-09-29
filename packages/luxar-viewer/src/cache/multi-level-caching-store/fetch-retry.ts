@@ -4,6 +4,7 @@ import {
   getActiveFetchCount,
   getFetchProgressEpoch,
   noteFetchProgress,
+  noteFetchUrl,
   type FetchLane,
   withFetchGate,
 } from '../../utils/fetch-concurrency';
@@ -291,9 +292,12 @@ async function runFetchAttempt<T>(
   consume: (attempt: FetchAttempt) => Promise<T>
 ): Promise<T> {
   const lane = options?.lane ?? 'data';
+  noteFetchUrl(url);
   return withFetchGate(async () => {
     // Start the per-attempt timer only after acquiring the gate. Queue wait is
     // controlled by the caller signal and must not consume the request budget.
+    // That holds only while the gate is no wider than the browser's socket
+    // pool, which `noteFetchUrl` keeps true on HTTP/1.1 origins.
     const timeoutController = new AbortController();
     const timeoutId = setTimeout(
       () =>
