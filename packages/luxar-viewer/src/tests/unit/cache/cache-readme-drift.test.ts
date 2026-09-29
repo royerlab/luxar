@@ -23,9 +23,7 @@ describe('cache README', () => {
   });
 
   it('documents validation for hash-less external datasets', () => {
-    const externalDatasets = readme()
-      .split('**External datasets**')[1]
-      ?.split('## Performance')[0];
+    const externalDatasets = readme().split('**External datasets**')[1]?.split('## Performance')[0];
 
     expect(externalDatasets).toBeDefined();
     expect(externalDatasets).toContain('zattrs-hash');
