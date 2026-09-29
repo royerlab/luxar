@@ -511,10 +511,11 @@ raw HDR captures were flat at 10,000 (~0.2–0.3 s), but reached 18–120 s by
 12,000 while the animation loop kept rendering into the readback window
 (#2970). Suppressing those extra renders brought three 20,000-element captures
 to 0.17–0.19 s, with stable renderer geometry and texture counts. The full
-20,000-element FOV comparison still took about 72 s for its three captures and
-fresh-page setup, beyond its 60 s test timeout. Use a smaller scene for that
-shader-plumbing check; benchmark a larger fixture on the target runner before
-adding it to the nightly suite.
+20,000-element FOV comparison still took about 72 s for points and 102 s for
+gsplats in isolation with a 180 s timeout, including three captures and
+fresh-page setup. Both exceed the normal 60 s test timeout. Use a smaller scene
+for that shader-plumbing check; benchmark a larger fixture on the target
+runner before adding it to the nightly suite.
 
 #### 4. Debug Mode Not Enabled
 
