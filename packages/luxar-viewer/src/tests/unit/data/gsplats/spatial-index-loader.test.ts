@@ -2062,7 +2062,7 @@ describe('GSplatsSpatialIndexLoader', () => {
 });
 
 describe('GSplatsSpatialIndexLoader — speculative calls keep a refinement-class index warm (B6)', () => {
-  it.fails('planPrefetch / prefetchChunks / prefetchChunkBoundary do not raise it to demand', async () => {
+  it('planPrefetch / prefetchChunks / prefetchChunkBoundary do not raise it to demand', async () => {
     const loader = new GSplatsSpatialIndexLoader(
       makeMockZarrLocation() as unknown as ConstructorParameters<
         typeof GSplatsSpatialIndexLoader
