@@ -683,13 +683,19 @@ export class WorkerPool {
    * step after the usability await. Marking later (after the caller resumes)
    * let every concurrent dispatch read the same worker as idle.
    */
-  private async acquireTrackedWorker(): Promise<TrackedWorkerHandle> {
+  private async acquireTrackedWorker(
+    eligible: (w: WorkerInstance) => boolean = () => true
+  ): Promise<TrackedWorkerHandle> {
     await this.whenUsable();
     if (this.workers.length === 0) {
       throw new WorkerUnavailableError('[WorkerPool] No workers available after initialization');
     }
     // No await between selection and marking — see the method doc.
-    const tracked = selectLeastBusy(this.workers);
+    const candidates = this.workers.filter(eligible);
+    if (candidates.length === 0) {
+      throw new WorkerUnavailableError('[WorkerPool] No worker eligible for this task');
+    }
+    const tracked = selectLeastBusy(candidates);
     tracked.markQueryStart();
     return tracked;
   }
@@ -726,20 +732,30 @@ export class WorkerPool {
   }
 
   /**
-   * Run a chunk-decode task on the least-busy worker, timeout-guarded but NOT
+   * Run a chunk-decode task on the least-busy WARM worker (see
+   * `CodecWarmup.isWarm`; none warm rejects, and the codec decodes on the main
+   * thread instead), timeout-guarded but NOT
    * raced against the pool-wide abort signal: a decode is a few milliseconds
    * of work whose result the L0 cache keeps, and abandoning it on a dataset
    * switch would only make the codec fall back to decoding it on the main
    * thread. Used by the blosc codec dispatcher (`worker-pool/codec-dispatch.ts`).
    */
   async runDecode<T>(op: string, fn: (api: Remote<DataWorkerAPI>) => Promise<T>): Promise<T> {
-    const tracked = await this.acquireTrackedWorker();
+    const tracked = await this.acquireTrackedWorker((w) => this.codecWarmup.isWarm(w));
     return this.dispatchTracked(op, 'decode', tracked, fn);
   }
 
-  /** Workers with no task in flight (the codec dispatcher spreads batches over these). */
+  /** Workers with no task in flight. */
   getIdleWorkerCount(): number {
     return this.workers.reduce((n, w) => n + (w.activeQueries === 0 ? 1 : 0), 0);
+  }
+
+  /** Idle workers whose codec is warm (the codec dispatcher spreads batches over these). */
+  getIdleWarmWorkerCount(): number {
+    return this.workers.reduce(
+      (n, w) => n + (w.activeQueries === 0 && this.codecWarmup.isWarm(w) ? 1 : 0),
+      0
+    );
   }
 
   /**
