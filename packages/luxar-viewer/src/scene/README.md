@@ -615,10 +615,13 @@ it. An activation only attaches the part's placeholders and REGISTERS its
 loaders (`NodeBuildCtx.registerOnly`) — it loads no data and changes nothing
 drawn. The pass that awaited it sweeps the new loaders itself, with its own
 directives (playback budget, pinned rungs: no initial-load lookahead), and
-commits them with the rest of the pass — one commit, one render per step. A
-part activated ahead by the prefetch is simply found registered by its slice's
-pass; only an unclaimed activation for a part the committed view already shows
-asks for a resync.
+commits them with the rest of the pass — one commit, one render per step. That
+claim is the pass's abort signal: a part activated ahead by the prefetch is
+simply found registered by its slice's pass, and an activation settling with
+NO live claim (unclaimed, or every pass that awaited it was superseded) asks
+for a resync when the committed view shows the part. A rejected activation
+records a retryable failure on the part's path and is not re-requested by
+itself; Retry (`retryLazyChildByNodePath`) re-arms it.
 
 `hasVisiblePendingPartitionResync()` publishes the held set to the wide
 load-activity and perf-settle predicates: a pending edge blocks settling only

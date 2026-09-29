@@ -1284,17 +1284,21 @@ export class SceneLoader {
    * their loaders are registered, sweep those loaders as part of THIS pass —
    * the ones `alreadySwept` (the main sweep's) does not hold. `null` when no
    * part was activated. Must be called synchronously with the main sweep, so
-   * the activation reads the pass's own view.
+   * the activation reads the pass's own view. The pass's `signal` is its claim
+   * on the activations: a superseded pass withdraws it, so an activation that
+   * outlives it resyncs its part rather than waiting on a sweep that never
+   * commits.
    */
   private async sweepActivatedParts(
     ctxs: UpdateCtxs,
     onArchiveFault: (fault: ArchiveFaultError) => void,
     resyncPaths: ReadonlySet<string> | undefined,
-    alreadySwept: ReadonlySet<string>
+    alreadySwept: ReadonlySet<string>,
+    signal: AbortSignal
   ): Promise<Awaited<ReturnType<SceneLoader['sweepLoaders']>> | null> {
     const registry = this.lodGroupRegistry;
     if (!registry) return null;
-    const parts = await registry.activatePartitionParts(this.viewState, resyncPaths);
+    const parts = await registry.activatePartitionParts(this.viewState, resyncPaths, signal);
     if (parts.length === 0) return null;
     const targets = new Set(parts);
     const pick = <T>(loaders: Map<string, T>): Map<string, T> => {
@@ -1660,7 +1664,13 @@ export class SceneLoader {
       const sweptPaths = this.registeredLoaderPaths();
       const [swept, activated] = await Promise.all([
         this.sweepLoaders(ctxs, onArchiveFault, (loaders) => loaders, resyncPaths),
-        this.sweepActivatedParts(ctxs, onArchiveFault, resyncPaths, sweptPaths),
+        this.sweepActivatedParts(
+          ctxs,
+          onArchiveFault,
+          resyncPaths,
+          sweptPaths,
+          updateController.signal
+        ),
       ]);
       const [pointsStaged, linesStaged, gsplatsStaged, meshStaged] = activated
         ? concatSweeps(swept, activated)

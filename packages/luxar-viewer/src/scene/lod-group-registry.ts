@@ -886,12 +886,21 @@ interface LazyPartState {
   /** The in-flight activation, if one is running. */
   running: Promise<void> | null;
   /**
-   * A loader pass awaits the running activation and sweeps the part's loaders
-   * itself once it settles (see {@link LODGroupRegistry.activatePartitionParts}).
-   * `false` ⇒ started ahead of any pass (`prefetchSlice`): the next pass for
-   * its slice finds the loaders registered.
+   * The loader passes awaiting the running activation, each of which sweeps
+   * the part's loaders itself once it settles (see
+   * {@link LODGroupRegistry.activatePartitionParts}); `true` is a claim that
+   * cannot be withdrawn. A claim only counts while its pass is alive: a
+   * superseded pass commits nothing, so an activation settling with no live
+   * claim resyncs the part itself. Empty ⇒ started ahead of any pass
+   * (`prefetchSlice`).
    */
-  claimed: boolean;
+  claims: Array<AbortSignal | true>;
+  /**
+   * The last activation rejected (its leaves recorded a retryable failure):
+   * the per-frame gate does not ask again until a Retry re-arms it
+   * ({@link LODGroupRegistry.retryLazyChildByNodePath}).
+   */
+  failed: boolean;
 }
 
 /** Per-part per-frame state of a registered partition (parallel to its children). */
@@ -1351,7 +1360,9 @@ export class LODGroupRegistry {
         footprintMatrixWorld: new Array<number>(child.objects.length * 16).fill(0),
         footprintDirty: true,
         inFrustum: true,
-        lazy: child.activate ? { requested: false, running: null, claimed: false } : null,
+        lazy: child.activate
+          ? { requested: false, running: null, claims: [], failed: false }
+          : null,
       })),
     });
     for (const child of entry.children) {
@@ -1494,7 +1505,8 @@ export class LODGroupRegistry {
    * loaders without loading their data: resolves, once every activation it
    * started (or joined) has settled, with the keys of those parts, whose new
    * loaders the pass then sweeps itself and commits with everything else.
-   * `forPass: false` (`prefetchSlice`, activating ahead of the next slice)
+   * `claim` is the pass's abort signal (`true`: a claim that is never
+   * withdrawn); `false` (`prefetchSlice`, activating ahead of the next slice)
    * claims nothing: that slice's pass finds the loaders registered. A deferred
    * part under `targets` that does not qualify has its request cleared, so the
    * per-frame gate asks again while it is still wanted.
@@ -1502,7 +1514,7 @@ export class LODGroupRegistry {
   activatePartitionParts(
     view: PartitionSliceView,
     targets?: ReadonlySet<string>,
-    forPass = true
+    claim: AbortSignal | boolean = true
   ): Promise<string[]> {
     const runs: Promise<void>[] = [];
     const keys: string[] = [];
@@ -1514,7 +1526,7 @@ export class LODGroupRegistry {
         if (!run) continue;
         runs.push(run.promise);
         keys.push(run.key);
-        if (forPass) run.lazy.claimed = true;
+        if (claim !== false) run.lazy.claims.push(claim);
       }
     }
     return runs.length === 0 ? Promise.resolve(keys) : Promise.all(runs).then(() => keys);
@@ -1529,7 +1541,7 @@ export class LODGroupRegistry {
   ): { promise: Promise<void>; key: string; lazy: LazyPartState } | null {
     const child = entry.children[index];
     const lazy = childCache.lazy;
-    if (!lazy || !child.activate) return null;
+    if (!lazy || !child.activate || lazy.failed) return null;
     const partKey = child.path || entry.path;
     if (targets && !isPartTargeted(partKey, entry.path, targets)) return null;
     if (!lazy.running) lazy.requested = false;
@@ -1561,39 +1573,54 @@ export class LODGroupRegistry {
     lazy: LazyPartState
   ): Promise<void> {
     const activate = child.activate as () => Promise<void>;
-    const settle = (): void => {
-      // Registered (or failed — its leaves record their own retryable
-      // failures): never activate the same slot twice. Nothing drawn changed —
-      // its placeholders are empty until a pass commits them.
-      child.activate = undefined;
-      if (childCache.lazy === lazy) childCache.lazy = null;
-      childCache.footprintDirty = true;
-      // No pass awaited it, and the COMMITTED view already shows it (the pass
-      // that moved there ran before its loaders registered): resync it.
-      const committed = this.deps.getCommittedViewState?.();
-      if (
-        !lazy.claimed &&
-        childCache.inFrustum &&
-        partitionChildInSlice(child, committed) &&
-        isEffectivelyVisible(entry.groupObject)
-      ) {
-        this.notePartitionRisingEdge(entry.path, new Set([partKey]));
-        this.keepTicking();
-      }
-    };
     return activate().then(
       () => {
         perfCounters.add(S_PARTS_ACTIVATED);
-        settle();
+        this.settleActivation(entry, partKey, child, childCache, lazy);
       },
       (error: unknown) => {
         log.warning(
           Modules.SCENE_LOADER,
           `partition part ${child.path} failed to activate: ${String(error)}`
         );
-        settle();
+        // Re-armable: its loaders recorded a retryable failure, and a Retry
+        // clears `failed` (see `retryLazyChildByNodePath`).
+        lazy.running = null;
+        lazy.requested = false;
+        lazy.claims = [];
+        lazy.failed = true;
       }
     );
+  }
+
+  /**
+   * A part's activation registered its loaders: never activate the slot again.
+   * Nothing drawn changed — its placeholders are empty until a pass commits
+   * them. With no LIVE claim (started ahead of any pass, or every pass that
+   * awaited it was superseded) and the COMMITTED view showing it, nothing else
+   * will sweep the new loaders for that view: resync it.
+   */
+  private settleActivation(
+    entry: PartitionGroupEntry,
+    partKey: string,
+    child: PartitionGroupChild,
+    childCache: PartitionChildCache,
+    lazy: LazyPartState
+  ): void {
+    child.activate = undefined;
+    if (childCache.lazy === lazy) childCache.lazy = null;
+    childCache.footprintDirty = true;
+    const claimLive = lazy.claims.some((claim) => claim === true || !claim.aborted);
+    const committed = this.deps.getCommittedViewState?.();
+    if (
+      !claimLive &&
+      childCache.inFrustum &&
+      partitionChildInSlice(child, committed) &&
+      isEffectivelyVisible(entry.groupObject)
+    ) {
+      this.notePartitionRisingEdge(entry.path, new Set([partKey]));
+      this.keepTicking();
+    }
   }
 
   /**
@@ -2039,6 +2066,10 @@ export class LODGroupRegistry {
    * Fire-and-forget semantics: ``true`` means "retry started", not "retry
    * succeeded" — the thunk owns the ready/failed outcome, and a repeat
    * failure re-enters the normal cooldown cycle.
+   *
+   * A deferred partition part (B4) whose activation failed is retried by its
+   * part path the same way: it is re-armed, and the per-frame gate asks for a
+   * pass to activate it again while it is wanted.
    */
   retryLazyChildByNodePath(path: string): boolean {
     if (!path) return false;
@@ -2048,6 +2079,23 @@ export class LODGroupRegistry {
         if (child.loading) return true; // retry already in flight
         return this.kickDeferredLoad(child, true);
       }
+    }
+    return this.rearmFailedPartitionPart(path);
+  }
+
+  /**
+   * Re-arm a deferred partition part whose activation failed (B4): the
+   * per-frame gate asks for a pass to activate it again while it is wanted.
+   */
+  private rearmFailedPartitionPart(path: string): boolean {
+    for (const [entryPath, entry] of this.partitionEntries) {
+      const cache = this.partitionCaches.get(entryPath);
+      const index = entry.children.findIndex((child) => child.path === path);
+      const lazy = index < 0 ? null : cache?.children[index]?.lazy;
+      if (!lazy?.failed) continue;
+      lazy.failed = false;
+      this.keepTicking();
+      return true;
     }
     return false;
   }
@@ -2358,7 +2406,7 @@ export class LODGroupRegistry {
     lazy: LazyPartState,
     wanted: boolean
   ): void {
-    if (!wanted || lazy.requested || lazy.running) return;
+    if (!wanted || lazy.requested || lazy.running || lazy.failed) return;
     lazy.requested = true;
     noteRisingPart(risingParts, child.path, entryPath);
   }

@@ -26,7 +26,7 @@
 import * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { log, Modules } from '../../../utils/log';
-import type { SceneNode, ViewState } from '../../data-loader-types';
+import type { GeometryKind, SceneNode, ViewState } from '../../data-loader-types';
 import type { BspTreeNode, PartitionGroupMetadata } from '../../../types/partition-group';
 import type { NodeBuildCtx } from './build-ctx';
 import type { PartitionGroupChild } from '../../../scene/lod-group-registry';
@@ -38,6 +38,7 @@ import {
 import { perfCounters } from '../../../profiling/perf-counters';
 import { normalizeExtendDims } from '../view-state/extend-tolerance';
 import { partBoundsIntersectSlice } from '../view-state/partition-slice-gate';
+import { isUnderAny } from '../loaders/run-loader-updates';
 
 /** Perf counter: partition parts whose subtree load (loader init) resolved. */
 const S_PARTS_INITIALISED = perfCounters.slot('partition.partsInitialised');
@@ -344,7 +345,8 @@ function planPartitionLoad(job: PartitionLoadJob): PartitionLoadPlan {
  * One idempotent activation thunk per deferred part: load its subtree into its
  * slot. `registerOnly` (the registry's activators) attaches and registers the
  * part's loaders without loading their data — the loader pass that activates
- * the part sweeps them (see `NodeBuildCtx.registerOnly`).
+ * the part sweeps them (see `NodeBuildCtx.registerOnly`). A failed activation
+ * is forgotten, so the next call (a Retry re-arming the part) runs it again.
  */
 function deferredActivators(
   job: PartitionLoadJob,
@@ -352,25 +354,65 @@ function deferredActivators(
   deferred: ReadonlySet<number>,
   registerOnly: boolean
 ): Map<number, () => Promise<void>> {
-  const { children, parentLoc, loadPart } = job;
   const ctx = registerOnly ? { ...job.ctx, registerOnly: true } : job.ctx;
   const activators = new Map<number, () => Promise<void>>();
   for (const index of deferred) {
-    const child = children[index];
     let started: Promise<void> | null = null;
     activators.set(index, () => {
-      started ??= (async () => {
-        const releaseWorkingSet = await acquireEagerWorkingSet(child, ctx);
-        try {
-          await loadPart(child, slots[index], parentLoc.resolve(child.path.slice(1)), ctx);
-        } finally {
-          releaseWorkingSet();
+      started ??= activateDeferredPart(job, job.children[index], slots[index], ctx).catch(
+        (error: unknown) => {
+          started = null;
+          throw error;
         }
-      })();
+      );
       return started;
     });
   }
   return activators;
+}
+
+/**
+ * Load one deferred part into its slot. A failure — the
+ * part's loader construction, which is not a leaf `LoaderError` — is recorded
+ * on the part's path so Retry lists it, after discarding whatever the part had
+ * attached or registered, so a re-run starts clean.
+ */
+async function activateDeferredPart(
+  job: PartitionLoadJob,
+  child: SceneNode,
+  slot: THREE.Group,
+  ctx: NodeBuildCtx
+): Promise<void> {
+  const releaseWorkingSet = await acquireEagerWorkingSet(child, ctx);
+  try {
+    await job.loadPart(child, slot, job.parentLoc.resolve(child.path.slice(1)), ctx);
+    if (ctx.registerOnly) ctx.registry.clearFailure(child.path);
+  } catch (error) {
+    discardPartialPart(slot, ctx, child.path);
+    ctx.registry.recordFailure(
+      child.path,
+      error instanceof Error ? error : new Error(String(error))
+    );
+    throw error;
+  } finally {
+    releaseWorkingSet();
+  }
+}
+
+const LOADER_KINDS: readonly GeometryKind[] = ['points', 'lines', 'gsplats', 'mesh'];
+
+/** Drop the placeholders and loaders a failed part activation left behind. */
+function discardPartialPart(slot: THREE.Group, ctx: NodeBuildCtx, partPath: string): void {
+  const under = new Set([partPath]);
+  for (const kind of LOADER_KINDS) {
+    const loaders = ctx.registry.loadersOf(kind);
+    for (const [path, loader] of loaders) {
+      if (!isUnderAny(path, under)) continue;
+      loaders.delete(path);
+      loader.dispose();
+    }
+  }
+  slot.clear();
 }
 
 /** The registry entry of each part, by part index (`undefined` = no scene object). */
