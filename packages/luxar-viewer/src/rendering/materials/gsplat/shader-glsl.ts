@@ -431,7 +431,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         float footprintAlpha = splatAlpha;
         #endif
         float visibleMahalSq = gsplatVisibleMahalSq(
-            vAmplitude2D * uInvOneMinusC * footprintAlpha * max(uIntensity, 1.0),
+            gsplatFootprintPeakScale(vAmplitude2D, uInvOneMinusC, footprintAlpha, uIntensity),
             uShiftC, uTruncateSq);
         if (visibleMahalSq < 0.0) {
             gl_Position = vec4(0.0, 0.0, -2.0, 1.0);

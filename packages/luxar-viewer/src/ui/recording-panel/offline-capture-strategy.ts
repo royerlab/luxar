@@ -279,7 +279,8 @@ export class OfflineCaptureStrategy implements CaptureStrategy {
       // would freeze depth order and LOD level at the opening pose
       // while the camera swings a full turn.
       this.animationController.startAnimation();
-      this.animationController.addPerFrameCallback(keepAliveId, () => {}, { continuous: true });
+      // Keep-alive only: it draws nothing (each capture renders its own pass).
+      this.animationController.addPerFrameCallback(keepAliveId, () => false, { continuous: true });
 
       const { capturedFrames, attemptedFrames } = await runFrameLoop({
         plan,

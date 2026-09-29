@@ -90,12 +90,12 @@ function scheduleBake(
   animationController.addPerFrameCallback(
     id,
     () => {
-      if (started) return;
+      if (started) return false;
       // Not before a dataset load has begun and produced a scene root.
       const hasScene = sceneManager.scene.children.some((c) => c.name === 'LuxarScene');
-      if (!getSceneLoader('default') || !hasScene) return;
+      if (!getSceneLoader('default') || !hasScene) return false;
       settledFrames = isSettled() ? settledFrames + 1 : 0;
-      if (settledFrames < BAKE_SETTLED_FRAMES) return;
+      if (settledFrames < BAKE_SETTLED_FRAMES) return false;
       started = true;
       animationController.removePerFrameCallback(id);
       // The bake swaps the scene's environment (it captures afresh): redraw
@@ -103,6 +103,9 @@ function scheduleBake(
       void runBake(sceneManager, request).finally(() =>
         animationController.requestRender('environmentBake')
       );
+      // Nothing drawn changes yet: the bake is async and requests its own
+      // render when it lands.
+      return false;
     },
     { continuous: true }
   );
