@@ -84,7 +84,7 @@ export class ChunkPrefetcher {
 
     // Prevent unbounded memory growth — evict oldest half when limit reached.
     // Do NOT clear maxChunkIndices: they're registered once per array and losing
-    // them causes out-of-range prefetch requests (404s) until arrays re-register.
+    // them disables adjacency prefetch until arrays re-register.
     if (this.seen.size > ChunkPrefetcher.MAX_SEEN_SIZE) {
       const evictCount = Math.floor(ChunkPrefetcher.MAX_SEEN_SIZE / 2);
       let count = 0;
@@ -108,7 +108,7 @@ export class ChunkPrefetcher {
 
     const adjacent = this.getAdjacentChunks(key);
     if (adjacent.length === 0) {
-      // Not a chunk file (metadata), skip prefetching
+      // Not a chunk file, no registered bounds, or no valid neighbors.
       return;
     }
 
