@@ -241,7 +241,7 @@ describe.each([
     expect(texture.updateRanges).toHaveLength(0);
   });
 
-  it.fails('a ranged first upload leaves the texture in sync, so the next commit is rows-only', () => {
+  it('a ranged first upload leaves the texture in sync, so the next commit is rows-only', () => {
     // First progressive rung: 2 of 20 rows, uploaded ranged.
     writeElements(texture, 0, PER_ROW * 2, 1);
     renderUpload(backend, texture);
