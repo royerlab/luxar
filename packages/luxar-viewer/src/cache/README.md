@@ -626,7 +626,7 @@ use.
 
 **`registerArrayBounds(arrayPath: string, shape: number[], chunks: number[]): void`**
 
-Register array shape and chunk sizes for bounds checking during prefetch. When registered, adjacent chunk generation skips indices beyond valid bounds, preventing 404s for small arrays.
+Register array shape and chunk sizes to enable adjacency prefetch. Unregistered arrays get no adjacency prefetch. For registered arrays, negative and out-of-range neighbors and dimensions with only one chunk are skipped.
 
 ```typescript
 prefetcher.registerArrayBounds('gsplats_t0023/centers', [2096, 4], [1024, 4]);
