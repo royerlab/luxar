@@ -36,7 +36,7 @@ import { log, Modules } from '../../utils/log';
 import type { PickingSystem } from '../picking/picking-system';
 import { applyTransform } from './transforms';
 import { validateLoadedPointsData, validateColorMode } from './validation';
-import { resolveColormapWindow } from '../display-range';
+import { resolveColormapWindow, type DisplayUniforms } from '../display-range';
 import { DEFAULT_POINT_RADIUS } from '../../config/constants';
 
 /**
@@ -251,7 +251,8 @@ export function createPointsMaterial(
         const ptScalarRange = resolveColormapWindow(
           attrs.scalar_data_range ?? [0, 1],
           { intensity: leaf.intensity ?? 1.0, offset: leaf.offset ?? 0.0 },
-          { intensity: composedIntensity, offset: composedOffset }
+          { intensity: composedIntensity, offset: composedOffset },
+          (attrs as { windowOwnerGain?: DisplayUniforms }).windowOwnerGain
         );
         material.updateScalarRange(ptScalarRange[0], ptScalarRange[1]);
         // The window now drives the LUT lookup; clear the post-LUT gain the

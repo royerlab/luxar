@@ -227,7 +227,11 @@ import { buildUpdateCtxs } from './scene-loader/update-view/build-update-ctxs';
 import { queueNext } from './scene-loader/update-view/queue-next';
 import { resetRefinementFailureTrackers } from './scene-loader/progressive/refinement-wrapper';
 import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-loader/nodes/connect-loader-to-monitor';
-import type { LineWorkingSetGate, NodeBuildCtx } from './scene-loader/nodes/build-ctx';
+import type {
+  LeafMaterializedListener,
+  LineWorkingSetGate,
+  NodeBuildCtx,
+} from './scene-loader/nodes/build-ctx';
 import { createLineWorkingSetGate } from './scene-loader/nodes/load-children-concurrently';
 import {
   noteRefinementAborted,
@@ -237,15 +241,6 @@ import {
 import { viewStatesEqual } from './loaders/progressive/view-state-equal';
 import { computeWorldNdTransform } from './transforms/nd-transform';
 
-/**
- * Longest a superseding view may keep aborting in-flight passes without one
- * committing (B5): past it, the pass in flight — whose streaming policy stops
- * at the first cold rung, so it is the coarsest data for its slice — commits
- * before the newer view runs. Settled frames are unaffected (the last view
- * always runs to completion); only how often a drag shows an intermediate
- * slice changes.
- */
-export const DRAG_COMMIT_INTERVAL_MS = 150;
 import {
   RefinementResidencyBudget,
   RefinementResidencyReporter,
@@ -257,6 +252,16 @@ import {
   type DensityGateCaps,
   type ProjectedDensityProvider,
 } from './scene-loader/progressive/density-gate';
+
+/**
+ * Longest a superseding view may keep aborting in-flight passes without one
+ * committing (B5): past it, the pass in flight — whose streaming policy stops
+ * at the first cold rung, so it is the coarsest data for its slice — commits
+ * before the newer view runs. Settled frames are unaffected (the last view
+ * always runs to completion); only how often a drag shows an intermediate
+ * slice changes.
+ */
+export const DRAG_COMMIT_INTERVAL_MS = 150;
 
 /**
  * Delay before `kickRefinementIfIdle` re-checks a lock-held serialization
@@ -362,6 +367,8 @@ export class SceneLoader {
   private _committedViewState: ViewState | null = null;
   /** `performance.now()` of the last committed pass (B5 commit guarantee). */
   private _lastCommitAt = 0;
+  /** Start of the current chain of superseding view passes. */
+  private _passChainStartedAt = 0;
   private config: LoaderConfig;
   private rootGroup: THREE.Group | null = null;
   /**
@@ -528,6 +535,8 @@ export class SceneLoader {
   // against a dead dataset.
   private _disposed = false;
   private _sceneGraph: SceneNode | null = null;
+  /** See {@link setLeafMaterializedListener}. */
+  private _leafMaterializedListener: LeafMaterializedListener | null = null;
 
   /**
    * View-state queue: owns `_pendingViewState` (set/take/has + drain)
@@ -672,6 +681,17 @@ export class SceneLoader {
   /** Public accessor for the scene graph built during loadScene(). */
   get sceneGraph(): SceneNode | null {
     return this._sceneGraph;
+  }
+
+  /**
+   * Connect the owner of per-leaf LIVE appearance state (the Layers panel) to
+   * every data leaf this loader attaches from now on — partition parts the LOD
+   * registry activates, lazily built levels, anything built after load. Each
+   * leaf is reported as its placeholder attaches, before any data reaches it,
+   * together with this loader's scene graph. `null` disconnects.
+   */
+  setLeafMaterializedListener(listener: LeafMaterializedListener | null): void {
+    this._leafMaterializedListener = listener;
   }
 
   /** Latched archive fault for this loader, or null while updates remain usable. */
@@ -839,18 +859,23 @@ export class SceneLoader {
   }
 
   /**
-   * The view the drawn geometry was last committed for (B4) — set when a load
-   * starts and by every committed pass. Before the first commit, the live view.
-   */
-  /**
    * Whether a superseding view must let the in-flight VIEW pass commit rather
-   * than abort it (B5): nothing has committed for {@link DRAG_COMMIT_INTERVAL_MS}.
+   * than abort it (B5): this pass chain has gone
+   * {@link DRAG_COMMIT_INTERVAL_MS} without a commit.
    * A refinement run is aborted as before — it only deepens what is shown.
    */
   private inFlightPassOwesCommit(): boolean {
-    return !this._refining && performance.now() - this._lastCommitAt >= DRAG_COMMIT_INTERVAL_MS;
+    return (
+      !this._refining &&
+      performance.now() - Math.max(this._lastCommitAt, this._passChainStartedAt) >=
+        DRAG_COMMIT_INTERVAL_MS
+    );
   }
 
+  /**
+   * The view the drawn geometry was last committed for (B4) — set when a load
+   * starts and by every committed pass. Before the first commit, the live view.
+   */
   get committedViewState(): ViewState {
     return this._committedViewState ?? this.viewState;
   }
@@ -1494,7 +1519,7 @@ export class SceneLoader {
       // view-state, so its remaining chunk reads/decodes should bail rather
       // than run to completion. Its commit is skipped (signal.aborted), and
       // queueNext re-enters updateView with the pending (winning) state —
-      // unless nothing has committed for DRAG_COMMIT_INTERVAL_MS (B5): then the
+      // unless this pass chain has gone DRAG_COMMIT_INTERVAL_MS without a commit: then the
       // in-flight pass is let through to commit first, so a continuous drag
       // whose passes outlast its event interval still shows progress.
       if (!this.inFlightPassOwesCommit()) this._updateAbortController?.abort();
@@ -1508,6 +1533,12 @@ export class SceneLoader {
       // Every minted generation must finish a pass (or be covered by a newer
       // one); isAtViewState relies on _completedGen catching up to _requestSeq.
       const gen = ++this._requestSeq;
+      // A refinement hold has no view pass in flight. Its first queued view
+      // starts a new drag chain, even though the queued generation makes the
+      // eventual re-entry look like a continuation of the previous chain.
+      if (this._refining && (!this.viewStateQueue.hasPending() || this._pendingIsResyncOnly)) {
+        this._passChainStartedAt = performance.now();
+      }
       this._requestGens.set(viewState, gen);
       this.viewStateQueue.setPending(viewState);
       // Whatever was stashed for a resync is now moot: this pending state (a
@@ -1538,6 +1569,9 @@ export class SceneLoader {
     // Mark update as in progress. The view version is decided below, once the
     // merged view state is known (bump only on a real change).
     this._updateInProgress = true;
+    // A queued re-entry belongs to its original supersede chain. A direct
+    // update after idle starts a fresh interval even if the last commit was old.
+    if (!this._requestGens.has(viewState)) this._passChainStartedAt = performance.now();
     // Paths stashed for a pending state travel in `opts` (``reenterPending``);
     // anything still parked here at the start of a pass is stale by
     // construction and must not narrow a later one.
@@ -2276,6 +2310,9 @@ export class SceneLoader {
         this._sceneGraph !== null &&
         Object.keys(computeWorldNdTransform(this._sceneGraph, path)).length > 0,
       factoryDeps: this.factoryDeps(),
+      onLeafMaterialized: (path, object) => {
+        if (this._sceneGraph) this._leafMaterializedListener?.(this._sceneGraph, path, object);
+      },
       isDatasetLive: () => this._datasetAbortController === ctrl && ctrl?.signal.aborted !== true,
       releaseLazyGSplats: (path) => {
         // Return the level's GPU buffer to the evictable pool and drop
@@ -2826,6 +2863,7 @@ export class SceneLoader {
     // start nulling the fields it reads.
     this._disposed = true;
     this.archiveFaultListeners.clear();
+    this._leafMaterializedListener = null;
     setSceneLineLoad(0);
 
     // Release the serialization lock explicitly — defence in depth. Only the

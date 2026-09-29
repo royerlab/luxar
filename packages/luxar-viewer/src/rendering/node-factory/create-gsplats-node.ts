@@ -13,7 +13,7 @@ import { syncGSplatMaterialWithGeometry } from '../material-sync-helpers';
 import type { GSplatsMetadata, GSplatsUserData, GSplatsDataLoader } from '../../types/gsplats';
 import type { PickingSystem } from '../picking/picking-system';
 import { applyTransform } from './transforms';
-import { resolveColormapWindow } from '../display-range';
+import { resolveColormapWindow, type DisplayUniforms } from '../display-range';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../config/constants';
 import { clampTruncationRadius } from '../materials/gsplat/math';
 
@@ -83,7 +83,8 @@ export function createGSplatsNode(
         intensity: (leafRaw.intensity as number | undefined) ?? 1.0,
         offset: (leafRaw.offset as number | undefined) ?? 0.0,
       },
-      { intensity: composedIntensity, offset: composedOffset }
+      { intensity: composedIntensity, offset: composedOffset },
+      nodeAttrs.windowOwnerGain as DisplayUniforms | undefined
     );
     material.updateScalarRange(gsScalarRange[0], gsScalarRange[1]);
   }

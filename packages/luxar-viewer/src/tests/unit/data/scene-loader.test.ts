@@ -1516,6 +1516,7 @@ describe('SceneLoader', () => {
     beforeEach(async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
     });
+    afterEach(() => vi.restoreAllMocks());
 
     // Three-geometry symmetry: the same supersede→abort contract must hold for
     // Points, Lines, and GSplats. Each registers its fake loader in the
@@ -1527,9 +1528,16 @@ describe('SceneLoader', () => {
       { type: 'gsplats', map: 'gsplatLoaders' },
     ] as const;
 
-    it.each(cases)(
-      'aborts the in-flight $type load when a newer view-state supersedes it; no false failure',
-      async ({ map }) => {
+    it.each(
+      cases.flatMap((testCase) => [
+        { ...testCase, idleMs: 0 },
+        { ...testCase, idleMs: 5000 },
+      ])
+    )(
+      'aborts the in-flight $type load after $idleMs ms idle when a newer view supersedes it',
+      async ({ map, idleMs }) => {
+        let now = (sceneLoader as unknown as { _lastCommitAt: number })._lastCommitAt + idleMs;
+        vi.spyOn(performance, 'now').mockImplementation(() => now);
         let capturedSignal: AbortSignal | undefined;
         let releaseFirst!: () => void;
         const firstGate = new Promise<void>((resolve) => {
@@ -1573,6 +1581,7 @@ describe('SceneLoader', () => {
           tolerance: [0, 0, 0, 0],
         });
         await Promise.resolve();
+        now += 10;
 
         // Second update supersedes the in-flight one → must abort its signal.
         // Do NOT await it yet: the queued promise now resolves only when the
@@ -1602,6 +1611,67 @@ describe('SceneLoader', () => {
         expect(sceneLoader.hasFailures()).toBe(false);
         expect(sceneLoader.getFailedLoaders().size).toBe(0);
         expect(forgetPathSpy).not.toHaveBeenCalledWith('/node');
+      }
+    );
+
+    it.each([false, true])(
+      'aborts the first pass superseded after a refinement hand-off following idle (resync first: %s)',
+      async (resyncFirst) => {
+        const internals = sceneLoader as unknown as {
+          _lastCommitAt: number;
+          _updateInProgress: boolean;
+          _refining: boolean;
+          _updateAbortController: AbortController | null;
+          viewStateQueue: ViewStateQueue;
+          reenterPending(state: Partial<ViewState>): Promise<void>;
+        };
+        let now = internals._lastCommitAt + 5000;
+        vi.spyOn(performance, 'now').mockImplementation(() => now);
+        let capturedSignal: AbortSignal | undefined;
+        let releaseFirst!: () => void;
+        const firstGate = new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+        const loader = {
+          updateView: vi.fn(async (_vs: unknown, _session: unknown, signal?: AbortSignal) => {
+            if (!capturedSignal) {
+              capturedSignal = signal;
+              await firstGate;
+              signal?.throwIfAborted();
+            }
+            return null;
+          }),
+          dispose: vi.fn(),
+        };
+        (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders.set('/node', loader);
+
+        // Refinement owns the lock, then hands its queued view to the next pass.
+        internals._updateInProgress = true;
+        internals._refining = true;
+        internals._updateAbortController = new AbortController();
+        if (resyncFirst) {
+          await sceneLoader.updateView({}, { resyncPaths: new Set(['/node']) });
+          expect(internals.viewStateQueue.hasPending()).toBe(true);
+        }
+        const queued = sceneLoader.updateView({ slicePosition: [0, 0, 0, 1] });
+        expect(internals.viewStateQueue.hasPending()).toBe(true);
+        internals._updateInProgress = false;
+        internals._refining = false;
+        const pending = internals.viewStateQueue.takePending();
+        expect(pending).toBeDefined();
+        const first = internals.reenterPending(pending!);
+        await Promise.resolve();
+        expect(capturedSignal).toBeInstanceOf(AbortSignal);
+
+        now += 10;
+        const winning = sceneLoader.updateView({ slicePosition: [0, 0, 0, 2] });
+        expect(capturedSignal?.aborted).toBe(true);
+
+        releaseFirst();
+        await first;
+        await Promise.all([queued, winning]);
+        expect(loader.updateView).toHaveBeenCalledTimes(2);
+        expect(sceneLoader.hasFailures()).toBe(false);
       }
     );
   });

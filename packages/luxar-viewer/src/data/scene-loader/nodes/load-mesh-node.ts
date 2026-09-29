@@ -104,6 +104,7 @@ export async function loadMeshNodeCheap(
     node.attrs as Partial<MeshMetadata>
   );
   parentThree.add(placeholder);
+  ctx.onLeafMaterialized?.(node.path, placeholder);
   return { placeholder, loader };
 }
 

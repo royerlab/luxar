@@ -256,6 +256,7 @@ describe('loadDataset', () => {
     (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
       sceneGraph: { kind: 'graph' },
       getFailedLoadsProvider: vi.fn(() => ({ getFailedPaths: () => [], retryAll: vi.fn() })),
+      setLeafMaterializedListener: vi.fn(),
     });
 
     await loadDataset('scene.zarr', ports);
@@ -281,6 +282,7 @@ describe('loadDataset', () => {
     (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
       sceneGraph: { kind: 'graph' },
       getFailedLoadsProvider,
+      setLeafMaterializedListener: vi.fn(),
     });
 
     await loadDataset('scene.zarr', ports);
@@ -291,6 +293,48 @@ describe('loadDataset', () => {
     expect(setFailedLoadsProvider.mock.invocationCallOrder[0]).toBeGreaterThan(
       initFromScene.mock.invocationCallOrder[0]
     );
+  });
+
+  it('routes leaves the loader materialises LATER to the layers panel, AFTER initFromScene', async () => {
+    // A partition part activated by the LOD registry (or any leaf built after
+    // load) must pick up the panel's live layer state before it is drawn. The
+    // loader reports it through this listener; the panel checks the graph.
+    const trace: Trace = { order: [], recordedViewerConfig: undefined };
+    const initFromScene = vi.fn();
+    const applyLayerStateToNewLeaf = vi.fn();
+    const ports = makePorts(trace, {
+      layersPanel: {
+        initFromScene,
+        setFailedLoadsProvider: vi.fn(),
+        setCameraFramer: vi.fn(),
+        applyLayerStateToNewLeaf,
+      } as never,
+    });
+    const root = new THREE.Group();
+    root.name = 'LuxarScene';
+    ports.sceneManager.scene.children = [root];
+    const setLeafMaterializedListener = vi.fn();
+    (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      sceneGraph: { kind: 'graph' },
+      getFailedLoadsProvider: vi.fn(() => ({ getFailedPaths: () => [], retryAll: vi.fn() })),
+      setLeafMaterializedListener,
+    });
+
+    await loadDataset('scene.zarr', ports);
+
+    expect(setLeafMaterializedListener).toHaveBeenCalledOnce();
+    expect(setLeafMaterializedListener.mock.invocationCallOrder[0]).toBeGreaterThan(
+      initFromScene.mock.invocationCallOrder[0]
+    );
+    const listener = setLeafMaterializedListener.mock.calls[0][0] as (
+      graph: unknown,
+      path: string,
+      object: THREE.Object3D
+    ) => void;
+    const graph = { kind: 'graph' };
+    const leaf = new THREE.Mesh();
+    listener(graph, '/nuclei/part_0', leaf);
+    expect(applyLayerStateToNewLeaf).toHaveBeenCalledExactlyOnceWith(graph, '/nuclei/part_0', leaf);
   });
 
   it('layers panel hydration is skipped when layersPanel is undefined', async () => {

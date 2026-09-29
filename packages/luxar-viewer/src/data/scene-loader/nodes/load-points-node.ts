@@ -129,6 +129,7 @@ export async function loadPointsNodeCheap(
     node.attrs as unknown as Partial<PointsMetadata>
   );
   parentThree.add(placeholder);
+  ctx.onLeafMaterialized?.(node.path, placeholder);
 
   return { placeholder, loader };
 }

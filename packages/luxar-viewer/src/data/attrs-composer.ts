@@ -260,6 +260,49 @@ export function collectAncestorAttrs(root: SceneNode, targetPath: string): Compo
 }
 
 /**
+ * Coerce a node's raw `layer` attr into "exposed in the Layers panel".
+ *
+ * The Python writer (`validate_layer`) always normalises to a JSON boolean,
+ * but hand-edited or third-party zarr may carry a number (`1`/`0`). Accept
+ * strict `true` and truthy finite numbers so such values don't silently drop
+ * the node from the panel; everything else (incl. `undefined`, strings) is
+ * not-a-layer. Pure — callers log a warning for malformed (non-boolean) values.
+ */
+export function isLayerEnabled(value: unknown): boolean {
+  if (value === true) return true;
+  if (typeof value === 'number') return Number.isFinite(value) && value !== 0;
+  return false;
+}
+
+/**
+ * The RAW authored gain (`intensity`/`offset`, uncomposed) of the node that owns
+ * `targetPath`'s display window in the Layers panel: the nearest `layer=true`
+ * node on its root→target chain, the target itself included. `undefined` when no
+ * node on the chain is a layer.
+ *
+ * The panel reads a non-identity gain on a LAYER as that layer's absolute window
+ * (`layer-state.ts` `computeDisplayRange`), whereas on a non-layer ancestor the
+ * same gain is a multiplier on the data range. `resolveColormapWindow` needs to
+ * know which of the two a composed gain came from to build the window the panel
+ * will push.
+ */
+export function windowOwnerGain(
+  root: SceneNode,
+  targetPath: string
+): { intensity: number; offset: number } | undefined {
+  const chain = collectAncestorNodes(root, targetPath);
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const attrs = chain[i].attrs;
+    if (!isLayerEnabled(attrs.layer)) continue;
+    return {
+      intensity: (attrs.intensity as number | undefined) ?? 1,
+      offset: (attrs.offset as number | undefined) ?? 0,
+    };
+  }
+  return undefined;
+}
+
+/**
  * Convenience: compose effective attrs for a target path in the scene graph.
  */
 export function getEffectiveAttrs(root: SceneNode, targetPath: string): EffectiveAttrs {

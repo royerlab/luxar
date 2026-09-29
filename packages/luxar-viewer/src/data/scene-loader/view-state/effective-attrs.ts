@@ -15,7 +15,7 @@
  * @module data/scene-loader/view-state/effective-attrs
  */
 
-import { getEffectiveAttrs } from '../../attrs-composer';
+import { getEffectiveAttrs, windowOwnerGain } from '../../attrs-composer';
 import type { SceneNode } from '../../data-loader-types';
 
 /**
@@ -49,5 +49,9 @@ export function applyEffectiveAttrs(
     // it onto the mesh's dedicated `userData.layerOrder` render-state slot
     // (`LAYER_ORDER_SPEC.md` §7).
     layer_order: eff.layer_order,
+    // Not an authored attr: the raw gain of the layer that owns this node's
+    // display window, so a colormapped factory windows the node exactly as the
+    // Layers panel will (`resolveColormapWindow`'s `owner`).
+    windowOwnerGain: windowOwnerGain(sceneGraph, node.path),
   };
 }
