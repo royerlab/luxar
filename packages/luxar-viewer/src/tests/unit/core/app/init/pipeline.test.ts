@@ -37,7 +37,7 @@ function makeSceneStub(opts: { initThrows?: boolean } = {}) {
       if (opts.initThrows) throw new Error('sceneManager.init failed');
     }),
     controls: { kind: 'controls' },
-    postProcessing: { kind: 'pp' },
+    postProcessing: { kind: 'pp', isCaptureInProgress: false },
     isWebGLContextLost: vi.fn().mockReturnValue(false),
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
@@ -653,6 +653,13 @@ describe('runInitPipeline', () => {
       // That is exactly what `isLoopRenderSuppressed()` reports, and it is
       // dropped before the capture's teardown awaits its driver abort.
       panel.isLoopRenderSuppressed.mockReturnValue(true);
+      expect(predicate()).toBe(true);
+
+      panel.isLoopRenderSuppressed.mockReturnValue(false);
+      const sceneManager = factories.sceneManager.mock.results[0].value as {
+        postProcessing: { isCaptureInProgress: boolean };
+      };
+      sceneManager.postProcessing.isCaptureInProgress = true;
       expect(predicate()).toBe(true);
     });
 

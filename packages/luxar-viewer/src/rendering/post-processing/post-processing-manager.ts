@@ -107,6 +107,7 @@ export class PostProcessingManager {
   private deferRebuildDepth = 0;
 
   private disposed = false;
+  private captureDepth = 0;
 
   // Wall-clock timestamp of the previous render() call, used to derive
   // the inter-frame delta for detector-noise time advancement. 0 means
@@ -670,6 +671,11 @@ export class PostProcessingManager {
   // ================================================================
 
   render(): void {
+    // A capture has already submitted its own render and is waiting for GPU
+    // readback. Keep the animation loop from queueing more work behind its
+    // fence (a severe SwiftShader cost cliff on dense scenes).
+    if (this.captureDepth > 0) return;
+
     // Wall-clock delta since previous render() (in seconds). Detector
     // noise uses this to animate its temporal pattern. Must be
     // wall-clock delta, not render duration — render duration is
@@ -856,6 +862,20 @@ export class PostProcessingManager {
   // Capture
   // ================================================================
 
+  get isCaptureInProgress(): boolean {
+    return this.captureDepth > 0;
+  }
+
+  /** Keep the frame loop from drawing over a capture target during readback. */
+  async suspendFrameRendersDuring<T>(capture: () => Promise<T>): Promise<T> {
+    this.captureDepth++;
+    try {
+      return await capture();
+    } finally {
+      this.captureDepth--;
+    }
+  }
+
   /**
    * Read raw HDR float pixel data in one of three capture modes:
    *
@@ -880,14 +900,16 @@ export class PostProcessingManager {
     mode: CaptureMode = 'hdr-effects-pre-tone',
     opts: { flipY?: boolean } = {}
   ): Promise<{ pixels: Float32Array; width: number; height: number }> {
-    return captureHDRPixelsImpl(this.captureCtx(), mode, opts);
+    return this.suspendFrameRendersDuring(() =>
+      captureHDRPixelsImpl(this.captureCtx(), mode, opts)
+    );
   }
 
   async captureHDRAsEXR(options?: {
     type?: THREE.TextureDataType;
     mode?: CaptureMode;
   }): Promise<Uint8Array> {
-    return captureHDRAsEXRImpl(this.captureCtx(), options);
+    return this.suspendFrameRendersDuring(() => captureHDRAsEXRImpl(this.captureCtx(), options));
   }
 
   async renderToImageData(): Promise<ImageData> {
@@ -900,7 +922,9 @@ export class PostProcessingManager {
     if (this.megaShader.isDetectorNoiseEnabled()) {
       this.megaShader.advanceTime(dt);
     }
-    return renderToImageDataImpl(this.captureCtx(), this.getPhysicalSize(), this.fxaaPass !== null);
+    return this.suspendFrameRendersDuring(() =>
+      renderToImageDataImpl(this.captureCtx(), this.getPhysicalSize(), this.fxaaPass !== null)
+    );
   }
 
   // ================================================================

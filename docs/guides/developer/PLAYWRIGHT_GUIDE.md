@@ -505,6 +505,17 @@ args: [
 
 **Verify**: Check test output for "SwiftShader" (software renderer)
 
+For additive synthetic scenes on headless Chromium's ANGLE/Vulkan SwiftShader,
+keep routine pixel assertions around 5,000 elements. On a shared 16-core host,
+raw HDR captures were flat at 10,000 (~0.2–0.3 s), but reached 18–120 s by
+12,000 while the animation loop kept rendering into the readback window
+(#2970). Suppressing those extra renders brought three 20,000-element captures
+to 0.17–0.19 s, with stable renderer geometry and texture counts. The full
+20,000-element FOV comparison still took about 72 s for its three captures and
+fresh-page setup, beyond its 60 s test timeout. Use a smaller scene for that
+shader-plumbing check; benchmark a larger fixture on the target runner before
+adding it to the nightly suite.
+
 #### 4. Debug Mode Not Enabled
 
 **Problem**: `window.__luxarDebug` is undefined
