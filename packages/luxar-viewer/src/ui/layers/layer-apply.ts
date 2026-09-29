@@ -78,6 +78,15 @@ interface LeafWrite {
 
 const NOTHING_WRITTEN: LeafWrite = { applied: false, pickDirty: false };
 
+const PUSHED_KINDS = [
+  'colormap',
+  'layerOrder',
+  'labelStyle',
+  'meshAppearance',
+  'physicalKnobs',
+] as const;
+type PushedKind = (typeof PUSHED_KINDS)[number];
+
 /**
  * Dependencies injected by the owning {@link LayersPanel}. `getRootGroup` /
  * `getSceneGraph` are accessors because both fields are replaced on every
@@ -113,19 +122,21 @@ export class LayerApplyEngine {
    * pushed is what lets {@link applyToNewLeaf} reproduce exactly the state the
    * existing leaves are in.
    */
-  private readonly pushed = {
-    colormap: new Set<string>(),
-    layerOrder: new Set<string>(),
-    labelStyle: new Set<string>(),
-    meshAppearance: new Set<string>(),
-    physicalKnobs: new Set<string>(),
+  private readonly pushed: Record<PushedKind, Map<string, number>> = {
+    colormap: new Map(),
+    layerOrder: new Map(),
+    labelStyle: new Map(),
+    meshAppearance: new Map(),
+    physicalKnobs: new Map(),
   };
+  private pushSequence = 0;
 
   constructor(private deps: LayerApplyEngineDeps) {}
 
   /** Forget what was pushed (a new scene's layers start from their authored state). */
   resetPushed(): void {
     for (const paths of Object.values(this.pushed)) paths.clear();
+    this.pushSequence = 0;
   }
 
   /**
@@ -137,10 +148,9 @@ export class LayerApplyEngine {
    * activates later (B4 gated loading), or any other late leaf, rendered its
    * authored appearance until the next edit re-pushed everything.
    *
-   * Replays, for every layer on the leaf's ancestry from the outermost in, the
-   * kinds of state the panel has pushed for it (see {@link pushed}), then the
-   * innermost layer's composed state — the order `initFromScene` and
-   * `resetAllLayers` leave the already-drawn leaves in. Visibility of a leaf
+   * Replays the last push of each kind on the leaf's ancestry in edit order,
+   * then the innermost layer's composed state. An outer layer edited after an
+   * inner layer also overwrote the existing leaves last. Visibility of a leaf
    * that is itself a hidden layer is stamped too; a hidden ANCESTOR hides it
    * through the scene graph already.
    */
@@ -149,8 +159,8 @@ export class LayerApplyEngine {
     if (!target) return;
     const { sceneGraph, ancestors, leaf, layers } = target;
     let pickDirty = false;
-    for (const layer of layers) {
-      pickDirty = this.replayPushedToLeaf(layer, leaf, obj, sceneGraph) || pickDirty;
+    for (const { layer, kind } of this.pushedReplay(layers)) {
+      pickDirty = this.replayPushedToLeaf(kind, layer, leaf, obj, sceneGraph) || pickDirty;
     }
     const owner = layers[layers.length - 1];
     this.applyComposedToLeaf(owner, leaf, obj, ancestors);
@@ -160,6 +170,20 @@ export class LayerApplyEngine {
     }
     if (pickDirty) this.deps.invalidatePickBuffer?.();
     this.deps.requestRender();
+  }
+
+  /** The last push of each kind on this ancestry, in the order existing leaves saw it. */
+  private pushedReplay(
+    layers: readonly LayerInfo[]
+  ): { layer: LayerInfo; kind: PushedKind; order: number }[] {
+    const replay: { layer: LayerInfo; kind: PushedKind; order: number }[] = [];
+    for (const layer of layers) {
+      for (const kind of PUSHED_KINDS) {
+        const order = this.pushed[kind].get(layer.path);
+        if (order !== undefined) replay.push({ layer, kind, order });
+      }
+    }
+    return replay.sort((a, b) => a.order - b.order);
   }
 
   /**
@@ -183,27 +207,28 @@ export class LayerApplyEngine {
     return { sceneGraph, ancestors, leaf, layers };
   }
 
-  /** {@link applyToNewLeaf}'s replay of one layer's pushed kinds. Returns pick-dirtiness. */
+  /** {@link applyToNewLeaf}'s replay of one pushed kind. Returns pick-dirtiness. */
   private replayPushedToLeaf(
+    kind: PushedKind,
     layer: LayerInfo,
     leaf: SceneNode,
     obj: THREE.Object3D,
     sceneGraph: SceneNode
   ): boolean {
-    const { colormap, layerOrder, labelStyle, meshAppearance, physicalKnobs } = this.pushed;
-    let pickDirty = false;
-    if (colormap.has(layer.path)) this.applyColormapToLeaf(layer, leaf, obj, sceneGraph);
-    if (layerOrder.has(layer.path)) this.applyLayerOrderToLeaf(layer, leaf, obj, sceneGraph);
-    if (labelStyle.has(layer.path)) {
-      pickDirty = this.applyLabelStyleToLeaf(layer, leaf, obj).pickDirty;
+    switch (kind) {
+      case 'colormap':
+        this.applyColormapToLeaf(layer, leaf, obj, sceneGraph);
+        return false;
+      case 'layerOrder':
+        this.applyLayerOrderToLeaf(layer, leaf, obj, sceneGraph);
+        return false;
+      case 'labelStyle':
+        return this.applyLabelStyleToLeaf(layer, leaf, obj).pickDirty;
+      case 'meshAppearance':
+        return this.applyMeshAppearanceToLeaf(layer, obj).pickDirty;
+      case 'physicalKnobs':
+        return this.applyPhysicalKnobsToLeaf(layer, obj);
     }
-    if (meshAppearance.has(layer.path)) {
-      pickDirty = this.applyMeshAppearanceToLeaf(layer, obj).pickDirty || pickDirty;
-    }
-    if (physicalKnobs.has(layer.path)) {
-      pickDirty = this.applyPhysicalKnobsToLeaf(layer, obj) || pickDirty;
-    }
-    return pickDirty;
   }
 
   private getMesh(path: string): THREE.Object3D | null {
@@ -618,7 +643,7 @@ export class LayerApplyEngine {
    * Push each composed effective attribute (except colormap, which is
    * per-leaf and doesn't chain through ancestors) to every affected leaf
    * material. Colormap is handled separately because textures don't
-   * compose — the nearest ancestor's colormap wins.
+   * compose — the last colormap push to a leaf wins.
    */
   private applyComposed(layer: LayerInfo): void {
     const leaves = this.getAffectedDataLeaves(layer.path);
@@ -804,7 +829,7 @@ export class LayerApplyEngine {
    * gsplats and would make a panel edit look authored on the next composition.
    */
   applyLayerOrder(layer: LayerInfo): void {
-    this.pushed.layerOrder.add(layer.path);
+    this.pushed.layerOrder.set(layer.path, ++this.pushSequence);
     const sceneGraph = this.deps.getSceneGraph();
     for (const leaf of this.getAffectedDataLeaves(layer.path)) {
       const obj = this.getMesh(leaf.path);
@@ -826,7 +851,7 @@ export class LayerApplyEngine {
   }
 
   applyLabelStyle(layer: LayerInfo): void {
-    this.pushed.labelStyle.add(layer.path);
+    this.pushed.labelStyle.set(layer.path, ++this.pushSequence);
     let applied = false;
     let pickDirty = false;
     for (const leaf of this.getAffectedDataLeaves(layer.path)) {
@@ -880,7 +905,7 @@ export class LayerApplyEngine {
    * buffer would make a freshly-dissolved region still hoverable.
    */
   applyMeshAppearance(layer: LayerInfo): void {
-    this.pushed.meshAppearance.add(layer.path);
+    this.pushed.meshAppearance.set(layer.path, ++this.pushSequence);
     let applied = false;
     let pickDirty = false;
     for (const leaf of this.getAffectedDataLeaves(layer.path)) {
@@ -917,7 +942,7 @@ export class LayerApplyEngine {
    */
   applyPhysicalKnobs(layer: LayerInfo): void {
     if (!layer.physicalKnobs) return;
-    this.pushed.physicalKnobs.add(layer.path);
+    this.pushed.physicalKnobs.set(layer.path, ++this.pushSequence);
     let applied = false;
     for (const leaf of this.getAffectedDataLeaves(layer.path)) {
       const obj = this.getMesh(leaf.path);
@@ -969,7 +994,7 @@ export class LayerApplyEngine {
     if (leaves.length === 0) return false;
     const sceneGraph = this.deps.getSceneGraph();
     if (!sceneGraph) return false;
-    this.pushed.colormap.add(layer.path);
+    this.pushed.colormap.set(layer.path, ++this.pushSequence);
 
     let colormapInEffect = false;
     let anyMaterialReached = false;

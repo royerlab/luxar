@@ -78,7 +78,9 @@ same per-leaf code an edit runs, plus every kind of non-composed state the panel
 has pushed for a layer on its ancestry (colormap, draw order, label style, mesh
 appearance, physical knobs). Kinds the panel never pushed are left at the
 factory's authored value, which is exactly what the already-drawn leaves still
-carry. A leaf of a different scene graph than the panel's is ignored.
+carry. Pushed writes replay in edit order so a later outer-layer edit wins over
+an earlier nested-layer edit on late leaves too. A leaf of a different scene
+graph than the panel's is ignored.
 
 ### Load-failure badge
 
