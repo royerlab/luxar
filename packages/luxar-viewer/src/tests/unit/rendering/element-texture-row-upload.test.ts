@@ -241,6 +241,18 @@ describe.each([
     expect(texture.updateRanges).toHaveLength(0);
   });
 
+  it.fails('a ranged first upload leaves the texture in sync, so the next commit is rows-only', () => {
+    // First progressive rung: 2 of 20 rows, uploaded ranged.
+    writeElements(texture, 0, PER_ROW * 2, 1);
+    renderUpload(backend, texture);
+    backend.writes.length = 0;
+    // Second rung: one more row — must not re-upload the full capacity.
+    writeElements(texture, PER_ROW * 2, PER_ROW * 3, 2);
+    renderUpload(backend, texture);
+    expect(backend.writes).toEqual([{ firstRow: 2, rows: 1, bytes: ROW_BYTES }]);
+    expect(gpuMirror(backend, texture)).toEqual(texture.image.data);
+  });
+
   it('a texture another renderer already uploaded gets a full first upload here', () => {
     // Some other renderer consumed an upload (and its ranges): this backend's
     // fresh resource must not trust the ranges alone.
