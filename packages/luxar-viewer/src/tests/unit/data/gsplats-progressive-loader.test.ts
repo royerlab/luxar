@@ -2209,3 +2209,76 @@ testLadderFoldContract('GSplats', async () => {
     },
   };
 });
+
+describe('GSplatsProgressiveLoader — no pin after the shadow pass is torn down', () => {
+  // A shadow (prefetch) pass's pinned store must not land after its abort or
+  // the loader's dispose: releaseShadows() has already unpinned its keys, so a
+  // late pin would outlive playback and never be released.
+  const shadowView: GSplatsViewState = { ...baseViewState, frameBudgetMs: 100_000, prefetch: true };
+
+  function gatedPair(): {
+    loader: GSplatsProgressiveLoader;
+    sc: SliceCache;
+    release: () => void;
+    entered: Promise<void>;
+  } {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let enter!: () => void;
+    const entered = new Promise<void>((r) => {
+      enter = r;
+    });
+    const first = makeSubLoader(makeLodData(10, 3, { color: 'uint8' }));
+    const last = makeSubLoader(makeLodData(5, 3, { color: 'uint8' }));
+    const data = makeLodData(5, 3, { color: 'uint8' });
+    last.updateViewWithResidency = vi.fn(async () => {
+      enter();
+      await gate; // hold the LAST level in flight
+      return { data, allResident: true };
+    });
+    const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+    const loader = new GSplatsProgressiveLoader(
+      [first, last] as unknown as GSplatsSpatialIndexLoader[],
+      2,
+      '/shadow-teardown',
+      undefined,
+      sc
+    );
+    return { loader, sc, release, entered };
+  }
+
+  function pinnedStores(sc: SliceCache, run: () => Promise<void>): Promise<number> {
+    const setSpy = vi.spyOn(sc, 'set');
+    return run().then(
+      () =>
+        setSpy.mock.calls.filter((call) => (call[2] as { pin?: boolean } | undefined)?.pin).length
+    );
+  }
+
+  it.fails('stores no pin when the last level resolves after the abort', async () => {
+    const { loader, sc, release, entered } = gatedPair();
+    const controller = new AbortController();
+    const pins = await pinnedStores(sc, async () => {
+      const pending = loader.updateView(shadowView, undefined, controller.signal);
+      await entered;
+      controller.abort(); // releaseShadows() aborts the pass (and unpins)
+      release(); // ...but the level was already past its own abort checks
+      await pending;
+    });
+    expect(pins).toBe(0);
+  });
+
+  it.fails('stores no pin when the loader is disposed during the last level', async () => {
+    const { loader, sc, release, entered } = gatedPair();
+    const pins = await pinnedStores(sc, async () => {
+      const pending = loader.updateView(shadowView);
+      await entered;
+      loader.dispose();
+      release();
+      await pending;
+    });
+    expect(pins).toBe(0);
+  });
+});
