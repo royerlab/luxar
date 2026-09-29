@@ -173,10 +173,13 @@ function parseChunkIndices(key: string): number[] | null {
 
 ### Adjacent Key Generation
 
+This snippet illustrates neighbor generation with `maxIndices` passed explicitly.
+The prefetcher's private method takes only `key` and looks up those counts from
+the bounds registered for its array path.
+
 ```typescript
 /**
- * Generate adjacent chunk keys (±1 in each dimension) using the chunk counts
- * looked up from registerArrayBounds for this array path.
+ * Generate adjacent chunk keys (±1 in each dimension) using the given chunk counts.
  *
  * @example
  * getAdjacentChunks('points/positions/1.2.3', [4, 5, 5])
