@@ -180,7 +180,7 @@ describe('L2 quota estimate vs. a write the disk refused', () => {
     vi.unstubAllGlobals();
   });
 
-  it.fails('re-estimates after a QuotaExceededError instead of trusting the cached estimate', async () => {
+  it('re-estimates after a QuotaExceededError instead of trusting the cached estimate', async () => {
     // The browser's estimate says there is ample room, but the disk is
     // actually full: the write itself throws QuotaExceededError. The cached
     // (30 s) estimate must not keep admitting writes that cannot land.

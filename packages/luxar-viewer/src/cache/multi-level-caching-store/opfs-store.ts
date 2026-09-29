@@ -160,6 +160,7 @@ export class OPFSStore {
   // deletes; a fresh estimate is taken when the cache is 30 s old, after
   // QUOTA_REESTIMATE_BYTES written, or whenever the cached headroom cannot
   // cover a write (so a full disk is never papered over by a stale "plenty").
+  // A write that fails with QuotaExceededError drops the cache outright.
   private static readonly QUOTA_ESTIMATE_MAX_AGE_MS = 30_000;
   private static readonly QUOTA_REESTIMATE_BYTES = 64 * 1024 * 1024;
   private quotaEstimate: { available: number; at: number } | null = null;
@@ -948,6 +949,11 @@ export class OPFSStore {
           continue;
         }
         this.writeFailures++;
+        // The disk refused bytes the cached estimate said would fit: drop it
+        // so the next write re-estimates instead of trusting it for up to 30 s.
+        if (error instanceof DOMException && error.name === 'QuotaExceededError') {
+          this.quotaEstimate = null;
+        }
         log.warning(Modules.CACHE, `OPFSStore failed to write ${key}: ${errorMsg}`);
         return;
       }
