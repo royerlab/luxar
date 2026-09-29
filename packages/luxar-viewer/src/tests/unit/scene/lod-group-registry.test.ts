@@ -492,15 +492,50 @@ describe('projectBoxDiagonalPx', () => {
       return cam;
     }
 
-    it('is orientation-stable: an orbit of a cube at constant radius varies by at most 1%', () => {
+    /**
+     * The legacy ``screen-area`` metric, computed independently from the box's 8
+     * projected corners: the viewport-clipped half-extents of their NDC AABB,
+     * multiplied. The reference the near-depth ellipse is sized against.
+     */
+    function legacyCornerRectArea(box: BoundingBox, cam: THREE.Camera): number {
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      for (let i = 0; i < 8; i++) {
+        const p = new THREE.Vector3(
+          i & 1 ? box.max.x : box.min.x,
+          i & 2 ? box.max.y : box.min.y,
+          i & 4 ? box.max.z : box.min.z
+        ).project(cam);
+        minX = Math.min(minX, p.x);
+        maxX = Math.max(maxX, p.x);
+        minY = Math.min(minY, p.y);
+        maxY = Math.max(maxY, p.y);
+      }
+      const w = Math.max(0, Math.min(maxX, 1) - Math.max(minX, -1)) * 0.5;
+      const h = Math.max(0, Math.min(maxY, 1) - Math.max(minY, -1)) * 0.5;
+      return w * h;
+    }
+
+    it('is orientation-stable: an orbit of a cube at 10 half-extents varies by at most 20% (legacy rect: far more)', () => {
       // The box's screen RECT grows by up to ~1.7x between a face-on and a
       // corner-on view, so a rect metric walks a lod ladder up and down during
       // one revolution at a FIXED distance. The inscribed ellipsoid of a cube
-      // is a sphere, whose projection depends only on the distance.
+      // is a sphere, whose projected SHAPE depends only on the distance. The
+      // ellipse is then SIZED at the depth of the box's nearest corner (area
+      // factor w_far / w_near, so a thick box close to the camera reads what
+      // its near face covers, like the legacy rect), and the corner depths do
+      // move with orientation: face-on the nearest corner is 1 half-extent in
+      // front of the centre, corner-on sqrt(3). At a radius of 10 half-extents
+      // that is (11.73 / 8.27) / (11 / 9) ≈ 1.16, a swing of ~14%. The unsized
+      // ellipsoid held 1%, but read 25% low for thick boxes near the camera
+      // (next two tests) — so the bound here is 20%, not 1%.
       const cube: BoundingBox = { min: { x: -1, y: -1, z: -1 }, max: { x: 1, y: 1, z: 1 } };
-      const radius = 8;
+      const radius = 10;
       const values: number[] = [];
-      for (const elevation of [0, Math.PI / 5]) {
+      const legacy: number[] = [];
+      for (const elevation of [0, Math.PI / 5, Math.atan(Math.SQRT1_2)]) {
         for (let k = 0; k < 24; k++) {
           const azimuth = (k / 24) * 2 * Math.PI;
           const cam = perspectiveLookingAtOrigin(
@@ -509,12 +544,86 @@ describe('projectBoxDiagonalPx', () => {
             radius * Math.cos(elevation) * Math.cos(azimuth)
           );
           values.push(projectBoxAreaFraction(cube, cam));
+          legacy.push(legacyCornerRectArea(cube, cam));
         }
       }
-      const lo = Math.min(...values);
-      const hi = Math.max(...values);
-      expect(lo).toBeGreaterThan(0);
-      expect((hi - lo) / hi).toBeLessThanOrEqual(0.01);
+      const swing = (xs: number[]): number => (Math.max(...xs) - Math.min(...xs)) / Math.max(...xs);
+      expect(Math.min(...values)).toBeGreaterThan(0);
+      expect(swing(values)).toBeLessThanOrEqual(0.2);
+      expect(swing(legacy)).toBeGreaterThan(2 * swing(values));
+    });
+
+    it.fails('face-on in perspective it tracks the legacy rect for boxes of any thickness', () => {
+      // The ellipse outline sits near the box's MIDDLE plane while the legacy
+      // rect is set by its NEAR face, so an unsized ellipse of a thick box
+      // close to the camera read far less than the rect. Sized at the nearest
+      // corner's depth it tracks the rect for every thickness.
+      const cam = perspectiveLookingAtOrigin(0, 0, 6);
+      for (const hz of [0, 0.25, 0.5, 1, 2]) {
+        for (const [cx, cy] of [
+          [0, 0],
+          [0.8, -0.5],
+        ]) {
+          const box: BoundingBox = {
+            min: { x: cx - 1, y: cy - 0.6, z: -hz },
+            max: { x: cx + 1, y: cy + 0.6, z: hz },
+          };
+          const legacy = legacyCornerRectArea(box, cam);
+          const metric = projectBoxAreaFraction(box, cam);
+          // On the view axis the sized ellipse IS the near-face rect; off it the
+          // two drift apart only for a box as deep as 2/3 of its distance (8%).
+          const tolerance = cx === 0 ? 1e-9 : hz <= 1 ? 0.02 : 0.1;
+          expect(Math.abs(metric / legacy - 1), `hz=${hz} c=(${cx},${cy})`).toBeLessThan(tolerance);
+        }
+      }
+    });
+
+    it.fails('hosted zebrafish endoderm at its opening view reads the legacy rect coverage and picks child_2', () => {
+      // gsplats_4d_zebrafish_timelapse: /endoderm is a kind=lod screen-area
+      // ladder [0, 0.125, 0.25, 0.5] whose box is ~0.4 times as deep as it is
+      // wide, 7 half-depths from the opening camera. The legacy corner rect
+      // reads 0.315 (child_2); the unsized ellipsoid read 0.237 and dropped the
+      // opening view to child_1 — 2.5-4x fewer, coarser splats every timepoint.
+      const box: BoundingBox = {
+        min: { x: -389.16583251953125, y: -382.4560852050781, z: -154.47067260742188 },
+        max: { x: 375.7462463378906, y: 394.1980895996094, z: 154.47067260742188 },
+      };
+      const cam = new THREE.PerspectiveCamera(63, 1000 / 700, 0.1, 10000);
+      cam.position.set(0, 0, 1092.41);
+      cam.lookAt(0, 0, 0);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      const legacy = legacyCornerRectArea(box, cam);
+      expect(legacy).toBeCloseTo(0.315, 2);
+      const metric = projectBoxAreaFraction(box, cam);
+      expect(Math.abs(metric / legacy - 1)).toBeLessThan(0.02);
+      expect(pickChildWithHysteresis([0, 0.125, 0.25, 0.5], 0, metric)).toBe(2);
+    });
+
+    it.fails('saturates to +Infinity when the eye plane cuts a box corner but misses its ellipsoid', () => {
+      // The nearest corner is behind the eye, so no finite near depth exists —
+      // the same saturation the legacy corner rect applied.
+      const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
+      const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+      // Eye plane 5.6 from the centre: outside the inscribed sphere (radius 5)
+      // but inside the box's corner reach (5·sqrt(3)); corner (5, 5, 5) is behind.
+      cam.position.set(0, 0, 7);
+      cam.lookAt(-0.424, -0.424, 6.2);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      expect(projectBoxAreaFraction(box, cam)).toBe(Number.POSITIVE_INFINITY);
+    });
+
+    it('an orthographic camera sizes a thick box exactly like a flat one (w is constant)', () => {
+      const cam = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
+      cam.position.set(0, 0, 100);
+      cam.lookAt(0, 0, 0);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      const flat: BoundingBox = { min: { x: -4, y: -2, z: 0 }, max: { x: 4, y: 2, z: 0 } };
+      const thick: BoundingBox = { min: { x: -4, y: -2, z: -30 }, max: { x: 4, y: 2, z: 30 } };
+      expect(projectBoxAreaFraction(flat, cam)).toBeCloseTo(0.08, 9);
+      expect(projectBoxAreaFraction(thick, cam)).toBeCloseTo(0.08, 9);
     });
 
     it('face-on it equals the legacy rect product, so derived thresholds keep their meaning', () => {
@@ -1921,11 +2030,14 @@ describe('LODGroupRegistry — auto evaluation', () => {
   });
 
   it('sizes a rotated group by its own corners, not by its world bounding box', () => {
-    // A 4 × 4 card 10 units in front of the camera covers 0.090 of the screen
-    // facing it. Turned 30° about the vertical it covers LESS (0.088), but the
-    // corners of its world AABB — wider and deeper — cover 0.097, which
-    // used to cross a 0.093 threshold and upgrade the level.
-    function selectedAt(yawDeg: number): number {
+    // A 4 × 0.4 bar 10 units in front of the camera covers 0.009 of the
+    // screen. Rolled 45° about the view axis it covers exactly as much (the
+    // ellipse only turns), but the corners of its world AABB — a 3.1 × 3.1
+    // square — cover 0.054, which would cross a 0.02 threshold and upgrade
+    // the level. (Pre-ellipsoid this pinned a 30° yaw of a square card; the
+    // near-depth ellipse now reads such a yawed card slightly LARGER than
+    // face-on, like its AABB, so that pose no longer tells the boxes apart.)
+    function selectedAt(rollDeg: number): number {
       const camera = new THREE.PerspectiveCamera(60, 4 / 3, 0.1, 1000);
       camera.updateMatrixWorld(true);
       const reg = new LODGroupRegistry({
@@ -1933,18 +2045,18 @@ describe('LODGroupRegistry — auto evaluation', () => {
         getViewportSize: () => ({ width: 800, height: 600 }),
         getDisplayDims: () => [0, 1, 2],
       });
-      const card = { min: [-2, -2, -0.01], max: [2, 2, 0.01] };
-      const children = [0, 0.093].map((t) => ({ ...makeChild(t), positionBounds: card }));
-      const entry = makeEntry(children, 0, `/rotated-card-${yawDeg}`);
+      const bar = { min: [-2, -0.2, -0.01], max: [2, 0.2, 0.01] };
+      const children = [0, 0.02].map((t) => ({ ...makeChild(t), positionBounds: bar }));
+      const entry = makeEntry(children, 0, `/rotated-bar-${rollDeg}`);
       entry.selector = 'screen-area';
       entry.groupObject.position.set(0, 0, -10);
-      entry.groupObject.rotation.y = (yawDeg * Math.PI) / 180;
+      entry.groupObject.rotation.z = (rollDeg * Math.PI) / 180;
       reg.register(entry);
       reg.evaluatePerFrame();
       return entry.activeChildIndex;
     }
     expect(selectedAt(0)).toBe(0);
-    expect(selectedAt(30)).toBe(0);
+    expect(selectedAt(45)).toBe(0);
   });
 
   it('selects from the camera pose as written, not a stale matrixWorldInverse', () => {
