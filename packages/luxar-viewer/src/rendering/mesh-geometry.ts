@@ -9,11 +9,11 @@
  * there is nothing to instance and no per-element extent to encode — so the
  * instanced-quad/element-texture stack is not a gap here, it is the wrong shape.
  *
- * A direct consequence: mesh does **not** use the GPU buffer pool
- * (`gpu-buffer-pool/pool-stats.ts` must keep listing exactly the three instanced
- * types), and its `color`/`aScalar` data goes to **vertex attributes** rather than
- * a texture. Mesh is the first type to do that, which is why the dtype rules below
- * exist and why nothing in the shipped tree had hit them before.
+ * A direct consequence: mesh buffers are not recycled by the GPU buffer pool
+ * (`gpu-buffer-pool/pool-stats.ts` lists the three instanced types only). Their
+ * resident bytes are still counted there. Mesh's `color`/`aScalar` data goes to
+ * **vertex attributes** rather than a texture, which is why the dtype rules
+ * below exist.
  *
  * @module rendering/mesh-geometry
  */

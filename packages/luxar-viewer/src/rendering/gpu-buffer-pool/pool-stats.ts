@@ -45,7 +45,7 @@ export interface TypePoolStats {
   pooledBytes: number;
 }
 
-/** Overall pool statistics with per-type breakdown. */
+/** Overall resident statistics; byType covers the three reusable buffer pools. */
 export interface PoolStats {
   allocations: number;
   reuses: number;
@@ -53,7 +53,7 @@ export interface PoolStats {
   capacityGrowths: number;
   activeBuffers: number;
   pooledBuffers: number;
-  /** cumulative byte counters across all types. */
+  /** Includes committed non-pooled mesh buffers in activeBytes and totalBytes. */
   activeBytes: number;
   pooledBytes: number;
   totalBytes: number;

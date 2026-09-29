@@ -1,7 +1,7 @@
 /**
  * GPU-resident geometry byte accounting. Used by the GPU buffer pool
- * (and adapters) to track memory pressure across point / line / gsplat
- * layers without re-iterating attribute byteLengths on every stats poll.
+ * (and adapters) to track memory pressure across point, line, gsplat, and
+ * committed mesh layers without re-iterating attribute byteLengths on every poll.
  *
  * @module rendering/gpu-buffer-pool/geometry-bytes
  */

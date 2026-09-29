@@ -22,7 +22,10 @@ import {
   resetMeshNoticesForTesting,
 } from '../../../../data/scene-loader/process/data-processor-mesh';
 import { commitMeshGeometry } from '../../../../data/scene-loader/commit/commit-mesh-geometry';
-import { createEmptyMeshNode } from '../../../../rendering/node-factory/create-mesh-node';
+import {
+  applyMeshTexture,
+  createEmptyMeshNode,
+} from '../../../../rendering/node-factory/create-mesh-node';
 import { GPUBufferPool } from '../../../../rendering/gpu-buffer-pool';
 import { SceneLoader } from '../../../../data/scene-loader';
 import type { NodeBuildCtx } from '../../../../data/scene-loader/nodes/build-ctx';
@@ -229,6 +232,45 @@ describe('commitMeshGeometry', () => {
     commitMeshGeometry({ rootGroup: root, currentVersion: 2, gpuBufferPool: pool }, staged);
     expect(mesh.geometry.drawRange.count).toBe(3);
     expect(pool.getResidentBytes()).toBe(committedBytes);
+  });
+
+  it('recreates a disposed texture when a lazy mesh is loaded again', () => {
+    const attrs: MeshMetadata = {
+      ...ATTRS,
+      has_normals: true,
+      has_scalars: true,
+      has_uvs: true,
+      has_texture: true,
+      texture_width: 1,
+      texture_height: 1,
+      texture_channels: 3,
+      texture_color_space: 'srgb',
+    };
+    const mesh = createEmptyMeshNode('/surface', attrs, loader, null);
+    const root = new THREE.Group();
+    root.add(mesh);
+    const sceneLoader = new SceneLoader({ enableMonitor: false });
+    const internals = sceneLoader as unknown as {
+      rootGroup: THREE.Group;
+      makeNodeBuildCtx(): NodeBuildCtx;
+    };
+    internals.rootGroup = root;
+    const data = {
+      kind: 'raw' as const,
+      pixels: new Uint8Array([255, 0, 0]),
+      width: 1,
+      height: 1,
+      channels: 3 as const,
+    };
+    applyMeshTexture(mesh, attrs, data);
+    const firstTexture = mesh.userData.meshTexture as THREE.Texture;
+
+    internals.makeNodeBuildCtx().releaseLazyMesh('/surface');
+    expect(mesh.geometry.getAttribute('normal')).toBeDefined();
+    expect(mesh.geometry.getAttribute('aScalar')).toBeDefined();
+    expect(mesh.geometry.getAttribute('uv')).toBeDefined();
+    applyMeshTexture(mesh, attrs, data);
+    expect(mesh.userData.meshTexture).not.toBe(firstTexture);
   });
 
   it('sizes the buffers from the NODE ATTRS, not the committed prefix (#1521)', async () => {

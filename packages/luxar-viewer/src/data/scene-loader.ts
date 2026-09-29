@@ -2058,9 +2058,9 @@ export class SceneLoader {
   /**
    * Commit mesh geometry (synchronous).
    *
-   * Implementation lives in `scene-loader/commit/commit-mesh-geometry.ts`. Takes no
-   * GPU buffer pool: a mesh's vertex buffers are uploaded once per `displayDims`
-   * epoch and never resized, so there is nothing for the pool to recycle.
+   * Implementation lives in `scene-loader/commit/commit-mesh-geometry.ts`. Mesh
+   * buffers are not pooled, but each commit registers their resident bytes for
+   * the shared GPU budget.
    */
   private commitMeshGeometry(
     staged: StagedMeshCommit,
@@ -2143,6 +2143,10 @@ export class SceneLoader {
           const level = mesh as THREE.Mesh;
           releaseDepthSortNode(level);
           level.geometry.dispose();
+          // The geometry owns the uploaded texture's disposal hook. Forget its
+          // cached identity so the next commit creates a live texture again.
+          delete level.userData.meshTexture;
+          delete level.userData.meshTextureSource;
           level.geometry = createEmptyMeshGeometry(level.userData.attrs as MeshMetadata);
           invalidateRenderObjectFor(level);
         }

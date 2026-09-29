@@ -6,12 +6,11 @@
  * Much shorter than the other three, and the reasons are structural rather than
  * "less finished":
  *
- * - **No GPU buffer pool.** The pool exists to recycle the instanced-quad
- *   attribute buffers whose capacity churns as a slice query returns different
- *   element counts. A mesh's vertex buffers are uploaded once per `displayDims`
- *   epoch and never resized, so there is nothing to recycle
- *   (`gpu-buffer-pool/pool-stats.ts` must keep listing exactly the three instanced
- *   types).
+ * - **No pooled mesh buffers.** The pool recycles instanced-quad attribute
+ *   buffers whose capacity churns as slice queries return different counts.
+ *   Mesh buffers are not reused, but their committed bytes are registered for
+ *   the shared resident-byte budget (`pool-stats.ts` still lists the three
+ *   instanced types only).
  * - **No capacity clamp.** Mesh's element ordinal is `gl_VertexID`, not an
  *   element-texture texel, so it is bounded by `MAX_MESH_VERTICES` at the loader's
  *   Stage-1 preflight instead of by texture dimensions here.
