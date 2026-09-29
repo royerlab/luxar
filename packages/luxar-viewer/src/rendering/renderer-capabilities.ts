@@ -86,14 +86,14 @@ export interface RendererCapabilities {
    *   bottom-up framebuffer. Either way the resulting `vUv` resolves
    *   to the canvas-relative UV at every fragment.
    * - `readPixelsCompactAsync` returns rows in canonical top-down order;
-   *   when this is `false`, the primitive inverts rows on the way out.
+   *   its readback conversion follows the running backend separately.
    *
    * Disambiguates from `apiSurface`: in practice both fields move
    * together today (every WebGPURenderer reports
    * `framebufferYDown=true`), but they answer different questions.
    * `apiSurface` is the *method-signature* contract (e.g.
    * `readRenderTargetPixelsAsync`'s shape); this field is the
-   * *framebuffer memory layout*. Future Three.js versions could
+   * *sampling convention*, not readback memory layout. Future Three.js versions could
    * conceivably introduce a `WebGPURenderer` configuration whose
    * effective Y differs, which is why we keep this as a separate
    * capability rather than aliasing `apiSurface`.

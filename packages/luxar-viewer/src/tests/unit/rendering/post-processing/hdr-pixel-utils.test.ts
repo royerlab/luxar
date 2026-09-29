@@ -372,6 +372,42 @@ describe('readPixelsCompactAsync — cube face threading', () => {
 });
 
 describe('readPixelsCompactAsync', () => {
+  it.each([false, true])(
+    'uses active WebGPU backend=%s for rows and region Y',
+    async (isNative) => {
+      const target = makeTarget(1, 10);
+      const readPixels = vi.fn().mockResolvedValue(makeRowProbeBuffer(3));
+      const renderer = {
+        backend: { isWebGPUBackend: isNative },
+        readRenderTargetPixelsAsync: readPixels,
+      } as unknown as Renderer;
+      const caps = makeCaps('webgpu', true);
+      const flipped = new Uint8Array(12);
+      const result = await readPixelsCompactAsync(renderer, caps, {
+        target,
+        kind: 'rgba8',
+        y: 2,
+        width: 1,
+        height: 3,
+        flipOut: flipped,
+      });
+      expect(readPixels.mock.calls[0][2]).toBe(isNative ? 2 : 5);
+      expect(extractRowIndices(result.pixels)).toEqual(isNative ? [0, 1, 2] : [2, 1, 0]);
+      if (isNative) expect(result.pixels).not.toBe(flipped);
+      else expect(result.pixels).toBe(flipped);
+
+      const bottomUp = await readPixelsCompactAsync(renderer, caps, {
+        target,
+        kind: 'rgba8',
+        y: 2,
+        width: 1,
+        height: 3,
+        flipY: true,
+      });
+      expect(extractRowIndices(bottomUp.pixels)).toEqual(isNative ? [2, 1, 0] : [0, 1, 2]);
+    }
+  );
+
   describe('WebGL2 (bottom-up framebuffer)', () => {
     // Under WebGL2, `readRenderTargetPixelsAsync` writes the raw
     // readback into the destination buffer in bottom-up order: the
@@ -486,10 +522,9 @@ describe('readPixelsCompactAsync', () => {
     });
   });
 
-  describe('WebGPU (sampling: top-down; readback: bottom-up)', () => {
+  describe('WebGPURenderer with WebGL2 fallback (sampling: top-down; readback: bottom-up)', () => {
     // Under WebGPURenderer, `readRenderTargetPixelsAsync` returns
-    // **bottom-up** rows on both its real-WebGPU and WebGL2 backends —
-    // verified empirically by the y-orientation E2E spec. (Sampling
+    // **bottom-up** rows on its WebGL2 fallback. (Sampling
     // via TSL `texture(...).sample(uv)` uses top-down UVs, which
     // `caps.framebufferYDown` describes — but the readback memory
     // convention is independent of that and matches the GL contract.)
@@ -610,9 +645,8 @@ describe('readPixelsCompactAsync', () => {
     });
 
     it('translates top-down y to bottom-up on WebGPU readback (same as WebGL2)', async () => {
-      // WebGPURenderer's readRenderTargetPixelsAsync uses the same
-      // bottom-up addressing as gl.readPixels on both its real-WebGPU
-      // and WebGL2 backends. caps.framebufferYDown=true describes the
+      // WebGPURenderer's WebGL2 fallback uses the same bottom-up
+      // addressing as gl.readPixels. caps.framebufferYDown=true describes the
       // shader-sampling convention, not the readback memory convention.
       const target = makeTarget(1, 10);
       const caps = makeCaps('webgpu', true);

@@ -1,21 +1,16 @@
 /**
  * Y-orientation pin for `renderToImageData()` across renderer backends.
  *
- * The viewer's two renderer paths follow opposite framebuffer-Y
- * conventions internally:
+ * The viewer's renderers use different readback conventions:
  *   - `THREE.WebGLRenderer`: row 0 of an FBO is at the bottom of the
  *     viewport. `readPixelsCompactAsync` flips reads into top-down
  *     order for `ImageData` / canonical-export.
- *   - `WebGPURenderer`: Three.js presents a top-down sampling
- *     convention to TSL `texture(...).sample(uv)` (handled by the
- *     UV-flip in {@link createFullscreenTriangleGeometry}), but
- *     `readRenderTargetPixelsAsync` still returns rows in bottom-up
- *     `gl.readPixels`-compat order on both its real-WebGPU and
- *     WebGL2 backends — verified empirically and pinned by this
- *     spec.
+ *   - `WebGPURenderer`: native WebGPU reads top-down; its WebGL2 fallback
+ *     reads bottom-up. Both use top-down shader sampling, which is a
+ *     separate convention.
  *
- * The test renders the same scene through `?renderer=webgl` and
- * `?renderer=webgpu&webgpuForceWebgl`, compares the resulting
+ * The test renders the same scene through `?renderer=webgl`,
+ * `?renderer=webgpu&webgpuForceWebgl`, and native `?renderer=webgpu`, compares the resulting
  * `renderToImageData()` outputs as per-row luminance profiles
  * (resilient to small canvas-size differences between contexts),
  * and asserts they match. If a future change breaks the orientation
@@ -23,13 +18,15 @@
  * when flipped" signal pointing at the side that flipped.
  *
  * @see fullscreen/geometry.ts — UV-flip table keyed on `framebufferYDown`
- * @see hdr/pixel-utils.ts::readPixelsCompactAsync — the unconditional flip
+ * @see hdr/pixel-utils.ts::readPixelsCompactAsync — backend-aware readback
  */
 
 import { test, expect, type Page } from './fixtures';
 import { probeWebGPUBackend, waitForLuxarReady, waitForPointsLoaded } from './helpers';
 
 const DATASET = 'http://localhost:9000/datasets/examples/build_example_structured.luxar.zarr';
+const LABELLED_DATASET =
+  'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_labelled_points.luxar.zarr';
 
 const N_BUCKETS = 32;
 /**
@@ -162,5 +159,27 @@ test.describe('Y-orientation contract — renderToImageData cross-backend parity
       await ctxA.close();
       await ctxB.close();
     }
+  });
+
+  test('native WebGPU picks an off-centre labelled point', async ({ page }) => {
+    await load(page, `/?renderer=webgpu&src=${LABELLED_DATASET}&debug`);
+    test.skip(!(await probeWebGPUBackend(page)).isNative, 'No native WebGPU adapter');
+
+    const target = await page.evaluate(() => {
+      const dbg = (window as any).__luxarDebug;
+      const camera = dbg.camera;
+      const ndc = camera.position.clone().set(5, 5, 0).project(camera);
+      const rect = dbg.renderer.domElement.getBoundingClientRect();
+      return {
+        x: rect.left + ((ndc.x + 1) / 2) * rect.width,
+        y: rect.top + ((1 - ndc.y) / 2) * rect.height,
+        centreY: rect.top + rect.height / 2,
+      };
+    });
+    expect(Math.abs(target.y - target.centreY)).toBeGreaterThan(15);
+    await page.mouse.move(target.x, target.y);
+    await expect(page.locator('[data-overlay-name="__hover_text"]')).toHaveText('Point 3', {
+      timeout: 10000,
+    });
   });
 });
