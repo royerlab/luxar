@@ -76,7 +76,7 @@ export interface RendererCapabilities {
    * normalises to match real WebGPU). False when row 0 is at the
    * **bottom** (`THREE.WebGLRenderer`).
    *
-   * This is the canonical seam for every Y-orientation decision in the
+   * This is the canonical seam for shader-sampling Y orientation in the
    * viewer:
    *
    * - `createFullscreenTriangleGeometry` emits V-inverted UVs when this
@@ -93,8 +93,8 @@ export interface RendererCapabilities {
    * `framebufferYDown=true`), but they answer different questions.
    * `apiSurface` is the *method-signature* contract (e.g.
    * `readRenderTargetPixelsAsync`'s shape); this field is the
-   * *sampling convention*, not readback memory layout. Future Three.js versions could
-   * conceivably introduce a `WebGPURenderer` configuration whose
+   * *sampling convention*, not readback memory layout. Future Three.js
+   * versions could conceivably introduce a `WebGPURenderer` configuration whose
    * effective Y differs, which is why we keep this as a separate
    * capability rather than aliasing `apiSurface`.
    */

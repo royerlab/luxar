@@ -161,25 +161,30 @@ test.describe('Y-orientation contract — renderToImageData cross-backend parity
     }
   });
 
-  test('native WebGPU picks an off-centre labelled point', async ({ page }) => {
-    await load(page, `/?renderer=webgpu&src=${LABELLED_DATASET}&debug`);
-    test.skip(!(await probeWebGPUBackend(page)).isNative, 'No native WebGPU adapter');
+  for (const backend of ['native', 'forceWebGL'] as const) {
+    test(`${backend} WebGPURenderer picks an off-centre labelled point`, async ({ page }) => {
+      const forced = backend === 'forceWebGL' ? '&webgpuForceWebgl' : '';
+      await load(page, `/?renderer=webgpu${forced}&src=${LABELLED_DATASET}&debug`);
+      if (backend === 'native') {
+        test.skip(!(await probeWebGPUBackend(page)).isNative, 'No native WebGPU adapter');
+      }
 
-    const target = await page.evaluate(() => {
-      const dbg = (window as any).__luxarDebug;
-      const camera = dbg.camera;
-      const ndc = camera.position.clone().set(5, 5, 0).project(camera);
-      const rect = dbg.renderer.domElement.getBoundingClientRect();
-      return {
-        x: rect.left + ((ndc.x + 1) / 2) * rect.width,
-        y: rect.top + ((1 - ndc.y) / 2) * rect.height,
-        centreY: rect.top + rect.height / 2,
-      };
+      const target = await page.evaluate(() => {
+        const dbg = (window as any).__luxarDebug;
+        const camera = dbg.camera;
+        const ndc = camera.position.clone().set(5, 5, 0).project(camera);
+        const rect = dbg.renderer.domElement.getBoundingClientRect();
+        return {
+          x: rect.left + ((ndc.x + 1) / 2) * rect.width,
+          y: rect.top + ((1 - ndc.y) / 2) * rect.height,
+          centreY: rect.top + rect.height / 2,
+        };
+      });
+      expect(Math.abs(target.y - target.centreY)).toBeGreaterThan(15);
+      await page.mouse.move(target.x, target.y);
+      await expect(page.locator('[data-overlay-name="__hover_text"]')).toHaveText('Point 3', {
+        timeout: 10000,
+      });
     });
-    expect(Math.abs(target.y - target.centreY)).toBeGreaterThan(15);
-    await page.mouse.move(target.x, target.y);
-    await expect(page.locator('[data-overlay-name="__hover_text"]')).toHaveText('Point 3', {
-      timeout: 10000,
-    });
-  });
+  }
 });

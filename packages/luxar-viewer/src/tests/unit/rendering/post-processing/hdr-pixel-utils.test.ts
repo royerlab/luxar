@@ -667,11 +667,9 @@ describe('readPixelsCompactAsync', () => {
       expect(args[2]).toBe(5);
     });
 
-    it('translates y to bottom-up when caps.framebufferYDown=false regardless of api', async () => {
-      // Defensive: production no longer pairs `api='webgpu'` with
-      // `framebufferYDown=false` (see the matching describe block
-      // above), but the primitive must still honour the cap if it ever
-      // appears.
+    it('translates y to bottom-up on the fallback even with mixed sampling caps', async () => {
+      // The readback backend stays authoritative even if sampling caps
+      // differ from their usual WebGPURenderer value.
       const target = makeTarget(1, 10);
       const caps = makeCaps('webgpu', false);
       const readPixels = vi.fn().mockResolvedValue(new Uint8Array(12));

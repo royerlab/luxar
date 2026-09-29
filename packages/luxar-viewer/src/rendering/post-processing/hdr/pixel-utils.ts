@@ -262,8 +262,8 @@ export interface ReadPixelsOpts<K extends TexelKind = TexelKind> {
   /**
    * Optional pre-allocated destination buffer for the row-flipped
    * output (consulted when a row flip is needed). Must
-   * be the same size and kind as `out`, and a different buffer than
-   * `out` (the row-flip interleaves reads/writes across rows and
+   * be the same size and kind as the readback, and a different buffer than
+   * `out` if one is supplied (the row-flip interleaves reads/writes across rows and
    * cannot operate in place). When provided, the row-flip writes into
    * this buffer instead of allocating one. The returned `pixels` is
    * this buffer (not the raw `out`).
@@ -289,6 +289,14 @@ type WebGPUReadback = {
     faceIndex?: number
   ): Promise<Uint8Array | Uint16Array | Float32Array>;
 };
+
+/** Readback layout follows the running backend, not the renderer's API surface. */
+function hasTopDownReadback(renderer: Renderer, caps: RendererCapabilities): boolean {
+  return (
+    caps.apiSurface === 'webgpu' &&
+    (renderer as { backend?: { isWebGPUBackend?: boolean } }).backend?.isWebGPUBackend === true
+  );
+}
 
 /**
  * Unified pixel readback. Hides three backend differences from callers:
@@ -317,13 +325,11 @@ export async function readPixelsCompactAsync<K extends TexelKind>(
   const yTopDown = opts.y ?? 0;
   const width = opts.width ?? target.width;
   const height = opts.height ?? target.height;
-  const flipY = opts.flipY ?? false;
+  const flipY = opts.flipY === true;
   const bytesPerTexel = BYTES_PER_TEXEL[opts.kind];
   const Ctor = TEXEL_CTOR[opts.kind];
   const compactLength = width * height * 4;
-  const readbackYDown =
-    caps.apiSurface === 'webgpu' &&
-    (renderer as { backend?: { isWebGPUBackend?: boolean } }).backend?.isWebGPUBackend === true;
+  const readbackYDown = hasTopDownReadback(renderer, caps);
 
   const x = xTopDown;
   const y = readbackYDown ? yTopDown : target.height - yTopDown - height;
