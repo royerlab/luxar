@@ -86,6 +86,9 @@ export class GPUBufferPool {
 
   /** @internal — shared with the per-type adapters. */
   activeBuffers = new Map<string, PooledBuffer>(); // nodeId → active geometry
+  /** Committed, non-pooled mesh geometries. The scene graph owns their lifetime. */
+  private meshGeometries = new Map<string, THREE.BufferGeometry>();
+  private trackedMeshGeometries = new WeakSet<THREE.BufferGeometry>();
   /** @internal — shared with the per-type adapters; increments via beginFrame(). */
   frameCount = 0;
 
@@ -485,7 +488,21 @@ export class GPUBufferPool {
     for (const buffer of this.activeBuffers.values()) {
       total += estimateGeometryBytes(buffer.geometry);
     }
+    for (const geometry of this.meshGeometries.values()) {
+      total += estimateGeometryBytes(geometry);
+    }
     return total;
+  }
+
+  /** Track a committed mesh without making it eligible for buffer reuse. */
+  registerMeshGeometry(nodeId: string, geometry: THREE.BufferGeometry): void {
+    invalidateCachedByteSize(geometry);
+    this.meshGeometries.set(nodeId, geometry);
+    if (this.trackedMeshGeometries.has(geometry)) return;
+    this.trackedMeshGeometries.add(geometry);
+    geometry.addEventListener('dispose', () => {
+      if (this.meshGeometries.get(nodeId) === geometry) this.meshGeometries.delete(nodeId);
+    });
   }
 
   /** Sum of bytes held by pooled (released, retained-for-reuse) buffers. */
@@ -580,12 +597,16 @@ export class GPUBufferPool {
       }
     }
 
-    const activeBytes = pointsActiveBytes + linesActiveBytes + gsplatsActiveBytes;
+    let meshActiveBytes = 0;
+    for (const geometry of this.meshGeometries.values()) {
+      meshActiveBytes += estimateGeometryBytes(geometry);
+    }
+    const activeBytes = pointsActiveBytes + linesActiveBytes + gsplatsActiveBytes + meshActiveBytes;
     const pooledBytes = pointsPooledBytes + linesPooledBytes + gsplatsPooledBytes;
 
     return {
       ...this.stats,
-      activeBuffers: this.activeBuffers.size,
+      activeBuffers: this.activeBuffers.size + this.meshGeometries.size,
       pooledBuffers: pointsPooled + linesPooled + gsplatsPooled,
       activeBytes,
       pooledBytes,
@@ -721,6 +742,7 @@ export class GPUBufferPool {
       geometries.push(buffer.geometry);
     }
     this.activeBuffers.clear();
+    this.meshGeometries.clear();
 
     const drainPool = (pool: Map<number, PooledBuffer[]>): void => {
       for (const buffers of pool.values()) {

@@ -23,6 +23,10 @@ import {
 } from '../../../../data/scene-loader/process/data-processor-mesh';
 import { commitMeshGeometry } from '../../../../data/scene-loader/commit/commit-mesh-geometry';
 import { createEmptyMeshNode } from '../../../../rendering/node-factory/create-mesh-node';
+import { GPUBufferPool } from '../../../../rendering/gpu-buffer-pool';
+import { SceneLoader } from '../../../../data/scene-loader';
+import type { NodeBuildCtx } from '../../../../data/scene-loader/nodes/build-ctx';
+import { enforceResidentByteBudget } from '../../../../scene/lod-eviction';
 import { log } from '../../../../utils/log';
 import type {
   LoadedMeshData,
@@ -163,6 +167,69 @@ describe('commitMeshGeometry', () => {
     root.add(mesh);
     return { root, mesh };
   }
+
+  it('accounts committed mesh buffers and removes them when geometry is disposed', async () => {
+    const { root, mesh } = sceneWithMesh('/surface');
+    const pool = new GPUBufferPool();
+    const staged = await processMeshData('/surface', loaded(), VIEW, {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+    });
+
+    commitMeshGeometry({ rootGroup: root, currentVersion: 1, gpuBufferPool: pool }, staged);
+    const expected = Object.values(mesh.geometry.attributes).reduce(
+      (sum, attr) => sum + attr.array.byteLength,
+      mesh.geometry.index!.array.byteLength
+    );
+    expect(pool.getResidentBytes()).toBe(expected);
+    expect(pool.getStats().totalBytes).toBe(expected);
+
+    mesh.geometry.dispose();
+    expect(pool.getResidentBytes()).toBe(0);
+  });
+
+  it('releases a lazy level and accounts its replacement after reloading', async () => {
+    const { root, mesh } = sceneWithMesh('/surface');
+    const pool = new GPUBufferPool();
+    const sceneLoader = new SceneLoader({ enableMonitor: false });
+    const internals = sceneLoader as unknown as {
+      rootGroup: THREE.Group;
+      _gpuBufferPool: GPUBufferPool;
+      makeNodeBuildCtx(): NodeBuildCtx;
+    };
+    internals.rootGroup = root;
+    internals._gpuBufferPool = pool;
+    const staged = await processMeshData('/surface', loaded(), VIEW, {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+    });
+    commitMeshGeometry({ rootGroup: root, currentVersion: 1, gpuBufferPool: pool }, staged);
+    const oldGeometry = mesh.geometry;
+    const committedBytes = pool.getResidentBytes();
+
+    const release = () => internals.makeNodeBuildCtx().releaseLazyMesh('/surface');
+    root.visible = false;
+    enforceResidentByteBudget({
+      entries: [
+        {
+          children: [{ object: mesh, ready: true, lastVisibleTick: 1, release }],
+          activeChildIndex: 0,
+        },
+      ],
+      camera: new THREE.PerspectiveCamera(),
+      frustum: new THREE.Frustum(),
+      getResidentByteBudget: () => committedBytes - 1,
+      getResidentBytes: () => pool.getResidentBytes(),
+      computeWorldBox: () => null,
+    });
+    expect(mesh.geometry).not.toBe(oldGeometry);
+    expect(mesh.geometry.drawRange.count).toBe(0);
+    expect(pool.getResidentBytes()).toBe(0);
+
+    commitMeshGeometry({ rootGroup: root, currentVersion: 2, gpuBufferPool: pool }, staged);
+    expect(mesh.geometry.drawRange.count).toBe(3);
+    expect(pool.getResidentBytes()).toBe(committedBytes);
+  });
 
   it('sizes the buffers from the NODE ATTRS, not the committed prefix (#1521)', async () => {
     // WHERE the capacity comes from, which the geometry-level tests cannot pin:

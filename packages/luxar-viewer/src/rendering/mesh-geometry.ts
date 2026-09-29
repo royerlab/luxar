@@ -20,7 +20,7 @@
 
 import * as THREE from 'three';
 import { log, Modules } from '../utils/log';
-import type { MeshColorArray, MeshProjectionBounds } from '../types/mesh';
+import type { MeshColorArray, MeshProjectionBounds, MeshMetadata } from '../types/mesh';
 
 /**
  * Everything {@link createMeshGeometry} and {@link updateMeshGeometry} need to lay out
@@ -600,6 +600,27 @@ export function createMeshGeometry(input: MeshGeometryConfig): THREE.BufferGeome
     geometry.computeBoundingSphere();
   }
   return geometry;
+}
+
+/**
+ * One-vertex, no-index geometry for a new or demoted mesh node. The optional
+ * attribute set comes from metadata so a later commit can fill its buffers
+ * without changing the layout after WebGPU has seen the node.
+ */
+export function createEmptyMeshGeometry(
+  attrs: Pick<MeshMetadata, 'has_normals' | 'has_scalars' | 'has_uvs'>
+): THREE.BufferGeometry {
+  return createMeshGeometry({
+    position: new Float32Array(3),
+    positionChanged: true,
+    indices: new Uint32Array(0),
+    colors: null,
+    normals: attrs.has_normals ? new Float32Array(3) : null,
+    scalars: attrs.has_scalars ? new Float32Array(1) : null,
+    uvs: attrs.has_uvs ? new Float32Array(2) : null,
+    vertexCount: 1,
+    faceCount: 0,
+  });
 }
 
 /**

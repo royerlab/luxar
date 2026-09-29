@@ -46,11 +46,21 @@ import { setCommittedData } from '../../../types/committed-data';
 import { isMeshUserData, type MeshMetadata } from '../../../types/mesh';
 import type { StagedMeshCommit } from '../process/data-processor-mesh';
 import type { UpdateSession } from '../../../profiling/update-profiler';
+import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 
 /** Host references the commit needs. */
 export interface MeshCommitCtx {
   rootGroup: THREE.Group | null;
   currentVersion: number;
+  gpuBufferPool?: GPUBufferPool | null;
+}
+
+function accountMeshGeometry(
+  ctx: MeshCommitCtx,
+  path: string,
+  geometry: THREE.BufferGeometry
+): void {
+  ctx.gpuBufferPool?.registerMeshGeometry(path, geometry);
 }
 
 /**
@@ -138,6 +148,7 @@ export function commitMeshGeometry(
     capacityVertexCount: nodeAttrs.n_vertices,
     capacityFaceCount: nodeAttrs.n_faces,
   });
+  accountMeshGeometry(ctx, staged.path, object.geometry);
 
   // The epoch's side, which is NOT simply the node's `double_sided`: an odd-parity
   // reflection keeps single-sided (the index post-pass restored winding), while an

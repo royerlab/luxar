@@ -486,15 +486,9 @@ export async function loadLodGroupNode(
           coverageFraction,
           ctx,
           () => loadMeshNodeExpensive(lazyChild, ctx, loader),
-          // `releaseLazyMesh` does LESS than its three peers, not nothing. They
-          // release a pooled GPU buffer back to the evictable pool on demotion; a
-          // mesh is `pooled: false` (an indexed BufferGeometry, not the
-          // instanced-quad stack), so there is nothing to hand back and no pool
-          // adapter to hand it to — a demoted level keeps its geometry until the
-          // node is disposed, the same lifetime a non-LOD mesh already has. What it
-          // DOES share is the depth-sort release, because mesh is `depthSortable`
-          // (#1347): a demoted `normal`-mode level would otherwise pin its
-          // coordinator state and worker-side centroids while not being drawn.
+          // A mesh is not pooled: demotion disposes its committed geometry and
+          // restores the empty placeholder. It also releases depth-sort state
+          // and worker-side centroids (#1347).
           () => ctx.releaseLazyMesh(lazyChild.path),
           // The same probe the other three pass, and it became load-bearing when
           // mesh gained a reveal ladder (#1476). A lazy level is deliberately kept

@@ -24,7 +24,7 @@
  */
 
 import * as THREE from 'three';
-import { createMeshGeometry } from '../mesh-geometry';
+import { createEmptyMeshGeometry } from '../mesh-geometry';
 import { applyTransform } from './transforms';
 import {
   materialManager,
@@ -435,34 +435,7 @@ export function createEmptyMeshNode(
   pickingSystem: PickingSystem | null,
   leafAttrs?: Partial<MeshMetadata>
 ): THREE.Mesh {
-  const geometry = createMeshGeometry({
-    // One vertex and no indices: a valid, drawable-but-empty geometry.
-    //
-    // The choice is conservative rather than forced, and it is worth saying so
-    // precisely because an earlier version of this comment claimed a zero-vertex buffer
-    // makes `computeBoundingSphere` produce NaN bounds. MEASURED against three r184,
-    // that is false in every direction: a 0-count `position` gives `radius = 0`, and an
-    // ABSENT `position` gives three's `radius = -1` "no geometry" sentinel. Neither is
-    // NaN. What one vertex does buy is that every attribute — including the
-    // always-bound default `color` — has `count >= 1`, so the geometry is
-    // non-degenerate for anything that divides by or iterates over the count, and its
-    // bounding sphere is a real sphere rather than the -1 sentinel.
-    position: new Float32Array(3),
-    // The placeholder's buffer is brand new, so it is trivially "changed".
-    positionChanged: true,
-    indices: new Uint32Array(0),
-    colors: null,
-    // One-vertex STUBS for the optional attributes the node declares, so the
-    // attribute SET is complete from birth and the first commit only replaces
-    // contents. Adding an attribute to a live geometry instead would grow the
-    // vertex layout the WebGPU backend caches at first draw. Keyed off the
-    // metadata, which is what the real arrays' presence will agree with.
-    normals: attrs.has_normals ? new Float32Array(3) : null,
-    scalars: attrs.has_scalars ? new Float32Array(1) : null,
-    uvs: attrs.has_uvs ? new Float32Array(2) : null,
-    vertexCount: 1,
-    faceCount: 0,
-  });
+  const geometry = createEmptyMeshGeometry(attrs);
 
   // The stored-normal half of the shading rule needs the active `displayDims`, which
   // no one knows yet — the first projection decides it. Start from the
