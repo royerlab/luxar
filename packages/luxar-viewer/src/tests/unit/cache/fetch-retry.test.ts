@@ -8,8 +8,11 @@ import {
   mergeAbortSignals,
 } from '../../../cache/multi-level-caching-store/fetch-retry';
 import {
+  getFetchLaneLimit,
+  HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
   MAX_CONCURRENT_CHUNK_FETCHES,
   resetFetchProgressEpoch,
+  resetFetchTransport,
   withFetchGate,
 } from '../../../utils/fetch-concurrency';
 import { log } from '../../../utils/log';
@@ -231,8 +234,21 @@ describe('fetchWithRetry', () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+    resetFetchTransport();
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it('narrows the fetch lane for plain HTTP requests only', async () => {
+    const fetchMock = vi.fn(async () => mockResponse(200));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await fetchWithRetry('https://example.com/x');
+    expect(getFetchLaneLimit('data')).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
+
+    await fetchWithRetry('http://example.com/x');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(getFetchLaneLimit('data')).toBe(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
   });
 
   it('returns the response on first success', async () => {

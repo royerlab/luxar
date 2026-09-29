@@ -8,12 +8,18 @@
  */
 
 import { createZipStoreOptions } from '../../../data/zip/store';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import ZipFileStore from '@zarrita/storage/zip';
 import { zipSync } from 'fflate';
 import * as zarr from '../../../data/zarr';
 import { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
 import { wrapWithCache } from '../../../cache/decompressed-chunk-cache/cached-zarr-array';
+import {
+  getFetchLaneLimit,
+  HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
+  MAX_CONCURRENT_CHUNK_FETCHES,
+  resetFetchTransport,
+} from '../../../utils/fetch-concurrency';
 
 const encoder = new TextEncoder();
 
@@ -161,6 +167,8 @@ function hasSignalOption(options: unknown, signal?: AbortSignal): boolean {
 }
 
 describe('Zarr facade contract', () => {
+  afterEach(() => resetFetchTransport());
+
   it('exposes the Luxar reader API surface', () => {
     expect(zarr.createFetchStore).toEqual(expect.any(Function));
     expect(zarr.openStore).toEqual(expect.any(Function));
@@ -175,6 +183,14 @@ describe('Zarr facade contract', () => {
 
     const fetchStore = zarr.createFetchStore('https://example.test/data.zarr');
     expect(fetchStore).toHaveProperty('get');
+  });
+
+  it('narrows the fetch lane when creating a plain HTTP store', () => {
+    zarr.createFetchStore('https://example.test/data.zarr');
+    expect(getFetchLaneLimit('data')).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
+
+    zarr.createFetchStore('http://example.test/data.zarr');
+    expect(getFetchLaneLimit('data')).toBe(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
   });
 
   it('wires nested archive entries to slash-prefixed Zarr keys', async () => {
