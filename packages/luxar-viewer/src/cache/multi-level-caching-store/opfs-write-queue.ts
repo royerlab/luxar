@@ -38,11 +38,11 @@
  *  - a SPECULATIVE arrival for a new key is dropped (the drop-the-arrival rule
  *    above, which keeps the oldest end contiguous);
  *  - a replacement for a key already pending (coalescing: the newer write wins)
- *    evicts the oldest OTHER speculative write rather than itself, so a
- *    coalesce can never lose the key it was updating.
+ *    evicts OTHER speculative writes first; if it still cannot fit, the
+ *    replacement is dropped along with the task it replaced.
  * Every discarded write is counted in `dropped` (and in `droppedSpeculative`
  * when it was speculative) and in `opfs.writesDropped` — none is silent. A
- * coalesced replacement is not a drop: the key's latest bytes still land.
+ * replacement that fits after coalescing is not a drop: the latest bytes land.
  *
  * Correctness is the caller's (MultiLevelCachingStore) responsibility: the
  * enqueued task must re-check staleness (disposed / dataAbort / epoch) at drain

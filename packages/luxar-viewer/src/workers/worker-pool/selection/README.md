@@ -39,8 +39,9 @@ Linear scan over `workers`, picking the entry with the smallest
 - `markQueryStart()` / `markQueryEnd()` — increment / decrement
   `activeQueries`. End clamps at zero to tolerate paired-call drift.
 
-Used by `WorkerPool.getWorkerWithTracking()`, which `runWithTimeout`
-calls on every hot-path dispatch. Once a worker's `activeQueries` grows
+Used by `WorkerPool.getWorkerWithTracking()` and `runWithTimeout`'s
+`acquireTrackedWorker()`, which also marks the selected worker busy before
+returning. Once a worker's `activeQueries` grows
 past its peers (e.g. a slow WASM call holding it), it stops being
 selected until the counter rebalances — this is the head-of-line
 blocking fix the round-robin path doesn't have.
