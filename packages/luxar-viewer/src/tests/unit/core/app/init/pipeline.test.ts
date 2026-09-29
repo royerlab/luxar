@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, expectTypeOf, vi, beforeEach } from 'vitest';
+import * as THREE from 'three';
 import {
   runInitPipeline,
   type InitPipelineResult,
@@ -311,6 +312,88 @@ describe('runInitPipeline', () => {
     };
     const registry = factory({ currentViewVersion: 1 });
     expect(registry.deps.getLodBias()).toBe(4);
+  });
+
+  it('refreshes the shared view after a clipping callback throws', async () => {
+    const ports = makePorts();
+    const { factories, sceneStub } = makeFactoryOverrides();
+    ports.options.factories = factories as never;
+    const camera = new THREE.PerspectiveCamera();
+    const clipping = vi.fn();
+    Object.assign(sceneStub, {
+      camera,
+      renderer: { domElement: ports.options.canvas },
+      updateDynamicClippingPlanes: clipping,
+    });
+
+    await runInitPipeline(ports, {});
+
+    const manager = SceneLoaderManager.getInstance() as unknown as {
+      setLODGroupRegistryFactory: ReturnType<typeof vi.fn>;
+    };
+    const factory = manager.setLODGroupRegistryFactory.mock.calls[0][0] as (owner: unknown) => {
+      deps: { getViewContext: () => { cameraWorldPosition: THREE.Vector3 } };
+    };
+    const registry = factory({ currentViewVersion: 1 });
+    const views = registry.deps.getViewContext;
+    const animation = factories.animationController.mock.results[0].value as ReturnType<
+      typeof makeAnimationStub
+    >;
+    const callback = animation.addPerFrameCallback.mock.calls.find(
+      ([id]) => id === 'dynamic-clipping'
+    )?.[1] as () => void;
+
+    callback();
+    expect(views().cameraWorldPosition.x).toBe(0);
+    camera.position.x = 5;
+    clipping.mockImplementation(() => {
+      throw new Error('clipping failed');
+    });
+    expect(callback).toThrow('clipping failed');
+    expect(views().cameraWorldPosition.x).toBe(5);
+  });
+
+  it('a read outside the frame loop sees the camera as it is now', async () => {
+    // A load-time consumer (no per-frame callback between the camera move and
+    // its read) must not get the last tick's pose.
+    const ports = makePorts();
+    const { factories, sceneStub } = makeFactoryOverrides();
+    ports.options.factories = factories as never;
+    const camera = new THREE.PerspectiveCamera();
+    Object.assign(sceneStub, {
+      camera,
+      renderer: { domElement: ports.options.canvas },
+      updateDynamicClippingPlanes: vi.fn(),
+    });
+
+    await runInitPipeline(ports, {});
+
+    const manager = SceneLoaderManager.getInstance() as unknown as {
+      setLODGroupRegistryFactory: ReturnType<typeof vi.fn>;
+    };
+    const factory = manager.setLODGroupRegistryFactory.mock.calls[0][0] as (owner: unknown) => {
+      deps: {
+        getViewContext: () => {
+          cameraWorldPosition: THREE.Vector3;
+          projectionMatrix: THREE.Matrix4;
+        };
+      };
+    };
+    const views = factory({ currentViewVersion: 1 }).deps.getViewContext;
+    const animation = factories.animationController.mock.results[0].value as ReturnType<
+      typeof makeAnimationStub
+    >;
+    const callback = animation.addPerFrameCallback.mock.calls.find(
+      ([id]) => id === 'dynamic-clipping'
+    )?.[1] as () => void;
+
+    callback();
+    expect(views().cameraWorldPosition.x).toBe(0);
+    camera.position.x = 5; // e.g. load-time framing, between ticks
+    camera.far = 42;
+    camera.updateProjectionMatrix();
+    expect(views().cameraWorldPosition.x).toBe(5);
+    expect(views().projectionMatrix.elements).toEqual(camera.projectionMatrix.elements);
   });
 
   describe('partial-accumulator contract (load-bearing)', () => {

@@ -127,7 +127,7 @@ export interface RowWriter {
 
 /**
  * GPU resource each element texture was last brought fully in sync with,
- * through a wrapped backend. Keyed by the texture; the resource object is
+ * through a wrapped backend (by a full upload or a successful row upload). Keyed by the texture; the resource object is
  * backend-specific, so a different backend or a reallocated resource never
  * matches.
  */
@@ -322,6 +322,10 @@ function tryRowUpload(
   } catch {
     return false;
   }
+  // A ranged first upload leaves the resource as in sync as a full one (its
+  // unwritten rows are the zeroed storage the CPU image also holds there);
+  // without the record the next commit would re-upload the full capacity.
+  syncedResource.set(texture, resource);
   texture.clearUpdateRanges();
   return true;
 }
