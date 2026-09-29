@@ -38,6 +38,25 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Reuse a dependency-hashed Hatch env on persistent runners
+        # The self-hosted runners are ephemeral containers, so each job otherwise
+        # rebuilds the multi-GB scientific env (torch, scipy, ...) from scratch.
+        # When the runner exposes a persistent cache root (LUXAR_CI_HATCH_BASE),
+        # point HATCH_DATA_DIR at a directory keyed by the interpreter and a hash
+        # of pyproject.toml: identical dependencies reuse the env across jobs (no
+        # rebuild), while any change to the interpreter or pyproject.toml resolves
+        # to a fresh directory so a stale env is never reused. No effect on
+        # GitHub-hosted runners, where the variable is unset.
+        run: |
+          if [ -n "${LUXAR_CI_HATCH_BASE:-}" ]; then
+            pv=$(python -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null \
+                 || python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null || echo unknown)
+            key="py${pv}-${{ hashFiles('pyproject.toml') }}"
+            dir="${LUXAR_CI_HATCH_BASE}/${key}"
+            mkdir -p "$dir"
+            echo "HATCH_DATA_DIR=${dir}" >> "$GITHUB_ENV"
+            echo "reusing hatch env cache at ${dir}"
+          fi
       - name: Install Hatch
         timeout-minutes: 5
         run: pipx install --python "${{ steps.setup-python.outputs.python-path }}" hatch
