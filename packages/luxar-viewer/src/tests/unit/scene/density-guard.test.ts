@@ -182,7 +182,7 @@ describe('DensityGuard.observe', () => {
   // The brightness factor depends on the MODE as well as on keep: opacity
   // x1/keep for a sum-projected node, the alpha exponent (and opacity x1) for
   // `normal`. A mode switch at an unchanged keep must re-apply it.
-  it.fails('re-applies the brightness on an additive -> normal switch at the same keep', () => {
+  it('re-applies the brightness on an additive -> normal switch at the same keep', () => {
     const { g } = guard();
     const { mesh, mat } = leaf('additive');
     g.observe(mesh, record(8));
@@ -196,7 +196,7 @@ describe('DensityGuard.observe', () => {
     expect(mesh.userData._lodFadeBase).toBeUndefined();
   });
 
-  it.fails('re-applies the brightness on a normal -> additive switch at the same keep', () => {
+  it('re-applies the brightness on a normal -> additive switch at the same keep', () => {
     const { g } = guard();
     const { mesh, mat } = leaf('normal');
     g.observe(mesh, record(8));

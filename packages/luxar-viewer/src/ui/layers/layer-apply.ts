@@ -55,6 +55,7 @@ import {
   type LayerStateManager,
 } from './layer-state';
 import { remapWindowToLeafRange } from '../../rendering/display-range';
+import { rebaseLodFade } from '../../scene/lod-fade';
 import {
   applyColorAdjustments,
   isColormapActive,
@@ -692,17 +693,13 @@ export class LayerApplyEngine {
     const identityLayerWindow = layer.scalarWindow && !isColormapActive(mat);
     const eff = this.composeEffective(leaf.path, layer.path, identityLayerWindow, ancestors);
     if (!eff) return;
-    // An in-flight LOD fade owns the live opacity uniform: it re-renders
-    // `_lodFadeBase × fadeProduct` every frame (scene/lod-fade.ts), so a
-    // direct uniform write here would be clobbered on the next fade frame
-    // and the panel edit lost until the fade ends. Rebase the fade's
-    // snapshot instead — the registry composes `newBase × product` on the
-    // very next frame and restores `newBase` when the fade completes.
-    if (obj.userData._lodFadeBase != null) {
-      obj.userData._lodFadeBase = eff.opacity;
-    } else {
-      mat.updateOpacity(eff.opacity);
-    }
+    // A live LOD fade (cross-fade, streaming energy or density-guard
+    // compensation) owns the live opacity uniform as `_lodFadeBase × product`
+    // (scene/lod-fade.ts), so a direct write of the authored value would be
+    // clobbered by the next recompose — or, on a density-thinned node nothing
+    // recomposes per frame, drop its compensation. Rebase the fade instead:
+    // `rebaseLodFade` moves the snapshot and redraws `newBase × product` now.
+    if (!rebaseLodFade(obj, mat, eff.opacity)) mat.updateOpacity(eff.opacity);
     // A mesh's PICK material reads the same coverage the visual one does — node
     // opacity times per-vertex alpha (§6.5) — so it has to move with the slider.
     // Without this, dragging opacity below the `opaque` cutoff would dissolve the

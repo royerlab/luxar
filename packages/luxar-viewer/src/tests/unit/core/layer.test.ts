@@ -1481,7 +1481,7 @@ describe('LuxarLayer', () => {
       expect(opacityOf(mesh)).toBeCloseTo(0.2); // uniform left to the fade
     });
 
-    it.fails('reaches the drawn opacity of a density-thinned node that is no LOD child', async () => {
+    it('reaches the drawn opacity of a density-thinned node that is no LOD child', async () => {
       // A thinned sum-projected node holds `_lodFadeBase` (its compensation
       // is `base / keep`), but nothing recomposes it per frame the way the LOD
       // registry does for its children: the guard re-applies only when keep

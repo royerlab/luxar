@@ -3238,7 +3238,7 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(updateOpacity).not.toHaveBeenCalled();
   });
 
-  it.fails('a panel opacity edit on a density-thinned node that is no LOD child reaches the drawn opacity', () => {
+  it('a panel opacity edit on a density-thinned node that is no LOD child reaches the drawn opacity', () => {
     // The guard compensates a thinned sum-projected node as `base / keep` and
     // re-applies only when keep steps; nothing recomposes a non-LOD node per
     // frame. Rebasing `_lodFadeBase` without rewriting the uniform left the

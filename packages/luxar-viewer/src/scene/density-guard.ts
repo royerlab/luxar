@@ -98,6 +98,13 @@ export interface DensityGuardDeps {
 
 interface GuardUserData {
   densityKeep?: number;
+  /**
+   * `isBlendableMode` of the mode the brightness term was last applied under.
+   * The term depends on the mode as well as on keep (opacity `1/keep` for a
+   * sum-projected node, 1 for `normal`, whose compensation is the alpha
+   * exponent), so a mode switch at an unchanged keep must re-apply it.
+   */
+  densityBlendable?: boolean;
 }
 
 /** Whether a single material supports shader-side density thinning. */
@@ -151,13 +158,7 @@ export class DensityGuard {
     const mode = material.userData?.blendingMode as string | undefined;
     const blendable = isBlendableMode(mode);
     const next = this.desiredKeep(current, mode, rec, deps);
-    if (next !== current) {
-      ud.densityKeep = next;
-      // Brightness first: applyLodFade may clone-on-first-fade, and the
-      // uniform must land on whichever material the mesh ends up drawing.
-      applyLodFade(mesh, null, deps.energyComp(), deps.registerMaterial);
-      this.changed = true;
-    }
+    this.applyBrightness(mesh, current, next, blendable, deps);
     rec.keep = next;
     // The refinement rung gate's cap choice: `normal` keeps the non-blendable cap.
     rec.blendable = blendable;
@@ -166,6 +167,29 @@ export class DensityGuard {
     if (setDensityDrop(mesh.material, 1 - next)) this.changed = true;
     const alphaExp = mode === 'normal' && next < 1 ? 1 / next : 1;
     if (setDensityAlphaExp(mesh.material, alphaExp)) this.changed = true;
+  }
+
+  /**
+   * Re-apply the brightness term when it changed. Keyed on (keep,
+   * blendability): a thinned node switching between a sum mode and `normal`
+   * keeps its keep but changes its term. An unthinned node (keep 1 before and
+   * after) is never touched.
+   */
+  private applyBrightness(
+    mesh: THREE.Mesh,
+    current: number,
+    next: number,
+    blendable: boolean,
+    deps: DensityGuardDeps
+  ): void {
+    const ud = mesh.userData as GuardUserData;
+    if (next === current && (next === 1 || ud.densityBlendable === blendable)) return;
+    ud.densityKeep = next;
+    ud.densityBlendable = blendable;
+    // Brightness first: applyLodFade may clone-on-first-fade, and the
+    // uniform must land on whichever material the mesh ends up drawing.
+    applyLodFade(mesh, null, deps.energyComp(), deps.registerMaterial);
+    this.changed = true;
   }
 
   /**
