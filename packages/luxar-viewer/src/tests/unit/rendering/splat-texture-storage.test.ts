@@ -920,6 +920,49 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
   });
 });
 
+describe('gsplat append commit — held draw until the grown ordering lands', () => {
+  let pool: GPUBufferPool;
+  beforeEach(() => {
+    pool = new GPUBufferPool();
+  });
+  afterEach(() => {
+    pool.dispose();
+  });
+
+  const src6 = makeSource(6);
+  const packed = (count: number) => ({
+    centers3D: src6.centers.subarray(0, count * 3),
+    amplitudes: src6.amplitudes.subarray(0, count),
+    choleskyFactors: src6.choleskyFactors.subarray(0, count * 6),
+    colors: src6.colors.subarray(0, count * 3),
+  });
+  const drawn = (geom: THREE.InstancedBufferGeometry): number[] => {
+    const ordering = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
+    return Array.from(ordering.subarray(0, geom.instanceCount));
+  };
+
+  it.fails('keeps drawing the previous population in its sorted order, then shows the grown one sorted', () => {
+    // Storage order is what an append used to draw until the worker's sort of
+    // the grown population landed (75-225 ms per rung above the synchronous
+    // sort limit). Every frame in that window must instead be an EXACT
+    // back-to-front draw of a population — the previous one — and the grown
+    // population must appear only with its own ordering.
+    const geom = pool.acquireGSplatsGeometry('node', 16);
+    pool.updateGSplatsGeometry(geom, packed(4), 4);
+    writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
+    drainSortedIndexApply(geom);
+
+    pool.updateGSplatsGeometry(geom, packed(6), 6, 3.0, { fromInstance: 4 });
+    expect(geom.instanceCount).toBe(4);
+    expect(drawn(geom)).toEqual([3, 2, 1, 0]);
+
+    writeSortedIndexOrdering(geom, new Uint32Array([5, 3, 4, 2, 1, 0]), 6);
+    drainSortedIndexApply(geom);
+    expect(geom.instanceCount).toBe(6);
+    expect(drawn(geom)).toEqual([5, 3, 4, 2, 1, 0]);
+  });
+});
+
 describe('per-node gsplat materials — manager registration lifecycle', () => {
   it('creates DISTINCT materials per call (LRU bypass) and unregisters on dispose', () => {
     // Spec §4 exit criterion: material-disposal leak check. Per-node
