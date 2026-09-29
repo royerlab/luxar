@@ -47,7 +47,7 @@
  * @module data/scene-loader/nodes/load-lod-group-node
  */
 
-import { latchChildFailure } from '../../../scene/lod-child-failure';
+import { latchChildFailure } from '../../../utils/lod-child-failure';
 import * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { archiveFaultFrom } from '../../../cache/chunk-source';

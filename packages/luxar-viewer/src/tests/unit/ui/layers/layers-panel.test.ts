@@ -31,7 +31,7 @@ import type { AnimationController } from '../../../../scene/animation/animation-
 import type { FailedLoadsProviderPort } from '../../../../data/scene-loader-monitor-port';
 import { MESH_DEFAULTS } from '../../../../rendering/materials/mesh/appearance';
 import { PhysicalMeshMaterial } from '../../../../rendering/materials/mesh-physical/material-glsl';
-import { clearChildFailure } from '../../../../scene/lod-child-failure';
+import { clearChildFailure } from '../../../../utils/lod-child-failure';
 import type { LODGroupChild } from '../../../../scene/lod-group-registry';
 import { failedLoadsVersion } from '../../../../utils/failed-loads-version';
 

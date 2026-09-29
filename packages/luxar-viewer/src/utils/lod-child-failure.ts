@@ -1,21 +1,25 @@
 /**
  * Keep every lazy-child failure transition paired with status invalidation.
- * Separate from the registry so the node loader needs no runtime registry import.
+ * Shared by the data loader and scene registry without crossing runtime layers.
  *
- * @module scene/lod-child-failure
+ * @module utils/lod-child-failure
  */
-import type { LODGroupChild } from './lod-group-registry';
-import { bumpFailedLoadsVersion } from '../utils/failed-loads-version';
+import { bumpFailedLoadsVersion } from './failed-loads-version';
+
+interface LazyChildFailureState {
+  permanentlyFailed?: boolean;
+  failureReason?: string;
+}
 
 /** Latch a lazy child failure and invalidate failure-status consumers. */
-export function latchChildFailure(child: LODGroupChild, reason: string): void {
+export function latchChildFailure(child: LazyChildFailureState, reason: string): void {
   child.permanentlyFailed = true;
   child.failureReason = reason;
   bumpFailedLoadsVersion();
 }
 
 /** Clear a lazy child failure on explicit retry. */
-export function clearChildFailure(child: LODGroupChild): void {
+export function clearChildFailure(child: LazyChildFailureState): void {
   if (child.permanentlyFailed) bumpFailedLoadsVersion();
   child.permanentlyFailed = false;
   child.failureReason = undefined;

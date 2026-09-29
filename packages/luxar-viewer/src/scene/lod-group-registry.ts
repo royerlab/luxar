@@ -65,7 +65,7 @@
  */
 
 import { bumpFailedLoadsVersion } from '../utils/failed-loads-version';
-import { clearChildFailure } from './lod-child-failure';
+import { clearChildFailure } from '../utils/lod-child-failure';
 import * as THREE from 'three';
 
 import type { BoundingBox } from './scene-manager/clipping/bounds-math';
