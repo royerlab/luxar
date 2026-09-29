@@ -62,7 +62,8 @@ const S_WRITES_DROPPED = perfCounters.slot('opfs.writesDropped');
  */
 export type OpfsWritePriority = 'demand' | 'speculative';
 
-interface PendingWrite {
+/** A write retained by the queue until its concurrency slot opens. */
+export interface PendingWrite {
   run: () => Promise<void>;
   byteLength: number;
   priority: OpfsWritePriority;
