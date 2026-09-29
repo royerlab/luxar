@@ -266,9 +266,11 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
 
         // Visible-footprint tightening — visual-shader parity (shader-glsl.ts;
         // derivation in materials/gsplat/math.ts). The pick fragment's
-        // visibility test has no gain or alpha factor, so the peak scale is
-        // just vAmplitude2D · 1/(1-C).
-        float visibleMahalSq = gsplatVisibleMahalSq(vAmplitude2D * uInvOneMinusC, uShiftC, uTruncateSq);
+        // visibility test has no gain or alpha factor: the SAME peak-scale
+        // function as the visual shader, with the neutral 1.0, 1.0.
+        float visibleMahalSq = gsplatVisibleMahalSq(
+            gsplatFootprintPeakScale(vAmplitude2D, uInvOneMinusC, 1.0, 1.0),
+            uShiftC, uTruncateSq);
         if (visibleMahalSq < 0.0) {
             gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
             return;
