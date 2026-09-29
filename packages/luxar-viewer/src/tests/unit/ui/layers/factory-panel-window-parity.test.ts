@@ -129,7 +129,7 @@ describe('factory window == panel window for a colormapped leaf', () => {
     __resetMaterialManagerForTests();
   });
 
-  it.fails('gain ON the layer node (kind=partition wrapper, the h2afva shape)', () => {
+  it('gain ON the layer node (kind=partition wrapper, the h2afva shape)', () => {
     const graph = scene(
       group(
         '/nuclei',
@@ -150,7 +150,7 @@ describe('factory window == panel window for a colormapped leaf', () => {
     expectSameWindow(factory, panel);
   });
 
-  it.fails('gain ON the layer node (kind=lod wrapper)', () => {
+  it('gain ON the layer node (kind=lod wrapper)', () => {
     const graph = scene(
       group('/cells', { kind: 'lod', layer: true, display_type: 'gsplats', intensity: 0.5 }, [
         splats('/cells/level_0'),

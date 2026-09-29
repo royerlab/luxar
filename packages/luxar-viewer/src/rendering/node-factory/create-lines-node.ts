@@ -21,7 +21,7 @@ import type { LinesMetadata, LinesUserData, LinesDataLoader } from '../../types/
 import { log, Modules } from '../../utils/log';
 import type { PickingSystem } from '../picking/picking-system';
 import { applyTransform } from './transforms';
-import { resolveColormapWindow } from '../display-range';
+import { resolveColormapWindow, type DisplayUniforms } from '../display-range';
 import { parseLineJoinStyle, LINE_JOIN_STYLES } from '../../types/line-join';
 import { lineNodeLoadFromAttrs, resolveLinePrimitiveForNode } from '../../types/line-primitive';
 
@@ -123,7 +123,8 @@ export function createLinesNode(
             intensity: (leafRaw.intensity as number | undefined) ?? 1.0,
             offset: (leafRaw.offset as number | undefined) ?? 0.0,
           },
-          { intensity: composedIntensity, offset: composedOffset }
+          { intensity: composedIntensity, offset: composedOffset },
+          nodeAttrs.windowOwnerGain as DisplayUniforms | undefined
         );
         material.updateScalarRange(lnScalarRange[0], lnScalarRange[1]);
         // The window now drives the LUT lookup; clear the post-LUT gain the

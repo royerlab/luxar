@@ -6,7 +6,11 @@
  */
 
 import type { SceneNode } from '../../data/data-loader-types';
-import { collectDataDescendants, getEffectiveAttrs } from '../../data/attrs-composer';
+import {
+  collectDataDescendants,
+  getEffectiveAttrs,
+  isLayerEnabled,
+} from '../../data/attrs-composer';
 import type { BlendingMode } from '../../types/blending';
 import type { GeometryTypeName, NodeKind } from '../../types/format-contract';
 import { defaultBlendingMode, isGeometryType } from '../../types/geometry-capabilities';
@@ -63,20 +67,9 @@ export interface SoundLayerInfo {
   sourceUrl?: string;
 }
 
-/**
- * Coerce a node's raw `layer` attr into "exposed in the Layers panel".
- *
- * The Python writer (`validate_layer`) always normalises to a JSON boolean,
- * but hand-edited or third-party zarr may carry a number (`1`/`0`). Accept
- * strict `true` and truthy finite numbers so such values don't silently drop
- * the node from the panel; everything else (incl. `undefined`, strings) is
- * not-a-layer. Pure — callers log a warning for malformed (non-boolean) values.
- */
-export function isLayerEnabled(value: unknown): boolean {
-  if (value === true) return true;
-  if (typeof value === 'number') return Number.isFinite(value) && value !== 0;
-  return false;
-}
+// Lives in the data layer since the node factory's window rule needs it too
+// (`windowOwnerGain`); re-exported for existing importers.
+export { isLayerEnabled };
 
 /**
  * Derive a SCALAR display data-range for a composite group (kind=lod /

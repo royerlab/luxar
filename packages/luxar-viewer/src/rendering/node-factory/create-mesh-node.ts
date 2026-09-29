@@ -42,7 +42,7 @@ import { isMeshPickAwareMaterial } from '../picking/mesh/pick-mode';
 import type { PickingSystem } from '../picking/picking-system';
 import { getColormapTexture } from '../colormap-textures';
 import { supportsScalarColormap } from '../material-colormap-helpers';
-import { resolveColormapWindow } from '../display-range';
+import { resolveColormapWindow, type DisplayUniforms } from '../display-range';
 import { scheduleBlendModeProgramWarmupForObject } from '../webgl-blend-warmup';
 import { log, Modules } from '../../utils/log';
 import type { MeshSide } from '../../data/mesh/projection';
@@ -324,7 +324,8 @@ export function createMeshMaterial(
         const scalarRange = resolveColormapWindow(
           attrs.scalar_data_range ?? [0, 1],
           { intensity: leaf.intensity ?? 1.0, offset: leaf.offset ?? 0.0 },
-          { intensity: composedIntensity, offset: composedOffset }
+          { intensity: composedIntensity, offset: composedOffset },
+          (attrs as { windowOwnerGain?: DisplayUniforms }).windowOwnerGain
         );
         material.updateScalarRange(scalarRange[0], scalarRange[1]);
         // The window now drives the LUT lookup; clear the post-LUT gain the material
