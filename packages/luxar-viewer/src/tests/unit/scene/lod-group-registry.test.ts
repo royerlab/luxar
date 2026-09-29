@@ -3643,7 +3643,7 @@ describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
   // evaluated frame after ``loading`` cleared, so a hidden tab (no frames) or
   // a skipped evaluate (collapsed canvas) counted idle time as load time and
   // capped playback coarse for ~19 s.
-  it.fails('times a load to its resolution, not to the next evaluated frame', () => {
+  it('times a load to its resolution, not to the next evaluated frame', () => {
     const state = { clock: 0 };
     const reg = makeRegistry(
       [0, 1, 2],
@@ -3672,7 +3672,7 @@ describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
     expect(child.loadEwmaMs).toBe(30);
   });
 
-  it.fails('never folds a negative sample when a retry lands between evaluates', () => {
+  it('never folds a negative sample when a retry lands between evaluates', () => {
     const state = { clock: 0 };
     const reg = makeRegistry(
       [0, 1, 2],
@@ -4465,7 +4465,7 @@ describe('LODGroupRegistry — playback aspiration', () => {
     expect(reg.get('/g')!.displayedChildIndex).toBe(2);
   });
 
-  it.fails('pausing while the held level reloads does not flash the coarse level', () => {
+  it('pausing while the held level reloads does not flash the coarse level', () => {
     // The reload was measured fast (so playback aspires to it) but this one
     // takes 400 ms: the stale hold outlives STALE_HOLD_MS under the playback
     // exemption. Pausing ends the exemption; the hold's budget must count from

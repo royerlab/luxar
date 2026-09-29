@@ -505,6 +505,11 @@ export interface LODGroupChild {
    */
   loadStartMs?: number;
   /**
+   * Registry clock (ms) at which the load started at ``loadStartMs`` settled
+   * (``onLoadSettled``). Registry-owned.
+   */
+  loadEndMs?: number;
+  /**
    * Exponentially weighted mean of this level's measured load+commit time, in
    * ms (fire → ``loading`` cleared, failures excluded). Registry-owned; during
    * playback it decides which level can keep up with the period.
@@ -537,8 +542,16 @@ export interface LODGroupChild {
    * ``loading``; on failure sets ``failed=true`` and clears ``loading``. A
    * container fault may additionally set ``permanentlyFailed``.
    * Must not touch ``object.visible`` — the registry owns the swap.
+   * Calls ``onLoadSettled`` right after clearing ``loading``.
    */
   ensureLoaded?: () => void;
+  /**
+   * Registry-owned hook, set each time the registry fires ``ensureLoaded``;
+   * the thunk calls it once the load has settled (``loading`` cleared). It
+   * stamps ``loadEndMs`` so the measured ``loadEwmaMs`` is the load itself,
+   * not the wait for the next evaluated frame (a hidden tab runs none).
+   */
+  onLoadSettled?: () => void;
   /**
    * Release this lazy level's GPU geometry back to the evictable pool
    * and reset its readiness so a later selection reloads it. Called by
@@ -2334,15 +2347,22 @@ export class LODGroupRegistry {
     return anyLoading;
   }
 
-  /** Fold a finished (``loading`` cleared) timed load of ``c`` into ``loadEwmaMs``. */
+  /**
+   * Fold a finished (``loading`` cleared) timed load of ``c`` into
+   * ``loadEwmaMs``: start to its stamped end, on the registry clock that
+   * stamped the start. Without an end stamp (a thunk that never calls
+   * ``onLoadSettled``) the load is timed to now — the first moment it was
+   * observed finished.
+   */
   private foldLoadTime(c: LODGroupChild): void {
     if (c.loadStartMs === undefined || c.loading === true) return;
     if (c.failed !== true) {
-      const ms = this.frame.nowMs - c.loadStartMs;
+      const ms = Math.max(0, (c.loadEndMs ?? this.nowMs()) - c.loadStartMs);
       c.loadEwmaMs =
         c.loadEwmaMs === undefined ? ms : c.loadEwmaMs + LOAD_EWMA_ALPHA * (ms - c.loadEwmaMs);
     }
     c.loadStartMs = undefined;
+    c.loadEndMs = undefined;
   }
 
   /**
@@ -3291,7 +3311,9 @@ export class LODGroupRegistry {
    * refreshed by later version bumps, and once exhausted it latches until the
    * aspiration commits fresh. So a continuous drag degrades to exactly the
    * pre-existing behaviour after `STALE_HOLD_MS`, rather than freezing on
-   * one frame for as long as the user keeps dragging.
+   * one frame for as long as the user keeps dragging. The one exception is
+   * playback with the held level's own reload in flight: that hold lasts
+   * until the reload lands, and its budget restarts on each such frame.
    */
   private staleHoldDisplayIndex(
     entry: LODGroupEntry,
@@ -3323,8 +3345,13 @@ export class LODGroupRegistry {
     // During playback the held level's own reload for the new timepoint is in
     // flight: keep it until that replacement lands rather than dropping to a
     // token of the new frame for the rest of the wait.
+    // The budget counts from the last frame of that exemption, so pausing
+    // mid-reload keeps the hold for a full STALE_HOLD_MS instead of dropping
+    // to the coarse level on the first paused frame.
     const replacementInFlight = this.frame.playbackPeriodMs !== null && prev.loading === true;
-    if (!replacementInFlight && now - entry.staleHoldSinceMs >= STALE_HOLD_MS) {
+    if (replacementInFlight) {
+      entry.staleHoldSinceMs = now;
+    } else if (now - entry.staleHoldSinceMs >= STALE_HOLD_MS) {
       entry.staleHoldExhausted = true;
       entry.staleHoldSinceMs = undefined;
       return undefined;
@@ -3478,7 +3505,12 @@ export class LODGroupRegistry {
     // A load that finished this frame, before the post-evaluation walk saw it.
     this.foldLoadTime(child);
     child.loading = true;
-    child.loadStartMs = this.nowMs();
+    const startMs = this.nowMs();
+    child.loadStartMs = startMs;
+    child.onLoadSettled = () => {
+      // Only the load this kick started (a release + re-kick restarts it).
+      if (child.loadStartMs === startMs) child.loadEndMs = this.nowMs();
+    };
     child.ensureLoaded();
     return true;
   }
