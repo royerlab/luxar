@@ -179,6 +179,47 @@ describe('DensityGuard.observe', () => {
     expect(g.takeChanged()).toBe(false);
   });
 
+  // The brightness factor depends on the MODE as well as on keep: opacity
+  // x1/keep for a sum-projected node, the alpha exponent (and opacity x1) for
+  // `normal`. A mode switch at an unchanged keep must re-apply it.
+  it.fails('re-applies the brightness on an additive -> normal switch at the same keep', () => {
+    const { g } = guard();
+    const { mesh, mat } = leaf('additive');
+    g.observe(mesh, record(8));
+    expect(mesh.userData.densityKeep).toBe(1 / 2);
+    expect(mat.getOpacity()).toBeCloseTo(2, 12);
+    mat.userData.blendingMode = 'normal';
+    g.observe(mesh, record(8));
+    expect(mesh.userData.densityKeep).toBe(1 / 2);
+    expect(mat.uniforms.uDensityAlphaExp.value).toBe(2);
+    expect(mat.getOpacity()).toBe(1); // alpha carries the compensation, not opacity
+    expect(mesh.userData._lodFadeBase).toBeUndefined();
+  });
+
+  it.fails('re-applies the brightness on a normal -> additive switch at the same keep', () => {
+    const { g } = guard();
+    const { mesh, mat } = leaf('normal');
+    g.observe(mesh, record(8));
+    expect(mesh.userData.densityKeep).toBe(1 / 2);
+    expect(mat.getOpacity()).toBe(1);
+    mat.userData.blendingMode = 'additive';
+    g.observe(mesh, record(8));
+    expect(mat.uniforms.uDensityAlphaExp.value).toBe(1);
+    expect(mat.getOpacity()).toBeCloseTo(2, 12);
+  });
+
+  it('an unthinned node switching mode is left byte-identical', () => {
+    const { g } = guard();
+    const { mesh, mat } = leaf('additive');
+    g.observe(mesh, record(1));
+    g.takeChanged();
+    mat.userData.blendingMode = 'normal';
+    g.observe(mesh, record(1));
+    expect(mat.getOpacity()).toBe(1);
+    expect(mesh.userData._lodFadeBase).toBeUndefined();
+    expect(g.takeChanged()).toBe(false);
+  });
+
   it('holds the current step while off-screen', () => {
     const { g } = guard();
     const { mesh, mat } = leaf('additive');

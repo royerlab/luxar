@@ -34,6 +34,7 @@ import { PhysicalMeshMaterial } from '../../../../rendering/materials/mesh-physi
 import { clearChildFailure } from '../../../../utils/lod-child-failure';
 import type { LODGroupChild } from '../../../../scene/lod-group-registry';
 import { failedLoadsVersion } from '../../../../utils/failed-loads-version';
+import { DensityGuard } from '../../../../scene/density-guard';
 
 // `showToast` lives in src/ui/toast; mock so the empty-scene branch
 // is observable.
@@ -3235,6 +3236,76 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     // left to the fade's next frame.
     expect(mesh.userData._lodFadeBase).toBeCloseTo(0.6, 6);
     expect(updateOpacity).not.toHaveBeenCalled();
+  });
+
+  it.fails('a panel opacity edit on a density-thinned node that is no LOD child reaches the drawn opacity', () => {
+    // The guard compensates a thinned sum-projected node as `base / keep` and
+    // re-applies only when keep steps; nothing recomposes a non-LOD node per
+    // frame. Rebasing `_lodFadeBase` without rewriting the uniform left the
+    // edit invisible until the density crossed a ladder step.
+    const stubMat: Record<string, unknown> = {
+      userData: { blendingMode: 'additive' },
+      uniforms: {
+        uOpacity: { value: 1.0 },
+        uDensityDrop: { value: 0 },
+        uDensityAlphaExp: { value: 1 },
+      },
+      defines: {},
+      updateIntensity: vi.fn(),
+      updateOffset: vi.fn(),
+      updateGamma: vi.fn(),
+      updateOpacity(v: number) {
+        (this as { uniforms: { uOpacity: { value: number } } }).uniforms.uOpacity.value = v;
+      },
+      getOpacity() {
+        return (this as { uniforms: { uOpacity: { value: number } } }).uniforms.uOpacity.value;
+      },
+      updateAbsorption: vi.fn(),
+      applyBlendingMode: vi.fn(),
+    };
+    stubMat.clone = vi.fn(() => stubMat);
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), stubMat as unknown as THREE.Material);
+    mesh.name = '/cloud';
+    mesh.userData._layerMaterialCloned = true;
+    const rootGroup = new THREE.Group();
+    rootGroup.add(mesh);
+    const guard = new DensityGuard();
+    guard.configure({
+      config: () => ({
+        capElementsPerPixel: 4,
+        minKeepFraction: 1 / 64,
+        enterRatio: 1.5,
+        leaveRatio: 0.75,
+      }),
+      energyComp: () => false,
+    });
+    const rec = {
+      path: '/cloud',
+      areaPx: 1000,
+      elements: 8000,
+      elementsPerPixel: 8,
+      onScreen: true,
+      frame: 1,
+      keep: 1,
+      blendable: true,
+    };
+    guard.observe(mesh, rec);
+    const live = (): number => (stubMat.getOpacity as () => number).call(stubMat);
+    expect(live()).toBeCloseTo(2, 12); // 1 / keep 1/2
+
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(rootGroup, makeLayeredSceneGraph('gsplats'));
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+    panel.layerState.applyToSelected((l) => {
+      l.opacity = 0.6;
+    });
+    const layer = panel.layerState.getLayer('/cloud')!;
+    (
+      panel as unknown as { applyEngine: { applyOpacity(l: unknown): void } }
+    ).applyEngine.applyOpacity(layer);
+    guard.observe(mesh, { ...rec, frame: 2 }); // same density: keep holds
+    expect(live()).toBeCloseTo(0.6 * 2, 6);
   });
 
   it('an opacity edit on a MESH also moves its pick material, so a dissolved surface stops being pickable', () => {

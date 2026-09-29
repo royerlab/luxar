@@ -216,6 +216,7 @@ vi.mock('../../../core/app/init/module-overrides', () => ({
 }));
 
 import { LuxarLayer, type LuxarLayerOptions } from '../../../core/layer/luxar-layer';
+import { DensityGuard } from '../../../scene/density-guard';
 
 function makeOptions(overrides: Partial<LuxarLayerOptions> = {}): LuxarLayerOptions {
   const renderer = {
@@ -1478,6 +1479,52 @@ describe('LuxarLayer', () => {
       layer.setExposure(0.5);
       expect(mesh.userData._lodFadeBase).toBeCloseTo(0.1);
       expect(opacityOf(mesh)).toBeCloseTo(0.2); // uniform left to the fade
+    });
+
+    it.fails('reaches the drawn opacity of a density-thinned node that is no LOD child', async () => {
+      // A thinned sum-projected node holds `_lodFadeBase` (its compensation
+      // is `base / keep`), but nothing recomposes it per frame the way the LOD
+      // registry does for its children: the guard re-applies only when keep
+      // steps. A rebase that left the uniform alone was therefore invisible.
+      const mesh = splatMesh(0.2);
+      const mat = mesh.material as unknown as { uniforms: Record<string, { value: number }> };
+      mat.uniforms.uDensityDrop = { value: 0 };
+      mat.uniforms.uDensityAlphaExp = { value: 1 };
+      (mesh.material as THREE.Material).userData.blendingMode = 'additive';
+      mesh.userData._layerMaterialCloned = true;
+      const guard = new DensityGuard();
+      guard.configure({
+        config: () => ({
+          capElementsPerPixel: 4,
+          minKeepFraction: 1 / 64,
+          enterRatio: 1.5,
+          leaveRatio: 0.75,
+        }),
+        energyComp: () => false,
+      });
+      const rec = {
+        path: 'n',
+        areaPx: 1000,
+        elements: 8000,
+        elementsPerPixel: 8,
+        onScreen: true,
+        frame: 1,
+        keep: 1,
+        blendable: true,
+      };
+      guard.observe(mesh, rec);
+      expect(opacityOf(mesh)).toBeCloseTo(0.4); // 0.2 / keep 1/2
+      loadSceneMock.mockImplementation(async () => {
+        const g = new THREE.Group();
+        g.add(mesh);
+        return g;
+      });
+      const layer = new LuxarLayer(makeOptions());
+      await layer.load('http://example.test/scene.zarr');
+
+      layer.setExposure(0.5);
+      guard.observe(mesh, { ...rec, frame: 2 }); // same density: keep holds
+      expect(opacityOf(mesh)).toBeCloseTo(0.2); // 0.1 / keep 1/2
     });
 
     it('is a no-op before load', () => {
