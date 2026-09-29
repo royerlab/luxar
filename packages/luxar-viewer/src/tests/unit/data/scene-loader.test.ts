@@ -41,6 +41,7 @@ import * as gsplatsRefinement from '../../../data/gsplats/lod-refinement';
 import { signalPriority } from '../../../utils/fetch-concurrency';
 import { log, Modules } from '../../../utils/log';
 import { failedLoadsVersion } from '../../../utils/failed-loads-version';
+import { SlicePrefetcher } from '../../../data/scene-loader/prefetch/slice-prefetcher';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
 // Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
@@ -1152,6 +1153,67 @@ describe('SceneLoader', () => {
       expect(next.updateView).toHaveBeenCalledTimes(1);
       expect(next.updateView.mock.calls[0][0].ladderDepth).toBe(2);
       expect(internals._passCount - passes).toBe(1);
+    });
+  });
+
+  describe('prefetchSlice — partition parts entering the next slice (B4)', () => {
+    it.fails('warms a part activated for the predicted slice once its loader is registered', async () => {
+      const DIMS = [
+        { name: 'x', unit: 'um', scale: 1 },
+        { name: 'y', unit: 'um', scale: 1 },
+        { name: 'z', unit: 'um', scale: 1 },
+        { name: 'time', unit: 'frame', scale: 1, discrete: true, step: 1 },
+      ];
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      await sceneLoader.updateView({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 3],
+        tolerance: [0, 0, 0, 0],
+        dimensions: DIMS,
+      });
+      const internals = sceneLoader as unknown as {
+        loaders: Map<string, unknown>;
+        lodGroupRegistry: LODGroupRegistry | null;
+      };
+      const camera = new THREE.Camera();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        getCommittedViewState: () => sceneLoader.committedViewState,
+      });
+      internals.lodGroupRegistry = reg;
+      const groupObject = new THREE.Group();
+      const slot = new THREE.Group();
+      groupObject.add(slot);
+      reg.registerPartition({
+        path: '/tiled',
+        groupObject,
+        children: [
+          {
+            path: '/tiled/part_1',
+            objects: [slot],
+            positionBounds: { min: [-0.5, -0.5, -0.5, 4], max: [0.5, 0.5, 0.5, 4] },
+            activate: async () => {
+              await Promise.resolve();
+              internals.loaders.set('/tiled/part_1', { updateView: vi.fn(), dispose: vi.fn() });
+            },
+          },
+        ],
+      });
+      reg.evaluatePerFrame();
+      const warmed = vi.spyOn(
+        SlicePrefetcher.prototype as unknown as { prefetchNode: (path: string) => Promise<void> },
+        'prefetchNode'
+      );
+
+      // Playback at t=3 prefetches t=4, where the deferred part lives.
+      sceneLoader.prefetchSlice({ slicePosition: [0, 0, 0, 4] }, 50);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // A shadow can only warm a registered loader: the part must be warmed
+      // after its activation registered it, or the first loop loads it cold.
+      expect(warmed.mock.calls.map(([path]) => path)).toContain('/tiled/part_1');
     });
   });
 
