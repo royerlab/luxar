@@ -172,6 +172,32 @@ export const GSPLAT_FOOTPRINT_PEAK_MARGIN = 1.05;
 export const GSPLAT_FOOTPRINT_PIXEL_MARGIN = 1.0;
 
 /**
+ * The peak scale P a gsplat vertex stage sizes its quad from: EXACTLY the
+ * factor its fragment multiplies the shifted falloff by before the
+ * visibility test, `amplitude2D · 1/(1−C) · alphaFactor · max(gain, 1)`.
+ *
+ * ONE definition for the visual AND pick vertex shaders (GLSL twin in
+ * {@link GLSL_GSPLAT_VISIBLE_FOOTPRINT}, TSL twin `gsplatQuadFootprintTSL` in
+ * `shader-tsl.ts`). The pick fragment's test carries neither an alpha factor
+ * nor a gain, so picking passes the neutral `1, 1` — at a neutral appearance
+ * (opaque splat, gain <= 1) the drawn and the pickable quads therefore reach
+ * the SAME radius, and cannot drift apart without changing this function.
+ *
+ * @param amplitude2D - The splat's `vAmplitude2D`.
+ * @param invOneMinusC - `1 / (1 − C)` (the `uInvOneMinusC` uniform).
+ * @param alphaFactor - Draw only: the fragment's alpha factor (1 for picking).
+ * @param gain - Draw only: the layer gain `uIntensity` (1 for picking).
+ */
+export function gsplatFootprintPeakScale(
+  amplitude2D: number,
+  invOneMinusC: number,
+  alphaFactor = 1,
+  gain = 1
+): number {
+  return amplitude2D * invOneMinusC * alphaFactor * Math.max(gain, 1);
+}
+
+/**
  * Squared Mahalanobis radius beyond which NO gsplat fragment can survive the
  * shaders' discard tests — the CPU mirror of the vertex-stage footprint math
  * in `shader-glsl.ts` / `shader-tsl.ts` and the two pick shaders.
@@ -212,11 +238,18 @@ export function gsplatVisibleMahalSq(
 
 /**
  * GLSL twin of {@link gsplatVisibleMahalSq}, shared by the visual and pick
- * vertex shaders (the TSL twin is `gsplatVisibleMahalSqTSL` in
+ * vertex shaders (the TSL twin is `gsplatQuadFootprintTSL` in
  * `shader-tsl.ts`). Constants are interpolated from this module; the floor
  * is spelled `1e-4` exactly as the fragment discards spell it.
  */
 export const GLSL_GSPLAT_VISIBLE_FOOTPRINT = /* glsl */ `
+    // The peak scale the quad is sized from (CPU mirror gsplatFootprintPeakScale):
+    // the pick shader passes alphaFactor = gain = 1.0, so draw and pick share
+    // one reach-radius rule.
+    float gsplatFootprintPeakScale(float amplitude2D, float invOneMinusC, float alphaFactor, float gain) {
+        return amplitude2D * invOneMinusC * alphaFactor * max(gain, 1.0);
+    }
+
     // Squared Mahalanobis radius beyond which no fragment can pass the
     // truncation + visibility discards; < 0 = no fragment can pass at all.
     // CPU mirror, derivation and margins: materials/gsplat/math.ts.

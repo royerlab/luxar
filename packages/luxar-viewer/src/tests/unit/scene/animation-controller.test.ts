@@ -170,8 +170,9 @@ describe('AnimationController', () => {
 
   describe('frame phases', () => {
     const order: string[] = [];
-    const push = (name: string) => () => {
+    const push = (name: string) => (): boolean => {
       order.push(name);
+      return false;
     };
 
     beforeEach(() => {
@@ -246,6 +247,7 @@ describe('AnimationController', () => {
           order.push('camera');
           controller.addPerFrameCallback('late-ui', push('late-ui'), { phase: 'ui' });
           controller.removePerFrameCallback('doomed');
+          return false;
         },
         { phase: 'camera' }
       );
@@ -257,7 +259,7 @@ describe('AnimationController', () => {
     });
 
     it('a continuous callback in any phase keeps the loop awake', () => {
-      controller.addPerFrameCallback('cam', () => {}, { continuous: true, phase: 'camera' });
+      controller.addPerFrameCallback('cam', () => false, { continuous: true, phase: 'camera' });
       controller.startAnimation();
 
       vi.advanceTimersByTime(config.animation.idleTimeoutMs + 10);
@@ -317,7 +319,7 @@ describe('AnimationController', () => {
     });
 
     it('a re-registered callback reports its own first failure', () => {
-      const broken = (): void => {
+      const broken = (): boolean => {
         throw new Error('broken subsystem');
       };
       controller.addPerFrameCallback('broken', broken);

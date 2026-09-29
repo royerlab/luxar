@@ -6,7 +6,7 @@
  * Per-vertex `aQuadCorner` (±1) scaled along the 2D covariance eigen-
  * vectors gives an eigen-aligned bounding rectangle of the Gaussian's
  * VISIBLE extent: the truncation ellipse, shrunk for dim splats to the
- * ellipse the visibility discard leaves (`gsplatVisibleMahalSqTSL`).
+ * ellipse the visibility discard leaves (`gsplatQuadFootprintTSL`).
  *
  * Per-splat data comes from the RGBA32F splat texture (`uSplatTex`,
  * 4 texels/splat — layout in `rendering/element-texture-layout.ts`),
@@ -124,11 +124,11 @@ const ivec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _ivec2 as TSLNode;
  * TSL twin of `gsplatVisibleMahalSq` (CPU mirror + derivation in `./math`;
  * GLSL twin `GLSL_GSPLAT_VISIBLE_FOOTPRINT`): the squared Mahalanobis radius
  * beyond which no fragment can pass the truncation + visibility discards,
- * or -1 when no fragment of the splat can pass at all. Shared with the pick
- * factory (`picking/gsplat/pick.tsl.ts`). `.select` evaluates both lanes, so
+ * or -1 when no fragment of the splat can pass at all. Reached only through
+ * {@link gsplatQuadFootprintTSL} (shared with picking). `.select` evaluates both lanes, so
  * the quotient is guarded finite and the log's unselected lane is harmless.
  */
-export function gsplatVisibleMahalSqTSL(
+function gsplatVisibleMahalSqTSL(
   peakScale: TSLNode,
   shiftC: TSLNode,
   truncateSq: TSLNode
@@ -148,7 +148,7 @@ export function gsplatVisibleMahalSqTSL(
  * along one eigen-axis, never above the legacy extent. `visibleMahalSq` is
  * clamped at 0 so a culled splat's (unused) lane stays NaN-free.
  */
-export function gsplatFootprintExtentTSL(
+function gsplatFootprintExtentTSL(
   legacyExtent: TSLNode,
   lambda: TSLNode,
   visibleMahalSq: TSLNode
@@ -157,6 +157,65 @@ export function gsplatFootprintExtentTSL(
     legacyExtent,
     sqrt(max(visibleMahalSq, float(0.0)).mul(lambda)).add(GSPLAT_FOOTPRINT_PIXEL_MARGIN)
   );
+}
+
+/** The draw-only factors of {@link gsplatQuadFootprintTSL}'s peak scale. */
+export interface GSplatFootprintDrawFactorsTSL {
+  /** The fragment's alpha factor (optical density under volumetric). */
+  readonly alphaFactor: TSLNode;
+  /** The layer gain `uIntensity`. */
+  readonly gain: TSLNode;
+}
+
+/** Inputs of {@link gsplatQuadFootprintTSL}. */
+export interface GSplatQuadFootprintInputsTSL {
+  /** The splat's `vAmplitude2D`. */
+  readonly amplitude2D: TSLNode;
+  /** Draw only; picking omits them (its fragment test carries neither). */
+  readonly drawFactors?: GSplatFootprintDrawFactorsTSL;
+  readonly invOneMinusC: TSLNode;
+  readonly shiftC: TSLNode;
+  readonly truncateSq: TSLNode;
+  /** The legacy (T-sigma, max-extent-clamped) half extents. */
+  readonly legacyExtents: readonly [TSLNode, TSLNode];
+  /** The Σ_2D eigenvalues along the two quad axes. */
+  readonly lambdas: readonly [TSLNode, TSLNode];
+}
+
+/** A splat's tightened quad: its two half extents, and whether it is culled. */
+export interface GSplatQuadFootprintTSL {
+  readonly culled: TSLNode;
+  readonly extent1: TSLNode;
+  readonly extent2: TSLNode;
+}
+
+/**
+ * The visible-footprint quad of one splat — ONE graph for the visual vertex
+ * stage and the pick factory (`picking/gsplat/pick.tsl.ts`), so the two
+ * cannot size a splat to different reach radii. The peak scale is
+ * `gsplatFootprintPeakScale` (`./math`): amplitude2D · 1/(1−C), times the
+ * alpha factor and max(gain, 1) when `drawFactors` is given. Picking omits
+ * them, which is the same function at the neutral 1, 1 with the no-op
+ * multiplies left out of the graph.
+ */
+export function gsplatQuadFootprintTSL(
+  inputs: GSplatQuadFootprintInputsTSL
+): GSplatQuadFootprintTSL {
+  const { amplitude2D, drawFactors, legacyExtents, lambdas } = inputs;
+  const base: TSLNode = amplitude2D.mul(inputs.invOneMinusC);
+  const peakScale: TSLNode = drawFactors
+    ? base.mul(drawFactors.alphaFactor).mul(max(drawFactors.gain, float(1.0)))
+    : base;
+  const visibleMahalSq: TSLNode = gsplatVisibleMahalSqTSL(
+    peakScale,
+    inputs.shiftC,
+    inputs.truncateSq
+  ).toVar();
+  return {
+    culled: visibleMahalSq.lessThan(0.0),
+    extent1: gsplatFootprintExtentTSL(legacyExtents[0], lambdas[0], visibleMahalSq),
+    extent2: gsplatFootprintExtentTSL(legacyExtents[1], lambdas[1], visibleMahalSq),
+  };
 }
 
 export interface GSplatTSLConfig {
@@ -653,17 +712,19 @@ export function gsplatWebGPUFactory(
           uHasElementAlpha
         )
       : splatAlpha;
-    const visibleMahalSq: TSLNode = gsplatVisibleMahalSqTSL(
-      vAmplitude2DVal
-        .mul(uInvOneMinusC)
-        .mul(footprintAlpha)
-        .mul(max(uIntensity, float(1.0))),
-      uShiftC,
-      uTruncateSq
-    ).toVar();
-    const footprintCulled: TSLNode = visibleMahalSq.lessThan(0.0);
-    const extent1: TSLNode = gsplatFootprintExtentTSL(extent1Legacy, lambda1, visibleMahalSq);
-    const extent2: TSLNode = gsplatFootprintExtentTSL(extent2Legacy, lambda2, visibleMahalSq);
+    const {
+      culled: footprintCulled,
+      extent1,
+      extent2,
+    } = gsplatQuadFootprintTSL({
+      amplitude2D: vAmplitude2DVal,
+      drawFactors: { alphaFactor: footprintAlpha, gain: uIntensity },
+      invOneMinusC: uInvOneMinusC,
+      shiftC: uShiftC,
+      truncateSq: uTruncateSq,
+      legacyExtents: [extent1Legacy, extent2Legacy],
+      lambdas: [lambda1, lambda2],
+    });
 
     // Screen centre in pixels from the clip-space centre.
     const vCenterScreenVal: TSLNode = centerClip.xy

@@ -37,9 +37,9 @@ import type { SceneManager } from '../../../../../scene/scene-manager';
 import type { AnimationController } from '../../../../../scene/animation/animation-controller';
 
 function makeHarness(options: { bakeEnvironment?: { probe?: string; resolution?: number } } = {}) {
-  const callbacks = new Map<string, () => void | boolean>();
+  const callbacks = new Map<string, () => boolean>();
   const animationController = {
-    addPerFrameCallback: vi.fn((id: string, cb: () => void | boolean) => {
+    addPerFrameCallback: vi.fn((id: string, cb: () => boolean) => {
       callbacks.set(id, cb);
     }),
     removePerFrameCallback: vi.fn((id: string) => callbacks.delete(id)),

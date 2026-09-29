@@ -73,6 +73,8 @@ async function orbitToFrame(
       // this is what drives the phase to 0 and puts the capture on the
       // true baseline distance rather than on a leftover offset.
       if (plan.dollyCycles > 0) controls.applyOrbitDolly(plan.dollyPhaseFor(i));
+      // Camera only: the view signature sees the new pose.
+      return false;
     },
     { phase: 'camera' }
   );
