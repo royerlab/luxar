@@ -49,7 +49,7 @@ Points (texel2.x) and lines (texel5.xy) always carry scalar texel slots, written
 
 ### LRU ageing is counted in commits
 
-The pool's clock is `commitCount`, advanced by `beginCommit()`, whose only production caller is the atomic commit (`data/scene-loader/update-view/atomic-commit.ts`, once per non-discarded update pass). Every age in the pool — `lastUsedCommit`, the `evictionCommits` threshold (default 300), the 60-commit `mustEvict` grace, the byte evictor's same-commit `graceCommit` — is therefore in **atomic commits, not rendered frames** (#2939). That is the intended policy (buffers are only acquired and released on commits), with two consequences: an orbiting or idle view runs no commit, so pooled buffers do not age and are freed only by the byte budget or `maxPoolSize`; and playback or scrubbing can run 300 commits in a few seconds. There is no idle time-based sweep.
+The pool's clock is `commitCount`, advanced by `beginCommit()`, whose only production caller is the atomic commit (`data/scene-loader/update-view/atomic-commit.ts`, once per non-discarded update pass). Every age in the pool — `lastUsedCommit`, the `evictionCommits` threshold (default 300), the `OVER_LIMIT_GRACE_COMMITS` (60) `mustEvict` grace, the byte evictor's same-commit `graceCommit` — is therefore in **atomic commits, not rendered frames** (#2939). That is the intended policy (buffers are only acquired and released on commits), with two consequences: an orbiting or idle view runs no commit, so pooled buffers do not age and are freed only by the byte budget or `maxPoolSize`; and playback or scrubbing can run 300 commits in a few seconds. There is no idle time-based sweep.
 
 ### Eviction policy
 

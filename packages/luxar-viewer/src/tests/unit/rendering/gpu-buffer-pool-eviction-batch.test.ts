@@ -76,22 +76,23 @@ describe('GPUBufferPool eviction batch cap', () => {
     // Tiny maxPoolSize forces `mustEvict = true` immediately.
     const pool = new GPUBufferPool(
       /* maxPoolSize */ 2,
-      /* evictionCommits */ 10,
+      /* evictionCommits */ 300,
       /* evictBatchSize */ 1
     );
 
     // Acquire 8 geometries; release each so they accumulate in the pool.
     fillPool(pool, 8);
 
-    // Advance past 60 commits (the over-limit-but-recent threshold) so
-    // mustEvict + commitsSinceUse > 60 fires for every buffer.
-    for (let commit = 0; commit < 75; commit++) {
+    // The over-limit grace is strict: nothing is evicted at 60 commits.
+    for (let commit = 0; commit < 60; commit++) {
       pool.beginCommit();
     }
+    expect(pool.evictUnused()).toBe(0);
+    pool.beginCommit();
 
-    // Single sweep evicts everything qualifying — bypasses the cap of 1.
+    // At 61 commits, a single sweep evicts all 8 despite the cap of 1.
     const evicted = pool.evictUnused();
-    expect(evicted).toBeGreaterThan(1);
+    expect(evicted).toBe(8);
   });
 
   it('clamps evictBatchSize to ≥ 1 even if 0 / negative passed', () => {

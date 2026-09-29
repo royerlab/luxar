@@ -57,6 +57,7 @@ export type {
   PooledBufferRef,
 } from './gpu-buffer-pool/pool-stats';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../config/constants';
+const OVER_LIMIT_GRACE_COMMITS = 60;
 // (`selectBuffersToEvict` / `chooseCapacity` used to be re-exported here
 // too, but every consumer imports them from their `gpu-buffer-pool/`
 // modules directly — the facade copies were dead.)
@@ -186,7 +187,8 @@ export class GPUBufferPool {
    *
    * The pool therefore ages pooled buffers in commits, not rendered frames
    * (#2939): `evictionCommits` (default 300) is 300 commits, and the
-   * over-limit `mustEvict` grace below is 60 commits. That is deliberate —
+   * over-limit `mustEvict` grace below is `OVER_LIMIT_GRACE_COMMITS` (60).
+   * That is deliberate —
    * buffers are only acquired and released on commits — but it has two
    * consequences worth knowing when tuning it:
    *  - while the view orbits or sits idle no commit runs, so pooled buffers
@@ -397,7 +399,8 @@ export class GPUBufferPool {
         for (const buffer of buffers) {
           const commitsSinceUse = currentCommit - buffer.lastUsedCommit;
           const evictable =
-            commitsSinceUse > this.evictionCommits || (mustEvict && commitsSinceUse > 60);
+            commitsSinceUse > this.evictionCommits ||
+            (mustEvict && commitsSinceUse > OVER_LIMIT_GRACE_COMMITS);
 
           // Evict if: unused for >evictionCommits OR pool over limit,
           // AND we're under the per-call batch cap.
