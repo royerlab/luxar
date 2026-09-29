@@ -51,7 +51,10 @@ async function bootSynthetic(page: Page, type: 'points' | 'gsplats'): Promise<vo
     // landing between the renders being compared.
     const result = await dbg.injectSyntheticScene({
       type: t,
-      count: 20000,
+      // Keep this shader-plumbing check within its 60 s timeout: even after
+      // #2970, 20k takes about 72 s for points and 102 s for splats in setup
+      // and full-frame transfers (see PLAYWRIGHT_GUIDE.md).
+      count: 5000,
       seed: 7,
       blending: 'additive',
     });
