@@ -51,7 +51,9 @@ async function bootSynthetic(page: Page, type: 'points' | 'gsplats'): Promise<vo
     // landing between the renders being compared.
     const result = await dbg.injectSyntheticScene({
       type: t,
-      count: 20000,
+      // The FOV check needs visible geometry, not a 20k-element GPU stress scene.
+      // Large captures can stall readback on slower renderers.
+      count: 5000,
       seed: 7,
       blending: 'additive',
     });
