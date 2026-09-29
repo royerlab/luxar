@@ -333,7 +333,7 @@ dataLoading: {
     // GPU buffer pool (reuse WebGL buffers)
     useGPUBufferPool: true,
     gpuPoolMaxSize: 20,
-    gpuPoolEvictionFrames: 300,
+    gpuPoolEvictionCommits: 300,
 
     // Debugging
     enablePerformanceMonitoring: false

@@ -33,7 +33,7 @@ export const dataLoadingPerformanceConfig: DataLoadingPerformanceConfig = {
   // into the scene-loader geometry-update path.
   useGPUBufferPool: true,
   gpuPoolMaxSize: 20,
-  gpuPoolEvictionFrames: 300,
+  gpuPoolEvictionCommits: 300,
   gpuPoolEvictBatchSize: 5,
   // Single GPU-geometry byte budget (pool + LOD retention). `null`
   // auto-sizes from device memory and the heap model's non-cache remainder,

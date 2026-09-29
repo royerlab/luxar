@@ -32,12 +32,12 @@ export interface DataLoadingPerformanceConfig {
   useGPUBufferPool: boolean;
   gpuPoolMaxSize: number;
   /**
-   * LRU age, in ATOMIC COMMITS (not rendered frames, despite the key name),
+   * LRU age, in ATOMIC COMMITS (not rendered frames),
    * after which a pooled GPU buffer is disposed — `GPUBufferPool`'s
    * `evictionCommits` (#2939). An idle or orbiting view runs no commit, so
    * pooled buffers do not age then.
    */
-  gpuPoolEvictionFrames: number;
+  gpuPoolEvictionCommits: number;
   /**
    * Per-call eviction-batch cap for the GPU buffer pool. When many
    * pooled buffers cross the eviction threshold in the same frame
