@@ -1,15 +1,16 @@
 /**
  * The frame's view: one snapshot of the camera that the view-dependent
- * per-frame work (LOD selection, projected density, depth sort) reads instead
+ * per-frame work (LOD selection, projected density) reads instead
  * of each re-deriving it from the live camera.
  *
- * Built lazily, on the first `get()` after an `invalidate()`. The frame loop
- * invalidates it at the start of every frame, and the camera writers that run
- * inside the `view` phase (dynamic clipping rewrites near/far) invalidate it
- * after they write, so a consumer never sees a projection older than the one
- * the frame renders with. A snapshot is only valid for the frame it was taken
- * in: the returned object and its matrices are reused, so a consumer must not
- * keep references across frames.
+ * Built lazily, on the first `get()` after an `invalidate()`. The
+ * `dynamic-clipping` callback is the first `view`-phase callback and the only
+ * camera write in that phase; it invalidates every frame before updating
+ * near/far. Later view callbacks therefore build from the current projection.
+ * Reads in the earlier `camera` phase or outside the frame loop may still see
+ * the previous snapshot (depth sort deliberately reads the camera directly).
+ * The returned object and its matrices are reused, so consumers must not keep
+ * references across frames.
  *
  * The view matrix is `inverse(camera.matrixWorld)`, derived here rather than
  * read from `camera.matrixWorldInverse`, which three builds with the scale
