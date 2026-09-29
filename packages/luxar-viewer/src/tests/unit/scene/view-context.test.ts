@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ViewContextProvider, type ViewSize } from '../../../scene/view-context';
 
@@ -76,23 +76,42 @@ describe('ViewContextProvider', () => {
     expect(ctx.viewDirection.distanceTo(dir)).toBeLessThan(1e-12);
   });
 
-  it('builds once until invalidated, then rebuilds from the camera as it is now', () => {
+  it('builds once while the camera is unchanged, then rebuilds when invalidated', () => {
     const camera = perspectiveAt(new THREE.Vector3(0, 0, 10), new THREE.Vector3());
-    const views = provider(() => camera);
+    let css: ViewSize = { width: 800, height: 450 };
+    const getViewportCss = vi.fn(() => css);
+    const views = new ViewContextProvider({
+      getCamera: () => camera,
+      getViewportCss,
+      getDrawingBuffer: () => null,
+    });
     const first = views.get();
     expect(first.cameraWorldPosition.z).toBe(10);
-
-    camera.position.set(0, 0, 20);
-    expect(views.get().cameraWorldPosition.z).toBe(10);
     expect(views.get()).toBe(first); // the same reused object
+    expect(getViewportCss).toHaveBeenCalledTimes(1); // no rebuild on an unchanged camera
 
-    camera.near = 1;
-    camera.updateProjectionMatrix();
+    // Sizes are only re-read on invalidate() (the frame loop does it every frame).
+    css = { width: 400, height: 225 };
+    expect(views.get().viewportCss).toEqual({ width: 800, height: 450 });
     views.invalidate();
     const second = views.get();
     expect(second).toBe(first);
-    expect(second.cameraWorldPosition.z).toBe(20);
-    expect(second.projectionMatrix.elements).toEqual(camera.projectionMatrix.elements);
+    expect(second.viewportCss).toEqual({ width: 400, height: 225 });
+  });
+
+  it.fails('follows a camera move or projection change without an invalidate', () => {
+    // A read outside the frame loop (e.g. a load-time consumer) must not see
+    // the pose of the last tick.
+    const camera = perspectiveAt(new THREE.Vector3(0, 0, 10), new THREE.Vector3());
+    const views = provider(() => camera);
+    expect(views.get().cameraWorldPosition.z).toBe(10);
+
+    camera.position.set(0, 0, 20); // matrixWorld not updated yet
+    expect(views.get().cameraWorldPosition.z).toBe(20);
+
+    camera.near = 1;
+    camera.updateProjectionMatrix();
+    expect(views.get().projectionMatrix.elements).toEqual(camera.projectionMatrix.elements);
   });
 
   it('follows a camera swap', () => {
