@@ -401,7 +401,7 @@ describe('initPicking', () => {
   });
 
   describe('deferred partition parts (B4)', () => {
-    it.fails('provisions picking for labels declared only on parts not yet built', async () => {
+    it('provisions picking for labels declared only on parts not yet built', async () => {
       // A labelled timelapse partition with no part in the opening slice: its
       // parts are empty slots, so no THREE object carries their attrs yet.
       const sceneLoader = {
