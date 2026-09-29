@@ -38,8 +38,8 @@
  *  - a SPECULATIVE arrival for a new key is dropped (the drop-the-arrival rule
  *    above, which keeps the oldest end contiguous);
  *  - a replacement for a key already pending (coalescing: the newer write wins)
- *    evicts OTHER speculative writes first; if it still cannot fit, the
- *    replacement is dropped along with the task it replaced.
+ *    prefers evicting OTHER speculative writes; when none can make room,
+ *    the replacement is dropped along with the task it replaced.
  * Every discarded write is counted in `dropped` (and in `droppedSpeculative`
  * when it was speculative) and in `opfs.writesDropped` — none is silent. A
  * replacement that fits after coalescing is not a drop: the latest bytes land.
