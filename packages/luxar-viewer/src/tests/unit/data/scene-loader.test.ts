@@ -1614,59 +1614,66 @@ describe('SceneLoader', () => {
       }
     );
 
-    it('aborts the first pass superseded after a refinement hand-off following idle', async () => {
-      const internals = sceneLoader as unknown as {
-        _lastCommitAt: number;
-        _updateInProgress: boolean;
-        _refining: boolean;
-        _updateAbortController: AbortController | null;
-        viewStateQueue: ViewStateQueue;
-        reenterPending(state: Partial<ViewState>): Promise<void>;
-      };
-      let now = internals._lastCommitAt + 5000;
-      vi.spyOn(performance, 'now').mockImplementation(() => now);
-      let capturedSignal: AbortSignal | undefined;
-      let releaseFirst!: () => void;
-      const firstGate = new Promise<void>((resolve) => {
-        releaseFirst = resolve;
-      });
-      const loader = {
-        updateView: vi.fn(async (_vs: unknown, _session: unknown, signal?: AbortSignal) => {
-          if (!capturedSignal) {
-            capturedSignal = signal;
-            await firstGate;
-            signal?.throwIfAborted();
-          }
-          return null;
-        }),
-        dispose: vi.fn(),
-      };
-      (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders.set('/node', loader);
+    it.each([false, true])(
+      'aborts the first pass superseded after a refinement hand-off following idle (resync first: %s)',
+      async (resyncFirst) => {
+        const internals = sceneLoader as unknown as {
+          _lastCommitAt: number;
+          _updateInProgress: boolean;
+          _refining: boolean;
+          _updateAbortController: AbortController | null;
+          viewStateQueue: ViewStateQueue;
+          reenterPending(state: Partial<ViewState>): Promise<void>;
+        };
+        let now = internals._lastCommitAt + 5000;
+        vi.spyOn(performance, 'now').mockImplementation(() => now);
+        let capturedSignal: AbortSignal | undefined;
+        let releaseFirst!: () => void;
+        const firstGate = new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+        const loader = {
+          updateView: vi.fn(async (_vs: unknown, _session: unknown, signal?: AbortSignal) => {
+            if (!capturedSignal) {
+              capturedSignal = signal;
+              await firstGate;
+              signal?.throwIfAborted();
+            }
+            return null;
+          }),
+          dispose: vi.fn(),
+        };
+        (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders.set('/node', loader);
 
-      // Refinement owns the lock, then hands its queued view to the next pass.
-      internals._updateInProgress = true;
-      internals._refining = true;
-      internals._updateAbortController = new AbortController();
-      const queued = sceneLoader.updateView({ slicePosition: [0, 0, 0, 1] });
-      expect(internals.viewStateQueue.hasPending()).toBe(true);
-      internals._updateInProgress = false;
-      internals._refining = false;
-      const pending = internals.viewStateQueue.takePending();
-      expect(pending).toBeDefined();
-      const first = internals.reenterPending(pending!);
-      await Promise.resolve();
-      expect(capturedSignal).toBeInstanceOf(AbortSignal);
+        // Refinement owns the lock, then hands its queued view to the next pass.
+        internals._updateInProgress = true;
+        internals._refining = true;
+        internals._updateAbortController = new AbortController();
+        if (resyncFirst) {
+          await sceneLoader.updateView({}, { resyncPaths: new Set(['/node']) });
+          expect(internals.viewStateQueue.hasPending()).toBe(true);
+        }
+        const queued = sceneLoader.updateView({ slicePosition: [0, 0, 0, 1] });
+        expect(internals.viewStateQueue.hasPending()).toBe(true);
+        internals._updateInProgress = false;
+        internals._refining = false;
+        const pending = internals.viewStateQueue.takePending();
+        expect(pending).toBeDefined();
+        const first = internals.reenterPending(pending!);
+        await Promise.resolve();
+        expect(capturedSignal).toBeInstanceOf(AbortSignal);
 
-      now += 10;
-      const winning = sceneLoader.updateView({ slicePosition: [0, 0, 0, 2] });
-      expect(capturedSignal?.aborted).toBe(true);
+        now += 10;
+        const winning = sceneLoader.updateView({ slicePosition: [0, 0, 0, 2] });
+        expect(capturedSignal?.aborted).toBe(true);
 
-      releaseFirst();
-      await first;
-      await Promise.all([queued, winning]);
-      expect(loader.updateView).toHaveBeenCalledTimes(2);
-      expect(sceneLoader.hasFailures()).toBe(false);
-    });
+        releaseFirst();
+        await first;
+        await Promise.all([queued, winning]);
+        expect(loader.updateView).toHaveBeenCalledTimes(2);
+        expect(sceneLoader.hasFailures()).toBe(false);
+      }
+    );
   });
 
   describe('updateView — queued calls resolve on the winning pass (real pacing gate)', () => {
