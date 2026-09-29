@@ -1493,6 +1493,12 @@ export class SceneLoader {
       // Every minted generation must finish a pass (or be covered by a newer
       // one); isAtViewState relies on _completedGen catching up to _requestSeq.
       const gen = ++this._requestSeq;
+      // A refinement hold has no view pass in flight. Its first queued view
+      // starts a new drag chain, even though the queued generation makes the
+      // eventual re-entry look like a continuation of the previous chain.
+      if (this._refining && (!this.viewStateQueue.hasPending() || this._pendingIsResyncOnly)) {
+        this._passChainStartedAt = performance.now();
+      }
       this._requestGens.set(viewState, gen);
       this.viewStateQueue.setPending(viewState);
       // Whatever was stashed for a resync is now moot: this pending state (a
