@@ -43,6 +43,8 @@ export function initScaleBar(ports: InitScaleBarPorts): ScaleBar {
     'scale-bar',
     () => {
       scaleBar.update();
+      // A DOM overlay: nothing the canvas draws.
+      return false;
     },
     { phase: 'ui' }
   );

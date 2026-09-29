@@ -88,12 +88,14 @@ function reasonSlot(reason: RenderReason): number {
 
 /**
  * A per-frame callback. Returning `true` says "I changed what the next render
- * draws" and makes this tick render; returning nothing (or `false`) says it
- * changed nothing drawn. A callback that mutates drawn state and returns
- * nothing leaves a stale frame on screen until something else redraws —
- * `?renderAudit` exists to catch exactly that.
+ * draws" and makes this tick render; `false` says it changed nothing drawn.
+ * The return is REQUIRED (not `void | boolean`) so every registration has to
+ * state which it is: a callback that mutated drawn state and returned nothing
+ * would leave a stale frame on screen until something else redraws, and the
+ * compiler now catches the one that forgets. Camera motion needs no `true`
+ * (the view signature catches it), nor does a DOM-only overlay.
  */
-export type PerFrameCallback = () => void | boolean;
+export type PerFrameCallback = () => boolean;
 
 /** A registered per-frame callback. */
 export interface PerFrameEntry {
@@ -254,7 +256,7 @@ export class AnimationController {
   /**
    * Add a per-frame callback with a unique identifier.
    *
-   * Multiple callbacks can be registered simultaneously (unlike setPerFrameCallback).
+   * Multiple callbacks can be registered simultaneously.
    * Use unique IDs to allow safe removal without affecting other callbacks.
    *
    * Useful for operations that need to run every frame:
@@ -285,8 +287,8 @@ export class AnimationController {
    *   Default: false.
    *
    * The callback's return value is the render-on-change contract: `true` when
-   * it changed what the next render draws (the tick then renders), nothing /
-   * `false` when it did not. Camera motion needs no `true`: the view signature
+   * it changed what the next render draws (the tick then renders), `false`
+   * when it did not. Camera motion needs no `true`: the view signature
    * catches it.
    *
    * @example
@@ -298,9 +300,9 @@ export class AnimationController {
    * );
    *
    * // Continuous callback: keeps animation loop alive
-   * animController.addPerFrameCallback('dimension-animation', () => {
-   *   animationManager.onFrame();
-   * }, { continuous: true });
+   * animController.addPerFrameCallback('dimension-animation', () =>
+   *   animationManager.onFrame()
+   * , { continuous: true });
    * ```
    */
   addPerFrameCallback(

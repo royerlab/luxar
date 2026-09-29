@@ -19,7 +19,10 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { DimensionAnimationManager } from '../../../scene/animation/dimension-animation-manager';
 import { log } from '../../../utils/log';
 import { SceneDimsManager } from '../../../scene/scene-dims-manager';
-import { AnimationController } from '../../../scene/animation/animation-controller';
+import {
+  AnimationController,
+  type PerFrameCallback,
+} from '../../../scene/animation/animation-controller';
 import type { ControlsManager } from '../../../controls/controls-manager';
 import type { PostProcessingManager } from '../../../rendering';
 import * as THREE from 'three';
@@ -29,7 +32,7 @@ describe('DimensionAnimationManager', () => {
   let sceneDimsManager: SceneDimsManager;
   let mockAnimationController: AnimationController;
   let mockScene: THREE.Scene;
-  let perFrameCallback: (() => void) | null = null;
+  let perFrameCallback: PerFrameCallback | null = null;
 
   beforeEach(() => {
     // Create mock scene with dimension metadata
@@ -60,7 +63,7 @@ describe('DimensionAnimationManager', () => {
     );
     vi.spyOn(mockAnimationController, 'startAnimation').mockImplementation(() => {});
     vi.spyOn(mockAnimationController, 'addPerFrameCallback').mockImplementation(
-      (_id: string, callback: () => void) => {
+      (_id: string, callback: PerFrameCallback) => {
         perFrameCallback = callback;
       }
     );
@@ -458,6 +461,21 @@ describe('DimensionAnimationManager', () => {
       expect(newValue).toBeGreaterThan(initialValue);
     });
 
+    it('the frame callback reports true exactly on the frames the playhead steps', () => {
+      // Render-on-change contract: a step draws a new slice. (The step's dims
+      // listener also wakes the loop; the return keeps the callback honest.)
+      vi.spyOn(sceneDimsManager, 'waitForUpdate').mockResolvedValue(undefined);
+      manager.play(3, { targetFPS: 10, direction: 'forward' });
+
+      mockTime += 20; // inside the 100ms FPS window: no step
+      expect(perFrameCallback?.()).toBe(false);
+      mockTime += 200; // past it: one step
+      expect(perFrameCallback?.()).toBe(true);
+      manager.pause(3);
+      mockTime += 200;
+      expect(perFrameCallback?.()).toBe(false);
+    });
+
     it('pacing gate: does not advance while waitForUpdate is unresolved (data-bound playback)', () => {
       // The frame-sync contract Fix 1 makes REAL end-to-end: after a tick
       // dispatches, the manager parks in pendingUpdates until
@@ -572,7 +590,7 @@ describe('DimensionAnimationManager', () => {
       const captured: { fn: (() => void) | null } = { fn: null };
       vi.spyOn(controller, 'startAnimation').mockImplementation(() => {});
       vi.spyOn(controller, 'addPerFrameCallback').mockImplementation(
-        (_id: string, callback: () => void) => {
+        (_id: string, callback: PerFrameCallback) => {
           captured.fn = callback;
         }
       );
@@ -905,7 +923,7 @@ describe('DimensionAnimationManager', () => {
       const captured: { fn: (() => void) | null } = { fn: null };
       vi.spyOn(controller, 'startAnimation').mockImplementation(() => {});
       vi.spyOn(controller, 'addPerFrameCallback').mockImplementation(
-        (_id: string, callback: () => void) => {
+        (_id: string, callback: PerFrameCallback) => {
           captured.fn = callback;
         }
       );
@@ -1018,7 +1036,7 @@ describe('DimensionAnimationManager', () => {
       const captured: { fn: (() => void) | null } = { fn: null };
       vi.spyOn(controller, 'startAnimation').mockImplementation(() => {});
       vi.spyOn(controller, 'addPerFrameCallback').mockImplementation(
-        (_id: string, callback: () => void) => {
+        (_id: string, callback: PerFrameCallback) => {
           captured.fn = callback;
         }
       );

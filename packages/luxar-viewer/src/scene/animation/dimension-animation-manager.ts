@@ -100,6 +100,9 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   /** Per-dimension update tracking — prevents advancing faster than data loads */
   private pendingUpdates = new Set<number>();
 
+  /** Playhead steps taken so far (one per `setDimensionValue`); see {@link onFrame}. */
+  private stepCount = 0;
+
   /** Unsubscribe function for sceneDimsManager listener */
   private removeDimsListener: (() => void) | null = null;
 
@@ -157,13 +160,9 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
     // Register per-frame callback with unique ID (won't overwrite other callbacks like dynamic clipping)
     // continuous: true because dimension animation needs every frame to advance
-    this.animationController.addPerFrameCallback(
-      'dimension-animation',
-      () => {
-        this.onFrame();
-      },
-      { continuous: true }
-    );
+    this.animationController.addPerFrameCallback('dimension-animation', () => this.onFrame(), {
+      continuous: true,
+    });
 
     this.isRegistered = true;
     log.info(Modules.ANIMATION, 'Registered with AnimationController');
@@ -211,10 +210,15 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
   /**
    * Per-frame callback - update all active animations
    * Called by AnimationController on each animation frame (~60 FPS)
+   *
+   * @returns whether any playhead stepped this frame (a new slice is drawn).
+   *   The step's dims listener also wakes the loop, so this does not change
+   *   WHETHER the frame renders; it keeps the callback's contract honest.
    */
-  private onFrame(): void {
+  private onFrame(): boolean {
     const currentTime = performance.now();
     this.noteFrameInterval(currentTime);
+    const stepsBefore = this.stepCount;
 
     // Update each active animation
     for (const [dimIndex, state] of this.animationStates) {
@@ -222,6 +226,13 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
         this.updateDimension(dimIndex, currentTime);
       }
     }
+    return this.stepCount !== stepsBefore;
+  }
+
+  /** Move one playhead (listeners start the data load) and count the step for {@link onFrame}. */
+  private stepTo(dimIndex: number, value: number): void {
+    this.sceneDimsManager.setDimensionValue(dimIndex, value);
+    this.stepCount++;
   }
 
   /**
@@ -363,7 +374,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
       this.pendingUpdates.add(dimIndex);
 
       // Update dimension value (triggers async data loading via listeners)
-      this.sceneDimsManager.setDimensionValue(dimIndex, nextValue);
+      this.stepTo(dimIndex, nextValue);
       // Perf trace: `due` is when this tick was scheduled to fire, so
       // `t - due` is the playhead's lateness.
       perfCounters.add(S_PLAYBACK_TICKS);
