@@ -1005,6 +1005,30 @@ describe('loadPartitionGroupNode — gated loading (B4)', () => {
     expect(ctx.registry.failedLoaders.has('/partition/part_0')).toBe(false);
   });
 
+  it.fails('an activation for a dataset that is no longer live loads nothing', async () => {
+    attachStubChildren();
+    const registerPartition = vi.fn();
+    let live = true;
+    const ctx = makeTestNodeBuildCtx({
+      ...timeCtx(registerPartition, TIME_DIMS),
+      isDatasetLive: () => live,
+    });
+    await loadPartitionGroupNode(
+      makePartitionGroupNode([timePart(0, 0), timePart(1, 1)], { display_type: 'gsplats' }),
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+    const deferred = registerPartition.mock.calls[0][0].children[0];
+    // e.g. started by the t+1 prefetch just before a dataset switch.
+    live = false;
+
+    await deferred.activate();
+
+    expect(loadSceneNodesMock).toHaveBeenCalledTimes(1);
+  });
+
   it('loads every part when the scene has no discrete hidden dimension', async () => {
     attachStubChildren();
     const continuous = TIME_DIMS.map((dim) => ({ ...dim, discrete: false }));

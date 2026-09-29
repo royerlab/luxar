@@ -146,4 +146,34 @@ describe('LODGroupRegistry — partition part activation (B4)', () => {
     await reg.activatePartitionParts(viewAt(0), new Set(['/p/part_0']));
     expect(activate).toHaveBeenCalledTimes(2);
   });
+
+  it.fails('an activation settling after the registry was cleared asks for nothing', async () => {
+    const requestReprocess = vi.fn<RequestReprocess>();
+    const reg = makeRegistry(requestReprocess);
+    let resolveActivation!: () => void;
+    registerLazyPart(
+      reg,
+      () =>
+        new Promise<void>((resolve) => {
+          resolveActivation = resolve;
+        })
+    );
+    reg.evaluatePerFrame();
+    // Started ahead of any pass (prefetchSlice), then the dataset is switched.
+    const run = reg.activatePartitionParts(viewAt(0), undefined, false);
+    reg.clear();
+    // The next dataset registers a partition at the same path, off screen.
+    const next = registerLazyPart(reg, () => Promise.resolve());
+    next.groupObject.position.x = 1000;
+    next.groupObject.updateMatrixWorld(true);
+    reg.evaluatePerFrame();
+    requestReprocess.mockClear();
+
+    resolveActivation();
+    await run;
+    reg.evaluatePerFrame();
+
+    // The old dataset's part must not resync a path of the new one.
+    expect(requestReprocess).not.toHaveBeenCalled();
+  });
 });
