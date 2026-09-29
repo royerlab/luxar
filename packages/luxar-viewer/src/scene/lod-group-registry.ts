@@ -3148,14 +3148,6 @@ export class LODGroupRegistry {
   }
 
   /**
-   * Apply the per-leaf LOD anti-popping opacity (cross-fade weight ×
-   * streaming `1/e(k)` energy compensation) to a child's leaf materials, or
-   * restore the authored opacity — see {@link applyLodFade}
-   * (``lod-fade.ts``) for the full mechanics. This wrapper supplies the
-   * registry's ``registerMaterial`` dep so a clone-on-first-fade material
-   * keeps receiving per-frame camera-uniform updates.
-   */
-  /**
    * Advance (or start) the dissolve of ``entry`` toward ``displayIdx`` and
    * return it, or ``null`` when the group should draw ``displayIdx`` alone.
    *
@@ -3214,6 +3206,14 @@ export class LODGroupRegistry {
     return this.isBlendable(from) && this.isBlendable(to);
   }
 
+  /**
+   * Apply the per-leaf LOD anti-popping opacity (cross-fade weight ×
+   * streaming `1/e(k)` energy compensation) to a child's leaf materials, or
+   * restore the authored opacity — see {@link applyLodFade}
+   * (``lod-fade.ts``) for the full mechanics. This wrapper supplies the
+   * registry's ``registerMaterial`` dep so a clone-on-first-fade material
+   * keeps receiving per-frame camera-uniform updates.
+   */
   private applyChildFade(child: LODGroupChild, weight: number | null, energyComp: boolean): void {
     if (applyLodFade(child.object, weight, energyComp, this.deps.registerMaterial)) {
       this.drawnStateChanged = true;

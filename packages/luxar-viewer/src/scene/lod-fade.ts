@@ -223,8 +223,8 @@ export function applyLodFade(
       energyFactor = energyCompensation(ud.committedEnergyFraction, ENERGY_FLOOR);
     }
     // Density-guard thinning (scene/density-guard.ts) draws a `keep` fraction
-    // of the elements; `1/keep` restores the aggregate brightness. Same
-    // blendable-only rule — the guard never thins the other modes.
+    // of the elements; `1/keep` restores aggregate brightness for blendable
+    // modes. Normal mode compensates per-element alpha in the shader instead.
     const densityFactor = blendable ? densityCompensation(ud.densityKeep) : 1;
     const product = coverageWeight * energyFactor * densityFactor;
     if (Math.abs(product - 1) < FADE_EPSILON) {
