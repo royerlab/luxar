@@ -231,6 +231,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "otherwise run zero tests",
     ),
     (
+        "scripts/ci_hatch_env_cache.sh",
+        "py",
+        "test_ci_hatch_env_cache.py executes the cache setup script",
+    ),
+    (
         "scripts/zenodo_record_text/records.json",
         "py",
         "test_zenodo_record_text.py checks the committed snapshot index and HTML "

@@ -150,7 +150,8 @@ jobs:
             # (checked against the hosted demo recipe), scripts/release.sh
             # (test_set_version.py asserts its `make set-version` remedy string;
             # a shell file matches no other domain, so a release.sh-only diff
-            # would otherwise run zero tests), generate-gallery.spec.ts (the
+            # would otherwise run zero tests). ci_hatch_env_cache.sh is executed
+            # by test_ci_hatch_env_cache.py. generate-gallery.spec.ts (the
             # gallery manifest field contract is parsed from it),
             # docs/guides/user/CLI_REFERENCE.md (test_docs_command_coverage.py),
             # the root, package and demos README files plus docs/index.rst
@@ -178,7 +179,7 @@ jobs:
             # snapshot test reads scripts/zenodo_record_text/. dependabot.yml,
             # coverage.yml, cadence-liveness.yml, and external-reference-audits.yml
             # are also pytest inputs, and workflow files match no language domain alone.
-            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^ACKNOWLEDGMENTS\.md$|^CLAUDE\.md$|^CITATION\.cff$|^\.agents/skills/luxar-(gsplat-pipeline/SKILL|visualization/(SKILL|references/scene-api))\.md$|^pyproject\.toml$|^\.pre-commit-config\.yaml$|(^|/)go\.mod$|\.(pyx|pxd|cu|cuh|cpp|h|hpp|mm|metal)$|^\.(gitattributes|gitignore)$|^scripts/complexity_baseline\.json$|^scripts/lint_baseline\.json$|^scripts/gallery/(manifest|media-manifest)\.json$|^scripts/zenodo_record_text/|^scripts/benchmarks/benchmark_bisect\.sh$|^scripts/demo_archive_characteristics\.json$|^scripts/release\.sh$|^docs/(index\.rst$|api/gsplats\.rst$|guides/(developer/DEMO_SITE_RUNBOOK|user/(CLI_REFERENCE|FORMAT_AND_MIGRATION|LUXAR_ZARR_FORMAT))\.md$|specs/(GSPLATS_DIMENSION_MAPPING|GSPLATS_ZARR_FORMAT)\.md$)|^(control|format)-contract/|^\.github/dependabot\.yml$|^\.github/workflows/(cadence-liveness|coverage|cuda-nightly|docs|external-reference-audits)\.yml$|^packages/luxar(-viewer)?/README\.md$|^packages/luxar-launcher/(control_contract\.go$|pkgconfig/)|^packages/luxar/src/luxar/(cli|gsplats(/(io|lod))?|core/group/(lod|gsplats_pipeline))/README\.md$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|scripts/bake-env\.mjs$|src/(config/(control-contract\.ts$|sections/(camera|rendering-controls)/data\.ts$)|data/(attrs-composer\.ts$|codecs/README\.md$|loaders/spatial-query/tolerance-computer\.ts$|scene-loader/lifecycle/load-scene\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$|unit/(gallery-selection\.test\.ts$|config/generated-fixture-freshness\.test\.ts$))|types/(data-monitor-types|format-contract|geometry-capabilities|lod-group|partition-group)\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
+            printf '%s\n' "$changed" | grep -qE '(\.py$|^Makefile$|^README\.md$|^ACKNOWLEDGMENTS\.md$|^CLAUDE\.md$|^CITATION\.cff$|^\.agents/skills/luxar-(gsplat-pipeline/SKILL|visualization/(SKILL|references/scene-api))\.md$|^pyproject\.toml$|^\.pre-commit-config\.yaml$|(^|/)go\.mod$|\.(pyx|pxd|cu|cuh|cpp|h|hpp|mm|metal)$|^\.(gitattributes|gitignore)$|^scripts/complexity_baseline\.json$|^scripts/lint_baseline\.json$|^scripts/gallery/(manifest|media-manifest)\.json$|^scripts/zenodo_record_text/|^scripts/benchmarks/benchmark_bisect\.sh$|^scripts/demo_archive_characteristics\.json$|^scripts/(release|ci_hatch_env_cache)\.sh$|^docs/(index\.rst$|api/gsplats\.rst$|guides/(developer/DEMO_SITE_RUNBOOK|user/(CLI_REFERENCE|FORMAT_AND_MIGRATION|LUXAR_ZARR_FORMAT))\.md$|specs/(GSPLATS_DIMENSION_MAPPING|GSPLATS_ZARR_FORMAT)\.md$)|^(control|format)-contract/|^\.github/dependabot\.yml$|^\.github/workflows/(cadence-liveness|coverage|cuda-nightly|docs|external-reference-audits)\.yml$|^packages/luxar(-viewer)?/README\.md$|^packages/luxar-launcher/(control_contract\.go$|pkgconfig/)|^packages/luxar/src/luxar/(cli|gsplats(/(io|lod))?|core/group/(lod|gsplats_pipeline))/README\.md$|^packages/luxar/src/luxar/demos/(README\.md$|data)|^packages/luxar-viewer/(package\.json$|scripts/bake-env\.mjs$|src/(config/(control-contract\.ts$|sections/(camera|rendering-controls)/data\.ts$)|data/(attrs-composer\.ts$|codecs/README\.md$|loaders/spatial-query/tolerance-computer\.ts$|scene-loader/lifecycle/load-scene\.ts$)|rendering/(blending-state\.ts$|element-texture-layout\.ts$|materials/mesh/appearance\.ts$|node-factory/create-(points|lines|gsplats|mesh)-node\.ts$)|scene/lod-group-registry\.ts$|tests/(global-setup\.ts$|README\.md$|screenshots/exposure-policy\.ts$|screenshots/generate-gallery\.spec\.ts$|unit/(gallery-selection\.test\.ts$|config/generated-fixture-freshness\.test\.ts$))|types/(data-monitor-types|format-contract|geometry-capabilities|lod-group|partition-group)\.ts$)|tests/fixtures/README\.md$|tools/example-fixture-freshness\.ts$))' && dom_py=true || true
             # TS domain = the WHOLE viewer package (its py fixture-generators feed TS tests -> hierarchy) + root TS config.
             # gallery-selection.test.ts also reads the root README and both gallery
             # manifests; generated-fixture-freshness.test.ts checks the Makefile's
@@ -478,25 +479,6 @@ jobs:
           cache: pnpm
           cache-dependency-path: packages/luxar-viewer/pnpm-lock.yaml
 
-      - name: Reuse a dependency-hashed Hatch env on persistent runners
-        # The self-hosted runners are ephemeral containers, so each job otherwise
-        # rebuilds the multi-GB scientific env (torch, scipy, ...) from scratch.
-        # When the runner exposes a persistent cache root (LUXAR_CI_HATCH_BASE),
-        # point HATCH_DATA_DIR at a directory keyed by the interpreter and a hash
-        # of pyproject.toml: identical dependencies reuse the env across jobs (no
-        # rebuild), while any change to the interpreter or pyproject.toml resolves
-        # to a fresh directory so a stale env is never reused. No effect on
-        # GitHub-hosted runners, where the variable is unset.
-        run: |
-          if [ -n "${LUXAR_CI_HATCH_BASE:-}" ]; then
-            pv=$(python -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null \
-                 || python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null || echo unknown)
-            key="py${pv}-${{ hashFiles('pyproject.toml') }}"
-            dir="${LUXAR_CI_HATCH_BASE}/${key}"
-            mkdir -p "$dir"
-            echo "HATCH_DATA_DIR=${dir}" >> "$GITHUB_ENV"
-            echo "reusing hatch env cache at ${dir}"
-          fi
       - name: Install Hatch
         if: needs.changes.outputs.docs_relevant != 'false'
         run: pipx install --python "${{ steps.setup-python-docs.outputs.python-path }}" hatch
@@ -704,25 +686,12 @@ jobs:
           key: ${{ runner.os }}-mypy-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}-${{ github.sha }}
           restore-keys: ${{ runner.os }}-mypy-${{ matrix.python-version }}-
 
-      - name: Reuse a dependency-hashed Hatch env on persistent runners
-        # The self-hosted runners are ephemeral containers, so each job otherwise
-        # rebuilds the multi-GB scientific env (torch, scipy, ...) from scratch.
-        # When the runner exposes a persistent cache root (LUXAR_CI_HATCH_BASE),
-        # point HATCH_DATA_DIR at a directory keyed by the interpreter and a hash
-        # of pyproject.toml: identical dependencies reuse the env across jobs (no
-        # rebuild), while any change to the interpreter or pyproject.toml resolves
-        # to a fresh directory so a stale env is never reused. No effect on
-        # GitHub-hosted runners, where the variable is unset.
-        run: |
-          if [ -n "${LUXAR_CI_HATCH_BASE:-}" ]; then
-            pv=$(python -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null \
-                 || python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null || echo unknown)
-            key="py${pv}-${{ hashFiles('pyproject.toml') }}"
-            dir="${LUXAR_CI_HATCH_BASE}/${key}"
-            mkdir -p "$dir"
-            echo "HATCH_DATA_DIR=${dir}" >> "$GITHUB_ENV"
-            echo "reusing hatch env cache at ${dir}"
-          fi
+      - name: Reuse Hatch env on persistent runners
+        # LUXAR_CI_HATCH_BASE is a dedicated, per-runner volume. Refresh the
+        # dependency resolution weekly and expire keys unused for seven days.
+        # Hosted runners leave the variable unset, so this script is a no-op.
+        if: needs.changes.outputs.dom_py != 'false'
+        run: bash scripts/ci_hatch_env_cache.sh "${{ hashFiles('pyproject.toml') }}"
       - name: Install Hatch
         if: needs.changes.outputs.dom_py != 'false'
         # Install Hatch ON the matrix interpreter. Hatch builds an environment
@@ -756,8 +725,9 @@ jobs:
       - name: Audit Python dependencies
         if: needs.changes.outputs.dom_py != 'false'
         run: |
-          hatch run python -m pip install pip-audit
-          hatch run python -m pip_audit --desc --skip-editable
+          site_packages=$(hatch run python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')
+          pipx run --python "${{ steps.setup-python.outputs.python-path }}" pip-audit \
+            --desc --skip-editable --path "$site_packages"
         continue-on-error: true
 
       # These gates judge the SOURCE, not the runtime (ruff at py312; mypy at
@@ -997,32 +967,20 @@ jobs:
 
       # Generate test fixtures (requires Python)
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        id: setup-python
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
         with:
           python-version: '3.12'
 
-      - name: Reuse a dependency-hashed Hatch env on persistent runners
-        # The self-hosted runners are ephemeral containers, so each job otherwise
-        # rebuilds the multi-GB scientific env (torch, scipy, ...) from scratch.
-        # When the runner exposes a persistent cache root (LUXAR_CI_HATCH_BASE),
-        # point HATCH_DATA_DIR at a directory keyed by the interpreter and a hash
-        # of pyproject.toml: identical dependencies reuse the env across jobs (no
-        # rebuild), while any change to the interpreter or pyproject.toml resolves
-        # to a fresh directory so a stale env is never reused. No effect on
-        # GitHub-hosted runners, where the variable is unset.
-        run: |
-          if [ -n "${LUXAR_CI_HATCH_BASE:-}" ]; then
-            pv=$(python -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null \
-                 || python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null || echo unknown)
-            key="py${pv}-${{ hashFiles('pyproject.toml') }}"
-            dir="${LUXAR_CI_HATCH_BASE}/${key}"
-            mkdir -p "$dir"
-            echo "HATCH_DATA_DIR=${dir}" >> "$GITHUB_ENV"
-            echo "reusing hatch env cache at ${dir}"
-          fi
+      - name: Reuse Hatch env on persistent runners
+        # LUXAR_CI_HATCH_BASE is a dedicated, per-runner volume. Refresh the
+        # dependency resolution weekly and expire keys unused for seven days.
+        # Hosted runners leave the variable unset, so this script is a no-op.
+        if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
+        run: bash scripts/ci_hatch_env_cache.sh "${{ hashFiles('pyproject.toml') }}"
       - name: Install Hatch
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
-        run: pipx install hatch
+        run: pipx install --python "${{ steps.setup-python.outputs.python-path }}" hatch
 
       - name: Verify fixture environment is lean and CPU-only
         if: (needs.changes.outputs.dom_ts != 'false' || needs.changes.outputs.dom_rust != 'false')
@@ -1659,25 +1617,6 @@ jobs:
           cache: pnpm
           cache-dependency-path: packages/luxar-viewer/pnpm-lock.yaml
 
-      - name: Reuse a dependency-hashed Hatch env on persistent runners
-        # The self-hosted runners are ephemeral containers, so each job otherwise
-        # rebuilds the multi-GB scientific env (torch, scipy, ...) from scratch.
-        # When the runner exposes a persistent cache root (LUXAR_CI_HATCH_BASE),
-        # point HATCH_DATA_DIR at a directory keyed by the interpreter and a hash
-        # of pyproject.toml: identical dependencies reuse the env across jobs (no
-        # rebuild), while any change to the interpreter or pyproject.toml resolves
-        # to a fresh directory so a stale env is never reused. No effect on
-        # GitHub-hosted runners, where the variable is unset.
-        run: |
-          if [ -n "${LUXAR_CI_HATCH_BASE:-}" ]; then
-            pv=$(python -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null \
-                 || python3 -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null || echo unknown)
-            key="py${pv}-${{ hashFiles('pyproject.toml') }}"
-            dir="${LUXAR_CI_HATCH_BASE}/${key}"
-            mkdir -p "$dir"
-            echo "HATCH_DATA_DIR=${dir}" >> "$GITHUB_ENV"
-            echo "reusing hatch env cache at ${dir}"
-          fi
       - name: Install Hatch
         run: pipx install --python "${{ steps.setup-python.outputs.python-path }}" hatch
 
