@@ -40,6 +40,16 @@ export function snapDiscreteValue(value: number, step: number, min: number, max:
   return snapped;
 }
 
+function constrainDimensionValue(
+  value: number,
+  range: [number, number] | undefined,
+  metadata: DimensionMetadata | undefined
+): number {
+  const [min, max] = range ?? [-Infinity, Infinity];
+  const clamped = range ? clamp(value, min, max) : value;
+  return metadata?.discrete ? snapDiscreteValue(clamped, metadata.step || 1.0, min, max) : clamped;
+}
+
 /**
  * Centralized dimension state manager ensuring consistency across all nD objects in the scene.
  *
@@ -310,19 +320,11 @@ export class SceneDimsManager {
       return;
     }
 
-    // Apply range constraints to prevent navigation beyond data bounds
-    let min = -Infinity;
-    let max = Infinity;
-    if (this.dimensionRanges) {
-      [min, max] = this.dimensionRanges[dimIndex];
-      value = clamp(value, min, max);
-    }
-
-    // Handle discrete dimensions (e.g., time frames, categorical data)
-    const dimMeta = this.dims.metadata?.[dimIndex];
-    if (dimMeta?.discrete) {
-      value = snapDiscreteValue(value, dimMeta.step || 1.0, min, max);
-    }
+    value = constrainDimensionValue(
+      value,
+      this.dimensionRanges?.[dimIndex],
+      this.dims.metadata?.[dimIndex]
+    );
 
     const changed = value !== this.dims.currentStep[dimIndex];
     if (!changed && !options.force) return;

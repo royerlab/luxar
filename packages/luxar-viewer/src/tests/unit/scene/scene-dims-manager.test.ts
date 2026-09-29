@@ -440,6 +440,17 @@ describe('SceneDimsManager', () => {
       manager.resetPositions();
 
       expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledWith(true);
+    });
+
+    it('still refreshes listeners on a no-op reset without reporting a slice change', () => {
+      manager.initFromScene(mockScene);
+      const listener = vi.fn();
+      manager.addListener(listener);
+
+      manager.resetPositions();
+
+      expect(listener).toHaveBeenCalledExactlyOnceWith(false);
     });
 
     it('is a safe no-op before initialization (no throw, no notify)', () => {
@@ -594,6 +605,7 @@ describe('SceneDimsManager', () => {
 
       manager.setDimensionValue(3, 10);
       expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenLastCalledWith(true);
       manager.setDimensionValue(3, 100); // clamps back to the current maximum
       expect(listener).toHaveBeenCalledTimes(1);
 
@@ -605,6 +617,24 @@ describe('SceneDimsManager', () => {
       manager.setDimensionValue(4, 1, { force: true });
       expect(listener).toHaveBeenCalledTimes(3);
       expect(listener).toHaveBeenLastCalledWith(false);
+    });
+
+    it('does not replace an in-flight update when a no-op value is set', async () => {
+      let release!: () => void;
+      manager.addListener(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve;
+          })
+      );
+      manager.setDimensionValue(3, 6);
+      const pending = manager.waitForUpdate();
+
+      manager.setDimensionValue(3, 6);
+      expect(manager.waitForUpdate()).toBe(pending);
+
+      release();
+      await pending;
     });
   });
 
