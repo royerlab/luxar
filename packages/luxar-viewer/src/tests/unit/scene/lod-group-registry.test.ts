@@ -518,19 +518,33 @@ describe('projectBoxDiagonalPx', () => {
       return w * h;
     }
 
-    it('is orientation-stable: an orbit of a cube at 10 half-extents varies by at most 20% (legacy rect: far more)', () => {
+    it('does not inflate a flat card as its plane tilts in perspective', () => {
+      const card: BoundingBox = { min: { x: -10, y: -10, z: 0 }, max: { x: 10, y: 10, z: 0 } };
+      const coverage: number[] = [];
+      for (const degrees of [0, 30, 60]) {
+        const radians = (degrees * Math.PI) / 180;
+        const cam = new THREE.PerspectiveCamera(50, 1.5, 0.1, 1000);
+        cam.position.set(30 * Math.sin(radians), 0, 30 * Math.cos(radians));
+        cam.lookAt(0, 0, 0);
+        cam.updateMatrixWorld(true);
+        cam.updateProjectionMatrix();
+        coverage.push(projectBoxAreaFraction(card, cam));
+      }
+      expect(coverage[0]).toBeCloseTo(0.341, 2);
+      expect(coverage[1]).toBeCloseTo(0.308, 2);
+      expect(coverage[2]).toBeCloseTo(0.194, 2);
+      expect(coverage[0]).toBeGreaterThan(coverage[1]);
+      expect(coverage[1]).toBeGreaterThan(coverage[2]);
+    });
+
+    it('is orientation-stable: an orbit of a cube at 10 half-extents varies by at most 1% (legacy rect: far more)', () => {
       // The box's screen RECT grows by up to ~1.7x between a face-on and a
       // corner-on view, so a rect metric walks a lod ladder up and down during
       // one revolution at a FIXED distance. The inscribed ellipsoid of a cube
       // is a sphere, whose projected SHAPE depends only on the distance. The
-      // ellipse is then SIZED at the depth of the box's nearest corner (area
-      // factor w_far / w_near, so a thick box close to the camera reads what
-      // its near face covers, like the legacy rect), and the corner depths do
-      // move with orientation: face-on the nearest corner is 1 half-extent in
-      // front of the centre, corner-on sqrt(3). At a radius of 10 half-extents
-      // that is (11.73 / 8.27) / (11 / 9) ≈ 1.16, a swing of ~14%. The unsized
-      // ellipsoid held 1%, but read 25% low for thick boxes near the camera
-      // (next two tests) — so the bound here is 20%, not 1%.
+      // ellipse is sized from its view-axis half-chord, which is the same
+      // in every direction for a sphere. The corner rect changes sharply
+      // with orientation; the ellipse still tracks near-face depth face-on.
       const cube: BoundingBox = { min: { x: -1, y: -1, z: -1 }, max: { x: 1, y: 1, z: 1 } };
       const radius = 10;
       const values: number[] = [];
@@ -549,15 +563,15 @@ describe('projectBoxDiagonalPx', () => {
       }
       const swing = (xs: number[]): number => (Math.max(...xs) - Math.min(...xs)) / Math.max(...xs);
       expect(Math.min(...values)).toBeGreaterThan(0);
-      expect(swing(values)).toBeLessThanOrEqual(0.2);
+      expect(swing(values)).toBeLessThanOrEqual(0.01);
       expect(swing(legacy)).toBeGreaterThan(2 * swing(values));
     });
 
     it('face-on in perspective it tracks the legacy rect for boxes of any thickness', () => {
       // The ellipse outline sits near the box's MIDDLE plane while the legacy
       // rect is set by its NEAR face, so an unsized ellipse of a thick box
-      // close to the camera read far less than the rect. Sized at the nearest
-      // corner's depth it tracks the rect for every thickness.
+      // close to the camera read far less than the rect. Sized by its
+      // view-axis half-chord it tracks the rect for every thickness.
       const cam = perspectiveLookingAtOrigin(0, 0, 6);
       for (const hz of [0, 0.25, 0.5, 1, 2]) {
         for (const [cx, cy] of [

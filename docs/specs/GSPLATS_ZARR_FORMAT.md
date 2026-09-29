@@ -338,23 +338,26 @@ object finest-at-opening use an explicit `coverage_fractions=[...]` list
 Three refinements are NORMATIVE parts of the `screen-area` metric (they decide
 which end of a ladder renders, so consumers must agree on them):
 
-* **Orientation-stable occupancy, sized at the near corner.** The bbox is
+* **Orientation-stable occupancy, sized along the view axis.** The bbox is
   measured through its INSCRIBED ellipsoid (semi-axes = the bbox
   half-extents), projected exactly (dual quadric → image conic). Under a
   perspective camera the image ellipse's NDC shape matrix `S` is then scaled
-  by `w_far / w_near`, the ratio of the largest to the smallest clip-space `w`
-  (view depth) over the 8 bbox corners, leaving its centre in place: the
-  projected ellipsoid reads at the geometric-mean depth `sqrt(w_near·w_far)`,
-  and this resizes it to the depth of the box's nearest corner, where the
-  box's near face sets its screen coverage. The metric is the product of the
-  sized ellipse's NDC semi-axes, `sqrt(det S)`. A box seen face-on on the view
-  axis therefore reads exactly the rect product the thresholds were defined
-  against (the ellipse is inscribed in the near face's rect) at any
-  thickness, and off-axis within a few percent; an orthographic camera has
-  constant `w`, so no scaling applies. A 3D rect grows by up to ~1.7x as the
-  camera merely orbits to a corner-on view; the sized ellipse of a cube
-  varies only with its corner depths (~14% at 10 half-extents), though an
-  elongated box seen close up and end-on swings nearly as much as its rect.
+  by `(w_c + c) / (w_c - c)`, where `w_c` is its centre's clip-space `w`
+  (view depth) and `c` is its half-chord along that axis, leaving its centre
+  in place. In the bbox frame, with `g` the spatial gradient of `w` and `h`
+  the bbox half-extents, `c = |g|² / sqrt(Σ g_i² / h_i²)`; if a zero
+  half-extent has a nonzero `g_i`, or `g` is zero, then `c = 0`. The
+  projected ellipsoid reads at the geometric-mean depth
+  `sqrt((w_c - c)·(w_c + c))`, and this resizes it to the nearer view-axis
+  point. The metric is the product of the sized ellipse's NDC semi-axes,
+  `sqrt(det S)`. A box seen face-on on the view axis therefore reads exactly
+  the rect product the thresholds were defined against (the ellipse is
+  inscribed in the near face's rect) at any
+  thickness; an orthographic camera has constant `w`, so no scaling applies.
+  A tilted flat box also gets no scaling. A 3D rect grows by up to ~1.7x as
+  the camera merely orbits to a corner-on view; the sized ellipse of a cube
+  stays constant at a fixed distance, though an elongated box changes size
+  when viewed from different directions.
   The eye plane cutting the bbox (nearest corner at `w <= 1e-6`: camera
   inside or beside the node) saturates to the finest level; a bbox wholly
   behind the camera reads `0`.

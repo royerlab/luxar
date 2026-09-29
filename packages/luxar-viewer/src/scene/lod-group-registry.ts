@@ -607,7 +607,8 @@ export interface LODGroupEntry {
    * Units of the children's ``coverageFraction`` thresholds (the on-disk
    * group's ``selector`` attr): ``'screen-area'`` compares them against the
    * projected bbox's fraction of the viewport AREA, measured through its
-   * inscribed ellipsoid sized at its nearest corner (``projectBoxAreaFraction``); ``'coverage'`` — the legacy diagonal metric
+   * inscribed ellipsoid sized by its view-axis half-chord
+   * (``projectBoxAreaFraction``); ``'coverage'`` — the legacy diagonal metric
    * (``projectBoxDiagonalPx / (FILL_FACTOR × min(viewport.width,
    * viewport.height))``, the fitted screen axis) — is the default when
    * absent, so older stores and test-constructed entries keep their
@@ -2689,9 +2690,9 @@ export class LODGroupRegistry {
           );
           if (entry.selector === 'screen-area') {
             // Screen-area selector: the metric IS the fraction of the viewport
-            // area the group's projected inscribed ellipsoid (sized at its
-            // nearest corner) covers, in rect units (orientation-stable, viewport-size
-            // independent by construction — see projectBoxAreaFraction). The
+            // area the group's projected inscribed ellipsoid (sized by its
+            // view-axis half-chord) covers, in rect units (orientation-stable,
+            // viewport-size independent by construction — see projectBoxAreaFraction). The
             // thresholds are literal area fractions ([0, …, 1/4, 1/2] whole-object;
             // a partition tile anchors at 1.0), so no FILL_FACTOR normalisation.
             // Camera inside the box → +Infinity → finest, same as the diagonal path.
