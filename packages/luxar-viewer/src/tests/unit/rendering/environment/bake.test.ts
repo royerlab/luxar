@@ -77,6 +77,61 @@ describe('packEnvironmentContainer', () => {
 });
 
 describe('bakeEnvironment', () => {
+  it('preserves native WebGPU cube-face readback rows in the baked faces', async () => {
+    const rawFace = new Uint16Array(2 * 2 * 4);
+    rawFace.fill(0x3c00, 0, 8);
+    rawFace.fill(0x4000, 8);
+    const read = vi.fn(async () => rawFace);
+    const renderer = {
+      backend: { isWebGPUBackend: true },
+      coordinateSystem: THREE.WebGPUCoordinateSystem,
+      xr: { enabled: false },
+      getRenderTarget: () => null,
+      getActiveCubeFace: () => 0,
+      getActiveMipmapLevel: () => 0,
+      setRenderTarget: () => {},
+      render: () => {},
+      readRenderTargetPixelsAsync: read,
+    };
+    const target = { texture: new THREE.CubeTexture(), width: 2, height: 2, dispose: () => {} };
+    const environment = new SceneEnvironment({
+      scene: new THREE.Scene(),
+      renderer,
+      createGenerator: () => ({
+        fromScene: () => ({ texture: new THREE.Texture(), dispose: () => {} }),
+        dispose: () => {},
+      }),
+      createCubeTarget: () => target,
+    });
+    environment.attachRuntime({
+      sceneRoot: () => null,
+      pushCaptureCameraParams: () => {},
+      restoreCameraParams: () => {},
+      isSettled: () => true,
+      baseUrl: () => undefined,
+    });
+
+    const result = await bakeEnvironment({
+      environment,
+      renderer: renderer as unknown as THREE.WebGLRenderer,
+      capabilities: {
+        apiSurface: 'webgpu',
+        framebufferYDown: true,
+        readbackYDown: true,
+      } as RendererCapabilities,
+      resolution: 2,
+      sceneContentHash: 'cafe',
+      viewerVersion: '1.2.3',
+    });
+
+    expect(read).toHaveBeenCalledTimes(6);
+    expect(read.mock.calls.map((args) => (args as unknown[])[6])).toEqual([0, 1, 2, 3, 4, 5]);
+    for (const face of result.faces) expect(face).toEqual(rawFace);
+    expect(unpack(result.bytes).samples).toEqual(
+      new Uint16Array(Array.from({ length: 6 }, () => Array.from(rawFace)).flat())
+    );
+  });
+
   it('captures, reads the six faces through the face-index slot, and records the header', async () => {
     const scene = new THREE.Scene();
     const readCalls: Array<{ target: unknown; face: number | undefined }> = [];
@@ -101,7 +156,8 @@ describe('bakeEnvironment', () => {
           face?: number
         ) => {
           readCalls.push({ target, face });
-          buffer.fill(0x4000 + (face ?? 0)); // half 2.0 + face id
+          buffer.fill(0x4000 + (face ?? 0)); // first raw row, half 2.0 + face id
+          buffer.fill(0x4200 + (face ?? 0), 16); // remaining rows distinguish a flip
         }
       ),
     };
@@ -126,6 +182,7 @@ describe('bakeEnvironment', () => {
     const capabilities = {
       apiSurface: 'webgl2',
       framebufferYDown: false,
+      readbackYDown: false,
     } as unknown as RendererCapabilities;
 
     const result = await bakeEnvironment({
@@ -142,6 +199,7 @@ describe('bakeEnvironment', () => {
     expect(readCalls.every((c) => c.target === target)).toBe(true);
     expect(result.faces).toHaveLength(6);
     expect(result.faces[3][0]).toBe(0x4003);
+    expect(result.faces[3][16]).toBe(0x4203);
     expect(result.faces[3].length).toBe(4 * 4 * 4);
     expect(result.header.resolution).toBe(4);
     expect(result.header.probe).toEqual({ spec: '1,2,3', position: [1, 2, 3] });

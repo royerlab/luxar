@@ -48,7 +48,7 @@ room prefilter or one small capture per load, never a wrong steady state.
 `bake.ts` runs one capture and reads the six faces back as half floats through
 `readPixelsCompactAsync` (`faceIndex` threads into the two renderers' differing
 argument slots), packs the `LXENV001` container (magic, u32 header length, JSON header,
-`uint16` half bits in three's `px nx py ny pz nz` order, GL row order) and hands it to
+`uint16` half bits in three's `px nx py ny pz nz` order, capture-target row order) and hands it to
 `__luxarDebug.environment.lastBake` for the Node driver
 (`scripts/bake-env.mjs`) plus a download. `luxar env attach` writes it into the store as
 `environment/faces-<digest>`; `data/loaders/environment/` reads it back. The environment

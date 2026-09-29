@@ -279,11 +279,13 @@ describe('compactWebGPUReadbackRows', () => {
 
 function makeCaps(
   apiSurface: 'webgl2' | 'webgpu',
-  framebufferYDown: boolean
+  framebufferYDown: boolean,
+  readbackYDown = false
 ): RendererCapabilities {
   return {
     apiSurface,
     framebufferYDown,
+    readbackYDown,
     hdr: {
       p3Gamut: false,
       rec2020Gamut: false,
@@ -377,23 +379,22 @@ describe('readPixelsCompactAsync', () => {
     async (isNative) => {
       const target = makeTarget(1, 10);
       const readPixels = vi.fn().mockResolvedValue(makeRowProbeBuffer(3));
-      const renderer = {
-        backend: { isWebGPUBackend: isNative },
-        readRenderTargetPixelsAsync: readPixels,
-      } as unknown as Renderer;
-      const caps = makeCaps('webgpu', true);
+      const renderer = { readRenderTargetPixelsAsync: readPixels } as unknown as Renderer;
+      const caps = makeCaps('webgpu', true, isNative);
       const flipped = new Uint8Array(12);
+      const out = new Uint8Array(12);
       const result = await readPixelsCompactAsync(renderer, caps, {
         target,
         kind: 'rgba8',
         y: 2,
         width: 1,
         height: 3,
+        out,
         flipOut: flipped,
       });
       expect(readPixels.mock.calls[0][2]).toBe(isNative ? 2 : 5);
       expect(extractRowIndices(result.pixels)).toEqual(isNative ? [0, 1, 2] : [2, 1, 0]);
-      if (isNative) expect(result.pixels).not.toBe(flipped);
+      if (isNative) expect(result.pixels).toBe(out);
       else expect(result.pixels).toBe(flipped);
 
       const bottomUp = await readPixelsCompactAsync(renderer, caps, {

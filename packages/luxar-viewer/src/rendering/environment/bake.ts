@@ -8,7 +8,7 @@
  * that make metals read). The container is defined once, in
  * `luxar.environment.container` (Python) and mirrored here: `LXENV001`, a little-endian u32
  * header length, a UTF-8 JSON header, then the six faces as `uint16` half bits in
- * three's `px, nx, py, ny, pz, nz` order, RGBA, GL memory (bottom-up) row order.
+ * three's `px, nx, py, ny, pz, nz` order, RGBA, capture-target texel row order.
  *
  * @module rendering/environment/bake
  */
@@ -60,9 +60,9 @@ export async function bakeEnvironment(req: BakeRequest): Promise<BakeResult> {
       target: capture.target as unknown as THREE.RenderTarget,
       kind: 'rgba16f',
       faceIndex: face,
-      // GL memory order (bottom-up), so the baked texture uploads with `flipY=false`
-      // land every texel where the render target had it (`./baked.ts`).
-      flipY: true,
+      // Preserve the backend's raw rows so `flipY=false` uploads each texel
+      // where the capture target had it (`./baked.ts`).
+      flipY: !req.capabilities.readbackYDown,
     });
     faces.push(pixels);
   }

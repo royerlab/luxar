@@ -15,6 +15,7 @@ function mockCaps(apiSurface: 'webgl2' | 'webgpu' = 'webgl2'): RendererCapabilit
   return {
     apiSurface,
     framebufferYDown: apiSurface === 'webgpu',
+    readbackYDown: false,
     hdr: {
       p3Gamut: false,
       rec2020Gamut: false,

@@ -48,6 +48,7 @@ function mockCaps(
   return {
     apiSurface,
     framebufferYDown: apiSurface === 'webgpu',
+    readbackYDown: false,
     hdr: {
       p3Gamut: false,
       rec2020Gamut: false,

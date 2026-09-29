@@ -97,6 +97,7 @@ describe('createRendererCapabilities', () => {
   it('reports framebufferYDown=false under WebGL2 (FBO row 0 = bottom)', () => {
     const caps = createRendererCapabilities(fakeRenderer());
     expect(caps.framebufferYDown).toBe(false);
+    expect(caps.readbackYDown).toBe(false);
   });
 
   it('passes through an explicit framebufferYDown override (test-only seam)', () => {
@@ -251,6 +252,18 @@ describe('createRendererCapabilities (GL probes)', () => {
 });
 
 describe('createRendererCapabilities (WebGPU limits)', () => {
+  it.each([false, true])('reads native backend=%s for readback Y', (isNative) => {
+    const renderer = {
+      isWebGPURenderer: true,
+      backend: { isWebGPUBackend: isNative },
+    } as unknown as Renderer;
+
+    const caps = createRendererCapabilities(renderer);
+
+    expect(caps.framebufferYDown).toBe(true);
+    expect(caps.readbackYDown).toBe(isNative);
+  });
+
   it('uses the WebGPU texture dimension for render attachments', () => {
     const renderer = {
       isWebGPURenderer: true,

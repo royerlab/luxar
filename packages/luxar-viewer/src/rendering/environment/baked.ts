@@ -8,13 +8,9 @@
  * faces rather than a prefiltered map keeps the prefilter math three's and the file
  * small (a 128 px cube is ~0.8 MB of halves before zstd).
  *
- * Orientation: the faces are read back from the capture target in GL memory order
- * (bottom-up rows — `readPixelsCompactAsync(..., { flipY: true })`) and uploaded here
- * with `flipY = false`, so every texel lands where the render target had it. The
- * header's `coordinate_system` records which backend captured them; three's `CubeCamera`
- * compensates for the backends' differing framebuffer conventions with per-backend
- * face orientations precisely so the RESULTING cube map is the same conventional cube
- * map, which is what lets a map baked on one backend load on the other.
+ * Orientation: the faces retain the capture target's raw texel row order and are
+ * uploaded here with `flipY = false`, so every texel lands where the target had it. The
+ * header's `coordinate_system` records the capturing renderer's API surface.
  *
  * @module rendering/environment/baked
  */

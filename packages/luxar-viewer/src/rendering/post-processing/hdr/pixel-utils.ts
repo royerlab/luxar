@@ -290,14 +290,6 @@ type WebGPUReadback = {
   ): Promise<Uint8Array | Uint16Array | Float32Array>;
 };
 
-/** Readback layout follows the running backend, not the renderer's API surface. */
-function hasTopDownReadback(renderer: Renderer, caps: RendererCapabilities): boolean {
-  return (
-    caps.apiSurface === 'webgpu' &&
-    (renderer as { backend?: { isWebGPUBackend?: boolean } }).backend?.isWebGPUBackend === true
-  );
-}
-
 /**
  * Unified pixel readback. Hides three backend differences from callers:
  *
@@ -310,10 +302,11 @@ function hasTopDownReadback(renderer: Renderer, caps: RendererCapabilities): boo
  * 3. **Readback Y orientation** — native WebGPU returns top-down rows
  *    and takes top-down region coordinates; WebGLRenderer and
  *    WebGPURenderer's WebGL2 fallback use bottom-up rows and coordinates.
- *    The active backend determines which applies (`caps.framebufferYDown`
- *    describes shader sampling, which differs from readback on the fallback).
+ *    `caps.readbackYDown` follows the active backend; `framebufferYDown`
+ *    describes shader sampling, which differs on the fallback. Native
+ *    top-down readback was verified with three r185 on M4 and Dawn/SwiftShader.
  *    Returns top-down rows by default; `flipY: true` returns bottom-up
- *    rows for consumers such as EXR export and environment bake.
+ *    rows for consumers such as EXR export.
  */
 export async function readPixelsCompactAsync<K extends TexelKind>(
   renderer: Renderer,
@@ -329,7 +322,7 @@ export async function readPixelsCompactAsync<K extends TexelKind>(
   const bytesPerTexel = BYTES_PER_TEXEL[opts.kind];
   const Ctor = TEXEL_CTOR[opts.kind];
   const compactLength = width * height * 4;
-  const readbackYDown = hasTopDownReadback(renderer, caps);
+  const readbackYDown = caps.readbackYDown;
 
   const x = xTopDown;
   const y = readbackYDown ? yTopDown : target.height - yTopDown - height;

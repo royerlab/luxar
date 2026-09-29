@@ -516,6 +516,7 @@ describe('SceneManager', () => {
         capabilities: {
           apiSurface: 'webgpu',
           framebufferYDown: true,
+          readbackYDown: true,
           hdr: {
             p3Gamut: false,
             rec2020Gamut: false,
