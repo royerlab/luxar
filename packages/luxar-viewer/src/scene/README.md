@@ -611,18 +611,19 @@ deferred part is activated inside a loader pass (`activatePartitionParts`): a
 view change activates every deferred part its slice needs; a deferred part that
 enters the frustum and the committed slice asks for a targeted resync, which
 activates it; the t+1 slice prefetch activates the next slice's parts ahead of
-it. An activation only attaches the part's placeholders and REGISTERS its
-loaders (`NodeBuildCtx.registerOnly`) — it loads no data and changes nothing
-drawn; one that settles after its dataset was switched away registers nothing
-(its loaders are disposed). The pass that awaited it sweeps the new loaders
-itself, with its own directives (playback budget, pinned rungs: no
-initial-load lookahead), and commits them with the rest of the pass — one
-commit, one render per step. That claim is the pass's abort signal: a part
-activated ahead by the prefetch is simply found registered by its slice's
-pass, and an activation settling with NO live claim (unclaimed, or every pass
-that awaited it was superseded) asks for a resync when the committed view
-shows the part. A rejected activation records a retryable failure on the
-part's path and is not re-requested by itself; Retry
+it, and shadow-warms their loaders once they are registered
+(`SlicePrefetcher.prefetchTargets`). An activation only attaches the part's
+placeholders and REGISTERS its loaders (`NodeBuildCtx.registerOnly`) — it
+loads no data and changes nothing drawn; one that settles after its dataset
+was switched away registers nothing (its loaders are disposed). The pass that
+awaited it sweeps the new loaders itself, with its own directives (playback
+budget, pinned rungs: no initial-load lookahead), and commits them with the
+rest of the pass — one commit, one render per step. That claim is the pass's
+abort signal: a part activated ahead by the prefetch is simply found
+registered by its slice's pass, and an activation settling with NO live claim
+(unclaimed, or every pass that awaited it was superseded) asks for a resync
+when the committed view shows the part. A rejected activation records a
+retryable failure on the part's path and is not re-requested by itself; Retry
 (`retryLazyChildByNodePath`) re-arms it.
 
 `hasVisiblePendingPartitionResync()` publishes the held set to the wide

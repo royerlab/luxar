@@ -662,11 +662,29 @@ export class SceneLoader {
     delete incoming.frameBudgetMs;
     delete incoming.ladderDepth;
     const predicted = { ...this.viewState, ...incoming };
-    // Deferred partition parts the next slice needs (B4) are activated ahead of
-    // it, so its foreground pass finds them registered (a shadow can only warm
-    // a registered node). Fire-and-forget: it never rejects.
-    void this.lodGroupRegistry?.activatePartitionParts(predicted, undefined, false);
     this._slicePrefetcher.prefetch(predicted, budgetMs, ladderDepth);
+    this.activateAndWarmNextSlice(predicted, budgetMs, ladderDepth);
+  }
+
+  /**
+   * Deferred partition parts the predicted slice needs (B4) are activated ahead
+   * of it, so its foreground pass finds them registered — and, once they are, a
+   * targeted shadow pass warms them: a shadow can only warm a REGISTERED node,
+   * so the batch `prefetchSlice` just started cannot reach them. Fire-and-forget:
+   * the activation never rejects.
+   */
+  private activateAndWarmNextSlice(
+    predicted: ViewState,
+    budgetMs: number,
+    ladderDepth: number | 'auto' | undefined
+  ): void {
+    const registry = this.lodGroupRegistry;
+    if (!registry) return;
+    const graph = this._sceneGraph;
+    void registry.activatePartitionParts(predicted, undefined, false).then((parts) => {
+      if (parts.length === 0 || this._disposed || this._sceneGraph !== graph) return;
+      this._slicePrefetcher?.prefetchTargets(predicted, budgetMs, ladderDepth, new Set(parts));
+    });
   }
 
   /**

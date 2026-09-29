@@ -1157,7 +1157,7 @@ describe('SceneLoader', () => {
   });
 
   describe('prefetchSlice — partition parts entering the next slice (B4)', () => {
-    it.fails('warms a part activated for the predicted slice once its loader is registered', async () => {
+    it('warms a part activated for the predicted slice once its loader is registered', async () => {
       const DIMS = [
         { name: 'x', unit: 'um', scale: 1 },
         { name: 'y', unit: 'um', scale: 1 },
