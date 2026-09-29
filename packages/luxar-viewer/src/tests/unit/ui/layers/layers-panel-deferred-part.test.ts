@@ -334,7 +334,7 @@ describe('LayersPanel — a partition part activated after the panel initialised
     }
   );
 
-  it.fails('a part activated after a switch INTO a sorted mode asks for no extra pass', async () => {
+  it('a part activated after a switch INTO a sorted mode asks for no extra pass', async () => {
     // Its first commit registers it with the sorter under the LIVE mode; a
     // switch hook on the empty placeholder would only queue a full re-sweep
     // for every part a playback step activates.
@@ -357,7 +357,7 @@ describe('LayersPanel — a partition part activated after the panel initialised
     }
   });
 
-  it.fails('a nested layer hidden before its part was activated stays hidden', async () => {
+  it('a nested layer hidden before its part was activated stays hidden', async () => {
     const graph = sceneGraph();
     const wrapper = graph.children![0];
     const leaf = { ...part(0), path: '/nuclei/part_0/splats' };
