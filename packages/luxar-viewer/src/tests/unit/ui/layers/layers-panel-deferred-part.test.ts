@@ -1,0 +1,247 @@
+// @vitest-environment jsdom
+/**
+ * A leaf that MATERIALISES after the Layers panel initialised must carry the
+ * owning layer's CURRENT state before it is first drawn.
+ *
+ * The panel pushes its state into the scene at exactly two moments: once per
+ * layer at `initFromScene`, and on every edit — and both skip a leaf that has
+ * no scene object yet. Gated partition loading (B4) builds an out-of-slice /
+ * out-of-frustum part only when the LOD registry first activates it, long
+ * after the panel initialised, and nothing re-applied the layer state then: the
+ * part rendered its AUTHORED appearance until the next slider edit re-pushed
+ * everything. On the hosted h2afva timelapse a time step brought in parts with
+ * the authored absorption/opacity (edits made before the step were lost on
+ * them) and a colormap window ~14x narrower than the panel's.
+ *
+ * The scene below is that store's shape: a `layer=true, kind=partition` wrapper
+ * authoring the display window (intensity/offset), absorption, opacity and
+ * gamma, over colormapped gsplat parts one timepoint each. The view sits at
+ * t = 1, so part_1 loads eagerly and part_0 is deferred behind the registry's
+ * activation thunk — the real loader path, real node factory, real panel.
+ */
+
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as THREE from 'three';
+
+const createGSplatsLoaderMock = vi.fn();
+vi.mock(import('../../../../data/scene-loader/loaders/loader-factory'), async (importOriginal) => ({
+  ...(await importOriginal()),
+  createGSplatsLoader: (...args: unknown[]) => createGSplatsLoaderMock(...args),
+  createProgressiveGSplatsLoader: (...args: unknown[]) => createGSplatsLoaderMock(...args),
+}));
+
+import { LayersPanel } from '../../../../ui/layers/layers-panel';
+import { NodeFactory } from '../../../../rendering/node-factory';
+import { __resetMaterialManagerForTests } from '../../../../rendering/material-manager';
+import { computeScalarRangeUniforms } from '../../../../rendering/materials/_shared/scalar-range';
+import { loadSceneNodes } from '../../../../data/scene-loader/nodes/load-scene-nodes';
+import { applyEffectiveAttrs } from '../../../../data/scene-loader/view-state/effective-attrs';
+import { findObjectByName } from '../../../../utils/scene-graph-index';
+import { makeTestNodeBuildCtx } from '../../../helpers/make-test-node-build-ctx';
+import type { NodeBuildCtx } from '../../../../data/scene-loader/nodes/build-ctx';
+import type { SceneNode } from '../../../../data/data-loader-types';
+import type { AnimationController } from '../../../../scene/animation/animation-controller';
+import type { PartitionGroupChild } from '../../../../scene/lod-group-registry';
+
+const AMPLITUDE_RANGE: [number, number] = [5.409804826328468e-10, 0.06948927677778476];
+
+function part(index: number): SceneNode {
+  return {
+    path: `/nuclei/part_${index}`,
+    type: 'gsplats',
+    attrs: {
+      type: 'gsplats',
+      child_index: index,
+      position_bounds: { min: [0, 0, 0, index], max: [1, 1, 1, index] },
+      colormap: 'plasma',
+      amplitude_data_range: AMPLITUDE_RANGE,
+      n_splats: 1000 + index,
+      intensity: 1.0,
+      offset: 0.0,
+      absorption: 1.0,
+      opacity: 1.0,
+      gamma: 1.0,
+    } as SceneNode['attrs'],
+    hasSpatialIndex: false,
+    children: [],
+  };
+}
+
+function sceneGraph(): SceneNode {
+  const wrapper: SceneNode = {
+    path: '/nuclei',
+    type: 'group',
+    attrs: {
+      type: 'group',
+      kind: 'partition',
+      layer: true,
+      display_type: 'gsplats',
+      intensity: 41.666666666666664,
+      offset: -0.041666666666666664,
+      absorption: 1.09,
+      opacity: 0.55,
+      gamma: 2.2,
+      blending_mode: 'volumetric',
+    } as SceneNode['attrs'],
+    hasSpatialIndex: false,
+    children: [part(0), part(1)],
+  };
+  return {
+    path: '/',
+    type: 'scene',
+    attrs: {} as SceneNode['attrs'],
+    hasSpatialIndex: false,
+    children: [wrapper],
+  };
+}
+
+function makeAnimationController(): AnimationController {
+  return {
+    startAnimation: vi.fn(),
+    addPerFrameCallback: vi.fn(),
+    removePerFrameCallback: vi.fn(() => true),
+    hasPerFrameCallback: vi.fn(() => false),
+  } as unknown as AnimationController;
+}
+
+function stubLoc() {
+  return { resolve: () => ({ resolve: () => ({}) }) } as never;
+}
+
+interface Harness {
+  graph: SceneNode;
+  root: THREE.Group;
+  panel: LayersPanel;
+  deferred: PartitionGroupChild;
+}
+
+/**
+ * Load the partition through the production loader path, then initialise the
+ * panel on the result — the order the app uses (`loadDataset` hydrates the
+ * panel after `loadSceneData` resolves).
+ */
+async function loadAndInitPanel(): Promise<Harness> {
+  const graph = sceneGraph();
+  const root = new THREE.Group();
+  root.name = 'LuxarScene';
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const panel = new LayersPanel(container, makeAnimationController());
+  const registerPartition = vi.fn();
+  const ctx: NodeBuildCtx = makeTestNodeBuildCtx({
+    nodeFactory: new NodeFactory(),
+    applyEffectiveAttrs: (node: SceneNode) => applyEffectiveAttrs(graph, node),
+    lodGroupRegistry: { registerPartition } as unknown as NodeBuildCtx['lodGroupRegistry'],
+    viewState: {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 1],
+      tolerance: [0, 0, 0, 0],
+      dimensions: [
+        { name: 'X', unit: 'um', scale: 1 },
+        { name: 'Y', unit: 'um', scale: 1 },
+        { name: 'Z', unit: 'um', scale: 1 },
+        { name: 'Time', unit: 'frame', scale: 1, discrete: true, step: 1 },
+      ],
+    } as NodeBuildCtx['viewState'],
+    // What `SceneLoader.makeNodeBuildCtx` hands every leaf loader once
+    // `loadDataset` has connected the panel.
+    onLeafMaterialized: (path: string, object: THREE.Object3D) =>
+      panel.applyLayerStateToNewLeaf(graph, path, object),
+  } as Partial<NodeBuildCtx>);
+
+  await loadSceneNodes(graph.children![0], root, stubLoc(), ctx);
+  panel.initFromScene(root, graph);
+
+  const children = registerPartition.mock.calls[0][0].children as PartitionGroupChild[];
+  const deferred = children[0];
+  return { graph, root, panel, deferred };
+}
+
+type Uniforms = Record<string, { value: number }>;
+
+function uniformsOf(root: THREE.Group, path: string): Uniforms {
+  const mesh = findObjectByName(root, path) as THREE.Mesh | undefined;
+  expect(mesh, `${path} has a scene object`).toBeDefined();
+  return (mesh!.material as THREE.ShaderMaterial).uniforms as unknown as Uniforms;
+}
+
+const APPEARANCE = [
+  'uAbsorption',
+  'uOpacity',
+  'uInvGamma',
+  'uIntensity',
+  'uOffset',
+  'uScalarMin',
+  'uScalarScale',
+] as const;
+
+function appearance(u: Uniforms): Record<string, number> {
+  return Object.fromEntries(APPEARANCE.map((k) => [k, u[k]?.value]));
+}
+
+describe('LayersPanel — a partition part activated after the panel initialised', () => {
+  beforeEach(() => {
+    __resetMaterialManagerForTests();
+    createGSplatsLoaderMock.mockReset();
+    createGSplatsLoaderMock.mockImplementation(() => ({
+      dispose: vi.fn(),
+      loadGSplats: vi.fn(async () => ({ splatCount: 0 })),
+    }));
+  });
+
+  it('the deferred part is not built until the registry activates it', async () => {
+    const h = await loadAndInitPanel();
+    expect(h.deferred.path).toBe('/nuclei/part_0');
+    expect(h.deferred.activate).toBeTypeOf('function');
+    expect(findObjectByName(h.root, '/nuclei/part_0')).toBeUndefined();
+    expect(findObjectByName(h.root, '/nuclei/part_1')).toBeDefined();
+  });
+
+  it('carries panel edits made BEFORE its activation', async () => {
+    const h = await loadAndInitPanel();
+    h.panel.setLayer('/nuclei', { absorption: 3, opacity: 0.3 });
+
+    await h.deferred.activate!();
+
+    const fresh = uniformsOf(h.root, '/nuclei/part_0');
+    const eager = uniformsOf(h.root, '/nuclei/part_1');
+    expect(fresh.uAbsorption.value).toBeCloseTo(3, 6);
+    expect(fresh.uOpacity.value).toBeCloseTo(eager.uOpacity.value, 6);
+    // The window is the one the panel pushes for the layer.
+    const layer = h.panel.layerState.getLayer('/nuclei')!;
+    const expected = computeScalarRangeUniforms(layer.displayMin, layer.displayMax);
+    expect(fresh.uScalarMin.value).toBeCloseTo(expected.scalarMin, 9);
+    expect(fresh.uScalarScale.value / expected.scalarScale).toBeCloseTo(1, 6);
+    // …and in every respect it matches the part that was there all along.
+    expect(appearance(fresh)).toEqual(appearance(eager));
+  });
+
+  it('with NO edits, its window equals the panel initial window', async () => {
+    const h = await loadAndInitPanel();
+
+    await h.deferred.activate!();
+
+    const fresh = uniformsOf(h.root, '/nuclei/part_0');
+    const eager = uniformsOf(h.root, '/nuclei/part_1');
+    const layer = h.panel.layerState.getLayer('/nuclei')!;
+    const expected = computeScalarRangeUniforms(layer.displayMin, layer.displayMax);
+    expect(fresh.uScalarMin.value).toBeCloseTo(expected.scalarMin, 9);
+    expect(fresh.uScalarScale.value / expected.scalarScale).toBeCloseTo(1, 6);
+    expect(appearance(fresh)).toEqual(appearance(eager));
+  });
+
+  it('a leaf of a DIFFERENT scene graph is left alone (stale panel / dataset switch)', async () => {
+    const h = await loadAndInitPanel();
+    const other = sceneGraph();
+    const mesh = new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      new THREE.ShaderMaterial({ uniforms: { uAbsorption: { value: 1 } } })
+    );
+    mesh.name = '/nuclei/part_0';
+    h.panel.setLayer('/nuclei', { absorption: 3 });
+
+    h.panel.applyLayerStateToNewLeaf(other, '/nuclei/part_0', mesh);
+
+    expect((mesh.material as THREE.ShaderMaterial).uniforms.uAbsorption.value).toBe(1);
+  });
+});

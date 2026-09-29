@@ -1335,7 +1335,7 @@
   },
   "src/ui/layers/layer-apply.ts": {
     "complexity": {
-      "count": 4
+      "count": 2
     }
   },
   "src/ui/layers/layer-controls.ts": {

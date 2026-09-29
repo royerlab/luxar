@@ -122,6 +122,7 @@ export async function loadGSplatsNodeCheap(
     loader
   );
   parentThree.add(placeholder);
+  ctx.onLeafMaterialized?.(node.path, placeholder);
 
   return { placeholder, loader };
 }

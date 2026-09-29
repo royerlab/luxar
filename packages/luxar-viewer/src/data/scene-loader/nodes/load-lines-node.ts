@@ -110,6 +110,7 @@ export async function loadLinesNodeCheap(
     loader
   );
   parentThree.add(placeholder);
+  ctx.onLeafMaterialized?.(node.path, placeholder);
 
   return { placeholder, loader };
 }

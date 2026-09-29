@@ -13,6 +13,7 @@
  * to mid-flight viewState mutation by a concurrent updateView.
  */
 
+import type * as THREE from 'three';
 import type { LoaderRegistry } from '../loaders/loader-registry';
 import type { LoaderFactoryDeps } from '../loaders/loader-factory';
 import type { NodeFactory } from '../../../rendering/node-factory';
@@ -44,6 +45,16 @@ export type LineWorkingSetNode = Pick<SceneNode, 'path' | 'type' | 'attrs'>;
 export interface LineWorkingSetGate {
   acquire(node: LineWorkingSetNode): Promise<() => void>;
 }
+
+/**
+ * Told about every data leaf a scene loader attaches to the scene, with the
+ * graph it belongs to. See {@link NodeBuildCtx.onLeafMaterialized}.
+ */
+export type LeafMaterializedListener = (
+  sceneGraph: SceneNode,
+  path: string,
+  object: THREE.Object3D
+) => void;
 
 export interface NodeBuildCtx {
   /** Shared loader bookkeeping (registration + failure recording). */
@@ -106,6 +117,15 @@ export interface NodeBuildCtx {
   factoryDeps: LoaderFactoryDeps;
   /** Compose effective rendering attrs along the scene-graph ancestry. */
   applyEffectiveAttrs(node: SceneNode): SceneNode['attrs'];
+  /**
+   * Called by each leaf loader right after it attaches its placeholder — before
+   * any data is loaded into it, so before it can be drawn. The factory styles
+   * that placeholder from AUTHORED attrs; a leaf built after the Layers panel
+   * initialised (a registry-activated partition part, a lazy level) needs the
+   * panel's LIVE layer state instead, and this is where the app hands it over.
+   * Optional: absent ⇒ nobody is listening.
+   */
+  onLeafMaterialized?(path: string, object: THREE.Object3D): void;
   /** Derive the per-node view state (same single source of truth used by retry/update). */
   deriveNodeViewState(
     path: string,

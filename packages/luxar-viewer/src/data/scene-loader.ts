@@ -226,7 +226,11 @@ import { buildUpdateCtxs } from './scene-loader/update-view/build-update-ctxs';
 import { queueNext } from './scene-loader/update-view/queue-next';
 import { resetRefinementFailureTrackers } from './scene-loader/progressive/refinement-wrapper';
 import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-loader/nodes/connect-loader-to-monitor';
-import type { LineWorkingSetGate, NodeBuildCtx } from './scene-loader/nodes/build-ctx';
+import type {
+  LeafMaterializedListener,
+  LineWorkingSetGate,
+  NodeBuildCtx,
+} from './scene-loader/nodes/build-ctx';
 import { createLineWorkingSetGate } from './scene-loader/nodes/load-children-concurrently';
 import {
   noteRefinementAborted,
@@ -530,6 +534,8 @@ export class SceneLoader {
   // against a dead dataset.
   private _disposed = false;
   private _sceneGraph: SceneNode | null = null;
+  /** See {@link setLeafMaterializedListener}. */
+  private _leafMaterializedListener: LeafMaterializedListener | null = null;
 
   /**
    * View-state queue: owns `_pendingViewState` (set/take/has + drain)
@@ -674,6 +680,17 @@ export class SceneLoader {
   /** Public accessor for the scene graph built during loadScene(). */
   get sceneGraph(): SceneNode | null {
     return this._sceneGraph;
+  }
+
+  /**
+   * Connect the owner of per-leaf LIVE appearance state (the Layers panel) to
+   * every data leaf this loader attaches from now on — partition parts the LOD
+   * registry activates, lazily built levels, anything built after load. Each
+   * leaf is reported as its placeholder attaches, before any data reaches it,
+   * together with this loader's scene graph. `null` disconnects.
+   */
+  setLeafMaterializedListener(listener: LeafMaterializedListener | null): void {
+    this._leafMaterializedListener = listener;
   }
 
   /** Latched archive fault for this loader, or null while updates remain usable. */
@@ -2267,6 +2284,9 @@ export class SceneLoader {
         this._sceneGraph !== null &&
         Object.keys(computeWorldNdTransform(this._sceneGraph, path)).length > 0,
       factoryDeps: this.factoryDeps(),
+      onLeafMaterialized: (path, object) => {
+        if (this._sceneGraph) this._leafMaterializedListener?.(this._sceneGraph, path, object);
+      },
       isDatasetLive: () => this._datasetAbortController === ctrl && ctrl?.signal.aborted !== true,
       releaseLazyGSplats: (path) => {
         // Return the level's GPU buffer to the evictable pool and drop
@@ -2816,6 +2836,7 @@ export class SceneLoader {
     // start nulling the fields it reads.
     this._disposed = true;
     this.archiveFaultListeners.clear();
+    this._leafMaterializedListener = null;
     setSceneLineLoad(0);
 
     // Release the serialization lock explicitly — defence in depth. Only the

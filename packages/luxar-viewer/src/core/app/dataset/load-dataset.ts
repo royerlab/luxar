@@ -101,10 +101,18 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
   ports.initScaleBar();
 
   const sceneLoader = getSceneLoader('default');
-  if (sceneLoader?.sceneGraph && ports.layersPanel) {
+  const layersPanel = ports.layersPanel;
+  if (sceneLoader?.sceneGraph && layersPanel) {
     const root = ports.sceneManager.scene.children.find((c) => c.name === 'LuxarScene');
     if (root) {
-      ports.layersPanel.initFromScene(root as THREE.Group, sceneLoader.sceneGraph);
+      layersPanel.initFromScene(root as THREE.Group, sceneLoader.sceneGraph);
+      // Leaves built from now on (partition parts the LOD registry activates,
+      // lazily built levels) must start from the panel's LIVE layer state, not
+      // their authored attrs — before they are first drawn. After initFromScene,
+      // which styled everything that already exists.
+      sceneLoader.setLeafMaterializedListener((graph, path, object) =>
+        layersPanel.applyLayerStateToNewLeaf(graph, path, object)
+      );
       // Hand the layers panel an equivalent failed-loads provider over the same
       // live failure set the data monitor reads (each getFailedLoadsProvider()
       // call returns a new object, but all close over the loader's one
@@ -112,10 +120,10 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
       // badge in the always-open panel instead of only in the console /
       // collapsed monitor. After initFromScene: its clear() resets any prior
       // provider first.
-      ports.layersPanel.setFailedLoadsProvider(sceneLoader.getFailedLoadsProvider());
+      layersPanel.setFailedLoadsProvider(sceneLoader.getFailedLoadsProvider());
       // Per-layer "Frame camera" context-menu action (same late-binding
       // pattern as the provider above).
-      ports.layersPanel.setCameraFramer((obj) => ports.sceneManager.fitCameraToObject(obj));
+      layersPanel.setCameraFramer((obj) => ports.sceneManager.fitCameraToObject(obj));
     }
   }
   // Notify on-screen affordances (the control rail's Layers button gates its

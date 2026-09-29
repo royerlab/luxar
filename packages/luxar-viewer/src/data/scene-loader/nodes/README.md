@@ -69,7 +69,8 @@ construction, slice updates, and retry-after-failure.
   `load-lines-node.ts`, and `load-gsplats-node.ts` follow the same
   shape: `createXLoader` helper →
   `nodeFactory.createEmptyXNode` placeholder → `parentThree.add` →
-  `deriveNodeViewState` → `loader.loadX` → process+commit through
+  `ctx.onLeafMaterialized` (the Layers panel restyles a leaf built after it
+  initialised, before it is drawn) → `deriveNodeViewState` → `loader.loadX` → process+commit through
   the same helpers the update/retry paths use →
   `registry.registerXLoader` in a `finally` (after the load settles,
   success or failure) → `recordFailure` +
