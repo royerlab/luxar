@@ -1616,6 +1616,63 @@ describe('SceneLoader', () => {
 
       expect(signals[0]?.aborted).toBe(true);
     });
+
+    /**
+     * One view pass that never finishes on its own (a chunk stuck on a cold
+     * edge), then a slice-only supersede `heldMs` after it started.
+     */
+    async function supersedeStuckPassAfter(heldMs: number): Promise<AbortSignal | undefined> {
+      let now = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => now);
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      now = 10_000;
+      const signals: Array<AbortSignal | undefined> = [];
+      const mockLoader = {
+        loadGSplats: vi.fn(),
+        updateView: vi.fn((_vs: unknown, _session: unknown, signal?: AbortSignal) => {
+          signals.push(signal);
+          return new Promise<null>((_resolve, reject) => {
+            signal?.addEventListener('abort', () =>
+              reject(new DOMException('Superseded', 'AbortError'))
+            );
+          });
+        }),
+        dispose: vi.fn(),
+      };
+      (sceneLoader as unknown as Record<string, Map<string, unknown>>).gsplatLoaders.set(
+        '/node',
+        mockLoader
+      );
+
+      void sceneLoader.updateView({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 1],
+        tolerance: [0, 0, 0, 0],
+      });
+      await vi.waitFor(() => expect(signals).toHaveLength(1));
+      now += heldMs;
+      void sceneLoader.updateView({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 2],
+        tolerance: [0, 0, 0, 0],
+      });
+      await Promise.resolve();
+      return signals[0];
+    }
+
+    it.fails('a pass stuck past DRAG_COMMIT_MAX_HOLD_MS is aborted by a newer view', async () => {
+      // Hosted chunks can take tens of seconds on a cold edge. Holding such a
+      // pass for its commit queues every newer view behind that one download
+      // (99 declined aborts over 42 s in an instrumented run): the scrub freezes.
+      const stuck = await supersedeStuckPassAfter(5_000);
+      expect(stuck?.aborted).toBe(true);
+    });
+
+    it('a pass younger than the hold cap and owed a commit is still let through', async () => {
+      // 400 ms: past DRAG_COMMIT_INTERVAL_MS (owed a commit), inside the cap.
+      const owed = await supersedeStuckPassAfter(400);
+      expect(owed?.aborted).toBe(false);
+    });
   });
 
   describe('updateView — superseded loads abort (per-update AbortSignal)', () => {
