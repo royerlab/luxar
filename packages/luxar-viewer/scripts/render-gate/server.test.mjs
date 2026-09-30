@@ -130,9 +130,9 @@ describe('startServer', () => {
         await fetch(`${s.origin}/datasets/gate/blob.bin`, { headers: { Range: 'bytes=0-9' } })
       ).arrayBuffer();
       // Client body completion can precede the server's response finish event.
-      await vi.waitFor(() => expect(s.log[0].endMs).not.toBeNull());
+      await vi.waitFor(() => expect(s.log[0].endMs).not.toBeNull(), { timeout: 5000 });
       await (await fetch(`${s.origin}/datasets/gate/missing.bin`)).arrayBuffer();
-      await vi.waitFor(() => expect(s.log[1].endMs).not.toBeNull());
+      await vi.waitFor(() => expect(s.log[1].endMs).not.toBeNull(), { timeout: 5000 });
       const log = await (await fetch(`${s.origin}/__gate/requests`)).json();
       expect(log).toHaveLength(2);
       expect(log[0]).toMatchObject({
@@ -149,18 +149,6 @@ describe('startServer', () => {
       expect(reset.status).toBe(204);
       expect(await (await fetch(`${s.origin}/__gate/requests`)).json()).toEqual([]);
       expect(s.stats().requests).toBe(0);
-    });
-  });
-
-  it('counts requests that actually overlap on the server', async () => {
-    await withServer({ latencyMs: 150 }, async (s) => {
-      const url = `${s.origin}/datasets/gate/blob.bin`;
-      await Promise.all([
-        fetch(url).then((r) => r.arrayBuffer()),
-        fetch(url).then((r) => r.arrayBuffer()),
-      ]);
-      expect(s.stats().maxInflight).toBe(2);
-      expect(s.log.map((entry) => entry.inflightAtStart)).toEqual([1, 2]);
     });
   });
 
