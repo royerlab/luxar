@@ -225,6 +225,10 @@ Every ordering uses the same staged-apply path; orderings larger than one 1M-ind
 
 **Bounded per node, not globally**: several large nodes resolving simultaneously each add one slice's cost to a frame (simultaneous 10M-scale resolves are already serialized by the per-node single-in-flight sort rule).
 
+### Held Append Draws
+
+A gsplat append commit — or a pool GROW that extends the drawn population, seeded with the previous geometry's drawn permutation — HOLDS its draw at the previous population (see `holdSortedIndexDrawForAppend` / `holdSortedIndexDrawFromSeed` in `element-storage.ts`): the suffix texels are uploaded but `instanceCount` stays at the drawn count until an ordering of the WHOLE grown population is installed — the slot flip of the worker's ordering, or the synchronous first sort's live write. So every frame is an exact back-to-front draw of some population instead of storage order for the 75-225 ms a large sort takes. The coordinator owns the other exit, `releaseHeldDraw` (a repaired full permutation, all elements drawn), on every path where that ordering will not arrive: an order-independent / depth-sort-off / empty commit, a missing API, a failed `registerNode`, a commit that cannot reach the worker, a `scheduleSort` that cannot dispatch, a current-generation sort that stages nothing (null result, rejected write), a failed sort RPC, a switch to a commutative mode, and node release. A STALE result does not release: the newer commit's sort is queued behind it. A release that ends a hold marks the drawn state changed and calls `requestRender`, since most release paths run in a promise callback after the commit's own render request was consumed; under render-on-change the held draw would otherwise stay on screen.
+
 ### Per-Frame Camera Re-Sort Scheduler (Phase 3)
 
 `evaluateDepthSortPerFrame()` runs as the `'depth-sort-scheduler'` per-frame callback (registered beside `'lod-group-selector'`). For each order-dependent node with a completed dispatch on record, compares the live model-view z-row against the pose the last sort was dispatched from and dispatches a re-sort when either:
@@ -238,7 +242,6 @@ Every ordering uses the same staged-apply path; orderings larger than one 1M-ind
 
 **Skips**:
 
-- Pending view updates (`isLoadInProgress()` — the commit will sort anyway)
 - In-flight sorts (the resolve is at most a frame away). In-flight chunked ordering applies do NOT skip — a fresher sort streams into the inactive buffer concurrently
 - Invisible meshes (`isEffectivelyVisible` checks all ancestors — an LOD level can be a hidden GROUP)
 - Demoted meshes (`!hasCommittedData(mesh)`)
@@ -255,7 +258,7 @@ Every ordering uses the same staged-apply path; orderings larger than one 1M-ind
    - Derive `modelView = inverse(camera.matrixWorld) × mesh.matrixWorld`
    - **Collect cross-mesh order slot** (see render-order.ts below)
    - **Within-mesh re-sort trigger**:
-     - Skip while a load is in progress or when the mesh is demoted (`!hasCommittedData(mesh)`)
+     - Skip when the mesh is demoted (`!hasCommittedData(mesh)`). NOT skipped while the loader is busy: `isLoadInProgress()` stays true through the whole progressive-refinement drain, and gating on it left an orbit answered only by rung commits (measured up to 176° of sort-axis lag on the hosted h2afva timelapse). A re-sort racing a commit is dropped by the generation check, and the commit's own sort queues behind it via `resortQueued`. `isLoadInProgress()` now gates only the starved-worker init retry
      - Skip if a sort is in flight; an apply-pending ordering does not block a fresher dispatch because it streams into the inactive buffer
      - If `!lastSortAxis && registered`: first commit raced a null camera; recover with one dispatch now
      - Compare live axis/offset against `lastSortAxis` / `lastSortOffset`:

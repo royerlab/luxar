@@ -24,6 +24,9 @@ import {
   pumpSortedIndexOrderingApply,
   getActiveSortedIndexAttribute,
   hasPendingSortedIndexOrderingApply,
+  holdSortedIndexDrawForAppend,
+  sortedIndexDrawHoldTarget,
+  writeSortedIndexOrderingLive,
 } from '../../../rendering/element-storage';
 
 describe('GPUBufferPool', () => {
@@ -488,6 +491,23 @@ describe('GPUBufferPool', () => {
   });
 
   describe('GSplats Geometry', () => {
+    it('releases a held draw before returning geometry to the pool', () => {
+      const geometry = pool.acquireGSplatsGeometry('first', 6);
+      expect(writeSortedIndexOrderingLive(geometry, new Uint32Array([3, 2, 1, 0]), 4)).toBe(4);
+      geometry.instanceCount = 4;
+      geometry.instanceCount = holdSortedIndexDrawForAppend(geometry, 4, 6);
+      expect(sortedIndexDrawHoldTarget(geometry)).toBe(6);
+
+      pool.releaseGSplatsGeometry('first');
+
+      expect(sortedIndexDrawHoldTarget(geometry)).toBeUndefined();
+      expect(geometry.instanceCount).toBe(6);
+      expect(
+        Array.from((getActiveSortedIndexAttribute(geometry)!.array as Uint32Array).slice(0, 6))
+      ).toEqual([3, 2, 1, 0, 4, 5]);
+      expect(pool.acquireGSplatsGeometry('second', 6)).toBe(geometry);
+    });
+
     it('should create InstancedBufferGeometry for gsplats', () => {
       const geom = pool.acquireGSplatsGeometry('splat1', 300);
       expect(geom).toBeInstanceOf(THREE.InstancedBufferGeometry);
