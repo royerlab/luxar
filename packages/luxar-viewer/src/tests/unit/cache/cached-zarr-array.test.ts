@@ -336,6 +336,32 @@ describe('cached-zarr-array', () => {
       expect(cache.has(DecompressedChunkCache.makeKey('/points/positions', [0]))).toBe(false);
     });
 
+    it('replaces a fully abandoned decode without caching its late result', async () => {
+      let finishOld!: (chunk: MockChunk) => void;
+      const fresh = { data: new Float32Array([2]), shape: [1], stride: [1] };
+      const old = { data: new Float32Array([1]), shape: [1], stride: [1] };
+      const decode = vi
+        .fn()
+        .mockImplementationOnce(() => new Promise<MockChunk>((resolve) => (finishOld = resolve)))
+        .mockResolvedValue(fresh);
+      const array = createMockZarrArray(decode);
+      const cancelled = new AbortController();
+      const wrapped = wrapWithCache(array, cache, '/points/positions');
+
+      const abandoned = wrapped.getChunk([0], { signal: cancelled.signal });
+      cancelled.abort(new DOMException('Superseded', 'AbortError'));
+      await expect(abandoned).rejects.toMatchObject({ name: 'AbortError' });
+
+      const replacement = await wrapped.getChunk([0]);
+      expect(decode).toHaveBeenCalledTimes(2);
+      expect(replacement.data).toEqual(fresh.data);
+
+      finishOld(old);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect((await wrapped.getChunk([0])).data).toEqual(fresh.data);
+      expect(decode).toHaveBeenCalledTimes(2);
+    });
+
     it('two concurrent same-key getChunk calls invoke underlying decode once', async () => {
       let resolveDecode: (chunk: MockChunk) => void = () => {};
       const decodeFn = vi.fn(

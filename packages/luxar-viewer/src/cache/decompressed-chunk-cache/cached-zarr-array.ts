@@ -144,7 +144,7 @@ export function wrapWithCache<D extends zarr.DataType>(
           // warm-cache hit and coalesced-pending paths below, which
           // short-circuit before zarrita's between-chunk throwIfAborted would
           // run. `getSignal` reads the loader's transient per-update field, so
-          // it is per-caller — it never aborts the shared `pendingChunks`
+          // it is per-caller — it never aborts the shared decode
           // promise that a different, still-live caller may be awaiting.
           const activeSignal = getSignal?.() ?? undefined;
           activeSignal?.throwIfAborted();

@@ -23,9 +23,9 @@ splices it onto a real zarr array without touching zarrita's source.
    (~1μs, no Blosc decode).
 3. On miss, await the original `getChunk()`, clone the result's
    `ArrayBufferView`, store it in the cache, and return the original.
-4. **Same-chunk decode coalescing** — a per-wrapper `Map<key, Promise>`
-   ensures concurrent `getChunk()` calls for the same key share one
-   underlying decompression instead of running Blosc twice.
+4. **Same-chunk decode coalescing** — an in-flight map on the shared L0 cache
+   lets separate wrappers for the same array key share one decode. Each caller
+   waits on its own abort signal; the source aborts when the last waiter leaves.
 5. **Residency reporting** — when an optional `getProbe` accessor is
    supplied, every `getChunk()` calls `getProbe()?.record(hit)` against
    the currently-active `ResidencyProbe` (see `../residency-probe`). L0
