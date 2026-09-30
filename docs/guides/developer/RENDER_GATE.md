@@ -153,11 +153,17 @@ between rounds. Each arm records:
   `--disable-gpu-vsync --disable-frame-rate-limit`. Motion matters: LOD
   selection, depth-sort scheduling, the density guard and dynamic clipping only
   work while the view changes, so a static camera measures almost none of the
-  frame loop. The four figures are:
-  - `frameMs`: wall time per presented frame;
-  - `frameP95Ms`: p95 frame interval;
+  frame loop. Every orbit frame ends with the same GPU sync as `gpuMs`, and the
+  frame is timed after it. The four figures are:
+  - `frameMs`: wall time per frame, CPU work plus GPU work. The sync
+    serializes the two (no CPU/GPU overlap), so this is an honest upper bound
+    on a frame's cost rather than a throughput figure;
+  - `frameP95Ms`: p95 of the same per-frame times;
   - `cpuMs`: script time per frame, from CDP `Performance.getMetrics`
-    `ScriptDuration`;
+    `ScriptDuration`. CPU cost only: `ScriptDuration` does not count the time
+    spent blocked in the sync (measured on ANGLE/Vulkan with
+    `perf-splats-5m-volumetric`: 2.3 ms of script in a 55 ms synced frame),
+    and the WebGPU wait is asynchronous;
   - `rendersPerFrame`: `postProcessing.render` calls per frame. A frame that
     renders twice costs twice.
 - **`wakeRenders`, `wakeBlockMs`**: waking a stopped loop the way an input
@@ -178,8 +184,15 @@ noise twice and fails unchanged builds at small round counts.
 
 Run the perf suite on the machine whose numbers you care about, with nothing else
 heavy on its GPU. In headless Chrome with vsync off, rAF does not wait for the
-GPU, so `frameMs` is effectively CPU-bound frame cost and `gpuMs` carries the GPU
-cost. Keep the two apart when reading a result.
+GPU: without the per-frame sync an orbit frame times only the CPU submitting it
+(0.1-0.3 ms against a 20-110 ms `gpuMs`), a GPU-bound change is invisible, and a
+CPU stall on a resource the GPU still holds (a blocking `bufferSubData`) moves the
+number by two orders of magnitude at unchanged GPU cost. So read the figures as:
+`frameMs`/`frameP95Ms` are the only frame metrics that include the GPU (the
+report says so under its Performance heading); `gpuMs` is GPU cost alone at a
+settled pose; `cpuMs` is CPU cost alone. The sync is part of the harness, so both
+arms carry it and the comparison stays like for like; a report measured before
+it existed is not comparable with one measured after.
 
 ## Workload suites
 

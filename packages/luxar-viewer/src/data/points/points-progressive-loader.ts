@@ -625,7 +625,11 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       // otherwise store nothing at all (completion never happens), making
       // scrub-back — the S-cache's headline case — always cold. One clone
       // per slice-leave; upgrade-if-longer makes re-departures cheap no-ops.
-      if (this.lastViewState && this._loadedLODCount > 0 && !this.tornDown(signal)) {
+      if (
+        this.lastViewState &&
+        this._loadedLODCount > 0 &&
+        !(isPrefetch && this.tornDown(signal))
+      ) {
         storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
           scan: this._frameBudgetMs !== null,
           pin: viewState.prefetch === true,
@@ -827,7 +831,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     return result;
   }
 
-  /** True once this pass was aborted or the loader disposed: no more cache stores. */
+  /** True once this pass was aborted or the loader disposed. */
   private tornDown(signal?: AbortSignal): boolean {
     return signal?.aborted === true || this._disposed;
   }
