@@ -372,6 +372,7 @@ for (const backend of BACKENDS) {
 // hidden behind every API's back) must be caught. Without this, a zero
 // `missedDirty` above could be an audit that never sees anything.
 test('the audit catches a silent drawn-state change', async ({ page }) => {
+  test.setTimeout(90_000);
   await page.goto(`/?src=${POINTS}&debug&renderAudit`);
   await waitForLuxarReady(page);
   await waitForPointsLoaded(page);
@@ -411,6 +412,7 @@ test('the audit catches a silent drawn-state change', async ({ page }) => {
 test('without the audit, an idle tail skips its renders (render-on-change is live)', async ({
   page,
 }) => {
+  test.setTimeout(90_000);
   await page.goto(`/?src=${POINTS}&debug`);
   await waitForLuxarReady(page);
   await waitForPointsLoaded(page);

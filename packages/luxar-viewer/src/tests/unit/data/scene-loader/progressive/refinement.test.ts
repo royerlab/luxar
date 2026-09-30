@@ -393,6 +393,22 @@ describe('RefinementFailureTracker', () => {
     expect(t.reset()).toBe(false);
   });
 
+  it('preserves toast state across backoff rounds and clears it on a new view', () => {
+    const t = new RefinementFailureTracker(1);
+    expect(t.recordFailure('/a')).toBe(true);
+    expect(t.shouldNotify('/a')).toBe(true);
+    expect(t.shouldNotify('/a')).toBe(false);
+
+    t.reopen();
+    expect(t.isExhausted('/a')).toBe(false);
+    expect(t.recordFailure('/a')).toBe(true);
+    expect(t.shouldNotify('/a')).toBe(false);
+    expect(t.shouldNotify('/b')).toBe(true);
+
+    expect(t.reset()).toBe(true);
+    expect(t.shouldNotify('/a')).toBe(true);
+  });
+
   it('tracks paths independently', () => {
     const t = new RefinementFailureTracker(2);
     t.recordFailure('/a');

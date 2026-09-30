@@ -80,6 +80,11 @@ export function resetRefinementFailureTrackers(loaders: Iterable<object>): boole
   return resetAny;
 }
 
+/** Re-open exhausted ladders after backoff, preserving notification state. */
+export function reopenRefinementFailureTrackers(loaders: Iterable<object>): void {
+  for (const loader of loaders) failureTrackers.get(loader)?.reopen();
+}
+
 /**
  * Paths whose ladder still has rungs left but was retired by the
  * consecutive-failure cap: work abandoned mid-ladder, which the owning
@@ -206,18 +211,21 @@ export function handleRefinementError(
   // See `loaders/progressive/pass-rollback`.
   const unwound = tryRollbackToPassStart(loader);
   const message = (error as Error).message;
-  if (failureTrackerFor(loader).recordFailure(path)) {
+  const tracker = failureTrackerFor(loader);
+  if (tracker.recordFailure(path)) {
     log.error(
       Modules.SCENE_LOADER,
       `${label} refinement failed for ${path}: ${message} — ` +
         `giving up after ${MAX_CONSECUTIVE_REFINEMENT_FAILURES} consecutive failures ` +
-        `(will re-drain after a backoff; unwound ${unwound} level(s))`
+        `(unwound ${unwound} level(s))`
     );
     // The node silently freezes at its last valid coarse prefix — a
     // console-only error leaves the user staring at a permanently coarse node
     // with no explanation. Same channel as leaf-load failures
     // (load-leaf-error-dispatch).
-    notifier.toast(`Refinement failed for ${path} — ${degradedState}`, 5000);
+    if (tracker.shouldNotify(path)) {
+      notifier.toast(`Refinement failed for ${path} — ${degradedState}`, 5000);
+    }
   } else {
     log.error(
       Modules.SCENE_LOADER,

@@ -43,6 +43,10 @@ import { signalPriority } from '../../../utils/fetch-concurrency';
 import { log, Modules } from '../../../utils/log';
 import { failedLoadsVersion } from '../../../utils/failed-loads-version';
 import { SlicePrefetcher } from '../../../data/scene-loader/prefetch/slice-prefetcher';
+import {
+  MAX_ABANDONED_RUNG_RETRY_ROUNDS,
+  MAX_CONSECUTIVE_REFINEMENT_FAILURES,
+} from '../../../data/scene-loader/progressive/refinement';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
 // Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
@@ -3396,20 +3400,40 @@ describe('SceneLoader', () => {
     it('bounds the retries of a rung that never recovers, then reports settled', async () => {
       const ladder = flakyLadder(Number.POSITIVE_INFINITY);
       (sceneLoader as unknown as RecoveryInternals).gsplatLoaders.set('/g', ladder);
+      const warningLog = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      notifierMocks.toast.mockClear();
 
       await drain();
+      expect(notifierMocks.toast).toHaveBeenCalledWith(
+        'Refinement failed for /g — showing reduced detail',
+        5000
+      );
       await vi.advanceTimersByTimeAsync(30 * 60_000);
       const settledCalls = ladder.calls;
       // More than the one drain it used to get, but bounded: a few backoff
       // rounds of the consecutive-failure cap each.
-      expect(settledCalls).toBeGreaterThan(3);
-      expect(settledCalls).toBeLessThanOrEqual(3 * 10);
+      expect(settledCalls).toBe(
+        MAX_CONSECUTIVE_REFINEMENT_FAILURES * (MAX_ABANDONED_RUNG_RETRY_ROUNDS + 1)
+      );
+      expect(
+        notifierMocks.toast.mock.calls.filter(([message]) =>
+          String(message).startsWith('Refinement failed')
+        )
+      ).toHaveLength(1);
       expect(ladder.loadedLODCount).toBe(1);
       expect(sceneLoader.isUpdateInProgress()).toBe(false);
       // Given up for good: no timer keeps polling and the drain reads complete.
       await vi.advanceTimersByTimeAsync(30 * 60_000);
       expect(ladder.calls).toBe(settledCalls);
       expect(getLoadTimeline().refinement.complete).toBe(true);
+      await drain();
+      await drain();
+      expect(
+        warningLog.mock.calls.filter(([, message]) =>
+          String(message).startsWith('Leaving LOD refinement')
+        )
+      ).toHaveLength(1);
+      warningLog.mockRestore();
     });
 
     it('a newer view re-opens a retired ladder at once instead of waiting out the backoff', async () => {
