@@ -922,7 +922,7 @@ function raiseHeldDraw(geometry: THREE.InstancedBufferGeometry, count: number): 
  * population keeps every frame an EXACT back-to-front draw of SOME population:
  * the active buffer's `[0, drawnCount)` is untouched, the suffix texels are
  * uploaded but not yet drawn, and the grown population appears one sort
- * round-trip later, already ordered ({@link raiseHeldDraw}).
+ * round-trip later, already ordered (`raiseHeldDraw`).
  *
  * The depth-sort coordinator owns the other exit: when no ordering for the
  * grown population will arrive (commutative mode, depth sort off, a failed or
