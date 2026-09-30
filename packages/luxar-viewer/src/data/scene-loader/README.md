@@ -84,6 +84,15 @@ The subfolders:
 - **Progressive refinement always terminates.** A successful pass that
   advances no rung on any still-pending loader releases the update lock
   and stops, so `hasMoreLODs` alone can never hold the lock at frame rate.
+- **An abandoned rung is re-drained, not dropped (#2975).** A ladder that
+  fails `MAX_CONSECUTIVE_REFINEMENT_FAILURES` steps in a row (e.g. a chunk
+  fetch that stalled to give-up) is retired for the drain, and the drain then
+  schedules a re-drain on an exponential backoff
+  (`ABANDONED_RUNG_RETRY_BASE_MS` doubling to `ABANDONED_RUNG_RETRY_MAX_MS`, at
+  most `MAX_ABANDONED_RUNG_RETRY_ROUNDS` rounds). Refinement is not reported
+  complete while one is pending. A view change cancels the wait and re-opens
+  the ladder for its own drain; dispose cancels it. A successful failed-loader
+  retry also resumes refinement for the rest of its ladder.
 - **Single source of truth for per-node view state.** Initial load,
   update, and retry all route through
   `view-state/derive-node-view-state.ts`. The `extend_to_all` handling

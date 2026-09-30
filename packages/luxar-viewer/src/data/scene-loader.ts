@@ -224,7 +224,16 @@ import {
 import { runAtomicCommit } from './scene-loader/update-view/atomic-commit';
 import { buildUpdateCtxs } from './scene-loader/update-view/build-update-ctxs';
 import { queueNext } from './scene-loader/update-view/queue-next';
-import { resetRefinementFailureTrackers } from './scene-loader/progressive/refinement-wrapper';
+import {
+  abandonedLadderPaths,
+  resetRefinementFailureTrackers,
+  type RefinableLoader,
+} from './scene-loader/progressive/refinement-wrapper';
+import {
+  ABANDONED_RUNG_RETRY_BASE_MS,
+  ABANDONED_RUNG_RETRY_MAX_MS,
+  MAX_ABANDONED_RUNG_RETRY_ROUNDS,
+} from './scene-loader/progressive/refinement';
 import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-loader/nodes/connect-loader-to-monitor';
 import type {
   LeafMaterializedListener,
@@ -545,6 +554,10 @@ export class SceneLoader {
   // time (see that method) — prevents a per-caller pile-up of scheduled
   // re-checks while an update holds the lock for a while.
   private _refinementKickPending = false;
+  // Pending re-drain of ladders the consecutive-failure cap retired, and the
+  // backoff round it is on (#2975). See `scheduleAbandonedRungRetry`.
+  private _abandonedRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private _abandonedRetryRound = 0;
   // Set true in dispose(); progressive-refinement loops poll this (via the
   // ctx isActive callback) so they abort promptly when this loader is torn
   // down mid-flight (e.g. a dataset switch) instead of fetching/decoding
@@ -1403,14 +1416,22 @@ export class SceneLoader {
 
   /** Re-open exhausted progressive ladders after connectivity is restored. */
   resetRefinementFailures(): boolean {
-    const reset = resetRefinementFailureTrackers([
-      ...this.loaders.values(),
-      ...this.linesLoaders.values(),
-      ...this.gsplatLoaders.values(),
-      ...this.meshLoaders.values(),
-    ]);
+    const reset = resetRefinementFailureTrackers(
+      this.sweepLoaderEntries().map(([, loader]) => loader)
+    );
+    this.cancelAbandonedRungRetry();
     if (reset) this.requestReprocess();
     return reset;
+  }
+
+  /** Every sweep-registered loader of the four geometry kinds, with its path. */
+  private sweepLoaderEntries(): Array<[string, RefinableLoader]> {
+    return [
+      ...this.loaders.entries(),
+      ...this.linesLoaders.entries(),
+      ...this.gsplatLoaders.entries(),
+      ...this.meshLoaders.entries(),
+    ] as Array<[string, RefinableLoader]>;
   }
 
   /** Hand the resync paths parked by a mid-pass call to the follow-up pass. */
@@ -1679,7 +1700,13 @@ export class SceneLoader {
         this._lastUpdateWasFrameBudgeted = frameBudgetMs !== undefined || ladderDepth !== undefined;
       }
       this.viewState = nextViewState;
-      if (viewChanged) this._updateVersion++;
+      if (viewChanged) {
+        this._updateVersion++;
+        // A new query owes a ladder retired on the old one a fresh set of
+        // attempts: this pass's own refinement drain retries it at once.
+        this.cancelAbandonedRungRetry();
+        resetRefinementFailureTrackers(this.sweepLoaderEntries().map(([, loader]) => loader));
+      }
       const currentVersion = this._updateVersion;
 
       const totalLoaders =
@@ -1910,7 +1937,9 @@ export class SceneLoader {
    * path is a deferred lod_group SUBTREE activation (e.g. the ``overview``
    * recipe's fine ``kind=partition`` branch): its part leaves join the sweep
    * maps mid-session, so the deferred-group ``ensureLoaded`` calls this after
-   * ``loadChildren`` settles.
+   * ``loadChildren`` settles. Two recovery paths use it too (#2975): a
+   * failed-loader retry that committed only part of a ladder, and the backoff
+   * re-drain of ladders the consecutive-failure cap retired.
    *
    * Lock discipline: when idle, take the serialization lock and run the same
    * orchestrator the other kick sites use (each phase releases/hands off the
@@ -1947,7 +1976,7 @@ export class SceneLoader {
       }, REFINEMENT_KICK_RECHECK_MS);
       return;
     }
-    log.info(Modules.SCENE_LOADER, 'Kicking progressive LOD refinement (deferred activation)');
+    log.info(Modules.SCENE_LOADER, 'Kicking progressive LOD refinement (loader idle)');
     this._updateInProgress = true;
     this.scheduleGSplatsRefinement().catch((error) => {
       log.error(
@@ -2164,7 +2193,73 @@ export class SceneLoader {
    * hand-off (the next update re-kicks refinement) and not on a dead loader.
    */
   private noteRefinementOutcome(cancelled: boolean): void {
-    if (!cancelled && !this._disposed) noteRefinementComplete();
+    if (cancelled || this._disposed) return;
+    // A ladder retired mid-way is still owed its rungs: stay unsettled while
+    // its re-drain is pending, so capture / isSettled do not report done.
+    if (this.scheduleAbandonedRungRetry()) return;
+    noteRefinementComplete();
+  }
+
+  /**
+   * Re-drain ladders the consecutive-failure cap retired (#2975).
+   *
+   * A chunk fetch that stalls to give-up fails the refinement step that needs
+   * it, and three such failures retire the ladder for this loader instance.
+   * Only an `online` event used to re-open it, so a session that stayed online
+   * sat idle at a coarser rung until the user moved something. Instead, after
+   * a drain that ends with such a ladder, wait
+   * `ABANDONED_RUNG_RETRY_BASE_MS · 2^round` (capped), re-open the retired
+   * ladders and kick a fresh drain. A view change, `resetRefinementFailures`
+   * or dispose cancels the wait; after `MAX_ABANDONED_RUNG_RETRY_ROUNDS`
+   * rounds the ladder is left, and the drain reports complete.
+   *
+   * @returns Whether a re-drain is pending (the drain is not complete).
+   */
+  private scheduleAbandonedRungRetry(): boolean {
+    const abandoned = abandonedLadderPaths(this.sweepLoaderEntries());
+    if (abandoned.length === 0) {
+      this._abandonedRetryRound = 0;
+      return false;
+    }
+    if (this._abandonedRetryTimer !== null) return true;
+    const round = this._abandonedRetryRound;
+    if (round >= MAX_ABANDONED_RUNG_RETRY_ROUNDS) {
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Leaving LOD refinement of ${abandoned.join(', ')} after ${round} re-drains ` +
+          '(a view change or restored connectivity retries it)'
+      );
+      return false;
+    }
+    const delayMs = Math.min(
+      ABANDONED_RUNG_RETRY_BASE_MS * 2 ** round,
+      ABANDONED_RUNG_RETRY_MAX_MS
+    );
+    this._abandonedRetryRound = round + 1;
+    log.info(
+      Modules.SCENE_LOADER,
+      `Re-draining abandoned LOD rung(s) of ${abandoned.join(', ')} in ${delayMs} ms ` +
+        `(round ${round + 1}/${MAX_ABANDONED_RUNG_RETRY_ROUNDS})`
+    );
+    this._abandonedRetryTimer = setTimeout(() => {
+      this._abandonedRetryTimer = null;
+      if (this._disposed) return;
+      if (this._archiveFault) {
+        noteRefinementAborted();
+        return;
+      }
+      resetRefinementFailureTrackers(this.sweepLoaderEntries().map(([, loader]) => loader));
+      if (!this.anyLoaderHasMoreLODs()) noteRefinementComplete();
+      else this.kickRefinementIfIdle();
+    }, delayMs);
+    return true;
+  }
+
+  /** Drop a pending re-drain and its backoff (the retired ladders are re-opened elsewhere). */
+  private cancelAbandonedRungRetry(): void {
+    if (this._abandonedRetryTimer !== null) clearTimeout(this._abandonedRetryTimer);
+    this._abandonedRetryTimer = null;
+    this._abandonedRetryRound = 0;
   }
 
   /**
@@ -2660,7 +2755,12 @@ export class SceneLoader {
 
   private resumeViewAfterRetry(hadArchiveFault: boolean): void {
     if (this.viewStateQueue.drain((state) => this.reenterPending(state))) return;
-    if (!hadArchiveFault || this._archiveFault) return;
+    if (!hadArchiveFault || this._archiveFault) {
+      // A retried progressive loader committed only one pass's worth of its
+      // ladder; nothing else resumes the rest (#2975).
+      this.kickRefinementIfIdle();
+      return;
+    }
     void this.updateView(this.viewState).catch((error) => {
       log.warning(
         Modules.SCENE_LOADER,
@@ -2923,6 +3023,7 @@ export class SceneLoader {
     // start nulling the fields it reads.
     this._disposed = true;
     this.clearHoldExpiry();
+    this.cancelAbandonedRungRetry();
     this.archiveFaultListeners.clear();
     this._leafMaterializedListener = null;
     setSceneLineLoad(0);

@@ -3368,7 +3368,7 @@ describe('SceneLoader', () => {
       await run;
     }
 
-    it.fails('re-drains an abandoned rung after a backoff and commits it, with no user action', async () => {
+    it('re-drains an abandoned rung after a backoff and commits it, with no user action', async () => {
       const ladder = flakyLadder(3);
       (sceneLoader as unknown as RecoveryInternals).gsplatLoaders.set('/g', ladder);
 
@@ -3393,7 +3393,7 @@ describe('SceneLoader', () => {
       expect(getLoadTimeline().refinement.complete).toBe(true);
     });
 
-    it.fails('bounds the retries of a rung that never recovers, then reports settled', async () => {
+    it('bounds the retries of a rung that never recovers, then reports settled', async () => {
       const ladder = flakyLadder(Number.POSITIVE_INFINITY);
       (sceneLoader as unknown as RecoveryInternals).gsplatLoaders.set('/g', ladder);
 
@@ -3412,7 +3412,7 @@ describe('SceneLoader', () => {
       expect(getLoadTimeline().refinement.complete).toBe(true);
     });
 
-    it.fails('a newer view re-opens a retired ladder at once instead of waiting out the backoff', async () => {
+    it('a newer view re-opens a retired ladder at once instead of waiting out the backoff', async () => {
       const ladder = flakyLadder(3, 4);
       (sceneLoader as unknown as RecoveryInternals).gsplatLoaders.set('/g', ladder);
 
@@ -3438,7 +3438,7 @@ describe('SceneLoader', () => {
       expect(ladder.calls).toBe(3);
     });
 
-    it.fails('resumes refinement after a failed view-pass load is retried successfully', async () => {
+    it('resumes refinement after a failed view-pass load is retried successfully', async () => {
       // The retry path commits one pass's worth of the node and used to stop
       // there, leaving the rest of the ladder idle.
       const internals = sceneLoader as unknown as RecoveryInternals;
