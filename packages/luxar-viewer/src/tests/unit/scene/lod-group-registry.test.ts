@@ -4593,6 +4593,7 @@ describe('LODGroupRegistry — playback aspiration', () => {
   it('re-probes a level capped by a cold load and recovers after warm reloads', () => {
     const { reg, children, frame } = playbackHarness([30]);
     children[1].loadEwmaMs = 500;
+    children[1].loadSamples = 2; // a measured (not cold-only) slow average
     let fineInLastSecond = 0;
     for (let f = 0; f < 600; f++) {
       frame();
@@ -4621,7 +4622,7 @@ describe('LODGroupRegistry — playback aspiration', () => {
   // Seeding the average from it capped playback at the coarse level until the
   // ~1 Hz probe measured a warm reload: two level swaps on a timelapse whose
   // fine level keeps up easily (render-gate `playback_lod_timelapse`).
-  it.fails('a slow cold first load does not demote a level whose warm reloads fit', () => {
+  it('a slow cold first load does not demote a level whose warm reloads fit', () => {
     const { reg, frame } = playbackHarness([(n) => (n === 0 ? 500 : 30)]);
     expect(countSwaps(reg, frame, 300)).toBe(0); // 5 s, 50 timepoints
     expect(reg.get('/g')!.displayedChildIndex).toBe(1);

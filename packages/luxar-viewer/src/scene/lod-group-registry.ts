@@ -537,6 +537,13 @@ export interface LODGroupChild {
    * playback it decides which level can keep up with the period.
    */
   loadEwmaMs?: number;
+  /**
+   * Successful timed loads folded into ``loadEwmaMs``. Registry-owned. The
+   * first is the level's cold load (cache miss, connection and decoder
+   * warm-up): it is recorded, but playback treats the level as unmeasured
+   * until a second load reseeds the average in its place.
+   */
+  loadSamples?: number;
   /** Last playback probe of a level whose measured reload exceeded the budget. */
   lastPlaybackProbeMs?: number;
   /** Set by the thunk on load failure to stop per-frame retry storms. */
@@ -2447,8 +2454,13 @@ export class LODGroupRegistry {
     if (c.loadStartMs === undefined || c.loading === true) return;
     if (c.failed !== true) {
       const ms = Math.max(0, (c.loadEndMs ?? this.nowMs()) - c.loadStartMs);
+      const samples = c.loadSamples ?? 0;
+      // The cold first sample seeds nothing: the second replaces it outright.
       c.loadEwmaMs =
-        c.loadEwmaMs === undefined ? ms : c.loadEwmaMs + LOAD_EWMA_ALPHA * (ms - c.loadEwmaMs);
+        c.loadEwmaMs === undefined || samples < 2
+          ? ms
+          : c.loadEwmaMs + LOAD_EWMA_ALPHA * (ms - c.loadEwmaMs);
+      c.loadSamples = samples + 1;
     }
     c.loadStartMs = undefined;
     c.loadEndMs = undefined;
@@ -2471,11 +2483,17 @@ export class LODGroupRegistry {
     return this.probedPlaybackLevel(entry, desired, affordable);
   }
 
-  /** Finest level whose measured reload fits this playback period. */
+  /**
+   * Finest level whose measured reload fits this playback period. A level
+   * with only its cold first load measured (``loadSamples`` < 2) counts as
+   * unmeasured, so one cold sample cannot demote it; a level whose warm
+   * reloads are too slow is demoted after its second load.
+   */
   private affordablePlaybackLevel(entry: LODGroupEntry, desired: number, budget: number): number {
     for (let i = desired; i > 0; i--) {
       const c = entry.children[i];
-      if (!c.ensureLoaded || c.loadEwmaMs === undefined || c.loadEwmaMs <= budget) return i;
+      const ewma = (c.loadSamples ?? 0) >= 2 ? c.loadEwmaMs : undefined;
+      if (!c.ensureLoaded || ewma === undefined || ewma <= budget) return i;
     }
     return 0;
   }

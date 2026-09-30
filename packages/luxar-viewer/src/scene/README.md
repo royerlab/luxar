@@ -411,11 +411,16 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    level whose measured load+commit time (`LODGroupChild.loadEwmaMs`, an
    EWMA of fire → the load settling (`onLoadSettled`), so idle frames in a hidden
    tab are not counted) is at most 0.8 × the period; an eager
-   or not-yet-measured level counts as fitting. The capped aspiration is
-   reloaded on every timepoint without the settle debounce
-   (`FINE_RELOAD_SETTLE_MS` = 130 ms, which a playing timelapse never
-   satisfies). Once per second the next finer capped level gets one reload
-   to re-measure it after a cold first load. The stale hold keeps the
+   or not-yet-measured level counts as fitting. A level's first load is
+   its cold one (cache miss, connection and decoder warm-up), so it seeds
+   nothing: the level stays "not yet measured" until its second load,
+   which reseeds the average in its place (`loadSamples`). One slow cold
+   sample therefore cannot demote a level whose warm reloads fit, while a
+   consistently slow level is still capped after its second load. The
+   capped aspiration is reloaded on every timepoint without the settle
+   debounce (`FINE_RELOAD_SETTLE_MS` = 130 ms, which a playing timelapse
+   never satisfies). Once per second the next finer capped level gets one
+   reload to re-measure it. The stale hold keeps the
    previously displayed level on screen while its reload is in flight, so
    playback no longer collapses to the coarsest level; its 250 ms budget
    restarts from the last playing frame, so pausing mid-reload does not
