@@ -1660,7 +1660,7 @@ describe('SceneLoader', () => {
       return signals[0];
     }
 
-    it.fails('a pass stuck past DRAG_COMMIT_MAX_HOLD_MS is aborted by a newer view', async () => {
+    it('a pass stuck past DRAG_COMMIT_MAX_HOLD_MS is aborted by a newer view', async () => {
       // Hosted chunks can take tens of seconds on a cold edge. Holding such a
       // pass for its commit queues every newer view behind that one download
       // (99 declined aborts over 42 s in an instrumented run): the scrub freezes.
