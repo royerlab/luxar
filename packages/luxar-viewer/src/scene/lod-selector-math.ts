@@ -11,7 +11,7 @@
  *   matrix to a screen-space pixel diagonal (with near-plane saturation). The legacy
  *   ``selector: 'coverage'`` metric.
  * - {@link projectBoxAreaFraction} — project the box's inscribed ellipsoid,
- *   sized at the box's nearest-corner depth, to the viewport AREA its
+ *   sized by the ellipsoid's view-axis depth, to the viewport AREA its
  *   screen-space ellipse covers, in rect units (same near-plane saturation). The ``selector: 'screen-area'`` metric.
  * - {@link pickChildWithHysteresis} — pick the level for whichever metric the
  *   group's ``selector`` names, with asymmetric downgrade hysteresis.
@@ -119,23 +119,19 @@ export const DEGENERATE_RECT_HALF_EXTENT = 1e-3;
  * lod ladder up and down while the camera merely orbits. The box is therefore
  * measured through its INSCRIBED ellipsoid (semi-axes = the box half-extents),
  * projected exactly as a dual quadric onto the image-plane conic, and then
- * SIZED at the depth of the box's nearest corner (see
- * {@link projectNearDepthEllipse}): in perspective the bare ellipse outline
+ * SIZED by the ellipsoid's view-axis half-chord (see
+ * ``projectNearDepthEllipse``): in perspective the bare ellipse outline
  * sits near the box's middle plane while its screen coverage is set by the near
  * face, so a thick box close to the camera would otherwise read too small. The
  * metric is ``sqrt(det S)`` of the sized ellipse's NDC shape matrix ``S`` (the
  * product of its semi-axes). For a flat box face-on, or under an orthographic
  * camera, it is exactly the legacy rect product ``halfW × halfH`` (the ellipse
  * is inscribed in the face's rect); a thick box face-on in perspective reads
- * its near-face rect exactly on the view axis and within a few percent off it,
- * so stored thresholds keep their meaning (a screen-filling face still reads
- * 1.0). For a cube at a fixed distance only the corner depths move with
- * orientation — face-on the nearest is 1 half-extent in front of the centre,
- * corner-on ``sqrt(3)`` — so an orbit at 10 half-extents swings the metric by
- * ~14% (the bare ellipsoid: ~0%; the corner rect: ~50%). The price is paid on
- * boxes seen close up and end-on: a flat card turned 30° reads ~7% MORE than
- * face-on (the rect ~3% less), and an elongated box orbited at a few of its
- * lengths swings nearly as much as its rect.
+ * its near-face rect exactly on the view axis, so stored thresholds keep their
+ * meaning (a screen-filling face still reads 1.0). A tilted flat card gets no
+ * depth correction. A cube at a fixed distance has the same half-chord from
+ * every direction, so its orbit metric stays constant; an elongated box still
+ * changes size when viewed from different directions.
  *
  * **Clipped to the viewport.** The ellipse's area is scaled, per axis, by the
  * visible fraction of its screen-space AABB, so the metric reads the portion of
@@ -238,30 +234,32 @@ const ELLIPSE_BEHIND = 2;
 
 /**
  * The box's inscribed-ellipsoid image ({@link projectInscribedEllipse}) SIZED
- * at the depth of the box's nearest corner. The ellipsoid's outline lies well
+ * by its view-axis half-chord. The ellipsoid's outline lies well
  * behind the box's near face, while what the box covers on screen is set by
  * that near face, so in perspective the bare ellipse of a thick box close to the
  * camera reads less than the box covers (the hosted zebrafish endoderm read
  * 25% below its corner rect and dropped a whole level at its opening view).
- * The ellipse is therefore resized to the depth of the nearest corner.
+ * The ellipse is therefore resized to the depth of its near view-axis point.
  *
  * ``w`` is clip-space ``w``, i.e. view depth along the camera axis, in the
- * frame of ``e`` (so a box-to-clip matrix carrying the group's world transform
- * is measured consistently); ``w_near`` / ``w_far`` are its extremes over the 8
- * corners. The projected ellipsoid does NOT sit at the centre depth: on the
- * axis, an ellipsoid with semi-axis ``a`` across and ``c`` along the view at
- * depth ``D`` has silhouette half-width ``f·a / sqrt(D² − c²)``, i.e. it
- * already reads at the geometric-mean depth ``sqrt(w_near · w_far)``. Resizing
- * it to ``w_near`` is the linear factor ``sqrt(w_far / w_near)`` per semi-axis,
- * so ``S`` scales by ``w_far / w_near`` — which makes a box seen face-on on the
- * axis read EXACTLY its near-face rect (the legacy corner-rect value), at any
- * thickness. (Scaling by ``w_centre / w_near`` instead, the naive "centre to
+ * frame of ``e``. The view direction is the cross product of the clip x/y
+ * rows in the box frame, so an anisotropic group scale does not change the
+ * chord of an otherwise identical world-space box. The projected ellipsoid
+ * does NOT sit at the centre depth: on the axis, an ellipsoid with semi-axis
+ * ``a`` across and ``c`` along the view at depth ``D`` has silhouette half-width
+ * ``f·a / sqrt(D² − c²)``, i.e. it
+ * already reads at the geometric-mean depth ``sqrt((w_c − c)(w_c + c))``, where
+ * ``w_c`` is centre depth and ``c`` is the ellipsoid's view-axis half-chord.
+ * Resizing it to ``w_c − c`` scales ``S`` by ``(w_c + c)/(w_c − c)`` — which
+ * makes a box seen face-on on the axis read EXACTLY its near-face rect, at any
+ * thickness. (Scaling by ``w_c / (w_c − c)`` instead, the naive "centre to
  * near" ratio, double-counts that depth: it overshoots the rect by 12% for a
  * box whose centre is three half-depths away, and made orbit LOD flips worse
  * than the corner rect.) The ellipse CENTRE is
  * not moved, only its size; everything downstream (the viewport clip overlap,
  * the full-coverage test, the degenerate ramp) reads the sized ellipse. An
- * orthographic projection has constant ``w``, so the factor is exactly 1.
+ * orthographic projection has constant ``w``, so the factor is exactly 1. A
+ * flat box tilted in perspective has zero view-axis chord and gets no scaling.
  *
  * Returns {@link ELLIPSE_BEHIND} when every corner is behind the eye and
  * {@link ELLIPSE_STRADDLES} when the nearest corner is at/behind
@@ -286,18 +284,49 @@ function projectNearDepthEllipse(
   if (!(wNear > W_EPSILON)) return ELLIPSE_STRADDLES;
   const ellipse = projectInscribedEllipse(box, e);
   if (ellipse === ELLIPSE_STRADDLES || ellipse === ELLIPSE_BEHIND) return ellipse;
-  const areaScale = wFar / wNear;
+  const wCenter = 0.5 * (wNear + wFar);
+  const chord = ellipsoidViewChord(box, e);
+  const areaScale = (wCenter + chord) / (wCenter - chord);
   ellipse.sxx *= areaScale;
   ellipse.sxy *= areaScale;
   ellipse.syy *= areaScale;
   return ellipse;
 }
 
+/** Half-chord along the camera axis, measured in clip-space w units. */
+function ellipsoidViewChord(box: BoundingBox, e: ArrayLike<number>): number {
+  const hx = 0.5 * (box.max.x - box.min.x);
+  const hy = 0.5 * (box.max.y - box.min.y);
+  const hz = 0.5 * (box.max.z - box.min.z);
+  const h2 = HALF_EXTENTS_SQ;
+  h2[0] = hx * hx;
+  h2[1] = hy * hy;
+  h2[2] = hz * hz;
+  // The cross product of the clip x/y rows points along the camera axis in
+  // box coordinates. The w gradient alone changes direction under scale.
+  const v = VIEW_AXIS_SCRATCH;
+  v[0] = e[4] * e[9] - e[8] * e[5];
+  v[1] = e[8] * e[1] - e[0] * e[9];
+  v[2] = e[0] * e[5] - e[4] * e[1];
+  let depthAlongAxis = 0;
+  let inverseRadiusSq = 0;
+  for (let i = 0; i < 3; i++) {
+    const g = e[3 + 4 * i];
+    if (h2[i] === 0 && v[i] !== 0) return 0;
+    depthAlongAxis += g * v[i];
+    if (h2[i] > 0) inverseRadiusSq += (v[i] * v[i]) / h2[i];
+  }
+  return inverseRadiusSq > 0 ? Math.abs(depthAlongAxis) / Math.sqrt(inverseRadiusSq) : 0;
+}
+
 /** Reused result object for {@link projectInscribedEllipse} (no per-call allocation). */
 const ELLIPSE_SCRATCH = { cx: 0, cy: 0, sxx: 0, sxy: 0, syy: 0 };
 
-/** Squared box half-extents for {@link weightedRowDot} (reused, no allocation). */
+/** Squared box half-extents for projection and view-chord math (reused, no allocation). */
 const HALF_EXTENTS_SQ = [0, 0, 0];
+
+/** Camera-axis direction in the box frame (reused, no per-call allocation). */
+const VIEW_AXIS_SCRATCH = [0, 0, 0];
 
 /** ``Σ h_i² a_i b_i`` over the three spatial columns of projection rows ``a`` and ``b``. */
 function weightedRowDot(e: ArrayLike<number>, a: number, b: number, h2: readonly number[]): number {
