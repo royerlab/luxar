@@ -57,10 +57,12 @@ describe('cached-zarr-array', () => {
       // Call getChunk
       const result = await wrapped.getChunk([0, 1, 2]);
 
-      // Should have called original getChunk. The proxy forwards args
-      // via rest-spread (`target.getChunk(...args)`), so a no-options
-      // call shows up as a single positional arg, not `(coords, undefined)`.
-      expect(mockArray.getChunk).toHaveBeenCalledWith([0, 1, 2]);
+      // The shared decode has its own signal, independent of this caller.
+      expect(mockArray.getChunk).toHaveBeenCalledWith(
+        [0, 1, 2],
+        { signal: expect.any(AbortSignal) },
+        undefined
+      );
 
       // Should return the chunk data
       expect(result.data).toBeInstanceOf(Float32Array);
@@ -292,6 +294,48 @@ describe('cached-zarr-array', () => {
   });
 
   describe('Decode coalescing (commit 5.2)', () => {
+    it('keeps a shared decode alive for one caller and aborts it when the last caller leaves', async () => {
+      let decodeSignal: AbortSignal | undefined;
+      const decode = vi.fn((_coords: number[], options?: { signal?: AbortSignal }) => {
+        decodeSignal = options?.signal;
+        return new Promise<MockChunk>((_resolve, reject) => {
+          options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), {
+            once: true,
+          });
+        });
+      });
+      const array = createMockZarrArray(decode as any);
+      const first = new AbortController();
+      const second = new AbortController();
+      const shadow = wrapWithCache(
+        array,
+        cache,
+        '/points/positions',
+        undefined,
+        () => first.signal
+      );
+      const foreground = wrapWithCache(
+        array,
+        cache,
+        '/points/positions',
+        undefined,
+        () => second.signal
+      );
+
+      const shadowRead = shadow.getChunk([0]);
+      const foregroundRead = foreground.getChunk([0]);
+      expect(decode).toHaveBeenCalledTimes(1);
+
+      first.abort(new DOMException('Shadow stopped', 'AbortError'));
+      await expect(shadowRead).rejects.toMatchObject({ name: 'AbortError' });
+      expect(decodeSignal?.aborted).toBe(false);
+
+      second.abort(new DOMException('Foreground superseded', 'AbortError'));
+      await expect(foregroundRead).rejects.toMatchObject({ name: 'AbortError' });
+      expect(decodeSignal?.aborted).toBe(true);
+      expect(cache.has(DecompressedChunkCache.makeKey('/points/positions', [0]))).toBe(false);
+    });
+
     it('two concurrent same-key getChunk calls invoke underlying decode once', async () => {
       let resolveDecode: (chunk: MockChunk) => void = () => {};
       const decodeFn = vi.fn(

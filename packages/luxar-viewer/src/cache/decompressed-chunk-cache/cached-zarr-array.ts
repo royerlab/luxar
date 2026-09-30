@@ -11,7 +11,11 @@
  */
 
 import type * as zarr from '../../data/zarr';
-import { DecompressedChunkCache, type DecompressedChunk } from '../decompressed-chunk-cache';
+import {
+  DecompressedChunkCache,
+  type DecompressedChunk,
+  type InflightDecode,
+} from '../decompressed-chunk-cache';
 import type { ResidencyProbe } from '../residency-probe';
 
 /**
@@ -46,7 +50,8 @@ const ORIGINAL_ARRAY = Symbol('luxar.originalArray');
  * The returned proxy intercepts `getChunk()` calls:
  * 1. Checks L0 cache for the requested chunk
  * 2. On hit: returns cached decompressed data immediately (~1μs)
- * 3. On miss: calls original `getChunk()`, caches result, returns data
+ * 3. On in-flight hit: joins the cache-wide decode as an independent waiter
+ * 4. On miss: calls original `getChunk()`, caches result, returns data
  *
  * All other zarr.Array properties and methods pass through unchanged.
  *
@@ -93,17 +98,6 @@ export function wrapWithCache<D extends zarr.DataType>(
     return array;
   }
 
-  // Same-chunk decode coalescing: concurrent getChunk(coords) calls
-  // for the same key share a single underlying decompression. Without
-  // this, two parallel loaders requesting the same chunk both miss
-  // L0, both call target.getChunk(), and both run Blosc decode. Map
-  // is keyed by DecompressedChunkCache.makeKey so it's shared across
-  // every wrapped array routed through the same L0 cache instance.
-  const pendingChunks = new Map<
-    string,
-    Promise<{ data: zarr.TypedArray<D>; shape: number[]; stride: number[] }>
-  >();
-
   return new Proxy(array, {
     get(target, prop, _receiver) {
       // Handle cache marker check
@@ -143,7 +137,7 @@ export function wrapWithCache<D extends zarr.DataType>(
         return async function (
           ...args: Parameters<typeof target.getChunk>
         ): Promise<{ data: zarr.TypedArray<D>; shape: number[]; stride: number[] }> {
-          const [chunkCoords] = args;
+          const [chunkCoords, callOptions, opts] = args;
 
           // Per-update abort chokepoint: bail BEFORE the L0 lookup / fetch /
           // Blosc decode if the owning load was superseded. This covers the
@@ -152,7 +146,10 @@ export function wrapWithCache<D extends zarr.DataType>(
           // run. `getSignal` reads the loader's transient per-update field, so
           // it is per-caller — it never aborts the shared `pendingChunks`
           // promise that a different, still-live caller may be awaiting.
-          getSignal?.()?.throwIfAborted();
+          const activeSignal = getSignal?.() ?? undefined;
+          activeSignal?.throwIfAborted();
+          const waiterSignal = callOptions?.signal ?? activeSignal;
+          waiterSignal?.throwIfAborted();
 
           const key = DecompressedChunkCache.makeKey(arrayPath, chunkCoords);
 
@@ -173,45 +170,51 @@ export function wrapWithCache<D extends zarr.DataType>(
           // decompressing this chunk, await their promise instead of
           // re-running Blosc. No fresh Blosc work is triggered for this
           // caller, so treat the coalesced wait as a hit for residency.
-          const pending = pendingChunks.get(key);
+          const pending = cache.getInflight(key);
           if (pending) {
             getProbe?.()?.record(true);
-            return pending;
+            pending.waiters++;
+            return (await waitForDecode(cache, key, pending, waiterSignal)) as {
+              data: zarr.TypedArray<D>;
+              shape: number[];
+              stride: number[];
+            };
           }
 
           // Genuine miss: a fetch + Blosc decode is about to run.
           getProbe?.()?.record(false);
 
-          const chunkPromise = (async () => {
-            try {
-              // Cache miss — call original getChunk (triggers Blosc decompression)
-              const chunk = await target.getChunk(...args);
-
-              // Cache the decompressed result. Clone the data to
-              // prevent callers from mutating the cached copy
-              // (ArrayBufferViews are references to underlying
-              // ArrayBuffers). cloneArrayBufferView branches on
-              // TypedArray vs DataView — the union type's public d.ts
-              // doesn't expose a common slice() so a single cast hid
-              // the DataView gap. zarrita's TypedArray<D> union
-              // includes object-dtype as unknown[], which is not an
-              // ArrayBufferView; cast through ArrayBufferView since
-              // numeric chunks (the only kind we cache) always are.
-              const clonedData = cloneArrayBufferView(chunk.data as unknown as ArrayBufferView);
+          const entry: InflightDecode = {
+            controller: new AbortController(),
+            waiters: 1,
+            promise: undefined as unknown as InflightDecode['promise'],
+          };
+          entry.promise = (async () => {
+            // The decode belongs to the shared entry, never to its first caller.
+            const chunk = await target.getChunk(
+              chunkCoords,
+              { ...callOptions, signal: entry.controller.signal },
+              opts
+            );
+            if (cache.getInflight(key) === entry) {
+              // Clone before storage: a caller may mutate its returned view.
               const cacheEntry: DecompressedChunk = {
-                data: clonedData,
+                data: cloneArrayBufferView(chunk.data as unknown as ArrayBufferView),
                 shape: chunk.shape.slice(),
                 stride: chunk.stride.slice(),
               };
               cache.set(key, cacheEntry);
-
-              return chunk;
-            } finally {
-              pendingChunks.delete(key);
             }
+            return chunk;
           })();
-          pendingChunks.set(key, chunkPromise);
-          return chunkPromise;
+          cache.setInflight(key, entry);
+          const forget = (): void => cache.deleteInflight(key, entry);
+          void entry.promise.then(forget, forget);
+          return (await waitForDecode(cache, key, entry, waiterSignal)) as {
+            data: zarr.TypedArray<D>;
+            shape: number[];
+            stride: number[];
+          };
         };
       }
 
@@ -223,6 +226,37 @@ export function wrapWithCache<D extends zarr.DataType>(
       return Reflect.get(target, prop, target);
     },
   }) as zarr.Array<D, zarr.Readable>;
+}
+
+/** Leave a shared decode on abort; cancel its source when the last waiter leaves. */
+function waitForDecode(
+  cache: DecompressedChunkCache,
+  key: string,
+  entry: InflightDecode,
+  signal?: AbortSignal
+): Promise<Awaited<InflightDecode['promise']>> {
+  if (!signal) return entry.promise;
+  return new Promise((resolve, reject) => {
+    const onAbort = (): void => {
+      entry.waiters--;
+      if (entry.waiters === 0) {
+        cache.deleteInflight(key, entry);
+        entry.controller.abort(signal.reason);
+      }
+      reject(signal.reason as Error);
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    void entry.promise.then(
+      (chunk) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(chunk);
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      }
+    );
+  });
 }
 
 /**

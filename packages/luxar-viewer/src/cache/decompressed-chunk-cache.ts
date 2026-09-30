@@ -32,6 +32,13 @@ export interface DecompressedChunk {
   stride: number[];
 }
 
+/** One shared fetch/decode, with an independent abort for each caller. */
+export interface InflightDecode {
+  promise: Promise<{ data: unknown; shape: number[]; stride: number[] }>;
+  controller: AbortController;
+  waiters: number;
+}
+
 /**
  * Configuration options for the decompressed chunk cache.
  */
@@ -91,6 +98,7 @@ export class DecompressedChunkCache {
   private static readonly METADATA_OVERHEAD = 64;
 
   private cache: LRUCache<DecompressedChunk>;
+  private readonly inflight = new Map<string, InflightDecode>();
   private debug: boolean;
   /** Resolved byte budget — surfaced in getStats() for runtime introspection. */
   private readonly maxSize: number;
@@ -167,11 +175,24 @@ export class DecompressedChunkCache {
     return this.cache.has(key);
   }
 
+  getInflight(key: string): InflightDecode | undefined {
+    return this.inflight.get(key);
+  }
+
+  setInflight(key: string, entry: InflightDecode): void {
+    this.inflight.set(key, entry);
+  }
+
+  deleteInflight(key: string, entry: InflightDecode): void {
+    if (this.inflight.get(key) === entry) this.inflight.delete(key);
+  }
+
   /**
    * Clear all cached chunks.
    */
   clear(): void {
     this.cache.clear();
+    this.inflight.clear();
 
     if (this.debug) {
       log.custom(LogEmoji.CACHE, Modules.CACHE, 'L0 cleared');
