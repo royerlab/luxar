@@ -32,11 +32,14 @@ import {
   hasPendingSortedIndexOrderingApply,
   pumpSortedIndexOrderingApply,
   registerElementTexelDirtyRange,
+  releaseSortedIndexDrawHold,
+  sortedIndexDrawHoldTarget,
   setSortedIndexApplyRequestRender,
   setSortedIndexChunkElementsForTests,
   writeSortedIndexIdentity,
   writeSortedIndexIdentityRange,
   writeSortedIndexOrdering,
+  writeSortedIndexOrderingLive,
   markElementTextureFullDirty,
 } from '../../../rendering/element-storage';
 import {
@@ -852,7 +855,7 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
     expect(Array.from(reset.subarray(0, 4))).toEqual([0, 1, 2, 3]);
   });
 
-  it('fromInstance append: writes only suffix texels but resets the full ordering to identity', () => {
+  it('fromInstance append: writes only suffix texels and holds the draw on the sorted prefix', () => {
     const geom = pool.acquireGSplatsGeometry('node', 16);
     const src6 = makeSource(6);
     const packed = (s: SplatTexelSource, count: number) => ({
@@ -871,20 +874,20 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
 
     // Append to 6 splats: fromInstance = 4 → only [4,6) rewritten.
     pool.updateGSplatsGeometry(geom, packed(src6, 6), 6, 3.0, { fromInstance: 4 });
-    expect(geom.instanceCount).toBe(6);
     expect(texels[0]).toBe(sentinel); // prefix texels untouched
-    // Suffix splat 5 center.x written.
+    // Suffix splat 5 center.x written (uploaded, not yet drawn).
     expect(texels[5 * SPLAT_FLOATS_PER_SPLAT]).toBe(src6.centers[15]);
-    // The enlarged draw must use one coherent fallback permutation while the
-    // commit-triggered worker sort is pending. Keeping the old sorted prefix
-    // followed by the new storage-order suffix renders two independently
-    // ordered populations.
-    expect(activeSortedIndexSlot(geom)).toBe(0);
+    // Neither fallback for the grown population is an ordering of it, so the
+    // draw stays on the previous population in its sorted order until the
+    // commit-triggered sort of all 6 lands.
+    expect(geom.instanceCount).toBe(4);
+    expect(sortedIndexDrawHoldTarget(geom)).toBe(6);
+    expect(activeSortedIndexSlot(geom)).toBe(1);
     const ordering = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
-    expect(Array.from(ordering.subarray(0, 6))).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(Array.from(ordering.subarray(0, 4))).toEqual([3, 2, 1, 0]);
   });
 
-  it('fromInstance append cancels a partially applied ordering and normalises slot 0', () => {
+  it('fromInstance append cancels a partially applied ordering and holds the displayed one', () => {
     setSortedIndexChunkElementsForTests(2);
     configureSortedIndexChunkedApply(true);
     const geom = pool.acquireGSplatsGeometry('node', 16);
@@ -908,15 +911,160 @@ describe('pool adapter — growth, dispose, byte accounting', () => {
 
       pool.updateGSplatsGeometry(geom, packed(6), 6, 3.0, { fromInstance: 4 });
 
+      // The half-streamed ordering described the old generation; the
+      // DISPLAYED complete one keeps being drawn over the old population.
       expect(hasPendingSortedIndexOrderingApply(geom)).toBe(false);
-      expect(activeSortedIndexSlot(geom)).toBe(0);
+      expect(activeSortedIndexSlot(geom)).toBe(1);
       const ordering = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
-      expect(Array.from(ordering.subarray(0, 6))).toEqual([0, 1, 2, 3, 4, 5]);
-      expect(geom.instanceCount).toBe(6);
+      expect(Array.from(ordering.subarray(0, 4))).toEqual([3, 2, 1, 0]);
+      expect(geom.instanceCount).toBe(4);
     } finally {
       cancelSortedIndexOrderingApply(geom);
       setSortedIndexChunkElementsForTests(null);
     }
+  });
+});
+
+describe('gsplat append commit — held draw until the grown ordering lands', () => {
+  let pool: GPUBufferPool;
+  beforeEach(() => {
+    pool = new GPUBufferPool();
+  });
+  afterEach(() => {
+    pool.dispose();
+  });
+
+  const src6 = makeSource(6);
+  const packed = (count: number) => ({
+    centers3D: src6.centers.subarray(0, count * 3),
+    amplitudes: src6.amplitudes.subarray(0, count),
+    choleskyFactors: src6.choleskyFactors.subarray(0, count * 6),
+    colors: src6.colors.subarray(0, count * 3),
+  });
+  const drawn = (geom: THREE.InstancedBufferGeometry): number[] => {
+    const ordering = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
+    return Array.from(ordering.subarray(0, geom.instanceCount));
+  };
+
+  it('keeps drawing the previous population in its sorted order, then shows the grown one sorted', () => {
+    // Storage order is what an append used to draw until the worker's sort of
+    // the grown population landed (75-225 ms per rung above the synchronous
+    // sort limit). Every frame in that window must instead be an EXACT
+    // back-to-front draw of a population — the previous one — and the grown
+    // population must appear only with its own ordering.
+    const geom = pool.acquireGSplatsGeometry('node', 16);
+    pool.updateGSplatsGeometry(geom, packed(4), 4);
+    writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
+    drainSortedIndexApply(geom);
+
+    pool.updateGSplatsGeometry(geom, packed(6), 6, 3.0, { fromInstance: 4 });
+    expect(geom.instanceCount).toBe(4);
+    expect(drawn(geom)).toEqual([3, 2, 1, 0]);
+
+    writeSortedIndexOrdering(geom, new Uint32Array([5, 3, 4, 2, 1, 0]), 6);
+    drainSortedIndexApply(geom);
+    expect(geom.instanceCount).toBe(6);
+    expect(drawn(geom)).toEqual([5, 3, 4, 2, 1, 0]);
+    expect(sortedIndexDrawHoldTarget(geom)).toBeUndefined();
+  });
+
+  const sortedPrefix = (geom: THREE.InstancedBufferGeometry): void => {
+    pool.updateGSplatsGeometry(geom, packed(3), 3);
+    writeSortedIndexOrdering(geom, new Uint32Array([2, 0, 1]), 3);
+    drainSortedIndexApply(geom);
+  };
+
+  it('does not raise the draw for an ordering of a different population', () => {
+    const geom = pool.acquireGSplatsGeometry('node', 16);
+    sortedPrefix(geom);
+    pool.updateGSplatsGeometry(geom, packed(5), 5, 3.0, { fromInstance: 3 });
+    expect(geom.instanceCount).toBe(3);
+    // A second append while still held: the drawn population stays the
+    // sorted 3, now waiting for 6 rather than 5.
+    pool.updateGSplatsGeometry(geom, packed(6), 6, 3.0, { fromInstance: 5 });
+    expect(geom.instanceCount).toBe(3);
+    expect(drawn(geom)).toEqual([2, 0, 1]);
+
+    writeSortedIndexOrderingLive(geom, new Uint32Array([4, 3, 2, 1, 0]), 5);
+    expect(geom.instanceCount).toBe(3); // 5 is not the population committed
+
+    writeSortedIndexOrderingLive(geom, new Uint32Array([5, 4, 3, 2, 1, 0]), 6);
+    expect(geom.instanceCount).toBe(6); // the synchronous-sort path raises too
+    expect(drawn(geom)).toEqual([5, 4, 3, 2, 1, 0]);
+  });
+
+  it('release draws the whole population as a valid permutation, drawn order first', () => {
+    const geom = pool.acquireGSplatsGeometry('node', 16);
+    sortedPrefix(geom);
+    pool.updateGSplatsGeometry(geom, packed(6), 6, 3.0, { fromInstance: 3 });
+    releaseSortedIndexDrawHold(geom);
+    expect(geom.instanceCount).toBe(6);
+    expect(drawn(geom)).toEqual([2, 0, 1, 3, 4, 5]);
+    expect(sortedIndexDrawHoldTarget(geom)).toBeUndefined();
+    releaseSortedIndexDrawHold(geom); // idempotent
+    expect(geom.instanceCount).toBe(6);
+  });
+
+  it('a vouched recommit while held repairs from the DRAWN prefix, never the unsorted tail', () => {
+    // `preserveOrdering` vouches for the buffer over the committed count, but
+    // a held draw's buffer is only a permutation over what it DRAWS.
+    const geom = pool.acquireGSplatsGeometry('node', 16);
+    sortedPrefix(geom);
+    pool.updateGSplatsGeometry(geom, packed(6), 6, 3.0, { fromInstance: 3 });
+    pool.updateGSplatsGeometry(geom, packed(6), 6, 3.0, { preserveOrdering: true });
+    expect(geom.instanceCount).toBe(6);
+    expect(drawn(geom)).toEqual([2, 0, 1, 3, 4, 5]);
+    expect(sortedIndexDrawHoldTarget(geom)).toBeUndefined();
+  });
+
+  it('a full rewrite ends the hold and draws the whole new population', () => {
+    const geom = pool.acquireGSplatsGeometry('node', 16);
+    sortedPrefix(geom);
+    pool.updateGSplatsGeometry(geom, packed(6), 6, 3.0, { fromInstance: 3 });
+    pool.updateGSplatsGeometry(geom, packed(5), 5);
+    expect(geom.instanceCount).toBe(5);
+    expect(drawn(geom)).toEqual([0, 1, 2, 3, 4]);
+    expect(sortedIndexDrawHoldTarget(geom)).toBeUndefined();
+  });
+
+  it('a GROWN geometry seeded with the previous drawn order holds on it, then flips to the grown order', () => {
+    // The pool grow path: a fresh geometry, every texel written, whose prefix
+    // is the previous geometry's drawn population (the commit layer proves it).
+    const geom = pool.acquireGSplatsGeometry('grown', 16);
+    pool.updateGSplatsGeometry(geom, packed(6), 6, 3.0, {
+      seedOrdering: new Uint32Array([2, 0, 1]),
+    });
+    expect(geom.instanceCount).toBe(3);
+    expect(activeSortedIndexSlot(geom)).toBe(0);
+    expect(drawn(geom)).toEqual([2, 0, 1]);
+    // The whole buffer is still a valid permutation (identity tail).
+    const whole = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
+    expect(Array.from(whole.subarray(0, 6))).toEqual([2, 0, 1, 3, 4, 5]);
+
+    writeSortedIndexOrdering(geom, new Uint32Array([5, 4, 3, 2, 1, 0]), 6);
+    drainSortedIndexApply(geom);
+    expect(geom.instanceCount).toBe(6);
+    expect(drawn(geom)).toEqual([5, 4, 3, 2, 1, 0]);
+  });
+
+  it('a seed that is not smaller than the population is ignored (identity, all drawn)', () => {
+    const geom = pool.acquireGSplatsGeometry('grown', 16);
+    pool.updateGSplatsGeometry(geom, packed(3), 3, 3.0, {
+      seedOrdering: new Uint32Array([2, 0, 1]),
+    });
+    expect(geom.instanceCount).toBe(3);
+    expect(drawn(geom)).toEqual([0, 1, 2]);
+    expect(sortedIndexDrawHoldTarget(geom)).toBeUndefined();
+  });
+
+  it('declines to hold when nothing is drawn yet', () => {
+    const geom = pool.acquireGSplatsGeometry('node', 16);
+    pool.updateGSplatsGeometry(geom, packed(3), 3);
+    geom.instanceCount = 0;
+    pool.updateGSplatsGeometry(geom, packed(6), 6, 3.0, { fromInstance: 3 });
+    expect(geom.instanceCount).toBe(6);
+    expect(drawn(geom)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(sortedIndexDrawHoldTarget(geom)).toBeUndefined();
   });
 });
 
