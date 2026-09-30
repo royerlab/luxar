@@ -97,13 +97,13 @@ export class RefinementFailureTracker {
   recordSuccess(path: string): void {
     this.failCounts.delete(path);
     this.exhaustedPaths.delete(path);
+    this.notifiedPaths.delete(path);
   }
 
   /** Clear every exhausted/counted path. Returns whether any state changed. */
   reset(): boolean {
     const hadFailures = this.failCounts.size > 0 || this.exhaustedPaths.size > 0;
     this.reopen();
-    this.notifiedPaths.clear();
     return hadFailures;
   }
 
@@ -113,7 +113,7 @@ export class RefinementFailureTracker {
     this.exhaustedPaths.clear();
   }
 
-  /** Show the exhaustion toast once per path until a full reset. */
+  /** Show the exhaustion toast once per path until that path succeeds. */
   shouldNotify(path: string): boolean {
     if (this.notifiedPaths.has(path)) return false;
     this.notifiedPaths.add(path);

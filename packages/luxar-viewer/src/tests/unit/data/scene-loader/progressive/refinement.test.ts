@@ -393,7 +393,7 @@ describe('RefinementFailureTracker', () => {
     expect(t.reset()).toBe(false);
   });
 
-  it('preserves toast state across backoff rounds and clears it on a new view', () => {
+  it('preserves toast state across retries and view changes until the path succeeds', () => {
     const t = new RefinementFailureTracker(1);
     expect(t.recordFailure('/a')).toBe(true);
     expect(t.shouldNotify('/a')).toBe(true);
@@ -406,6 +406,8 @@ describe('RefinementFailureTracker', () => {
     expect(t.shouldNotify('/b')).toBe(true);
 
     expect(t.reset()).toBe(true);
+    expect(t.shouldNotify('/a')).toBe(false);
+    t.recordSuccess('/a');
     expect(t.shouldNotify('/a')).toBe(true);
   });
 
