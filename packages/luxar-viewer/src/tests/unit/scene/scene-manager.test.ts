@@ -701,7 +701,11 @@ describe('SceneManager', () => {
       await sceneManager.loadSceneData(testUrl);
 
       expect(mockShowLoadingIndicator).toHaveBeenCalled();
-      expect(mockLoadScene).toHaveBeenCalledWith(testUrl, undefined);
+      // The loader config carries the pre-node-load framing hook.
+      expect(mockLoadScene).toHaveBeenCalledWith(
+        testUrl,
+        expect.objectContaining({ onSceneMetadata: expect.any(Function) })
+      );
       expect(mockHideLoadingIndicator).toHaveBeenCalled();
     });
 
@@ -960,7 +964,7 @@ describe('SceneManager', () => {
       return { atNodeLoad };
     }
 
-    it.fails('places the AUTHORED opening camera before the scene nodes load', async () => {
+    it('places the AUTHORED opening camera before the scene nodes load', async () => {
       const { atNodeLoad } = loadSceneRecordingNodeLoad({
         viewerConfig: { camera: { position: [3, 3, 8], target: [3, 3, 0], up: [0, 1, 0] } },
         positionBounds: { min: [0, 0, 0], max: [40, 40, 40] },
@@ -974,7 +978,7 @@ describe('SceneManager', () => {
       expect(atNodeLoad.rootInScene).toBe(false);
     });
 
-    it.fails('auto-frames the opening camera before the scene nodes load', async () => {
+    it('auto-frames the opening camera before the scene nodes load', async () => {
       const { atNodeLoad } = loadSceneRecordingNodeLoad({
         positionBounds: { min: [0, 0, 0], max: [40, 40, 40] },
       });

@@ -832,79 +832,14 @@ export class SceneManager extends THREE.EventDispatcher<{
         this.updateMaterialsForCurrentCamera();
       }
 
-      const root = await loadScene(src, loaderConfig);
+      const root = await loadScene(src, {
+        ...loaderConfig,
+        onSceneMetadata: (metaRoot) => this.frameBeforeNodesLoad(metaRoot, options),
+      });
       notifier.hideLoading();
       this.scene.add(root);
       this.invalidateBoundsCache();
-
-      // Resolve the scene's DISPLAYED dimensions before anything below reads
-      // bounds. Every metadata-bounds consumer in this method (scene scale,
-      // auto-frame, clipping planes, near-cull) projects the nD
-      // `position_bounds` through `sceneDimsManager.getDims().displayed`, and
-      // falls back to [0, 1, 2] when the manager is uninitialised. The
-      // dimension-navigation UI initialises it too, but only AFTER this method
-      // resolves — so a scene whose displayed dims are not the first three
-      // (e.g. a leading non-displayed time / order / channel axis) used to be
-      // framed around the WRONG axes: the non-displayed axis' extent landed on
-      // world X, putting the look-at target off to one side of the geometry and
-      // inflating the fit distance by that axis' range. `initFromScene` is a
-      // pure metadata read (no listeners fire, no camera touched), and the
-      // later UI call re-runs it identically.
-      sceneDimsManager.initFromScene(this.scene);
-
-      // Material parameters were initialized before loadScene(). A scene FOV
-      // applied below refreshes them again before the first rendered frame.
-
-      // Establish scale-aware orbit distance limits from scene bounds BEFORE
-      // applying the author's camera. The orbit controls start with a small
-      // default maxDistance (config.controls.orbit.zoom.maxDistance); a
-      // viewer_config that places the camera far from its target (a wide
-      // establishing shot) would otherwise have that distance clamped to the
-      // default max by reinitialize()+update(), snapping the camera near the
-      // target. setSceneScale only sets the distance limits (it never moves
-      // the camera) and is idempotent, so the later autoAdjustClippingPlanes()
-      // call — which sets the same scale — is a no-op for it.
-      const metaBoundsForScale = this.getSceneBoundsFromMetadata();
-      if (metaBoundsForScale) {
-        this.controls.setSceneScale(getBoundingBoxDiagonal(metaBoundsForScale));
-      }
-
-      // Apply viewer config from zarr (camera position, background color).
-      // The helper returns whether an explicit camera position was applied;
-      // also extract once more to detect author-set target/targetNode.
-      const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
-      const { positionApplied, appliedUp } = this.applyZarrViewerConfig(root);
-      if ((options.applyViewerConfigFov || positionApplied) && viewerConfig) {
-        const fovOverride = extractRenderingOverrides(viewerConfig).fov;
-        const validFovOverride =
-          fovOverride !== undefined &&
-          Number.isFinite(fovOverride) &&
-          fovOverride >= config.camera.fovMin &&
-          fovOverride <= config.camera.fovMax;
-        if (fovOverride !== undefined && (options.applyViewerConfigFov || validFovOverride)) {
-          this.setFov(fovOverride);
-        }
-      }
-      // The scene up governs every camera fit/reset (Home/F, center-on-
-      // origin, this auto-frame): world +Y unless the author set one.
-      this.sceneUp.copy(appliedUp ?? DEFAULT_SCENE_UP);
-      const camOverrides = viewerConfig ? extractCameraOverrides(viewerConfig) : {};
-      const hasAuthorTarget = !!(camOverrides.target || camOverrides.targetNode);
-
-      // Auto-frame camera to fit scene contents, unless the zarr author specified
-      // a camera position. Only an explicit position suppresses auto-framing — a
-      // target/targetNode alone means the author wants the orbit pivot set but
-      // still expects the camera to be at a sensible distance.
-      if (!positionApplied) {
-        // No author camera position — auto-frame using metadata bounds.
-        // If the author set a target, preserve it as the look-at point
-        // instead of overwriting with bounding box center.
-        this.autoFrameCamera(hasAuthorTarget);
-      }
-
-      // Auto-adjust clipping planes using scene bounds from metadata
-      // (must run AFTER autoFrameCamera since camera position affects clipping)
-      this.autoAdjustClippingPlanes();
+      this.frameFromRootMetadata(root, options);
 
       log.info(
         Modules.SCENE_MANAGER,
@@ -915,6 +850,111 @@ export class SceneManager extends THREE.EventDispatcher<{
       log.error(Modules.SCENE_MANAGER, 'Failed to load scene:', error);
       notifier.error(`Failed to load scene from "${src}". Please check the path and try again.`);
       throw error;
+    }
+  }
+
+  /**
+   * Frame the opening camera from the root's METADATA alone, before any node
+   * loads (the loader's `onSceneMetadata` hook). Load-time decisions that read
+   * the view — B4's partition gating ranks parts against the camera and the
+   * displayed dims — then see the pose the scene opens on, rather than the
+   * reset pose and the previous scene's (or no) dimensions. The root joins the
+   * scene only for the synchronous framing call, so no frame draws it
+   * half-built. {@link loadSceneData} frames again once the nodes are in, which
+   * re-applies the same pose. A `target_node` names a node not built yet, so
+   * such a scene is framed after the load only (as before).
+   */
+  private frameBeforeNodesLoad(root: THREE.Group, options: SceneLoadOptions): void {
+    const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
+    if (viewerConfig && extractCameraOverrides(viewerConfig).targetNode) return;
+    this.scene.add(root);
+    this.invalidateBoundsCache();
+    try {
+      this.frameFromRootMetadata(root, options);
+    } finally {
+      this.scene.remove(root);
+      this.invalidateBoundsCache();
+    }
+  }
+
+  /**
+   * The opening-camera framing of `root` (already in `this.scene`): displayed
+   * dims, scene-scale orbit limits, the authored camera (or an auto-frame from
+   * the metadata bounds) and the clipping planes. Idempotent.
+   */
+  private frameFromRootMetadata(root: THREE.Group, options: SceneLoadOptions): void {
+    // Resolve the scene's DISPLAYED dimensions before anything below reads
+    // bounds. Every metadata-bounds consumer in this method (scene scale,
+    // auto-frame, clipping planes, near-cull) projects the nD
+    // `position_bounds` through `sceneDimsManager.getDims().displayed`, and
+    // falls back to [0, 1, 2] when the manager is uninitialised. The
+    // dimension-navigation UI initialises it too, but only AFTER loadSceneData
+    // resolves — so a scene whose displayed dims are not the first three
+    // (e.g. a leading non-displayed time / order / channel axis) used to be
+    // framed around the WRONG axes: the non-displayed axis' extent landed on
+    // world X, putting the look-at target off to one side of the geometry and
+    // inflating the fit distance by that axis' range. `initFromScene` is a
+    // pure metadata read (no listeners fire, no camera touched), and the
+    // later UI call re-runs it identically.
+    sceneDimsManager.initFromScene(this.scene);
+
+    // Material parameters were initialized before loadScene(). A scene FOV
+    // applied below refreshes them again before the first rendered frame.
+
+    // Establish scale-aware orbit distance limits from scene bounds BEFORE
+    // applying the author's camera. The orbit controls start with a small
+    // default maxDistance (config.controls.orbit.zoom.maxDistance); a
+    // viewer_config that places the camera far from its target (a wide
+    // establishing shot) would otherwise have that distance clamped to the
+    // default max by reinitialize()+update(), snapping the camera near the
+    // target. setSceneScale only sets the distance limits (it never moves
+    // the camera) and is idempotent, so the later autoAdjustClippingPlanes()
+    // call — which sets the same scale — is a no-op for it.
+    const metaBoundsForScale = this.getSceneBoundsFromMetadata();
+    if (metaBoundsForScale) {
+      this.controls.setSceneScale(getBoundingBoxDiagonal(metaBoundsForScale));
+    }
+
+    // Apply viewer config from zarr (camera position, background color).
+    // The helper returns whether an explicit camera position was applied;
+    // also extract once more to detect author-set target/targetNode.
+    const viewerConfig = root.userData?.viewerConfig as ZarrViewerConfig | undefined;
+    const { positionApplied, appliedUp } = this.applyZarrViewerConfig(root);
+    if ((options.applyViewerConfigFov || positionApplied) && viewerConfig) {
+      this.applyViewerConfigFov(viewerConfig, options);
+    }
+    // The scene up governs every camera fit/reset (Home/F, center-on-
+    // origin, this auto-frame): world +Y unless the author set one.
+    this.sceneUp.copy(appliedUp ?? DEFAULT_SCENE_UP);
+    const camOverrides = viewerConfig ? extractCameraOverrides(viewerConfig) : {};
+    const hasAuthorTarget = !!(camOverrides.target || camOverrides.targetNode);
+
+    // Auto-frame camera to fit scene contents, unless the zarr author specified
+    // a camera position. Only an explicit position suppresses auto-framing — a
+    // target/targetNode alone means the author wants the orbit pivot set but
+    // still expects the camera to be at a sensible distance.
+    if (!positionApplied) {
+      // No author camera position — auto-frame using metadata bounds.
+      // If the author set a target, preserve it as the look-at point
+      // instead of overwriting with bounding box center.
+      this.autoFrameCamera(hasAuthorTarget);
+    }
+
+    // Auto-adjust clipping planes using scene bounds from metadata
+    // (must run AFTER autoFrameCamera since camera position affects clipping)
+    this.autoAdjustClippingPlanes();
+  }
+
+  /** The scene FOV, applied unconditionally when the caller asked for it, else only if valid. */
+  private applyViewerConfigFov(viewerConfig: ZarrViewerConfig, options: SceneLoadOptions): void {
+    const fovOverride = extractRenderingOverrides(viewerConfig).fov;
+    const validFovOverride =
+      fovOverride !== undefined &&
+      Number.isFinite(fovOverride) &&
+      fovOverride >= config.camera.fovMin &&
+      fovOverride <= config.camera.fovMax;
+    if (fovOverride !== undefined && (options.applyViewerConfigFov || validFovOverride)) {
+      this.setFov(fovOverride);
     }
   }
 

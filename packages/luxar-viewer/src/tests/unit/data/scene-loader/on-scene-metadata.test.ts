@@ -84,7 +84,7 @@ describe('SceneLoader — onSceneMetadata hook', () => {
     vi.restoreAllMocks();
   });
 
-  it.fails('hands the root, with its viewer_config and bounds, to the hook before the load resolves', async () => {
+  it('hands the root, with its viewer_config and bounds, to the hook before the load resolves', async () => {
     const seen: { viewerConfig: unknown; positionBounds: unknown; sceneDimensions: unknown }[] = [];
     const onSceneMetadata = vi.fn((root: THREE.Group) => {
       seen.push({

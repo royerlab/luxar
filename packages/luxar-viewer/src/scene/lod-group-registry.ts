@@ -1629,10 +1629,12 @@ export class LODGroupRegistry {
   /**
    * Load-time ranking of a partition's parts against the CURRENT camera (B4):
    * which intersect the padded partition frustum, and a nearest-first load
-   * order. `null` when there is no usable view, or when no part is in the
-   * frustum at all — a camera that sees none of a partition has not been framed
-   * on it yet (the scene frames the camera after the load), so gating on it
-   * would defer everything the opening view is about to show.
+   * order. The scene manager frames the opening camera from the root metadata
+   * before any node loads (`LoaderConfig.onSceneMetadata`), so this is the pose
+   * the scene opens on. `null` when there is no usable view (no displayed dims
+   * yet, an empty viewport), or when no part is in the frustum at all: a scene
+   * framed after its load (an authored `target_node` names a node not built
+   * yet) would otherwise defer everything its opening view is about to show.
    */
   rankPartitionPartsForLoad(
     groupObject: THREE.Object3D,
