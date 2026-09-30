@@ -11,8 +11,9 @@ increasing in coarsest→finest order, coarsest = 0.0); the group's ``selector``
 attr names the UNITS those thresholds are in:
 
 * ``selector="screen-area"`` — what every DERIVED ladder stamps. A threshold is
-  a literal **screen-area fraction**: the group's projected bbox rect area over
-  the viewport area. The derived whole-object ladder is
+  a literal **screen-area fraction**: the projected area of the group box's
+  inscribed ellipsoid, sized at its near depth, over the viewport area (the
+  near-face rect face-on). The derived whole-object ladder is
   ``[0, …, 1/8, 1/4, 1/2]`` (:data:`WHOLE_OBJECT_FINEST_ANCHOR` — full detail
   while the node occupies at least half the screen, one level coarser per
   halving of occupied area) and a partition tile anchors at
@@ -277,7 +278,8 @@ def _assert_strict_ascending(thresholds: List[float], source: str) -> None:
 
 #: Whole-object ladders anchor their FINEST level at HALF THE SCREEN AREA.
 #: Under ``selector="screen-area"`` the per-child ``coverage_fraction`` IS a
-#: screen-area fraction (projected bbox rect area / viewport area), so the
+#: screen-area fraction (projected area of the box's inscribed ellipsoid,
+#: sized at its near depth, over the viewport area), so the
 #: rule reads literally: full detail while the node occupies at least half
 #: the screen (0.5), one level coarser per halving of occupied area
 #: (…, 1/8, 1/4, 1/2). A partition tile anchors at 1.0 (the tile alone

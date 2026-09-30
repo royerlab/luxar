@@ -162,7 +162,8 @@ The current format is **v3.4**, a node tree (§ "On-disk grammar"). It differs
 from **v3.3** only in the `kind=lod` selector: the group `selector` attr gains
 the value `"screen-area"` (what every DERIVED ladder now stamps), under which
 the per-child `coverage_fraction` is a literal **screen-area fraction**
-(projected bbox rect area / viewport area; occupancy halving — whole-object
+(projected area of the box's inscribed ellipsoid, sized at its near depth, over
+the viewport area — the near-face rect face-on; occupancy halving — whole-object
 finest `0.5`, partition tile `1.0` — see the `kind=lod` section). Stores with
 `selector: "coverage"` keep the legacy diagonal-metric units and are read and
 round-tripped unchanged, so every v3.3 store is also a valid v3.4 store.
@@ -313,7 +314,8 @@ accessor returns); they are deliberately decoupled, so the writer stamps
 strictly ascending coarsest→finest with the coarsest child always `0.0`; the
 group's `selector` attr names the UNITS. Under `selector: "screen-area"` (what
 every derived ladder stamps since v3.4) a threshold is a literal screen-area
-fraction — the node's projected bbox rect area over the viewport area — and
+fraction — the projected area of the node box's inscribed ellipsoid, sized at
+its near depth, over the viewport area (the near-face rect face-on) — and
 writers derive the ladder by SCREEN-OCCUPANCY HALVING: authored detail is
 meant to be viewed full screen, so a whole-object ladder anchors its FINEST
 level at `0.5` (full detail while the node occupies at least half the screen)
