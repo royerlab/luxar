@@ -29,8 +29,11 @@ things make that a per-GROUP measurement rather than a per-demo slogan
 
 **The two selectors are in different units and are kept that way.** Under
 ``selector="screen-area"`` the metric is :func:`project_box_area_fraction` — the
-projected world AABB intersected with the viewport, area in half-extent units,
-saturating at exactly ``1.0``. Under the legacy ``selector="coverage"`` it is
+group box's inscribed ellipsoid projected to a screen ellipse, sized by its
+view-axis half-chord, clipped to the viewport and read in half-extent (rect)
+units, saturating at exactly ``1.0``. Both metrics project the group's LOCAL box
+through ``P·V·matrixWorld``, as the viewer does; only the off-screen frustum
+gate uses the world AABB. Under the legacy ``selector="coverage"`` it is
 :func:`legacy_coverage_metric` — the UNCLIPPED projected diagonal in pixels over
 ``FILL_FACTOR × min(viewportW, viewportH)``, range roughly ``[0, 4]``. Comparing
 a stored coverage threshold against an area fraction is the mistake this module
@@ -62,8 +65,12 @@ on either side should move both:
 **What is deliberately NOT modelled.** Dynamic near/far clipping: the near and
 far planes are set far outside the fitted scene (:func:`_near_far_for`) so only
 the four SIDE planes can gate. That costs nothing, because the near-plane hazard
-the metrics actually care about is the homogeneous-``w`` straddle inside
-:func:`project_box_ndc_rect`, which does not read ``camera.near`` at all.
+the metrics actually care about is the homogeneous-``w`` straddle of the box's
+corners (:func:`project_box_ndc_rect`, and the same test ahead of the ellipse in
+:func:`project_box_area_fraction`), which does not read ``camera.near`` at all.
+Nor is the viewer's projected-FOOTPRINT pick for GSplat ladders carrying
+complete footprint stamps (``lod-group-registry.ts::pickStampedFootprintChild``),
+which runs ahead of the occupancy metric there; the screen reports occupancy only.
 """
 
 from __future__ import annotations
@@ -169,7 +176,7 @@ DEFAULT_FIT_FOV = 47.0
 FILL_FACTOR = 0.5
 
 #: ``DEGENERATE_RECT_HALF_EXTENT`` (``scene/lod-selector-math.ts``) — below this
-#: RAW half-extent the area metric ramps to the rect's linear span instead.
+#: RAW minor semi-axis the area metric ramps to the ellipse's linear span instead.
 DEGENERATE_RECT_HALF_EXTENT = 1e-3
 
 #: ``W_EPSILON`` (``scene/lod-selector-math.ts``) — a corner at or below this
@@ -511,37 +518,201 @@ def project_box_ndc_rect(box: Box3, proj_view: np.ndarray) -> Optional[NdcRect]:
     )
 
 
+@dataclass
+class _Ellipse:
+    """A projected ellipse in NDC: centre ``(cx, cy)``, shape matrix ``S``.
+
+    The ellipse is ``{c + S^{1/2} u : |u| = 1}``, so ``sqrt(sxx)`` / ``sqrt(syy)``
+    are the half-extents of its screen AABB and ``sqrt(det S)`` is the product of
+    its semi-axes.
+    """
+
+    cx: float
+    cy: float
+    sxx: float
+    sxy: float
+    syy: float
+
+
+#: :func:`_project_near_depth_ellipse`: the eye plane cuts the box.
+_ELLIPSE_STRADDLES = "straddles"
+#: :func:`_project_near_depth_ellipse`: the box lies wholly behind the eye.
+_ELLIPSE_BEHIND = "behind"
+
+
+def _half_extents_sq(box: Box3) -> Tuple[float, float, float]:
+    """The squared half-extents of ``box`` — its inscribed ellipsoid's semi-axes²."""
+    return (
+        (0.5 * (box.max[0] - box.min[0])) ** 2,
+        (0.5 * (box.max[1] - box.min[1])) ** 2,
+        (0.5 * (box.max[2] - box.min[2])) ** 2,
+    )
+
+
+def _weighted_row_dot(
+    m: np.ndarray, a: int, b: int, h2: Tuple[float, float, float]
+) -> float:
+    """``Σ h_i² m[a, i] m[b, i]`` over the three spatial columns of rows a and b."""
+    return float(sum(h2[i] * m[a, i] * m[b, i] for i in range(3)))
+
+
+def _project_inscribed_ellipse(box: Box3, m: np.ndarray) -> "_Ellipse | str":
+    """The image of the ellipsoid inscribed in ``box`` under the box-to-clip ``m``.
+
+    ``lod-selector-math.ts::projectInscribedEllipse``. The ellipsoid's dual
+    quadric ``T diag(hx², hy², hz², −1) Tᵀ`` projects through the x, y and w
+    rows of ``m`` to a dual conic; normalised so its ``w,w`` entry is ``−1`` it
+    reads ``[[S − ccᵀ, −c], [−cᵀ, −1]]``. ``k = w_c² − Σ(h_i m_{3i})²`` is
+    positive iff the eye plane misses the ellipsoid.
+    """
+    h2 = _half_extents_sq(box)
+    centre = np.array([*box.center, 1.0])
+    u = float(m[0] @ centre)
+    v = float(m[1] @ centre)
+    w = float(m[3] @ centre)
+    k = w * w - _weighted_row_dot(m, 3, 3, h2)
+    if not k > 0:
+        return _ELLIPSE_STRADDLES
+    if w < 0:
+        return _ELLIPSE_BEHIND
+    cx = (u * w - _weighted_row_dot(m, 0, 3, h2)) / k
+    cy = (v * w - _weighted_row_dot(m, 1, 3, h2)) / k
+    return _Ellipse(
+        cx=cx,
+        cy=cy,
+        sxx=(_weighted_row_dot(m, 0, 0, h2) - u * u) / k + cx * cx,
+        sxy=(_weighted_row_dot(m, 0, 1, h2) - u * v) / k + cx * cy,
+        syy=(_weighted_row_dot(m, 1, 1, h2) - v * v) / k + cy * cy,
+    )
+
+
+def _ellipsoid_view_chord(box: Box3, m: np.ndarray) -> float:
+    """The inscribed ellipsoid's half-chord along the camera axis, in ``w`` units.
+
+    ``lod-selector-math.ts::ellipsoidViewChord``. The camera axis in the box
+    frame is the cross product of the clip x/y rows — NOT the ``w`` gradient,
+    which an anisotropic group scale tilts — so a scaled local box reads the
+    same chord as the identical world box.
+    """
+    h2 = _half_extents_sq(box)
+    view_axis = np.cross(m[0, :3], m[1, :3])
+    depth_along_axis = 0.0
+    inverse_radius_sq = 0.0
+    for i in range(3):
+        if h2[i] == 0 and view_axis[i] != 0:
+            return 0.0
+        depth_along_axis += float(m[3, i] * view_axis[i])
+        if h2[i] > 0:
+            inverse_radius_sq += float(view_axis[i] ** 2) / h2[i]
+    if not inverse_radius_sq > 0:
+        return 0.0
+    return abs(depth_along_axis) / math.sqrt(inverse_radius_sq)
+
+
+def _project_near_depth_ellipse(box: Box3, m: np.ndarray) -> "_Ellipse | str":
+    """The inscribed-ellipsoid image SIZED by its view-axis half-chord.
+
+    ``lod-selector-math.ts::projectNearDepthEllipse``. On the view axis the bare
+    ellipsoid silhouette reads at the geometric-mean depth
+    ``sqrt((w_c − c)(w_c + c))``; scaling ``S`` by ``(w_c + c)/(w_c − c)`` moves
+    it to the near depth ``w_c − c``, so a face-on box on the axis reads EXACTLY
+    its near-face rect at any thickness. The centre is not moved. ``w_c`` is the
+    midpoint of the corners' ``w`` range. An orthographic projection or a flat
+    tilted card has a zero chord and is not resized.
+
+    Returns :data:`_ELLIPSE_BEHIND` when every corner is behind the eye and
+    :data:`_ELLIPSE_STRADDLES` when the nearest corner is at/behind
+    :data:`W_EPSILON` — the corner-rect saturation rule, kept even when the eye
+    plane misses the inscribed ellipsoid.
+    """
+    w = _box_corners(box) @ m[3]
+    w_near = float(w.min())
+    w_far = float(w.max())
+    if not w_far > 0:
+        return _ELLIPSE_BEHIND
+    if not w_near > W_EPSILON:
+        return _ELLIPSE_STRADDLES
+    ellipse = _project_inscribed_ellipse(box, m)
+    if isinstance(ellipse, str):
+        return ellipse
+    w_centre = 0.5 * (w_near + w_far)
+    chord = _ellipsoid_view_chord(box, m)
+    area_scale = (w_centre + chord) / (w_centre - chord)
+    ellipse.sxx *= area_scale
+    ellipse.sxy *= area_scale
+    ellipse.syy *= area_scale
+    return ellipse
+
+
+def _viewport_inside_ellipse(ellipse: _Ellipse, det: float) -> bool:
+    """A convex ellipse contains the viewport iff it contains all four corners."""
+    if not (det > 0 and math.isfinite(det)):
+        return False
+    for x in (-1.0, 1.0):
+        for y in (-1.0, 1.0):
+            dx = x - ellipse.cx
+            dy = y - ellipse.cy
+            inside = (
+                ellipse.syy * dx * dx
+                - 2 * ellipse.sxy * dx * dy
+                + ellipse.sxx * dy * dy
+                <= det
+            )
+            if not inside:
+                return False
+    return True
+
+
 def project_box_area_fraction(box: Box3, proj_view: np.ndarray) -> float:
     """The ``selector="screen-area"`` metric: the visible viewport area fraction.
 
-    ``lod-selector-math.ts::projectBoxAreaFraction``. The projected rect is
-    INTERSECTED with the viewport first, so the metric reads the screen actually
-    occupied and tops out at exactly ``1.0``; a SIGNED negative overlap on either
-    axis means no viewport overlap at all and zeroes the metric before the
-    degenerate ramp can see it. That ramp — gated on the RAW, pre-clip thin
-    half-extent — lets sub-pixel-thin content (an axis-aligned polyline, an
-    edge-on plane) read its clipped LINEAR span instead of a vanishing area
-    product, decaying continuously to the plain area at the floor.
+    ``lod-selector-math.ts::projectBoxAreaFraction``, ported exactly. The box is
+    measured through its INSCRIBED ellipsoid (semi-axes = the box half-extents),
+    projected as a dual quadric onto an image-plane ellipse and sized by the
+    ellipsoid's view-axis half-chord (:func:`_project_near_depth_ellipse`); the
+    metric is ``sqrt(det S)`` of that ellipse, so an orbit at fixed distance
+    does not walk the ladder the way the 8-corner rect did. Face-on on the view
+    axis, and under an orthographic camera, it is exactly the legacy rect
+    product ``halfW × halfH`` of the near face.
+
+    The area is scaled per axis by the VISIBLE fraction of the ellipse's screen
+    AABB, and reads exactly ``1.0`` once the ellipse contains the whole viewport;
+    a SIGNED negative overlap on either axis means no viewport overlap at all
+    and zeroes the metric before the degenerate ramp can see it. That ramp —
+    gated on the RAW, pre-clip MINOR semi-axis — lets sub-pixel-thin content (an
+    axis-aligned polyline, an edge-on plane) read its clipped LINEAR span instead
+    of a vanishing area, decaying continuously to the plain area at the floor.
 
     Args:
-        box: A world-space box.
-        proj_view: The row-major ``projection @ view`` product.
+        box: A box in the frame ``proj_view`` maps to clip space — group-local
+            bounds with ``P·V·matrixWorld``, or world bounds with ``P·V``.
+        proj_view: The row-major box-to-clip matrix.
 
     Returns:
-        A fraction in ``[0, 1]``, or ``+inf`` on a near-plane straddle.
+        A fraction in ``[0, 1]``, or ``+inf`` when the eye plane cuts the box.
     """
-    rect = project_box_ndc_rect(box, proj_view)
-    if rect is None:
-        return math.inf
-    overlap_w = min(rect.max_x, 1.0) - max(rect.min_x, -1.0)
-    overlap_h = min(rect.max_y, 1.0) - max(rect.min_y, -1.0)
+    ellipse = _project_near_depth_ellipse(box, proj_view)
+    if isinstance(ellipse, str):
+        return math.inf if ellipse == _ELLIPSE_STRADDLES else 0.0
+    # A zero-extent axis leaves a diagonal entry at rounding noise, which may be
+    # a hair below zero; that axis is simply zero-width.
+    ex = math.sqrt(max(0.0, ellipse.sxx))
+    ey = math.sqrt(max(0.0, ellipse.syy))
+    overlap_w = min(ellipse.cx + ex, 1.0) - max(ellipse.cx - ex, -1.0)
+    overlap_h = min(ellipse.cy + ey, 1.0) - max(ellipse.cy - ey, -1.0)
     if overlap_w < 0 or overlap_h < 0:
         return 0.0
-    half_w = overlap_w * 0.5
-    half_h = overlap_h * 0.5
-    span = max(half_w, half_h)
-    area = half_w * half_h
-    raw_thin = min(rect.max_x - rect.min_x, rect.max_y - rect.min_y) * 0.5
+    det = ellipse.sxx * ellipse.syy - ellipse.sxy * ellipse.sxy
+    if _viewport_inside_ellipse(ellipse, det):
+        return 1.0
+    visible_w = min(1.0, overlap_w / (2 * ex)) if ex > 0 else 1.0
+    visible_h = min(1.0, overlap_h / (2 * ey)) if ey > 0 else 1.0
+    area = math.sqrt(max(0.0, det)) * visible_w * visible_h
+    half_trace = 0.5 * (ellipse.sxx + ellipse.syy)
+    half_diff = 0.5 * (ellipse.sxx - ellipse.syy)
+    minor_sq = half_trace - math.sqrt(half_diff * half_diff + ellipse.sxy**2)
+    raw_thin = math.sqrt(max(0.0, minor_sq))
+    span = max(overlap_w, overlap_h) * 0.5
     degenerate = span * max(0.0, 1.0 - raw_thin / DEGENERATE_RECT_HALF_EXTENT)
     return max(area, degenerate)
 
@@ -1299,10 +1470,12 @@ def _preflight(facts: _LodGroupFacts) -> Tuple[List[float], Optional[GroupScreen
 
 @dataclass(frozen=True)
 class _Geometry:
-    """One group's world boxes and ladders, fixed across the aspect sweep."""
+    """One group's boxes, world matrix and ladders, fixed across the aspect sweep."""
 
     raw_world: Box3
-    metric_world: Box3
+    raw_local: Box3
+    metric_local: Box3
+    world_matrix: np.ndarray
     has_lod_bounds: bool
     selector: str
     default_level: int
@@ -1359,18 +1532,24 @@ def _measure(
         today_metric = area_metric = 0.0
         today_index = rederived_index = geometry.default_level
     else:
-        area_metric = project_box_area_fraction(geometry.metric_world, proj_view)
+        # Like the viewer, the metrics project the group's LOCAL box through
+        # `P·V·matrixWorld` — the box's own 8 corners as oriented on screen. The
+        # world AABB (the frustum gate's box) inflates a rotated group.
+        box_to_clip = proj_view @ geometry.world_matrix
+        area_metric = project_box_area_fraction(geometry.metric_local, box_to_clip)
         if geometry.has_lod_bounds:
             # The thin-rect ramp is not monotone under containment, so robust
             # bounds may only REDUCE the raw-bounds metric.
             area_metric = min(
                 area_metric,
-                project_box_area_fraction(geometry.raw_world, proj_view),
+                project_box_area_fraction(geometry.raw_local, box_to_clip),
             )
         today_metric = (
             area_metric
             if geometry.selector == DERIVED_LOD_SELECTOR
-            else legacy_coverage_metric(geometry.metric_world, proj_view, width, height)
+            else legacy_coverage_metric(
+                geometry.metric_local, box_to_clip, width, height
+            )
         )
         today_index = pick_child_with_hysteresis(
             geometry.stored_thresholds, geometry.default_level, today_metric
@@ -1467,7 +1646,9 @@ def _screen_group(
 
     geometry = _Geometry(
         raw_world=transform_box(raw_local, facts.world_matrix),
-        metric_world=transform_box(metric_local, facts.world_matrix),
+        raw_local=raw_local,
+        metric_local=metric_local,
+        world_matrix=facts.world_matrix,
         has_lod_bounds=has_lod_bounds,
         selector=facts.selector,
         default_level=facts.default_level,
