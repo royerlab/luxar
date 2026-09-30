@@ -768,8 +768,9 @@ function reregisterAfterLateWorkerInit(): void {
   // re-enters `updateView` with it once the in-flight pass unwinds, so the
   // re-commit these stamp-less nodes need always happens. The in-flight pass
   // is usually ABORTED first (its commit skipped); only one that has gone
-  // `DRAG_COMMIT_INTERVAL_MS` without a commit is let through to commit
-  // before the parked state runs. The accepted cost of the abort is the
+  // `DRAG_COMMIT_INTERVAL_MS` without a commit, and is itself younger than
+  // `DRAG_COMMIT_MAX_HOLD_MS`, is let through to commit before the parked
+  // state runs. The accepted cost of the abort is the
   // aborted pass's fetch/decode work, which the winning pass redoes. Gating on
   // `isLoadInProgress` instead would be the worse trade: the stamps are
   // already cleared at this point, so a skipped reprocess leaves the nodes

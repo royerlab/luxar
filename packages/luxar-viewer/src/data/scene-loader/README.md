@@ -23,7 +23,11 @@ The SceneLoader has three external entry points:
   one, its signal is aborted so the superseded load's chunk reads/worker
   decodes bail (an `AbortError`/`WorkerAbortError` is treated as
   superseded, not a failure) and its atomic commit is skipped — the
-  winning view-state commits the correct frame. The signal flows from
+  winning view-state commits the correct frame. The exception is a drag
+  (B5): once a pass chain has gone `DRAG_COMMIT_INTERVAL_MS` (150 ms)
+  without a commit, a slice-only supersede lets the in-flight pass commit
+  first — unless that pass is older than `DRAG_COMMIT_MAX_HOLD_MS` (1 s),
+  i.e. stuck on a slow chunk, which is aborted as usual. The signal flows from
   `updateView` through the handler ctx and `loader.updateView` to two read
   surfaces: the `wrapWithCache` L0 chokepoint (covers warm-cache hits), and
   `RangeLoader` — the single owner of every demand chunk read for all three

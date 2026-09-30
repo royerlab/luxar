@@ -264,6 +264,15 @@ import {
 export const DRAG_COMMIT_INTERVAL_MS = 150;
 
 /**
+ * Longest a view pass may run and still be owed its commit (B5). A pass older
+ * than this is waiting on something slow — typically a stalled chunk download
+ * (a cold hosted edge can take tens of seconds) — and holding it would queue
+ * every newer view behind that one download, freezing the scrub. Past the cap
+ * the superseding view aborts it as it would without the guarantee.
+ */
+export const DRAG_COMMIT_MAX_HOLD_MS = 1000;
+
+/**
  * Delay before `kickRefinementIfIdle` re-checks a lock-held serialization
  * lock. Frame-scale-ish: responsive after the holder finishes, cheap while it
  * runs (one timer at a time — see `_refinementKickPending`). Module-local (no
@@ -369,6 +378,8 @@ export class SceneLoader {
   private _lastCommitAt = 0;
   /** Start of the current chain of superseding view passes. */
   private _passChainStartedAt = 0;
+  /** Start of the view pass in flight (B5 hold cap). */
+  private _passStartedAt = 0;
   private config: LoaderConfig;
   private rootGroup: THREE.Group | null = null;
   /**
@@ -879,7 +890,9 @@ export class SceneLoader {
   /**
    * Whether a superseding view must let the in-flight VIEW pass commit rather
    * than abort it (B5): this pass chain has gone
-   * {@link DRAG_COMMIT_INTERVAL_MS} without a commit.
+   * {@link DRAG_COMMIT_INTERVAL_MS} without a commit, and the pass itself is
+   * younger than {@link DRAG_COMMIT_MAX_HOLD_MS} — one stuck on a slow chunk
+   * is aborted, or it would hold every newer view for as long as it runs.
    * A refinement run is aborted as before — it only deepens what is shown.
    * So is a pass superseded by a `displayDims` change: an intermediate SLICE
    * is a truthful frame of a drag, but geometry projected for the old display
@@ -891,10 +904,11 @@ export class SceneLoader {
     if (next && (next.length !== current.length || next.some((d, i) => d !== current[i]))) {
       return false;
     }
+    const now = performance.now();
     return (
       !this._refining &&
-      performance.now() - Math.max(this._lastCommitAt, this._passChainStartedAt) >=
-        DRAG_COMMIT_INTERVAL_MS
+      now - this._passStartedAt < DRAG_COMMIT_MAX_HOLD_MS &&
+      now - Math.max(this._lastCommitAt, this._passChainStartedAt) >= DRAG_COMMIT_INTERVAL_MS
     );
   }
 
@@ -1551,7 +1565,8 @@ export class SceneLoader {
       // queueNext re-enters updateView with the pending (winning) state —
       // unless this pass chain has gone DRAG_COMMIT_INTERVAL_MS without a commit: then the
       // in-flight pass is let through to commit first, so a continuous drag
-      // whose passes outlast its event interval still shows progress.
+      // whose passes outlast its event interval still shows progress. A pass
+      // older than DRAG_COMMIT_MAX_HOLD_MS is aborted regardless.
       if (!this.inFlightPassOwesCommit(viewState)) this._updateAbortController?.abort();
 
       // Store the latest pending state (supersedes any previous pending
@@ -1622,6 +1637,7 @@ export class SceneLoader {
     // the geometry commit below.
     const updateController = new AbortController();
     this._updateAbortController = updateController;
+    this._passStartedAt = performance.now();
     let supersededPassWait: Promise<void> | undefined;
     let sweepArchiveFault: ArchiveFaultError | undefined;
     const onArchiveFault = (fault: ArchiveFaultError): void => {
