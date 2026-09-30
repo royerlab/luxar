@@ -41,6 +41,7 @@ export const URL_PARAM_KEYS = {
   src: 'src',
   theme: 'theme',
   title: 'title',
+  view: 'view',
   control: 'control',
   controlToken: 'controlToken',
   controlAllowCrossOrigin: 'controlAllowCrossOrigin',
@@ -387,6 +388,8 @@ export interface UrlParams {
    * a scene's authored `viewer_config.title` overrides it at load.
    */
   title: string | null;
+  /** Shareable view bookmark JSON (`?view=...`). */
+  view: string | null;
   /**
    * Remote-control socket URL, already resolved and validated
    * (`?control`, or `?control=ws://host/control` to split the origin).
@@ -683,6 +686,7 @@ export function readUrlParams(search?: string, origin?: ControlSocketOrigin): Ur
     src: normalizeDataSourceUrl(get(K.src)),
     theme: get(K.theme),
     title: trimmedParam(params, K.title),
+    view: get(K.view),
     control: normalizeControlSocketUrl(get(K.control), pageOrigin, allowCrossOriginControl),
     controlToken: trimmedParam(params, K.controlToken),
     controlAllowCrossOrigin: allowCrossOriginControl,

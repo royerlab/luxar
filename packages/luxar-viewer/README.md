@@ -811,6 +811,7 @@ the native WKWebView launcher fall back to L1-only caching; see the
 - `?src=<path>` — Path to a Zarr dataset (trailing slashes are normalized away)
 - `?theme=<id>` — Select `dark`, `light`, `frosted-glass`, or `liquid-glass`
 - `?debug` — Expose `window.__luxarDebug` for Playwright / dev console
+- `?view=<JSON>` — Restores a shared view bookmark after the dataset loads (camera, slices, rendering and layers)
 - `?title=<text>` — Browser tab title; `luxar serve --open` derives it from the dataset file name, a scene's authored `viewer_config.title` overrides it, and it is dropped when you switch datasets
 - `?kiosk` — Force kiosk mode on as a hard operator override (locks a scene; cannot unlock authored kiosk mode)
 - `?control` / `?control=<ws-url>` — Attach to the serving app's remote-control hub; an explicit URL must be same-origin unless `?controlAllowCrossOrigin` is also present

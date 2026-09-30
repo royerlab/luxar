@@ -142,6 +142,7 @@ describe('readUrlParams', () => {
       src: null,
       theme: null,
       title: null,
+      view: null,
       control: null,
       controlToken: null,
       controlAllowCrossOrigin: false,

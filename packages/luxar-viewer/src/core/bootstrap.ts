@@ -17,6 +17,7 @@
  */
 
 import { LuxarApp, type LuxarAppOptions } from './app';
+import { parseBookmark, restoreBookmark } from './app/bookmark-state';
 import { KeyAction } from '../input';
 import { dataSourceDocumentTitle, setDocumentTitle } from './document-title';
 import { config } from '../config';
@@ -411,6 +412,18 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
 
   try {
     await app.init(appOptions);
+    if (urlParams.view !== null) {
+      const bookmark = parseBookmark(urlParams.view);
+      if (bookmark) {
+        try {
+          await restoreBookmark(app, bookmark);
+        } catch (error) {
+          log.warning(Modules.LUXAR, 'Could not restore view bookmark:', error);
+        }
+      } else {
+        log.warning(Modules.LUXAR, 'Ignoring invalid view bookmark URL');
+      }
+    }
   } catch (error) {
     log.error(Modules.LUXAR, `Failed to start Luxar application: ${getErrorMessage(error)}`, error);
     // Two failures carry a user-actionable message of their own: an archive

@@ -17,6 +17,11 @@ import { buildNavigationPopover } from '../../../ui/rail-panels/navigation-popov
 import { buildPerformancePopover } from '../../../ui/rail-panels/performance-popover';
 import { buildHomePopover } from '../../../ui/rail-panels/home-popover';
 import { buildAudioPopover } from '../../../ui/rail-panels/audio-popover';
+import {
+  buildBookmarksPopover,
+  type BookmarksPopoverContext,
+  type NamedBookmark,
+} from '../../../ui/rail-panels/bookmarks-popover';
 import { getSceneLoader } from '../../../data/scene-loader-manager';
 import type { InputHandler } from '../../../input';
 import { nextControlType } from '../../../controls/types';
@@ -55,6 +60,7 @@ export interface RailItemsDeps {
   recordingPanel: RecordingPanel;
   /** The sound layer; the Sound button exists only while it has nodes. */
   audioEngine: AudioEngine;
+  bookmarks?: BookmarksPopoverContext;
 }
 
 /** How the Sound button reads in each of its three states. */
@@ -98,7 +104,9 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
     debugConsole,
     recordingPanel,
     audioEngine,
+    bookmarks,
   } = deps;
+  const savedBookmarks: NamedBookmark[] = [];
   const controlModeShortcut = shortcutForAction(KeyAction.toggleControlMode);
   const coarse = getInputProfile().coarsePointer;
 
@@ -339,6 +347,24 @@ export function buildRailItems(deps: RailItemsDeps): ControlRailItem[] {
         },
       },
     },
+    ...(bookmarks
+      ? [
+          {
+            id: 'bookmarks',
+            title: 'Bookmarks',
+            icon: RAIL_ICONS.bookmarks,
+            activate: () => {},
+            popover: {
+              trigger: 'click' as const,
+              title: 'Bookmarks',
+              build: (host: HTMLElement) => {
+                closeOtherLeftPanels();
+                return buildBookmarksPopover(host, bookmarks, savedBookmarks);
+              },
+            },
+          },
+        ]
+      : []),
     {
       id: 'recording',
       title: 'Recording',

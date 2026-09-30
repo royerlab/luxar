@@ -64,6 +64,7 @@ import { setViewerContainer } from '../utils/viewer-container';
 import { assertBrowserEnvironment, assertThreeRevision } from './app/init/environment-guards';
 import { applyModuleOverrides } from './app/init/module-overrides';
 import { runInitPipeline, type InitPipelineResult } from './app/init/pipeline';
+import { captureBookmark, restoreBookmark } from './app/bookmark-state';
 import { runDisposePipeline } from './app/lifecycle/dispose-pipeline';
 import { shouldShowBrowser as shouldShowBrowserImpl } from './app/dataset/should-show-browser';
 import { showDatasetBrowser as showDatasetBrowserImpl } from './app/dataset/show-browser';
@@ -305,6 +306,12 @@ export class LuxarApp {
         {
           options: this.options,
           events: this.events,
+          bookmarks: {
+            capture: () => captureBookmark(this),
+            restore: (bookmark) => restoreBookmark(this, bookmark),
+            baseUrl: () => window.location.href,
+            copy: (url) => navigator.clipboard.writeText(url),
+          },
           getPanelVisibilityStates: () => this.getPanelVisibilityStates(),
           restorePanelVisibilityStates: (states) => this.restorePanelVisibilityStates(states),
           emitEmbedderEvent: (event, payload) => this.embedderEvents.emit(event, payload),
