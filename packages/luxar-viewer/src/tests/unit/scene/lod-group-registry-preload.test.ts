@@ -158,6 +158,25 @@ describe('LODGroupRegistry — band preload of the neighbouring level', () => {
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
   });
 
+  it('does not hold capture for a hidden preload, but waits when that level is selected', () => {
+    const reg = makeReg();
+    const coarse = eagerChild(0);
+    const { child: fine, ensureLoaded } = lazyChild(0.7);
+    const entry = makeEntry([coarse, fine]);
+    reg.register(entry);
+
+    reg.evaluatePerFrame();
+    expect(ensureLoaded).toHaveBeenCalledTimes(1);
+    expect(fine.loading).toBe(true);
+    expect(fine.object.visible).toBe(false);
+    expect(reg.isCaptureQuiescent()).toBe(true);
+
+    entry.groupObject.scale.setScalar(1.6);
+    reg.evaluatePerFrame();
+    expect(entry.desiredChildIndex).toBe(1);
+    expect(reg.isCaptureQuiescent()).toBe(false);
+  });
+
   it('outside the band: does not load the finer level', () => {
     // Thresholds [0, 0.9]: band [0.54, 1.26]; metric 0.5 is outside it.
     const reg = makeReg();

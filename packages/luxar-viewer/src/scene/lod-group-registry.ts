@@ -170,7 +170,6 @@ function retargetedFade(
   return { fromIdx, toIdx, startMs, startProgress: start, progress: start };
 }
 
-/** Perf counter: displayed-level changes of a lod group (one per group per frame). */
 /**
  * Band preload (see ``LODGroupRegistry.preloadNeighbour``): the level a group is
  * making resident, hidden, while its selector metric sits in the band of the
@@ -192,6 +191,7 @@ interface PreloadVisit {
  */
 const PRELOAD_EXIT_BAND_FRACTION = 0.5;
 
+/** Perf counter: displayed-level changes of a lod group (one per group per frame). */
 const S_LOD_LEVEL_SWAPS = perfCounters.slot('lod.levelSwaps');
 /** Perf counter: group-frames drawing two levels cross-faded (one per group per frame). */
 const S_LOD_BLEND_FRAMES = perfCounters.slot('lod.blendFrames');
@@ -1992,8 +1992,9 @@ export class LODGroupRegistry {
    *   climbing its ladder under the sweep-driven refinement loop — read as
    *   complete. Anything with no stamp at all (never committed, or a
    *   non-progressive loader) carries no signal and counts as complete.
-   * - No child of the entry may be ``loading`` — an in-flight commit can change
-   *   what renders on a later frame.
+   * - No child that can affect the frame may be ``loading`` — an in-flight
+   *   commit can change what renders later. A hidden band preload is exempt
+   *   until it becomes the selected level.
    * - No level dissolve may be in flight ({@link isAnimating}). The dissolve
    *   is driven by WALL time, which an offline capture does not follow, so
    *   filming one mid-way would make each exported frame depend on how long
@@ -2064,7 +2065,11 @@ export class LODGroupRegistry {
       if (aspiration.hasMoreLODs?.() === true) return false;
       if (!progress.subtreeLadderComplete) return false;
 
+      const preloadIdx = this.preloads.get(entry.path)?.idx;
       for (let i = 0; i < entry.children.length; i++) {
+        // The neighbour is loaded only to make a future threshold crossing
+        // immediate; it cannot change this frame while it stays unselected.
+        if (i === preloadIdx && i !== active && i !== desired) continue;
         if (entry.children[i].loading) return false;
       }
     }
