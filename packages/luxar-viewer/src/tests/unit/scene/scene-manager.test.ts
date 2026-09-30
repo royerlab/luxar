@@ -433,6 +433,7 @@ vi.mock('../../../scene/scene-manager/render-pipeline/renderer-setup', async () 
 import { SceneManager } from '../../../scene/scene-manager';
 import { loadScene as mockLoadScene } from '../../../data';
 import { materialManager } from '../../../rendering/material-manager';
+import { log } from '../../../utils/log';
 import { createWebGPURenderer as mockedCreateWebGPURenderer } from '../../../scene/scene-manager/render-pipeline/renderer-setup';
 import {
   sceneDimsManager,
@@ -987,6 +988,26 @@ describe('SceneManager', () => {
 
       // The pose the nodes were loaded against is the one the scene opens on.
       expect(atNodeLoad.position).toEqual(sceneManager.camera.position.toArray());
+    });
+
+    it('defers an authored target_node until its node is loaded', async () => {
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      const { atNodeLoad } = loadSceneRecordingNodeLoad({
+        viewerConfig: { camera: { position: [3, 3, 8], target_node: 'focus' } },
+        positionBounds: { min: [0, 0, 0], max: [40, 40, 40] },
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr');
+
+      expect(atNodeLoad.position).toEqual([0, 0, 8]);
+      expect(atNodeLoad.rootInScene).toBe(false);
+      // The test loader has no node to resolve, so only the post-load framing warns.
+      expect(
+        warning.mock.calls.filter(([, message]) =>
+          String(message).includes("target_node 'focus' not found in scene graph")
+        )
+      ).toHaveLength(1);
+      warning.mockRestore();
     });
 
     it('skips autoFrameCamera when applyZarrViewerConfig reports positionApplied=true', async () => {
