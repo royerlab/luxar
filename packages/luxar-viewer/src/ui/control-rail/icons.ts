@@ -32,6 +32,7 @@ export const RAIL_ICONS: Record<string, string> = {
   // the same thing.
   audioBlocked:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5v5h3.5L12 18.5v-13L7.5 9.5z"/><circle cx="18" cy="12" r="3.2"/><path d="M18 10.4v1.6"/><path d="M18 13.6v.1"/></svg>',
+  bookmarks: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg>',
   recording:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10l5-3v10l-5-3z"/></svg>',
   screenshot:
