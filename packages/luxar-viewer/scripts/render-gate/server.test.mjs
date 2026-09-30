@@ -5,10 +5,6 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { parseRange, startServer } from './server.mjs';
 
-// Ports outside the gate's default range (4801+) so a concurrent gate run and
-// this test do not collide.
-let nextPort = 4930 + Math.floor(Math.random() * 60);
-
 let root;
 let dist;
 let data;
@@ -27,7 +23,7 @@ beforeAll(() => {
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 async function withServer(options, fn) {
-  const server = await startServer({ distDir: dist, dataRoot: data, port: nextPort++, ...options });
+  const server = await startServer({ distDir: dist, dataRoot: data, port: 0, ...options });
   try {
     await fn(server);
   } finally {
