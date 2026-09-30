@@ -47,6 +47,55 @@ const baseViewState: ViewState = {
 };
 
 describe('runGSplatsRefinement — abort-gated commit', () => {
+  it('hands off a queued update when the final rung is aborted during projection', async () => {
+    const controller = new AbortController();
+    const queue = new ViewStateQueue();
+    const pendingState = { slicePosition: [0, 0, 0, 1] };
+    let loaded = 1;
+    const loader = {
+      get hasMoreLODs() {
+        return loaded < 2;
+      },
+      get loadedLODCount() {
+        return loaded;
+      },
+      totalLODCount: 2,
+      updateView: async () => {
+        loaded = 2;
+        return { splatCount: 10 };
+      },
+      rollbackToPassStart: () => {
+        loaded = 1;
+        return 1;
+      },
+    } as unknown as GSplatsDataLoader;
+    const retriggerUpdate = vi.fn();
+    const releaseLock = vi.fn();
+    const commitGSplats = vi.fn();
+
+    await runGSplatsRefinement({
+      objects: new Map(),
+      viewStateQueue: queue,
+      loaders: new Map([['/g', loader]]),
+      deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+      processGSplats: async () => {
+        queue.setPending(pendingState);
+        controller.abort();
+        return { path: '/g' } as never;
+      },
+      commitGSplats,
+      updateVisibleCountsInMonitor: vi.fn(),
+      releaseLock,
+      retriggerUpdate,
+      signal: controller.signal,
+    });
+
+    expect(commitGSplats).not.toHaveBeenCalled();
+    expect(loaded).toBe(1);
+    expect(retriggerUpdate).toHaveBeenCalledWith(pendingState);
+    expect(releaseLock).not.toHaveBeenCalled();
+  });
+
   it('does NOT commit when the signal aborts during the async process step', async () => {
     // The core failure mode: loader.updateView resolves cleanly (no throw), so
     // the AbortError catch never fires; the supersede then aborts the run's

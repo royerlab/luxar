@@ -28,6 +28,7 @@ import * as THREE from 'three';
 import type { GSplatsDataLoader, GSplatsMetadata, GSplatsViewState } from '../../types/gsplats';
 import type { LoadedGSplatsData } from '../../types/gsplats';
 import { releaseLineageIfUncommitted } from '../../types/prefix-lineage';
+import { tryRollbackToPassStart } from '../loaders/progressive/pass-rollback';
 import type { UpdateProfiler, UpdateSession } from '../../profiling/update-profiler';
 import type { ViewState } from '../data-loader-types';
 import type { ViewStateQueue } from '../scene-loader/view-state/view-state-queue';
@@ -173,13 +174,18 @@ export async function runGSplatsRefinement(ctx: GSplatsRefinementCtx): Promise<v
               // whole redundant copy on a deep ladder. See prefix-lineage.ts.
               releaseLineageIfUncommitted(data, committed);
             }
+            // updateView advances the ladder cursor before projection finishes.
+            // If an abort skips the final commit, hasMoreLODs would otherwise
+            // become false and the loop could exit before handing off the
+            // queued view update. Keep the uncommitted rung retryable.
+            if (!committed) tryRollbackToPassStart(progressiveLoader);
           }
         } finally {
           session?.end();
           pass?.end();
         }
         failureTrackerFor(progressiveLoader).recordSuccess(path);
-        return true;
+        return ctx.signal?.aborted !== true;
       } catch (error) {
         return handleRefinementError({ label: LABEL }, path, error, progressiveLoader);
       } finally {
