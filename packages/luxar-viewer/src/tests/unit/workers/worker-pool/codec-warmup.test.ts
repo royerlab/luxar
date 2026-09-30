@@ -171,6 +171,27 @@ describe('WorkerPool — lazy, one-worker-first codec warm-up', () => {
     pool.dispose();
   });
 
+  it('keeps concurrent decodes on the warm worker while the others warm', async () => {
+    const { WorkerPool, warmGates, warmCalls, decodeCalls } = await loadPool(3);
+    const pool = new WorkerPool();
+    await pool.initialize();
+    pool.warmCodecs();
+    await flush();
+    const first = warmCalls[0];
+    warmGates[first].resolve(undefined);
+    await flush();
+    expect(warmCalls).toHaveLength(3);
+
+    const run = () =>
+      pool.runDecode('decodeBloscBatch', (api) =>
+        api.decodeBloscBatch([{ bytes: new Uint8Array(1), delta: null }])
+      );
+    await Promise.all([run(), run(), run()]);
+    expect(decodeCalls).toHaveLength(3);
+    expect(new Set(decodeCalls)).toEqual(new Set([first]));
+    pool.dispose();
+  });
+
   it('never warms a worker codec under the ?mainThreadCodecs kill switch', async () => {
     const { WorkerPool, BloscDecodeDispatcher, MIN_OFFLOAD_DECODED_BYTES, blosc, warmCalls } =
       await loadPool(2);

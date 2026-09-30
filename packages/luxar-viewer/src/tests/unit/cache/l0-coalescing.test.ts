@@ -49,6 +49,37 @@ function fakeArray(counter: Counter, delayMs = 20) {
   };
 }
 
+/**
+ * Fake array whose getChunk IGNORES options.signal and returns data filled
+ * with call + 1, so a late result is distinguishable from a fresh one.
+ *
+ * The FIRST call does not finish until the test calls `releaseFirst()`, so
+ * a test can order "later call lands" before "first call lands" explicitly
+ * rather than through a race between two wall-clock timers. Later calls
+ * finish on their own after a macrotask.
+ */
+function signalDeafArray(counter: Counter) {
+  let finishFirst: (() => void) | undefined;
+  const array = {
+    shape: [1000, 3],
+    chunks: [100, 3],
+    async getChunk(_coords: number[], _options?: { signal?: AbortSignal }) {
+      const call = counter.starts++;
+      await new Promise<void>((resolve) => {
+        if (call === 0) finishFirst = resolve;
+        else setTimeout(resolve, 0);
+      });
+      counter.decodes++;
+      return { data: new Float32Array(300).fill(call + 1), shape: [100, 3], stride: [3, 1] };
+    },
+  };
+  const releaseFirst = () => {
+    if (!finishFirst) throw new Error('releaseFirst() called before the first getChunk');
+    finishFirst();
+  };
+  return { array, releaseFirst };
+}
+
 const outcome = (p: Promise<unknown>): Promise<string> =>
   p.then(
     () => 'ok',
@@ -167,6 +198,81 @@ describe('L0 coalesced waiters are abort-isolated', () => {
     expect(await outcome(p2)).toBe('ok');
     expect(counter.starts).toBe(2);
     expect(counter.decodes).toBe(1);
+  });
+
+  it('an adopting proxy keeps the decode alive and aborts it when it leaves last', async () => {
+    const cache = new DecompressedChunkCache({ maxSize: 1 << 20 });
+    const counter: Counter = { decodes: 0, starts: 0, aborted: 0 };
+    const inner = fakeArray(counter);
+    const decodeSignals: (AbortSignal | undefined)[] = [];
+    const arr = {
+      ...inner,
+      getChunk(coords: number[], options?: { signal?: AbortSignal }) {
+        decodeSignals.push(options?.signal);
+        return inner.getChunk(coords, options);
+      },
+    };
+    const shadowAc = new AbortController();
+    const foregroundAc = new AbortController();
+    const shadow = wrapWithCache(arr as never, cache, '/n/centers', {
+      getSignal: () => shadowAc.signal,
+    });
+    const foreground = wrapWithCache(arr as never, cache, '/n/centers', {
+      getSignal: () => foregroundAc.signal,
+    });
+    const key = DecompressedChunkCache.makeKey('/n/centers', [0, 0]);
+    const p1 = shadow.getChunk([0, 0]);
+    const p2 = foreground.getChunk([0, 0]); // adopts the shadow's decode
+    expect(counter.starts).toBe(1);
+    expect(decodeSignals).toHaveLength(1);
+    expect(decodeSignals[0]).toBeDefined();
+    expect(decodeSignals[0]).not.toBe(shadowAc.signal);
+    expect(decodeSignals[0]).not.toBe(foregroundAc.signal);
+
+    shadowAc.abort();
+    expect(await outcome(p1)).toBe('AbortError');
+    expect(counter.aborted).toBe(0);
+    expect(decodeSignals[0]?.aborted).toBe(false);
+    expect(cache.getInflight(key)).toBeDefined();
+
+    foregroundAc.abort();
+    expect(await outcome(p2)).toBe('AbortError');
+    expect(decodeSignals[0]?.aborted).toBe(true);
+    await new Promise((r) => setTimeout(r, 40));
+    expect(counter.aborted).toBe(1);
+    expect(counter.decodes).toBe(0);
+    expect(cache.getInflight(key)).toBeUndefined();
+    expect(cache.has(key)).toBe(false);
+  });
+
+  it('a fully-abandoned decode that finishes late does not overwrite its replacement', async () => {
+    const cache = new DecompressedChunkCache({ maxSize: 1 << 20 });
+    const counter: Counter = { decodes: 0, starts: 0, aborted: 0 };
+    const { array, releaseFirst } = signalDeafArray(counter);
+    const a = wrapWithCache(array as never, cache, '/n/centers');
+    const key = DecompressedChunkCache.makeKey('/n/centers', [0, 0]);
+    const c1 = new AbortController();
+    const p1 = a.getChunk([0, 0], { signal: c1.signal } as never);
+    c1.abort();
+    expect(await outcome(p1)).toBe('AbortError');
+    expect(cache.getInflight(key)).toBeUndefined();
+
+    // The abandoned decode is still pending (only releaseFirst() can finish
+    // it), so the fresh decode lands and is cached strictly first.
+    const fresh = await a.getChunk([0, 0]);
+    expect(counter.starts).toBe(2);
+    expect(counter.decodes).toBe(1);
+    const firstValue = (data: unknown) => (data as Float32Array)[0];
+    expect(firstValue(fresh.data)).toBe(2);
+    expect(firstValue(cache.get(key)?.data)).toBe(2);
+
+    // Now let the stale decode finish, and drain its settle handlers.
+    releaseFirst();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(counter.decodes).toBe(2);
+    expect(firstValue(cache.get(key)?.data)).toBe(2);
+    expect(firstValue((await a.getChunk([0, 0])).data)).toBe(2);
+    expect(counter.starts).toBe(2);
   });
 });
 
