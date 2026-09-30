@@ -1675,7 +1675,7 @@ describe('SceneLoader', () => {
       expect(owed?.aborted).toBe(false);
     });
 
-    it.fails('a view queued behind a held pass starts once the hold cap expires, with no newer view', async () => {
+    it('a view queued behind a held pass starts once the hold cap expires, with no newer view', async () => {
       // The drag stops while its last position is queued behind a held pass.
       // No newer view arrives to re-check the cap, so without a timer the last
       // position waits for however long the stuck pass runs.

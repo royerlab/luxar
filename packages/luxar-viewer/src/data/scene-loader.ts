@@ -379,6 +379,12 @@ export class SceneLoader {
   private _passChainStartedAt = 0;
   /** Start of the view pass in flight (B5 hold cap). */
   private _passStartedAt = 0;
+  /**
+   * Fires when the held pass's {@link DRAG_COMMIT_MAX_HOLD_MS} runs out while a
+   * view waits behind it (B5): a drag that stopped sends no newer view to
+   * re-check the cap. Cleared when the pass ends and on dispose.
+   */
+  private _holdExpiryTimer: ReturnType<typeof setTimeout> | null = null;
   private config: LoaderConfig;
   private rootGroup: THREE.Group | null = null;
   /**
@@ -909,6 +915,32 @@ export class SceneLoader {
       now - this._passStartedAt < DRAG_COMMIT_MAX_HOLD_MS &&
       now - Math.max(this._lastCommitAt, this._passChainStartedAt) >= DRAG_COMMIT_INTERVAL_MS
     );
+  }
+
+  /**
+   * Abort the held view pass once its {@link DRAG_COMMIT_MAX_HOLD_MS} runs out,
+   * so the view queued behind it runs even when no newer view arrives to
+   * re-check the cap (the drag has stopped). One timer per pass; it is a no-op
+   * if the pass has ended, or nothing is pending, by the time it fires.
+   */
+  private armHoldExpiry(): void {
+    if (this._holdExpiryTimer !== null) return;
+    const controller = this._updateAbortController;
+    const remaining = DRAG_COMMIT_MAX_HOLD_MS - (performance.now() - this._passStartedAt);
+    this._holdExpiryTimer = setTimeout(
+      () => {
+        this._holdExpiryTimer = null;
+        if (this._updateAbortController !== controller) return;
+        if (this.viewStateQueue.hasPending()) controller?.abort();
+      },
+      Math.max(0, remaining)
+    );
+  }
+
+  private clearHoldExpiry(): void {
+    if (this._holdExpiryTimer === null) return;
+    clearTimeout(this._holdExpiryTimer);
+    this._holdExpiryTimer = null;
   }
 
   /**
@@ -1543,8 +1575,10 @@ export class SceneLoader {
       // unless this pass chain has gone DRAG_COMMIT_INTERVAL_MS without a commit: then the
       // in-flight pass is let through to commit first, so a continuous drag
       // whose passes outlast its event interval still shows progress. A pass
-      // older than DRAG_COMMIT_MAX_HOLD_MS is aborted regardless.
-      if (!this.inFlightPassOwesCommit(viewState)) this._updateAbortController?.abort();
+      // older than DRAG_COMMIT_MAX_HOLD_MS is aborted regardless — by the next
+      // view, or by the hold-expiry timer if the drag stops first.
+      if (this.inFlightPassOwesCommit(viewState)) this.armHoldExpiry();
+      else this._updateAbortController?.abort();
 
       // Store the latest pending state (supersedes any previous pending
       // state). Log supersedes so rapid slider drags surface as
@@ -1781,6 +1815,7 @@ export class SceneLoader {
     } finally {
       // End profiling update cycle (always, even if errors)
       this.profiler?.endUpdate();
+      this.clearHoldExpiry();
 
       this._passGen = 0;
       this._completedGen = Math.max(this._completedGen, passGen);
@@ -2887,6 +2922,7 @@ export class SceneLoader {
     // Signal any in-flight progressive-refinement loop to abort before we
     // start nulling the fields it reads.
     this._disposed = true;
+    this.clearHoldExpiry();
     this.archiveFaultListeners.clear();
     this._leafMaterializedListener = null;
     setSceneLineLoad(0);
