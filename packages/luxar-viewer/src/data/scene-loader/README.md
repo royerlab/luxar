@@ -27,7 +27,9 @@ The SceneLoader has three external entry points:
   (B5): once a pass chain has gone `DRAG_COMMIT_INTERVAL_MS` (150 ms)
   without a commit, a slice-only supersede lets the in-flight pass commit
   first — unless that pass is older than `DRAG_COMMIT_MAX_HOLD_MS` (1 s),
-  i.e. stuck on a slow chunk, which is aborted as usual. The signal flows from
+  i.e. stuck on a slow chunk, which is aborted as usual. A timer enforces the
+  cap even when no newer view arrives (the drag stopped with its last position
+  queued behind the held pass). The signal flows from
   `updateView` through the handler ctx and `loader.updateView` to two read
   surfaces: the `wrapWithCache` L0 chokepoint (covers warm-cache hits), and
   `RangeLoader` — the single owner of every demand chunk read for all three
