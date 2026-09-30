@@ -171,6 +171,10 @@ describe('LODGroupRegistry — band preload of the neighbouring level', () => {
     expect(fine.object.visible).toBe(false);
     expect(reg.isCaptureQuiescent()).toBe(true);
 
+    fine.object.visible = true;
+    expect(reg.isCaptureQuiescent()).toBe(false);
+    fine.object.visible = false;
+
     entry.groupObject.scale.setScalar(1.6);
     reg.evaluatePerFrame();
     expect(entry.desiredChildIndex).toBe(1);

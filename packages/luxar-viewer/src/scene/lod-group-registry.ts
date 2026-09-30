@@ -2069,7 +2069,8 @@ export class LODGroupRegistry {
       for (let i = 0; i < entry.children.length; i++) {
         // The neighbour is loaded only to make a future threshold crossing
         // immediate; it cannot change this frame while it stays unselected.
-        if (i === preloadIdx && i !== active && i !== desired) continue;
+        if (i === preloadIdx && i !== active && i !== desired && !entry.children[i].object.visible)
+          continue;
         if (entry.children[i].loading) return false;
       }
     }
