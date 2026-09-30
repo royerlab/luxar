@@ -41,6 +41,7 @@ export const URL_PARAM_KEYS = {
   src: 'src',
   theme: 'theme',
   title: 'title',
+  view: 'view',
   control: 'control',
   controlToken: 'controlToken',
   controlAllowCrossOrigin: 'controlAllowCrossOrigin',
@@ -390,6 +391,8 @@ export interface UrlParams {
    * a scene's authored `viewer_config.title` overrides it at load.
    */
   title: string | null;
+  /** Shareable view bookmark JSON (`?view=...`). */
+  view: string | null;
   /**
    * Remote-control socket URL, already resolved and validated
    * (`?control`, or `?control=ws://host/control` to split the origin).
@@ -677,14 +680,25 @@ export interface UrlParams {
   envResolution: number | null;
 }
 
+function readBookmarkFragment(hash: string | undefined, queryView: string | null): string | null {
+  const fragment = hash ?? (typeof window !== 'undefined' ? window.location?.hash : '') ?? '';
+  if (!fragment.startsWith('#view=')) return queryView;
+  return new URLSearchParams(fragment.slice(1)).get(URL_PARAM_KEYS.view) ?? queryView;
+}
+
 /**
  * Parse the supplied query string (or `window.location.search` by default)
- * into a typed `UrlParams` snapshot.
+ * into a typed `UrlParams` snapshot. Bookmarks use the URL fragment so their
+ * larger payload never enters the server request.
  *
  * Pass an explicit `search` string in tests; in production main.ts calls this
  * once with no argument and threads the result through the rest of the app.
  */
-export function readUrlParams(search?: string, origin?: ControlSocketOrigin): UrlParams {
+export function readUrlParams(
+  search?: string,
+  origin?: ControlSocketOrigin,
+  hash?: string
+): UrlParams {
   const raw = search ?? (typeof window !== 'undefined' ? window.location?.search : '') ?? '';
   const params = new URLSearchParams(raw);
   // The control socket's address is derived from the page's own origin, so the
@@ -704,6 +718,7 @@ export function readUrlParams(search?: string, origin?: ControlSocketOrigin): Ur
     src: normalizeDataSourceUrl(get(K.src)),
     theme: get(K.theme),
     title: trimmedParam(params, K.title),
+    view: readBookmarkFragment(hash ?? (search === undefined ? undefined : ''), get(K.view)),
     control: normalizeControlSocketUrl(get(K.control), pageOrigin, allowCrossOriginControl),
     controlToken: trimmedParam(params, K.controlToken),
     controlAllowCrossOrigin: allowCrossOriginControl,
@@ -872,9 +887,26 @@ export function buildDataSourceBrowserUrl(src: string, location: BrowserUrlLocat
   const params = new URLSearchParams(location.search);
   params.set(URL_PARAM_KEYS.src, normalizeSrcForUrl(src));
   params.delete(URL_PARAM_KEYS.title);
+  // A bookmark belongs to the previous dataset. Keeping it would send a
+  // reload back to that view, undoing the user's dataset selection.
+  params.delete(URL_PARAM_KEYS.view);
   const query = params.toString();
-  const hash = location.hash ?? '';
+  const hash = location.hash?.startsWith('#view=') ? '' : (location.hash ?? '');
   return `${location.pathname}${query ? `?${query}` : ''}${hash}`;
+}
+
+/** Build a share link without carrying remote-control connection details. */
+export function buildViewBookmarkUrl(base: string, src: string, view: string): string {
+  const url = new URL(base);
+  url.searchParams.set(URL_PARAM_KEYS.src, src);
+  url.searchParams.delete(URL_PARAM_KEYS.view);
+  // Fragments stay client-side; even a scene with many layers never exceeds
+  // the server's request-line limit when someone opens its shared link.
+  url.hash = new URLSearchParams({ [URL_PARAM_KEYS.view]: view }).toString();
+  url.searchParams.delete(URL_PARAM_KEYS.controlToken);
+  url.searchParams.delete(URL_PARAM_KEYS.control);
+  url.searchParams.delete(URL_PARAM_KEYS.controlAllowCrossOrigin);
+  return url.toString();
 }
 
 /**

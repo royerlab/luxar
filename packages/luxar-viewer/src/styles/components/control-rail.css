@@ -602,3 +602,56 @@
     transition: none;
   }
 }
+
+/* Named view links in the rail's side panel. */
+.luxar-bookmarks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  color: var(--luxar-text-primary);
+  font-family: var(--luxar-font-base);
+  font-size: var(--luxar-text-sm);
+}
+.luxar-bookmarks__form,
+.luxar-bookmarks__actions {
+  display: flex;
+  gap: 6px;
+}
+.luxar-bookmarks input {
+  min-width: 0;
+  flex: 1;
+  padding: 5px;
+  color: var(--luxar-text-primary);
+  background: var(--luxar-bg-secondary);
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-sm, 4px);
+}
+.luxar-bookmarks button {
+  padding: 5px 8px;
+  color: var(--luxar-text-primary);
+  background: var(--luxar-bg-secondary);
+  border: 1px solid var(--luxar-border-default);
+  border-radius: var(--luxar-radius-sm, 4px);
+  cursor: pointer;
+}
+.luxar-bookmarks button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.luxar-bookmarks ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.luxar-bookmarks li button {
+  width: 100%;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.luxar-bookmarks__status {
+  min-height: 1.2em;
+  color: var(--luxar-text-secondary);
+}

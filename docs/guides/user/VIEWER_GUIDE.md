@@ -199,6 +199,7 @@ Append parameters to the viewer URL to control startup behavior.
 |-----------|------|-------------|
 | `src` | string | Zarr dataset URL or local path. |
 | `theme` | string | Initial theme. One of: `light`, `dark`, `liquid-glass`, `frosted-glass`. |
+| `view` | JSON fragment (`#view=`) | Shareable view bookmark state. The Bookmarks rail panel creates and copies these links; opening one restores the camera, slices, rendering and layer appearance after loading `src`. |
 | `title` | string | Browser tab title (`document.title`). Serve-family commands derive it from the dataset file name; a scene's authored `viewer_config.title` overrides it. Dropped when you switch datasets in the viewer -- the tab is then named after the dataset you switched to. |
 | `control` | flag \| WebSocket URL | Attach this viewer to the serving app's control hub. A URL selects an explicit hub and must be same-origin unless `controlAllowCrossOrigin` is present. |
 | `controlToken` | string | Shared control-hub token, matching `luxar serve --control-token`. Query-string tokens are visible in browser history and are only a LAN convenience. |
