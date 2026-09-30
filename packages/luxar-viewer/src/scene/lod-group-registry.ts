@@ -2530,9 +2530,7 @@ export class LODGroupRegistry {
           ? PLAYBACK_KEEP_BUDGET_FRACTION
           : PLAYBACK_LOAD_BUDGET_FRACTION;
       if (!c.ensureLoaded || ewma === undefined || ewma <= fraction * periodMs) {
-        if (c.playbackProbeAdmissionPending && ewma !== undefined) {
-          c.playbackProbeAdmissionPending = undefined;
-        }
+        if (ewma !== undefined) c.playbackProbeAdmissionPending = undefined;
         return i;
       }
     }
