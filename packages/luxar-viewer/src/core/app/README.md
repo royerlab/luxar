@@ -61,6 +61,7 @@ app/
   scene's authored `viewer_config.waypoints` (camera poses keyed on hidden-dimension
   positions with the overlay `visible_range` matching rule) to the dims manager —
   snap at load, `flyTo` on a change of matched waypoint.
+- **`bookmark-state.ts`** — serializes the current camera, dimensions, rendering and layer appearance into a shareable URL and restores it through the public app setters.
 - **`snapshot/`** — `captureSnapshot` / `restoreSnapshot` + `ViewerSnapshot`
   types. JSON-serialisable view state (camera + slice position only) for
   tests, share-view links, and regression harnesses. Layer-panel and
