@@ -4640,6 +4640,59 @@ describe('LODGroupRegistry — playback aspiration', () => {
     expect(coarse / frames).toBeGreaterThanOrEqual(0.7);
   });
 
+  // Measured on obsidian (lod_timelapse, 20 fps, WebGL, 3 rounds x 8 s): once
+  // warm, the mid level's reload average hovered at the 40 ms budget
+  // (0.8 x 50 ms), and one average of 40.6 ms demoted it to the coarsest level
+  // for a second, until the next probe. A level whose reloads straddle the
+  // budget must not flip each time its average crosses it: holding a level (or
+  // stepping down to one) only needs its reloads to fit the whole period.
+  it.fails('a level whose reload average straddles the budget is not flipped in and out', () => {
+    // 40 / 100 ms alternating: the average swings either side of the 80 ms
+    // budget of a 100 ms period, while the reloads fit the period on average.
+    const { reg, frame } = playbackHarness([(n) => (n % 2 === 0 ? 40 : 100)]);
+    for (let f = 0; f < 180; f++) frame(); // warm-up (3 s): the average converges
+    expect(countSwaps(reg, frame, 600)).toBe(0); // 10 s, 100 timepoints
+    expect(reg.get('/g')!.displayedChildIndex).toBe(1);
+  });
+
+  // Same run, cold first loop: the finest level (reloads ~65-100 ms) was
+  // demoted past a mid level averaging ~45 ms, inside the 50 ms period but
+  // over the 40 ms admission budget, down to the coarsest level for up to
+  // four seconds.
+  it.fails('a demoted level steps down to the next level whose reloads fit the period', () => {
+    // mid 70 ms (over the 80 ms budget once frame-quantised, inside the
+    // 100 ms period); fine 150 ms (over the period).
+    const { reg, frame } = playbackHarness([70, 150]);
+    for (let f = 0; f < 60; f++) frame(); // both averages measured
+    let mid = 0;
+    const frames = 300;
+    for (let f = 0; f < frames; f++) {
+      frame();
+      if (reg.get('/g')!.displayedChildIndex === 1) mid++;
+    }
+    expect(mid / frames).toBeGreaterThanOrEqual(0.9);
+  });
+
+  // Measured on obsidian (lod_timelapse, 20 fps, WebGL, 5 rounds): the first
+  // loop's reloads are cache misses (80-200 ms), which cap the mid level; once
+  // the cache is warm its reloads take 5-10 ms, but a capped level is only
+  // re-measured by the 1 Hz probe, and each probe moved the average 30% of the
+  // way from the stale cold value (108 -> 92 -> 85 -> 61 -> 49 -> 41 ms): four
+  // to six seconds at the coarsest level. A probe is a fresh measurement after
+  // a gap of a second or more, so it must replace the stale average.
+  it.fails('a capped level recovers on the first warm probe, not after the cold average decays', () => {
+    // Six cold (cache-miss) reloads of 200 ms, then warm 10 ms reloads.
+    const { reg, frame } = playbackHarness([(n) => (n < 6 ? 200 : 10)]);
+    for (let f = 0; f < 360; f++) frame(); // 6 s: the cold loads are spent (by the 5th probe)
+    let mid = 0;
+    const frames = 120; // the next 2 s: one warm probe has landed
+    for (let f = 0; f < frames; f++) {
+      frame();
+      if (reg.get('/g')!.displayedChildIndex === 1) mid++;
+    }
+    expect(mid / frames).toBeGreaterThanOrEqual(0.5);
+  });
+
   it('aspires to the finest level whose reload fits the playback period, and to the finest again once paused', () => {
     // mid reloads in 20 ms, fine in 150 ms: at a 100 ms period only mid can
     // keep up (the budget is 0.8 × the period).
