@@ -4525,11 +4525,11 @@ describe('LODGroupRegistry — playback aspiration', () => {
   /**
    * A lod group whose coarse level is eager (the sweep re-stamps it every
    * step) and whose finer levels are lazy, committed, and take `reloadMs[i]`
-   * to reload for a new timepoint. `frame()` advances the clock one display
+   * to reload for a new timepoint (a function gets the 0-based load count). `frame()` advances the clock one display
    * frame, steps the timepoint every `periodMs` while playing, lands due
    * reloads for the timepoint they were started on, then evaluates.
    */
-  function playbackHarness(reloadMs: number[], periodMs = 100) {
+  function playbackHarness(reloadMs: Array<number | ((n: number) => number)>, periodMs = 100) {
     const state = { t: 1000, version: 1, playing: true, nextStepAt: 1000 + periodMs };
     const coarse = makeGsplatChild(0, 1);
     coarse.object.userData.visibleSplatCount = 10;
@@ -4539,8 +4539,11 @@ describe('LODGroupRegistry — playback aspiration', () => {
       const child = makeGsplatChild((i + 1) / (reloadMs.length + 1), 1);
       child.object.userData.visibleSplatCount = 1000 * (i + 1);
       child.ready = true;
+      let loads = 0;
       child.ensureLoaded = () => {
-        pending.set(child, { due: state.t + ms, version: state.version });
+        const dur = typeof ms === 'number' ? ms : ms(loads);
+        loads++;
+        pending.set(child, { due: state.t + dur, version: state.version });
       };
       children.push(child);
     });
@@ -4597,6 +4600,43 @@ describe('LODGroupRegistry — playback aspiration', () => {
     }
     expect(children[1].loadEwmaMs).toBeLessThan(80);
     expect(fineInLastSecond).toBeGreaterThan(50);
+  });
+
+  /** How many times the displayed level changes over `frames` frames after the first. */
+  function countSwaps(reg: LODGroupRegistry, frame: () => void, frames: number): number {
+    frame(); // the first evaluate commits the initial selection
+    let swaps = 0;
+    let last = reg.get('/g')!.displayedChildIndex;
+    for (let f = 0; f < frames; f++) {
+      frame();
+      const shown = reg.get('/g')!.displayedChildIndex;
+      if (shown !== last) swaps++;
+      last = shown;
+    }
+    return swaps;
+  }
+
+  // The first load of a level is cold (cache miss, connection and decoder
+  // warm-up) and says nothing about what a warm per-timepoint reload costs.
+  // Seeding the average from it capped playback at the coarse level until the
+  // ~1 Hz probe measured a warm reload: two level swaps on a timelapse whose
+  // fine level keeps up easily (render-gate `playback_lod_timelapse`).
+  it.fails('a slow cold first load does not demote a level whose warm reloads fit', () => {
+    const { reg, frame } = playbackHarness([(n) => (n === 0 ? 500 : 30)]);
+    expect(countSwaps(reg, frame, 300)).toBe(0); // 5 s, 50 timepoints
+    expect(reg.get('/g')!.displayedChildIndex).toBe(1);
+  });
+
+  it('a level whose reloads are consistently too slow is still demoted promptly', () => {
+    const { reg, frame } = playbackHarness([150]);
+    for (let f = 0; f < 40; f++) frame(); // two 150 ms reloads measured
+    let coarse = 0;
+    const frames = 90;
+    for (let f = 0; f < frames; f++) {
+      frame();
+      if (reg.get('/g')!.displayedChildIndex === 0) coarse++;
+    }
+    expect(coarse / frames).toBeGreaterThanOrEqual(0.7);
   });
 
   it('aspires to the finest level whose reload fits the playback period, and to the finest again once paused', () => {
