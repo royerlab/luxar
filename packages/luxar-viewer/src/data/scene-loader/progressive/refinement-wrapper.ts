@@ -80,6 +80,23 @@ export function resetRefinementFailureTrackers(loaders: Iterable<object>): boole
   return resetAny;
 }
 
+/**
+ * Paths whose ladder still has rungs left but was retired by the
+ * consecutive-failure cap: work abandoned mid-ladder, which the owning
+ * SceneLoader re-drains on a backoff (#2975).
+ */
+export function abandonedLadderPaths(
+  loaders: Iterable<readonly [string, RefinableLoader]>
+): string[] {
+  const paths: string[] = [];
+  for (const [path, loader] of loaders) {
+    if (loader.hasMoreLODs === true && failureTrackers.get(loader)?.isExhausted(path) === true) {
+      paths.push(path);
+    }
+  }
+  return paths;
+}
+
 function cannotRefine(
   path: string,
   loader: RefinableLoader,
@@ -194,7 +211,7 @@ export function handleRefinementError(
       Modules.SCENE_LOADER,
       `${label} refinement failed for ${path}: ${message} — ` +
         `giving up after ${MAX_CONSECUTIVE_REFINEMENT_FAILURES} consecutive failures ` +
-        `(will retry after connectivity is restored; unwound ${unwound} level(s))`
+        `(will re-drain after a backoff; unwound ${unwound} level(s))`
     );
     // The node silently freezes at its last valid coarse prefix — a
     // console-only error leaves the user staring at a permanently coarse node

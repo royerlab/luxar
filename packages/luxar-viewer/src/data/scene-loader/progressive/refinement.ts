@@ -38,6 +38,28 @@ import { noteRefinementPass } from '../../../profiling/load-timeline';
 export const MAX_CONSECUTIVE_REFINEMENT_FAILURES = 3;
 
 /**
+ * Delay before the first re-drain of a ladder the cap above retired (#2975).
+ * Retiring a ladder used to be final until an `online` event, so one chunk
+ * fetch that stalled to give-up left a session that never went offline idle
+ * at a coarser rung. The owning SceneLoader re-opens such ladders on an
+ * exponential backoff instead: this delay, doubled per round, capped at
+ * {@link ABANDONED_RUNG_RETRY_MAX_MS}, for at most
+ * {@link MAX_ABANDONED_RUNG_RETRY_ROUNDS} rounds per view.
+ */
+export const ABANDONED_RUNG_RETRY_BASE_MS = 1_000;
+
+/** Longest wait between two re-drains of a retired ladder. */
+export const ABANDONED_RUNG_RETRY_MAX_MS = 30_000;
+
+/**
+ * Re-drain rounds per view before a retired ladder is left for good (an
+ * `online` event, a manual retry or a view change still re-open it). Each
+ * round costs at most {@link MAX_CONSECUTIVE_REFINEMENT_FAILURES} steps, so a
+ * rung that never recovers is attempted a bounded 21 times over about a minute.
+ */
+export const MAX_ABANDONED_RUNG_RETRY_ROUNDS = 6;
+
+/**
  * Loader steps one refinement pass keeps in flight at once (B9c). The serial
  * loop left the network idle while each step decoded, projected and committed,
  * so a scene of many small laddered nodes (a partition's parts) refined one
