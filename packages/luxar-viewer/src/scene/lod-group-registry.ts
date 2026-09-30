@@ -568,6 +568,8 @@ export interface LODGroupChild {
    * ``loadEwmaMs`` instead of blending into it. Registry-owned.
    */
   playbackProbePending?: boolean;
+  /** A probe may move the aspiration, but cannot grant the 1.0 keep budget. */
+  playbackProbeAdmissionPending?: boolean;
   /** Set by the thunk on load failure to stop per-frame retry storms. */
   failed?: boolean;
   /**
@@ -2524,8 +2526,15 @@ export class LODGroupRegistry {
       const c = entry.children[i];
       const ewma = (c.loadSamples ?? 0) >= 2 ? c.loadEwmaMs : undefined;
       const fraction =
-        i <= entry.activeChildIndex ? PLAYBACK_KEEP_BUDGET_FRACTION : PLAYBACK_LOAD_BUDGET_FRACTION;
-      if (!c.ensureLoaded || ewma === undefined || ewma <= fraction * periodMs) return i;
+        i <= entry.activeChildIndex && c.playbackProbeAdmissionPending !== true
+          ? PLAYBACK_KEEP_BUDGET_FRACTION
+          : PLAYBACK_LOAD_BUDGET_FRACTION;
+      if (!c.ensureLoaded || ewma === undefined || ewma <= fraction * periodMs) {
+        if (c.playbackProbeAdmissionPending && ewma !== undefined) {
+          c.playbackProbeAdmissionPending = undefined;
+        }
+        return i;
+      }
     }
     return 0;
   }
@@ -2545,6 +2554,7 @@ export class LODGroupRegistry {
       ) {
         next.lastPlaybackProbeMs = now;
         next.playbackProbePending = true;
+        next.playbackProbeAdmissionPending = true;
         return affordable + 1;
       }
     }

@@ -4693,6 +4693,20 @@ describe('LODGroupRegistry — playback aspiration', () => {
     expect(mid / frames).toBeGreaterThanOrEqual(0.5);
   });
 
+  it('a probe does not admit a capped level whose warm reload still exceeds the admission budget', () => {
+    // The 70 ms reload lands after five 60 Hz frames (83 ms): it fits the
+    // 100 ms period but exceeds the 80 ms admission budget.
+    const { reg, children, frame } = playbackHarness([(n) => (n < 6 ? 200 : 70)]);
+    for (let f = 0; f < 360; f++) frame(); // cold reloads are spent
+    let fine = 0;
+    for (let f = 0; f < 180; f++) {
+      frame();
+      if (reg.get('/g')!.displayedChildIndex === 1) fine++;
+    }
+    expect(children[1].loadEwmaMs).toBeGreaterThan(80);
+    expect(fine).toBeLessThan(20); // only the occasional probe may show it
+  });
+
   it('aspires to the finest level whose reload fits the playback period, and to the finest again once paused', () => {
     // mid reloads in 20 ms, fine in 150 ms: at a 100 ms period only mid can
     // keep up (the budget is 0.8 × the period).
