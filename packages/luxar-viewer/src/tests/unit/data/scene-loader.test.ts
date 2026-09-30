@@ -23,6 +23,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SceneLoader, type LoaderConfig, type ViewState } from '../../../data';
+import { DRAG_COMMIT_MAX_HOLD_MS } from '../../../data/scene-loader';
 import type { ViewStateQueue } from '../../../data/scene-loader/view-state/view-state-queue';
 import { releaseDepthSortNode } from '../../../rendering/depth-sort-coordinator';
 import * as THREE from 'three';
@@ -1672,6 +1673,67 @@ describe('SceneLoader', () => {
       // 400 ms: past DRAG_COMMIT_INTERVAL_MS (owed a commit), inside the cap.
       const owed = await supersedeStuckPassAfter(400);
       expect(owed?.aborted).toBe(false);
+    });
+
+    it.fails('a view queued behind a held pass starts once the hold cap expires, with no newer view', async () => {
+      // The drag stops while its last position is queued behind a held pass.
+      // No newer view arrives to re-check the cap, so without a timer the last
+      // position waits for however long the stuck pass runs.
+      let now = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => now);
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        now = 10_000;
+        const calls: Array<{ slice: number; signal?: AbortSignal }> = [];
+        const mockLoader = {
+          loadGSplats: vi.fn(),
+          updateView: vi.fn(
+            (vs: { slicePosition: number[] }, _session: unknown, signal?: AbortSignal) => {
+              calls.push({ slice: vs.slicePosition[3], signal });
+              return new Promise<null>((_resolve, reject) => {
+                signal?.addEventListener('abort', () =>
+                  reject(new DOMException('Superseded', 'AbortError'))
+                );
+              });
+            }
+          ),
+          dispose: vi.fn(),
+        };
+        (sceneLoader as unknown as Record<string, Map<string, unknown>>).gsplatLoaders.set(
+          '/node',
+          mockLoader
+        );
+        const view = (slice: number) => ({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0, slice],
+          tolerance: [0, 0, 0, 0],
+        });
+
+        void sceneLoader.updateView(view(1));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(calls).toHaveLength(1);
+        // 400 ms in: owed a commit and inside the cap, so the pass is held.
+        now += 400;
+        void sceneLoader.updateView(view(2));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(calls[0].signal?.aborted).toBe(false);
+
+        // Just inside the cap: still held.
+        now = 10_000 + DRAG_COMMIT_MAX_HOLD_MS - 10;
+        await vi.advanceTimersByTimeAsync(DRAG_COMMIT_MAX_HOLD_MS - 410);
+        expect(calls[0].signal?.aborted).toBe(false);
+        expect(calls).toHaveLength(1);
+
+        // At the cap, with no newer view: the held pass is aborted and the
+        // queued (last) view runs.
+        now = 10_000 + DRAG_COMMIT_MAX_HOLD_MS + 10;
+        await vi.advanceTimersByTimeAsync(20);
+        expect(calls[0].signal?.aborted).toBe(true);
+        await vi.waitFor(() => expect(calls.map((call) => call.slice)).toEqual([1, 2]));
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
