@@ -89,7 +89,7 @@ describe('motion frame timing', () => {
   const pose = { position: [0, 0, 5], target: [0, 0, 0], up: [0, 1, 0] };
 
   for (const kind of ['webgl', 'webgpu']) {
-    it.fails(`frameMs and p95 include GPU completion on ${kind}`, async () => {
+    it(`frameMs and p95 include GPU completion on ${kind}`, async () => {
       install(kind);
       const mo = await motion({ frames: 12, warm: 3, pose });
       expect(mo.rendersPerFrame).toBe(1);
@@ -100,7 +100,7 @@ describe('motion frame timing', () => {
     });
   }
 
-  it.fails('restores the WebGL framebuffer binding it reads through', async () => {
+  it('restores the WebGL framebuffer binding it reads through', async () => {
     install('webgl');
     const gl = page.dbg.app.sceneManager.renderer.backend.gl;
     const bound = [];
