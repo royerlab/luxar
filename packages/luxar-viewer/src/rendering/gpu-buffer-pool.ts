@@ -39,7 +39,11 @@ import { evictUntilUnderByteBudget } from './gpu-buffer-pool/byte-budget-evictor
 import { ActiveBufferMap } from './gpu-buffer-pool/byte-tracked-maps';
 import { PointsBufferAdapter } from './gpu-buffer-pool/points-adapter';
 import { LinesBufferAdapter } from './gpu-buffer-pool/lines-adapter';
-import { GSplatsBufferAdapter, type PackedGSplatsData } from './gpu-buffer-pool/gsplats-adapter';
+import {
+  GSplatsBufferAdapter,
+  type GSplatsUpdateOptions,
+  type PackedGSplatsData,
+} from './gpu-buffer-pool/gsplats-adapter';
 
 // Per-type spec arrays and helpers live in
 // ./gpu-buffer-pool/{points,lines,gsplats}-adapter.
@@ -50,7 +54,7 @@ export { estimateGeometryBytes, invalidateCachedByteSize };
 
 // Re-export the public surface so the parent rendering/gpu-buffer-pool.ts
 // stub (and existing consumers) keep working unchanged.
-export type { PackedGSplatsData } from './gpu-buffer-pool/gsplats-adapter';
+export type { GSplatsUpdateOptions, PackedGSplatsData } from './gpu-buffer-pool/gsplats-adapter';
 export type {
   PooledBuffer,
   TypePoolStats,
@@ -331,15 +335,18 @@ export class GPUBufferPool {
    *   (same-node same-count recommit — the commit path decides; see
    *   commit-gsplats-geometry.ts). `fromInstance`: append fast path (Phase 4
    *   Stage 2) — write & upload only the `[fromInstance, count)` suffix,
-   *   preserving the prefix texels while resetting the enlarged ordering to
-   *   full identity until the commit-triggered sort lands.
+   *   preserving the prefix texels and HOLDING the draw at the previous
+   *   population until the grown population's ordering lands.
+   *   `seedOrdering`: the previous geometry's drawn permutation when this
+   *   commit extends that population into a GROWN geometry — the draw is held
+   *   on it the same way.
    */
   updateGSplatsGeometry(
     geometry: THREE.InstancedBufferGeometry,
     data: PackedGSplatsData,
     count: number,
     truncationRadius: number = GSPLAT_DEFAULT_TRUNCATION_RADIUS,
-    options?: { preserveOrdering?: boolean; repairFromCount?: number; fromInstance?: number }
+    options?: GSplatsUpdateOptions
   ): void {
     this.gsplats.updateGeometry(geometry, data, count, truncationRadius, options);
   }

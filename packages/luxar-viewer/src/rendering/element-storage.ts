@@ -676,6 +676,9 @@ function applyNextSortedIndexChunk(
   // visible mesh can upload the final slice and draw the new slot in that
   // frame. `onAfterRender` is the proof that this actually happened.
   setSortedIndexSlot(geometry, activeSortedIndexSlot(geometry) === 0 ? 1 : 0);
+  // A held append draw becomes the grown population on THIS flip — the first
+  // frame that has an ordering for it.
+  raiseHeldDraw(geometry, state.count);
 
   // The ordering that just finished streaming is now SELECTED for the render
   // about to run, but it is not applied yet: THREE has not consumed this
@@ -954,6 +957,134 @@ function clearIdentityPrefix(attr: THREE.BufferAttribute): void {
 }
 
 /**
+ * Held draws (gsplat append commits): geometry -> the element count the draw
+ * is waiting to reach. While an entry exists, `instanceCount` is deliberately
+ * LOWER than the committed population — see
+ * {@link holdSortedIndexDrawForAppend}.
+ */
+const heldDrawTargets = new WeakMap<THREE.InstancedBufferGeometry, number>();
+
+function setInstanceDrawCount(geometry: THREE.InstancedBufferGeometry, count: number): void {
+  geometry.instanceCount = count;
+  // Force THREE to recompute `_maxInstanceCount` (same as the adapters).
+  delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
+}
+
+/**
+ * Raise a held draw to `count` if `count` is exactly the population it waits
+ * for. Called by the two writers that install a COMPLETE ordering in the
+ * active buffer (the slot flip and the live write), so the grown population
+ * becomes visible on the very frame its own permutation does — never earlier.
+ */
+function raiseHeldDraw(geometry: THREE.InstancedBufferGeometry, count: number): void {
+  if (heldDrawTargets.get(geometry) !== count) return;
+  heldDrawTargets.delete(geometry);
+  setInstanceDrawCount(geometry, count);
+}
+
+/**
+ * Start (or continue) a HELD draw for an append commit that grew a node from
+ * `drawnCount` drawn elements to `count` committed ones. Returns the count the
+ * caller must draw now.
+ *
+ * WHY. An append grows the population while the displayed permutation still
+ * covers only the old one, and every fallback for the grown population is
+ * wrong until its sort lands: storage order draws the whole node unsorted
+ * (measured as 75-225 ms per rung above `syncSortMaxElements` on a hosted 1.1M
+ * splat ladder), and the old prefix plus a storage-order suffix is two
+ * independently ordered populations. Holding the draw at the previous
+ * population keeps every frame an EXACT back-to-front draw of SOME population:
+ * the active buffer's `[0, drawnCount)` is untouched, the suffix texels are
+ * uploaded but not yet drawn, and the grown population appears one sort
+ * round-trip later, already ordered (`raiseHeldDraw`).
+ *
+ * The depth-sort coordinator owns the other exit: when no ordering for the
+ * grown population will arrive (commutative mode, depth sort off, a failed or
+ * superseded-without-successor sort) it calls
+ * {@link releaseSortedIndexDrawHold}. A later non-append write (identity or
+ * repair) also ends the hold; its caller sets `instanceCount` itself.
+ *
+ * Declines — full identity over `count`, returning `count` — when nothing is
+ * drawn yet (holding would draw nothing), the drawn count is not below `count`
+ * (not a real growth: THREE's default `instanceCount` is `Infinity`), or the
+ * ordering pair is malformed.
+ */
+export function holdSortedIndexDrawForAppend(
+  geometry: THREE.InstancedBufferGeometry,
+  drawnCount: number,
+  count: number
+): number {
+  // Any in-flight apply describes an older generation of this node.
+  cancelSortedIndexOrderingApply(geometry);
+  const drawn = drawnCount;
+  if (!(drawn > 0) || drawn >= count || !sortedIndexBuffersUsable(geometry)) {
+    writeSortedIndexIdentity(geometry, count);
+    return count;
+  }
+  heldDrawTargets.set(geometry, count);
+  return drawn;
+}
+
+/**
+ * The GROWN-geometry sibling of {@link holdSortedIndexDrawForAppend}: a
+ * commit that extends the previous population but lands in a DIFFERENT
+ * geometry (the pool grew the node's buffers — every rung that doubles a
+ * ladder does). The new geometry's texels are fully written, so its first
+ * `seed.length` elements are the same splats the previous geometry drew
+ * (the commit layer proves this with the prefix lineage), and `seed` — the
+ * previous geometry's drawn permutation of `[0, seed.length)` — is an exact
+ * ordering of them. Writes identity over `count` (normalising slot 0, so the
+ * whole buffer stays a valid permutation), overlays `seed` on the prefix, and
+ * holds the draw there until the grown population's ordering lands.
+ *
+ * Declines exactly like {@link holdSortedIndexDrawForAppend}.
+ */
+export function holdSortedIndexDrawFromSeed(
+  geometry: THREE.InstancedBufferGeometry,
+  seed: Uint32Array,
+  count: number
+): number {
+  writeSortedIndexIdentity(geometry, count);
+  const attr = getActiveSortedIndexAttribute(geometry);
+  const drawn = seed.length;
+  if (!attr || !(drawn > 0) || drawn >= count || !sortedIndexBuffersUsable(geometry)) {
+    return count;
+  }
+  // The identity write above may have been a no-op (the buffer was already
+  // known identity), so the overlay owns its own memo reset and upload range.
+  clearIdentityPrefix(attr);
+  (attr.array as Uint32Array).set(seed, 0);
+  collapseSortedIndexRanges(attr, drawn);
+  heldDrawTargets.set(geometry, count);
+  return drawn;
+}
+
+/** The element count a held draw is waiting for, or `undefined` if none. */
+export function sortedIndexDrawHoldTarget(
+  geometry: THREE.InstancedBufferGeometry
+): number | undefined {
+  return heldDrawTargets.get(geometry);
+}
+
+/**
+ * End a held draw WITHOUT a sorted ordering for the grown population: rebuild
+ * the active ordering over the whole population from the drawn permutation
+ * ({@link repairSortedIndexForCount}: old order first, the appended suffix
+ * after it) and draw everything. The fallback for every path on which no
+ * ordering for the grown population will arrive. No-op when nothing is held.
+ *
+ * @returns true when a hold ended (the drawn population changed), so the
+ *   caller can wake a frame under render-on-change.
+ */
+export function releaseSortedIndexDrawHold(geometry: THREE.InstancedBufferGeometry): boolean {
+  const target = heldDrawTargets.get(geometry);
+  if (target === undefined) return false;
+  repairSortedIndexForCount(geometry, geometry.instanceCount, target);
+  setInstanceDrawCount(geometry, target);
+  return true;
+}
+
+/**
  * Fill `aSortedIndex[0..count)` with identity ordering and register a
  * single collapsed prefix update range. Ranges accumulate across
  * commits while a mesh is not drawn (no backend merges them at flush),
@@ -973,8 +1104,8 @@ function clearIdentityPrefix(attr: THREE.BufferAttribute): void {
  *
  * The Points and Lines append writers deliberately differ: their adapters
  * call {@link writeSortedIndexIdentityRange} to preserve the live prefix
- * permutation. GSplat appends call this full writer instead, trading that
- * prefix prior for one coherent storage-order fallback over the grown node.
+ * permutation. GSplat appends call neither: they HOLD the draw at the previous
+ * population until the grown one is sorted ({@link holdSortedIndexDrawForAppend}).
  */
 export function writeSortedIndexIdentity(
   geometry: THREE.InstancedBufferGeometry,
@@ -984,6 +1115,8 @@ export function writeSortedIndexIdentity(
   // its remaining slices belong to the OLD element population and
   // would scribble a stale permutation over the identity just written.
   cancelSortedIndexOrderingApply(geometry);
+  // A full write ends any held draw; the caller sets `instanceCount`.
+  heldDrawTargets.delete(geometry);
   // Normalise to slot 0 BEFORE picking the target, so identity always
   // lands in the buffer a default-valued selector uniform reads.
   setSortedIndexSlot(geometry, 0);
@@ -1003,9 +1136,9 @@ export function writeSortedIndexIdentity(
  * Extend `aSortedIndex` with identity ordering for the appended suffix
  * `[from, count)`, preserving the existing `[0, from)` permutation
  * (depth-sorting Phase 4 Stage 2, the append fast path). Its two owners are
- * `points-adapter.ts` and `lines-adapter.ts`; GSplat appends instead use
- * {@link writeSortedIndexIdentity} so the grown node has one coherent
- * storage-order fallback. The collapse still uploads `[0, count)` —
+ * `points-adapter.ts` and `lines-adapter.ts`; GSplat appends instead hold
+ * the draw at the previous population ({@link holdSortedIndexDrawForAppend}).
+ * The collapse still uploads `[0, count)` —
  * `aSortedIndex` is a tiny 4-byte/instance buffer, so the GPU upload is the
  * same size either way; the expensive element-texture upload is the one
  * Stage 2 restricts to the suffix.
@@ -1019,6 +1152,7 @@ export function writeSortedIndexIdentityRange(
   // invalidates the ordering an in-flight chunked apply was streaming
   // (the coordinator re-sorts the grown population on a later frame).
   cancelSortedIndexOrderingApply(geometry);
+  heldDrawTargets.delete(geometry);
   // Identity targets the ACTIVE buffer: it is a complete permutation by
   // construction, so writing it live is safe and needs no flip.
   const attr = getActiveSortedIndexAttribute(geometry);
@@ -1072,6 +1206,7 @@ export function writeSortedIndexOrderingLive(
   clearIdentityPrefix(attr);
   arr.set(ordering.subarray(0, count), 0);
   collapseSortedIndexRanges(attr, count);
+  raiseHeldDraw(geometry, count);
   return count;
 }
 
@@ -1140,6 +1275,9 @@ export function repairSortedIndexForCount(
   // population invalidates the ordering an in-flight chunked apply was
   // streaming for the previous one.
   cancelSortedIndexOrderingApply(geometry);
+  // A repaired full population ends any held draw; the caller sets
+  // `instanceCount` (`releaseSortedIndexDrawHold` for the held case).
+  heldDrawTargets.delete(geometry);
   const attr = getActiveSortedIndexAttribute(geometry);
   if (!attr) return;
   const arr = attr.array as Uint32Array;

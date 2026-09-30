@@ -69,10 +69,9 @@ export const COVERAGE_THRESHOLDS = {
   // working, same as the bumps below.
   'src/config/**': { lines: 94, functions: 98, branches: 93 },
   'src/utils/**': { lines: 98, functions: 99, branches: 94 },
-  // functions 85 -> 86 after the projected-density tracker / density guard
-  // tests (2026-09): the subtree went 87.50 -> 88.06 and check-coverage-slack
-  // flagged the old floor as stale — the ratchet working.
-  'src/scene/**': { lines: 93, functions: 86, branches: 89 },
+  // The frame-loop driver and callback tests (#2923) raised measured lines
+  // to 96.28 and functions to 89.36, leaving the prior floors stale.
+  'src/scene/**': { lines: 95, functions: 88, branches: 89 },
   // branches 82 -> 84 after the OPFS write-queue / heap-budget tests
   // (2026-09, #2561): the subtree went 84.88 -> 85.25 and check-coverage-slack
   // flagged the old floor as stale — the ratchet working.
@@ -137,8 +136,8 @@ export const COVERAGE_RECORDED = {
   'src/wasm/**': { lines: 98.58, functions: 100, branches: 96.46 },
   'src/config/**': { lines: 96.36, functions: 100, branches: 94.05 },
   'src/utils/**': { lines: 99.6, functions: 100, branches: 96.19 },
-  'src/scene/**': { lines: 95.5, functions: 86.74, branches: 91.15 },
-  'src/cache/**': { lines: 95.03, functions: 95.2, branches: 85.41 },
+  'src/scene/**': { lines: 96.28, functions: 89.36, branches: 91.15 },
+  'src/cache/**': { lines: 95.03, functions: 95.2, branches: 86.56 },
   'src/controls/**': { lines: 96.32, functions: 91.21, branches: 89.44 },
   'src/data/**': { lines: 93.6, functions: 92.03, branches: 87.31 },
   'src/workers/**': { lines: 91.39, functions: 91.41, branches: 86.74 },

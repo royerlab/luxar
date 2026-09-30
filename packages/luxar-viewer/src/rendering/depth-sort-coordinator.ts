@@ -79,6 +79,7 @@ import {
   getActiveSortedIndexAttribute,
   hasPendingSortedIndexOrderingApply,
   pumpSortedIndexOrderingApply,
+  releaseSortedIndexDrawHold,
   setSortedIndexApplyBackPressureBypassed,
   setSortedIndexApplyRequestRender,
   writeSortedIndexOrdering,
@@ -338,10 +339,14 @@ export function configureDepthSort(options: {
    */
   requestReprocess?: () => void;
   /**
-   * True while a view-update sweep is in flight (the same signal the
-   * refinement loop consults). The per-frame scheduler skips dispatching
-   * camera-motion re-sorts during loads — the pending commit will sort
-   * from the then-current pose anyway.
+   * True while the loader is doing work of any kind (a view-update sweep or
+   * its progressive-refinement drain). Gates ONLY the starved-worker init
+   * retry — a retry fired into that main-thread saturation spends an attempt
+   * on a guaranteed miss. Camera-motion re-sorts are deliberately NOT gated
+   * on it: the refinement drain holds this true for seconds on a hosted
+   * laddered scene, and a gated orbit left the drawn order up to ~180 deg
+   * stale until the next rung commit. A re-sort racing a commit is safe —
+   * the commit bumps the generation, so the stale result is dropped.
    */
   isLoadInProgress?: () => boolean;
   /**
@@ -1164,6 +1169,9 @@ export function noteDepthSortCommit(
     // pending indexed apply was already cancelled above, for every commit.)
     state.triangleSource = undefined;
     releaseWorkerNode(nodeId);
+    // No ordering will come for this commit, so a held append draw shows the
+    // whole population now (the order is irrelevant or pinned here).
+    releaseHeldDraw(mesh);
     return;
   }
 
@@ -1176,7 +1184,10 @@ export function noteDepthSortCommit(
   const generation = state.generation;
   void ensureWorker()
     .then(() => {
-      if (!api) return;
+      if (!api) {
+        releaseHeldDraw(mesh);
+        return;
+      }
       // A newer commit may have landed while the worker was spawning.
       const current = nodeStates.get(nodeId);
       if (current?.generation !== generation) return;
@@ -1201,11 +1212,16 @@ export function noteDepthSortCommit(
           // keep dispatching guaranteed-null sorts against the missing
           // registration until the next commit.
           const failed = nodeStates.get(nodeId);
-          if (failed?.generation === generation) failed.registered = false;
+          if (failed?.generation === generation) {
+            failed.registered = false;
+            releaseHeldDraw(mesh);
+          }
         });
       scheduleSort(mesh, nodeId);
     })
     .catch((error) => {
+      // This commit's population will not be sorted: show all of it.
+      if (nodeStates.get(nodeId)?.generation === generation) releaseHeldDraw(mesh);
       // Once per EPISODE: while init is failing the cached initPromise stays
       // rejected, so EVERY later commit lands here — per-commit error lines
       // would flood a timelapse scrub. Rendering degrades gracefully to the
@@ -1230,6 +1246,25 @@ export function noteDepthSortCommit(
         );
       }
     });
+}
+
+/**
+ * End a held append draw (`holdSortedIndexDrawForAppend`) WITHOUT a sorted
+ * ordering for the grown population: every path on which no such ordering
+ * will arrive calls this, so a held draw can never outlive the sort it waits
+ * for. A no-op when nothing is held (the common case, and every non-gsplat
+ * geometry).
+ *
+ * A release changes what the next frame draws, and most of its callers run in
+ * a promise callback long after the commit's own render request was consumed,
+ * so it wakes a frame itself: under render-on-change the held draw would
+ * otherwise stay on screen until something else moved.
+ */
+function releaseHeldDraw(mesh: THREE.Mesh): void {
+  const geometry = mesh.geometry as THREE.InstancedBufferGeometry | undefined;
+  if (!geometry || !releaseSortedIndexDrawHold(geometry)) return;
+  drawnStateChanged = true;
+  requestRender?.();
 }
 
 /**
@@ -1417,7 +1452,11 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   // still leaves a pose on record for a sort that never ran — which is exactly
   // what silences the per-frame `!lastSortAxis` recovery dispatch for a node
   // whose first real dispatch raced a null camera.
-  if (!state || !api || workerInitState !== 'ready' || !camera) return;
+  if (!state || !api || workerInitState !== 'ready' || !camera) {
+    // Nothing will sort this population, so a held append draw must not wait.
+    if (state) releaseHeldDraw(mesh);
+    return;
+  }
   if (state.inFlight) {
     state.resortQueued = true;
     return;
@@ -1610,6 +1649,10 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       // missing attribute): the pass is just the dispatch→resolve
       // round-trip — close it now (issue #713).
       if (!applyOwnsSession) session?.end();
+      // A sort for the CURRENT population that staged nothing leaves no
+      // ordering for a held append draw to wait for. (A stale generation's
+      // does not: the newer commit's own sort is queued behind this one.)
+      if (!applyOwnsSession && current.generation === generation) releaseHeldDraw(mesh);
 
       if (current.resortQueued) {
         current.resortQueued = false;
@@ -1631,6 +1674,7 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       log.error(Modules.WORKER_POOL, `SortWorker sort failed for ${nodeId}`, error);
       if (!current) return;
       current.inFlight = false;
+      if (current.generation === generation) releaseHeldDraw(mesh);
       // Drain a queued re-sort even on failure — a commit landed while
       // this sort was out, and dropping its request would leave the node
       // stale until the NEXT commit. Bounded: only a real commit sets
@@ -1787,15 +1831,15 @@ function pumpChunkedOrderingApplies(): void {
  * fresh pose, so a triggered node goes quiet until the camera moves past
  * the threshold AGAIN. Frames between dispatch and resolve render the
  * previous order — bounded staleness, standard 3DGS behavior. Skips:
- * pending view updates (the commit will sort anyway), in-flight sorts
+ * in-flight sorts
  * (the resolve is at most a frame away), invisible/demoted meshes, and
  * nodes whose live mode is no longer order-dependent. A streaming
  * chunked apply does NOT skip — a fresher sort fills the inactive
  * buffer concurrently.
  *
  * Work is tiered by dependency: frame-state cleanup runs above every gate,
- * pure main-thread cross-node ordering runs above the loader gate, and only
- * work that touches the SortWorker stays below that gate.
+ * and the only thing the loader-busy signal gates is the starved-worker init
+ * retry. Cross-node ordering and within-mesh re-sorts both run during loads.
  *
  * @returns true when this pass changed what the next render draws (a
  *   renderOrder or an ordering-buffer slot) — the render-on-change loop's
@@ -1920,9 +1964,14 @@ export function evaluateDepthSortPerFrame(): boolean {
     if (!orderDependent) continue;
 
     // Everything below dispatches or evaluates a within-mesh worker sort.
-    // Keep that work paused during a loader sweep, but do not pause the
-    // pure-main-thread cross-mesh ordering collected above.
-    if (loadInProgress) continue;
+    // NOT paused while the loader is busy. "The pending commit will sort
+    // anyway" holds only for the nodes a pass actually re-commits, and only
+    // once it lands: through a progressive-refinement drain (seconds on a
+    // hosted scene) and through a view pass that leaves a node untouched,
+    // the orbit would otherwise be answered only by rung commits — measured
+    // at up to 176 deg of sort-axis lag. Racing a commit is safe: it bumps
+    // the generation (the resolve drops the stale ordering) and the commit's
+    // own sort queues behind this one via `resortQueued`.
     // Mode switches and late-worker re-registration deliberately invalidate
     // commit stamps while the existing geometry stays visible. Those meshes
     // still receive their cross-mesh rank above, but cannot dispatch a worker
@@ -2162,6 +2211,8 @@ export function noteDepthSortBlendingModeSwitch(
     }
     cancelTriangleOrderingApply(mesh.geometry);
     releaseWorkerNode(mesh.uuid);
+    // The generation bump above drops the sort a held append draw waits for.
+    releaseHeldDraw(mesh);
   }
 }
 
@@ -2185,6 +2236,8 @@ export function releaseDepthSortNode(mesh: THREE.Mesh): void {
     // session. Nothing to undo in the buffer itself — see
     // `cancelTriangleOrderingApply`.
     cancelTriangleOrderingApply(geometry);
+    // No sort will ever raise a held append draw now.
+    releaseHeldDraw(mesh);
   }
   releaseWorkerNode(nodeId);
 }
