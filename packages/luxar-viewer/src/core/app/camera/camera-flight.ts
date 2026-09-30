@@ -340,11 +340,9 @@ export class CameraFlight {
 
     camera.position.copy(vec3(pose.position));
     camera.up.copy(vec3(pose.up));
-    // Same rule as restoreCamera: under dynamic clipping the per-frame
-    // updater owns near/far. It runs BEFORE this callback each frame (it was
-    // registered at init), so writing the interpolated planes here overrode
-    // it every frame — geometry clipped away during the flight and came back
-    // on landing (reported on the stories demo).
+    // Same rule as restoreCamera: under dynamic clipping the view-phase
+    // updater owns near/far and runs after this camera-phase callback, so it
+    // sees this frame's pose.
     if (!dynamicClippingActive(sceneManager)) {
       camera.near = pose.near;
       camera.far = pose.far;
