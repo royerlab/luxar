@@ -213,6 +213,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "gallery-selection.test.ts validates README media keys against it",
     ),
     (
+        "packages/luxar-viewer/scripts/render-gate/gate-scenes.json",
+        "ts",
+        "gate-scenes.test.mjs validates every referenced store and case id",
+    ),
+    (
         "scripts/benchmarks/benchmark_bisect.sh",
         "py",
         "test_benchmark_bisect.py executes the committed launcher directly",
@@ -672,6 +677,9 @@ _NON_GATE_PYTHON_TEST_PATH_LITERAL_EXCLUSIONS = {
 
 _NON_GATE_PYTHON_TEST_PATH_READ_EXCLUSIONS = {
     ".github/workflows/ci.yml": "owned by the explicit all-domains workflow block",
+    "packages/luxar-viewer/scripts/render-gate/gate-scenes.json": (
+        "the viewer gate validates the manifest directly in gate-scenes.test.mjs"
+    ),
 }
 
 #: The rule that puts the workflow itself in every domain. Extracted as text so a

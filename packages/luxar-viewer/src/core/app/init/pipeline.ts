@@ -16,6 +16,7 @@ import { RecordingPanel } from '../../../ui/recording-panel';
 import { LayersPanel } from '../../../ui/layers';
 import { ControlRail } from '../../../ui/control-rail';
 import { buildRailItems } from './build-rail-items';
+import type { BookmarksPopoverContext } from '../../../ui/rail-panels/bookmarks-popover';
 import { AudioEngine } from '../../../audio/audio-engine';
 import { resolveTargetNodeCenter } from '../../../scene/scene-manager/camera/camera-setup';
 import { getViewerContainer } from '../../../utils/viewer-container';
@@ -118,6 +119,7 @@ export interface InitPipelineResult {
 export interface InitPipelinePorts {
   options: LuxarAppOptions;
   events: EventGroup;
+  bookmarks?: BookmarksPopoverContext;
   getPanelVisibilityStates: () => Map<string, boolean>;
   restorePanelVisibilityStates: (states: Map<string, boolean>) => void;
   /** Emit a public embedder event (the audio engine's `sound-started` / `sound-ended`). */
@@ -801,6 +803,7 @@ export async function runInitPipeline(
     debugConsole,
     recordingPanel,
     audioEngine,
+    bookmarks: ports.bookmarks,
   });
   // Dock the perf readout as the rail's footer; the gauge above toggles it.
   const controlRail = new ControlRail(railItems, performanceMonitor.element);
