@@ -72,10 +72,9 @@ export const COVERAGE_THRESHOLDS = {
   // The frame-loop driver and callback tests (#2923) raised measured lines
   // to 96.28 and functions to 89.36, leaving the prior floors stale.
   'src/scene/**': { lines: 95, functions: 88, branches: 89 },
-  // branches 82 -> 84 after the OPFS write-queue / heap-budget tests
-  // (2026-09, #2561): the subtree went 84.88 -> 85.25 and check-coverage-slack
-  // flagged the old floor as stale — the ratchet working.
-  'src/cache/**': { lines: 93, functions: 93, branches: 84 },
+  // Cache tests in #2946 lifted measured functions to 96.11 and branches to
+  // 87.23, leaving the prior floors stale.
+  'src/cache/**': { lines: 93, functions: 95, branches: 86 },
   // lines 93 -> 95 and branches 86 -> 88 after the fly-touch orchestration
   // and input/touch.ts tests moved the subtree past the slack budget.
   // functions 88 -> 90 after the shared view-axis roll regression tests
@@ -137,12 +136,12 @@ export const COVERAGE_RECORDED = {
   'src/config/**': { lines: 96.36, functions: 100, branches: 94.05 },
   'src/utils/**': { lines: 99.6, functions: 100, branches: 96.19 },
   'src/scene/**': { lines: 96.28, functions: 89.36, branches: 91.15 },
-  'src/cache/**': { lines: 95.03, functions: 95.2, branches: 86.56 },
+  'src/cache/**': { lines: 95.03, functions: 96.11, branches: 87.23 },
   'src/controls/**': { lines: 96.32, functions: 91.21, branches: 89.44 },
   'src/data/**': { lines: 93.6, functions: 92.03, branches: 87.31 },
-  'src/workers/**': { lines: 91.39, functions: 91.41, branches: 86.74 },
+  'src/workers/**': { lines: 91.39, functions: 92.65, branches: 86.74 },
   'src/ui/**': { lines: 92.0, functions: 86.95, branches: 79.58 },
   'src/core/**': { lines: 91.11, functions: 78.49, branches: 86.94 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
-  'src/rendering/**': { lines: 77.18, functions: 78.13, branches: 73.22 },
+  'src/rendering/**': { lines: 77.18, functions: 79.66, branches: 74.64 },
 };
