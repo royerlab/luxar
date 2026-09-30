@@ -64,7 +64,12 @@ import { setViewerContainer } from '../utils/viewer-container';
 import { assertBrowserEnvironment, assertThreeRevision } from './app/init/environment-guards';
 import { applyModuleOverrides } from './app/init/module-overrides';
 import { runInitPipeline, type InitPipelineResult } from './app/init/pipeline';
-import { captureBookmark, restoreBookmark, type ViewBookmark } from './app/bookmark-state';
+import {
+  buildBookmarkUrl,
+  captureBookmark,
+  restoreBookmark,
+  type ViewBookmark,
+} from './app/bookmark-state';
 import { runDisposePipeline } from './app/lifecycle/dispose-pipeline';
 import { shouldShowBrowser as shouldShowBrowserImpl } from './app/dataset/should-show-browser';
 import { showDatasetBrowser as showDatasetBrowserImpl } from './app/dataset/show-browser';
@@ -1012,6 +1017,7 @@ export class LuxarApp {
       capture: () => captureBookmark(this),
       restore: (bookmark: ViewBookmark) => restoreBookmark(this, bookmark),
       baseUrl: () => window.location.href,
+      buildUrl: buildBookmarkUrl,
       copy: (url: string) =>
         navigator.clipboard?.writeText(url) ?? Promise.reject(new Error('Clipboard unavailable')),
     };

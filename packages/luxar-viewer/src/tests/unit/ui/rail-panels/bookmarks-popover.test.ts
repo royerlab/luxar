@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import { buildBookmarksPopover } from '../../../../ui/rail-panels/bookmarks-popover';
-import type { ViewBookmark } from '../../../../core/app/bookmark-state';
+import { buildBookmarkUrl, type ViewBookmark } from '../../../../core/app/bookmark-state';
 
 const state = {
   version: 1,
@@ -37,6 +37,7 @@ describe('Bookmarks panel', () => {
       capture: () => state,
       restore,
       baseUrl: () => 'https://example.org/viewer',
+      buildUrl: buildBookmarkUrl,
       copy,
     };
     buildBookmarksPopover(host, ctx, list);

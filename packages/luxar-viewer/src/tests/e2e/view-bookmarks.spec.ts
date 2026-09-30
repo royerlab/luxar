@@ -6,6 +6,8 @@ import { readFile } from 'node:fs/promises';
 const DATASET = 'http://localhost:9000/datasets/examples/layers_test_example.luxar.zarr';
 
 test('bookmark panel captures, revisits, exports, and opens a view link', async ({ page }) => {
+  // The test loads the dataset twice, once to capture and once to open the link.
+  test.setTimeout(120_000);
   await page.goto(`/?src=${DATASET}&debug&renderer=webgl`);
   await waitForLuxarReady(page);
   await waitForPointsLoaded(page);

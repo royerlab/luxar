@@ -1,5 +1,5 @@
 /** Named view links beside the control rail. The list lives for this viewer session. */
-import { buildBookmarkUrl, type ViewBookmark } from '../../core/app/bookmark-state';
+import type { ViewBookmark } from '../../core/app/bookmark-state';
 import { downloadBlob } from '../recording-panel/screenshot-exporter';
 
 /** Live viewer operations supplied by the app; the panel owns no scene state. */
@@ -7,6 +7,7 @@ export interface BookmarksPopoverContext {
   capture(): ViewBookmark;
   restore(bookmark: ViewBookmark): Promise<void>;
   baseUrl(): string;
+  buildUrl(base: string, bookmark: ViewBookmark): string;
   copy(url: string): Promise<void>;
 }
 
@@ -82,7 +83,7 @@ export function buildBookmarksPopover(
     try {
       const state = ctx.capture();
       const label = name.value.trim().replace(/[\r\n\t]+/g, ' ') || `View ${bookmarks.length + 1}`;
-      const url = buildBookmarkUrl(ctx.baseUrl(), state);
+      const url = ctx.buildUrl(ctx.baseUrl(), state);
       bookmarks.push({ name: label, url, state });
       name.value = '';
       render();
