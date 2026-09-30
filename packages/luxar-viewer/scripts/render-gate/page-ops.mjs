@@ -354,12 +354,23 @@ export async function gpuCost({ k = 20, warm = 10, reps = 5 }) {
  * clipping) is exercised, identically in both builds. A static camera
  * measures almost none of it.
  *
- * Reports ms per presented frame (wall time / rAF ticks), the p95 rAF
- * interval, and `rendersPerFrame`, counted by wrapping
- * `postProcessing.render` (present in every build): a frame that renders
- * twice costs twice and should show up. Launch the browser with
- * `--disable-gpu-vsync --disable-frame-rate-limit` so frames are not pinned to
- * the display refresh. The caller reads CPU script time around this call.
+ * Every measured frame ENDS WITH A GPU SYNC (a 1-pixel `readPixels` on
+ * WebGL, `queue.onSubmittedWorkDone()` on WebGPU, as in `gpuCost`), and the
+ * frame's time is taken after it. Without it the numbers are CPU submission
+ * only: in headless Chrome with vsync off an animation frame never waits for
+ * the GPU, so a 100 ms GPU frame reads 0.1 ms, a GPU-bound change is
+ * invisible, and a CPU stall on a resource the GPU still holds (a blocking
+ * `bufferSubData`) swings the number by orders of magnitude at unchanged GPU
+ * cost. With the sync a frame costs its CPU work plus its GPU work, serialized
+ * (no CPU/GPU overlap), which is what the gate compares.
+ *
+ * Reports ms per frame (wall time / frames), the p95 frame time, and
+ * `rendersPerFrame`, counted by wrapping `postProcessing.render` (present in
+ * every build): a frame that renders twice costs twice and should show up.
+ * Launch the browser with `--disable-gpu-vsync --disable-frame-rate-limit` so
+ * frames are not pinned to the display refresh. The caller reads CPU script
+ * time around this call (CDP `ScriptDuration`, which does not count the time
+ * spent blocked in the sync).
  *
  * @param {{ frames?: number, warm?: number, degPerFrame?: number,
  *   pose: { position: number[], target: number[], up: number[] } }} opts
@@ -416,7 +427,25 @@ export async function wake({ reps = 9 }) {
 export async function motion({ frames = 180, warm = 30, degPerFrame = 1, pose }) {
   const dbg = window.__luxarDebug;
   const pp = dbg.app.sceneManager.postProcessing;
-  const tick = () => new Promise((r) => requestAnimationFrame((t) => r(t)));
+  const renderer = dbg.app.sceneManager.renderer;
+  const backend = renderer.backend;
+  const tick = () => new Promise((r) => requestAnimationFrame(() => r()));
+  const px = new Uint8Array(4);
+  // Wait for the GPU to finish everything submitted so far (as gpuCost does),
+  // and return the time it did. The WebGL framebuffer binding is restored so
+  // three's state cache stays truthful.
+  const sync = async () => {
+    if (backend?.isWebGPUBackend && backend.device) {
+      await backend.device.queue.onSubmittedWorkDone();
+    } else {
+      const gl = backend?.gl ?? renderer.getContext();
+      const bound = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, bound);
+    }
+    return performance.now();
+  };
   const [tx, , tz] = pose.target;
   const dx = pose.position[0] - tx;
   const dz = pose.position[2] - tz;
@@ -442,6 +471,7 @@ export async function motion({ frames = 180, warm = 30, degPerFrame = 1, pose })
   for (let i = 0; i < warm; i++) {
     place(i - warm);
     await tick();
+    await sync();
   }
   let renders = 0;
   const original = pp.render;
@@ -453,11 +483,15 @@ export async function motion({ frames = 180, warm = 30, degPerFrame = 1, pose })
   let t0;
   let last;
   try {
-    t0 = await tick();
+    // The loop renders in the animation frame before this tick resolves, so
+    // the sync after it covers that frame's GPU work.
+    await tick();
+    t0 = await sync();
     last = t0;
     for (let i = 0; i < frames; i++) {
       place(i);
-      const t = await tick();
+      await tick();
+      const t = await sync();
       deltas.push(t - last);
       last = t;
     }

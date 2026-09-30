@@ -191,6 +191,56 @@ describe('LinesProgressiveLoader', () => {
       tolerance: [0, 0, 0, 0],
     };
 
+    it('keeps an outgoing foreground prefix when the incoming update is already aborted', async () => {
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const setSpy = vi.spyOn(sc, 'set');
+      const a = makeSubLoader(makeLodData(20, 10));
+      const b = makeSubLoader(makeLodData(10, 5));
+      const c = makeSubLoader(makeLodData(4, 2));
+      b.updateViewWithResidency.mockResolvedValue({ data: makeLodData(10, 5), allResident: false });
+      const l = new LinesProgressiveLoader(
+        [a, b, c] as unknown as LinesSpatialIndexLoader[],
+        3,
+        '/l',
+        undefined,
+        sc
+      );
+      await l.updateView(viewA);
+      expect(sc.getStats().count).toBe(0);
+
+      const aborted = new AbortController();
+      aborted.abort();
+      await l.updateView(viewB, undefined, aborted.signal);
+      const key = SliceCache.makeKey('/l', buildSliceViewSig(viewA));
+      expect(sc.peek(key)?.ladderDepth).toBe(2);
+      expect(setSpy.mock.calls.find((call) => call[0] === key)?.[2]).toEqual({
+        scan: false,
+        pin: false,
+      });
+      a.updateViewWithResidency.mockClear();
+      await l.updateView(viewA);
+      expect(a.updateViewWithResidency).not.toHaveBeenCalled();
+    });
+
+    it('does not pin an outgoing prefix from an already aborted shadow update', async () => {
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const a = makeSubLoader(makeLodData(20, 10));
+      const b = makeSubLoader(makeLodData(10, 5));
+      b.updateViewWithResidency.mockResolvedValue({ data: makeLodData(10, 5), allResident: false });
+      const l = new LinesProgressiveLoader(
+        [a, b, makeSubLoader(makeLodData(4, 2))] as unknown as LinesSpatialIndexLoader[],
+        3,
+        '/l',
+        undefined,
+        sc
+      );
+      await l.updateView(viewA);
+      const aborted = new AbortController();
+      aborted.abort();
+      await l.updateView({ ...viewB, prefetch: true }, undefined, aborted.signal);
+      expect(sc.peek(SliceCache.makeKey('/l', buildSliceViewSig(viewA)))).toBeUndefined();
+    });
+
     it('restores a revisited view from the SliceCache without re-streaming sub-LODs', async () => {
       const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
       const a = makeSubLoader(makeLodData(20, 10, 3, { color: 'uint8' }));
