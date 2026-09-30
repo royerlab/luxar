@@ -701,7 +701,11 @@ describe('SceneManager', () => {
       await sceneManager.loadSceneData(testUrl);
 
       expect(mockShowLoadingIndicator).toHaveBeenCalled();
-      expect(mockLoadScene).toHaveBeenCalledWith(testUrl, undefined);
+      // The loader config carries the pre-node-load framing hook.
+      expect(mockLoadScene).toHaveBeenCalledWith(
+        testUrl,
+        expect.objectContaining({ onSceneMetadata: expect.any(Function) })
+      );
       expect(mockHideLoadingIndicator).toHaveBeenCalled();
     });
 
@@ -933,6 +937,56 @@ describe('SceneManager', () => {
       for (let i = 1; i < order.length; i++) {
         expect(order[i]).toBeGreaterThan(order[i - 1]);
       }
+    });
+
+    /**
+     * Make `loadScene` behave like the real loader: attach the root metadata,
+     * call the config's `onSceneMetadata` hook, then "load the nodes" — and
+     * record the camera pose (and whether the root is in the scene) at that
+     * moment, which is when B4 ranks a partition's parts against the camera.
+     */
+    function loadSceneRecordingNodeLoad(userData: Record<string, unknown>): {
+      atNodeLoad: { position: number[] | null; rootInScene: boolean | null };
+    } {
+      const atNodeLoad = { position: null as number[] | null, rootInScene: null as boolean | null };
+      (mockLoadScene as any).mockImplementationOnce(
+        async (_src: string, cfg?: { onSceneMetadata?: (root: THREE.Group) => void }) => {
+          const T = await import('three');
+          const group = new T.Group();
+          group.name = 'LuxarScene';
+          Object.assign(group.userData, userData);
+          cfg?.onSceneMetadata?.(group);
+          atNodeLoad.position = sceneManager.camera.position.toArray();
+          atNodeLoad.rootInScene = group.parent !== null;
+          return group;
+        }
+      );
+      return { atNodeLoad };
+    }
+
+    it('places the AUTHORED opening camera before the scene nodes load', async () => {
+      const { atNodeLoad } = loadSceneRecordingNodeLoad({
+        viewerConfig: { camera: { position: [3, 3, 8], target: [3, 3, 0], up: [0, 1, 0] } },
+        positionBounds: { min: [0, 0, 0], max: [40, 40, 40] },
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr');
+
+      expect(atNodeLoad.position).toEqual([3, 3, 8]);
+      expect(sceneManager.camera.position.toArray()).toEqual([3, 3, 8]);
+      // Framing early must not put a half-loaded root on screen.
+      expect(atNodeLoad.rootInScene).toBe(false);
+    });
+
+    it('auto-frames the opening camera before the scene nodes load', async () => {
+      const { atNodeLoad } = loadSceneRecordingNodeLoad({
+        positionBounds: { min: [0, 0, 0], max: [40, 40, 40] },
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr');
+
+      // The pose the nodes were loaded against is the one the scene opens on.
+      expect(atNodeLoad.position).toEqual(sceneManager.camera.position.toArray());
     });
 
     it('skips autoFrameCamera when applyZarrViewerConfig reports positionApplied=true', async () => {

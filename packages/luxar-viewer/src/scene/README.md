@@ -651,8 +651,10 @@ parts outside it are not swept, and the pass's commit hides them
 (`applyCommittedSlice`) in the same frame its successors appear. A part under
 an `nd_transform`, or a dimension a part extends across, is never gated. At
 load, `load-partition-group-node` loads only the ACTIVE parts (in the padded
-frustum of the current camera — unless it sees none of the partition, i.e. has
-not been framed on it yet — and in the slice), nearest first; the rest keep an
+frustum of the opening camera — which `SceneManager` frames from the root
+metadata before any node loads, via `LoaderConfig.onSceneMetadata`; a camera
+that sees none of the partition gates nothing — and in the slice), nearest
+first; the rest keep an
 empty slot and register as deferred (`PartitionGroupChild.activate`). A
 deferred part is activated inside a loader pass (`activatePartitionParts`): a
 view change activates every deferred part its slice needs; a deferred part that

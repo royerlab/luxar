@@ -25,6 +25,7 @@ export type {
 
 import type { PointRange } from '../types/points';
 import type { LoaderTypeName } from '../types/format-contract';
+import type { Group } from 'three';
 
 /**
  * Configuration for data loader behavior
@@ -32,6 +33,15 @@ import type { LoaderTypeName } from '../types/format-contract';
 export interface LoaderConfig {
   /** Enable debug logging */
   debug?: boolean;
+
+  /**
+   * Called once per load with the scene's root group as soon as its root
+   * metadata (`viewer_config`, `position_bounds`, scene dimensions) is on
+   * `userData` — BEFORE any node loads, and before the root is in the scene.
+   * The scene manager frames the opening camera here, so load-time decisions
+   * that read the view (partition part gating) see the pose the scene opens on.
+   */
+  onSceneMetadata?: (root: Group) => void;
 
   /** Enable data loading monitor UI */
   enableMonitor?: boolean;

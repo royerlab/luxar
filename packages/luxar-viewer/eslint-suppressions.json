@@ -1049,11 +1049,6 @@
       "count": 1
     }
   },
-  "src/scene/scene-manager.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
   "src/scene/scene-manager/camera/camera-framing.ts": {
     "complexity": {
       "count": 2

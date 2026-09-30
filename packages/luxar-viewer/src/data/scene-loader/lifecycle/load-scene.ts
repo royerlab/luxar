@@ -16,7 +16,9 @@
  *   8. Persist `viewer_config` + `position_bounds` onto the root group's
  *      userData for the UI to read.
  *   9. Build the scene graph (zarr group enumeration → SceneNode tree).
- *  10. Recursively load every leaf via `loadSceneNodes`.
+ *  10. Hand the root to `config.onSceneMetadata` (the scene manager frames
+ *      the opening camera from the metadata), then recursively load every
+ *      leaf via `loadSceneNodes`.
  *  11. Load overlay configs (screen-space annotations).
  *  12. Wire post-load monitor providers (cache stats, loader maps, etc.).
  *  13. Schedule progressive GSplats LOD refinement when any multi-LOD
@@ -479,6 +481,9 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const sceneGraph = await buildSceneGraph(rootLoc, sceneAttrs, zarrStore);
   ctx.setSceneGraph(sceneGraph);
   setSceneLineLoad(sceneEffectiveLineLoad(sceneGraph));
+
+  // The opening camera is framed from this metadata before any node reads the view.
+  ctx.config.onSceneMetadata?.(rootGroup);
 
   // Load points / lines / gsplats / nested groups recursively
   await loadSceneNodes(sceneGraph, rootGroup, rootLoc, ctx.makeNodeBuildCtx());
