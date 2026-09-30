@@ -189,6 +189,56 @@ describe('PointsProgressiveLoader', () => {
       tolerance: [0, 0, 0, 0],
     };
 
+    it('keeps an outgoing foreground prefix when the incoming update is already aborted', async () => {
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const setSpy = vi.spyOn(sc, 'set');
+      const a = makeSubLoader(makeLodData(100));
+      const b = makeSubLoader(makeLodData(50));
+      const c = makeSubLoader(makeLodData(25));
+      b.updateViewWithResidency.mockResolvedValue({ data: makeLodData(50), allResident: false });
+      const l = new PointsProgressiveLoader(
+        [a, b, c] as unknown as PointsSpatialIndexLoader[],
+        3,
+        '/p',
+        undefined,
+        sc
+      );
+      await l.updateView(viewA);
+      expect(sc.getStats().count).toBe(0);
+
+      const aborted = new AbortController();
+      aborted.abort();
+      await l.updateView(viewB, undefined, aborted.signal);
+      const key = SliceCache.makeKey('/p', buildSliceViewSig(viewA));
+      expect(sc.peek(key)?.ladderDepth).toBe(2);
+      expect(setSpy.mock.calls.find((call) => call[0] === key)?.[2]).toEqual({
+        scan: false,
+        pin: false,
+      });
+      a.updateViewWithResidency.mockClear();
+      await l.updateView(viewA);
+      expect(a.updateViewWithResidency).not.toHaveBeenCalled();
+    });
+
+    it('does not pin an outgoing prefix from an already aborted shadow update', async () => {
+      const sc = new SliceCache({ maxSize: 10 * 1024 * 1024 });
+      const a = makeSubLoader(makeLodData(100));
+      const b = makeSubLoader(makeLodData(50));
+      b.updateViewWithResidency.mockResolvedValue({ data: makeLodData(50), allResident: false });
+      const l = new PointsProgressiveLoader(
+        [a, b, makeSubLoader(makeLodData(25))] as unknown as PointsSpatialIndexLoader[],
+        3,
+        '/p',
+        undefined,
+        sc
+      );
+      await l.updateView(viewA);
+      const aborted = new AbortController();
+      aborted.abort();
+      await l.updateView({ ...viewB, prefetch: true }, undefined, aborted.signal);
+      expect(sc.peek(SliceCache.makeKey('/p', buildSliceViewSig(viewA)))).toBeUndefined();
+    });
+
     // Regression (deep-double-check round 5, Playwright-measured): scrubbing
     // faster than the ladder completes NEVER stored anything — the reset
     // branch discarded the partial ladder, so scrub-back was always cold

@@ -318,6 +318,9 @@ describe('runInitPipeline', () => {
     const ports = makePorts();
     const { factories, sceneStub } = makeFactoryOverrides();
     ports.options.factories = factories as never;
+    let canvasWidth = 800;
+    Object.defineProperty(ports.options.canvas, 'clientWidth', { get: () => canvasWidth });
+    Object.defineProperty(ports.options.canvas, 'clientHeight', { get: () => 600 });
     const camera = new THREE.PerspectiveCamera();
     const clipping = vi.fn();
     Object.assign(sceneStub, {
@@ -332,7 +335,7 @@ describe('runInitPipeline', () => {
       setLODGroupRegistryFactory: ReturnType<typeof vi.fn>;
     };
     const factory = manager.setLODGroupRegistryFactory.mock.calls[0][0] as (owner: unknown) => {
-      deps: { getViewContext: () => { cameraWorldPosition: THREE.Vector3 } };
+      deps: { getViewContext: () => { viewportCss: { width: number; height: number } | null } };
     };
     const registry = factory({ currentViewVersion: 1 });
     const views = registry.deps.getViewContext;
@@ -344,13 +347,13 @@ describe('runInitPipeline', () => {
     )?.[1] as () => void;
 
     callback();
-    expect(views().cameraWorldPosition.x).toBe(0);
-    camera.position.x = 5;
+    expect(views().viewportCss?.width).toBe(800);
+    canvasWidth = 600;
     clipping.mockImplementation(() => {
       throw new Error('clipping failed');
     });
     expect(callback).toThrow('clipping failed');
-    expect(views().cameraWorldPosition.x).toBe(5);
+    expect(views().viewportCss?.width).toBe(600);
   });
 
   it('a read outside the frame loop sees the camera as it is now', async () => {

@@ -485,7 +485,11 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       // DEPARTURE store: snapshot the outgoing view's partial ladder under
       // the OUTGOING key before discarding — scrub-back stays warm even when
       // ladders never complete between navigations. Mirrors Points/GSplats.
-      if (this.lastViewState && this._loadedLODCount > 0 && !this.tornDown(signal)) {
+      if (
+        this.lastViewState &&
+        this._loadedLODCount > 0 &&
+        !(isPrefetch && this.tornDown(signal))
+      ) {
         storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
           scan: this._frameBudgetMs !== null,
           pin: viewState.prefetch === true,
@@ -676,7 +680,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     return result;
   }
 
-  /** True once this pass was aborted or the loader disposed: no more cache stores. */
+  /** True once this pass was aborted or the loader disposed. */
   private tornDown(signal?: AbortSignal): boolean {
     return signal?.aborted === true || this._disposed;
   }

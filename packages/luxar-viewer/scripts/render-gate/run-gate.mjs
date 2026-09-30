@@ -355,6 +355,9 @@ async function measureArm(browser, origin, c, backend) {
       gpuMs: gpu.minMs,
       frameMs: mo.frameMs,
       frameP95Ms: mo.p95Ms,
+      // CDP ScriptDuration does not count the time motion's GPU sync blocks in
+      // readPixels (measured: 2.3 ms of script in a 55 ms synced frame), so this
+      // stays CPU cost only.
       cpuMs: ((s1 - s0) * 1000) / Math.max(1, mo.frames),
       rendersPerFrame: mo.rendersPerFrame,
       wakeRenders: wk.renders,
@@ -471,6 +474,10 @@ function markdown(meta, exact, perf, suites) {
   if (perf) {
     lines.push(
       '## Performance (ratio cand/base, 95% CI, A/A floor)',
+      '',
+      '`frameMs` / `frameP95Ms` INCLUDE GPU completion: each orbit frame ends with a GPU sync, so a ' +
+        'frame costs its CPU plus GPU work, serialized. `gpuMs` is GPU cost alone (settled pose); ' +
+        '`cpuMs` is script time alone.',
       '',
       '| case | backend | metric | base | cand | ratio | CI | floor | verdict |',
       '|---|---|---|---|---|---|---|---|---|'
