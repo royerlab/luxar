@@ -64,7 +64,7 @@ import { setViewerContainer } from '../utils/viewer-container';
 import { assertBrowserEnvironment, assertThreeRevision } from './app/init/environment-guards';
 import { applyModuleOverrides } from './app/init/module-overrides';
 import { runInitPipeline, type InitPipelineResult } from './app/init/pipeline';
-import { captureBookmark, restoreBookmark } from './app/bookmark-state';
+import { captureBookmark, restoreBookmark, type ViewBookmark } from './app/bookmark-state';
 import { runDisposePipeline } from './app/lifecycle/dispose-pipeline';
 import { shouldShowBrowser as shouldShowBrowserImpl } from './app/dataset/should-show-browser';
 import { showDatasetBrowser as showDatasetBrowserImpl } from './app/dataset/show-browser';
@@ -306,14 +306,7 @@ export class LuxarApp {
         {
           options: this.options,
           events: this.events,
-          bookmarks: {
-            capture: () => captureBookmark(this),
-            restore: (bookmark) => restoreBookmark(this, bookmark),
-            baseUrl: () => window.location.href,
-            copy: (url) =>
-              navigator.clipboard?.writeText(url) ??
-              Promise.reject(new Error('Clipboard unavailable')),
-          },
+          bookmarks: this.createBookmarksContext(),
           getPanelVisibilityStates: () => this.getPanelVisibilityStates(),
           restorePanelVisibilityStates: (states) => this.restorePanelVisibilityStates(states),
           emitEmbedderEvent: (event, payload) => this.embedderEvents.emit(event, payload),
@@ -1011,6 +1004,17 @@ export class LuxarApp {
       throw new Error('LuxarApp.captureSnapshot called before init()');
     }
     return captureViewerSnapshot(this.sceneManager);
+  }
+
+  private createBookmarksContext() {
+    if (this.options.updateBrowserUrl !== true) return undefined;
+    return {
+      capture: () => captureBookmark(this),
+      restore: (bookmark: ViewBookmark) => restoreBookmark(this, bookmark),
+      baseUrl: () => window.location.href,
+      copy: (url: string) =>
+        navigator.clipboard?.writeText(url) ?? Promise.reject(new Error('Clipboard unavailable')),
+    };
   }
 
   /**

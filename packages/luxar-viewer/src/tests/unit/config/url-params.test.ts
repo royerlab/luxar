@@ -7,11 +7,38 @@ import {
   hasParam,
   normalizeDataSourceUrl,
   readUrlParams,
+  buildViewBookmarkUrl,
   replaceBrowserDataSourceUrl,
   URL_PARAM_KEYS,
 } from '../../../config/url-params';
 
 const PACKAGE_ROOT = new URL('../../../../', import.meta.url);
+
+describe('view bookmark fragments', () => {
+  it('keeps view state out of the server request and reads it at startup', () => {
+    const url = new URL(
+      buildViewBookmarkUrl(
+        'https://example.org/viewer?src=old&view=stale&controlToken=secret',
+        '/sample.zarr',
+        '{"version":1}'
+      )
+    );
+    expect(url.searchParams.has('view')).toBe(false);
+    expect(url.searchParams.has('controlToken')).toBe(false);
+    expect(url.hash).toBe('#view=%7B%22version%22%3A1%7D');
+    expect(readUrlParams(url.search, undefined, url.hash).view).toBe('{"version":1}');
+  });
+
+  it('drops a bookmark fragment when switching datasets', () => {
+    expect(
+      buildDataSourceBrowserUrl('/next.zarr', {
+        pathname: '/viewer',
+        search: '?src=old',
+        hash: '#view=old',
+      })
+    ).toBe('/viewer?src=%2Fnext.zarr');
+  });
+});
 
 /** The old kebab spellings retired by the 2026-09 camelCase hard cut. */
 const RETIRED_KEBAB_SPELLINGS = [
@@ -88,7 +115,7 @@ describe('URL_PARAM_KEYS', () => {
     const section = end === -1 ? body : body.slice(0, end);
     const undocumented = Object.values(URL_PARAM_KEYS).filter((wire) => {
       const escaped = wire.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
-      return !new RegExp(`(?:[?&]|\\| \`)${escaped}(?![A-Za-z0-9-])`).test(section);
+      return !new RegExp(`(?:[?&#]|\\| \`)${escaped}(?![A-Za-z0-9-])`).test(section);
     });
     expect(undocumented).toEqual([]);
   });

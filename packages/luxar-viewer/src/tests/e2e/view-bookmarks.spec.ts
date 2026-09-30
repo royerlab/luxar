@@ -25,7 +25,8 @@ test('bookmark panel captures, revisits, exports, and opens a view link', async 
   await page.getByRole('button', { name: 'Add bookmark' }).click();
   const saved = page.getByRole('button', { name: 'Cells at T7' });
   const url = await saved.getAttribute('title');
-  expect(url).toContain('view=');
+  expect(new URL(url!).searchParams.has('view')).toBe(false);
+  expect(new URL(url!).hash).toContain('view=');
 
   await page.evaluate((path) => {
     const app = (window as any).__luxarDebug.app;

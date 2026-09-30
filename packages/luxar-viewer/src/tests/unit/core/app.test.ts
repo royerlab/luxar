@@ -151,6 +151,7 @@ import { InputHandler } from '../../../input';
 import { RenderingControls } from '../../../ui/rendering-controls';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { DatasetBrowser } from '../../../ui/dataset-browser';
+import { ControlRail } from '../../../ui/control-rail';
 import { cleanupUI as mockCleanupUI } from '../../../ui/ui-cleanup';
 import { clearError as mockClearError } from '../../../ui/error-overlay';
 import { showToast as mockShowToast } from '../../../ui/toast';
@@ -1299,6 +1300,12 @@ describe('LuxarApp', () => {
       const replaceStateSpy = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
 
       await app.init({ canvas: mockCanvas, src: '', updateBrowserUrl: false });
+      expect(
+        vi
+          .mocked(ControlRail)
+          .mock.calls.at(-1)?.[0]
+          .some((item) => item.id === 'bookmarks')
+      ).toBe(false);
 
       const browserCall = (DatasetBrowser as any).mock.calls.at(-1);
       expect(browserCall).toBeDefined();
@@ -1330,6 +1337,12 @@ describe('LuxarApp', () => {
       const replaceStateSpy = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
 
       await app.init({ canvas: mockCanvas, src: '', updateBrowserUrl: true });
+      expect(
+        vi
+          .mocked(ControlRail)
+          .mock.calls.at(-1)?.[0]
+          .some((item) => item.id === 'bookmarks')
+      ).toBe(true);
 
       const browserCall = (DatasetBrowser as any).mock.calls.at(-1);
       const onSelect = browserCall[0].onDatasetSelect as (url: string) => Promise<void>;

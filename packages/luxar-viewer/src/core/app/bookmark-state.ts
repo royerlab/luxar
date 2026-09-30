@@ -4,6 +4,7 @@ import type { ViewerSnapshot } from './snapshot/viewer-snapshot';
 import type { LayerPatch } from './embedder/events';
 import type { RenderingSettings } from '../../config';
 import { buildViewBookmarkUrl, normalizeDataSourceUrl } from '../../config/url-params';
+import { validateRenderingSettings } from '../../ui/rendering-controls/controls-utils';
 
 export interface ViewBookmark {
   version: 1;
@@ -14,6 +15,56 @@ export interface ViewBookmark {
 }
 
 const MAX_BOOKMARK_LENGTH = 100_000;
+const VIEW_RENDERING_KEYS = [
+  'fov',
+  'near',
+  'far',
+  'dynamicClippingEnabled',
+  'exposure',
+  'globalOffset',
+  'globalGamma',
+  'toneMapping',
+  'bloomEnabled',
+  'bloomThreshold',
+  'bloomStrength',
+  'bloomRadius',
+  'bloomLevels',
+  'vignetteEnabled',
+  'vignetteDarkness',
+  'vignetteOffset',
+  'detectorNoiseEnabled',
+  'detectorNoiseReadoutSigma',
+  'detectorNoisePhotonGain',
+  'detectorNoiseFpnSigma',
+  'chromaticLensDistortionEnabled',
+  'chromaticLensDistortionX',
+  'chromaticLensDistortionY',
+  'chromaticLensDispersion',
+  'chromaticLensPrincipalPointX',
+  'chromaticLensPrincipalPointY',
+  'chromaticLensFocalLengthX',
+  'chromaticLensFocalLengthY',
+  'chromaticLensSkew',
+  'controlType',
+  'autoRotate',
+  'autoRotateSpeed',
+  'autoRotateAxis',
+  'autoDolly',
+  'autoDollyAmplitudePercent',
+  'autoDollyPeriod',
+] as const satisfies readonly (keyof RenderingSettings)[];
+
+function viewRendering(value: Record<string, unknown>): Partial<RenderingSettings> {
+  const selected = Object.fromEntries(
+    VIEW_RENDERING_KEYS.filter((key) => value[key] !== undefined).map((key) => [key, value[key]])
+  ) as Partial<RenderingSettings>;
+  const validated = validateRenderingSettings(selected);
+  return Object.fromEntries(
+    Object.entries(selected).filter(
+      ([key, entry]) => entry === validated[key as keyof RenderingSettings]
+    )
+  ) as Partial<RenderingSettings>;
+}
 const finite = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -75,7 +126,7 @@ function validBookmark(value: unknown): value is ViewBookmark {
   if (normalizeDataSourceUrl(value.src) !== value.src) return false;
   return [
     validSnapshot(value.snapshot),
-    record(value.rendering) && finiteTree(value.rendering),
+    record(value.rendering),
     Array.isArray(value.layers) && value.layers.every(validLayer),
   ].every(Boolean);
 }
@@ -92,7 +143,7 @@ export function captureBookmark(app: LuxarApp): ViewBookmark {
   if (!src) throw new Error('Load a dataset before adding a bookmark');
   const snapshot = app.captureSnapshot();
   if (!snapshot.dims) throw new Error('Load a dataset before adding a bookmark');
-  const rendering = app.getRenderingSettings();
+  const rendering = viewRendering(app.getRenderingSettings() as unknown as Record<string, unknown>);
   // With dynamic clipping, these are live readouts from the current pose,
   // not settings the user chose. Restoring them would briefly override the
   // recomputed planes and warn on every shared link.
@@ -131,7 +182,8 @@ export function parseBookmark(raw: string | null): ViewBookmark | null {
   } catch {
     return null;
   }
-  return validBookmark(value) ? value : null;
+  if (!validBookmark(value)) return null;
+  return { ...value, rendering: viewRendering(value.rendering as Record<string, unknown>) };
 }
 
 function finiteTree(value: unknown): boolean {
@@ -153,11 +205,14 @@ export async function restoreBookmark(app: LuxarApp, bookmark: ViewBookmark): Pr
   if (normalizeDataSourceUrl(app.getViewerState().src) !== bookmark.src) {
     await app.switchDataset(bookmark.src);
   }
+  // Restoring dimensions can activate a story waypoint, including its camera
+  // flight and rendering overrides. Apply the saved view after that callback.
+  app.restoreSnapshot(bookmark.snapshot);
   app.setRenderingSettings(bookmark.rendering);
   for (const layer of bookmark.layers) {
     if (app.getLayers().some((current) => current.path === layer.path)) {
       app.setLayer(layer.path, layer.appearance);
     }
   }
-  app.restoreSnapshot(bookmark.snapshot);
+  await app.flyTo(bookmark.snapshot.camera, { durationMs: 0 });
 }
