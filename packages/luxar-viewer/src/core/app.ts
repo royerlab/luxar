@@ -310,7 +310,9 @@ export class LuxarApp {
             capture: () => captureBookmark(this),
             restore: (bookmark) => restoreBookmark(this, bookmark),
             baseUrl: () => window.location.href,
-            copy: (url) => navigator.clipboard.writeText(url),
+            copy: (url) =>
+              navigator.clipboard?.writeText(url) ??
+              Promise.reject(new Error('Clipboard unavailable')),
           },
           getPanelVisibilityStates: () => this.getPanelVisibilityStates(),
           restorePanelVisibilityStates: (states) => this.restorePanelVisibilityStates(states),

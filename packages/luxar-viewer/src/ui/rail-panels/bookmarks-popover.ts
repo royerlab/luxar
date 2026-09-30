@@ -2,6 +2,7 @@
 import { buildBookmarkUrl, type ViewBookmark } from '../../core/app/bookmark-state';
 import { downloadBlob } from '../recording-panel/screenshot-exporter';
 
+/** Live viewer operations supplied by the app; the panel owns no scene state. */
 export interface BookmarksPopoverContext {
   capture(): ViewBookmark;
   restore(bookmark: ViewBookmark): Promise<void>;
@@ -9,6 +10,7 @@ export interface BookmarksPopoverContext {
   copy(url: string): Promise<void>;
 }
 
+/** A captured view and the link copied when it was added. */
 export interface NamedBookmark {
   name: string;
   url: string;
@@ -92,8 +94,8 @@ export function buildBookmarksPopover(
           status.textContent = 'Bookmark added; clipboard unavailable';
         }
       );
-    } catch {
-      status.textContent = 'Load a dataset before adding a bookmark';
+    } catch (error) {
+      status.textContent = error instanceof Error ? error.message : 'Could not add bookmark';
     }
   });
   clear.addEventListener('click', () => {

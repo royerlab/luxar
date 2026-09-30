@@ -852,9 +852,23 @@ export function buildDataSourceBrowserUrl(src: string, location: BrowserUrlLocat
   const params = new URLSearchParams(location.search);
   params.set(URL_PARAM_KEYS.src, normalizeSrcForUrl(src));
   params.delete(URL_PARAM_KEYS.title);
+  // A bookmark belongs to the previous dataset. Keeping it would send a
+  // reload back to that view, undoing the user's dataset selection.
+  params.delete(URL_PARAM_KEYS.view);
   const query = params.toString();
   const hash = location.hash ?? '';
   return `${location.pathname}${query ? `?${query}` : ''}${hash}`;
+}
+
+/** Build a share link without carrying remote-control connection details. */
+export function buildViewBookmarkUrl(base: string, src: string, view: string): string {
+  const url = new URL(base);
+  url.searchParams.set(URL_PARAM_KEYS.src, src);
+  url.searchParams.set(URL_PARAM_KEYS.view, view);
+  url.searchParams.delete(URL_PARAM_KEYS.controlToken);
+  url.searchParams.delete(URL_PARAM_KEYS.control);
+  url.searchParams.delete(URL_PARAM_KEYS.controlAllowCrossOrigin);
+  return url.toString();
 }
 
 /**

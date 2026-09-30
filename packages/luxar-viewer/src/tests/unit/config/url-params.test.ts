@@ -636,13 +636,13 @@ describe('buildDataSourceBrowserUrl — edge cases', () => {
     expect(url).toBe('/viewer?src=');
   });
 
-  it('drops a stale ?title= but keeps the other params when src changes', () => {
+  it('drops stale title and view parameters when src changes', () => {
     // ?title= names the dataset the server was started with. Switching
     // datasets in the browser modal must not carry it over, or a reload (or
     // a shared link) titles the tab after a scene it no longer shows.
     const url = buildDataSourceBrowserUrl('datasets/next.zarr', {
       pathname: '/viewer',
-      search: '?src=datasets%2Fprev.zarr&title=Prev%20Scene&theme=dark',
+      search: '?src=datasets%2Fprev.zarr&title=Prev%20Scene&view=old&theme=dark',
     });
     expect(url).toBe('/viewer?src=datasets%2Fnext.zarr&theme=dark');
   });

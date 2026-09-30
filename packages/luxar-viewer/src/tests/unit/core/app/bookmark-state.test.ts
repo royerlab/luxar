@@ -25,7 +25,13 @@ function makeApp() {
       camera: pose,
       dims: { ndim: 4, displayed: [0, 1, 2], currentStep: [0, 0, 0, 7] },
     })),
-    getRenderingSettings: vi.fn(() => ({ exposure: 1.5, controlType: 'orbit' })),
+    getRenderingSettings: vi.fn(() => ({
+      exposure: 1.5,
+      controlType: 'orbit',
+      dynamicClippingEnabled: false,
+      near: 0.1,
+      far: 100,
+    })),
     getLayers: vi.fn(() => [
       {
         path: 'cells',
@@ -55,11 +61,16 @@ describe('view bookmarks', () => {
   it('round-trips the current view through a share URL and restores settings and layers', async () => {
     const app = makeApp();
     const bookmark = captureBookmark(app as unknown as LuxarApp);
-    const url = buildBookmarkUrl('https://example.org/viewer?debug&src=old#section', bookmark);
+    const url = buildBookmarkUrl(
+      'https://example.org/viewer?debug&src=old&control=ws%3A%2F%2Fhost&controlToken=secret#section',
+      bookmark
+    );
     const parsed = parseBookmark(new URL(url).searchParams.get('view'));
     expect(parsed).toEqual(bookmark);
     expect(new URL(url).searchParams.get('src')).toBe('/sample.zarr');
     expect(new URL(url).hash).toBe('#section');
+    expect(new URL(url).searchParams.has('controlToken')).toBe(false);
+    expect(new URL(url).searchParams.has('control')).toBe(false);
     await restoreBookmark(app as unknown as LuxarApp, parsed!);
     expect(app.restoreSnapshot).toHaveBeenCalledWith(bookmark.snapshot);
     expect(app.setRenderingSettings).toHaveBeenCalledWith(bookmark.rendering);
@@ -79,10 +90,44 @@ describe('view bookmarks', () => {
     expect(app.restoreSnapshot).toHaveBeenCalledTimes(1);
   });
 
+  it('leaves dynamic clipping planes to the camera updater', () => {
+    const app = makeApp();
+    app.getRenderingSettings.mockReturnValue({
+      exposure: 1.5,
+      controlType: 'orbit',
+      dynamicClippingEnabled: true,
+      near: 0.1,
+      far: 100,
+    });
+    const bookmark = captureBookmark(app as unknown as LuxarApp);
+    expect(bookmark.rendering).not.toHaveProperty('near');
+    expect(bookmark.rendering).not.toHaveProperty('far');
+    expect(bookmark.rendering).toHaveProperty('exposure', 1.5);
+  });
+
+  it('accepts an orthographic camera with zoom instead of perspective FOV', () => {
+    const app = makeApp();
+    const ortho = { ...pose, isOrtho: true, fov: undefined, zoom: 2 };
+    app.captureSnapshot.mockReturnValue({
+      version: 1,
+      camera: ortho,
+      dims: { ndim: 4, displayed: [0, 1, 2], currentStep: [0, 0, 0, 7] },
+    } as never);
+    const bookmark = captureBookmark(app as unknown as LuxarApp);
+    expect(parseBookmark(JSON.stringify(bookmark))).toEqual(bookmark);
+  });
+
+  it('requires a loaded scene even if a source was configured', () => {
+    const app = makeApp();
+    app.captureSnapshot.mockReturnValue({ version: 1, camera: pose, dims: undefined } as never);
+    expect(() => captureBookmark(app as unknown as LuxarApp)).toThrow('Load a dataset');
+  });
+
   it('rejects malformed, oversized, and non-finite URL state', () => {
     expect(parseBookmark('invalid')).toBeNull();
     expect(parseBookmark('x'.repeat(100_001))).toBeNull();
     const bookmark = captureBookmark(makeApp() as unknown as LuxarApp);
+    expect(parseBookmark(JSON.stringify({ ...bookmark, src: 'javascript:alert(1)' }))).toBeNull();
     expect(
       parseBookmark(
         JSON.stringify({

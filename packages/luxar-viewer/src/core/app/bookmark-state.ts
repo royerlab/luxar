@@ -3,13 +3,13 @@ import type { LuxarApp } from '../app';
 import type { ViewerSnapshot } from './snapshot/viewer-snapshot';
 import type { LayerPatch } from './embedder/events';
 import type { RenderingSettings } from '../../config';
-import { normalizeDataSourceUrl, URL_PARAM_KEYS } from '../../config/url-params';
+import { buildViewBookmarkUrl, normalizeDataSourceUrl } from '../../config/url-params';
 
 export interface ViewBookmark {
   version: 1;
   src: string;
   snapshot: ViewerSnapshot;
-  rendering: RenderingSettings;
+  rendering: Partial<RenderingSettings>;
   layers: Array<{ path: string; appearance: LayerPatch }>;
 }
 
@@ -88,13 +88,23 @@ function validSnapshot(value: unknown): boolean {
 
 /** Snapshot only editable layer fields; diagnostics and authored bounds are not state. */
 export function captureBookmark(app: LuxarApp): ViewBookmark {
-  const src = app.getViewerState().src;
+  const src = normalizeDataSourceUrl(app.getViewerState().src);
   if (!src) throw new Error('Load a dataset before adding a bookmark');
+  const snapshot = app.captureSnapshot();
+  if (!snapshot.dims) throw new Error('Load a dataset before adding a bookmark');
+  const rendering = app.getRenderingSettings();
+  // With dynamic clipping, these are live readouts from the current pose,
+  // not settings the user chose. Restoring them would briefly override the
+  // recomputed planes and warn on every shared link.
+  if (rendering.dynamicClippingEnabled) {
+    delete (rendering as Partial<RenderingSettings>).near;
+    delete (rendering as Partial<RenderingSettings>).far;
+  }
   return {
     version: 1,
     src,
-    snapshot: app.captureSnapshot(),
-    rendering: app.getRenderingSettings(),
+    snapshot,
+    rendering,
     layers: app.getLayers().map((layer) => ({
       path: layer.path,
       appearance: {
@@ -133,21 +143,16 @@ function finiteTree(value: unknown): boolean {
 
 /** Preserve ordinary viewer options while replacing the dataset and view. */
 export function buildBookmarkUrl(base: string, bookmark: ViewBookmark): string {
-  const url = new URL(base);
-  url.searchParams.set(URL_PARAM_KEYS.src, bookmark.src);
   const encoded = JSON.stringify(bookmark);
   if (encoded.length > MAX_BOOKMARK_LENGTH) throw new Error('Bookmark is too large to share');
-  url.searchParams.set(URL_PARAM_KEYS.view, encoded);
-  // A link should not disclose or reconnect a remote-control session.
-  url.searchParams.delete(URL_PARAM_KEYS.controlToken);
-  url.searchParams.delete(URL_PARAM_KEYS.control);
-  url.searchParams.delete(URL_PARAM_KEYS.controlAllowCrossOrigin);
-  return url.toString();
+  return buildViewBookmarkUrl(base, bookmark.src, encoded);
 }
 
 /** Dataset switches finish before the saved appearance and camera are applied. */
 export async function restoreBookmark(app: LuxarApp, bookmark: ViewBookmark): Promise<void> {
-  if (app.getViewerState().src !== bookmark.src) await app.switchDataset(bookmark.src);
+  if (normalizeDataSourceUrl(app.getViewerState().src) !== bookmark.src) {
+    await app.switchDataset(bookmark.src);
+  }
   app.setRenderingSettings(bookmark.rendering);
   for (const layer of bookmark.layers) {
     if (app.getLayers().some((current) => current.path === layer.path)) {
