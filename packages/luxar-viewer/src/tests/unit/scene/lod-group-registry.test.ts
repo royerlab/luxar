@@ -4704,6 +4704,7 @@ describe('LODGroupRegistry — playback aspiration', () => {
       if (reg.get('/g')!.displayedChildIndex === 1) fine++;
     }
     expect(children[1].loadEwmaMs).toBeGreaterThan(80);
+    expect(children[1].loadEwmaMs).toBeLessThan(100); // warm probes did run
     expect(fine).toBeLessThan(20); // only the occasional probe may show it
   });
 
