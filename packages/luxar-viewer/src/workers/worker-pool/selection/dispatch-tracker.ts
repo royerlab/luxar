@@ -24,6 +24,7 @@ const S_DISPATCHES = perfCounters.slot('worker.dispatches');
 const S_BUSY_MS = perfCounters.slot('worker.busyMs');
 const S_MISROUTES = perfCounters.slot('worker.misroutes');
 
+/** Counts worker-side in-flight tasks and records dispatch performance counters. */
 export class DispatchTracker {
   /** Real (worker-side) in-flight task count per worker; absent means 0. */
   private readonly realInFlight = new Map<Worker, number>();

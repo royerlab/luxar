@@ -86,16 +86,16 @@ export interface RowSpan {
 }
 
 /** The slice of three's `Textures.updateTexture` options this module reads. */
-interface UpdateOptions {
+export interface UpdateOptions {
   image?: unknown;
   width?: number;
   height?: number;
 }
 
-type UpdateTextureFn = (texture: THREE.Texture, options: UpdateOptions) => void;
+export type UpdateTextureFn = (texture: THREE.Texture, options: UpdateOptions) => void;
 
 /** Structural view of three's backends (native WebGPU + WebGL2 fallback). */
-interface BackendLike {
+export interface BackendLike {
   isWebGPUBackend?: boolean;
   isWebGLBackend?: boolean;
   updateTexture?: UpdateTextureFn;
@@ -107,7 +107,7 @@ interface BackendLike {
 }
 
 /** Image shape of an element `DataTexture`. */
-interface ElementImage {
+export interface ElementImage {
   data: Float32Array;
   width: number;
   height: number;
