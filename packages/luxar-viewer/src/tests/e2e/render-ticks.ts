@@ -275,10 +275,12 @@ export async function flushRenderTicks(
     }
 
     // Kick the loop. Under render-on-change an idle tick draws nothing, so
-    // every kick is what makes the NEXT frame render (`renderOnce()` marks it
-    // dirty, or draws at once on a stopped loop); it also re-arms the
-    // controller's ~2 s idle timeout. Outcomes are counted rather than
-    // swallowed so the diagnostics can say how many kicks the page answered.
+    // every kick is what makes the NEXT frame render: on a stopped loop,
+    // renderOnce() draws synchronously and arms the next rAF frame; on a
+    // running loop it marks the next tick dirty. Every kick also resets the
+    // idle timeout, keeping the loop alive for the whole flush. Outcomes are
+    // counted rather than swallowed so the diagnostics can say how many kicks
+    // the page actually answered.
     const outcome = await raceEvaluate<KickOutcome>(
       page
         .evaluate(() => {

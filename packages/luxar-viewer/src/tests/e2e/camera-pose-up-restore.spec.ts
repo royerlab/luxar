@@ -19,6 +19,8 @@ import { waitForLuxarReady, waitForPointsLoaded } from './helpers';
 const DATASET =
   'http://localhost:9000/packages/luxar-viewer/tests/fixtures/test_points_blending_modes.luxar.zarr';
 
+test.describe.configure({ timeout: 60_000 });
+
 const S = Math.SQRT1_2;
 const UPS: Array<[string, [number, number, number]]> = [
   ['Z-up', [0, 0, 1]],

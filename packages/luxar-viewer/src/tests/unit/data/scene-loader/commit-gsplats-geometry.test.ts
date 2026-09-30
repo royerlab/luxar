@@ -760,6 +760,72 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
+  // A pool GROW (every rung that doubles a ladder crosses the 1.5x capacity
+  // headroom) hands the node a fresh geometry, so the append fast path cannot
+  // fire — and the fresh geometry used to be drawn in storage order until the
+  // worker sorted it. When the commit still provably EXTENDS the drawn
+  // population, the previous geometry's drawn permutation is an exact
+  // ordering of the new geometry's prefix: hand it over as the seed.
+  const sortedGeometry = (ordering: number[], capacity = 8): THREE.InstancedBufferGeometry => {
+    const g = new THREE.InstancedBufferGeometry();
+    const a = new Uint32Array(capacity);
+    a.set(ordering);
+    g.setAttribute('aSortedIndex', new THREE.InstancedBufferAttribute(a, 1));
+    g.setAttribute(
+      'aSortedIndexB',
+      new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1)
+    );
+    g.instanceCount = ordering.length;
+    return g;
+  };
+  const seedOf = (pool: ReturnType<typeof makePool>): number[] | undefined => {
+    const opts = (pool.updateGSplatsGeometry.mock.calls.at(-1) as unknown[])[4] as {
+      seedOrdering?: Uint32Array;
+    };
+    return opts.seedOrdering ? Array.from(opts.seedOrdering) : undefined;
+  };
+
+  it('a grow that extends the drawn population seeds the new geometry with its drawn order', () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+    const pool = makePool(sortedGeometry([3, 2, 1, 0]));
+    const next = primeAndExtend(root, pool, 4, 6);
+    pool.acquireGSplatsGeometry.mockReturnValue(new THREE.InstancedBufferGeometry());
+    pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
+    commitGSplatsGeometry(next, root, pool as never, undefined, V);
+    expect(lastOpts(pool).fromInstance).toBe(0);
+    expect(seedOf(pool)).toEqual([3, 2, 1, 0]);
+  });
+
+  it('seeds only the drawn prefix when releasing an old held geometry raises its count', () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+    const oldGeometry = sortedGeometry([3, 2, 1, 0], 8);
+    const pool = makePool(oldGeometry);
+    const next = primeAndExtend(root, pool, 4, 8);
+    const newGeometry = new THREE.InstancedBufferGeometry();
+    pool.acquireGSplatsGeometry.mockImplementation(() => {
+      oldGeometry.instanceCount = 6; // pool release ends the prior held draw
+      return newGeometry;
+    });
+    pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
+
+    commitGSplatsGeometry(next, root, pool as never, undefined, V);
+
+    expect(seedOf(pool)).toEqual([3, 2, 1, 0]);
+  });
+
+  it('a grow WITHOUT prefix lineage gets no seed (the prefix is not the same splats)', () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+    const pool = makePool(sortedGeometry([3, 2, 1, 0]));
+    commitGSplatsGeometry(makeStaged(4), root, pool as never, undefined, V);
+    pool.acquireGSplatsGeometry.mockReturnValue(new THREE.InstancedBufferGeometry());
+    pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
+    commitGSplatsGeometry(makeStaged(6), root, pool as never, undefined, V);
+    expect(seedOf(pool)).toBeUndefined();
+  });
+
   it('does NOT append on an equal-count recommit (that is the preserveOrdering path)', () => {
     const root = new THREE.Group();
     root.add(makeMesh('/g'));
