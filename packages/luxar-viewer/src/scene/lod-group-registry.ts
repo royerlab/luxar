@@ -241,10 +241,27 @@ const FINE_RELOAD_SETTLE_MS = 130;
  */
 const PLAYBACK_LOAD_BUDGET_FRACTION = 0.8;
 
+/**
+ * Hysteresis for {@link PLAYBACK_LOAD_BUDGET_FRACTION}: the current aspiration,
+ * and any coarser level a demotion steps down to, only needs a reload average
+ * within this fraction of the period (a finer level is still admitted at 0.8).
+ * Without it a level whose reloads straddle the admission budget flipped with
+ * each sample (lod_timelapse at 20 fps on obsidian: an average of 40.6 ms
+ * against a 40 ms budget sent the mid level to the coarsest for a second), and
+ * a demoted finest level skipped a mid level averaging 45 ms of a 50 ms period.
+ */
+const PLAYBACK_KEEP_BUDGET_FRACTION = 1.0;
+
 /** Weight of a new sample in ``LODGroupChild.loadEwmaMs``. */
 const LOAD_EWMA_ALPHA = 0.3;
 
-/** Retry the next capped playback level once per second to measure warm loads. */
+/**
+ * Retry the next capped playback level once per second to measure warm loads.
+ * The probe's reload REPLACES the level's average rather than moving it 30%:
+ * on lod_timelapse at 20 fps (obsidian) the first loop's cache-miss reloads
+ * (80-200 ms) capped the mid level, and blending each warm 5-10 ms probe into
+ * that stale average took four to six probes, i.e. seconds at the coarsest level.
+ */
 const PLAYBACK_PROBE_INTERVAL_MS = 1000;
 
 /**
@@ -546,6 +563,11 @@ export interface LODGroupChild {
   loadSamples?: number;
   /** Last playback probe of a level whose measured reload exceeded the budget. */
   lastPlaybackProbeMs?: number;
+  /**
+   * Set when a playback probe fires; the next timed load then REPLACES
+   * ``loadEwmaMs`` instead of blending into it. Registry-owned.
+   */
+  playbackProbePending?: boolean;
   /** Set by the thunk on load failure to stop per-frame retry storms. */
   failed?: boolean;
   /**
@@ -2458,12 +2480,16 @@ export class LODGroupRegistry {
       const ms = Math.max(0, (c.loadEndMs ?? this.nowMs()) - c.loadStartMs);
       const samples = c.loadSamples ?? 0;
       // The cold first sample seeds nothing: the second replaces it outright.
+      // A playback probe replaces it too: the level has not been reloaded for
+      // a second or more, so its average describes a cache state that is gone
+      // (cold loads the first loop paid, while the cache has warmed since).
       c.loadEwmaMs =
-        c.loadEwmaMs === undefined || samples < 2
+        c.loadEwmaMs === undefined || samples < 2 || c.playbackProbePending === true
           ? ms
           : c.loadEwmaMs + LOAD_EWMA_ALPHA * (ms - c.loadEwmaMs);
       c.loadSamples = samples + 1;
     }
+    c.playbackProbePending = undefined;
     c.loadStartMs = undefined;
     c.loadEndMs = undefined;
   }
@@ -2480,8 +2506,7 @@ export class LODGroupRegistry {
     const period = this.frame.playbackPeriodMs;
     if (period === null || entry.selectorMode !== 'auto') return desired;
     if (this.deps.getForceFinestLOD?.() === true) return desired;
-    const budget = PLAYBACK_LOAD_BUDGET_FRACTION * period;
-    const affordable = this.affordablePlaybackLevel(entry, desired, budget);
+    const affordable = this.affordablePlaybackLevel(entry, desired, period);
     return this.probedPlaybackLevel(entry, desired, affordable);
   }
 
@@ -2489,18 +2514,27 @@ export class LODGroupRegistry {
    * Finest level whose measured reload fits this playback period. A level
    * with only its cold first load measured (``loadSamples`` < 2) counts as
    * unmeasured, so one cold sample cannot demote it; a level whose warm
-   * reloads are too slow is demoted after its second load.
+   * reloads are too slow is demoted after its second load. A level finer than
+   * the aspiration must fit ``PLAYBACK_LOAD_BUDGET_FRACTION`` of the period to
+   * be admitted; the aspiration and the levels below it only need
+   * ``PLAYBACK_KEEP_BUDGET_FRACTION`` (hysteresis).
    */
-  private affordablePlaybackLevel(entry: LODGroupEntry, desired: number, budget: number): number {
+  private affordablePlaybackLevel(entry: LODGroupEntry, desired: number, periodMs: number): number {
     for (let i = desired; i > 0; i--) {
       const c = entry.children[i];
       const ewma = (c.loadSamples ?? 0) >= 2 ? c.loadEwmaMs : undefined;
-      if (!c.ensureLoaded || ewma === undefined || ewma <= budget) return i;
+      const fraction =
+        i <= entry.activeChildIndex ? PLAYBACK_KEEP_BUDGET_FRACTION : PLAYBACK_LOAD_BUDGET_FRACTION;
+      if (!c.ensureLoaded || ewma === undefined || ewma <= fraction * periodMs) return i;
     }
     return 0;
   }
 
-  /** Periodically re-measure the next finer capped level after a cold load. */
+  /**
+   * Periodically re-measure the next finer capped level after a cold load. The
+   * probe's reload replaces the level's average (``playbackProbePending``): the
+   * samples it holds are at least a probe interval old.
+   */
   private probedPlaybackLevel(entry: LODGroupEntry, desired: number, affordable: number): number {
     const next = entry.children[affordable + 1];
     if (affordable < desired && next?.loadEwmaMs !== undefined) {
@@ -2510,6 +2544,7 @@ export class LODGroupRegistry {
         PLAYBACK_PROBE_INTERVAL_MS
       ) {
         next.lastPlaybackProbeMs = now;
+        next.playbackProbePending = true;
         return affordable + 1;
       }
     }

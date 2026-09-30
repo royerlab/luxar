@@ -4646,7 +4646,7 @@ describe('LODGroupRegistry — playback aspiration', () => {
   // for a second, until the next probe. A level whose reloads straddle the
   // budget must not flip each time its average crosses it: holding a level (or
   // stepping down to one) only needs its reloads to fit the whole period.
-  it.fails('a level whose reload average straddles the budget is not flipped in and out', () => {
+  it('a level whose reload average straddles the budget is not flipped in and out', () => {
     // 40 / 100 ms alternating: the average swings either side of the 80 ms
     // budget of a 100 ms period, while the reloads fit the period on average.
     const { reg, frame } = playbackHarness([(n) => (n % 2 === 0 ? 40 : 100)]);
@@ -4659,7 +4659,7 @@ describe('LODGroupRegistry — playback aspiration', () => {
   // demoted past a mid level averaging ~45 ms, inside the 50 ms period but
   // over the 40 ms admission budget, down to the coarsest level for up to
   // four seconds.
-  it.fails('a demoted level steps down to the next level whose reloads fit the period', () => {
+  it('a demoted level steps down to the next level whose reloads fit the period', () => {
     // mid 70 ms (over the 80 ms budget once frame-quantised, inside the
     // 100 ms period); fine 150 ms (over the period).
     const { reg, frame } = playbackHarness([70, 150]);
@@ -4680,7 +4680,7 @@ describe('LODGroupRegistry — playback aspiration', () => {
   // way from the stale cold value (108 -> 92 -> 85 -> 61 -> 49 -> 41 ms): four
   // to six seconds at the coarsest level. A probe is a fresh measurement after
   // a gap of a second or more, so it must replace the stale average.
-  it.fails('a capped level recovers on the first warm probe, not after the cold average decays', () => {
+  it('a capped level recovers on the first warm probe, not after the cold average decays', () => {
     // Six cold (cache-miss) reloads of 200 ms, then warm 10 ms reloads.
     const { reg, frame } = playbackHarness([(n) => (n < 6 ? 200 : 10)]);
     for (let f = 0; f < 360; f++) frame(); // 6 s: the cold loads are spent (by the 5th probe)
