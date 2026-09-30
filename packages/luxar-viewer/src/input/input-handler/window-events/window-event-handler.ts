@@ -147,10 +147,9 @@ export class WindowEventHandler {
 
     requestAnimationFrame(() => {
       this.sceneManager.updateSize();
-      // The resize clears the canvas, and we are inside an animation-frame
-      // callback: arming the loop here would first paint NEXT frame and
-      // composite one cleared frame. Draw now.
-      this.animationController.renderOnce();
+      // updateSize schedules the actual resize for the next frame. Arm the
+      // loop after it so that frame repaints at the new size.
+      this.animationController.startAnimation();
     });
   }
 
