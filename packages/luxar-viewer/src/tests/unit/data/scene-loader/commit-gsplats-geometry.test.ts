@@ -797,6 +797,24 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     expect(seedOf(pool)).toEqual([3, 2, 1, 0]);
   });
 
+  it('seeds only the drawn prefix when releasing an old held geometry raises its count', () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+    const oldGeometry = sortedGeometry([3, 2, 1, 0], 8);
+    const pool = makePool(oldGeometry);
+    const next = primeAndExtend(root, pool, 4, 8);
+    const newGeometry = new THREE.InstancedBufferGeometry();
+    pool.acquireGSplatsGeometry.mockImplementation(() => {
+      oldGeometry.instanceCount = 6; // pool release ends the prior held draw
+      return newGeometry;
+    });
+    pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
+
+    commitGSplatsGeometry(next, root, pool as never, undefined, V);
+
+    expect(seedOf(pool)).toEqual([3, 2, 1, 0]);
+  });
+
   it('a grow WITHOUT prefix lineage gets no seed (the prefix is not the same splats)', () => {
     const root = new THREE.Group();
     root.add(makeMesh('/g'));
