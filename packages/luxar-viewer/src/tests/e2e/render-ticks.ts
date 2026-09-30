@@ -274,10 +274,9 @@ export async function flushRenderTicks(
       break;
     }
 
-    // Kick the loop. The FIRST kick starts a continuous rAF loop
-    // (`startAnimation()` is gated on `!isAnimating`); every later one only
-    // re-arms the controller's ~2 s idle timeout, which is what keeps the loop
-    // alive for the whole flush. Outcomes are counted rather than swallowed so
+    // Kick the loop. On a stopped loop, renderOnce() draws synchronously and
+    // arms the next rAF frame. Later kicks wake the running loop and reset its
+    // idle timeout, keeping it alive for the whole flush. Outcomes are counted so
     // the diagnostics can say how many kicks the page actually answered.
     const outcome = await raceEvaluate<KickOutcome>(
       page

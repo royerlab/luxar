@@ -550,12 +550,10 @@ export class AnimationController {
    * {@link startAnimation} does.
    *
    * `startAnimation()` only arms the next animation frame. This is for the
-   * few callers that must have a frame on the canvas before they return: a
-   * resize made inside an animation-frame callback (arming there would land a
-   * frame late and composite one cleared frame), or a video capture that
-   * starts recording the canvas in the same turn. When the loop is already
-   * running it draws nothing extra: the running loop paints at the next
-   * animation frame.
+   * few callers that must have a frame on the canvas before they return,
+   * such as a video capture that starts recording the canvas in the same
+   * turn. When the loop is already running it draws nothing extra: the loop
+   * paints at the next animation frame.
    */
   renderOnce(): void {
     if (this.resumeIfStopped()) this.tick();
