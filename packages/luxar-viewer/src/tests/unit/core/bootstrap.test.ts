@@ -24,6 +24,10 @@ const mocks = vi.hoisted(() => ({
   showError: vi.fn(),
   shortcutForAction: vi.fn().mockReturnValue('F1'),
   bloscThunk: vi.fn().mockResolvedValue({}),
+  restoreSnapshot: vi.fn(),
+  setRenderingSettings: vi.fn(),
+  flyTo: vi.fn().mockResolvedValue({ completed: true }),
+  disposeCleanups: [] as Array<() => void>,
 }));
 
 vi.mock('../../../core/app', () => ({
@@ -31,7 +35,17 @@ vi.mock('../../../core/app', () => ({
     init: mocks.init,
     initialized: true,
     shortcutForAction: mocks.shortcutForAction,
-    dispose: vi.fn(),
+    getViewerState: () => ({ src: '/sample.zarr' }),
+    restoreSnapshot: mocks.restoreSnapshot,
+    setRenderingSettings: mocks.setRenderingSettings,
+    getLayers: () => [],
+    flyTo: mocks.flyTo,
+    onDispose: (cleanup: () => void) => {
+      mocks.disposeCleanups.push(cleanup);
+    },
+    dispose: () => {
+      mocks.disposeCleanups.splice(0).forEach((cleanup) => cleanup());
+    },
   })),
 }));
 
@@ -98,6 +112,7 @@ const EMPTY_PARAMS: UrlParams = {
   src: null,
   theme: null,
   title: null,
+  view: null,
   control: null,
   controlToken: null,
   controlAllowCrossOrigin: false,
@@ -142,6 +157,7 @@ const EMPTY_PARAMS: UrlParams = {
 describe('bootstrapStandalone', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.disposeCleanups.splice(0).forEach((cleanup) => cleanup());
     mocks.init.mockResolvedValue(undefined);
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
     delete window.__luxarBuild;
@@ -150,6 +166,7 @@ describe('bootstrapStandalone', () => {
   });
 
   afterEach(() => {
+    mocks.disposeCleanups.splice(0).forEach((cleanup) => cleanup());
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
     delete window.__luxarBuild;
     localStorage.clear();
@@ -510,6 +527,71 @@ describe('bootstrapStandalone', () => {
   });
 
   describe('success and error paths', () => {
+    it('restores a new #view on same-document navigation and removes the listener on dispose', async () => {
+      const app = await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+      const bookmark = {
+        version: 1,
+        src: '/sample.zarr',
+        snapshot: {
+          version: 1,
+          camera: {
+            position: [1, 2, 3],
+            target: [0, 0, 0],
+            up: [0, 1, 0],
+            isOrtho: false,
+            fov: 45,
+            near: 0.1,
+            far: 100,
+          },
+        },
+        rendering: { exposure: 1.5 },
+        layers: [],
+      };
+      window.history.replaceState(
+        null,
+        '',
+        `#view=${encodeURIComponent(JSON.stringify(bookmark))}`
+      );
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      await vi.waitFor(() => expect(mocks.restoreSnapshot).toHaveBeenCalledWith(bookmark.snapshot));
+      expect(mocks.setRenderingSettings).toHaveBeenCalledWith(bookmark.rendering);
+      expect(mocks.flyTo).toHaveBeenCalledWith(bookmark.snapshot.camera, { durationMs: 0 });
+
+      mocks.restoreSnapshot.mockClear();
+      const nextBookmark = {
+        ...bookmark,
+        snapshot: {
+          ...bookmark.snapshot,
+          camera: { ...bookmark.snapshot.camera, position: [4, 5, 6] },
+        },
+      };
+      window.history.replaceState(
+        null,
+        '',
+        `#view=${encodeURIComponent(JSON.stringify(nextBookmark))}`
+      );
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      await vi.waitFor(() =>
+        expect(mocks.restoreSnapshot).toHaveBeenCalledWith(nextBookmark.snapshot)
+      );
+
+      mocks.restoreSnapshot.mockClear();
+      window.history.replaceState(null, '', '#section');
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      await Promise.resolve();
+      expect(mocks.restoreSnapshot).not.toHaveBeenCalled();
+
+      app.dispose();
+      window.history.replaceState(
+        null,
+        '',
+        `#view=${encodeURIComponent(JSON.stringify(bookmark))}`
+      );
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      await Promise.resolve();
+      expect(mocks.restoreSnapshot).not.toHaveBeenCalled();
+      window.history.replaceState(null, '', window.location.pathname);
+    });
     it('returns the constructed LuxarApp on success', async () => {
       const app = await bootstrapStandalone({
         canvas: CANVAS,

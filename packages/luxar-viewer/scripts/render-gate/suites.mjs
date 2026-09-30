@@ -104,7 +104,10 @@ export function judgeMetric(m, samples) {
   const cand = pick('cand');
   const common = { kind, better };
   if (kind === 'counter')
-    return { ...common, ...judgeCounter(base, cand, base2, { better, tol: m.tol ?? 0, relTol: m.relTol ?? 0 }) };
+    return {
+      ...common,
+      ...judgeCounter(base, cand, base2, { better, tol: m.tol ?? 0, relTol: m.relTol ?? 0 }),
+    };
   if (anyMissing(base, cand, base2)) return { ...common, verdict: 'n/a' };
   return {
     ...common,
