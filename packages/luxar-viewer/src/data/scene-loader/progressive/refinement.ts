@@ -84,6 +84,7 @@ export const MAX_CONCURRENT_REFINEMENT_STEPS = 4;
 export class RefinementFailureTracker {
   private failCounts = new Map<string, number>();
   private exhaustedPaths = new Set<string>();
+  private notifiedPaths = new Set<string>();
 
   constructor(private maxConsecutiveFailures: number = MAX_CONSECUTIVE_REFINEMENT_FAILURES) {}
 
@@ -101,9 +102,22 @@ export class RefinementFailureTracker {
   /** Clear every exhausted/counted path. Returns whether any state changed. */
   reset(): boolean {
     const hadFailures = this.failCounts.size > 0 || this.exhaustedPaths.size > 0;
+    this.reopen();
+    this.notifiedPaths.clear();
+    return hadFailures;
+  }
+
+  /** Re-open failed paths for a backoff round without repeating their toast. */
+  reopen(): void {
     this.failCounts.clear();
     this.exhaustedPaths.clear();
-    return hadFailures;
+  }
+
+  /** Show the exhaustion toast once per path until a full reset. */
+  shouldNotify(path: string): boolean {
+    if (this.notifiedPaths.has(path)) return false;
+    this.notifiedPaths.add(path);
+    return true;
   }
 
   /**

@@ -227,6 +227,7 @@ import { queueNext } from './scene-loader/update-view/queue-next';
 import {
   abandonedLadderPaths,
   resetRefinementFailureTrackers,
+  reopenRefinementFailureTrackers,
   type RefinableLoader,
 } from './scene-loader/progressive/refinement-wrapper';
 import {
@@ -2224,11 +2225,14 @@ export class SceneLoader {
     if (this._abandonedRetryTimer !== null) return true;
     const round = this._abandonedRetryRound;
     if (round >= MAX_ABANDONED_RUNG_RETRY_ROUNDS) {
-      log.warning(
-        Modules.SCENE_LOADER,
-        `Leaving LOD refinement of ${abandoned.join(', ')} after ${round} re-drains ` +
-          '(a view change or restored connectivity retries it)'
-      );
+      if (round === MAX_ABANDONED_RUNG_RETRY_ROUNDS) {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Leaving LOD refinement of ${abandoned.join(', ')} after ${round} re-drains ` +
+            '(a view change or restored connectivity retries it)'
+        );
+        this._abandonedRetryRound = round + 1;
+      }
       return false;
     }
     const delayMs = Math.min(
@@ -2248,7 +2252,7 @@ export class SceneLoader {
         noteRefinementAborted();
         return;
       }
-      resetRefinementFailureTrackers(this.sweepLoaderEntries().map(([, loader]) => loader));
+      reopenRefinementFailureTrackers(this.sweepLoaderEntries().map(([, loader]) => loader));
       if (!this.anyLoaderHasMoreLODs()) noteRefinementComplete();
       else this.kickRefinementIfIdle();
     }, delayMs);
