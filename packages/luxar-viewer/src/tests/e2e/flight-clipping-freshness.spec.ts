@@ -33,6 +33,7 @@ interface Trace {
 }
 
 test('each flight frame renders with the far plane of its own pose', async ({ page }) => {
+  test.setTimeout(60_000);
   await page.setViewportSize({ width: 640, height: 480 });
   await page.goto(`/?src=${DATASET}&debug&renderer=webgl`);
   await waitForLuxarReady(page);

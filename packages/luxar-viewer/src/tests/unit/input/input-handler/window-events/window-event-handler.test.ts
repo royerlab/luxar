@@ -478,9 +478,9 @@ describe('WindowEventHandler', () => {
       expect(canvas.hasAttribute('style')).toBe(false);
     });
 
-    it('schedules updateSize + renderOnce via requestAnimationFrame', async () => {
+    it('schedules updateSize + startAnimation via requestAnimationFrame', async () => {
       const { sceneManager, updateSize } = makeSceneManager();
-      const { animationController, renderOnce } = makeAnimationController();
+      const { animationController, startAnimation } = makeAnimationController();
       const handler = new WindowEventHandler(sceneManager, animationController);
       handler.attach([]);
 
@@ -488,12 +488,12 @@ describe('WindowEventHandler', () => {
 
       // updateSize should NOT be called synchronously — it's deferred.
       expect(updateSize).not.toHaveBeenCalled();
-      expect(renderOnce).not.toHaveBeenCalled();
+      expect(startAnimation).not.toHaveBeenCalled();
 
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
       expect(updateSize).toHaveBeenCalledTimes(1);
-      expect(renderOnce).toHaveBeenCalledTimes(1);
+      expect(startAnimation).toHaveBeenCalledTimes(1);
     });
   });
 });
