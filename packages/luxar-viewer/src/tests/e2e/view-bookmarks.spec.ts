@@ -67,4 +67,33 @@ test('bookmark panel captures, revisits, exports, and opens a view link', async 
   for (let i = 0; i < 3; i++) expect(opened.position[i]).toBeCloseTo(expected.position[i], 5);
   expect(opened.layer.visible).toBe(false);
   expect(opened.layer.opacity).toBeCloseTo(0.4);
+
+  await page.evaluate(
+    ({ hash, path }) => {
+      const app = (window as any).__luxarDebug.app;
+      (window as any).__bookmarkApp = app;
+      app.recenterCamera();
+      app.setLayer(path, { visible: true, opacity: 1 });
+      window.history.replaceState(null, '', '#section');
+      window.location.hash = hash;
+    },
+    { hash: new URL(url!).hash, path: expected.path }
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(({ position, path }) => {
+        const app = (window as any).__luxarDebug.app;
+        const actual = app.getCameraPose().position;
+        const layer = app.getLayers().find((l: any) => l.path === path);
+        return (
+          app === (window as any).__bookmarkApp &&
+          actual.every(
+            (value: number, index: number) => Math.abs(value - position[index]) < 1e-5
+          ) &&
+          layer.visible === false &&
+          Math.abs(layer.opacity - 0.4) < 1e-5
+        );
+      }, expected)
+    )
+    .toBe(true);
 });

@@ -1552,6 +1552,11 @@ export class LuxarApp {
     this.isDisposed = true;
   }
 
+  /** Register cleanup owned by this app's current lifetime. */
+  onDispose(cleanup: () => void): void {
+    this.events.add(cleanup);
+  }
+
   /**
    * Get visibility states of all UI panels for save/restore during recording.
    * Implementation lives in `core/app/viewer-config/panel-visibility.ts`.
