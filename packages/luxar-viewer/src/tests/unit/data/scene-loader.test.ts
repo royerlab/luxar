@@ -3305,6 +3305,165 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('abandoned rung recovery (#2975)', () => {
+    // A chunk fetch that stalls to give-up makes the store reject; a
+    // refinement step that hits it fails. After the consecutive-failure cap
+    // the ladder was retired and nothing but an `online` event re-opened it,
+    // so a session that never went offline sat at the coarser rung, idle and
+    // reported settled, until the user happened to move something.
+    interface RecoveryInternals {
+      _updateInProgress: boolean;
+      rootGroup: THREE.Group | null;
+      gsplatLoaders: Map<string, unknown>;
+      registry: { recordFailure(path: string, error: Error): void };
+      scheduleGSplatsRefinement: () => Promise<void>;
+    }
+
+    const stallError = () =>
+      new Error(
+        'fetch exhausted retries for additive_1/amplitudes/c/0: ' +
+          'response bodies made no aggregate progress for 7500 ms'
+      );
+
+    /** A ladder whose next rung fails `failures` times, then streams normally. */
+    function flakyLadder(failures: number, total = 3) {
+      const ladder = {
+        calls: 0,
+        loadedLODCount: 1,
+        totalLODCount: total,
+        get hasMoreLODs() {
+          return ladder.loadedLODCount < ladder.totalLODCount;
+        },
+        updateView: vi.fn(async () => {
+          ladder.calls += 1;
+          if (ladder.calls <= failures) throw stallError();
+          ladder.loadedLODCount += 1;
+          return null;
+        }),
+        dispose: vi.fn(),
+      };
+      return ladder;
+    }
+
+    let errorLog: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      resetLoadTimeline();
+      errorLog = vi.spyOn(log, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      (sceneLoader as unknown as RecoveryInternals).gsplatLoaders.clear();
+      errorLog.mockRestore();
+      vi.useRealTimers();
+    });
+
+    /** Run one refinement drain the way an update tail does (lock held). */
+    async function drain(): Promise<void> {
+      const internals = sceneLoader as unknown as RecoveryInternals;
+      internals._updateInProgress = true;
+      const run = internals.scheduleGSplatsRefinement();
+      await vi.advanceTimersByTimeAsync(300);
+      await run;
+    }
+
+    it.fails('re-drains an abandoned rung after a backoff and commits it, with no user action', async () => {
+      const ladder = flakyLadder(3);
+      (sceneLoader as unknown as RecoveryInternals).gsplatLoaders.set('/g', ladder);
+
+      await drain();
+      // The first drain gave up at the consecutive-failure cap and let go of
+      // the lock: the rung is still missing.
+      expect(ladder.calls).toBe(3);
+      expect(ladder.loadedLODCount).toBe(1);
+      expect(sceneLoader.isUpdateInProgress()).toBe(false);
+      // ...so the loader must not report its refinement done while that rung
+      // is only waiting for a retry: capture / isSettled read this.
+      expect(getLoadTimeline().refinement.complete).toBe(false);
+
+      // Backoff, not a hot loop: nothing is re-fetched right away.
+      await vi.advanceTimersByTimeAsync(400);
+      expect(ladder.calls).toBe(3);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(ladder.loadedLODCount).toBe(3);
+      expect(ladder.hasMoreLODs).toBe(false);
+      expect(sceneLoader.isUpdateInProgress()).toBe(false);
+      expect(getLoadTimeline().refinement.complete).toBe(true);
+    });
+
+    it.fails('bounds the retries of a rung that never recovers, then reports settled', async () => {
+      const ladder = flakyLadder(Number.POSITIVE_INFINITY);
+      (sceneLoader as unknown as RecoveryInternals).gsplatLoaders.set('/g', ladder);
+
+      await drain();
+      await vi.advanceTimersByTimeAsync(30 * 60_000);
+      const settledCalls = ladder.calls;
+      // More than the one drain it used to get, but bounded: a few backoff
+      // rounds of the consecutive-failure cap each.
+      expect(settledCalls).toBeGreaterThan(3);
+      expect(settledCalls).toBeLessThanOrEqual(3 * 10);
+      expect(ladder.loadedLODCount).toBe(1);
+      expect(sceneLoader.isUpdateInProgress()).toBe(false);
+      // Given up for good: no timer keeps polling and the drain reads complete.
+      await vi.advanceTimersByTimeAsync(30 * 60_000);
+      expect(ladder.calls).toBe(settledCalls);
+      expect(getLoadTimeline().refinement.complete).toBe(true);
+    });
+
+    it.fails('a newer view re-opens a retired ladder at once instead of waiting out the backoff', async () => {
+      const ladder = flakyLadder(3, 4);
+      (sceneLoader as unknown as RecoveryInternals).gsplatLoaders.set('/g', ladder);
+
+      await drain();
+      expect(ladder.calls).toBe(3);
+      const update = sceneLoader.updateView({ slicePosition: [0, 0, 0, 5] });
+      await vi.advanceTimersByTimeAsync(500);
+      await update;
+      // The view pass took one rung; its own refinement drain took the rest,
+      // well inside the first backoff delay.
+      expect(ladder.loadedLODCount).toBe(4);
+      expect(getLoadTimeline().refinement.complete).toBe(true);
+    });
+
+    it('a dataset switch (dispose) cancels a pending re-drain', async () => {
+      const ladder = flakyLadder(3);
+      (sceneLoader as unknown as RecoveryInternals).gsplatLoaders.set('/g', ladder);
+
+      await drain();
+      expect(ladder.calls).toBe(3);
+      void sceneLoader.dispose();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(ladder.calls).toBe(3);
+    });
+
+    it.fails('resumes refinement after a failed view-pass load is retried successfully', async () => {
+      // The retry path commits one pass's worth of the node and used to stop
+      // there, leaving the rest of the ladder idle.
+      const internals = sceneLoader as unknown as RecoveryInternals;
+      const root = new THREE.Group();
+      const node = new THREE.Group();
+      node.name = '/g';
+      root.add(node);
+      internals.rootGroup = root;
+      const ladder = flakyLadder(0);
+      internals.gsplatLoaders.set('/g', ladder);
+      internals.registry.recordFailure('/g', stallError());
+      const refine = vi.fn(async () => {
+        internals._updateInProgress = false;
+      });
+      internals.scheduleGSplatsRefinement = refine;
+
+      const result = await sceneLoader.retryAllFailedLoaders();
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(result.succeeded).toEqual(['/g']);
+      expect(ladder.hasMoreLODs).toBe(true);
+      expect(refine).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('error handling', () => {
     it('should handle store opening failures', async () => {
       resetLoadTimeline();
