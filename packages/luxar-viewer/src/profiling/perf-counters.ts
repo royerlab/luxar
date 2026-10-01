@@ -46,6 +46,7 @@ export class PerfCounters {
   /** 1 for a slot `gauge()` has written (kept across `reset()`), else 0. */
   private gauges = new Uint8Array(64);
   private readonly rings = new Map<string, unknown[]>();
+  private readonly resetHooks = new Set<() => void>();
 
   /** Resolve (registering on first use) the slot for `name`. */
   slot(name: string): PerfCounterSlot {
@@ -116,14 +117,33 @@ export class PerfCounters {
   }
 
   /**
-   * Start a new window: zero every counter and high-water mark and drop every
-   * record. Gauges keep their current value. Slots stay valid.
+   * Run `hook` on every {@link reset}. For per-window state a counter's owner
+   * keeps beside it (e.g. the duplicate-decode history behind
+   * `decode.duplicates`), which must start the new window empty too. Returns
+   * an unsubscribe.
+   */
+  onReset(hook: () => void): () => void {
+    this.resetHooks.add(hook);
+    return () => this.resetHooks.delete(hook);
+  }
+
+  /**
+   * Start a new window: zero every counter and high-water mark, drop every
+   * record, and run the {@link onReset} hooks. Gauges keep their current
+   * value. Slots stay valid.
    */
   reset(): void {
     for (let i = 0; i < this.names.length; i++) {
       if (this.gauges[i] === 0) this.values[i] = 0;
     }
     this.rings.clear();
+    for (const hook of this.resetHooks) {
+      try {
+        hook();
+      } catch {
+        /* A hook never breaks the reset (nothing here throws into the caller). */
+      }
+    }
   }
 }
 

@@ -75,10 +75,13 @@ function cacheIdentity(cache: DecompressedChunkCache): number {
   return id;
 }
 
-/** Forget the decode history (tests; perf-counter resets do not need it). */
+/** Forget the decode history (tests, and every perf-counter reset below). */
 export function resetDecodeHistory(): void {
   decodeHistory.clear();
 }
+// A perf-counter reset opens a new measurement window: a decode from the
+// previous window must not make this window's first decode a "duplicate".
+perfCounters.onReset(resetDecodeHistory);
 
 /** Tally one completed miss decode (count, bytes, origin, duplicate check). */
 function recordDecode(historyKey: string, origin: string, bytes: number): void {

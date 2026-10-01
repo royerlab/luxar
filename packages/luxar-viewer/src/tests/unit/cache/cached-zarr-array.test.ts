@@ -635,7 +635,7 @@ describe('cached-zarr-array perf counters', () => {
     expect(perfCounters.get('decode.count')).toBe(3);
   });
 
-  it.fails('starts a fresh duplicate window on a perf-counter reset', async () => {
+  it('starts a fresh duplicate window on a perf-counter reset', async () => {
     // resetPerfCounters() opens a new measurement window; a decode from the
     // previous window must not make the first decode of this one a
     // "duplicate" (the gate's decode.duplicates would charge the candidate

@@ -38,7 +38,7 @@ import { selectLeastBusy, type TrackedWorkerHandle } from './worker-pool/selecti
 import { nextRoundRobin } from './worker-pool/selection/round-robin';
 import { DispatchTracker } from './worker-pool/selection/dispatch-tracker';
 import { computeStats, computeQueueDepth, type PoolStats } from './worker-pool/stats';
-import { markLoad } from '../profiling/load-timeline';
+import { markLoad, noteLoadResourceReleased } from '../profiling/load-timeline';
 import {
   areWorkerCodecsEnabled,
   setBloscDecodeBackend,
@@ -1000,6 +1000,8 @@ export function disposeWorkerPool(): void {
       // Drop the codec route with the pool: blosc decodes run on the main
       // thread until a new pool is created.
       setBloscDecodeBackend(null);
+      // A new pool marks `poolReady` again; the next load must wait for it.
+      noteLoadResourceReleased('poolReady');
     }
   }
 }
