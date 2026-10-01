@@ -635,6 +635,21 @@ describe('cached-zarr-array perf counters', () => {
     expect(perfCounters.get('decode.count')).toBe(3);
   });
 
+  it.fails('starts a fresh duplicate window on a perf-counter reset', async () => {
+    // resetPerfCounters() opens a new measurement window; a decode from the
+    // previous window must not make the first decode of this one a
+    // "duplicate" (the gate's decode.duplicates would charge the candidate
+    // for work done before the window opened).
+    const wrapped = wrapWithCache(createMockZarrArray(), cache, '/p/positions');
+    await wrapped.getChunk([0]);
+    cache.clear();
+    perfCounters.reset();
+    nowMs += 1;
+    await wrapped.getChunk([0]);
+    expect(perfCounters.get('decode.count')).toBe(1);
+    expect(perfCounters.get('decode.duplicates')).toBe(0);
+  });
+
   it('does not treat the same path in a different L0 cache (scene) as a duplicate', async () => {
     const other = new DecompressedChunkCache({ maxSize: 1024 * 1024 });
     await wrapWithCache(createMockZarrArray(), cache, '/p/positions').getChunk([0]);

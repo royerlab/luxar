@@ -11,6 +11,24 @@ import {
   resetLoadTimeline,
 } from '../../../profiling/load-timeline';
 
+describe('load timeline: process-lifetime milestones', () => {
+  beforeEach(() => resetLoadTimeline());
+  afterEach(() => resetLoadTimeline());
+
+  it.fails('reports an already-ready pool and WASM module on a later load', () => {
+    // The worker pool and the shared WASM module outlive a dataset switch, so
+    // a second load never marks them again; their measures must read "ready
+    // at load start" (0), not "never happened" (null).
+    markLoad('loadStart');
+    markLoad('wasmReady');
+    markLoad('poolReady');
+    markLoad('loadStart');
+    const { measures, milestones } = getLoadTimeline();
+    expect(measures.poolReadyMs).toBe(0);
+    expect(milestones.wasmReady).toBe(milestones.loadStart);
+  });
+});
+
 describe('load-timeline', () => {
   beforeEach(() => {
     resetLoadTimeline();
