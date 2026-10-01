@@ -28,10 +28,17 @@ one WebGL context, one camera, one set of controls.
 
 The seam predates this module. `SceneLoader.loadScene()` returns a plain
 `THREE.Group` (its own docstring says `threeScene.add(scene)`), and both
-`LODGroupRegistryDeps` and `configureDepthSort()` are defined purely in terms of
-injectable getters — `getCamera()`, `getViewportSize()`, `getDisplayDims()`.
-Nothing in the data, cache, LOD, or material path reaches for `SceneManager`.
-`LuxarLayer` supplies those getters from the host instead.
+`LODGroupRegistryDeps` and `DepthSortCoordinator.configure()` are defined purely
+in terms of injectable getters — `getCamera()`, `getViewportSize()`,
+`getDisplayDims()`. Nothing in the data, cache, LOD, or material path reaches for
+`SceneManager`. `LuxarLayer` supplies those getters from the host instead.
+
+Each layer owns its own `DepthSortCoordinator` (as each `LuxarApp` owns one on
+its `SceneManager`) and hands it to its loader through `loadScene`, so the
+layer's nodes are sorted against the host camera and wake only the host's
+`requestRender` — even with a `LuxarApp` or a second layer on the same page.
+The SortWorker behind them is shared page-wide and terminated by the last
+coordinator's dispose.
 
 ## Usage
 

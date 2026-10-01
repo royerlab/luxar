@@ -1384,7 +1384,7 @@ _For implementation details, see the source files in this directory._
   GSplats get valid lower-triangular Cholesky factors with varied
   scale, anisotropy, and orientation so depth-sorted 'normal'
   blending is order-dependent; the injector emits the production
-  commit signals (`committedData` stamp + `noteDepthSortCommit`) so
+  commit signals (`committedData` stamp + `depthSort.noteCommit`) so
   the sort subsystem engages on injected nodes.
 
 ## Subpackages

@@ -99,8 +99,8 @@ depth test off altogether), so a glass drawn after the data cannot tell a point 
 of it from one behind it — and three's WebGL transmission pass draws only the OPAQUE
 render list into the texture a glass samples, so on that backend the glass could not see
 the data at all in one pass. `renderSceneToHdr` therefore asks the `DataRefractionSplit`
-first. When some visible glass asks to refract (the depth-sort coordinator's
-`collectRefractingGlass`, injected) it renders: the glass's front-face depth through
+first. When some visible glass asks to refract (the host depth-sort coordinator's
+`collectRefractingGlass`, injected as the manager's `GlassMeshSource`) it renders: the glass's front-face depth through
 depth-only proxies into a target wrapping the one shared depth texture (pass G); the data
 in partition mode 1 — each fragment keeps itself only when it is behind the glass or under
 no glass — plus the meshes three's own materials draw (pass A; `collectUnpartitionedMeshes`
