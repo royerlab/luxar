@@ -51,7 +51,11 @@ multi-level-caching-store/
   were the last unbounded browser-filesystem path after writes gained their own
   cap. The reported multi-second L2 stall remains unattributed. Queue wait is
   outside each operation's timeout, so healthy backpressure is never
-  misclassified as hung I/O.
+  misclassified as hung I/O. `run` receives `hold(io)`: a lease lasts until
+  every held file-I/O promise settles too, so a read whose timeout gave up
+  still occupies its slot while the browser finishes it. The optional
+  `signal` lets a queued read leave the queue on abort (rejecting with the
+  signal's reason).
 - **`getOpfsReadGateStats()`** — exposes active and queued reads to the cache
   monitor so a live stall distinguishes backend work from gate backpressure.
 - **`resetOpfsReadGate()`** — clears module-global gate state for test isolation;

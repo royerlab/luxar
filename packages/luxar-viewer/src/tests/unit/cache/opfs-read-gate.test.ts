@@ -29,7 +29,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 afterEach(() => resetOpfsReadGate());
 
 describe('OPFS read gate', () => {
-  it.fails('a queued read whose signal aborts leaves the queue without running', async () => {
+  it('a queued read whose signal aborts leaves the queue without running', async () => {
     const cap = config.cache.opfsReadConcurrency;
     const blocker = deferred();
     const busy = Array.from({ length: cap }, () => withOpfsReadGate(() => blocker.promise));
@@ -56,7 +56,7 @@ describe('OPFS read gate', () => {
     expect(ran).toBe(false);
   });
 
-  it.fails('holds the slot until held file I/O settles, even after run() gave up on it', async () => {
+  it('holds the slot until held file I/O settles, even after run() gave up on it', async () => {
     const cap = config.cache.opfsReadConcurrency;
     const io = Array.from({ length: cap }, deferred);
     // Each run() hands the real I/O to `hold`, then rejects early — what a
