@@ -69,7 +69,6 @@ interface LineMaterialTSLNodeTable {
   uLineTex: TSLNode;
   uResolution: TSLNode;
   uPixelRatio: TSLNode;
-  uIsOrtho: TSLNode;
   uSortedIndexSlot: TSLNode;
   uDensityDrop: TSLNode;
   uDensityAlphaExp: TSLNode;
@@ -128,7 +127,6 @@ export class LineTSLMaterial
       uLineTex: texture(getPlaceholderElementTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
       uPixelRatio: uniform(1),
-      uIsOrtho: uniform(0),
       uSortedIndexSlot: uniform(0),
       uDensityDrop: uniform(0),
       uDensityAlphaExp: uniform(1),
@@ -160,7 +158,6 @@ export class LineTSLMaterial
       uLineTex: proxyIUniform(this.tslNodes.uLineTex),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
       uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
-      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
       uDensityAlphaExp: proxyIUniform(this.tslNodes.uDensityAlphaExp),
@@ -232,8 +229,8 @@ export class LineTSLMaterial
 
     // The rendering primitive (#1352) picks WHICH factory rebuildGraph
     // runs. Unlike lineJoin above this is stamped RESOLVED, not
-    // as passed: `rebuildGraph` re-reads this on every camera-mode flip
-    // and clone() re-passes it, so an unresolved (undefined) stamp would
+    // as passed: `rebuildGraph` re-reads this on every texture / define
+    // rebuild and clone() re-passes it, so an unresolved (undefined) stamp would
     // re-run the session/policy resolution later — a policy that sized
     // the node at first build must stay frozen for the material's life.
     this.userData.linePrimitive = resolveLinePrimitive(materialConfig.primitive);
@@ -306,12 +303,6 @@ export class LineTSLMaterial
     const useColormap = !!this.defines && 'USE_COLORMAP' in this.defines;
     const gammaOne = !!this.defines && 'LUXAR_GAMMA_ONE' in this.defines;
     const noGOG = !!this.defines && 'LUXAR_NO_GOG' in this.defines;
-    // Camera mode lives on the uniform itself, not in defines: the
-    // factory reads `tslNodes.uIsOrtho.value` at build time so a fresh
-    // rebuild after `updateCameraParams` flips the flag picks up the
-    // change. (Defines are also TextureNode-trigger; uniform numeric
-    // value is the simpler source of truth here.)
-    const isOrtho = (this.tslNodes.uIsOrtho.value as number) === 1;
     this.rebuildColormapNodes(useColormap);
     // The primitive picks the factory (#1352) — the TSL counterpart of the
     // GLSL twin's shader-source pair selection.
@@ -324,7 +315,6 @@ export class LineTSLMaterial
       useColormap,
       gammaOne,
       noGOG,
-      isOrtho,
       join: this.userData.lineJoin as LineJoinStyle | undefined,
       blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       elementTextureWidth: resolveElementTextureWidth(
@@ -400,15 +390,21 @@ export class LineTSLMaterial
     return false;
   }
 
+  /**
+   * Camera-dependent uniforms. The pixel-width scale AND the ortho branch are
+   * read in the graph from the projection matrix of the draw
+   * (`projectionSizeScaleTSL()` / `isOrthoProjectionTSL()`, the GLSL twin's
+   * `luxarLineScale` / `luxarLineIsOrtho`), so `_isOrtho` is accepted for the
+   * `CameraAwareMaterial` contract and ignored — a camera-kind flip selects
+   * no graph and rebuilds nothing.
+   */
   updateCameraParams(
     resolution: THREE.Vector2,
-    isOrtho: boolean = false,
+    _isOrtho: boolean = false,
     nearCull?: number,
     pixelRatio: number = 1
   ): void {
-    const prevIsOrtho = (this.uniforms.uIsOrtho.value as number) === 1;
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
-    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     // Accept ANY defined value, including 0 — matching the point/gsplat
     // wrappers (the shader floors at 1e-20). The old `> 0` gate silently
     // KEPT a stale value on zero-diagonal scenes (or, with LRU-cached
@@ -419,12 +415,6 @@ export class LineTSLMaterial
     }
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
     this.uniforms.uPixelRatio.value = pixelRatio;
-    // Each projection mode is a separate TSL graph variant. Rebuild
-    // when the mode flips so the unused branch is dropped from the
-    // generated WGSL/GLSL.
-    if (isOrtho !== prevIsOrtho) {
-      this.rebuildGraph();
-    }
   }
 
   updateOpacity(opacity: number): void {
@@ -602,16 +592,8 @@ export class LineTSLMaterial
 
     // Runtime state a fresh clone would reset (LINE_RUNTIME_UNIFORMS, ../_shared/runtime-uniforms.ts).
     copyRuntimeUniforms(this, cloned, LINE_RUNTIME_UNIFORMS);
-    // `uIsOrtho` is a graph-specialized config — the constructor's
-    // `rebuildGraph` ran against the default value 0 (perspective).
-    // Copy uniforms, then re-run the rebuild against the now-correct
-    // value so the right pixel-width branch is emitted.
-    const sourceIsOrtho = (this.uniforms.uIsOrtho.value as number) === 1;
-    if (sourceIsOrtho) {
-      cloned.rebuildGraph();
-    }
-    // Rebind the line data texture LAST (its own rebuild picks up the
-    // ortho flag copied above). No-op when still on the placeholder.
+    // Rebind the line data texture (its own rebuild re-bakes the texture
+    // width). No-op when still on the placeholder.
     const lineTex = this.uniforms.uLineTex?.value as THREE.DataTexture | null | undefined;
     if (lineTex) cloned.updateLineTexture(lineTex);
 

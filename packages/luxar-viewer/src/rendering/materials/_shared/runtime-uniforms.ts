@@ -10,11 +10,10 @@
  *
  * ONE list per geometry type, shared by the GLSL and TSL twins so the two
  * clones cannot drift; a name a twin does not declare (e.g. `uLineJoin`, a
- * runtime uniform only in GLSL; `uIsOrtho`, the TSL line graph variant) is
- * skipped for it. Why each rides along:
+ * runtime uniform only in GLSL) is skipped for it. Why each rides along:
  *
  *   - `uResolution`, `uPixelRatio`, `uNearCull`, `maxPointSize`,
- *     `uMaxLinePixelWidth`, `uIsOrtho`: the camera broadcast — a clone
+ *     `uMaxLinePixelWidth`: the camera broadcast — a clone
  *     otherwise renders with stale camera state until the next broadcast.
  *   - `uSortedIndexSlot`: the active ordering buffer — a clone taken while
  *     the geometry draws from slot 1 would read the stale buffer until the
@@ -52,7 +51,6 @@ export const POINT_RUNTIME_UNIFORMS = [
 
 export const LINE_RUNTIME_UNIFORMS = [
   'uResolution',
-  'uIsOrtho',
   'uNearCull',
   'uPixelRatio',
   'uMaxLinePixelWidth',

@@ -73,8 +73,9 @@ import {
   LINE_TEXTURE_LAYOUT,
 } from '../../element-texture-layout';
 import {
+  isOrthoProjectionTSL,
+  perspectiveNearFadeTSL,
   projectionSizeScaleTSL,
-  perspectiveNearFadeStaticTSL,
   sanitizeAlpha,
   sanitizeNonNegative,
   type TSLNode,
@@ -127,20 +128,16 @@ export interface LineTSLConfig {
    */
   readonly noGOG?: boolean;
   /**
-   * Camera projection mode at build time. When `true` (orthographic),
-   * the factory emits only the ortho pixel-width branch; when `false`
-   * or undefined (perspective), only the perspective branch is
-   * emitted. Eliminates the runtime `int(uIsOrtho).select(...)` and
-   * its `.toVar()` materialisation of the unused branch. Wrapper
-   * triggers `rebuildGraph()` whenever the camera mode flips.
-   */
-  readonly isOrtho?: boolean;
-  /**
    * Join style at degree-2 polyline joints (#790). BUILD-time here, unlike the
    * GLSL twin's `uLineJoin` uniform: the TSL vertex stage is traced in a single
    * `Fn()` that deliberately avoids structural `select()` branches, so the
-   * style follows the same graph-variant pattern as `isOrtho` and the wrapper
-   * calls `rebuildGraph()` when it changes. Omitted ⇒ the session default.
+   * style is a graph variant and the wrapper calls `rebuildGraph()` when it
+   * changes. Omitted ⇒ the session default.
+   *
+   * The camera projection is NOT a config field: the ortho/perspective split
+   * is read per draw from `cameraProjectionMatrix` (`isOrthoProjectionTSL()`,
+   * the GLSL twin's `luxarLineIsOrtho`), so one graph serves both cameras and
+   * a camera-kind flip rebuilds nothing.
    */
   readonly join?: LineJoinStyle;
   /**
@@ -180,7 +177,6 @@ export interface LineTSLNodes {
   readonly uLineTex: TSLNode;
   readonly uResolution: TSLNode;
   readonly uPixelRatio: TSLNode;
-  readonly uIsOrtho: TSLNode;
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
   readonly uDensityDrop: TSLNode;
@@ -248,8 +244,8 @@ export function lineWebGPUFactory(
   // `.onUpdate` callbacks needed.
   // No FOV uniform exists: the pixel-width scale is read from the
   // projection matrix (`lineScale` below).
-  // uIsOrtho is also intentionally absent — projection mode is a
-  // JS-level config branch (`config.isOrtho`), not a runtime uniform.
+  // No uIsOrtho either: the ortho test is read from the same matrix
+  // (`isOrthoProjectionTSL()`, the vertex prologue's `isOrtho`).
   const uLineTex = nodes.uLineTex;
   const uResolution = nodes.uResolution;
   const uPixelRatio = nodes.uPixelRatio;
@@ -321,9 +317,8 @@ export function lineWebGPUFactory(
   // per-fragment — interpolating the FADE itself is wrong on long
   // segments (fade(lerp(z)) != lerp(fade(z)); one endpoint at the
   // camera plane would dim mid-segment fragments far outside the fade
-  // band). Ortho graphs skip the varying entirely (compile-time
-  // variant; fade is identically 1).
-  const vViewZ: TSLNode | null = config.isOrtho ? null : varying(float(0.0));
+  // band). Under ortho the fragment's fade is identically 1.
+  const vViewZ: TSLNode = varying(float(0.0));
   // Continuous [0, 1] cap-suppression scalars, one per endpoint —
   // per-instance, same across all 4 quad verts.
   const vCapSuppressStart: TSLNode = varying(float(0.0)).setInterpolation('flat');
@@ -387,6 +382,14 @@ export function lineWebGPUFactory(
     // aQuadCorner.x ∈ {-1, +1} by construction.
     const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5).toVar();
 
+    // The ortho branch of the projection THIS draw uses (GLSL twin:
+    // `luxarLineIsOrtho = luxarIsOrthoProjection()`), so a draw through a
+    // different camera (the environment capture's cube faces) needs no
+    // CPU-pushed flag and no graph rebuild. Materialised here, ahead of every
+    // `If` block, so its first use never lands inside a branch.
+    const isOrtho: TSLNode = isOrthoProjectionTSL().equal(int(1)).toVar();
+    const isPersp: TSLNode = isOrtho.not().toVar();
+
     // Project endpoints to view space FIRST — the near-plane segment
     // clipping below rewrites them, and every attribute interpolation
     // after this block reads the remapped parameter tEff.
@@ -395,8 +398,8 @@ export function lineWebGPUFactory(
     const startDepth: TSLNode = mvStart.z.negate().toVar();
     const endDepth: TSLNode = mvEnd.z.negate().toVar();
 
-    // Near-plane SEGMENT clipping (perspective only; compile-time graph
-    // variant). When exactly one endpoint sits closer than nearCull (or
+    // Near-plane SEGMENT clipping (perspective only, a real `If` on the
+    // draw's ortho test, as in the GLSL twin). When exactly one endpoint sits closer than nearCull (or
     // behind the camera), move it along the segment onto the nearCull
     // plane BEFORE any screen-space math. Without this a behind-camera
     // endpoint has clip w <= 0: its NDC is mirrored AND the clip-space
@@ -412,9 +415,9 @@ export function lineWebGPUFactory(
     // denominator gets a benign 1.0 only in its UNTAKEN lane. The taken lane
     // divides by the exact positive depth delta, matching GLSL even at tiny
     // scene scales (a blanket max(delta, 1e-20) changed the real result).
-    let tA: TSLNode = float(0.0);
-    let tB: TSLNode = float(1.0);
-    if (!config.isOrtho) {
+    const tA: TSLNode = float(0.0).toVar();
+    const tB: TSLNode = float(1.0).toVar();
+    If(isPersp, () => {
       const startNear: TSLNode = startDepth
         .lessThan(nearCull)
         .and(endDepth.greaterThanEqual(nearCull));
@@ -425,15 +428,15 @@ export function lineWebGPUFactory(
         .select(endDepth.sub(startDepth), float(1.0))
         .toVar();
       const endDenominator: TSLNode = endNear.select(startDepth.sub(endDepth), float(1.0)).toVar();
-      tA = startNear
-        .select(nearCull.sub(startDepth).div(startDenominator).toVar(), float(0.0))
-        .toVar();
-      tB = endNear.select(startDepth.sub(nearCull).div(endDenominator).toVar(), float(1.0)).toVar();
+      tA.assign(
+        startNear.select(nearCull.sub(startDepth).div(startDenominator).toVar(), float(0.0))
+      );
+      tB.assign(endNear.select(startDepth.sub(nearCull).div(endDenominator).toVar(), float(1.0)));
       const mvStartClipped: TSLNode = mix(mvStart, mvEnd, tA).toVar();
       const mvEndClipped: TSLNode = mix(mvStart, mvEnd, tB).toVar();
       mvStart.assign(mvStartClipped);
       mvEnd.assign(mvEndClipped);
-    }
+    });
     const tEff: TSLNode = mix(tA, tB, t).toVar();
 
     // Per-endpoint colour or LUT lookup. Branch on `config.useColormap`
@@ -470,19 +473,18 @@ export function lineWebGPUFactory(
     // Interpolated view position — from the (possibly clipped) endpoints.
     const mvPos: TSLNode = mix(mvStart, mvEnd, t).toVar();
 
-    // Near-plane / behind-camera safety — PERSPECTIVE ONLY (compile-time
-    // graph variant: ortho graphs carry no cull/fade code at all; under
-    // ortho NDC clipping is the sole authority and the previous ungated
-    // cull wrongly hid in-frustum lines in the near slab). Reads the
+    // Near-plane / behind-camera safety — PERSPECTIVE ONLY (gated on the
+    // draw's ortho test: under ortho NDC clipping is the sole authority and
+    // the previous ungated cull wrongly hid in-frustum lines in the near slab). Reads the
     // ORIGINAL depths (computed before segment clipping above).
     // uNearCull is scene-bounds-scaled; the 1e-20 floor only guards
     // uNearCull == 0 (degenerate smoothstep / division). An absolute
     // 1e-4 floor overrode the scene-relative value on tiny-unit scenes —
     // every segment sat inside the "both behind" margin and was culled.
     // GLSL twin: shader-glsl.ts.
-    const bothBehind: TSLNode | null = config.isOrtho
-      ? null
-      : startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull));
+    const bothBehind: TSLNode = isPersp.and(
+      startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull))
+    );
 
     const clipStart: TSLNode = cameraProjectionMatrix.mul(mvStart).toVar();
     const clipEnd: TSLNode = cameraProjectionMatrix.mul(mvEnd).toVar();
@@ -495,9 +497,8 @@ export function lineWebGPUFactory(
     // absolute epsilon: 1e-4 clamped VALID w on tiny-unit scenes and
     // scrambled quad directions, while a raw 1e-20 floor could overflow
     // float32 in the pixel-length math for behind-camera endpoints.
-    // Ortho graphs: w == 1 exactly, guard 1.0 is inert (compile-time
-    // variant). GLSL twin: shader-glsl.ts.
-    const wGuard: TSLNode = config.isOrtho ? float(1.0) : nearCull;
+    // Ortho: w == 1 exactly, guard 1.0 is inert. GLSL twin: shader-glsl.ts.
+    const wGuard: TSLNode = isOrtho.select(float(1.0), nearCull);
     const wStart: TSLNode = max(clipStart.w, wGuard);
     const wEnd: TSLNode = max(clipEnd.w, wGuard);
     const ndcStart: TSLNode = vec2(clipStart.xy.div(wStart)).toVar();
@@ -514,20 +515,15 @@ export function lineWebGPUFactory(
       .toVar();
     const perpendicular: TSLNode = vec2(lineDir.y.negate(), lineDir.x).toVar();
 
-    // World-space → pixel conversion. Each camera projection mode is a
-    // separate graph variant (`config.isOrtho`) so the unused branch
-    // never materialises into generated code. The wrapper calls
-    // `rebuildGraph()` whenever the camera mode flips. Perspective uses
+    // World-space → pixel conversion, selected by the draw's ortho test
+    // (GLSL twin: the `luxarLineIsOrtho == 1` branch). Perspective uses
     // view-space depth (-mvPos.z) — drops a sqrt and is more
     // projection-correct (screen size scales with view-z, not Euclidean
     // distance from the camera position).
-    let rawPixelWidth: TSLNode;
-    if (config.isOrtho) {
-      rawPixelWidth = width.mul(lineScale).toVar();
-    } else {
-      const distView: TSLNode = max(mvPos.z.negate(), nearCull);
-      rawPixelWidth = width.mul(lineScale).div(distView).toVar();
-    }
+    const distView: TSLNode = max(mvPos.z.negate(), nearCull);
+    const rawPixelWidth: TSLNode = isOrtho
+      .select(width.mul(lineScale), width.mul(lineScale).div(distView))
+      .toVar();
 
     // Preserve the historical framebuffer-pixel floor below 1× render scale.
     const minPixelWidth = uPixelRatio.max(float(1.0)).mul(1.5);
@@ -548,22 +544,19 @@ export function lineWebGPUFactory(
     // the clamp — the quad is partially sentinelled and a visible wedge
     // survives (issue #849). Gate on the MAX of the pixel width at both
     // clipped endpoints so all four vertices take the same branch.
-    let pathological: TSLNode | null = null;
-    if (!config.isOrtho) {
-      const startPixelWidth: TSLNode = mix(startW, endW, tA)
-        .mul(lineScale)
-        .div(max(mvStart.z.negate(), nearCull))
-        .toVar();
-      const endPixelWidth: TSLNode = mix(startW, endW, tB)
-        .mul(lineScale)
-        .div(max(mvEnd.z.negate(), nearCull))
-        .toVar();
-      const segMaxPixelWidth: TSLNode = max(startPixelWidth, endPixelWidth).toVar();
-      pathological = startDepth
-        .lessThan(nearCull.mul(2.0))
-        .and(endDepth.lessThan(nearCull.mul(2.0)))
-        .and(segMaxPixelWidth.greaterThan(maxPW.mul(2.0)));
-    }
+    const startPixelWidth: TSLNode = mix(startW, endW, tA)
+      .mul(lineScale)
+      .div(max(mvStart.z.negate(), nearCull))
+      .toVar();
+    const endPixelWidth: TSLNode = mix(startW, endW, tB)
+      .mul(lineScale)
+      .div(max(mvEnd.z.negate(), nearCull))
+      .toVar();
+    const segMaxPixelWidth: TSLNode = max(startPixelWidth, endPixelWidth).toVar();
+    const pathological: TSLNode = isPersp
+      .and(startDepth.lessThan(nearCull.mul(2.0)))
+      .and(endDepth.lessThan(nearCull.mul(2.0)))
+      .and(segMaxPixelWidth.greaterThan(maxPW.mul(2.0)));
 
     // The quad's per-END clamped half-widths, via the shared
     // `tslLineEndPixelWidth` (GLSL twin: `luxarLineEndPixelWidth`), so the two
@@ -577,7 +570,7 @@ export function lineWebGPUFactory(
     // startEndPixelWidth exactly (symmetrically at t=1).
     const endPixelWidthAt = (tEnd: TSLNode, mvZ: TSLNode): TSLNode =>
       clamp(
-        tslLineEndPixelWidth(!!config.isOrtho, mix(startW, endW, tEnd), mvZ, nearCull, lineScale),
+        tslLineEndPixelWidth(isOrtho, mix(startW, endW, tEnd), mvZ, nearCull, lineScale),
         minPixelWidth,
         maxPW
       );
@@ -586,7 +579,7 @@ export function lineWebGPUFactory(
 
     // === Join geometry at degree-2 polyline joints (#790) ===
     // Build-time variant: a graph built for style 'none' carries no join code
-    // at all (mirroring how `config.isOrtho` drops the unused width branch).
+    // at all.
     // Each offset starts at the shipped plain-perpendicular expansion and each
     // cap at -1.0 ("keep the code-implied default"), so every skipped path —
     // style none, below the width gate, free end, near clip, partner behind
@@ -605,7 +598,7 @@ export function lineWebGPUFactory(
       // The width is deliberately NOT shared between the two calls: each end
       // supplies its OWN segment-constant half-width (computed above).
       const shared = {
-        isOrtho: !!config.isOrtho,
+        isOrtho,
         uLineTex,
         lineTexW,
         uResolution,
@@ -664,24 +657,16 @@ export function lineWebGPUFactory(
     // Route culled / pathological segments to off-screen via real
     // TSL control flow. `If(predicate, () => { ... })` emits actual
     // `if` blocks in the generated WGSL/GLSL so only one branch runs
-    // per vertex — unlike `select(...)` which evaluates both. Ortho
-    // graphs (culls null) skip the wrapper entirely — dead code drops
-    // from the ortho codegen, consistent with the config.isOrtho
-    // graph-variant design above. Sentinel vec4(0,0,-2,1) matches the
-    // point/gsplat reject convention.
-    const culledBase: TSLNode | null =
-      bothBehind && pathological ? bothBehind.or(pathological) : (bothBehind ?? pathological);
+    // per vertex — unlike `select(...)` which evaluates both. Both cull
+    // terms are false under ortho (gated on isPersp above). Sentinel
+    // vec4(0,0,-2,1) matches the point/gsplat reject convention.
     // Projected-density thinning rides the same cull path (GLSL twin folds it
     // into `bothBehind`), so a dropped segment takes the zero-varyings path.
-    const culled: TSLNode | null = culledBase ? culledBase.or(densityDropped) : densityDropped;
+    const culled: TSLNode = bothBehind.or(pathological).or(densityDropped);
     const clipPosOut: TSLNode = vec4(0.0, 0.0, -2.0, 1.0).toVar('clipPos');
-    if (culled) {
-      If(culled.not(), () => {
-        clipPosOut.assign(expandedClip);
-      });
-    } else {
+    If(culled.not(), () => {
       clipPosOut.assign(expandedClip);
-    }
+    });
 
     // Assign varyings (declared outside the Fn; see above).
     vColor.assign(perPointColor);
@@ -692,7 +677,7 @@ export function lineWebGPUFactory(
     vWidthAtT.assign(width);
     vPixelWidth.assign(rawPixelWidth);
     vWidthFade.assign(vWidthFadeVal);
-    if (vViewZ) vViewZ.assign(mvPos.z);
+    vViewZ.assign(mvPos.z);
     // texel4.yz hold a per-endpoint joint CODE, not a [0, 1] scalar. Reading
     // it as one let capFactor scale with the partner's slot index (200.5 for a
     // segment joining slot 399, -0.5 for a hub, 0.0 for a slice-clipped end).
@@ -786,7 +771,9 @@ export function lineWebGPUFactory(
       .mul(edgeAA)
       .mul(widthScale)
       .mul(vWidthFade)
-      .mul(vViewZ ? perspectiveNearFadeStaticTSL(false, vViewZ, nearCull) : float(1.0));
+      // The fragment stage reads the same per-draw ortho test (the GLSL twin
+      // hands it over as the flat `vLineIsOrtho`); the fade is 1.0 under ortho.
+      .mul(perspectiveNearFadeTSL(isOrthoProjectionTSL(), vViewZ, nearCull));
 
     // GOG. uIntensity (gain) + uOffset apply in BOTH modes so the layer
     // intensity/offset controls work for a colormapped line too (GLSL
@@ -930,7 +917,6 @@ export function buildLineTSLNodesFromUniforms(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),
     uPixelRatio: uniform((uniforms.uPixelRatio?.value as number) ?? 1),
-    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
     uDensityAlphaExp: uniform((uniforms.uDensityAlphaExp?.value as number) ?? 1),

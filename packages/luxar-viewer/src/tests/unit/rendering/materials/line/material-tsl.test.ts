@@ -1,12 +1,8 @@
 /**
- * Unit tests for LineTSLMaterial clone semantics.
- *
- * Pins the clone contract for the `isOrtho` graph-specialized config.
- * The constructor builds the TSL graph using its default value
- * (perspective); the node-factory / camera updates flip `uIsOrtho`
- * post-construction. A naïve clone copies uniforms but drops the
- * rebuild, so the clone would silently render with the wrong
- * projection branch. These tests pin that the clone re-applies it.
+ * Unit tests for LineTSLMaterial clone semantics and its camera push. The
+ * projection (pixel-width scale and ortho branch) is read per draw from
+ * `cameraProjectionMatrix`, so neither is a uniform or a graph variant —
+ * see ortho-from-projection.test.ts for the no-rebuild-on-flip contract.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -14,22 +10,13 @@ import * as THREE from 'three';
 import { LineTSLMaterial } from '../../../../../rendering/materials/line/material-tsl';
 
 describe('LineTSLMaterial clone', () => {
-  it('preserves the orthographic uIsOrtho uniform value', () => {
-    const original = new LineTSLMaterial();
-    original.uniforms.uIsOrtho.value = 1;
-
-    const cloned = original.clone();
-
-    expect(cloned.uniforms.uIsOrtho.value).toBe(1);
-  });
-
-  it('updateCameraParams flips uIsOrtho and writes no line-scale uniform', () => {
-    // uIsOrtho stays (it selects the compile-time ortho graph); the pixel-width
-    // scale is read in the graph from cameraProjectionMatrix, so the former
-    // perspective / ortho line-scale uniforms are gone.
+  it('updateCameraParams writes no projection uniform', () => {
+    // The pixel-width scale and the ortho test are both read in the graph from
+    // cameraProjectionMatrix, so the former uIsOrtho flag and perspective /
+    // ortho line-scale uniforms are gone.
     const material = new LineTSLMaterial();
     material.updateCameraParams(new THREE.Vector2(800, 600), true, 0.25, 2);
-    expect(material.uniforms.uIsOrtho.value).toBe(1);
+    expect(material.uniforms.uIsOrtho).toBeUndefined();
     expect(material.uniforms.uNearCull.value).toBe(0.25);
     expect(material.uniforms.uPixelRatio.value).toBe(2);
     expect(material.uniforms.uPerspectiveLineScale).toBeUndefined();

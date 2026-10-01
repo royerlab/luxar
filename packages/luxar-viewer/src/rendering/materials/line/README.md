@@ -20,7 +20,7 @@ semantics — `MaterialManager.getLineMaterial` dispatches on
 | File                     | Role                                                                                                                                                                                                                                   |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `material-glsl.ts`       | `LineMaterial extends THREE.ShaderMaterial` — wraps the GLSL3 vertex/fragment pair, owns `uniforms`, manages variant `defines`, applies the canonical blending state. WebGL2 path.                                                     |
-| `material-tsl.ts`        | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or projection mode flip. WebGPU path.            |
+| `material-tsl.ts`        | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or the line texture change. WebGPU path.         |
 | `shader-glsl.ts`         | `LINE_VERTEX_SHADER` + `LINE_FRAGMENT_SHADER` GLSL3 source strings and the `LINE_SOURCE: ShaderSource` registry entry. The `webgpu` field re-enters `lineWebGPUFactory` so the parity harness can drive both backends from one symbol. |
 | `shader-tsl.ts`          | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                 |
 | `shader-glsl-capsule.ts` | `CAPSULE_LINE_VERTEX_SHADER` + `CAPSULE_LINE_FRAGMENT_SHADER` + `CAPSULE_LINE_SOURCE` — the capsule primitive's GLSL pair (see the section below).                                                                                     |
@@ -524,18 +524,23 @@ so THREE's program cache recompiles; the TSL wrapper calls
 `rebuildGraph()`, which points the material at the SHARED graph of its new
 configuration (`../_shared/shared-graph-tsl.ts` — built once per
 configuration, since three keys its node-build cache on node ids). The key
-carries every define above plus the primitive, the resolved join, the
-projection mode and the baked line-texture width. Projection mode is read
-from the projection matrix in GLSL (`luxarLineIsOrtho`, assigned with
-`luxarLineScale` at the top of `main()` and handed to the fragment stage as a
-flat varying), so the GLSL wrapper binds no ortho uniform. In TSL it is **not**
-a runtime branch — `nodes.uIsOrtho.value` is read at build time and emits a
-single-branch graph (the unused width/fade branches cost nothing), so a mode
-flip in `updateCameraParams` repoints the material at the other
-configuration's shared graph (built once). A draw through a different
-projection kind than the broadcast camera's (the scene environment capture)
-must therefore push that kind first, which `scene-manager.ts`'s capture
-runtime does.
+carries every define above plus the primitive, the resolved join and the
+baked line-texture width — **not** the projection mode. Both backends read the
+ortho branch from the projection matrix of the draw: GLSL as
+`luxarLineIsOrtho` (assigned with `luxarLineScale` at the top of `main()` and
+handed to the fragment stage as a flat varying), TSL as
+`isOrthoProjectionTSL()` (a bool var materialised in the vertex prologue ahead
+of every `If`; the quad fragment re-reads it for the near fade, as the mesh
+graphs do). Neither wrapper binds an ortho uniform, `updateCameraParams`
+ignores its `isOrtho` argument, and a camera-kind flip rebuilds no graph and
+moves no material to another shared-graph key — so a draw through a different
+projection than the broadcast camera's (the scene environment capture's cube
+faces under an orthographic main camera) needs no push. The ortho/perspective
+branches are both present in the one graph (the GLSL twin's runtime branch;
+the near-plane segment clip is a real `If`, the rest `select()`s), which is
+why the ortho- and perspective-camera visual codegen snapshots are identical
+(`line` / `line-behind`, `line-capsule-sideon` / `line-capsule-endon-persp`;
+the pick pair differs only in three's own camera-class-dependent `depth` node).
 
 ## Shared helpers from `_shared/`
 

@@ -285,12 +285,14 @@ const SHADERS = [
   // w(a) alpha map both read the single unconditional texel5 fetch —
   // distinct generated code neither single-flag variant pins.
   'line-volumetric-colormap',
-  // Lines are the only geometry whose ortho/perspective split is a
-  // BUILD-time TSL option (points/gsplats branch at runtime on the
-  // projection matrix's ortho test), so the perspective line shaders are distinct
-  // generated code that the four ortho variants above never pin. The
-  // `-behind` harness variants build with `isOrtho: false` — reuse
-  // them to snapshot the perspective visual + pick branches.
+  // The ortho/perspective split is a RUNTIME branch on the projection
+  // matrix's ortho test for every geometry, lines included, so these
+  // perspective-camera entries generate the SAME line graph as `line` /
+  // `line-pick`. They stay as a tripwire: `line-behind` must equal `line`
+  // byte for byte, and `line-pick-behind` may differ from `line-pick` only in
+  // three's own `depth` node (which lowers per camera class) and in node
+  // uniform numbering. A divergence beyond that means a build-time projection
+  // variant has crept back into a line graph.
   'line-behind',
   'line-pick-behind',
   'point',
@@ -381,8 +383,10 @@ const SHADERS = [
   // snapshot (49 files of spurious churn when 'erf' briefly led this list).
   'erf',
   // Capsule line primitive (#1352, ?linePrimitive=capsule) — one entry per
-  // distinct GRAPH: ortho additive (sideon; joint/fold/taper/fat share its
-  // code), perspective (near-clip + fade branches), the max and volumetric
+  // distinct GRAPH: additive (sideon; joint/fold/taper/fat share its
+  // code), the perspective-camera twin `endon-persp` (byte-identical to
+  // sideon — the projection is read per draw; kept as the same tripwire as
+  // `line-behind` above), the max and volumetric
   // mode tails, the colormap fragment, and the pick twin.
   'line-capsule-sideon',
   'line-capsule-endon-persp',

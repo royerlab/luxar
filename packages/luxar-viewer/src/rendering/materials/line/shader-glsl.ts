@@ -768,19 +768,14 @@ export const LINE_SOURCE: ShaderSource = {
   webgl: { vertex: LINE_VERTEX_SHADER, fragment: LINE_FRAGMENT_SHADER },
   webgpu: (uniforms: Record<string, unknown>) => {
     const u = uniforms as Record<string, import('three').IUniform>;
-    // Read "uIsOrtho" from the uniform record at build time so the
-    // projection-mode graph variant matches the camera the caller set
-    // up. Live ortho/perspective flips on a long-lived material go
-    // through "LineTSLMaterial.updateCameraParams", which calls
-    // "rebuildGraph()" itself — this short-lived ShaderSource path
-    // just needs the right variant at construction.
-    // Default config otherwise — no toggles: colormap uniforms in the
+    // The projection (ortho test included) is read per draw from the
+    // camera's matrix, as in the GLSL twin, so nothing about the camera
+    // selects a variant here. Default config — no toggles: colormap uniforms in the
     // record are IGNORED here (matching POINT_SOURCE). Consumers
     // needing USE_COLORMAP / LUXAR_MAX_RGB_CONTRIBUTION call
     // `lineWebGPUFactory(buildLineTSLNodesFromUniforms(u, { useColormap }),
     // { ...flags })` directly, as the parity harness does.
-    const isOrtho = ((u.uIsOrtho?.value as number) ?? 0) === 1;
-    // Same at build time for the join style. The GLSL twin carries it as the
+    // The join style IS selected at build time. The GLSL twin carries it as the
     // runtime "uLineJoin" uniform, so a harness that pins one backend's
     // uniform record gets the matching graph variant out of the other —
     // without this the WebGPU build would silently ignore a pinned
@@ -788,6 +783,6 @@ export const LINE_SOURCE: ShaderSource = {
     const join = lineJoinStyleFromUniform(u.uLineJoin?.value as number | undefined);
     const { lineWebGPUFactory, buildLineTSLNodesFromUniforms } =
       requireTslMaterials().factories.line;
-    return lineWebGPUFactory(buildLineTSLNodesFromUniforms(u, {}), { isOrtho, join });
+    return lineWebGPUFactory(buildLineTSLNodesFromUniforms(u, {}), { join });
   },
 };

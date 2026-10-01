@@ -443,15 +443,15 @@ describe('GSplatPickingTSLMaterial', () => {
 describe('LinePickingTSLMaterial', () => {
   it('clone preserves config and tuned uniforms (independent of source)', () => {
     // One-for-one mirror of the GLSL wrapper's clone test above
-    // (GLSL ↔ TSL symmetry, same rule as the gsplat pick wrappers).
-    // Ortho camera params also exercise the clone's graph rebuild on
-    // the copied projection mode (the pick graph is JS-specialized).
+    // (GLSL ↔ TSL symmetry, same rule as the gsplat pick wrappers). The
+    // ortho test is read per draw from the projection matrix, so no
+    // projection flag is bound or copied (ortho-from-projection.test.ts).
     const material = new LinePickingTSLMaterial({ nodeId: 7 });
     material.updateCameraParams(new THREE.Vector2(800, 600), true, 0.25);
 
     const cloned = material.clone();
     expect(cloned.uniforms.uNodeId.value).toBe(7);
-    expect(cloned.uniforms.uIsOrtho.value).toBe(1);
+    expect(cloned.uniforms.uIsOrtho).toBeUndefined();
     expect(cloned.uniforms.uNearCull.value).toBe(0.25);
     expect(cloned.uniforms.uMaxLinePixelWidth.value).toBe(300); // 600 * 0.5
     // The pixel-width scale is read in shader from the projection matrix; the

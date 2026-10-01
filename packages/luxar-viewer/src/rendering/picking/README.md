@@ -31,7 +31,7 @@ picking/
 │   └── shaders.ts               #   GLSL3 vertex/fragment source + ShaderSource record
 │
 ├── line/                        # idem for lines (sharpness fast-path define mirrored,
-│   ├── material.ts              #   full pick width, isOrtho-aware webgpu factory)
+│   ├── material.ts              #   full pick width; ortho read from the projection)
 │   ├── material-tsl.ts
 │   ├── pick.tsl.ts
 │   └── shaders.ts

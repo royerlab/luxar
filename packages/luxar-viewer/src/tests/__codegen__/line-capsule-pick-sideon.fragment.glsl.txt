@@ -57,14 +57,14 @@ layout( std140 ) uniform object {
 	uint nodeUniform18;
 	mat3 nodeUniform19;
 	uint nodeUniform20;
-	vec2 nodeUniform22;
-	float nodeUniform23;
+	float nodeUniform22;
+	vec2 nodeUniform23;
 	float nodeUniform24;
-	mat3 nodeUniform25;
-	uint nodeUniform26;
-	mat3 nodeUniform27;
-	uint nodeUniform28;
-	float nodeUniform29;
+	float nodeUniform25;
+	mat3 nodeUniform26;
+	uint nodeUniform27;
+	mat3 nodeUniform28;
+	uint nodeUniform29;
 	mat3 nodeUniform30;
 	uint nodeUniform31;
 	mat3 nodeUniform32;
@@ -77,8 +77,8 @@ layout( std140 ) uniform object {
 layout( std140 ) uniform render {
 	float cameraNear;
 	float cameraFar;
-	mat4 cameraViewMatrix;
 	mat4 cameraProjectionMatrix;
+	mat4 cameraViewMatrix;
 	mat4 cameraProjectionMatrixInverse;
 };
 
@@ -154,11 +154,11 @@ float nodeVar52;
 float nodeVar53;
 float nodeVar54;
 float lineCapsulePickBrightness;
-vec4 nodeVar225;
+vec4 nodeVar240;
 vec3 positionView;
 vec4 DiffuseColor;
 vec4 Output;
-vec4 nodeVar228;
+vec4 nodeVar243;
 
 // codes
 
@@ -357,8 +357,8 @@ void main() {
 	}
 
 	lineCapsulePickBrightness = ( ( nodeVar19 * nodeVarying3 ) * ( ( nodeVar54 * nodeUniform4 ) * max( nodeUniform5, 1.0 ) ) );
-	nodeVar225 = ( cameraProjectionMatrixInverse * v_clipSpace );
-	positionView = ( nodeVar225.xyz / vec3( nodeVar225.w ) );
+	nodeVar240 = ( cameraProjectionMatrixInverse * v_clipSpace );
+	positionView = ( nodeVar240.xyz / vec3( nodeVar240.w ) );
 	gl_FragDepth = mix( ( 1.0 - clamp( lineCapsulePickBrightness, 0.0, 1.0 ) ), ( ( positionView.z + cameraNear ) / ( cameraNear - cameraFar ) ), nodeUniform36 );
 
 	if ( ( lineCapsulePickBrightness < 0.0001 ) ) {
@@ -370,10 +370,10 @@ void main() {
 
 	DiffuseColor = vec4( nodeVarying9, nodeVarying10.x, lineCapsulePickBrightness, nodeVarying10.y );
 	DiffuseColor.w = ( DiffuseColor.w * nodeUniform38 );
-	nodeVar228 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar228;
+	nodeVar243 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar243;
 
 	// result
-	fragColor = nodeVar228;
+	fragColor = nodeVar243;
 
 }

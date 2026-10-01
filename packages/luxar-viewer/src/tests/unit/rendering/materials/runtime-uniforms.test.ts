@@ -57,8 +57,8 @@ describe.each([
       if (u.value instanceof THREE.Vector2) {
         u.value.set(123 + n, 45 + n);
         expected[name] = [123 + n, 45 + n];
-      } else if (name === 'uSortedIndexSlot' || name === 'uIsOrtho') {
-        u.value = 1; // 0/1 flags
+      } else if (name === 'uSortedIndexSlot') {
+        u.value = 1; // 0/1 flag
         expected[name] = 1;
       } else {
         u.value = 0.25 + n / 64;

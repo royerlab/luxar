@@ -66,6 +66,18 @@
       "urlParams": "linePrimitive=capsule"
     },
     {
+      "id": "lines-quad",
+      "synthetic": {
+        "type": "lines",
+        "count": 100000,
+        "seed": 5,
+        "blending": "additive",
+        "width": 3.0,
+        "turnAngle": 0.3
+      },
+      "urlParams": "linePrimitive=screen-space"
+    },
+    {
       "id": "splats-additive",
       "synthetic": {
         "type": "gsplats",
@@ -153,6 +165,26 @@
       "id": "mixed",
       "store": "gate/mixed.luxar.zarr",
       "pick": true,
+      "poses": [
+        {
+          "position": [14, 9, 16],
+          "target": [0, 0, 0],
+          "up": [0, 1, 0]
+        },
+        {
+          "position": [3, 2, 7],
+          "target": [0.5, 0, 0],
+          "up": [0, 1, 0],
+          "fov": 40,
+          "zoom": 3
+        }
+      ]
+    },
+    {
+      "id": "mixed-quad",
+      "store": "gate/mixed.luxar.zarr",
+      "pick": true,
+      "urlParams": "linePrimitive=screen-space",
       "poses": [
         {
           "position": [14, 9, 16],

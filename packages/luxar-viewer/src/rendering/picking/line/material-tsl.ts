@@ -48,7 +48,6 @@ export class LinePickingTSLMaterial
     uLineTex: TSLNode;
     uResolution: TSLNode;
     uPixelRatio: TSLNode;
-    uIsOrtho: TSLNode;
     uNearCull: TSLNode;
     uMaxLinePixelWidth: TSLNode;
     uNodeId: TSLNode;
@@ -72,7 +71,6 @@ export class LinePickingTSLMaterial
       uLineTex: texture(getPlaceholderElementTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
       uPixelRatio: uniform(1),
-      uIsOrtho: uniform(0),
       // 0.1 matches the visual line material ctor default (pre-first-broadcast only).
       uNearCull: uniform(0.1),
       uMaxLinePixelWidth: uniform(540),
@@ -112,7 +110,6 @@ export class LinePickingTSLMaterial
       uLineTex: proxyIUniform(this.tslNodes.uLineTex),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
       uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
-      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uMaxLinePixelWidth: proxyIUniform(this.tslNodes.uMaxLinePixelWidth),
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
@@ -137,15 +134,13 @@ export class LinePickingTSLMaterial
    */
   private _currentConfig(): LinePickTSLConfig {
     return {
-      isOrtho: (this.tslNodes.uIsOrtho.value as number) === 1,
       join: this.userData.lineJoin as LineJoinStyle | undefined,
     };
   }
 
   /**
    * (Re)build the pick graph, dispatching on the line primitive (#1352).
-   * Every build site — constructor, clone, projection-mode flip, texture
-   * rebind — funnels through here so the two factories can never drift.
+   * Every build site — constructor, texture rebind — funnels through here so the two factories can never drift.
    */
   private _rebuild(): void {
     const primitive = resolveLinePrimitive(
@@ -153,8 +148,8 @@ export class LinePickingTSLMaterial
     );
     const config = this._currentConfig();
     // ONE graph per configuration (`../_shared/shared-pick-graph-tsl.ts`):
-    // the primitive, the build-time projection/join variant and the baked
-    // line-texture width are what select code.
+    // the primitive, the build-time join variant and the baked line-texture
+    // width are what select code (the projection is read per draw).
     const key = {
       primitive,
       ...config,
@@ -177,10 +172,6 @@ export class LinePickingTSLMaterial
    * clone (the inherited `Material.clone()` calls the constructor with
    * no config and would throw; `NodeMaterial.copy` would alias the
    * source's node graph instead of this instance's own uniform nodes).
-   * The pick graph is JS-specialized on the projection mode (see
-   * `updateCameraParams`), so after copying `uIsOrtho` the clone's
-   * graph is rebuilt when the mode differs from the constructor
-   * default (perspective) — same rebuild-on-flip rule as the source.
    */
   clone(): this {
     const cloned = new LinePickingTSLMaterial({
@@ -195,7 +186,6 @@ export class LinePickingTSLMaterial
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );
-    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
@@ -206,10 +196,6 @@ export class LinePickingTSLMaterial
     cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
     copyPickVisibilityUniforms(this.uniforms, cloned.uniforms);
     cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
-    if (cloned._currentConfig().isOrtho) {
-      cloned._rebuild();
-      cloned.needsUpdate = true;
-    }
     return cloned as this;
   }
 
@@ -225,15 +211,19 @@ export class LinePickingTSLMaterial
     this.uniforms.uSurfaceDepth.value = on ? 1 : 0;
   }
 
+  /**
+   * Camera-dependent uniforms. The ortho branch is read in the graph from the
+   * projection matrix of the draw (`isOrthoProjectionTSL()`, the GLSL twin's
+   * `luxarLineIsOrtho`), so `_isOrtho` is accepted for the
+   * `CameraAwareMaterial` contract and ignored.
+   */
   updateCameraParams(
     resolution: THREE.Vector2,
-    isOrtho: boolean = false,
+    _isOrtho: boolean = false,
     nearCull?: number,
     pixelRatio: number = 1
   ): void {
-    const prevIsOrtho = (this.tslNodes.uIsOrtho.value as number) === 1;
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
-    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     // Accept ANY defined value, including 0 — matching the point/gsplat
     // wrappers (the shader floors at 1e-20). The old `> 0` gate silently
     // KEPT a stale value on zero-diagonal scenes (or, with LRU-cached
@@ -244,11 +234,6 @@ export class LinePickingTSLMaterial
     }
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
     this.uniforms.uPixelRatio.value = pixelRatio;
-    // Rebuild on projection-mode flip so the unused branch drops.
-    if (isOrtho !== prevIsOrtho) {
-      this._rebuild();
-      this.needsUpdate = true;
-    }
   }
 
   /**

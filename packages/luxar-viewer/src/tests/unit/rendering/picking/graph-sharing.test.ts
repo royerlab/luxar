@@ -2,8 +2,9 @@
  * Pick TSL materials of one configuration share one node graph, as their
  * visual twins do (#2992; see materials/graph-sharing-cases.ts for why the
  * cache key is the observable). The node id is a per-material VALUE; the
- * baked element-texture width, the line primitive / projection / join
- * variant and the mesh texture presence select code.
+ * baked element-texture width, the line primitive / join variant and the
+ * mesh texture presence select code (the projection is read per draw — an
+ * ortho flip keeping the graph is pinned in ortho-from-projection.test.ts).
  */
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
@@ -38,21 +39,6 @@ describeGraphSharing('LinePickingTSLMaterial', {
     ['no join', { join: 'none' }],
   ],
   bindElementTexture: (m, tex) => m.updateLineTexture(tex),
-});
-
-describe('LinePickingTSLMaterial: the build-time ortho variant', () => {
-  it('an ortho camera push moves to the ortho graph (shared) and back', () => {
-    const res = new THREE.Vector2(800, 600);
-    const a = new LinePickingTSLMaterial({ nodeId: 1 });
-    const b = new LinePickingTSLMaterial({ nodeId: 2 });
-    const persp = a.customProgramCacheKey();
-    a.updateCameraParams(res, true);
-    b.updateCameraParams(res, true);
-    expect(a.customProgramCacheKey()).not.toBe(persp);
-    expect(b.customProgramCacheKey()).toBe(a.customProgramCacheKey());
-    a.updateCameraParams(res, false);
-    expect(a.customProgramCacheKey()).toBe(persp);
-  });
 });
 
 describeGraphSharing('MeshPickingTSLMaterial', {
