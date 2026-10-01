@@ -221,12 +221,12 @@ describe('GSplatPickingMaterial', () => {
     material.dispose();
   });
 
-  it('uses max projection mode for picking (no uProjectionMode uniform; shader hard-codes max)', () => {
-    // The picking shader hard-codes max projection — it has no
-    // sum-projection ray-integral path — so neither the GLSL nor the
-    // TSL picking materials bind a `uProjectionMode` uniform.
+  it('defaults to the peak projection until the pick render syncs the node', () => {
+    // The pick shader evaluates the VISUAL node's projection (synced per
+    // pick render — picking-system/visibility-sync.ts); before the first
+    // sync it is peak, the pick pass's historical convention.
     const material = new GSplatPickingMaterial({ nodeId: 1 });
-    expect(material.uniforms.uProjectionMode).toBeUndefined();
+    expect(material.uniforms.uProjectionMode.value).toBe(1);
     material.dispose();
   });
 
@@ -344,12 +344,10 @@ describe('GSplatPickingTSLMaterial', () => {
     material.dispose();
   });
 
-  it('uses max projection mode (no uProjectionMode uniform)', () => {
-    // Symmetric with GSplatPickingMaterial (GLSL): picking shader
-    // hard-codes max projection; uProjectionMode is intentionally
-    // NOT exposed (see material-tsl.ts module preamble).
+  it('defaults to the peak projection until the pick render syncs the node', () => {
+    // Symmetric with GSplatPickingMaterial (GLSL).
     const material = new GSplatPickingTSLMaterial({ nodeId: 1 });
-    expect(material.uniforms.uProjectionMode).toBeUndefined();
+    expect(material.uniforms.uProjectionMode.value).toBe(1);
     material.dispose();
   });
 

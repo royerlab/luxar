@@ -27,6 +27,11 @@ import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { computeMaxPointSize } from '../../materials/_shared/camera-uniforms';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
+import {
+  createPickVisibilityTSLNodes,
+  proxyPickVisibilityUniforms,
+} from '../_shared/visibility-tsl';
+import { copyPickVisibilityUniforms } from '../_shared/visibility-uniforms';
 import type { PointPickingMaterialConfig } from './material';
 
 export class PointPickingTSLMaterial extends NodeMaterial implements CameraAwareMaterial {
@@ -42,6 +47,10 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     uResolution: TSLNode;
     uSortedIndexSlot: TSLNode;
     uDensityDrop: TSLNode;
+    uIntensity: TSLNode;
+    uOpacity: TSLNode;
+    uHasElementAlpha: TSLNode;
+    uVolumetric: TSLNode;
   };
 
   constructor(config: PointPickingMaterialConfig) {
@@ -67,6 +76,9 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
       // `uniforms` below.
       uSortedIndexSlot: uniform(0),
       uDensityDrop: uniform(0),
+      // Visual-pass weight inputs, neutral until the first pick render
+      // syncs the node's own (picking-system/visibility-sync.ts).
+      ...createPickVisibilityTSLNodes(),
     };
 
     this.uniforms = {
@@ -79,6 +91,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
       uResolution: proxyIUniform(this.tslNodes.uResolution),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
+      ...proxyPickVisibilityUniforms(this.tslNodes),
     };
 
     this.toneMapped = false;
@@ -126,6 +139,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     // until the coordinator's next per-frame re-assert.
     cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
+    copyPickVisibilityUniforms(this.uniforms, cloned.uniforms);
     return cloned as this;
   }
 

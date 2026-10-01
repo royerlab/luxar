@@ -33,6 +33,7 @@ import {
   CAPSULE_STENCIL_APRON_PX,
 } from '../../materials/_shared/line-capsule';
 import { requireTslMaterials } from '../../tsl/slot';
+import { GLSL_PICK_VISIBILITY } from '../_shared/visibility-glsl';
 
 const G = {
   RADIUS_FACTOR: CAPSULE_RADIUS_PER_QUAD_HALFWIDTH.toFixed(7),
@@ -75,6 +76,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
     flat out float vAbLen;
     out float vFade;
     out float vSharp;
+    out float vAlpha;       // per-element alpha along the span (visual-twin parity)
     flat out highp float vNodeId;
     flat out highp vec2 vElementId;
 
@@ -122,7 +124,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
         vCutN = vec4(-1.0, 0.0, 1.0, 0.0);
         vPack = uvec4(0u, 0u, packHalf2x16(vec2(1.0, 1.0)), packHalf2x16(vec2(1.0, 0.0)));
         vAbLen = 1.0;
-        vFade = 0.0; vSharp = 0.5;
+        vFade = 0.0; vSharp = 0.5; vAlpha = 1.0;
         return;
       }
       float tA = 0.0;
@@ -140,6 +142,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
       vec4 lineT2 = texelFetch(uLineTex, ivec2(texel0.x + 2, texel0.y), 0);
       vec4 lineT3 = texelFetch(uLineTex, ivec2(texel0.x + 3, texel0.y), 0);
+      vec4 lineT5 = texelFetch(uLineTex, ivec2(texel0.x + 5, texel0.y), 0);
 
       float w0 = sanitizeNonNegative(lineT0.w, 0.0);
       float w1 = sanitizeNonNegative(lineT1.w, 0.0);
@@ -358,6 +361,8 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float widthScale = min(rawC / minRadius, 1.0);
       vFade = perspectiveNearFade(uIsOrtho, mix(mvStart.z, mvEnd.z, tc), nearCull) * widthScale;
       vSharp = mix(s0, s1, tOrig);
+      // Each endpoint sanitized BEFORE the mix, exactly as the visual twin.
+      vAlpha = mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), tOrig);
 
       vec4 clipMix = mix(clipA, clipB, tc);
       float wMix = max(clipMix.w, 1e-6);
@@ -369,6 +374,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
 export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
+    ${GLSL_PICK_VISIBILITY}
 
     in vec2 vLocal;
     flat in vec4 vCutN;
@@ -376,6 +382,7 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
     flat in float vAbLen;
     in float vFade;
     in float vSharp;
+    in float vAlpha;
     flat in highp float vNodeId;
     flat in highp vec2 vElementId;
 
@@ -477,7 +484,9 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
           if (profile <= 0.0) discard;
         }
       }
-      float brightness = profile * vFade;
+      // Weighted by what the visual pass scales the line by (per-element
+      // alpha, node opacity, max(gain, 1)) — see ../_shared/visibility-glsl.ts.
+      float brightness = profile * vFade * luxarPickWeight(vAlpha);
       if (brightness < 1e-4) discard;
 
       fragColor = vec4(vNodeId, vElementId.x, brightness, vElementId.y);

@@ -136,6 +136,18 @@ export function computePickBufferSize(drawW: number, drawH: number): { w: number
   };
 }
 
+/**
+ * The blending mode a node's visual material composites with: a physical mesh
+ * follows its own translucency (three's PBR material carries no Luxar mode),
+ * every other material its `userData.blendingMode` (additive when unset).
+ */
+function effectiveBlendingMode(material: THREE.Material | undefined): BlendingMode {
+  if (material && isPhysicalMeshMaterial(material)) {
+    return material.transparent ? 'normal' : 'opaque';
+  }
+  return (material?.userData.blendingMode ?? 'additive') as BlendingMode;
+}
+
 export class PickingSystem {
   private pickScene: THREE.Scene;
   private pickTarget: THREE.WebGLRenderTarget;
@@ -868,9 +880,15 @@ export class PickingSystem {
       // index), or hovering a thinned-away element would resolve a pick the
       // user cannot see. Cheap no-op when unchanged.
       setDensityDrop(mat, getDensityDrop((entry.main as THREE.Mesh).material));
+      // entry.main is typed Object3D — non-mesh mains have no material.
+      const mainMat = (entry.main as THREE.Mesh).material as
+        THREE.Material | THREE.Material[] | undefined;
+      const single = Array.isArray(mainMat) ? mainMat[0] : mainMat;
+      const mode = effectiveBlendingMode(single);
       // Visibility inputs the visual pass alone is written with (truncation,
-      // coverage limit, ...): the pick pass must cull exactly what it culls.
-      syncPickVisibilityInputs(mat, (entry.main as THREE.Mesh).material);
+      // coverage limit, opacity, gain, alpha, projection): the pick pass must
+      // see exactly what the draw shows.
+      syncPickVisibilityInputs(mat, mainMat, mode);
 
       // Pick-depth convention sync: under the depth-ordered surface
       // modes — 'normal' (sorted alpha-over) and 'opaque' (depth-
@@ -894,16 +912,6 @@ export class PickingSystem {
       // view-facing, but a mesh whose back faces are culled on screen must
       // not rasterize them into the pick buffer at true surface depth.
       if (isMeshPickAwareMaterial(mat) || isSurfacePickAwareMaterial(mat)) {
-        // entry.main is typed Object3D — non-mesh mains have no material.
-        const mainMat = (entry.main as THREE.Mesh).material as
-          THREE.Material | THREE.Material[] | undefined;
-        const single = Array.isArray(mainMat) ? mainMat[0] : mainMat;
-        const mode =
-          single && isPhysicalMeshMaterial(single)
-            ? single.transparent
-              ? 'normal'
-              : 'opaque'
-            : ((single?.userData.blendingMode ?? 'additive') as BlendingMode);
         if (isMeshPickAwareMaterial(mat)) {
           mat.setPickMode(mode);
           if (single) mat.setPickSide(single.side);

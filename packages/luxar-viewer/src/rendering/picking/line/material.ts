@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { LINE_PICK_SOURCE } from './shaders';
 import { CAPSULE_LINE_PICK_SOURCE } from './shaders-capsule';
+import { copyPickVisibilityUniforms, pickVisibilityUniforms } from '../_shared/visibility-uniforms';
 import { requireWebGLSources } from '../../materials/_shared/shader-source';
 import {
   getElementTextureWidth,
@@ -67,6 +68,9 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
         // flip must not recompile the program).
         uSortedIndexSlot: { value: 0 },
         uDensityDrop: { value: 0 },
+        // Visual-pass weight inputs (../_shared/visibility-glsl.ts), neutral
+        // until the first pick render syncs the node's own.
+        ...pickVisibilityUniforms(),
         // 0.1 matches the visual line material ctor default (pre-first-
         // broadcast only; updateCameraParams overwrites with the scene value).
         uNearCull: { value: 0.1 },
@@ -131,6 +135,7 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
     // until the coordinator's next per-frame re-assert.
     cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
+    copyPickVisibilityUniforms(this.uniforms, cloned.uniforms);
     return cloned as this;
   }
 

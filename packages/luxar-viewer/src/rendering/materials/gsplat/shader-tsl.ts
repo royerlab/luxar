@@ -161,6 +161,85 @@ function gsplatFootprintExtentTSL(
   );
 }
 
+/** The six distinct entries of the symmetric camera-space covariance Σ_cam. */
+export interface GSplatSigmaCamTSL {
+  readonly S00: TSLNode;
+  readonly S01: TSLNode;
+  readonly S02: TSLNode;
+  readonly S11: TSLNode;
+  readonly S12: TSLNode;
+  readonly S22: TSLNode;
+}
+
+/**
+ * The world-unit standard deviation of a splat along the view ray,
+ * `sigmaRay = 1/√(rᵀ Σ⁻¹ r)` — the sum projection's ray-integral scale. ONE
+ * graph for the visual vertex stage (sum-projection variants) and the pick
+ * factory, which must weigh a splat by the amplitude the draw emits. A plain
+ * graph builder (not a TSL `Fn`), so it emits exactly the statements inlined
+ * at the call site. GLSL twin: the `uProjectionMode == 0` block of
+ * shader-glsl.ts (and of picking/gsplat/shaders.ts).
+ */
+export function gsplatRaySigmaTSL(
+  sigma: GSplatSigmaCamTSL,
+  isOrtho: TSLNode,
+  centerCam: TSLNode
+): TSLNode {
+  const { S00, S01, S02, S11, S12, S22 } = sigma;
+  // SCALE-FREE inversion (GLSL twin: shader-glsl.ts): normalize
+  // Σ_cam by its mean diagonal variance s = trace/3 before the
+  // cofactor inverse. det(Σ) is world-units⁶ and under/overflows
+  // float32 on tiny/huge-unit scenes (GPUs flush denormals to
+  // zero), which turned the absolute 1e-12 clamp into garbage
+  // Σ⁻¹. With Σn = Σ/s the determinant and ray quadratic are O(1)
+  // at any scale, so the 1e-12 / 1e-8 floors act as scale-free
+  // condition-number guards; sigmaRay = sqrt(s / quadN) restores
+  // the world-unit result exactly. 1e-30 on s guards an all-zero
+  // covariance only.
+  const sTrace: TSLNode = max(
+    S00.add(S11)
+      .add(S22)
+      .mul(1.0 / 3.0),
+    float(1e-30)
+  ).toVar();
+  const invS: TSLNode = float(1.0).div(sTrace).toVar();
+  const a = S00.mul(invS).toVar();
+  const b = S01.mul(invS).toVar();
+  const c = S02.mul(invS).toVar();
+  const d = S11.mul(invS).toVar();
+  const e = S12.mul(invS).toVar();
+  const f = S22.mul(invS).toVar();
+  const detSigma: TSLNode = a
+    .mul(d.mul(f).sub(e.mul(e)))
+    .sub(b.mul(b.mul(f).sub(c.mul(e))))
+    .add(c.mul(b.mul(e).sub(c.mul(d))));
+  const invDet: TSLNode = float(1.0)
+    .div(max(detSigma, float(1e-12)))
+    .toVar();
+  const i00: TSLNode = d.mul(f).sub(e.mul(e)).mul(invDet).toVar();
+  const i11: TSLNode = a.mul(f).sub(c.mul(c)).mul(invDet).toVar();
+  const i22: TSLNode = a.mul(d).sub(b.mul(b)).mul(invDet).toVar();
+  const i01: TSLNode = b.mul(f).sub(c.mul(e)).negate().mul(invDet).toVar();
+  const i02: TSLNode = b.mul(e).sub(c.mul(d)).mul(invDet).toVar();
+  const i12: TSLNode = a.mul(e).sub(b.mul(c)).negate().mul(invDet).toVar();
+
+  // Ray direction: ortho = (0, 0, -1); perspective = normalize(centerCam).
+  const rayDirOrtho: TSLNode = vec3(0.0, 0.0, -1.0);
+  const rayDirPersp: TSLNode = normalize(centerCam);
+  const rayDir: TSLNode = isOrtho.select(rayDirOrtho, rayDirPersp).toVar();
+  const prx: TSLNode = i00.mul(rayDir.x).add(i01.mul(rayDir.y)).add(i02.mul(rayDir.z));
+  const pry: TSLNode = i01.mul(rayDir.x).add(i11.mul(rayDir.y)).add(i12.mul(rayDir.z));
+  const prz: TSLNode = i02.mul(rayDir.x).add(i12.mul(rayDir.y)).add(i22.mul(rayDir.z));
+  // quad is rᵀ Σn⁻¹ r (normalized space); un-normalize via
+  // sqrt(sTrace) — see the scale-free inversion note above.
+  const quad: TSLNode = max(
+    rayDir.x.mul(prx).add(rayDir.y.mul(pry)).add(rayDir.z.mul(prz)),
+    float(1e-8)
+  );
+  const sigmaRay: TSLNode = sqrt(sTrace).div(sqrt(quad));
+  return sigmaRay;
+}
+
 /** The draw-only factors of {@link gsplatQuadFootprintTSL}'s peak scale. */
 export interface GSplatFootprintDrawFactorsTSL {
   /** The fragment's alpha factor (optical density under volumetric). */
@@ -173,7 +252,7 @@ export interface GSplatFootprintDrawFactorsTSL {
 export interface GSplatQuadFootprintInputsTSL {
   /** The splat's `vAmplitude2D`. */
   readonly amplitude2D: TSLNode;
-  /** Draw only; picking omits them (its fragment test carries neither). */
+  /** The fragment test's factors (picking folds the node opacity into the alpha factor). */
   readonly drawFactors?: GSplatFootprintDrawFactorsTSL;
   readonly invOneMinusC: TSLNode;
   readonly shiftC: TSLNode;
@@ -196,9 +275,9 @@ export interface GSplatQuadFootprintTSL {
  * stage and the pick factory (`picking/gsplat/pick.tsl.ts`), so the two
  * cannot size a splat to different reach radii. The peak scale is
  * `gsplatFootprintPeakScale` (`./math`): amplitude2D · 1/(1−C), times the
- * alpha factor and max(gain, 1) when `drawFactors` is given. Picking omits
- * them, which is the same function at the neutral 1, 1 with the no-op
- * multiplies left out of the graph.
+ * alpha factor and max(gain, 1) when `drawFactors` is given (both the draw
+ * and the pick stage give them; omitting them is the same function at the
+ * neutral 1, 1 with the no-op multiplies left out of the graph).
  */
 export function gsplatQuadFootprintTSL(
   inputs: GSplatQuadFootprintInputsTSL
@@ -617,57 +696,11 @@ export function gsplatWebGPUFactory(
     // where the dilation-compensation emission needs the same gate.)
     let vAmplitude2DVal: TSLNode;
     if (useSumProjection) {
-      // SCALE-FREE inversion (GLSL twin: shader-glsl.ts): normalize
-      // Σ_cam by its mean diagonal variance s = trace/3 before the
-      // cofactor inverse. det(Σ) is world-units⁶ and under/overflows
-      // float32 on tiny/huge-unit scenes (GPUs flush denormals to
-      // zero), which turned the absolute 1e-12 clamp into garbage
-      // Σ⁻¹. With Σn = Σ/s the determinant and ray quadratic are O(1)
-      // at any scale, so the 1e-12 / 1e-8 floors act as scale-free
-      // condition-number guards; sigmaRay = sqrt(s / quadN) restores
-      // the world-unit result exactly. 1e-30 on s guards an all-zero
-      // covariance only.
-      const sTrace: TSLNode = max(
-        S00.add(S11)
-          .add(S22)
-          .mul(1.0 / 3.0),
-        float(1e-30)
-      ).toVar();
-      const invS: TSLNode = float(1.0).div(sTrace).toVar();
-      const a = S00.mul(invS).toVar();
-      const b = S01.mul(invS).toVar();
-      const c = S02.mul(invS).toVar();
-      const d = S11.mul(invS).toVar();
-      const e = S12.mul(invS).toVar();
-      const f = S22.mul(invS).toVar();
-      const detSigma: TSLNode = a
-        .mul(d.mul(f).sub(e.mul(e)))
-        .sub(b.mul(b.mul(f).sub(c.mul(e))))
-        .add(c.mul(b.mul(e).sub(c.mul(d))));
-      const invDet: TSLNode = float(1.0)
-        .div(max(detSigma, float(1e-12)))
-        .toVar();
-      const i00: TSLNode = d.mul(f).sub(e.mul(e)).mul(invDet).toVar();
-      const i11: TSLNode = a.mul(f).sub(c.mul(c)).mul(invDet).toVar();
-      const i22: TSLNode = a.mul(d).sub(b.mul(b)).mul(invDet).toVar();
-      const i01: TSLNode = b.mul(f).sub(c.mul(e)).negate().mul(invDet).toVar();
-      const i02: TSLNode = b.mul(e).sub(c.mul(d)).mul(invDet).toVar();
-      const i12: TSLNode = a.mul(e).sub(b.mul(c)).negate().mul(invDet).toVar();
-
-      // Ray direction: ortho = (0, 0, -1); perspective = normalize(centerCam).
-      const rayDirOrtho: TSLNode = vec3(0.0, 0.0, -1.0);
-      const rayDirPersp: TSLNode = normalize(centerCam);
-      const rayDir: TSLNode = isOrtho.select(rayDirOrtho, rayDirPersp).toVar();
-      const prx: TSLNode = i00.mul(rayDir.x).add(i01.mul(rayDir.y)).add(i02.mul(rayDir.z));
-      const pry: TSLNode = i01.mul(rayDir.x).add(i11.mul(rayDir.y)).add(i12.mul(rayDir.z));
-      const prz: TSLNode = i02.mul(rayDir.x).add(i12.mul(rayDir.y)).add(i22.mul(rayDir.z));
-      // quad is rᵀ Σn⁻¹ r (normalized space); un-normalize via
-      // sqrt(sTrace) — see the scale-free inversion note above.
-      const quad: TSLNode = max(
-        rayDir.x.mul(prx).add(rayDir.y.mul(pry)).add(rayDir.z.mul(prz)),
-        float(1e-8)
+      const sigmaRay: TSLNode = gsplatRaySigmaTSL(
+        { S00, S01, S02, S11, S12, S22 },
+        isOrtho,
+        centerCam
       );
-      const sigmaRay: TSLNode = sqrt(sTrace).div(sqrt(quad));
       const rayIntegrationBoost: TSLNode = sigmaRay.mul(uRayIntegralFactor);
       // dilationCompensation keeps the screen-integrated light invariant under
       // the 2D low-pass (derivation at its definition). Sum projection only —

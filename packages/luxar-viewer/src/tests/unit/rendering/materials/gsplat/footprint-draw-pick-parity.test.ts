@@ -7,12 +7,15 @@
  * pixel-identity gate sees that, because the drawn image is unchanged. So the
  * rule is ONE function in each language (`gsplatFootprintPeakScale` +
  * `gsplatVisibleMahalSq` in GLSL, `gsplatQuadFootprintTSL` in TSL), and the
- * two stages differ ONLY in the draw-only peak-scale factors (the alpha
- * factor and max(gain, 1)), which the pick fragment test does not carry.
+ * two stages differ ONLY in the alpha factor they hand it: the pick pass
+ * weighs by the same per-splat alpha factor and gain as the draw, and
+ * additionally by the node opacity (a fully transparent node is invisible
+ * however bright its splats, so it must not be pickable either).
  *
  * Pinned three ways:
  *   1. GLSL sources: both vertex shaders call the shared helpers with the
- *      same amplitude and uniforms; pick passes the neutral `1.0, 1.0`.
+ *      same amplitude, uniforms and gain; pick's alpha factor is
+ *      `pickAlphaFactor` (the draw's alpha factor times uOpacity).
  *   2. Numerics, through the shared CPU mirror: over a grid of amplitudes and
  *      truncation radii, pick's radius and extents equal draw's EXACTLY at a
  *      neutral appearance (opaque, gain <= 1).
@@ -74,11 +77,11 @@ describe('GLSL: draw and pick vertex shaders share one reach-radius rule', () =>
     );
   });
 
-  it('same amplitude and uniforms; pick passes the neutral draw factors', () => {
+  it('same amplitude, uniforms and gain; pick folds the node opacity into the alpha factor', () => {
     const draw = glslPeakScaleArgs(shaders.draw);
     const pick = glslPeakScaleArgs(shaders.pick);
     expect(draw.slice(0, 2)).toEqual(['vAmplitude2D', 'uInvOneMinusC']);
-    expect(pick).toEqual(['vAmplitude2D', 'uInvOneMinusC', '1.0', '1.0']);
+    expect(pick).toEqual(['vAmplitude2D', 'uInvOneMinusC', 'pickAlphaFactor', 'uIntensity']);
     expect(draw.slice(2)).toEqual(['footprintAlpha', 'uIntensity']);
   });
 

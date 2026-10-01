@@ -21,6 +21,8 @@
  */
 
 import { isPhysicalMeshMaterial } from '../../materials/mesh-physical/config';
+import { isVolumetricMode } from '../../blending-state';
+import type { BlendingMode } from '../../../types/blending';
 
 interface UniformHolder {
   uniforms?: Record<string, { value: unknown } | undefined>;
@@ -30,7 +32,7 @@ interface UniformHolder {
 /** One mirrored input: the pick uniform, and how to read its value off the visual material. */
 interface VisibilityInput {
   readonly pick: string;
-  readonly read: (visual: UniformHolder) => unknown;
+  readonly read: (visual: UniformHolder, mode: BlendingMode) => unknown;
 }
 
 /** Read a uniform of the visual material by name. */
@@ -56,6 +58,13 @@ const uniformOf =
  * - `uNearFade`: whether the mesh pick mirrors the house shader's near fade.
  *   A physical visual (three's PBR material) has none, so its pick must not
  *   discard the fade band either.
+ * - `uIntensity`, `uHasElementAlpha`, `uVolumetric` (with `uOpacity`): the
+ *   visual weight every point/line/gsplat pick multiplies its falloff by
+ *   (`../_shared/visibility-glsl.ts`). `uVolumetric` has no visual uniform —
+ *   the visual shaders branch on a compile-time define — so it is derived
+ *   from the node's blending mode.
+ * - `uProjectionMode`, `uRayIntegralFactor`: the gsplat amplitude the draw
+ *   emits (sum projection's ray-integral boost vs the plain peak).
  */
 const VISIBILITY_INPUTS: readonly VisibilityInput[] = [
   { pick: 'uCoverageTruncate', read: uniformOf('uTruncate') },
@@ -66,6 +75,11 @@ const VISIBILITY_INPUTS: readonly VisibilityInput[] = [
     read: (visual) => visual.uniforms?.uOpacity?.value ?? visual.getOpacity?.(),
   },
   { pick: 'uNearFade', read: (visual) => (isPhysicalMeshMaterial(visual) ? 0 : 1) },
+  { pick: 'uIntensity', read: uniformOf('uIntensity') },
+  { pick: 'uHasElementAlpha', read: uniformOf('uHasElementAlpha') },
+  { pick: 'uVolumetric', read: (_visual, mode) => (isVolumetricMode(mode) ? 1 : 0) },
+  { pick: 'uProjectionMode', read: uniformOf('uProjectionMode') },
+  { pick: 'uRayIntegralFactor', read: uniformOf('uRayIntegralFactor') },
 ];
 
 /** The first material of a (possibly multi-material) slot. */
@@ -76,15 +90,18 @@ function single(material: unknown): UniformHolder | undefined {
 /**
  * Copy every visibility input `visual` carries onto `pick`. Cheap: a handful
  * of numeric assignments, run once per node per pick-buffer render.
+ *
+ * @param mode - the node's effective blending mode (as the pick depth sync
+ *   resolves it), for the inputs derived from it rather than read.
  */
-export function syncPickVisibilityInputs(pick: unknown, visual: unknown): void {
+export function syncPickVisibilityInputs(pick: unknown, visual: unknown, mode: BlendingMode): void {
   const pickUniforms = single(pick)?.uniforms;
   const source = single(visual);
   if (!pickUniforms || !source) return;
   for (const input of VISIBILITY_INPUTS) {
     const target = pickUniforms[input.pick];
     if (!target) continue;
-    const value = input.read(source);
+    const value = input.read(source, mode);
     if (typeof value !== 'number' || !Number.isFinite(value)) continue;
     if (target.value !== value) target.value = value;
   }

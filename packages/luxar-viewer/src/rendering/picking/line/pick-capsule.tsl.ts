@@ -6,8 +6,9 @@
  * capsule TSL factory (`materials/line/shader-tsl-capsule.ts`); the pick
  * output contract is the shared one:
  *   `vec4(nodeId, elementId-low16, brightness, elementId-high16)`,
- * with brightness-as-depth via `material.depthNode`. Per-element alpha and
- * node opacity are ignored, matching the other pick variants.
+ * with brightness-as-depth via `material.depthNode`. The brightness carries
+ * the visual weight (per-element alpha, node opacity, max(gain, 1) —
+ * `../_shared/visibility-tsl.ts`), matching the other pick variants.
  */
 import {
   abs,
@@ -51,11 +52,13 @@ import {
   projectionSizeScaleTSL,
   perspectiveNearFadeStaticTSL,
   sanitizeNonNegative,
+  sanitizeAlpha,
   tslLineJointCapSuppression,
   type TSLNode,
   sortedIndexNode,
 } from '../../materials/_shared/tsl-helpers';
 import type { LinePickTSLNodes } from './pick.tsl';
+import { pickWeightTSL } from '../_shared/visibility-tsl';
 
 /** Build-time configuration (projection mode picks the graph variant). */
 export interface CapsuleLinePickTSLConfig {
@@ -97,6 +100,8 @@ export function capsuleLinePickWebGPUFactory(
   const vW: TSLNode = varying(float(1.0));
   const vFade: TSLNode = varying(float(1.0));
   const vSharp: TSLNode = varying(float(0.5));
+  // Per-element alpha along the span (texel5.zw), sanitized as the visual twin.
+  const vAlpha: TSLNode = varying(float(1.0));
   const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat');
   // Storage index split into two 16-bit halves — see the screen-space
   // pick factory (`pick.tsl.ts`) for the float32-mantissa rationale.
@@ -124,6 +129,7 @@ export function capsuleLinePickWebGPUFactory(
     const lineT2: TSLNode = uLineTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
     const lineT3: TSLNode = uLineTex.load(ivec2(texelX.add(int(3)), texelY)).toVar();
     const lineT4: TSLNode = uLineTex.load(ivec2(texelX.add(int(4)), texelY)).toVar();
+    const lineT5: TSLNode = uLineTex.load(ivec2(texelX.add(int(5)), texelY)).toVar();
 
     const mvStart: TSLNode = modelViewMatrix.mul(vec4(lineT0.xyz, 1.0)).toVar();
     const mvEnd: TSLNode = modelViewMatrix.mul(vec4(lineT1.xyz, 1.0)).toVar();
@@ -411,6 +417,7 @@ export function capsuleLinePickWebGPUFactory(
     vAbLen.assign(abLen);
     vFade.assign(fade.mul(widthScale).mul(culled.select(float(0.0), float(1.0))));
     vSharp.assign(mix(s0, s1, tOrig));
+    vAlpha.assign(mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), tOrig));
 
     const clipMix: TSLNode = mix(clipA, clipB, tc).toVar();
     const wMix: TSLNode = max(clipMix.w, float(1e-6)).toVar();
@@ -524,7 +531,8 @@ export function capsuleLinePickWebGPUFactory(
         Discard(profile.lessThanEqual(0.0));
       });
     });
-    return profile.mul(vFade);
+    // Weighted by the visual factors (GLSL twin: luxarPickWeight).
+    return profile.mul(vFade).mul(pickWeightTSL(vAlpha, nodes));
   }).once();
   const brightness: TSLNode = brightnessShared().toVar('lineCapsulePickBrightness');
 

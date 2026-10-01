@@ -24,6 +24,11 @@ import type { LineJoinStyle } from '../../../types/line-join';
 import { resolveLinePrimitive, type LinePrimitive } from '../../../types/line-primitive';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
+import {
+  createPickVisibilityTSLNodes,
+  proxyPickVisibilityUniforms,
+} from '../_shared/visibility-tsl';
+import { copyPickVisibilityUniforms } from '../_shared/visibility-uniforms';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { LinePickingMaterialConfig } from './material';
 
@@ -40,6 +45,10 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     uNodeId: TSLNode;
     uSortedIndexSlot: TSLNode;
     uDensityDrop: TSLNode;
+    uIntensity: TSLNode;
+    uOpacity: TSLNode;
+    uHasElementAlpha: TSLNode;
+    uVolumetric: TSLNode;
   };
 
   constructor(config: LinePickingMaterialConfig) {
@@ -66,6 +75,9 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       // `uniforms` below.
       uSortedIndexSlot: uniform(0),
       uDensityDrop: uniform(0),
+      // Visual-pass weight inputs, neutral until the first pick render
+      // syncs the node's own (picking-system/visibility-sync.ts).
+      ...createPickVisibilityTSLNodes(),
     };
 
     // Join style — a BUILD-time graph variant (see pick.tsl.ts), so it is
@@ -93,6 +105,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
+      ...proxyPickVisibilityUniforms(this.tslNodes),
     };
 
     this.toneMapped = false;
@@ -163,6 +176,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     // until the coordinator's next per-frame re-assert.
     cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
+    copyPickVisibilityUniforms(this.uniforms, cloned.uniforms);
     if (cloned._currentConfig().isOrtho) {
       cloned._rebuild();
       cloned.needsUpdate = true;

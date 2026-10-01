@@ -63,6 +63,7 @@ import {
   isOrthoProjectionTSL,
   projectionSizeScaleTSL,
   sanitizeNonNegative,
+  sanitizeAlpha,
   type TSLNode,
   sortedIndexNode,
   densityDroppedNode,
@@ -72,6 +73,11 @@ import {
   resolveElementTextureWidth,
   POINT_TEXTURE_LAYOUT,
 } from '../../element-texture-layout';
+import {
+  pickVisibilityTSLNodesFromUniforms,
+  pickWeightTSL,
+  type PickVisibilityTSLNodes,
+} from '../_shared/visibility-tsl';
 
 // Type-erased constructor aliases — same rationale as the gsplat TSL
 // factories (see materials/gsplat/shader-tsl.ts).
@@ -86,7 +92,7 @@ const ivec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _ivec2 as TSLNode;
  * rationale: avoids `.onUpdate('render')` callback churn by using
  * the wrapper-owned `UniformNode` references directly.
  */
-export interface PointPickTSLNodes {
+export interface PointPickTSLNodes extends PickVisibilityTSLNodes {
   /**
    * Point data texture node (RGBA32F, 3 texels/point) — shared with
    * the visual material's storage; rebound per node by the commit's
@@ -148,6 +154,8 @@ export function pointPickWebGPUFactory(
   const vBeta: TSLNode = varying(float(0.0));
   const vNearFade: TSLNode = varying(float(1.0));
   const vPickSize: TSLNode = varying(float(0.0));
+  // Per-point opacity (texel2.y), sanitized as the visual graph does.
+  const vAlpha: TSLNode = varying(float(1.0));
   const vNodeId: TSLNode = varying(uNodeId);
   // Storage slot, NOT instanceIndex (the draw slot): identical under
   // Phase-1 identity ordering, and stays the id the rest of the
@@ -168,8 +176,8 @@ export function pointPickWebGPUFactory(
 
   const vertexBody = Fn(() => {
     // === Point-texture fetch prologue (visual-factory parity) ===
-    // Picking needs texels 0-1 only (center/radius/sharpness); color
-    // and scalar are not fetched. Every value is a `.toVar()` STATEMENT
+    // Picking needs texels 0-1 (center/radius/sharpness) and the alpha
+    // in texel 2; color and scalar are not fetched. Every value is a `.toVar()` STATEMENT
     // (Fn house rule). Width is a multiple of 3 -> one row per point.
     const pointBase: TSLNode = int(aSortedIndex).mul(int(3)).toVar();
     // The width is baked as a LITERAL, not read via textureSize(): a
@@ -188,6 +196,7 @@ export function pointPickWebGPUFactory(
     const texelY: TSLNode = pointBase.div(pointTexW).toVar();
     const pointT0: TSLNode = uPointTex.load(ivec2(texelX, texelY)).toVar();
     const pointT1: TSLNode = uPointTex.load(ivec2(texelX.add(int(1)), texelY)).toVar();
+    const pointT2: TSLNode = uPointTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
     const aCenter: TSLNode = vec3(pointT0).toVar();
     const aRadius: TSLNode = pointT0.w.toVar();
     const aSharpness: TSLNode = pointT1.w.toVar();
@@ -254,6 +263,7 @@ export function pointPickWebGPUFactory(
     vBeta.assign(beta);
     vNearFade.assign(depthFade);
     vPickSize.assign(rawPickSize);
+    vAlpha.assign(sanitizeAlpha(pointT2.y));
 
     return clipPos;
   });
@@ -283,6 +293,9 @@ export function pointPickWebGPUFactory(
     // Sub-pixel compensation (sizeScale², matching the VISUAL point and
     // the line pick's widthScale) — pick salience tracks visual salience.
     .mul(min(vPickSize.div(uPixelRatio.max(float(1.0)).mul(1.5)), float(1.0)).pow(2.0))
+    // ...and the visual weight: per-point alpha (optical depth under
+    // volumetric), node opacity, max(gain, 1) — GLSL twin: luxarPickWeight.
+    .mul(pickWeightTSL(vAlpha, nodes))
     .toVar();
 
   const colorNode = Fn(() => {
@@ -356,5 +369,6 @@ export function buildPointPickTSLNodesFromUniforms(
     uResolution: uniform(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),
+    ...pickVisibilityTSLNodesFromUniforms(uniforms),
   };
 }

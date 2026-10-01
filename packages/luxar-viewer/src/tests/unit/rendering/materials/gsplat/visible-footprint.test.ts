@@ -235,6 +235,6 @@ describe('shader sources stay wired to the footprint helper', () => {
       expect(vs).toContain('extent2 = gsplatFootprintExtent(extent2, lambda2, visibleMahalSq);');
     }
     expect(GSPLAT_FRAGMENT_SHADER).toContain('intensity * max(uIntensity, 1.0) < 1e-4) discard');
-    expect(GSPLAT_PICK_FRAGMENT_SHADER).toContain('if (intensity < 1e-4) discard');
+    expect(GSPLAT_PICK_FRAGMENT_SHADER).toContain('if (salience < 1e-4) discard');
   });
 });

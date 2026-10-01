@@ -25,10 +25,11 @@ and the same exception, that a cut end reserves the FULL disc rather than its
 half whenever a deficit packet exists, since the deficit term reaches as far
 as the leg's own profile does — #1488) — and the fragment shades the same quartic
 profile of the 2D point-to-segment distance, so `brightness = profile ×
-fade` tracks the visible pixels one-for-one (the capsule is peak-shaped by
-construction; there is no separate peak lane to select). Per-element alpha
-and node opacity are ignored, matching the pick contract of the
-screen-space primitive. Output contract:
+fade × weight` tracks the visible pixels one-for-one (the capsule is
+peak-shaped by construction; there is no separate peak lane to select). The
+weight is the visual one shared with the screen-space primitive — per-element
+alpha, node opacity, `max(gain, 1)` (`../_shared/visibility-glsl.ts`).
+Output contract:
 `vec4(nodeId, elementId-low16, brightness, elementId-high16)`,
 `gl_FragDepth = 1 − brightness`. Footprint
 agreement is pinned in `tsl-shader-parity.spec.ts` against the fat visual
