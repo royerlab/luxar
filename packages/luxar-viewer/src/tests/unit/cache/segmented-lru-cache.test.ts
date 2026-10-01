@@ -249,6 +249,20 @@ describe('SegmentedLRUCache', () => {
       expect(stats.chunksSize).toBe(2000);
     });
 
+    it.fails('keeps a chunk segment, within budget, when L1 is below the 10 MB metadata floor', () => {
+      // `?cacheBudgetMB=40` scales L1 to ~8 MB (heap-budget.ts). A fixed 10 MB
+      // metadata floor left the chunk segment at 0 — every L1 chunk insert was
+      // rejected — and the two segments together over the configured budget.
+      const MB = 1024 * 1024;
+      const small = new SegmentedLRUCache(8 * MB);
+      for (let i = 0; i < 16; i++) small.set(`points/c/${i}`, new Uint8Array(MB));
+      for (let i = 0; i < 16; i++) small.set(`n${i}/zarr.json`, new Uint8Array(MB));
+      const stats = small.getStats();
+      expect(stats.chunksCount).toBeGreaterThan(0);
+      expect(stats.metadataCount).toBeGreaterThan(0);
+      expect(stats.chunksSize + stats.metadataSize).toBeLessThanOrEqual(8 * MB);
+    });
+
     // workers.md O3 / cache.md G6 [P5]: audit-id moved to comment per Phase E54.
     it('clamps chunksSize to 0 when totalSize < MIN_METADATA_SIZE (10MB)', () => {
       // [cache.md/G6][P5] Pre-audit boundary: a regression that flipped the
