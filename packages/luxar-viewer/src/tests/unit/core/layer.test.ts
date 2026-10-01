@@ -985,7 +985,7 @@ describe('LuxarLayer', () => {
       expect(evaluateDepthSortPerFrame).not.toHaveBeenCalled();
     });
 
-    it.fails('asks an on-demand host for the next frame while a fade or cull flip is in motion', async () => {
+    it('asks an on-demand host for the next frame while a fade or cull flip is in motion', async () => {
       // A LOD fade steps one opacity increment per evaluation and reports it
       // only through takeDrawnStateChanged(); a host that renders on demand
       // never runs the next step unless the layer asks for another frame.
@@ -1009,7 +1009,7 @@ describe('LuxarLayer', () => {
       expect(requestRender).toHaveBeenCalledTimes(3);
     });
 
-    it.fails('requests nothing on a settled frame', async () => {
+    it('requests nothing on a settled frame', async () => {
       const requestRender = vi.fn();
       const layer = new LuxarLayer(makeOptions({ requestRender }));
       await layer.load('http://example.test/scene.zarr');
