@@ -36,7 +36,11 @@ it('reports the A/A buffers and scene state for an excluded view', () => {
           pick: null,
           counts: { first: { lens: 'mesh:1:?:true' }, second: { lens: 'mesh:0:?:true' } },
           camera: { first: { world: [1] }, second: { world: [2] } },
-          stable: { first: true, second: true },
+          stable: { first: false, second: true },
+          bufferStability: {
+            first: { hdr: true, ldr: false },
+            second: { hdr: true, ldr: true },
+          },
           heatmap: 'heatmaps/glass-control-hdr.png',
           ldrHeatmap: 'heatmaps/glass-control-ldr.png',
         },
@@ -52,6 +56,7 @@ it('reports the A/A buffers and scene state for an excluded view', () => {
   expect(markdown).toContain('control: HDR 6130 px');
   expect(markdown).toContain('LDR 3363 px');
   expect(markdown).toContain('counts differ; camera differs');
+  expect(markdown).toContain('within-page HDR/LDR stable true/false, true/true');
   expect(markdown).toContain('[A/A HDR heatmap](heatmaps/glass-control-hdr.png)');
   expect(markdown).toContain('[A/A LDR heatmap](heatmaps/glass-control-ldr.png)');
 });

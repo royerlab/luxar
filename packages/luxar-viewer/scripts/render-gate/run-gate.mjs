@@ -209,6 +209,7 @@ async function captureArm(browser, origin, c, variant) {
           width: cap.width,
           height: cap.height,
           stable: cap.hdrStable && cap.ldrStable,
+          bufferStability: { hdr: cap.hdrStable, ldr: cap.ldrStable },
           camera: cap.camera,
           hdr: decode(cap.hdr),
           ldr: decode(cap.ldr),
@@ -316,6 +317,7 @@ async function runExact(session, servers, outDir) {
             counts: { first: a.counts, second: a2.counts },
             camera: { first: a.camera, second: a2.camera },
             stable: { first: a.stable, second: a2.stable },
+            bufferStability: { first: a.bufferStability, second: a2.bufferStability },
           };
           if (aa.differing > 0) {
             const file = `${c.id}-${variant.backend}-dsf${variant.dsf}-${view.replace('#', '')}-control-hdr.png`;
@@ -504,7 +506,7 @@ function markdown(meta, exact, perf, suites) {
     for (const r of exact.filter((row) => row.control)) {
       const control = r.control;
       lines.push(
-        `- ${r.case} ${r.backend} dsf${r.dsf} ${r.view} control: HDR ${fmtScore(control.hdr)}; LDR ${fmtScore(control.ldr)}; pick ${control.pick?.mismatches ?? '-'} mismatches; counts ${sameCounts(control.counts.first, control.counts.second) ? 'equal' : 'differ'}; camera ${JSON.stringify(control.camera.first) === JSON.stringify(control.camera.second) ? 'equal' : 'differs'}; within-page stable ${control.stable.first}/${control.stable.second}.`
+        `- ${r.case} ${r.backend} dsf${r.dsf} ${r.view} control: HDR ${fmtScore(control.hdr)}; LDR ${fmtScore(control.ldr)}; pick ${control.pick?.mismatches ?? '-'} mismatches; counts ${sameCounts(control.counts.first, control.counts.second) ? 'equal' : 'differ'}; camera ${JSON.stringify(control.camera.first) === JSON.stringify(control.camera.second) ? 'equal' : 'differs'}; within-page HDR/LDR stable ${control.bufferStability?.first?.hdr}/${control.bufferStability?.first?.ldr}, ${control.bufferStability?.second?.hdr}/${control.bufferStability?.second?.ldr}.`
       );
       if (control.heatmap) lines.push(`  - [A/A HDR heatmap](${control.heatmap})`);
       if (control.ldrHeatmap) lines.push(`  - [A/A LDR heatmap](${control.ldrHeatmap})`);
