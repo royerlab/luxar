@@ -315,6 +315,8 @@ export class LuxarApp {
           getPanelVisibilityStates: () => this.getPanelVisibilityStates(),
           restorePanelVisibilityStates: (states) => this.restorePanelVisibilityStates(states),
           emitEmbedderEvent: (event, payload) => this.embedderEvents.emit(event, payload),
+          // Read lazily: `this.pickingSystem` is (re)assigned per dataset load.
+          invalidatePickBuffer: () => this.pickingSystem?.markDirty(),
         },
         partial
       );

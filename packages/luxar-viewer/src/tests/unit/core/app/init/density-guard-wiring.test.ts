@@ -137,7 +137,7 @@ describe('wireDensityGuard', () => {
     expect(deps.spies.resume).toHaveBeenCalledTimes(2);
   });
 
-  it.fails('a keep step invalidates the cached pick buffer, even with a still camera', () => {
+  it('a keep step invalidates the cached pick buffer, even with a still camera', () => {
     // The pick pass drops exactly the elements the visual pass drops (same
     // hash, synced uDensityDrop), but only when it re-renders. A guard step
     // with no camera motion dirtied nothing the picking system listens to, so
