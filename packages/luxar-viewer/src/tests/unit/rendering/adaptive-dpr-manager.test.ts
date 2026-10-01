@@ -350,7 +350,7 @@ describe('AdaptiveDPRManager — off-tick DPR changes', () => {
     restore = setNativeDPR(2.0);
   });
 
-  it.fails('disabling at the ceiling does not resize (and so clear) the canvas', () => {
+  it('disabling at the ceiling does not resize (and so clear) the canvas', () => {
     // A resize clears the drawing buffer; from a UI event on an idle loop it
     // is a blank canvas until something redraws. Nothing changed here.
     const m = new AdaptiveDPRManager();
@@ -365,7 +365,7 @@ describe('AdaptiveDPRManager — off-tick DPR changes', () => {
     }
   });
 
-  it.fails('a manual DPR change notifies the DPR-change listener like every other change', () => {
+  it('a manual DPR change notifies the DPR-change listener like every other change', () => {
     const m = new AdaptiveDPRManager();
     try {
       m.setRenderer(makeRenderer());

@@ -226,7 +226,7 @@ describe('setupPerformanceControls', () => {
       expect(manager.setEnabled).toHaveBeenCalledWith(false);
     });
 
-    it.fails('repaints: disabling resets the DPR off-tick, which clears the canvas', () => {
+    it('repaints: disabling resets the DPR off-tick, which clears the canvas', () => {
       // setEnabled(false) resizes to the ceiling from a UI event, outside any
       // tick; on an idle loop nothing else would redraw the cleared canvas.
       // The sibling DPR controls (manual slider, Allow High DPR) already wake.

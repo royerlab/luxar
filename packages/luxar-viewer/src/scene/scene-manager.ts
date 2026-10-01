@@ -1287,6 +1287,11 @@ export class SceneManager extends THREE.EventDispatcher<{
    * acceptable thresholds, and by the manual DPR control when adaptive
    * mode is disabled.
    *
+   * Unlike {@link resizeToCanvas} this does NOT dispatch `change`, although
+   * the resize clears the canvas: the idle restore resizes right after the
+   * loop stops and draws its own frame, and a `change` would wake the loop
+   * again. A caller outside a tick (a UI control) requests the repaint.
+   *
    * @param dpr - The new device pixel ratio to use
    */
   public setAdaptivePixelRatio(dpr: number): void {

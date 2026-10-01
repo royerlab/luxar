@@ -348,6 +348,9 @@ export function setupPerformanceControls(context: PerformanceSetupContext): Perf
     saveSettings();
     log.info(Modules.RENDERER, `Adaptive resolution ${enabled ? 'enabled' : 'disabled'}`);
     updateVisibility(enabled);
+    // Disabling resizes to the ceiling from this UI event, outside any tick;
+    // the resize clears the canvas and an idle loop would leave it blank.
+    triggerAnimation();
   });
 
   // Periodic display refresh — the DPR/FPS rows only while adaptive is
