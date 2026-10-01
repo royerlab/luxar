@@ -220,7 +220,7 @@ describe('SceneLoader', () => {
       expect(scene.name).toBe('LuxarScene');
     });
 
-    it.fails('starts each dataset with a fresh update profiler', async () => {
+    it('starts each dataset with a fresh update profiler', async () => {
       // The profiler is a manager-wide singleton; without a reset at loadStart
       // every row the previous dataset ever produced stays in the tree, and
       // each merge's stale sweep walks all of them.
