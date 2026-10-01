@@ -6030,6 +6030,26 @@ describe('depth-sort coordinator — held append draws', () => {
     expect(isPermutation(mesh, 6)).toBe(true);
   });
 
+  it.fails('an ordering whose length is not the committed count is rejected and releases the hold', async () => {
+    // The worker clamps a registration whose centers under-deliver and sorts
+    // the clamped count. Applying that short ordering would write a partial
+    // permutation, and its flip raises the held draw only for ITS length — so
+    // a hold waiting for the committed 6 would never end.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = await heldMesh('normal');
+    coord.noteDepthSortCommit(mesh, centers(6), 6);
+    await flush();
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([4, 3, 2, 1, 0]),
+    });
+    await flush();
+    await applyStagedOrdering(mesh);
+    expect(drawnCount(mesh)).toBe(6);
+    expect(isPermutation(mesh, 6)).toBe(true);
+  });
+
   it('a failed sort RPC releases the hold', async () => {
     const coord = await loadCoordinator();
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
