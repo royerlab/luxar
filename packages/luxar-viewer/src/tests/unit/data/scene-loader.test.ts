@@ -2528,6 +2528,38 @@ describe('SceneLoader', () => {
       expect((sceneLoader as any).rootGroup).toBeNull();
     });
 
+    it.fails('dispose drops its refinement state and cancels a pending kick re-check', async () => {
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      type Internals = {
+        _updateInProgress: boolean;
+        _refinementKickPending: boolean;
+        gsplatLoaders: Map<string, unknown>;
+        sliceCache: unknown;
+        lastResidencyBudget: { isDeclined(path: string): boolean } | null;
+        refinementDensityGate: { deferred: Map<string, number> } | null;
+      };
+      const internals = sceneLoader as unknown as Internals;
+      expect(internals.sliceCache).not.toBeNull();
+      internals.lastResidencyBudget = { isDeclined: () => true };
+      sceneLoader.setRefinementDensityProvider(
+        () => ({ areaPx: 100, elements: 1_000_000, onScreen: true, blendable: true }),
+        { blendable: 4, nonBlendable: 1 }
+      );
+      internals.refinementDensityGate!.deferred.set('/g', 1e9);
+      internals.gsplatLoaders.set('/g', { hasMoreLODs: true, dispose: vi.fn() });
+      internals._updateInProgress = true;
+      sceneLoader.kickRefinementIfIdle(); // lock busy: one re-check timer
+      expect(internals._refinementKickPending).toBe(true);
+
+      await sceneLoader.dispose();
+
+      expect(internals._refinementKickPending).toBe(false);
+      expect(internals.sliceCache).toBeNull();
+      expect(internals.lastResidencyBudget).toBeNull();
+      expect(internals.refinementDensityGate).toBeNull();
+      expect(sceneLoader.refinementHoldReason('/g')).toBeNull();
+    });
+
     it('SceneLoader.dispose returns a Promise that resolves cleanly (async signature)', async () => {
       // Locks in commit 2.1's signature change. loadScene's call site
       // (commit 2.3) now uses `await this.dispose()` — we cannot directly
