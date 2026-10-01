@@ -432,6 +432,7 @@ vi.mock('../../../scene/scene-manager/render-pipeline/renderer-setup', async () 
 // Import after mocks are set up
 import { SceneManager } from '../../../scene/scene-manager';
 import { loadScene as mockLoadScene } from '../../../data';
+import { attachSceneGraphIndex, sceneGraphIndexOf } from '../../../utils/scene-graph-index';
 import { materialManager } from '../../../rendering/material-manager';
 import { log } from '../../../utils/log';
 import { createWebGPURenderer as mockedCreateWebGPURenderer } from '../../../scene/scene-manager/render-pipeline/renderer-setup';
@@ -716,6 +717,23 @@ describe('SceneManager', () => {
 
       expect(sceneManager.warmBlendModePrograms()).toBe(completion);
       expect(blendWarmupMocks.warmScene).toHaveBeenCalledExactlyOnceWith(sceneManager.scene);
+    });
+
+    it.fails("detaches the outgoing scene's path index when the next load clears it", async () => {
+      // The loader indexes its root; a dataset switch must stop maintaining
+      // the old tree (listeners on every node) rather than leave it to GC.
+      const oldRoot = new THREE.Group();
+      oldRoot.name = 'LuxarScene';
+      oldRoot.add(new THREE.Mesh());
+      attachSceneGraphIndex(oldRoot);
+      sceneManager.scene.add(oldRoot);
+      expect(sceneGraphIndexOf(oldRoot)).toBeDefined();
+
+      await sceneManager.loadSceneData('http://example.com/next.zarr');
+
+      expect(oldRoot.parent).toBeNull();
+      expect(sceneGraphIndexOf(oldRoot)).toBeUndefined();
+      expect(sceneGraphIndexOf(oldRoot.children[0])).toBeUndefined();
     });
 
     it('should clear existing scene before loading new one', async () => {
