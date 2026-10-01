@@ -1326,7 +1326,7 @@ _For implementation details, see the source files in this directory._
 
 - `scene-manager.ts` — `SceneManager` orchestrator: renderer, camera,
   controls, post-processing, resize, disposal.
-- `scene-dims-manager.ts` — Singleton dimension state across all nD
+- `scene-dims-manager.ts` — Dimension state across all nD (the `sceneDimsManager` singleton is the LuxarApp's; a `LuxarLayer` constructs its own `SceneDimsManager` and resolves it from its own root)
   objects in the scene (exported as both class `SceneDimsManager`
   and lazy-Proxy singleton `sceneDimsManager`).
 - `dimension-loading.ts` — Applies the current scene-dimension selection,

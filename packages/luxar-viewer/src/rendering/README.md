@@ -386,7 +386,7 @@ _to_ GLSL):
 
 ### 6. Material Manager
 
-Singleton manager for material creation across Points, Lines, GSplats and Mesh (ALL per node — each instanced material binds its node's element texture; the historical Lines LRU died with the lines texture-storage migration). Runtime blending changes use `blending-state.ts` so UI updates apply the same complete THREE.js state as material creation.
+Per-HOST manager for material creation across Points, Lines, GSplats and Mesh. The `materialManager` export is the LuxarApp's (lazily built; `getPageMaterialManager()`); each `LuxarLayer` constructs its own `MaterialManager`, and its loaders' node factory and commit stage run inside `runWithMaterialManager(layerMaterials, …)`, so the shared create-* code reaching `materialManager` lands in the layer's registry — its renderer capabilities, its camera broadcast, its disposal. The bracket is synchronous (node creation and commits never await) (ALL per node — each instanced material binds its node's element texture; the historical Lines LRU died with the lines texture-storage migration). Runtime blending changes use `blending-state.ts` so UI updates apply the same complete THREE.js state as material creation.
 
 ```typescript
 // Get the per-node point material
