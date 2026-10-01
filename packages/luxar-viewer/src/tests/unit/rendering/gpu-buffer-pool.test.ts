@@ -27,6 +27,7 @@ import {
   holdSortedIndexDrawForAppend,
   sortedIndexDrawHoldTarget,
   writeSortedIndexOrderingLive,
+  writeSortedIndexIdentity,
 } from '../../../rendering/element-storage';
 
 describe('GPUBufferPool', () => {
@@ -491,7 +492,7 @@ describe('GPUBufferPool', () => {
   });
 
   describe('GSplats Geometry', () => {
-    it('releases a held draw before returning geometry to the pool', () => {
+    it('returns a held geometry to the pool without repairing it; the next full write ends the hold', () => {
       const geometry = pool.acquireGSplatsGeometry('first', 6);
       expect(writeSortedIndexOrderingLive(geometry, new Uint32Array([3, 2, 1, 0]), 4)).toBe(4);
       geometry.instanceCount = 4;
@@ -500,12 +501,14 @@ describe('GPUBufferPool', () => {
 
       pool.releaseGSplatsGeometry('first');
 
-      expect(sortedIndexDrawHoldTarget(geometry)).toBeUndefined();
-      expect(geometry.instanceCount).toBe(6);
-      expect(
-        Array.from((getActiveSortedIndexAttribute(geometry)!.array as Uint32Array).slice(0, 6))
-      ).toEqual([3, 2, 1, 0, 4, 5]);
+      // Nobody draws a free-listed geometry: no O(n) repair, no upload.
+      expect(sortedIndexDrawHoldTarget(geometry)).toBe(6);
+      expect(geometry.instanceCount).toBe(4);
       expect(pool.acquireGSplatsGeometry('second', 6)).toBe(geometry);
+
+      // A new tenant's first commit is a full write, which discards the hold.
+      writeSortedIndexIdentity(geometry, 6);
+      expect(sortedIndexDrawHoldTarget(geometry)).toBeUndefined();
     });
 
     it('should create InstancedBufferGeometry for gsplats', () => {

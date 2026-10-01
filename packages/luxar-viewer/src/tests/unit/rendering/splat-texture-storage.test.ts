@@ -1005,7 +1005,7 @@ describe('gsplat append commit — held draw until the grown ordering lands', ()
     expect(geom.instanceCount).toBe(6);
   });
 
-  it.fails('releasing a held geometry to the free list does no repair and no upload', () => {
+  it('releasing a held geometry to the free list does no repair and no upload', () => {
     // Every pool GROW releases the node's old geometry. Repairing its ordering
     // over the held population there is O(target) work plus a full-range
     // ordering upload for a geometry nobody draws; the next commit that writes

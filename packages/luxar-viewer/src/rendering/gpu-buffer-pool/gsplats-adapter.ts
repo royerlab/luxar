@@ -24,7 +24,6 @@ import {
   holdSortedIndexDrawForAppend,
   holdSortedIndexDrawFromSeed,
   repairSortedIndexForCount,
-  releaseSortedIndexDrawHold,
   sortedIndexDrawHoldTarget,
   writeSortedIndexIdentity,
 } from '../element-storage';
@@ -352,7 +351,13 @@ export class GSplatsBufferAdapter {
     // Dispose already cancels via the geometry's own listener; release
     // is the other exit from "in use" and needs the same treatment.
     cancelSortedIndexOrderingApply(buffer.geometry as THREE.InstancedBufferGeometry);
-    releaseSortedIndexDrawHold(buffer.geometry as THREE.InstancedBufferGeometry);
+    // A held append draw is deliberately LEFT held: ending it here would
+    // repair the ordering over the whole held population (O(n) plus a
+    // full-range upload) for a geometry nobody draws, on every pool grow.
+    // Whichever commit writes this geometry next resolves it — a new
+    // tenant's full write discards the hold, and this node's own vouched
+    // recommit (a failed grow re-claims the buffer) repairs from the drawn
+    // prefix (`writeCommitOrdering`).
 
     // Stamp the release commit so acquire-triggered byte sweeps later in
     // this same commit grace the buffer (see EvictorCtx.graceCommit) — a
