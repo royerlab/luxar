@@ -249,6 +249,7 @@ import {
   noteRefinementStarted,
 } from '../profiling/load-timeline';
 import { viewStatesEqual } from './loaders/progressive/view-state-equal';
+import { tryRollbackToPassStart } from './loaders/progressive/pass-rollback';
 import { computeWorldNdTransform } from './transforms/nd-transform';
 
 import {
@@ -1949,16 +1950,11 @@ export class SceneLoader {
       commitGSplatsGeometry: (staged, session) => this.commitGSplatsGeometry(staged, session),
       commitMeshGeometry: (staged, session) => this.commitMeshGeometry(staged, session),
       onCommitFailed: (path) => {
-        const loader =
-          this.loaders.get(path) ??
-          this.linesLoaders.get(path) ??
-          this.gsplatLoaders.get(path) ??
-          this.meshLoaders.get(path);
-        (
-          loader as typeof loader & {
-            rollbackToPassStart?: () => number;
-          }
-        )?.rollbackToPassStart?.();
+        const kind = this.registry.getLoaderType(path);
+        const loader = kind ? this.registry.loadersOf(kind).get(path) : undefined;
+        // Like every other rollback site: a throwing rollback is logged and
+        // the commit failure stays the one reported.
+        if (loader) tryRollbackToPassStart(loader as { rollbackToPassStart?: () => number });
       },
     });
   }

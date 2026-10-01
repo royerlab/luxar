@@ -489,7 +489,7 @@ describe('SceneLoader', () => {
       expect(rollbackToPassStart).toHaveBeenCalledOnce();
     });
 
-    it.fails('a throwing rollback after a failed commit is logged, not folded into the commit error', async () => {
+    it('a throwing rollback after a failed commit is logged, not folded into the commit error', async () => {
       // Every other rollback site goes through tryRollbackToPassStart, which
       // keeps the ORIGINAL failure as the one reported; the commit path called
       // the raw method and buried it in a nested AggregateError.
