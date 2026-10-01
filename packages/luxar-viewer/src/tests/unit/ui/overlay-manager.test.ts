@@ -349,6 +349,30 @@ describe('OverlayManager.loadOverlays', () => {
     pausedSpy.mockRestore();
   });
 
+  it('keeps a failed video on its poster when shown again', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    await manager.loadOverlays(
+      [makeTextOverlay({ name: 'broken', type: 'overlay_video', video_file: 'missing.webm' })],
+      'https://example.com/scene.luxar.zarr/'
+    );
+    const video = document.querySelector('.luxar-overlay--video video') as HTMLVideoElement;
+    expect(video.hasAttribute('src')).toBe(true);
+
+    video.dispatchEvent(new Event('error'));
+    expect(warning).toHaveBeenCalledExactlyOnceWith(
+      Modules.UI,
+      'Video overlay "broken" failed to load missing.webm — showing poster only'
+    );
+    manager.hide();
+    expect(video.hasAttribute('src')).toBe(false);
+    manager.show();
+    expect(video.hasAttribute('src')).toBe(false);
+    expect(warning).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps a fading clip until its fade-out ends, then releases it; stepping quickly frees every one', async () => {
     const playSpy = vi
       .spyOn(HTMLMediaElement.prototype, 'play')
@@ -406,7 +430,7 @@ describe('OverlayManager.loadOverlays', () => {
     for (let k = 2; k <= 8; k++) {
       setStory(k);
       vi.advanceTimersByTime(150);
-      expect(videos.filter((v) => v.hasAttribute('src')).length).toBeLessThanOrEqual(3);
+      expect(videos.filter((v) => v.hasAttribute('src')).length).toBeLessThanOrEqual(2);
     }
     vi.advanceTimersByTime(300);
     expect(videos.filter((v) => v.hasAttribute('src'))).toEqual([videos[7]]);

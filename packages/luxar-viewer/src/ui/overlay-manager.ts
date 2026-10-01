@@ -234,6 +234,8 @@ export class OverlayManager {
    * poster stands in meanwhile, and a hidden clip never touches the network.
    */
   private videoSources = new Map<string, string>();
+  /** Clips whose media failed to load; revisiting them keeps the poster. */
+  private videoFailed = new Set<string>();
   /** Fade-out timers after which a hidden clip releases its media. */
   private videoReleaseTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /**
@@ -602,6 +604,7 @@ export class OverlayManager {
     for (const video of this.videoElements.values()) releaseVideoMedia(video);
     this.videoElements.clear();
     this.videoSources.clear();
+    this.videoFailed.clear();
     for (const el of this.overlayElements.values()) {
       el.remove();
     }
@@ -741,7 +744,8 @@ export class OverlayManager {
     if (!this.setVideoMedia(video, config, archivedVideo, archivedPoster)) return;
     video.onerror = () => {
       // Releasing a clip empties its source; only a real load failure counts.
-      if (!video.hasAttribute('src')) return;
+      if (!video.hasAttribute('src') || this.videoFailed.has(config.name)) return;
+      this.videoFailed.add(config.name);
       log.warning(
         Modules.UI,
         `Video overlay "${config.name}" failed to load ${config.video_file} — showing poster only`
@@ -963,6 +967,7 @@ export class OverlayManager {
   /** Attach a shown clip's source (see `videoSources`) and start it if it autoplays. */
   private showVideo(name: string, video: HTMLVideoElement): void {
     this.cancelVideoRelease(name);
+    if (this.videoFailed.has(name)) return;
     const source = this.videoSources.get(name);
     if (source && !video.hasAttribute('src')) video.src = source;
     if (video.paused && video.dataset.autoplay === '1') {
