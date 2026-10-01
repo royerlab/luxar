@@ -6,7 +6,7 @@
       "height": 540
     },
     "dsf": [1, 2],
-    "backends": ["webgl", "webgpu"],
+    "backends": ["webgl", "webgpu", "webgpu-gl"],
     "projections": ["perspective", "ortho"],
     "urlParams": "lodFinest&noLodFade&noPrefetch&noBlendWarmup"
   },
@@ -601,6 +601,7 @@
           "workload": { "kind": "scrub", "mode": "drag", "steps": 20, "intervalMs": 50 },
           "metrics": [
             { "name": "commitsDuringDrag", "better": "higher", "kind": "counter", "relTol": 0.05 },
+            { "name": "dragFrames", "better": "higher", "kind": "counter", "relTol": 0.05 },
             { "name": "render.count", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "decode.count", "better": "lower", "kind": "counter", "relTol": 0.05 }
           ]
@@ -632,6 +633,16 @@
           "id": "cold_sp64_closeup",
           "store": "gate/sp64.luxar.zarr",
           "pose": { "position": [3, 3, 8], "target": [3, 3, 0], "up": [0, 1, 0], "fov": 40 },
+          "workload": { "kind": "coldLoad" },
+          "metrics": [
+            { "name": "partition.partsInitialised", "better": "lower", "kind": "counter" },
+            { "name": "requestsToFirstFrame", "better": "lower", "kind": "counter" },
+            { "name": "firstFrameMs", "better": "lower", "kind": "timing" }
+          ]
+        },
+        {
+          "id": "cold_sp64_closeup_authored",
+          "store": "gate/sp64_closeup_authored.luxar.zarr",
           "workload": { "kind": "coldLoad" },
           "metrics": [
             { "name": "partition.partsInitialised", "better": "lower", "kind": "counter" },
