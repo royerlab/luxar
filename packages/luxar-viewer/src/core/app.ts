@@ -196,7 +196,7 @@ export class LuxarApp {
   /**
    * Teardown for the kiosk watchdog, if one is running.
    *
-   * Held so `switchDataset` cannot leave the previous scene's watchdog
+   * Held so neither `switchDataset` nor `dispose` can leave a watchdog
    * listening on a canvas whose context state it no longer describes.
    */
   private kioskTeardown: (() => void) | null = null;
@@ -1526,6 +1526,10 @@ export class LuxarApp {
     this.datasetFaultUnsubscribe = undefined;
     this.datasetFaultLoader = undefined;
     this.currentDatasetSrc = undefined;
+    // The kiosk watchdog listens on the canvas and owns a reload timer; left
+    // running it would reload the page after the app is gone.
+    this.kioskTeardown?.();
+    this.kioskTeardown = null;
 
     runDisposePipeline({
       events: this.events,

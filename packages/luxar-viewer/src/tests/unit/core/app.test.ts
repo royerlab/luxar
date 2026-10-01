@@ -1867,7 +1867,7 @@ describe('LuxarApp', () => {
       expect(state.layers).toEqual([]);
     });
 
-    it.fails('stops the kiosk watchdog on dispose', async () => {
+    it('stops the kiosk watchdog on dispose', async () => {
       // A watchdog left listening after dispose() reloads the page on the next
       // context loss of a canvas the app no longer owns.
       const canvas = { addEventListener: vi.fn(), removeEventListener: vi.fn() };
