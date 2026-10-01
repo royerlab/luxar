@@ -1372,7 +1372,7 @@ _For implementation details, see the source files in this directory._
   diagonal) — both with near-plane saturation — and
   `pickChildWithHysteresis`.
 - `lod-fade.ts` — Material-level appliers for the two LOD anti-popping
-  mechanisms: `applyLodFade` (write coverage-weight × `1/e(k)` opacity
+  mechanisms: `applyLodFade` (write dissolve-weight × `1/e(k)` opacity
   per fadeable leaf, clone-on-first-fade) and `isBlendableSubtree`
   (uniformly additive/luminous/volumetric check — `BLENDABLE_MODES`).
   The material-touching counterpart of `lod-blend.ts`'s pure math.

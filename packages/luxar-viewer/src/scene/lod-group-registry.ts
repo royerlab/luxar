@@ -137,13 +137,13 @@ export interface PreloadVisit {
 
 /** Perf counter: displayed-level changes of a lod group (one per group per frame). */
 const S_LOD_LEVEL_SWAPS = perfCounters.slot('lod.levelSwaps');
-/** Perf counter: group-frames drawing two levels cross-faded (one per group per frame). */
+/** Perf counter: group-frames drawing two levels dissolving (one per group per frame). */
 const S_LOD_BLEND_FRAMES = perfCounters.slot('lod.blendFrames');
 
 /**
  * Tally this frame's display outcome for one group (perf counters only): a
  * level swap when the shown level differs from the last one displayed, and a
- * blend frame when the primary and its cross-fade partner are both drawn.
+ * blend frame when the primary and its dissolve partner are both drawn.
  * Must run BEFORE ``displayedChildIndex`` is updated.
  */
 function countLodDisplay(
@@ -900,8 +900,8 @@ export interface LODGroupRegistryDeps {
    */
   isUpdateInProgress?: () => boolean;
   /**
-   * Whether the LOD cross-fade is enabled (ON by default; `?noLodFade`
-   * disables). When true and a blendable (additive/luminous/volumetric — see
+   * Whether the LOD level dissolve is enabled (ON by default; `?noLodFade`
+   * disables; the name predates the time-driven dissolve). When true and a blendable (additive/luminous/volumetric — see
    * `BLENDABLE_MODES` in `scene/lod-fade.ts`) group changes its displayed
    * level, the registry dissolves from the outgoing level to the incoming one
    * over `config.lod.fadeMs` — the incoming at `smoothstep(elapsed / fadeMs)`,
@@ -926,8 +926,9 @@ export interface LODGroupRegistryDeps {
    * Whether streaming brightness compensation is enabled: as a blendable
    * (additive/luminous/volumetric)
    * leaf's ladder streams in, scale its opacity by `1/e(k)` so the partial prefix
-   * renders at the full-level energy (no brightening pop). Distinct axis from the
-   * cross-fade (time, not distance) and independently gated; either flag on
+   * renders at the full-level energy (no brightening pop). Distinct from the
+   * level dissolve (within one level's stream, not between levels) and
+   * independently gated; either flag on
    * enables the registry's per-frame opacity management. Omitted / false ⇒
    * byte-identical (no material writes). Read live so the flag applies without a
    * reload. The default for unit tests (off).
@@ -1048,7 +1049,7 @@ export class LODGroupRegistry {
   private settleTracker = new SettleTracker();
 
   /**
-   * Whether fade management (cross-fade and/or energy compensation) was ON
+   * Whether fade management (level dissolve and/or energy compensation) was ON
    * during the previous ``evaluatePerFrame``. Falling-edge detector for the
    * one-shot residual-opacity restore in ``evaluateEntry``: toggling BOTH
    * anti-popping flags off MID-fade would otherwise strand a half-faded
@@ -1063,7 +1064,7 @@ export class LODGroupRegistry {
    * level shown OR hidden, a fade opacity written with a new value. Broader
    * than {@link evaluatePerFrame}'s return (which reports only a newly shown
    * level, for the monitor tally): hiding a level, a time-driven stale-hold
-   * expiry, or a cross-fade weight step all change pixels too. Read and
+   * expiry, or a dissolve weight step all change pixels too. Read and
    * cleared by {@link takeDrawnStateChanged} — the render-on-change loop's
    * signal to redraw.
    */
@@ -2024,14 +2025,16 @@ export class LODGroupRegistry {
    *
    * Off / non-blendable / off-screen / locked / a held-stale display ⇒ no
    * dissolve (byte-identical hard swap). Nor for a level picked by the GSplat
-   * projected-FOOTPRINT rule (``PICK.usedFootprint``): that rule picks the
-   * coarsest level whose splats stay under ``config.lod.maxMedianFootprintPx``,
-   * i.e. the levels are swapped where they look the same on screen — there is
-   * no visible pop to hide, and drawing both levels for ``fadeMs`` would only
-   * add a second level's overdraw. For the same reason the footprint path
-   * leaves ``preloadMetric`` null, so it gets no band preload either: its
-   * switch point is a pixel-size threshold, not a coverage threshold the band
-   * is measured against.
+   * projected-FOOTPRINT rule (``PICK.usedFootprint``). That rule picks the
+   * coarsest level whose median splat stays under
+   * ``config.lod.maxMedianFootprintPx``, so its swaps happen where splats are
+   * about a pixel across and the two levels are expected to read alike — the
+   * case the dissolve exists for (a visible pop) should not arise, and drawing
+   * both levels for ``fadeMs`` would add a second level's overdraw. The
+   * footprint path leaves ``preloadMetric`` null too, so it gets no band
+   * preload: the band is measured against coverage thresholds, and its switch
+   * point is a pixel-size threshold. (A design reading, not a measured
+   * guarantee: if footprint swaps are seen to pop, this is the gate to open.)
    */
   private dissolveStep(
     entry: LODGroupEntry,
@@ -2137,7 +2140,7 @@ export class LODGroupRegistry {
   }
 
   /**
-   * One child's opacity under ``FADE_MODE``. Cross-fade weight only when a
+   * One child's opacity under ``FADE_MODE``. Dissolve weight only when a
    * partner is in flight (primary at α, partner at 1−α); otherwise no coverage
    * weight (null ⇒ 1). Energy compensation is folded in PER-LEAF inside
    * applyChildFade, so it also covers a plainly-displayed streaming level with
@@ -2444,7 +2447,7 @@ export class LODGroupRegistry {
   }
 
   /**
-   * Apply the per-leaf LOD anti-popping opacity (cross-fade weight ×
+   * Apply the per-leaf LOD anti-popping opacity (dissolve weight ×
    * streaming `1/e(k)` energy compensation) to a child's leaf materials, or
    * restore the authored opacity — see {@link applyLodFade}
    * (``lod-fade.ts``) for the full mechanics. This wrapper supplies the

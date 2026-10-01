@@ -472,12 +472,13 @@ export interface UrlParams {
   /** Clear caches on init (`?clearCache`). */
   clearCache: boolean;
   /**
-   * Whether the substitutive-LOD cross-fade is enabled: blend adjacent LOD
-   * levels' opacity as the camera zooms across their boundary instead of a hard
-   * visibility swap, for blendable (additive/luminous/volumetric) layers
-   * (anti-popping). **On by
-   * default**; pass `?noLodFade` to disable it (e.g. to compare against the
-   * hard swap or isolate a rendering issue).
+   * Whether the substitutive-LOD level dissolve is enabled: when a blendable
+   * (additive/luminous/volumetric) group changes its displayed level, dissolve
+   * the outgoing level into the incoming one over `config.lod.fadeMs` instead
+   * of a hard visibility swap (anti-popping). Driven by time since the change,
+   * not by the camera's distance to a threshold, so a parked camera always
+   * settles on one level. **On by default**; pass `?noLodFade` to disable it
+   * (e.g. to compare against the hard swap or isolate a rendering issue).
    */
   lodFade: boolean;
   /**
@@ -496,8 +497,8 @@ export interface UrlParams {
    * (additive/luminous/volumetric)
    * LOD leaf's additive ladder streams in, scale its opacity by `1/e(k)` so the
    * partial prefix renders at full-level brightness instead of brightening up as
-   * chunks arrive (anti-popping on the time axis, orthogonal to `lodFade`'s
-   * distance axis). **On by default**; pass `?noLodEnergy` to disable it (e.g.
+   * chunks arrive (anti-popping WITHIN one level's stream, orthogonal to
+   * `lodFade`'s dissolve BETWEEN levels). **On by default**; pass `?noLodEnergy` to disable it (e.g.
    * to compare against the uncompensated brightening ramp).
    */
   lodEnergyComp: boolean;
