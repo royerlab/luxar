@@ -1027,7 +1027,7 @@
   },
   "src/scene/lod-group-registry.ts": {
     "complexity": {
-      "count": 5
+      "count": 4
     },
     "max-depth": {
       "count": 1

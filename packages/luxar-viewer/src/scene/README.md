@@ -30,7 +30,12 @@ scene/
 ├── scene-dims-manager.ts           # nD dimension coordination
 ├── dimension-loading.ts            # Current-slice loading + playback prefetch
 ├── view-context.ts                 # The camera snapshot (view, projection, frustum, sizes); rebuilt on a camera change or per-frame invalidate
-├── lod-group-registry.ts           # Per-frame LOD-group selector (policy/state machine)
+├── lod-group-registry.ts           # Per-frame LOD-group selector (the orchestrator)
+├── lod-dissolve.ts                 # Time-driven level dissolve state machine
+├── playback-aspiration.ts          # Reload timing (EWMA), playback level cap, probes
+├── partition-gate.ts               # kind=partition culling, re-entry resync, lazy part activation
+├── capture-quiescence.ts           # Offline-capture "frame is final" predicate
+├── tick-demand.ts                  # Liveness contract: until when a component needs ticks
 ├── lod-selector-math.ts            # Selector math: world-box fold, box→area/diagonal projections, hysteresis pick
 ├── lod-blend.ts                    # Pure opacity math: level-dissolve curve + energy compensation
 ├── lod-fade.ts                     # Material-level fade appliers (clone-on-first-fade)
@@ -1341,7 +1346,25 @@ _For implementation details, see the source files in this directory._
   - asymmetric hysteresis), lazy-load gating, and the display/fade/
     eviction orchestration. Re-exports `projectBoxAreaFraction`,
     `projectBoxDiagonalPx` and `pickChildWithHysteresis` from
-    `lod-selector-math.ts`.
+    `lod-selector-math.ts`, and the partition types from
+    `partition-gate.ts`. Its stateful collaborators each own one concern
+    and state their liveness through `tick-demand.ts`
+    (`tickUntilMs()`: until when the loop must keep ticking —
+    `NO_TICK`, a deadline, or `UNTIL_RESOLVED`); `evaluatePerFrame` folds
+    them into one `requestTick`:
+  - `lod-dissolve.ts` — `LodDissolves`: the in-flight level dissolves
+    (start, retarget, end, drop) as a state machine; ticks while one is
+    in flight.
+  - `playback-aspiration.ts` — `foldLoadTime` (the reload EWMA; only full
+    loads/reloads are timed) and `PlaybackAspiration` (admission with
+    keep-budget hysteresis, the periodic probe whose replace mark is set
+    only when its reload starts and cleared when playback stops).
+  - `partition-gate.ts` — `PartitionGate`: per-part frustum/slice culling,
+    the coalesced re-entry resync, deferred-part (B4) activation and its
+    request timeout; ticks while a visible resync or an activation request
+    is outstanding (only when `requestReprocess` is wired).
+  - `capture-quiescence.ts` — `isCaptureQuiescent`, the offline-capture
+    drain predicate over lod_groups and partitions.
 - `lod-selector-math.ts` — The selector's camera-geometry math:
   `computeEntryWorldBox` (nD raw or robust bounds → world box via
   displayDims), `projectBoxAreaFraction` (world box → fraction of the
