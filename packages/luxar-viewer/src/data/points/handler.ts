@@ -10,6 +10,7 @@
  */
 
 import { findObjectByName } from '../../utils/scene-graph-index';
+import { withPassDirectives, type PassDirectives } from '../loaders/pass-directives';
 import * as THREE from 'three';
 import type { DataLoader, GeometryKind, LoadedPointsData, ViewState } from '../data-loader-types';
 import { log, Modules } from '../../utils/log';
@@ -27,7 +28,7 @@ export interface StagedPointsCommit {
 }
 
 /** Bundle of host references the handler needs to do its work. */
-export interface PointsHandlerCtx {
+export interface PointsHandlerCtx extends PassDirectives {
   rootGroup: THREE.Group | null;
   viewStateQueue: ViewStateQueue;
   /** Called on a successful load to clear the path's failure record. */
@@ -42,18 +43,6 @@ export interface PointsHandlerCtx {
   extendedToleranceCache: Map<string, number[]>;
   /** Per-update abort signal forwarded to `loader.updateView` (see DataLoader). */
   signal?: AbortSignal;
-  /**
-   * Per-tick LOD time budget during dimension-animation playback (see
-   * `ViewState.frameBudgetMs`). Injected into the DERIVED per-node view
-   * state below — a per-pass directive, so refinement/retry passes (which
-   * derive independently) stay budget-free.
-   */
-  frameBudgetMs?: number;
-  /**
-   * Pinned playback ladder depth (see `ViewState.ladderDepth`). Same per-pass
-   * contract as `frameBudgetMs`: injected into the DERIVED view state only.
-   */
-  ladderDepth?: number | 'auto';
 }
 
 /**
@@ -89,12 +78,9 @@ export async function loadAndStage(
   // derived as a normal node with a slice-INVARIANT query, so it flows through
   // the standard load path below: the first sweep fetches it and every later
   // sweep hits the loader's same-view memoized no-op. No skip shortcut.
-  // Playback frame budget rides the derived per-node view state (per-pass
-  // directive; absent outside animation playback — see ctx.frameBudgetMs).
-  const pointsViewState: ViewState =
-    ctx.frameBudgetMs !== undefined || ctx.ladderDepth !== undefined
-      ? { ...derived.viewState, frameBudgetMs: ctx.frameBudgetMs, ladderDepth: ctx.ladderDepth }
-      : derived.viewState;
+  // Playback directives ride the derived per-node view state (per-pass;
+  // absent outside animation playback — see `PassDirectives`).
+  const pointsViewState: ViewState = withPassDirectives(derived.viewState, ctx);
   const data = await loader.updateView(pointsViewState, session, ctx.signal);
   if (!data) {
     markPathHealthy();

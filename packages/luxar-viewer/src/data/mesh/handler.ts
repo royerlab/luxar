@@ -8,6 +8,7 @@
  */
 
 import { findObjectByName } from '../../utils/scene-graph-index';
+import { withPassDirectives, type PassDirectives } from '../loaders/pass-directives';
 import * as THREE from 'three';
 import type { GeometryKind, ViewState } from '../data-loader-types';
 import type { MeshDataLoader, MeshMetadata, MeshViewState } from '../../types/mesh';
@@ -22,7 +23,7 @@ import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-toleran
 export const kind: GeometryKind = 'mesh';
 export const label = 'Mesh' as const;
 
-export interface MeshHandlerCtx {
+export interface MeshHandlerCtx extends PassDirectives {
   rootGroup: THREE.Group | null;
   clearFailure(path: string): void;
   currentVersion: number;
@@ -34,18 +35,6 @@ export interface MeshHandlerCtx {
   extendedToleranceCache: Map<string, number[]>;
   /** Per-update abort signal forwarded to `loader.updateView` (see DataLoader). */
   signal?: AbortSignal;
-  /**
-   * Per-tick LOD time budget during dimension-animation playback (see
-   * `ViewState.frameBudgetMs`). Injected into the DERIVED per-node view
-   * state below — a per-pass directive, so refinement/retry passes (which
-   * derive independently) stay budget-free.
-   */
-  frameBudgetMs?: number;
-  /**
-   * Pinned playback ladder depth (see `ViewState.ladderDepth`). Same per-pass
-   * contract as `frameBudgetMs`: injected into the DERIVED view state only.
-   */
-  ladderDepth?: number | 'auto';
 }
 
 /**
@@ -96,12 +85,9 @@ export async function loadAndStage(
    */
   const markPathHealthy = (): void => ctx.clearFailure(path);
 
-  // Playback frame budget rides the derived per-node view state (per-pass
-  // directive; absent outside animation playback — see ctx.frameBudgetMs).
-  const meshViewState: MeshViewState =
-    ctx.frameBudgetMs !== undefined || ctx.ladderDepth !== undefined
-      ? { ...derived.viewState, frameBudgetMs: ctx.frameBudgetMs, ladderDepth: ctx.ladderDepth }
-      : derived.viewState;
+  // Playback directives ride the derived per-node view state (per-pass;
+  // absent outside animation playback — see `PassDirectives`).
+  const meshViewState: MeshViewState = withPassDirectives(derived.viewState, ctx);
   const data = await loader.updateView(meshViewState, session, ctx.signal);
   if (!data) {
     // The mesh loader is whole-node resident and always returns data in

@@ -233,11 +233,6 @@
       "count": 1
     }
   },
-  "src/data/gsplats/handler.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
   "src/data/gsplats/lod-refinement.ts": {
     "complexity": {
       "count": 1

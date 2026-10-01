@@ -443,6 +443,10 @@ attach` re-consolidates), so a scene without the sidecar costs NO request. An
   `updateViewWithResidency` bodies). Reentrant: each call withdraws exactly its
   own entry; while calls overlap, a read is cancelled only once every call is
   aborted and is recorded into every call's probe.
+- **`pass-directives.ts`** — `PassDirectives` (`frameBudgetMs`, `ladderDepth`)
+  and `withPassDirectives(viewState, directives)`: the per-pass playback
+  directives every node handler injects into its DERIVED view state (the same
+  object when the pass has none).
 - **`abortable-wait.ts`** — `abortableWait(shared, signal)`: join a single-flight
   promise while giving up on the caller's own signal, without cancelling the
   shared work for the other joiners.
@@ -486,6 +490,7 @@ src/data/loaders/
 ├── loader-lifetime.ts            # Disposed latch, lifetime signal, init, per-call context
 ├── active-load-context.ts        # Reentrant per-call signal/probe for the L0 proxies
 ├── abortable-wait.ts             # Per-caller abortable wait on a shared promise
+├── pass-directives.ts            # withPassDirectives — playback directives into a node view
 ├── monitor-events.ts             # LoaderEventEmitter — listener fan-out with error isolation
 ├── once-init.ts                  # One-shot async initializer with retry-on-failure
 ├── extend-to-all-preflight.ts    # Shared extend_to_all warning + one-time announce

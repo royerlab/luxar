@@ -8,6 +8,7 @@
  */
 
 import { findObjectByName } from '../../utils/scene-graph-index';
+import { withPassDirectives, type PassDirectives } from '../loaders/pass-directives';
 import * as THREE from 'three';
 import type { GeometryKind, ViewState } from '../data-loader-types';
 import type {
@@ -28,7 +29,7 @@ import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-toleran
 export const kind: GeometryKind = 'gsplats';
 export const label = 'GSplats' as const;
 
-export interface GSplatsHandlerCtx {
+export interface GSplatsHandlerCtx extends PassDirectives {
   rootGroup: THREE.Group | null;
   viewStateQueue: ViewStateQueue;
   clearFailure(path: string): void;
@@ -42,18 +43,6 @@ export interface GSplatsHandlerCtx {
   ): { skip: false; viewState: ViewState };
   /** Per-update abort signal forwarded to `loader.updateView` (see DataLoader). */
   signal?: AbortSignal;
-  /**
-   * Per-tick LOD time budget during dimension-animation playback (see
-   * `ViewState.frameBudgetMs`). Injected into the DERIVED per-node view
-   * state below — a per-pass directive, so refinement/retry passes (which
-   * derive independently) stay budget-free.
-   */
-  frameBudgetMs?: number;
-  /**
-   * Pinned playback ladder depth (see `ViewState.ladderDepth`). Same per-pass
-   * contract as `frameBudgetMs`: injected into the DERIVED view state only.
-   */
-  ladderDepth?: number | 'auto';
 }
 
 /**
@@ -87,12 +76,9 @@ export async function loadAndStage(
   // A fully-extended node is derived as a normal node with a slice-INVARIANT
   // query (see deriveNodeViewState), so it flows through the standard load path
   // below — first sweep fetches, later sweeps hit the same-view no-op. No skip.
-  // Playback frame budget rides the derived per-node view state (per-pass
-  // directive; absent outside animation playback — see ctx.frameBudgetMs).
-  const gsplatsViewState: GSplatsViewState =
-    ctx.frameBudgetMs !== undefined || ctx.ladderDepth !== undefined
-      ? { ...derived.viewState, frameBudgetMs: ctx.frameBudgetMs, ladderDepth: ctx.ladderDepth }
-      : derived.viewState;
+  // Playback directives ride the derived per-node view state (per-pass;
+  // absent outside animation playback — see `PassDirectives`).
+  const gsplatsViewState: GSplatsViewState = withPassDirectives(derived.viewState, ctx);
   const data: LoadedGSplatsData | null = await loader.updateView(
     gsplatsViewState,
     session,
