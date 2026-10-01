@@ -63,7 +63,8 @@ export interface LinesDualChunkIndex {
  */
 export async function loadLinesDualChunkIndex(
   zarrLocation: zarr.Location<zarr.Readable>,
-  attrs: LinesMetadata
+  attrs: LinesMetadata,
+  signal?: AbortSignal
 ): Promise<LinesDualChunkIndex | null> {
   if (attrs.ordering === 'none' || !attrs.vertex_ordering || !attrs.segment_ordering) {
     log.info(
@@ -77,7 +78,8 @@ export async function loadLinesDualChunkIndex(
     zarrLocation,
     'vertex_chunk_bounds',
     Modules.LINES_LOADER,
-    'No chunk bounds found - Lines dataset has no spatial indexing'
+    'No chunk bounds found - Lines dataset has no spatial indexing',
+    signal
   );
   if (!vertexResult) return null;
 
@@ -85,7 +87,8 @@ export async function loadLinesDualChunkIndex(
     zarrLocation,
     'segment_chunk_bounds',
     Modules.LINES_LOADER,
-    'No chunk bounds found - Lines dataset has no spatial indexing'
+    'No chunk bounds found - Lines dataset has no spatial indexing',
+    signal
   );
   if (!segmentResult) return null;
 

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { LoaderLifetime } from '../../../../data/loaders/loader-lifetime';
+import { signalPriority } from '../../../../utils/fetch-concurrency';
 
 describe('LoaderLifetime', () => {
   it('latches disposal and aborts its signal, idempotently', () => {
@@ -58,5 +59,55 @@ describe('LoaderLifetime', () => {
     const lifetime = new LoaderLifetime();
     const boom = new Error('boom');
     await expect(lifetime.guardInit('x', () => Promise.reject(boom), vi.fn())).rejects.toBe(boom);
+  });
+
+  it('ensureInitialized shares one in-flight attempt and retries after a failure', async () => {
+    const lifetime = new LoaderLifetime();
+    const init = vi.fn().mockRejectedValueOnce(new Error('flaky')).mockResolvedValue(undefined);
+    await expect(lifetime.ensureInitialized('x', init, vi.fn())).rejects.toThrow('flaky');
+    await Promise.all([
+      lifetime.ensureInitialized('x', init, vi.fn()),
+      lifetime.ensureInitialized('x', init, vi.fn()),
+    ]);
+    expect(init).toHaveBeenCalledTimes(2);
+    expect(lifetime.initialized).toBe(true);
+  });
+
+  it('a prioritised init rides a tagged child of the lifetime signal, raised by a plain call', async () => {
+    const lifetime = new LoaderLifetime();
+    let seen: AbortSignal | undefined;
+    let finish!: () => void;
+    const warm = lifetime.ensureInitialized(
+      'x',
+      (signal) => {
+        seen = signal;
+        return new Promise<void>((resolve) => (finish = resolve));
+      },
+      vi.fn(),
+      'refinement'
+    );
+    expect(signalPriority(seen)?.value).toBe('refinement');
+    const demand = lifetime.ensureInitialized('x', vi.fn(), vi.fn());
+    expect(signalPriority(seen)?.value).toBe('demand');
+    finish();
+    await Promise.all([warm, demand]);
+  });
+
+  it('dispose aborts a prioritised init and resets the one-shot', async () => {
+    const lifetime = new LoaderLifetime();
+    let seen: AbortSignal | undefined;
+    const warm = lifetime.ensureInitialized(
+      'x',
+      (signal) => {
+        seen = signal;
+        return new Promise<void>(() => undefined);
+      },
+      vi.fn(),
+      'speculative'
+    );
+    lifetime.dispose();
+    expect(seen?.aborted).toBe(true);
+    expect(lifetime.initialized).toBe(false);
+    void warm.catch(() => undefined);
   });
 });

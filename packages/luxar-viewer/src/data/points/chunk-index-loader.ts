@@ -58,7 +58,8 @@ export interface PointsChunkIndex {
 }
 
 /**
- * Probe `chunk_bounds` under `zarrLocation` and assemble a
+ * Probe `chunk_bounds` under `zarrLocation` (the read rides `signal`, which
+ * carries its fetch priority) and assemble a
  * `PointsChunkIndex`. Returns `null` for the two soft-fail cases
  * the loader already handled inline:
  *   - the node has no spatial ordering (`ordering` is undefined or
@@ -73,7 +74,8 @@ export interface PointsChunkIndex {
  */
 export async function loadPointsChunkIndex(
   zarrLocation: zarr.Location<zarr.Readable>,
-  nodeAttrs: PointsNodeAttrsForIndex
+  nodeAttrs: PointsNodeAttrsForIndex,
+  signal?: AbortSignal
 ): Promise<PointsChunkIndex | null> {
   if (!nodeAttrs.ordering || nodeAttrs.ordering === 'none') {
     log.info(Modules.SPATIAL_INDEX, 'No spatial ordering — skipping chunk_bounds probe');
@@ -84,7 +86,8 @@ export async function loadPointsChunkIndex(
     zarrLocation,
     'chunk_bounds',
     Modules.SPATIAL_INDEX,
-    'No chunk_bounds found - dataset has no spatial indexing'
+    'No chunk_bounds found - dataset has no spatial indexing',
+    signal
   );
   if (!result) return null;
 

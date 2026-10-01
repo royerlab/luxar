@@ -63,7 +63,7 @@ export interface SpatialFacadeCtx {
   /** Emit a monitor event through the loader's listener set. */
   emit(event: MonitorEvent): void;
   /**
-   * The current update's abort signal (the loader's `_calls.signal`), so a
+   * The current update's abort signal (the loader's `_lifetime.calls.signal`), so a
    * wait for an in-flight shadow store stops when the update is superseded.
    */
   activeSignal?(): AbortSignal | null;

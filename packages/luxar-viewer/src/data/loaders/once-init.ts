@@ -1,20 +1,16 @@
 /**
  * One-shot async initializer with retry-on-failure semantics.
  *
- * Each spatial-index loader wraps its `initialize()` method in the same
- * guard: cache the in-flight promise so concurrent callers all await the
- * same work, but null it back out on rejection so the next caller can
- * retry from scratch. That pattern was duplicated four times across the
- * three loaders. This helper centralizes it.
+ * Cache the in-flight promise so concurrent callers all await the same work,
+ * but null it back out on rejection so the next caller can retry from
+ * scratch. The spatial-index loaders reach it through
+ * `LoaderLifetime.ensureInitialized` (`./loader-lifetime`), which adds the
+ * disposed latch and the initialization priority on top.
  *
  * @example
  * ```ts
- * private _onceInit = new OnceInit();
- *
- * async loadGSplats(...) {
- *   await this._onceInit.ensure(() => this.initialize());
- *   // ...
- * }
+ * const once = new OnceInit();
+ * await once.ensure(() => initialize());
  * ```
  *
  * @module data/loaders/once-init

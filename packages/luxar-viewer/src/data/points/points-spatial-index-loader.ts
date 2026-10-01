@@ -7,7 +7,7 @@
  */
 
 import * as zarr from '../zarr';
-import { ActiveLoadContext } from '../loaders/active-load-context';
+import type { FetchPriority } from '../../utils/fetch-concurrency';
 import { LoaderLifetime } from '../loaders/loader-lifetime';
 import { isArrayListed } from '../loaders/optional-array-listing';
 import { log, LogEmoji, Modules } from '../../utils/log';
@@ -58,7 +58,6 @@ import {
   colorComponentsOf,
   prefetchRangesIntoCache,
   planChunkBoundaryViewStates,
-  OnceInit,
   makeInitialLoaderMetrics,
   buildSpatialIndexMetrics,
   loadSliceWithCache,
@@ -126,8 +125,12 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   private _effectiveRadiusConfig: EffectiveRadiusConfig | null = null;
   private zarrLocation: zarr.Location<zarr.Readable>;
   private node: SceneNode;
-  private _onceInit = new OnceInit();
-  /** Disposed latch + lifetime signal (see `LoaderLifetime`). */
+  /**
+   * Disposed latch, lifetime signal, one-shot initialization and the per-call
+   * demand-load context (`lifetime.calls`) the wrapped arrays' getChunk reads
+   * through the `() => this._lifetime.calls.signal` / `.probe` thunks below
+   * (see `LoaderLifetime`, `ActiveLoadContext`).
+   */
   private readonly _lifetime = new LoaderLifetime();
   private arrays: {
     positions?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -144,12 +147,6 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   // Data accumulator for object pooling.
   private _accumulator: LoadedPointsDataAccumulator | null = null;
   private _accumulatorConfig: { capacity: number; ndim: number; totalPoints: number } | null = null;
-  /**
-   * Bumped by {@link dispose}. A load that started before the bump was
-   * abandoned on purpose (dataset switch) and must not finish — see the
-   * disposed-during-load guard in `loadPointsInternal`.
-   */
-  private _disposeGeneration = 0;
 
   /**
    * Components per color item, learned from the zarr `colors` shape at
@@ -173,14 +170,6 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
   private l0Cache: DecompressedChunkCache | null = null;
-
-  // The in-flight demand loads' abort signals and residency probes, published
-  // to the wrapped arrays' getChunk through the `() => this._calls.signal` /
-  // `() => this._calls.probe` thunks below. Per call and reentrant: each
-  // `updateView` / `updateViewWithResidency` registers its own entry and
-  // withdraws exactly that one (see `ActiveLoadContext`). Empty between loads,
-  // so prefetch traffic is neither recorded nor cancelled by a demand load.
-  private readonly _calls = new ActiveLoadContext();
 
   // Chunk prefetcher (optional, for registering array bounds to suppress 404s)
   private prefetcher: ChunkPrefetcher | null = null;
@@ -215,7 +204,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     this.rangeLoader = new RangeLoader(refRegistry || new ArrayRefRegistry());
     // Forward the per-update abort signal into worker decodes (LUT/quantized/
     // broadcasted) so a superseded update's decode bails before dispatch.
-    this.rangeLoader.setSignalSource(() => this._calls.signal);
+    this.rangeLoader.setSignalSource(() => this._lifetime.calls.signal);
     this.zarrStore = zarrStore || null;
     this.l0Cache = l0Cache || null;
     // array_ref targets: opened once per (store, target) and read through L0
@@ -225,8 +214,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       this.rangeLoader.setRefTargetWrapper({
         wrap: (array, targetPath) =>
           wrapWithCache(array, l0Cache, targetPath, {
-            getProbe: () => this._calls.probe,
-            getSignal: () => this._calls.signal,
+            getProbe: () => this._lifetime.calls.probe,
+            getSignal: () => this._lifetime.calls.signal,
             aliasOnMiss: L0_ALIAS_ON_MISS,
           }),
         epoch: () => l0Cache.generation,
@@ -244,7 +233,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       nextQueryId: () => this.nextQueryId++,
       accumulatorMemoryMB: () => this.getAccumulatorStats()?.memoryMB ?? 0,
       emit: (event) => this.emitEvent(event),
-      activeSignal: () => this._calls.signal,
+      activeSignal: () => this._lifetime.calls.signal,
     };
   }
 
@@ -258,29 +247,36 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   }
 
   /**
-   * Initialize once, under the disposed latch: a disposed loader refuses to
-   * re-initialize, and an initialization still in flight when {@link dispose}
-   * runs is discarded instead of repopulating the loader.
+   * Initialize metadata once without loading any attribute payload chunks,
+   * under the disposed latch (`LoaderLifetime.ensureInitialized`): a disposed
+   * loader refuses to re-initialize, and an initialization still in flight
+   * when {@link dispose} runs is discarded instead of repopulating the loader.
+   *
+   * `priority` classes the `chunk_bounds` read of an initialization THIS call
+   * starts (B6: a progressive loader warms rung k+1's index at
+   * `'refinement'` while rung k loads; the speculative entry points pass
+   * `'speculative'`). A later call without one raises an in-flight warm to
+   * `demand`.
    */
-  private ensureInit(): Promise<void> {
-    return this._onceInit.ensure(() =>
-      this._lifetime.guardInit(
-        `Points loader ${this.node.path}`,
-        () => this.initialize(),
-        () => this.dispose()
-      )
+  ensureInitialized(priority?: FetchPriority): Promise<void> {
+    return this._lifetime.ensureInitialized(
+      `Points loader ${this.node.path}`,
+      (signal) => this.initialize(signal),
+      () => this.dispose(),
+      priority
     );
   }
 
   /**
    * Initialize the loader by loading spatial index and opening arrays
    */
-  async initialize(): Promise<void> {
+  async initialize(signal?: AbortSignal): Promise<void> {
     // Load chunk-based spatial index
     try {
       this.chunkIndex = await loadPointsChunkIndex(
         this.zarrLocation,
-        this.node.attrs as PointsNodeAttrs
+        this.node.attrs as PointsNodeAttrs,
+        signal
       );
 
       if (!this.chunkIndex) {
@@ -394,8 +390,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
           this.l0Cache,
           `${this.node.path}/positions`,
           {
-            getProbe: () => this._calls.probe,
-            getSignal: () => this._calls.signal,
+            getProbe: () => this._lifetime.calls.probe,
+            getSignal: () => this._lifetime.calls.signal,
             aliasOnMiss: L0_ALIAS_ON_MISS,
           }
         );
@@ -419,8 +415,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         // Wrap with L0 cache if enabled
         if (this.l0Cache) {
           colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`, {
-            getProbe: () => this._calls.probe,
-            getSignal: () => this._calls.signal,
+            getProbe: () => this._lifetime.calls.probe,
+            getSignal: () => this._lifetime.calls.signal,
             aliasOnMiss: L0_ALIAS_ON_MISS,
           });
         }
@@ -449,8 +445,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         // Wrap with L0 cache if enabled
         if (this.l0Cache) {
           radiiArray = wrapWithCache(radiiArray, this.l0Cache, `${this.node.path}/radii`, {
-            getProbe: () => this._calls.probe,
-            getSignal: () => this._calls.signal,
+            getProbe: () => this._lifetime.calls.probe,
+            getSignal: () => this._lifetime.calls.signal,
             aliasOnMiss: L0_ALIAS_ON_MISS,
           });
         }
@@ -481,8 +477,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
             this.l0Cache,
             `${this.node.path}/sharpnesses`,
             {
-              getProbe: () => this._calls.probe,
-              getSignal: () => this._calls.signal,
+              getProbe: () => this._lifetime.calls.probe,
+              getSignal: () => this._lifetime.calls.signal,
               aliasOnMiss: L0_ALIAS_ON_MISS,
             }
           );
@@ -509,8 +505,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         this.registerBounds('scalars', scalarsArray);
         if (this.l0Cache) {
           scalarsArray = wrapWithCache(scalarsArray, this.l0Cache, `${this.node.path}/scalars`, {
-            getProbe: () => this._calls.probe,
-            getSignal: () => this._calls.signal,
+            getProbe: () => this._lifetime.calls.probe,
+            getSignal: () => this._lifetime.calls.signal,
             aliasOnMiss: L0_ALIAS_ON_MISS,
           });
         }
@@ -574,8 +570,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     queryId: string,
     startTime: number
   ): Promise<LoadedPointsData> {
-    const disposeGeneration = this._disposeGeneration;
-    await this.ensureInit();
+    await this.ensureInitialized();
 
     // Check if loader is properly initialized (chunk index OR fallback with total points count)
     if (!this.chunkIndex && this.totalPointsNoIndex === 0) {
@@ -806,9 +801,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     // stages null quietly — instead of projecting into a disposed accumulator
     // and handing back a payload for a loader that no longer exists. The
     // Points counterpart of the Lines/GSplats accumulator-identity guard.
-    if (this._disposeGeneration !== disposeGeneration) {
-      throw new DOMException(`Points loader disposed during load: ${this.node.path}`, 'AbortError');
-    }
+    this._lifetime.throwIfDisposed(`Points loader disposed during load: ${this.node.path}`);
 
     let result: LoadedPointsData;
     if (session) {
@@ -860,7 +853,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     session?: UpdateSession,
     signal?: AbortSignal
   ): Promise<LoadedPointsData> {
-    return this._calls.runWithSignal(signal, async () => {
+    return this._lifetime.calls.runWithSignal(signal, async () => {
       const result = await this.loadPoints(viewState, session);
       if (!this._initialLoadDone) {
         this._initialLoadDone = true;
@@ -879,7 +872,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     session?: UpdateSession,
     signal?: AbortSignal
   ): Promise<{ data: LoadedPointsData; allResident: boolean }> {
-    return this._calls.runWithProbe(() => this.updateView(viewState, session, signal));
+    return this._lifetime.calls.runWithProbe(() => this.updateView(viewState, session, signal));
   }
 
   /**
@@ -895,7 +888,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
    */
   async prefetchChunks(viewState: ViewState, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) return;
-    await this.ensureInit();
+    await this.ensureInitialized();
 
     if (!this.arrays.positions) return;
 
@@ -919,7 +912,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     signal?: AbortSignal
   ): Promise<void> {
     if (signal?.aborted) return;
-    await this.ensureInit();
+    await this.ensureInitialized();
     if (!this.chunkIndex || !this.arrays.positions) {
       await this.prefetchChunks(predicted, signal);
       return;
@@ -1548,10 +1541,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
    */
   dispose(): void {
     this._lifetime.dispose();
-    this._disposeGeneration++;
     this.chunkIndex = null;
     this.arrays = {};
-    this._onceInit.reset();
     this.events.clear();
     this.activeQueries.clear();
 

@@ -41,6 +41,7 @@
  */
 
 import * as zarr from '../zarr';
+import { LoaderLifetime } from '../loaders/loader-lifetime';
 import { log, Modules } from '../../utils/log';
 import { ArrayDecoder, type ArrayMetadata, type ArrayRefRegistry } from '../array-decoder/decoder';
 import { colorComponentsOf, loadColorRanges } from '../loaders';
@@ -234,17 +235,17 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
   private inFlight: Promise<LoadedMeshData> | null = null;
 
   /**
-   * Aborts the in-flight reads when the loader is torn down.
-   *
-   * The generation token below stops a post-dispose completion from
-   * repopulating the cache, but on its own it lets the transfer RUN to
-   * completion first — for a near-budget mesh that is up to half a gigabyte
-   * fetched and decoded for nothing, concurrently with whatever replaced the
-   * node. Aborting the reads stops the spend, not just the publish.
-   * Replaced (not just aborted) on {@link dispose} so the reuse-after-dispose
-   * path starts with a live signal.
+   * The current lifetime (see `LoaderLifetime`): its signal aborts the
+   * in-flight reads when the loader is torn down, and its IDENTITY is the
+   * generation token that stops a post-dispose completion from repopulating
+   * the cache. Both matter: the token alone would let a near-budget transfer
+   * (up to half a gigabyte) run to completion for nothing, concurrently with
+   * whatever replaced the node; the abort alone would still let a settle that
+   * raced it publish. Replaced (not latched) on {@link dispose}: mesh disposal
+   * is state-clearing, so the reuse-after-dispose path starts with a fresh,
+   * live lifetime.
    */
-  private aborter = new AbortController();
+  private lifetime = new LoaderLifetime();
 
   /**
    * The signal governing the current fetch, sourced by the shared
@@ -254,8 +255,8 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
    * sufficient.
    *
    * NAMED DIFFERENTLY from its three siblings on purpose. Points, Lines and GSplats
-   * each hold a per-call `_calls` context and wire the identical
-   * `setSignalSource(() => this._calls.signal)` one line into their constructors, so
+   * each hold a per-call `_lifetime.calls` context and wire the identical
+   * `setSignalSource(() => this._lifetime.calls.signal)` one line into their constructors, so
    * this looks like a symmetry break — it is a lifetime difference. Their signal is
    * per-UPDATE: set at the top of every `updateView` and cleared in its `finally`,
    * live whenever the loader is doing anything. Mesh is whole-node resident, so it
@@ -265,17 +266,6 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
    * opposite of what holds.
    */
   private fetchSignal: AbortSignal | null = null;
-
-  /**
-   * Bumped by {@link dispose}, so a fetch that settles afterwards cannot write its
-   * result back into a loader that has been torn down.
-   *
-   * Without it, `dispose()` during an in-flight load leaves the completion free to
-   * repopulate `this.data` — resurrecting the cache on a dead loader, and for a
-   * near-budget mesh pinning up to half a gigabyte that nothing will ever read.
-   * Cheap enough that the whole-mesh payload makes it worth having.
-   */
-  private generation = 0;
 
   /**
    * Monitor telemetry for this node — see the LoaderMonitor section at the
@@ -327,8 +317,8 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
    * for *all* declared arrays, including the string-channel CSR pairs v1 never fetches.
    * The budget has to see them to be a budget.
    *
-   * Captures `generation` up front and guards BOTH publishes below with it,
-   * mirroring {@link load}'s own generation guard. Without this, a `dispose()`
+   * Captures the current `lifetime` up front and guards BOTH publishes below
+   * with it, mirroring {@link load}'s own lifetime guard. Without this, a `dispose()`
    * racing an in-flight `doInitialize()` — reachable with no `load()` in
    * flight at all, since {@link runPreflight} calls this too, including during
    * a dataset switch — would still let the metadata open complete and publish
@@ -337,7 +327,7 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
    * that window: the stale, non-null handles would look already-initialized.
    */
   private async doInitialize(): Promise<void> {
-    const generation = this.generation;
+    const lifetime = this.lifetime;
     const open = async (name: string) => zarr.open(this.location.resolve(name), { kind: 'array' });
 
     let vertices: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -387,7 +377,7 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
     // Only publish if this loader has not been disposed since this attempt began —
     // otherwise a dispose()-then-settle would resurrect `handles`/`preflight` on a
     // torn-down loader (see this method's docstring).
-    if (generation === this.generation) {
+    if (lifetime === this.lifetime) {
       this.preflight = preflight;
       this.handles = handles;
     }
@@ -632,8 +622,8 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
 
   /** Start the ONE shared fetch {@link load} hands to every caller. */
   private startFetch(): Promise<LoadedMeshData> {
-    const generation = this.generation;
-    const fetchSignal = this.aborter.signal;
+    const lifetime = this.lifetime;
+    const fetchSignal = lifetime.signal;
     this.fetchSignal = fetchSignal;
     // Wall-clock start of the ONE fetch this loader makes, for `avgLoadTime`.
     // Taken here rather than inside `fetch()` so it spans the metadata open and
@@ -645,7 +635,7 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
         // Only publish if this loader has not been disposed since the fetch began.
         // The caller still receives the data — it is view-independent, so it is not
         // wrong, just unwanted — but the loader does not retain it.
-        const retained = generation === this.generation;
+        const retained = lifetime === this.lifetime;
         if (retained) this.data = data;
         // Counted either way (the bytes really were fetched and decoded), but a
         // payload the loader did not retain must not be reported as resident
@@ -861,18 +851,15 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
   /**
    * Clear all cached state.
    *
-   * State-clearing rather than terminal, matching the sibling loaders (the points
-   * loader's `dispose` likewise drops its arrays and calls `_onceInit.reset()`):
-   * a subsequent `loadMesh` re-initializes and re-fetches rather than throwing.
+   * State-clearing rather than terminal — unlike the spatial-index siblings,
+   * whose `LoaderLifetime` latch makes disposal final: a subsequent `loadMesh`
+   * re-initializes and re-fetches rather than throwing.
    */
   dispose(): void {
-    this.generation++;
-    // Abort the in-flight reads, not just the publish: the generation bump
-    // alone lets a near-budget transfer run to completion for a loader nothing
-    // will ever read. A fresh controller replaces the tripped one so the
-    // re-initialize path below starts with a live signal.
-    this.aborter.abort();
-    this.aborter = new AbortController();
+    // Abort the in-flight reads AND retire the generation in one step; a fresh
+    // lifetime replaces the tripped one so the re-initialize path starts live.
+    this.lifetime.dispose();
+    this.lifetime = new LoaderLifetime();
     // An `ImageBitmap` holds a decoded surface OUTSIDE the JS heap, so dropping
     // the last reference does not free it — the spec requires an explicit
     // `close()`. A 2048x1024 basemap is 8 MB of native memory per node, and a
