@@ -124,13 +124,13 @@ export const COVERAGE_THRESHOLDS = {
   // is how a metric starts lying. Revisit once the job is required.
   // lines 74 -> 76 after the bloom live-texture binding tests moved measured
   // line coverage to 77.18 and check-coverage-slack flagged the old floor.
-  'src/rendering/**': { lines: 76, functions: 77, branches: 72 },
+  'src/rendering/**': { lines: 78, functions: 79, branches: 74 },
 };
 
 /** Last accepted coverage measurements for each floor. */
 export const COVERAGE_RECORDED = {
   lines: 90.55,
-  statements: 88.43,
+  statements: 89.58,
   functions: 88.02,
   branches: 84.11,
   'src/types/**': { lines: 99, functions: 96.77, branches: 98.05 },
@@ -145,5 +145,5 @@ export const COVERAGE_RECORDED = {
   'src/ui/**': { lines: 92.0, functions: 86.95, branches: 79.58 },
   'src/core/**': { lines: 91.11, functions: 78.49, branches: 86.94 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
-  'src/rendering/**': { lines: 77.18, functions: 79.66, branches: 74.64 },
+  'src/rendering/**': { lines: 79, functions: 80.73, branches: 75.88 },
 };
