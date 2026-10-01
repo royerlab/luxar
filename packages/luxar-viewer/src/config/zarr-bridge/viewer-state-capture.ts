@@ -24,6 +24,23 @@ import { isOrthographicCamera } from '../../utils/camera-utils';
 const _warnedUnknownStateKeys = new Set<string>();
 
 /**
+ * RenderingSettings keys that are deliberately NOT exported as top-level
+ * viewer_config fields, so dropping them is not worth a warning: the lens and
+ * clipping planes are captured into the `camera` block below, and the orbit
+ * zoom / damping and fly-look speeds are viewer-local preferences with no
+ * viewer_config counterpart.
+ */
+const NOT_TOP_LEVEL_KEYS: ReadonlySet<string> = new Set([
+  'fov',
+  'fovPreset',
+  'near',
+  'far',
+  'orbitZoomSpeed',
+  'orbitDampingFactor',
+  'flyLookSpeed',
+]);
+
+/**
  * Capture the complete viewer state as a ZarrViewerConfig object.
  *
  * This produces the same JSON format stored in zarr viewer_config,
@@ -104,7 +121,7 @@ export function captureViewerState(
     const snakeKey = REVERSE_SETTINGS_MAP[camelKey];
     if (snakeKey) {
       (result as Record<string, unknown>)[snakeKey] = value;
-    } else if (!_warnedUnknownStateKeys.has(camelKey)) {
+    } else if (!NOT_TOP_LEVEL_KEYS.has(camelKey) && !_warnedUnknownStateKeys.has(camelKey)) {
       _warnedUnknownStateKeys.add(camelKey);
       log.warning(
         Modules.RENDERING_CONTROLS,

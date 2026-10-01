@@ -768,6 +768,23 @@ describe('RenderingControls', () => {
       expect(controls.settings.bloomStrength).toBe(config.renderingControls.defaults.bloomStrength);
     });
 
+    it('pushes an authored density_guard_enabled onto the live guard', () => {
+      const controls = renderingControls as any;
+      const control = {
+        isEnabled: () => true,
+        sessionDisabled: false,
+        setEnabled: vi.fn(),
+        thinning: () => ({ nodes: 0, minKeep: 1 }),
+        capElementsPerPixel: () => 4,
+      };
+      controls.setDensityGuardControl(control);
+
+      controls.applyOverrides({ densityGuardEnabled: false });
+
+      expect(controls.settings.densityGuardEnabled).toBe(false);
+      expect(control.setEnabled).toHaveBeenLastCalledWith(false);
+    });
+
     it('getSettingsSnapshot returns a copy of the live settings', () => {
       const controls = renderingControls as any;
       controls.applyOverrides({ exposure: 0.75 });

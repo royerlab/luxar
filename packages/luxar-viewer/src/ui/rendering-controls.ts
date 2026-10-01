@@ -664,6 +664,11 @@ export class RenderingControls {
     if (zarrOverrides.allowHighDPR !== undefined) {
       this.adaptiveDPRManager?.setHighDPRAllowed(this.settings.allowHighDPR);
     }
+    // An authored `density_guard_enabled` reaches the live guard the same way
+    // the stored flag does (left alone while `?noDensityGuard` holds it off).
+    if (zarrOverrides.densityGuardEnabled !== undefined) {
+      this.applyDensityGuardSetting();
+    }
 
     // Update GUI controllers to reflect new values
     this.gui.controllersRecursive().forEach((controller) => {

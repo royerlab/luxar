@@ -598,6 +598,16 @@ class TestViewerConfig:
         assert vc.allow_high_dpr is None
         assert "allow_high_dpr" not in vc.to_dict()
 
+    def test_density_guard_enabled_round_trips(self) -> None:
+        # The viewer persists its Density Guard toggle as
+        # `density_guard_enabled`; a scene must be able to author it and a
+        # Ctrl+Shift+S export must load back.
+        vc = ViewerConfig(density_guard_enabled=False)
+        d = vc.to_dict()
+        assert d["density_guard_enabled"] is False
+        assert ViewerConfig.from_dict(d).density_guard_enabled is False
+        assert "density_guard_enabled" not in ViewerConfig().to_dict()
+
     def test_ui_config(self) -> None:
         vc = ViewerConfig(ui=UIConfig(show_help=False, show_dimensions=True))
         d = vc.to_dict()
