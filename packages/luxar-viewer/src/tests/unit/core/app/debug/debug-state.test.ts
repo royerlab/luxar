@@ -781,7 +781,7 @@ describe('computeDebugState', () => {
     });
 
     it('reports both drawn levels of a cross-fade with their live uOpacity weights (#2925)', () => {
-      // Mid-blend the registry writes the levels' weights through
+      // During a cross-fade the registry writes the levels' weights through
       // updateOpacity → the `uOpacity` uniform; THREE's `material.opacity`
       // stays 1.00 on both, which is what made the #2925 repro read as two
       // full-weight levels. The readout must surface the uniform. (Here the

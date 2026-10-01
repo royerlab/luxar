@@ -144,9 +144,9 @@ export interface LODGroupDebugInfo {
   /**
    * Every level currently drawn, coarsest first, with the live opacity
    * multiplier of its first fadeable leaf (`null` when it has none). Two
-   * entries mean a coverage-band cross-fade is in flight. The value is the
+   * entries mean an LOD cross-fade is in flight. The value is the
    * leaf's composed `uOpacity` as the LOD fade last wrote it through
-   * `updateOpacity`: authored layer opacity × coverage-band blend weight × any
+   * `updateOpacity`: authored layer opacity × cross-fade weight × any
    * energy/density compensation. It is therefore not a bare blend weight; the
    * two levels' values sum to one only at authored opacity 1 with no
    * compensation active. The fade never touches THREE's `material.opacity`
