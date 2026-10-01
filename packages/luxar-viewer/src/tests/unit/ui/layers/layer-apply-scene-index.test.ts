@@ -80,22 +80,19 @@ function partitionHarness() {
     },
   });
 
-  const deps = {
+  const deps: LayerApplyEngineDeps = {
     getRootGroup: () => rootGroup,
-    // Both ports: the bare graph (what the engine read before the index port
-    // existed) and the index, so a descent through either is counted.
-    getSceneGraph: () => graph,
     getSceneNodeIndex: () => index,
     state,
     requestRender: () => {},
     requestReprocess: () => {},
   };
-  const engine = new LayerApplyEngine(deps as unknown as LayerApplyEngineDeps);
+  const engine = new LayerApplyEngine(deps);
   return { engine, state, writes, walks: () => walks };
 }
 
 describe('LayerApplyEngine — scene-node index', () => {
-  it.fails('composes a slider tick over a partition from the index without descending the graph', () => {
+  it('composes a slider tick over a partition from the index without descending the graph', () => {
     const h = partitionHarness();
     const layer = h.state.getLayer('/layer')!;
     layer.opacity = 0.4;

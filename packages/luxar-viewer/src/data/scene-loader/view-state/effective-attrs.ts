@@ -15,11 +15,7 @@
  * @module data/scene-loader/view-state/effective-attrs
  */
 
-import {
-  collectAncestorNodes,
-  getEffectiveAttrsOfChain,
-  windowOwnerGainOfChain,
-} from '../../attrs-composer';
+import { getEffectiveAttrsOfChain, windowOwnerGainOfChain } from '../../attrs-composer';
 import type { SceneNode } from '../../data-loader-types';
 import type { SceneNodeIndex } from './scene-node-index';
 
@@ -33,11 +29,9 @@ export function applyEffectiveAttrs(
   node: SceneNode
 ): SceneNode['attrs'] {
   if (!sceneIndex) return node.attrs;
-  // O(depth) through the index. A path it does not hold (and the composer's
-  // "nothing requested" empty path) keeps the descent's exact answer.
-  const chain =
-    (node.path ? sceneIndex.ancestors(node.path) : undefined) ??
-    collectAncestorNodes(sceneIndex.root, node.path);
+  // O(1) through the index; see `SceneNodeIndex.ancestorChain` for the
+  // fallback that keeps an unindexed path's exact answer.
+  const chain = sceneIndex.ancestorChain(node.path);
   const eff = getEffectiveAttrsOfChain(chain);
   return {
     ...node.attrs,

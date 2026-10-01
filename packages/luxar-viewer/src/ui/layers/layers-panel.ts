@@ -22,6 +22,7 @@
 import { findObjectByName } from '../../utils/scene-graph-index';
 import * as THREE from 'three';
 import type { SceneNode } from '../../data/data-loader-types';
+import { SceneNodeIndex } from '../../data/scene-loader/view-state/scene-node-index';
 import type { FailedLoadsProviderPort } from '../../data/scene-loader-monitor-port';
 import { LayerStateManager, type LayerInfo, type SelectionMode } from './layer-state';
 import type { LayerPatch, LayerSummary } from '../../core/app/embedder/events';
@@ -136,6 +137,8 @@ export class LayersPanel {
   /** The sound layer, for `sound` rows (null before wiring / in tests). */
   private audioPort: LayersAudioPort | null = null;
   private sceneGraph: SceneNode | null = null;
+  /** Path index over {@link sceneGraph}: every leaf's root→leaf chain in O(1). */
+  private sceneNodeIndex: SceneNodeIndex | null = null;
   private animationController: AnimationController;
 
   private state = new LayerStateManager();
@@ -147,12 +150,12 @@ export class LayersPanel {
 
   /**
    * Scene-application engine: recomposes + pushes attrs to materials.
-   * Constructed with ACCESSORS for rootGroup/sceneGraph (both reassigned in
+   * Constructed with ACCESSORS for rootGroup/sceneNodeIndex (both reassigned in
    * initFromScene), never captured values — see the stale-capture pitfall.
    */
   private applyEngine = new LayerApplyEngine({
     getRootGroup: () => this.rootGroup,
-    getSceneGraph: () => this.sceneGraph,
+    getSceneNodeIndex: () => this.sceneNodeIndex,
     state: this.state,
     requestRender: () => this.requestRender(),
     requestReprocess: (paths) =>
@@ -229,14 +232,24 @@ export class LayersPanel {
   /**
    * Initialize the panel from a loaded scene.
    * Must be called after the scene is loaded and rootGroup is available.
+   *
+   * `sceneIndex` is the scene loader's `SceneNodeIndex` over `sceneGraph`
+   * (`SceneLoader.sceneNodeIndex`); without one, or with one over another
+   * graph, the panel builds its own (one O(N) pass).
    */
-  initFromScene(rootGroup: THREE.Group, sceneGraph: SceneNode): void {
+  initFromScene(
+    rootGroup: THREE.Group,
+    sceneGraph: SceneNode,
+    sceneIndex?: SceneNodeIndex | null
+  ): void {
     // Clean up previous state
     this.clear();
 
     this.rootGroup = rootGroup;
     this.sceneGraph = sceneGraph;
-    this.state.initFromSceneGraph(sceneGraph);
+    this.sceneNodeIndex =
+      sceneIndex?.root === sceneGraph ? sceneIndex : new SceneNodeIndex(sceneGraph);
+    this.state.initFromSceneGraph(sceneGraph, this.sceneNodeIndex);
 
     // Subscribe to state changes — only update selection highlights and controls,
     // NOT full list re-renders (those are expensive and cause flicker)
@@ -293,7 +306,7 @@ export class LayersPanel {
   resetAllLayers(): void {
     if (!this.sceneGraph || this.state.count === 0) return;
 
-    this.state.initFromSceneGraph(this.sceneGraph);
+    this.state.initFromSceneGraph(this.sceneGraph, this.sceneNodeIndex);
     const layers = this.state.getLayers();
     for (const layer of layers) {
       // Visibility applies unconditionally: a currently-hidden layer whose
@@ -661,7 +674,7 @@ export class LayersPanel {
     const live = this.state.getLayer(path);
     if (!live) return;
     const scratch = new LayerStateManager();
-    scratch.initFromSceneGraph(this.sceneGraph);
+    scratch.initFromSceneGraph(this.sceneGraph, this.sceneNodeIndex);
     const fresh = scratch.getLayer(path);
     scratch.dispose();
     if (!fresh) return;
@@ -895,6 +908,7 @@ export class LayersPanel {
     // unconditionally.
     this.animationController.removePerFrameCallback('layers-lod-status');
     this.sceneGraph = null;
+    this.sceneNodeIndex = null;
     this.applyEngine.resetPushed();
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;

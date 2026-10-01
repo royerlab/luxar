@@ -20,6 +20,7 @@
  * @module data/scene-loader/view-state/scene-node-index
  */
 
+import { collectAncestorNodes } from '../../attrs-composer';
 import type { SceneNode } from '../../data-loader-types';
 import type { NdTransformMap } from '../../../types/zarr';
 import { composeNdTransforms } from '../../transforms/nd-transform';
@@ -94,6 +95,16 @@ export class SceneNodeIndex {
    */
   ancestors(path: string): readonly SceneNode[] | undefined {
     return this.byPath.get(path)?.ancestors;
+  }
+
+  /**
+   * `collectAncestorNodes(root, path)`, answered from the index: O(1) for an
+   * indexed path. A path the graph does not hold, and the composer's empty
+   * "nothing requested" path, fall back to the descent so the answer is
+   * identical in every case.
+   */
+  ancestorChain(path: string): readonly SceneNode[] {
+    return (path ? this.ancestors(path) : undefined) ?? collectAncestorNodes(this.root, path);
   }
 
   /** Whether the world nD transform at `path` is not the identity. */

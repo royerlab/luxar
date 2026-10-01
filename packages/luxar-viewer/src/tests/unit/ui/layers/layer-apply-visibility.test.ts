@@ -13,7 +13,7 @@ describe('LayerApplyEngine visibility', () => {
     const requestReprocess = vi.fn();
     const engine = new LayerApplyEngine({
       getRootGroup: () => root,
-      getSceneGraph: () => null,
+      getSceneNodeIndex: () => null,
       state: {} as never,
       requestRender,
       requestReprocess,

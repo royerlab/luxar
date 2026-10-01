@@ -109,7 +109,7 @@ function factoryThenPanel(graph: SceneNode, leafPath: string, layerPath: string)
   state.initFromSceneGraph(graph);
   const engine = new LayerApplyEngine({
     getRootGroup: () => root,
-    getSceneGraph: () => graph,
+    getSceneNodeIndex: () => new SceneNodeIndex(graph),
     state,
     requestRender: vi.fn(),
     requestReprocess: vi.fn(),

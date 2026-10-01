@@ -8,9 +8,10 @@
 import type { SceneNode } from '../../data/data-loader-types';
 import {
   collectDataDescendants,
-  getEffectiveAttrs,
+  getEffectiveAttrsOfChain,
   isLayerEnabled,
 } from '../../data/attrs-composer';
+import { SceneNodeIndex } from '../../data/scene-loader/view-state/scene-node-index';
 import type { BlendingMode } from '../../types/blending';
 import type { GeometryTypeName, NodeKind } from '../../types/format-contract';
 import { defaultBlendingMode, isGeometryType } from '../../types/geometry-capabilities';
@@ -640,19 +641,25 @@ export class LayerStateManager {
   /**
    * Initialize layers from the scene graph.
    * Walks children recursively and collects nodes with `layer: true`.
+   *
+   * `sceneIndex` is the scene loader's `SceneNodeIndex` over `root`: each
+   * layer's composed attrs read its root→node chain from it in O(1) instead of
+   * descending the graph per layer. Without one (or with an index over a
+   * different graph) one is built here — a single O(N) pass.
    */
-  initFromSceneGraph(root: SceneNode): void {
+  initFromSceneGraph(root: SceneNode, sceneIndex?: SceneNodeIndex | null): void {
     this.soloState = null;
     this.layers.clear();
     this.layerOrder = [];
     this.lastClickedPath = null;
 
-    this.walkSceneGraph(root, root, undefined);
+    const index = sceneIndex?.root === root ? sceneIndex : new SceneNodeIndex(root);
+    this.walkSceneGraph(root, index, undefined);
   }
 
   private walkSceneGraph(
     node: SceneNode,
-    root: SceneNode,
+    index: SceneNodeIndex,
     inheritedLayerOrder: number | undefined
   ): void {
     const ownLayerOrder =
@@ -697,7 +704,7 @@ export class LayerStateManager {
         const canUseInheritedColormap =
           groupCanUseInheritedColormap || node.type === 'gsplats' || !!node.attrs.has_scalars;
         const inheritedColormap = canUseInheritedColormap
-          ? getEffectiveAttrs(root, node.path).colormap
+          ? getEffectiveAttrsOfChain(index.ancestorChain(node.path)).colormap
           : undefined;
         const colormap =
           (node.attrs.colormap as string | undefined) ||
@@ -812,7 +819,7 @@ export class LayerStateManager {
         // the canonical inherited/authored mode (#1272). The `undefined` case is
         // exactly what tells us to fall back to the per-type default AND to leave
         // the layer non-explicit so it does not impose that default on descendants.
-        const effectiveAttrs = getEffectiveAttrs(root, node.path);
+        const effectiveAttrs = getEffectiveAttrsOfChain(index.ancestorChain(node.path));
         const composedBlendingMode = effectiveAttrs.blending_mode;
         const material = layerType === 'mesh' ? deriveMeshMaterialFromDescendants(node) : 'luxar';
 
@@ -917,7 +924,7 @@ export class LayerStateManager {
     // Recurse into children
     if (node.children) {
       for (const child of node.children) {
-        this.walkSceneGraph(child, root, effectiveLayerOrder);
+        this.walkSceneGraph(child, index, effectiveLayerOrder);
       }
     }
   }
