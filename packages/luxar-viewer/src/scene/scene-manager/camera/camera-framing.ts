@@ -216,7 +216,7 @@ export interface FitCameraOptions {
  *     `ZOOM_IN_FACTOR` in / `ZOOM_OUT_FACTOR` out.
  *   - Run `lookAt(lookAtTarget) → updateMatrixWorld(true) →
  *     controls.setTarget(...) → controls.reinitialize() →
- *     controls.update() → controls.saveState()` so the orbit state is
+ *     controls.update() → controls.saveState()` so the controls state is
  *     consistent with the new pose.
  *
  * Returns the diagonal of the bounding box (used by the caller for

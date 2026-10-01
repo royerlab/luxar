@@ -32,8 +32,8 @@ ControlsManager (class)
    │     ├── camera-state.saveCameraState(ctx)            // snapshot from old controls
    │     ├── currentControls?.dispose()
    │     ├── factories.create{Orbit,Fly,Ortho}Controls(ctx)
-   │     ├── event-forwarders.attachControlEventForwarders(new, dispatch, group)
-   │     └── camera-state.restoreCameraState(ctx)         // re-seed target + reinitialize
+   │     ├── camera-state.restoreCameraState(ctx)         // re-seed target + reinitialize
+   │     └── event-forwarders.attachControlEventForwarders(new, dispatch, group)
    │
    ├── setNaturalDrag(enabled)
    │     └── factories.naturalDragButtonMap(enabled)      // hot-swap orbit mouse map

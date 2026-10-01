@@ -64,6 +64,23 @@ describe('camera writers with live controls', () => {
     expect(changed).toHaveBeenCalledTimes(1);
   });
 
+  it('publishes one change across a bounds fit and the next orbit update', () => {
+    const { camera, controls } = makeControls();
+    const changed = vi.fn();
+    controls.addEventListener('change', changed);
+
+    fitCameraToBounds(
+      camera,
+      controls,
+      { min: { x: -2, y: -2, z: -2 }, max: { x: 2, y: 2, z: 2 } },
+      { lookAtTarget: new THREE.Vector3(1, 2, 3) }
+    );
+    if (changed.mock.calls.length === 0) controls.dispatchEvent({ type: 'change' });
+    controls.update();
+
+    expect(changed).toHaveBeenCalledTimes(1);
+  });
+
   it('publishes one change across a control switch and the next update', () => {
     const { controls } = makeControls();
     const changed = vi.fn();
@@ -72,11 +89,13 @@ describe('camera writers with live controls', () => {
     controls.setControlType('fly');
     controls.update();
     expect(changed).toHaveBeenCalledTimes(1);
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ controlType: 'fly' }));
 
     changed.mockClear();
     controls.setControlType('orbit');
     controls.update();
     expect(changed).toHaveBeenCalledTimes(1);
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ controlType: 'orbit' }));
   });
 
   it('keeps a preserved fly framing target after the next update', () => {
