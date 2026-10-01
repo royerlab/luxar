@@ -2449,7 +2449,7 @@ describe('PointsProgressiveLoader — no pin after the shadow pass is torn down'
 });
 
 describe('PointsProgressiveLoader — per-pass logging', () => {
-  it.fails('a streaming pass logs its ladder summary at verbose, never at info', async () => {
+  it('a streaming pass logs its ladder summary at verbose, never at info', async () => {
     // A pass runs on every view tick; an info line per pass floods the console
     // the GSplats sibling keeps quiet (it uses log.verbose for the same line).
     const info = vi.spyOn(log, 'info');

@@ -913,7 +913,7 @@ testLadderFoldContract('Mesh', async () => {
 });
 
 describe('MeshProgressiveLoader — per-pass logging', () => {
-  it.fails('a streaming pass logs its ladder summary at verbose, never at info', async () => {
+  it('a streaming pass logs its ladder summary at verbose, never at info', async () => {
     const info = vi.spyOn(log, 'info');
     const verbose = vi.spyOn(log, 'verbose');
     const subs = [level(3, [0, 1, 2]), level(3, [0, 1, 2], { base: 10 })].map((d) => subLoader(d));

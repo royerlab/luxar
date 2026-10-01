@@ -642,12 +642,14 @@ export class LinesProgressiveLoader implements LinesDataLoader {
 
     const totalSegs = this.loadedLODs.reduce((s, d) => s + d.segmentCount, 0);
     if (this._loadedLODCount < this.nLods) {
-      log.info(
+      log.verbose(
+        LogEmoji.INFO,
         Modules.LINES_LOADER,
         `Progressive Lines: ${this._loadedLODCount}/${this.nLods} LODs (${totalSegs} segs) — refining`
       );
     } else if (startLevel < this.nLods) {
-      log.info(
+      log.verbose(
+        LogEmoji.INFO,
         Modules.LINES_LOADER,
         `Progressive Lines: ${this.nLods}/${this.nLods} LODs (${totalSegs} segs) — complete`
       );

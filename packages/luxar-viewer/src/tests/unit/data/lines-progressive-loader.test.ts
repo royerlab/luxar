@@ -2149,7 +2149,7 @@ describe('LinesProgressiveLoader — no pin after the shadow pass is torn down',
 });
 
 describe('LinesProgressiveLoader — per-pass logging', () => {
-  it.fails('a streaming pass logs its ladder summary at verbose, never at info', async () => {
+  it('a streaming pass logs its ladder summary at verbose, never at info', async () => {
     const info = vi.spyOn(log, 'info');
     const verbose = vi.spyOn(log, 'verbose');
     const lods = [makeSubLoader(makeLodData(20, 10)), makeSubLoader(makeLodData(10, 5))];

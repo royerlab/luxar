@@ -463,7 +463,7 @@ describe('commitMeshGeometry', () => {
     expect(mesh.userData.visibleTriangleCount).toBe(0);
   });
 
-  it.fails('an empty commit is reported at verbose: a slice scrub commits one per tick', async () => {
+  it('an empty commit is reported at verbose: a slice scrub commits one per tick', async () => {
     const { root } = sceneWithMesh('/surface');
     const staged = await processMeshData(
       '/surface',

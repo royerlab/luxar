@@ -769,13 +769,15 @@ export class MeshProgressiveLoader implements MeshDataLoader {
 
     const totalFaces = this.loadedLODs.reduce((s, d) => s + d.faceCount, 0);
     if (this._loadedLODCount < this.nLods) {
-      log.info(
+      log.verbose(
+        LogEmoji.INFO,
         Modules.SCENE_LOADER,
         `Progressive Mesh: ${this._loadedLODCount}/${this.nLods} LODs ` +
           `(${totalFaces} faces) — revealing`
       );
     } else if (startLevel < this.nLods) {
-      log.info(
+      log.verbose(
+        LogEmoji.INFO,
         Modules.SCENE_LOADER,
         `Progressive Mesh: ${this.nLods}/${this.nLods} LODs (${totalFaces} faces) — complete`
       );

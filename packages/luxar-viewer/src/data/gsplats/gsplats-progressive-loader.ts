@@ -798,7 +798,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       this._initialLoadDone = true;
     }
 
-    // Log LOD loading summary (compact, always shown for progressive loaders)
+    // LOD loading summary, at verbose: a pass runs on every view tick.
     const totalSplats = this.loadedLODs.reduce((s, d) => s + d.splatCount, 0);
     if (this._loadedLODCount < this.nLods) {
       log.verbose(

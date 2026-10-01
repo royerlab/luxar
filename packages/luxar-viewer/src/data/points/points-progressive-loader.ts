@@ -794,12 +794,14 @@ export class PointsProgressiveLoader implements PointsDataLoader {
 
     const totalPoints = this.loadedLODs.reduce((s, d) => s + d.positions.length / 3, 0);
     if (this._loadedLODCount < this.nLods) {
-      log.info(
+      log.verbose(
+        LogEmoji.INFO,
         Modules.SPATIAL_INDEX_LOADER,
         `Progressive Points: ${this._loadedLODCount}/${this.nLods} LODs (${totalPoints} points) — refining`
       );
     } else if (startLevel < this.nLods) {
-      log.info(
+      log.verbose(
+        LogEmoji.INFO,
         Modules.SPATIAL_INDEX_LOADER,
         `Progressive Points: ${this.nLods}/${this.nLods} LODs (${totalPoints} points) — complete`
       );
