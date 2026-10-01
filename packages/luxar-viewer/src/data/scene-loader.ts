@@ -2442,7 +2442,9 @@ export class SceneLoader {
       data,
       viewState,
       this.rootGroup,
-      this._updateVersion,
+      // First-update log gate: a PASS counter (see `_passCount`). The view
+      // version stays at 1 on a static scene, logging every refinement rung.
+      this._passCount,
       session,
       signal
     );
@@ -2492,7 +2494,9 @@ export class SceneLoader {
       data,
       viewState,
       this.rootGroup,
-      this._updateVersion,
+      // First-update log gate: a PASS counter (see `_passCount`). The view
+      // version stays at 1 on a static scene, logging every refinement rung.
+      this._passCount,
       session,
       signal
     );
