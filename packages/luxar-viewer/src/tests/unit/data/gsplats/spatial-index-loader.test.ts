@@ -1887,6 +1887,23 @@ describe('GSplatsSpatialIndexLoader', () => {
         expect(attributeGets()).toHaveLength(0);
       });
 
+      it.fails('forwards the predicted-view signal to the warm-up it falls back to', async () => {
+        const current: ViewState = {
+          displayDims: [0, 1],
+          slicePosition: [0, 0, 1],
+          tolerance: [0, 0, 0],
+        };
+        const predicted = { ...current, slicePosition: [0, 0, 2] };
+        mockExecute.mockRejectedValueOnce(new Error('malformed current view'));
+        mockExecute.mockResolvedValue([{ start: 100, end: 200 }]);
+        const spy = vi.spyOn(bodyLoader, 'prefetchChunks');
+        const signal = new AbortController().signal;
+
+        await bodyLoader.prefetchChunkBoundary(current, predicted, signal);
+
+        expect(spy).toHaveBeenCalledWith(predicted, signal);
+      });
+
       it('warms the predicted slice and only the nearest next chunk boundary', async () => {
         bodyLoader.dispose();
         chunkBoundsArray.shape = [50, 4, 2];

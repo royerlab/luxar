@@ -1306,6 +1306,23 @@ describe('LinesSpatialIndexLoader', () => {
         // The predicted view alone: segment chunk 0 + chunk 1 of four vertex arrays.
         expect(warmCalls()).toBe(5);
       });
+
+      it.fails('forwards the predicted-view signal to the warm-up it falls back to', async () => {
+        const current: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+        const predicted = { ...current, slicePosition: [0, 0, 1] };
+        mockExecute.mockRejectedValueOnce(new Error('malformed current view'));
+        mockExecute.mockResolvedValue([{ start: 10, end: 20 }]);
+        const spy = vi.spyOn(bodyLoader, 'prefetchChunks');
+        const signal = new AbortController().signal;
+
+        await bodyLoader.prefetchChunkBoundary(current, predicted, signal);
+
+        expect(spy).toHaveBeenCalledWith(predicted, signal);
+      });
     });
 
     describe('resource cleanup', () => {

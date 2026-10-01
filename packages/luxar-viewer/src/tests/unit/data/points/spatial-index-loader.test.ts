@@ -979,6 +979,24 @@ describe('PointsSpatialIndexLoader', () => {
       expect(warmCalls()).toBe(4);
     });
 
+    it.fails('an aborted predicted-view signal stops every boundary warm-up', async () => {
+      const current: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 1],
+        tolerance: [0, 0, 0, 0.1],
+      };
+      const predicted = { ...current, slicePosition: [0, 0, 0, 2] };
+      await loader.loadPoints(current);
+      vi.clearAllMocks();
+      mockExecute.mockResolvedValue([{ start: 100, end: 200 }]);
+      const superseded = new AbortController();
+      superseded.abort();
+
+      await loader.prefetchChunkBoundary(current, predicted, superseded.signal);
+
+      expect(warmCalls()).toBe(0);
+    });
+
     it('skips fetches when the spatial query returns no ranges', async () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],

@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { signalPriority } from '../../../../../utils/fetch-concurrency';
 import {
   predictNextViewState,
   dispatchPredictivePrefetch,
@@ -157,6 +158,33 @@ describe('dispatchPredictivePrefetch', () => {
     expect(transition.mock.calls[0][0]).toBe(current);
     expect(transition.mock.calls[0][1].slicePosition[3]).toBe(7);
     expect(fallback).not.toHaveBeenCalled();
+  });
+
+  it.fails('hands every warm-up a SPECULATIVE signal, not an untagged (demand) one', () => {
+    const transition = vi.fn().mockResolvedValue(undefined);
+    const plain = vi.fn().mockResolvedValue(undefined);
+    dispatchPredictivePrefetch(
+      vs({ slicePosition: [0, 0, 0, 5] }),
+      vs({ slicePosition: [0, 0, 0, 6] }),
+      [{ prefetchChunkBoundary: transition }, { prefetchChunks: plain }]
+    );
+    const boundarySignal = transition.mock.calls[0][2] as AbortSignal | undefined;
+    const plainSignal = plain.mock.calls[0][1] as AbortSignal | undefined;
+    expect(signalPriority(boundarySignal)?.value).toBe('speculative');
+    expect(signalPriority(plainSignal)?.value).toBe('speculative');
+  });
+
+  it.fails("forwards the caller's signal so a superseded prediction can be cancelled", () => {
+    const transition = vi.fn().mockResolvedValue(undefined);
+    const controller = new AbortController();
+    dispatchPredictivePrefetch(
+      vs({ slicePosition: [0, 0, 0, 5] }),
+      vs({ slicePosition: [0, 0, 0, 6] }),
+      [{ prefetchChunkBoundary: transition }],
+      controller.signal
+    );
+    expect(transition.mock.calls[0][2]).toBe(controller.signal);
+    expect(signalPriority(controller.signal)?.value).toBe('speculative');
   });
 
   it('skips loaders that do not expose prefetchChunks', () => {

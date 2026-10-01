@@ -219,6 +219,30 @@ describe('ViewStateQueue.dispatchPrefetch', () => {
     expect(dispatchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it.fails('a newer prediction aborts the one it supersedes, keeping its predecessor joinable', async () => {
+    const at = (t: number): ViewState => ({ ...baseViewState, slicePosition: [0, 0, 0, t] });
+    queue.dispatchPrefetch('/a', at(4), {});
+    for (const t of [5, 6, 7]) {
+      queue.dispatchPrefetch('/a', at(t), {});
+      await Promise.resolve();
+    }
+    const [p5, p6, p7] = dispatchSpy.mock.calls.map((call) => call[3] as AbortSignal | undefined);
+    // p6's reads may still be joining p5's in-flight fetches when p7 starts; p5
+    // has two newer predictions and is cancelled.
+    expect(p5?.aborted).toBe(true);
+    expect(p6?.aborted).toBe(false);
+    expect(p7?.aborted).toBe(false);
+  });
+
+  it.fails('clearPrev aborts every outstanding prediction', async () => {
+    queue.dispatchPrefetch('/a', baseViewState, {});
+    queue.dispatchPrefetch('/a', { ...baseViewState, slicePosition: [0, 0, 0, 5] }, {});
+    await Promise.resolve();
+    const signal = dispatchSpy.mock.calls[0][3] as AbortSignal | undefined;
+    queue.clearPrev();
+    expect(signal?.aborted).toBe(true);
+  });
+
   it('forgetPath drops the saved snapshot for one path only', async () => {
     const loader = {};
     queue.dispatchPrefetch('/a', baseViewState, loader);

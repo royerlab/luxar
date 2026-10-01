@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { GSplatsProgressiveLoader } from '../../../data/gsplats/gsplats-progressive-loader';
 import type { GSplatsSpatialIndexLoader } from '../../../data/gsplats/gsplats-spatial-index-loader';
 import type { GSplatsViewState, LoadedGSplatsData } from '../../../types/gsplats';
+import { signalPriority } from '../../../utils/fetch-concurrency';
 
 const DIMENSIONS = [
   { name: 'X', unit: 'um', scale: 1 },
@@ -206,5 +207,52 @@ describe('GSplatsProgressiveLoader — a braked pinned pass cancels its remainin
     pass.abort();
     expect(signals.every((s) => s?.aborted)).toBe(true);
     void promise.catch(() => {});
+  });
+});
+
+describe('GSplatsProgressiveLoader — lookahead honours the update signal', () => {
+  /** Three rungs; rungs 0 and 1 come back COLD, so a refine pass stops after rung 1. */
+  function coldFirstRung() {
+    const rungs = [subLoader(1, false), subLoader(2, false), subLoader(4, false)];
+    for (const level of [0, 1]) {
+      rungs[level].stub.updateViewWithResidency.mockImplementation(async () => ({
+        data: lodData(2 ** level),
+        allResident: false,
+      }));
+    }
+    return rungs;
+  }
+
+  it.fails('the next-rung lookahead is speculative and aborts with the update that scheduled it', async () => {
+    const rungs = coldFirstRung();
+    const loader = makeLoader(rungs);
+    const pass = new AbortController();
+    await loader.updateView(viewAt(0), undefined, pass.signal);
+
+    await vi.waitFor(() => expect(rungs[2].stub.prefetchChunks).toHaveBeenCalled());
+    const lookahead = rungs[2].stub.prefetchChunks.mock.calls[0][1] as AbortSignal;
+    expect(signalPriority(lookahead)?.value).toBe('speculative');
+    expect(lookahead.aborted).toBe(false);
+    pass.abort();
+    expect(lookahead.aborted).toBe(true);
+  });
+
+  it.fails('a pass aborted by the time its rungs land schedules no lookahead and no read-ahead', async () => {
+    const rungs = coldFirstRung();
+    const loader = makeLoader(rungs);
+    await loader.updateView(viewAt(4));
+    rungs[0].stub.prefetchChunks.mockClear();
+    rungs[2].stub.prefetchChunks.mockClear();
+
+    const pass = new AbortController();
+    rungs[1].stub.updateViewWithResidency.mockImplementationOnce(async () => {
+      pass.abort(); // superseded while its last rung was in flight
+      return { data: lodData(2), allResident: false };
+    });
+    await loader.updateView(viewAt(5), undefined, pass.signal).catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(rungs[2].stub.prefetchChunks).not.toHaveBeenCalled();
+    expect(rungs[0].stub.prefetchChunks).not.toHaveBeenCalled();
   });
 });
