@@ -3372,23 +3372,23 @@ describe('LODGroupRegistry — lazy children', () => {
     const ensureLoaded = vi.fn();
     const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
     children[1].failed = true; // a prior reload attempt failed
-    const reg = makeRegistry();
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, undefined, undefined, frameClock());
     reg.register(makeEntry(children, 0, '/g'));
     reg.setSelectorMode('/g', { lockLevel: 1 }); // desired = the failed level
 
     // Within the cooldown window the failed level is not retried.
-    reg.evaluatePerFrame(); // stamps failedTick
+    reg.evaluatePerFrame(); // stamps failedAtMs
     reg.evaluatePerFrame();
     expect(ensureLoaded).not.toHaveBeenCalled();
 
-    // Advance past FAILED_RETRY_FRAMES (120) of frames; the cooldown clears
-    // and the next selection retries the load exactly once.
+    // Advance past FAILED_RETRY_MS (2 s ≈ 120 frames at 60 Hz); the cooldown
+    // clears and the next selection retries the load exactly once.
     for (let i = 0; i < 121; i++) reg.evaluatePerFrame();
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
     expect(children[1].failed).not.toBe(true);
   });
 
-  it.fails('the failure cooldown is wall-clock time, not a frame count (#2944 A6)', () => {
+  it('the failure cooldown is wall-clock time, not a frame count (#2944 A6)', () => {
     const ensureLoaded = vi.fn();
     const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
     children[1].failed = true;
@@ -3408,7 +3408,7 @@ describe('LODGroupRegistry — lazy children', () => {
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
   });
 
-  it.fails('keeps the loop ticking through the failure cooldown so a parked camera retries (#2944 A6)', () => {
+  it('keeps the loop ticking through the failure cooldown so a parked camera retries (#2944 A6)', () => {
     // An on-demand loop: a frame runs only when the registry (or someone)
     // asks for a tick. Nothing else moves here, so if the registry stops
     // asking while the level cools, the retry never happens.
@@ -3481,7 +3481,7 @@ describe('LODGroupRegistry — lazy children', () => {
 
     expect(ensureLoaded).not.toHaveBeenCalled();
     expect(children[1].failed).toBe(true);
-    expect(children[1].failedTick).toBeUndefined();
+    expect(children[1].failedAtMs).toBeUndefined();
   });
 
   it('clear() resets the monotonic tick', () => {
@@ -3917,13 +3917,13 @@ describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
     const child = makeLazyChild(0.5, ensureLoaded);
     child.nodePath = '/g/child_1';
     child.failed = true;
-    child.failedTick = 42;
+    child.failedAtMs = 42;
     reg.register(makeEntry([makeChild(0), child], 0, '/g'));
 
     expect(reg.retryLazyChildByNodePath('/g/child_1')).toBe(true);
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
     expect(child.failed).toBe(false);
-    expect(child.failedTick).toBeUndefined();
+    expect(child.failedAtMs).toBeUndefined();
     // kickDeferredLoad owns the loading flag (the thunk never sets it).
     expect(child.loading).toBe(true);
   });
@@ -3954,7 +3954,7 @@ describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
     const child = makeLazyChild(0.5, ensureLoaded);
     child.nodePath = '/g/child_1';
     child.failed = true;
-    child.failedTick = 42;
+    child.failedAtMs = 42;
     child.permanentlyFailed = true;
     child.failureReason = 'archive fault';
     reg.register(makeEntry([makeChild(0), child], 0, '/g'));
@@ -3963,7 +3963,7 @@ describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
     expect(reg.retryLazyChildByNodePath('/g/child_1')).toBe(true);
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
     expect(child.failed).toBe(false);
-    expect(child.failedTick).toBeUndefined();
+    expect(child.failedAtMs).toBeUndefined();
     expect(child.permanentlyFailed).toBe(false);
     expect(child.failureReason).toBeUndefined();
     expect(reg.getFailedLazyChildPaths()).toEqual([]);

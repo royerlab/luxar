@@ -467,13 +467,15 @@ export const FILL_FACTOR = 0.5;
 export const SCREEN_FILL_DIAGONAL_RATIO = 2;
 
 /**
- * Frames a lazy level stays in the ``failed`` state before the registry
- * retries its deferred load. ~2 s at 60 fps — long enough to avoid
- * per-frame retry storms after a hard failure, short enough that a
- * transient (network blip) failure self-heals once the camera revisits
- * the level. See ``LODGroupRegistry.maybeKickLoad``.
+ * Milliseconds a lazy level stays in the ``failed`` state before the registry
+ * retries its deferred load — long enough to avoid per-frame retry storms
+ * after a hard failure, short enough that a transient (network blip) failure
+ * self-heals. Wall-clock, not a frame count: a 30 Hz display or a throttled
+ * tab would otherwise stretch it, and the registry keeps the loop ticking
+ * while a level cools (see ``LODGroupRegistry.isCoolingDown``), so a parked
+ * camera still reaches the retry (#2944 A6). See ``maybeKickLoad``.
  */
-const FAILED_RETRY_FRAMES = 120;
+const FAILED_RETRY_MS = 2000;
 
 /** One LOD-group child as tracked by the registry. */
 export interface LODGroupChild {
@@ -582,13 +584,13 @@ export interface LODGroupChild {
   /** Human-readable reason retained for monitor rows after the loader latch clears. */
   failureReason?: string;
   /**
-   * Registry tick when ``failed`` was first observed. Drives the
-   * transient-failure retry cooldown (``FAILED_RETRY_FRAMES``): once it
+   * Registry clock (``frame.nowMs``) when ``failed`` was first observed. Drives
+   * the transient-failure retry cooldown (``FAILED_RETRY_MS``): once it
    * elapses the registry clears ``failed`` and retries the load, so a
    * level that fails on *reload* (after a successful load + byte-eviction)
    * is not stuck on its placeholder forever. Cleared alongside ``failed``.
    */
-  failedTick?: number;
+  failedAtMs?: number;
   /**
    * Idempotent fire-and-forget loader for a lazy child. Kicks the
    * deferred geometry load; on success sets ``ready=true`` and clears
@@ -2231,7 +2233,7 @@ export class LODGroupRegistry {
    * GROUP placeholders remain addressable without duplicating scene identity
    * onto the THREE object.
    *
-   * Clears the failure cooldown (``failed``/``failedTick``) through the shared
+   * Clears the failure cooldown (``failed``/``failedAtMs``) through the shared
    * ``kickDeferredLoad`` gate, which owns setting ``loading`` before firing
    * ``ensureLoaded`` (the thunk itself never sets ``loading`` — only the
    * registry does; keep that invariant here).
@@ -2456,7 +2458,8 @@ export class LODGroupRegistry {
   }
 
   /**
-   * Whether any child of ``entry`` is loading, and — for each child whose
+   * Whether any child of ``entry`` is loading or cooling down after a failure
+   * (both keep the loop ticking), and — for each child whose
    * ``ensureLoaded`` has finished since it was fired — fold the measured
    * load+commit time into its ``loadEwmaMs`` (a failure is not a timing).
    */
@@ -2465,8 +2468,22 @@ export class LODGroupRegistry {
     for (const c of entry.children) {
       if (c.loading) anyLoading = true;
       else this.foldLoadTime(c);
+      if (this.isCoolingDown(c)) anyLoading = true;
     }
     return anyLoading;
+  }
+
+  /**
+   * Whether ``c`` is inside its failure cooldown. The loop must keep ticking
+   * until it ends — nothing else may wake a parked camera — so the frame after
+   * it can retry the load (#2944 A6). Bounded: false once the cooldown passes.
+   */
+  private isCoolingDown(c: LODGroupChild): boolean {
+    return (
+      c.failed === true &&
+      c.failedAtMs !== undefined &&
+      this.frame.nowMs - c.failedAtMs < FAILED_RETRY_MS
+    );
   }
 
   /**
@@ -3686,8 +3703,8 @@ export class LODGroupRegistry {
    * both the desired-target swap path and the active-child self-heal so
    * the failure/cooldown logic lives in exactly one place.
    *
-   * A freshly-failed child is stamped with the current tick; once
-   * ``FAILED_RETRY_FRAMES`` elapse the ``failed`` flag is cleared and the
+   * A freshly-failed child is stamped with the frame clock; once
+   * ``FAILED_RETRY_MS`` elapse the ``failed`` flag is cleared and the
    * load retried — recovering a level that failed on *reload* (after a
    * successful load + byte-eviction), which the old "failed until
    * released" behaviour left permanently stuck (a failed child is never an
@@ -3758,8 +3775,8 @@ export class LODGroupRegistry {
    * Shared lazy-load gate for ``maybeKickLoad`` (initial load of a not-ready
    * level) and ``maybeKickReload`` (refresh of a ready-but-stale level): fire
    * ``ensureLoaded`` unless already loading or inside the failure cooldown. A
-   * freshly-failed child is stamped with the current tick; once
-   * ``FAILED_RETRY_FRAMES`` elapse the ``failed`` flag clears and the load
+   * freshly-failed child is stamped with the frame clock; once
+   * ``FAILED_RETRY_MS`` elapse the ``failed`` flag clears and the load
    * retries — recovering a level that failed on reload (after a successful load
    * + byte-eviction), which the old "failed until released" behaviour left stuck.
    * The automatic caller separately gates loader-level archive faults. The
@@ -3773,17 +3790,17 @@ export class LODGroupRegistry {
     if (child.failed) {
       if (explicitRetry) {
         child.failed = false;
-        child.failedTick = undefined;
+        child.failedAtMs = undefined;
       } else {
-        if (child.failedTick == null) {
+        if (child.failedAtMs == null) {
           // First frame we observe the failure — start the cooldown clock.
-          child.failedTick = this.tick;
+          child.failedAtMs = this.frame.nowMs;
           return false;
         }
-        if (this.tick - child.failedTick < FAILED_RETRY_FRAMES) return false;
+        if (this.frame.nowMs - child.failedAtMs < FAILED_RETRY_MS) return false;
         // Cooldown elapsed — clear the failure and fall through to retry.
         child.failed = false;
-        child.failedTick = undefined;
+        child.failedAtMs = undefined;
       }
     }
     if (explicitRetry) {

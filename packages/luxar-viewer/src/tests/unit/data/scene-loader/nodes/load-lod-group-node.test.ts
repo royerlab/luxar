@@ -623,11 +623,12 @@ describe('loadLodGroupNode — registry registration', () => {
 // ────────────────────────────────────────────────────────────────────────
 
 describe('loadLodGroupNode — lazy level loading', () => {
-  function makeReg(): LODGroupRegistry {
+  function makeReg(now?: () => number): LODGroupRegistry {
     return new LODGroupRegistry({
       getCamera: () => new THREE.Camera(),
       getViewportSize: () => ({ width: 100, height: 100 }),
       getDisplayDims: () => [0, 1, 2],
+      ...(now ? { now } : {}),
     });
   }
 
@@ -1000,7 +1001,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
     const deferred = reg.get('/lod')!.children[1];
     deferred.ready = true; // simulate a completed load
     deferred.failed = true; // simulate a stale failure flag from a prior cycle
-    deferred.failedTick = 42;
+    deferred.failedAtMs = 42;
     expect(typeof deferred.release).toBe('function');
 
     deferred.release!();
@@ -1009,7 +1010,7 @@ describe('loadLodGroupNode — lazy level loading', () => {
     expect(deferred.loading).toBe(false);
     expect(deferred.failed).toBe(false);
     // The failure cooldown is also cleared so a reload starts fresh.
-    expect(deferred.failedTick).toBeUndefined();
+    expect(deferred.failedAtMs).toBeUndefined();
   });
 
   it('does not give the eager default level a release thunk', async () => {
@@ -1149,7 +1150,8 @@ describe('loadLodGroupNode — lazy level loading', () => {
     const warningSpy = vi.spyOn(log, 'warning').mockImplementation(() => {});
 
     try {
-      const reg = makeReg();
+      let t = 0;
+      const reg = makeReg(() => t);
       const ctx = makeCtx(reg);
       const node = makeLodGroupNode(
         [makeChildNode('/lod/child_0', 0), makeGroupChildNode('/lod/child_1', 0.5)],
@@ -1169,7 +1171,11 @@ describe('loadLodGroupNode — lazy level loading', () => {
 
       reg.setSelectorMode('/lod', { lockLevel: 1 });
       reg.evaluatePerFrame();
-      for (let frame = 0; frame < 121; frame++) reg.evaluatePerFrame();
+      // The failure cooldown is wall-clock (2 s), not a frame count.
+      for (let frame = 0; frame < 121; frame++) {
+        t += 1000 / 60;
+        reg.evaluatePerFrame();
+      }
       await vi.waitFor(() => expect(deferred.failed).toBe(true));
       expect(deferred.loading).toBe(false);
 
@@ -1283,7 +1289,7 @@ describe('loadLodGroupNode — lazy points level loading', () => {
     const deferred = reg.get('/lod')!.children[1];
     deferred.ready = true; // simulate a completed load
     deferred.failed = true;
-    deferred.failedTick = 42;
+    deferred.failedAtMs = 42;
     expect(typeof deferred.release).toBe('function');
 
     deferred.release!();
@@ -1291,7 +1297,7 @@ describe('loadLodGroupNode — lazy points level loading', () => {
     expect(deferred.ready).toBe(false);
     expect(deferred.loading).toBe(false);
     expect(deferred.failed).toBe(false);
-    expect(deferred.failedTick).toBeUndefined();
+    expect(deferred.failedAtMs).toBeUndefined();
   });
 
   it('surfaces the progressive points loader hasMoreLODs on the lazy level (composed ladder advances)', async () => {
@@ -1478,14 +1484,14 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     const ln = reg.get('/lod')!.children[1];
     ln.ready = true; // simulate a completed load
     ln.failed = true; // simulate a stale failure flag from a prior cycle
-    ln.failedTick = 42;
+    ln.failedAtMs = 42;
     expect(typeof ln.release).toBe('function');
     ln.release!();
     expect(vi.mocked(ctx.releaseLazyLines)).toHaveBeenCalledWith('/lod/child_1');
     expect(ln.ready).toBe(false);
     expect(ln.loading).toBe(false);
     expect(ln.failed).toBe(false);
-    expect(ln.failedTick).toBeUndefined();
+    expect(ln.failedAtMs).toBeUndefined();
   });
 
   it('does not register the lines level when the dataset is switched mid-load', async () => {
@@ -1631,14 +1637,14 @@ describe('loadLodGroupNode — lazy lines level loading', () => {
     const ln = reg.get('/lod')!.children[1];
     ln.ready = true; // simulate a completed load
     ln.failed = true; // stale failure flag from a prior cycle
-    ln.failedTick = 42;
+    ln.failedAtMs = 42;
     expect(typeof ln.release).toBe('function');
     ln.release!();
     expect(vi.mocked(ctx.releaseLazyMesh)).toHaveBeenCalledWith('/lod/child_1');
     expect(ln.ready).toBe(false);
     expect(ln.loading).toBe(false);
     expect(ln.failed).toBe(false);
-    expect(ln.failedTick).toBeUndefined();
+    expect(ln.failedAtMs).toBeUndefined();
   });
 
   it('a deferred mesh level with NO ladder reports hasMoreLODs false, not undefined', async () => {
