@@ -373,6 +373,50 @@ describe('OPFSMetadataManager', () => {
       expect(onError).not.toHaveBeenCalled();
     });
 
+    // A reload that lands inside the trailing debounce loses the session's whole
+    // index: a save started at unload never completes across a navigation
+    // (measured on Chromium). The leading edge puts the first index on disk
+    // shortly after a burst begins, while a sustained burst keeps the debounce.
+    it.fails('leading edge: the first save after a quiet period starts within leadingDelayMs', async () => {
+      perfCounters.reset();
+      const { root } = mockRoot();
+      const onError = vi.fn();
+      const params = {
+        root,
+        getSnapshot: () => snap(),
+        delayMs: 1000,
+        maxWaitMs: 2000,
+        leadingDelayMs: 150,
+        onError,
+      };
+      mgr.scheduleSave(params);
+      // A burst behind the first write must not push the leading save back.
+      for (let t = 0; t < 100; t += 50) {
+        await vi.advanceTimersByTimeAsync(50);
+        mgr.scheduleSave(params);
+      }
+      await vi.advanceTimersByTimeAsync(50);
+      await mgr.awaitInFlight();
+      expect(perfCounters.get('opfs.indexSaves')).toBe(1);
+
+      // Writes arriving right after that save are NOT a quiet period: they wait
+      // out the ordinary trailing debounce.
+      mgr.scheduleSave(params);
+      await vi.advanceTimersByTimeAsync(900);
+      expect(perfCounters.get('opfs.indexSaves')).toBe(1);
+      await vi.advanceTimersByTimeAsync(100);
+      await mgr.awaitInFlight();
+      expect(perfCounters.get('opfs.indexSaves')).toBe(2);
+
+      // After a full quiet period, the next first write takes the leading edge again.
+      await vi.advanceTimersByTimeAsync(1000);
+      mgr.scheduleSave(params);
+      await vi.advanceTimersByTimeAsync(150);
+      await mgr.awaitInFlight();
+      expect(perfCounters.get('opfs.indexSaves')).toBe(3);
+      expect(onError).not.toHaveBeenCalled();
+    });
+
     it('maxWait: a save that is still in flight is never overlapped by the next one', async () => {
       // Two createWritable() streams on the same file are not safe. When the
       // ceiling fires while the previous index write is still running, the
