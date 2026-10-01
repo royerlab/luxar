@@ -192,8 +192,8 @@ export function minNearForRadius(expandedRadius: number): number {
  *
  *     Δz(d) = d² · (far − near) / (near · far) · 2⁻²⁴
  *
- * — inversely proportional to `near`. Left unbounded, the
- * inside-the-sphere branch of {@link calculateClippingPlanesFromSphere}
+ * — inversely proportional to `near`. Left unbounded, when the sphere
+ * reached the camera plane, {@link calculateClippingPlanesFromSphere}
  * pinned `near` to `R · MIN_NEAR_RADIUS_FACTOR` (2e-6 · R), i.e. a
  * ratio near 6e5:1, which puts Δz at ~4e-2 world units on a
  * diagonal-100 scene viewed from 8.5 units — coarse enough to z-fight
