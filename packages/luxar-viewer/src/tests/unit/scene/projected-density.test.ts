@@ -74,7 +74,7 @@ describe('projectSphereAreaPx', () => {
     });
   });
 
-  it.fails('is off-screen when the sphere lies wholly behind the camera (#2944 A4)', () => {
+  it('is off-screen when the sphere lies wholly behind the camera (#2944 A4)', () => {
     const camera = perspective(1600, 1000, 100);
     // view-space z > 0 is behind the eye; the sphere does not reach z = 0.
     expect(projectSphereAreaPx({ x: 0, y: 0, z: 100 }, 5, camera, 1600, 1000)).toEqual({
