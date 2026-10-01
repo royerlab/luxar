@@ -137,9 +137,53 @@ export interface GPUPoolDebugStats {
 export interface LODGroupDebugInfo {
   name: string;
   levelCount: number;
+  /** Index of the FIRST visible level (−1 if none) — the coarser one mid-blend. */
   activeLevel: number;
   selector: LodSelectorName;
   footprintStamped: boolean;
+  /**
+   * Every level currently drawn, coarsest first, with the live opacity
+   * multiplier of its first fadeable leaf (`null` when it has none). Two
+   * entries mean a coverage-band cross-fade is in flight. The value is the
+   * leaf's composed `uOpacity` as the LOD fade last wrote it through
+   * `updateOpacity`: authored layer opacity × coverage-band blend weight × any
+   * energy/density compensation. It is therefore not a bare blend weight; the
+   * two levels' values sum to one only at authored opacity 1 with no
+   * compensation active. The fade never touches THREE's `material.opacity`
+   * (which stays 1.00), so this is the only readout that reflects the real
+   * fade state (#2925).
+   */
+  drawnLevels: LODLevelDebugInfo[];
+}
+
+/** One drawn level of a `kind=lod` group (see `LODGroupDebugInfo.drawnLevels`). */
+export interface LODLevelDebugInfo {
+  level: number;
+  opacity: number | null;
+}
+
+/**
+ * The live opacity multiplier (`getOpacity()`, i.e. the `uOpacity` uniform the
+ * LOD fade writes) of the first fadeable leaf under `level`, or `null`.
+ */
+function liveLeafOpacity(level: THREE.Object3D): number | null {
+  let found: number | null = null;
+  level.traverse((object) => {
+    const material = (object as THREE.Mesh).material as { getOpacity?: () => number } | undefined;
+    if (found === null && typeof material?.getOpacity === 'function') {
+      found = material.getOpacity();
+    }
+  });
+  return found;
+}
+
+/** The visible levels of a `kind=lod` group with their live opacity. */
+function drawnLodLevels(levels: readonly THREE.Object3D[]): LODLevelDebugInfo[] {
+  const drawn: LODLevelDebugInfo[] = [];
+  levels.forEach((child, level) => {
+    if (child.visible) drawn.push({ level, opacity: liveLeafOpacity(child) });
+  });
+  return drawn;
 }
 
 /** `kind=partition` BSP group summary. */
@@ -363,6 +407,7 @@ export function computeDebugState(ctx: DebugStateContext): DebugState {
         activeLevel: children.findIndex((c) => c.visible),
         selector: metadata.lodSelector ?? 'coverage',
         footprintStamped: metadata.footprintStamped ?? false,
+        drawnLevels: drawnLodLevels(children),
       });
     } else if (kind === 'partition') {
       const children = object.children;

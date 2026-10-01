@@ -46,6 +46,7 @@ describe('summarizeSelection', () => {
       activeLevel: 1,
       selector: 'screen-area' as const,
       footprintStamped: true,
+      drawnLevels: [{ level: 1, opacity: 1 }],
     },
   ];
 

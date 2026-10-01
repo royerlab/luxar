@@ -15,6 +15,7 @@ import {
   type DebugStateContext,
 } from '../../../../../core/app/debug/debug-state';
 import type { SimpleDims } from '../../../../../types/dims';
+import { PointMaterial } from '../../../../../rendering/materials/point/material-glsl';
 import type { RefinementResidencyStop } from '../../../../../data/scene-loader/progressive/residency-budget';
 
 function makePointCloud(
@@ -773,9 +774,46 @@ describe('computeDebugState', () => {
           activeLevel: 1,
           selector: 'screen-area',
           footprintStamped: true,
+          drawnLevels: [{ level: 1, opacity: null }], // bare groups: nothing fadeable
         },
       ]);
       expect(state.partitions).toEqual([]);
+    });
+
+    it('reports both drawn levels of a cross-fade with their live uOpacity weights (#2925)', () => {
+      // Mid-blend the registry writes the levels' weights through
+      // updateOpacity → the `uOpacity` uniform; THREE's `material.opacity`
+      // stays 1.00 on both, which is what made the #2925 repro read as two
+      // full-weight levels. The readout must surface the uniform. (Here the
+      // uniform is the bare weight; in general it is authored opacity × weight
+      // × any energy/density compensation.)
+      const scene = new THREE.Scene();
+      const lod = new THREE.Group();
+      lod.name = '/rotated/cloud';
+      lod.userData.kind = 'lod';
+      const levels = [0.84375, 0.15625, null].map((weight) => {
+        const leaf = new THREE.Mesh(new THREE.BufferGeometry(), new PointMaterial());
+        if (weight === null) leaf.visible = false;
+        else (leaf.material as PointMaterial).updateOpacity(weight);
+        const level = new THREE.Group();
+        level.visible = weight !== null;
+        level.add(leaf);
+        return level;
+      });
+      lod.add(...levels);
+      scene.add(lod);
+
+      const [info] = computeDebugState(makeContext(scene)).lodGroups;
+      const materials = levels.map(
+        (level) => (level.children[0] as THREE.Mesh).material as PointMaterial
+      );
+      expect(materials[0].opacity).toBe(1); // the misleading field
+      expect(materials[1].opacity).toBe(1);
+      expect(info.activeLevel).toBe(0);
+      expect(info.drawnLevels).toEqual([
+        { level: 0, opacity: 0.84375 },
+        { level: 1, opacity: 0.15625 },
+      ]);
     });
 
     it('reports activeLevel -1 when no level is visible', () => {
