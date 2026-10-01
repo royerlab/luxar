@@ -1621,13 +1621,17 @@ describe('PointsProgressiveLoader', () => {
       await expect(loader.loadPoints(baseViewState)).rejects.toThrow(/'colors' as Uint8Array/);
     });
 
-    it('drops colors entirely when at least one LOD lacks them (all-or-nothing policy)', async () => {
-      // PointsProgressiveLoader's all-or-nothing per-attr concatenation
-      // policy: any LOD missing an optional attribute → the merged result
-      // drops that attribute (no fill-with-default like gsplats).
+    it('white-fills the colors of an LOD that lacks them (the Lines/GSplats policy)', async () => {
+      // One colourless rung used to drop colours from the WHOLE merged ladder,
+      // so every coloured point turned to the node default the moment it
+      // landed; Lines and GSplats fill only that rung, with white.
       lodB.updateView.mockResolvedValue(makeLodData(50, 3)); // no colors
       const result = await loader.loadPoints(baseViewState);
-      expect(result.colors).toBeUndefined();
+      expect(result.colors).toBeInstanceOf(Uint8Array);
+      expect(result.colors!.length).toBe(175 * 3);
+      expect(result.colorComponents).toBe(3);
+      const levelB = Array.from(result.colors!.subarray(100 * 3, 150 * 3));
+      expect(levelB.every((v) => v === 255)).toBe(true);
     });
 
     it('keeps colors absent when no LOD has colors', async () => {

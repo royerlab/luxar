@@ -217,13 +217,17 @@ export function commitPointsGeometry(
       //   still holds that parent's projection. This conjunct also covers
       //   dtype: the concat's arrays carry one dtype per field, so the
       //   prefix widens to bit-identical floats on both commits.
-      // - optional-field presence must MATCH the committed parent: the concat
-      //   is all-or-nothing per field (concatOptionalField), so a new level
-      //   WITHOUT e.g. Float32 colors drops the merged field entirely and the
-      //   adapter's constant fill would differ from the prefix's committed
-      //   values. (The fixed texel layout means the pool no longer rebuilds
-      //   on dtype/scalar-presence changes — these presence conjuncts are
-      //   now the SOLE guard for every optional field, scalars included.)
+      // - optional-field presence must MATCH the committed parent. Radii,
+      //   sharpness and scalars concat all-or-nothing (concatOptionalField),
+      //   so a new level WITHOUT one drops the merged field and the adapter's
+      //   constant fill would differ from the prefix's committed values.
+      //   Colours white-fill a colourless rung instead (concatColorsWhiteFilled),
+      //   so that level no longer flips presence OFF — but the first coloured
+      //   level joining a colourless prefix still flips it ON, rewriting the
+      //   prefix's colours from the default to white, so the colour conjunct
+      //   stays. (The fixed texel layout means the pool no longer rebuilds on
+      //   dtype/scalar-presence changes — these presence conjuncts are now the
+      //   SOLE guard for every optional field, scalars included.)
       const committed = getCommittedData(points) as LoadedPointsData | undefined;
       const canAppend =
         hadCommittedData &&

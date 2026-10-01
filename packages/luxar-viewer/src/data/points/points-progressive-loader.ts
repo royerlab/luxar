@@ -41,7 +41,12 @@ import type {
   QueryInfo,
 } from '../../types/data-monitor-types';
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
-import { concatOptionalField, concatRequiredField } from '../loaders/progressive/concat-helpers';
+import {
+  concatColorsWhiteFilled,
+  concatOptionalField,
+  concatRequiredField,
+  type ConcatColorArray,
+} from '../loaders/progressive/concat-helpers';
 import {
   classifyStreamingPass,
   resolveLadderDepth,
@@ -317,25 +322,19 @@ function concatenatePointsData(
     },
   };
 
-  // Optional per-point fields: all-or-nothing across LODs (dtype preserved).
-  // Color LAYOUT (3 = RGB, 4 = RGBA) strides the concat — a hardcoded 3
-  // would truncate + misalign an RGBA additive ladder (the gsplat colorK
-  // lesson, PR #620). Layout is a property of the dataset, uniform across
-  // its LODs; a mismatch is malformed data — fail fast, naming the level.
-  const colorK: 3 | 4 = parts.find((p) => p.colors)?.colorComponents ?? 3;
-  for (const [levelIdx, part] of parts.entries()) {
-    if (part.colors && (part.colorComponents ?? 3) !== colorK) {
-      throw new Error(
-        'concatenatePointsData: mixed color layouts across LOD levels ' +
-          `(level ${levelIdx}: ${part.colorComponents ?? 3} vs ${colorK} ` +
-          'components) — ladder levels must share the color layout (RGB vs RGBA).'
-      );
-    }
-  }
-  const colors = concatOptionalField(parts, (p) => p.colors as ColorArray, count, colorK, 'colors');
-  if (colors) {
-    result.colors = colors;
-    result.colorComponents = colorK;
+  // Colours follow the shared ladder policy (`concatColorsWhiteFilled`): a
+  // rung without them is filled with white rather than dropping colours from
+  // the whole ladder. The other optional per-point fields stay all-or-nothing
+  // across LODs (dtype preserved).
+  const colored = concatColorsWhiteFilled(
+    parts,
+    (p) => ({ colors: p.colors as ConcatColorArray | undefined, components: p.colorComponents }),
+    count,
+    'concatenatePointsData'
+  );
+  if (colored) {
+    result.colors = colored.colors as ColorArray;
+    result.colorComponents = colored.colorComponents;
   }
   const radii = concatOptionalField(parts, (p) => p.radii as ScalarArray, count, 1, 'radii');
   if (radii) result.radii = radii;

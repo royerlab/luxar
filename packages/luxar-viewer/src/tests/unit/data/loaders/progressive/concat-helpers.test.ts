@@ -9,6 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  concatColorsWhiteFilled,
   concatOptionalField,
   concatRequiredField,
 } from '../../../../../data/loaders/progressive/concat-helpers';
@@ -154,5 +155,77 @@ describe('concat-helpers zero-row abstainer rule', () => {
     const out = concatOptionalField(parts, (p) => p.data, n, 1, 'colors');
     expect(out).toBeInstanceOf(Uint8Array);
     expect(out).toHaveLength(0);
+  });
+});
+
+describe('concatColorsWhiteFilled', () => {
+  type Part = { n: number; colors?: Uint8Array | Float32Array | null; k?: 3 | 4 };
+  const get = (p: Part) => ({ colors: p.colors, components: p.k });
+  const count = (p: Part) => p.n;
+
+  it('is null when no part carries colours', () => {
+    expect(concatColorsWhiteFilled<Part>([{ n: 2 }, { n: 1 }], get, count, 't')).toBeNull();
+  });
+
+  it('white-fills a colourless part at the dtype full scale', () => {
+    const out = concatColorsWhiteFilled<Part>(
+      [{ n: 1, colors: new Uint8Array([1, 2, 3]) }, { n: 2 }],
+      get,
+      count,
+      't'
+    )!;
+    expect(Array.from(out.colors)).toEqual([1, 2, 3, 255, 255, 255, 255, 255, 255]);
+    expect(out.colorComponents).toBe(3);
+  });
+
+  it('fills an RGBA ladder opaque and keeps the float dtype', () => {
+    const out = concatColorsWhiteFilled<Part>(
+      [{ n: 1 }, { n: 1, colors: new Float32Array([0.1, 0.2, 0.3, 0.4]), k: 4 }],
+      get,
+      count,
+      't'
+    )!;
+    expect(out.colors).toBeInstanceOf(Float32Array);
+    expect(Array.from(out.colors.subarray(0, 4))).toEqual([1, 1, 1, 1]);
+    expect(out.colorComponents).toBe(4);
+  });
+
+  it('lets a zero-row part abstain from the dtype and layout checks', () => {
+    const out = concatColorsWhiteFilled<Part>(
+      [
+        { n: 0, colors: new Float32Array(0) },
+        { n: 1, colors: new Uint8Array([9, 9, 9]) },
+      ],
+      get,
+      count,
+      't'
+    )!;
+    expect(out.colors).toBeInstanceOf(Uint8Array);
+    expect(Array.from(out.colors)).toEqual([9, 9, 9]);
+  });
+
+  it('rejects mixed dtypes and layouts, naming the level', () => {
+    expect(() =>
+      concatColorsWhiteFilled<Part>(
+        [
+          { n: 1, colors: new Uint8Array(3) },
+          { n: 1, colors: new Float32Array(3) },
+        ],
+        get,
+        count,
+        't'
+      )
+    ).toThrow(/t: mixed color dtypes .*level 1/);
+    expect(() =>
+      concatColorsWhiteFilled<Part>(
+        [
+          { n: 1, colors: new Uint8Array(3) },
+          { n: 1, colors: new Uint8Array(4), k: 4 },
+        ],
+        get,
+        count,
+        't'
+      )
+    ).toThrow(/mixed color layouts .*level 1: 4 vs 3 components/);
   });
 });

@@ -11,7 +11,7 @@ The three progressive (additive-LOD) loaders —
 levels and concatenate the per-LOD typed-array fields into a single
 merged payload. The bits that were identical across all three live here
 so the geometry loaders only carry their own geometry-specific wrinkles
-(segment-index offsetting, colour fill-with-white, Cholesky factor
+(segment-index offsetting, Lines' sharpness default, Cholesky factor
 sizing).
 
 This folder holds no loader of its own — it is a pure helper module
@@ -27,9 +27,12 @@ resident and has no per-slice payload to cache.
 ```
 progressive/
 ├── concat-helpers.ts      # Generic typed-array field concatenation across LOD parts
+├── child-signal.ts        # createChildController — a per-read child of a pass signal that
+│                          # inherits its priority/origin tags (a pinned pass's concurrent rungs)
 ├── constants.ts           # CACHE_HIT_THRESHOLD_MS — the shared streaming threshold
-├── lookahead-signal.ts    # 'lookahead'-tagged controller for the next-rung prefetch (free
-│                          # navigation only; linked to the scheduling update's abort signal)
+├── lookahead-signal.ts    # 'lookahead'-origin, 'speculative'-priority controller for the
+│                          # next-rung prefetch (free navigation only; linked to the
+│                          # scheduling update's abort signal)
 ├── pass-rollback.ts       # Shared retry/truncate/full-unwind decision for failed passes
 ├── streaming-policy.ts    # Per-pass LOD streaming decisions (playback / prefetch / refine)
 ├── slice-cache-helper.ts  # Shared SliceCache key/clone/restore/store logic, including separate
@@ -49,11 +52,12 @@ Structurally-generic concatenation over any typed array `A`
 (Float32Array, Uint8/16/32Array, Float16Array, …). The output dtype is
 preserved by constructing from the first part's array.
 
-| Symbol                                               | Description                                                                                                                                                                       |
-| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `interface ConcatTypedArray`                         | Minimal structural shape (`length`, `set(array, offset?)`) common to every typed array being concatenated.                                                                        |
-| `concatRequiredField(parts, get, countOf, perItem?)` | Concatenate a **required** field. Allocates `sum(countOf) * perItem` elements and copies each part at a running offset.                                                           |
-| `concatOptionalField(parts, get, countOf, perItem?)` | Concatenate an **optional** field with **all-or-nothing** policy: returns `undefined` unless _every_ part carries the field — except that **zero-row parts abstain** (see below). |
+| Symbol                                                | Description                                                                                                                                                                                                                                                                                                                       |
+| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `interface ConcatTypedArray`                          | Minimal structural shape (`length`, `set(array, offset?)`) common to every typed array being concatenated.                                                                                                                                                                                                                        |
+| `concatRequiredField(parts, get, countOf, perItem?)`  | Concatenate a **required** field. Allocates `sum(countOf) * perItem` elements and copies each part at a running offset.                                                                                                                                                                                                           |
+| `concatOptionalField(parts, get, countOf, perItem?)`  | Concatenate an **optional** field with **all-or-nothing** policy: returns `undefined` unless _every_ part carries the field — except that **zero-row parts abstain** (see below).                                                                                                                                                 |
+| `concatColorsWhiteFilled(parts, get, countOf, label)` | The shared **colour** policy of all three emissive ladders: when any part carries colours the result does, and a part without them is filled with white (full scale for the dtype; RGBA alpha opaque). Dtype and layout (RGB/RGBA) come from the first coloured part; a mismatch throws naming the level. Zero-row parts abstain. |
 
 `get` extracts the field from a part, `countOf` returns a part's element
 count (rows), and `perItem` is the components per element (e.g. `3` for
@@ -66,8 +70,8 @@ import { concatRequiredField, concatOptionalField } from '../loaders/progressive
 // Required: positions are ndim components per row.
 const positions = concatRequiredField(parts, (p) => p.positions, count, ndim);
 
-// Optional: colours only survive if every LOD part has them.
-const colors = concatOptionalField(parts, (p) => p.colors as ColorArray, count, 3);
+// Optional: radii only survive if every LOD part has them.
+const radii = concatOptionalField(parts, (p) => p.radii as ScalarArray, count, 1);
 ```
 
 **Zero-row parts abstain.** A part with `countOf(p) === 0` contributes no rows,
@@ -79,17 +83,17 @@ level of an additive ladder stripped those fields from every _other_ level too
 and the node adapters substituted constant fills (issue #1456). What each
 geometry stood to lose differs:
 
-| Geometry | Fields routed through `concatOptionalField` | Lost without the rule                                            |
-| -------- | ------------------------------------------- | ---------------------------------------------------------------- |
-| Points   | `colors`, `radii`, `sharpness`, `scalars`   | all four → white, radius 0.5, sharpness 0.5, colormap suppressed |
-| Lines    | `scalars` only                              | colormap suppressed (`hasScalars` clears)                        |
-| GSplats  | none                                        | nothing — unaffected                                             |
+| Geometry | Fields routed through `concatOptionalField` | Lost without the rule                          |
+| -------- | ------------------------------------------- | ---------------------------------------------- |
+| Points   | `radii`, `sharpness`, `scalars`             | radius 0.5, sharpness 0.5, colormap suppressed |
+| Lines    | `scalars` only                              | colormap suppressed (`hasScalars` clears)      |
+| GSplats  | none                                        | nothing — unaffected                           |
 
-Lines has no `radii` field at all, and its `colors` / `sharpness` are
-present-but-`null` on the empty payload and merge via the bespoke find-first +
-fill-for-missing path in `concatenateLinesData`, not this helper. GSplats'
-empty payload carries zero-length `Float32Array`s for its required fields and
-takes the same fill-for-missing path for colours.
+Colours go through `concatColorsWhiteFilled` for all three geometries (its
+zero-row parts abstain the same way). Lines has no `radii` field at all, and its
+`sharpness` is present-but-`null` on the empty payload and merges via the
+bespoke fill-with-default (0.5) path in `concatenateLinesData`. GSplats' empty
+payload carries zero-length `Float32Array`s for its required fields.
 
 When _every_ part is zero-row the gate falls back to all the parts, so a wholly
 empty ladder yields exactly what it always did.

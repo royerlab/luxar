@@ -109,8 +109,10 @@ function emptyMeshData(): LoadedMeshData {
 /**
  * Reject a ladder whose levels disagree about whether an optional array exists.
  *
- * The three sibling loaders are LENIENT here — a missing level's colours are
- * filled with white — and they are right to be, because their levels answer a
+ * The three sibling loaders are LENIENT about colours — a level without them is
+ * filled with white (`concatColorsWhiteFilled` in
+ * `../loaders/progressive/concat-helpers`) — and they are right to be, because
+ * their levels answer a
  * spatial range query and a level legitimately contributes zero rows to a given
  * slice. A mesh ladder has no such case: every level is whole-node resident and
  * the levels are one source mesh partitioned by face, so `has_normals` /

@@ -24,7 +24,11 @@ import type {
 } from '../../types/data-monitor-types';
 import { assertColorLayout } from '../loaders';
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
-import { concatOptionalField, concatRequiredField } from '../loaders/progressive/concat-helpers';
+import {
+  concatColorsWhiteFilled,
+  concatOptionalField,
+  concatRequiredField,
+} from '../loaders/progressive/concat-helpers';
 import {
   classifyStreamingPass,
   resolveLadderDepth,
@@ -139,27 +143,18 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
   const widths = concatRequiredField(parts, (p) => p.widths, count, 1, 'widths');
   const scalars = concatOptionalField(parts, (p) => p.scalars as ScalarArray, count, 1, 'scalars');
 
-  // Bespoke fields: segments need vertex-offset remapping; colors fill missing
-  // LODs with white; sharpness is partial (nullable, not all-or-nothing).
+  // Bespoke fields: segments need vertex-offset remapping; sharpness is
+  // partial (nullable, not all-or-nothing). Colours follow the shared ladder
+  // policy: a rung without them is filled with white.
   const segments = new Uint32Array(totalSegments * 2);
-
-  const firstWithColors = parts.find((p) => p.colors !== null);
-  // Color stride follows the ladder's layout (3 RGB / 4 RGBA). Mixed
-  // layouts across levels are rejected below — like the dtype contract,
-  // the layout is a property of the dataset, and a silent 3-vs-4 mix
-  // would mis-stride every vertex after the offending level (the gsplat
-  // ladder shipped exactly this bug before its colorK guard).
-  const colorK = firstWithColors?.colorComponents ?? 3;
-  let colors: Float32Array | Uint8Array | Uint16Array | null = null;
-  if (firstWithColors?.colors) {
-    if (firstWithColors.colors instanceof Uint8Array) {
-      colors = new Uint8Array(totalVertices * colorK);
-    } else if (firstWithColors.colors instanceof Uint16Array) {
-      colors = new Uint16Array(totalVertices * colorK);
-    } else {
-      colors = new Float32Array(totalVertices * colorK);
-    }
-  }
+  const colored = concatColorsWhiteFilled(
+    parts,
+    (p) => ({ colors: p.colors, components: p.colorComponents }),
+    count,
+    'concatenateLinesData'
+  );
+  const colors = colored?.colors ?? null;
+  const colorK = colored?.colorComponents ?? 3;
   const firstWithSharpness = parts.find((p) => p.sharpness !== null);
   let sharpness: Float32Array | null = firstWithSharpness?.sharpness
     ? new Float32Array(totalVertices)
@@ -167,41 +162,10 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
 
   let vertexOffset = 0;
   let segmentOffset = 0;
-  for (const [levelIdx, part] of parts.entries()) {
+  for (const part of parts) {
     // Offset-adjust segment indices into the concatenated vertex array.
     for (let i = 0; i < part.segments.length; i++) {
       segments[segmentOffset * 2 + i] = part.segments[i] + vertexOffset;
-    }
-    if (colors && part.colors) {
-      // LADDER-DTYPE CONTRACT (see concat-helpers.ts): `set` converts by
-      // VALUE, not semantics — a Float32 (0..1) level written into a Uint8
-      // (0..255) merge truncates to garbage, and the reverse writes 255×
-      // values. The writer emits one color dtype per ladder; fail fast.
-      // Names the offending level (concat-helpers' convention) so a corrupt
-      // store is diagnosable without a debugger.
-      if (part.colors.constructor !== colors.constructor) {
-        throw new Error(
-          'concatenateLinesData: mixed color dtypes across LOD levels ' +
-            `(level ${levelIdx}: ${part.colors.constructor.name} vs ` +
-            `${colors.constructor.name}) — ladder levels must share each ` +
-            "field's dtype."
-        );
-      }
-      if ((part.colorComponents ?? 3) !== colorK) {
-        throw new Error(
-          'concatenateLinesData: mixed color layouts across LOD levels ' +
-            `(level ${levelIdx}: ${part.colorComponents ?? 3} components vs ` +
-            `${colorK}) — ladder levels must share the color layout.`
-        );
-      }
-      colors.set(part.colors, vertexOffset * colorK);
-    } else if (colors && !part.colors) {
-      // White fill; for an RGBA ladder the alpha column gets the same
-      // max value = 1.0 opaque (the per-element-opacity identity).
-      const fill = colors instanceof Uint8Array ? 255 : colors instanceof Uint16Array ? 65535 : 1.0;
-      for (let i = 0; i < part.vertexCount * colorK; i++) {
-        colors[vertexOffset * colorK + i] = fill;
-      }
     }
     if (sharpness && part.sharpness) {
       sharpness.set(part.sharpness, vertexOffset);
@@ -213,7 +177,7 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
       // renders standalone, which the append fast path's prefix-identity
       // contract relies on (and fixes a full-rewrite inconsistency where
       // sharpness-less parts turned razor-sharp when a sharpness-carrying
-      // level joined the ladder). Mirrors the white color fill above.
+      // level joined the ladder). Mirrors the white colour fill.
       sharpness.fill(0.5, vertexOffset, vertexOffset + part.vertexCount);
     }
     // (scalars are fully concatenated above via concatOptionalField.)
