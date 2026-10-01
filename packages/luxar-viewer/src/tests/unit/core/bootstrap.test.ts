@@ -28,6 +28,14 @@ const mocks = vi.hoisted(() => ({
   setRenderingSettings: vi.fn(),
   flyTo: vi.fn().mockResolvedValue({ completed: true }),
   disposeCleanups: [] as Array<() => void>,
+  renderer: {
+    info: {
+      autoReset: true,
+      reset: () => undefined,
+      render: { frame: 1, calls: 7, triangles: 70, points: 0, lines: 0 },
+      memory: { geometries: 2, textures: 3 },
+    },
+  },
 }));
 
 vi.mock('../../../core/app', () => ({
@@ -40,6 +48,7 @@ vi.mock('../../../core/app', () => ({
     setRenderingSettings: mocks.setRenderingSettings,
     getLayers: () => [],
     flyTo: mocks.flyTo,
+    components: { sceneManager: { renderer: mocks.renderer } },
     onDispose: (cleanup: () => void) => {
       mocks.disposeCleanups.push(cleanup);
     },
@@ -100,6 +109,17 @@ import { setDocumentTitle } from '../../../core/document-title';
 import { log } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
 import type { UrlParams } from '../../../config/url-params';
+import * as THREE from 'three';
+import { perfCounters } from '../../../profiling/perf-counters';
+import { eventBus } from '../../../utils/cross-layer/event-bus';
+import {
+  lodLoadStatsEnabled,
+  setLodLoadStatsEnabled,
+} from '../../../data/scene-loader/lod-load-stats';
+import {
+  getRendererInfoSnapshot,
+  uninstallRendererInfoSampler,
+} from '../../../core/app/debug/renderer-info-sampler';
 import { resetRootDocumentPrefetchForTests } from '../../../cache/root-document-prefetch';
 import {
   defaultUserSettings,
@@ -545,6 +565,36 @@ describe('bootstrapStandalone', () => {
     it('does not seed window.__luxarDebug without either flag', async () => {
       await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
       expect(window.__luxarDebug).toBeUndefined();
+    });
+
+    it.fails('installs the debug perf instruments before the first load starts', async () => {
+      // A probe reading getPerf() during the first load (the case the perf
+      // gates measure) must see the getObjectByName counter, the lazy-LOD
+      // stage timings and the renderer.info sampler — not only after it.
+      let releaseInit!: () => void;
+      mocks.init.mockImplementationOnce(
+        () => new Promise<void>((resolve) => (releaseInit = resolve))
+      );
+      setLodLoadStatsEnabled(false);
+      uninstallRendererInfoSampler();
+      const booting = bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, debug: true },
+      });
+      await vi.waitFor(() => expect(mocks.init).toHaveBeenCalled());
+      try {
+        expect(lodLoadStatsEnabled()).toBe(true);
+        const before = perfCounters.get('scene.getObjectByName');
+        new THREE.Group().getObjectByName('anything');
+        expect(perfCounters.get('scene.getObjectByName')).toBe(before + 1);
+        eventBus.emit('frame-start', {});
+        eventBus.emit('frame-end', { rendered: true });
+        expect(getRendererInfoSnapshot()).toMatchObject({ calls: 7, triangles: 70 });
+      } finally {
+        releaseInit();
+        await booting;
+        uninstallRendererInfoSampler();
+      }
     });
 
     it('forwards debug:true to LuxarApp.init()', async () => {
