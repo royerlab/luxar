@@ -13,6 +13,7 @@ import { GSplatsProgressiveLoader } from '../../../data/gsplats/gsplats-progress
 import type { GSplatsSpatialIndexLoader } from '../../../data/gsplats/gsplats-spatial-index-loader';
 import type { GSplatsViewState, LoadedGSplatsData } from '../../../types/gsplats';
 import { signalPriority } from '../../../utils/fetch-concurrency';
+import { log } from '../../../utils/log';
 
 const DIMENSIONS = [
   { name: 'X', unit: 'um', scale: 1 },
@@ -254,5 +255,40 @@ describe('GSplatsProgressiveLoader — lookahead honours the update signal', () 
 
     expect(rungs[2].stub.prefetchChunks).not.toHaveBeenCalled();
     expect(rungs[0].stub.prefetchChunks).not.toHaveBeenCalled();
+  });
+});
+
+describe('GSplatsProgressiveLoader — a lookahead outliving dispose', () => {
+  it.fails('a planned lookahead that resolves after dispose neither reads the dropped rungs nor warns', async () => {
+    // Five rungs; every pass loads two cold ones then stops, so the second
+    // pass (metadata warm started) schedules a PLANNED lookahead of rung 4.
+    const rungs = Array.from({ length: 5 }, (_, i) => subLoader(2 ** i, false));
+    for (const [level, r] of rungs.entries()) {
+      r.stub.updateViewWithResidency.mockImplementation(async () => ({
+        data: lodData(2 ** level),
+        allResident: false,
+      }));
+      r.stub.getPrefetchCacheStats.mockReturnValue({ size: 0, maxSize: 1e9 } as never);
+    }
+    let releasePlan: () => void = () => undefined;
+    rungs[4].stub.planPrefetch.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releasePlan = () => resolve({ bytes: 0, ranges: [] });
+        })
+    );
+    const warning = vi.spyOn(log, 'warning');
+    const loader = makeLoader(rungs);
+    await loader.updateView(viewAt(0));
+    await loader.updateView(viewAt(0));
+    await vi.waitFor(() => expect(rungs[4].stub.planPrefetch).toHaveBeenCalled());
+
+    loader.dispose(); // dataset switch while the plan is in flight
+    releasePlan();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(rungs[4].stub.prefetchChunks).not.toHaveBeenCalled();
+    expect(warning).not.toHaveBeenCalled();
+    warning.mockRestore();
   });
 });
