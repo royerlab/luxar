@@ -137,6 +137,23 @@ describe('wireDensityGuard', () => {
     expect(deps.spies.resume).toHaveBeenCalledTimes(2);
   });
 
+  it.fails('a keep step invalidates the cached pick buffer, even with a still camera', () => {
+    // The pick pass drops exactly the elements the visual pass drops (same
+    // hash, synced uDensityDrop), but only when it re-renders. A guard step
+    // with no camera motion dirtied nothing the picking system listens to, so
+    // hover kept resolving against the pre-step buffer: thinned-away elements
+    // stayed pickable, and restored ones were not.
+    const invalidatePickBuffer = vi.fn();
+    const deps = makeDeps({ invalidatePickBuffer } as Partial<DensityGuardWiringDeps>);
+    const wiring = wireDensityGuard(deps);
+
+    expect(wiring.perFrame()).toBe(true);
+    expect(invalidatePickBuffer).toHaveBeenCalledTimes(1);
+    // Steady state: no step, no invalidation.
+    expect(wiring.perFrame()).toBe(false);
+    expect(invalidatePickBuffer).toHaveBeenCalledTimes(1);
+  });
+
   it('is inert when disabled: null provider, no evaluation, no thinning', () => {
     const deps = makeDeps({ option: false });
     const wiring = wireDensityGuard(deps);
