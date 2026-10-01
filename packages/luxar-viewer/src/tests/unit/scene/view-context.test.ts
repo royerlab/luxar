@@ -81,11 +81,12 @@ describe('ViewContextProvider', () => {
     expect(views.get().frustum.containsPoint(point)).toBe(true);
   });
 
-  it('uses reversed depth when building a WebGPU frustum', () => {
+  it('uses reversed depth when building a WebGL frustum', () => {
     const camera = new THREE.PerspectiveCamera(60, 1, 1, 10);
-    camera.coordinateSystem = THREE.WebGPUCoordinateSystem;
+    camera.coordinateSystem = THREE.WebGLCoordinateSystem;
     // The renderer enables reversed depth through this internal camera flag.
     Object.assign(camera, { _reversedDepth: true });
+    expect(camera.reversedDepth).toBe(true);
     camera.updateProjectionMatrix();
     const frustum = provider(() => camera).get().frustum;
 

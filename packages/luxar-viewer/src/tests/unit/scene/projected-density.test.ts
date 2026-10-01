@@ -87,10 +87,20 @@ describe('projectSphereAreaPx', () => {
     camera.setViewOffset(2000, 2000, 0, 0, 1000, 1000);
     const outside = projectSphereAreaPx({ x: 1, y: 0, z: -10 }, 0.1, camera, 1000, 1000);
     const inside = projectSphereAreaPx({ x: -3, y: 3, z: -10 }, 0.1, camera, 1000, 1000);
+    const centred = perspective(1000, 1000, 0);
+    centred.setViewOffset(2000, 2000, 500, 500, 1000, 1000);
+    const centredArea = projectSphereAreaPx(
+      { x: 0, y: 0, z: -10 },
+      0.1,
+      centred,
+      1000,
+      1000
+    ).areaPx;
 
     expect(outside).toEqual({ areaPx: 0, onScreen: false });
     expect(inside.onScreen).toBe(true);
     expect(inside.areaPx).toBeGreaterThan(0);
+    expect(inside.areaPx).toBeCloseTo(centredArea);
   });
 });
 

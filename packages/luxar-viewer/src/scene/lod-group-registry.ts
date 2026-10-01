@@ -2346,7 +2346,8 @@ export class LODGroupRegistry {
     this.tick++;
     // ``view.projView`` (projection×view, using the camera's clip coordinates) is
     // shared three ways: its frustum gates off-screen groups and ranks
-    // eviction, and the per-group projections reuse the matrix.
+    // eviction, and the per-group projections reuse the matrix. The manual
+    // divide in projectBoxDiagonalPx reads only x/y/w, independent of clip depth.
     FRUSTUM_MATRIX_SCRATCH.copy(view.projView);
     FRUSTUM_SCRATCH.copy(view.frustum);
     PARTITION_FRUSTUM_MATRIX_SCRATCH.copy(FRUSTUM_MATRIX_SCRATCH).premultiply(
