@@ -170,7 +170,7 @@ describe('GSplatsProgressiveLoader — a braked pinned pass cancels its remainin
     return { rungs, signals, release: () => releases.splice(0).forEach((r) => r()) };
   }
 
-  it.fails('the residency brake aborts and releases the rungs it will never commit', async () => {
+  it('the residency brake aborts and releases the rungs it will never commit', async () => {
     const { rungs, signals, release } = parkedRungs(3);
     const loader = makeLoader(rungs);
     // A 1-byte allowance: rung 0 spends it, so the loop stops right after it.

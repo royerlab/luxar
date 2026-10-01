@@ -53,6 +53,7 @@ import {
   awaitShadowStore,
 } from '../loaders/progressive/slice-cache-helper';
 import { planLadderRollback } from '../loaders/progressive/pass-rollback';
+import { createChildController, type ChildController } from '../loaders/progressive/child-signal';
 import { SPLAT_FLOATS_PER_SPLAT } from '../../rendering/element-texture-layout';
 import {
   ladderResidentBytes,
@@ -83,6 +84,13 @@ function readPrefetchHeadroom(loader: GSplatsSpatialIndexLoader | undefined): nu
   const stats = loader.getPrefetchCacheStats();
   if (!stats) return null;
   return Math.max(0, (stats.maxSize ?? 0) - stats.size);
+}
+
+/** One rung a pinned pass started up front, with the controller that can cancel it. */
+interface PinnedRungLoad {
+  readonly level: number;
+  readonly load: Promise<{ data: LoadedGSplatsData; allResident: boolean }>;
+  readonly child: ChildController;
 }
 
 interface DeepLookaheadPlan {
@@ -708,74 +716,81 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       pass === 'pinned'
         ? this.startLevelLoads(startLevel, targetLevels, viewState, session, signal)
         : null;
-    for (let level = startLevel; level < targetLevels; level++) {
-      // A dispose() racing the awaited level below clears `lodLoaders`, so
-      // the next iteration would TypeError on `this.lodLoaders[level]` — a
-      // teardown mis-counted as a real refinement failure (recordFailure +
-      // backoff). Stop streaming instead.
-      if (this._disposed) {
-        break;
-      }
-      // Pass-budget guard: playback only guarantees a level for an empty
-      // ladder; prefetch retains one-level progress after a restore (#2379).
-      if (shouldStopBeforeLevel(pass, level, startLevel, performance.now(), budgetDeadline)) {
-        break;
-      }
-      // Rung level+1's chunk_bounds is fetched WHILE this rung's data loads
-      // (B6), not after the pass: the next refinement step then starts with
-      // its index in hand. Not under a playback budget (one rung per tick) nor
-      // for a shadow prefetch pass — the same rule as `warmRemainingLODMetadata`.
-      if (this._frameBudgetMs === null && !isPrefetch) this.warmLevelIndex(level + 1);
-      const t0 = performance.now();
-      const { data: lodData, allResident } = await (pinnedLoads?.[level - startLevel] ??
-        this.loadLevel(level, viewState, session, signal));
-      const elapsed = performance.now() - t0;
+    try {
+      for (let level = startLevel; level < targetLevels; level++) {
+        // A dispose() racing the awaited level below clears `lodLoaders`, so
+        // the next iteration would TypeError on `this.lodLoaders[level]` — a
+        // teardown mis-counted as a real refinement failure (recordFailure +
+        // backoff). Stop streaming instead.
+        if (this._disposed) {
+          break;
+        }
+        // Pass-budget guard: playback only guarantees a level for an empty
+        // ladder; prefetch retains one-level progress after a restore (#2379).
+        if (shouldStopBeforeLevel(pass, level, startLevel, performance.now(), budgetDeadline)) {
+          break;
+        }
+        // Rung level+1's chunk_bounds is fetched WHILE this rung's data loads
+        // (B6), not after the pass: the next refinement step then starts with
+        // its index in hand. Not under a playback budget (one rung per tick) nor
+        // for a shadow prefetch pass — the same rule as `warmRemainingLODMetadata`.
+        if (this._frameBudgetMs === null && !isPrefetch) this.warmLevelIndex(level + 1);
+        const t0 = performance.now();
+        const { data: lodData, allResident } = await (pinnedLoads?.[level - startLevel]?.load ??
+          this.loadLevel(level, viewState, session, signal));
+        const elapsed = performance.now() - t0;
 
-      this.loadedLODs.push(lodData);
-      this._restoredOrigin = null;
-      this._loadedLODCount++;
-      this._lastAllResident = allResident;
+        this.loadedLODs.push(lodData);
+        this._restoredOrigin = null;
+        this._loadedLODCount++;
+        this._lastAllResident = allResident;
 
-      if (!this._initialLoadDone) {
-        log.verbose(
-          LogEmoji.BROADCAST,
-          Modules.GSPLATS_SPATIAL_INDEX_LOADER,
-          `LOD ${level}/${this.nLods - 1}: ${lodData.splatCount} splats (${elapsed.toFixed(1)}ms${allResident ? '' : ', miss'})`
+        if (!this._initialLoadDone) {
+          log.verbose(
+            LogEmoji.BROADCAST,
+            Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+            `LOD ${level}/${this.nLods - 1}: ${lodData.splatCount} splats (${elapsed.toFixed(1)}ms${allResident ? '' : ', miss'})`
+          );
+        }
+
+        // NEVER break out because a level came back empty (#1456). It is a
+        // tempting optimization — this loop used to latch a terminal "empty
+        // ladder" on an empty LOD 0 and stop — but it is wrong here: this loader
+        // is constructed only for ADDITIVE ladders
+        // (`createProgressiveGSplatsLoader` iterates the `additive_<i>`
+        // subgroups), whose levels are DISJOINT increments of one permutation,
+        // not coarse-to-fine resamplings of the same elements. They are therefore
+        // NOT spatially coextensive: LOD 0 is a small SUBSET of the node (a few
+        // thousand splats under `-b stream:C` / `--target-ms`, the recommended
+        // ladder shape), so a hidden-dimension slice that none of ITS members
+        // lands on says nothing whatever about levels 1..n-1, which may hold
+        // plenty of splats right there. Stopping here rendered such a slice
+        // permanently blank. The same reasoning forbids inferring anything from a
+        // restored cache PREFIX whose LOD 0 is empty.
+
+        const additionalResidentBytes = Math.max(
+          0,
+          ladderResidentBytes(this.ladderResidency()) - residentBytesAtPassStart
         );
+        if (
+          shouldStopAfterLevel(
+            pass,
+            level,
+            startLevel,
+            allResident,
+            elapsed,
+            additionalResidentBytes,
+            residencyAllowanceBytes
+          )
+        ) {
+          break;
+        }
       }
-
-      // NEVER break out because a level came back empty (#1456). It is a
-      // tempting optimization — this loop used to latch a terminal "empty
-      // ladder" on an empty LOD 0 and stop — but it is wrong here: this loader
-      // is constructed only for ADDITIVE ladders
-      // (`createProgressiveGSplatsLoader` iterates the `additive_<i>`
-      // subgroups), whose levels are DISJOINT increments of one permutation,
-      // not coarse-to-fine resamplings of the same elements. They are therefore
-      // NOT spatially coextensive: LOD 0 is a small SUBSET of the node (a few
-      // thousand splats under `-b stream:C` / `--target-ms`, the recommended
-      // ladder shape), so a hidden-dimension slice that none of ITS members
-      // lands on says nothing whatever about levels 1..n-1, which may hold
-      // plenty of splats right there. Stopping here rendered such a slice
-      // permanently blank. The same reasoning forbids inferring anything from a
-      // restored cache PREFIX whose LOD 0 is empty.
-
-      const additionalResidentBytes = Math.max(
-        0,
-        ladderResidentBytes(this.ladderResidency()) - residentBytesAtPassStart
-      );
-      if (
-        shouldStopAfterLevel(
-          pass,
-          level,
-          startLevel,
-          allResident,
-          elapsed,
-          additionalResidentBytes,
-          residencyAllowanceBytes
-        )
-      ) {
-        break;
-      }
+    } finally {
+      // A rung started up front but never committed (the residency brake, an
+      // abort, a throw) must not keep fetching and decoding into an
+      // accumulator nothing will read (A20).
+      if (pinnedLoads) this.discardUncommittedLoads(pinnedLoads);
     }
 
     if (!this._initialLoadDone && startLevel === 0) {
@@ -1011,7 +1026,9 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
   }
 
   /**
-   * Start rungs `[from, to)` concurrently, coarsest first. A rung the loop never
+   * Start rungs `[from, to)` concurrently, coarsest first, each under its OWN
+   * child of the pass signal so the remainder can be cancelled without
+   * cancelling the pass ({@link discardUncommittedLoads}). A rung the loop never
    * awaits (it broke out early, or an earlier rung threw) must not surface as an
    * unhandled rejection, so each promise gets a no-op handler; the loop still
    * awaits — and rethrows — the original.
@@ -1022,14 +1039,31 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     viewState: GSplatsViewState,
     session: UpdateSession | undefined,
     signal: AbortSignal | undefined
-  ): Array<Promise<{ data: LoadedGSplatsData; allResident: boolean }>> {
-    const loads: Array<Promise<{ data: LoadedGSplatsData; allResident: boolean }>> = [];
+  ): PinnedRungLoad[] {
+    const loads: PinnedRungLoad[] = [];
     for (let level = from; level < to; level++) {
-      const load = this.loadLevel(level, viewState, session, signal);
+      const child = createChildController(signal);
+      const load = this.loadLevel(level, viewState, session, child.controller.signal);
       void load.catch(() => {});
-      loads.push(load);
+      loads.push({ level, load, child });
     }
     return loads;
+  }
+
+  /**
+   * Cancel every pinned rung the loop did not commit and drop what its
+   * accumulator already decoded: the residency brake refused those bytes, so
+   * leaving them resident (or still arriving) defeats the budget. Committed
+   * rungs keep their reads; every child is detached from the pass signal.
+   */
+  private discardUncommittedLoads(loads: readonly PinnedRungLoad[]): void {
+    for (const { level, child } of loads) {
+      if (level >= this._loadedLODCount) {
+        child.controller.abort();
+        this.lodLoaders[level]?.releaseAccumulator();
+      }
+      child.detach();
+    }
   }
 
   private warmRemainingLODMetadata(): void {
