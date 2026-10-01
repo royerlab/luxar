@@ -167,7 +167,7 @@ describe('OPFSMetadataManager', () => {
       expect(mgr.parseFailures).toBe(1);
     });
 
-    it.fails('a zero-byte index (a first save interrupted before close) is a cold start, not corruption', async () => {
+    it('a zero-byte index (a first save interrupted before close) is a cold start, not corruption', async () => {
       const { root, rootFiles } = mockRoot();
       // What an interrupted FIRST save leaves on disk: the file exists from
       // getFileHandle({ create: true }), but its bytes only land at close().

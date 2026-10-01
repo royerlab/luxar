@@ -110,7 +110,11 @@ Key behaviours:
   `orphansReindexed`).
 - **Index persistence** — the index save is a 1 s debounce with a 2 s
   ceiling, flushed on `pagehide` / hidden (`flushAllMetadata`) and on
-  `dispose()`; an open-time, per-session-budgeted orphan reconcile re-indexes
+  `dispose()`. Neither unload-time write survives a navigation: measured on
+  Chromium, a reload that lands inside the debounce stops the save after
+  `getFileHandle(create)`, so that session's index is lost. The zero-byte file
+  this leaves is read as a cold start, not as corruption. An open-time,
+  per-session-budgeted orphan reconcile re-indexes
   or deletes chunk files the index never recorded (see `../README.md`,
   "L2 index persistence").
 - **Quota estimate cache** — `navigator.storage.estimate()` is re-run at most

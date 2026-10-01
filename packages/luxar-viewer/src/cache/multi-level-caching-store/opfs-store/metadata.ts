@@ -100,7 +100,7 @@ export class OPFSMetadataManager {
 
   /**
    * Read and parse `_cache_meta.json`. Returns null on cold start
-   * (file missing). On parse failure, returns a fresh snapshot with
+   * (file missing, or empty: a first save interrupted before close). On parse failure, returns a fresh snapshot with
    * `needsOrphanCleanup = true` and increments `parseFailures` —
    * caller should run `cleanupOrphans` to reclaim stray files.
    */
@@ -108,7 +108,14 @@ export class OPFSMetadataManager {
     try {
       const metaHandle = await root.getFileHandle(METADATA_FILE);
       const file = await metaHandle.getFile();
-      const meta: OPFSMetadata = JSON.parse(await file.text());
+      const text = await file.text();
+      // Zero bytes means a FIRST save that never got to close(). The file
+      // exists from getFileHandle({ create: true }), but its bytes only land
+      // at close(), and a page that navigates away mid-save stops in between.
+      // On Chromium a reload inside the save debounce leaves exactly this. It
+      // means "never saved", which is a cold start, not a corrupt index.
+      if (text.length === 0) return null;
+      const meta: OPFSMetadata = JSON.parse(text);
 
       // Encoding-version mismatch ⇒ stale directory: previous cache
       // entries used a different keyToFileName encoding and won't be
