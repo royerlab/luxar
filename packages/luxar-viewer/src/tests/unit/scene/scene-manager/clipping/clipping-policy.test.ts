@@ -29,6 +29,8 @@ import {
 } from '../../../../../scene/scene-manager/clipping/bounds-math';
 import { log } from '../../../../../utils/log';
 
+const FORWARD = { x: 0, y: 0, z: -1 };
+
 function makeCamera(
   position = new THREE.Vector3(0, 0, 100),
   near = 0.1,
@@ -157,7 +159,11 @@ describe('autoAdjustFromBounds — metadata path', () => {
     // far to a fixed large constant would pass the "> near" check but fail
     // this exact comparison.
     const expectedSphere = boundingBoxToSphere(metadataBounds);
-    const expected = calculateClippingPlanesFromSphere(expectedSphere, { x: 0, y: 0, z: 100 });
+    const expected = calculateClippingPlanesFromSphere(
+      expectedSphere,
+      { x: 0, y: 0, z: 100 },
+      FORWARD
+    );
     expect(result.near).toBeCloseTo(expected.near, 6);
     expect(result.far).toBeCloseTo(expected.far, 6);
 
@@ -191,11 +197,11 @@ describe('autoAdjustFromBounds — metadata path', () => {
 
     expect(near).toBe(minNearForRadius(R));
     expect(near).toBe(
-      calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: 8.5 }, false).near
+      calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: 8.5 }, FORWARD, false).near
     );
     // And strictly below what perspective would have used at the same pose.
     expect(near).toBeLessThan(
-      calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: 8.5 }, true).near
+      calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: 8.5 }, FORWARD, true).near
     );
   });
 
@@ -329,7 +335,7 @@ describe('updateDynamicFromCache', () => {
     // uses, so a sign error or missing safety-expansion factor is caught.
     const sphere = ctx.boundsCache.getSphere();
     expect(sphere).not.toBeNull();
-    const expected = calculateClippingPlanesFromSphere(sphere!, { x: 0, y: 0, z: 100 });
+    const expected = calculateClippingPlanesFromSphere(sphere!, { x: 0, y: 0, z: 100 }, FORWARD);
     expect(camera.near).toBeCloseTo(expected.near, 4);
     expect(camera.far).toBeCloseTo(expected.far, 4);
   });
@@ -435,7 +441,7 @@ describe('updateDynamicFromCache', () => {
 
     const sphere = ctx.boundsCache.getSphere();
     expect(sphere).not.toBeNull();
-    const expected = calculateClippingPlanesFromSphere(sphere!, { x: 5, y: -3, z: 10 });
+    const expected = calculateClippingPlanesFromSphere(sphere!, { x: 5, y: -3, z: 10 }, FORWARD);
     // Inside the sphere the helper returns the scale-aware floor —
     // pin the dynamic path to the identical value (exact, not close).
     expect(camera.near).toBe(expected.near);
@@ -521,11 +527,15 @@ describe('updateDynamicFromCache', () => {
       const camera = makeCamera(new THREE.Vector3(0, 0, 100), 0.1, 1000);
       const { ctx } = makeCtx({ camera, scene, metadataBounds: null });
       ctx.boundsCache.ensure(scene);
-      const expected = calculateClippingPlanesFromSphere(ctx.boundsCache.getSphere()!, {
-        x: 0,
-        y: 0,
-        z: 100,
-      });
+      const expected = calculateClippingPlanesFromSphere(
+        ctx.boundsCache.getSphere()!,
+        {
+          x: 0,
+          y: 0,
+          z: 100,
+        },
+        FORWARD
+      );
 
       // Pin the non-poisoned plane so ONLY the poisoned one can reopen the gate.
       camera.near = poisoned === 'near' ? NaN : expected.near;
@@ -555,11 +565,15 @@ describe('updateDynamicFromCache', () => {
     const camera = makeCamera(new THREE.Vector3(0, 0, 100), 0.1, 1000);
     const { ctx } = makeCtx({ camera, scene, metadataBounds: null });
     ctx.boundsCache.ensure(scene);
-    const expected = calculateClippingPlanesFromSphere(ctx.boundsCache.getSphere()!, {
-      x: 0,
-      y: 0,
-      z: 100,
-    });
+    const expected = calculateClippingPlanesFromSphere(
+      ctx.boundsCache.getSphere()!,
+      {
+        x: 0,
+        y: 0,
+        z: 100,
+      },
+      FORWARD
+    );
 
     camera.near = poisoned === 'near' ? bad : expected.near;
     camera.far = poisoned === 'far' ? bad : expected.far;
@@ -632,7 +646,12 @@ describe('updateDynamicFromCache', () => {
     // perspective-only parity test below would not have caught an ortho arm
     // that forgot to forward the flag.
     const sphere = orthoCtx.boundsCache.getSphere()!;
-    const expectedOrtho = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: 8.5 }, false);
+    const expectedOrtho = calculateClippingPlanesFromSphere(
+      sphere,
+      { x: 0, y: 0, z: 8.5 },
+      FORWARD,
+      false
+    );
     expect(ortho.near).toBe(expectedOrtho.near);
     expect(ortho.far).toBeCloseTo(expectedOrtho.far, 10);
     expect(ortho.near).toBeLessThan(perspNear);

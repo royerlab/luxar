@@ -206,8 +206,8 @@ export function autoAdjustFromBounds(ctx: ClippingCtx): {
     const { near, far } = calculateClippingPlanesFromSphere(
       sphere,
       cameraPos,
-      boundRatio,
-      direction
+      direction,
+      boundRatio
     );
     const applied = applyClippingPlanes(ctx.camera, near, far);
 
@@ -243,7 +243,7 @@ export function autoAdjustFromBounds(ctx: ClippingCtx): {
   }
 
   const sphere = boundingBoxToSphere(fallbackBounds);
-  const { near, far } = calculateClippingPlanesFromSphere(sphere, cameraPos, boundRatio, direction);
+  const { near, far } = calculateClippingPlanesFromSphere(sphere, cameraPos, direction, boundRatio);
   const applied = applyClippingPlanes(ctx.camera, near, far);
 
   return { near, far, applied };

@@ -378,25 +378,22 @@ export function boundingBoxToSphere(box: BoundingBox): BoundingSphere {
  *
  * @param sphere - Scene bounding sphere
  * @param cameraPosition - Camera position in world coordinates
+ * @param viewDirection - Camera forward direction in world coordinates.
  * @param boundNearFarRatio - Forwarded to {@link nearPlaneFloor}; pass
  *   false for an orthographic projection. Defaults to true (perspective).
- * @param viewDirection - Camera forward direction in world coordinates.
- *   When omitted, the radial distance is used for legacy position-only callers.
  * @returns Near and far clipping plane distances
  */
 export function calculateClippingPlanesFromSphere(
   sphere: BoundingSphere,
   cameraPosition: { x: number; y: number; z: number },
-  boundNearFarRatio: boolean = true,
-  viewDirection?: { x: number; y: number; z: number }
+  viewDirection: { x: number; y: number; z: number },
+  boundNearFarRatio: boolean = true
 ): { near: number; far: number } {
   const dx = cameraPosition.x - sphere.center.x;
   const dy = cameraPosition.y - sphere.center.y;
   const dz = cameraPosition.z - sphere.center.z;
   const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-  const depth = viewDirection
-    ? -(dx * viewDirection.x + dy * viewDirection.y + dz * viewDirection.z)
-    : dist;
+  const depth = -(dx * viewDirection.x + dy * viewDirection.y + dz * viewDirection.z);
   const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
 
   const far = dist + R;
