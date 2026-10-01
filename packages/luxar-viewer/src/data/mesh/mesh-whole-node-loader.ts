@@ -55,7 +55,7 @@ import {
 import { validateFaceIndices, validateMaterializedLength } from './validate';
 import { decodeMeshTexture } from './texture-decode';
 import type { FaceIndexSource } from './validate';
-import { combineSignals } from '../../workers/worker-pool/timeout/combine-signals';
+import { abortableWait, abortReason } from '../loaders/abortable-wait';
 import { isAbortError } from '../loaders/abort-error';
 import { LoaderEventEmitter } from '../loaders/monitor-events';
 import { makeInitialLoaderMetrics, recordLoadEvent } from '../loaders/loader-metrics';
@@ -603,27 +603,37 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
    * the latch each call would start its own full-mesh fetch — the exact
    * duplicate-work the whole-node design exists to avoid.
    *
-   * One consequence of sharing that fetch: the reads run under the FIRST
-   * caller's `signal` combined with the loader-lifetime one ({@link dispose}
-   * aborts the latter). A later caller joining an in-flight fetch cannot abort
-   * it and will receive the mesh even if its own update was superseded. That is
-   * benign here in a way it would not be for the range-query siblings — a
-   * superseded caller gets data it no longer needs, never data for the wrong
-   * query, because there is only one thing to fetch and it does not depend on the
-   * view. The wasted work is bounded by one mesh, once per loader.
+   * Sharing that fetch decides whose signal governs it: the reads run under the
+   * LOADER-LIFETIME signal only ({@link dispose} aborts it), never under a
+   * caller's. Each caller instead WAITS on its own signal ({@link abortableWait}):
+   * a superseded update is released with an `AbortError` at once, while the
+   * fetch keeps going for everyone else. Running it under the first caller's
+   * signal would be wrong in exactly the case the latch exists for — during a
+   * scrub over a cold mesh every pass is superseded by the next, so each would
+   * abort the fetch the later passes had joined and the mesh would never land.
+   * Letting a fetch outlive the caller that started it is benign here in a way
+   * it would not be for the range-query siblings: there is only one thing to
+   * fetch and it does not depend on the view, so the next pass wants exactly
+   * these bytes. The wasted work is bounded by one mesh, once per loader.
    *
-   * The combined signal reaches EVERY read: the raw `faces` read directly, the
+   * The lifetime signal reaches EVERY read: the raw `faces` read directly, the
    * decoder-routed arrays through {@link ArrayDecoder.decode}'s signal
    * parameter, and the shared colour path through the {@link RangeLoader}
    * signal-source thunk wired in the constructor.
    */
   private load(signal?: AbortSignal): Promise<LoadedMeshData> {
     if (this.data) return Promise.resolve(this.data);
-    if (this.inFlight) return this.inFlight;
+    // A caller whose signal is already aborted does not start the fetch: a
+    // superseded update has no business costing a whole-mesh read nobody asked
+    // for yet.
+    if (signal?.aborted) return Promise.reject(abortReason(signal));
+    return abortableWait(this.inFlight ?? this.startFetch(), signal);
+  }
 
+  /** Start the ONE shared fetch {@link load} hands to every caller. */
+  private startFetch(): Promise<LoadedMeshData> {
     const generation = this.generation;
-    const scope = combineSignals(signal, this.aborter.signal);
-    const fetchSignal = scope?.signal ?? this.aborter.signal;
+    const fetchSignal = this.aborter.signal;
     this.fetchSignal = fetchSignal;
     // Wall-clock start of the ONE fetch this loader makes, for `avgLoadTime`.
     // Taken here rather than inside `fetch()` so it spans the metadata open and
@@ -648,7 +658,6 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
         throw error;
       })
       .finally(() => {
-        scope?.dispose();
         // Only clear what is still OURS — a dispose-then-reload may have installed
         // a replacement fetch's signal before this stale completion lands.
         if (this.fetchSignal === fetchSignal) this.fetchSignal = null;

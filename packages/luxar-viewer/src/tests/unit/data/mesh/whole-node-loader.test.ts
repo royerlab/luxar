@@ -1395,7 +1395,7 @@ describe('MeshWholeNodeLoader — a superseded caller does not abort the shared 
     });
   }
 
-  it.fails('a joiner still receives the mesh when the FIRST caller is aborted', async () => {
+  it('a joiner still receives the mesh when the FIRST caller is aborted', async () => {
     // During a scrub over a cold mesh every pass is superseded by the next. If the
     // shared fetch ran under the first caller's signal, aborting that pass would
     // reject every joiner with an AbortError and the mesh would never land.
@@ -1422,7 +1422,7 @@ describe('MeshWholeNodeLoader — a superseded caller does not abort the shared 
     expect(store.chunkRequests()).toEqual(['/mesh/vertices/0.0', '/mesh/faces/0.0']);
   });
 
-  it.fails('a lone caller aborted mid-fetch is released without waiting for the read', async () => {
+  it('a lone caller aborted mid-fetch is released without waiting for the read', async () => {
     const store = buildStore(meshAttrs(), tetArrays());
     store.parkFacesRead = 1; // never released: the read stays on the wire
     const loader = makeLoader(store, meshAttrs());
