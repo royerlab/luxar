@@ -241,7 +241,7 @@ export async function loadPointsNode(
     // Registering before the await let a concurrent updateView sweep call
     // loader.updateView while the initial load was mid-flight on the same
     // instance — interleaving the shared accumulator buffers and clobbering
-    // the per-update _activeSignal slot (routine during deferred-group
+    // the per-update signal slot (routine during deferred-group
     // activation, where zoom-triggered loads overlap slice scrubs). Nothing
     // during the load resolves the loader through the registry maps (commit
     // helpers use rootGroup.getObjectByName), and load-scene's post-load

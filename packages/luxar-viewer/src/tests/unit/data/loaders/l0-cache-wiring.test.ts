@@ -8,8 +8,8 @@
  * identical `wrapWithCache(...)` block repeated once per opened zarr array
  * — 21 call sites in total, and (measured 2026-09) covered by ZERO tests.
  * `this.l0Cache` was falsy in every existing loader test, so the whole
- * wrapping path, including the twelve `() => this._activeProbe` /
- * `() => this._activeSignal` thunks, never executed.
+ * wrapping path, including the twelve `() => this._calls.probe` /
+ * `() => this._calls.signal` thunks, never executed.
  *
  * The wrapper's own behaviour is NOT what is untested:
  * `cache/decompressed-chunk-cache/cached-zarr-array.ts` sits at 97.9% lines
@@ -27,7 +27,7 @@
  *   2. Every wrap is keyed `<node.path>/<arrayName>` — the cache is shared
  *      process-wide, so an unprefixed key would collide across nodes.
  *   3. Probe and signal are passed as LIVE accessors, not snapshots.
- *      Replacing `() => this._activeProbe` with `this._activeProbe` reads
+ *      Replacing `() => this._calls.probe` with `this._calls.probe` reads
  *      as a harmless simplification and would permanently pin the wrapper
  *      to `null`; these assertions mutate the loader's state after wrapping
  *      and require the thunk to observe the change.
@@ -40,6 +40,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { ActiveLoadContext } from '../../../../data/loaders/active-load-context';
 import * as zarr from 'zarrita';
 
 import { PointsSpatialIndexLoader } from '../../../../data/points/points-spatial-index-loader';
@@ -347,14 +348,17 @@ describe('L0 cache wiring (differential across the three spatial-index loaders)'
       expect(getSignal()).toBeNull();
 
       // ...and a later state change must be VISIBLE through the same
-      // accessor. A snapshot (`this._activeProbe` instead of
-      // `() => this._activeProbe`) would still return null here.
-      const probe = { record: vi.fn() };
+      // accessor. A snapshot (`this._calls.probe` instead of
+      // `() => this._calls.probe`) would still return null here.
       const controller = new AbortController();
-      (loader as unknown as Record<string, unknown>)._activeProbe = probe;
-      (loader as unknown as Record<string, unknown>)._activeSignal = controller.signal;
+      const calls = (loader as unknown as { _calls: ActiveLoadContext })._calls;
+      let release!: () => void;
+      const running = calls.runWithSignal(controller.signal, () =>
+        calls.runWithProbe(() => new Promise<void>((resolve) => (release = resolve)))
+      );
 
-      expect(getProbe()).toBe(probe);
+      const probe = getProbe();
+      expect(probe).not.toBeNull();
       expect(getSignal()).toBe(controller.signal);
 
       // Every wrapped array must share that liveness, not just the first.
@@ -362,6 +366,8 @@ describe('L0 cache wiring (differential across the three spatial-index loaders)'
         expect(call[3].getProbe()).toBe(probe);
         expect(call[3].getSignal()).toBe(controller.signal);
       }
+      release();
+      await running;
 
       loader.dispose();
     });

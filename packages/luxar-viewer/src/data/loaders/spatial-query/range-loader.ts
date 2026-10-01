@@ -63,7 +63,7 @@ export class RangeLoader {
 
   /**
    * Wire the owning loader's per-update abort signal source. The thunk reads
-   * the loader's transient `_activeSignal`, so worker decodes started by a
+   * the loader's per-call `_calls.signal`, so worker decodes started by a
    * superseded update bail before dispatch (see WorkerPool.runWithTimeout).
    */
   setSignalSource(getSignal: () => AbortSignal | null): void {

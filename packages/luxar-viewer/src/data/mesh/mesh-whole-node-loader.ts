@@ -254,8 +254,8 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
    * sufficient.
    *
    * NAMED DIFFERENTLY from its three siblings on purpose. Points, Lines and GSplats
-   * each hold `_activeSignal` and wire the identical
-   * `setSignalSource(() => this._activeSignal)` one line into their constructors, so
+   * each hold a per-call `_calls` context and wire the identical
+   * `setSignalSource(() => this._calls.signal)` one line into their constructors, so
    * this looks like a symmetry break — it is a lifetime difference. Their signal is
    * per-UPDATE: set at the top of every `updateView` and cleared in its `finally`,
    * live whenever the loader is doing anything. Mesh is whole-node resident, so it

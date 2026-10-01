@@ -15,7 +15,7 @@
  * ## Why shadow loader instances
  *
  * The foreground loaders CANNOT be reused for a concurrent prefetch: they
- * hold mutable per-instance state (`_activeSignal` read by the RangeLoader
+ * hold mutable per-instance state (the per-call signal context read by the RangeLoader
  * signal-source and the L0 proxy, a REUSED accumulator whose returned
  * arrays the next load overwrites, `loadedLODs`/`lastViewState` in the
  * progressive wrappers). And `SceneLoader.updateView` is single-flight —
