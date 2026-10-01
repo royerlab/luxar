@@ -96,7 +96,10 @@ def _resolve_points_representation(kwargs: dict) -> tuple[str, Union[str, float]
                 "levels preserve discrete hidden coordinates automatically"
             ),
             **{
-                key: "it controls Gaussian partitioning, while same-type point levels use a separate sampler or merger"
+                key: (
+                    "it controls Gaussian partitioning, while same-type point "
+                    "levels use a separate sampler or merger"
+                )
                 for key in (
                     "lloyd_iterations",
                     "candidate_bins_k",

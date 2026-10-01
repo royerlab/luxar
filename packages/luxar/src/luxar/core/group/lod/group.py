@@ -1153,6 +1153,34 @@ def resolve_coarsen_dims(
     return _finalize(idxs)
 
 
+def _gaussian_int_control(name: str, value: Any, *, minimum: int) -> int:
+    """Parse an integral Gaussian reduction control before lifting source data."""
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be an integer >= {minimum}, got {value!r}")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            f"{name} must be an integer >= {minimum}, got {value!r}"
+        ) from exc
+    if (not isinstance(value, str) and value != parsed) or parsed < minimum:
+        raise ValueError(f"{name} must be an integer >= {minimum}, got {value!r}")
+    return parsed
+
+
+def _gaussian_float_control(name: str, value: Any, *, minimum: float) -> float:
+    """Parse a finite Gaussian reduction control before lifting source data."""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            f"{name} must be finite and >= {minimum:g}, got {value!r}"
+        ) from exc
+    if not math.isfinite(parsed) or parsed < minimum:
+        raise ValueError(f"{name} must be finite and >= {minimum:g}, got {value!r}")
+    return parsed
+
+
 def resolve_substitutive_axis(
     spec: Any,
     geometry: str,
@@ -1271,10 +1299,18 @@ def resolve_substitutive_axis(
             )
 
     quality_stamps = _resolve_quality_stamps(kwargs)
-    lloyd_iterations = kwargs.pop("lloyd_iterations", 5)
-    candidate_bins_k = kwargs.pop("candidate_bins_k", 12)
-    coverage_inflation = kwargs.pop("coverage_inflation", 3.0)
-    color_weight = kwargs.pop("color_weight", 0.0)
+    lloyd_iterations = _gaussian_int_control(
+        "lloyd_iterations", kwargs.pop("lloyd_iterations", 5), minimum=0
+    )
+    candidate_bins_k = _gaussian_int_control(
+        "candidate_bins_k", kwargs.pop("candidate_bins_k", 12), minimum=1
+    )
+    coverage_inflation = _gaussian_float_control(
+        "coverage_inflation", kwargs.pop("coverage_inflation", 3.0), minimum=1.0
+    )
+    color_weight = _gaussian_float_control(
+        "color_weight", kwargs.pop("color_weight", 0.0), minimum=0.0
+    )
 
     if kwargs:
         valid_keys = [

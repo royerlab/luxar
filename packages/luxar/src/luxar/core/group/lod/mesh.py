@@ -8,17 +8,19 @@ wrapper over the shared :func:`luxar.core.group.lod.group.resolve_substitutive_a
 
 Points and Lines share one implementation because they coarsen the same way:
 both LIFT their elements to gsplats and run the gsplat substitutive pipeline. So
-they share its whole vocabulary, including four keys that exist only because of
-that lift —
+they share its whole vocabulary, including controls that exist only because of
+that lift or its Gaussian reduction —
 
 * ``truncation_radius`` — feeds ``lift_points_to_gsplats`` / ``lift_lines_to_gsplats``
 * ``max_aspect`` — caps per-splat anisotropy on the merged coarse levels
 * ``device`` / ``seed`` — the mixture reduction's compute placement and RNG
+* ``lloyd_iterations`` / ``candidate_bins_k`` — Lloyd refinement settings
+* ``coverage_inflation`` / ``color_weight`` — Gaussian footprint and color controls
 
 Mesh does not lift. It coarsens by DECIMATION: merge vertices, reindex the faces,
-drop the triangles that collapsed. None of those four keys names anything the
+drop the triangles that collapsed. None of these controls names anything the
 decimator can do, and there is no Gaussian mixture for ``method="kmeans"`` to
-reduce. Widening the shared resolver would therefore have meant accepting five
+reduce. Widening the shared resolver would therefore have meant accepting
 words that quietly do nothing — which is exactly the class of bug the geometry
 capability table exists to prevent, one layer down.
 
@@ -78,11 +80,20 @@ _LIFT_ONLY_KEYS: Dict[str, str] = {
         "vertex clustering is deterministic: there is no seeding, no "
         "initialization and nothing to converge, so there is no RNG to fix"
     ),
+    **{
+        key: "it tunes Gaussian-mixture partitioning, while a mesh coarsens by decimation"
+        for key in (
+            "lloyd_iterations",
+            "candidate_bins_k",
+            "coverage_inflation",
+            "color_weight",
+        )
+    },
 }
 
 
 def _reject_lift_only_keys(kwargs: Dict[str, Any]) -> None:
-    """Refuse the four :data:`_LIFT_ONLY_KEYS` with the reason each cannot apply.
+    """Refuse :data:`_LIFT_ONLY_KEYS` with the reason each cannot apply.
 
     Run BEFORE the generic unknown-key sweep at the end of the resolver so these
     get their specific explanation rather than being lumped into a list of typos.

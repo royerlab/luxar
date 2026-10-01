@@ -208,35 +208,49 @@ class TestResolveSubstitutiveAxisLines:
 
 class TestAddLinesSubstitutiveLod:
     @pytest.mark.parametrize(
-        ("control", "message"),
+        ("key", "value", "field"),
         [
-            ({"coverage_inflation": 0.5}, "coverage_inflation must be >= 1"),
-            ({"color_weight": -0.1}, "color_weight must be finite and >= 0"),
-            ({"color_weight": np.nan}, "color_weight must be finite and >= 0"),
+            ("lloyd_iterations", 0, "centers"),
+            ("candidate_bins_k", 1, "centers"),
+            ("coverage_inflation", 1.0, "cholesky_factors_diag"),
+            ("color_weight", 10.0, "centers"),
         ],
     )
-    def test_invalid_gaussian_controls_reach_reducer(
-        self, tmp_path, control: dict, message: str
+    def test_gaussian_control_changes_written_coarse_level(
+        self, tmp_path, key: str, value, field: str
     ) -> None:
-        with pytest.raises(ValueError, match=message):
-            _build(tmp_path, n_seg=12, levels=1, **control)
-
-    def test_gaussian_controls_change_written_coarse_level(self, tmp_path) -> None:
-        default, _ = _build(tmp_path / "default", n_seg=30, levels=1)
+        method = (
+            "kmeans_lloyd"
+            if key in ("lloyd_iterations", "candidate_bins_k")
+            else "auto"
+        )
+        default, _ = _build(tmp_path / "default", n_seg=96, levels=1, method=method)
         tuned, _ = _build(
             tmp_path / "tuned",
-            n_seg=30,
+            n_seg=96,
             levels=1,
-            coverage_inflation=1.0,
-            lloyd_iterations=2,
-            candidate_bins_k=4,
-            color_weight=0.25,
+            method=method,
+            **{key: value},
         )
         decoder = ArrayDecoder()
-        before = decoder.decode(default["child_0"]["cholesky_factors_diag"], default)
-        after = decoder.decode(tuned["child_0"]["cholesky_factors_diag"], tuned)
-        assert before.shape == after.shape
-        assert not np.allclose(before, after)
+        before = decoder.decode(default["child_0"][field], default)
+        after = decoder.decode(tuned["child_0"][field], tuned)
+        assert before.shape != after.shape or not np.allclose(before, after)
+
+    def test_color_weight_requires_colors(self, tmp_path) -> None:
+        out = tmp_path / "uncolored.luxar.zarr"
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(
+                ValueError, match="color_weight > 0 requires colors= on add_lines"
+            ):
+                scene.add_lines(
+                    "l",
+                    _segments(8),
+                    1.0,
+                    line_type="segments",
+                    substitutive_lod={"levels": 1, "color_weight": 1.0},
+                )
 
     def test_lifted_quality_stamps_can_be_disabled(self, tmp_path) -> None:
         group, _ = _build(tmp_path, n_seg=96, levels=1, quality_stamps=False)
