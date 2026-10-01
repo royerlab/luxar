@@ -216,7 +216,8 @@ kwarg (`None`/`False` no-op; `True`/`dict()` defaults `K=4, levels=3,
 method="auto"`; dict keys `compression_factor` (`K`), `levels` (`n_lods`),
 `coarse`, `brightness_compensation`, `method`, `truncation_radius`, `device`,
 `seed`, `quality_stamps` (measure per-level quality, default `True`),
-`refine="l2"` and `refine_iters` (volume-free Gaussian refinement),
+`refine="l2"` and `refine_iters` (volume-free Gaussian refinement; a positive
+iteration count requires `refine="l2"`, while omission uses the reducer default),
 `coverage_fractions`
 (explicit per-level viewport-relative thresholds, strict-ascending in
 `[0, MAX_COVERAGE_FRACTION]` = `[0, 4]`), `coarsen_dims`, `max_aspect`

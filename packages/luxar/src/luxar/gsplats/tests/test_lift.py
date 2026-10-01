@@ -52,6 +52,21 @@ def test_lifted_mass_switch_is_inert_and_refinement_conserves_light():
     )[0]
     assert render_light(final) == pytest.approx(render_light(lifted), rel=1e-5)
 
+    empty = lift_points_to_gsplats(
+        np.zeros((4, 3), dtype=np.float32), np.zeros(4, dtype=np.float32)
+    )
+    assert (
+        coarse_substitutive_levels(
+            empty,
+            levels=1,
+            device="cpu",
+            refine="l2",
+            refine_iters=1,
+            quality_stamps=False,
+        )[0].n_splats
+        == 0
+    )
+
 
 def test_ray_integral_factor_matches_ts_reference():
     # Matches materials/gsplat/math.ts: ~2.433 at T=3, ~sqrt(2 pi)=2.507 untruncated.
