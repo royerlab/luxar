@@ -62,7 +62,8 @@ multi-level-caching-store/
 `SegmentedLRUCache` wraps two `LRUCache<Uint8Array>` instances and routes
 incoming keys by filename pattern. Zarr metadata keys (`.zmetadata`,
 `.zarray`, `.zattrs`, `zarr.json`) go to a dedicated **metadata
-segment** sized at 20% of the total budget with a 10MB floor; everything
+segment** sized at 20% of the total budget with a 10MB floor (capped at half
+the total on a small budget); everything
 else goes to the **chunks segment** sized at the remaining 80%. This
 protects small, high-traffic metadata files from being evicted when a
 single navigation pulls in many large chunks.
@@ -214,9 +215,11 @@ than the full data-fetch timeout.
   exhausted retry budgets log a warning and return `undefined`; a consumer's
   own error propagates unchanged so status and archive validation failures
   keep their domain-specific type.
-- **Metadata segment never starves.** `SegmentedLRUCache` enforces a
-  10MB floor on the metadata segment regardless of `totalSize` — small
-  L1 budgets only shrink the chunks segment.
+- **Metadata segment never starves.** `SegmentedLRUCache` gives the
+  metadata segment a 10MB floor, capped at half of `totalSize`: a heap- or
+  `?cacheBudgetMB`-scaled L1 below 20MB splits evenly rather than leaving
+  the chunks segment at zero (every L1 chunk rejected) and the two segments
+  over budget.
 - **URL hash is part of the on-disk format.** `hashUrl` is a SHA-256
   prefix; changing the prefix length or hash function orphans every
   existing OPFS dataset directory.
