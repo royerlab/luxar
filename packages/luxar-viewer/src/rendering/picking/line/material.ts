@@ -65,7 +65,6 @@ export class LinePickingMaterial
         uLineTex: { value: null },
         uResolution: { value: new THREE.Vector2(1, 1) },
         uPixelRatio: { value: 1 },
-        uIsOrtho: { value: 0 },
         // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
         // Flipped by the depth-sort coordinator once the inactive buffer
         // holds a whole permutation (runtime uniform: never a define — a
@@ -133,7 +132,6 @@ export class LinePickingMaterial
     // session-width pre-stamp).
     cloned.updateLineTexture(this.uniforms.uLineTex.value as THREE.DataTexture | null);
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
-    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
@@ -160,14 +158,18 @@ export class LinePickingMaterial
     this.uniforms.uSurfaceDepth.value = on ? 1 : 0;
   }
 
+  /**
+   * Camera-dependent uniforms. The ortho branch is read in shader from the
+   * projection matrix of the draw (`luxarLineIsOrtho`), so `_isOrtho` is
+   * accepted for the `CameraAwareMaterial` contract and ignored.
+   */
   updateCameraParams(
     resolution: THREE.Vector2,
-    isOrtho: boolean = false,
+    _isOrtho: boolean = false,
     nearCull?: number,
     pixelRatio: number = 1
   ): void {
     this.uniforms.uResolution.value.copy(resolution);
-    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     // Accept ANY defined value, including 0 — matching the point/gsplat
     // wrappers (the shader floors at 1e-20). The old `> 0` gate silently
     // KEPT a stale value on zero-diagonal scenes (or, with LRU-cached

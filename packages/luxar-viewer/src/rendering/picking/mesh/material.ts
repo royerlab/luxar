@@ -12,7 +12,7 @@
  *
  * 1. **A `CameraAwareMaterial` for only half the usual reason.** A mesh has no
  *    screen-space footprint to size, so `resolution` and `isOrtho` are ignored (the
- *    near fade's ortho test reads three's `isOrthographic`); what it does consume
+ *    near fade's ortho test reads the projection matrix); what it does consume
  *    is `uNearCull`, because the pick pass has to
  *    reproduce the visual near fade or a fading surface would stay fully pickable
  *    (#1431). Registering it therefore routes it into the camera broadcast, exactly
@@ -106,8 +106,8 @@ export class MeshPickingMaterial
    * Update the camera-dependent uniforms.
    *
    * `_resolution` / `_isOrtho` are accepted and IGNORED — a mesh has no
-   * screen-space footprint to size, and the near fade's ortho test reads three's
-   * `isOrthographic`. Only `nearCull` is consumed, and it must be kept identical to the visual material's or pick coverage would stop matching
+   * screen-space footprint to size, and the near fade's ortho test reads the
+   * projection matrix. Only `nearCull` is consumed, and it must be kept identical to the visual material's or pick coverage would stop matching
    * visible coverage near the camera. Mirrors `MeshMaterial.updateCameraParams`.
    */
   updateCameraParams(

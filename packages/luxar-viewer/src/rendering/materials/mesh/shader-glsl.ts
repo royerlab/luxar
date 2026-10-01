@@ -35,7 +35,11 @@
  * @module rendering/materials/mesh/shader-glsl
  */
 
-import { GLSL_SANITIZE_FUNCTIONS, GLSL_NEAR_FADE_FUNCTIONS } from '../_shared/glsl-lib';
+import {
+  GLSL_SANITIZE_FUNCTIONS,
+  GLSL_NEAR_FADE_FUNCTIONS,
+  GLSL_PROJECTION_FUNCTIONS,
+} from '../_shared/glsl-lib';
 import {
   GLSL_GLASS_PARTITION_GUARD,
   GLSL_GLASS_PARTITION_UNIFORMS,
@@ -64,6 +68,7 @@ export const MESH_VERTEX_SHADER = /* glsl */ `
     precision highp float;
 
     ${GLSL_SANITIZE_FUNCTIONS}
+    ${GLSL_PROJECTION_FUNCTIONS}
 
     // Per-vertex colour, always bound (never left to the GL default black —
     // see createMeshDefaultColorAttribute). RGB input arrives as w = 1.0.
@@ -96,6 +101,9 @@ export const MESH_VERTEX_SHADER = /* glsl */ `
     // \`cross(dFdx(vViewPos), dFdy(vViewPos))\` is the flat-normal fallback, and
     // mediump would quantize the inter-fragment delta into a noisy normal.
     out highp vec3 vViewPos;
+    // Ortho branch of the projection this draw uses (luxarIsOrthoProjection()),
+    // for the fragment stage's near fade — which has no projectionMatrix.
+    flat out int vIsOrtho;
 
     #if !defined(LUXAR_MESH_FLAT_NORMAL) && !defined(LUXAR_MESH_NO_SHADING)
     // VIEW-space normal. The attribute is in the node's local display frame and
@@ -110,6 +118,7 @@ export const MESH_VERTEX_SHADER = /* glsl */ `
     #endif
 
     void main() {
+      vIsOrtho = luxarIsOrthoProjection();
       #ifdef LUXAR_MESH_BASE_COLOR_TEX
       vUv = uv;
       #endif
@@ -203,9 +212,10 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
     uniform mediump float uShininess;      // highlight exponent
     // Cutout threshold, read only under LUXAR_MESH_ALPHA_CUTOUT.
     uniform mediump float uAlphaCutoff;
-    // Near-fade start, world units (scene-relative). The fade's ortho test reads
-    // three's isOrthographic (the camera this draw uses), not a uniform.
+    // Near-fade start, world units (scene-relative). The fade's ortho test is
+    // the vertex stage's luxarIsOrthoProjection() (vIsOrtho), not a uniform.
     uniform float uNearCull;
+    flat in int vIsOrtho;
 
     #ifdef LUXAR_MESH_BASE_COLOR_TEX
     uniform sampler2D uBaseColorTex;
@@ -349,10 +359,10 @@ export const MESH_FRAGMENT_SHADER = /* glsl */ `
       // the sibling shaders. Kept at the file's highp default rather than
       // mediump like the appearance uniforms: only the RESULT is in [0, 1], and
       // the depths being compared are not (same as the line shader's twin).
-      // Ortho test from three's per-draw 'isOrthographic' (the camera being
-      // drawn with), not a CPU-pushed flag; the fragment stage has no
-      // projectionMatrix to read it from.
-      float nearFade = perspectiveNearFade(isOrthographic ? 1 : 0, vViewPos.z, max(uNearCull, 1e-20));
+      // Ortho test from the projection matrix of the draw (the vertex stage's
+      // luxarIsOrthoProjection(), handed over flat — the fragment stage has no
+      // projectionMatrix), not a CPU-pushed flag or three's camera-class bit.
+      float nearFade = perspectiveNearFade(vIsOrtho, vViewPos.z, max(uNearCull, 1e-20));
       // Rejected in EVERY mode, at the siblings' 0.01 threshold. Not optional in
       // the depth-writing ones: 'opaque' always writes depth and 'normal' does at
       // opacity >= 0.99 (blending-state.ts::normalModeDepthWrite, which mesh feeds

@@ -340,8 +340,8 @@ See `materials/mesh/README.md` and `docs/specs/MESH_NODE_SPEC.md` §6.2.
   texture, no `texelFetch` prologue, no `aSortedIndex` indirection and no buffer pool.
   Per-vertex data arrives in ordinary vertex attributes.
 - **Camera-aware for half the contract.** A mesh has no screen-space footprint to
-  size, so `resolution` / `isOrtho` are ignored (the fade's ortho test reads three's
-  `isOrthographic`) — but `uNearCull` is bound and broadcast, because the shared `perspectiveNearFade` applies to a surface as
+  size, so `resolution` / `isOrtho` are ignored (the fade's ortho test reads the
+  projection matrix, `luxarIsOrthoProjection()`) — but `uNearCull` is bound and broadcast, because the shared `perspectiveNearFade` applies to a surface as
   much as to a sprite. Mesh evaluates it PER FRAGMENT (a triangle spans depth) with a
   per-fragment reject below 0.01; see the stage table in
   `materials/_shared/README.md`.

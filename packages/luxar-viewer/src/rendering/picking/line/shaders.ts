@@ -59,7 +59,8 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
     uniform vec2 uResolution;
     uniform float uPixelRatio;
-    uniform int uIsOrtho;
+    // Ortho flag of the projection this draw uses, for the fragment's near fade.
+    flat out int vLineIsOrtho;
     uniform float uNodeId;
     uniform float uNearCull;          // visual-shader parity
     uniform float uMaxLinePixelWidth; // visual-shader parity
@@ -86,6 +87,9 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
     void main() {
       // Line pixel-width scale for this draw: resY * |P11| (glsl-lib GLSL_LINE_SCALE).
       luxarLineScale = uResolution.y * luxarProjectionSizeScale();
+      // Ortho branch from the projection this draw uses (glsl-lib GLSL_LINE_SCALE).
+      luxarLineIsOrtho = luxarIsOrthoProjection();
+      vLineIsOrtho = luxarLineIsOrtho;
       // === Line-texture fetch prologue (visual-shader parity) ===
       // Width is a multiple of 6, so a segment's texels share one row.
       // Colors (texels 2/3 .rgb) and scalars (texel 5) are not needed
@@ -149,7 +153,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       // line shader): a dropped segment must not be pickable either.
       bool bothBehind =
         luxarDensityDropped() ||
-        ((uIsOrtho == 0) && (startDepth < nearCull) && (endDepth < nearCull));
+        ((luxarLineIsOrtho == 0) && (startDepth < nearCull) && (endDepth < nearCull));
       if (bothBehind) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
         // Defensive: width/sharpness are computed AFTER the clip
@@ -177,7 +181,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       // per-endpoint attributes keep the original parameterization.
       float tA = 0.0;
       float tB = 1.0;
-      if (uIsOrtho == 0) {
+      if (luxarLineIsOrtho == 0) {
         if (startDepth < nearCull && endDepth >= nearCull) {
           tA = (nearCull - startDepth) / (endDepth - startDepth);
         } else if (endDepth < nearCull && startDepth >= nearCull) {
@@ -212,7 +216,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       // w == 1, guard inert) — see the visual line shader for why an
       // absolute 1e-4 scrambled tiny-unit scenes and a raw 1e-20 could
       // overflow the pixel-length math.
-      float wGuard = (uIsOrtho == 1) ? 1.0 : nearCull;
+      float wGuard = (luxarLineIsOrtho == 1) ? 1.0 : nearCull;
       float wStart = max(clipStart.w, wGuard);
       float wEnd = max(clipEnd.w, wGuard);
       vec2 ndcStart = clipStart.xy / wStart;
@@ -225,7 +229,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
       vec2 perpendicular = vec2(-lineDir.y, lineDir.x);
 
       float rawPixelWidth;
-      if (uIsOrtho == 1) {
+      if (luxarLineIsOrtho == 1) {
         rawPixelWidth = width * luxarLineScale;
       } else {
         // View-space depth: drops a sqrt, more projection-correct.
@@ -251,7 +255,7 @@ export const LINE_PICK_VERTEX_SHADER = /* glsl */ `
         mix(startW, endW, tB) * luxarLineScale / max(-mvEnd.z, nearCull);
       float segMaxPixelWidth = max(startPixelWidth, endPixelWidth);
       if (
-        uIsOrtho == 0 &&
+        luxarLineIsOrtho == 0 &&
         startDepth < nearCull * 2.0 &&
         endDepth < nearCull * 2.0 &&
         segMaxPixelWidth > maxPW * 2.0
@@ -338,7 +342,7 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
     ${GLSL_NEAR_FADE_FUNCTIONS}
     ${GLSL_PICK_VISIBILITY}
 
-    uniform int uIsOrtho;   // shared with the vertex stage
+    flat in int vLineIsOrtho; // the vertex stage's luxarIsOrthoProjection()
     // 1 = surface modes (opaque/normal): real projected depth (front-most
     // wins). 0 = commutative modes: brightness-as-depth (brightest wins).
     uniform int uSurfaceDepth;
@@ -398,7 +402,7 @@ export const LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
 
       // 1e-20 floor = degenerate-smoothstep guard only (scene-relative
       // uNearCull; see the vertex-stage nearCull note).
-      float nearFade = perspectiveNearFade(uIsOrtho, vViewZ, max(uNearCull, 1e-20));
+      float nearFade = perspectiveNearFade(vLineIsOrtho, vViewZ, max(uNearCull, 1e-20));
       // ...weighted by what the visual pass scales the line by: the
       // per-endpoint alpha (optical depth under volumetric, from the
       // interpolated alpha exactly as the visual), node opacity, max(gain, 1).

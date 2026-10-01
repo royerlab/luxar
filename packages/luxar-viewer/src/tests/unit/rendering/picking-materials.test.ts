@@ -191,7 +191,8 @@ describe('LinePickingMaterial', () => {
 
     const cloned = material.clone();
     expect(cloned.uniforms.uNodeId.value).toBe(7);
-    expect(cloned.uniforms.uIsOrtho.value).toBe(1);
+    // GLSL reads the ortho branch from the projection matrix (no pushed flag).
+    expect(cloned.uniforms.uIsOrtho).toBeUndefined();
     expect(cloned.uniforms.uNearCull.value).toBe(0.25);
     expect(cloned.uniforms.uMaxLinePixelWidth.value).toBe(300); // 600 * 0.5
     // The pixel-width scale is read in shader from the projection matrix; the

@@ -102,13 +102,14 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     // Uniforms
     uniform vec2 uResolution;
     uniform float uPixelRatio;
-    uniform int uIsOrtho;  // 0 = perspective, 1 = orthographic
+    // Ortho flag of the projection this draw uses, for the fragment's near fade.
+    flat out int vLineIsOrtho;
     uniform float uNearCull;          // near-plane safety distance (view-space, +z toward camera)
     uniform float uMaxLinePixelWidth; // clamp for screen-space width
 
     // Screen-space miter join (#790) — declares uLineJoin and defines
     // luxarLinePixelPos + luxarLineJoin. MUST follow the uniforms above:
-    // it reads uLineTex, uResolution and uIsOrtho.
+    // it reads uLineTex, uResolution and luxarLineIsOrtho.
     ${GLSL_LINE_JOIN}
 
     // Colormap uniforms (only active when USE_COLORMAP is defined)
@@ -136,6 +137,9 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     void main() {
       // Line pixel-width scale for this draw: resY * |P11| (glsl-lib GLSL_LINE_SCALE).
       luxarLineScale = uResolution.y * luxarProjectionSizeScale();
+      // Ortho branch from the projection this draw uses (glsl-lib GLSL_LINE_SCALE).
+      luxarLineIsOrtho = luxarIsOrthoProjection();
+      vLineIsOrtho = luxarLineIsOrtho;
       // === Line-texture fetch prologue ===
       // texelFetch reads reconstruct the per-segment values into the exact
       // local names the math below has always used — zero changes
@@ -226,7 +230,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // as the both-behind case so the varyings are zeroed identically.
       bool bothBehind =
         luxarDensityDropped() ||
-        ((uIsOrtho == 0) && (startDepth < nearCull) && (endDepth < nearCull));
+        ((luxarLineIsOrtho == 0) && (startDepth < nearCull) && (endDepth < nearCull));
       if (bothBehind) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0); // off-screen → no fragments
         // Defensive: zero the remaining varyings the fragment-stage
@@ -262,7 +266,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // the ORIGINAL vSegmentLength) keep their original parameterization.
       float tA = 0.0;
       float tB = 1.0;
-      if (uIsOrtho == 0) {
+      if (luxarLineIsOrtho == 0) {
         if (startDepth < nearCull && endDepth >= nearCull) {
           tA = (nearCull - startDepth) / (endDepth - startDepth);
         } else if (endDepth < nearCull && startDepth >= nearCull) {
@@ -367,7 +371,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // still get a bounded NDC (clip.xy scales with the scene too, keeping the
       // ratio finite — a raw 1e-20 floor could overflow float32 in the
       // pixel-length math below). Ortho: w == 1 exactly, guard 1.0 is inert.
-      float wGuard = (uIsOrtho == 1) ? 1.0 : nearCull;
+      float wGuard = (luxarLineIsOrtho == 1) ? 1.0 : nearCull;
       float wStart = max(clipStart.w, wGuard);
       float wEnd = max(clipEnd.w, wGuard);
       vec2 ndcStart = clipStart.xy / wStart;
@@ -386,7 +390,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // precomputed on the CPU once per camera/resolution change so
       // the shader avoids per-vertex tan() and FOV divisions.
       float rawPixelWidth;
-      if (uIsOrtho == 1) {
+      if (luxarLineIsOrtho == 1) {
         // Orthographic: constant screen size regardless of distance.
         rawPixelWidth = width * luxarLineScale;
       } else {
@@ -436,7 +440,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
         mix(startW, endW, tB) * luxarLineScale / max(-mvEnd.z, nearCull);
       float segMaxPixelWidth = max(startPixelWidth, endPixelWidth);
       if (
-        uIsOrtho == 0 &&
+        luxarLineIsOrtho == 0 &&
         startDepth < nearCull * 2.0 &&
         endDepth < nearCull * 2.0 &&
         segMaxPixelWidth > maxPW * 2.0
@@ -543,7 +547,7 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
     ${GLSL_DENSITY_ALPHA}
     ${GLSL_NEAR_FADE_FUNCTIONS}
 
-    uniform int uIsOrtho;   // shared with the vertex stage
+    flat in int vLineIsOrtho; // the vertex stage's luxarIsOrthoProjection()
     uniform float uNearCull;
     uniform float uPixelRatio;
     uniform float uOpacity;
@@ -657,7 +661,7 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // varying).
       // 1e-20 floor = degenerate-smoothstep guard only; uNearCull is
       // scene-relative (see the vertex-stage nearCull note).
-      float nearFade = perspectiveNearFade(uIsOrtho, vViewZ, max(uNearCull, 1e-20));
+      float nearFade = perspectiveNearFade(vLineIsOrtho, vViewZ, max(uNearCull, 1e-20));
       float intensity = capFactor * perpFalloff * edgeAA * widthScale * vWidthFade * nearFade;
 
       // Per-node GOG (Gain-Offset-Gamma) color adjustment. uIntensity (gain)
