@@ -5,7 +5,6 @@ import {
   buildUrl,
   fetchWithRetry as fetchWithRetryScoped,
   hashUrl,
-  mergeAbortSignals,
 } from '../../../cache/multi-level-caching-store/fetch-retry';
 import {
   getFetchLaneLimit,
@@ -70,106 +69,6 @@ function forceAbortSignalAnyFallback(): () => void {
     else delete (AbortSignal as unknown as { any?: unknown }).any;
   };
 }
-
-describe('mergeAbortSignals', () => {
-  it('returns the primary signal in a no-op scope when no caller is provided', () => {
-    const primary = new AbortController().signal;
-    const merged = mergeAbortSignals(primary);
-    expect(merged.signal).toBe(primary);
-    expect(() => merged.dispose()).not.toThrow();
-  });
-
-  it('keeps the native AbortSignal.any path unchanged', () => {
-    const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
-    const nativeSignal = new AbortController().signal;
-    const any = vi.fn(() => nativeSignal);
-    Object.defineProperty(AbortSignal, 'any', { configurable: true, value: any });
-    try {
-      const primary = new AbortController().signal;
-      const caller = new AbortController().signal;
-      const merged = mergeAbortSignals(primary, caller);
-      expect(any).toHaveBeenCalledWith([primary, caller]);
-      expect(merged.signal).toBe(nativeSignal);
-      expect(() => merged.dispose()).not.toThrow();
-    } finally {
-      if (descriptor) Object.defineProperty(AbortSignal, 'any', descriptor);
-      else delete (AbortSignal as unknown as { any?: unknown }).any;
-    }
-  });
-
-  it('fallback abort from primary relays immediately and removes both listeners', () => {
-    const restore = forceAbortSignalAnyFallback();
-    try {
-      const primary = new AbortController();
-      const caller = new AbortController();
-      const merged = mergeAbortSignals(primary.signal, caller.signal);
-      expect(getEventListeners(primary.signal, 'abort')).toHaveLength(1);
-      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(1);
-
-      const reason = new Error('primary timeout');
-      primary.abort(reason);
-
-      expect(merged.signal.aborted).toBe(true);
-      expect(merged.signal.reason).toBe(reason);
-      expect(getEventListeners(primary.signal, 'abort')).toHaveLength(0);
-      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
-    } finally {
-      restore();
-    }
-  });
-
-  it('fallback abort from caller relays immediately and removes both listeners', () => {
-    const restore = forceAbortSignalAnyFallback();
-    try {
-      const primary = new AbortController();
-      const caller = new AbortController();
-      const merged = mergeAbortSignals(primary.signal, caller.signal);
-
-      const reason = new Error('caller cancelled');
-      caller.abort(reason);
-
-      expect(merged.signal.aborted).toBe(true);
-      expect(merged.signal.reason).toBe(reason);
-      expect(getEventListeners(primary.signal, 'abort')).toHaveLength(0);
-      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
-    } finally {
-      restore();
-    }
-  });
-
-  it('fallback dispose is idempotent and prevents completed merges from accumulating', () => {
-    const restore = forceAbortSignalAnyFallback();
-    try {
-      const primary = new AbortController();
-      for (let i = 0; i < 100; i++) {
-        const caller = new AbortController();
-        const merged = mergeAbortSignals(primary.signal, caller.signal);
-        merged.dispose();
-        merged.dispose();
-      }
-      expect(getEventListeners(primary.signal, 'abort')).toHaveLength(0);
-    } finally {
-      restore();
-    }
-  });
-
-  it('fallback returns an already-aborted scope without registering listeners', () => {
-    const restore = forceAbortSignalAnyFallback();
-    try {
-      const primary = new AbortController();
-      const reason = new Error('already timed out');
-      primary.abort(reason);
-      const caller = new AbortController();
-      const merged = mergeAbortSignals(primary.signal, caller.signal);
-      expect(merged.signal.aborted).toBe(true);
-      expect(merged.signal.reason).toBe(reason);
-      expect(getEventListeners(primary.signal, 'abort')).toHaveLength(0);
-      expect(getEventListeners(caller.signal, 'abort')).toHaveLength(0);
-    } finally {
-      restore();
-    }
-  });
-});
 
 describe('buildUrl', () => {
   it('joins a clean base + key with a single slash', () => {

@@ -24,7 +24,7 @@ import {
 } from './worker-pool/errors';
 
 import { withTimeout } from './worker-pool/timeout/with-timeout';
-import { combineSignals, type CombinedSignalScope } from './worker-pool/timeout/combine-signals';
+import { combineAbortSignals } from '../utils/abort-signals';
 import { pickTimeoutMs } from './worker-pool/timeout/pick-timeout-ms';
 import { getConfiguredWorkerCount } from './worker-pool/lifecycle/worker-count';
 import { getSharedWasmModule } from '../wasm/shared-module';
@@ -628,7 +628,7 @@ export class WorkerPool {
     // are present, race them together so either can settle the call.
     // The scope is disposed when this call settles so the fallback
     // relay does not retain a listener on the session-lived pool signal.
-    const abortScope = this.combineSignals(this.poolAbortSignal, signal);
+    const abortScope = combineAbortSignals(this.poolAbortSignal, signal);
     const effectiveSignal = abortScope?.signal;
     try {
       // Pre-check: signal already aborted? Bail before dispatching any work.
@@ -795,21 +795,6 @@ export class WorkerPool {
    */
   setAbortSignal(signal: AbortSignal | undefined): void {
     this.poolAbortSignal = signal;
-  }
-
-  /**
-   * Combine the pool-wide signal with a caller-supplied signal into
-   * a single scoped abort source. Returns `undefined` when both are
-   * absent. Uses native `AbortSignal.any` when available (modern
-   * browsers / Node 20+) and falls back to the simpler "trip either
-   * one" wiring for older runtimes; the returned scope's `dispose()`
-   * releases the fallback's source listeners once the call settles.
-   */
-  private combineSignals(
-    a: AbortSignal | undefined,
-    b: AbortSignal | undefined
-  ): CombinedSignalScope | undefined {
-    return combineSignals(a, b);
   }
 
   /**

@@ -54,13 +54,14 @@ worker-pool/
   that don't want tracking overhead.
 
 - **[timeout/](./timeout/README.md)** — bound every Comlink round-trip.
-  `with-timeout.ts` is the `Promise.race` core; `pick-timeout-ms.ts`
-  maps a `TimeoutKind` to the right knob in
-  `config.dataLoading.performance`; `combine-signals.ts` merges the
-  caller's `AbortSignal` with the pool-wide one set via
-  `setAbortSignal()` (using `AbortSignal.any` when available, falling
-  back to a hand-rolled forwarder whose scope is disposed when the
-  call settles so listeners never accumulate on the pool signal).
+  `with-timeout.ts` wraps the shared `raceTimeout` (`utils/race-timeout.ts`)
+  with the pool's logging and eviction; `pick-timeout-ms.ts` maps a
+  `TimeoutKind` to the right knob in `config.dataLoading.performance`. The
+  caller's `AbortSignal` is merged with the pool-wide one set via
+  `setAbortSignal()` by the shared `combineAbortSignals`
+  (`utils/abort-signals.ts`: `AbortSignal.any` when available, else a relay
+  whose scope is disposed when the call settles so listeners never accumulate
+  on the pool signal).
 
 ## Relationship to `worker-pool.ts`
 
@@ -77,7 +78,7 @@ WorkerPool.initialize()
 WorkerPool.runWithTimeout()
   ├─ selectLeastBusy()           ── selection/least-busy
   ├─ pickTimeoutMs(kind)         ── timeout/pick-timeout-ms
-  ├─ combineSignals()            ── timeout/combine-signals
+  ├─ combineAbortSignals()       ── ../../utils/abort-signals
   └─ withTimeout()               ── timeout/with-timeout
 
 WorkerPool.getStats() / getQueueDepth()

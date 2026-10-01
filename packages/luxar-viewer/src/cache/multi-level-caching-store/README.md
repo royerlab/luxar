@@ -131,12 +131,12 @@ Key behaviours:
 
 ### `fetch-retry.ts` — network primitives
 
-- **`mergeAbortSignals(primary, caller?)`** — produces a scoped signal that
-  fires when either source aborts. Uses native `AbortSignal.any` when
-  available (Node 22+, modern browsers) and falls back to a relay
-  controller otherwise. The fallback scope removes both source listeners
-  immediately on abort or when its idempotent `dispose()` is called, so a
-  long-lived dataset signal does not retain one closure per completed fetch.
+- Each attempt's timeout signal is merged with the caller's by the shared
+  `combineAbortSignals` (`../../utils/abort-signals.ts`, also used by the
+  store for its dispose signal): native `AbortSignal.any` when available,
+  else a relay whose idempotent `dispose()` removes both source listeners,
+  so a long-lived dataset signal does not retain one closure per completed
+  fetch.
 - **`buildUrl(baseUrl, key)`** — joins a base URL and a zarr key while
   stripping trailing slashes on the base and leading slashes on the key
   (defends against the triple-slash bug when a base URL ends in `/`

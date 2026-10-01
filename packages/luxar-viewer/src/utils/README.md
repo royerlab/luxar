@@ -213,6 +213,14 @@ The single answer to "is this a touch-first device, is it an iPhone or an iPad, 
 
 `attachLongPress(el, { onLongPress, durationMs = 500, slopPx = 12 })` arms a delegated long-press on `el` for touch-like pointers only (`isTouchLikePointer`; a mouse keeps its right button and never sees a timer). Cancels on movement past the slop, on release, on `pointercancel`/`pointerleave`, or when a second finger lands (a pinch). The callback runs after `durationMs`, or immediately when a platform `contextmenu` arrives mid-press, and returns whether it handled the press. Only a handled press becomes the SINGLE opener across platforms: it swallows that `contextmenu` (iOS never fires one) so a press cannot open two menus, and swallows the release `click` so the button's primary action does not run under the menu that just opened. Returns a disposer. Used by the control rail (context popovers), the dimension sliders' play button (animation settings) and the layers panel (row / eye / header menus); the canvas has its own long-press inside `core/app/interaction/canvas-actions.ts` because its release path is `pointerup`, not `click`.
 
+### abort-signals.ts - Abort-Signal Combinator
+
+- `combineAbortSignals(a, b?)` — The viewer's one "abort when either aborts" merge (fetch retry, caching store, zip reader, worker pool, mesh loader). Returns a scope `{ signal, dispose }`: native `AbortSignal.any` when present, else a relay that carries the first abort's reason and whose idempotent `dispose()` removes its source listeners — call it when the work using `signal` settles. One input is returned as is; none gives `undefined`.
+
+### race-timeout.ts - Promise-vs-Timer Race
+
+- `raceTimeout(promise, timeoutMs, onTimeout)` — Settle with `promise`, or reject with `onTimeout()`'s value once `timeoutMs` elapses first; clears the timer on settle. `timeoutMs <= 0` or non-finite installs no timer and returns `promise` itself. Settles only the caller: the work keeps running. The worker pool's `withTimeout` wraps it.
+
 ### platform.ts - Platform Detection
 
 - `isMacPlatform()` — `navigator.platform.startsWith('Mac')`; returns `false` in non-browser contexts. Centralized so tests can stub one export.

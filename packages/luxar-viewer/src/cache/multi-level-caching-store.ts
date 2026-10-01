@@ -2,7 +2,8 @@ import type { AsyncReadable } from '../data/zarr';
 import { SegmentedLRUCache } from './multi-level-caching-store/segmented-lru-cache';
 import { OPFSStore, type CachedDatasetSummary } from './multi-level-caching-store/opfs-store';
 import { BandwidthWindow } from './multi-level-caching-store/bandwidth-window';
-import { hashUrl, mergeAbortSignals } from './multi-level-caching-store/fetch-retry';
+import { hashUrl } from './multi-level-caching-store/fetch-retry';
+import { combineAbortSignals } from '../utils/abort-signals';
 import { ValidationQueue, type QueueEntry } from './multi-level-caching-store/validation-queue';
 import type { ChunkPrefetcher } from './chunk-prefetcher';
 import { OpfsWriteQueue } from './multi-level-caching-store/opfs-write-queue';
@@ -692,7 +693,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // aborts in-flight prefetch/demand fetches without each call site
     // plumbing its own controller. The shared pending-get controller aborts
     // when invalidated or when every caller waiting on this key has cancelled.
-    const fetchAbort = mergeAbortSignals(this.dataAbort.signal, sharedSignal);
+    const fetchAbort = combineAbortSignals(this.dataAbort.signal, sharedSignal);
     try {
       const outcome = await this.source.get(key, fetchAbort.signal, { priority });
 
@@ -1071,7 +1072,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // Mark disposed first so concurrent getResult calls bail synchronously
     // and any racing fetch-error path returns Aborted. Aborting dataAbort
     // unwinds in-flight prefetch/demand fetches that were composed with
-    // it via mergeAbortSignals in getResult.
+    // it via combineAbortSignals in getResult.
     this.disposed = true;
     this.dataAbort.abort();
 
