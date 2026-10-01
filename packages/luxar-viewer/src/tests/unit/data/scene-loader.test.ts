@@ -489,7 +489,7 @@ describe('SceneLoader', () => {
       expect(rollbackToPassStart).toHaveBeenCalledOnce();
     });
 
-    it.fails('a partially failing commit still records the frame it committed (A9)', async () => {
+    it('a partially failing commit still records the frame it committed (A9)', async () => {
       // runAtomicCommit commits every sibling and only THEN rethrows. The
       // siblings' geometry is on screen, so the pass's post-commit bookkeeping
       // must run too: skipping it left the committed slice (B4 partition

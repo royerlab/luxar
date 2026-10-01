@@ -1808,9 +1808,7 @@ export class SceneLoader {
           updateController.signal
         ),
       ]);
-      const [pointsStaged, linesStaged, gsplatsStaged, meshStaged] = activated
-        ? concatSweeps(swept, activated)
-        : swept;
+      const staged = activated ? concatSweeps(swept, activated) : swept;
 
       if (sweepArchiveFault) {
         this.reportArchiveFault(sweepArchiveFault);
@@ -1826,39 +1824,21 @@ export class SceneLoader {
       // Stage 2: Atomic commit — ALL geometry mutations in one sync block.
       // Implementation in scene-loader/update-view/atomic-commit.ts.
       // ================================================================
-      runAtomicCommit(pointsStaged, linesStaged, gsplatsStaged, meshStaged, {
-        gpuBufferPool: this._gpuBufferPool,
-        nodeFactory: this.nodeFactory,
-        // When this update was superseded mid-flight, skip the geometry
-        // commits so a stale/partial frame never reaches the GPU; profiler
-        // sessions are still ended inside runAtomicCommit regardless. Keep
-        // abort reserved for supersession/cancellation so profiler and log
-        // semantics stay accurate; archive faults discard independently.
-        signal: updateController.signal,
-        discard: sweepArchiveFault !== undefined,
-        updatePointsGeometry: (path, data, session) =>
-          this.updatePointsGeometry(path, data, session),
-        commitLinesGeometry: (staged, session) => this.commitLinesGeometry(staged, session),
-        commitGSplatsGeometry: (staged, session) => this.commitGSplatsGeometry(staged, session),
-        commitMeshGeometry: (staged, session) => this.commitMeshGeometry(staged, session),
-        onCommitFailed: (path) => {
-          const loader =
-            this.loaders.get(path) ??
-            this.linesLoaders.get(path) ??
-            this.gsplatLoaders.get(path) ??
-            this.meshLoaders.get(path);
-          (
-            loader as typeof loader & {
-              rollbackToPassStart?: () => number;
-            }
-          )?.rollbackToPassStart?.();
-        },
-      });
+      // A failing node commit is rethrown only AFTER every sibling committed
+      // (an AggregateError), so the frame IS on screen: hold the error until
+      // the post-commit bookkeeping below has recorded it (A9).
+      let commitFailure: { error: unknown } | null = null;
+      try {
+        this.runPassCommit(staged, updateController.signal, sweepArchiveFault !== undefined);
+      } catch (error) {
+        commitFailure = { error };
+      }
 
       // Post-commit bookkeeping is meaningful only for a committed frame. A
       // superseded update committed nothing (and its loaders may have aborted
       // mid-attribute) — skip the monitor refresh and the failed-loader
-      // warning; the winning update runs both with correct state.
+      // warning; the winning update runs both with correct state. A partially
+      // failed commit DID commit its siblings, so it is recorded like any other.
       if (!updateController.signal.aborted && !sweepArchiveFault) {
         // This view is now what is drawn: re-gate partition parts on its slice
         // before anything renders or refinement reads the stamps (B4).
@@ -1872,6 +1852,7 @@ export class SceneLoader {
         // Warn user if any loaders failed (shared with the end-of-load report).
         warnFailedLoaders(Array.from(this.failedLoaders.keys()));
       }
+      if (commitFailure !== null) throw commitFailure.error;
     } finally {
       // End profiling update cycle (always, even if errors)
       this.profiler?.endUpdate();
@@ -1930,6 +1911,48 @@ export class SceneLoader {
       }
     }
     await supersededPassWait;
+  }
+
+  /**
+   * Stage 2 of a view pass: the synchronous atomic commit of every staged node
+   * (`update-view/atomic-commit.ts`). Skipped wholesale when the pass was
+   * superseded (`signal`) or hit an archive fault (`discard`); a failing node
+   * commit is rolled back to its pass start and rethrown after its siblings.
+   */
+  private runPassCommit(
+    [pointsStaged, linesStaged, gsplatsStaged, meshStaged]: Awaited<
+      ReturnType<SceneLoader['sweepLoaders']>
+    >,
+    signal: AbortSignal,
+    discard: boolean
+  ): void {
+    runAtomicCommit(pointsStaged, linesStaged, gsplatsStaged, meshStaged, {
+      gpuBufferPool: this._gpuBufferPool,
+      nodeFactory: this.nodeFactory,
+      // When this update was superseded mid-flight, skip the geometry
+      // commits so a stale/partial frame never reaches the GPU; profiler
+      // sessions are still ended inside runAtomicCommit regardless. Keep
+      // abort reserved for supersession/cancellation so profiler and log
+      // semantics stay accurate; archive faults discard independently.
+      signal,
+      discard,
+      updatePointsGeometry: (path, data, session) => this.updatePointsGeometry(path, data, session),
+      commitLinesGeometry: (staged, session) => this.commitLinesGeometry(staged, session),
+      commitGSplatsGeometry: (staged, session) => this.commitGSplatsGeometry(staged, session),
+      commitMeshGeometry: (staged, session) => this.commitMeshGeometry(staged, session),
+      onCommitFailed: (path) => {
+        const loader =
+          this.loaders.get(path) ??
+          this.linesLoaders.get(path) ??
+          this.gsplatLoaders.get(path) ??
+          this.meshLoaders.get(path);
+        (
+          loader as typeof loader & {
+            rollbackToPassStart?: () => number;
+          }
+        )?.rollbackToPassStart?.();
+      },
+    });
   }
 
   /** Any registered loader (points / lines / gsplats / mesh) with LODs left to stream. */
