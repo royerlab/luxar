@@ -33,7 +33,6 @@ interface MockApi {
   registerNode: ReturnType<typeof vi.fn>;
   sort: ReturnType<typeof vi.fn>;
   releaseNode: ReturnType<typeof vi.fn>;
-  releaseAllNodes: ReturnType<typeof vi.fn>;
 }
 
 const terminatedWorkers: unknown[] = [];
@@ -56,7 +55,6 @@ function makeMockApi(): MockApi {
         })
     ),
     releaseNode: vi.fn(async () => undefined),
-    releaseAllNodes: vi.fn(async () => undefined),
   };
 }
 

@@ -24,7 +24,6 @@ let mockApi: {
   registerNode: ReturnType<typeof vi.fn>;
   sort: ReturnType<typeof vi.fn>;
   releaseNode: ReturnType<typeof vi.fn>;
-  releaseAllNodes: ReturnType<typeof vi.fn>;
 };
 let sortResolvers: Array<(r: { generation: number; ordering: Uint32Array } | null) => void>;
 let terminated: number;
@@ -38,7 +37,6 @@ async function loadModule() {
     registerNode: vi.fn(async () => undefined),
     sort: vi.fn(() => new Promise((resolve) => sortResolvers.push(resolve))),
     releaseNode: vi.fn(async () => undefined),
-    releaseAllNodes: vi.fn(async () => undefined),
   };
   vi.doMock('../../../../utils/log', () => ({
     log: { info: vi.fn(), warning: vi.fn(), error: vi.fn() },
@@ -190,7 +188,6 @@ describe('two depth-sort coordinators on one page', () => {
     expect(mockApi.registerNode).toHaveBeenCalledTimes(2);
 
     a.releaseAllNodes();
-    expect(mockApi.releaseAllNodes).not.toHaveBeenCalled();
     expect(mockApi.releaseNode.mock.calls.map((c) => c[0] as string)).toEqual([meshA.uuid]);
 
     a.dispose();

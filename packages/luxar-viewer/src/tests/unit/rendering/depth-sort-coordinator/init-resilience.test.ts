@@ -42,7 +42,6 @@ let mockApi: {
   registerNode: ReturnType<typeof vi.fn>;
   sort: ReturnType<typeof vi.fn>;
   releaseNode: ReturnType<typeof vi.fn>;
-  releaseAllNodes: ReturnType<typeof vi.fn>;
 };
 /**
  * The config instance the freshly imported coordinator actually reads. It
@@ -64,7 +63,6 @@ function makeMockApi(behavior: InitBehavior) {
     // Never settles: these tests only assert that a sort was DISPATCHED.
     sort: vi.fn(() => new Promise(() => {})),
     releaseNode: vi.fn(async () => undefined),
-    releaseAllNodes: vi.fn(async () => undefined),
   };
 }
 
