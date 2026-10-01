@@ -170,39 +170,48 @@ describe('fetch-concurrency gate', () => {
     expect(peak).toBe(MAX_CONCURRENT_METADATA_FETCHES);
   });
 
-  it('fits both lanes into the six HTTP/1.1 sockets once an http: URL is seen', () => {
+  it("fits an http: origin's lanes into its six HTTP/1.1 sockets once seen", () => {
+    const lan = 'http://10.0.0.55:8001';
+    const cdn = 'https://cdn.example.org';
     expect(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES + HTTP1_MAX_CONCURRENT_METADATA_FETCHES).toBe(6);
-    noteFetchUrl('https://cdn.example.org/scene.luxar.zarr/zarr.json');
-    expect(getFetchLaneLimit('data')).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
-    noteFetchUrl('http://10.0.0.55:8001/data/Backdrop/part_3/zarr.json');
-    expect(getFetchLaneLimit('data')).toBe(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
-    expect(getFetchLaneLimit('metadata')).toBe(HTTP1_MAX_CONCURRENT_METADATA_FETCHES);
-    // Never widens again within the session.
-    noteFetchUrl('https://cdn.example.org/other/zarr.json');
-    expect(getFetchLaneLimit('data')).toBe(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
+    noteFetchUrl(`${cdn}/scene.luxar.zarr/zarr.json`);
+    expect(getFetchLaneLimit('data', cdn)).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
+    noteFetchUrl(`${lan}/data/Backdrop/part_3/zarr.json`);
+    expect(getFetchLaneLimit('data', lan)).toBe(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
+    expect(getFetchLaneLimit('metadata', lan)).toBe(HTTP1_MAX_CONCURRENT_METADATA_FETCHES);
+    // The origin never widens again within the session; others never narrowed.
+    noteFetchUrl(`${cdn}/other/zarr.json`);
+    expect(getFetchLaneLimit('data', lan)).toBe(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
+    expect(getFetchLaneLimit('data', cdn)).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
   });
 
   it('drains in-flight leases down to a cap that shrank under them', async () => {
     let active = 0;
     let peak = 0;
     const release: Array<() => void> = [];
+    const lan = 'http://localhost:8005';
     const fire = () =>
-      withFetchGate(() => {
-        active += 1;
-        peak = Math.max(peak, active);
-        return new Promise<void>((resolve) =>
-          release.push(() => {
-            active -= 1;
-            resolve();
-          })
-        );
-      });
+      withFetchGate(
+        () => {
+          active += 1;
+          peak = Math.max(peak, active);
+          return new Promise<void>((resolve) =>
+            release.push(() => {
+              active -= 1;
+              resolve();
+            })
+          );
+        },
+        'data',
+        'demand',
+        lan
+      );
     const calls = Array.from({ length: MAX_CONCURRENT_CHUNK_FETCHES * 2 }, fire);
     await Promise.resolve();
     await Promise.resolve();
     expect(active).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
 
-    noteFetchUrl('http://localhost:8005/scene.luxar.zarr/zarr.json');
+    noteFetchUrl(`${lan}/scene.luxar.zarr/zarr.json`);
     peak = 0;
     while (release.length) {
       release.shift()!();

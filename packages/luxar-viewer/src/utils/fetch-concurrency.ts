@@ -25,8 +25,8 @@
  * the timer already running. Under a steady stream (a large backdrop still
  * loading while the view changes) those parked requests time out, their
  * retries rejoin the same queue, and every load fails together. So once a
- * plain `http:` URL is seen, both lanes shrink to fit the socket pool (see
- * {@link noteFetchUrl}).
+ * plain `http:` URL is seen, THAT ORIGIN's share of both lanes shrinks to fit
+ * its socket pool (see {@link noteFetchUrl}); other origins keep their width.
  *
  * Within a lane, waiters are served by PRIORITY CLASS — `demand` (a frame is
  * waiting on it), then `refinement` (a finer level of something already shown),
@@ -36,10 +36,11 @@
  * caller joining a prefetch) through a {@link FetchPriorityCell}, and a request
  * whose caller aborts while it waits leaves the queue at once.
  *
- * Each class is queued per lane WIDTH (the default origins, and the multiplexed
- * ones with the wider lane), so a head held only by its own origin's width never
- * holds back a waiter of the same class that an h2/h3 origin's wider lane could
- * start; FIFO holds across the two by enqueue order.
+ * Each class is queued per lane WIDTH (HTTP/1.1 origins with their socket cap,
+ * the default origins, and the multiplexed ones with the wider lane), so a head
+ * held only by its own origin's width never holds back a waiter of the same
+ * class that a wider origin could start; FIFO holds across the tiers by
+ * enqueue order.
  *
  * The data lane is {@link MAX_CONCURRENT_CHUNK_FETCHES} wide by default and
  * {@link MAX_CONCURRENT_MULTIPLEXED_CHUNK_FETCHES} for an origin that resource
@@ -237,23 +238,34 @@ interface Waiter {
 }
 
 /**
- * Width tiers per class: 0 = the lane's default width, 1 = an origin known to
- * multiplex (the wide data lane). Decided at enqueue; admission re-checks the
- * origin's live width, so a tier only decides who may be passed, never a cap.
+ * Width tiers per class: 0 = an HTTP/1.1 origin (its socket cap), 1 = the
+ * lane's default width, 2 = an origin known to multiplex (the wide data lane).
+ * Decided at enqueue; admission re-checks the origin's live width, so a tier
+ * only decides who may be passed, never a cap. A request never needs to wait
+ * behind another tier's head: a head blocked by a NARROWER width is no reason
+ * to hold a wider request, and one blocked by a WIDER width means the lane is
+ * too full for the narrower request too.
  */
-const WIDTH_TIERS = 2;
+const WIDTH_TIERS = 3;
 
 const ZARR_METADATA_KEYS = new Set(['zarr.json', '.zarray', '.zattrs', '.zgroup', '.zmetadata']);
+
+/** Leases one origin holds in a lane (kept only while it holds any). */
+interface OriginLeases {
+  active: number;
+  speculative: number;
+}
 
 interface FetchGateState {
   readonly lane: FetchLane;
   active: number;
-  /**
-   * The lane's cap before per-origin widening: the default width, or the
-   * HTTP/1.1 socket cap once a plain `http:` URL has been seen.
-   */
-  limit: number;
+  /** The lane's default width: its global cap for every origin not known to multiplex. */
+  readonly limit: number;
+  /** The per-origin cap of an HTTP/1.1 origin (see {@link noteFetchUrl}). */
+  readonly http1Limit: number;
   speculativeActive: number;
+  /** Live leases per origin, so an HTTP/1.1 origin is held to its own sockets. */
+  readonly originLeases: Map<string, OriginLeases>;
   /** One FIFO per (priority class, width tier): index `rank * WIDTH_TIERS + tier`. */
   readonly queues: Deque<QueueEntry>[];
   /** `fetch.<lane>.requests`: every gated call, queued or not. */
@@ -269,7 +281,10 @@ function createGate(lane: FetchLane): FetchGateState {
     lane,
     active: 0,
     limit: lane === 'data' ? MAX_CONCURRENT_CHUNK_FETCHES : MAX_CONCURRENT_METADATA_FETCHES,
+    http1Limit:
+      lane === 'data' ? HTTP1_MAX_CONCURRENT_CHUNK_FETCHES : HTTP1_MAX_CONCURRENT_METADATA_FETCHES,
     speculativeActive: 0,
+    originLeases: new Map(),
     queues: Array.from({ length: PRIORITY_CLASSES * WIDTH_TIERS }, () => new Deque<QueueEntry>()),
     sRequests: perfCounters.slot(`fetch.${lane}.requests`),
     sHighWater: perfCounters.slot(`fetch.${lane}.highWater`),
@@ -351,17 +366,34 @@ function ensureResourceObserver(): void {
   }
 }
 
-/** Set by {@link noteFetchUrl} once a plain `http:` (HTTP/1.1) URL is seen. */
-let http1Origin = false;
+/** Origins {@link noteFetchUrl} has seen over plain `http:` (HTTP/1.1 for certain). */
+const http1Origins = new Set<string>();
 
+function isHttp1(origin: string | undefined): origin is string {
+  return origin !== undefined && http1Origins.has(origin);
+}
+
+/**
+ * The lane's GLOBAL in-flight ceiling for a request from `origin`: the wide
+ * lane for a multiplexed origin's data, the default width otherwise. An
+ * HTTP/1.1 origin is additionally held to its own socket cap
+ * ({@link FetchGateState.http1Limit}).
+ */
 function laneLimit(gate: FetchGateState, origin: string | undefined): number {
-  // Once a plain `http:` URL is seen the whole gate is HTTP/1.1-capped (see
-  // noteFetchUrl): widening any origin would park requests in the browser's
-  // own socket queue with their header timers running.
-  if (http1Origin || gate.lane === 'metadata') return gate.limit;
+  if (gate.lane === 'metadata' || isHttp1(origin)) return gate.limit;
   return origin !== undefined && multiplexedOrigins.has(origin)
     ? MAX_CONCURRENT_MULTIPLEXED_CHUNK_FETCHES
     : gate.limit;
+}
+
+/** How many of this lane's requests `origin` may have in flight at once. */
+function originWidth(gate: FetchGateState, origin: string | undefined): number {
+  return isHttp1(origin) ? gate.http1Limit : laneLimit(gate, origin);
+}
+
+/** Speculative leases allowed out of a width of `limit`. */
+function speculativeCap(limit: number): number {
+  return Math.max(1, Math.floor(limit * MAX_SPECULATIVE_FETCH_SHARE));
 }
 
 // ── Admission ───────────────────────────────────────────────────────────────
@@ -371,35 +403,35 @@ let fetchProgressEpoch = 0;
 /**
  * Record a URL about to be fetched. Browsers speak HTTP/2 and HTTP/3 only over
  * TLS, so a plain `http:` URL is HTTP/1.1 for certain: the local kiosk and
- * `luxar serve`, on localhost or a LAN. The first one shrinks both lanes to the
- * HTTP/1.1 caps for the rest of the session; the gate is global, and a mixed
- * scene only pays a narrower gate on its TLS origins. An `https:` origin that
- * happens to be HTTP/1.1 is not detected and keeps the wide caps.
+ * `luxar serve`, on localhost or a LAN. That ORIGIN is then held to the
+ * HTTP/1.1 caps — its data and metadata leases together fit its six sockets —
+ * for the rest of the session, while every other origin keeps its own width
+ * (a mixed scene's TLS CDN is not narrowed by a LAN backdrop). An `https:`
+ * origin that happens to be HTTP/1.1 is not detected and keeps the wide caps.
  */
 export function noteFetchUrl(url: string): void {
-  if (http1Origin) return;
-  let protocol: string;
+  let parsed: URL;
   try {
-    protocol = new URL(url, globalThis.location?.href).protocol;
+    parsed = new URL(url, globalThis.location?.href);
   } catch {
     return;
   }
-  if (protocol !== 'http:') return;
-  http1Origin = true;
-  fetchGates.data.limit = HTTP1_MAX_CONCURRENT_CHUNK_FETCHES;
-  fetchGates.metadata.limit = HTTP1_MAX_CONCURRENT_METADATA_FETCHES;
+  if (parsed.protocol !== 'http:') return;
+  http1Origins.add(parsed.origin);
 }
 
-/** Current cap of one lane. */
-export function getFetchLaneLimit(lane: FetchLane): number {
-  return fetchGates[lane].limit;
+/**
+ * Current cap of one lane for requests from `origin`: the HTTP/1.1 socket cap
+ * for an origin seen over plain `http:`, the wide lane for a multiplexed
+ * origin's data, else the default width. Omitted = an origin-less request.
+ */
+export function getFetchLaneLimit(lane: FetchLane, origin?: string): number {
+  return originWidth(fetchGates[lane], origin);
 }
 
-/** Restore the wide caps between isolated tests. */
+/** Forget every HTTP/1.1 origin between isolated tests. */
 export function resetFetchTransport(): void {
-  http1Origin = false;
-  fetchGates.data.limit = MAX_CONCURRENT_CHUNK_FETCHES;
-  fetchGates.metadata.limit = MAX_CONCURRENT_METADATA_FETCHES;
+  http1Origins.clear();
 }
 
 export function fetchLaneForKey(key: string): FetchLane {
@@ -431,30 +463,52 @@ function rankOf(priority: FetchPriorityCell | FetchPriority): number {
   return PRIORITY_RANK[typeof priority === 'string' ? priority : priority.value];
 }
 
+/** Does an HTTP/1.1 origin still have a socket (and, if speculative, its share) free? */
+function originAdmits(gate: FetchGateState, origin: string, rank: number): boolean {
+  const leases = gate.originLeases.get(origin);
+  if (leases === undefined) return true;
+  if (leases.active >= gate.http1Limit) return false;
+  return rank !== SPECULATIVE_RANK || leases.speculative < speculativeCap(gate.http1Limit);
+}
+
 function admissible(gate: FetchGateState, origin: string | undefined, rank: number): boolean {
   const limit = laneLimit(gate, origin);
   if (gate.active >= limit) return false;
-  if (rank !== SPECULATIVE_RANK) return true;
-  return gate.speculativeActive < Math.max(1, Math.floor(limit * MAX_SPECULATIVE_FETCH_SHARE));
+  if (isHttp1(origin) && !originAdmits(gate, origin, rank)) return false;
+  return rank !== SPECULATIVE_RANK || gate.speculativeActive < speculativeCap(limit);
 }
 
 /** Width tier of a request from `origin` (see {@link WIDTH_TIERS}). */
 function tierOf(gate: FetchGateState, origin: string | undefined): number {
-  return laneLimit(gate, origin) > gate.limit ? 1 : 0;
+  if (isHttp1(origin)) return 0;
+  return laneLimit(gate, origin) > gate.limit ? 2 : 1;
 }
 
-/**
- * Does any LIVE waiter of `rank` or more urgent sit in `tier`'s queues? Under the
- * HTTP/1.1 cap every origin has one width, so every tier counts (a waiter queued
- * wide before the cap landed must not be passed).
- */
+/** Does any LIVE waiter of `rank` or more urgent sit in `tier`'s queues? */
 function hasQueuedAtOrAbove(gate: FetchGateState, rank: number, tier: number): boolean {
   for (let r = 0; r <= rank; r++) {
-    for (let t = 0; t < WIDTH_TIERS; t++) {
-      if ((t === tier || http1Origin) && liveHead(gate, r * WIDTH_TIERS + t)) return true;
-    }
+    if (liveHead(gate, r * WIDTH_TIERS + tier)) return true;
   }
   return false;
+}
+
+/** Count a lease against its origin (`delta` +1 on start, -1 on release). */
+function tallyOriginLease(
+  gate: FetchGateState,
+  origin: string | undefined,
+  speculative: boolean,
+  delta: 1 | -1
+): void {
+  if (origin === undefined) return;
+  let leases = gate.originLeases.get(origin);
+  if (leases === undefined) {
+    if (delta < 0) return;
+    leases = { active: 0, speculative: 0 };
+    gate.originLeases.set(origin, leases);
+  }
+  leases.active += delta;
+  if (speculative) leases.speculative += delta;
+  if (leases.active <= 0) gate.originLeases.delete(origin);
 }
 
 /** Head of one queue, discarding entries left dead by a promotion or an abort. */
@@ -600,6 +654,7 @@ export function withFetchGate<T>(
     gate.active += 1;
     speculativeLease = rankOf(priority) === SPECULATIVE_RANK;
     if (speculativeLease) gate.speculativeActive += 1;
+    tallyOriginLease(gate, origin, speculativeLease, 1);
     perfCounters.max(gate.sHighWater, gate.active);
   };
 
@@ -624,9 +679,10 @@ export function withFetchGate<T>(
     } finally {
       gate.active -= 1;
       if (speculativeLease) gate.speculativeActive -= 1;
+      tallyOriginLease(gate, origin, speculativeLease, -1);
       // Hand the freed slot to the most urgent waiter. dispatch() admits only
-      // below laneLimit(), so after the cap shrinks, leases already in flight
-      // drain before new ones start.
+      // below the origin's width, so after an origin turns out to be HTTP/1.1,
+      // its leases already in flight drain before new ones start.
       dispatch(gate);
     }
   });
@@ -644,24 +700,38 @@ function signalOfStoreArgs(args: readonly unknown[]): AbortSignal | undefined {
   return undefined;
 }
 
+/** The origin of a store that exposes its base `url` (zarrita's `FetchStore`). */
+function originOfStore(store: object): string | undefined {
+  const url = (store as { url?: unknown }).url;
+  if (url instanceof URL) return originOfUrl(url.href);
+  return typeof url === 'string' ? originOfUrl(url) : undefined;
+}
+
 /**
  * Wrap a zarr store so its `get` / `getRange` go through {@link withFetchGate}.
  * A `Proxy` keeps the store's full surface intact (consolidated-metadata and
  * caching wrappers, `contents()`, etc.) while throttling only the two
- * data-fetching methods.
+ * data-fetching methods. The gate is told the store's origin (so an h2/h3 host
+ * gets its wide lane and an `http:` host its socket cap) and each call's abort
+ * signal (so a superseded read leaves the queue).
  */
 export function boundedConcurrencyStore<S extends object>(store: S): S {
+  const origin = originOfStore(store);
   return new Proxy(store, {
     get(target, prop, receiver) {
       if (prop === 'get' || prop === 'getRange') {
         const orig = Reflect.get(target, prop, receiver);
         if (typeof orig === 'function') {
-          return (...args: unknown[]) =>
-            withFetchGate(
+          return (...args: unknown[]) => {
+            const signal = signalOfStoreArgs(args);
+            return withFetchGate(
               () => (orig as (...a: unknown[]) => Promise<unknown>).apply(target, args),
               typeof args[0] === 'string' ? fetchLaneForKey(args[0]) : 'data',
-              signalPriority(signalOfStoreArgs(args)) ?? 'demand'
+              signalPriority(signal) ?? 'demand',
+              origin,
+              signal
             );
+          };
         }
       }
       return Reflect.get(target, prop, receiver);

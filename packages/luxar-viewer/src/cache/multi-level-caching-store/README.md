@@ -146,10 +146,10 @@ Key behaviours:
   at a 16 KiB/s aggregate floor shared across at most eight active leases, or
   eight stall windows shared across at most four leases when the length is
   unavailable. Metadata probes use a separate lane from data bodies: the caps
-  are 24 data + 4 metadata in TLS-only sessions, with the data lane widened to 96
-  for an origin whose resource timing shows it negotiated h2/h3, and both lanes
-  shrink to 4 data + 2 metadata once an `http:` URL is seen (HTTP/1.1's six
-  sockets). `priority` (`demand` > `refinement` > `speculative`, or a
+  are 24 data + 4 metadata, with the data lane widened to 96 for an origin
+  whose resource timing shows it negotiated h2/h3, and an origin seen over a
+  plain `http:` URL held to 4 data + 2 metadata of its own (HTTP/1.1's six
+  sockets) while other origins keep their width. `priority` (`demand` > `refinement` > `speculative`, or a
   `FetchPriorityCell` a coalescing caller may raise) orders the gate's queue;
   speculative requests never hold more than a quarter of a lane. The store
   passes `speculative` for prefetcher reads and raises a pending read to

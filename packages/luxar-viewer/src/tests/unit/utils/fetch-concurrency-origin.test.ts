@@ -65,7 +65,7 @@ afterEach(() => {
 });
 
 describe('HTTP/1.1 lane cap is per origin', () => {
-  it.fails('an http: URL narrows only its own origin', () => {
+  it('an http: URL narrows only its own origin', () => {
     noteFetchUrl(`${LAN}/data/Backdrop/part_3/zarr.json`);
     expect(getFetchLaneLimit('data', LAN)).toBe(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
     expect(getFetchLaneLimit('metadata', LAN)).toBe(HTTP1_MAX_CONCURRENT_METADATA_FETCHES);
@@ -73,7 +73,7 @@ describe('HTTP/1.1 lane cap is per origin', () => {
     expect(getFetchLaneLimit('metadata', CDN)).toBe(MAX_CONCURRENT_METADATA_FETCHES);
   });
 
-  it.fails('a TLS origin keeps its full lane while the http: origin is held to its sockets', async () => {
+  it('a TLS origin keeps its full lane while the http: origin is held to its sockets', async () => {
     noteFetchUrl(`${LAN}/scene.luxar.zarr/zarr.json`);
     const tls = Array.from({ length: 10 }, () => holder(CDN));
     const lan = Array.from({ length: HTTP1_MAX_CONCURRENT_CHUNK_FETCHES + 3 }, () => holder(LAN));
@@ -88,7 +88,7 @@ describe('HTTP/1.1 lane cap is per origin', () => {
 });
 
 describe('boundedConcurrencyStore names its origin and signal', () => {
-  it.fails('gives a multiplexed no-cache store its wide lane', async () => {
+  it('gives a multiplexed no-cache store its wide lane', async () => {
     const h2 = 'https://h2.example';
     noteOriginProtocol(h2, 'h2');
     let active = 0;
@@ -121,7 +121,7 @@ describe('boundedConcurrencyStore names its origin and signal', () => {
     expect(peakBeforeRelease).toBe(MAX_CONCURRENT_CHUNK_FETCHES + 8);
   });
 
-  it.fails('frees the queue place of a no-cache read whose caller aborts', async () => {
+  it('frees the queue place of a no-cache read whose caller aborts', async () => {
     const busy = Array.from({ length: MAX_CONCURRENT_CHUNK_FETCHES }, () => holder(undefined));
     await flush();
     let ran = false;
