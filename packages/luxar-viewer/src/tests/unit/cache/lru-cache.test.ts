@@ -149,7 +149,7 @@ describe('LRUCache', () => {
       expect(cache.size).toBe(100);
     });
 
-    it.fails('an oversized set on an EXISTING key drops the stale value instead of keeping it', () => {
+    it('an oversized set on an EXISTING key drops the stale value instead of keeping it', () => {
       // Keeping the old value would leave `key1` answering with bytes the
       // caller just replaced: a stale read, not a preserved one.
       const evicted: string[] = [];

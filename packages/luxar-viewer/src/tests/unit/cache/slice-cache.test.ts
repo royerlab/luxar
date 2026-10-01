@@ -262,7 +262,7 @@ describe('SliceCache pinned perf gauges', () => {
     expect(pinned()).toEqual([0, 0]);
   });
 
-  it.fails('an oversized pinned re-set neither keeps nor pins the stale entry', () => {
+  it('an oversized pinned re-set neither keeps nor pins the stale entry', () => {
     perfCounters.reset();
     const c = new SliceCache({ maxSize: 1024 });
     const a = SliceCache.makeKey('/n', 'a');

@@ -80,6 +80,8 @@ export class LRUCache<V> {
    *
    * @param key - Cache key
    * @param value - Value to cache (size calculated via getSize function)
+   * @returns Whether `value` was stored. `false` means it exceeds the whole
+   *   budget; any previous value under `key` has then been dropped too.
    *
    * @example
    * ```typescript
@@ -103,15 +105,19 @@ export class LRUCache<V> {
    *
    * @remarks Performance: O(k) where k = number of evictions needed (typically 0-2)
    */
-  set(key: string, value: V, opts?: { evictMostRecent?: boolean }): void {
+  set(key: string, value: V, opts?: { evictMostRecent?: boolean }): boolean {
     const size = this.getSize(value);
 
     // Reject items that exceed total cache capacity to avoid permanent
-    // size invariant violation (currentSize > maxSize).
-    // IMPORTANT: This check must be BEFORE removing the existing entry,
-    // otherwise replacing a key with an oversized value would silently
-    // delete the old entry (data loss).
-    if (size > this.maxSize) return;
+    // size invariant violation (currentSize > maxSize). Nothing ELSE is
+    // evicted for it — but an existing entry under the same key is dropped
+    // (through `delete`, so `onEvict` sees it): the caller has just replaced
+    // that value, and keeping the old one would serve stale bytes under the
+    // key, and let a following `pin(key)` protect them.
+    if (size > this.maxSize) {
+      this.delete(key);
+      return false;
+    }
 
     // If exists, remove old
     if (this.cache.has(key)) {
@@ -141,6 +147,7 @@ export class LRUCache<V> {
 
     this.cache.set(key, value);
     this.currentSize += size;
+    return true;
   }
 
   /**
