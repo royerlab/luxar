@@ -567,7 +567,7 @@ describe('bootstrapStandalone', () => {
       expect(window.__luxarDebug).toBeUndefined();
     });
 
-    it.fails('installs the debug perf instruments before the first load starts', async () => {
+    it('installs the debug perf instruments before the first load starts', async () => {
       // A probe reading getPerf() during the first load (the case the perf
       // gates measure) must see the getObjectByName counter, the lazy-LOD
       // stage timings and the renderer.info sampler — not only after it.

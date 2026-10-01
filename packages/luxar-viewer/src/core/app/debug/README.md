@@ -6,19 +6,20 @@ all reach into.
 
 ## Overview
 
-This folder owns the `__luxarDebug` global. The bootstrap entry point
-(`core/bootstrap.ts`) seeds a minimal stub (`app`, `consoleInterceptor`,
-`version`) so the global exists from the first JS tick. Once `LuxarApp.init()`
-finishes building the subsystem graph it calls `installDebugInterface(ports)`
-to extend that stub with live runtime components, helper functions, and the
-synthetic-scene injector.
+This folder owns the `__luxarDebug` global. Under `?debug` the bootstrap entry
+point (`core/bootstrap.ts`) seeds a stub (`app`, `consoleInterceptor`,
+`version`, the perf readers `getPerf` / `getPerfRecords` / `resetPerfCounters`,
+`showError`) so the global exists from the first JS tick, and installs the debug
+perf instruments (`perf-instruments.ts`) so the first load is measured too.
+Once `LuxarApp.init()` finishes building the subsystem graph it calls
+`installDebugInterface(ports)` to extend that stub with live runtime
+components, helper functions, and the synthetic-scene injector.
 
-Everything here is private to `LuxarApp` — only `app.ts` imports these files
-(`LuxarApp.setupDebugInterface()` calls `installDebugInterface`, and a private
-`openCacheStatsView()` wrapper delegates to `cache-stats-view.ts`). The one
-exception is `capture-readiness.ts`, which is deliberately dependency-free so
-the out-of-bundle capture tool (`tools/capture-hires.ts`) can consume the
-`getState()` snapshot from Node.
+`app.ts` imports `debug-interface.ts` (from `LuxarApp.setupDebugInterface()`)
+and `cache-stats-view.ts`; the bootstrap imports `perf-snapshot.ts` and
+`perf-instruments.ts` for its pre-init seed. `capture-readiness.ts` is
+deliberately dependency-free so the out-of-bundle capture tool
+(`tools/capture-hires.ts`) can consume the `getState()` snapshot from Node.
 
 ## File Structure
 
@@ -28,7 +29,10 @@ debug/
 ├── debug-state.ts           # computeDebugState() + computeDrawOrder() — pure scene walks
 ├── capture-readiness.ts     # summarizeCaptureReadiness() — "did anything load?" verdict
 ├── debug-cache-helpers.ts   # buildDebugCacheHelpers() — __luxarDebug.cache.* wrappers
-└── cache-stats-view.ts      # openCacheStatsView() — pops the data-monitor Cache tab
+├── cache-stats-view.ts      # openCacheStatsView() — pops the data-monitor Cache tab
+├── perf-snapshot.ts         # computePerfSnapshot() — the getPerf() payload
+├── perf-instruments.ts      # installDebugPerfInstruments() — debug-only perf probes
+└── renderer-info-sampler.ts # per-frame renderer.info sampler behind getPerf().rendererInfo
 ```
 
 ## Files
@@ -52,13 +56,14 @@ on the runtime fields. When `LuxarApp` is instantiated outside the standalone
 entry point — e.g. embeds or unit tests — bootstrap hasn't run, so the helper
 falls back to a fresh stub.
 
-On entry it calls `setLodLoadStatsEnabled(true)` (from
-`data/scene-loader/lod-load-stats`) so per-stage timing for lazy LOD level
-loads and additive per-level ladder loads is captured under `?debug` only.
-Those lazy `ensureLoaded` loads run outside any `updateView` cycle, so the
-`UpdateProfiler` never sees them — this fills the gap. The captured stats are
-reachable as `__luxarDebug.getLodLoadStats()` (snapshot) and
-`resetLodLoadStats()`.
+On entry it calls `installDebugPerfInstruments()` (`perf-instruments.ts`,
+idempotent; the bootstrap already ran it before `init()`): per-stage timing for
+lazy LOD level loads and additive per-level ladder loads
+(`setLodLoadStatsEnabled(true)` — those lazy `ensureLoaded` loads run outside
+any `updateView` cycle, so the `UpdateProfiler` never sees them), the
+`scene.getObjectByName` call counter, and the `renderer.info` sampler, re-pointed
+at the live renderer. The LOD stats are reachable as
+`__luxarDebug.getLodLoadStats()` (snapshot) and `resetLodLoadStats()`.
 
 `injectSyntheticScene`'s body is wrapped in try/catch: on failure it logs via
 `log.error` and surfaces the message through the user-facing error overlay
