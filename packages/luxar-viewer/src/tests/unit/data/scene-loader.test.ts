@@ -489,6 +489,43 @@ describe('SceneLoader', () => {
       expect(rollbackToPassStart).toHaveBeenCalledOnce();
     });
 
+    it.fails('a throwing rollback after a failed commit is logged, not folded into the commit error', async () => {
+      // Every other rollback site goes through tryRollbackToPassStart, which
+      // keeps the ORIGINAL failure as the one reported; the commit path called
+      // the raw method and buried it in a nested AggregateError.
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      const loaders = (sceneLoader as any).loaders as Map<string, unknown>;
+      loaders.clear();
+      loaders.set('/commit-fail', {
+        updateView: vi.fn().mockResolvedValue({
+          pointCount: 1,
+          positions: new Float32Array([1, 2, 3]),
+          metadata: { loadedPoints: 1 },
+        }),
+        rollbackToPassStart: vi.fn(() => {
+          throw new Error('rollback failed');
+        }),
+        dispose: vi.fn(),
+      });
+      const commitError = new Error('GPU commit failed');
+      vi.spyOn(sceneLoader as any, 'updatePointsGeometry').mockImplementation(() => {
+        throw commitError;
+      });
+
+      const failure = await sceneLoader
+        .updateView({ displayDims: [0, 1, 2] })
+        .catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect((failure as AggregateError).errors).toEqual([commitError]);
+      expect(warning).toHaveBeenCalledWith(
+        Modules.SCENE_LOADER,
+        'Progressive loader rollback failed',
+        expect.any(Error)
+      );
+      warning.mockRestore();
+    });
+
     it('a partially failing commit still records the frame it committed (A9)', async () => {
       // runAtomicCommit commits every sibling and only THEN rethrows. The
       // siblings' geometry is on screen, so the pass's post-commit bookkeeping
