@@ -33,7 +33,7 @@ describe.each([
   ['GSplatMaterial', () => new GSplatMaterial({})],
   ['GSplatTSLMaterial', () => new GSplatTSLMaterial({})],
 ])('%s.clone() carries the density-guard state', (_name, make) => {
-  it.fails('copies uDensityDrop and uDensityAlphaExp', () => {
+  it('copies uDensityDrop and uDensityAlphaExp', () => {
     const mat = make() as unknown as Uniforms;
     mat.uniforms[DENSITY_DROP_UNIFORM].value = 0.75;
     mat.uniforms[DENSITY_ALPHA_EXP_UNIFORM].value = 4;
