@@ -165,9 +165,65 @@ vi.mock('../../../rendering/environment/scene-environment', () => ({
 }));
 
 vi.mock('../../../rendering/renderer-capabilities', () => ({
-  createRendererCapabilities: () => ({ backend: 'webgl', apiSurface: 'webgl2' }),
+  createRendererCapabilities: (renderer: { isWebGLRenderer?: boolean }) =>
+    renderer.isWebGLRenderer === true
+      ? { backend: 'webgl', apiSurface: 'webgl2', maxTextureSize: 4096 }
+      : { backend: 'webgpu', apiSurface: 'webgpu', maxTextureSize: 8192 },
   isWebGLRenderer: (renderer: { isWebGLRenderer?: boolean }) => renderer.isWebGLRenderer === true,
 }));
+
+// The per-backend switches renderer-setup flips for the app's own renderer.
+// Spied rather than stubbed: the real modules hold the state materials read.
+const backendConfig = vi.hoisted(() => ({
+  chunkedApply: vi.fn(),
+  renderObjectEviction: vi.fn(),
+  textureLayout: vi.fn(),
+  rowUploads: vi.fn(),
+}));
+vi.mock('../../../rendering/element-storage', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../rendering/element-storage')>();
+  return {
+    ...actual,
+    configureSortedIndexChunkedApply: (enabled: boolean) => {
+      backendConfig.chunkedApply(enabled);
+      actual.configureSortedIndexChunkedApply(enabled);
+    },
+  };
+});
+vi.mock('../../../data/scene-loader/commit/invalidate-render-object', async (importOriginal) => {
+  const actual =
+    await importOriginal<
+      typeof import('../../../data/scene-loader/commit/invalidate-render-object')
+    >();
+  return {
+    ...actual,
+    configureRenderObjectEviction: (enabled: boolean) => {
+      backendConfig.renderObjectEviction(enabled);
+      actual.configureRenderObjectEviction(enabled);
+    },
+  };
+});
+vi.mock('../../../rendering/element-texture-layout', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../rendering/element-texture-layout')>();
+  return {
+    ...actual,
+    configureElementTextureLayout: (maxTextureSize: number) => {
+      backendConfig.textureLayout(maxTextureSize);
+      actual.configureElementTextureLayout(maxTextureSize);
+    },
+  };
+});
+vi.mock('../../../rendering/element-texture-row-upload', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../../rendering/element-texture-row-upload')>();
+  return {
+    ...actual,
+    installElementTextureRowUploads: (renderer: unknown) => {
+      backendConfig.rowUploads(renderer);
+      return actual.installElementTextureRowUploads(renderer);
+    },
+  };
+});
 const reduceGpuByteBudgetForContextLoss = vi.fn();
 const initializeGpuByteBudget = vi.fn();
 vi.mock('../../../rendering/gpu-byte-budget', () => ({
@@ -347,6 +403,31 @@ describe('LuxarLayer', () => {
         camera: expect.any(THREE.Camera),
         targetScene: options.scene,
       });
+    });
+
+    it.fails('configures the backend switches for a host WebGPU renderer', () => {
+      // Without these a host WebGPU renderer keeps the classic-WebGL defaults:
+      // chunked ordering applies that wait on an upload callback WebGPU never
+      // fires (a >1M sort stalls after its first slice), no RenderObject
+      // eviction after a pool grow, and full element-texture uploads.
+      const renderer = {
+        getDrawingBufferSize: (v: THREE.Vector2) => v.set(800, 600),
+        getPixelRatio: () => 2,
+      } as unknown as LuxarLayerOptions['renderer'];
+      new LuxarLayer(makeOptions({ renderer }));
+
+      expect(backendConfig.chunkedApply).toHaveBeenCalledWith(false);
+      expect(backendConfig.renderObjectEviction).toHaveBeenCalledWith(true);
+      expect(backendConfig.textureLayout).toHaveBeenCalledWith(8192);
+      expect(backendConfig.rowUploads).toHaveBeenCalledWith(renderer);
+    });
+
+    it.fails('configures the backend switches for a host WebGL renderer', () => {
+      new LuxarLayer(makeOptions());
+
+      expect(backendConfig.chunkedApply).toHaveBeenCalledWith(true);
+      expect(backendConfig.renderObjectEviction).toHaveBeenCalledWith(false);
+      expect(backendConfig.textureLayout).toHaveBeenCalledWith(4096);
     });
 
     it('skips depth-sort wiring when disabled', () => {
