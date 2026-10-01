@@ -452,28 +452,28 @@ describe('OPFSStore reload at any moment: chunk files outlive a lost index save'
     expect(JSON.parse(disk.rootFiles.get(META) ?? '{"entries":[]}').entries.length).toBe(N);
   }
 
-  it.fails('no index save ever landed (unload before the first save)', async () => {
+  it('no index save ever landed (unload before the first save)', async () => {
     const disk = installBucketed();
     await interruptedSession(disk, HASH);
     expect(disk.rootFiles.has(META)).toBe(false);
     await expectAllServedOnFirstRead(disk);
   });
 
-  it.fails('a zero-byte index (a save cut off by the navigation)', async () => {
+  it('a zero-byte index (a save cut off by the navigation)', async () => {
     const disk = installBucketed();
     await interruptedSession(disk, HASH);
     disk.rootFiles.set(META, '');
     await expectAllServedOnFirstRead(disk);
   });
 
-  it.fails('a stale index missing the last writes (reload inside the debounce)', async () => {
+  it('a stale index missing the last writes (reload inside the debounce)', async () => {
     const disk = installBucketed();
     await interruptedSession(disk, HASH, N - 6);
     expect(JSON.parse(disk.rootFiles.get(META)!).entries.length).toBe(N - 6);
     await expectAllServedOnFirstRead(disk);
   });
 
-  it.fails('a different content hash still invalidates the unindexed files', async () => {
+  it('a different content hash still invalidates the unindexed files', async () => {
     const disk = installBucketed();
     await interruptedSession(disk, 'hash-old');
     const store = new OPFSStore('reload', URL, 1e9);
@@ -489,7 +489,7 @@ describe('OPFSStore reload at any moment: chunk files outlive a lost index save'
     await store.dispose();
   });
 
-  it.fails('a zero-byte chunk file (a chunk write cut off before close) is not served', async () => {
+  it('a zero-byte chunk file (a chunk write cut off before close) is not served', async () => {
     const disk = installBucketed();
     await interruptedSession(disk, HASH);
     const torn = 'points/c/torn';
@@ -578,7 +578,7 @@ describe('MultiLevelCachingStore reload at any moment: no network for chunks alr
     expect(disk.fileCount()).toBeGreaterThanOrEqual(keys.length);
   }
 
-  it.fails('serves every chunk written before the reload from L2', async () => {
+  it('serves every chunk written before the reload from L2', async () => {
     const disk = installBucketed();
     const hash = { value: 'hash-a' };
     await interrupted(disk, hash);
