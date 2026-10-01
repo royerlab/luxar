@@ -54,6 +54,7 @@ import { MAX_PICK_NODE_ID, voteWinner, type VoteEntry } from './picking-system/p
 import { SettleScheduler } from './picking-system/settle-scheduler';
 import { resolveOnDiskElementId } from './picking-system/element-id-map';
 import { applyLensDistortion } from './picking-system/lens-distortion';
+import { syncPickVisibilityInputs } from './picking-system/visibility-sync';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import { readPixelsCompactAsync } from '../post-processing/hdr/pixel-utils';
 import { isOrthographicCamera } from '../../utils/camera-utils';
@@ -867,6 +868,9 @@ export class PickingSystem {
       // index), or hovering a thinned-away element would resolve a pick the
       // user cannot see. Cheap no-op when unchanged.
       setDensityDrop(mat, getDensityDrop((entry.main as THREE.Mesh).material));
+      // Visibility inputs the visual pass alone is written with (truncation,
+      // coverage limit, ...): the pick pass must cull exactly what it culls.
+      syncPickVisibilityInputs(mat, (entry.main as THREE.Mesh).material);
 
       // Pick-depth convention sync: under the depth-ordered surface
       // modes — 'normal' (sorted alpha-over) and 'opaque' (depth-

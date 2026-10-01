@@ -18,6 +18,7 @@ import {
   SPLAT_TEXTURE_LAYOUT,
 } from '../../element-texture-layout';
 import { GSPLAT_COV2D_DILATION_DEFAULT } from '../../materials/gsplat/math';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 
 // Module-load assertion: the GLSL wrapper requires the GLSL source.
 const GSPLAT_PICK_GLSL = requireWebGLSources(GSPLAT_PICK_SOURCE);
@@ -79,6 +80,10 @@ export class GSplatPickingMaterial
         uPixelRatio: { value: 1 },
         uTruncate: { value: truncate },
         uTruncateSq: { value: truncate * truncate },
+        // The draw pass's T, read by the coverage fade only — synced from
+        // the visual material per pick render (see picking-system/
+        // visibility-sync.ts).
+        uCoverageTruncate: { value: GSPLAT_DEFAULT_TRUNCATION_RADIUS },
         uShiftC: { value: shiftC },
         uInvOneMinusC: { value: invOneMinusC },
         // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
@@ -158,6 +163,7 @@ export class GSplatPickingMaterial
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uCoverageTruncate.value = this.uniforms.uCoverageTruncate.value;
     cloned.uniforms.uMaxExtentFactor.value = this.uniforms.uMaxExtentFactor.value;
     cloned.uniforms.uCov2DDilation.value = this.uniforms.uCov2DDilation.value;
     cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;

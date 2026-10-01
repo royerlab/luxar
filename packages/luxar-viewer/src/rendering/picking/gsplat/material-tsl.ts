@@ -25,6 +25,7 @@ import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { GSplatPickingMaterialConfig, SurfacePickAwareMaterial } from './material';
 import { GSPLAT_COV2D_DILATION_DEFAULT } from '../../materials/gsplat/math';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 
 export class GSplatPickingTSLMaterial
   extends NodeMaterial
@@ -38,6 +39,7 @@ export class GSplatPickingTSLMaterial
     uPixelRatio: TSLNode;
     uTruncate: TSLNode;
     uTruncateSq: TSLNode;
+    uCoverageTruncate: TSLNode;
     uShiftC: TSLNode;
     uInvOneMinusC: TSLNode;
     uNearCull: TSLNode;
@@ -66,6 +68,8 @@ export class GSplatPickingTSLMaterial
       uPixelRatio: uniform(1),
       uTruncate: uniform(truncate),
       uTruncateSq: uniform(truncate * truncate),
+      // The draw pass's T for the coverage fade (synced per pick render).
+      uCoverageTruncate: uniform(GSPLAT_DEFAULT_TRUNCATION_RADIUS),
       uShiftC: uniform(shiftC),
       uInvOneMinusC: uniform(invOneMinusC),
       uNearCull: uniform(0.1),
@@ -94,6 +98,7 @@ export class GSplatPickingTSLMaterial
       uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
       uTruncate: proxyIUniform(this.tslNodes.uTruncate),
       uTruncateSq: proxyIUniform(this.tslNodes.uTruncateSq),
+      uCoverageTruncate: proxyIUniform(this.tslNodes.uCoverageTruncate),
       uShiftC: proxyIUniform(this.tslNodes.uShiftC),
       uInvOneMinusC: proxyIUniform(this.tslNodes.uInvOneMinusC),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
@@ -161,6 +166,7 @@ export class GSplatPickingTSLMaterial
     );
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uCoverageTruncate.value = this.uniforms.uCoverageTruncate.value;
     cloned.uniforms.uMaxExtentFactor.value = this.uniforms.uMaxExtentFactor.value;
     cloned.uniforms.uCov2DDilation.value = this.uniforms.uCov2DDilation.value;
     cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;

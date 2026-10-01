@@ -61,6 +61,7 @@ import {
 } from '../../materials/_shared/tsl-helpers';
 import { gsplatQuadFootprintTSL } from '../../materials/gsplat/shader-tsl';
 import { GSPLAT_VISIBILITY_FLOOR } from '../../materials/gsplat/math';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 
 const vec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _vec2 as TSLNode;
 const vec3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _vec3 as TSLNode;
@@ -85,6 +86,12 @@ export interface GSplatPickTSLNodes {
   readonly uPixelRatio: TSLNode;
   readonly uTruncate: TSLNode;
   readonly uTruncateSq: TSLNode;
+  /**
+   * The draw pass's truncation radius (the node's T), read only by the
+   * coverage fade — a cull rule that must cull exactly what the draw culls.
+   * `uTruncate` keeps sizing the tighter pick footprint.
+   */
+  readonly uCoverageTruncate: TSLNode;
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
   readonly uDensityDrop: TSLNode;
@@ -123,6 +130,7 @@ export function gsplatPickWebGPUFactory(
   const uSplatTex = nodes.uSplatTex;
   const uResolution = nodes.uResolution;
   const uTruncate = nodes.uTruncate;
+  const uCoverageTruncate = nodes.uCoverageTruncate;
   const uNearCull = nodes.uNearCull;
   const uMaxExtentFactor = nodes.uMaxExtentFactor;
   const uCov2DDilation = nodes.uCov2DDilation;
@@ -252,7 +260,7 @@ export function gsplatPickWebGPUFactory(
       .mul(0.5)
       .mul(projectionSizeScaleTSL())
       .mul(sqrt(max(maxLateralVar, float(1e-20))))
-      .mul(uTruncate)
+      .mul(uCoverageTruncate)
       .div(isOrtho.select(float(1.0), max(zDepth, float(1e-20))));
     const maxExtent: TSLNode = max(uResolution.x, uResolution.y).mul(uMaxExtentFactor);
     const coverageFade: TSLNode = float(1.0)
@@ -558,6 +566,9 @@ export function buildGSplatPickTSLNodesFromUniforms(
     // 1.5² — keep the default PAIR consistent (9.0 was half-copied from the
     // visual builder's 3.0/9.0 and sized the quad for 1.5σ while discarding at 3σ).
     uTruncateSq: uniform((uniforms.uTruncateSq?.value as number) ?? 2.25),
+    uCoverageTruncate: uniform(
+      (uniforms.uCoverageTruncate?.value as number) ?? GSPLAT_DEFAULT_TRUNCATION_RADIUS
+    ),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),

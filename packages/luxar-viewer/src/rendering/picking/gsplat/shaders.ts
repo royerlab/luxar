@@ -61,6 +61,10 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
 
     uniform vec2 uResolution;
     uniform float uTruncate;
+    // The DRAW pass's truncation radius (the node's T), synced from the
+    // visual material per pick render: the coverage fade below is a cull
+    // rule, not a footprint, and must cull exactly what the draw culls.
+    uniform float uCoverageTruncate;
     uniform float uNearCull;
     uniform float uMaxExtentFactor;
     uniform float uCov2DDilation;     // 2D-covariance low-pass dilation in CSS px² (visual-shader parity)
@@ -180,7 +184,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
             // scene); zDepth is bounded by the scene-relative near fade.
             float maxLateralVar = max(Sigma_cam[0][0], max(Sigma_cam[1][1], Sigma_cam[2][2]));
             float extentDivisor = (isOrtho == 1) ? 1.0 : max(zDepth, 1e-20);
-            float projectedExtent = (halfResY * luxarProjectionSizeScale()) * sqrt(max(maxLateralVar, 1e-20)) * uTruncate / extentDivisor;
+            float projectedExtent = (halfResY * luxarProjectionSizeScale()) * sqrt(max(maxLateralVar, 1e-20)) * uCoverageTruncate / extentDivisor;
             float maxExtent = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
             coverageFade = 1.0 - smoothstep(maxExtent * 0.5, maxExtent, projectedExtent);
             if (coverageFade < 0.01) {
