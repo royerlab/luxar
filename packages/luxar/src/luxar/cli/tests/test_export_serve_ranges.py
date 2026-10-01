@@ -146,6 +146,15 @@ def test_directories_and_missing_files_behave_as_before(port: int) -> None:
     assert "accept-ranges" not in headers
 
 
+@pytest.mark.parametrize("headers", [{}, {"Range": "bytes=0-9"}])
+def test_file_path_with_trailing_slash_is_not_a_file(
+    port: int, headers: dict[str, str]
+) -> None:
+    status, response_headers, _ = get(port, "/clip.webm/", headers)
+    assert status == 404
+    assert "accept-ranges" not in response_headers
+
+
 def test_parse_byte_range_on_an_empty_file() -> None:
     assert template.parse_byte_range("bytes=0-", 0) == template.UNSATISFIABLE
     assert template.parse_byte_range("bytes=-5", 0) == template.UNSATISFIABLE

@@ -32,6 +32,7 @@ import hashlib
 import hmac
 import http.server
 import json
+import os
 import socket
 import struct
 import sys
@@ -719,7 +720,7 @@ class LuxarHandler(http.server.SimpleHTTPRequestHandler):
         """Serve a requested byte range as a 206; everything else as before."""
         self._range_remaining: int | None = None
         file_path = self.translate_path(self.path)
-        self._serving_file = Path(file_path).is_file()
+        self._serving_file = os.path.isfile(file_path)
         spec = self.headers.get("Range")
         if (
             spec is None
