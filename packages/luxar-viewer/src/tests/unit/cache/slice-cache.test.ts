@@ -262,6 +262,18 @@ describe('SliceCache pinned perf gauges', () => {
     expect(pinned()).toEqual([0, 0]);
   });
 
+  it.fails('an oversized pinned re-set neither keeps nor pins the stale entry', () => {
+    perfCounters.reset();
+    const c = new SliceCache({ maxSize: 1024 });
+    const a = SliceCache.makeKey('/n', 'a');
+    c.set(a, entry(100, 'old'));
+    c.set(a, entry(4096, 'new'), { pin: true }); // larger than the whole budget
+
+    expect(c.has(a)).toBe(false);
+    expect(pinned()).toEqual([0, 0]);
+    expect(c.getStats().size).toBe(0);
+  });
+
   it('keeps a re-set pinned key pinned at its new size (as the LRU does)', () => {
     perfCounters.reset();
     const c = new SliceCache({ maxSize: 1024 });
