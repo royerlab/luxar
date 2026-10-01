@@ -3591,7 +3591,7 @@ export class LODGroupRegistry {
     version: number | null
   ): LevelFade | null {
     const fadeMs = config.lod.fadeMs;
-    const now = this.nowMs();
+    const now = this.frame.nowMs;
     let fade = this.fades.get(entry.path) ?? null;
     const prev = entry.displayedChildIndex;
     if (prev !== undefined && prev !== displayIdx && fadeMs > 0) {
@@ -3734,7 +3734,7 @@ export class LODGroupRegistry {
     if (prevCount == null || fallbackCount == null || prevCount <= 0) return undefined;
     if (fallbackCount >= prevCount * STALE_HOLD_MIN_RATIO) return undefined;
 
-    const now = this.deps.now?.() ?? performance.now();
+    const now = this.frame.nowMs;
     if (entry.staleHoldSinceMs == null) entry.staleHoldSinceMs = now;
     // During playback the held level's own reload for the new timepoint is in
     // flight: keep it until that replacement lands rather than dropping to a

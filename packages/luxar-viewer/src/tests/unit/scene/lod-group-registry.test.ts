@@ -827,7 +827,7 @@ function makeRegistry(
 
 /**
  * A registry clock that advances one 60 Hz frame per read. The registry reads
- * it once per ``evaluatePerFrame`` (plus the stale-hold budget, when one runs),
+ * it once per ``evaluatePerFrame`` (plus load start/end stamps, when one runs),
  * so a loop of evaluations spans real-looking time for the ms-based settle
  * debounce without each test threading its own clock.
  */
@@ -5678,7 +5678,7 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
   // #2944 review B: the dissolve must run on the FRAME's clock reading
   // (``frame.nowMs``), like every other time-driven rule of the registry. It
   // re-read the clock, so work done earlier in the same frame shifted its start.
-  it.fails('a dissolve is timed on the frame clock, not on a later clock read', () => {
+  it('a dissolve is timed on the frame clock, not on a later clock read', () => {
     const clock = { t: 1000 };
     let lateReads = false; // later reads within a frame see time that has passed
     let readsThisFrame = 0;
