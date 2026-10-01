@@ -82,6 +82,24 @@ function wrapOrStop(
 }
 
 /**
+ * Bounce handling for a step that reached or passed the end it moves toward:
+ * the playhead lands ON ``end`` — unless it is already there (playback started
+ * on the endpoint), in which case it steps the same distance back from it at
+ * once, rather than holding the endpoint for a second period (#2944 review B).
+ */
+function bounceValue(
+  current: number,
+  stepped: number,
+  end: number,
+  [min, top]: readonly [number, number],
+  eps: number
+): number {
+  if (Math.abs(current - end) > eps) return end;
+  const away = end - (stepped - current);
+  return Math.min(top, Math.max(min, away));
+}
+
+/**
  * Compute the next playback value for a dimension — pure, no state mutation.
  *
  * Discrete dimensions step by `±step` on the range-min-anchored grid;
@@ -91,7 +109,8 @@ function wrapOrStop(
  * (backward) lands on it, and the NEXT step — taken from the endpoint —
  * wraps to the opposite end (`loop`) or stops (`once`). `bounce` clamps and
  * flips the returned direction on arrival, which already shows the endpoint
- * exactly once.
+ * exactly once; a bounce STARTED on the endpoint it moves toward steps away
+ * from it on the first tick.
  */
 export function advanceDimensionValue(args: AdvanceArgs): AdvanceResult {
   const { current, min, max, step, loopMode, targetFPS, continuousTraverseMs } = args;
@@ -116,7 +135,7 @@ export function advanceDimensionValue(args: AdvanceArgs): AdvanceResult {
   const forwardHit = args.direction === 'forward' && value >= top - eps;
   const backwardHit = args.direction === 'backward' && value <= min + eps;
   if (loopMode === 'bounce' && (forwardHit || backwardHit)) {
-    value = forwardHit ? top : min;
+    value = bounceValue(current, value, forwardHit ? top : min, [min, top], eps);
     direction = forwardHit ? 'backward' : 'forward';
     directionChanged = true;
   } else if (loopMode !== 'bounce' && forwardHit) {

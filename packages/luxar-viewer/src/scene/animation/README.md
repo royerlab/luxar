@@ -200,7 +200,10 @@ unchanged render per tick.
   show: in `loop` and `once` a step that reaches or overshoots `max` (forward)
   or `min` (backward) lands ON it, and only the next step, taken from the
   endpoint, wraps (`loop`) or completes (`once`). `bounce` clamps and flips the
-  direction on arrival. On a discrete dim whose `max` is off its grid, the last
+  direction on arrival; a bounce started ON the endpoint it moves toward steps
+  away from it on the first tick instead of holding it for a second period. A
+  tick whose value does not change the playhead (a single-timepoint dim) does
+  not count as a step for the frame callback's redraw report. On a discrete dim whose `max` is off its grid, the last
   grid point is the endpoint. Discrete dims advance by `metadata.step` (or the
   step override), continuous dims by `range / continuousTraverseSeconds`
   scaled to the current target FPS. `peekNextValue` runs the same function, so

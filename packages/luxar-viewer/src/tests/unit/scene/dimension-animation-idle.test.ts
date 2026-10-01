@@ -82,7 +82,7 @@ describe('DimensionAnimationManager: render-loop liveness (#2944 A1)', () => {
 });
 
 describe('DimensionAnimationManager: step reporting (#2944 review B)', () => {
-  it.fails('a tick that leaves the playhead where it was reports no step', () => {
+  it('a tick that leaves the playhead where it was reports no step', () => {
     // A single-timepoint discrete dim playing in loop mode: every tick wraps
     // back onto the same value, which setDimensionValue ignores. The frame
     // callback must not report a new slice for it.

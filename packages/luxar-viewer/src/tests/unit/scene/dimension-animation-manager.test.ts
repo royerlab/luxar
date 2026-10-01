@@ -420,9 +420,11 @@ describe('DimensionAnimationManager', () => {
     it('bounce boundary: peeks the turnaround value WITHOUT flipping the live direction', () => {
       sceneDimsManager.setDimensionValue(3, 10);
       manager.play(3, { loopMode: 'bounce' });
-      expect(manager.peekNextValue(3)).toBe(10); // clamped at max
+      // Started ON the max: the next tick turns and steps away at once
+      // (#2944 review B — no second period on the endpoint).
+      expect(manager.peekNextValue(3)).toBe(9);
       expect(manager.getState(3)?.direction).toBe('forward'); // state unmutated
-      expect(manager.peekNextValue(3)).toBe(10); // repeatable
+      expect(manager.peekNextValue(3)).toBe(9); // repeatable
     });
 
     it("returns null for 'once' at the boundary (nothing to prefetch)", () => {

@@ -237,10 +237,13 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     return this.stepCount !== stepsBefore;
   }
 
-  /** Move one playhead (listeners start the data load) and count the step for {@link onFrame}. */
+  /**
+   * Move one playhead (listeners start the data load) and count the step for
+   * {@link onFrame} — only when the value actually changed: a tick that wraps
+   * back onto the same value (a single-timepoint dim) draws no new slice.
+   */
   private stepTo(dimIndex: number, value: number): void {
-    this.sceneDimsManager.setDimensionValue(dimIndex, value);
-    this.stepCount++;
+    if (this.sceneDimsManager.setDimensionValue(dimIndex, value)) this.stepCount++;
   }
 
   /**

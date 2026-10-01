@@ -169,7 +169,7 @@ describe('advanceDimensionValue — boundaries', () => {
   });
 
   it('bounce mode clamps at max and RETURNS the flipped direction (no mutation contract)', () => {
-    const a = args({ current: 99, loopMode: 'bounce' });
+    const a = args({ current: 98.5, loopMode: 'bounce' });
     const r = advanceDimensionValue(a);
     expect(r.value).toBe(99);
     expect(r.direction).toBe('backward');
@@ -181,7 +181,7 @@ describe('advanceDimensionValue — boundaries', () => {
 
   it('bounce mode flips backward → forward at min', () => {
     const r = advanceDimensionValue(
-      args({ current: 0, direction: 'backward', loopMode: 'bounce' })
+      args({ current: 0.5, direction: 'backward', loopMode: 'bounce' })
     );
     expect(r.value).toBe(0);
     expect(r.direction).toBe('forward');
@@ -191,7 +191,7 @@ describe('advanceDimensionValue — boundaries', () => {
   // #2944 review B: a bounce STARTED on the endpoint it moves toward (play
   // pressed on the last frame) used to clamp back onto it and only flip, so
   // that frame was held for two periods before the playhead moved.
-  it.fails('a bounce started at the top endpoint steps away on the first tick', () => {
+  it('a bounce started at the top endpoint steps away on the first tick', () => {
     const r = advanceDimensionValue(args({ current: 99, loopMode: 'bounce' }));
     expect(r).toEqual({
       value: 98,
@@ -201,7 +201,7 @@ describe('advanceDimensionValue — boundaries', () => {
     });
   });
 
-  it.fails('a bounce started at the bottom endpoint moving backward steps away on the first tick', () => {
+  it('a bounce started at the bottom endpoint moving backward steps away on the first tick', () => {
     const r = advanceDimensionValue(
       args({ current: 0, direction: 'backward', loopMode: 'bounce' })
     );
@@ -210,7 +210,7 @@ describe('advanceDimensionValue — boundaries', () => {
     expect(r.directionChanged).toBe(true);
   });
 
-  it.fails('a continuous bounce started at the top endpoint steps away on the first tick', () => {
+  it('a continuous bounce started at the top endpoint steps away on the first tick', () => {
     const r = advanceDimensionValue(args({ current: 99, step: null, loopMode: 'bounce' }));
     expect(r.value).toBeLessThan(99);
     expect(r.direction).toBe('backward');
