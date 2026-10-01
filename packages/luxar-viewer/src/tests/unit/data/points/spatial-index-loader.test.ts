@@ -1023,6 +1023,48 @@ describe('PointsSpatialIndexLoader', () => {
   });
 
   describe('resource cleanup', () => {
+    it.fails('an initialize still in flight at dispose does not repopulate the loader', async () => {
+      // dispose() resets the one-shot initializer and clears the arrays, but an
+      // initialize() already awaiting its metadata opens used to finish afterwards
+      // and write chunkIndex / arrays back into the disposed loader.
+      const view: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+      const open = zarr.open as any;
+      const original = open.getMockImplementation() as (...args: unknown[]) => unknown;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      open.mockImplementation((...args: unknown[]) => gate.then(() => original(...args)));
+      const load = loader.loadPoints(view);
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+
+      loader.dispose();
+      release();
+
+      await expect(load).rejects.toMatchObject({ name: 'AbortError' });
+      expect((loader as any).chunkIndex).toBeNull();
+      expect((loader as any).arrays).toEqual({});
+    });
+
+    it.fails('a disposed loader refuses to re-initialize', async () => {
+      loader.dispose();
+      (zarr.open as unknown as ReturnType<typeof vi.fn>).mockClear();
+      await expect(
+        loader.loadPoints({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0, 5],
+          tolerance: [0, 0, 0, 0.1],
+        })
+      ).rejects.toMatchObject({
+        name: 'AbortError',
+      });
+      expect(zarr.open).not.toHaveBeenCalled();
+    });
+
     it('dispose clears the active-query map (mid-flight leak guard)', async () => {
       // Regression (×3 symmetric): points dispose() historically omitted
       // activeQueries.clear(), so a dispose mid-flight leaked the tracked

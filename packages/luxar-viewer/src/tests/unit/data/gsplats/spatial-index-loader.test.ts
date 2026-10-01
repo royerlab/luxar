@@ -1676,6 +1676,73 @@ describe('GSplatsSpatialIndexLoader', () => {
     });
 
     describe('resource cleanup', () => {
+      it.fails('an initialize still in flight at dispose does not repopulate the loader', async () => {
+        // dispose() resets the one-shot initializer and clears the arrays, but an
+        // initialize() already awaiting its metadata opens used to finish afterwards
+        // and write chunkIndex / arrays back into the disposed loader.
+        const view: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+        const open = zarr.open as any;
+        const original = open.getMockImplementation() as (...args: unknown[]) => unknown;
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        open.mockImplementation((...args: unknown[]) => gate.then(() => original(...args)));
+        const load = bodyLoader.loadGSplats(view);
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+
+        bodyLoader.dispose();
+        release();
+
+        await expect(load).rejects.toMatchObject({ name: 'AbortError' });
+        expect((bodyLoader as any).chunkIndex).toBeNull();
+        expect((bodyLoader as any).arrays).toEqual({});
+      });
+
+      it.fails("dispose aborts a speculative initialization's chunk_bounds read", async () => {
+        // ensureInitialized('speculative') minted its own never-aborted signal,
+        // so a warm-up of a rung that was then torn down kept its index read
+        // on the wire for a loader nothing will use.
+        const get = zarr.get as unknown as ReturnType<typeof vi.fn>;
+        const original = get.getMockImplementation() as (...args: unknown[]) => unknown;
+        let seen: AbortSignal | undefined;
+        get.mockImplementation((...args: unknown[]) => {
+          const opts = args[2] as { signal?: AbortSignal } | undefined;
+          if (opts?.signal) seen = opts.signal;
+          return original(...args);
+        });
+        const fresh = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          makeGSplatsNode()
+        );
+        const init = fresh.ensureInitialized('speculative').catch(() => undefined);
+        await vi.waitFor(() => expect(seen).toBeDefined());
+
+        fresh.dispose();
+
+        expect(seen!.aborted).toBe(true);
+        await init;
+      });
+
+      it.fails('a disposed loader refuses to re-initialize', async () => {
+        bodyLoader.dispose();
+        (zarr.open as unknown as ReturnType<typeof vi.fn>).mockClear();
+        await expect(
+          bodyLoader.loadGSplats({
+            displayDims: [0, 1, 2],
+            slicePosition: [0, 0, 0],
+            tolerance: [0, 0, 0],
+          })
+        ).rejects.toMatchObject({
+          name: 'AbortError',
+        });
+        expect(zarr.open).not.toHaveBeenCalled();
+      });
+
       it('dispose clears the active-query map (mid-flight leak guard)', async () => {
         // Regression (×3 symmetric): points dispose() historically omitted
         // activeQueries.clear(), so a dispose mid-flight leaked the tracked
