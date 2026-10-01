@@ -8,10 +8,38 @@
  * across Playwright contexts is unreliable).
  */
 
+import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { waitForLuxarReady, waitForCacheStable } from './helpers';
 
 const DATASET = 'http://localhost:9000/datasets/examples/radius_basic_example.luxar.zarr';
+
+/**
+ * Entries listed by the largest on-disk L2 index (`_cache_meta.json`) under the
+ * viewer's OPFS namespace, or 0 while none parses. This is the PERSISTED view,
+ * as opposed to `getStats().l2.count`, which is the in-memory index.
+ */
+async function persistedIndexEntries(page: Page): Promise<number> {
+  return page.evaluate(async () => {
+    try {
+      const root = await navigator.storage.getDirectory();
+      const namespace = await root.getDirectoryHandle('luxar');
+      let most = 0;
+      for await (const handle of (namespace as any).values()) {
+        if (handle.kind !== 'directory') continue;
+        try {
+          const file = await (await handle.getFileHandle('_cache_meta.json')).getFile();
+          most = Math.max(most, JSON.parse(await file.text()).entries?.length ?? 0);
+        } catch {
+          // Not saved yet, or a write interrupted mid-way: not persisted.
+        }
+      }
+      return most;
+    } catch {
+      return 0;
+    }
+  });
+}
 
 test.describe('L2 persistence across page reload (R7)', () => {
   test('L2 entries survive a full page reload (Chromium real OPFS)', async ({
@@ -46,6 +74,18 @@ test.describe('L2 persistence across page reload (R7)', () => {
     const before = await page.evaluate(async () => (window as any).__luxarDebug.cache.getStats());
     expect(before.l2).toBeDefined();
     expect(before.l2.count).toBeGreaterThan(0);
+
+    // `count` is the IN-MEMORY index. What makes the files findable after a
+    // reload is the index file, saved on a debounce (METADATA_SAVE_DELAY in
+    // opfs-store.ts), not per write; and a save started from the unload events
+    // does not survive a navigation (measured: the old page dies after
+    // `getFileHandle(create)`, leaving a zero-byte index). Persistence across a
+    // reload is therefore a property of PERSISTED entries: wait for the on-disk
+    // index to list every entry counted above. Without this the test only passed
+    // while a load was slow enough for the debounce to fire before the reload.
+    await expect
+      .poll(() => persistedIndexEntries(page), { timeout: 15000 })
+      .toBeGreaterThanOrEqual(before.l2.count);
 
     // Pass 2: full page reload. The same dataset's content hash must
     // match → L2 entries are preserved → after-reload count equals

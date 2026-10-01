@@ -167,6 +167,19 @@ describe('OPFSMetadataManager', () => {
       expect(mgr.parseFailures).toBe(1);
     });
 
+    it.fails('a zero-byte index (a first save interrupted before close) is a cold start, not corruption', async () => {
+      const { root, rootFiles } = mockRoot();
+      // What an interrupted FIRST save leaves on disk: the file exists from
+      // getFileHandle({ create: true }), but its bytes only land at close().
+      // Measured on Chromium: a reload inside the save debounce leaves exactly
+      // this, and the next session read it as a corrupt index.
+      await root.getFileHandle('_cache_meta.json', { create: true });
+      expect(rootFiles.get('_cache_meta.json')).toBe('');
+
+      expect(await mgr.load(root)).toBeNull();
+      expect(mgr.parseFailures).toBe(0);
+    });
+
     it('clamps NaN/Infinity/negative totalSize to entries-derived sum or 0', async () => {
       const { root, rootFiles } = mockRoot();
       seedMetadata(rootFiles, {
