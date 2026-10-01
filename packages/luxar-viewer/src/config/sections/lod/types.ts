@@ -22,8 +22,10 @@ export interface LodConfig {
    * of a threshold, the level across it is loaded in the background and kept
    * hidden, so crossing the threshold starts the dissolve at once instead of
    * after that level's load. `0` disables it; it applies only while the
-   * dissolve is on and never during playback. At most `0.5`, which keeps the
-   * bands of adjacent thresholds from overlapping.
+   * dissolve is on and never during playback. Below `0.5`, the half-width of
+   * the exit band a visit ends at (strictly, so the two bands keep a
+   * hysteresis gap; `0.5` also keeps adjacent thresholds' bands from
+   * overlapping).
    */
   preloadBandFraction: number;
 }

@@ -21,7 +21,7 @@ describe('validateLod', () => {
   // it) is fixed at 0.5. An entry band as wide as the exit band leaves no
   // hysteresis between them, so a camera hovering at the edge starts a new
   // visit (and a reload) per wobble.
-  it.fails('rejects a preload band as wide as the exit band', () => {
+  it('rejects a preload band as wide as the exit band', () => {
     const cfg = cloneConfig();
     cfg.lod.preloadBandFraction = 0.5;
     const result = invokeValidator(validateLod, cfg);
