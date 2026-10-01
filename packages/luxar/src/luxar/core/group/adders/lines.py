@@ -2178,6 +2178,8 @@ def add_lines_substitutive_lod_wrapper_impl(
         coarsen_dims=coarsen_dims,
         max_aspect=spec.get("max_aspect", 3.0),
         quality_stamps=bool(spec["quality_stamps"]),
+        refine=str(spec["refine"]),
+        refine_iters=spec["refine_iters"],
     )
 
     # Degenerate -> flat Lines node. Covers BOTH no coarse levels AND an

@@ -78,11 +78,17 @@ _LIFT_ONLY_KEYS: Dict[str, str] = {
         "vertex clustering is deterministic: there is no seeding, no "
         "initialization and nothing to converge, so there is no RNG to fix"
     ),
+    "refine": (
+        "it refines merged Gaussians, while mesh levels use triangle decimation"
+    ),
+    "refine_iters": (
+        "it controls Gaussian refinement, while mesh levels use triangle decimation"
+    ),
 }
 
 
 def _reject_lift_only_keys(kwargs: Dict[str, Any]) -> None:
-    """Refuse the four :data:`_LIFT_ONLY_KEYS` with the reason each cannot apply.
+    """Refuse :data:`_LIFT_ONLY_KEYS` with the reason each cannot apply.
 
     Run BEFORE the generic unknown-key sweep at the end of the resolver so these
     get their specific explanation rather than being lumped into a list of typos.

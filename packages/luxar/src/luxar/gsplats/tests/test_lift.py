@@ -12,7 +12,45 @@ from luxar.gsplats.lift import (
     lift_points_to_gsplats,
     render_light,
 )
+from luxar.gsplats.lod.substitutive import make_substitutive_lod
 from luxar.gsplats.utils.trils import pack_tril, unpack_tril
+
+
+def test_lifted_mass_switch_is_inert_and_refinement_conserves_light():
+    rng = np.random.default_rng(2)
+    lifted = lift_points_to_gsplats(
+        rng.normal(size=(32, 3)).astype(np.float32),
+        np.full(32, 4.0, dtype=np.float32),
+    )
+    for refine, refine_iters in (("none", None), ("l2", 3)):
+        reduced = [
+            make_substitutive_lod(
+                lifted,
+                levels=1,
+                device="cpu",
+                amplitude="mass",
+                conserve_mass=flag,
+                refine=refine,
+                refine_iters=refine_iters,
+            )
+            .at_substitutive(1)
+            .flattened()
+            for flag in (False, True)
+        ]
+        for field in ("centers", "amplitudes", "cholesky_factors"):
+            np.testing.assert_array_equal(
+                getattr(reduced[0], field), getattr(reduced[1], field)
+            )
+
+    final = coarse_substitutive_levels(
+        lifted,
+        levels=1,
+        device="cpu",
+        refine="l2",
+        refine_iters=3,
+        quality_stamps=False,
+    )[0]
+    assert render_light(final) == pytest.approx(render_light(lifted), rel=1e-5)
 
 
 def test_ray_integral_factor_matches_ts_reference():

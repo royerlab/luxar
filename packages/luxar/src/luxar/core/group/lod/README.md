@@ -216,12 +216,19 @@ kwarg (`None`/`False` no-op; `True`/`dict()` defaults `K=4, levels=3,
 method="auto"`; dict keys `compression_factor` (`K`), `levels` (`n_lods`),
 `coarse`, `brightness_compensation`, `method`, `truncation_radius`, `device`,
 `seed`, `quality_stamps` (measure per-level quality, default `True`),
+`refine="l2"` and `refine_iters` (volume-free Gaussian refinement),
 `coverage_fractions`
 (explicit per-level viewport-relative thresholds, strict-ascending in
 `[0, MAX_COVERAGE_FRACTION]` = `[0, 4]`), `coarsen_dims`, `max_aspect`
 (per-splat anisotropy cap on the
 coarse levels, default 3.0; `None` disables)).
 `add_points_substitutive_lod_wrapper_impl` (`adders/points.py`) then:
+
+`refine="volume"` is unavailable because Points have no source volume;
+`coarse="points"` has no Gaussian levels to refine. `conserve_mass` is not a
+lifted-path option: the reducer uses per-bin mass-preserving amplitudes, and
+the final render-light normalization conserves the level total even after
+refinement. Lines follow the same rule for their default Gaussian coarse path.
 
 With the default `coarse="gsplats"`, it:
 
