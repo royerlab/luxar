@@ -164,9 +164,12 @@ the value `"screen-area"` (what every DERIVED ladder now stamps), under which
 the per-child `coverage_fraction` is a literal **screen-area fraction**
 (projected area of the box's inscribed ellipsoid, sized at its near depth, over
 the viewport area — the near-face rect face-on; occupancy halving — whole-object
-finest `0.5`, partition tile `1.0` — see the `kind=lod` section). Stores with
-`selector: "coverage"` keep the legacy diagonal-metric units and are read and
-round-tripped unchanged, so every v3.3 store is also a valid v3.4 store.
+finest `0.5`, partition tile `1.0` — see the `kind=lod` section). Existing
+stores stamped `screen-area` use this metric without re-stamping: face-on
+coverage agrees with the earlier rectangle metric, while an oblique view may
+select a different level. Stores with `selector: "coverage"` keep the legacy
+diagonal-metric units and are read and round-tripped unchanged, so every v3.3
+store is also a valid v3.4 store.
 **v3.3** differs
 from **v3.2** only in allowing quantized code arrays (coordinates, Cholesky
 halves, amplitudes) to carry the optional `luxar_delta_v1` zarr v2 **filter**
