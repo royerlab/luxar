@@ -371,7 +371,7 @@ export function boundingBoxToSphere(box: BoundingBox): BoundingSphere {
  * edges/corners. The sphere produces smooth near/far values as the camera
  * moves, eliminating the need for exponential smoothing.
  *
- * `near` is the nearest point on the sphere surface, floored by
+ * `near` uses the nearest view-axis depth on the sphere, floored by
  * {@link nearPlaneFloor} — which is what keeps the near/far ratio (and
  * therefore depth-buffer precision) bounded once the camera moves INSIDE
  * the sphere, the regime where the bare surface distance goes to zero.
@@ -380,32 +380,38 @@ export function boundingBoxToSphere(box: BoundingBox): BoundingSphere {
  * @param cameraPosition - Camera position in world coordinates
  * @param boundNearFarRatio - Forwarded to {@link nearPlaneFloor}; pass
  *   false for an orthographic projection. Defaults to true (perspective).
+ * @param viewDirection - Camera forward direction in world coordinates.
+ *   When omitted, the radial distance is used for legacy position-only callers.
  * @returns Near and far clipping plane distances
  */
 export function calculateClippingPlanesFromSphere(
   sphere: BoundingSphere,
   cameraPosition: { x: number; y: number; z: number },
-  boundNearFarRatio: boolean = true
+  boundNearFarRatio: boolean = true,
+  viewDirection?: { x: number; y: number; z: number }
 ): { near: number; far: number } {
   const dx = cameraPosition.x - sphere.center.x;
   const dy = cameraPosition.y - sphere.center.y;
   const dz = cameraPosition.z - sphere.center.z;
   const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  const depth = viewDirection
+    ? -(dx * viewDirection.x + dy * viewDirection.y + dz * viewDirection.z)
+    : dist;
   const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
 
   const far = dist + R;
+  if (R === 0) return { near: far, far };
   const minNear = nearPlaneFloor(R, far, boundNearFarRatio);
 
-  if (dist < R) {
-    // Inside sphere: the surface distance is meaningless (it would be
-    // negative), so the floor IS the near plane. Bounded by the
+  if (depth <= R) {
+    // At or behind the near side of the sphere, the floor IS the near plane. Bounded by the
     // depth-precision ratio rather than collapsing to
     // minNearForRadius — see MAX_NEAR_FAR_RATIO.
     return { near: minNear, far };
   }
 
-  // Outside sphere: nearest point on sphere surface
-  const near = Math.max(minNear, dist - R);
+  // In front of the sphere: nearest point along the view axis.
+  const near = Math.max(minNear, depth - R);
   return { near, far };
 }
 

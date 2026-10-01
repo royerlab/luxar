@@ -597,6 +597,17 @@ describe('bounds-math', () => {
   });
 
   describe('calculateClippingPlanesFromSphere', () => {
+    it('keeps the near side of an off-axis sphere in front of the near plane', () => {
+      const sphere = { center: { x: 0, y: 0, z: 0 }, radius: 1 };
+      const camera = { x: 0, y: 0, z: 3 };
+      const direction = { x: 0.5, y: 0, z: -Math.sqrt(3) / 2 };
+      const nearestDepth = (3 * Math.sqrt(3)) / 2 - SPHERE_SAFETY_EXPANSION;
+
+      const planes = calculateClippingPlanesFromSphere(sphere, camera, true, direction);
+      expect(planes.near).toBeCloseTo(nearestDepth, 10);
+      expect(planes.near).toBeLessThanOrEqual(nearestDepth);
+      expect(planes.far).toBeCloseTo(3 + SPHERE_SAFETY_EXPANSION, 10);
+    });
     it('should calculate clipping planes when outside sphere', () => {
       const box: BoundingBox = {
         min: { x: -10, y: -10, z: -10 },

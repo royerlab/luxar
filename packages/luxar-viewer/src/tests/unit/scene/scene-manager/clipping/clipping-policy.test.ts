@@ -120,6 +120,22 @@ describe('applyClippingPlanes', () => {
 });
 
 describe('autoAdjustFromBounds — metadata path', () => {
+  it('uses view depth for a sphere off the camera axis', () => {
+    const camera = makeCamera(new THREE.Vector3(0, 0, 3));
+    camera.lookAt(0.5, 0, 3 - Math.sqrt(3) / 2);
+    const h = 1 / Math.sqrt(3);
+    const metadataBounds = {
+      min: { x: -h, y: -h, z: -h },
+      max: { x: h, y: h, z: h },
+    };
+    const { ctx } = makeCtx({ camera, metadataBounds });
+
+    const planes = autoAdjustFromBounds(ctx);
+    expect(planes.applied).toBe(true);
+    expect(planes.near).toBeCloseTo((3 * Math.sqrt(3)) / 2 - SPHERE_SAFETY_EXPANSION, 10);
+    expect(camera.near).toBe(planes.near);
+  });
+
   it('applies bounds-derived near/far when metadata bounds are present', () => {
     const camera = makeCamera(new THREE.Vector3(0, 0, 100));
     const metadataBounds: BoundingBox = {
@@ -230,6 +246,19 @@ describe('autoAdjustFromBounds — geometry fallback', () => {
 });
 
 describe('updateDynamicFromCache', () => {
+  it('uses the current camera view depth for an off-axis sphere', () => {
+    const scene = new THREE.Scene();
+    const h = 1 / Math.sqrt(3);
+    scene.userData = { positionBounds: { min: [-h, -h, -h], max: [h, h, h] } };
+    const camera = makeCamera(new THREE.Vector3(0, 0, 3));
+    camera.lookAt(0.5, 0, 3 - Math.sqrt(3) / 2);
+    const { ctx } = makeCtx({ camera, scene });
+
+    expect(updateDynamicFromCache(ctx)).toBe(true);
+    expect(camera.near).toBeCloseTo((3 * Math.sqrt(3)) / 2 - SPHERE_SAFETY_EXPANSION, 10);
+    expect(camera.far).toBeCloseTo(3 + SPHERE_SAFETY_EXPANSION, 10);
+  });
+
   beforeEach(() => {
     // ensure clean state
   });
