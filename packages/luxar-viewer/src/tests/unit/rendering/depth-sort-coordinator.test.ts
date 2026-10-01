@@ -952,6 +952,47 @@ describe('depth-sort coordinator', () => {
     setSortedIndexChunkElementsForTests(null);
   });
 
+  it.fails('a slice upload acknowledged DURING resortForCapture does not wake the loop either', async () => {
+    // The per-slice render hook (#715 resume gap) must honour the capture's
+    // requestRender suppression like every other wake path: a draw landing
+    // mid-drain acknowledges the slice it uploaded, and that acknowledgement
+    // used to call the ORIGINAL requestRender captured at configure time.
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender });
+
+    const { setSortedIndexChunkElementsForTests, configureSortedIndexChunkedApply } =
+      await import('../../../rendering/element-storage');
+    configureSortedIndexChunkedApply(true);
+    setSortedIndexChunkElementsForTests(1);
+
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([0, 2, 1]),
+    });
+    await flush();
+    await applyStagedOrdering(mesh);
+
+    const before = mockApi.sort.mock.calls.length;
+    const rrBefore = requestRender.mock.calls.length;
+    const p = coord.resortForCapture(2000);
+    sortResolvers[sortResolvers.length - 1]({
+      generation: mockApi.sort.mock.calls[before][0].generation as number,
+      ordering: new Uint32Array([2, 0, 1]),
+    });
+    // Let the drain write its first slice, then draw the mesh mid-drain.
+    await new Promise<void>((r) => setTimeout(r, 0));
+    simulateMeshRender(mesh);
+    await p;
+
+    expect(requestRender.mock.calls.length).toBe(rrBefore);
+    setSortedIndexChunkElementsForTests(null);
+  });
+
   it('derives the model-view from fresh matrices, not renderer-maintained caches', async () => {
     // A commit can fire before the next render (first commit of a load,
     // idle-paused loop): camera.matrixWorldInverse and mesh.matrixWorld
