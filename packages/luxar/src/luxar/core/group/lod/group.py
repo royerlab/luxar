@@ -1175,7 +1175,9 @@ def resolve_substitutive_axis(
       did), ``coarsen_dims``,
       ``max_aspect`` (per-splat anisotropy cap on the coarse levels, default 3.0;
       ``None`` disables — see :func:`luxar.gsplats.lift._cap_aspect`), and
-      ``quality_stamps`` (measure per-level mixture quality, default ``True``).
+      ``quality_stamps`` (measure per-level mixture quality, default ``True``),
+      ``lloyd_iterations``, ``candidate_bins_k``, ``coverage_inflation``,
+      and ``color_weight`` (lifted-Gaussian reduction controls).
       Unrecognized keys raise. LOD switch thresholds are otherwise auto-derived by
       :func:`derive_coverage_fractions` (screen-occupancy halving, re-anchored at
       fills-screen when the insertion point is partition-bound) — no method
@@ -1269,6 +1271,10 @@ def resolve_substitutive_axis(
             )
 
     quality_stamps = _resolve_quality_stamps(kwargs)
+    lloyd_iterations = kwargs.pop("lloyd_iterations", 5)
+    candidate_bins_k = kwargs.pop("candidate_bins_k", 12)
+    coverage_inflation = kwargs.pop("coverage_inflation", 3.0)
+    color_weight = kwargs.pop("color_weight", 0.0)
 
     if kwargs:
         valid_keys = [
@@ -1282,6 +1288,10 @@ def resolve_substitutive_axis(
             "coarsen_dims",
             "max_aspect",
             "quality_stamps",
+            "lloyd_iterations",
+            "candidate_bins_k",
+            "coverage_inflation",
+            "color_weight",
             *extra_valid_keys,
         ]
         raise ValueError(
@@ -1300,6 +1310,10 @@ def resolve_substitutive_axis(
         "coarsen_dims": coarsen_dims,
         "max_aspect": max_aspect,
         "quality_stamps": quality_stamps,
+        "lloyd_iterations": lloyd_iterations,
+        "candidate_bins_k": candidate_bins_k,
+        "coverage_inflation": coverage_inflation,
+        "color_weight": color_weight,
     }
 
 

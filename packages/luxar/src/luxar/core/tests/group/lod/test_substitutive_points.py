@@ -67,6 +67,31 @@ class TestResolveSubstitutiveAxisPoints:
         assert r["compression_factor"] == 8
         assert r["levels"] == 2
 
+    def test_gaussian_reduction_controls(self) -> None:
+        r = resolve_substitutive_axis_points(
+            dict(
+                lloyd_iterations=2,
+                candidate_bins_k=4,
+                coverage_inflation=1.5,
+                color_weight=0.25,
+            )
+        )
+        assert (r["lloyd_iterations"], r["candidate_bins_k"]) == (2, 4)
+        assert (r["coverage_inflation"], r["color_weight"]) == (1.5, 0.25)
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "lloyd_iterations",
+            "candidate_bins_k",
+            "coverage_inflation",
+            "color_weight",
+        ],
+    )
+    def test_same_type_refuses_gaussian_controls(self, key: str) -> None:
+        with pytest.raises(ValueError, match=rf"{key!r} does not apply"):
+            resolve_substitutive_axis_points({"coarse": "points", key: 2})
+
     def test_quality_stamps_can_be_disabled(self) -> None:
         assert (
             resolve_substitutive_axis_points({"quality_stamps": False})[
@@ -257,6 +282,23 @@ def _build(tmp_path, *, n=6000, levels=3, radius_scale=1.0, **kw):
 
 
 class TestAddPointsSubstitutiveLod:
+    def test_gaussian_controls_change_written_coarse_level(self, tmp_path) -> None:
+        default, _ = _build(tmp_path / "default", n=96, levels=1)
+        tuned, _ = _build(
+            tmp_path / "tuned",
+            n=96,
+            levels=1,
+            coverage_inflation=1.0,
+            lloyd_iterations=2,
+            candidate_bins_k=4,
+            color_weight=0.25,
+        )
+        decoder = ArrayDecoder()
+        before = decoder.decode(default["child_0"]["cholesky_factors_diag"], default)
+        after = decoder.decode(tuned["child_0"]["cholesky_factors_diag"], tuned)
+        assert before.shape == after.shape
+        assert not np.allclose(before, after)
+
     def test_lifted_quality_stamps_can_be_disabled(self, tmp_path) -> None:
         group, _ = _build(tmp_path, n=96, levels=1, quality_stamps=False)
         children = [group[f"child_{i}"] for i in range(2)]

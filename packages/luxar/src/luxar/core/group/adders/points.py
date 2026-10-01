@@ -1514,6 +1514,10 @@ def add_points_substitutive_lod_wrapper_impl(
         coarsen_dims=coarsen_dims,
         max_aspect=spec.get("max_aspect", 3.0),
         quality_stamps=bool(spec["quality_stamps"]),
+        lloyd_iterations=spec["lloyd_iterations"],
+        candidate_bins_k=spec["candidate_bins_k"],
+        coverage_inflation=spec["coverage_inflation"],
+        color_weight=spec["color_weight"],
     )
 
     # Degenerate input -> finest Points shape rather than a one-child LOD group.
