@@ -22,9 +22,9 @@ export const dataLoadingPerformanceConfig: DataLoadingPerformanceConfig = {
   workerProjectionTimeoutMs: 60000,
   // Worker pool init timeout: protects against unreachable worker
   // scripts (404 on the chunk URL, blocked by route, dev-server
-  // misconfig). Scene environment capture can occupy the main thread
-  // while the pool's workers initialize; 10s incorrectly timed out most
-  // of the pool on the mesh reflections example. Keep the deadline finite
+  // misconfig). GPU readback can stall the main thread while scene
+  // environment capture drains queued frame draws; 10s incorrectly timed
+  // out most of the pool on the mesh reflections example. Keep it finite
   // so a blocked worker still settles and the app can fall back.
   workerInitTimeoutMs: 30000,
 

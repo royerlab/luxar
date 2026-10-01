@@ -363,7 +363,7 @@ export class WorkerPool {
         // Note: we deliberately keep `initPromise` (the rejected one) so
         // subsequent `getWorker()` / `runWithTimeout` calls fail FAST rather
         // than re-running the 30s init guard for every nD load. A blocked
-        // worker chunk would otherwise stack 10s × N delays and blow past
+        // worker chunk would otherwise stack 30s × N delays and blow past
         // the page's `waitForLuxarReady` timeout. To opt back in to a fresh
         // init attempt (e.g. after a transient network blip), call
         // `reinitialize()`.
