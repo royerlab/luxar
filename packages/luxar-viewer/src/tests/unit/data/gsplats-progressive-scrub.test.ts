@@ -259,7 +259,7 @@ describe('GSplatsProgressiveLoader — lookahead honours the update signal', () 
 });
 
 describe('GSplatsProgressiveLoader — a lookahead outliving dispose', () => {
-  it.fails('a planned lookahead that resolves after dispose neither reads the dropped rungs nor warns', async () => {
+  it('a planned lookahead that resolves after dispose neither reads the dropped rungs nor warns', async () => {
     // Five rungs; every pass loads two cold ones then stops, so the second
     // pass (metadata warm started) schedules a PLANNED lookahead of rung 4.
     const rungs = Array.from({ length: 5 }, (_, i) => subLoader(2 ** i, false));

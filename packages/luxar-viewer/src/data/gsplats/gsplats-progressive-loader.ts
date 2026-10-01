@@ -1004,6 +1004,10 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     tagSignalOrigin(controller.signal, 'lookahead');
     const prefetch = async (): Promise<void> => {
       const ranges = plan ? (await plan).ranges : undefined;
+      // A dispose() (or view change) while the plan was in flight aborted this
+      // controller and dropped `lodLoaders`: indexing it now would throw a
+      // TypeError that surfaces as a bogus "lookahead prefetch failed" warning.
+      if (controller.signal.aborted || this._disposed) return;
       if (ranges) {
         await this.lodLoaders[level].prefetchChunks(viewState, controller.signal, ranges);
       } else {
