@@ -4782,6 +4782,45 @@ describe('LODGroupRegistry — playback aspiration', () => {
     expect(reg.get('/g')!.displayedChildIndex).toBe(2);
   });
 
+  // #2944 review B (probe flags). A probe marks the capped level so its next
+  // timed reload REPLACES the stale average. The mark must belong to a reload
+  // that actually started, must not outlive playback, and only a full
+  // (re)load is a reload timing — a ladder refinement step is not.
+  it.fails('a probe whose reload is refused leaves no probe mark behind', () => {
+    const { reg, children, frame } = playbackHarness([30]);
+    children[1].loadEwmaMs = 500;
+    children[1].loadSamples = 2; // capped: the 1 Hz probe re-measures it
+    reg.get('/g')!.groupObject.visible = false; // hidden layer: no load may start
+    for (let f = 0; f < 90; f++) frame(); // 1.5 s: at least one probe
+    expect(children[1].lastPlaybackProbeMs).toBeDefined(); // a probe was attempted
+    expect(children[1].playbackProbePending).toBeUndefined();
+  });
+
+  it.fails('stopping playback clears a pending probe admission', () => {
+    const { children, state, frame } = playbackHarness([30]);
+    children[1].loadEwmaMs = 500;
+    children[1].loadSamples = 2;
+    for (let f = 0; f < 90 && children[1].playbackProbeAdmissionPending !== true; f++) frame();
+    expect(children[1].playbackProbeAdmissionPending).toBe(true);
+    state.playing = false;
+    for (let f = 0; f < 30; f++) frame();
+    expect(children[1].playbackProbeAdmissionPending).toBeUndefined();
+    expect(children[1].playbackProbePending).toBeUndefined();
+  });
+
+  it.fails('a ladder refinement step is not folded into the reload average', () => {
+    // Paused: the fresh fine level keeps refining its ladder (5 ms passes). Its
+    // full reload costs 150 ms; the refinement passes must not drag the
+    // average down and later admit a level whose reloads cannot keep up.
+    const { children, state, frame } = playbackHarness([5]);
+    state.playing = false;
+    children[1].loadEwmaMs = 150;
+    children[1].loadSamples = 5;
+    children[1].hasMoreLODs = () => true;
+    for (let f = 0; f < 60; f++) frame();
+    expect(children[1].loadEwmaMs).toBe(150);
+  });
+
   it('pausing while the held level reloads does not flash the coarse level', () => {
     // The reload was measured fast (so playback aspires to it) but this one
     // takes 400 ms: the stale hold outlives STALE_HOLD_MS under the playback
