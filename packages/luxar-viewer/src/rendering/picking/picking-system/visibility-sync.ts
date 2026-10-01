@@ -14,16 +14,31 @@
  *
  * Duck-typed on `material.uniforms`, so one table serves the GLSL
  * `ShaderMaterial` records and the TSL wrappers' `proxyIUniform` records
- * alike. A pair whose uniform is missing on either side is skipped.
+ * alike. An input whose pick uniform is missing, or whose visual value is not
+ * a finite number, is skipped.
  *
  * @module rendering/picking/picking-system/visibility-sync
  */
 
-/** `[pickUniform, visualUniform]` — copy the visual value onto the pick uniform. */
-type UniformPair = readonly [pick: string, visual: string];
+interface UniformHolder {
+  uniforms?: Record<string, { value: unknown } | undefined>;
+  getOpacity?: () => number;
+}
+
+/** One mirrored input: the pick uniform, and how to read its value off the visual material. */
+interface VisibilityInput {
+  readonly pick: string;
+  readonly read: (visual: UniformHolder) => unknown;
+}
+
+/** Read a uniform of the visual material by name. */
+const uniformOf =
+  (name: string) =>
+  (visual: UniformHolder): unknown =>
+    visual.uniforms?.[name]?.value;
 
 /**
- * Every pair the pick pass mirrors. Each pick material declares only the
+ * Every input the pick pass mirrors. Each pick material declares only the
  * pick-side names it consumes; the rest are skipped for it.
  *
  * - `uCoverageTruncate` ← `uTruncate`: the gsplat screen-coverage fade is a
@@ -31,16 +46,21 @@ type UniformPair = readonly [pick: string, visual: string];
  *   tighter 1.5σ pick footprint radius the pick's own `uTruncate` holds.
  * - `uMaxExtentFactor`, `uCov2DDilation`: the other inputs of the gsplat
  *   coverage limit and of the dilated footprint.
+ * - `uOpacity`: the LIVE node opacity. Its writers are the Layers panel, the
+ *   LOD cross-fade (`scene/lod-fade.ts`) and the embedder exposure path, and
+ *   only the first ever touched a pick material. A physical mesh keeps its
+ *   opacity off the uniform record (three's PBR material), so it is read
+ *   through `getOpacity()`.
  */
-const VISIBILITY_UNIFORM_PAIRS: readonly UniformPair[] = [
-  ['uCoverageTruncate', 'uTruncate'],
-  ['uMaxExtentFactor', 'uMaxExtentFactor'],
-  ['uCov2DDilation', 'uCov2DDilation'],
+const VISIBILITY_INPUTS: readonly VisibilityInput[] = [
+  { pick: 'uCoverageTruncate', read: uniformOf('uTruncate') },
+  { pick: 'uMaxExtentFactor', read: uniformOf('uMaxExtentFactor') },
+  { pick: 'uCov2DDilation', read: uniformOf('uCov2DDilation') },
+  {
+    pick: 'uOpacity',
+    read: (visual) => visual.uniforms?.uOpacity?.value ?? visual.getOpacity?.(),
+  },
 ];
-
-interface UniformHolder {
-  uniforms?: Record<string, { value: unknown } | undefined>;
-}
 
 /** The first material of a (possibly multi-material) slot. */
 function single(material: unknown): UniformHolder | undefined {
@@ -53,12 +73,13 @@ function single(material: unknown): UniformHolder | undefined {
  */
 export function syncPickVisibilityInputs(pick: unknown, visual: unknown): void {
   const pickUniforms = single(pick)?.uniforms;
-  const visualUniforms = single(visual)?.uniforms;
-  if (!pickUniforms || !visualUniforms) return;
-  for (const [pickName, visualName] of VISIBILITY_UNIFORM_PAIRS) {
-    const target = pickUniforms[pickName];
-    const source = visualUniforms[visualName];
-    if (!target || !source || typeof source.value !== 'number') continue;
-    if (target.value !== source.value) target.value = source.value;
+  const source = single(visual);
+  if (!pickUniforms || !source) return;
+  for (const input of VISIBILITY_INPUTS) {
+    const target = pickUniforms[input.pick];
+    if (!target) continue;
+    const value = input.read(source);
+    if (typeof value !== 'number' || !Number.isFinite(value)) continue;
+    if (target.value !== value) target.value = value;
   }
 }

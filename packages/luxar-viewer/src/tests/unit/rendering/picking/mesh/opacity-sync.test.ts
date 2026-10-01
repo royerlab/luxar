@@ -24,7 +24,7 @@ describe.each([
   ['GLSL', () => new MeshMaterial({}), () => new MeshPickingMaterial({ nodeId: 1 })],
   ['TSL', () => new MeshTSLMaterial({}), () => new MeshPickingTSLMaterial({ nodeId: 1 })],
 ])('mesh pick opacity sync [%s]', (_name, makeMain, makePick) => {
-  it.fails('a visual-only opacity write (LOD fade, exposure) reaches the pick material', () => {
+  it('a visual-only opacity write (LOD fade, exposure) reaches the pick material', () => {
     const { register, renderPickBuffer } = makePickHarness();
     const main = makeMain();
     const pick = makePick();
@@ -39,7 +39,7 @@ describe.each([
 });
 
 describe('mesh pick opacity sync [physical]', () => {
-  it.fails("a physical mesh's opacity (kept off the uniform record) reaches the pick material", () => {
+  it("a physical mesh's opacity (kept off the uniform record) reaches the pick material", () => {
     const { register, renderPickBuffer } = makePickHarness();
     const main = new PhysicalMeshMaterial({});
     const pick = new MeshPickingMaterial({ nodeId: 1 });
