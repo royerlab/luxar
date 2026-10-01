@@ -49,6 +49,8 @@ import {
   dot,
   exp,
   Discard,
+  depth,
+  mix,
   modelViewMatrix,
   cameraProjectionMatrix,
 } from 'three/tsl';
@@ -108,6 +110,8 @@ export interface PointPickTSLNodes extends PickVisibilityTSLNodes {
   readonly uPixelRatio: TSLNode;
   readonly uNodeId: TSLNode;
   readonly uResolution: TSLNode;
+  /** Pick depth convention: 0 = brightness-as-depth, 1 = real fragment depth. */
+  readonly uSurfaceDepth: TSLNode;
 }
 
 /**
@@ -133,6 +137,7 @@ export function pointPickWebGPUFactory(
   const uNearCull = nodes.uNearCull;
   const uPixelRatio = nodes.uPixelRatio;
   const uNodeId = nodes.uNodeId;
+  const uSurfaceDepth = nodes.uSurfaceDepth;
   const uResolution = nodes.uResolution;
 
   // ---- Vertex ----
@@ -307,19 +312,23 @@ export function pointPickWebGPUFactory(
     return vec4(vNodeId, vElementId.x, brightness, vElementId.y);
   });
 
-  // Depth = 1.0 - brightness (the brightest hit takes precedence).
-  // Discard-gating happens via colorNode → depth is only written when
-  // colorNode also writes.
-  //
-  // BRANCHLESS by construction, and that is load-bearing: `brightness`
-  // is a factory-scope `.toVar()` shared with `colorNode`, so it is
-  // assigned wherever three first BUILDS it — which is unconditional
-  // top-level flow in either entry point only while this body contains
-  // no `if`. Adding a branch here (a `uSurfaceDepth`-style select) would
-  // bury that assignment in one arm and leave `colorNode`'s top-level
-  // readers with 0; it needs the same unconditional fragment prologue
-  // the gsplat/mesh pick factories use.
-  const depthNode = Fn(() => float(1.0).sub(clamp(brightness, 0.0, 1.0)));
+  // Pick depth convention (GLSL twin: shaders.ts). Discard-gating happens via
+  // colorNode → depth is only written when colorNode also writes.
+  const depthNode = Fn(() => {
+    // BRANCHLESS by construction, and that is load-bearing: `brightness` is a
+    // factory-scope `.toVar()` shared with `colorNode`, so it is assigned wherever
+    // three first BUILDS it — which is unconditional top-level flow in either entry
+    // point only while this body contains no `if`. So the depth convention is a
+    // `mix` on the 0/1 `uSurfaceDepth` flag, not a select: 0 = brightness-as-depth
+    // (brightest wins; commutative modes), exactly the old expression (x·1 + y·0);
+    // 1 = the real fragment depth (front-most wins; opaque/normal — GLSL twin:
+    // `gl_FragCoord.z`).
+    return mix(
+      float(1.0).sub(clamp(brightness, 0.0, 1.0)),
+      depth as unknown as TSLNode,
+      float(uSurfaceDepth)
+    );
+  });
 
   const material = outMaterial ?? new NodeMaterial();
   material.vertexNode = clipPos;
@@ -369,6 +378,7 @@ export function buildPointPickTSLNodesFromUniforms(
     uResolution: uniform(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),
+    uSurfaceDepth: uniform((uniforms.uSurfaceDepth?.value as number) ?? 0),
     ...pickVisibilityTSLNodesFromUniforms(uniforms),
   };
 }

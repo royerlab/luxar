@@ -27,6 +27,7 @@ import {
   max,
   min,
   mix,
+  depth,
   mod,
   modelViewMatrix,
   packHalf2x16,
@@ -77,6 +78,7 @@ export function capsuleLinePickWebGPUFactory(
   const uResolution = nodes.uResolution;
   const uPixelRatio = nodes.uPixelRatio;
   const uNodeId = nodes.uNodeId;
+  const uSurfaceDepth = nodes.uSurfaceDepth;
   const uNearCull = nodes.uNearCull;
   const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
   // Pixels per view unit at unit depth: resY * |P11|, read from the
@@ -545,11 +547,16 @@ export function capsuleLinePickWebGPUFactory(
     // BRANCHLESS by construction, and that is load-bearing: `brightness` is a
     // factory-scope `.toVar()` shared with `colorNode`, so it is assigned wherever
     // three first BUILDS it — which is unconditional top-level flow in either entry
-    // point only while this body contains no `if`. Adding a branch here (a
-    // `uSurfaceDepth`-style select) would bury that assignment in one arm and leave
-    // `colorNode`'s top-level readers with 0; it needs the same unconditional fragment
-    // prologue the gsplat/mesh pick factories use.
-    return float(1.0).sub(clamp(brightness, 0.0, 1.0));
+    // point only while this body contains no `if`. So the depth convention is a
+    // `mix` on the 0/1 `uSurfaceDepth` flag, not a select: 0 = brightness-as-depth
+    // (brightest wins; commutative modes), exactly the old expression (x·1 + y·0);
+    // 1 = the real fragment depth (front-most wins; opaque/normal — GLSL twin:
+    // `gl_FragCoord.z`).
+    return mix(
+      float(1.0).sub(clamp(brightness, 0.0, 1.0)),
+      depth as unknown as TSLNode,
+      float(uSurfaceDepth)
+    );
   });
 
   const material = outMaterial ?? new NodeMaterial();

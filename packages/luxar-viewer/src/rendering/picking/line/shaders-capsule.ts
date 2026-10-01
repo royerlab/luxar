@@ -375,6 +375,9 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
 export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
     ${GLSL_PICK_VISIBILITY}
+    // 1 = surface modes (opaque/normal): real projected depth (front-most
+    // wins). 0 = commutative modes: brightness-as-depth (brightest wins).
+    uniform int uSurfaceDepth;
 
     in vec2 vLocal;
     flat in vec4 vCutN;
@@ -490,7 +493,11 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       if (brightness < 1e-4) discard;
 
       fragColor = vec4(vNodeId, vElementId.x, brightness, vElementId.y);
-      gl_FragDepth = 1.0 - clamp(brightness, 0.0, 1.0);
+      // Pick depth convention, synced from the visual node's blending mode:
+      // the surface modes (opaque/normal) write the real projected depth so
+      // the FRONT-MOST element wins; the commutative modes keep
+      // brightness-as-depth (BRIGHTEST wins).
+      gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 - clamp(brightness, 0.0, 1.0);
     }
 `;
 

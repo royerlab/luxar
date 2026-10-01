@@ -29,10 +29,14 @@ import {
   proxyPickVisibilityUniforms,
 } from '../_shared/visibility-tsl';
 import { copyPickVisibilityUniforms } from '../_shared/visibility-uniforms';
+import type { SurfacePickAwareMaterial } from '../_shared/surface-pick';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
 import type { LinePickingMaterialConfig } from './material';
 
-export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareMaterial {
+export class LinePickingTSLMaterial
+  extends NodeMaterial
+  implements CameraAwareMaterial, SurfacePickAwareMaterial
+{
   uniforms: Record<string, THREE.IUniform>;
 
   private tslNodes: {
@@ -49,6 +53,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     uOpacity: TSLNode;
     uHasElementAlpha: TSLNode;
     uVolumetric: TSLNode;
+    uSurfaceDepth: TSLNode;
   };
 
   constructor(config: LinePickingMaterialConfig) {
@@ -78,6 +83,9 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       // Visual-pass weight inputs, neutral until the first pick render
       // syncs the node's own (picking-system/visibility-sync.ts).
       ...createPickVisibilityTSLNodes(),
+      // 0 = brightness-as-depth, 1 = real fragment depth (front-most wins;
+      // opaque/normal) — mirrors the GLSL wrapper.
+      uSurfaceDepth: uniform(0),
     };
 
     // Join style — a BUILD-time graph variant (see pick.tsl.ts), so it is
@@ -106,6 +114,7 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
       ...proxyPickVisibilityUniforms(this.tslNodes),
+      uSurfaceDepth: proxyIUniform(this.tslNodes.uSurfaceDepth),
     };
 
     this.toneMapped = false;
@@ -177,11 +186,24 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
     copyPickVisibilityUniforms(this.uniforms, cloned.uniforms);
+    cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
     if (cloned._currentConfig().isOrtho) {
       cloned._rebuild();
       cloned.needsUpdate = true;
     }
     return cloned as this;
+  }
+
+  /**
+   * Select the pick depth convention (`SurfacePickAwareMaterial`): `true`
+   * under the depth-ordered surface modes (`opaque` / `normal`) writes the
+   * real projected depth so the FRONT-MOST element wins, as the user sees
+   * it; `false` (default) keeps brightness-as-depth so the BRIGHTEST wins,
+   * right for the commutative modes. Synced per pick render by
+   * `PickingSystem.renderPickBuffer()`.
+   */
+  setSurfacePickDepth(on: boolean): void {
+    this.uniforms.uSurfaceDepth.value = on ? 1 : 0;
   }
 
   updateCameraParams(

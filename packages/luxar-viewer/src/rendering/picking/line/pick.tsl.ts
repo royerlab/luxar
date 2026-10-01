@@ -42,6 +42,7 @@ import {
   min,
   clamp,
   mix,
+  depth,
   length,
   exp,
   texture,
@@ -100,6 +101,8 @@ export interface LinePickTSLNodes extends PickVisibilityTSLNodes {
   readonly uNodeId: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uMaxLinePixelWidth: TSLNode;
+  /** Pick depth convention: 0 = brightness-as-depth, 1 = real fragment depth. */
+  readonly uSurfaceDepth: TSLNode;
 }
 
 /**
@@ -151,6 +154,7 @@ export function linePickWebGPUFactory(
   const uResolution = nodes.uResolution;
   const uPixelRatio = nodes.uPixelRatio;
   const uNodeId = nodes.uNodeId;
+  const uSurfaceDepth = nodes.uSurfaceDepth;
   const uNearCull = nodes.uNearCull;
   const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
   // Pixels per view unit at unit depth: resY * |P11|, read from the
@@ -556,11 +560,16 @@ export function linePickWebGPUFactory(
     // BRANCHLESS by construction, and that is load-bearing: `brightness` is a
     // factory-scope `.toVar()` shared with `colorNode`, so it is assigned wherever
     // three first BUILDS it — which is unconditional top-level flow in either entry
-    // point only while this body contains no `if`. Adding a branch here (a
-    // `uSurfaceDepth`-style select) would bury that assignment in one arm and leave
-    // `colorNode`'s top-level readers with 0; it needs the same unconditional fragment
-    // prologue the gsplat/mesh pick factories use.
-    return float(1.0).sub(clamp(brightness, 0.0, 1.0));
+    // point only while this body contains no `if`. So the depth convention is a
+    // `mix` on the 0/1 `uSurfaceDepth` flag, not a select: 0 = brightness-as-depth
+    // (brightest wins; commutative modes), exactly the old expression (x·1 + y·0);
+    // 1 = the real fragment depth (front-most wins; opaque/normal — GLSL twin:
+    // `gl_FragCoord.z`).
+    return mix(
+      float(1.0).sub(clamp(brightness, 0.0, 1.0)),
+      depth as unknown as TSLNode,
+      float(uSurfaceDepth)
+    );
   });
 
   const material = outMaterial ?? new NodeMaterial();
@@ -615,6 +624,7 @@ export function buildLinePickTSLNodesFromUniforms(
     uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),
+    uSurfaceDepth: uniform((uniforms.uSurfaceDepth?.value as number) ?? 0),
     ...pickVisibilityTSLNodesFromUniforms(uniforms),
   };
 }

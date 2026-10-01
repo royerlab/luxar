@@ -24,7 +24,8 @@ import { gsplatPickWebGPUFactory } from './pick.tsl';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
 import { getPlaceholderElementTexture } from '../../element-texture-layout';
-import type { GSplatPickingMaterialConfig, SurfacePickAwareMaterial } from './material';
+import type { GSplatPickingMaterialConfig } from './material';
+import type { SurfacePickAwareMaterial } from '../_shared/surface-pick';
 import {
   computeRayIntegralFactor,
   GSPLAT_COV2D_DILATION_DEFAULT,

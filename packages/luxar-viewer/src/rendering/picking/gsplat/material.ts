@@ -23,37 +23,10 @@ import {
 } from '../../materials/gsplat/math';
 import { copyPickVisibilityUniforms, pickVisibilityUniforms } from '../_shared/visibility-uniforms';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
+import type { SurfacePickAwareMaterial } from '../_shared/surface-pick';
 
 // Module-load assertion: the GLSL wrapper requires the GLSL source.
 const GSPLAT_PICK_GLSL = requireWebGLSources(GSPLAT_PICK_SOURCE);
-
-/**
- * Pick materials with a switchable depth convention (both gsplat pick
- * wrappers implement it; points/lines don't — their brightness-as-depth
- * is unconditional). The picking system's per-render mode sync detects
- * the capability via {@link isSurfacePickAwareMaterial}, mirroring the
- * `CameraAwareMaterial` guard idiom.
- */
-export interface SurfacePickAwareMaterial {
-  /**
-   * Select the pick depth convention: `true` = real projected depth
-   * (front-most wins; the depth-sorted `normal` surface mode), `false`
-   * = brightness-as-depth (brightest wins; commutative modes).
-   */
-  setSurfacePickDepth(on: boolean): void;
-}
-
-/** Type guard for {@link SurfacePickAwareMaterial}. */
-export function isSurfacePickAwareMaterial(
-  material: unknown
-): material is SurfacePickAwareMaterial {
-  return (
-    typeof material === 'object' &&
-    material !== null &&
-    'setSurfacePickDepth' in material &&
-    typeof (material as Record<string, unknown>).setSurfacePickDepth === 'function'
-  );
-}
 
 export interface GSplatPickingMaterialConfig {
   nodeId: number;

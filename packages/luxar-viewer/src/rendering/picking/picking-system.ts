@@ -23,9 +23,9 @@
  * B=brightness, A=elementId high 16 bits (split so an index past f32's
  * 24-bit exact range survives — see picking-system/pick-render.ts)
  * Brightness-as-depth (gl_FragDepth = 1 - brightness) ensures the
- * brightest element at each pixel wins the depth test. Exception:
- * gsplat nodes in surface ('normal') blending mode write real projected
- * depth instead (front-most wins) — renderPickBuffer syncs the
+ * brightest element at each pixel wins the depth test. Exception: nodes
+ * in the depth-ordered surface modes ('opaque' / 'normal') write real
+ * projected depth instead (front-most wins) — renderPickBuffer syncs the
  * convention from each main material's blendingMode per render.
  *
  * Caching: the pick buffer is only re-rendered when dirty (camera move,
@@ -38,7 +38,7 @@ import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing/post-processing-manager';
 import { isCameraAwareMaterial } from '../materials/_shared/camera-aware-material';
 import { getDensityDrop, setDensityDrop } from '../materials/_shared/density-drop';
-import { isSurfacePickAwareMaterial } from './gsplat/material';
+import { isSurfacePickAwareMaterial } from './_shared/surface-pick';
 import { isMeshPickAwareMaterial } from './mesh/pick-mode';
 import { alignProvokingVertexWithWebGPU } from './mesh/provoking-vertex';
 import { isNormalMode, isOpaqueMode } from '../blending-state';
@@ -901,8 +901,9 @@ export class PickingSystem {
       // needsDepthSort): it is emissive, so phase 1 keeps additive-style
       // brightness picking — a heavily-absorbed back splat can still win
       // the pick if brightest; front-most-beyond-a-τ-threshold is a
-      // spec'd follow-up (VOLUMETRIC_BLENDING_SPEC.md §5.2). Points and
-      // lines implement neither capability and are unaffected.
+      // spec'd follow-up (VOLUMETRIC_BLENDING_SPEC.md §5.2). Points, lines
+      // and gsplats share this capability (`_shared/surface-pick.ts`): an
+      // opaque atom behind another must not win just for being brighter.
       //
       // MESH implements the richer MeshPickAwareMaterial instead, because
       // its blending mode has a SECOND pick-pass consequence the boolean
