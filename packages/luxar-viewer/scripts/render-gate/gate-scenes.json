@@ -601,6 +601,7 @@
           "workload": { "kind": "scrub", "mode": "drag", "steps": 20, "intervalMs": 50 },
           "metrics": [
             { "name": "commitsDuringDrag", "better": "higher", "kind": "counter", "relTol": 0.05 },
+            { "name": "dragFrames", "better": "higher", "kind": "counter", "relTol": 0.05 },
             { "name": "render.count", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "decode.count", "better": "lower", "kind": "counter", "relTol": 0.05 }
           ]

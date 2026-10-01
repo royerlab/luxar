@@ -254,6 +254,17 @@ judged by `judgePerf` against the A/A floor, in the declared `better`
 direction. A metric an arm does not report (an older baseline has no viewer
 counters) reads `n/a`: never a pass for an expected metric.
 
+`better` defaults to `lower`, which is right for costs (renders, uploads,
+decodes, requests, latencies) and wrong for throughput. `METRIC_DIRECTIONS` in
+`suites.mjs` pins the direction of every metric whose meaning fixes it, and the
+runner refuses (exit 2) a manifest, including a derived one passed with
+`--scenes`, that declares one of them the other way. Higher is better for
+`dragFrames` (the rAF callbacks that fired during a scrub drag: a freer main
+thread fires more), `commitsDuringDrag`, `achievedFps`, `ticks`,
+`lastTimepointShown`, `settled` and `maxInflight`. A ratio metric (`of`/`per`)
+takes its numerator's direction. Declaring a new metric in the shipped manifest
+means adding it to the table too (a harness test enforces it).
+
 ### Workloads
 
 The in-page halves are self-contained functions in `page-ops.mjs`. They use only

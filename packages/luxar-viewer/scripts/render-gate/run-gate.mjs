@@ -41,7 +41,7 @@ import { writeUlpHeatmap } from './heatmap.mjs';
 import * as ops from './page-ops.mjs';
 import { judgePerf, median, noiseFloor, ROTATIONS } from './perf-stats.mjs';
 import { startServer } from './server.mjs';
-import { loadExpectations, runSuite, suiteMarkdown } from './suites.mjs';
+import { loadExpectations, runSuite, suiteMarkdown, validateMetricDirections } from './suites.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const viewerRoot = resolve(here, '../..');
@@ -99,6 +99,11 @@ const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
 const manifest = JSON.parse(readFileSync(opts.scenes, 'utf8'));
 const log = (m) => console.log(`[render-gate] ${m}`);
 const manifestSuites = manifest.suites ?? {};
+try {
+  validateMetricDirections(manifestSuites);
+} catch (e) {
+  configError(e.message);
+}
 const BUILT_IN = ['exact', 'perf'];
 if (opts.suite !== 'all' && !BUILT_IN.includes(opts.suite) && !manifestSuites[opts.suite]) {
   configError(

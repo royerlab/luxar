@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
+import { judgeMetric, METRIC_DIRECTIONS, validateMetricDirections } from './suites.mjs';
+
 const manifest = JSON.parse(readFileSync(new URL('./gate-scenes.json', import.meta.url), 'utf8'));
 const generator = readFileSync(new URL('./generate_gate_scenes.py', import.meta.url), 'utf8');
 
@@ -46,5 +48,32 @@ describe('render-gate scene manifest', () => {
   it('has a unique id for every case', () => {
     const ids = [...manifest.exact, ...manifest.perf].map((scene) => scene.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('judges dragFrames as better: higher (more rAF callbacks = a freer main thread)', () => {
+    // `dragFrames` counts the animation frames that fired during the scrub
+    // drag; a build that frees the main thread fires MORE of them. Judged
+    // lower-is-better, an improvement from 39 to 63 frames read as a FAIL.
+    const drag = manifest.suites.playback.cases.find((c) => c.id === 'scrub_tp50_drag');
+    const m = drag.metrics.find((x) => x.name === 'dragFrames');
+    expect(m).toMatchObject({ better: 'higher' });
+    const arm = (...frames) => frames.map((dragFrames) => ({ dragFrames }));
+    const judged = judgeMetric(m, {
+      base: arm(39, 40, 38),
+      base2: arm(39, 38, 40),
+      cand: arm(63, 62, 64),
+    });
+    expect(judged.verdict).toBe('win');
+  });
+
+  it('declares every suite metric in its known direction', () => {
+    expect(() => validateMetricDirections(manifest.suites)).not.toThrow();
+    // Every metric the shipped manifest gates on has its direction pinned, so
+    // a new metric must state which way is better before it can be declared.
+    for (const suite of Object.values(manifest.suites)) {
+      for (const c of suite.cases) {
+        for (const m of c.metrics) expect(METRIC_DIRECTIONS).toHaveProperty([m.of ?? m.name]);
+      }
+    }
   });
 });
