@@ -20,6 +20,8 @@
  * @module rendering/picking/picking-system/visibility-sync
  */
 
+import { isPhysicalMeshMaterial } from '../../materials/mesh-physical/config';
+
 interface UniformHolder {
   uniforms?: Record<string, { value: unknown } | undefined>;
   getOpacity?: () => number;
@@ -51,6 +53,9 @@ const uniformOf =
  *   only the first ever touched a pick material. A physical mesh keeps its
  *   opacity off the uniform record (three's PBR material), so it is read
  *   through `getOpacity()`.
+ * - `uNearFade`: whether the mesh pick mirrors the house shader's near fade.
+ *   A physical visual (three's PBR material) has none, so its pick must not
+ *   discard the fade band either.
  */
 const VISIBILITY_INPUTS: readonly VisibilityInput[] = [
   { pick: 'uCoverageTruncate', read: uniformOf('uTruncate') },
@@ -60,6 +65,7 @@ const VISIBILITY_INPUTS: readonly VisibilityInput[] = [
     pick: 'uOpacity',
     read: (visual) => visual.uniforms?.uOpacity?.value ?? visual.getOpacity?.(),
   },
+  { pick: 'uNearFade', read: (visual) => (isPhysicalMeshMaterial(visual) ? 0 : 1) },
 ];
 
 /** The first material of a (possibly multi-material) slot. */

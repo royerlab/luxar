@@ -79,6 +79,9 @@ export class MeshPickingMaterial
         uAlphaCutout: { value: 1 },
         uSurfaceDepth: { value: 1 },
         uNearCull: { value: 0.1 }, // Default; overridden per-scene by updateCameraParams
+        // 1 = mirror the house shader's near fade; 0 for a physical visual (no
+        // fade there). Synced per pick render (picking-system/visibility-sync.ts).
+        uNearFade: { value: 1 },
         ...(config.baseColorTexture ? { uBaseColorTex: { value: config.baseColorTexture } } : {}),
       },
       vertexShader: MESH_PICK_GLSL.vertex,
@@ -199,6 +202,7 @@ export class MeshPickingMaterial
     // pick coverage against the wrong near plane — and under ortho, where the fade
     // is the identity, would fade at all.
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uNearFade.value = this.uniforms.uNearFade.value;
     // The epoch's culling must ride along: a clone taken on an undecidable frame
     // would otherwise revert to FrontSide and drop half the pickable surface until
     // the next commit re-applied it.

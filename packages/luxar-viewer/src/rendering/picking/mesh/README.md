@@ -29,7 +29,9 @@ Three differences from the point/line/gsplat pick materials, all from
   `isOrthographic` — but `uNearCull` is bound and the material
   joins the camera broadcast, because the pick pass has to reproduce the visual near fade or a
   surface fading out of view would stay fully pickable. Matching the visual mesh material, which
-  is camera-aware for exactly the same half.
+  is camera-aware for exactly the same half. The fade is a runtime switch (`uNearFade`) that the
+  pick render turns off for a `material="physical"` node: three's PBR material has no near fade,
+  so a physical surface right in front of the camera is fully visible and must stay pickable.
 - **`side` is synced from the visual material** rather than pinned to `DoubleSide`. The siblings'
   quads are view-facing; a mesh's back faces may be culled on screen, and a pick pass that
   rasterized them anyway would make an invisible interior face both pickable and

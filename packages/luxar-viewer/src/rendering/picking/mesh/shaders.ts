@@ -202,6 +202,11 @@ export const MESH_PICK_FRAGMENT_SHADER = /* glsl */ `
     // Near-fade start, world units (scene-relative), mirroring the visual
     // material. The ortho test reads three's isOrthographic, not a uniform.
     uniform float uNearCull;
+    // 1 = apply the near fade (the house mesh shader has it); 0 = none — a
+    // PHYSICAL visual (three's PBR material) has no near fade, so its surface is
+    // fully visible right in front of the camera and must stay pickable there.
+    // Synced per pick render from the visual material.
+    uniform int uNearFade;
     // 1 = 'opaque': apply the visual shader's hard cutout. Runtime uniform, not a
     // define — a layers-panel mode switch must not recompile the pick program.
     uniform int uAlphaCutout;
@@ -235,7 +240,9 @@ export const MESH_PICK_FRAGMENT_SHADER = /* glsl */ `
       // Ortho test from three's per-draw 'isOrthographic' (the camera being
       // drawn with), not a CPU-pushed flag; the fragment stage has no
       // projectionMatrix to read it from.
-      float nearFade = perspectiveNearFade(isOrthographic ? 1 : 0, vViewZ, max(uNearCull, 1e-20));
+      float nearFade = (uNearFade == 1)
+        ? perspectiveNearFade(isOrthographic ? 1 : 0, vViewZ, max(uNearCull, 1e-20))
+        : 1.0;
       if (nearFade < 0.01) discard;
 
       if (uAlphaCutout == 1) {
