@@ -2051,15 +2051,19 @@ function isCaptureQuiescent(): boolean {
  *
  * WHY this exists: the Phase-3 per-frame scheduler
  * ({@link evaluateDepthSortPerFrame}) is wired ONLY as an
- * AnimationController per-frame callback, so it runs exclusively inside
- * the rAF loop. Offline capture (the gallery orbit-video pass) deliberately
- * STOPS that loop, then per frame moves the camera and renders
- * synchronously. With the loop dead the scheduler never fires: across the
- * whole orbit there are zero re-sorts and zero cross-node renderOrder
- * updates, so any order-dependent node (`normal` / `volumetric`) is filmed
- * with the back-to-front permutation frozen at the pre-orbit pose. This
- * helper drives the scheduler + worker round-trip + chunked apply by hand
- * so each captured frame is ordered for its own pose.
+ * AnimationController per-frame callback, and re-sorts only past its
+ * motion thresholds. Two offline captures need an ordering exact for each
+ * frame's pose instead:
+ * - the gallery orbit-video pass (`__luxarDebug`) STOPS the rAF loop and
+ *   renders each frame synchronously, so the scheduler never fires at all;
+ * - the recording panel's frame-by-frame capture
+ *   (`ui/recording-panel/offline-capture-frame-loop.ts`) keeps the loop
+ *   running but suppresses its own render, and steps the turntable by less
+ *   than the angle threshold, so the scheduler fires too rarely.
+ * Either way an order-dependent node (`normal` / `volumetric`) would be
+ * filmed with a permutation from an earlier pose. This helper drives the
+ * scheduler + worker round-trip + chunked apply by hand so each captured
+ * frame is ordered for its own pose.
  *
  * It is a NO-OP (returns as soon as it observes quiescence) when depth sort
  * is disabled, no order-dependent node exists, or nothing is pending. It
@@ -2075,12 +2079,13 @@ function isCaptureQuiescent(): boolean {
  * ordering is current.
  */
 export async function resortForCapture(maxWaitMs = 3000): Promise<void> {
-  // The capture stopped the rAF loop on purpose; `requestRender` is wired
-  // to `animationController.startAnimation()`, and the sort resolve/pump
-  // paths call `requestRender?.()`. Suppress it for the duration so
-  // draining (which we drive ourselves) can't silently re-arm the frozen
-  // loop. Safe offline: there are no concurrent commits to lose a frame
-  // request from. The suppression is depth-counted / reentrancy-safe: this
+  // `requestRender` is wired to `animationController.requestRender('depthSort')`
+  // (core/app/init/pipeline.ts), and the sort resolve/pump paths call
+  // `requestRender?.()`. Suppress it for the duration so draining (which we
+  // drive ourselves) can't silently re-arm a loop the gallery capture
+  // stopped on purpose. Safe offline: nothing but the capture's own pass
+  // draws (the panel capture suppresses the loop's render), so there is no
+  // frame request to lose. The suppression is depth-counted / reentrancy-safe: this
   // helper is exposed on `__luxarDebug`, so an overlapping (nested) call
   // could otherwise snapshot `null` and restore `null` permanently, wedging
   // the render loop forever. Only the OUTERMOST call snapshots and restores.

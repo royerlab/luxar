@@ -1254,7 +1254,7 @@ describe('OfflineCaptureStrategy', () => {
       resortForCaptureMock.mockClear();
     });
 
-    it.fails('awaits a pose-fresh depth re-sort AFTER the LOD settle and BEFORE every grab', async () => {
+    it('awaits a pose-fresh depth re-sort AFTER the LOD settle and BEFORE every grab', async () => {
       // An order-dependent (normal / volumetric) node is drawn with the
       // permutation of the last sort. The per-frame scheduler only re-sorts
       // past an angle threshold, and the loop's own render is suppressed for

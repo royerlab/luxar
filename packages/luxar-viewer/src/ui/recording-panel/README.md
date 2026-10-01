@@ -49,7 +49,7 @@ reference to Session for the shared scaffolding.
 | `offline-capture-preflight.ts`  | Confirmation dialog, session ownership, capture resolution, turntable rotation/dolly plan                                                                                                                |
 | `offline-capture-context.ts`    | `createCaptureDriver` (mode → driver) + `buildCaptureContext` (the driver's dependencies)                                                                                                                |
 | `offline-capture-overlay.ts`    | The modal progress overlay: ARIA, focus trap, Escape/Cancel, live preview, frame counter                                                                                                                 |
-| `offline-capture-frame-loop.ts` | The per-frame loop: orbit → settle → grab, with the consecutive-failure bail                                                                                                                             |
+| `offline-capture-frame-loop.ts` | The per-frame loop: orbit → settle → re-sort → grab, with the consecutive-failure bail                                                                                                                   |
 | `offline-lod-settle.ts`         | `LodSettleDrain` — the per-frame LOD quiescence wait, its latch/re-arm, and its report                                                                                                                   |
 | `offline-capture-teardown.ts`   | The one safe teardown order (flags, driver abort, callbacks, overlay, state restore)                                                                                                                     |
 | `screenshot-exporter.ts`        | `renderFrameToCanvas`, `encodeScreenshotBlob`, `normalizeScreenshotFormat`, `downloadBlob`                                                                                                               |
@@ -327,29 +327,28 @@ time, which an offline capture does not, so `isCaptureQuiescent` reports
 false while one is in flight, and the export shows a clean cut instead of a
 dissolve whose progress depended on how fast each frame rendered.
 
+After the LOD settle, each frame also awaits a depth re-sort for the
+pinned pose: `runFrameLoop` calls `resortForCapture()` from
+`rendering/depth-sort-coordinator.ts` before the grab. The per-frame
+scheduler alone only re-sorts past its angle threshold (default 3°,
+`config.depthSort.angleThresholdDeg`, against a turntable stepping
+~1°/frame), and the loop's own render is suppressed for the whole
+capture, so an order-dependent (`normal` / `volumetric`) node was
+filmed with an ordering up to a few degrees stale. The helper's
+`requestRender` suppression and sorted-index back-pressure bypass are
+sound here for the same reason: nothing but the capture's own pass
+draws while it runs. It is bounded (`maxWaitMs`, 3 s) and a no-op when
+nothing is order-dependent. Beware the name collision while reading that
+file: it has a module-private `isCaptureQuiescent()`, unrelated to the
+registry method of the same name — it asks whether the depth-sort
+subsystem has settled (no sort RPC in flight, no queued re-sort, no
+chunked ordering apply streaming), not whether the LOD tree has.
+
 Also deliberately left alone:
 
 - **The realtime WebM route** (above): `MediaRecorder` records the canvas
   as it is painted, so there is no per-frame point at which the loop
   could wait.
-- **The depth-sort ordering.** `rendering/depth-sort-coordinator.ts`
-  exports `resortForCapture(maxWaitMs)`, whose own doc calls it "the
-  offline-capture entry point" — but the only caller is `__luxarDebug`
-  (the gallery harness, which stops the rAF loop and drives each frame by
-  hand). This loop keeps the rAF loop running, so the per-frame depth-sort
-  scheduler does fire; with the default 3° re-sort threshold
-  (`config.depthSort.angleThresholdDeg`) and a turntable stepping
-  ~1°/frame, an order-dependent (`normal` / `volumetric`) gsplat
-  node is nonetheless filmed with an ordering up to a few degrees stale,
-  and the LOD drain makes _how_ stale vary with load timing. Wiring the
-  helper in is a separate change with its own risk (it suppresses
-  `requestRender` and bypasses the sorted-index apply back-pressure,
-  both of which assume the loop is stopped), so it is not done here.
-  Beware the name collision while reading that file: it also has a
-  module-private `isCaptureQuiescent()`, unrelated to the registry
-  method of the same name — it asks whether the depth-sort subsystem has
-  settled (no sort RPC in flight, no queued re-sort, no chunked ordering
-  apply streaming), not whether the LOD tree has.
 
 Step 7's wake-up is load-bearing, not belt-and-braces: the turntable's
 rotation is applied from a per-frame callback, those only run while the
