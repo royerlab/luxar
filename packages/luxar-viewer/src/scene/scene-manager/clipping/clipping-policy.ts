@@ -51,6 +51,7 @@ import type { SceneBoundsCache } from './scene-bounds-cache';
  * so a pose written this frame (fly controls do not refresh it) is honoured.
  */
 const CAMERA_WORLD_SCRATCH = new THREE.Vector3();
+const CAMERA_DIRECTION_SCRATCH = new THREE.Vector3();
 
 /**
  * Ctx supplied by SceneManager to the policy helpers. Kept narrow:
@@ -188,6 +189,7 @@ export function autoAdjustFromBounds(ctx: ClippingCtx): {
 } {
   const world = ctx.camera.getWorldPosition(CAMERA_WORLD_SCRATCH);
   const cameraPos = { x: world.x, y: world.y, z: world.z };
+  const direction = ctx.camera.getWorldDirection(CAMERA_DIRECTION_SCRATCH);
   // Read from the LIVE camera, never cached: the viewer swaps projections at
   // runtime (V key), and the ratio bound must not follow a stale one.
   const boundRatio = !isOrthographicCamera(ctx.camera);
@@ -201,7 +203,12 @@ export function autoAdjustFromBounds(ctx: ClippingCtx): {
     }
 
     const sphere = boundingBoxToSphere(sceneBounds);
-    const { near, far } = calculateClippingPlanesFromSphere(sphere, cameraPos, boundRatio);
+    const { near, far } = calculateClippingPlanesFromSphere(
+      sphere,
+      cameraPos,
+      direction,
+      boundRatio
+    );
     const applied = applyClippingPlanes(ctx.camera, near, far);
 
     if (applied) {
@@ -236,7 +243,7 @@ export function autoAdjustFromBounds(ctx: ClippingCtx): {
   }
 
   const sphere = boundingBoxToSphere(fallbackBounds);
-  const { near, far } = calculateClippingPlanesFromSphere(sphere, cameraPos, boundRatio);
+  const { near, far } = calculateClippingPlanesFromSphere(sphere, cameraPos, direction, boundRatio);
   const applied = applyClippingPlanes(ctx.camera, near, far);
 
   return { near, far, applied };
@@ -272,12 +279,15 @@ export function updateDynamicFromCache(ctx: ClippingCtx): boolean {
   const dy = cam.y - s.center.y;
   const dz = cam.z - s.center.z;
   const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  const direction = ctx.camera.getWorldDirection(CAMERA_DIRECTION_SCRATCH);
+  const depth = -(dx * direction.x + dy * direction.y + dz * direction.z);
   const R = s.radius * SPHERE_SAFETY_EXPANSION;
+  if (R === 0) return false;
   const far = dist + R;
   // Live projection check (not cached): ortho opts out of the ratio bound —
   // its depth is linear, so the bound is pure clipping cost there.
   const minNear = nearPlaneFloor(R, far, !isOrthographicCamera(ctx.camera));
-  const near = dist < R ? minNear : Math.max(minNear, dist - R);
+  const near = Math.max(minNear, depth - R);
 
   // Degenerate guard (zero-extent scene → radius-0 sphere → near >= far):
   // writing that to the camera puts (far - near) = 0 into the projection

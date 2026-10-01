@@ -170,6 +170,37 @@ def test_new_default_writers_write_openable_stores(tmp_path: Path, name: str) ->
         assert len(list(root["splats"].group_keys())) == 64
 
 
+def test_sp64_closeup_authored_opens_on_the_closeup(tmp_path: Path) -> None:
+    # The B4 opening-camera case: the SAME 64-part partition as sp64, but its
+    # authored viewer_config.camera is the close-up, so the viewer can frame the
+    # opening camera before any node loads (a harness pose arrives too late).
+    gate_scenes.main(
+        ["--out", str(tmp_path), "--only", "sp64", "sp64_closeup_authored", "--small"]
+    )
+    sp64 = open_group(tmp_path / "sp64.luxar.zarr", mode="r")
+    authored = open_group(tmp_path / "sp64_closeup_authored.luxar.zarr", mode="r")
+    parts = sorted(authored["splats"].group_keys())
+    assert len(parts) == 64
+    assert parts == sorted(sp64["splats"].group_keys())
+    for key in parts:
+        assert (
+            authored["splats"][key].attrs["position_bounds"]
+            == sp64["splats"][key].attrs["position_bounds"]
+        ), key
+    closeup = gate_scenes._CLOSEUP
+    camera = authored.attrs["viewer_config"]["camera"]
+    assert list(camera["position"]) == closeup["position"]
+    assert list(camera["target"]) == closeup["target"]
+    assert camera["fov"] == closeup["fov"]
+    # sp64 itself keeps the framed-whole opening camera.
+    assert sp64.attrs["viewer_config"]["camera"]["position"] != closeup["position"]
+    poses = json.loads((tmp_path / "POSES.json").read_text())["scenes"]
+    assert poses["sp64_closeup_authored"]["store"] == (
+        "gate/sp64_closeup_authored.luxar.zarr"
+    )
+    assert poses["sp64_closeup_authored"]["poses"]["closeup"] == closeup
+
+
 @pytest.mark.slow
 def test_zip_mixed_copies_mixed(tmp_path: Path) -> None:
     gate_scenes.main(["--out", str(tmp_path), "--only", "zip_mixed"])

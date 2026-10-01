@@ -805,7 +805,8 @@ export class RenderingControls {
     // method exists to remove.
     //
     // `nearMax = scale` (an earlier spelling) was not merely short at the
-    // zoom-out limit: `near = dist - R` overtakes it once `dist > scale + R`,
+    // zoom-out limit: on axis, `near = viewDepth - R = dist - R` overtakes
+    // it once `dist > scale + R`,
     // i.e. at 0.9x the framed distance, so the thumb pinned at the OPENING
     // pose of any ordinary scene. It also made things worse below diagonal ~10,
     // where the old absolute max of 10 was the larger of the two and a manual
@@ -815,7 +816,7 @@ export class RenderingControls {
     const R = 0.5 * scale * SPHERE_SAFETY_EXPANSION;
     const distMax = scale * config.controls.scaleMultipliers.maxDistanceFactor;
     const nearMin = minNearForRadius(R);
-    const nearMax = distMax; // near = dist - R, so distMax bounds it
+    const nearMax = distMax; // viewDepth - R <= dist - R; the floor is also below distMax
     const farMin = nearMin * 10;
     const farMax = distMax + R; // far = dist + R at the limit
 

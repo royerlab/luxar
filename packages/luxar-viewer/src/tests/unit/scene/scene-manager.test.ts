@@ -2073,9 +2073,11 @@ describe('SceneManager', () => {
       // via the sphere formula — not arbitrary positive values. Compute the
       // expectation from the same [-5,5] bounds and the camera's actual pose.
       const cam = sceneManager.camera.position;
+      const direction = sceneManager.camera.getWorldDirection(new THREE.Vector3());
       const expected = calculateClippingPlanesFromSphere(
         boundingBoxToSphere({ min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } }),
-        { x: cam.x, y: cam.y, z: cam.z }
+        { x: cam.x, y: cam.y, z: cam.z },
+        direction
       );
       expect(result.near).toBeCloseTo(expected.near, 4);
       expect(result.far).toBeCloseTo(expected.far, 4);

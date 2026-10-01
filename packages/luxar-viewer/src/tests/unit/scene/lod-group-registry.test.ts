@@ -984,6 +984,77 @@ describe('LODGroupRegistry — takeDrawnStateChanged (render-on-change)', () => 
 });
 
 describe('LODGroupRegistry — partition frustum selection', () => {
+  it('excludes parts in front of a WebGPU camera near plane during load and frame selection', () => {
+    const camera = new THREE.PerspectiveCamera(60, 1, 1, 10);
+    camera.coordinateSystem = THREE.WebGPUCoordinateSystem;
+    camera.updateProjectionMatrix();
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 800 }),
+      getDisplayDims: () => [0, 1, 2],
+    });
+    const groupObject = new THREE.Group();
+    const near = new THREE.Group();
+    const inside = new THREE.Group();
+    groupObject.add(near, inside);
+    const bounds = [
+      { min: [-0.05, -0.05, -0.8], max: [0.05, 0.05, -0.7] },
+      { min: [-0.05, -0.05, -2.05], max: [0.05, 0.05, -1.95] },
+    ];
+
+    expect(reg.rankPartitionPartsForLoad(groupObject, bounds)?.inFrustum).toEqual([false, true]);
+    camera.coordinateSystem = THREE.WebGLCoordinateSystem;
+    expect(reg.rankPartitionPartsForLoad(groupObject, bounds)?.inFrustum).toEqual([true, true]);
+    camera.coordinateSystem = THREE.WebGPUCoordinateSystem;
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: bounds.map((positionBounds, i) => ({
+        path: `/partition/part_${i}`,
+        objects: [i === 0 ? near : inside],
+        positionBounds,
+      })),
+    });
+    reg.evaluatePerFrame();
+    expect(near.visible).toBe(false);
+    expect(inside.visible).toBe(true);
+  });
+
+  it('excludes parts beyond the far plane with reversed-depth WebGL during load and frame selection', () => {
+    const camera = new THREE.PerspectiveCamera(60, 1, 1, 10);
+    camera.coordinateSystem = THREE.WebGLCoordinateSystem;
+    Object.assign(camera, { _reversedDepth: true });
+    expect(camera.reversedDepth).toBe(true);
+    camera.updateProjectionMatrix();
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 800 }),
+      getDisplayDims: () => [0, 1, 2],
+    });
+    const groupObject = new THREE.Group();
+    const far = new THREE.Group();
+    const inside = new THREE.Group();
+    groupObject.add(far, inside);
+    const bounds = [
+      { min: [-0.05, -0.05, -11.05], max: [0.05, 0.05, -10.95] },
+      { min: [-0.05, -0.05, -2.05], max: [0.05, 0.05, -1.95] },
+    ];
+
+    expect(reg.rankPartitionPartsForLoad(groupObject, bounds)?.inFrustum).toEqual([false, true]);
+    reg.registerPartition({
+      path: '/partition',
+      groupObject,
+      children: bounds.map((positionBounds, i) => ({
+        path: `/partition/part_${i}`,
+        objects: [i === 0 ? far : inside],
+        positionBounds,
+      })),
+    });
+    reg.evaluatePerFrame();
+    expect(far.visible).toBe(false);
+    expect(inside.visible).toBe(true);
+  });
+
   it('gates and restores every object emitted by a part', () => {
     const reg = makeRegistry();
     const groupObject = new THREE.Group();
