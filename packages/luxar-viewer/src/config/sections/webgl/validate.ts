@@ -3,7 +3,7 @@ import type { AppConfig } from '../../types';
 /**
  * Validate WebGL configuration
  */
-export function validateWebGL(config: AppConfig, errors: string[], warnings: string[]): void {
+export function validateWebGL(config: AppConfig, errors: string[], _warnings: string[]): void {
   const { webgl } = config;
 
   // Validate power preference
@@ -19,14 +19,6 @@ export function validateWebGL(config: AppConfig, errors: string[], warnings: str
   if (!validPrecisions.includes(webgl.renderer.precision)) {
     errors.push(
       `Invalid WebGL precision: ${webgl.renderer.precision} (must be one of: ${validPrecisions.join(', ')})`
-    );
-  }
-
-  // Validate MSAA samples
-  const validSamples = [0, 2, 4, 8];
-  if (!validSamples.includes(webgl.renderTarget.samples)) {
-    warnings.push(
-      `Unusual MSAA samples: ${webgl.renderTarget.samples} (typical values: ${validSamples.join(', ')})`
     );
   }
 }

@@ -1,11 +1,13 @@
 /**
  * Centralized URL parameter parsing.
  *
- * `window.location.search` is read in exactly one place — `main.ts` — and the
- * result flows through the application as a typed object. Components that need
- * a flag declare it on their options, rather than reaching back to
- * `window.location` themselves. URL writing is centralized here for the same
- * reason.
+ * The query string is parsed in one place — `readUrlParams()` here, whose
+ * standalone caller is the bootstrap (`core/bootstrap.ts`, which also re-reads
+ * it for a same-document `#view=` hash change) — and the result flows through
+ * the application as a typed object. Components that need a flag declare it on
+ * their options, rather than reaching back to `window.location` themselves.
+ * URL writing is centralized here for the same reason
+ * (`replaceBrowserDataSourceUrl`, called by `LuxarApp.switchDataset`).
  *
  * This makes consumers testable (no need to mock `window.location`), the URL
  * contract auditable (every recognized parameter is listed in `UrlParams`),

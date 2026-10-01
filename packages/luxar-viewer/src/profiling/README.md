@@ -277,15 +277,29 @@ this.monitor.setProfiler(this.profiler);
 
 - `update-profiler.ts` — `UpdateProfiler`, `RootSession`, the
   `TimingEntry` / `TimingMetadata` / `UpdateSession` interfaces, plus the
-  `formatMs` and `hasOverBudget` helpers.
+  `formatMs` and `hasOverBudget` helpers. One instance per
+  `SceneLoaderManager`, reset at every `loadStart`.
+- `load-timeline.ts` — the per-load milestone timeline (see above):
+  `markLoad`, `markFirstCommit`, the refinement counters, and
+  `getLoadTimeline()`.
+- `perf-counters.ts` — `PerfCounters` and the process-wide `perfCounters`
+  registry (see above).
 
 ## Public Exports
 
 - `class UpdateProfiler`, `class RootSession`
 - Interfaces: `UpdateSession`, `TimingEntry`, `TimingMetadata`
 - Functions: `formatMs(ms)`, `hasOverBudget(entry)`
+- `load-timeline.ts`: `markLoad`, `markFirstCommit`, `noteRefinementPass`,
+  `noteRefinementDensityDeferral`, `noteRefinementStarted`,
+  `noteRefinementAborted`, `noteRefinementComplete`,
+  `noteLoadResourceReleased`, `getLoadTimeline`, `resetLoadTimeline` (tests)
+- `perf-counters.ts`: `class PerfCounters`, `perfCounters`,
+  `PERF_RECORD_RING_SIZE`, `type PerfCounterSlot`
 
 ## Dependencies
 
 - Internal: `../utils/log` (for `log.warning` / `log.error` on session
-  misuse and listener errors).
+  misuse and listener errors); `update-profiler.ts` also tallies its merge
+  cost into `perf-counters.ts`. `load-timeline.ts` and `perf-counters.ts`
+  import nothing.

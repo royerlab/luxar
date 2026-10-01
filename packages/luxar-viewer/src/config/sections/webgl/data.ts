@@ -1,4 +1,3 @@
-import * as THREE from 'three';
 import type { WebGLConfig } from './types';
 
 /**
@@ -9,8 +8,9 @@ export const webglConfig: WebGLConfig = {
   context: {
     alpha: false, // No transparency in canvas background
     // The scene never renders to the backbuffer — everything goes through
-    // the HDR render target (renderTarget.samples controls real MSAA), so
-    // an antialiased backbuffer is a dead multisample allocation.
+    // the HDR render target, whose MSAA is `renderingControls.msaaEnabled` /
+    // `msaaSamples` (applied by the post-processing manager), so an
+    // antialiased backbuffer is a dead multisample allocation.
     antialias: false,
     depth: true, // Enable depth buffer for 3D rendering
     stencil: false, // No stencil buffer needed (saves memory)
@@ -25,22 +25,13 @@ export const webglConfig: WebGLConfig = {
     failIfMajorPerformanceCaveat: false, // Don't fail on slow GPUs
   },
 
-  // THREE.WebGLRenderer specific settings (renderer-only; shared attributes
-  // like antialias, powerPreference, preserveDrawingBuffer, premultipliedAlpha
-  // are sourced from webgl.context and spread at renderer creation time)
+  // THREE.WebGLRenderer constructor parameters (renderer-only; shared
+  // attributes like antialias, powerPreference, preserveDrawingBuffer,
+  // premultipliedAlpha are sourced from webgl.context). Spread verbatim into
+  // the constructor (`renderer-setup.ts`), so only real constructor
+  // parameters belong here.
   renderer: {
     logarithmicDepthBuffer: false, // Standard depth buffer (faster)
     precision: 'highp' as const, // High precision for better quality
-    shadowMap: {
-      enabled: false, // No shadows needed for points
-      type: THREE.PCFShadowMap, // PCF is soft by default since three r182
-    },
-  },
-
-  // Render target configuration for post-processing
-  renderTarget: {
-    depthBuffer: true, // Needed for depth testing
-    stencilBuffer: false, // Not needed, saves memory
-    samples: 0, // MSAA samples (0 = disabled for additive blending compatibility)
   },
 };

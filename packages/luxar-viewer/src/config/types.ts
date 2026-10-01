@@ -38,10 +38,9 @@ import type {
   WebGLConfig,
   WebGLContextAttributes,
   WebGLRendererConfig,
-  WebGLRenderTargetConfig,
 } from './sections/webgl/types';
-/** WebGL renderer, context-attributes, and render-target configuration types. */
-export type { WebGLConfig, WebGLContextAttributes, WebGLRendererConfig, WebGLRenderTargetConfig };
+/** WebGL renderer and context-attributes configuration types. */
+export type { WebGLConfig, WebGLContextAttributes, WebGLRendererConfig };
 
 import type { InputConfig } from './sections/input/types';
 /** Input (keyboard/mouse) configuration type. */
