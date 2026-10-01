@@ -2853,7 +2853,7 @@ describe('SceneLoader', () => {
       return { retried };
     }
 
-    it.fails('retryFailedLoader runs instead of reporting deferred', async () => {
+    it('retryFailedLoader runs instead of reporting deferred', async () => {
       const { retried } = startDrainWithFailure();
       const result = sceneLoader.retryFailedLoader('/p');
       await pumpUntil(result);
@@ -2863,7 +2863,7 @@ describe('SceneLoader', () => {
       expect(sceneLoader.hasFailures()).toBe(false);
     });
 
-    it.fails('retryAllFailedLoaders runs instead of reporting deferred', async () => {
+    it('retryAllFailedLoaders runs instead of reporting deferred', async () => {
       const { retried } = startDrainWithFailure();
       const result = sceneLoader.retryAllFailedLoaders();
       await pumpUntil(result);

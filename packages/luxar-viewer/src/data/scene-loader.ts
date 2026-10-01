@@ -556,6 +556,12 @@ export class SceneLoader {
   // time (see that method) — prevents a per-caller pile-up of scheduled
   // re-checks while an update holds the lock for a while.
   private _refinementKickPending = false;
+  /**
+   * Failed-loader retries waiting for a refinement drain to hand them the
+   * serialization lock (A10, see `acquireLockForRetry`). Each resolves `true`
+   * when it now owns the lock, `false` when it must report the retry deferred.
+   */
+  private _retryLockWaiters: Array<(owned: boolean) => void> = [];
   // Pending re-drain of ladders the consecutive-failure cap retired, and the
   // backoff round it is on (#2975). See `scheduleAbandonedRungRetry`.
   private _abandonedRetryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2080,6 +2086,7 @@ export class SceneLoader {
     // (see the `_refining` field). Cleared in the `finally` below so every exit
     // path — early return, cancellation hand-off, disposal, throw — clears it.
     this._refining = true;
+    let cancelled = false;
     try {
       // Orchestrate progressive refinement across all four leaf types in
       // sequence: gsplats first (its progressive-loader was the original
@@ -2088,8 +2095,10 @@ export class SceneLoader {
       // refinement) the cancelling phase hands the lock to
       // retriggerUpdate's rAF and the orchestrator exits early so the
       // later phases don't fire on stale state. On normal completion of
-      // the FINAL phase, the lock is released.
-      let cancelled = false;
+      // the FINAL phase, the lock is released. A failed-loader retry pre-empts
+      // the run the same way (A10): `isActive` turns false, every phase exits,
+      // and the `finally` hands the still-held lock to the retry.
+      const isActive = () => !this._disposed && this._retryLockWaiters.length === 0;
       const onCancel = (pendingState: Partial<ViewState>) => {
         cancelled = true;
         this.handOffCancelledRefinement(pendingState);
@@ -2130,6 +2139,8 @@ export class SceneLoader {
         /* lock stays held; next phase owns it */
       };
       const finalReleaseLock = () => {
+        // A pre-empting retry takes the lock over in the `finally` below.
+        if (!isActive() && !this._disposed) return;
         this._updateInProgress = false;
         // dispose() flushes waiters itself; never re-enter a dead loader.
         if (this._disposed) return;
@@ -2158,12 +2169,12 @@ export class SceneLoader {
         updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
         releaseLock: noopReleaseLock,
         retriggerUpdate: onCancel,
-        isActive: () => !this._disposed,
+        isActive,
         signal: refinementController.signal,
         profiler: this.profiler,
         residencyBudget,
       });
-      if (cancelled || this._disposed) return;
+      if (cancelled || !isActive()) return;
 
       await runPointsRefinement({
         viewStateQueue: this.viewStateQueue,
@@ -2175,12 +2186,12 @@ export class SceneLoader {
         updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
         releaseLock: noopReleaseLock,
         retriggerUpdate: onCancel,
-        isActive: () => !this._disposed,
+        isActive,
         signal: refinementController.signal,
         profiler: this.profiler,
         residencyBudget,
       });
-      if (cancelled || this._disposed) return;
+      if (cancelled || !isActive()) return;
 
       await runLinesRefinement({
         viewStateQueue: this.viewStateQueue,
@@ -2193,12 +2204,12 @@ export class SceneLoader {
         updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
         releaseLock: noopReleaseLock,
         retriggerUpdate: onCancel,
-        isActive: () => !this._disposed,
+        isActive,
         signal: refinementController.signal,
         profiler: this.profiler,
         residencyBudget,
       });
-      if (cancelled || this._disposed) return;
+      if (cancelled || !isActive()) return;
 
       // Mesh runs LAST and therefore owns `finalReleaseLock`. Order within the four
       // phases is otherwise historical (gsplats was the template), but the final slot
@@ -2217,7 +2228,7 @@ export class SceneLoader {
         updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
         releaseLock: finalReleaseLock,
         retriggerUpdate: onCancel,
-        isActive: () => !this._disposed,
+        isActive,
         signal: refinementController.signal,
         profiler: this.profiler,
         residencyBudget,
@@ -2225,7 +2236,43 @@ export class SceneLoader {
       this.noteRefinementOutcome(cancelled);
     } finally {
       this._refining = false;
+      this.handLockToRetryWaiters(cancelled);
     }
+  }
+
+  /**
+   * Take the serialization lock for a failed-loader retry (A10). A free lock is
+   * taken at once. A refinement drain holding it, with no view queued to run
+   * next, is pre-empted the way a view change pre-empts it — its reads are
+   * aborted and it hands the lock over as it unwinds. A view pass holding it
+   * (or one queued behind the drain) keeps it: the retry is reported deferred,
+   * as before.
+   *
+   * @returns Whether the caller now holds the lock (and must release it).
+   */
+  private acquireLockForRetry(): Promise<boolean> {
+    if (!this._updateInProgress) {
+      this._updateInProgress = true;
+      return Promise.resolve(true);
+    }
+    if (!this._refining || this.viewStateQueue.hasPending()) return Promise.resolve(false);
+    const owned = new Promise<boolean>((resolve) => this._retryLockWaiters.push(resolve));
+    this._updateAbortController?.abort();
+    return owned;
+  }
+
+  /**
+   * Settle the retries waiting on a refinement run that just unwound. Unless
+   * the lock went to a view hand-off (`lockHandedOff`) or the loader was
+   * disposed, the first one inherits the lock the run still holds; the rest
+   * defer.
+   */
+  private handLockToRetryWaiters(lockHandedOff: boolean): void {
+    const waiters = this._retryLockWaiters;
+    if (waiters.length === 0) return;
+    this._retryLockWaiters = [];
+    const lockHeld = !lockHandedOff && !this._disposed;
+    waiters.forEach((resolve, i) => resolve(lockHeld && i === 0));
   }
 
   /**
@@ -2268,7 +2315,8 @@ export class SceneLoader {
    * hand-off (the next update re-kicks refinement) and not on a dead loader.
    */
   private noteRefinementOutcome(cancelled: boolean): void {
-    if (cancelled || this._disposed) return;
+    // A retry pre-empting the run (A10) is a cancellation too: its resume re-kicks.
+    if (cancelled || this._disposed || this._retryLockWaiters.length > 0) return;
     // A ladder retired mid-way is still owed its rungs: stay unsettled while
     // its re-drain is pending, so capture / isSettled do not report done.
     if (this.scheduleAbandonedRungRetry()) return;
@@ -2923,8 +2971,9 @@ export class SceneLoader {
     // zarr fetches and concurrent commits to the same THREE object
     // produce inconsistent state. Both halves are required: refusing
     // when an update is already active AND taking the lock so an
-    // updateView starting AFTER retry begins can't race.
-    if (this._updateInProgress) {
+    // updateView starting AFTER retry begins can't race. A refinement drain
+    // is pre-empted rather than waited out (A10).
+    if (!(await this.acquireLockForRetry())) {
       log.info(
         Modules.SCENE_LOADER,
         `Retry of ${path} deferred — main update in progress; try again after the update settles`
@@ -2932,7 +2981,6 @@ export class SceneLoader {
       return false;
     }
 
-    this._updateInProgress = true;
     try {
       if (lazyFailure) {
         this.clearArchiveFaultForRetry();
@@ -3021,8 +3069,8 @@ export class SceneLoader {
     // Same serialization as retryFailedLoader: take the lock once around
     // the parallel batch and call the unlocked retry helper for each
     // path, so siblings in the same batch don't trigger the lock-refusal
-    // branch.
-    if (this._updateInProgress) {
+    // branch. A refinement drain is pre-empted rather than waited out (A10).
+    if (!(await this.acquireLockForRetry())) {
       log.info(
         Modules.SCENE_LOADER,
         'Retry-all deferred — main update in progress; try again after the update settles'
@@ -3036,7 +3084,6 @@ export class SceneLoader {
 
     log.info(Modules.SCENE_LOADER, `Retrying ${failedPaths.length} failed loader(s)`);
 
-    this._updateInProgress = true;
     try {
       if (opts.onlyAutoRetryable) {
         // Charge the automatic-retry budget once per connectivity-triggered
@@ -3125,6 +3172,7 @@ export class SceneLoader {
     // counts towards `isLoadPassInProgress()`.
     this._updateInProgress = false;
     this._refining = false;
+    this.handLockToRetryWaiters(true);
     this.viewStateQueue.takePending();
     this._pendingResyncPaths = null;
     this._queuedResyncPaths = null;
