@@ -6,16 +6,12 @@
  * `PointsDataLoader` (aka `DataLoader`) interface so the scene
  * loader's update loop works unchanged.
  *
- * Loading strategy mirrors `GSplatsProgressiveLoader`:
- *
- * - On each `updateView()` call, loads LODs sequentially starting from
- *   LOD 0.
- * - Stops at the first LOD whose load exceeds the cache-hit threshold
- *   (the shared `CACHE_HIT_THRESHOLD_MS` in
- *   `loaders/progressive/constants` — one threshold across all geometry
- *   types).
- * - After returning, fires a prefetch for the next unloaded LOD so the
- *   refinement loop hits a warm cache on the next call.
+ * The per-view lifecycle (streaming policy under the shared
+ * `CACHE_HIT_THRESHOLD_MS`, SliceCache departure/adoption/restore, B6 index
+ * warm, pinned concurrent rungs, signal-linked lookahead of the next rung, B5
+ * neighbour read-ahead, memoized concat) is the shared `AdditiveLadderCore`
+ * (`../loaders/progressive/additive-ladder-core`), as for
+ * `GSplatsProgressiveLoader` / `LinesProgressiveLoader`.
  *
  * LODs are additive: LOD 0 contains the coarsest subset, each
  * subsequent LOD adds more elements. The loader concatenates loaded
@@ -32,7 +28,6 @@ import type {
   PointsViewState,
   ScalarArray,
 } from '../../types/points';
-import { setPrefixParent } from '../../types/prefix-lineage';
 import type { PointsSpatialIndexLoader } from './points-spatial-index-loader';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type {
@@ -48,30 +43,13 @@ import {
   type ConcatColorArray,
 } from '../loaders/progressive/concat-helpers';
 import {
-  classifyStreamingPass,
-  resolveLadderDepth,
-  shouldStopBeforeLevel,
-  shouldStopAfterLevel,
-} from '../loaders/progressive/streaming-policy';
-import { config } from '../../config';
-import {
-  deleteLadder,
-  measureLodBytes,
-  restoreLadderSnapshot,
-  storeLadder,
-  awaitShadowStore,
-} from '../loaders/progressive/slice-cache-helper';
-import { planLadderRollback } from '../loaders/progressive/pass-rollback';
+  AdditiveLadderCore,
+  type LadderGeometry,
+} from '../loaders/progressive/additive-ladder-core';
 import { POINT_FLOATS_PER_POINT } from '../../rendering/element-texture-layout';
-import {
-  ladderResidentBytes,
-  type LadderResidency,
-} from '../scene-loader/progressive/residency-budget';
-import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
+import type { LadderResidency } from '../scene-loader/progressive/residency-budget';
 import type { SliceCache } from '../../cache/slice-cache';
-import { log, Modules, LogEmoji } from '../../utils/log';
-import { timeLodStageWithResult } from '../scene-loader/lod-load-stats';
-import { createLookaheadController } from '../loaders/progressive/lookahead-signal';
+import { log, Modules } from '../../utils/log';
 
 /**
  * Compose the levels' slot → on-disk maps into ONE map in the parent's union
@@ -367,86 +345,38 @@ function concatenatePointsData(
   return result;
 }
 
+const POINTS_LADDER: LadderGeometry<LoadedPointsData> = {
+  kind: 'points',
+  module: Modules.SPATIAL_INDEX_LOADER,
+  label: 'Points',
+  unit: 'points',
+  warnPrefix: 'Points',
+  countOf: (data) => data.pointCount,
+  concat: (parts, layout) =>
+    concatenatePointsData(parts, layout.payloadLevelStarts, layout.loadedLevels, null),
+  empty: () => concatenatePointsData([], [], 0, null),
+  // 3 RGBA32F texels/point. See LadderResidency — the payload alone is not
+  // the node's footprint, and the ratio differs per geometry.
+  bytesPerElement: POINT_FLOATS_PER_POINT * Float32Array.BYTES_PER_ELEMENT,
+  // A Points result is never stamped with a slice-cache origin.
+  stampsRestoredOrigin: false,
+};
+
 /**
- * Progressive Points loader.
+ * Progressive Points loader: the Points face of the shared additive-ladder
+ * engine (`AdditiveLadderCore`), which owns the whole per-view lifecycle. This
+ * class adds the Points concatenation, including the ladder's composed
+ * slot -> on-disk picking map over the parent's union CSR (`levelOffsets`).
  */
 export class PointsProgressiveLoader implements PointsDataLoader {
-  private lodLoaders: PointsSpatialIndexLoader[];
-  private loadedLODs: LoadedPointsData[] = [];
-  // Payload i spans logical levels [_payloadLevelStarts[i],
-  // _payloadLevelStarts[i + 1] ?? _loadedLODCount); folding collapses this to [0].
-  private _payloadLevelStarts: number[] = [];
-  private _loadedLODCount = 0;
-  private lastViewState: PointsViewState | null = null;
-  private nLods: number;
-  private monitor: ProgressiveMonitorAdapter;
-  private _initialLoadDone = false;
-  private _lastAllResident = true;
-  private _disposed = false;
-  /** Controller for the in-flight next-rung lookahead (null when idle). */
-  private _lookaheadController: AbortController | null = null;
-  // Memoized concatenation. Keyed on (resetGeneration, loadedLODs.length):
-  // the generation bumps on every view-state reset so a reset-then-reload
-  // back to the same LOD count yields a NEW reference (contents differ),
-  // while an unchanged view state with no new LODs returns the SAME
-  // reference — which the commit pipeline uses to skip no-op re-commits.
-  private _resetGeneration = 0;
-  private _concatCache: {
-    generation: number;
-    lodCount: number;
-    result: LoadedPointsData;
-  } | null = null;
-  // Logical ladder depth and retained payload count as the CURRENT updateView
-  // pass found them. The pass advances both before its caller has committed
-  // the result, while concatenation may later fold many logical rungs into one
-  // retained payload. Rollback needs both watermarks to distinguish an intact
-  // append from an already-folded result.
-  // See `../loaders/progressive/pass-rollback`.
-  private _levelsAtPassStart = 0;
-  private _payloadsAtPassStart = 0;
-  private _restoredFullLadderAtPassStart = false;
-  // A completed pass can still fail after loading, during projection or commit.
-  // Keep it schedulable for one retry even though the ladder cursor is full.
-  private _retryFoldedPass = false;
-  // Per-sub-LOD cumulative energy fractions e(k) (the build-time
-  // `lod_stats.energy_fraction_cum` stamps), normalized at construction:
-  // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
-  // ladder reads as unstamped — never blend stamped and guessed entries).
-  private energyTable: readonly number[] | null;
-  // CSR-style bounds over the levels' ON-DISK element counts (`nLods + 1`
-  // entries): level `i` occupies `[levelOffsets[i], levelOffsets[i + 1])`
-  // inside the parent node's union string/image CSR index space. Non-null only
-  // when the parent declares at least one such CSR
-  // (`createProgressivePointsLoader`); null means no ladder picking map is
-  // published at all.
-  private readonly levelOffsets: readonly number[] | null;
+  private readonly core: AdditiveLadderCore<LoadedPointsData, PointsSpatialIndexLoader>;
+  private readonly monitor: ProgressiveMonitorAdapter;
+
   // One fail-closed composition warning per LOADER, not per concat: the concat
-  // re-runs on every (generation, lodCount) miss and a view change bumps the
+  // re-runs on every (generation, rung count) miss and a view change bumps the
   // generation, so a malformed ladder would otherwise log tens of lines a
-  // second during dimension-animation playback. Same latch pattern as
-  // `slice-cache-helper.ts::markOversizedWarned` / the label-loader demotion.
-  private _composeWarned = false;
-  private readonly warnComposeFailure = (message: string): void => {
-    if (this._composeWarned) return;
-    this._composeWarned = true;
-    log.warning(Modules.SPATIAL_INDEX_LOADER, `${message} (logged once per node)`);
-  };
-  // Node path (SliceCache namespace) + the shared SliceCache, if enabled.
-  private readonly path: string;
-  private readonly sliceCache: SliceCache | null;
-  // Per-tick LOD time budget (ms) from the CURRENT updateView call during
-  // dimension-animation playback; null outside playback. A per-pass
-  // directive (never part of lastViewState / viewStatesEqual / cache keys).
-  // Mirrors GSplatsProgressiveLoader.
-  private _frameBudgetMs: number | null = null;
-  /**
-   * Pinned rung count for the current pass (`ViewState.ladderDepth`, the
-   * playback "detail" setting), resolved through `resolveLadderDepth`; null
-   * when the pass is not pinned. A pinned pass loads exactly this many rungs,
-   * cold or not, and reports `hasMoreLODs === false` like a budgeted one — the
-   * pinned prefix IS the target.
-   */
-  private _ladderDepth: number | null = null;
+  // second during dimension-animation playback.
+  private composeWarned = false;
 
   constructor(
     lodLoaders: PointsSpatialIndexLoader[],
@@ -456,129 +386,68 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     sliceCache?: SliceCache | null,
     levelOffsets?: readonly number[] | null
   ) {
-    this.lodLoaders = lodLoaders;
-    this.nLods = nLods;
-    this.path = path;
-    this.sliceCache = sliceCache ?? null;
-    this.levelOffsets = levelOffsets ?? null;
+    // CSR-style bounds over the levels' ON-DISK element counts (`nLods + 1`
+    // entries): level `i` occupies `[levelOffsets[i], levelOffsets[i + 1])`
+    // inside the parent node's union string/image CSR index space. Null means
+    // no ladder picking map is published at all.
+    const offsets = levelOffsets ?? null;
+    const warn = (message: string): void => {
+      if (this.composeWarned) return;
+      this.composeWarned = true;
+      log.warning(Modules.SPATIAL_INDEX_LOADER, `${message} (logged once per node)`);
+    };
+    const geometry: LadderGeometry<LoadedPointsData> = {
+      ...POINTS_LADDER,
+      concat: (parts, layout) =>
+        concatenatePointsData(parts, layout.payloadLevelStarts, layout.loadedLevels, offsets, warn),
+    };
+    this.core = new AdditiveLadderCore(lodLoaders, nLods, path, geometry, {
+      energyTable,
+      sliceCache,
+    });
     this.monitor = new ProgressiveMonitorAdapter(
-      () => this.lodLoaders,
+      () => this.core.rungLoaders,
       path,
       'point-spatial-index'
     );
-    this.energyTable =
-      energyTable && energyTable.length === nLods && energyTable.every((e) => typeof e === 'number')
-        ? (energyTable as number[])
-        : null;
   }
 
-  /** Whether more LOD levels remain to load for the current view state. */
+  /** Whether there are more LOD levels to load for the current view state. */
   get hasMoreLODs(): boolean {
-    // A disposed loader has work-state cleared; report no further work so a
-    // refinement loop holding a stale reference stops instead of indexing
-    // into the now-empty lodLoaders. Mirrors GSplatsProgressiveLoader.
-    if (this._disposed) return false;
-    if (this._retryFoldedPass) return true;
-    // While a playback frame budget is active, the budgeted prefix IS the
-    // target: no background refinement between animation ticks; the commit
-    // stamps the prefix complete. Mirrors GSplatsProgressiveLoader.
-    if (this._frameBudgetMs !== null) return false;
-    if (this._ladderDepth !== null) return false;
-    return this._loadedLODCount < this.nLods;
+    return this.core.hasMoreLODs;
   }
 
+  /** Number of LOD levels currently loaded. */
   get loadedLODCount(): number {
-    return this._loadedLODCount;
+    return this.core.loadedLODCount;
   }
 
-  /**
-   * Measured footprint of the loaded ladder, for the shared sweep residency
-   * budget (`scene-loader/progressive/residency-budget`). Sums real
-   * `byteLength`s rather than modelling a per-element cost. Rung count comes
-   * from `_loadedLODCount` (LOGICAL levels), not `loadedLODs.length`, which is
-   * 1 once the ladder has folded.
-   */
+  /** Measured footprint of the loaded ladder (see `AdditiveLadderCore`). */
   ladderResidency(): LadderResidency {
-    return {
-      residentBytes: measureLodBytes(this.loadedLODs),
-      loadedRungs: this._loadedLODCount,
-      elementCount: this.loadedLODs.reduce((s, d) => s + d.pointCount, 0),
-      // 3 RGBA32F texels/point. See LadderResidency — the payload alone is not
-      // the node's footprint, and the ratio differs per geometry.
-      bytesPerElement: POINT_FLOATS_PER_POINT * Float32Array.BYTES_PER_ELEMENT,
-    };
+    return this.core.ladderResidency();
   }
 
-  get totalLODCount(): number {
-    return this.nLods;
-  }
-
-  /**
-   * Discard the levels the current pass appended, restoring the ladder to the
-   * prefix the pass started from. Called by the main-update and refinement catches;
-   * see `../loaders/progressive/pass-rollback` for why a failed commit must
-   * not leave the cursor advanced.
-   *
-   * @returns Levels discarded (0 when the pass appended none).
-   */
-  rollbackToPassStart(): number {
-    const plan = planLadderRollback({
-      loadedLevelCount: this._loadedLODCount,
-      levelsAtPassStart: this._levelsAtPassStart,
-      concatCacheLodCount: this._concatCache?.lodCount ?? null,
-      retainedPayloadCount: this.loadedLODs.length,
-      payloadsAtPassStart: this._payloadsAtPassStart,
-      restoredFullLadderAtPassStart: this._restoredFullLadderAtPassStart,
-      totalLevelCount: this.nLods,
-    });
-    if (plan.action === 'none') return 0;
-    if (plan.action === 'retry-folded-pass') {
-      this._retryFoldedPass = true;
-      return 0;
-    }
-    if (plan.action === 'unwind-restored-full') {
-      this.loadedLODs = [];
-      this._payloadLevelStarts = [];
-      this._loadedLODCount = 0;
-      this._restoredFullLadderAtPassStart = false;
-      this._retryFoldedPass = false;
-      if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
-      this._concatCache = null;
-      return plan.dropped;
-    }
-    this.loadedLODs.length = this._payloadsAtPassStart;
-    this._payloadLevelStarts.length = this._payloadsAtPassStart;
-    this._loadedLODCount = plan.keep;
-    this._retryFoldedPass = false;
-    if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
-    if (plan.invalidateConcatCache) this._concatCache = null;
-    return plan.dropped;
-  }
-
-  /**
-   * Cumulative energy fraction e(k) ∈ [0, 1] of the currently loaded LOD
-   * prefix — how much of this ladder's total self-energy the committed
-   * chunks carry (the additive orderer's own ranking criterion, stamped at
-   * build time as `lod_stats.energy_fraction_cum`). `null` when the dataset
-   * carries no energy stamps; `0` before any LOD loads. Read at commit time
-   * by `stampLadderComplete` (→ the `committedEnergyFraction` mesh stamp)
-   * for the display gate's energy-threshold upgrade release.
-   */
+  /** Cumulative energy fraction e(k) of the loaded prefix (see the core). */
   get committedEnergyFraction(): number | null {
-    if (!this.energyTable) return null;
-    const k = this._loadedLODCount;
-    if (k === 0) return 0;
-    return this.energyTable[Math.min(k, this.energyTable.length) - 1];
+    return this.core.committedEnergyFraction;
   }
 
-  /**
-   * Whether the most recently streamed LOD level was fully cache-resident.
-   * Drives the monitor's residency indicator. Defaults to `true`.
-   */
+  /** Total number of LOD levels. */
+  get totalLODCount(): number {
+    return this.core.totalLODCount;
+  }
+
+  /** Discard the levels the current pass appended (see `pass-rollback.ts`). */
+  rollbackToPassStart(): number {
+    return this.core.rollbackToPassStart();
+  }
+
+  /** Whether the most recently streamed LOD level was fully cache-resident. */
   get lastAllResident(): boolean {
-    return this._lastAllResident;
+    return this.core.lastAllResident;
   }
 
+  /** Load points data (delegates to {@link updateView}). */
   async loadPoints(
     viewState: PointsViewState,
     session?: UpdateSession,
@@ -587,343 +456,31 @@ export class PointsProgressiveLoader implements PointsDataLoader {
     return this.updateView(viewState, session, signal);
   }
 
-  async updateView(
+  /** Stream as many LODs as the pass allows for `viewState` (see the core). */
+  updateView(
     viewState: PointsViewState,
     session?: UpdateSession,
     signal?: AbortSignal,
     residencyAllowanceBytes?: number
   ): Promise<LoadedPointsData> {
-    // Record the per-pass playback budget FIRST (before the restore branch:
-    // a pause re-trigger arrives with the SAME view state — it must still
-    // clear the budget). Mirrors GSplatsProgressiveLoader.
-    this._frameBudgetMs = viewState.frameBudgetMs ?? null;
-    this._ladderDepth = resolveLadderDepth(
-      viewState.ladderDepth,
-      this.nLods,
-      this.energyTable,
-      config.dimensionAnimation.playback.autoEnergyThreshold
-    );
-    this._retryFoldedPass = false;
-    const budgetDeadline =
-      this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
-
-    // Background prefetch (shadow) passes only warm the SliceCache — the
-    // SlicePrefetcher discards the return value — so hand back a cheap empty
-    // result instead of the O(N) main-thread concat, which would stall
-    // foreground frames as the ladder deepens. Mirrors GSplatsProgressiveLoader.
-    const isPrefetch = viewState.prefetch === true;
-    const finish = (): LoadedPointsData =>
-      isPrefetch ? concatenatePointsData([], [], 0, null) : this.concatenateMemoized(session);
-
-    if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
-      // The old view's next rung will never be read now.
-      this.cancelLookahead();
-      // DEPARTURE store: snapshot the OUTGOING view's partial ladder before
-      // discarding it, keyed under the OUTGOING view (lastViewState — never
-      // the incoming one). Scrubbing faster than the ladder completes would
-      // otherwise store nothing at all (completion never happens), making
-      // scrub-back — the S-cache's headline case — always cold. One clone
-      // per slice-leave; upgrade-if-longer makes re-departures cheap no-ops.
-      if (
-        this.lastViewState &&
-        this._loadedLODCount > 0 &&
-        !(isPrefetch && this.tornDown(signal))
-      ) {
-        storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
-          scan: this._frameBudgetMs !== null,
-          pin: viewState.prefetch === true,
-          ladderDepth: this._loadedLODCount,
-          totalLODCount: this.nLods,
-        });
-      }
-      // Try the SliceCache before discarding the ladder (see GSplats loader).
-      // IN-FLIGHT ADOPTION: a shadow (SlicePrefetcher) pass may be building
-      // this very slice right now. Wait for its store (bounded; rejects on
-      // this update's abort) and restore that, instead of redoing the same
-      // dequant/assembly — measured 49% duplicate work during playback.
-      const shadowStore = isPrefetch
-        ? null
-        : awaitShadowStore(this.sliceCache, this.path, viewState, signal);
-      if (shadowStore) await shadowStore;
-      const restored = restoreLadderSnapshot<LoadedPointsData>(
-        this.sliceCache,
-        this.path,
-        viewState,
-        this.nLods
-      );
-      // Shallow-copy the CONTAINER: the streaming loop below pushes further
-      // levels and must never mutate the cache's payload array (elements
-      // stay shared read-only). Mirrors GSplatsProgressiveLoader.
-      this.loadedLODs = restored ? [...restored.lods] : [];
-      this._loadedLODCount = restored?.depth ?? 0;
-      if (restored) {
-        const foldedPrefixDepth = restored.depth - restored.lods.length + 1;
-        this._payloadLevelStarts = restored.lods.map((_, index) =>
-          index === 0 ? 0 : foldedPrefixDepth + index - 1
-        );
-      } else {
-        this._payloadLevelStarts = [];
-      }
-      // A restored full ladder has not been committed for this pass. If its
-      // concat or commit fails, unwind the whole restored snapshot rather than
-      // preserving a cursor at nLods and silently disabling retries.
-      this._levelsAtPassStart = 0;
-      this._payloadsAtPassStart = 0;
-      this._restoredFullLadderAtPassStart = false;
-      this._resetGeneration++;
-      this.lastViewState = {
-        displayDims: [...viewState.displayDims],
-        slicePosition: [...viewState.slicePosition],
-        tolerance: [...viewState.tolerance],
-        dimensions: viewState.dimensions,
-      };
-      if (restored) {
-        this._initialLoadDone = true;
-        this._lastAllResident = true;
-        // FULL ladder short-circuits; a PREFIX falls through to the loop
-        // (startLevel = prefix length). Mirrors GSplatsProgressiveLoader.
-        if (restored.depth === this.nLods) {
-          this._restoredFullLadderAtPassStart = true;
-          return finish();
-        }
-      }
-    } else if (this.lastViewState.dimensions !== viewState.dimensions) {
-      // Metadata refresh with an UNCHANGED query determinant (the scene
-      // rebuilds the dimensions objects right after the first data load —
-      // see view-state-equal.ts): adopt the fresh reference so subsequent
-      // compares take the reference-equality fast path instead of
-      // re-deriving the dims projection sig on every pass. Content is
-      // determinant-equal per the check above, so cache keys (which build
-      // from the same determinant) are unaffected.
-      this.lastViewState.dimensions = viewState.dimensions;
-    }
-
-    // Stream under the shared streaming policy (see `streaming-policy.ts`):
-    // `playback` streams cache-resident levels after an empty or restored
-    // prefix while budget remains; `prefetch` deepens toward the
-    // full decoded ladder (abort-safe, stored per level); `refine` stops at the
-    // first cold/slow level. Mirrors GSplatsProgressiveLoader.
-    const pass = classifyStreamingPass(
-      budgetDeadline !== null,
-      isPrefetch,
-      this._ladderDepth !== null
-    );
-    const startLevel = this._loadedLODCount;
-    const residentBytesAtPassStart = ladderResidentBytes(this.ladderResidency());
-    this._levelsAtPassStart = startLevel;
-    this._payloadsAtPassStart = this.loadedLODs.length;
-    this._restoredFullLadderAtPassStart = false;
-
-    // A pinned pass bounds the loop at the pinned rung count; the policy's
-    // `pinned` kind disables the deadline / cold-level brakes.
-    const targetLevels = this._ladderDepth ?? this.nLods;
-    for (let level = startLevel; level < targetLevels; level++) {
-      // A dispose() racing the awaited level below clears `lodLoaders`, so
-      // the next iteration would TypeError on `this.lodLoaders[level]` — a
-      // teardown mis-counted as a real refinement failure (recordFailure +
-      // backoff). Stop streaming instead.
-      if (this._disposed) {
-        break;
-      }
-      // Pass-budget guard: playback only guarantees a level for an empty
-      // ladder; prefetch retains one-level progress after a restore (#2379).
-      if (shouldStopBeforeLevel(pass, level, startLevel, performance.now(), budgetDeadline)) {
-        break;
-      }
-      const t0 = performance.now();
-      const { data: lodData, allResident } = await timeLodStageWithResult(
-        ({ allResident }) => `additive:points:level:${level}:${allResident ? 'resident' : 'miss'}`,
-        `additive:points:level:${level}:aborted`,
-        () => this.lodLoaders[level].updateViewWithResidency(viewState, session, signal)
-      );
-      const elapsed = performance.now() - t0;
-
-      this.loadedLODs.push(lodData);
-      this._payloadLevelStarts.push(level);
-      this._loadedLODCount++;
-      this._lastAllResident = allResident;
-
-      if (!this._initialLoadDone) {
-        log.verbose(
-          LogEmoji.BROADCAST,
-          Modules.SPATIAL_INDEX_LOADER,
-          `LOD ${level}/${this.nLods - 1}: ${
-            lodData.positions.length / 3
-          } points (${elapsed.toFixed(1)}ms${allResident ? '' : ', miss'})`
-        );
-      }
-
-      // NEVER break out because a level came back empty (#1456). It is a
-      // tempting optimization — this loop used to latch a terminal "empty
-      // ladder" on an empty LOD 0 and stop — but it is wrong here: this loader
-      // is constructed only for ADDITIVE ladders (`createProgressivePointsLoader`
-      // iterates the `additive_<i>` subgroups), whose levels are DISJOINT
-      // increments of one permutation, not coarse-to-fine resamplings of the
-      // same elements. They are therefore NOT spatially coextensive: LOD 0 is a
-      // small SUBSET of the node (a few thousand points under `-b stream:C` /
-      // `--target-ms`, the recommended ladder shape), so a hidden-dimension
-      // slice that none of ITS members lands on says nothing whatever about
-      // levels 1..n-1, which may hold plenty of points right there. Stopping
-      // here rendered such a slice permanently blank. The same reasoning
-      // forbids inferring anything from a restored cache PREFIX whose LOD 0 is
-      // empty.
-
-      const additionalResidentBytes = Math.max(
-        0,
-        ladderResidentBytes(this.ladderResidency()) - residentBytesAtPassStart
-      );
-      if (
-        shouldStopAfterLevel(
-          pass,
-          level,
-          startLevel,
-          allResident,
-          elapsed,
-          additionalResidentBytes,
-          residencyAllowanceBytes
-        )
-      ) {
-        break;
-      }
-    }
-
-    if (!this._initialLoadDone && startLevel === 0) {
-      this._initialLoadDone = true;
-    }
-
-    const totalPoints = this.loadedLODs.reduce((s, d) => s + d.positions.length / 3, 0);
-    if (this._loadedLODCount < this.nLods) {
-      log.verbose(
-        LogEmoji.INFO,
-        Modules.SPATIAL_INDEX_LOADER,
-        `Progressive Points: ${this._loadedLODCount}/${this.nLods} LODs (${totalPoints} points) — refining`
-      );
-    } else if (startLevel < this.nLods) {
-      log.verbose(
-        LogEmoji.INFO,
-        Modules.SPATIAL_INDEX_LOADER,
-        `Progressive Points: ${this.nLods}/${this.nLods} LODs (${totalPoints} points) — complete`
-      );
-    }
-
-    this.prefetchNextLOD(viewState, signal);
-
-    // Snapshot into the SliceCache (upgrade-if-longer): full ladders always;
-    // PREFIXES only while a playback budget is active. Mirrors
-    // GSplatsProgressiveLoader.
-    const result = finish();
-    // A pass aborted or disposed mid-level must not store: releaseShadows()
-    // has already unpinned this key, so a late pinned store would outlive
-    // playback with nothing left to release it.
-    if (this.tornDown(signal)) return result;
-    if (
-      this._loadedLODCount === this.nLods ||
-      this._frameBudgetMs !== null ||
-      this._ladderDepth !== null
-    ) {
-      storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, {
-        scan: this._frameBudgetMs !== null,
-        pin: viewState.prefetch === true,
-        ladderDepth: this._loadedLODCount,
-        totalLODCount: this.nLods,
-      });
-    }
-
-    return result;
+    return this.core.updateView(viewState, session, signal, residencyAllowanceBytes);
   }
 
-  /** True once this pass was aborted or the loader disposed. */
-  private tornDown(signal?: AbortSignal): boolean {
-    return signal?.aborted === true || this._disposed;
+  /** Predicted-view warm-up of the coarse rung (`dispatchPredictivePrefetch`). */
+  prefetchChunks(viewState: PointsViewState, signal?: AbortSignal): Promise<void> {
+    return this.core.prefetchChunks(viewState, signal);
   }
 
-  /**
-   * Concatenate loaded LODs, memoized on (resetGeneration, LOD count).
-   * An unchanged view state with no new LODs returns the SAME object
-   * reference — safe because the result is never mutated downstream
-   * (worker projection inputs are structured-cloned, not transferred) —
-   * letting the commit pipeline skip no-op re-commits by identity.
-   *
-   * Each fresh result is also stamped with a PREFIX-LINEAGE parent (the
-   * previous same-generation memo) via {@link setPrefixParent}, so the
-   * commit layer can recognise a genuine prefix-extension and take the
-   * append fast path (depth-sorting Phase 4 Stage 2). The parent is null
-   * for the first level of a generation (a view change bumps the reset
-   * generation and empties `loadedLODs`), which is correct — the first
-   * commit extends nothing. Mirrors GSplatsProgressiveLoader.
-   */
-  private concatenateMemoized(session?: UpdateSession): LoadedPointsData {
-    const concatSession = session?.begin('Concatenate LODs');
-    try {
-      if (
-        this._concatCache &&
-        this._concatCache.generation === this._resetGeneration &&
-        this._concatCache.lodCount === this._loadedLODCount
-      ) {
-        return this._concatCache.result;
-      }
-      // Capture the previous SAME-GENERATION memo before overwriting the
-      // cache — that (and only that) is the result this one extends.
-      const prevMemo =
-        this._concatCache &&
-        this._concatCache.generation === this._resetGeneration &&
-        this._concatCache.lodCount < this._loadedLODCount
-          ? this._concatCache.result
-          : null;
-      const result = concatenatePointsData(
-        this.loadedLODs,
-        this._payloadLevelStarts,
-        this._loadedLODCount,
-        this.levelOffsets,
-        this.warnComposeFailure
-      );
-      setPrefixParent(result, prevMemo);
-      for (let level = 0; level < this._loadedLODCount; level++) {
-        this.lodLoaders[level]?.releaseAccumulator();
-      }
-      this.loadedLODs = [result];
-      this._payloadLevelStarts = [0];
-      this._concatCache = {
-        generation: this._resetGeneration,
-        lodCount: this._loadedLODCount,
-        result,
-      };
-      return result;
-    } finally {
-      concatSession?.end();
-    }
-  }
-
-  private prefetchNextLOD(viewState: PointsViewState, updateSignal?: AbortSignal): void {
-    // Same teardown race as the streaming loop: a dispose() between the
-    // awaited level and this fire-and-forget clears `lodLoaders`, and
-    // indexing it would TypeError before the .catch can swallow anything.
-    if (this._disposed) return;
-    // Playback (frame-budgeted) and pinned-scrub passes skip the lookahead:
-    // the next pass is a different slice, so this slice's next rung is never
-    // read (measured pure waste during playback). Shadow passes carry a frame
-    // budget, so they are covered too. Mirrors GSplatsProgressiveLoader.
-    if (this._frameBudgetMs !== null || this._ladderDepth !== null) return;
-    const nextLevel = this._loadedLODCount;
-    if (nextLevel >= this.nLods) return;
-    this.cancelLookahead();
-    const controller = createLookaheadController(updateSignal);
-    this._lookaheadController = controller;
-    // Fire-and-forget; errors ignored (network failures, aborts).
-    void this.lodLoaders[nextLevel].prefetchChunks(viewState, controller.signal).catch(() => {
-      /* ignore */
-    });
-  }
-
-  private cancelLookahead(): void {
-    this._lookaheadController?.abort();
-    this._lookaheadController = null;
+  /** Predicted-view warm-up over a current → predicted transition. */
+  prefetchChunkBoundary(
+    current: PointsViewState,
+    predicted: PointsViewState,
+    signal?: AbortSignal
+  ): Promise<void> {
+    return this.core.prefetchChunkBoundary(current, predicted, signal);
   }
 
   // ---- LoaderMonitor surface (delegated to ProgressiveMonitorAdapter) ----
-  // Lets `connectLoaderToMonitor` wire the progressive node to the data
-  // monitor so its query/throughput/memory telemetry is reported (aggregated
-  // across LODs, re-pathed to this node) instead of silently dropped.
 
   addEventListener(listener: MonitorEventListener): void {
     this.monitor.addEventListener(listener);
@@ -939,22 +496,11 @@ export class PointsProgressiveLoader implements PointsDataLoader {
 
   getMetrics(): LoaderMetrics {
     const metrics = this.monitor.getMetrics();
-    const concatMemory = this._concatCache ? measureLodBytes([this._concatCache.result]) : 0;
-    return { ...metrics, memoryUsed: metrics.memoryUsed + concatMemory };
+    return { ...metrics, memoryUsed: metrics.memoryUsed + this.core.concatMemoryBytes() };
   }
 
+  /** Clean up all LOD loaders. */
   dispose(): void {
-    this._disposed = true;
-    this.cancelLookahead();
-    for (const loader of this.lodLoaders) {
-      loader.dispose();
-    }
-    this.lodLoaders = [];
-    this.loadedLODs = [];
-    this._payloadLevelStarts = [];
-    this._loadedLODCount = 0;
-    this._retryFoldedPass = false;
-    this.lastViewState = null;
-    this._concatCache = null;
+    this.core.dispose();
   }
 }

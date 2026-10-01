@@ -171,9 +171,9 @@ describe('GSplatsProgressiveLoader', () => {
       const result = await loader.loadGSplats(baseViewState);
       const retained = (
         loader as unknown as {
-          loadedLODs: LoadedGSplatsData[];
+          core: { loadedLODs: LoadedGSplatsData[] };
         }
-      ).loadedLODs;
+      ).core.loadedLODs;
 
       expect(loader.loadedLODCount).toBe(3);
       expect(retained).toEqual([result]);

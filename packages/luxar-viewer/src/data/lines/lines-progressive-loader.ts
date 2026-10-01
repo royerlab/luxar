@@ -2,7 +2,8 @@
  * Progressive Lines loader for multi-additive-LOD datasets.
  *
  * Wraps N `LinesSpatialIndexLoader` instances (one per `additive_<i>`
- * subgroup) using the Composite pattern. Mirrors
+ * subgroup) using the Composite pattern. The per-view lifecycle is the shared
+ * `AdditiveLadderCore` (`../loaders/progressive/additive-ladder-core`), as for
  * `GSplatsProgressiveLoader` / `PointsProgressiveLoader`.
  *
  * Concatenation is the only line-specific wrinkle: `segments` indices
@@ -14,7 +15,6 @@
 
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../../types/lines';
 import type { ScalarArray } from '../../types/points';
-import { setPrefixParent } from '../../types/prefix-lineage';
 import type { LinesSpatialIndexLoader } from './lines-spatial-index-loader';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import type {
@@ -30,31 +30,13 @@ import {
   concatRequiredField,
 } from '../loaders/progressive/concat-helpers';
 import {
-  classifyStreamingPass,
-  resolveLadderDepth,
-  shouldStopBeforeLevel,
-  shouldStopAfterLevel,
-} from '../loaders/progressive/streaming-policy';
-import { config } from '../../config';
-import {
-  deleteLadder,
-  measureLodBytes,
-  restoreLadderSnapshot,
-  storeLadder,
-  awaitShadowStore,
-} from '../loaders/progressive/slice-cache-helper';
-import { planLadderRollback } from '../loaders/progressive/pass-rollback';
+  AdditiveLadderCore,
+  type LadderGeometry,
+} from '../loaders/progressive/additive-ladder-core';
 import { LINE_FLOATS_PER_SEGMENT } from '../../rendering/element-texture-layout';
-import {
-  ladderResidentBytes,
-  type LadderResidency,
-} from '../scene-loader/progressive/residency-budget';
-import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
+import type { LadderResidency } from '../scene-loader/progressive/residency-budget';
 import type { SliceCache } from '../../cache/slice-cache';
-import { setSliceCacheOrigin, type SliceCacheOrigin } from '../../cache/slice-cache-origin';
-import { log, Modules, LogEmoji } from '../../utils/log';
-import { timeLodStageWithResult } from '../scene-loader/lod-load-stats';
-import { createLookaheadController } from '../loaders/progressive/lookahead-signal';
+import { Modules } from '../../utils/log';
 
 /**
  * Concatenate per-LOD `LoadedLinesData`. Segment indices are
@@ -205,69 +187,30 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
   return result;
 }
 
+const LINES_LADDER: LadderGeometry<LoadedLinesData> = {
+  kind: 'lines',
+  module: Modules.LINES_LOADER,
+  label: 'Lines',
+  unit: 'segments',
+  warnPrefix: 'Lines',
+  countOf: (data) => data.segmentCount,
+  concat: (parts) => concatenateLinesData(parts),
+  empty: () => concatenateLinesData([]),
+  // 6 RGBA32F texels/segment — the largest element row of any geometry, and
+  // ~3.6x this payload's own bytes per vertex. Omitting it made the shared
+  // budget under-count Lines far more than GSplats.
+  bytesPerElement: LINE_FLOATS_PER_SEGMENT * Float32Array.BYTES_PER_ELEMENT,
+  stampsRestoredOrigin: true,
+};
+
 /**
- * Progressive Lines loader.
+ * Progressive Lines loader: the Lines face of the shared additive-ladder
+ * engine (`AdditiveLadderCore`), which owns the whole per-view lifecycle. This
+ * class adds the Lines concatenation (segment-index offsetting).
  */
 export class LinesProgressiveLoader implements LinesDataLoader {
-  private lodLoaders: LinesSpatialIndexLoader[];
-  // Retained payloads are folded after each concatenation, so this array may
-  // contain one cumulative payload plus newly loaded rungs. Its length is not
-  // the logical cursor; only _loadedLODCount tracks loaded ladder depth.
-  private loadedLODs: LoadedLinesData[] = [];
-  private _loadedLODCount = 0;
-  private lastViewState: LinesViewState | null = null;
-  private nLods: number;
-  private monitor: ProgressiveMonitorAdapter;
-  private _initialLoadDone = false;
-  private _lastAllResident = true;
-  private _disposed = false;
-  /** Controller for the in-flight next-rung lookahead (null when idle). */
-  private _lookaheadController: AbortController | null = null;
-  // Memoized concatenation. Keyed on (resetGeneration, logical LOD count):
-  // the generation bumps on every view-state reset so a reset-then-reload
-  // back to the same LOD count yields a NEW reference (contents differ),
-  // while an unchanged view state with no new LODs returns the SAME
-  // reference — which the commit pipeline uses to skip no-op re-commits.
-  private _resetGeneration = 0;
-  private _concatCache: {
-    generation: number;
-    lodCount: number;
-    result: LoadedLinesData;
-  } | null = null;
-  // Logical ladder depth and retained payload count as the CURRENT updateView
-  // pass found them. The pass advances both before its caller has committed
-  // the result, while concatenation may later fold many logical rungs into one
-  // retained payload. Rollback needs both watermarks to distinguish an intact
-  // append from an already-folded result.
-  // See `../loaders/progressive/pass-rollback`.
-  private _levelsAtPassStart = 0;
-  private _payloadsAtPassStart = 0;
-  private _restoredFullLadderAtPassStart = false;
-  private _retryFoldedPass = false;
-  // The S-cache entry `loadedLODs` holds exactly (see the GSplats twin):
-  // stamped on concatenations built from it alone, for the stage cache.
-  private _restoredOrigin: SliceCacheOrigin | null = null;
-  // Per-sub-LOD cumulative energy fractions e(k) (the build-time
-  // `lod_stats.energy_fraction_cum` stamps), normalized at construction:
-  // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
-  // ladder reads as unstamped — never blend stamped and guessed entries).
-  private energyTable: readonly number[] | null;
-  // Node path (SliceCache namespace) + the shared SliceCache, if enabled.
-  private readonly path: string;
-  private readonly sliceCache: SliceCache | null;
-  // Per-tick LOD time budget (ms) from the CURRENT updateView call during
-  // dimension-animation playback; null outside playback. A per-pass
-  // directive (never part of lastViewState / viewStatesEqual / cache keys).
-  // Mirrors GSplatsProgressiveLoader.
-  private _frameBudgetMs: number | null = null;
-  /**
-   * Pinned rung count for the current pass (`ViewState.ladderDepth`, the
-   * playback "detail" setting), resolved through `resolveLadderDepth`; null
-   * when the pass is not pinned. A pinned pass loads exactly this many rungs,
-   * cold or not, and reports `hasMoreLODs === false` like a budgeted one — the
-   * pinned prefix IS the target.
-   */
-  private _ladderDepth: number | null = null;
+  private readonly core: AdditiveLadderCore<LoadedLinesData, LinesSpatialIndexLoader>;
+  private readonly monitor: ProgressiveMonitorAdapter;
 
   constructor(
     lodLoaders: LinesSpatialIndexLoader[],
@@ -276,137 +219,53 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     energyTable?: ReadonlyArray<number | null | undefined>,
     sliceCache?: SliceCache | null
   ) {
-    this.lodLoaders = lodLoaders;
-    this.nLods = nLods;
-    this.path = path;
-    this.sliceCache = sliceCache ?? null;
+    this.core = new AdditiveLadderCore(lodLoaders, nLods, path, LINES_LADDER, {
+      energyTable,
+      sliceCache,
+    });
     this.monitor = new ProgressiveMonitorAdapter(
-      () => this.lodLoaders,
+      () => this.core.rungLoaders,
       path,
       'lines-spatial-index'
     );
-    this.energyTable =
-      energyTable && energyTable.length === nLods && energyTable.every((e) => typeof e === 'number')
-        ? (energyTable as number[])
-        : null;
   }
 
+  /** Whether there are more LOD levels to load for the current view state. */
   get hasMoreLODs(): boolean {
-    // A disposed loader has work-state cleared; report no further work so a
-    // refinement loop holding a stale reference stops instead of indexing
-    // into the now-empty lodLoaders. Mirrors GSplatsProgressiveLoader.
-    if (this._disposed) return false;
-    if (this._retryFoldedPass) return true;
-    // While a playback frame budget is active, the budgeted prefix IS the
-    // target: no background refinement between animation ticks; the commit
-    // stamps the prefix complete. Mirrors GSplatsProgressiveLoader.
-    if (this._frameBudgetMs !== null) return false;
-    if (this._ladderDepth !== null) return false;
-    return this._loadedLODCount < this.nLods;
+    return this.core.hasMoreLODs;
   }
 
+  /** Number of LOD levels currently loaded. */
   get loadedLODCount(): number {
-    return this._loadedLODCount;
+    return this.core.loadedLODCount;
   }
 
-  /**
-   * Measured footprint of the loaded ladder, for the shared sweep residency
-   * budget (`scene-loader/progressive/residency-budget`).
-   *
-   * `measureLodBytes` sums real `byteLength`s rather than modelling a
-   * per-element cost, so this stays correct as payload columns come and go —
-   * and correct after the fold, where `loadedLODs` is one merged payload rather
-   * than one entry per rung. That is exactly why the rung count is reported
-   * from `_loadedLODCount` (LOGICAL levels) instead of `loadedLODs.length`.
-   */
+  /** Measured footprint of the loaded ladder (see `AdditiveLadderCore`). */
   ladderResidency(): LadderResidency {
-    return {
-      residentBytes: measureLodBytes(this.loadedLODs),
-      loadedRungs: this._loadedLODCount,
-      elementCount: this.loadedLODs.reduce((s, d) => s + d.segmentCount, 0),
-      // 6 RGBA32F texels/segment — the largest element row of any geometry, and
-      // ~3.6x this payload's own bytes per vertex. Omitting it made the
-      // shared budget under-count Lines far more than GSplats.
-      bytesPerElement: LINE_FLOATS_PER_SEGMENT * Float32Array.BYTES_PER_ELEMENT,
-    };
+    return this.core.ladderResidency();
   }
 
-  get totalLODCount(): number {
-    return this.nLods;
-  }
-
-  /**
-   * Discard the levels the current pass appended, restoring the ladder to the
-   * prefix the pass started from.
-   *
-   * Called by the main-update and refinement catch paths. `updateView` advances the cursor as
-   * each level ARRIVES, but the concat / projection / commit that follows can
-   * still throw — classically `RangeError: Array buffer allocation failed` on a
-   * large node. Without this the retry would resume from the advanced cursor
-   * and attempt an even larger allocation, and on reaching `nLods` would flip
-   * `hasMoreLODs` false and strand the node silently. Unwinding makes the retry
-   * re-attempt the SAME prefix, so the failure tracker's 3-strike cap can
-   * actually be reached and reported.
-   *
-   * @returns Levels discarded (0 when the pass appended none).
-   */
-  rollbackToPassStart(): number {
-    const plan = planLadderRollback({
-      loadedLevelCount: this._loadedLODCount,
-      levelsAtPassStart: this._levelsAtPassStart,
-      concatCacheLodCount: this._concatCache?.lodCount ?? null,
-      retainedPayloadCount: this.loadedLODs.length,
-      payloadsAtPassStart: this._payloadsAtPassStart,
-      restoredFullLadderAtPassStart: this._restoredFullLadderAtPassStart,
-      totalLevelCount: this.nLods,
-    });
-    if (plan.action === 'none') return 0;
-    if (plan.action === 'retry-folded-pass') {
-      this._retryFoldedPass = true;
-      return 0;
-    }
-    this._restoredOrigin = null;
-    if (plan.action === 'unwind-restored-full') {
-      this.loadedLODs = [];
-      this._loadedLODCount = 0;
-      this._restoredFullLadderAtPassStart = false;
-      this._retryFoldedPass = false;
-      if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
-      this._concatCache = null;
-      return plan.dropped;
-    }
-    this.loadedLODs.length = this._payloadsAtPassStart;
-    this._loadedLODCount = plan.keep;
-    this._retryFoldedPass = false;
-    if (this.lastViewState) deleteLadder(this.sliceCache, this.path, this.lastViewState);
-    if (plan.invalidateConcatCache) this._concatCache = null;
-    return plan.dropped;
-  }
-
-  /**
-   * Cumulative energy fraction e(k) ∈ [0, 1] of the currently loaded LOD
-   * prefix — how much of this ladder's total self-energy the committed
-   * chunks carry (the additive orderer's own ranking criterion, stamped at
-   * build time as `lod_stats.energy_fraction_cum`). `null` when the dataset
-   * carries no energy stamps; `0` before any LOD loads. Read at commit time
-   * by `stampLadderComplete` (→ the `committedEnergyFraction` mesh stamp)
-   * for the display gate's energy-threshold upgrade release.
-   */
+  /** Cumulative energy fraction e(k) of the loaded prefix (see the core). */
   get committedEnergyFraction(): number | null {
-    if (!this.energyTable) return null;
-    const k = this._loadedLODCount;
-    if (k === 0) return 0;
-    return this.energyTable[Math.min(k, this.energyTable.length) - 1];
+    return this.core.committedEnergyFraction;
   }
 
-  /**
-   * Whether the most recently streamed LOD level was fully cache-resident.
-   * Drives the monitor's residency indicator. Defaults to `true`.
-   */
+  /** Total number of LOD levels. */
+  get totalLODCount(): number {
+    return this.core.totalLODCount;
+  }
+
+  /** Discard the levels the current pass appended (see `pass-rollback.ts`). */
+  rollbackToPassStart(): number {
+    return this.core.rollbackToPassStart();
+  }
+
+  /** Whether the most recently streamed LOD level was fully cache-resident. */
   get lastAllResident(): boolean {
-    return this._lastAllResident;
+    return this.core.lastAllResident;
   }
 
+  /** Load lines data (delegates to {@link updateView}). */
   async loadLines(
     viewState: LinesViewState,
     session?: UpdateSession,
@@ -415,326 +274,31 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     return this.updateView(viewState, session, signal);
   }
 
-  async updateView(
+  /** Stream as many LODs as the pass allows for `viewState` (see the core). */
+  updateView(
     viewState: LinesViewState,
     session?: UpdateSession,
     signal?: AbortSignal,
     residencyAllowanceBytes?: number
   ): Promise<LoadedLinesData> {
-    // Record the per-pass playback budget FIRST (before the restore branch:
-    // a pause re-trigger arrives with the SAME view state — it must still
-    // clear the budget). Mirrors GSplatsProgressiveLoader.
-    this._frameBudgetMs = viewState.frameBudgetMs ?? null;
-    this._ladderDepth = resolveLadderDepth(
-      viewState.ladderDepth,
-      this.nLods,
-      this.energyTable,
-      config.dimensionAnimation.playback.autoEnergyThreshold
-    );
-    this._retryFoldedPass = false;
-    const budgetDeadline =
-      this._frameBudgetMs !== null ? performance.now() + this._frameBudgetMs : null;
-
-    // Background prefetch (shadow) passes only warm the SliceCache — the
-    // SlicePrefetcher discards the return value — so hand back a cheap empty
-    // result instead of the O(N) main-thread concat, which would stall
-    // foreground frames as the ladder deepens. Mirrors GSplatsProgressiveLoader.
-    const isPrefetch = viewState.prefetch === true;
-    const finish = (): LoadedLinesData =>
-      isPrefetch ? concatenateLinesData([]) : this.concatenateMemoized(session);
-
-    if (!this.lastViewState || !viewStatesEqual(viewState, this.lastViewState)) {
-      // The old view's next rung will never be read now.
-      this.cancelLookahead();
-      // DEPARTURE store: snapshot the outgoing view's partial ladder under
-      // the OUTGOING key before discarding — scrub-back stays warm even when
-      // ladders never complete between navigations. Mirrors Points/GSplats.
-      if (
-        this.lastViewState &&
-        this._loadedLODCount > 0 &&
-        !(isPrefetch && this.tornDown(signal))
-      ) {
-        storeLadder(this.sliceCache, this.path, this.lastViewState, this.loadedLODs, {
-          scan: this._frameBudgetMs !== null,
-          pin: viewState.prefetch === true,
-          ladderDepth: this._loadedLODCount,
-          totalLODCount: this.nLods,
-        });
-      }
-      // Try the SliceCache before discarding the ladder (see GSplats loader).
-      // IN-FLIGHT ADOPTION: a shadow (SlicePrefetcher) pass may be building
-      // this very slice right now. Wait for its store (bounded; rejects on
-      // this update's abort) and restore that, instead of redoing the same
-      // dequant/assembly — measured 49% duplicate work during playback.
-      const shadowStore = isPrefetch
-        ? null
-        : awaitShadowStore(this.sliceCache, this.path, viewState, signal);
-      if (shadowStore) await shadowStore;
-      const restored = restoreLadderSnapshot<LoadedLinesData>(
-        this.sliceCache,
-        this.path,
-        viewState,
-        this.nLods
-      );
-      // Shallow-copy the CONTAINER: the streaming loop below pushes further
-      // levels and must never mutate the cache's payload array (elements
-      // stay shared read-only). Mirrors GSplatsProgressiveLoader.
-      this.loadedLODs = restored ? [...restored.lods] : [];
-      this._restoredOrigin = restored?.origin ?? null;
-      this._loadedLODCount = restored?.depth ?? 0;
-      this._levelsAtPassStart = 0;
-      this._payloadsAtPassStart = 0;
-      this._restoredFullLadderAtPassStart = false;
-      this._resetGeneration++;
-      this.lastViewState = {
-        displayDims: [...viewState.displayDims],
-        slicePosition: [...viewState.slicePosition],
-        tolerance: [...viewState.tolerance],
-        dimensions: viewState.dimensions,
-      };
-      if (restored) {
-        this._initialLoadDone = true;
-        this._lastAllResident = true;
-        // FULL ladder short-circuits; a PREFIX falls through to the loop at
-        // its restored logical depth even when several rungs share one payload.
-        if (restored.depth === this.nLods) {
-          this._restoredFullLadderAtPassStart = true;
-          return finish();
-        }
-      }
-    } else if (this.lastViewState.dimensions !== viewState.dimensions) {
-      // Metadata refresh with an UNCHANGED query determinant (the scene
-      // rebuilds the dimensions objects right after the first data load —
-      // see view-state-equal.ts): adopt the fresh reference so subsequent
-      // compares take the reference-equality fast path instead of
-      // re-deriving the dims projection sig on every pass. Content is
-      // determinant-equal per the check above, so cache keys (which build
-      // from the same determinant) are unaffected.
-      this.lastViewState.dimensions = viewState.dimensions;
-    }
-
-    // Stream under the shared streaming policy (see `streaming-policy.ts`):
-    // `playback` streams cache-resident levels after an empty or restored
-    // prefix while budget remains; `prefetch` deepens toward the
-    // full decoded ladder (abort-safe, stored per level); `refine` stops at the
-    // first cold/slow level. Mirrors GSplatsProgressiveLoader.
-    const pass = classifyStreamingPass(
-      budgetDeadline !== null,
-      isPrefetch,
-      this._ladderDepth !== null
-    );
-    const startLevel = this._loadedLODCount;
-    const residentBytesAtPassStart = ladderResidentBytes(this.ladderResidency());
-    this._levelsAtPassStart = startLevel;
-    this._payloadsAtPassStart = this.loadedLODs.length;
-    this._restoredFullLadderAtPassStart = false;
-
-    // A pinned pass bounds the loop at the pinned rung count; the policy's
-    // `pinned` kind disables the deadline / cold-level brakes.
-    const targetLevels = this._ladderDepth ?? this.nLods;
-    for (let level = startLevel; level < targetLevels; level++) {
-      // A dispose() racing the awaited level below clears `lodLoaders`, so
-      // the next iteration would TypeError on `this.lodLoaders[level]` — a
-      // teardown mis-counted as a real refinement failure (recordFailure +
-      // backoff). Stop streaming instead.
-      if (this._disposed) {
-        break;
-      }
-      // Pass-budget guard: playback only guarantees a level for an empty
-      // ladder; prefetch retains one-level progress after a restore (#2379).
-      if (shouldStopBeforeLevel(pass, level, startLevel, performance.now(), budgetDeadline)) {
-        break;
-      }
-      const t0 = performance.now();
-      const { data: lodData, allResident } = await timeLodStageWithResult(
-        ({ allResident }) => `additive:lines:level:${level}:${allResident ? 'resident' : 'miss'}`,
-        `additive:lines:level:${level}:aborted`,
-        () => this.lodLoaders[level].updateViewWithResidency(viewState, session, signal)
-      );
-      const elapsed = performance.now() - t0;
-
-      this.loadedLODs.push(lodData);
-      this._restoredOrigin = null;
-      this._loadedLODCount++;
-      this._lastAllResident = allResident;
-
-      if (!this._initialLoadDone) {
-        log.verbose(
-          LogEmoji.BROADCAST,
-          Modules.LINES_LOADER,
-          `LOD ${level}/${this.nLods - 1}: ${lodData.segmentCount} segments (${elapsed.toFixed(1)}ms${allResident ? '' : ', miss'})`
-        );
-      }
-
-      // NEVER break out because a level came back empty (#1456). It is a
-      // tempting optimization — this loop used to latch a terminal "empty
-      // ladder" on an empty LOD 0 and stop — but it is wrong here: this loader
-      // is constructed only for ADDITIVE ladders (`createProgressiveLinesLoader`
-      // iterates the `additive_<i>` subgroups), whose levels are DISJOINT
-      // increments of one permutation, not coarse-to-fine resamplings of the
-      // same elements. They are therefore NOT spatially coextensive: LOD 0 is a
-      // small SUBSET of the node (a few thousand vertices under `-b stream:C` /
-      // `--target-ms`, the recommended ladder shape), so a hidden-dimension
-      // slice that none of ITS vertices lands on says nothing whatever about
-      // levels 1..n-1, which may hold plenty of geometry right there. Stopping
-      // here rendered such a slice permanently blank. The same reasoning
-      // forbids inferring anything from a restored cache PREFIX whose LOD 0 is
-      // empty.
-
-      const additionalResidentBytes = Math.max(
-        0,
-        ladderResidentBytes(this.ladderResidency()) - residentBytesAtPassStart
-      );
-      if (
-        shouldStopAfterLevel(
-          pass,
-          level,
-          startLevel,
-          allResident,
-          elapsed,
-          additionalResidentBytes,
-          residencyAllowanceBytes
-        )
-      ) {
-        break;
-      }
-    }
-
-    if (!this._initialLoadDone && startLevel === 0) {
-      this._initialLoadDone = true;
-    }
-
-    const totalSegs = this.loadedLODs.reduce((s, d) => s + d.segmentCount, 0);
-    if (this._loadedLODCount < this.nLods) {
-      log.verbose(
-        LogEmoji.INFO,
-        Modules.LINES_LOADER,
-        `Progressive Lines: ${this._loadedLODCount}/${this.nLods} LODs (${totalSegs} segs) — refining`
-      );
-    } else if (startLevel < this.nLods) {
-      log.verbose(
-        LogEmoji.INFO,
-        Modules.LINES_LOADER,
-        `Progressive Lines: ${this.nLods}/${this.nLods} LODs (${totalSegs} segs) — complete`
-      );
-    }
-
-    this.prefetchNextLOD(viewState, signal);
-
-    // Snapshot into the SliceCache (upgrade-if-longer): full ladders always;
-    // PREFIXES only while a playback budget is active. Mirrors
-    // GSplatsProgressiveLoader.
-    const result = finish();
-
-    // A pass aborted or disposed mid-level must not store: releaseShadows()
-    // has already unpinned this key, so a late pinned store would outlive
-    // playback with nothing left to release it.
-    if (this.tornDown(signal)) return result;
-    if (
-      this._loadedLODCount === this.nLods ||
-      this._frameBudgetMs !== null ||
-      this._ladderDepth !== null
-    ) {
-      storeLadder(this.sliceCache, this.path, viewState, this.loadedLODs, {
-        scan: this._frameBudgetMs !== null,
-        pin: viewState.prefetch === true,
-        ladderDepth: this._loadedLODCount,
-        totalLODCount: this.nLods,
-      });
-    }
-
-    return result;
+    return this.core.updateView(viewState, session, signal, residencyAllowanceBytes);
   }
 
-  /** True once this pass was aborted or the loader disposed. */
-  private tornDown(signal?: AbortSignal): boolean {
-    return signal?.aborted === true || this._disposed;
+  /** Predicted-view warm-up of the coarse rung (`dispatchPredictivePrefetch`). */
+  prefetchChunks(viewState: LinesViewState, signal?: AbortSignal): Promise<void> {
+    return this.core.prefetchChunks(viewState, signal);
   }
 
-  /**
-   * Concatenate loaded LODs, memoized on (resetGeneration, logical LOD count).
-   * An unchanged view state with no new LODs returns the SAME object
-   * reference — safe because the result is never mutated downstream
-   * (worker projection inputs are structured-cloned, not transferred) —
-   * letting the commit pipeline skip no-op re-commits by identity.
-   *
-   * Each fresh result is also stamped with a PREFIX-LINEAGE parent (the
-   * previous same-generation memo) via {@link setPrefixParent}, so the
-   * commit layer can recognise a genuine prefix-extension and take the
-   * append fast path (depth-sorting Phase 4 Stage 2). The parent is null
-   * for the first level of a generation (a view change bumps the reset
-   * generation and resets the logical depth), which is correct — the first
-   * commit extends nothing. Mirrors GSplatsProgressiveLoader.
-   */
-  private concatenateMemoized(session?: UpdateSession): LoadedLinesData {
-    const concatSession = session?.begin('Concatenate LODs');
-    try {
-      if (
-        this._concatCache &&
-        this._concatCache.generation === this._resetGeneration &&
-        this._concatCache.lodCount === this._loadedLODCount
-      ) {
-        return this._concatCache.result;
-      }
-      // Capture the previous SAME-GENERATION memo before overwriting the
-      // cache — that (and only that) is the result this one extends.
-      const prevMemo =
-        this._concatCache &&
-        this._concatCache.generation === this._resetGeneration &&
-        this._concatCache.lodCount < this._loadedLODCount
-          ? this._concatCache.result
-          : null;
-      const result = concatenateLinesData(this.loadedLODs);
-      setPrefixParent(result, prevMemo);
-      if (this._restoredOrigin) setSliceCacheOrigin(result, this._restoredOrigin);
-      // Keep only the cumulative payload, and release the sub-loaders' pooled
-      // buffers that back the decoded rung views. Retaining either copy keeps
-      // roughly the same bytes as `result` and doubles terminal residency.
-      for (let level = 0; level < this._loadedLODCount; level++) {
-        this.lodLoaders[level]?.releaseAccumulator();
-      }
-      this.loadedLODs = [result];
-      this._concatCache = {
-        generation: this._resetGeneration,
-        lodCount: this._loadedLODCount,
-        result,
-      };
-      return result;
-    } finally {
-      concatSession?.end();
-    }
-  }
-
-  private prefetchNextLOD(viewState: LinesViewState, updateSignal?: AbortSignal): void {
-    // Same teardown race as the streaming loop: a dispose() between the
-    // awaited level and this fire-and-forget clears `lodLoaders`, and
-    // indexing it would TypeError before the .catch can swallow anything.
-    if (this._disposed) return;
-    // Playback (frame-budgeted) and pinned-scrub passes skip the lookahead:
-    // the next pass is a different slice, so this slice's next rung is never
-    // read (measured pure waste during playback). Shadow passes carry a frame
-    // budget, so they are covered too. Mirrors GSplatsProgressiveLoader.
-    if (this._frameBudgetMs !== null || this._ladderDepth !== null) return;
-    const nextLevel = this._loadedLODCount;
-    if (nextLevel >= this.nLods) return;
-    this.cancelLookahead();
-    const controller = createLookaheadController(updateSignal);
-    this._lookaheadController = controller;
-    // Fire-and-forget; errors ignored (network failures, aborts).
-    void this.lodLoaders[nextLevel].prefetchChunks(viewState, controller.signal).catch(() => {
-      /* ignore */
-    });
-  }
-
-  private cancelLookahead(): void {
-    this._lookaheadController?.abort();
-    this._lookaheadController = null;
+  /** Predicted-view warm-up over a current → predicted transition. */
+  prefetchChunkBoundary(
+    current: LinesViewState,
+    predicted: LinesViewState,
+    signal?: AbortSignal
+  ): Promise<void> {
+    return this.core.prefetchChunkBoundary(current, predicted, signal);
   }
 
   // ---- LoaderMonitor surface (delegated to ProgressiveMonitorAdapter) ----
-  // Lets `connectLoaderToMonitor` wire the progressive node to the data
-  // monitor so its query/throughput/memory telemetry is reported (aggregated
-  // across LODs, re-pathed to this node) instead of silently dropped.
 
   addEventListener(listener: MonitorEventListener): void {
     this.monitor.addEventListener(listener);
@@ -750,22 +314,11 @@ export class LinesProgressiveLoader implements LinesDataLoader {
 
   getMetrics(): LoaderMetrics {
     const metrics = this.monitor.getMetrics();
-    const concatMemory = this._concatCache ? measureLodBytes([this._concatCache.result]) : 0;
-    return { ...metrics, memoryUsed: metrics.memoryUsed + concatMemory };
+    return { ...metrics, memoryUsed: metrics.memoryUsed + this.core.concatMemoryBytes() };
   }
 
+  /** Clean up all LOD loaders. */
   dispose(): void {
-    this._disposed = true;
-    this.cancelLookahead();
-    for (const loader of this.lodLoaders) {
-      loader.dispose();
-    }
-    this.lodLoaders = [];
-    this.loadedLODs = [];
-    this._restoredOrigin = null;
-    this._loadedLODCount = 0;
-    this._retryFoldedPass = false;
-    this.lastViewState = null;
-    this._concatCache = null;
+    this.core.dispose();
   }
 }

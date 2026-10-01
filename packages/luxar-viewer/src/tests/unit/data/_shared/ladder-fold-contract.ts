@@ -76,8 +76,13 @@ export interface LadderFoldSubject {
  * that only used the public surface could not tell a folded loader from an
  * unfolded one — which is precisely the regression this exists to catch.
  */
+/**
+ * Read a private ladder field. Points, Lines and GSplats keep their ladder
+ * state in a shared `AdditiveLadderCore` (`core`); Mesh still holds its own.
+ */
 function priv<T>(loader: object, field: string): T {
-  return (loader as unknown as Record<string, T>)[field];
+  const owner = (loader as { core?: object }).core ?? loader;
+  return (owner as unknown as Record<string, T>)[field];
 }
 
 async function loadWithStableClock(loadAll: () => Promise<void>): Promise<void> {

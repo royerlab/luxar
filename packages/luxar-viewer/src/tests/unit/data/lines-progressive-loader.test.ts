@@ -33,10 +33,17 @@ import {
   snapshotLodLoadStats,
 } from '../../../data/scene-loader/lod-load-stats';
 
+/** A log message as logged: a string, or the thunk `log.verbose` defers. */
+function messageOf(message: unknown): string {
+  return typeof message === 'function' ? (message as () => string)() : String(message);
+}
+
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
   updateViewWithResidency: ReturnType<typeof vi.fn>;
   prefetchChunks: ReturnType<typeof vi.fn>;
+  prefetchChunkBoundary: ReturnType<typeof vi.fn>;
+  ensureInitialized: ReturnType<typeof vi.fn>;
   releaseAccumulator: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   getMetrics: ReturnType<typeof vi.fn>;
@@ -146,6 +153,8 @@ function makeSubLoader(
     updateView,
     updateViewWithResidency,
     prefetchChunks: vi.fn().mockResolvedValue(undefined),
+    prefetchChunkBoundary: vi.fn().mockResolvedValue(undefined),
+    ensureInitialized: vi.fn().mockResolvedValue(undefined),
     releaseAccumulator: vi.fn(),
     dispose: vi.fn(),
     getMetrics: vi.fn(() => stubMetrics(metrics)),
@@ -327,9 +336,9 @@ describe('LinesProgressiveLoader', () => {
       const result = await loader.loadLines(baseViewState);
       const retained = (
         loader as unknown as {
-          loadedLODs: LoadedLinesData[];
+          core: { loadedLODs: LoadedLinesData[] };
         }
-      ).loadedLODs;
+      ).core.loadedLODs;
 
       expect(loader.loadedLODCount).toBe(3);
       expect(retained).toHaveLength(1);
@@ -689,9 +698,9 @@ describe('LinesProgressiveLoader', () => {
 
       const retained = (
         loader as unknown as {
-          loadedLODs: LoadedLinesData[];
+          core: { loadedLODs: LoadedLinesData[] };
         }
-      ).loadedLODs;
+      ).core.loadedLODs;
       expect(retained).toHaveLength(1);
 
       // A later pass starts from the completed folded ladder and appends no
@@ -2161,7 +2170,7 @@ describe('LinesProgressiveLoader — per-pass logging', () => {
     await l.updateView(baseViewState);
     expect(info).not.toHaveBeenCalled();
     expect(
-      verbose.mock.calls.some((call) => String(call.at(-1)).includes('Progressive Lines'))
+      verbose.mock.calls.some((call) => messageOf(call[2]).includes('Progressive Lines'))
     ).toBe(true);
     info.mockRestore();
     verbose.mockRestore();

@@ -29,10 +29,17 @@ import {
   snapshotLodLoadStats,
 } from '../../../data/scene-loader/lod-load-stats';
 
+/** A log message as logged: a string, or the thunk `log.verbose` defers. */
+function messageOf(message: unknown): string {
+  return typeof message === 'function' ? (message as () => string)() : String(message);
+}
+
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
   updateViewWithResidency: ReturnType<typeof vi.fn>;
   prefetchChunks: ReturnType<typeof vi.fn>;
+  prefetchChunkBoundary: ReturnType<typeof vi.fn>;
+  ensureInitialized: ReturnType<typeof vi.fn>;
   releaseAccumulator: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   getMetrics: ReturnType<typeof vi.fn>;
@@ -144,6 +151,8 @@ function makeSubLoader(
     updateView,
     updateViewWithResidency,
     prefetchChunks: vi.fn().mockResolvedValue(undefined),
+    prefetchChunkBoundary: vi.fn().mockResolvedValue(undefined),
+    ensureInitialized: vi.fn().mockResolvedValue(undefined),
     releaseAccumulator: vi.fn(),
     dispose: vi.fn(),
     getMetrics: vi.fn(() => stubMetrics(metrics)),
@@ -357,9 +366,9 @@ describe('PointsProgressiveLoader', () => {
       const result = await loader.loadPoints(baseViewState);
       const retained = (
         loader as unknown as {
-          loadedLODs: LoadedPointsData[];
+          core: { loadedLODs: LoadedPointsData[] };
         }
-      ).loadedLODs;
+      ).core.loadedLODs;
 
       expect(loader.loadedLODCount).toBe(3);
       expect(retained).toEqual([result]);
@@ -2467,7 +2476,7 @@ describe('PointsProgressiveLoader — per-pass logging', () => {
     await l.updateView(baseViewState);
     expect(info).not.toHaveBeenCalled();
     expect(
-      verbose.mock.calls.some((call) => String(call.at(-1)).includes('Progressive Points'))
+      verbose.mock.calls.some((call) => messageOf(call[2]).includes('Progressive Points'))
     ).toBe(true);
     info.mockRestore();
     verbose.mockRestore();
