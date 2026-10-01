@@ -23,23 +23,40 @@ Mesh cannot double-buffer because `geometry.index` is _bound_ state: no uniform 
 ## File Map
 
 ```
+depth-sort-coordinator.ts (parent dir) — PUBLIC entry point: configureDepthSort,
+│                          noteDepthSortCommit, blending-mode switch, node release,
+│                          glass registry, disposeDepthSort; re-exports the rest
 depth-sort-coordinator/
+├── state.ts             — The ONE shared state object (`shared`: worker handle, init
+│                          bookkeeping, wired callbacks, capture suppression, sync
+│                          budget) + `nodeStates` + small shared helpers
+│                          (live blending mode, held-draw release, pose clear)
+├── worker-lifecycle.ts  — SortWorker spawn + guarded init, starved/dead
+│                          classification, bounded retry + self-wake, status,
+│                          post-retry re-registration, warm-up
+├── ordering-apply.ts    — Slot → material sync, draw-acknowledgement hook, the
+│                          commit-time synchronous first sort, resolve helpers
+├── scheduler.ts         — scheduleSort (single in flight, resolve + apply), the
+│                          chunked apply pump, the per-frame camera-motion pass
+├── capture.ts           — resortForCapture / isCaptureQuiescent (offline drain)
 ├── render-order.ts      — Cross-node renderOrder assignment: BSP partition traversal +
 │                          centroid fallback, ONE global scale
 └── triangle-ordering.ts — The INDEXED (mesh) apply: face centroids + atomic index
                            permutation + the draw-acknowledgement lifecycle
 ```
 
-The main facade `rendering/depth-sort-coordinator.ts` owns:
+The coordinator as a whole owns:
 
-- SortWorker spawn + initialization + disposal
-- Per-node **generation** tracking (bumped on every non-noop commit)
-- Single-in-flight-per-node sort rule + queue-exactly-one re-sort
-- Ordering application: `writeSortedIndexOrdering` (element-storage) for the instanced types, `writeSortedTriangleOrdering` (`triangle-ordering.ts`) for mesh
-- Per-frame camera-motion re-sort scheduler (angle/translation thresholds)
-- Offline-capture entry point (`resortForCapture` / `isCaptureQuiescent`) — pose-fresh sort + drain to quiescence when the rAF loop is stopped
+- SortWorker spawn + initialization + disposal (`worker-lifecycle.ts`)
+- Per-node **generation** tracking (bumped on every non-noop commit; the public file)
+- Single-in-flight-per-node sort rule + queue-exactly-one re-sort (`scheduler.ts`)
+- Ordering application: `writeSortedIndexOrdering` (element-storage) for the instanced types, `writeSortedTriangleOrdering` (`triangle-ordering.ts`) for mesh (`scheduler.ts`; the commit-time synchronous sort in `ordering-apply.ts`)
+- Per-frame camera-motion re-sort scheduler (angle/translation thresholds; `scheduler.ts`)
+- Offline-capture entry point (`resortForCapture` / `isCaptureQuiescent`; `capture.ts`) — pose-fresh sort + drain to quiescence for an offline capture
 - Blending-mode switch hook (TO sorted: reprocess; AWAY: release)
 - Node release (disposal / LOD demotion)
+
+The state is still module-scoped: one `shared` object per page, so two viewer apps on one page share it and the last `configureDepthSort` wins (see "Module-Scoped Live Authority"). Gathering every mutable binding into that one object is the first step toward a per-app instance.
 
 The submodule `render-order.ts` owns:
 
@@ -58,13 +75,13 @@ The submodule `triangle-ordering.ts` owns:
 
 ### Module-Scoped Live Authority
 
-Both files are **module-scoped singletons** (the `element-texture-layout.ts` pattern):
+The coordinator modules are **module-scoped singletons** (the `element-texture-layout.ts` pattern):
 
 - Commit paths (all four geometry types) and app lifecycle are far apart
 - All callers talk to this module via exported functions
 - No coordinator object is threaded through constructors
 
-**Module state** (depth-sort-coordinator.ts):
+**Module state** (fields of `shared` in `state.ts`, plus `nodeStates` there and `nextGeneration` in `depth-sort-coordinator.ts`):
 
 - `worker` — the single persistent SortWorker (spawned at app init by `warmUpDepthSortWorker()`, terminated on app dispose)
 - `api` — Comlink-wrapped `SortWorkerAPI` (registerNode, sort, releaseNode, releaseAllNodes)

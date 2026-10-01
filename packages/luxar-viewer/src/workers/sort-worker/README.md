@@ -76,7 +76,7 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 
 ### Spawn (Main Thread → Worker)
 
-1. Main thread calls `ensureWorker()` (depth-sort-coordinator.ts) — at APP INIT via `warmUpDepthSortWorker()`, not on the first order-dependent commit. That commit arrives while the loader saturates the main thread, which is where the init deadline below used to be missed
+1. Main thread calls `ensureWorker()` (`depth-sort-coordinator/worker-lifecycle.ts`) — at APP INIT via `warmUpDepthSortWorker()`, not on the first order-dependent commit. That commit arrives while the loader saturates the main thread, which is where the init deadline below used to be missed
 2. Constructs `new SortWorker()` (Vite `?worker` import) or `new Worker(sortWorkerUrlOverride)` (embedder override)
 3. Wraps via Comlink: `api = wrap<SortWorkerAPI>(worker)`
 4. Calls `api.initialize(sortWorkerWasmPathOverride)` through the shared `worker-pool/lifecycle/init-with-guard.ts` — `config.depthSort.workerInitTimeoutMs` deadline + `onerror`/`onmessageerror` guard (see the failure taxonomy in the depth-sort-coordinator README)
@@ -172,7 +172,7 @@ Clears `ctx.nodes.clear()`. Called on dataset switch / app teardown (main thread
 - **Unique across lifetimes**, not just within one: `releaseDepthSortNode` deletes the node state, and a re-promotion recommit would otherwise restart the counter — letting a stale in-flight sort from the previous life pass the guard and apply a CORRUPT permutation over the new (differently-sized) commit
 - Enforced at **two checkpoints**:
   1. **Worker side** (here, `sortNode` line 87): returns `null` when `node.generation !== params.generation`
-  2. **Main thread** (depth-sort-coordinator.ts, `scheduleSort`'s resolve handler): applies the ordering only when `result.generation === current.generation` AND `hasCommittedData(mesh)` (LOD demotion signal)
+  2. **Main thread** (`depth-sort-coordinator/scheduler.ts`, `scheduleSort`'s resolve handler): applies the ordering only when `result.generation === current.generation` AND `hasCommittedData(mesh)` (LOD demotion signal)
 
 **Why the double-check?** The worker check catches a re-registration that raced the RPC (new centers transferred mid-flight). The main-thread check catches a commit or LOD demotion that raced the RPC's return.
 
@@ -202,18 +202,18 @@ The worker uses the same `wasm/` module as the data workers:
 }
 ```
 
-**Used by** `depth-sort-coordinator.ts::api` (Comlink-wrapped Remote<SortWorkerAPI>).
+**Used by** `shared.api` in `depth-sort-coordinator/state.ts` (Comlink-wrapped Remote<SortWorkerAPI>).
 
 ## Integration Points
 
-### Main Thread (depth-sort-coordinator.ts)
+### Main Thread (depth-sort-coordinator.ts and its `depth-sort-coordinator/` modules)
 
 (Line numbers deliberately omitted — the previous ones had drifted by ~70 lines and quietly misled.)
 
 - **Warm up**: `warmUpDepthSortWorker()` — fire-and-forget `ensureWorker()` at app init
-- **Spawn**: `ensureWorker()` — constructs worker, wraps via Comlink, calls `initialize()` under the shared init guard
+- **Spawn**: `ensureWorker()` (`worker-lifecycle.ts`) — constructs worker, wraps via Comlink, calls `initialize()` under the shared init guard
 - **Register**: `noteDepthSortCommit()` — transfers centers, calls `api.registerNode()`
-- **Sort**: `scheduleSort()` — calls `withTimeout('depth-sort', api.sort(...), SORT_RPC_TIMEOUT_MS)`
+- **Sort**: `scheduleSort()` (`scheduler.ts`) — calls `withTimeout('depth-sort', api.sort(...), SORT_RPC_TIMEOUT_MS)`
 - **Release node**: `releaseDepthSortNode()` — calls `releaseWorkerNode()` → `api.releaseNode()` (fire-and-forget)
 - **Release all**: `releaseAllDepthSortNodes()` — calls `api.releaseAllNodes()` (fire-and-forget)
 - **Terminate**: `disposeDepthSort()` — calls `worker.terminate()`
@@ -224,7 +224,7 @@ The worker uses the same `wasm/` module as the data workers:
 - **Points**: `data/scene-loader/commit/commit-points-geometry.ts` → `noteDepthSortCommit(mesh, () => freshCopy(data.positions), count)`
 - **Lines**: `data/scene-loader/commit/commit-lines-geometry.ts` → `noteDepthSortCommit(mesh, () => computeSegmentMidpoints(data), count)`
 
-### Per-Frame Scheduler (depth-sort-coordinator.ts)
+### Per-Frame Scheduler (depth-sort-coordinator/scheduler.ts)
 
 `evaluateDepthSortPerFrame()` — registered as the `'depth-sort-scheduler'` per-frame callback:
 
