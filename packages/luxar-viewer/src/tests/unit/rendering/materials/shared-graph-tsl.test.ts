@@ -122,6 +122,56 @@ describe('shared TSL graph forwarding (gsplat)', () => {
     expect(draw(graph, late).uOpacity).toBe(0.42);
   });
 
+  it('does not retain a disposed material texture before or after a draw', () => {
+    const firstTexture = floatTexture(3072);
+    const first = new GSplatTSLMaterial({});
+    first.updateSplatTexture(firstTexture);
+    const graph = graphOf(first);
+    const standIn = graph.inputs.uSplatTex.value as THREE.DataTexture;
+    expect(standIn).not.toBe(firstTexture);
+    expect(standIn).toBeInstanceOf(THREE.DataTexture);
+    expect(standIn.type).toBe(firstTexture.type);
+    expect(standIn.format).toBe(firstTexture.format);
+    expect(standIn.image).toMatchObject({ width: 1, height: 1 });
+    expect(standIn.image.data).toBeInstanceOf(Float32Array);
+
+    expect(draw(graph, first).uSplatTex).toBe(firstTexture);
+    first.dispose();
+    firstTexture.dispose();
+    expect(graph.inputs.uSplatTex.value).toBe(standIn);
+
+    const secondTexture = floatTexture(3072);
+    const second = new GSplatTSLMaterial({});
+    second.updateSplatTexture(secondTexture);
+    expect(graphOf(second)).toBe(graph);
+    expect(draw(graph, second).uSplatTex).toBe(secondTexture);
+    second.dispose();
+    expect(graph.inputs.uSplatTex.value).toBe(standIn);
+  });
+
+  it('releases an undrawn texture and leaves the latest material bound', () => {
+    const firstTexture = floatTexture(2048);
+    const first = new GSplatTSLMaterial({});
+    first.updateSplatTexture(firstTexture);
+    const graph = graphOf(first);
+    const standIn = graph.inputs.uSplatTex.value;
+    first.dispose();
+    expect(graph.inputs.uSplatTex.value).toBe(standIn);
+
+    const secondTexture = floatTexture(2048);
+    const second = new GSplatTSLMaterial({});
+    second.updateSplatTexture(secondTexture);
+    expect(draw(graph, second).uSplatTex).toBe(secondTexture);
+    const thirdTexture = floatTexture(2048);
+    const third = new GSplatTSLMaterial({});
+    third.updateSplatTexture(thirdTexture);
+    expect(draw(graph, third).uSplatTex).toBe(thirdTexture);
+    second.dispose();
+    expect(graph.inputs.uSplatTex.value).toBe(thirdTexture);
+    third.dispose();
+    expect(graph.inputs.uSplatTex.value).toBe(standIn);
+  });
+
   it('a drawn material that is not registered leaves the forwarded value alone', () => {
     const a = new GSplatTSLMaterial({ opacity: 0.6 });
     const graph = graphOf(a);

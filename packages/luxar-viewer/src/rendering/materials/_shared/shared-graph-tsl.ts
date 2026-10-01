@@ -43,7 +43,7 @@
  * @module rendering/materials/_shared/shared-graph-tsl
  */
 
-import type * as THREE from 'three';
+import * as THREE from 'three';
 import { texture, uniform } from 'three/tsl';
 import { NodeMaterial, NodeUpdateType } from 'three/webgpu';
 import type { TSLNode } from './tsl-helpers';
@@ -67,6 +67,10 @@ interface FrameLike {
 
 /** Drawn material → its own leaf set (the forwarding source). */
 const leavesByMaterial = new WeakMap<object, Record<string, TSLNode | undefined>>();
+const registeredMaterials = new WeakSet<NodeMaterial>();
+const forwardedInputsByMaterial = new WeakMap<NodeMaterial, Set<TSLNode>>();
+const ownerByInput = new WeakMap<TSLNode, string>();
+const standInByInput = new WeakMap<TSLNode, unknown>();
 /** Configuration key → shared graph. Bounded by the configuration space. */
 const graphs = new Map<string, SharedTSLGraph>();
 
@@ -112,6 +116,25 @@ function cloneValue(value: unknown): unknown {
   return value;
 }
 
+/** A small, independent image with the same sample type as the real texture. */
+function standInTexture(source: THREE.Texture): THREE.Texture {
+  let standIn: THREE.Texture;
+  if (source instanceof THREE.DepthTexture) {
+    standIn = new THREE.DepthTexture(1, 1, source.type);
+  } else if (source instanceof THREE.DataTexture) {
+    const pixels = source.image.data;
+    const ArrayType = pixels?.constructor as Uint8ArrayConstructor | undefined;
+    const data = ArrayType ? new ArrayType(4) : new Uint8Array(4);
+    standIn = new THREE.DataTexture(data, 1, 1, source.format as THREE.PixelFormat, source.type);
+  } else {
+    standIn = new THREE.Texture();
+  }
+  standIn.type = source.type;
+  standIn.format = source.format;
+  standIn.colorSpace = source.colorSpace;
+  return standIn;
+}
+
 /**
  * Forwarding twin of one leaf: same type, and before every draw it takes the
  * value of the drawn material's same-named leaf. A material with no
@@ -125,15 +148,28 @@ function cloneValue(value: unknown): unknown {
 function forwardingLeaf(name: string, template: TSLNode): TSLNode {
   // `uniform` is typed per value kind; the leaf's own value picks the kind.
   const makeUniform = uniform as (value: unknown, type?: string | null) => TSLNode;
+  const standIn = isTextureLeaf(template)
+    ? standInTexture(template.value as THREE.Texture)
+    : cloneValue(template.value);
   const node: TSLNode = isTextureLeaf(template)
-    ? texture(template.value as THREE.Texture)
-    : makeUniform(cloneValue(template.value), (template as { nodeType?: string | null }).nodeType);
+    ? texture(standIn as THREE.Texture)
+    : makeUniform(standIn, (template as { nodeType?: string | null }).nodeType);
+  standInByInput.set(node, standIn);
   node.updateBeforeType = NodeUpdateType.OBJECT;
   node.updateBefore = (frame: FrameLike): undefined => {
     const material = frame.material;
     if (!material) return;
     const source = leavesByMaterial.get(material)?.[name];
-    if (source) node.value = source.value;
+    if (source) {
+      node.value = source.value;
+      ownerByInput.set(node, (material as NodeMaterial).uuid);
+      let forwarded = forwardedInputsByMaterial.get(material as NodeMaterial);
+      if (!forwarded) {
+        forwarded = new Set<TSLNode>();
+        forwardedInputsByMaterial.set(material as NodeMaterial, forwarded);
+      }
+      forwarded.add(node);
+    }
   };
   return node;
 }
@@ -180,6 +216,19 @@ export function applySharedTSLGraph<T extends TSLLeafSet>(
     graphs.set(fullKey, graph);
   }
   leavesByMaterial.set(material, leaves as Record<string, TSLNode | undefined>);
+  if (!registeredMaterials.has(material)) {
+    registeredMaterials.add(material);
+    material.addEventListener('dispose', () => {
+      leavesByMaterial.delete(material);
+      for (const input of forwardedInputsByMaterial.get(material) ?? []) {
+        if (ownerByInput.get(input) === material.uuid) {
+          input.value = standInByInput.get(input);
+          ownerByInput.delete(input);
+        }
+      }
+      forwardedInputsByMaterial.delete(material);
+    });
+  }
   material.vertexNode = graph.vertexNode;
   material.colorNode = graph.colorNode;
   return graph;
