@@ -74,6 +74,7 @@ import { runDisposePipeline } from './app/lifecycle/dispose-pipeline';
 import { shouldShowBrowser as shouldShowBrowserImpl } from './app/dataset/should-show-browser';
 import { showDatasetBrowser as showDatasetBrowserImpl } from './app/dataset/show-browser';
 import { loadDataset as loadDatasetImpl } from './app/dataset/load-dataset';
+import { datasetLoadErrorMessage } from './app/dataset/dataset-error-message';
 import { dataSourceDocumentTitle, setDocumentTitle } from './document-title';
 import { installDebugInterface } from './app/debug/debug-interface';
 import {
@@ -228,16 +229,21 @@ export class LuxarApp {
    * even during long load operations.
    *
    * @param options - Init-time options. URL parameters are not consulted
-   *                  here — main.ts is responsible for reading them and
-   *                  passing the result.
+   *                  here — the standalone bootstrap (`core/bootstrap.ts`)
+   *                  reads them and passes the result.
    *
-   * @returns Promise that resolves when initialization is complete and
-   *          dataset loading has started (may still be loading in background).
-   *          Does NOT wait for all chunks to load.
+   * @returns Promise that resolves once the subsystems are wired and the first
+   *          dataset has loaded (its first slice committed) or failed, or the
+   *          dataset browser has opened. Progressive refinement keeps
+   *          streaming afterwards.
    *
    * @throws {Error} If WebGL is not supported by browser
-   * @throws {Error} If scene manager initialization fails
-   * @throws {Error} Dataset loading errors are caught and displayed to user
+   * @throws {Error} If a subsystem (scene manager, input, panels, …) fails to
+   *                 initialize — the partial app is disposed first.
+   *
+   * A failed first DATASET load does not throw: the app stays initialized,
+   * emits `dataset-error`, and shows a persistent error dialog whose
+   * dataset-browser hint works (see {@link loadInitialDataset}).
    *
    * @example
    * ```typescript
@@ -350,7 +356,7 @@ export class LuxarApp {
           );
         }
       } else {
-        await this.loadDataset(result.sceneSrc);
+        await this.loadInitialDataset(result.sceneSrc);
       }
 
       this.setupDisposeOnUnload();
@@ -418,6 +424,23 @@ export class LuxarApp {
         this.datasetBrowser = undefined;
       },
     });
+  }
+
+  /**
+   * The first dataset load. A DATASET failure (a `?src` typo, a 404, a refused
+   * format version) leaves the viewer running: {@link loadDataset} has already
+   * emitted `dataset-error`, the persistent dialog names the failure and
+   * points at the dataset browser, and that browser works because the app is
+   * alive. Only a subsystem failure — anything init() throws outside this call
+   * — still disposes the app.
+   */
+  private async loadInitialDataset(src: string): Promise<void> {
+    try {
+      await this.loadDataset(src);
+    } catch (error) {
+      log.error(Modules.APP, `Initial dataset load failed: ${getErrorMessage(error)}`, error);
+      notifier.error(datasetLoadErrorMessage(error), { persistent: true });
+    }
   }
 
   /**

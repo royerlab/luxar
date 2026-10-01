@@ -775,19 +775,7 @@ describe('LuxarApp', () => {
       expect(app.initialized).toBe(false);
     });
 
-    it('propagates loadSceneData errors out of init() so the caller can handle them', async () => {
-      mockFetch.mockResolvedValue({ ok: true });
-      mockSceneManager.loadSceneData.mockRejectedValue(new Error('Load failed'));
-
-      // Contract: init() does NOT swallow loadSceneData failures. The previous
-      // name ("should continue if data loading fails") contradicted the
-      // assertion — the test always asserted the throw.
-      await expect(
-        app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })
-      ).rejects.toThrow('Load failed');
-    });
-
-    it.fails('keeps the viewer alive when the first dataset fails to load', async () => {
+    it('keeps the viewer alive when the first dataset fails to load', async () => {
       // A `?src` typo must not leave a dead page: the error dialog advertises
       // the dataset browser, so the app (and its browser shortcut) has to
       // survive the failed load. Subsystem failures still dispose (below).
@@ -1308,11 +1296,15 @@ describe('LuxarApp', () => {
 
     it('removes the early browser listener and clears initializing state when init fails', async () => {
       mockFetch.mockResolvedValue({ ok: true });
-      mockSceneManager.loadSceneData.mockRejectedValueOnce(new Error('initial load failed'));
+      // A wiring failure AFTER routing (the embedder hooks subscribe to the
+      // controls' change stream) — a dataset failure no longer fails init().
+      mockSceneManager.controls.addEventListener.mockImplementation((type: string) => {
+        if (type === 'change') throw new Error('initial wiring failed');
+      });
 
       await expect(
         app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })
-      ).rejects.toThrow('initial load failed');
+      ).rejects.toThrow('initial wiring failed');
 
       const browserRegistration = mockAddEventListener.mock.calls.find(
         (call) => call[0] === OPEN_DATASET_BROWSER_EVENT

@@ -171,7 +171,7 @@ class LuxarApp {
 - **Animation First**: Start rendering loop before loading data for immediate visual feedback
 - **Serialized Dataset Switches**: Programmatic switches and built-in browser selections share one in-flight guard; the browser cannot reopen until the active teardown+reload finishes
 - **Error Isolation**: Component failures don't prevent other systems from initializing
-- **Progressive Enhancement**: Core 3D functionality works even if data loading fails
+- **A Bad Dataset Is Not a Dead Viewer**: a failed first dataset load leaves the app initialized — it emits `dataset-error` and shows a persistent dialog whose dataset-browser hint (`O`) works. Only a subsystem failure (scene manager, input, panels) makes `init()` dispose the partial app and reject
 
 ### Disposal and Resource Management
 

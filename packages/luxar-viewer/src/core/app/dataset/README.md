@@ -22,6 +22,7 @@ dataset/
 ├── should-show-browser.ts    # Sync classify + async zarr-marker HEAD probe
 ├── show-browser.ts           # Open the DatasetBrowser modal + wire callbacks
 ├── browser-shortcut.ts       # `luxar-open-dataset-browser` window-event listener
+├── dataset-error-message.ts  # User-facing text for a failed dataset load
 └── load-dataset.ts           # Scene load + scene-dependent UI init sequence
 ```
 
