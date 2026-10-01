@@ -48,7 +48,7 @@ describe('PerfCounters', () => {
     expect(c.records('other')).toEqual([]);
   });
 
-  it('reset zeroes values and drops records but keeps slots valid', () => {
+  it('reset zeroes counters and drops records but keeps slots valid', () => {
     const c = new PerfCounters();
     const s = c.slot('s');
     c.add(s, 2);
@@ -60,7 +60,7 @@ describe('PerfCounters', () => {
     expect(c.get('s')).toBe(1);
   });
 
-  it.fails('reset keeps gauges: a gauge describes current state, not a window', () => {
+  it('reset keeps gauges: a gauge describes current state, not a window', () => {
     // Owners republish a gauge only when it CHANGES (the slice cache's
     // pinned-bytes gauge does), so zeroing it would make a gated reading
     // report 0 until the next change.

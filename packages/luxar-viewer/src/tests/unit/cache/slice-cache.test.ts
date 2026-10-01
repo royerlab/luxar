@@ -294,8 +294,12 @@ describe('SliceCache pinned perf gauges', () => {
   });
 
   it('does not count a pin request for an oversized (rejected) entry', () => {
-    perfCounters.reset();
     const c = new SliceCache({ maxSize: 100 });
+    // Gauges survive perfCounters.reset() (they describe current state), so
+    // publish this cache's empty state first rather than inherit the last
+    // test's cache.
+    c.clear();
+    expect(pinned()).toEqual([0, 0]);
     c.set(SliceCache.makeKey('/n', 'big'), entry(500), { pin: true });
     expect(pinned()).toEqual([0, 0]);
   });

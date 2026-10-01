@@ -20,6 +20,12 @@
  * appends a structured record to a bounded per-kind ring (for per-tick
  * traces such as playback). Nothing here throws into the caller.
  *
+ * `reset()` starts a new measurement window: counters, high-water marks and
+ * records go back to empty, but a GAUGE keeps its value. A gauge describes
+ * current state (bytes pinned right now), and its owners republish it only
+ * when it changes, so zeroing it would make the next reading lie until then.
+ * A slot becomes a gauge the first time `gauge()` writes it.
+ *
  * Read via `__luxarDebug.getPerf().counters` (a flat `name -> number` map),
  * `__luxarDebug.getPerfRecords(kind)`, and reset via
  * `__luxarDebug.resetPerfCounters()`.
@@ -37,6 +43,8 @@ export class PerfCounters {
   private readonly names: string[] = [];
   private readonly index = new Map<string, PerfCounterSlot>();
   private values = new Float64Array(64);
+  /** 1 for a slot `gauge()` has written (kept across `reset()`), else 0. */
+  private gauges = new Uint8Array(64);
   private readonly rings = new Map<string, unknown[]>();
 
   /** Resolve (registering on first use) the slot for `name`. */
@@ -50,6 +58,9 @@ export class PerfCounters {
       const grown = new Float64Array(this.values.length * 2);
       grown.set(this.values);
       this.values = grown;
+      const grownGauges = new Uint8Array(grown.length);
+      grownGauges.set(this.gauges);
+      this.gauges = grownGauges;
     }
     return slot;
   }
@@ -64,9 +75,10 @@ export class PerfCounters {
     if (v > this.values[slot]) this.values[slot] = v;
   }
 
-  /** Overwrite a gauge with its current value. */
+  /** Overwrite a gauge with its current value (survives {@link reset}). */
   gauge(slot: PerfCounterSlot, v: number): void {
     this.values[slot] = v;
+    this.gauges[slot] = 1;
   }
 
   /** Convenience for cold paths: add to a counter by name. */
@@ -103,9 +115,14 @@ export class PerfCounters {
     return out;
   }
 
-  /** Zero every counter and drop every record. Slots stay valid. */
+  /**
+   * Start a new window: zero every counter and high-water mark and drop every
+   * record. Gauges keep their current value. Slots stay valid.
+   */
   reset(): void {
-    this.values.fill(0);
+    for (let i = 0; i < this.names.length; i++) {
+      if (this.gauges[i] === 0) this.values[i] = 0;
+    }
     this.rings.clear();
   }
 }

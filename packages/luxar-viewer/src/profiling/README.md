@@ -51,7 +51,10 @@ store per event (`perfCounters.add(S, n)`); `max` keeps a high-water mark and
 
 Read them through `__luxarDebug.getPerf().counters` (a flat `name -> number`
 map, available from bootstrap on), `__luxarDebug.getPerfRecords(kind)`, and
-reset with `__luxarDebug.resetPerfCounters()`. Counters are the base for every
+reset with `__luxarDebug.resetPerfCounters()`. A reset starts a new measurement
+window — counters, high-water marks and records clear — but a gauge keeps its
+value: it describes current state, and its owner republishes it only on change.
+Counters are the base for every
 gated perf comparison, so a counter must exist on both the base and the
 candidate build before a commit can be judged on it.
 
