@@ -3388,6 +3388,61 @@ describe('LODGroupRegistry — lazy children', () => {
     expect(children[1].failed).not.toBe(true);
   });
 
+  it.fails('the failure cooldown is wall-clock time, not a frame count (#2944 A6)', () => {
+    const ensureLoaded = vi.fn();
+    const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
+    children[1].failed = true;
+    let t = 0;
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, undefined, undefined, () => t);
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+
+    reg.evaluatePerFrame(); // observes the failure: the cooldown starts
+    t = 1000;
+    reg.evaluatePerFrame();
+    expect(ensureLoaded).not.toHaveBeenCalled(); // still cooling
+    // ~2 s later, however few frames ran in between (a 30 Hz display, a
+    // throttled tab), the next frame retries.
+    t = 2100;
+    reg.evaluatePerFrame();
+    expect(ensureLoaded).toHaveBeenCalledTimes(1);
+  });
+
+  it.fails('keeps the loop ticking through the failure cooldown so a parked camera retries (#2944 A6)', () => {
+    // An on-demand loop: a frame runs only when the registry (or someone)
+    // asks for a tick. Nothing else moves here, so if the registry stops
+    // asking while the level cools, the retry never happens.
+    const ensureLoaded = vi.fn();
+    const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
+    children[1].failed = true;
+    let t = 0;
+    let tickRequested = true;
+    const reg = new LODGroupRegistry({
+      getCamera: () => {
+        const camera = new THREE.Camera();
+        camera.matrixWorldInverse.identity();
+        camera.projectionMatrix.identity();
+        return camera;
+      },
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      now: () => t,
+      requestTick: () => {
+        tickRequested = true;
+      },
+    });
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+
+    for (let frame = 0; frame < 200 && ensureLoaded.mock.calls.length === 0; frame++) {
+      t += 1000 / 30; // 30 Hz display
+      if (!tickRequested) continue; // the loop idles: no frame runs
+      tickRequested = false;
+      reg.evaluatePerFrame();
+    }
+    expect(ensureLoaded).toHaveBeenCalledTimes(1);
+  });
+
   it('pauses automatic lazy loads during an archive fault and resumes on the next frame', () => {
     const ensureLoaded = vi.fn();
     const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
