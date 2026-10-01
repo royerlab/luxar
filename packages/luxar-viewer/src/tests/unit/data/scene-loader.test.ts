@@ -1766,6 +1766,180 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('updateView — the inter-pass frame yield (A8)', () => {
+    // Between two serialized passes the lock stays held across one frame
+    // (`scheduleFrame`), with no pass in flight. A view arriving in that window
+    // must win over the state queued before it, and must not arm the B5 hold
+    // timer against the finished pass's dead controller.
+    let frames: Array<() => void>;
+
+    beforeEach(() => {
+      frames = [];
+      vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+        frames.push(() => callback(0));
+        return frames.length;
+      });
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    });
+
+    const view = (slice: number) => ({
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, slice],
+      tolerance: [0, 0, 0, 0],
+    });
+
+    /** Fire every queued frame, letting each one's continuation settle. */
+    async function pumpFrames(): Promise<void> {
+      for (let i = 0; i < 50 && frames.length > 0; i++) {
+        frames.shift()!();
+        await vi.advanceTimersByTimeAsync(0);
+      }
+    }
+
+    it.fails('a view arriving during the yield runs instead of the older queued state', async () => {
+      let now = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => now);
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      now = 10_000;
+      const calls: Array<{ slice: number; signal?: AbortSignal }> = [];
+      (sceneLoader as unknown as Record<string, Map<string, unknown>>).gsplatLoaders.set('/node', {
+        loadGSplats: vi.fn(),
+        updateView: vi.fn(
+          (vs: { slicePosition: number[] }, _session: unknown, signal?: AbortSignal) => {
+            calls.push({ slice: vs.slicePosition[3], signal });
+            return new Promise<null>((_resolve, reject) => {
+              signal?.addEventListener('abort', () =>
+                reject(new DOMException('Superseded', 'AbortError'))
+              );
+            });
+          }
+        ),
+        dispose: vi.fn(),
+      });
+
+      void sceneLoader.updateView(view(1));
+      await vi.advanceTimersByTimeAsync(0);
+      // Inside the drag interval: the newer view aborts pass 1 outright.
+      now = 10_050;
+      void sceneLoader.updateView(view(2));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls[0].signal?.aborted).toBe(true);
+      // Pass 1 ended; view 2 waits for the frame the lock is held across.
+      expect(frames).toHaveLength(1);
+
+      // A view lands in that window, when the finished pass would read as owed
+      // a commit (its start is 200 ms old, nothing committed in the chain).
+      now = 10_200;
+      void sceneLoader.updateView(view(3));
+      await vi.advanceTimersByTimeAsync(0);
+      frames.shift()!();
+      await vi.advanceTimersByTimeAsync(0);
+      // The newest view runs; the superseded view 2 never starts a pass.
+      expect(calls.map((call) => call.slice)).toEqual([1, 3]);
+
+      // The pass now in flight is held for its commit by a newer view, and the
+      // hold cap still applies to it: the timer belongs to THIS pass.
+      now = 10_600;
+      void sceneLoader.updateView(view(4));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls[1].signal?.aborted).toBe(false);
+      now = 10_200 + DRAG_COMMIT_MAX_HOLD_MS + 10;
+      await vi.advanceTimersByTimeAsync(DRAG_COMMIT_MAX_HOLD_MS);
+      await pumpFrames();
+      expect(calls[1].signal?.aborted).toBe(true);
+      expect(calls.map((call) => call.slice)).toEqual([1, 3, 4]);
+    });
+
+    it.fails('a view arriving during the refinement hand-off frame wins over the state that cancelled it', async () => {
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const slices: number[] = [];
+      const ladder = {
+        loadedLODCount: 1,
+        totalLODCount: 3,
+        get hasMoreLODs() {
+          return ladder.loadedLODCount < ladder.totalLODCount;
+        },
+        updateView: vi.fn(async (vs: { slicePosition: number[] }) => {
+          slices.push(vs.slicePosition[3]);
+          return null;
+        }),
+        dispose: vi.fn(),
+      };
+      const internals = sceneLoader as unknown as {
+        _updateInProgress: boolean;
+        gsplatLoaders: Map<string, unknown>;
+        scheduleGSplatsRefinement(): Promise<void>;
+      };
+      internals.gsplatLoaders.set('/g', ladder);
+
+      // A refinement run holds the lock, parked on its first frame yield.
+      internals._updateInProgress = true;
+      const run = internals.scheduleGSplatsRefinement();
+      expect(frames).toHaveLength(1);
+      // View 2 cancels it: the loop takes it and hands off across a frame.
+      void sceneLoader.updateView(view(2));
+      frames.shift()!();
+      await vi.advanceTimersByTimeAsync(0);
+      await run;
+      expect(frames).toHaveLength(1);
+
+      // A newer view lands in that hand-off frame.
+      void sceneLoader.updateView(view(3));
+      await pumpFrames();
+
+      // Pre-fix the cancelling view 2 ran a full pass first, unaborted.
+      expect(slices).not.toContain(2);
+      expect(slices[0]).toBe(3);
+      expect(sceneLoader.isUpdateInProgress()).toBe(false);
+    });
+
+    it.fails('a real view landing in the yield supersedes the queued resync with one full sweep', async () => {
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const swept: string[] = [];
+      const makeLoader = (path: string, gated: boolean) => ({
+        loadPoints: vi.fn(),
+        updateView: vi.fn(async () => {
+          swept.push(path);
+          if (gated) await gate;
+          return null;
+        }),
+        dispose: vi.fn(),
+      });
+      const loaders = (sceneLoader as unknown as Record<string, Map<string, unknown>>).loaders;
+      loaders.set('/a', makeLoader('/a', true));
+      loaders.set('/b', makeLoader('/b', false));
+
+      const pass = sceneLoader.updateView(view(1));
+      await vi.advanceTimersByTimeAsync(0);
+      // A targeted resync lands mid-pass and is parked for the follow-up pass.
+      const resync = sceneLoader.updateView({}, { resyncPaths: new Set(['/b']) });
+      swept.length = 0;
+      release();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(frames).toHaveLength(1);
+      // A newer, real view lands in the yield: its full sweep is a superset.
+      const real = sceneLoader.updateView(view(2));
+      await pumpFrames();
+      await Promise.all([pass, resync, real]);
+
+      // One full sweep for view 2 (both loaders), no narrowed or stale pass.
+      expect(swept.sort()).toEqual(['/a', '/b']);
+    });
+  });
+
   describe('updateView — superseded loads abort (per-update AbortSignal)', () => {
     beforeEach(async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');

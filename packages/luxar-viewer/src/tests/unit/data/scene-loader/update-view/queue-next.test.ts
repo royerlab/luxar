@@ -139,6 +139,22 @@ describe('queueNext — pending state + rAF available', () => {
     expect(ctx.spies.resolvePassWaiters).not.toHaveBeenCalled();
   });
 
+  it.fails('re-enters with the NEWEST pending state when one is queued during the yield (A8)', () => {
+    // The lock is held across the frame with no pass in flight, so a view
+    // arriving then lands in the pending slot. It must win: re-entering the
+    // state taken before the yield ran a full stale pass ahead of it.
+    const ctx = makeCtx();
+    ctx.viewStateQueue.setPending({ slicePosition: [0, 0, 0, 1] });
+
+    queueNext(ctx);
+    ctx.viewStateQueue.setPending({ slicePosition: [0, 0, 0, 2] });
+    rafCallbacks[0](performance.now());
+
+    expect(ctx.spies.updateView).toHaveBeenCalledTimes(1);
+    expect(ctx.spies.updateView).toHaveBeenCalledWith({ slicePosition: [0, 0, 0, 2] });
+    expect(ctx.viewStateQueue.hasPending()).toBe(false);
+  });
+
   it('logs a rejected updateView re-entry instead of leaving an unhandled rejection', async () => {
     const ctx = makeCtx();
     const errorLog = vi.spyOn(log, 'error').mockImplementation(() => {});
