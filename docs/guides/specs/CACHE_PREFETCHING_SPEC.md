@@ -335,6 +335,12 @@ class ChunkPrefetcher {
 }
 ```
 
+(Simplified. The shipped queue is BOUNDED — `ChunkPrefetcher.MAX_QUEUED`, 64 —
+and drained NEWEST first: a re-requested neighbour moves to the newest end, and
+past the bound the oldest entry is dropped, so after a fast pan the prefetcher
+works on the current view rather than the region it left. Reads carry a signal
+that `dispose()` aborts.)
+
 This ensures:
 - At most 4 prefetch requests in flight
 - Full deduplication (no duplicate prefetches in queue or in-flight)
@@ -508,7 +514,7 @@ With `maxConcurrent = 4`:
 Prefetching can hurt performance when:
 1. **Random access patterns** - Prefetched data is never used
 2. **Bandwidth-constrained** - Prefetch competes with needed data
-3. **High-latency connections** - Queue fills up, stale prefetches
+3. **High-latency connections** - Queue fills up (bounded; oldest dropped first)
 
 The `?noPrefetch` parameter allows disabling for these cases.
 

@@ -34,7 +34,7 @@ async function settle(): Promise<void> {
 }
 
 describe('ChunkPrefetcher queue', () => {
-  it.fails('bounds the queue and serves the newest neighbours first', async () => {
+  it('bounds the queue and serves the newest neighbours first', async () => {
     const { store, calls } = controlledStore();
     const prefetcher = new ChunkPrefetcher(store as never, { maxConcurrent: 1 });
     prefetcher.registerArrayBounds('data', [100_000], [1]);
@@ -54,7 +54,7 @@ describe('ChunkPrefetcher queue', () => {
     expect(['data/1499', 'data/1501']).toContain(next);
   });
 
-  it.fails('aborts its in-flight reads on dispose', async () => {
+  it('aborts its in-flight reads on dispose', async () => {
     const { store, calls } = controlledStore();
     const prefetcher = new ChunkPrefetcher(store as never, { maxConcurrent: 2 });
     prefetcher.registerArrayBounds('data', [100], [1]);

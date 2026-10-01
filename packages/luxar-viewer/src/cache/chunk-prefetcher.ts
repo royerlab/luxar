@@ -23,7 +23,10 @@ export interface ChunkPrefetcherOptions {
  * - Symmetric ±1 adjacency in all dimensions
  * - Concurrency limiting (default: 4 concurrent)
  * - Full deduplication (queue + in-flight)
- * - Fire-and-forget pattern (non-blocking)
+ * - A bounded, NEWEST-first queue: the neighbours of the latest access are the
+ *   likeliest next reads, and once the view has moved on the oldest entries
+ *   are the least useful, so they are served last and dropped first
+ * - Fire-and-forget pattern (non-blocking); `dispose()` aborts reads in flight
  * - Race-condition safe queue processing
  *
  * See: docs/guides/specs/CACHE_PREFETCHING_SPEC.md
@@ -34,11 +37,19 @@ export class ChunkPrefetcher {
   private enabled: boolean;
   private debug: boolean;
 
-  // Queue management. A single FIFO queue (the Set preserves insertion
-  // order) drained under the concurrency limit each processQueue cycle.
+  /**
+   * Most neighbours held waiting. A 3D access adds up to six, so this keeps
+   * the last ten or so accesses' worth; anything older is dropped.
+   */
+  static readonly MAX_QUEUED = 64;
+
+  // Queue management. The Set preserves insertion order, so its LAST entry is
+  // the newest; processQueue drains from that end under the concurrency limit.
   private inFlight = new Set<string>();
   private queue = new Set<string>();
   private processing = false;
+  /** Aborted by dispose(): cancels every prefetch read still in flight. */
+  private readonly abort = new AbortController();
   // Lifecycle: set by dispose(). Distinct from `enabled` (a feature toggle)
   // so we can short-circuit the in-flight `.finally()` continuation
   // without claiming the feature itself is disabled.
@@ -122,12 +133,25 @@ export class ChunkPrefetcher {
   }
 
   /**
-   * Add a key to the queue, unless it is already queued or in flight.
+   * Add a key at the newest end of the queue (moving it there if already
+   * queued), unless it is in flight; past {@link MAX_QUEUED} the oldest goes.
    */
   private addToQueue(key: string): void {
-    if (this.inFlight.has(key) || this.queue.has(key)) return;
+    if (this.inFlight.has(key)) return;
+    this.queue.delete(key);
     this.queue.add(key);
+    if (this.queue.size > ChunkPrefetcher.MAX_QUEUED) {
+      const oldest = this.queue.values().next().value;
+      if (oldest !== undefined) this.queue.delete(oldest);
+    }
     this.log(`  Enqueued: ${key}`);
+  }
+
+  /** The newest queued key (the Set's last entry). */
+  private newestQueued(): string | undefined {
+    let newest: string | undefined;
+    for (const key of this.queue) newest = key;
+    return newest;
   }
 
   /**
@@ -146,8 +170,7 @@ export class ChunkPrefetcher {
     try {
       while (this.queue.size > 0 && this.inFlight.size < this.maxConcurrent) {
         if (this.isDisposed) break;
-        // Set insertion order gives FIFO semantics.
-        const key = this.queue.values().next().value;
+        const key = this.newestQueued();
         if (!key) break;
 
         this.queue.delete(key);
@@ -162,7 +185,7 @@ export class ChunkPrefetcher {
         // a prefetch of K+1 would call onAccess(K+1) and enqueue K+2,
         // K+3, ... cascading until MAX_SEEN_SIZE bounds it.
         this.store
-          .getResult(key, { suppressPrefetch: true })
+          .getResult(key, { suppressPrefetch: true, signal: this.abort.signal })
           .then((r) => {
             if (!r.ok && r.error.kind === 'NetworkError') {
               this.log(`Prefetch network error: ${key} (${r.error.cause.message})`);
@@ -337,6 +360,7 @@ export class ChunkPrefetcher {
   dispose(): void {
     this.isDisposed = true;
     this.enabled = false;
+    this.abort.abort();
     this.seen.clear();
     this.parsedCache.clear();
     this.maxChunkIndices.clear();
