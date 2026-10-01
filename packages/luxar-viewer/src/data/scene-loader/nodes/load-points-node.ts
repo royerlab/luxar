@@ -13,7 +13,7 @@
 
 import type * as THREE from 'three';
 import * as zarr from '../../zarr';
-import { log, Modules } from '../../../utils/log';
+import { log, LogEmoji, Modules } from '../../../utils/log';
 import { LoaderError, classifyLoaderError } from './load-leaf-error-dispatch';
 import {
   createPointsLoader as createPointsLoaderHelper,
@@ -85,16 +85,21 @@ export async function loadPointsNodeCheap(
   loc: zarr.Location<zarr.Readable>,
   ctx: NodeBuildCtx
 ): Promise<PointsCheapLoad> {
-  log.custom('📍', Modules.SCENE_LOADER, `Loading points: ${node.path}`);
-  log.info(Modules.SCENE_LOADER, `  Has spatial index: ${node.hasSpatialIndex}`);
-  log.info(Modules.SCENE_LOADER, `  Total points: ${node.attrs.n_points || 'unknown'}`);
+  log.verbose('📍', Modules.SCENE_LOADER, `Loading points: ${node.path}`);
+  log.verbose(LogEmoji.INFO, Modules.SCENE_LOADER, `  Has spatial index: ${node.hasSpatialIndex}`);
+  log.verbose(
+    LogEmoji.INFO,
+    Modules.SCENE_LOADER,
+    `  Total points: ${node.attrs.n_points || 'unknown'}`
+  );
 
   // Progressive multi-additive-LOD Points: walks `additive_<i>/` subgroups
   // and wraps them in a `PointsProgressiveLoader`. Single-LOD nodes
   // (no `n_additive_sublods` attr) take the standard path below.
   const nAdditive = (node.attrs as { n_additive_sublods?: number }).n_additive_sublods ?? 0;
   if (nAdditive > 1) {
-    log.info(
+    log.verbose(
+      LogEmoji.INFO,
       Modules.SCENE_LOADER,
       `  Additive sub-LODs: ${nAdditive} (progressive loading enabled)`
     );
@@ -124,6 +129,7 @@ export async function loadPointsNodeCheap(
     node.attrs as unknown as Partial<PointsMetadata>
   );
   parentThree.add(placeholder);
+  ctx.onLeafMaterialized?.(node.path, placeholder);
 
   return { placeholder, loader };
 }
@@ -219,6 +225,15 @@ export async function loadPointsNode(
   ctx: NodeBuildCtx
 ): Promise<THREE.Mesh | null> {
   const { placeholder, loader } = await loadPointsNodeCheap(node, parentThree, loc, ctx);
+  // A registry-activated partition part: the activating pass sweeps it (B4).
+  if (ctx.registerOnly) {
+    // Built after a dataset switch (the activation is fire-and-forget): the
+    // loader registry outlives the dataset, so a dead dataset's loader is
+    // disposed, never registered where the next dataset's passes sweep.
+    if (ctx.isDatasetLive()) ctx.registry.registerPointsLoader(node.path, loader);
+    else loader.dispose();
+    return placeholder;
+  }
   try {
     await loadPointsNodeExpensive(node, ctx, loader);
   } finally {

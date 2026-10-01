@@ -11,6 +11,7 @@
  * @module rendering/environment/probe
  */
 
+import { findObjectByName } from '../../utils/scene-graph-index';
 import * as THREE from 'three';
 import type { EnvironmentProbe } from '../../types/environment';
 export { parseProbeSpec } from '../../types/environment';
@@ -73,7 +74,7 @@ export function resolveProbe(
 /** The bounding-box centre of the named node, or `null` (with a warning) when it cannot be used. */
 function nodeProbeCentre(name: string, root: THREE.Object3D | null): THREE.Vector3 | null {
   const path = name.startsWith('/') ? name : `/${name}`;
-  const node = root?.getObjectByName(path) ?? root?.getObjectByName(name) ?? null;
+  const node = findObjectByName(root, path) ?? findObjectByName(root, name) ?? null;
   const sphere = committedBoundingSphere(node);
   if (sphere) return sphere.center;
   log.warning(

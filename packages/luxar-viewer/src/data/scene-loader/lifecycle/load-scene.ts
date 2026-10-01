@@ -16,7 +16,9 @@
  *   8. Persist `viewer_config` + `position_bounds` onto the root group's
  *      userData for the UI to read.
  *   9. Build the scene graph (zarr group enumeration → SceneNode tree).
- *  10. Recursively load every leaf via `loadSceneNodes`.
+ *  10. Hand the root to `config.onSceneMetadata` (the scene manager frames
+ *      the opening camera from the metadata), then recursively load every
+ *      leaf via `loadSceneNodes`.
  *  11. Load overlay configs (screen-space annotations).
  *  12. Wire post-load monitor providers (cache stats, loader maps, etc.).
  *  13. Schedule progressive GSplats LOD refinement when any multi-LOD
@@ -33,6 +35,7 @@ import * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { log, Modules, LogEmoji } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
+import { attachSceneGraphIndex } from '../../../utils/scene-graph-index';
 import { getWorkerPool, warmUpDataWorkerPool } from '../../../workers/worker-pool';
 import { markLoad, noteRefinementComplete } from '../../../profiling/load-timeline';
 import type { RefinementHoldReason } from '../../../types/data-monitor-types';
@@ -338,6 +341,11 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // Create root THREE.js group
   const rootGroup = new THREE.Group();
   rootGroup.name = 'LuxarScene';
+  // Path lookups (commit / process / sweep / release hooks) resolve through this
+  // index instead of an O(scene) `getObjectByName` walk each (B9a). It maintains
+  // itself from the graph's own add/remove/rename events, so no builder below has
+  // to know about it; a dataset switch builds a fresh root and a fresh index.
+  attachSceneGraphIndex(rootGroup);
   ctx.setRootGroup(rootGroup);
 
   // Load scene metadata
@@ -473,6 +481,9 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const sceneGraph = await buildSceneGraph(rootLoc, sceneAttrs, zarrStore);
   ctx.setSceneGraph(sceneGraph);
   setSceneLineLoad(sceneEffectiveLineLoad(sceneGraph));
+
+  // The opening camera is framed from this metadata before any node reads the view.
+  ctx.config.onSceneMetadata?.(rootGroup);
 
   // Load points / lines / gsplats / nested groups recursively
   await loadSceneNodes(sceneGraph, rootGroup, rootLoc, ctx.makeNodeBuildCtx());

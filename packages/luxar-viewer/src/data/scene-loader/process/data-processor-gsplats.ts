@@ -30,6 +30,7 @@
  * @module data/scene-loader/process/data-processor-gsplats
  */
 
+import { findObjectByName } from '../../../utils/scene-graph-index';
 import * as THREE from 'three';
 import type {
   LoadedGSplatsData,
@@ -382,7 +383,7 @@ export async function processGSplatsData(
 ): Promise<StagedGSplatsCommit | null> {
   if (!rootGroup) return null;
 
-  const mesh = rootGroup.getObjectByName(path) as THREE.Mesh;
+  const mesh = findObjectByName(rootGroup, path) as THREE.Mesh;
   if (!mesh || mesh.userData?.nodeType !== 'gsplats') {
     log.warning(
       Modules.SCENE_LOADER,

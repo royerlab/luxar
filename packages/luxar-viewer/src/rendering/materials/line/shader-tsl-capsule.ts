@@ -78,6 +78,7 @@ import {
   type TSLNode,
   sortedIndexNode,
   densityDroppedNode,
+  densityAlphaNode,
 } from '../_shared/tsl-helpers';
 import {
   applyBlendingStateToMaterial,
@@ -128,6 +129,10 @@ export function capsuleLineWebGPUFactory(
   const uScalarScale = config.useColormap ? nodes.uScalarScale! : null;
 
   const blendingMode = config.blendingMode ?? 'additive';
+  // Alpha-over density-guard compensation on the normal graph — identical to
+  // the quad's (GLSL luxarDensityAlpha twin); every other graph is untouched.
+  const alphaExp = blendingMode === 'normal' ? nodes.uDensityAlphaExp : undefined;
+  const normalAlpha = (a: TSLNode): TSLNode => (alphaExp ? densityAlphaNode(a, alphaExp) : a);
   const volumetric = isVolumetricMode(blendingMode);
   const opaque = blendingMode === 'opaque';
   const premultiplyRGB =
@@ -662,7 +667,7 @@ export function capsuleLineWebGPUFactory(
       const a: TSLNode = intensityScaled.mul(uOpacity).toVar();
       return vec4(gammaColor.mul(a), a);
     }
-    return vec4(gammaColor, intensityScaled.mul(uOpacity));
+    return vec4(gammaColor, normalAlpha(intensityScaled.mul(uOpacity)));
   });
 
   const material = outMaterial ?? new NodeMaterial();

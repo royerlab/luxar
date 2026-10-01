@@ -162,7 +162,8 @@ The current format is **v3.4**, a node tree (§ "On-disk grammar"). It differs
 from **v3.3** only in the `kind=lod` selector: the group `selector` attr gains
 the value `"screen-area"` (what every DERIVED ladder now stamps), under which
 the per-child `coverage_fraction` is a literal **screen-area fraction**
-(projected bbox rect area / viewport area; occupancy halving — whole-object
+(projected area of the box's inscribed ellipsoid, sized at its near depth, over
+the viewport area — the near-face rect face-on; occupancy halving — whole-object
 finest `0.5`, partition tile `1.0` — see the `kind=lod` section). Stores with
 `selector: "coverage"` keep the legacy diagonal-metric units and are read and
 round-tripped unchanged, so every v3.3 store is also a valid v3.4 store.
@@ -313,7 +314,8 @@ accessor returns); they are deliberately decoupled, so the writer stamps
 strictly ascending coarsest→finest with the coarsest child always `0.0`; the
 group's `selector` attr names the UNITS. Under `selector: "screen-area"` (what
 every derived ladder stamps since v3.4) a threshold is a literal screen-area
-fraction — the node's projected bbox rect area over the viewport area — and
+fraction — the projected area of the node box's inscribed ellipsoid, sized at
+its near depth, over the viewport area (the near-face rect face-on) — and
 writers derive the ladder by SCREEN-OCCUPANCY HALVING: authored detail is
 meant to be viewed full screen, so a whole-object ladder anchors its FINEST
 level at `0.5` (full detail while the node occupies at least half the screen)
@@ -335,25 +337,53 @@ with full detail one modest zoom away. Authors who want a high-aspect
 object finest-at-opening use an explicit `coverage_fractions=[...]` list
 (legacy units).
 
-Two refinements are NORMATIVE parts of the `screen-area` metric (they decide
+Three refinements are NORMATIVE parts of the `screen-area` metric (they decide
 which end of a ladder renders, so consumers must agree on them):
 
-* **Visible occupancy.** The projected rect is intersected with the viewport
-  before the area is taken; a rect with no viewport overlap on either axis
-  reads exactly `0` (coarsest), and full coverage tops out at exactly `1.0`
-  (thresholds are satisfied inclusively, `threshold <= metric`). Under a
-  PERSPECTIVE camera, a node whose bounds reach the camera's near plane has
-  no meaningful projection (the homogeneous divide degenerates), so the
-  metric saturates to the finest level — the same near-plane guard the
-  legacy diagonal metric applies. An ORTHOGRAPHIC projection never
+* **Orientation-stable occupancy, sized along the view axis.** The bbox is
+  measured through its INSCRIBED ellipsoid (semi-axes = the bbox
+  half-extents), projected exactly (dual quadric → image conic). Under a
+  perspective camera the image ellipse's NDC shape matrix `S` is then scaled
+  by `(w_c + c) / (w_c - c)`, where `w_c` is its centre's clip-space `w`
+  (view depth) and `c` is its half-chord along that axis, leaving its centre
+  in place. In the bbox frame, let `g` be the spatial gradient of `w`, `h`
+  the bbox half-extents, and `v` the cross product of the clip `x` and `y`
+  row gradients (the camera-axis direction in that frame). Then
+  `c = |g·v| / sqrt(Σ v_i² / h_i²)`; if a zero half-extent has a nonzero
+  `v_i`, or `v` is zero, then `c = 0`. This remains the same when an
+  anisotropic scale is moved between the bbox and its group transform. The
+  projected ellipsoid reads at the geometric-mean depth
+  `sqrt((w_c - c)·(w_c + c))`, and this resizes it to the nearer view-axis
+  point. The metric is the product of the sized ellipse's NDC semi-axes,
+  `sqrt(det S)`. A box seen face-on on the view axis therefore reads exactly
+  the rect product the thresholds were defined against (the ellipse is
+  inscribed in the near face's rect) at any
+  thickness; an orthographic camera has constant `w`, so no scaling applies.
+  A tilted flat box also gets no scaling. A 3D rect grows by up to ~1.7x as
+  the camera merely orbits to a corner-on view; the sized ellipse of a cube
+  stays constant at a fixed distance, though an elongated box changes size
+  when viewed from different directions.
+  The eye plane cutting the bbox (nearest corner at `w <= 1e-6`: camera
+  inside or beside the node) saturates to the finest level; a bbox wholly
+  behind the camera reads `0`.
+
+* **Visible occupancy.** The ellipse's area is scaled, per axis, by the
+  visible fraction of its screen AABB (exact for an axis-aligned ellipse); an
+  ellipse with no viewport overlap on either axis reads exactly `0`
+  (coarsest). When all four viewport corners lie inside the ellipse's image
+  conic, full coverage reads exactly `1.0` even for a tilted ellipse
+  (thresholds are satisfied inclusively, `threshold <= metric`). Under a PERSPECTIVE camera,
+  a node the eye plane cuts has no meaningful projection, so the metric
+  saturates to the finest level — the counterpart of the near-plane guard
+  the legacy diagonal metric applies to the bbox corners. An ORTHOGRAPHIC projection never
   degenerates (`w` stays 1), so no saturation applies and the plain clipped
   metric is used directly: a camera inside a large node still reads full
-  coverage naturally (its rect spans the viewport), and both selectors
+  coverage naturally (its ellipse spans the viewport), and both selectors
   behave identically here by design.
 * **Degenerate (lower-dimensional) content.** A node whose projected bounds
   are (near-)zero-thickness — an axis-aligned straight polyline, a planar
   dataset viewed edge-on — has area ~0 no matter how much screen it spans.
-  When the RAW (pre-clip) thin half-extent is at/below a sub-pixel floor
+  When the RAW (pre-clip) minor semi-axis is at/below a sub-pixel floor
   `ε` (implementations should use `ε` ≈ one pixel of the viewport axis; the
   reference viewer uses 1e-3 of the axis), the metric is
   `max(area, clippedSpan × (1 − rawThin/ε))` — a continuous ramp from the

@@ -1469,19 +1469,18 @@ describe('GSplatsProgressiveLoader', () => {
       warningSpy.mockRestore();
     });
 
-    it('starts the remaining spatial-index initializers only after the first load returns', async () => {
+    it("warms each rung's index while the rung before it loads", async () => {
       lodB.updateViewWithResidency.mockResolvedValue({
         data: makeLodData(50),
         allResident: false,
       });
 
       await loader.loadGSplats(baseViewState);
-      expect(lodB.ensureInitialized).not.toHaveBeenCalled();
-      expect(lodC.ensureInitialized).not.toHaveBeenCalled();
-
-      await loader.updateView(baseViewState);
-      expect(lodB.ensureInitialized).toHaveBeenCalledTimes(1);
-      expect(lodC.ensureInitialized).toHaveBeenCalledTimes(1);
+      // B6: each rung's index is requested while the rung before it loads —
+      // rung 2's while rung 1 (which stopped the pass cold) was loading.
+      expect(lodB.ensureInitialized).toHaveBeenCalledWith('refinement');
+      expect(lodC.ensureInitialized).toHaveBeenCalledWith('refinement');
+      expect(lodA.ensureInitialized).not.toHaveBeenCalled();
     });
 
     it('logs non-abort metadata warming failures', async () => {
@@ -1505,20 +1504,28 @@ describe('GSplatsProgressiveLoader', () => {
 
     it('does not batch spatial-index metadata during playback', async () => {
       await loader.loadGSplats(baseViewState);
+      const warmedB = lodB.ensureInitialized.mock.calls.length;
+      const warmedC = lodC.ensureInitialized.mock.calls.length;
 
       await loader.updateView({ ...baseViewState, frameBudgetMs: 1_000 });
 
-      expect(lodB.ensureInitialized).not.toHaveBeenCalled();
-      expect(lodC.ensureInitialized).not.toHaveBeenCalled();
+      // Only the first (unbudgeted) load's rung-ahead warms (B6); the
+      // budgeted pass adds none.
+      expect(lodB.ensureInitialized).toHaveBeenCalledTimes(warmedB);
+      expect(lodC.ensureInitialized).toHaveBeenCalledTimes(warmedC);
     });
 
     it('does not batch spatial-index metadata during shadow prefetch', async () => {
       await loader.loadGSplats(baseViewState);
+      const warmedB = lodB.ensureInitialized.mock.calls.length;
+      const warmedC = lodC.ensureInitialized.mock.calls.length;
 
       await loader.updateView({ ...baseViewState, frameBudgetMs: 1_000, prefetch: true });
 
-      expect(lodB.ensureInitialized).not.toHaveBeenCalled();
-      expect(lodC.ensureInitialized).not.toHaveBeenCalled();
+      // Only the first (unbudgeted) load's rung-ahead warms (B6); the
+      // budgeted pass adds none.
+      expect(lodB.ensureInitialized).toHaveBeenCalledTimes(warmedB);
+      expect(lodC.ensureInitialized).toHaveBeenCalledTimes(warmedC);
     });
 
     it('prefetches up to three later rungs once metadata warming has started', async () => {

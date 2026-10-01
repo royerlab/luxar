@@ -187,16 +187,25 @@ export function remapWindowToLeafRange(
  * both double-applies (#936). Callers therefore push identity to the color
  * GOG and this window to `updateScalarRange`.
  *
- * The identity-vs-window decision follows the RAW LEAF gain, mirroring the
- * layers panel (`layer-state.ts` `initialDisplayRange` starts from the data
- * range whenever the LEAF gain is identity) — NOT the composed value, which
- * would treat an ancestor-only gain as an authored window and discard the
- * node's own data range. When the leaf DID author a window, the COMPOSED
- * gain IS the panel's effective gain (intensity multiplies, offset adds —
- * `attrs-composer.ts`), so it is used directly. When the leaf is identity,
- * any ancestor gain is folded onto the data-range window exactly the way the
- * panel composes it: data range → window uniforms → × ancestor gain → back
- * to a window.
+ * The identity-vs-window decision follows the RAW gain of the node whose
+ * window the Layers panel controls — the leaf, or the nearest `layer=true`
+ * ancestor that owns it (`owner`) — mirroring the panel: `layer-state.ts`
+ * starts a layer from its data range when THAT LAYER's gain is identity, and
+ * reads a non-identity gain on it as the absolute window. NOT the composed
+ * value, which would treat a non-layer ancestor's gain as an authored window
+ * and discard the node's own data range. When the leaf or its owning layer DID
+ * author a window, the COMPOSED gain IS the panel's effective gain (intensity
+ * multiplies, offset adds — `attrs-composer.ts`), so it is used directly. When
+ * both are identity, any ancestor gain is folded onto the data-range window
+ * exactly the way the panel composes it: data range → window uniforms ×
+ * ancestor gain → back to a window.
+ *
+ * Deciding on the leaf alone disagreed with the panel whenever the gain sat on
+ * a layer GROUP above an identity leaf (`luxar gsplat convert --intensity`, a
+ * `kind=partition` wrapper): the factory folded it onto the leaf's range while
+ * the panel pushed it as the window — ~14x narrower on the hosted h2afva
+ * timelapse. Invisible on leaves the panel re-pushes, visible on any leaf built
+ * after the panel's last push.
  *
  * Shared by the points, lines, and gsplats node factories so all three
  * geometry types agree (the three-geometry symmetry rule).
@@ -204,21 +213,26 @@ export function remapWindowToLeafRange(
  * @param dataRange   The node's own scalar/amplitude data range.
  * @param leaf        Raw leaf-authored gain/offset (uncomposed).
  * @param composed    Effective gain/offset after ancestor composition.
+ * @param owner       Raw gain/offset of the nearest `layer=true` node on the
+ *                    leaf's ancestry, the leaf included (`windowOwnerGain`);
+ *                    omitted when no layer owns the leaf.
  */
 export function resolveColormapWindow(
   dataRange: readonly [number, number],
   leaf: DisplayUniforms,
-  composed: DisplayUniforms
+  composed: DisplayUniforms,
+  owner?: DisplayUniforms
 ): [number, number] {
-  const leafIsIdentity = leaf.intensity === 1.0 && leaf.offset === 0.0;
-  if (!leafIsIdentity) {
+  const isIdentity = (g: DisplayUniforms): boolean => g.intensity === 1.0 && g.offset === 0.0;
+  if (!isIdentity(leaf) || (owner !== undefined && !isIdentity(owner))) {
     const { min, max } = computeDisplayRange(composed.intensity, composed.offset);
     return [min, max];
   }
   if (composed.intensity === 1.0 && composed.offset === 0.0) {
     return [dataRange[0], dataRange[1]];
   }
-  // Ancestor-only gain (leaf identity ⇒ composed == ancestor product).
+  // Ancestor-only gain (leaf and owner identity ⇒ composed == the product of
+  // non-owner ancestor gains).
   const w = computeUniforms(dataRange[0], dataRange[1]);
   const { min, max } = computeDisplayRange(
     composed.intensity * w.intensity,

@@ -93,7 +93,7 @@ export async function runLinesRefinement(ctx: LinesRefinementCtx): Promise<void>
       // typed as plain `LinesDataLoader`: a non-progressive loader has no
       // ladder. `admitRefinementCandidate` gates on `hasMoreLODs`.
       const progressiveLoader = loader as LinesDataLoader & RefinableLoader;
-      const admission = admitRefinementCandidate(
+      const admission = await admitRefinementCandidate(
         path,
         progressiveLoader,
         ctx.residencyBudget,

@@ -301,15 +301,19 @@ export class NodeFactory {
    * geometry changes can move the bounding box. (Camera-only motion
    * does NOT need to invalidate boxes and reaches `markDirty()` via
    * the controls 'change' event, not this method.)
+   *
+   * @param drawn - Whether any committed node was on screen (default true);
+   *   forwarded on `geometry-committed`.
    */
-  markPickingDirty(): void {
+  markPickingDirty(drawn = true): void {
     this.pickingSystem?.markDirty();
     this.pickingSystem?.invalidateBoxes();
     // The same moment is "what is resident changed" for anything derived from
     // the committed scene — today the scene-derived environment capture
     // (`rendering/environment/`), which marks itself stale here and rebuilds
-    // once the loader settles.
-    eventBus.emit('geometry-committed', {});
+    // once the loader settles. `drawn` is false when no committed node was on
+    // screen, so the render loop need not redraw for it.
+    eventBus.emit('geometry-committed', { drawn });
   }
 
   /**

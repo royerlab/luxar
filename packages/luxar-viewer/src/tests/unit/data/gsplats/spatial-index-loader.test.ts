@@ -35,6 +35,7 @@ import { makeMockZarrLocation } from '../../../builders/spatial-loader-fixtures'
 import { SliceCache } from '../../../../cache/slice-cache';
 import { log } from '../../../../utils/log';
 import { MIN_TRUNCATION_RADIUS } from '../../../../rendering/materials/gsplat/math';
+import { signalPriority } from '../../../../utils/fetch-concurrency';
 
 vi.mock('zarrita', () => ({
   registry: {},
@@ -2057,5 +2058,39 @@ describe('GSplatsSpatialIndexLoader', () => {
         expect(callsAfter).toBe(callsBefore);
       });
     });
+  });
+});
+
+describe('GSplatsSpatialIndexLoader — speculative calls keep a refinement-class index warm (B6)', () => {
+  it('planPrefetch / prefetchChunks / prefetchChunkBoundary do not raise it to demand', async () => {
+    const loader = new GSplatsSpatialIndexLoader(
+      makeMockZarrLocation() as unknown as ConstructorParameters<
+        typeof GSplatsSpatialIndexLoader
+      >[0],
+      makeGSplatsNode()
+    );
+    let initSignal: AbortSignal | undefined;
+    vi.spyOn(loader, 'initialize').mockImplementation((signal?: AbortSignal) => {
+      initSignal = signal;
+      return new Promise<void>(() => undefined);
+    });
+    const view: ViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0],
+      tolerance: [0, 0, 0],
+    };
+
+    void loader.ensureInitialized('refinement');
+    void loader.planPrefetch(view);
+    void loader.prefetchChunks(view);
+    void loader.prefetchChunkBoundary(view, view);
+    await Promise.resolve();
+    // A speculative warm-up of rung k+1 is not a frame waiting on the index.
+    expect(signalPriority(initSignal)?.value).toBe('refinement');
+
+    // A demand load still raises it.
+    void loader.ensureInitialized();
+    expect(signalPriority(initSignal)?.value).toBe('demand');
+    loader.dispose();
   });
 });

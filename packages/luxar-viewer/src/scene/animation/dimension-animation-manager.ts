@@ -453,6 +453,21 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     return playing;
   }
 
+  /**
+   * The frame period (ms) of the FASTEST playing dimension (`1000 / targetFPS`),
+   * or null when nothing plays. The LOD registry sizes its playback aspiration
+   * against it (`LODGroupRegistryDeps.getPlaybackPeriodMs`).
+   */
+  getPlaybackPeriodMs(): number | null {
+    let maxFPS: number | null = null;
+    for (const state of this.animationStates.values()) {
+      if (state.isPlaying) {
+        maxFPS = maxFPS === null ? state.targetFPS : Math.max(maxFPS, state.targetFPS);
+      }
+    }
+    return maxFPS === null || !(maxFPS > 0) ? null : 1000 / maxFPS;
+  }
+
   /** Whether ANY dimension is currently playing (== getFrameBudgetMs() !== null). */
   isAnyPlaying(): boolean {
     for (const state of this.animationStates.values()) {

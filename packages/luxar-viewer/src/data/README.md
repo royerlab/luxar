@@ -1178,7 +1178,7 @@ get the loader via `SceneLoaderManager.getDefaultLoader()` (or
 | `hasLoader(id)` / `getLoaderCount()`            | Lookup and count helpers for the loader registry.                                              |
 | `setMonitorFactory(factory)`                    | Inject a `SceneLoaderMonitorFactory` (called from `core/app.ts`).                              |
 | `setLODGroupRegistryFactory(factory)`           | Inject the LOD-group registry factory (app init pipeline owns SceneManager + camera).          |
-| `setRequestRender(callback)`                    | Inject the render-loop wake-up forwarded to every created loader.                              |
+| `setRequestRender(callback)`                    | Inject the render-loop wake-up for every loader; `drawn=false` (hidden node) ticks, no redraw. |
 | `getProfiler()`                                 | Return the shared `UpdateProfiler` singleton.                                                  |
 | `disposeInstance()`                             | Dispose the singleton (call from app dispose; preserved for re-init)                           |
 

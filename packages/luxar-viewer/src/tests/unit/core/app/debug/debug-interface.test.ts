@@ -68,6 +68,7 @@ vi.mock('../../../../../utils/log', () => ({
     warning: vi.fn(),
     error: vi.fn(),
     custom: vi.fn(),
+    verbose: vi.fn(),
   },
   Modules: { LUXAR: 'LUXAR' },
   LogEmoji: {},

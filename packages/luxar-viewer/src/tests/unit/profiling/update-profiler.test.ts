@@ -922,6 +922,37 @@ describe('UpdateProfiler — refinement passes (beginPass)', () => {
     expect(findChild(profiler.getTimings(), 'Points (/p)')!.lastMs).toBe(5);
   });
 
+  it('keeps a concurrent pass that finishes after a later-started one (B9c)', () => {
+    // Up to four refinement steps run at once, each its own pass. A pass that
+    // started first but finished last used to carry the older seq and was
+    // dropped as stale by the root merge — so the slowest node, the one most
+    // worth seeing, vanished from the tree.
+    const profiler = new UpdateProfiler();
+    for (const path of ['/a', '/b']) {
+      const warm = profiler.beginPass();
+      warm.begin(`GSplats (${path})`).end();
+      warm.end();
+    }
+
+    const a = profiler.beginPass();
+    const aNode = a.begin('GSplats (/a)');
+    const b = profiler.beginPass();
+    const bNode = b.begin('GSplats (/b)');
+    clock.advance(10);
+    bNode.end();
+    b.end();
+    clock.advance(40);
+    aNode.end();
+    a.end();
+
+    const refinement = profiler.getRefinementTimings();
+    expect(refinement.count).toBe(4);
+    expect(refinement.lastMs).toBe(50);
+    const aRow = findChild(refinement, 'GSplats (/a)')!;
+    expect(aRow.lastMs).toBe(50);
+    expect(aRow.stale).toBe(false);
+  });
+
   it('reset clears the refinement tree and pass counter', () => {
     const profiler = new UpdateProfiler();
     const pass = profiler.beginPass();
@@ -1134,5 +1165,113 @@ describe('UpdateProfiler — depth-sort completion stream', () => {
     profiler.recordDepthSortCompletion(completion(1));
     expect(profiler.getDepthSortTimings().count).toBe(2);
     expect(profiler.getDepthSortCompletions().total).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------
+// Path-keyed merge: attribution + scaling (perf programme #2944, item A5)
+// ---------------------------------------------------------------------
+
+/**
+ * Run one update with `n` loaders, each shaped like a real progressive
+ * loader: `Points (/lN)` > `Load Arrays` > `Decode`. Every loader shares the
+ * child names — the production shape (every loader opens 'Load Arrays').
+ * Sessions end innermost-first, as they do in the pipeline.
+ */
+function runLoaderUpdate(
+  profiler: UpdateProfiler,
+  n: number,
+  advance: (i: number) => void = () => undefined
+): void {
+  profiler.beginUpdate();
+  for (let i = 0; i < n; i++) {
+    const top = profiler.beginTopLevel(`Points (/l${i})`);
+    const load = top.begin('Load Arrays');
+    const decode = load.begin('Decode');
+    advance(i);
+    decode.end();
+    load.end();
+    top.end();
+  }
+  profiler.endUpdate();
+}
+
+/**
+ * Count every read of `name` / `children` on the PERSISTENT tree: one read
+ * is one node visit by the merge. Installed after a warm-up update so the
+ * second update measures steady-state merging into an existing tree.
+ */
+function instrumentVisits(entry: TimingEntry, counter: { visits: number }): void {
+  const name = entry.name;
+  const children = entry.children;
+  Object.defineProperty(entry, 'name', {
+    get() {
+      counter.visits++;
+      return name;
+    },
+    configurable: true,
+  });
+  Object.defineProperty(entry, 'children', {
+    get() {
+      counter.visits++;
+      return children;
+    },
+    configurable: true,
+  });
+  for (const c of children) instrumentVisits(c, counter);
+}
+
+function mergeVisitsFor(n: number): number {
+  const profiler = new UpdateProfiler();
+  runLoaderUpdate(profiler, n);
+  const counter = { visits: 0 };
+  instrumentVisits(profiler.getTimings(), counter);
+  runLoaderUpdate(profiler, n);
+  return counter.visits;
+}
+
+describe('UpdateProfiler — path-keyed merge (A5)', () => {
+  it('[A5-attribution] two loaders with same-named children keep their own depth-3 timings', () => {
+    const clock = controlledClock();
+    try {
+      const profiler = new UpdateProfiler();
+      // Loader 0's Decode takes 3ms, loader 1's 7ms.
+      const advance = (i: number) => clock.advance(i === 0 ? 3 : 7);
+
+      for (let update = 1; update <= 2; update++) {
+        runLoaderUpdate(profiler, 2, advance);
+        const root = profiler.getTimings();
+        expect(root.children.map((c) => c.name)).toEqual(['Points (/l0)', 'Points (/l1)']);
+        for (const [i, ms] of [
+          [0, 3],
+          [1, 7],
+        ] as const) {
+          const top = root.children[i];
+          expect(top.children.map((c) => c.name)).toEqual(['Load Arrays']);
+          const load = top.children[0];
+          expect(load.children.map((c) => c.name)).toEqual(['Decode']);
+          const decode = load.children[0];
+          expect({ update, loader: i, lastMs: decode.lastMs, count: decode.count }).toEqual({
+            update,
+            loader: i,
+            lastMs: ms,
+            count: update,
+          });
+          expect(load.lastMs).toBe(ms);
+          expect(top.lastMs).toBe(ms);
+        }
+      }
+    } finally {
+      clock.restore();
+    }
+  });
+
+  it('[A5-scaling] merge work grows linearly with the number of loaders (50 vs 200)', () => {
+    const v50 = mergeVisitsFor(50);
+    const v200 = mergeVisitsFor(200);
+    // 4x the loaders: linear merging costs ~4x, a per-merge tree scan ~16x.
+    expect(v200 / Math.max(v50, 1), `visits: 50 loaders=${v50}, 200 loaders=${v200}`).toBeLessThan(
+      6
+    );
   });
 });

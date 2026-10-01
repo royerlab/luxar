@@ -258,6 +258,18 @@ function mergeMetadata(
 }
 
 /**
+ * Separator between path segments. NUL cannot appear in a timing name the
+ * pipeline builds (node paths, stage labels), so 'a' + 'b/c' and 'a/b' + 'c'
+ * can never collide the way a '/' join would.
+ */
+const PATH_SEP = '\u0000';
+
+/** Path of child `name` under the entry at `parentPath`. */
+function pathKey(parentPath: string, name: string): string {
+  return parentPath + PATH_SEP + name;
+}
+
+/**
  * Internal session implementation
  */
 class SessionImpl implements UpdateSession {
@@ -268,6 +280,13 @@ class SessionImpl implements UpdateSession {
   private readonly profiler: UpdateProfiler;
   /** Which persistent root tree this session's subtree merges into. */
   private readonly rootName: string;
+  /**
+   * Full path of this session in its tree ({@link pathKey}): the root's
+   * path is its rootName, a child's is its parent's path plus its own name.
+   * The persistent-tree merge is keyed on it, so two loaders whose children
+   * share a name ('Load Arrays', 'Decode', …) never merge into each other.
+   */
+  readonly path: string;
   /**
    * Update/pass sequence this session belongs to. Root sessions capture it
    * from the profiler at construction; children INHERIT their parent's seq
@@ -280,12 +299,19 @@ class SessionImpl implements UpdateSession {
    * Draw the sequence at end() (in COMPLETION order) rather than at
    * construction (dispatch order). Used by depth-sort passes, which end
    * when their ordering is APPLIED — many frames after dispatch and out of
-   * dispatch order relative to superseded/abandoned siblings. A
-   * dispatch-time seq would let a later-completing-but-lower-seq applied
-   * pass be dropped by mergeEntryValues' stale-guard (issue #713). Only
-   * ever set on a root (leaf) session — depth-sort passes have no children.
+   * dispatch order relative to superseded/abandoned siblings, and by
+   * refinement passes, up to four of which run at once (B9c) and finish in
+   * any order. A dispatch-time seq would let a later-completing-but-lower-seq
+   * pass be dropped by mergeEntryValues' stale-guard (issue #713). Only ever
+   * set on a root session. Its children end BEFORE it, so the tree's seq is
+   * drawn once, at the FIRST end() anywhere in it, and shared by the rest
+   * ({@link resolveSeq}) — one tree still accounts to one pass.
    */
   private readonly deferSeqUntilEnd: boolean;
+  /** The root of this session's tree (itself for a root). */
+  private readonly root: SessionImpl;
+  /** A deferred root's seq, once drawn. */
+  private drawnSeq: number | null = null;
   // Set by markSkipped() so end() bypasses duration measurement + EMA.
   // Without this flag, skipped entries still record the begin→markSkipped→end
   // overhead because markSkipped() zeroes lastMs/avgMs BEFORE end() runs them.
@@ -316,10 +342,12 @@ class SessionImpl implements UpdateSession {
     this.parent = parent;
     this.profiler = profiler;
     this.rootName = parent ? parent.rootName : (rootName ?? TOTAL_UPDATE_ROOT);
+    this.path = parent ? pathKey(parent.path, name) : this.rootName;
     this.seq = parent ? parent.seq : (seq ?? 0);
     // Children inherit their parent's seq (one tree = one update); only a
     // root session may defer.
     this.deferSeqUntilEnd = parent ? false : deferSeqUntilEnd;
+    this.root = parent ? parent.root : this;
     this.generation = profiler._currentGeneration();
 
     // Add to parent's children if we have a parent
@@ -368,15 +396,22 @@ class SessionImpl implements UpdateSession {
     }
 
     // Stamp the owning update so the persistent-tree merge can decide
-    // between sum-within-update, rollover, and stale-drop. Depth-sort passes
-    // draw their seq HERE (completion order) so a late-completing applied
-    // pass is never dropped as stale by a superseded sibling that ended
-    // first (issue #713); all other sessions use their construction-time seq.
-    const seq = this.deferSeqUntilEnd ? this.profiler._nextSortSeq() : this.seq;
+    // between sum-within-update, rollover, and stale-drop. Depth-sort and
+    // refinement trees draw their seq at their first end() (completion order)
+    // so a late-completing pass is never dropped as stale by a sibling that
+    // ended first (issue #713, B9c); updates use their construction-time seq.
+    const seq = this.root.resolveSeq();
     this.entry.lastSeq = seq;
 
     // Merge into profiler's persistent state
-    this.profiler._mergeEntry(this.entry, this.parent?.entry.name, this.rootName, seq);
+    this.profiler._mergeEntry(this.entry, this.parent?.path, this.rootName, seq);
+  }
+
+  /** This (root) session's seq: the construction-time one, or drawn once on first use. */
+  private resolveSeq(): number {
+    if (!this.deferSeqUntilEnd) return this.seq;
+    this.drawnSeq ??= this.profiler._nextDeferredSeq(this.rootName);
+    return this.drawnSeq;
   }
 
   setMetadata(meta: Partial<TimingMetadata>): void {
@@ -461,11 +496,14 @@ const NOOP_SESSION = new NoOpSession();
  */
 export class UpdateProfiler {
   // Persistent timing state (survives across updates), one tree per root.
-  private roots = new Map<string, TimingEntry>([
-    [TOTAL_UPDATE_ROOT, UpdateProfiler.makeRoot(TOTAL_UPDATE_ROOT)],
-    [REFINEMENT_ROOT, UpdateProfiler.makeRoot(REFINEMENT_ROOT)],
-    [DEPTH_SORT_ROOT, UpdateProfiler.makeRoot(DEPTH_SORT_ROOT)],
-  ]);
+  private roots = UpdateProfiler.makeRoots();
+
+  // Every persistent entry of every tree, keyed by its full session path
+  // (see SessionImpl.path; a root is keyed by its rootName). A finished
+  // session finds its parent — and its own persistent row — in O(1) here
+  // instead of searching the tree by NAME, which both cross-attributed
+  // same-named children of different loaders and cost O(tree) per merge.
+  private index = new Map<string, TimingEntry>(this.roots);
 
   // Current active session (null when not profiling)
   private activeSession: RootSession | null = null;
@@ -479,12 +517,12 @@ export class UpdateProfiler {
   // Uses AsyncLocalStorage-like pattern: each sync execution path has its own context
   private currentSessionContext: UpdateSession | null = null;
 
-  // Per-update sequence for the 'Total Update' tree (bumped in beginUpdate)
-  // and per-pass sequence for the 'LOD Refinement' tree (bumped in
-  // beginPass); those sessions capture their seq at (root) construction. The
-  // 'Depth Sort' tree uses `sortSeq` differently: a pass draws its seq at
-  // end() (COMPLETION order) via _nextSortSeq(), because a pass ends when
-  // its ordering is applied — out of dispatch order (issue #713). The merge
+  // Per-update sequence for the 'Total Update' tree (bumped in beginUpdate),
+  // captured at root construction. The 'LOD Refinement' (`passSeq`) and
+  // 'Depth Sort' (`sortSeq`) trees draw theirs at end() (COMPLETION order)
+  // via _nextDeferredSeq(): a sort pass ends when its ordering is applied —
+  // out of dispatch order (issue #713) — and refinement passes run up to four
+  // at once (B9c), finishing in any order. The merge
   // uses the seq to sum same-update siblings, roll over on a new update, and
   // DROP merges that arrive late from a superseded update.
   private updateSeq = 0;
@@ -515,6 +553,14 @@ export class UpdateProfiler {
     };
   }
 
+  private static makeRoots(): Map<string, TimingEntry> {
+    return new Map<string, TimingEntry>([
+      [TOTAL_UPDATE_ROOT, UpdateProfiler.makeRoot(TOTAL_UPDATE_ROOT)],
+      [REFINEMENT_ROOT, UpdateProfiler.makeRoot(REFINEMENT_ROOT)],
+      [DEPTH_SORT_ROOT, UpdateProfiler.makeRoot(DEPTH_SORT_ROOT)],
+    ]);
+  }
+
   /**
    * Internal: current generation counter. Read by `SessionImpl` to gate
    * its `end()` merge — and by the depth-sort coordinator to gate its
@@ -526,13 +572,13 @@ export class UpdateProfiler {
   }
 
   /**
-   * Internal: draw the next depth-sort sequence number. Called by a
-   * deferred-seq `SessionImpl` (a depth-sort pass) at end() so its seq
-   * reflects COMPLETION order, not dispatch order (issue #713). NOT a
-   * public API.
+   * Internal: draw the next sequence number of a deferred-seq tree. Called by
+   * a deferred-seq `SessionImpl` (a depth-sort or refinement pass) at its
+   * tree's first end() so its seq reflects COMPLETION order, not dispatch
+   * order (issue #713, B9c). NOT a public API.
    */
-  _nextSortSeq(): number {
-    return ++this.sortSeq;
+  _nextDeferredSeq(rootName: string): number {
+    return rootName === REFINEMENT_ROOT ? ++this.passSeq : ++this.sortSeq;
   }
 
   // Listeners for UI updates
@@ -577,8 +623,9 @@ export class UpdateProfiler {
    * per-node top-level sessions.
    */
   beginPass(): UpdateSession {
-    this.passSeq++;
-    return new SessionImpl(REFINEMENT_ROOT, null, this, REFINEMENT_ROOT, this.passSeq);
+    // Seq drawn at end(), as for depth sort below: concurrent refinement
+    // steps (B9c) each open a pass and finish in any order.
+    return new SessionImpl(REFINEMENT_ROOT, null, this, REFINEMENT_ROOT, 0, true);
   }
 
   /**
@@ -856,11 +903,8 @@ export class UpdateProfiler {
     this.sortSeq = 0;
     this.depthSortCompletionTotal = 0;
     this.depthSortCompletions = [];
-    this.roots = new Map<string, TimingEntry>([
-      [TOTAL_UPDATE_ROOT, UpdateProfiler.makeRoot(TOTAL_UPDATE_ROOT)],
-      [REFINEMENT_ROOT, UpdateProfiler.makeRoot(REFINEMENT_ROOT)],
-      [DEPTH_SORT_ROOT, UpdateProfiler.makeRoot(DEPTH_SORT_ROOT)],
-    ]);
+    this.roots = UpdateProfiler.makeRoots();
+    this.index = new Map<string, TimingEntry>(this.roots);
     this.notifyListeners();
   }
 
@@ -884,7 +928,7 @@ export class UpdateProfiler {
    */
   _mergeEntry(
     entry: TimingEntry,
-    parentName: string | undefined,
+    parentPath: string | undefined,
     rootName: string,
     seq: number
   ): void {
@@ -892,7 +936,7 @@ export class UpdateProfiler {
     if (!root) return;
 
     const mergeStart = performance.now();
-    if (!parentName) {
+    if (parentPath === undefined) {
       // This is a root entry (update root or refinement pass root)
       this.mergeEntryValues(root, entry, seq);
       // Sweep: anything this update/pass did NOT touch is now stale. The
@@ -909,8 +953,7 @@ export class UpdateProfiler {
       perfCounters.add(S_MERGE_MS, performance.now() - mergeStart);
       this.notifyListeners();
     } else {
-      // Find parent within THIS root's tree and merge child
-      this.mergeChild(root, entry, parentName, seq);
+      this.mergeChild(entry, parentPath, seq);
       perfCounters.add(S_MERGE_MS, performance.now() - mergeStart);
     }
   }
@@ -965,65 +1008,54 @@ export class UpdateProfiler {
   }
 
   /**
-   * Find parent entry and merge child into it
+   * Merge a finished child session into the persistent row at its PATH
+   * (parent path + name), found in O(1) through {@link index}.
+   *
+   * - Parent not persisted yet → drop. Sessions end innermost-first, so on
+   *   the first update a child ends before its parent has a row; the
+   *   parent's own end() then inserts its whole session subtree (this child
+   *   included) via {@link insertSubtree}.
+   * - Row exists → merge values only. Its children are NOT re-merged: each
+   *   child session merges itself through its own end(), and re-merging
+   *   here would double-increment count and double-apply the EMA.
+   * - Row missing under a persisted parent → insert the subtree.
    */
-  private mergeChild(
-    current: TimingEntry,
-    child: TimingEntry,
-    parentName: string,
-    seq: number
-  ): boolean {
-    if (current.name === parentName) {
-      this.mergeChildEntry(current.children, child, seq);
-      return true;
-    }
-
-    for (const c of current.children) {
-      if (this.mergeChild(c, child, parentName, seq)) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  /**
-   * Merge a child entry into a children array
-   */
-  private mergeChildEntry(children: TimingEntry[], entry: TimingEntry, seq: number): void {
-    // Find existing entry with same name
-    const existing = children.find((c) => c.name === entry.name);
-
+  private mergeChild(entry: TimingEntry, parentPath: string, seq: number): void {
+    const parent = this.index.get(parentPath);
+    if (!parent) return;
+    const existing = this.index.get(pathKey(parentPath, entry.name));
     if (existing) {
       this.mergeEntryValues(existing, entry, seq);
-
-      // Note: children are NOT re-merged here. Each child session merges itself
-      // via its own SessionImpl.end() → _mergeEntry path (which walks the
-      // persistent tree to find its parent). Re-merging here would
-      // double-increment count and double-apply the EMA for every descendant.
     } else {
-      // Add new entry (first time seeing this path)
-      // Deep clone to avoid reference issues
-      children.push(this.cloneEntry(entry));
+      this.insertSubtree(parent, parentPath, entry);
     }
   }
 
   /**
-   * Deep clone a timing entry
+   * Deep-clone a session entry under a persistent parent, indexing every
+   * cloned node by its path. If a session opened two same-named siblings,
+   * both rows are kept (as before) and the path resolves to the FIRST, which
+   * is the row every later merge lands in.
    */
-  private cloneEntry(entry: TimingEntry): TimingEntry {
-    return {
+  private insertSubtree(parent: TimingEntry, parentPath: string, entry: TimingEntry): void {
+    const path = pathKey(parentPath, entry.name);
+    const clone: TimingEntry = {
       name: entry.name,
       lastMs: entry.lastMs,
       avgMs: entry.avgMs,
       count: entry.count,
-      children: entry.children.map((c) => this.cloneEntry(c)),
+      children: [],
       metadata: entry.metadata ? { ...entry.metadata } : undefined,
       overBudget: entry.overBudget,
       lastSeq: entry.lastSeq,
       emaBase: entry.emaBase,
       stale: entry.stale,
     };
+    parent.children.push(clone);
+    if (!this.index.has(path)) this.index.set(path, clone);
+    for (const child of entry.children) {
+      this.insertSubtree(clone, path, child);
+    }
   }
 
   /**

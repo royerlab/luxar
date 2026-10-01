@@ -745,7 +745,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
       this._lastAllResident = allResident;
 
       if (!this._initialLoadDone) {
-        log.custom(
+        log.verbose(
           LogEmoji.BROADCAST,
           Modules.SPATIAL_INDEX_LOADER,
           `LOD ${level}/${this.nLods - 1}: ${

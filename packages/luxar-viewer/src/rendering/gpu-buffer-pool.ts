@@ -36,6 +36,7 @@ import type { LoadedPointsData } from '../data/data-loader-types';
 import type { ProcessedLinesData } from '../types/lines';
 import type { PooledBuffer, PoolStats } from './gpu-buffer-pool/pool-stats';
 import { evictUntilUnderByteBudget } from './gpu-buffer-pool/byte-budget-evictor';
+import { ActiveBufferMap } from './gpu-buffer-pool/byte-tracked-maps';
 import { PointsBufferAdapter } from './gpu-buffer-pool/points-adapter';
 import { LinesBufferAdapter } from './gpu-buffer-pool/lines-adapter';
 import {
@@ -90,8 +91,12 @@ export class GPUBufferPool {
   /** @internal — gsplats-specific pool state and methods. */
   readonly gsplats: GSplatsBufferAdapter;
 
-  /** @internal — shared with the per-type adapters. */
-  activeBuffers = new Map<string, PooledBuffer>(); // nodeId → active geometry
+  /**
+   * nodeId → active geometry, keeping a running byte total (see
+   * `gpu-buffer-pool/byte-tracked-maps.ts`). @internal — shared with the
+   * per-type adapters.
+   */
+  readonly activeBuffers = new ActiveBufferMap();
   /** Committed, non-pooled mesh geometries. The scene graph owns their lifetime. */
   private meshGeometries = new Map<string, THREE.BufferGeometry>();
   private trackedMeshGeometries = new WeakSet<THREE.BufferGeometry>();
@@ -509,12 +514,14 @@ export class GPUBufferPool {
     return evicted;
   }
 
-  /** Sum of bytes held by active (in-use) buffers. Uses cached per-geometry estimates. */
+  /**
+   * Sum of bytes held by active (in-use) buffers. O(1): the map keeps the
+   * total incrementally (B9b) — it used to walk every active buffer.
+   */
   private sumActiveBytes(): number {
-    let total = 0;
-    for (const buffer of this.activeBuffers.values()) {
-      total += estimateGeometryBytes(buffer.geometry);
-    }
+    // Active buffers keep a running total; mesh levels are few and re-measured
+    // here, since a committed mesh's geometry can be rewritten in place.
+    let total = this.activeBuffers.bytes;
     for (const geometry of this.meshGeometries.values()) {
       total += estimateGeometryBytes(geometry);
     }
@@ -532,18 +539,13 @@ export class GPUBufferPool {
     });
   }
 
-  /** Sum of bytes held by pooled (released, retained-for-reuse) buffers. */
+  /** Sum of bytes held by pooled (released, retained-for-reuse) buffers. O(1). */
   private sumPooledBytes(): number {
-    let total = 0;
-    const add = (pool: Map<number, PooledBuffer[]>): void => {
-      for (const arr of pool.values()) {
-        for (const b of arr) total += estimateGeometryBytes(b.geometry);
-      }
-    };
-    add(this.points.pointBuffers);
-    add(this.lines.lineBuffers);
-    add(this.gsplats.gsplatBuffers);
-    return total;
+    return (
+      this.points.pointBuffers.bytes +
+      this.lines.lineBuffers.bytes +
+      this.gsplats.gsplatBuffers.bytes
+    );
   }
 
   /**
@@ -703,10 +705,11 @@ export class GPUBufferPool {
    *    LRU sweep into aggressive `mustEvict` mode), and queued for a
    *    second `dispose()` by the evictors.
    *
-   * Resident-byte / stats accounting is DERIVED from `activeBuffers` +
-   * free-bucket membership (see {@link getStats} / {@link getResidentBytes}),
-   * so removing the entry is the entire correction — there is no persistent
-   * counter to decrement. On the normal release/evict/dispose paths the
+   * Resident-byte / stats accounting follows `activeBuffers` + free-bucket
+   * membership (see {@link getStats} / {@link getResidentBytes}; the byte
+   * totals are kept incrementally BY those containers), so removing the
+   * entry is the entire correction — there is no separate counter to
+   * decrement. On the normal release/evict/dispose paths the
    * entry (or its free-bucket slot) is already gone before `dispose()`
    * runs, so this listener finds nothing and is a safe no-op there — it
    * never double-counts eviction stats and never mutates a bucket array
@@ -744,14 +747,7 @@ export class GPUBufferPool {
   private removeFromFreeBuckets(geometry: THREE.BufferGeometry): void {
     const pools = [this.points.pointBuffers, this.lines.lineBuffers, this.gsplats.gsplatBuffers];
     for (const pool of pools) {
-      for (const [bucket, buffers] of pool) {
-        const index = buffers.findIndex((b) => b.geometry === geometry);
-        if (index !== -1) {
-          buffers.splice(index, 1);
-          if (buffers.length === 0) pool.delete(bucket);
-          return;
-        }
-      }
+      if (pool.removeFirst((b) => b.geometry === geometry, true)) return;
     }
   }
 

@@ -23,6 +23,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SceneLoader, type LoaderConfig, type ViewState } from '../../../data';
+import { DRAG_COMMIT_MAX_HOLD_MS } from '../../../data/scene-loader';
 import type { ViewStateQueue } from '../../../data/scene-loader/view-state/view-state-queue';
 import { releaseDepthSortNode } from '../../../rendering/depth-sort-coordinator';
 import * as THREE from 'three';
@@ -38,8 +39,14 @@ import {
 import type { NodeBuildCtx } from '../../../data/scene-loader/nodes/build-ctx';
 import { getLoadTimeline, resetLoadTimeline } from '../../../profiling/load-timeline';
 import * as gsplatsRefinement from '../../../data/gsplats/lod-refinement';
+import { signalPriority } from '../../../utils/fetch-concurrency';
 import { log, Modules } from '../../../utils/log';
 import { failedLoadsVersion } from '../../../utils/failed-loads-version';
+import { SlicePrefetcher } from '../../../data/scene-loader/prefetch/slice-prefetcher';
+import {
+  MAX_ABANDONED_RUNG_RETRY_ROUNDS,
+  MAX_CONSECUTIVE_REFINEMENT_FAILURES,
+} from '../../../data/scene-loader/progressive/refinement';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
 // Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
@@ -1042,6 +1049,179 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('updateView — partition parts entering the slice (B4)', () => {
+    // A timelapse partition: one part per timepoint. Stepping the hidden dim
+    // brings a deferred part into the slice; its activation must ride the pass
+    // that moved the slice — swept by it, with its directives, and committed
+    // with it — not load on its own and then ask for a second pass.
+    const DIMS = [
+      { name: 'x', unit: 'um', scale: 1 },
+      { name: 'y', unit: 'um', scale: 1 },
+      { name: 'z', unit: 'um', scale: 1 },
+      { name: 'time', unit: 'frame', scale: 1, discrete: true, step: 1 },
+    ];
+    type Internals = {
+      _passCount: number;
+      loaders: Map<string, unknown>;
+      lodGroupRegistry: LODGroupRegistry | null;
+    };
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    function setup(activate: (register: () => void) => Promise<void>) {
+      const internals = sceneLoader as unknown as Internals;
+      const camera = new THREE.Camera();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        getCommittedViewState: () => sceneLoader.committedViewState,
+        getViewVersion: () => sceneLoader.currentViewVersion,
+        isUpdateInProgress: () => sceneLoader.isLoadPassInProgress(),
+        requestReprocess: (paths) => sceneLoader.requestReprocess(paths),
+      });
+      internals.lodGroupRegistry = reg;
+      const makeLoader = () => ({ updateView: vi.fn().mockResolvedValue(null), dispose: vi.fn() });
+      const now = makeLoader();
+      const next = makeLoader();
+      internals.loaders.set('/tiled/part_0', now);
+      const groupObject = new THREE.Group();
+      const slot0 = new THREE.Group();
+      const slot1 = new THREE.Group();
+      groupObject.add(slot0, slot1);
+      reg.registerPartition({
+        path: '/tiled',
+        groupObject,
+        children: [
+          {
+            path: '/tiled/part_0',
+            objects: [slot0],
+            positionBounds: { min: [-0.5, -0.5, -0.5, 3], max: [0.5, 0.5, 0.5, 3] },
+          },
+          {
+            path: '/tiled/part_1',
+            objects: [slot1],
+            positionBounds: { min: [-0.5, -0.5, -0.5, 4], max: [0.5, 0.5, 0.5, 4] },
+            activate: () => activate(() => internals.loaders.set('/tiled/part_1', next)),
+          },
+        ],
+      });
+      return { internals, reg, now, next };
+    }
+
+    beforeEach(async () => {
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      await sceneLoader.updateView({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 3],
+        tolerance: [0, 0, 0, 0],
+        dimensions: DIMS,
+      });
+    });
+
+    it('the pass that moves the slice sweeps the part it activates, once, with its directives', async () => {
+      const { internals, reg, next } = setup(async (register) => register());
+      reg.evaluatePerFrame();
+      const passes = internals._passCount;
+
+      await sceneLoader.updateView({ slicePosition: [0, 0, 0, 4], ladderDepth: 2 });
+      await flush();
+      reg.evaluatePerFrame();
+      await flush();
+
+      expect(next.updateView).toHaveBeenCalledTimes(1);
+      expect(next.updateView.mock.calls[0][0].ladderDepth).toBe(2);
+      expect(internals._passCount - passes).toBe(1);
+    });
+
+    it('a part activated ahead of its slice joins that slice’s pass without a resync pass', async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => (release = resolve));
+      const { internals, reg, next } = setup(async (register) => {
+        await gate;
+        register();
+      });
+      reg.evaluatePerFrame();
+      const passes = internals._passCount;
+
+      // What `prefetchSlice` does for the predicted next slice (playback).
+      const ahead = reg.activatePartitionParts({
+        ...sceneLoader.committedViewState,
+        slicePosition: [0, 0, 0, 4],
+      });
+      const pass = sceneLoader.updateView({ slicePosition: [0, 0, 0, 4], ladderDepth: 2 });
+      release();
+      await Promise.all([ahead, pass]);
+      await flush();
+      reg.evaluatePerFrame();
+      await flush();
+
+      expect(next.updateView).toHaveBeenCalledTimes(1);
+      expect(next.updateView.mock.calls[0][0].ladderDepth).toBe(2);
+      expect(internals._passCount - passes).toBe(1);
+    });
+  });
+
+  describe('prefetchSlice — partition parts entering the next slice (B4)', () => {
+    it('warms a part activated for the predicted slice once its loader is registered', async () => {
+      const DIMS = [
+        { name: 'x', unit: 'um', scale: 1 },
+        { name: 'y', unit: 'um', scale: 1 },
+        { name: 'z', unit: 'um', scale: 1 },
+        { name: 'time', unit: 'frame', scale: 1, discrete: true, step: 1 },
+      ];
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      await sceneLoader.updateView({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 3],
+        tolerance: [0, 0, 0, 0],
+        dimensions: DIMS,
+      });
+      const internals = sceneLoader as unknown as {
+        loaders: Map<string, unknown>;
+        lodGroupRegistry: LODGroupRegistry | null;
+      };
+      const camera = new THREE.Camera();
+      const reg = new LODGroupRegistry({
+        getCamera: () => camera,
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        getCommittedViewState: () => sceneLoader.committedViewState,
+      });
+      internals.lodGroupRegistry = reg;
+      const groupObject = new THREE.Group();
+      const slot = new THREE.Group();
+      groupObject.add(slot);
+      reg.registerPartition({
+        path: '/tiled',
+        groupObject,
+        children: [
+          {
+            path: '/tiled/part_1',
+            objects: [slot],
+            positionBounds: { min: [-0.5, -0.5, -0.5, 4], max: [0.5, 0.5, 0.5, 4] },
+            activate: async () => {
+              await Promise.resolve();
+              internals.loaders.set('/tiled/part_1', { updateView: vi.fn(), dispose: vi.fn() });
+            },
+          },
+        ],
+      });
+      reg.evaluatePerFrame();
+      const warmed = vi.spyOn(
+        SlicePrefetcher.prototype as unknown as { prefetchNode: (path: string) => Promise<void> },
+        'prefetchNode'
+      );
+
+      // Playback at t=3 prefetches t=4, where the deferred part lives.
+      sceneLoader.prefetchSlice({ slicePosition: [0, 0, 0, 4] }, 50);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // A shadow can only warm a registered loader: the part must be warmed
+      // after its activation registered it, or the first loop loads it cold.
+      expect(warmed.mock.calls.map(([path]) => path)).toContain('/tiled/part_1');
+    });
+  });
+
   describe('updateView — dispose race', () => {
     it('resolves (does not hang) when called after dispose while the update lock is held', async () => {
       // Reproduce the dispose race: a refinement pass holds the update lock
@@ -1332,10 +1512,240 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('updateView — drag commit guarantee (B5)', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('a 3 s drag keeps committing: no supersede aborts a pass 150 ms after the last commit', async () => {
+      let now = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => now);
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+
+      // Every load takes 100 ms of (simulated) time; an aborted one bails at once.
+      const PASS_MS = 100;
+      const jobs: Array<{ start: number; done: boolean; finish: () => void }> = [];
+      const commits: number[] = [];
+      const mockLoader = {
+        loadGSplats: vi.fn(),
+        updateView: vi.fn(
+          (_vs: unknown, _session: unknown, signal?: AbortSignal) =>
+            new Promise<null>((resolve, reject) => {
+              const job = {
+                start: now,
+                done: false,
+                finish: () => {
+                  if (job.done) return;
+                  job.done = true;
+                  if (signal?.aborted) {
+                    reject(new DOMException('Superseded', 'AbortError'));
+                    return;
+                  }
+                  commits.push(now);
+                  resolve(null);
+                },
+              };
+              jobs.push(job);
+              signal?.addEventListener('abort', () => job.finish());
+            })
+        ),
+        dispose: vi.fn(),
+      };
+      (sceneLoader as unknown as Record<string, Map<string, unknown>>).gsplatLoaders.set(
+        '/node',
+        mockLoader
+      );
+
+      // A slider drag: a new slice every 50 ms for 3 s, never awaited.
+      for (let t = 0; t <= 3000; t += 10) {
+        now = t;
+        if (t % 50 === 0) {
+          void sceneLoader.updateView({
+            displayDims: [0, 1, 2],
+            slicePosition: [0, 0, 0, t / 50],
+            tolerance: [0, 0, 0, 0],
+          });
+        }
+        for (const job of jobs) if (now - job.start >= PASS_MS) job.finish();
+        // Let the pass pipeline settle before simulated time moves on.
+        for (let turn = 0; turn < 5; turn++) await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+
+      // Superseded passes never commit, so without the guarantee a drag whose
+      // passes outlast the event interval commits nothing until it stops.
+      expect(commits.length).toBeGreaterThanOrEqual(12);
+      const gaps = commits.map((at, i) => at - (i === 0 ? 0 : commits[i - 1]));
+      expect(Math.max(...gaps)).toBeLessThanOrEqual(150 + PASS_MS + 50);
+    });
+
+    it('a displayDims change aborts an overdue pass instead of letting it commit', async () => {
+      // The guarantee is for a DRAG: an intermediate slice is still a truthful
+      // frame. A pass for the OLD display axes is not — letting it commit puts
+      // at least one frame of geometry projected for the wrong axes on screen.
+      let now = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => now);
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      now = 10_000;
+      const signals: Array<AbortSignal | undefined> = [];
+      const mockLoader = {
+        loadGSplats: vi.fn(),
+        updateView: vi.fn((_vs: unknown, _session: unknown, signal?: AbortSignal) => {
+          signals.push(signal);
+          return new Promise<null>((_resolve, reject) => {
+            signal?.addEventListener('abort', () =>
+              reject(new DOMException('Superseded', 'AbortError'))
+            );
+          });
+        }),
+        dispose: vi.fn(),
+      };
+      (sceneLoader as unknown as Record<string, Map<string, unknown>>).gsplatLoaders.set(
+        '/node',
+        mockLoader
+      );
+
+      void sceneLoader.updateView({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 1],
+        tolerance: [0, 0, 0, 0],
+      });
+      await vi.waitFor(() => expect(signals).toHaveLength(1));
+      // Well past the drag interval, with nothing committed in this chain.
+      now += 400;
+      void sceneLoader.updateView({
+        displayDims: [0, 1, 3],
+        slicePosition: [0, 0, 0, 1],
+        tolerance: [0, 0, 0, 0],
+      });
+      await Promise.resolve();
+
+      expect(signals[0]?.aborted).toBe(true);
+    });
+
+    /**
+     * One view pass that never finishes on its own (a chunk stuck on a cold
+     * edge), then a slice-only supersede `heldMs` after it started.
+     */
+    async function supersedeStuckPassAfter(heldMs: number): Promise<AbortSignal | undefined> {
+      let now = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => now);
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      now = 10_000;
+      const signals: Array<AbortSignal | undefined> = [];
+      const mockLoader = {
+        loadGSplats: vi.fn(),
+        updateView: vi.fn((_vs: unknown, _session: unknown, signal?: AbortSignal) => {
+          signals.push(signal);
+          return new Promise<null>((_resolve, reject) => {
+            signal?.addEventListener('abort', () =>
+              reject(new DOMException('Superseded', 'AbortError'))
+            );
+          });
+        }),
+        dispose: vi.fn(),
+      };
+      (sceneLoader as unknown as Record<string, Map<string, unknown>>).gsplatLoaders.set(
+        '/node',
+        mockLoader
+      );
+
+      void sceneLoader.updateView({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 1],
+        tolerance: [0, 0, 0, 0],
+      });
+      await vi.waitFor(() => expect(signals).toHaveLength(1));
+      now += heldMs;
+      void sceneLoader.updateView({
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 2],
+        tolerance: [0, 0, 0, 0],
+      });
+      await Promise.resolve();
+      return signals[0];
+    }
+
+    it('a pass stuck past DRAG_COMMIT_MAX_HOLD_MS is aborted by a newer view', async () => {
+      // Hosted chunks can take tens of seconds on a cold edge. Holding such a
+      // pass for its commit queues every newer view behind that one download
+      // (99 declined aborts over 42 s in an instrumented run): the scrub freezes.
+      const stuck = await supersedeStuckPassAfter(5_000);
+      expect(stuck?.aborted).toBe(true);
+    });
+
+    it('a pass younger than the hold cap and owed a commit is still let through', async () => {
+      // 400 ms: past DRAG_COMMIT_INTERVAL_MS (owed a commit), inside the cap.
+      const owed = await supersedeStuckPassAfter(400);
+      expect(owed?.aborted).toBe(false);
+    });
+
+    it('a view queued behind a held pass starts once the hold cap expires, with no newer view', async () => {
+      // The drag stops while its last position is queued behind a held pass.
+      // No newer view arrives to re-check the cap, so without a timer the last
+      // position waits for however long the stuck pass runs.
+      let now = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => now);
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        now = 10_000;
+        const calls: Array<{ slice: number; signal?: AbortSignal }> = [];
+        const mockLoader = {
+          loadGSplats: vi.fn(),
+          updateView: vi.fn(
+            (vs: { slicePosition: number[] }, _session: unknown, signal?: AbortSignal) => {
+              calls.push({ slice: vs.slicePosition[3], signal });
+              return new Promise<null>((_resolve, reject) => {
+                signal?.addEventListener('abort', () =>
+                  reject(new DOMException('Superseded', 'AbortError'))
+                );
+              });
+            }
+          ),
+          dispose: vi.fn(),
+        };
+        (sceneLoader as unknown as Record<string, Map<string, unknown>>).gsplatLoaders.set(
+          '/node',
+          mockLoader
+        );
+        const view = (slice: number) => ({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0, slice],
+          tolerance: [0, 0, 0, 0],
+        });
+
+        void sceneLoader.updateView(view(1));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(calls).toHaveLength(1);
+        // 400 ms in: owed a commit and inside the cap, so the pass is held.
+        now += 400;
+        void sceneLoader.updateView(view(2));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(calls[0].signal?.aborted).toBe(false);
+
+        // Just inside the cap: still held.
+        now = 10_000 + DRAG_COMMIT_MAX_HOLD_MS - 10;
+        await vi.advanceTimersByTimeAsync(DRAG_COMMIT_MAX_HOLD_MS - 410);
+        expect(calls[0].signal?.aborted).toBe(false);
+        expect(calls).toHaveLength(1);
+
+        // At the cap, with no newer view: the held pass is aborted and the
+        // queued (last) view runs.
+        now = 10_000 + DRAG_COMMIT_MAX_HOLD_MS + 10;
+        await vi.advanceTimersByTimeAsync(20);
+        expect(calls[0].signal?.aborted).toBe(true);
+        await vi.waitFor(() => expect(calls.map((call) => call.slice)).toEqual([1, 2]));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   describe('updateView — superseded loads abort (per-update AbortSignal)', () => {
     beforeEach(async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
     });
+    afterEach(() => vi.restoreAllMocks());
 
     // Three-geometry symmetry: the same supersede→abort contract must hold for
     // Points, Lines, and GSplats. Each registers its fake loader in the
@@ -1347,9 +1757,16 @@ describe('SceneLoader', () => {
       { type: 'gsplats', map: 'gsplatLoaders' },
     ] as const;
 
-    it.each(cases)(
-      'aborts the in-flight $type load when a newer view-state supersedes it; no false failure',
-      async ({ map }) => {
+    it.each(
+      cases.flatMap((testCase) => [
+        { ...testCase, idleMs: 0 },
+        { ...testCase, idleMs: 5000 },
+      ])
+    )(
+      'aborts the in-flight $type load after $idleMs ms idle when a newer view supersedes it',
+      async ({ map, idleMs }) => {
+        let now = (sceneLoader as unknown as { _lastCommitAt: number })._lastCommitAt + idleMs;
+        vi.spyOn(performance, 'now').mockImplementation(() => now);
         let capturedSignal: AbortSignal | undefined;
         let releaseFirst!: () => void;
         const firstGate = new Promise<void>((resolve) => {
@@ -1393,6 +1810,7 @@ describe('SceneLoader', () => {
           tolerance: [0, 0, 0, 0],
         });
         await Promise.resolve();
+        now += 10;
 
         // Second update supersedes the in-flight one → must abort its signal.
         // Do NOT await it yet: the queued promise now resolves only when the
@@ -1422,6 +1840,67 @@ describe('SceneLoader', () => {
         expect(sceneLoader.hasFailures()).toBe(false);
         expect(sceneLoader.getFailedLoaders().size).toBe(0);
         expect(forgetPathSpy).not.toHaveBeenCalledWith('/node');
+      }
+    );
+
+    it.each([false, true])(
+      'aborts the first pass superseded after a refinement hand-off following idle (resync first: %s)',
+      async (resyncFirst) => {
+        const internals = sceneLoader as unknown as {
+          _lastCommitAt: number;
+          _updateInProgress: boolean;
+          _refining: boolean;
+          _updateAbortController: AbortController | null;
+          viewStateQueue: ViewStateQueue;
+          reenterPending(state: Partial<ViewState>): Promise<void>;
+        };
+        let now = internals._lastCommitAt + 5000;
+        vi.spyOn(performance, 'now').mockImplementation(() => now);
+        let capturedSignal: AbortSignal | undefined;
+        let releaseFirst!: () => void;
+        const firstGate = new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+        const loader = {
+          updateView: vi.fn(async (_vs: unknown, _session: unknown, signal?: AbortSignal) => {
+            if (!capturedSignal) {
+              capturedSignal = signal;
+              await firstGate;
+              signal?.throwIfAborted();
+            }
+            return null;
+          }),
+          dispose: vi.fn(),
+        };
+        (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders.set('/node', loader);
+
+        // Refinement owns the lock, then hands its queued view to the next pass.
+        internals._updateInProgress = true;
+        internals._refining = true;
+        internals._updateAbortController = new AbortController();
+        if (resyncFirst) {
+          await sceneLoader.updateView({}, { resyncPaths: new Set(['/node']) });
+          expect(internals.viewStateQueue.hasPending()).toBe(true);
+        }
+        const queued = sceneLoader.updateView({ slicePosition: [0, 0, 0, 1] });
+        expect(internals.viewStateQueue.hasPending()).toBe(true);
+        internals._updateInProgress = false;
+        internals._refining = false;
+        const pending = internals.viewStateQueue.takePending();
+        expect(pending).toBeDefined();
+        const first = internals.reenterPending(pending!);
+        await Promise.resolve();
+        expect(capturedSignal).toBeInstanceOf(AbortSignal);
+
+        now += 10;
+        const winning = sceneLoader.updateView({ slicePosition: [0, 0, 0, 2] });
+        expect(capturedSignal?.aborted).toBe(true);
+
+        releaseFirst();
+        await first;
+        await Promise.all([queued, winning]);
+        expect(loader.updateView).toHaveBeenCalledTimes(2);
+        expect(sceneLoader.hasFailures()).toBe(false);
       }
     );
   });
@@ -2141,6 +2620,30 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('refinement fetch class (B9c)', () => {
+    it("runs refinement under a signal carrying the 'refinement' fetch priority", async () => {
+      let seen: AbortSignal | undefined;
+      const runRefinement = vi
+        .spyOn(gsplatsRefinement, 'runGSplatsRefinement')
+        .mockImplementation(async (ctx) => {
+          seen = ctx.signal;
+        });
+      const internals = sceneLoader as unknown as {
+        _updateInProgress: boolean;
+        scheduleGSplatsRefinement(): Promise<void>;
+      };
+      internals._updateInProgress = true;
+      try {
+        await internals.scheduleGSplatsRefinement();
+        expect(seen).toBeDefined();
+        expect(signalPriority(seen)?.value).toBe('refinement');
+      } finally {
+        runRefinement.mockRestore();
+        internals._updateInProgress = false;
+      }
+    });
+  });
+
   describe('getFailedLoadsProvider — reason mapping', () => {
     // #1055: the layers-panel error badge reads its tooltip from the provider's
     // getFailedReason, which folds error.message → classified kind → undefined.
@@ -2803,6 +3306,195 @@ describe('SceneLoader', () => {
         updateView.mockRestore();
         warningLog.mockRestore();
       }
+    });
+  });
+
+  describe('abandoned rung recovery (#2975)', () => {
+    // A chunk fetch that stalls to give-up makes the store reject; a
+    // refinement step that hits it fails. After the consecutive-failure cap
+    // the ladder was retired and nothing but an `online` event re-opened it,
+    // so a session that never went offline sat at the coarser rung, idle and
+    // reported settled, until the user happened to move something.
+    interface RecoveryInternals {
+      _updateInProgress: boolean;
+      rootGroup: THREE.Group | null;
+      gsplatLoaders: Map<string, unknown>;
+      registry: { recordFailure(path: string, error: Error): void };
+      scheduleGSplatsRefinement: () => Promise<void>;
+    }
+
+    const stallError = () =>
+      new Error(
+        'fetch exhausted retries for additive_1/amplitudes/c/0: ' +
+          'response bodies made no aggregate progress for 7500 ms'
+      );
+
+    /** A ladder whose next rung fails `failures` times, then streams normally. */
+    function flakyLadder(failures: number, total = 3) {
+      const ladder = {
+        calls: 0,
+        loadedLODCount: 1,
+        totalLODCount: total,
+        get hasMoreLODs() {
+          return ladder.loadedLODCount < ladder.totalLODCount;
+        },
+        updateView: vi.fn(async () => {
+          ladder.calls += 1;
+          if (ladder.calls <= failures) throw stallError();
+          ladder.loadedLODCount += 1;
+          return null;
+        }),
+        dispose: vi.fn(),
+      };
+      return ladder;
+    }
+
+    let errorLog: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      resetLoadTimeline();
+      errorLog = vi.spyOn(log, 'error').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      (sceneLoader as unknown as RecoveryInternals).gsplatLoaders.clear();
+      errorLog.mockRestore();
+      vi.useRealTimers();
+    });
+
+    /** Run one refinement drain the way an update tail does (lock held). */
+    async function drain(): Promise<void> {
+      const internals = sceneLoader as unknown as RecoveryInternals;
+      internals._updateInProgress = true;
+      const run = internals.scheduleGSplatsRefinement();
+      await vi.advanceTimersByTimeAsync(300);
+      await run;
+    }
+
+    it('re-drains an abandoned rung after a backoff and commits it, with no user action', async () => {
+      const ladder = flakyLadder(3);
+      (sceneLoader as unknown as RecoveryInternals).gsplatLoaders.set('/g', ladder);
+
+      await drain();
+      // The first drain gave up at the consecutive-failure cap and let go of
+      // the lock: the rung is still missing.
+      expect(ladder.calls).toBe(3);
+      expect(ladder.loadedLODCount).toBe(1);
+      expect(sceneLoader.isUpdateInProgress()).toBe(false);
+      // ...so the loader must not report its refinement done while that rung
+      // is only waiting for a retry: capture / isSettled read this.
+      expect(getLoadTimeline().refinement.complete).toBe(false);
+
+      // Backoff, not a hot loop: nothing is re-fetched right away.
+      await vi.advanceTimersByTimeAsync(400);
+      expect(ladder.calls).toBe(3);
+
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(ladder.loadedLODCount).toBe(3);
+      expect(ladder.hasMoreLODs).toBe(false);
+      expect(sceneLoader.isUpdateInProgress()).toBe(false);
+      expect(getLoadTimeline().refinement.complete).toBe(true);
+    });
+
+    it('bounds the retries of a rung that never recovers, then reports settled', async () => {
+      const ladder = flakyLadder(Number.POSITIVE_INFINITY);
+      (sceneLoader as unknown as RecoveryInternals).gsplatLoaders.set('/g', ladder);
+      const warningLog = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      notifierMocks.toast.mockClear();
+
+      await drain();
+      expect(notifierMocks.toast).toHaveBeenCalledWith(
+        'Refinement failed for /g — showing reduced detail',
+        5000
+      );
+      await vi.advanceTimersByTimeAsync(30 * 60_000);
+      const settledCalls = ladder.calls;
+      // More than the one drain it used to get, but bounded: a few backoff
+      // rounds of the consecutive-failure cap each.
+      expect(settledCalls).toBe(
+        MAX_CONSECUTIVE_REFINEMENT_FAILURES * (MAX_ABANDONED_RUNG_RETRY_ROUNDS + 1)
+      );
+      expect(
+        notifierMocks.toast.mock.calls.filter(([message]) =>
+          String(message).startsWith('Refinement failed')
+        )
+      ).toHaveLength(1);
+      expect(ladder.loadedLODCount).toBe(1);
+      expect(sceneLoader.isUpdateInProgress()).toBe(false);
+      // Given up for good: no timer keeps polling and the drain reads complete.
+      await vi.advanceTimersByTimeAsync(30 * 60_000);
+      expect(ladder.calls).toBe(settledCalls);
+      expect(getLoadTimeline().refinement.complete).toBe(true);
+      await drain();
+      await drain();
+      expect(
+        warningLog.mock.calls.filter(([, message]) =>
+          String(message).startsWith('Leaving LOD refinement')
+        )
+      ).toHaveLength(1);
+      for (let slice = 1; slice <= 3; slice++) {
+        const update = sceneLoader.updateView({ slicePosition: [0, 0, 0, slice] });
+        await vi.advanceTimersByTimeAsync(500);
+        await update;
+      }
+      expect(
+        notifierMocks.toast.mock.calls.filter(([message]) =>
+          String(message).startsWith('Refinement failed')
+        )
+      ).toHaveLength(1);
+      warningLog.mockRestore();
+    });
+
+    it('a newer view re-opens a retired ladder at once instead of waiting out the backoff', async () => {
+      const ladder = flakyLadder(3, 4);
+      (sceneLoader as unknown as RecoveryInternals).gsplatLoaders.set('/g', ladder);
+
+      await drain();
+      expect(ladder.calls).toBe(3);
+      const update = sceneLoader.updateView({ slicePosition: [0, 0, 0, 5] });
+      await vi.advanceTimersByTimeAsync(500);
+      await update;
+      // The view pass took one rung; its own refinement drain took the rest,
+      // well inside the first backoff delay.
+      expect(ladder.loadedLODCount).toBe(4);
+      expect(getLoadTimeline().refinement.complete).toBe(true);
+    });
+
+    it('a dataset switch (dispose) cancels a pending re-drain', async () => {
+      const ladder = flakyLadder(3);
+      (sceneLoader as unknown as RecoveryInternals).gsplatLoaders.set('/g', ladder);
+
+      await drain();
+      expect(ladder.calls).toBe(3);
+      void sceneLoader.dispose();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(ladder.calls).toBe(3);
+    });
+
+    it('resumes refinement after a failed view-pass load is retried successfully', async () => {
+      // The retry path commits one pass's worth of the node and used to stop
+      // there, leaving the rest of the ladder idle.
+      const internals = sceneLoader as unknown as RecoveryInternals;
+      const root = new THREE.Group();
+      const node = new THREE.Group();
+      node.name = '/g';
+      root.add(node);
+      internals.rootGroup = root;
+      const ladder = flakyLadder(0);
+      internals.gsplatLoaders.set('/g', ladder);
+      internals.registry.recordFailure('/g', stallError());
+      const refine = vi.fn(async () => {
+        internals._updateInProgress = false;
+      });
+      internals.scheduleGSplatsRefinement = refine;
+
+      const result = await sceneLoader.retryAllFailedLoaders();
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(result.succeeded).toEqual(['/g']);
+      expect(ladder.hasMoreLODs).toBe(true);
+      expect(refine).toHaveBeenCalledTimes(1);
     });
   });
 

@@ -14,7 +14,7 @@ import { config } from '../config';
 import { type Result, ok, err, isErr } from '../utils/result';
 import type { MultiLevelCacheStats } from './types';
 import { perfCounters } from '../profiling/perf-counters';
-import { FetchPriorityCell, type FetchPriority } from '../utils/fetch-concurrency';
+import { FetchPriorityCell, signalPriority, type FetchPriority } from '../utils/fetch-concurrency';
 
 /**
  * Perf counter: demand callers served from L2 (mirrors `l2HitCount`, but
@@ -510,7 +510,11 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // (a successful prefetch would look identical to a successful
     // user demand).
     const isDemand = !options?.suppressPrefetch;
-    const priority: FetchPriority = options?.priority ?? (isDemand ? 'demand' : 'speculative');
+    // A class carried on the caller's signal (a refinement run's reads — see
+    // `tagSignalPriority`) applies when the call names none itself.
+    const signalCell = signalPriority(options?.signal);
+    const priority: FetchPriority =
+      options?.priority ?? signalCell?.value ?? (isDemand ? 'demand' : 'speculative');
 
     // L1: Memory check (fastest, ~1μs). Stays direct (no coalescing
     // needed — synchronous, no I/O cost to share).
@@ -565,6 +569,12 @@ export class MultiLevelCachingStore implements AsyncReadable {
     pending.waiters++;
     if (isDemand) pending.demand = true;
     pending.priority.raise(priority);
+    // Follow a raise of the signal's class while waiting (a demand read joined
+    // the L0 decode this read serves), so the fetch does not stay queued low.
+    const unlinkSignalCell =
+      options?.priority === undefined
+        ? signalCell?.onRaise(() => pending.priority.raise(signalCell.value))
+        : undefined;
 
     let outcome: PendingGetOutcome;
     try {
@@ -572,6 +582,8 @@ export class MultiLevelCachingStore implements AsyncReadable {
     } catch (error) {
       const cause = error instanceof Error ? error : new Error(String(error));
       return err({ kind: 'NetworkError', cause });
+    } finally {
+      unlinkSignalCell?.();
     }
 
     // Per-caller demand counters: which tier "served" this caller.

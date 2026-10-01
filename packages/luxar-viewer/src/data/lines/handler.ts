@@ -7,6 +7,7 @@
  * @module data/lines/handler
  */
 
+import { findObjectByName } from '../../utils/scene-graph-index';
 import * as THREE from 'three';
 import type { GeometryKind, ViewState } from '../data-loader-types';
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../../types/lines';
@@ -65,7 +66,7 @@ export async function loadAndStage(
   session: UpdateSession,
   ctx: LinesHandlerCtx
 ): Promise<StagedLinesCommit | null> {
-  const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+  const mesh = findObjectByName(ctx.rootGroup, path) as THREE.Mesh | undefined;
   const attrs = mesh?.userData?.attrs as { extend_to_all?: string[] } | undefined;
   const derived = ctx.deriveNodeViewState(path, attrs, {
     applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.lines,

@@ -54,8 +54,11 @@ export async function loadSceneNodes(
     // afterwards. Wrap with ``loadLeafNode`` for the same error-capture
     // semantics as the leaf branches above — a failing LOD group
     // shouldn't sink the rest of the scene.
+    // Its lazy levels load OUTSIDE any pass, so a register-only activation
+    // (see `NodeBuildCtx.registerOnly`) never reaches its subtree.
+    const lodCtx = ctx.registerOnly ? { ...ctx, registerOnly: false } : ctx;
     await loadLeafNode(
-      () => loadLodGroupNode(node, parentThree, parentLoc, ctx, loadSceneNodes),
+      () => loadLodGroupNode(node, parentThree, parentLoc, lodCtx, loadSceneNodes),
       node.path
     );
   } else if (node.type === 'group' && node.attrs.kind === 'partition') {

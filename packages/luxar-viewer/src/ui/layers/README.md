@@ -59,6 +59,34 @@ panel doesn't import `scene/` directly (respecting the data → ui layer
 direction). Locking a level wakes the animation loop (`requestRender`) so the
 new active level paints even when the camera and slice are idle.
 
+### Leaves built after the panel initialised
+
+The panel pushes layer state into the scene at `initFromScene` and on every
+edit, and both skip a leaf with no scene object yet. A leaf built LATER — a
+`kind=partition` part the LOD registry activates when it enters the frustum or
+the current slice (B4 gated loading), a lazily built level — would otherwise
+render its AUTHORED appearance until the next edit re-pushed everything.
+
+So the scene loader reports every placeholder it attaches
+(`NodeBuildCtx.onLeafMaterialized`, forwarded by
+`SceneLoader.setLeafMaterializedListener`, wired in
+`core/app/dataset/load-dataset.ts` right after `initFromScene`) and
+`LayersPanel.applyLayerStateToNewLeaf` → `LayerApplyEngine.applyToNewLeaf`
+styles it before any data reaches it: the innermost owning layer's composed
+state (opacity, absorption, window, gamma, blend) through the same per-leaf
+code an edit runs, plus every kind of non-composed state the panel has pushed
+for a layer on its ancestry (colormap, draw order, label style, mesh
+appearance, physical knobs). Pushed writes replay in edit order, so a later
+outer-layer edit wins over an earlier nested-layer edit on late leaves too.
+The depth-sort blend-switch hook is skipped: the leaf has no commit yet, and
+its first commit registers it with the sorter under the live mode (reporting
+the switch would queue a full re-sweep per activated part). A hidden layer
+whose object is as new as the leaf — the leaf itself, or a group built with it
+inside the same deferred part — is stamped hidden. Kinds the panel never
+pushed are left at the factory's authored value, which is exactly what the
+already-drawn leaves still carry. A leaf of a different scene graph than the
+panel's is ignored.
+
 ### Load-failure badge
 
 When a node's loader throws (corrupt data, network failure, the "Vertex index N

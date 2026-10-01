@@ -80,6 +80,28 @@ export function resetRefinementFailureTrackers(loaders: Iterable<object>): boole
   return resetAny;
 }
 
+/** Re-open exhausted ladders after backoff, preserving notification state. */
+export function reopenRefinementFailureTrackers(loaders: Iterable<object>): void {
+  for (const loader of loaders) failureTrackers.get(loader)?.reopen();
+}
+
+/**
+ * Paths whose ladder still has rungs left but was retired by the
+ * consecutive-failure cap: work abandoned mid-ladder, which the owning
+ * SceneLoader re-drains on a backoff (#2975).
+ */
+export function abandonedLadderPaths(
+  loaders: Iterable<readonly [string, RefinableLoader]>
+): string[] {
+  const paths: string[] = [];
+  for (const [path, loader] of loaders) {
+    if (loader.hasMoreLODs === true && failureTrackers.get(loader)?.isExhausted(path) === true) {
+      paths.push(path);
+    }
+  }
+  return paths;
+}
+
 function cannotRefine(
   path: string,
   loader: RefinableLoader,
@@ -113,18 +135,39 @@ export interface RefinementErrorPresentation {
  * especially important for meshes, where that is the overwhelmingly common
  * case and whole-node loaders do not expose a ladder.
  *
+ * Asynchronous because the budget can answer `in-flight` — the step fits
+ * alone but not beside the concurrent steps still loading (B9c). That is a
+ * wait, not a refusal, so this re-asks each time one of them records. The
+ * wait always ends: `in-flight` is only answered while another admitted step
+ * is outstanding, and every admitted step records in its `finally`.
+ *
  * @param path Node path, used as the key for backoff and admission state.
  * @param loader The loader being offered.
  * @param residencyBudget Shared residency ceiling; absent means unbounded.
  * @param isPathVisible Live culling/layer-visibility predicate.
  * @returns Whether to proceed, and the byte allowance if one was granted.
  */
-export function admitRefinementCandidate(
+export async function admitRefinementCandidate(
   path: string,
   loader: RefinableLoader,
   residencyBudget?: RefinementResidencyBudget,
   isPathVisible?: (path: string) => boolean
-): RefinementAdmissionDecision {
+): Promise<RefinementAdmissionDecision> {
+  let decision = admitNow(path, loader, residencyBudget, isPathVisible);
+  while (decision === 'wait') {
+    await residencyBudget?.whenStepSettles();
+    decision = admitNow(path, loader, residencyBudget, isPathVisible);
+  }
+  return decision;
+}
+
+/** One synchronous admission attempt; `'wait'` for an `in-flight` verdict. */
+function admitNow(
+  path: string,
+  loader: RefinableLoader,
+  residencyBudget?: RefinementResidencyBudget,
+  isPathVisible?: (path: string) => boolean
+): RefinementAdmissionDecision | 'wait' {
   if (cannotRefine(path, loader, isPathVisible)) return { admitted: false };
   // Declining here is not sufficient on its own: `anyHasMoreLODs` and
   // `getLoaderProgress` must exclude declined paths too, or the loop re-offers
@@ -132,8 +175,10 @@ export function admitRefinementCandidate(
   // both live in this module.
   const residency = loader.ladderResidency?.();
   const admission = residency ? residencyBudget?.admit(path, residency) : undefined;
-  if (admission?.admitted === false) return { admitted: false };
-  return { admitted: true, allowanceBytes: admission?.allowanceBytes ?? undefined };
+  if (!admission) return { admitted: true };
+  if (admission.reason === 'in-flight') return 'wait';
+  if (!admission.admitted) return { admitted: false };
+  return { admitted: true, allowanceBytes: admission.allowanceBytes ?? undefined };
 }
 
 /**
@@ -166,18 +211,21 @@ export function handleRefinementError(
   // See `loaders/progressive/pass-rollback`.
   const unwound = tryRollbackToPassStart(loader);
   const message = (error as Error).message;
-  if (failureTrackerFor(loader).recordFailure(path)) {
+  const tracker = failureTrackerFor(loader);
+  if (tracker.recordFailure(path)) {
     log.error(
       Modules.SCENE_LOADER,
       `${label} refinement failed for ${path}: ${message} — ` +
         `giving up after ${MAX_CONSECUTIVE_REFINEMENT_FAILURES} consecutive failures ` +
-        `(will retry after connectivity is restored; unwound ${unwound} level(s))`
+        `(unwound ${unwound} level(s))`
     );
     // The node silently freezes at its last valid coarse prefix — a
     // console-only error leaves the user staring at a permanently coarse node
     // with no explanation. Same channel as leaf-load failures
     // (load-leaf-error-dispatch).
-    notifier.toast(`Refinement failed for ${path} — ${degradedState}`, 5000);
+    if (tracker.shouldNotify(path)) {
+      notifier.toast(`Refinement failed for ${path} — ${degradedState}`, 5000);
+    }
   } else {
     log.error(
       Modules.SCENE_LOADER,

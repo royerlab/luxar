@@ -5,6 +5,9 @@
  * loading for all points nodes and managing the THREE.js scene construction.
  */
 
+import { findObjectByName } from '../utils/scene-graph-index';
+import { isEffectivelyVisible } from '../utils/object-visibility';
+import { tagSignalPriority } from '../utils/fetch-concurrency';
 import { bumpFailedLoadsVersion, failedLoadsVersion } from '../utils/failed-loads-version';
 import * as zarr from './zarr';
 import * as THREE from 'three';
@@ -113,6 +116,12 @@ export interface LODGroupRegistryOwner {
    * streaming (minutes on a slow link).
    */
   isLoadPassInProgress(): boolean;
+  /**
+   * The view the owning loader last COMMITTED geometry for (B4): partition
+   * parts that miss its hidden-dim slice are hidden and kept out of refinement.
+   * Optional so a narrow owner (a test double) may omit it ⇒ no slice gating.
+   */
+  readonly committedViewState?: ViewState;
 }
 
 /** Per-call directives for {@link SceneLoader.updateView}. */
@@ -202,7 +211,7 @@ import { deriveNodeViewState as deriveNodeViewStateHelper } from './scene-loader
 import { SlicePrefetcher } from './scene-loader/prefetch/slice-prefetcher';
 import {
   resolveLoadEligibleLoaders,
-  isLoaderPathEligible,
+  isObjectViewEligible,
   isUnderAny,
   runLoaderUpdates as runLoaderUpdatesHelper,
 } from './scene-loader/loaders/run-loader-updates';
@@ -216,9 +225,23 @@ import {
 import { runAtomicCommit } from './scene-loader/update-view/atomic-commit';
 import { buildUpdateCtxs } from './scene-loader/update-view/build-update-ctxs';
 import { queueNext } from './scene-loader/update-view/queue-next';
-import { resetRefinementFailureTrackers } from './scene-loader/progressive/refinement-wrapper';
+import {
+  abandonedLadderPaths,
+  resetRefinementFailureTrackers,
+  reopenRefinementFailureTrackers,
+  type RefinableLoader,
+} from './scene-loader/progressive/refinement-wrapper';
+import {
+  ABANDONED_RUNG_RETRY_BASE_MS,
+  ABANDONED_RUNG_RETRY_MAX_MS,
+  MAX_ABANDONED_RUNG_RETRY_ROUNDS,
+} from './scene-loader/progressive/refinement';
 import { connectLoaderToMonitor as connectLoaderToMonitorHelper } from './scene-loader/nodes/connect-loader-to-monitor';
-import type { LineWorkingSetGate, NodeBuildCtx } from './scene-loader/nodes/build-ctx';
+import type {
+  LeafMaterializedListener,
+  LineWorkingSetGate,
+  NodeBuildCtx,
+} from './scene-loader/nodes/build-ctx';
 import { createLineWorkingSetGate } from './scene-loader/nodes/load-children-concurrently';
 import {
   noteRefinementAborted,
@@ -226,6 +249,8 @@ import {
   noteRefinementStarted,
 } from '../profiling/load-timeline';
 import { viewStatesEqual } from './loaders/progressive/view-state-equal';
+import { computeWorldNdTransform } from './transforms/nd-transform';
+
 import {
   RefinementResidencyBudget,
   RefinementResidencyReporter,
@@ -239,6 +264,25 @@ import {
 } from './scene-loader/progressive/density-gate';
 
 /**
+ * Longest a superseding view may keep aborting in-flight passes without one
+ * committing (B5): past it, the pass in flight — whose streaming policy stops
+ * at the first cold rung, so it is the coarsest data for its slice — commits
+ * before the newer view runs. Settled frames are unaffected (the last view
+ * always runs to completion); only how often a drag shows an intermediate
+ * slice changes.
+ */
+export const DRAG_COMMIT_INTERVAL_MS = 150;
+
+/**
+ * Longest a view pass may run and still be owed its commit (B5). A pass older
+ * than this is waiting on something slow — typically a stalled chunk download
+ * (a cold hosted edge can take tens of seconds) — and holding it would queue
+ * every newer view behind that one download, freezing the scrub. Past the cap
+ * the superseding view aborts it as it would without the guarantee.
+ */
+export const DRAG_COMMIT_MAX_HOLD_MS = 1000;
+
+/**
  * Delay before `kickRefinementIfIdle` re-checks a lock-held serialization
  * lock. Frame-scale-ish: responsive after the holder finishes, cheap while it
  * runs (one timer at a time — see `_refinementKickPending`). Module-local (no
@@ -246,6 +290,21 @@ import {
  */
 const REFINEMENT_KICK_RECHECK_MS = 100;
 
+/** The per-type handler ctxs of one pass (see `build-update-ctxs.ts`). */
+type UpdateCtxs = ReturnType<typeof buildUpdateCtxs>;
+
+/** Join two stage-1 sweeps of one pass, type by type (points, lines, gsplats, mesh). */
+function concatSweeps<A, B, C, D>(
+  first: [A[], B[], C[], D[]],
+  second: [A[], B[], C[], D[]]
+): [A[], B[], C[], D[]] {
+  return [
+    [...first[0], ...second[0]],
+    [...first[1], ...second[1]],
+    [...first[2], ...second[2]],
+    [...first[3], ...second[3]],
+  ];
+}
 /**
  * Main scene loader that handles the complete loading pipeline.
  *
@@ -323,6 +382,20 @@ export class SceneLoader {
   }
 
   private viewState: ViewState;
+  /** See {@link committedViewState}; `null` until a load or pass commits. */
+  private _committedViewState: ViewState | null = null;
+  /** `performance.now()` of the last committed pass (B5 commit guarantee). */
+  private _lastCommitAt = 0;
+  /** Start of the current chain of superseding view passes. */
+  private _passChainStartedAt = 0;
+  /** Start of the view pass in flight (B5 hold cap). */
+  private _passStartedAt = 0;
+  /**
+   * Fires when the held pass's {@link DRAG_COMMIT_MAX_HOLD_MS} runs out while a
+   * view waits behind it (B5): a drag that stopped sends no newer view to
+   * re-check the cap. Cleared when the pass ends and on dispose.
+   */
+  private _holdExpiryTimer: ReturnType<typeof setTimeout> | null = null;
   private config: LoaderConfig;
   private rootGroup: THREE.Group | null = null;
   /**
@@ -483,12 +556,18 @@ export class SceneLoader {
   // time (see that method) — prevents a per-caller pile-up of scheduled
   // re-checks while an update holds the lock for a while.
   private _refinementKickPending = false;
+  // Pending re-drain of ladders the consecutive-failure cap retired, and the
+  // backoff round it is on (#2975). See `scheduleAbandonedRungRetry`.
+  private _abandonedRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private _abandonedRetryRound = 0;
   // Set true in dispose(); progressive-refinement loops poll this (via the
   // ctx isActive callback) so they abort promptly when this loader is torn
   // down mid-flight (e.g. a dataset switch) instead of fetching/decoding
   // against a dead dataset.
   private _disposed = false;
   private _sceneGraph: SceneNode | null = null;
+  /** See {@link setLeafMaterializedListener}. */
+  private _leafMaterializedListener: LeafMaterializedListener | null = null;
 
   /**
    * View-state queue: owns `_pendingViewState` (set/take/has + drain)
@@ -606,7 +685,7 @@ export class SceneLoader {
         factoryDeps: () => this.factoryDeps(),
         registry: this.registry,
         applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
-        resolveObject: (path) => this.rootGroup?.getObjectByName(path),
+        resolveObject: (path) => findObjectByName(this.rootGroup, path),
       });
     }
     // Strip any rider budget off the incoming partial — the shadow pass gets
@@ -614,7 +693,30 @@ export class SceneLoader {
     const incoming = { ...viewState };
     delete incoming.frameBudgetMs;
     delete incoming.ladderDepth;
-    this._slicePrefetcher.prefetch({ ...this.viewState, ...incoming }, budgetMs, ladderDepth);
+    const predicted = { ...this.viewState, ...incoming };
+    this._slicePrefetcher.prefetch(predicted, budgetMs, ladderDepth);
+    this.activateAndWarmNextSlice(predicted, budgetMs, ladderDepth);
+  }
+
+  /**
+   * Deferred partition parts the predicted slice needs (B4) are activated ahead
+   * of it, so its foreground pass finds them registered — and, once they are, a
+   * targeted shadow pass warms them: a shadow can only warm a REGISTERED node,
+   * so the batch `prefetchSlice` just started cannot reach them. Fire-and-forget:
+   * the activation never rejects.
+   */
+  private activateAndWarmNextSlice(
+    predicted: ViewState,
+    budgetMs: number,
+    ladderDepth: number | 'auto' | undefined
+  ): void {
+    const registry = this.lodGroupRegistry;
+    if (!registry) return;
+    const graph = this._sceneGraph;
+    void registry.activatePartitionParts(predicted, undefined, false).then((parts) => {
+      if (parts.length === 0 || this._disposed || this._sceneGraph !== graph) return;
+      this._slicePrefetcher?.prefetchTargets(predicted, budgetMs, ladderDepth, new Set(parts));
+    });
   }
 
   /**
@@ -628,6 +730,17 @@ export class SceneLoader {
   /** Public accessor for the scene graph built during loadScene(). */
   get sceneGraph(): SceneNode | null {
     return this._sceneGraph;
+  }
+
+  /**
+   * Connect the owner of per-leaf LIVE appearance state (the Layers panel) to
+   * every data leaf this loader attaches from now on — partition parts the LOD
+   * registry activates, lazily built levels, anything built after load. Each
+   * leaf is reported as its placeholder attaches, before any data reaches it,
+   * together with this loader's scene graph. `null` disconnects.
+   */
+  setLeafMaterializedListener(listener: LeafMaterializedListener | null): void {
+    this._leafMaterializedListener = listener;
   }
 
   /** Latched archive fault for this loader, or null while updates remain usable. */
@@ -795,6 +908,65 @@ export class SceneLoader {
   }
 
   /**
+   * Whether a superseding view must let the in-flight VIEW pass commit rather
+   * than abort it (B5): this pass chain has gone
+   * {@link DRAG_COMMIT_INTERVAL_MS} without a commit, and the pass itself is
+   * younger than {@link DRAG_COMMIT_MAX_HOLD_MS} — one stuck on a slow chunk
+   * is aborted, or it would hold every newer view for as long as it runs.
+   * A refinement run is aborted as before — it only deepens what is shown.
+   * So is a pass superseded by a `displayDims` change: an intermediate SLICE
+   * is a truthful frame of a drag, but geometry projected for the old display
+   * axes is not, so it must never be let through to commit.
+   */
+  private inFlightPassOwesCommit(superseding: Partial<ViewState>): boolean {
+    const next = superseding.displayDims;
+    const current = this.viewState.displayDims;
+    if (next && (next.length !== current.length || next.some((d, i) => d !== current[i]))) {
+      return false;
+    }
+    const now = performance.now();
+    return (
+      !this._refining &&
+      now - this._passStartedAt < DRAG_COMMIT_MAX_HOLD_MS &&
+      now - Math.max(this._lastCommitAt, this._passChainStartedAt) >= DRAG_COMMIT_INTERVAL_MS
+    );
+  }
+
+  /**
+   * Abort the held view pass once its {@link DRAG_COMMIT_MAX_HOLD_MS} runs out,
+   * so the view queued behind it runs even when no newer view arrives to
+   * re-check the cap (the drag has stopped). One timer per pass; it is a no-op
+   * if the pass has ended, or nothing is pending, by the time it fires.
+   */
+  private armHoldExpiry(): void {
+    if (this._holdExpiryTimer !== null) return;
+    const controller = this._updateAbortController;
+    const remaining = DRAG_COMMIT_MAX_HOLD_MS - (performance.now() - this._passStartedAt);
+    this._holdExpiryTimer = setTimeout(
+      () => {
+        this._holdExpiryTimer = null;
+        if (this._updateAbortController !== controller) return;
+        if (this.viewStateQueue.hasPending()) controller?.abort();
+      },
+      Math.max(0, remaining)
+    );
+  }
+
+  private clearHoldExpiry(): void {
+    if (this._holdExpiryTimer === null) return;
+    clearTimeout(this._holdExpiryTimer);
+    this._holdExpiryTimer = null;
+  }
+
+  /**
+   * The view the drawn geometry was last committed for (B4) — set when a load
+   * starts and by every committed pass. Before the first commit, the live view.
+   */
+  get committedViewState(): ViewState {
+    return this._committedViewState ?? this.viewState;
+  }
+
+  /**
    * Optional render-loop wake-up, wired by `SceneLoaderManager` from the
    * app pipeline (→ `AnimationController.startAnimation`). Fired after
    * every geometry commit so late commits — progressive-refinement
@@ -804,13 +976,35 @@ export class SceneLoader {
    * early-outs while animating and re-arms the idle timer), so per-node
    * calls inside an atomic sweep are harmless. Null in bare/test
    * loaders → no-op.
+   *
+   * `drawn` is false when the committed node was not drawn either side of
+   * the commit (itself or an ancestor hidden: an LOD level the registry
+   * keeps off screen, a hidden layer), so the frame cannot have changed and
+   * the receiver only keeps the loop ticking. It must still wake it: the LOD
+   * registry polls per frame and may now show the level that just
+   * committed, and that visibility flip requests its own redraw.
    */
-  private _requestRender: (() => void) | null = null;
+  private _requestRender: ((drawn: boolean) => void) | null = null;
   private readonly decodeKTX2: KTX2TextureDecoder | null;
 
   /** Install (or clear) the render-loop wake-up callback. */
-  setRequestRender(callback: (() => void) | null): void {
+  setRequestRender(callback: ((drawn: boolean) => void) | null): void {
     this._requestRender = callback;
+  }
+
+  /**
+   * Run a commit of the node at `path`, then wake the render loop (see
+   * {@link _requestRender}), saying whether the commit can have changed the
+   * drawn frame: the node was effectively visible before or after it. A node
+   * that cannot be resolved counts as drawn. Returns that verdict.
+   */
+  private commitAndRequestRender(path: string, commit: () => void): boolean {
+    const node = findObjectByName(this.rootGroup, path);
+    const drawnBefore = isEffectivelyVisible(node);
+    commit();
+    const drawn = node === undefined || drawnBefore || isEffectivelyVisible(node);
+    this._requestRender?.(drawn);
+    return drawn;
   }
 
   /** Install (or clear) the notification used to arm online failure retries. */
@@ -1132,9 +1326,98 @@ export class SceneLoader {
       viewStateQueue: this.viewStateQueue,
       registry: this.registry,
       onArchiveFault,
-      shouldUpdatePath: (path) => isLoaderPathEligible(this.rootGroup, path),
+      // A pass runs for its OWN view: frustum + layer gate only, then its slice
+      // (B4) — a part outside it is hidden from this pass's commit on.
+      shouldUpdatePath: (path) =>
+        isObjectViewEligible(findObjectByName(this.rootGroup, path)) &&
+        this.lodGroupRegistry?.isPathInPartitionSlice(path, this.viewState) !== false,
       isResyncTarget: resyncPaths ? (path) => isUnderAny(path, resyncPaths) : undefined,
     });
+  }
+
+  /**
+   * Stage 1 of a pass for every loader `pick` keeps: load + process each, one
+   * {@link runLoaderUpdates} per geometry type, nothing committed.
+   */
+  private sweepLoaders(
+    ctxs: UpdateCtxs,
+    onArchiveFault: (fault: ArchiveFaultError) => void,
+    pick: <T>(loaders: Map<string, T>) => Map<string, T>,
+    resyncPaths?: ReadonlySet<string>
+  ) {
+    const { pointsCtx, linesCtx, gsplatsCtx, meshCtx } = ctxs;
+    return Promise.all([
+      this.runLoaderUpdates(
+        pick(this.loaders),
+        pointsLabel,
+        (path, loader, session) => pointsLoadAndStage(path, loader, session, pointsCtx),
+        onArchiveFault,
+        resyncPaths
+      ),
+      this.runLoaderUpdates(
+        pick(this.linesLoaders),
+        linesLabel,
+        (path, loader, session) => linesLoadAndStage(path, loader, session, linesCtx),
+        onArchiveFault,
+        resyncPaths
+      ),
+      this.runLoaderUpdates(
+        pick(this.gsplatLoaders),
+        gsplatsLabel,
+        (path, loader, session) => gsplatsLoadAndStage(path, loader, session, gsplatsCtx),
+        onArchiveFault,
+        resyncPaths
+      ),
+      this.runLoaderUpdates(
+        pick(this.meshLoaders),
+        meshLabel,
+        (path, loader, session) => meshLoadAndStage(path, loader, session, meshCtx),
+        onArchiveFault,
+        resyncPaths
+      ),
+    ]);
+  }
+
+  /** Every registered loader path, of every geometry type. */
+  private registeredLoaderPaths(): Set<string> {
+    return new Set([
+      ...this.loaders.keys(),
+      ...this.linesLoaders.keys(),
+      ...this.gsplatLoaders.keys(),
+      ...this.meshLoaders.keys(),
+    ]);
+  }
+
+  /**
+   * Activate the deferred partition parts this pass's view needs (B4) and, once
+   * their loaders are registered, sweep those loaders as part of THIS pass —
+   * the ones `alreadySwept` (the main sweep's) does not hold. `null` when no
+   * part was activated. Must be called synchronously with the main sweep, so
+   * the activation reads the pass's own view. The pass's `signal` is its claim
+   * on the activations: a superseded pass withdraws it, so an activation that
+   * outlives it resyncs its part rather than waiting on a sweep that never
+   * commits.
+   */
+  private async sweepActivatedParts(
+    ctxs: UpdateCtxs,
+    onArchiveFault: (fault: ArchiveFaultError) => void,
+    resyncPaths: ReadonlySet<string> | undefined,
+    alreadySwept: ReadonlySet<string>,
+    signal: AbortSignal
+  ): Promise<Awaited<ReturnType<SceneLoader['sweepLoaders']>> | null> {
+    const registry = this.lodGroupRegistry;
+    if (!registry) return null;
+    const parts = await registry.activatePartitionParts(this.viewState, resyncPaths, signal);
+    if (parts.length === 0) return null;
+    const targets = new Set(parts);
+    const pick = <T>(loaders: Map<string, T>): Map<string, T> => {
+      const fresh = new Map<string, T>();
+      for (const [path, loader] of loaders) {
+        if (!alreadySwept.has(path) && isUnderAny(path, targets)) fresh.set(path, loader);
+      }
+      return fresh;
+    };
+    return this.sweepLoaders(ctxs, onArchiveFault, pick);
   }
 
   /**
@@ -1157,14 +1440,22 @@ export class SceneLoader {
 
   /** Re-open exhausted progressive ladders after connectivity is restored. */
   resetRefinementFailures(): boolean {
-    const reset = resetRefinementFailureTrackers([
-      ...this.loaders.values(),
-      ...this.linesLoaders.values(),
-      ...this.gsplatLoaders.values(),
-      ...this.meshLoaders.values(),
-    ]);
+    const reset = resetRefinementFailureTrackers(
+      this.sweepLoaderEntries().map(([, loader]) => loader)
+    );
+    this.cancelAbandonedRungRetry();
     if (reset) this.requestReprocess();
     return reset;
+  }
+
+  /** Every sweep-registered loader of the four geometry kinds, with its path. */
+  private sweepLoaderEntries(): Array<[string, RefinableLoader]> {
+    return [
+      ...this.loaders.entries(),
+      ...this.linesLoaders.entries(),
+      ...this.gsplatLoaders.entries(),
+      ...this.meshLoaders.entries(),
+    ] as Array<[string, RefinableLoader]>;
   }
 
   /** Hand the resync paths parked by a mid-pass call to the follow-up pass. */
@@ -1325,8 +1616,14 @@ export class SceneLoader {
       // Abort the in-flight update: it has now been superseded by this newer
       // view-state, so its remaining chunk reads/decodes should bail rather
       // than run to completion. Its commit is skipped (signal.aborted), and
-      // queueNext re-enters updateView with the pending (winning) state.
-      this._updateAbortController?.abort();
+      // queueNext re-enters updateView with the pending (winning) state —
+      // unless this pass chain has gone DRAG_COMMIT_INTERVAL_MS without a commit: then the
+      // in-flight pass is let through to commit first, so a continuous drag
+      // whose passes outlast its event interval still shows progress. A pass
+      // older than DRAG_COMMIT_MAX_HOLD_MS is aborted regardless — by the next
+      // view, or by the hold-expiry timer if the drag stops first.
+      if (this.inFlightPassOwesCommit(viewState)) this.armHoldExpiry();
+      else this._updateAbortController?.abort();
 
       // Store the latest pending state (supersedes any previous pending
       // state). Log supersedes so rapid slider drags surface as
@@ -1337,6 +1634,12 @@ export class SceneLoader {
       // Every minted generation must finish a pass (or be covered by a newer
       // one); isAtViewState relies on _completedGen catching up to _requestSeq.
       const gen = ++this._requestSeq;
+      // A refinement hold has no view pass in flight. Its first queued view
+      // starts a new drag chain, even though the queued generation makes the
+      // eventual re-entry look like a continuation of the previous chain.
+      if (this._refining && (!this.viewStateQueue.hasPending() || this._pendingIsResyncOnly)) {
+        this._passChainStartedAt = performance.now();
+      }
       this._requestGens.set(viewState, gen);
       this.viewStateQueue.setPending(viewState);
       // Whatever was stashed for a resync is now moot: this pending state (a
@@ -1367,6 +1670,9 @@ export class SceneLoader {
     // Mark update as in progress. The view version is decided below, once the
     // merged view state is known (bump only on a real change).
     this._updateInProgress = true;
+    // A queued re-entry belongs to its original supersede chain. A direct
+    // update after idle starts a fresh interval even if the last commit was old.
+    if (!this._requestGens.has(viewState)) this._passChainStartedAt = performance.now();
     // Paths stashed for a pending state travel in `opts` (``reenterPending``);
     // anything still parked here at the start of a pass is stale by
     // construction and must not narrow a later one.
@@ -1387,6 +1693,7 @@ export class SceneLoader {
     // the geometry commit below.
     const updateController = new AbortController();
     this._updateAbortController = updateController;
+    this._passStartedAt = performance.now();
     let supersededPassWait: Promise<void> | undefined;
     let sweepArchiveFault: ArchiveFaultError | undefined;
     const onArchiveFault = (fault: ArchiveFaultError): void => {
@@ -1417,7 +1724,13 @@ export class SceneLoader {
         this._lastUpdateWasFrameBudgeted = frameBudgetMs !== undefined || ladderDepth !== undefined;
       }
       this.viewState = nextViewState;
-      if (viewChanged) this._updateVersion++;
+      if (viewChanged) {
+        this._updateVersion++;
+        // A new query owes a ladder retired on the old one a fresh set of
+        // attempts: this pass's own refinement drain retries it at once.
+        this.cancelAbandonedRungRetry();
+        resetRefinementFailureTrackers(this.sweepLoaderEntries().map(([, loader]) => loader));
+      }
       const currentVersion = this._updateVersion;
 
       const totalLoaders =
@@ -1470,45 +1783,25 @@ export class SceneLoader {
         deriveNodeViewState: (path, attrs, opts) => this.deriveNodeViewState(path, attrs, opts),
       });
 
-      const pointsTask = this.runLoaderUpdates(
-        this.loaders,
-        pointsLabel,
-        (path, loader, session) => pointsLoadAndStage(path, loader, session, pointsCtx),
-        onArchiveFault,
-        resyncPaths
-      );
-
-      const linesTask = this.runLoaderUpdates(
-        this.linesLoaders,
-        linesLabel,
-        (path, loader, session) => linesLoadAndStage(path, loader, session, linesCtx),
-        onArchiveFault,
-        resyncPaths
-      );
-
-      const gsplatsTask = this.runLoaderUpdates(
-        this.gsplatLoaders,
-        gsplatsLabel,
-        (path, loader, session) => gsplatsLoadAndStage(path, loader, session, gsplatsCtx),
-        onArchiveFault,
-        resyncPaths
-      );
-
-      const meshTask = this.runLoaderUpdates(
-        this.meshLoaders,
-        meshLabel,
-        (path, loader, session) => meshLoadAndStage(path, loader, session, meshCtx),
-        onArchiveFault,
-        resyncPaths
-      );
-
-      // Wait for ALL loaders to complete (load + process)
-      const [pointsStaged, linesStaged, gsplatsStaged, meshStaged] = await Promise.all([
-        pointsTask,
-        linesTask,
-        gsplatsTask,
-        meshTask,
+      const ctxs = { pointsCtx, linesCtx, gsplatsCtx, meshCtx };
+      // Deferred partition parts this view needs (B4) are activated alongside
+      // the sweep. An activation only REGISTERS their loaders; this pass sweeps
+      // them itself, with its own directives, and commits them with everything
+      // else. They stay hidden until the commit (`applyCommittedSlice`).
+      const sweptPaths = this.registeredLoaderPaths();
+      const [swept, activated] = await Promise.all([
+        this.sweepLoaders(ctxs, onArchiveFault, (loaders) => loaders, resyncPaths),
+        this.sweepActivatedParts(
+          ctxs,
+          onArchiveFault,
+          resyncPaths,
+          sweptPaths,
+          updateController.signal
+        ),
       ]);
+      const [pointsStaged, linesStaged, gsplatsStaged, meshStaged] = activated
+        ? concatSweeps(swept, activated)
+        : swept;
 
       if (sweepArchiveFault) {
         this.reportArchiveFault(sweepArchiveFault);
@@ -1558,6 +1851,12 @@ export class SceneLoader {
       // mid-attribute) — skip the monitor refresh and the failed-loader
       // warning; the winning update runs both with correct state.
       if (!updateController.signal.aborted && !sweepArchiveFault) {
+        // This view is now what is drawn: re-gate partition parts on its slice
+        // before anything renders or refinement reads the stamps (B4).
+        this._committedViewState = this.viewState;
+        this._lastCommitAt = performance.now();
+        this.lodGroupRegistry?.applyCommittedSlice();
+
         // Update monitor with total visible segments across all lines nodes
         this.updateVisibleCountsInMonitor();
 
@@ -1567,6 +1866,7 @@ export class SceneLoader {
     } finally {
       // End profiling update cycle (always, even if errors)
       this.profiler?.endUpdate();
+      this.clearHoldExpiry();
 
       this._passGen = 0;
       this._completedGen = Math.max(this._completedGen, passGen);
@@ -1661,7 +1961,9 @@ export class SceneLoader {
    * path is a deferred lod_group SUBTREE activation (e.g. the ``overview``
    * recipe's fine ``kind=partition`` branch): its part leaves join the sweep
    * maps mid-session, so the deferred-group ``ensureLoaded`` calls this after
-   * ``loadChildren`` settles.
+   * ``loadChildren`` settles. Two recovery paths use it too (#2975): a
+   * failed-loader retry that committed only part of a ladder, and the backoff
+   * re-drain of ladders the consecutive-failure cap retired.
    *
    * Lock discipline: when idle, take the serialization lock and run the same
    * orchestrator the other kick sites use (each phase releases/hands off the
@@ -1698,7 +2000,7 @@ export class SceneLoader {
       }, REFINEMENT_KICK_RECHECK_MS);
       return;
     }
-    log.info(Modules.SCENE_LOADER, 'Kicking progressive LOD refinement (deferred activation)');
+    log.info(Modules.SCENE_LOADER, 'Kicking progressive LOD refinement (loader idle)');
     this._updateInProgress = true;
     this.scheduleGSplatsRefinement().catch((error) => {
       log.error(
@@ -1783,6 +2085,10 @@ export class SceneLoader {
       // catches treat the resulting AbortError as cancellation (no failure
       // recorded); the loop's next-pass pending check performs the hand-off.
       const refinementController = new AbortController();
+      // Every read of the run rides this signal, so it also carries the run's
+      // fetch class: a finer level of something already on screen queues behind
+      // every `demand` read (a frame waiting), ahead of speculation (B9c).
+      tagSignalPriority(refinementController.signal, 'refinement');
       this._updateAbortController = refinementController;
       // ONE budget for the whole run, shared by all four geometry phases and
       // seeded from every sweep-registered ladder. Completed loaders return
@@ -1911,7 +2217,76 @@ export class SceneLoader {
    * hand-off (the next update re-kicks refinement) and not on a dead loader.
    */
   private noteRefinementOutcome(cancelled: boolean): void {
-    if (!cancelled && !this._disposed) noteRefinementComplete();
+    if (cancelled || this._disposed) return;
+    // A ladder retired mid-way is still owed its rungs: stay unsettled while
+    // its re-drain is pending, so capture / isSettled do not report done.
+    if (this.scheduleAbandonedRungRetry()) return;
+    noteRefinementComplete();
+  }
+
+  /**
+   * Re-drain ladders the consecutive-failure cap retired (#2975).
+   *
+   * A chunk fetch that stalls to give-up fails the refinement step that needs
+   * it, and three such failures retire the ladder for this loader instance.
+   * Only an `online` event used to re-open it, so a session that stayed online
+   * sat idle at a coarser rung until the user moved something. Instead, after
+   * a drain that ends with such a ladder, wait
+   * `ABANDONED_RUNG_RETRY_BASE_MS · 2^round` (capped), re-open the retired
+   * ladders and kick a fresh drain. A view change, `resetRefinementFailures`
+   * or dispose cancels the wait; after `MAX_ABANDONED_RUNG_RETRY_ROUNDS`
+   * rounds the ladder is left, and the drain reports complete.
+   *
+   * @returns Whether a re-drain is pending (the drain is not complete).
+   */
+  private scheduleAbandonedRungRetry(): boolean {
+    const abandoned = abandonedLadderPaths(this.sweepLoaderEntries());
+    if (abandoned.length === 0) {
+      this._abandonedRetryRound = 0;
+      return false;
+    }
+    if (this._abandonedRetryTimer !== null) return true;
+    const round = this._abandonedRetryRound;
+    if (round >= MAX_ABANDONED_RUNG_RETRY_ROUNDS) {
+      if (round === MAX_ABANDONED_RUNG_RETRY_ROUNDS) {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Leaving LOD refinement of ${abandoned.join(', ')} after ${round} re-drains ` +
+            '(a view change or restored connectivity retries it)'
+        );
+        this._abandonedRetryRound = round + 1;
+      }
+      return false;
+    }
+    const delayMs = Math.min(
+      ABANDONED_RUNG_RETRY_BASE_MS * 2 ** round,
+      ABANDONED_RUNG_RETRY_MAX_MS
+    );
+    this._abandonedRetryRound = round + 1;
+    log.info(
+      Modules.SCENE_LOADER,
+      `Re-draining abandoned LOD rung(s) of ${abandoned.join(', ')} in ${delayMs} ms ` +
+        `(round ${round + 1}/${MAX_ABANDONED_RUNG_RETRY_ROUNDS})`
+    );
+    this._abandonedRetryTimer = setTimeout(() => {
+      this._abandonedRetryTimer = null;
+      if (this._disposed) return;
+      if (this._archiveFault) {
+        noteRefinementAborted();
+        return;
+      }
+      reopenRefinementFailureTrackers(this.sweepLoaderEntries().map(([, loader]) => loader));
+      if (!this.anyLoaderHasMoreLODs()) noteRefinementComplete();
+      else this.kickRefinementIfIdle();
+    }, delayMs);
+    return true;
+  }
+
+  /** Drop a pending re-drain and its backoff (the retired ladders are re-opened elsewhere). */
+  private cancelAbandonedRungRetry(): void {
+    if (this._abandonedRetryTimer !== null) clearTimeout(this._abandonedRetryTimer);
+    this._abandonedRetryTimer = null;
+    this._abandonedRetryRound = 0;
   }
 
   /**
@@ -1922,7 +2297,7 @@ export class SceneLoader {
    * fresh loader → new data reference → full recommit either way.
    */
   private clearCommittedDataStamp(path: string): void {
-    const mesh = this.rootGroup?.getObjectByName(path);
+    const mesh = findObjectByName(this.rootGroup, path);
     if (mesh) {
       clearCommittedData(mesh);
     }
@@ -1985,18 +2360,19 @@ export class SceneLoader {
     staged: StagedLinesCommit,
     session?: UpdateSession,
     loadedViewVersion: number = this._updateVersion
-  ): void {
+  ): boolean {
     this.lodGroupRegistry?.invalidatePartitionFootprint(staged.path);
-    commitLinesGeometryHelper(
-      staged,
-      this.rootGroup,
-      this._gpuBufferPool,
-      session,
-      loadedViewVersion
-    );
     // Wake the idle-paused render loop so this commit paints (see
     // _requestRender).
-    this._requestRender?.();
+    return this.commitAndRequestRender(staged.path, () =>
+      commitLinesGeometryHelper(
+        staged,
+        this.rootGroup,
+        this._gpuBufferPool,
+        session,
+        loadedViewVersion
+      )
+    );
   }
 
   /**
@@ -2034,18 +2410,19 @@ export class SceneLoader {
     staged: StagedGSplatsCommit,
     session?: UpdateSession,
     loadedViewVersion: number = this._updateVersion
-  ): void {
+  ): boolean {
     this.lodGroupRegistry?.invalidatePartitionFootprint(staged.path);
-    commitGSplatsGeometryHelper(
-      staged,
-      this.rootGroup,
-      this._gpuBufferPool,
-      session,
-      loadedViewVersion
-    );
     // Wake the idle-paused render loop so this commit paints (see
     // _requestRender).
-    this._requestRender?.();
+    return this.commitAndRequestRender(staged.path, () =>
+      commitGSplatsGeometryHelper(
+        staged,
+        this.rootGroup,
+        this._gpuBufferPool,
+        session,
+        loadedViewVersion
+      )
+    );
   }
 
   /**
@@ -2075,19 +2452,20 @@ export class SceneLoader {
     staged: StagedMeshCommit,
     session?: UpdateSession,
     loadedViewVersion: number = this._updateVersion
-  ): void {
+  ): boolean {
     this.lodGroupRegistry?.invalidatePartitionFootprint(staged.path);
-    commitMeshGeometryHelper(
-      {
-        rootGroup: this.rootGroup,
-        currentVersion: this._updateVersion,
-        gpuBufferPool: this._gpuBufferPool,
-      },
-      staged,
-      session,
-      loadedViewVersion
+    return this.commitAndRequestRender(staged.path, () =>
+      commitMeshGeometryHelper(
+        {
+          rootGroup: this.rootGroup,
+          currentVersion: this._updateVersion,
+          gpuBufferPool: this._gpuBufferPool,
+        },
+        staged,
+        session,
+        loadedViewVersion
+      )
     );
-    this._requestRender?.();
   }
 
   /**
@@ -2102,13 +2480,25 @@ export class SceneLoader {
     // this dataset can detect (via identity + aborted flag) that its
     // dataset is no longer live and skip committing into a stale scene.
     const ctrl = this._datasetAbortController;
+    // The eager load commits for the view it is built under (B4).
+    if (this._committedViewState === null) {
+      this._committedViewState = this.viewState;
+      this._lastCommitAt = performance.now();
+    }
     return {
       registry: this.registry,
       lineWorkingSetGate: this.lineWorkingSetGate,
       lodGroupRegistry: this.lodGroupRegistry ?? undefined,
       nodeFactory: this.nodeFactory,
       viewState: this.viewState,
+      getSliceView: () => this.viewState,
+      pathHasNdTransform: (path) =>
+        this._sceneGraph !== null &&
+        Object.keys(computeWorldNdTransform(this._sceneGraph, path)).length > 0,
       factoryDeps: this.factoryDeps(),
+      onLeafMaterialized: (path, object) => {
+        if (this._sceneGraph) this._leafMaterializedListener?.(this._sceneGraph, path, object);
+      },
       isDatasetLive: () => this._datasetAbortController === ctrl && ctrl?.signal.aborted !== true,
       releaseLazyGSplats: (path) => {
         // Return the level's GPU buffer to the evictable pool and drop
@@ -2120,7 +2510,7 @@ export class SceneLoader {
         // demoted level won't sort again until re-promotion re-registers it
         // (fresh commit → noteDepthSortCommit). Mirrors the coordinator's
         // empty-commit release hygiene.
-        const mesh = this.rootGroup?.getObjectByName(path);
+        const mesh = findObjectByName(this.rootGroup, path);
         if (mesh) releaseDepthSortNode(mesh as THREE.Mesh);
       },
       releaseLazyPoints: (path) => {
@@ -2132,7 +2522,7 @@ export class SceneLoader {
         this.clearCommittedDataStamp(path);
         // Drop the level's depth-sort state + worker-side centers — the
         // same demotion hygiene as the gsplats branch above.
-        const mesh = this.rootGroup?.getObjectByName(path);
+        const mesh = findObjectByName(this.rootGroup, path);
         if (mesh) releaseDepthSortNode(mesh as THREE.Mesh);
       },
       releaseLazyLines: (path) => {
@@ -2142,12 +2532,12 @@ export class SceneLoader {
         this.clearCommittedDataStamp(path);
         // Drop the level's depth-sort state + worker-side midpoints —
         // the same demotion hygiene as the gsplats/points branches above.
-        const mesh = this.rootGroup?.getObjectByName(path);
+        const mesh = findObjectByName(this.rootGroup, path);
         if (mesh) releaseDepthSortNode(mesh as THREE.Mesh);
       },
       releaseLazyMesh: (path) => {
         this.clearCommittedDataStamp(path);
-        const mesh = this.rootGroup?.getObjectByName(path);
+        const mesh = findObjectByName(this.rootGroup, path);
         if (mesh) {
           const level = mesh as THREE.Mesh;
           // Mesh is depthSortable (#1347); demotion must drop coordinator
@@ -2232,20 +2622,21 @@ export class SceneLoader {
     // the slice it actually loaded (the registry then re-reloads for the newer
     // version) rather than being mis-stamped fresh.
     loadedViewVersion: number = this._updateVersion
-  ): void {
+  ): boolean {
     this.lodGroupRegistry?.invalidatePartitionFootprint(path);
-    commitPointsGeometryHelper(
-      path,
-      data,
-      this.rootGroup,
-      this._gpuBufferPool,
-      this.nodeFactory,
-      session,
-      loadedViewVersion
-    );
     // Wake the idle-paused render loop so this commit paints (see
     // _requestRender).
-    this._requestRender?.();
+    return this.commitAndRequestRender(path, () =>
+      commitPointsGeometryHelper(
+        path,
+        data,
+        this.rootGroup,
+        this._gpuBufferPool,
+        this.nodeFactory,
+        session,
+        loadedViewVersion
+      )
+    );
   }
 
   /**
@@ -2395,7 +2786,12 @@ export class SceneLoader {
 
   private resumeViewAfterRetry(hadArchiveFault: boolean): void {
     if (this.viewStateQueue.drain((state) => this.reenterPending(state))) return;
-    if (!hadArchiveFault || this._archiveFault) return;
+    if (!hadArchiveFault || this._archiveFault) {
+      // A retried progressive loader committed only one pass's worth of its
+      // ladder; nothing else resumes the rest (#2975).
+      this.kickRefinementIfIdle();
+      return;
+    }
     void this.updateView(this.viewState).catch((error) => {
       log.warning(
         Modules.SCENE_LOADER,
@@ -2657,7 +3053,10 @@ export class SceneLoader {
     // Signal any in-flight progressive-refinement loop to abort before we
     // start nulling the fields it reads.
     this._disposed = true;
+    this.clearHoldExpiry();
+    this.cancelAbandonedRungRetry();
     this.archiveFaultListeners.clear();
+    this._leafMaterializedListener = null;
     setSceneLineLoad(0);
 
     // Release the serialization lock explicitly — defence in depth. Only the
@@ -2713,6 +3112,7 @@ export class SceneLoader {
     // new registry instance per loader, but clearing here protects
     // against future refactors that share registries across scenes.
     this.lodGroupRegistry?.clear();
+    this._committedViewState = null;
 
     // Strip every mesh's `committedData` no-op stamp. The stamp holds the
     // loader-returned source arrays (for gsplats, the full memoized LOD

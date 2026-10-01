@@ -27,6 +27,7 @@
  * @module data/scene-loader/commit/commit-mesh-geometry
  */
 
+import { findObjectByName } from '../../../utils/scene-graph-index';
 import type * as THREE from 'three';
 import { log, Modules } from '../../../utils/log';
 import { updateMeshGeometry } from '../../../rendering/mesh-geometry';
@@ -80,7 +81,7 @@ export function commitMeshGeometry(
   const { rootGroup, currentVersion } = ctx;
   if (!rootGroup) return;
 
-  const found = rootGroup.getObjectByName(staged.path);
+  const found = findObjectByName(rootGroup, staged.path);
   // Guarded rather than cast: `getObjectByName` searches by name across the whole
   // subtree, so a path collision or a dataset switch mid-commit can hand back an
   // object of another type. Writing mesh geometry into a points node would corrupt

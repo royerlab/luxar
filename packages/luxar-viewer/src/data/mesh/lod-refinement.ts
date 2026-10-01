@@ -95,7 +95,7 @@ export async function runMeshRefinement(ctx: MeshRefinementCtx): Promise<void> {
       // typed as plain `MeshDataLoader`: a non-progressive loader has no
       // ladder. `admitRefinementCandidate` gates on `hasMoreLODs`.
       const progressiveLoader = loader as MeshDataLoader & RefinableLoader;
-      const admission = admitRefinementCandidate(
+      const admission = await admitRefinementCandidate(
         path,
         progressiveLoader,
         ctx.residencyBudget,

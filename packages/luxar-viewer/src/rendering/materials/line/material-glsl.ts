@@ -170,6 +170,9 @@ export class LineMaterial
         // flip must not recompile the program).
         uSortedIndexSlot: { value: 0 },
         uDensityDrop: { value: 0 },
+        // Alpha-over compensation of a thinned normal node (density guard);
+        // 1 is the identity the fragment stage skips.
+        uDensityAlphaExp: { value: 1 },
         // Refraction split (glass-partition.ts): mode 0 outside the split; the ONE
         // shared depth texture the split renders the refracting glass into.
         uGlassPartition: { value: 0 },

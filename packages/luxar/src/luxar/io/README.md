@@ -540,8 +540,20 @@ displaying fewer than two dimensions is skipped too —
 `lod-group-registry.ts::evaluatePerFrame` bails there before it evaluates any
 group.
 Dynamic near/far clipping is deliberately NOT modelled — the near-plane hazard
-that matters is the homogeneous-`w` straddle inside `project_box_ndc_rect`,
-which never reads `camera.near`.
+that matters is the homogeneous-`w` straddle of the box's corners, which never
+reads `camera.near`. Neither is the viewer's projected-footprint pick for GSplat
+ladders with complete footprint stamps; the screen reports occupancy only.
+
+The `screen-area` metric is the viewer's own, ported line for line from
+`projectBoxAreaFraction`: the group box's INSCRIBED ellipsoid, projected to a
+screen ellipse and sized by its view-axis half-chord, so an orbit at a fixed
+distance does not change the reading the way the 8-corner rect did. Face-on on
+the view axis it equals the near-face rect exactly, which is why derived
+thresholds keep their meaning. Like the viewer, both metrics project the group's
+LOCAL box through `P·V·matrixWorld` (a rotated group's world AABB is bigger than
+the group); only the off-screen gate uses the world AABB. The tests pin the
+viewer's own numbers for a thick box, an orbit, a tilted card, scaled and
+rotated groups, and the zebrafish endoderm opening view (0.3147 → `child_2`).
 
 Every metric primitive is exported and unit-tested against hand-derived values
 (`project_box_ndc_rect`, `project_box_area_fraction`, `project_box_diagonal_px`,

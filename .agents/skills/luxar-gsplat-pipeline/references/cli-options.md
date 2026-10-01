@@ -247,8 +247,8 @@ luxar gsplat additive sub.gsplats.zarr pyr.gsplats.zarr --target-ms 200   # ~200
 ### LOD switch tuning (any kind=lod group)
 Auto-derived, no knob, and COUNT-INDEPENDENT: thresholds come from SCREEN-AREA
 occupancy halving and are stamped `selector="screen-area"`. Each
-`coverage_fraction` is a literal screen-area fraction (projected bbox rect area /
-viewport area): the coarsest child gets `0.0` (always-eligible floor), the finest
+`coverage_fraction` is a literal screen-area fraction (projected area of the box's
+inscribed ellipsoid, sized at its near depth, over the viewport area): the coarsest child gets `0.0` (always-eligible floor), the finest
 gets `0.5` — so a WHOLE-OBJECT ladder holds full detail while the object occupies
 at least half the screen — and each level between halves once more
 (…, 1/8, 1/4, 1/2). Element counts are read only for the ladder's LENGTH.

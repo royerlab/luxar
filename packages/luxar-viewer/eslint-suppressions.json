@@ -155,7 +155,7 @@
   },
   "src/core/app/picking/init-picking.ts": {
     "complexity": {
-      "count": 2
+      "count": 1
     },
     "max-lines-per-function": {
       "count": 1
@@ -594,9 +594,6 @@
   },
   "src/data/scene-loader/progressive/refinement.ts": {
     "complexity": {
-      "count": 1
-    },
-    "max-depth": {
       "count": 1
     }
   },
@@ -1052,11 +1049,6 @@
       "count": 1
     }
   },
-  "src/scene/scene-manager.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
   "src/scene/scene-manager/camera/camera-framing.ts": {
     "complexity": {
       "count": 2
@@ -1338,7 +1330,7 @@
   },
   "src/ui/layers/layer-apply.ts": {
     "complexity": {
-      "count": 4
+      "count": 2
     }
   },
   "src/ui/layers/layer-controls.ts": {

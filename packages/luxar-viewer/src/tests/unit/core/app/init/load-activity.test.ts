@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildEnvironmentSettledPredicate,
   buildLoadActivityPredicate,
   isLoadActivity,
   refinementCompleteFromTimeline,
@@ -102,5 +103,41 @@ describe('refinementCompleteFromTimeline', () => {
     markLoad('loadStart');
     expect(refinementCompleteFromTimeline()).toBe(false);
     resetLoadTimeline();
+  });
+});
+
+describe('buildEnvironmentSettledPredicate', () => {
+  it('holds a live environment capture while a LOD level dissolve is in flight', () => {
+    // A capture freezes a frame into the reflections and nothing re-marks the
+    // environment stale when a dissolve lands, so it must not capture mid-way.
+    let animating = true;
+    let loadActive = false;
+    const settled = buildEnvironmentSettledPredicate(
+      {
+        getDefaultLoader: () => ({
+          isUpdateInProgress: () => false,
+          lodGroupRegistry: {
+            isAnyLevelLoading: () => false,
+            hasVisiblePendingPartitionResync: () => false,
+            isAnimating: () => animating,
+          },
+        }),
+        isAnyLoadPassInProgress: () => false,
+      },
+      () => loadActive
+    );
+    expect(settled()).toBe(false);
+    animating = false;
+    expect(settled()).toBe(true);
+    loadActive = true;
+    expect(settled()).toBe(false);
+  });
+
+  it('treats a missing loader or registry as no dissolve', () => {
+    const settled = buildEnvironmentSettledPredicate(
+      { getDefaultLoader: () => null, isAnyLoadPassInProgress: () => false },
+      () => false
+    );
+    expect(settled()).toBe(true);
   });
 });

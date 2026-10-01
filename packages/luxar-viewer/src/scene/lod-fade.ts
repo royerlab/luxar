@@ -41,7 +41,7 @@ function isFadeable(mat: THREE.Material): mat is FadeableMaterial {
 
 /**
  * Blend modes where opacity is a well-behaved linear knob on the composited
- * result, so both LOD anti-popping mechanisms — the coverage cross-fade
+ * result, so both LOD anti-popping mechanisms — the level dissolve
  * (mass-conserved levels) and the streaming energy compensation (`1/e(k)`) —
  * are physically sound:
  *
@@ -209,6 +209,7 @@ export function applyLodFade(
     if (!current || Array.isArray(current) || !isFadeable(current)) return;
     const ud = mesh.userData as {
       _lodFadeBase?: number;
+      _lodFadeProduct?: number;
       _layerMaterialCloned?: boolean;
       committedEnergyFraction?: number;
       densityKeep?: number;
@@ -223,8 +224,8 @@ export function applyLodFade(
       energyFactor = energyCompensation(ud.committedEnergyFraction, ENERGY_FLOOR);
     }
     // Density-guard thinning (scene/density-guard.ts) draws a `keep` fraction
-    // of the elements; `1/keep` restores the aggregate brightness. Same
-    // blendable-only rule — the guard never thins the other modes.
+    // of the elements; `1/keep` restores aggregate brightness for blendable
+    // modes. Normal mode compensates per-element alpha in the shader instead.
     const densityFactor = blendable ? densityCompensation(ud.densityKeep) : 1;
     const product = coverageWeight * energyFactor * densityFactor;
     if (Math.abs(product - 1) < FADE_EPSILON) {
@@ -234,6 +235,7 @@ export function applyLodFade(
         current.updateOpacity(ud._lodFadeBase);
         refreshNormalDepthWrite(current);
         ud._lodFadeBase = undefined;
+        ud._lodFadeProduct = undefined;
         changed = true;
       }
       return;
@@ -250,6 +252,9 @@ export function applyLodFade(
     // Snapshot the composed authored opacity once; hold it steady while the
     // multiplier changes (per-frame as the ladder fills in), clear it on restore.
     if (ud._lodFadeBase == null) ud._lodFadeBase = mat.getOpacity();
+    // Recorded so an authored-opacity edit can rebase immediately
+    // (`rebaseLodFade`) on a node nothing recomposes per frame.
+    ud._lodFadeProduct = product;
     const faded = ud._lodFadeBase * product;
     if (mat.getOpacity() !== faded) changed = true;
     mat.updateOpacity(faded);
@@ -259,4 +264,35 @@ export function applyLodFade(
   if (obj.material) visit(root);
   else root.traverse(visit);
   return changed;
+}
+
+/**
+ * Route an authored-opacity edit (Layers panel, layer exposure) through a live
+ * LOD fade: when `obj` carries a fade snapshot (`_lodFadeBase`), rebase it to
+ * `base` AND redraw the uniform at `base × the product last applied`, instead
+ * of writing `base` straight into a uniform that holds `base × product`.
+ *
+ * Rebasing the snapshot alone relied on a per-frame recompose, which only a
+ * LOD-group child gets (the registry re-applies every frame). A node thinned
+ * by the density guard is compensated too (`base / keep`) but re-applied only
+ * when its keep steps, so the edit stayed invisible until the density crossed
+ * a ladder step. A LOD child is simply recomposed again on its next frame.
+ *
+ * @returns false when no fade is live (the caller writes `base` itself).
+ */
+export function rebaseLodFade(
+  obj: THREE.Object3D,
+  mat: Pick<FadeableMaterial, 'updateOpacity' | 'applyBlendingMode' | 'userData'>,
+  base: number
+): boolean {
+  const ud = obj.userData as { _lodFadeBase?: number; _lodFadeProduct?: number };
+  if (ud._lodFadeBase == null) return false;
+  ud._lodFadeBase = base;
+  if (ud._lodFadeProduct == null) return true;
+  mat.updateOpacity(base * ud._lodFadeProduct);
+  // Normal mode's depthWrite is opacity-gated: re-derive it, as applyLodFade does.
+  if ((mat.userData?.blendingMode as string | undefined) === 'normal') {
+    mat.applyBlendingMode?.('normal');
+  }
+  return true;
 }

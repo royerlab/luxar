@@ -385,6 +385,27 @@ describe('RangeLoader.loadBroadcasted (via loadRanges)', () => {
     expect(Array.from(output)).toEqual([0.5, 0.5, 0.5, 0.5]);
   });
 
+  it("a loader's first load logs its decode detail only under verboseLog", async () => {
+    // A fresh loader (its first load: verbose detail on) — one per partition
+    // part, and a slice step can activate several.
+    const fresh = new RangeLoader(new ArrayRefRegistry(), { workerThreshold: Infinity });
+    setMockData(new Float32Array([0.5]));
+    const consoleLog = vi.spyOn(console, 'log');
+    try {
+      await fresh.loadRanges(
+        mockZarrArray('float32', [1]),
+        { encoding: { name: 'broadcasted', n_elements: 4 } },
+        [{ start: 0, end: 4 }],
+        new Float32Array(4),
+        4,
+        1
+      );
+      expect(consoleLog).not.toHaveBeenCalled();
+    } finally {
+      consoleLog.mockRestore();
+    }
+  });
+
   it('replicates a 3-component vector (e.g. RGB color) to all elements', async () => {
     // Broadcasted color: [1.0, 0.0, 0.5]
     setMockData(new Float32Array([1.0, 0.0, 0.5]));

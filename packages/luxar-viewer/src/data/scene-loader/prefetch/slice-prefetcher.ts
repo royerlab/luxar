@@ -90,7 +90,7 @@ import { deriveNodeViewState } from '../view-state/derive-node-view-state';
 import { isExtendToAll } from '../../../workers/data-worker/projection/hidden-dims';
 import { isAbortError } from '../../loaders';
 import { tagSignalOrigin } from '../../../cache/decompressed-chunk-cache/decode-origin';
-import { isObjectLoadEligible } from '../loaders/run-loader-updates';
+import { isObjectViewEligible, isUnderAny } from '../loaders/run-loader-updates';
 import type { SliceCache } from '../../../cache/slice-cache';
 import { beginShadowStore, sliceKeyFor } from '../../loaders/progressive/slice-cache-helper';
 import type * as THREE from 'three';
@@ -177,6 +177,9 @@ export class SlicePrefetcher {
    */
   private readonly pinnedKeys = new Map<string, SliceCache>();
 
+  /** Node paths whose shadow pass is running (see {@link queueVisible}). */
+  private readonly running = new Set<string>();
+
   constructor(private readonly ctx: SlicePrefetcherCtx) {}
 
   /**
@@ -210,19 +213,55 @@ export class SlicePrefetcher {
       this.abortInFlight();
     }
 
-    const graph = this.ctx.getSceneGraph();
-    if (!graph) return;
+    if (!this.ctx.getSceneGraph()) return;
+    this.runBatch(this.startBatch(), viewState, budgetMs, ladderDepth);
+  }
 
+  /**
+   * Shadow-warm the loaders at or under `targets` for `viewState`, joining the
+   * in-flight batch rather than waiting for it to finish. For loaders
+   * registered after that batch enumerated its nodes — a partition part
+   * activated for the predicted slice (B4) — which the running batch cannot
+   * reach and the next one would warm a whole tick late, i.e. after the
+   * foreground already loaded the slice cold.
+   */
+  prefetchTargets(
+    viewState: ViewState,
+    budgetMs: number,
+    ladderDepth: number | 'auto' | undefined,
+    targets: ReadonlySet<string>
+  ): void {
+    if (this.disposed || targets.size === 0 || !this.ctx.getSceneGraph()) return;
+    const controller = this.controller ?? this.startBatch();
+    this.runBatch(controller, viewState, budgetMs, ladderDepth, targets);
+  }
+
+  /** A fresh batch controller (the in-flight gate counts its tasks). */
+  private startBatch(): AbortController {
     const controller = new AbortController();
     this.controller = controller;
     // Shadow updates forward this signal into every read, so their miss
     // decodes are counted under `decode.count.shadow`.
     tagSignalOrigin(controller.signal, 'shadow');
     this.batchStartMs = performance.now();
+    return controller;
+  }
 
+  /**
+   * Queue one shadow pass per registered, view-eligible node (restricted to
+   * `targets` when given) under `controller`'s batch, and count them into the
+   * in-flight gate until they settle.
+   */
+  private runBatch(
+    controller: AbortController,
+    viewState: ViewState,
+    budgetMs: number,
+    ladderDepth: number | 'auto' | undefined,
+    targets?: ReadonlySet<string>
+  ): void {
     const { registry } = this.ctx;
     const tasks: Array<Promise<void>> = [];
-    const request = { viewState, budgetMs, ladderDepth, signal: controller.signal };
+    const request = { viewState, budgetMs, ladderDepth, signal: controller.signal, targets };
     const objects = new Map<string, THREE.Object3D | null | undefined>();
     const resolveObject = (path: string): THREE.Object3D | null | undefined => {
       if (!objects.has(path)) objects.set(path, this.ctx.resolveObject(path));
@@ -232,11 +271,11 @@ export class SlicePrefetcher {
     this.queueVisible(tasks, registry.linesLoaders, 'lines', request, resolveObject);
     this.queueVisible(tasks, registry.gsplatLoaders, 'gsplats', request, resolveObject);
 
-    this.inFlight = tasks.length;
-    // Reopen the gate once the whole batch settles so the next tick re-targets.
+    this.inFlight += tasks.length;
+    // Reopen the gate once these tasks settle so the next tick re-targets.
     // Guard against a newer controller (an abort + fresh batch raced ahead).
     void Promise.allSettled(tasks).then(() => {
-      if (this.controller === controller) this.inFlight = 0;
+      if (this.controller === controller) this.inFlight -= tasks.length;
     });
   }
 
@@ -304,16 +343,25 @@ export class SlicePrefetcher {
       budgetMs: number;
       ladderDepth?: number | 'auto';
       signal: AbortSignal;
+      targets?: ReadonlySet<string>;
     },
     resolveObject: (path: string) => THREE.Object3D | null | undefined
   ): void {
+    const { targets, ...pass } = request;
     for (const path of loaders.keys()) {
+      if (targets && !isUnderAny(path, targets)) continue;
+      // One shadow pass per node at a time: a targeted pass never overlaps
+      // the batch pass already running on the same shadow loader.
+      if (this.running.has(path)) continue;
       const object = resolveObject(path);
-      if (!isObjectLoadEligible(object)) {
+      if (!isObjectViewEligible(object)) {
         this.dropShadow(path);
         continue;
       }
-      tasks.push(this.prefetchNode(path, kind, { ...request, object }));
+      this.running.add(path);
+      tasks.push(
+        this.prefetchNode(path, kind, { ...pass, object }).finally(() => this.running.delete(path))
+      );
     }
   }
 
@@ -376,7 +424,7 @@ export class SlicePrefetcher {
     return this.getShadow(path, kind, node)
       .then((shadow) => {
         if (signal.aborted || this.disposed) return;
-        if (!isObjectLoadEligible(object)) {
+        if (!isObjectViewEligible(object)) {
           this.dropShadow(path);
           return;
         }

@@ -30,7 +30,7 @@
 
 import type * as THREE from 'three';
 import type * as zarr from '../../zarr';
-import { log, Modules } from '../../../utils/log';
+import { log, LogEmoji, Modules } from '../../../utils/log';
 import { LoaderError, classifyLoaderError } from './load-leaf-error-dispatch';
 import { createMeshLoader, createProgressiveMeshLoader } from '../loaders/loader-factory';
 import type { SceneNode } from '../../data-loader-types';
@@ -58,8 +58,9 @@ export async function loadMeshNodeCheap(
   loc: zarr.Location<zarr.Readable>,
   ctx: NodeBuildCtx
 ): Promise<MeshCheapLoad> {
-  log.custom('🔺', Modules.SCENE_LOADER, `Loading mesh: ${node.path}`);
-  log.info(
+  log.verbose('🔺', Modules.SCENE_LOADER, `Loading mesh: ${node.path}`);
+  log.verbose(
+    LogEmoji.INFO,
     Modules.SCENE_LOADER,
     `  ${typeof node.attrs.n_vertices === 'number' ? node.attrs.n_vertices.toString() : 'unknown'} vertices, ` +
       `${typeof node.attrs.n_faces === 'number' ? node.attrs.n_faces.toString() : 'unknown'} faces`
@@ -70,7 +71,11 @@ export async function loadMeshNodeCheap(
   // the single-loader path below.
   const nAdditive = (node.attrs as { n_additive_sublods?: number }).n_additive_sublods ?? 0;
   if (nAdditive > 1) {
-    log.info(Modules.SCENE_LOADER, `  Additive sub-LODs: ${nAdditive} (reveal ladder)`);
+    log.verbose(
+      LogEmoji.INFO,
+      Modules.SCENE_LOADER,
+      `  Additive sub-LODs: ${nAdditive} (reveal ladder)`
+    );
   }
 
   // The effective attrs are read BEFORE the loader is built, unlike the three
@@ -99,6 +104,7 @@ export async function loadMeshNodeCheap(
     node.attrs as Partial<MeshMetadata>
   );
   parentThree.add(placeholder);
+  ctx.onLeafMaterialized?.(node.path, placeholder);
   return { placeholder, loader };
 }
 
@@ -187,6 +193,15 @@ export async function loadMeshNode(
   ctx: NodeBuildCtx
 ): Promise<THREE.Object3D | null> {
   const { placeholder, loader } = await loadMeshNodeCheap(node, parentThree, loc, ctx);
+  // A registry-activated partition part: the activating pass sweeps it (B4).
+  if (ctx.registerOnly) {
+    // Built after a dataset switch (the activation is fire-and-forget): the
+    // loader registry outlives the dataset, so a dead dataset's loader is
+    // disposed, never registered where the next dataset's passes sweep.
+    if (ctx.isDatasetLive()) ctx.registry.registerMeshLoader(node.path, loader);
+    else loader.dispose();
+    return placeholder;
+  }
   try {
     await loadMeshNodeExpensive(node, ctx, loader);
   } finally {

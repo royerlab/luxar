@@ -182,6 +182,11 @@ export function evictUntilUnderByteBudget(
         // leaks this one already-unreachable buffer — the safe
         // direction.
         arr.splice(ref.index, 1);
+        // Re-`set` the bucket after each splice, still before the dispose:
+        // the pool's `FreeBucketMap` resyncs its incremental byte total on
+        // `set`, so the total stays exact even if a dispose below throws
+        // (a no-op on a plain Map).
+        pool.set(bucket, arr);
         ctx.typeEvictionCounters[ref.buffer.type].evictions++;
         ref.buffer.geometry.dispose();
       }

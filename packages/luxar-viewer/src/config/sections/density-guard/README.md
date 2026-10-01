@@ -10,7 +10,7 @@ frame at DPR 1 and 83 ms at DPR 0.5, while the same points dollied 4× closer
 rendered at 120 fps — so resolution scaling moves in the wrong direction on
 exactly these scenes. The guard measures the density per node each frame
 (`scene/projected-density.ts`), feeds it to `__luxarDebug.getPerf().density`,
-thins blendable nodes on the shaders with brightness compensation, and stops
+thins blendable and `normal` nodes on the shaders with brightness (or, for `normal`, alpha) compensation, and stops
 the refinement loop from admitting rungs the view cannot resolve.
 
 `?noDensityGuard` clears `enabled` for a session, and `?densityCap=N`
@@ -26,11 +26,13 @@ any refinement rung the gate was holding back load; the URL flag wins over the
 stored choice for that session without overwriting it.
 
 Two consumers read the cap. The shader keep-fraction ladder
-(`scene/density-guard.ts`) thins blendable nodes down to `capElementsPerPixel`
-with hysteresis (`enterRatio` / `leaveRatio`) and a floor (`minKeepFraction`).
+(`scene/density-guard.ts`) thins blendable and `normal` nodes down to
+`capElementsPerPixel` with hysteresis (`enterRatio` / `leaveRatio`) and a floor
+(`minKeepFraction`); `normal` is compensated in alpha rather than opacity, and
+nothing is thinned during an offline capture.
 The refinement rung gate (`data/scene-loader/progressive/density-gate.ts`)
 defers the next additive rung of any node already denser than its cap on
 screen: `capElementsPerPixel` for blendable nodes, the tighter
-`nonBlendableCapElementsPerPixel` for `max` / `normal` / `opaque`, which cannot
-be thinned. Both consumers exclude shaded triangle meshes. Deferred rungs
+`nonBlendableCapElementsPerPixel` for `max` / `normal` / `opaque` (whose
+brightness has no linear knob). Both consumers exclude shaded triangle meshes. Deferred rungs
 resume when the camera moves in.

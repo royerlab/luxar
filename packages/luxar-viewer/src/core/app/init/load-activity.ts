@@ -56,6 +56,8 @@ export interface LoadActivitySources {
     lodGroupRegistry?: {
       isAnyLevelLoading(): boolean;
       hasVisiblePendingPartitionResync(): boolean;
+      /** A LOD level dissolve is in flight (read by the environment predicate only). */
+      isAnimating?(): boolean;
     } | null;
   } | null;
   isAnyLoadPassInProgress(): boolean;
@@ -76,4 +78,22 @@ export function buildLoadActivityPredicate(sources: LoadActivitySources): () => 
         sources.getDefaultLoader()?.lodGroupRegistry?.hasVisiblePendingPartitionResync() === true,
       isRefinementComplete: refinementCompleteFromTimeline,
     });
+}
+
+/**
+ * The scene environment's "settled" predicate: no load activity AND no LOD
+ * level dissolve in flight. A capture is a frozen frame (it becomes every
+ * reflection until the next commit re-marks the environment stale), and
+ * nothing re-marks it when a dissolve lands, so a capture taken mid-dissolve
+ * would keep both levels, half-faded, in the reflections. The environment's
+ * `tick` retries each frame while this is false, so the capture simply lands
+ * on the first frame drawing one level. Kept out of {@link isLoadActivity}: a
+ * dissolve is not a load, and the adaptive-DPR controller's sense is unchanged.
+ */
+export function buildEnvironmentSettledPredicate(
+  sources: LoadActivitySources,
+  isLoadActive: () => boolean
+): () => boolean {
+  return () =>
+    !isLoadActive() && sources.getDefaultLoader()?.lodGroupRegistry?.isAnimating?.() !== true;
 }

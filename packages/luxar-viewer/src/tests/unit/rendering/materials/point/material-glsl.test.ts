@@ -409,8 +409,11 @@ describe('PointMaterial', () => {
       expect(material.fragmentShader).not.toContain('uniform bool uLuminous');
       expect(material.fragmentShader).not.toContain('if (uLuminous)');
 
-      // Check for alpha output for AdditiveBlending (SrcAlpha, One)
-      expect(material.fragmentShader).toContain('fragColor = vec4(finalColor, alpha)');
+      // Check for alpha output for AdditiveBlending (SrcAlpha, One); the
+      // density-guard helper is the identity unless a normal node is thinned.
+      expect(material.fragmentShader).toContain(
+        'fragColor = vec4(finalColor, luxarDensityAlpha(alpha))'
+      );
     });
 
     it('should preserve depthTest setting when cloning', () => {

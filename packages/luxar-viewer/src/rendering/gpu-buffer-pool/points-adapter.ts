@@ -43,6 +43,7 @@ import { clampPointCapacity } from '../element-texture-layout';
 import { DEFAULT_POINT_RADIUS } from '../../config/constants';
 import type { LoadedPointsData } from '../../data/data-loader-types';
 import type { PooledBuffer } from './pool-stats';
+import { FreeBucketMap } from './byte-tracked-maps';
 import { chooseCapacity } from './capacity';
 
 /**
@@ -118,7 +119,7 @@ export interface PointsAdapterHost {
 
 export class PointsBufferAdapter {
   /** @internal — pool-bucketed reusable point geometries. */
-  readonly pointBuffers = new Map<number, PooledBuffer[]>();
+  readonly pointBuffers = new FreeBucketMap();
 
   constructor(private readonly host: PointsAdapterHost) {}
 
@@ -208,10 +209,10 @@ export class PointsBufferAdapter {
     // BEST-fit, not first-fit — see the gsplats adapter for rationale.
     // The fixed texel layout means any pooled points geometry fits any
     // points node: capacity is the only matching criterion.
-    let bestList: PooledBuffer[] | null = null;
+    let bestBucket: number | null = null;
     let bestIndex = -1;
     let bestCapacity = Infinity;
-    for (const pooled of this.pointBuffers.values()) {
+    for (const [bucket, pooled] of this.pointBuffers) {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
         // Skip a free-bucket resident whose out-of-band dispose already
@@ -219,15 +220,14 @@ export class PointsBufferAdapter {
         // would resurrect the #689 use-after-dispose through the free list.
         if (candidate.geometry.userData.luxarInvalidated) continue;
         if (candidate.capacity >= pointCount && candidate.capacity < bestCapacity) {
-          bestList = pooled;
+          bestBucket = bucket;
           bestIndex = i;
           bestCapacity = candidate.capacity;
         }
       }
     }
-    if (bestList) {
-      const candidate = bestList[bestIndex];
-      bestList.splice(bestIndex, 1);
+    if (bestBucket !== null) {
+      const candidate = this.pointBuffers.takeAt(bestBucket, bestIndex);
       // Adopted geometry may still carry the previous tenant's
       // instanceCount + texels; draw nothing until this node's write
       // sets the real count (a throwing write must not render the
@@ -301,16 +301,12 @@ export class PointsBufferAdapter {
       host.activeBuffers.delete(nodeId);
     }
 
-    for (const pooled of this.pointBuffers.values()) {
-      const index = pooled.indexOf(released);
-      if (index !== -1) {
-        pooled.splice(index, 1);
-        released.inUse = true;
-        released.lastUsedCommit = host.commitCount;
-        host.activeBuffers.set(nodeId, released);
-        this.disposeReplacementAfterReclaim(current);
-        return;
-      }
+    if (this.pointBuffers.removeFirst((buffer) => buffer === released, false)) {
+      released.inUse = true;
+      released.lastUsedCommit = host.commitCount;
+      host.activeBuffers.set(nodeId, released);
+      this.disposeReplacementAfterReclaim(current);
+      return;
     }
     // Not found: already disposed by the release-time sweep — see the
     // "documented residual" note in acquireGeometry.
@@ -355,10 +351,7 @@ export class PointsBufferAdapter {
     buffer.lastUsedCommit = host.commitCount;
 
     const bucket = host.getBucket(buffer.capacity);
-    if (!this.pointBuffers.has(bucket)) {
-      this.pointBuffers.set(bucket, []);
-    }
-    this.pointBuffers.get(bucket)!.push(buffer);
+    this.pointBuffers.pushBuffer(bucket, buffer);
 
     host.evictUnused();
   }
