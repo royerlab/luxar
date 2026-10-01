@@ -1867,6 +1867,31 @@ describe('LuxarApp', () => {
       expect(state.layers).toEqual([]);
     });
 
+    it.fails('stops the kiosk watchdog on dispose', async () => {
+      // A watchdog left listening after dispose() reloads the page on the next
+      // context loss of a canvas the app no longer owns.
+      const canvas = { addEventListener: vi.fn(), removeEventListener: vi.fn() };
+      mockSceneManager.renderer = { domElement: canvas };
+      await app.init({ canvas: mockCanvas, src: SRC });
+      const internals = app as unknown as {
+        applyKiosk: (config: {
+          ui: { kiosk: { enabled: boolean; watchdog_reload: boolean } };
+        }) => void;
+      };
+      internals.applyKiosk({ ui: { kiosk: { enabled: true, watchdog_reload: true } } });
+      expect(canvas.addEventListener).toHaveBeenCalledWith(
+        'webglcontextlost',
+        expect.any(Function)
+      );
+
+      app.dispose();
+
+      expect(canvas.removeEventListener).toHaveBeenCalledWith(
+        'webglcontextlost',
+        canvas.addEventListener.mock.calls.find((call) => call[0] === 'webglcontextlost')?.[1]
+      );
+    });
+
     it('keeps authored scene overlays visible in kiosk mode', async () => {
       await app.init({ canvas: mockCanvas, src: SRC });
       const hideOverlay = vi.fn();
