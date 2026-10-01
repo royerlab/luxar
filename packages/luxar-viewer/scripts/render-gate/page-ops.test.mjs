@@ -17,6 +17,22 @@ describe('rendererInfo', () => {
     renderer.isWebGPURenderer = false;
     expect((await rendererInfo()).api).toBe('webgl');
   });
+
+  it('reports native WebGPU and an unrecognized backend without claiming the forced arm', async () => {
+    const gl = {
+      isContextLost: () => false,
+      getExtension: () => null,
+      getParameter: () => 'Hardware GPU',
+    };
+    const renderer = { isWebGPURenderer: true, backend: { isWebGPUBackend: true } };
+    vi.stubGlobal('window', { __luxarDebug: { app: { sceneManager: { renderer } } } });
+    vi.stubGlobal('navigator', {
+      gpu: { requestAdapter: async () => ({ info: { vendor: 'Hardware GPU' } }) },
+    });
+    expect(await rendererInfo()).toEqual({ api: 'webgpu', gpu: 'Hardware GPU', usable: true });
+    renderer.backend = { gl };
+    expect(await rendererInfo()).toEqual({ api: 'webgl', gpu: 'Hardware GPU', usable: true });
+  });
 });
 
 /**
