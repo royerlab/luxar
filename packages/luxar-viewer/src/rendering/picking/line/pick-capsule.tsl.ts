@@ -39,8 +39,8 @@ import {
   vec3,
   vec4,
 } from 'three/tsl';
-import * as THREE from 'three';
 import { NodeMaterial } from 'three/webgpu';
+import { applyPickMaterialState } from '../_shared/shared-pick-graph-tsl';
 import { resolveElementTextureWidth, LINE_TEXTURE_LAYOUT } from '../../element-texture-layout';
 import {
   CAPSULE_JOINT_DEFICIT_GATE,
@@ -563,14 +563,9 @@ export function capsuleLinePickWebGPUFactory(
   material.vertexNode = clipPos;
   material.colorNode = colorNode();
   material.depthNode = depthNode();
-  material.toneMapped = false;
-  material.depthTest = true;
-  material.depthWrite = true;
-  material.transparent = false;
-  // Pin opacity to exactly 1 — the NodeMaterial fragment tail multiplies
-  // alpha by material.opacity, and alpha carries the element id's HIGH
-  // half (see the screen-space pick factory's note).
-  material.opacity = 1;
-  material.blending = THREE.NoBlending;
+  // The pick pass's fixed state: an opaque, depth-tested ID buffer with
+  // opacity pinned to exactly 1 (the element id's high half rides in alpha;
+  // see applyPickMaterialState).
+  applyPickMaterialState(material);
   return material;
 }

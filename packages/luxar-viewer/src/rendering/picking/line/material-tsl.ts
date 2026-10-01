@@ -30,7 +30,12 @@ import {
 } from '../_shared/visibility-tsl';
 import { copyPickVisibilityUniforms } from '../_shared/visibility-uniforms';
 import type { SurfacePickAwareMaterial } from '../_shared/surface-pick';
-import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import {
+  getPlaceholderElementTexture,
+  LINE_TEXTURE_LAYOUT,
+  resolveElementTextureWidth,
+} from '../../element-texture-layout';
+import { applySharedPickGraph } from '../_shared/shared-pick-graph-tsl';
 import type { LinePickingMaterialConfig } from './material';
 
 export class LinePickingTSLMaterial
@@ -146,11 +151,25 @@ export class LinePickingTSLMaterial
     const primitive = resolveLinePrimitive(
       this.userData.linePrimitive as LinePrimitive | undefined
     );
-    if (primitive === 'capsule') {
-      capsuleLinePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
-    } else {
-      linePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
-    }
+    const config = this._currentConfig();
+    // ONE graph per configuration (`../_shared/shared-pick-graph-tsl.ts`):
+    // the primitive, the build-time projection/join variant and the baked
+    // line-texture width are what select code.
+    const key = {
+      primitive,
+      ...config,
+      elementTextureWidth: resolveElementTextureWidth(
+        LINE_TEXTURE_LAYOUT,
+        this.tslNodes.uLineTex.value as { image?: { width?: number } } | null
+      ),
+    };
+    applySharedPickGraph(this, 'line-pick', key, this.tslNodes, (inputs, scratch) => {
+      if (primitive === 'capsule') {
+        capsuleLinePickWebGPUFactory(inputs, config, scratch);
+      } else {
+        linePickWebGPUFactory(inputs, config, scratch);
+      }
+    });
   }
 
   /**

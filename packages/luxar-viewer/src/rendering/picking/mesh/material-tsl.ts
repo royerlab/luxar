@@ -26,6 +26,7 @@ import * as THREE from 'three';
 import { texture, uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { meshPickWebGPUFactory } from './pick.tsl';
+import { applySharedPickGraph } from '../_shared/shared-pick-graph-tsl';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
 import { MESH_DEFAULTS, clampAppearanceFraction } from '../../materials/mesh/appearance';
 import { resolveMeshPickModeState, type MeshPickAwareMaterial } from './pick-mode';
@@ -96,7 +97,19 @@ export class MeshPickingTSLMaterial
     this.side = THREE.FrontSide;
     this.forceSinglePass = true;
 
-    meshPickWebGPUFactory(this.tslNodes, this);
+    this.rebuildGraph();
+  }
+
+  /**
+   * Point this material at the SHARED graph of its configuration
+   * (`../_shared/shared-pick-graph-tsl.ts`): one node build per configuration
+   * instead of one per material. The only code-selecting input is whether the
+   * node has a texture, which the leaf set itself carries.
+   */
+  private rebuildGraph(): void {
+    applySharedPickGraph(this, 'mesh-pick', {}, this.tslNodes, (inputs, scratch) => {
+      meshPickWebGPUFactory(inputs, scratch);
+    });
   }
 
   /**
@@ -118,7 +131,7 @@ export class MeshPickingTSLMaterial
     if ((this.uniforms.uBaseColorTex?.value as THREE.Texture | null) === tex) return;
     this.tslNodes.uBaseColorTex = texture(tex);
     this.uniforms.uBaseColorTex = { value: tex };
-    meshPickWebGPUFactory(this.tslNodes, this);
+    this.rebuildGraph();
     this.needsUpdate = true;
   }
 

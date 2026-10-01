@@ -51,6 +51,7 @@ import {
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
+import { applyPickMaterialState } from '../_shared/shared-pick-graph-tsl';
 import {
   FALLOFF_FLOOR,
   FALLOFF_K,
@@ -576,23 +577,10 @@ export function linePickWebGPUFactory(
   material.vertexNode = clipPos;
   material.colorNode = colorNode();
   material.depthNode = depthNode();
-  material.toneMapped = false;
-  material.depthTest = true;
-  material.depthWrite = true;
-  material.transparent = false;
-  // The element index's HIGH half rides in alpha, and THREE's NodeMaterial
-  // appends `DiffuseColor.w *= material.opacity` to every generated fragment
-  // (see the codegen snapshots, and `tsl-opacity-tail.test.ts` for the same
-  // tail on the visual materials). NoBlending does not suppress that
-  // shader-side multiply, so any opacity other than exactly 1 would scale the
-  // high half and decode a WRONG element id — on the TSL path only, since the
-  // GLSL twins have no such tail. Pin it so the multiply is provably identity,
-  // including when a caller injects `outMaterial`.
-  material.opacity = 1;
-  // Picking output is an opaque ID buffer; any blending would smear
-  // nodeId / elementId across overlapping picks. Matches the GLSL
-  // picking material.
-  material.blending = THREE.NoBlending;
+  // The pick pass's fixed state: an opaque, depth-tested ID buffer with
+  // opacity pinned to exactly 1 (the element id's high half rides in alpha;
+  // see applyPickMaterialState).
+  applyPickMaterialState(material);
   return material;
 }
 
