@@ -90,20 +90,35 @@ describe('bounds-math properties', () => {
   });
 
   describe('calculateClippingPlanesFromSphere (scale-aware near floor)', () => {
-    // Camera along +z from a sphere at the origin — the planes depend only
-    // on (dist, radius), so one axis covers the full input space.
+    // On-axis fixture for the scale-floor properties below.
     const radiusArb = fc.double({ min: 1e-6, max: 1e4, noNaN: true, noDefaultInfinity: true });
     const distArb = fc.double({ min: 0, max: 1e6, noNaN: true, noDefaultInfinity: true });
+    const zArb = fc.double({ min: -1, max: 1, noNaN: true, noDefaultInfinity: true });
+    const angleArb = fc.double({
+      min: -Math.PI,
+      max: Math.PI,
+      noNaN: true,
+      noDefaultInfinity: true,
+    });
+    const directionArb = fc.tuple(zArb, angleArb).map(([z, angle]) => {
+      const xy = Math.sqrt(1 - z * z);
+      return { x: xy * Math.cos(angle), y: xy * Math.sin(angle), z };
+    });
     const planesAt = (radius: number, dist: number) =>
       calculateClippingPlanesFromSphere(
         { center: { x: 0, y: 0, z: 0 }, radius },
-        { x: 0, y: 0, z: dist }
+        { x: 0, y: 0, z: dist },
+        { x: 0, y: 0, z: -1 }
       );
 
     test('always yields a valid frustum (0 < near < far) for any non-degenerate sphere', () => {
       fc.assert(
-        fc.property(radiusArb, distArb, (radius, dist) => {
-          const { near, far } = planesAt(radius, dist);
+        fc.property(radiusArb, distArb, directionArb, (radius, dist, direction) => {
+          const { near, far } = calculateClippingPlanesFromSphere(
+            { center: { x: 0, y: 0, z: 0 }, radius },
+            { x: 0, y: 0, z: dist },
+            direction
+          );
           expect(near).toBeGreaterThan(0);
           expect(far).toBeGreaterThan(near);
         })

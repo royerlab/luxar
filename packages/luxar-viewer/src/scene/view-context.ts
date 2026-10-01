@@ -6,9 +6,9 @@
  * Built lazily and cached. `get()` rebuilds when the snapshot was
  * `invalidate()`d or when the camera no longer matches it — another camera
  * object, a moved pose (`matrixWorld` after `updateMatrixWorld()`) or a new
- * projection matrix — so a read in the earlier `camera` phase, a read after a
- * failed callback, or a load-time read outside the frame loop always sees the
- * camera as it is now. The canvas sizes are only re-read on a rebuild: the
+ * projection matrix, or its clip/depth convention — so a read in the earlier
+ * `camera` phase, a read after a failed callback, or a load-time read always
+ * sees the camera as it is now. The canvas sizes are only re-read on a rebuild: the
  * `dynamic-clipping` callback (the first `view`-phase callback) invalidates
  * every frame so a resize is picked up at least once per frame (depth sort
  * deliberately reads the camera directly). The returned object and its
@@ -89,6 +89,8 @@ export class ViewContextProvider {
   private readonly bufferScratch: ViewSize = { width: 0, height: 0 };
   /** `camera.matrixWorld` as of the last build (the view matrix is its inverse). */
   private readonly builtWorld = new THREE.Matrix4();
+  private builtCoordinateSystem: THREE.Camera['coordinateSystem'] = THREE.WebGLCoordinateSystem;
+  private builtReversedDepth = false;
   private valid = false;
 
   constructor(private readonly deps: ViewContextDeps) {
@@ -123,7 +125,9 @@ export class ViewContextProvider {
     return (
       camera === this.ctx.camera &&
       camera.matrixWorld.equals(this.builtWorld) &&
-      camera.projectionMatrix.equals(this.ctx.projectionMatrix)
+      camera.projectionMatrix.equals(this.ctx.projectionMatrix) &&
+      camera.coordinateSystem === this.builtCoordinateSystem &&
+      camera.reversedDepth === this.builtReversedDepth
     );
   }
 
@@ -131,13 +135,19 @@ export class ViewContextProvider {
     const ctx = this.ctx;
     ctx.camera = camera;
     this.builtWorld.copy(camera.matrixWorld);
+    this.builtCoordinateSystem = camera.coordinateSystem;
+    this.builtReversedDepth = camera.reversedDepth;
     ctx.viewMatrix.copy(camera.matrixWorld).invert();
     ctx.cameraWorldPosition.setFromMatrixPosition(camera.matrixWorld);
     const e = camera.matrixWorld.elements;
     ctx.viewDirection.set(-e[8], -e[9], -e[10]).normalize();
     ctx.projectionMatrix.copy(camera.projectionMatrix);
     ctx.projView.multiplyMatrices(ctx.projectionMatrix, ctx.viewMatrix);
-    ctx.frustum.setFromProjectionMatrix(ctx.projView);
+    ctx.frustum.setFromProjectionMatrix(
+      ctx.projView,
+      camera.coordinateSystem,
+      camera.reversedDepth
+    );
     ctx.isOrtho = ctx.projectionMatrix.elements[15] === 1;
     ctx.viewportCss = usableSize(this.deps.getViewportCss(), this.cssScratch);
     ctx.drawingBuffer = usableSize(this.deps.getDrawingBuffer(), this.bufferScratch);

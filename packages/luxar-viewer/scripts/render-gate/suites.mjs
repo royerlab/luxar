@@ -33,6 +33,80 @@ import {
 export const EXPECTATIONS = ['win', 'zero', 'same', 'pass'];
 
 /**
+ * The direction of improvement of every metric whose MEANING fixes it. A
+ * manifest (the shipped one, or a derived one an audit writes) that declares
+ * one of these the other way is a harness error: it would read every
+ * improvement as a regression. Throughput and coverage are higher-is-better
+ * (`dragFrames` counts the rAF callbacks that fired during a scrub drag, so a
+ * freer main thread fires more); costs, latencies and work counts are
+ * lower-is-better. A ratio metric (`of`/`per`) takes its numerator's direction.
+ */
+export const METRIC_DIRECTIONS = Object.freeze({
+  // Higher is better: frames, commits, playback progress, request concurrency.
+  dragFrames: 'higher',
+  commitsDuringDrag: 'higher',
+  achievedFps: 'higher',
+  ticks: 'higher',
+  lastTimepointShown: 'higher',
+  settled: 'higher',
+  maxInflight: 'higher',
+  // Lower is better: renders, uploads, decodes, lookups, requests, latency.
+  'render.count': 'lower',
+  renders: 'lower',
+  tailRenders: 'lower',
+  'gpu.uploadBytes': 'lower',
+  'gpu.uploadBytes.texture': 'lower',
+  'ext.gpuUploadBytes': 'lower',
+  'ext.gpuUploadBytesBuffer': 'lower',
+  'ext.gpuUploadBytesTexture': 'lower',
+  'ext.consoleCalls': 'lower',
+  'console.calls': 'lower',
+  'worker.misroutes': 'lower',
+  'decode.count': 'lower',
+  'decode.count.lookahead': 'lower',
+  'decode.duplicates': 'lower',
+  'lod.levelSwaps': 'lower',
+  levelFlips: 'lower',
+  'scene.getObjectByName': 'lower',
+  'profiler.mergeMs': 'lower',
+  'scache.pinnedBytes': 'lower',
+  'partition.partsInitialised': 'lower',
+  stepMs: 'lower',
+  stepP90Ms: 'lower',
+  firstFrameMs: 'lower',
+  ttfpMs: 'lower',
+  settledMs: 'lower',
+  serverRequests: 'lower',
+  serverBytes: 'lower',
+  requestsToFirstFrame: 'lower',
+  bytesToFirstFrame: 'lower',
+  serialDepth: 'lower',
+});
+
+/**
+ * Throw when a manifest suite declares a metric against its known direction
+ * (see `METRIC_DIRECTIONS`). Metrics the table does not know are left alone.
+ *
+ * @param {Record<string, object>} manifestSuites The manifest's `suites`.
+ */
+export function validateMetricDirections(manifestSuites) {
+  for (const suite of Object.values(manifestSuites ?? {})) {
+    for (const c of suite.cases ?? []) {
+      for (const m of c.metrics ?? []) {
+        const field = m.of ?? m.name;
+        const known = METRIC_DIRECTIONS[field];
+        const better = m.better ?? 'lower';
+        if (known && better !== known) {
+          throw new Error(
+            `${c.id}.${m.name}: declared better: '${better}', but ${field} is ${known}-is-better`
+          );
+        }
+      }
+    }
+  }
+}
+
+/**
  * Load and validate an `--expect` file: `{ "<caseId>": { "<metric>": "win" |
  * "zero" | "same" | "pass" } }`. A case or metric the manifest does not
  * declare is a hard error (a typo would otherwise expect nothing).
