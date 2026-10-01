@@ -25,7 +25,10 @@
  */
 
 import { ArchiveFaultError } from '../../cache/chunk-source';
-import { fetchWithRetry } from '../../cache/multi-level-caching-store/fetch-retry';
+import {
+  fetchWithRetry,
+  mergeAbortSignals,
+} from '../../cache/multi-level-caching-store/fetch-retry';
 import type { FetchPriority, FetchPriorityCell } from '../../utils/fetch-concurrency';
 import { perfCounters } from '../../profiling/perf-counters';
 
@@ -343,17 +346,31 @@ export class LuxarHttpRangeReader {
    *
    * @param priority - Gate class for the window fetch (the member's caller knows
    *   whether a frame is waiting on it; `unzipit`'s own reads do not).
+   * @param signal - The member caller's abort signal. It cancels the window
+   *   fetch — queued in the gate or in flight — on top of the reader's
+   *   lifetime, so a superseded view stops holding a slot. `unzipit`'s follow-up
+   *   reads are answered from the window, or go out under the lifetime alone.
    */
   async readMember<T>(
     offset: number,
     size: number,
     body: () => Promise<T>,
-    priority?: FetchPriority | FetchPriorityCell
+    priority?: FetchPriority | FetchPriorityCell,
+    signal?: AbortSignal
   ): Promise<T> {
     const end = this.#length === undefined ? offset + size : Math.min(offset + size, this.#length);
     const windowSize = end - offset;
     if (windowSize <= 0 || this.#covered(offset, windowSize)) return body();
-    const bytes = await this.#fetchRange(offset, windowSize, undefined, priority);
+    const scope =
+      signal && this.lifetime
+        ? mergeAbortSignals(this.lifetime, signal)
+        : { signal: signal ?? this.lifetime, dispose: () => {} };
+    let bytes: Uint8Array<ArrayBuffer>;
+    try {
+      bytes = await this.#fetchRange(offset, windowSize, scope.signal, priority);
+    } finally {
+      scope.dispose();
+    }
     const window = { offset, bytes };
     this.#windows.push(window);
     try {

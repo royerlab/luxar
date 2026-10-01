@@ -21,9 +21,10 @@
  *    asked for a key.
  *
  * So: build lazily on first read, memoize **only on success**, and let a failed
- * attempt be retried by the next caller. Reads are driven by a per-store
- * `AbortController` that only `dispose()` trips, never a per-caller signal —
- * one cancelled chunk must not poison the directory every other chunk needs.
+ * attempt be retried by the next caller. The directory read is driven by a
+ * per-store `AbortController` that only `dispose()` trips, never a per-caller
+ * signal — one cancelled chunk must not poison the directory every other chunk
+ * needs. A member read additionally honours its own caller's signal.
  *
  * @module data/zip/store
  */
@@ -196,13 +197,16 @@ export class LuxarZipStore implements AsyncReadable {
    * Read one member with ONE ranged GET (header + payload, sized from the
    * central directory) instead of `unzipit`'s two serial ones.
    *
-   * @param _signal - Advisory only (see `ArchiveByteReader.get`); zarrita, which
-   *   also reads this store directly, passes its `GetOptions` here instead.
+   * @param signal - Cancels this member's window fetch, queued or in flight
+   *   (the store's own lifetime still cancels it too). zarrita, which also reads
+   *   this store directly, passes its `GetOptions` here instead. The shared
+   *   directory open never takes it: one cancelled chunk must not fail the
+   *   directory every other chunk needs.
    * @param options - `priority` classes the member's window fetch in the gate.
    */
   async get(
     key: string,
-    _signal?: AbortSignal | GetOptions,
+    signal?: AbortSignal | GetOptions,
     options?: ChunkSourceGetOptions
   ): Promise<Uint8Array | undefined> {
     const store = await this.#open();
@@ -213,7 +217,8 @@ export class LuxarZipStore implements AsyncReadable {
       window.offset,
       window.size,
       () => store.get(key as AbsolutePath),
-      options?.priority
+      options?.priority,
+      signal instanceof AbortSignal ? signal : signal?.signal
     );
   }
 

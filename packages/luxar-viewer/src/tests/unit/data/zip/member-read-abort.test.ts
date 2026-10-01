@@ -81,7 +81,7 @@ afterEach(() => {
 });
 
 describe('zip member reads and the caller signal', () => {
-  it.fails('an aborted member read leaves the gate queue and never fetches its window', async () => {
+  it('an aborted member read leaves the gate queue and never fetches its window', async () => {
     const { fetchMock, ranges } = serve(archive());
     vi.stubGlobal('fetch', fetchMock);
     const store = new LuxarZipStore(URL_);
