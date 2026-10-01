@@ -1155,7 +1155,7 @@ def resolve_coarsen_dims(
 
 def _gaussian_int_control(name: str, value: Any, *, minimum: int) -> int:
     """Parse an integral Gaussian reduction control before lifting source data."""
-    if isinstance(value, bool):
+    if isinstance(value, (bool, np.bool_)):
         raise ValueError(f"{name} must be an integer >= {minimum}, got {value!r}")
     try:
         parsed = int(value)

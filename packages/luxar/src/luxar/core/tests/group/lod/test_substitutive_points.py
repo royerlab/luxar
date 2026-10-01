@@ -98,10 +98,12 @@ class TestResolveSubstitutiveAxisPoints:
         [
             ("lloyd_iterations", -1),
             ("lloyd_iterations", True),
+            ("lloyd_iterations", np.bool_(True)),
             ("lloyd_iterations", 2.7),
             ("lloyd_iterations", "abc"),
             ("candidate_bins_k", 0),
             ("candidate_bins_k", False),
+            ("candidate_bins_k", np.bool_(False)),
             ("candidate_bins_k", 1.5),
             ("candidate_bins_k", "abc"),
             ("coverage_inflation", 0.5),
