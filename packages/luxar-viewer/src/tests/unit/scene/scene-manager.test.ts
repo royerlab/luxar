@@ -965,6 +965,23 @@ describe('SceneManager', () => {
       return { atNodeLoad };
     }
 
+    it.fails("chains an embedder's onSceneMetadata after its own pre-node framing", async () => {
+      loadSceneRecordingNodeLoad({ positionBounds: { min: [0, 0, 0], max: [40, 40, 40] } });
+      const positionAtHook: number[][] = [];
+      const embedderHook = vi.fn((_root: THREE.Group) => {
+        positionAtHook.push(sceneManager.camera.position.toArray());
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr', {
+        onSceneMetadata: embedderHook,
+      });
+
+      expect(embedderHook).toHaveBeenCalledTimes(1);
+      expect((embedderHook.mock.calls[0][0] as THREE.Group).name).toBe('LuxarScene');
+      // The embedder sees the opening pose, as load-time decisions do.
+      expect(positionAtHook[0]).toEqual(sceneManager.camera.position.toArray());
+    });
+
     it('places the AUTHORED opening camera before the scene nodes load', async () => {
       const { atNodeLoad } = loadSceneRecordingNodeLoad({
         viewerConfig: { camera: { position: [3, 3, 8], target: [3, 3, 0], up: [0, 1, 0] } },
