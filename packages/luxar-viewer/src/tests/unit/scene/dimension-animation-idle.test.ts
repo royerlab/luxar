@@ -47,21 +47,21 @@ describe('DimensionAnimationManager: render-loop liveness (#2944 A1)', () => {
     expect(keepsAwake()).toBe(true);
   });
 
-  it.fails('lets the loop idle after play → pause', () => {
+  it('lets the loop idle after play → pause', () => {
     const { manager, keepsAwake } = setup();
     manager.play(3, { targetFPS: 10 });
     manager.pause(3);
     expect(keepsAwake()).toBe(false);
   });
 
-  it.fails('lets the loop idle after play → stop', () => {
+  it('lets the loop idle after play → stop', () => {
     const { manager, keepsAwake } = setup();
     manager.play(3, { targetFPS: 10 });
     manager.stop(3);
     expect(keepsAwake()).toBe(false);
   });
 
-  it.fails('stays awake while another dimension still plays, then idles', () => {
+  it('stays awake while another dimension still plays, then idles', () => {
     const { manager, keepsAwake } = setup();
     manager.play(3, { targetFPS: 10 });
     manager.play(4, { targetFPS: 10 });

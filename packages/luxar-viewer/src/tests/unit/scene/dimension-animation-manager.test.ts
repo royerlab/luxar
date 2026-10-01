@@ -484,9 +484,13 @@ describe('DimensionAnimationManager', () => {
       expect(perFrameCallback?.()).toBe(false);
       mockTime += 200; // past it: one step
       expect(perFrameCallback?.()).toBe(true);
+      // pause() unregisters the callback (#2944 A1); a frame already in
+      // flight may still run it, and must report no step.
+      const inFlight = perFrameCallback!;
       manager.pause(3);
+      expect(perFrameCallback).toBeNull();
       mockTime += 200;
-      expect(perFrameCallback?.()).toBe(false);
+      expect(inFlight()).toBe(false);
     });
 
     it('pacing gate: does not advance while waitForUpdate is unresolved (data-bound playback)', () => {
