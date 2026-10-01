@@ -64,13 +64,16 @@ const W_EPSILON = 1e-6;
  * **Near-plane saturation.** Projects with an explicit homogeneous ``w`` (the
  * supplied box-to-clip matrix (or projection × matrixWorldInverse), not THREE's
  * ``Vector3.project`` which divides by ``w`` unguarded). If any corner has
- * ``w <= W_EPSILON`` — i.e. the camera is inside or straddling the box — the
- * group fills the screen, so we return ``+Infinity`` to saturate the selector
- * to its finest level (``pickChildWithHysteresis`` then picks the top index;
- * the value is never fed to finite arithmetic, so no NaN). This is the inverse
- * of the old behaviour, where a corner crossing behind the near plane
- * *collapsed* the diagonal and wrongly dropped to a coarse level on close
- * approach. Orthographic cameras keep ``w == 1`` and so never saturate.
+ * ``w <= W_EPSILON`` the eye plane cuts the box. With the camera INSIDE the box
+ * the group fills the screen, so we return ``+Infinity`` to saturate the
+ * selector to its finest level (``pickChildWithHysteresis`` then picks the top
+ * index; the value is never fed to finite arithmetic, so no NaN). With the eye
+ * outside it (a box running past the camera) the rect is that of the part in
+ * front of the near plane (``clippedNdcRect``) — unclipped by the viewport,
+ * so usually large, but finite (#2944 review B). Saturating was the inverse of
+ * the old behaviour, where a corner crossing behind the near plane *collapsed*
+ * the diagonal and wrongly dropped to a coarse level on close approach.
+ * Orthographic cameras keep ``w == 1`` and so never saturate.
  *
  * Exported for unit testing.
  */
@@ -163,14 +166,18 @@ export const DEGENERATE_RECT_HALF_EXTENT = 1e-3;
  * camera: a clipped interval that is INVERTED (no viewport overlap on that
  * axis) zeroes the metric before the degenerate ramp can see it.
  *
- * **+Infinity when the camera plane cuts the box** (the camera is inside it,
- * or the node straddles the eye plane — including a corner poking behind the
- * eye while the inscribed ellipsoid stays in front): there is no finite
- * near-corner depth to size the ellipse at, so the metric saturates to the
- * finest level, like the corner-rect metrics. An ORTHOGRAPHIC projection
- * never degenerates (``w`` stays 1), so no saturation applies — a camera inside
- * a large node reads full coverage naturally because its ellipse spans the
- * viewport. See the v3.4 spec's normative metric rules.
+ * **When the eye plane cuts the box** there is no finite near-corner depth to
+ * size the ellipse at. With the camera INSIDE the box the metric saturates to
+ * ``+Infinity`` (the finest level), like the corner-rect metrics. With the eye
+ * OUTSIDE it (a node running past the camera, its far end behind the eye,
+ * including a corner poking behind the eye while the inscribed ellipsoid stays
+ * in front) the metric is the viewport-clipped area of the screen rect of the
+ * part in front of the near plane (``straddlingAreaFraction``): what it
+ * really covers, not the finest level for a box that only grazes a corner of
+ * the view (#2944 review B). An ORTHOGRAPHIC projection never degenerates
+ * (``w`` stays 1), so neither applies — a camera inside a large node reads full
+ * coverage naturally because its ellipse spans the viewport. See the v3.4
+ * spec's normative metric rules.
  *
  * Exported for unit testing.
  */
@@ -185,7 +192,7 @@ export function projectBoxAreaFraction(
     boxToClip ??
     PROJ_VIEW_SCRATCH.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
   const ellipse = projectNearDepthEllipse(box, m.elements);
-  if (ellipse === ELLIPSE_STRADDLES) return Number.POSITIVE_INFINITY;
+  if (ellipse === ELLIPSE_STRADDLES) return straddlingAreaFraction(box, m.elements);
   if (ellipse === ELLIPSE_BEHIND) return 0;
   const { cx, cy, sxx, sxy, syy } = ellipse;
   const ex = Math.sqrt(sxx);
@@ -211,6 +218,133 @@ export function projectBoxAreaFraction(
   const span = Math.max(overlapW, overlapH) * 0.5;
   const degenerate = span * Math.max(0, 1 - rawThin / DEGENERATE_RECT_HALF_EXTENT);
   return Math.max(area, degenerate);
+}
+
+/**
+ * {@link projectBoxAreaFraction} when the eye plane cuts the box: ``+Infinity``
+ * with the eye inside it, else the visible (viewport-clipped) area fraction of
+ * the screen rect of the box's part in front of the near plane — a rect, like
+ * the face-on ellipse it stands in for, in the same units.
+ */
+function straddlingAreaFraction(box: BoundingBox, e: ArrayLike<number>): number {
+  if (eyeInsideBox(box, e)) return Number.POSITIVE_INFINITY;
+  const rect = clippedNdcRect(box, e);
+  if (rect === null) return 0;
+  const overlapW = Math.min(rect.maxX, 1) - Math.max(rect.minX, -1);
+  const overlapH = Math.min(rect.maxY, 1) - Math.max(rect.minY, -1);
+  if (overlapW < 0 || overlapH < 0) return 0;
+  return (overlapW * overlapH) / 4;
+}
+
+/**
+ * Whether the eye lies inside (or on) ``box``, in the box frame of the
+ * box-to-clip ``e``. The eye is the point whose clip ``x``, ``y`` and ``w`` all
+ * vanish: rows 0, 1 and 3 solved by Cramer's rule. A frame with no such point
+ * (singular — a zero group scale) answers ``true``, keeping the conservative
+ * saturation.
+ */
+function eyeInsideBox(box: BoundingBox, e: ArrayLike<number>): boolean {
+  const [a, b, c] = [e[0], e[4], e[8]];
+  const [d, f, g] = [e[1], e[5], e[9]];
+  const [h, i, j] = [e[3], e[7], e[11]];
+  const det = a * (f * j - g * i) - b * (d * j - g * h) + c * (d * i - f * h);
+  if (!(Math.abs(det) > 0) || !Number.isFinite(det)) return true;
+  const [r0, r1, r2] = [-e[12], -e[13], -e[15]];
+  const x = (r0 * (f * j - g * i) - b * (r1 * j - g * r2) + c * (r1 * i - f * r2)) / det;
+  const y = (a * (r1 * j - g * r2) - r0 * (d * j - g * h) + c * (d * r2 - r1 * h)) / det;
+  const z = (a * (f * r2 - r1 * i) - b * (d * r2 - r1 * h) + r0 * (d * i - f * h)) / det;
+  return (
+    x >= box.min.x &&
+    x <= box.max.x &&
+    y >= box.min.y &&
+    y <= box.max.y &&
+    z >= box.min.z &&
+    z <= box.max.z
+  );
+}
+
+/** The 12 box edges as corner-index pairs (corner bits: 1 = max x, 2 = max y, 4 = max z). */
+const BOX_EDGES: readonly (readonly [number, number])[] = [
+  [0, 1],
+  [2, 3],
+  [4, 5],
+  [6, 7],
+  [0, 2],
+  [1, 3],
+  [4, 6],
+  [5, 7],
+  [0, 4],
+  [1, 5],
+  [2, 6],
+  [3, 7],
+];
+
+/** Clip-space ``x, y, w`` and near-plane distance ``z + w`` per corner (reused). */
+const CORNER_CLIP_SCRATCH = new Float64Array(32);
+
+/**
+ * The NDC AABB of the part of ``box`` in front of the NEAR plane (clip
+ * ``z + w >= 0``, the WebGL convention of the projection matrices here): the
+ * corners in front, plus every edge's crossing of the plane, divided by their
+ * ``w`` — the box as the renderer clips it. Unclamped. ``null`` when nothing is
+ * in front. Writes the shared rect scratch.
+ */
+function clippedNdcRect(box: BoundingBox, e: ArrayLike<number>): typeof NDC_RECT_SCRATCH | null {
+  const k = clipCorners(box, e);
+  const r = NDC_RECT_SCRATCH;
+  r.minX = Infinity;
+  r.maxX = -Infinity;
+  r.minY = Infinity;
+  r.maxY = -Infinity;
+  for (let n = 0; n < 8; n++) {
+    if (k[4 * n + 3] >= 0 && k[4 * n + 2] > 0) includeNdc(r, k[4 * n], k[4 * n + 1], k[4 * n + 2]);
+  }
+  includeNearPlaneCrossings(r, k);
+  if (r.minX === Infinity) return null;
+  r.halfW = (r.maxX - r.minX) * 0.5;
+  r.halfH = (r.maxY - r.minY) * 0.5;
+  return r;
+}
+
+/** Clip ``x, y, w`` and near-plane distance ``z + w`` of the 8 corners (the reused scratch). */
+function clipCorners(box: BoundingBox, e: ArrayLike<number>): Float64Array {
+  const k = CORNER_CLIP_SCRATCH;
+  for (let n = 0; n < 8; n++) {
+    const x = n & 1 ? box.max.x : box.min.x;
+    const y = n & 2 ? box.max.y : box.min.y;
+    const z = n & 4 ? box.max.z : box.min.z;
+    const w = e[3] * x + e[7] * y + e[11] * z + e[15];
+    k[4 * n] = e[0] * x + e[4] * y + e[8] * z + e[12];
+    k[4 * n + 1] = e[1] * x + e[5] * y + e[9] * z + e[13];
+    k[4 * n + 2] = w;
+    k[4 * n + 3] = e[2] * x + e[6] * y + e[10] * z + e[14] + w;
+  }
+  return k;
+}
+
+/** Grow ``r`` by every box edge's crossing of the near plane (see {@link clippedNdcRect}). */
+function includeNearPlaneCrossings(r: typeof NDC_RECT_SCRATCH, k: Float64Array): void {
+  for (const [p, q] of BOX_EDGES) {
+    const dp = k[4 * p + 3];
+    const dq = k[4 * q + 3];
+    if (dp >= 0 === dq >= 0) continue;
+    const t = dp / (dp - dq);
+    const w = k[4 * p + 2] + t * (k[4 * q + 2] - k[4 * p + 2]);
+    if (!(w > 0)) continue;
+    const u = k[4 * p] + t * (k[4 * q] - k[4 * p]);
+    const v = k[4 * p + 1] + t * (k[4 * q + 1] - k[4 * p + 1]);
+    includeNdc(r, u, v, w);
+  }
+}
+
+/** Grow ``r`` by the clip point ``(u, v, w)`` after its perspective divide. */
+function includeNdc(r: typeof NDC_RECT_SCRATCH, u: number, v: number, w: number): void {
+  const x = u / w;
+  const y = v / w;
+  if (x < r.minX) r.minX = x;
+  if (x > r.maxX) r.maxX = x;
+  if (y < r.minY) r.minY = y;
+  if (y > r.maxY) r.maxY = y;
 }
 
 /** A convex ellipse contains the viewport iff it contains all four corners. */
@@ -263,8 +397,9 @@ const ELLIPSE_BEHIND = 2;
  *
  * Returns {@link ELLIPSE_BEHIND} when every corner is behind the eye and
  * {@link ELLIPSE_STRADDLES} when the nearest corner is at/behind
- * {@link W_EPSILON} — the eye plane cuts the box, the same saturation rule as
- * the corner-rect metrics — even if it misses the inscribed ellipsoid.
+ * {@link W_EPSILON} — the eye plane cuts the box, the same rule as the
+ * corner-rect metrics — even if it misses the inscribed ellipsoid (the caller
+ * then saturates or near-clips, see {@link straddlingAreaFraction}).
  */
 function projectNearDepthEllipse(
   box: BoundingBox,
@@ -382,15 +517,35 @@ function projectInscribedEllipse(
 /** Reused result object for {@link projectBoxNdcRect} (no per-call allocation). */
 const NDC_RECT_SCRATCH = { halfW: 0, halfH: 0, minX: 0, maxX: 0, minY: 0, maxY: 0 };
 
+/** The smallest clip ``w`` (view depth) over the box's 8 corners. */
+function nearestCornerW(box: BoundingBox, e: ArrayLike<number>): number {
+  let wNear = Infinity;
+  for (let n = 0; n < 8; n++) {
+    const x = n & 1 ? box.max.x : box.min.x;
+    const y = n & 2 ? box.max.y : box.min.y;
+    const z = n & 4 ? box.max.z : box.min.z;
+    wNear = Math.min(wNear, e[3] * x + e[7] * y + e[11] * z + e[15]);
+  }
+  return wNear;
+}
+
+/** The rect scratch set to an empty (zero-size) rect: nothing in front of the eye. */
+function emptyNdcRect(): typeof NDC_RECT_SCRATCH {
+  const r = NDC_RECT_SCRATCH;
+  r.halfW = r.halfH = r.minX = r.maxX = r.minY = r.maxY = 0;
+  return r;
+}
+
 /**
  * Shared 8-corner projection for the two metrics above: the box's screen-space
  * AABB as raw NDC bounds (``minX``/``maxX``/``minY``/``maxY``, unclamped) plus
  * the HALF-NDC spans (``ndcExtent / 2`` per axis — i.e. the fraction of the
  * viewport covered along each axis, unclamped) the diagonal metric consumes.
- * Returns ``null`` when any corner's homogeneous ``w`` falls to/below
- * {@link W_EPSILON} (camera inside / straddling the box — callers saturate to
- * ``+Infinity``). The returned object is a module-scope scratch: consume it
- * before the next call.
+ * When a corner's homogeneous ``w`` falls to/below {@link W_EPSILON} (the eye
+ * plane cuts the box) it returns ``null`` if the camera is INSIDE the box
+ * (callers saturate to ``+Infinity``), else the rect of the part in front of
+ * the near plane ({@link clippedNdcRect}; an empty rect when nothing is). The
+ * returned object is a module-scope scratch: consume it before the next call.
  */
 function projectBoxNdcRect(
   box: BoundingBox,
@@ -405,6 +560,12 @@ function projectBoxNdcRect(
     boxToClip ??
     PROJ_VIEW_SCRATCH.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
   const e = m.elements; // THREE.Matrix4 is column-major flat[16]
+  if (nearestCornerW(box, e) <= W_EPSILON) {
+    // The eye plane cuts the box. Camera inside → the group fills the screen
+    // → saturate so the finest child is selected; otherwise measure the part
+    // in front of the near plane (#2944 review B).
+    return eyeInsideBox(box, e) ? null : (clippedNdcRect(box, e) ?? emptyNdcRect());
+  }
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
@@ -416,11 +577,6 @@ function projectBoxNdcRect(
     // Same column-major indexing as ``transformBoundingBox`` (bounds-math.ts):
     // w = m[3]*x + m[7]*y + m[11]*z + m[15].
     const w = e[3] * x + e[7] * y + e[11] * z + e[15];
-    if (w <= W_EPSILON) {
-      // Camera inside / straddling the bbox near plane → group fills the
-      // screen → saturate so the finest child is selected.
-      return null;
-    }
     const ndcX = (e[0] * x + e[4] * y + e[8] * z + e[12]) / w;
     const ndcY = (e[1] * x + e[5] * y + e[9] * z + e[13]) / w;
     if (ndcX < minX) minX = ndcX;

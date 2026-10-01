@@ -491,31 +491,111 @@ def project_bounds_to_display_dims(
 
 
 def project_box_ndc_rect(box: Box3, proj_view: np.ndarray) -> Optional[NdcRect]:
-    """The box's screen-space AABB in NDC, or ``None`` on a near-plane straddle.
+    """The box's screen-space AABB in NDC, or ``None`` with the camera inside it.
 
     ``lod-selector-math.ts::projectBoxNdcRect``: the eight corners go through
     ``P·V`` with an EXPLICIT homogeneous ``w`` (not THREE's unguarded
-    ``Vector3.project``), and any corner at ``w <= W_EPSILON`` aborts the whole
-    projection — the perspective divide is already producing exploding/flipped
-    NDC there, so both metrics saturate to ``+inf`` instead of reading a
-    meaningless rect.
+    ``Vector3.project``). When a corner is at ``w <= W_EPSILON`` the eye plane
+    cuts the box and the perspective divide of the raw corners is meaningless:
+    with the camera INSIDE the box this returns ``None`` (both metrics saturate
+    to ``+inf``); with the eye outside it (a box running past the camera) it is
+    the rect of the part in front of the near plane
+    (:func:`_clipped_ndc_rect`), or an empty rect when nothing is.
 
     Args:
         box: A world-space box.
         proj_view: The row-major ``projection @ view`` product.
 
     Returns:
-        The NDC rect, or ``None`` when the camera is inside or straddling ``box``.
+        The NDC rect, or ``None`` when the camera is inside ``box``.
     """
     projected = _box_corners(box) @ proj_view.T
     w = projected[:, 3]
     if bool((w <= W_EPSILON).any()):
-        return None
+        if _eye_inside_box(box, proj_view):
+            return None
+        return _clipped_ndc_rect(box, proj_view) or NdcRect(0.0, 0.0, 0.0, 0.0)
     ndc_x = projected[:, 0] / w
     ndc_y = projected[:, 1] / w
     return NdcRect(
         float(ndc_x.min()), float(ndc_x.max()), float(ndc_y.min()), float(ndc_y.max())
     )
+
+
+#: The 12 box edges as corner-index pairs (corner bits as :func:`_box_corners`).
+_BOX_EDGES = (
+    (0, 1),
+    (2, 3),
+    (4, 5),
+    (6, 7),
+    (0, 2),
+    (1, 3),
+    (4, 6),
+    (5, 7),
+    (0, 4),
+    (1, 5),
+    (2, 6),
+    (3, 7),
+)
+
+
+def _eye_inside_box(box: Box3, m: np.ndarray) -> bool:
+    """Whether the eye lies inside (or on) ``box``, in the frame of ``m``.
+
+    ``lod-selector-math.ts::eyeInsideBox``. The eye is the point whose clip
+    ``x``, ``y`` and ``w`` all vanish (rows 0, 1 and 3 of ``m``); a frame with
+    no such point (singular) answers ``True``, keeping the saturation.
+    """
+    a = np.array([m[0, :3], m[1, :3], m[3, :3]], dtype=np.float64)
+    det = float(np.linalg.det(a))
+    if not (abs(det) > 0 and math.isfinite(det)):
+        return True
+    eye = np.linalg.solve(a, -np.array([m[0, 3], m[1, 3], m[3, 3]]))
+    return all(box.min[i] <= float(eye[i]) <= box.max[i] for i in range(3))
+
+
+def _clipped_ndc_rect(box: Box3, m: np.ndarray) -> Optional[NdcRect]:
+    """The NDC AABB of the part of ``box`` in front of the near plane.
+
+    ``lod-selector-math.ts::clippedNdcRect``: the corners with clip
+    ``z + w >= 0`` (and ``w > 0``), plus every edge's crossing of that plane,
+    each divided by its ``w`` — the box as the renderer clips it. Unclamped.
+    ``None`` when nothing is in front.
+    """
+    clip = _box_corners(box) @ m.T
+    near = clip[:, 2] + clip[:, 3]
+    points = [clip[n] for n in range(8) if near[n] >= 0 and clip[n, 3] > 0]
+    for p, q in _BOX_EDGES:
+        if (near[p] >= 0) == (near[q] >= 0):
+            continue
+        t = near[p] / (near[p] - near[q])
+        point = clip[p] + t * (clip[q] - clip[p])
+        if point[3] > 0:
+            points.append(point)
+    if not points:
+        return None
+    ndc_x = [float(pt[0] / pt[3]) for pt in points]
+    ndc_y = [float(pt[1] / pt[3]) for pt in points]
+    return NdcRect(min(ndc_x), max(ndc_x), min(ndc_y), max(ndc_y))
+
+
+def _straddling_area_fraction(box: Box3, m: np.ndarray) -> float:
+    """:func:`project_box_area_fraction` when the eye plane cuts the box.
+
+    ``lod-selector-math.ts::straddlingAreaFraction``: ``+inf`` with the eye
+    inside the box, else the viewport-clipped area fraction of the near-clipped
+    rect (:func:`_clipped_ndc_rect`).
+    """
+    if _eye_inside_box(box, m):
+        return math.inf
+    rect = _clipped_ndc_rect(box, m)
+    if rect is None:
+        return 0.0
+    overlap_w = min(rect.max_x, 1.0) - max(rect.min_x, -1.0)
+    overlap_h = min(rect.max_y, 1.0) - max(rect.min_y, -1.0)
+    if overlap_w < 0 or overlap_h < 0:
+        return 0.0
+    return overlap_w * overlap_h / 4
 
 
 @dataclass
@@ -622,8 +702,9 @@ def _project_near_depth_ellipse(box: Box3, m: np.ndarray) -> "_Ellipse | str":
 
     Returns :data:`_ELLIPSE_BEHIND` when every corner is behind the eye and
     :data:`_ELLIPSE_STRADDLES` when the nearest corner is at/behind
-    :data:`W_EPSILON` — the corner-rect saturation rule, kept even when the eye
-    plane misses the inscribed ellipsoid.
+    :data:`W_EPSILON` — the corner-rect rule, kept even when the eye plane
+    misses the inscribed ellipsoid (the caller then saturates or near-clips,
+    see :func:`_straddling_area_fraction`).
     """
     w = _box_corners(box) @ m[3]
     w_near = float(w.min())
@@ -688,12 +769,19 @@ def project_box_area_fraction(box: Box3, proj_view: np.ndarray) -> float:
             bounds with ``P·V·matrixWorld``, or world bounds with ``P·V``.
         proj_view: The row-major box-to-clip matrix.
 
+    When the eye plane cuts the box (no finite near depth to size the ellipse
+    at) the metric is ``+inf`` with the camera INSIDE the box, else the
+    viewport-clipped area of the near-clipped rect: a box running past the
+    camera reads what it covers instead of forcing the finest level.
+
     Returns:
-        A fraction in ``[0, 1]``, or ``+inf`` when the eye plane cuts the box.
+        A fraction in ``[0, 1]``, or ``+inf`` when the camera is inside the box.
     """
     ellipse = _project_near_depth_ellipse(box, proj_view)
     if isinstance(ellipse, str):
-        return math.inf if ellipse == _ELLIPSE_STRADDLES else 0.0
+        if ellipse == _ELLIPSE_STRADDLES:
+            return _straddling_area_fraction(box, proj_view)
+        return 0.0
     # A zero-extent axis leaves a diagonal entry at rounding noise, which may be
     # a hair below zero; that axis is simply zero-width.
     ex = math.sqrt(max(0.0, ellipse.sxx))
@@ -734,7 +822,7 @@ def project_box_diagonal_px(
         height: Viewport height in pixels.
 
     Returns:
-        The pixel diagonal, or ``+inf`` on a near-plane straddle.
+        The pixel diagonal, or ``+inf`` with the camera inside the box.
     """
     rect = project_box_ndc_rect(box, proj_view)
     if rect is None:
@@ -760,7 +848,7 @@ def legacy_coverage_metric(
         height: Viewport height in pixels.
 
     Returns:
-        The coverage metric, or ``+inf`` on a near-plane straddle.
+        The coverage metric, or ``+inf`` with the camera inside the box.
     """
     fitted_axis_px = min(width, height)
     return project_box_diagonal_px(box, proj_view, width, height) / (

@@ -372,14 +372,17 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    `calculateCameraDistance` actually fits), so its finest anchor
    (`coverage_fraction` 1.0) is reached once the projected diagonal is
    half of the fitted screen axis. Both projections are `w`-aware: if
-   any corner (for `screen-area`, any point of the ellipsoid) is
-   at/behind the camera plane (camera inside or straddling the box),
-   they return `+Infinity` so the selector
-   saturates to the finest level — instead of the collapsed/garbage
-   value an unguarded perspective divide would produce on close
-   approach. Under an ORTHOGRAPHIC projection nothing degenerates (`w`
-   stays 1), so neither function ever saturates and each metric's plain
-   value is used directly.
+   any corner is at/behind the camera plane, they return `+Infinity`
+   when the camera is INSIDE the box, so the selector saturates to the
+   finest level — instead of the collapsed/garbage value an unguarded
+   perspective divide would produce on close approach. With the camera
+   beside the box (a node running past the eye) they measure the part
+   in front of the near plane instead (`screen-area`: its
+   viewport-clipped rect area), so a node grazing a corner of the view
+   does not force the finest level (#2944 review B). Under an
+   ORTHOGRAPHIC projection nothing degenerates (`w` stays 1), so neither
+   function ever saturates and each metric's plain value is used
+   directly.
    A session-wide replacement-LOD bias (`?lodBias` / `LuxarAppOptions.lodBias`)
    is applied between measurement and selection: `b` multiplies `screen-area`,
    while `sqrt(b)` multiplies legacy diagonal `coverage`, so both move by the

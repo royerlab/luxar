@@ -641,9 +641,11 @@ describe('projectBoxDiagonalPx', () => {
       expect(pickChildWithHysteresis([0, 0.125, 0.25, 0.5], 0, metric)).toBe(2);
     });
 
-    it('saturates to +Infinity when the eye plane cuts a box corner but misses its ellipsoid', () => {
-      // The nearest corner is behind the eye, so no finite near depth exists —
-      // the same saturation the legacy corner rect applied.
+    it('near-clips, not saturates, when the eye plane cuts a box corner but misses its ellipsoid', () => {
+      // The nearest corner is behind the eye, so no finite near depth exists
+      // to size the ellipse at. The eye is OUTSIDE the box, so the metric is
+      // the near-clipped rect (#2944 review B) — here the near face fills the
+      // view: full coverage, not +Infinity.
       const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
       const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
       // Eye plane 5.6 from the centre: outside the inscribed sphere (radius 5)
@@ -652,7 +654,7 @@ describe('projectBoxDiagonalPx', () => {
       cam.lookAt(-0.424, -0.424, 6.2);
       cam.updateMatrixWorld(true);
       cam.updateProjectionMatrix();
-      expect(projectBoxAreaFraction(box, cam)).toBe(Number.POSITIVE_INFINITY);
+      expect(projectBoxAreaFraction(box, cam)).toBeCloseTo(1, 9);
     });
 
     it('an orthographic camera sizes a thick box exactly like a flat one (w is constant)', () => {
@@ -684,6 +686,39 @@ describe('projectBoxDiagonalPx', () => {
       const cam = perspectiveLookingAtOrigin(0, 0, 10);
       const box: BoundingBox = { min: { x: 40, y: -1, z: -1 }, max: { x: 42, y: 1, z: 1 } };
       expect(projectBoxAreaFraction(box, cam)).toBe(0);
+    });
+
+    // #2944 review B: the eye plane cutting a box the eye is NOT inside (a long
+    // box running past the camera, its far end behind it) has a finite visible
+    // footprint — the part in front of the eye, clipped to the viewport — and
+    // must not force the finest level.
+    it('a box beside the camera that the eye plane cuts reads its clipped visible area', () => {
+      // fov 90, aspect 1: NDC x = x / depth. The box x ∈ [2, 3] runs from 4 in
+      // front of the eye to 1 behind it. In front it covers NDC x ∈ [0.5, 1]
+      // (its near end runs off the right edge) over the full height, so the
+      // clipped rect is 0.5 × 2 of the 2 × 2 viewport: 0.25.
+      const cam = new THREE.PerspectiveCamera(90, 1, 0.1, 1000);
+      cam.position.set(0, 0, 0);
+      cam.lookAt(0, 0, -1);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      const box: BoundingBox = { min: { x: 2, y: -0.5, z: -4 }, max: { x: 3, y: 0.5, z: 1 } };
+      expect(projectBoxAreaFraction(box, cam)).toBeCloseTo(0.25, 9);
+      expect(
+        pickChildWithHysteresis([0, 0.125, 0.2, 0.5], 3, projectBoxAreaFraction(box, cam))
+      ).toBe(2);
+    });
+
+    it('the diagonal metric of a box beside the camera stays finite', () => {
+      const cam = new THREE.PerspectiveCamera(90, 1, 0.1, 1000);
+      cam.position.set(0, 0, 0);
+      cam.lookAt(0, 0, -1);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      const box: BoundingBox = { min: { x: 2, y: -0.5, z: -4 }, max: { x: 3, y: 0.5, z: 1 } };
+      expect(Number.isFinite(projectBoxDiagonalPx(box, cam, { width: 800, height: 600 }))).toBe(
+        true
+      );
     });
 
     it('saturates to +Infinity when the camera is inside the box, looking in any direction', () => {

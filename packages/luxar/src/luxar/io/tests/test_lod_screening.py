@@ -163,6 +163,20 @@ def test_near_plane_straddle_saturates_both_metrics_and_forces_the_finest() -> N
     assert pick_child_with_hysteresis([0.0, 0.25, 0.5], 0, math.inf) == 2
 
 
+def test_a_box_beside_the_camera_reads_its_clipped_visible_area() -> None:
+    """The eye plane cutting a box the eye is NOT inside does not force the finest.
+
+    Mirrors the viewer test of the same scene (#2944 review B): FOV 90, aspect
+    1, camera at the origin. The box ``x`` in ``[2, 3]`` runs from 4 in front
+    of the eye to 1 behind it; in front it covers NDC ``x`` in ``[0.5, 1]``
+    over the full height, so the clipped rect is ``0.5 * 2 / 4 = 0.25``.
+    """
+    beside = Box3((2.0, -0.5, -4.0), (3.0, 0.5, 1.0))
+    proj_view = _proj_view(0.0)
+    assert project_box_area_fraction(beside, proj_view) == pytest.approx(0.25, rel=1e-9)
+    assert math.isfinite(project_box_diagonal_px(beside, proj_view, 1920, 1080))
+
+
 def test_zero_thickness_rect_ramps_to_its_full_linear_span() -> None:
     """A flat (edge-on) box reads its clipped LINEAR span, not a zero area.
 
