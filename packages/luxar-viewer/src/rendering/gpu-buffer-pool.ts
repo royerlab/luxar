@@ -358,7 +358,7 @@ export class GPUBufferPool {
   /**
    * Get size bucket for capacity-based pooling.
    * Buckets: 1K, 5K, 10K, 50K, 100K, 500K, 1M.
-   * @internal — called by adapters; public to satisfy PointsAdapterHost.
+   * @internal — called by adapters; public to satisfy PoolAdapterHost.
    */
   getBucket(count: number): number {
     if (count <= 1000) return 1000;
