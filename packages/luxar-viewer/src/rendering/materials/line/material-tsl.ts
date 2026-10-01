@@ -30,6 +30,7 @@ import {
   type LineTSLConfig,
   type LineTSLNodes,
 } from './shader-tsl';
+import { copyRuntimeUniforms, LINE_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
 import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
 import { capsuleLineWebGPUFactory } from './shader-tsl-capsule';
 import { isGammaOne, isNoGOG, type LineMaterialConfig } from './material-glsl';
@@ -599,27 +600,13 @@ export class LineTSLMaterial
       cloned.blendDst = this.blendDst;
     }
 
-    (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
-      this.uniforms.uResolution.value as THREE.Vector2
-    );
+    // Runtime state a fresh clone would reset (LINE_RUNTIME_UNIFORMS, ../_shared/runtime-uniforms.ts).
+    copyRuntimeUniforms(this, cloned, LINE_RUNTIME_UNIFORMS);
     // `uIsOrtho` is a graph-specialized config — the constructor's
     // `rebuildGraph` ran against the default value 0 (perspective).
     // Copy uniforms, then re-run the rebuild against the now-correct
     // value so the right pixel-width branch is emitted.
     const sourceIsOrtho = (this.uniforms.uIsOrtho.value as number) === 1;
-    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
-    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
-    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
-    cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
-    cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
-    // The active ordering slot must ride along: a clone taken while the
-    // geometry draws from slot 1 would otherwise read the stale buffer
-    // until the coordinator's next per-frame re-assert.
-    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
-    // The density guard's thinning state rides along too (it is re-asserted
-    // only on the guard's next visit, which an off-screen node never gets).
-    cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
-    cloned.uniforms.uDensityAlphaExp.value = this.uniforms.uDensityAlphaExp.value;
     if (sourceIsOrtho) {
       cloned.rebuildGraph();
     }

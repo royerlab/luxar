@@ -13,6 +13,7 @@ import {
   applyElementTextureWidthDefine,
   POINT_TEXTURE_LAYOUT,
 } from '../../element-texture-layout';
+import { copyRuntimeUniforms, POINT_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import { getGlassDepthTexture } from '../_shared/glass-partition';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
@@ -519,26 +520,8 @@ export class PointMaterial
     // texture rather than left on the constructor's session-width
     // pre-stamp.
     cloned.updatePointTexture(this.uniforms.uPointTex.value as THREE.DataTexture | null);
-    cloned.uniforms.maxPointSize.value = this.uniforms.maxPointSize.value;
-    cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
-    cloned.uniforms.radiusScale.value = this.uniforms.radiusScale.value;
-    // Camera-state uniforms must ride along too (mirrors
-    // LineMaterial.clone, the reference implementation): a clone
-    // otherwise renders with stale resolution/nearCull until the next
-    // global updateCameraParams broadcast reaches it.
-    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
-    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
-    (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
-      this.uniforms.uResolution.value as THREE.Vector2
-    );
-    // The active ordering slot must ride along: a clone taken while the
-    // geometry draws from slot 1 would otherwise read the stale buffer
-    // until the coordinator's next per-frame re-assert.
-    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
-    // The density guard's thinning state rides along too (it is re-asserted
-    // only on the guard's next visit, which an off-screen node never gets).
-    cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
-    cloned.uniforms.uDensityAlphaExp.value = this.uniforms.uDensityAlphaExp.value;
+    // Runtime state a fresh clone would reset (POINT_RUNTIME_UNIFORMS, ../_shared/runtime-uniforms.ts).
+    copyRuntimeUniforms(this, cloned, POINT_RUNTIME_UNIFORMS);
     return cloned as this;
   }
 

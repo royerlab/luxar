@@ -36,6 +36,7 @@ import {
   applyElementTextureWidthDefine,
   SPLAT_TEXTURE_LAYOUT,
 } from '../../element-texture-layout';
+import { copyRuntimeUniforms, GSPLAT_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import { getGlassDepthTexture } from '../_shared/glass-partition';
 import type { BlendingMode } from '../../../types/blending';
@@ -537,26 +538,12 @@ export class GSplatMaterial
     // is re-stamped from the texture it actually binds rather than left
     // on the constructor's session-width pre-stamp.
     cloned.updateSplatTexture(this.uniforms.uSplatTex.value as THREE.DataTexture | null);
-    cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
-    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
-    // Camera-state uniforms ride along (mirrors LineMaterial.clone / the
-    // points clone fix): a clone otherwise renders with a stale
-    // near-cull until the next global camera broadcast.
-    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
-    cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
-    cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
+    // Runtime state a fresh clone would reset (GSPLAT_RUNTIME_UNIFORMS, ../_shared/runtime-uniforms.ts).
+    copyRuntimeUniforms(this, cloned, GSPLAT_RUNTIME_UNIFORMS);
     cloned.updateLabelStyle(
       this.uniforms.uLabelColorMode.value === 1,
       this.uniforms.uLabelFilterIndex.value
     );
-    // The active ordering slot must ride along: a clone taken while the
-    // geometry draws from slot 1 would otherwise read the stale buffer
-    // until the coordinator's next per-frame re-assert.
-    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
-    // The density guard's thinning state rides along too (it is re-asserted
-    // only on the guard's next visit, which an off-screen node never gets).
-    cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
-    cloned.uniforms.uDensityAlphaExp.value = this.uniforms.uDensityAlphaExp.value;
 
     return cloned as this;
   }

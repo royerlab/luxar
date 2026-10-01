@@ -36,6 +36,7 @@ import {
   type MeshTSLConfig,
   type MeshTSLNodes,
 } from './shader-tsl';
+import { copyRuntimeUniforms, MESH_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
 import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
 import {
   MESH_DEFAULTS,
@@ -519,11 +520,8 @@ export class MeshTSLMaterial
     }
     // `side` is epoch state, not config — carry the live value (see the GLSL twin).
     cloned.side = this.side;
-    cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
-    // Camera state rides along for the same reason it does on the GLSL twin: a
-    // clone left at the perspective/0.1 defaults would fade against the wrong near
-    // plane — and under ortho, where the fade is the identity, would fade at all.
-    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    // Runtime state a fresh clone would reset (MESH_RUNTIME_UNIFORMS, ../_shared/runtime-uniforms.ts).
+    copyRuntimeUniforms(this, cloned, MESH_RUNTIME_UNIFORMS);
     return cloned as this;
   }
 
