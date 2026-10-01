@@ -34,7 +34,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { browserKit } from './browser.mjs';
+import { browserKit, selectBackends } from './browser.mjs';
 import { ensureBuild } from './builds.mjs';
 import { judge, scoreBlocks, scoreFloatBuffers, scorePickBuffers } from './exactness.mjs';
 import { writeUlpHeatmap } from './heatmap.mjs';
@@ -174,9 +174,7 @@ function decode(packed) {
 
 function exactVariants(c) {
   const d = manifest.defaults;
-  const backends = (opts.backends ?? c.backends ?? d.backends).filter((b) =>
-    (c.backends ?? d.backends).includes(b)
-  );
+  const backends = selectBackends(opts.backends, c.backends ?? d.backends);
   const dsfs = opts.dsf ?? c.dsf ?? d.dsf;
   const out = [];
   for (const backend of backends)
@@ -391,7 +389,7 @@ async function runPerf(session, servers) {
   const results = [];
   const cases = manifest.perf.filter((c) => !opts.only || opts.only.includes(c.id));
   for (const c of cases) {
-    for (const backend of opts.backends ?? d.backends) {
+    for (const backend of selectBackends(opts.backends, d.backends)) {
       log(`perf: ${c.id} ${backend} (${rounds} rounds)`);
       const samples = { base: [], base2: [], cand: [] };
       try {

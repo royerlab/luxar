@@ -12,6 +12,11 @@ import * as ops from './page-ops.mjs';
 
 const SOFTWARE = /swiftshader|llvmpipe|software|basic render/i;
 
+/** Keep a requested backend list within the current suite or case. */
+export function selectBackends(requested, allowed) {
+  return (requested ?? allowed).filter((backend) => allowed.includes(backend));
+}
+
 /**
  * A case's URL: the suite defaults, then the case's own `urlParams` appended.
  * `liveLod: true` drops the defaults' `lodFinest`, which every other exact case
