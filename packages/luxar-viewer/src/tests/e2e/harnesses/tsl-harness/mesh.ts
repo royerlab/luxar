@@ -285,6 +285,8 @@ function meshPickUniforms(
     uAlphaCutout: { value: surfaceMode ? 1 : 0 },
     uSurfaceDepth: { value: surfaceMode ? 1 : 0 },
     uNearCull: { value: fade.uNearCull },
+    // The house shader's near fade applies (0 only for a physical visual).
+    uNearFade: { value: 1 },
     ...(withTexture ? { uBaseColorTex: { value: buildBaseColorTexture() } } : {}),
   };
 }

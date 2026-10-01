@@ -16,6 +16,7 @@ import {
   buildGSplatTSLNodesFromUniforms,
 } from '../../../../rendering/materials/gsplat/shader-tsl';
 import { GSPLAT_PICK_SOURCE } from '../../../../rendering/picking/gsplat/shaders';
+import { pickVisibilityUniforms } from '../../../../rendering/picking/_shared/visibility-uniforms';
 import {
   gsplatPickWebGPUFactory,
   buildGSplatPickTSLNodesFromUniforms,
@@ -227,6 +228,22 @@ function buildSurfacePickMesh(material: THREE.Material): THREE.Object3D {
 }
 
 /**
+ * The pick inputs production syncs from the visual material each pick render
+ * (picking-system/visibility-sync.ts), at their neutral values: an opaque,
+ * unit-gain, peak-projection node whose coverage fade culls at the pick
+ * radius. A GLSL uniform left out of the record reads 0, so every GLSL pick
+ * case must state them for the TSL fallbacks to have something to match.
+ */
+function gsplatPickNeutralUniforms(): Record<string, THREE.IUniform> {
+  return {
+    ...pickVisibilityUniforms(),
+    uProjectionMode: { value: 1 },
+    uRayIntegralFactor: { value: 2.433 },
+    uCoverageTruncate: { value: 1.5 },
+  };
+}
+
+/**
  * Shared uniforms for the surface-pick depth variants — identical to the
  * `gsplat-pick` parity entry plus the `uSurfaceDepth` selector under test.
  */
@@ -239,6 +256,7 @@ function buildSurfacePickUniforms(surfaceDepth: 0 | 1): Record<string, THREE.IUn
     uNearCull: { value: 0.01 },
     uMaxExtentFactor: { value: 1.0 },
     uNodeId: { value: 42 },
+    ...gsplatPickNeutralUniforms(),
     uShiftC: { value: Math.exp(-0.5 * 2.25) },
     uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 2.25)) },
     uSurfaceDepth: { value: surfaceDepth },
@@ -830,6 +848,8 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uNodeId: { value: 42 },
+      ...gsplatPickNeutralUniforms(),
+      ...gsplatPickNeutralUniforms(),
       uShiftC: { value: Math.exp(-0.5 * 2.25) },
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 2.25)) },
     }),
@@ -881,6 +901,8 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
       uNearCull: { value: 0.01 },
       uMaxExtentFactor: { value: 1.0 },
       uNodeId: { value: 42 },
+      ...gsplatPickNeutralUniforms(),
+      ...gsplatPickNeutralUniforms(),
       uShiftC: { value: Math.exp(-0.5 * 2.25) },
       uInvOneMinusC: { value: 1.0 / (1.0 - Math.exp(-0.5 * 2.25)) },
     }),

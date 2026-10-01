@@ -22,6 +22,7 @@ import {
   buildLineTSLNodesFromUniforms,
 } from '../../../../rendering/materials/line/shader-tsl';
 import { LINE_PICK_SOURCE } from '../../../../rendering/picking/line/shaders';
+import { pickVisibilityUniforms } from '../../../../rendering/picking/_shared/visibility-uniforms';
 import {
   linePickWebGPUFactory,
   buildLinePickTSLNodesFromUniforms,
@@ -422,6 +423,8 @@ function buildPickLineUniforms(
     uResolution: { value: new THREE.Vector2(64, 64) },
     uIsOrtho: { value: isOrtho ? 1 : 0 },
     uNodeId: { value: 42 },
+    // Synced from the visual material in production; GLSL reads 0 when absent.
+    ...pickVisibilityUniforms(),
     uNearCull: { value: nearCull },
     uMaxLinePixelWidth: { value: 32.0 },
   };
@@ -1554,6 +1557,10 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 1 },
       uNodeId: { value: 42 },
+      // Synced from the visual material in production; GLSL reads 0 when absent.
+      ...pickVisibilityUniforms(),
+      // Synced from the visual material in production; GLSL reads 0 when absent.
+      ...pickVisibilityUniforms(),
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
       // Pre-baked pixel-width scales (mirror `line` parity entry).
@@ -1598,6 +1605,10 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 0 },
       uNodeId: { value: 42 },
+      // Synced from the visual material in production; GLSL reads 0 when absent.
+      ...pickVisibilityUniforms(),
+      // Synced from the visual material in production; GLSL reads 0 when absent.
+      ...pickVisibilityUniforms(),
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
     }),
@@ -1766,6 +1777,10 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 0 },
       uNodeId: { value: 42 },
+      // Synced from the visual material in production; GLSL reads 0 when absent.
+      ...pickVisibilityUniforms(),
+      // Synced from the visual material in production; GLSL reads 0 when absent.
+      ...pickVisibilityUniforms(),
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
     }),
@@ -1795,6 +1810,10 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
       uResolution: { value: new THREE.Vector2(64, 64) },
       uIsOrtho: { value: 0 },
       uNodeId: { value: 42 },
+      // Synced from the visual material in production; GLSL reads 0 when absent.
+      ...pickVisibilityUniforms(),
+      // Synced from the visual material in production; GLSL reads 0 when absent.
+      ...pickVisibilityUniforms(),
       uNearCull: { value: 0.01 },
       uMaxLinePixelWidth: { value: 32.0 },
     }),
