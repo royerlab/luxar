@@ -170,9 +170,11 @@ transform, then calls `invertNdTransformForQuery(...)` to convert the
 orchestrator's world-space `ViewState` into the per-node local-space query
 that goes into the spatial index. The SceneLoader hands it a
 `SceneNodeIndex` (`../scene-loader/view-state/scene-node-index.ts`), which
-composes every node's world transform once with `composeNdTransforms`;
-`computeWorldNdTransform(sceneGraph, path)` remains the walk for callers
-holding a bare graph.
+composes every node's world transform once with `composeNdTransforms`.
+`deriveNodeViewState` accepts only that index, so no production code walks
+the graph per derivation; `computeWorldNdTransform(sceneGraph, path)` is kept
+as the reference walk the index is tested against
+(`scene-node-index.test.ts`).
 
 ## See also
 

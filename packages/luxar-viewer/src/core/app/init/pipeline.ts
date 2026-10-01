@@ -775,7 +775,7 @@ export async function runInitPipeline(
       sceneDimsManager.addListener(listener);
       return () => sceneDimsManager.removeListener(listener);
     },
-    getSceneGraph: () => getSceneLoader('default')?.sceneGraph ?? null,
+    getSceneNodeIndex: () => getSceneLoader('default')?.sceneNodeIndex ?? null,
     getSceneScale: () => sceneManager.getSceneScale(),
     container: getViewerContainer,
     emit: (event, payload) => ports.emitEmbedderEvent(event, payload),

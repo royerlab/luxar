@@ -21,15 +21,15 @@
  * well-tested normal-node path — no fragile convergence detection.
  */
 
-import type { SceneNode, ViewState } from '../../data-loader-types';
+import type { ViewState } from '../../data-loader-types';
 import {
   hasOwnProperties,
   getOrComputeExtendedTolerance,
   normalizeExtendDims,
   validateExtendDims,
 } from './extend-tolerance';
-import { computeWorldNdTransform, invertNdTransformForQuery } from '../../transforms/nd-transform';
-import { SceneNodeIndex } from './scene-node-index';
+import { invertNdTransformForQuery } from '../../transforms/nd-transform';
+import type { SceneNodeIndex } from './scene-node-index';
 
 export type DerivedNodeViewState = { skip: false; viewState: ViewState };
 
@@ -44,14 +44,17 @@ export interface DeriveOpts {
 
 /**
  * Derive a per-node view state. Pure function; takes the base viewState
- * + the scene-graph root (for computing the world `nd_transform` from
- * the node up to the root) as inputs.
+ * + the loader's {@link SceneNodeIndex} (the node's composed world
+ * `nd_transform`, looked up in O(1)) as inputs. `null` = no scene yet, so
+ * no `nd_transform` applies. There is deliberately no bare-graph form: a
+ * walk from the root per derivation made one pass O(N²) on a many-part
+ * partition.
  */
 export function deriveNodeViewState(
   path: string,
   attrs: { extend_to_all?: string[] } | undefined,
   baseViewState: ViewState,
-  sceneGraph: SceneNodeIndex | SceneNode | null,
+  sceneIndex: SceneNodeIndex | null,
   opts: DeriveOpts
 ): DerivedNodeViewState {
   // Never trust the raw attr shape: a malformed `extend_to_all` (e.g. an
@@ -104,13 +107,8 @@ export function deriveNodeViewState(
   }
 
   // Step 3: nd_transform inverse for world→local query mapping.
-  if (sceneGraph && derived.dimensions) {
-    // O(1) through the loader's path index; a bare graph (a caller without
-    // one) is walked from the root.
-    const worldNdT =
-      sceneGraph instanceof SceneNodeIndex
-        ? sceneGraph.worldNdTransform(path)
-        : computeWorldNdTransform(sceneGraph, path);
+  if (sceneIndex && derived.dimensions) {
+    const worldNdT = sceneIndex.worldNdTransform(path);
     if (hasOwnProperties(worldNdT)) {
       const inverted = invertNdTransformForQuery(
         derived.slicePosition,

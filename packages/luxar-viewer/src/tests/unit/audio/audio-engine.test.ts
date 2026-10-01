@@ -90,7 +90,7 @@ function makeHarness(state: 'running' | 'suspended' = 'running'): Harness {
       dimsListeners.add(cb);
       return () => dimsListeners.delete(cb);
     },
-    getSceneGraph: () => null,
+    getSceneNodeIndex: () => null,
     getSceneScale: () => 100,
     resolveNodeCenter: (name) => (name === 'blob' ? new THREE.Vector3(4, 5, 6) : null),
     container: () => document.body,
@@ -342,7 +342,8 @@ describe('AudioEngine — slab, ducking and buses', () => {
         },
       ],
     } as unknown as SceneNode;
-    (h.engine as unknown as { deps: AudioEngineDeps }).deps.getSceneGraph = () => graph;
+    (h.engine as unknown as { deps: AudioEngineDeps }).deps.getSceneNodeIndex = () =>
+      new SceneNodeIndex(graph);
     h.root.add(soundPlaceholder('/hum', { trigger: 'continuous', attach_to: 'Story 1: Hb' }));
     h.engine.attachScene(h.root);
     await flush();
@@ -720,7 +721,7 @@ describe('AudioEngine — a context the browser has not released', () => {
 });
 
 describe('AudioEngine — scene-node index', () => {
-  it.fails("reads a sound's world nd_transform from the loader's scene-node index, never walking the graph", async () => {
+  it("reads a sound's world nd_transform from the loader's scene-node index, never walking the graph", async () => {
     const h = makeHarness();
     // `/sounds` shifts the story axis by +1, so a row authored at local story 1
     // sits at world story 2.
@@ -742,11 +743,7 @@ describe('AudioEngine — scene-node index', () => {
         throw new Error('scene graph walked from the root');
       },
     });
-    // Both ports: the bare graph (what the engine read before the index port
-    // existed) and the index, so a walk through either is caught.
-    const deps = (h.engine as unknown as { deps: Record<string, unknown> }).deps;
-    deps.getSceneGraph = () => graph;
-    deps.getSceneNodeIndex = () => index;
+    (h.engine as unknown as { deps: AudioEngineDeps }).deps.getSceneNodeIndex = () => index;
     h.root.add(soundPlaceholder('/sounds/hum', { trigger: 'continuous' }, [[1, 0, 0, 0]]));
     h.dims = storyDims(1);
     h.engine.attachScene(h.root);

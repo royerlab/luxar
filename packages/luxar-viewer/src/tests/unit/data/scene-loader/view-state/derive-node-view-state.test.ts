@@ -15,6 +15,7 @@
 import { describe, it, expect } from 'vitest';
 import { deriveNodeViewState } from '../../../../../data/scene-loader/view-state/derive-node-view-state';
 import { EXTEND_TO_ALL_TOLERANCE } from '../../../../../data/scene-loader/view-state/extend-tolerance';
+import { SceneNodeIndex } from '../../../../../data/scene-loader/view-state/scene-node-index';
 import type { ViewState, SceneNode } from '../../../../../data/data-loader-types';
 import type { DimensionMetadata } from '../../../../../types/dims';
 
@@ -159,14 +160,14 @@ describe('deriveNodeViewState — fully-extended = slice-invariant normal node (
       'points',
       attrs,
       baseViewState({ slicePosition: [5, 1, 0, 0] }),
-      root,
+      new SceneNodeIndex(root),
       { applyPartialExtendTolerance: true }
     );
     const b = deriveNodeViewState(
       'points',
       attrs,
       baseViewState({ slicePosition: [42, 2, 0, 0] }),
-      root,
+      new SceneNodeIndex(root),
       { applyPartialExtendTolerance: true }
     );
     expect(a.viewState.slicePosition).toEqual(b.viewState.slicePosition);
@@ -310,7 +311,13 @@ describe('deriveNodeViewState — nd_transform inverse-query mapping', () => {
     const root = node('', {}, [
       node('points', { nd_transform: { time: { scale: 2, offset: 10 } } }),
     ]);
-    const result = deriveNodeViewState('points', undefined, baseViewState(), root, noTransformOpts);
+    const result = deriveNodeViewState(
+      'points',
+      undefined,
+      baseViewState(),
+      new SceneNodeIndex(root),
+      noTransformOpts
+    );
     if (result.skip !== false) throw new Error('expected non-skip');
     expect(result.viewState.slicePosition[0]).toBeCloseTo(-2.5, 10);
     expect(result.viewState.tolerance[0]).toBeCloseTo(0.25, 10);
@@ -323,7 +330,13 @@ describe('deriveNodeViewState — nd_transform inverse-query mapping', () => {
     // 'z' is a displayed dim (index 2). invertNdTransformForQuery skips
     // displayDims, so the transform on 'z' must have no effect.
     const root = node('', {}, [node('points', { nd_transform: { z: { scale: 3, offset: 1 } } })]);
-    const result = deriveNodeViewState('points', undefined, baseViewState(), root, noTransformOpts);
+    const result = deriveNodeViewState(
+      'points',
+      undefined,
+      baseViewState(),
+      new SceneNodeIndex(root),
+      noTransformOpts
+    );
     if (result.skip !== false) throw new Error('expected non-skip');
     expect(result.viewState.slicePosition[2]).toBe(0); // unchanged display dim
     expect(result.viewState.tolerance[2]).toBe(0);
@@ -337,7 +350,13 @@ describe('deriveNodeViewState — nd_transform inverse-query mapping', () => {
     const root = node('', {}, [
       node('points', { nd_transform: { channel: { permutation: [2, 0, 1] } } }),
     ]);
-    const result = deriveNodeViewState('points', undefined, base, root, noTransformOpts);
+    const result = deriveNodeViewState(
+      'points',
+      undefined,
+      base,
+      new SceneNodeIndex(root),
+      noTransformOpts
+    );
     if (result.skip !== false) throw new Error('expected non-skip');
     expect(result.viewState.slicePosition[1]).toBe(2); // remapped channel
     // Tolerance for categorical dims is unchanged.
@@ -355,7 +374,7 @@ describe('deriveNodeViewState — nd_transform inverse-query mapping', () => {
       'root/points',
       undefined,
       baseViewState(),
-      root,
+      new SceneNodeIndex(root),
       noTransformOpts
     );
     if (result.skip !== false) throw new Error('expected non-skip');
@@ -365,7 +384,13 @@ describe('deriveNodeViewState — nd_transform inverse-query mapping', () => {
 
   it('is identity when the node has no nd_transform in its path', () => {
     const root = node('', {}, [node('points', {})]);
-    const result = deriveNodeViewState('points', undefined, baseViewState(), root, noTransformOpts);
+    const result = deriveNodeViewState(
+      'points',
+      undefined,
+      baseViewState(),
+      new SceneNodeIndex(root),
+      noTransformOpts
+    );
     if (result.skip !== false) throw new Error('expected non-skip');
     expect(result.viewState.slicePosition).toEqual([5, 1, 0, 0]);
     expect(result.viewState.tolerance).toEqual([0.5, 0.5, 0, 0]);
@@ -376,7 +401,13 @@ describe('deriveNodeViewState — nd_transform inverse-query mapping', () => {
     const root = node('', {}, [
       node('points', { nd_transform: { time: { scale: 2, offset: 10 } } }),
     ]);
-    const result = deriveNodeViewState('points', undefined, base, root, noTransformOpts);
+    const result = deriveNodeViewState(
+      'points',
+      undefined,
+      base,
+      new SceneNodeIndex(root),
+      noTransformOpts
+    );
     if (result.skip !== false) throw new Error('expected non-skip');
     // No dimensions => Step 3 short-circuits, slicePosition unchanged.
     expect(result.viewState.slicePosition).toEqual([5, 1, 0, 0]);
@@ -393,7 +424,7 @@ describe('deriveNodeViewState — combined partial-extend + nd_transform', () =>
       'points',
       { extend_to_all: ['time'] },
       baseViewState(),
-      root,
+      new SceneNodeIndex(root),
       { applyPartialExtendTolerance: true }
     );
     if (result.skip !== false) throw new Error('expected non-skip');
@@ -420,7 +451,13 @@ describe('deriveNodeViewState — nd_transform no-preimage propagation', () => {
   it('flags noPreimage when the inverse query falls between discrete categories', () => {
     // world time 5, scale 2 → local 2.5: no local category maps to world 5.
     const base = baseViewState({ dimensions: discreteDims(), tolerance: [0, 0.5, 0, 0] });
-    const result = deriveNodeViewState('points', undefined, base, scaledNode(2), noTransformOpts);
+    const result = deriveNodeViewState(
+      'points',
+      undefined,
+      base,
+      new SceneNodeIndex(scaledNode(2)),
+      noTransformOpts
+    );
     if (result.skip !== false) throw new Error('expected non-skip');
     expect(result.viewState.noPreimage).toBe(true);
     // The position is still inverted — the flag is what suppresses the render.
@@ -433,7 +470,13 @@ describe('deriveNodeViewState — nd_transform no-preimage propagation', () => {
       slicePosition: [4, 1, 0, 0],
       tolerance: [0, 0.5, 0, 0],
     });
-    const result = deriveNodeViewState('points', undefined, base, scaledNode(2), noTransformOpts);
+    const result = deriveNodeViewState(
+      'points',
+      undefined,
+      base,
+      new SceneNodeIndex(scaledNode(2)),
+      noTransformOpts
+    );
     if (result.skip !== false) throw new Error('expected non-skip');
     expect(result.viewState.noPreimage).toBeUndefined();
     expect(result.viewState.slicePosition[0]).toBeCloseTo(2, 10);
@@ -442,7 +485,13 @@ describe('deriveNodeViewState — nd_transform no-preimage propagation', () => {
   it('leaves noPreimage unset for a plain offset transform', () => {
     const root = node('', {}, [node('points', { nd_transform: { time: { offset: 3 } } })]);
     const base = baseViewState({ dimensions: discreteDims(), tolerance: [0, 0.5, 0, 0] });
-    const result = deriveNodeViewState('points', undefined, base, root, noTransformOpts);
+    const result = deriveNodeViewState(
+      'points',
+      undefined,
+      base,
+      new SceneNodeIndex(root),
+      noTransformOpts
+    );
     if (result.skip !== false) throw new Error('expected non-skip');
     expect(result.viewState.noPreimage).toBeUndefined();
   });
@@ -461,7 +510,7 @@ describe('deriveNodeViewState — nd_transform no-preimage propagation', () => {
       'lines',
       { extend_to_all: ['time'] },
       base,
-      root,
+      new SceneNodeIndex(root),
       { applyPartialExtendTolerance: false } // the lines contract
     );
     if (result.skip !== false) throw new Error('expected non-skip');
@@ -476,9 +525,15 @@ describe('deriveNodeViewState — nd_transform no-preimage propagation', () => {
       node('lines', { extend_to_all: ['channel'], nd_transform: { time: { scale: 2 } } }),
     ]);
     const base = baseViewState({ dimensions: discreteDims(), tolerance: [0, 0.5, 0, 0] });
-    const result = deriveNodeViewState('lines', { extend_to_all: ['channel'] }, base, root, {
-      applyPartialExtendTolerance: false,
-    });
+    const result = deriveNodeViewState(
+      'lines',
+      { extend_to_all: ['channel'] },
+      base,
+      new SceneNodeIndex(root),
+      {
+        applyPartialExtendTolerance: false,
+      }
+    );
     if (result.skip !== false) throw new Error('expected non-skip');
     expect(result.viewState.noPreimage).toBe(true);
   });

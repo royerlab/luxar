@@ -361,6 +361,11 @@ export function composeNdTransforms(...transforms: NdTransformMap[]): NdTransfor
  *
  * Collects nd_transforms from root to target and composes them.
  *
+ * O(N) per call. Production code reads world transforms from the loader's
+ * `SceneNodeIndex` (`scene-loader/view-state/scene-node-index.ts`), which
+ * composes them once per scene; this walk is the reference that index is
+ * tested against.
+ *
  * @param sceneGraph - Root scene node
  * @param targetPath - Path to the target node
  * @returns Composed world nD transform (empty map = identity)

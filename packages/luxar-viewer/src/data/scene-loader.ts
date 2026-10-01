@@ -624,6 +624,16 @@ export class SceneLoader {
   }
 
   /**
+   * Path index over {@link sceneGraph} (`path → node + world nD transform`),
+   * built with it in `setSceneGraph`. Consumers outside the loader that derive
+   * per-node view states (the audio slab rule) read nD transforms from here in
+   * O(1) instead of walking the graph from the root on every derivation.
+   */
+  get sceneNodeIndex(): SceneNodeIndex | null {
+    return this._sceneNodeIndex;
+  }
+
+  /**
    * Connect the owner of per-leaf LIVE appearance state (the Layers panel) to
    * every data leaf this loader attaches from now on — partition parts the LOD
    * registry activates, lazily built levels, anything built after load. Each
