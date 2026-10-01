@@ -52,6 +52,12 @@ export interface ScheduleSaveParams {
    * (pure trailing debounce).
    */
   maxWaitMs?: number;
+  /**
+   * Leading edge: the first call after a quiet period (no save started for
+   * `delayMs`) writes within this many ms, and later calls in the same window
+   * cannot push that write back. Omitted = no leading edge.
+   */
+  leadingDelayMs?: number;
   onError: (error: unknown) => void;
 }
 
@@ -95,6 +101,10 @@ export class OPFSMetadataManager {
   private params: ScheduleSaveParams | null = null;
   /** Epoch ms of the first scheduleSave() since the last write: the maxWait anchor. */
   private firstUnsavedAt: number | null = null;
+  /** Epoch ms the last index write started (null = none this session). */
+  private lastSaveStartedAt: number | null = null;
+  /** Epoch ms the pending leading-edge save is due (null = no leading edge armed). */
+  private leadingDeadline: number | null = null;
   /** A save came due while one was in flight; write once more when it settles. */
   private saveQueuedBehindFlight = false;
 
@@ -219,6 +229,13 @@ export class OPFSMetadataManager {
    * called to produce the latest state and the file is written; failures
    * invoke `onError`.
    *
+   * With `leadingDelayMs`, the first call after a quiet period (no write
+   * started for `delayMs`) is written within that delay instead. The trailing
+   * debounce alone lost a whole session's index to a reload landing inside it,
+   * because a save started at unload never completes across a navigation
+   * (measured on Chromium). A sustained burst still gets the trailing debounce
+   * once the leading write has gone out.
+   *
    * Index writes never overlap: a save due while the previous one is still in
    * flight is deferred until it settles, and any number of such saves collapse
    * into ONE follow-up write of the then-latest snapshot (two concurrent
@@ -227,18 +244,32 @@ export class OPFSMetadataManager {
   scheduleSave(params: ScheduleSaveParams): void {
     perfCounters.add(S_SAVE_ATTEMPTS);
     const now = Date.now();
-    if (this.firstUnsavedAt === null) this.firstUnsavedAt = now;
+    if (this.firstUnsavedAt === null) {
+      this.firstUnsavedAt = now;
+      this.leadingDeadline = this.leadingDeadlineFor(params, now);
+    }
     this.params = params;
     let delay = params.delayMs;
     if (params.maxWaitMs !== undefined && Number.isFinite(params.maxWaitMs)) {
       const ceiling = this.firstUnsavedAt + Math.max(0, params.maxWaitMs);
       delay = Math.max(0, Math.min(delay, ceiling - now));
     }
+    if (this.leadingDeadline !== null) {
+      delay = Math.max(0, Math.min(delay, this.leadingDeadline - now));
+    }
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.timer = null;
       this.fire();
     }, delay);
+  }
+
+  /** When a leading-edge save is due for a first call at `now`, or null when none applies. */
+  private leadingDeadlineFor(params: ScheduleSaveParams, now: number): number | null {
+    const lead = params.leadingDelayMs;
+    if (lead === undefined || !Number.isFinite(lead)) return null;
+    const quiet = this.lastSaveStartedAt === null || now - this.lastSaveStartedAt >= params.delayMs;
+    return quiet ? now + Math.max(0, lead) : null;
   }
 
   /**
@@ -265,6 +296,8 @@ export class OPFSMetadataManager {
     }
     this.params = null;
     this.firstUnsavedAt = null;
+    this.leadingDeadline = null;
+    this.lastSaveStartedAt = Date.now();
     this.saveQueuedBehindFlight = false;
     this.inFlight = writeSnapshot(params.root, params.getSnapshot())
       .catch((error) => {
@@ -298,6 +331,7 @@ export class OPFSMetadataManager {
     }
     this.params = null;
     this.firstUnsavedAt = null;
+    this.leadingDeadline = null;
     this.saveQueuedBehindFlight = false;
   }
 

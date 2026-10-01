@@ -128,6 +128,11 @@ export class OPFSStore {
   // index, so this is the persistence-vs-main-thread trade: 2 s bounds what an
   // interruption can lose without re-serializing the index per write.
   private static readonly METADATA_SAVE_MAX_WAIT = 2000;
+  // Leading edge: the first write after a quiet second is indexed within this
+  // delay. Measured on the reload spec, the reload came ~1.1 s after the first
+  // L2 write and ~0.4 s after the last, so the trailing debounce never fired
+  // before it. 150 ms still batches a load's first burst into one save.
+  private static readonly METADATA_SAVE_LEADING_DELAY = 150;
 
   // Live (initialized, not yet disposed) stores, for the page-lifecycle flush
   // (`flushAllMetadata`, wired to pagehide / visibilitychange in
@@ -1608,6 +1613,7 @@ export class OPFSStore {
       getSnapshot: () => this.metadataSnapshot(),
       delayMs: OPFSStore.METADATA_SAVE_DELAY,
       maxWaitMs: OPFSStore.METADATA_SAVE_MAX_WAIT,
+      leadingDelayMs: OPFSStore.METADATA_SAVE_LEADING_DELAY,
       onError: (error) => {
         this.writeFailures++;
         log.warning(

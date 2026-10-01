@@ -377,7 +377,7 @@ describe('OPFSMetadataManager', () => {
     // index: a save started at unload never completes across a navigation
     // (measured on Chromium). The leading edge puts the first index on disk
     // shortly after a burst begins, while a sustained burst keeps the debounce.
-    it.fails('leading edge: the first save after a quiet period starts within leadingDelayMs', async () => {
+    it('leading edge: the first save after a quiet period starts within leadingDelayMs', async () => {
       perfCounters.reset();
       const { root } = mockRoot();
       const onError = vi.fn();

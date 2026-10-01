@@ -109,10 +109,12 @@ Key behaviours:
   `getStats()` and the cache monitor's "Errors" card (plus
   `orphansReindexed`).
 - **Index persistence** — the index save is a 1 s debounce with a 2 s
-  ceiling, flushed on `pagehide` / hidden (`flushAllMetadata`) and on
-  `dispose()`. Neither unload-time write survives a navigation: measured on
-  Chromium, a reload that lands inside the debounce stops the save after
-  `getFileHandle(create)`, so that session's index is lost. The zero-byte file
+  ceiling and a 150 ms leading edge (the first write after a quiet second is
+  indexed within 150 ms), flushed on `pagehide` / hidden (`flushAllMetadata`)
+  and on `dispose()`. Neither unload-time write survives a navigation: measured
+  on Chromium, a reload stops the save after `getFileHandle(create)`, so entries
+  written since the last completed save are lost (the leading edge keeps a
+  load's first burst out of that window). The zero-byte file
   this leaves is read as a cold start, not as corruption. An open-time,
   per-session-budgeted orphan reconcile re-indexes
   or deletes chunk files the index never recorded (see `../README.md`,

@@ -78,11 +78,13 @@ encodingVersion, validationMode, lastValidatedAt}`.
     the persisted value disagrees with the sum by more than 1 byte.
     Entries are sorted by ascending `order` so `Map` insertion order
     equals LRU order.
-- **`scheduleSave({ root, getSnapshot, delayMs, maxWaitMs?, onError })`** —
+- **`scheduleSave({ root, getSnapshot, delayMs, maxWaitMs?, leadingDelayMs?, onError })`** —
   debounced save, BOUNDED by `maxWaitMs`: each call re-arms the timer
   (last-writer-wins) but never past `maxWaitMs` after the first unsaved
   call, so a continuous write stream still saves (a pure trailing debounce
-  never fired during playback). On fire, calls `getSnapshot()` to capture
+  never fired during playback). With `leadingDelayMs`, the first call after a
+  quiet period (no write started for `delayMs`) is written within that delay,
+  and later calls cannot push it back. On fire, calls `getSnapshot()` to capture
   the latest state and writes it. Writes never overlap: a save due while
   one is in flight is coalesced into ONE follow-up write. The in-flight
   promise is tracked so `dispose()` can await it.
