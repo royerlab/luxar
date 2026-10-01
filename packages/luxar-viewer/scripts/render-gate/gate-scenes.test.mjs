@@ -76,4 +76,24 @@ describe('render-gate scene manifest', () => {
       }
     }
   });
+
+  it('covers the authored opening camera with a cold load that sets no harness pose', () => {
+    // `cold_sp64_closeup` applies its pose from the harness AFTER navigation,
+    // so the initial load still sees the default camera. The authored case's
+    // close-up lives in the STORE (viewer_config.camera), which the viewer
+    // frames before any node loads; a harness pose would mask exactly that.
+    const hosted = manifest.suites.hosted.cases;
+    const c = hosted.find((x) => x.id === 'cold_sp64_closeup_authored');
+    expect(c).toMatchObject({
+      store: 'gate/sp64_closeup_authored.luxar.zarr',
+      workload: { kind: 'coldLoad' },
+    });
+    expect(c.pose).toBeUndefined();
+    const names = c.metrics.filter((m) => !m.report).map((m) => m.name);
+    expect(names).toEqual(
+      expect.arrayContaining(['partition.partsInitialised', 'requestsToFirstFrame'])
+    );
+    for (const name of ['partition.partsInitialised', 'requestsToFirstFrame'])
+      expect(c.metrics.find((m) => m.name === name)).toMatchObject({ better: 'lower' });
+  });
 });

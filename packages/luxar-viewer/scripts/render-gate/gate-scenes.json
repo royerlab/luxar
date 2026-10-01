@@ -641,6 +641,16 @@
           ]
         },
         {
+          "id": "cold_sp64_closeup_authored",
+          "store": "gate/sp64_closeup_authored.luxar.zarr",
+          "workload": { "kind": "coldLoad" },
+          "metrics": [
+            { "name": "partition.partsInitialised", "better": "lower", "kind": "counter" },
+            { "name": "requestsToFirstFrame", "better": "lower", "kind": "counter" },
+            { "name": "firstFrameMs", "better": "lower", "kind": "timing" }
+          ]
+        },
+        {
           "id": "cold_sp64_full",
           "store": "gate/sp64.luxar.zarr",
           "workload": { "kind": "coldLoad" },

@@ -205,7 +205,7 @@ provide the second. Each is a key of the manifest's `suites` block and is run by
 |---|---|
 | `counters` | idle after a small drag (renders, bytes uploaded, stale frame); WebGPU uploads while idle |
 | `playback` | play a hidden time axis (achieved fps, renders, last timepoint shown, duplicate decodes); a slider drag over it |
-| `hosted` | cold loads over the simulated hosted link (first frame, settle, requests and bytes to first frame, concurrency) |
+| `hosted` | cold loads over the simulated hosted link (first frame, settle, requests and bytes to first frame, concurrency, parts initialised under an authored close-up opening camera) |
 | `trees` | single timeline steps on a time-partitioned tree (step latency, lookups, console calls); an orbit over a LOD ladder |
 | `cache` | several playback loops (duplicate decodes, pinned bytes, server requests) |
 
@@ -308,6 +308,11 @@ Notes on method:
   includes fetching the viewer); `settledMs` is when `isSettled` has held for 3
   frames. A case `pose` is applied at once and again at `sceneLoaded`, because
   loading the scene frames the camera and no URL parameter sets a pose.
+  That pose still arrives after the initial load chose what to fetch, so a
+  harness pose cannot gate the OPENING camera: `cold_sp64_closeup_authored`
+  sets no case pose and instead authors the close-up in the store
+  (`viewer_config.camera` of `sp64_closeup_authored`, the same 64 parts as
+  `sp64`), which the viewer frames before any node loads.
 - `staleFrameCheck: true` screenshots the page without forcing a render, then
   renders once and screenshots again. The PNGs must be byte-identical; a
   candidate arm that differs fails the row with reason `stale-frame` (a stale
