@@ -361,6 +361,11 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     initializeFromCameraHelper(this.camera, this.orientation);
   }
 
+  /** Adopt a camera pose written by framing before the next physics update. */
+  public reinitialize(): void {
+    this.initializeFromCamera();
+  }
+
   private updateOrientation(): void {
     updateOrientationHelper(this.camera, this.orientation);
   }

@@ -410,6 +410,7 @@ export function centerOnOrigin(
   camera.updateMatrixWorld(true);
 
   controls.setTarget(origin);
+  controls.reinitialize();
   controls.update();
   // NOTE: Do NOT call reset() before saveState() — that would undo the
   // centering and return the camera to the previous default.
