@@ -181,7 +181,7 @@ describe('LODGroupRegistry — partition part activation (B4)', () => {
   // the part, so a resync that ended without activating it (rejected, or
   // superseded by a pass targeting other parts) left the part asking for
   // nothing for the rest of the session.
-  it.fails('asks again for a part whose requested resync never activated it', () => {
+  it('asks again for a part whose requested resync never activated it', () => {
     const requestReprocess = vi.fn<RequestReprocess>(); // the pass never activates
     let t = 0;
     let tickRequested = true;
@@ -211,7 +211,7 @@ describe('LODGroupRegistry — partition part activation (B4)', () => {
     expect(requestReprocess).toHaveBeenLastCalledWith(['/p/part_0']);
   });
 
-  it.fails('does not keep the loop ticking for a resync nobody can run (no requestReprocess)', () => {
+  it('does not keep the loop ticking for a resync nobody can run (no requestReprocess)', () => {
     const requestTick = vi.fn();
     const camera = new THREE.Camera();
     const reg = new LODGroupRegistry({

@@ -919,6 +919,11 @@ const PARTITION_BECAME_VISIBLE = 2;
 // ``evaluatePartitionEntry`` and merged into ``partitionResyncPending`` only
 // on a rising edge (rare), so the steady-state per-frame path allocates nothing.
 const RISING_PARTS_SCRATCH = new Set<string>();
+/**
+ * How long a deferred part's activation request may wait for a pass to reach
+ * it before the per-frame gate asks again (see ``LazyPartState``).
+ */
+const LAZY_REQUEST_TIMEOUT_MS = 2000;
 // Partitions skipped this frame because their wrapper was hidden (re-checked
 // after the LOD pass, which may reveal them). Reused: no per-frame allocation.
 const HIDDEN_PARTITIONS_SCRATCH: PartitionGroupEntry[] = [];
@@ -1026,10 +1031,15 @@ export interface PartitionPartRef {
  * A deferred part's activation state (B4). `requested` is set when the
  * per-frame gate asked the loader for a pass to activate it (a pending
  * resync), `running` while that pass's activation is in flight; both clear
- * when the pass declines it, so a part still wanted is asked for again.
+ * when the pass declines it, so a part still wanted is asked for again. A
+ * request no pass has reached within `LAZY_REQUEST_TIMEOUT_MS` (the resync was
+ * rejected, or superseded by a pass targeting other parts) expires, and the
+ * registry keeps ticking until then so a parked camera asks again (#2944).
  */
 export interface LazyPartState {
   requested: boolean;
+  /** Registry clock (``frame.nowMs``) of the outstanding request. */
+  requestedAtMs: number;
   /** The in-flight activation, if one is running. */
   running: Promise<void> | null;
   /**
@@ -1414,6 +1424,8 @@ export class LODGroupRegistry {
    * Reset per entry in ``evaluateEntry``.
    */
   private probeCandidate: LODGroupChild | null = null;
+  /** Set this frame when a deferred part's activation request is outstanding. */
+  private lazyRequestOutstanding = false;
   /**
    * Partition rising edges waiting for their wrapper to be visible and the
    * loader to be idle: wrapper path → the re-entering PART paths. A set that
@@ -1534,7 +1546,7 @@ export class LODGroupRegistry {
         footprintDirty: true,
         inFrustum: true,
         lazy: child.activate
-          ? { requested: false, running: null, claims: [], failed: false }
+          ? { requested: false, requestedAtMs: 0, running: null, claims: [], failed: false }
           : null,
       })),
     });
@@ -2388,6 +2400,7 @@ export class LODGroupRegistry {
     // reveal it this frame (the overview recipe's fine level), and it must be
     // culled before that frame draws, not one frame late.
     HIDDEN_PARTITIONS_SCRATCH.length = 0;
+    this.lazyRequestOutstanding = false;
     for (const entry of this.partitionEntries.values()) {
       if (!isEffectivelyVisible(entry.groupObject)) {
         HIDDEN_PARTITIONS_SCRATCH.push(entry);
@@ -2422,6 +2435,8 @@ export class LODGroupRegistry {
     if (hasVisiblePendingResync && this.partitionResyncPending.size > 0) {
       this.keepTicking();
     }
+    // Nobody can run a resync without ``requestReprocess``: nothing to wait for.
+    if (this.lazyRequestOutstanding && this.deps.requestReprocess) this.keepTicking();
     if (anyLoading) this.keepTicking();
     // A dissolve is a function of TIME, so the loop must keep drawing until it
     // lands even when nothing else moves (each step writes a new opacity,
@@ -2675,7 +2690,12 @@ export class LODGroupRegistry {
    */
   private flushPartitionResyncs(): void {
     const requestReprocess = this.deps.requestReprocess;
-    if (!requestReprocess) return;
+    if (!requestReprocess) {
+      // Unwired (an embedder without a loader pass): nothing will ever run
+      // these, and a pending set would keep the loop ticking every frame.
+      this.partitionResyncPending.clear();
+      return;
+    }
     let resyncPaths: string[] | null = null;
     for (const [path, parts] of this.partitionResyncPending) {
       const entry = this.partitionEntries.get(path);
@@ -2792,8 +2812,17 @@ export class LODGroupRegistry {
     lazy: LazyPartState,
     wanted: boolean
   ): void {
-    if (!wanted || lazy.requested || lazy.running || lazy.failed) return;
+    if (!wanted || lazy.running || lazy.failed) return;
+    if (lazy.requested) {
+      // Outstanding: keep ticking until it is reached or expires.
+      if (this.frame.nowMs - lazy.requestedAtMs < LAZY_REQUEST_TIMEOUT_MS) {
+        this.lazyRequestOutstanding = true;
+        return;
+      }
+    }
     lazy.requested = true;
+    lazy.requestedAtMs = this.frame.nowMs;
+    this.lazyRequestOutstanding = true;
     noteRisingPart(risingParts, child.path, entryPath);
   }
 
