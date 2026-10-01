@@ -1059,6 +1059,38 @@ describe('PointsSpatialIndexLoader', () => {
       release();
       await loadPromise;
     });
+
+    it.fails('a load disposed mid-flight settles as a cancellation, not as data', async () => {
+      // The Lines/GSplats siblings bail with an AbortError when the loader was
+      // torn down while the chunk reads were in flight (run-loader-updates then
+      // stages null quietly). Points used to carry on and project a payload for
+      // a loader that no longer exists.
+      const baseViewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+      await loader.loadPoints(baseViewState);
+
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      (zarr.get as any).mockImplementation(() =>
+        gate.then(() => ({ data: new Float32Array(400) }))
+      );
+      const loadPromise = loader.loadPoints({
+        ...baseViewState,
+        slicePosition: [0.5, 0.5, 0.5, 5],
+      });
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      loader.dispose();
+      release();
+
+      await expect(loadPromise).rejects.toMatchObject({ name: 'AbortError' });
+    });
+
     it('should dispose resources properly', async () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
