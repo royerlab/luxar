@@ -131,6 +131,13 @@ export interface PointTSLConfig {
    * match the GLSL wrapper class.
    */
   readonly blendingMode?: BlendingMode;
+  /**
+   * The point texture's width, baked into the vertex addressing as a
+   * literal. Defaults to the width resolved from `nodes.uPointTex.value`;
+   * a wrapper building a SHARED graph (`shared-graph-tsl.ts`) passes it so
+   * it is part of the graph's configuration key.
+   */
+  readonly elementTextureWidth?: number;
 }
 
 /**
@@ -328,10 +335,11 @@ export function pointWebGPUFactory(
     // Safe because the width is a per-layout session constant, capped
     // at 4096 on every device (element-texture-layout.ts).
     const pointTexW: TSLNode = int(
-      resolveElementTextureWidth(
-        POINT_TEXTURE_LAYOUT,
-        (nodes.uPointTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
-      )
+      config.elementTextureWidth ??
+        resolveElementTextureWidth(
+          POINT_TEXTURE_LAYOUT,
+          (nodes.uPointTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
+        )
     ).toVar();
     const texelX: TSLNode = pointBase.mod(pointTexW).toVar();
     const texelY: TSLNode = pointBase.div(pointTexW).toVar();
@@ -566,21 +574,32 @@ export function pointWebGPUFactory(
   // modelViewProjection chain.
   material.vertexNode = clipPos;
   material.colorNode = colorNode();
-  material.toneMapped = false;
-
-  // Wire blending state from the shared helper. The shader-output
-  // shape (premultiplied RGB vs alpha-weighted) is derived from the
-  // blending mode unless the caller passed an explicit override.
-  // This factory tail is the ONLY state writer at TSL construction
-  // (the ctor never calls applyBlendingMode, unlike the GLSL twin) AND
-  // re-runs on every rebuildGraph — so it must derive the state from
-  // the same mode the output branch above used.
-  const blendingMode: BlendingMode = config.blendingMode ?? 'additive';
-  const opacityValue = (nodes.uOpacity.value as number | undefined) ?? 1.0;
-  // Points never depth-write in `normal` (see `getPointBlendingState`).
-  const blendingState = getPointBlendingState(blendingMode, opacityValue);
-  applyBlendingStateToMaterial(material, blendingState);
+  applyPointMaterialState(
+    material,
+    config.blendingMode ?? 'additive',
+    (nodes.uOpacity.value as number | undefined) ?? 1.0
+  );
   return material;
+}
+
+/**
+ * The non-graph material state the factory derives from the mode
+ * (`toneMapped` + blending). Exported so a wrapper taking its graph from a
+ * shared build (`shared-graph-tsl.ts`) applies the same state to itself.
+ *
+ * This tail is the ONLY state writer at TSL construction (the ctor never
+ * calls applyBlendingMode, unlike the GLSL twin) AND re-runs on every
+ * rebuildGraph — so it must derive the state from the same mode the
+ * graph's output branch used.
+ */
+export function applyPointMaterialState(
+  material: NodeMaterial,
+  blendingMode: BlendingMode,
+  opacityValue: number
+): void {
+  material.toneMapped = false;
+  // Points never depth-write in `normal` (see `getPointBlendingState`).
+  applyBlendingStateToMaterial(material, getPointBlendingState(blendingMode, opacityValue));
 }
 
 /**
