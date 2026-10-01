@@ -924,7 +924,7 @@
   },
   "src/rendering/picking/picking-system.ts": {
     "complexity": {
-      "count": 2
+      "count": 1
     }
   },
   "src/rendering/picking/point/pick.tsl.ts": {
