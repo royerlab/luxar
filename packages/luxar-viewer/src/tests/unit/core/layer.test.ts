@@ -405,7 +405,7 @@ describe('LuxarLayer', () => {
       });
     });
 
-    it.fails('configures the backend switches for a host WebGPU renderer', () => {
+    it('configures the backend switches for a host WebGPU renderer', () => {
       // Without these a host WebGPU renderer keeps the classic-WebGL defaults:
       // chunked ordering applies that wait on an upload callback WebGPU never
       // fires (a >1M sort stalls after its first slice), no RenderObject
@@ -422,7 +422,7 @@ describe('LuxarLayer', () => {
       expect(backendConfig.rowUploads).toHaveBeenCalledWith(renderer);
     });
 
-    it.fails('configures the backend switches for a host WebGL renderer', () => {
+    it('configures the backend switches for a host WebGL renderer', () => {
       new LuxarLayer(makeOptions());
 
       expect(backendConfig.chunkedApply).toHaveBeenCalledWith(true);

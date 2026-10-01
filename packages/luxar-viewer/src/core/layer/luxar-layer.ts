@@ -145,6 +145,7 @@ import { isLuxarMaterial } from '../../ui/layers/luxar-material';
 import { clamp } from '../../utils/clamp';
 import { log, Modules } from '../../utils/log';
 import { markSceneResourcesDirtyForContextRestore } from '../../scene/scene-manager/render-pipeline/webgl-context-recovery';
+import { configureRendererBackend } from '../../scene/scene-manager/render-pipeline/renderer-setup';
 import type { Renderer } from '../../rendering/renderer-capabilities';
 import type { LoaderConfig } from '../../data/data-loader-types';
 import type { EmbedderDimensions } from '../app/embedder/events';
@@ -284,6 +285,10 @@ export class LuxarLayer {
     // them, and a node created first would get the wrong backend.
     this.capabilities = createRendererCapabilities(options.renderer);
     materialManager.setCaps(this.capabilities);
+    // The same per-backend switches the app sets for its own renderer: left at
+    // their classic-WebGL defaults, a host WebGPU renderer stalls large sorts
+    // after their first slice and never evicts stale RenderObjects.
+    configureRendererBackend(options.renderer, this.capabilities);
     this.resize();
 
     this.installLodRegistryFactory();

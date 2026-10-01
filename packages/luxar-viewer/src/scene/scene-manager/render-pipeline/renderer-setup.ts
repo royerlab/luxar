@@ -1,8 +1,11 @@
 /**
  * Renderer-construction helpers extracted from SceneManager.
  *
- * Three concerns live here:
+ * Four concerns live here:
  *
+ *   - `configureRendererBackend` — point the backend-dependent rendering
+ *     paths (texture layout, ordering applies, RenderObject eviction,
+ *     element-texture row uploads) at a renderer; shared with layer mode.
  *   - `selectBackend` — apply the URL-param / env-var / default
  *     precedence ladder to pick WebGL or WebGPU.
  *   - `createWebGLRenderer` — construct a `THREE.WebGLRenderer`
@@ -37,6 +40,35 @@ import { configureRenderObjectEviction } from '../../../data/scene-loader/commit
 import { configureHDRRenderer, logHDRCapabilities } from '../../../utils/hdr/hdr-detection';
 import { log, Modules } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
+
+/**
+ * Point the backend-dependent rendering paths at `renderer`. Every renderer
+ * Luxar draws through needs this — the app's own (both `create*Renderer`
+ * below) and a host's in layer mode (`core/layer/luxar-layer.ts`) — because
+ * each switch is a module default tuned for classic WebGL:
+ *
+ *   - element textures are laid out against the device's `maxTextureSize`;
+ *   - both WebGPU backends ignore texture update ranges, so element textures
+ *     upload only their dirty rows there (#2944) — a no-op on classic WebGL;
+ *   - chunked ordering applies need honoured attribute update ranges and the
+ *     `onUploadCallback` back-pressure, which neither WebGPU backend fires —
+ *     classic WebGL only (see element-storage's chunked-apply note);
+ *   - RenderObject eviction (dispose dispatch) flushes the stale vertexBuffers
+ *     chainMap cache only WebGPU keeps; on classic WebGL the same event
+ *     destroys the compiled program (a shader recompile), so WebGPU only.
+ *
+ * Call after the renderer is initialised (WebGPU's backend exists only after
+ * `init()`).
+ */
+export function configureRendererBackend(
+  renderer: Renderer,
+  capabilities: RendererCapabilities
+): void {
+  configureElementTextureLayout(capabilities.maxTextureSize);
+  installElementTextureRowUploads(renderer);
+  configureSortedIndexChunkedApply(capabilities.apiSurface === 'webgl2');
+  configureRenderObjectEviction(capabilities.apiSurface === 'webgpu');
+}
 
 /**
  * URL-param / env-var / default precedence ladder for backend
@@ -191,13 +223,7 @@ export async function createWebGLRenderer(
   installUploadCounters(renderer);
 
   const capabilities = createRendererCapabilities(renderer);
-  configureElementTextureLayout(capabilities.maxTextureSize);
-  // Chunked ordering applies need honored attribute update ranges —
-  // classic WebGL only (see element-storage's chunked-apply note).
-  configureSortedIndexChunkedApply(capabilities.apiSurface === 'webgl2');
-  // RenderObject eviction (dispose dispatch) is WebGPU-only — on classic
-  // WebGL the same event destroys the compiled program (shader recompile).
-  configureRenderObjectEviction(capabilities.apiSurface === 'webgpu');
+  configureRendererBackend(renderer, capabilities);
 
   log.info(Modules.RENDERER, `Rendering API: ${capabilities.apiSurface}`);
 
@@ -381,19 +407,9 @@ export async function createWebGPURenderer(
   await gpuRenderer.init();
   // After init(): the backend's device / WebGL2 context exists only now.
   installUploadCounters(gpuRenderer);
-  // Both WebGPU backends ignore texture update ranges; upload only the
-  // dirty rows of element textures there (#2944).
-  installElementTextureRowUploads(gpuRenderer);
 
   const capabilities = createRendererCapabilities(gpuRenderer);
-  configureElementTextureLayout(capabilities.maxTextureSize);
-  // Both WebGPU backends ignore attribute update ranges (full re-upload
-  // per needsUpdate) — chunking would multiply the GPU upload, so large
-  // orderings keep the single-shot path there.
-  configureSortedIndexChunkedApply(capabilities.apiSurface === 'webgl2');
-  // RenderObject eviction (dispose dispatch) is WebGPU-only — it flushes
-  // the stale vertexBuffers chainMap cache that only WebGPU maintains.
-  configureRenderObjectEviction(capabilities.apiSurface === 'webgpu');
+  configureRendererBackend(gpuRenderer, capabilities);
   log.info(Modules.RENDERER, `Rendering API: ${capabilities.apiSurface}`);
 
   const hdrCapabilities = capabilities.hdr;
