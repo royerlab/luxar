@@ -59,6 +59,11 @@ view that differed, a heatmap PNG (black: identical; blue: drift; red: flip).
 The forced WebGL2 arm is named `webgpu-gl` in reports and `--backends`. It opens
 `?renderer=webgpu&webgpuForceWebgl`; the gate checks the renderer class and
 active backend before measuring so a silent fallback to a different path fails.
+The arm runs with the default MSAA-off setting; enabling MSAA for a case instead
+exercises the single-pass glass fallback, not the production refraction split.
+It adds one capture path per case, device scale factor, projection and pose;
+expect roughly 1.5× exact-suite runtime when captures dominate (three arms
+instead of two).
 Performance cases retain their separate WebGL and native WebGPU defaults.
 
 ## Exactness
