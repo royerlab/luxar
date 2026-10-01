@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type { SceneNode } from '../../../../../data/data-loader-types';
 import { SceneNodeIndex } from '../../../../../data/scene-loader/view-state/scene-node-index';
 import { computeWorldNdTransform } from '../../../../../data/transforms/nd-transform';
+import { collectAncestorNodes } from '../../../../../data/attrs-composer';
 
 function node(path: string, ndTransform?: object, children: SceneNode[] = []): SceneNode {
   return {
@@ -50,6 +51,19 @@ describe('SceneNodeIndex', () => {
     expect(index.node('/a/leaf')).toBe(graph.children![0].children![0]);
     expect(index.node('/missing')).toBeNull();
     expect(index.size).toBe(7);
+  });
+
+  it('matches collectAncestorNodes for every path, with a scene root and without', () => {
+    const groupRooted = makeGraph();
+    const sceneRooted = { ...makeGraph(), type: 'scene' } as SceneNode;
+    for (const graph of [groupRooted, sceneRooted]) {
+      const index = new SceneNodeIndex(graph);
+      for (const path of allPaths(graph)) {
+        expect(index.ancestors(path)).toEqual(collectAncestorNodes(graph, path));
+      }
+      expect(index.ancestors('/missing')).toBeUndefined();
+    }
+    expect(new SceneNodeIndex(sceneRooted).ancestors('/')).toEqual([]);
   });
 
   it('looks paths up without walking the graph', () => {

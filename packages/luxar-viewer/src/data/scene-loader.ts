@@ -758,7 +758,7 @@ export class SceneLoader {
    * If the scene graph is unavailable, falls back to the node's raw attrs.
    */
   private applyEffectiveAttrs(node: SceneNode): SceneNode['attrs'] {
-    return applyEffectiveAttrsHelper(this._sceneGraph, node);
+    return applyEffectiveAttrsHelper(this._sceneNodeIndex, node);
   }
 
   /**

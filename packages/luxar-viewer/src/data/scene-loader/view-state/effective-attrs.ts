@@ -15,8 +15,13 @@
  * @module data/scene-loader/view-state/effective-attrs
  */
 
-import { getEffectiveAttrs, windowOwnerGain } from '../../attrs-composer';
+import {
+  collectAncestorNodes,
+  getEffectiveAttrsOfChain,
+  windowOwnerGainOfChain,
+} from '../../attrs-composer';
 import type { SceneNode } from '../../data-loader-types';
+import type { SceneNodeIndex } from './scene-node-index';
 
 /**
  * Return a node-attrs record with rendering attributes replaced by
@@ -24,11 +29,16 @@ import type { SceneNode } from '../../data-loader-types';
  * (root → leaf).
  */
 export function applyEffectiveAttrs(
-  sceneGraph: SceneNode | null | undefined,
+  sceneIndex: SceneNodeIndex | null | undefined,
   node: SceneNode
 ): SceneNode['attrs'] {
-  if (!sceneGraph) return node.attrs;
-  const eff = getEffectiveAttrs(sceneGraph, node.path);
+  if (!sceneIndex) return node.attrs;
+  // O(depth) through the index. A path it does not hold (and the composer's
+  // "nothing requested" empty path) keeps the descent's exact answer.
+  const chain =
+    (node.path ? sceneIndex.ancestors(node.path) : undefined) ??
+    collectAncestorNodes(sceneIndex.root, node.path);
+  const eff = getEffectiveAttrsOfChain(chain);
   return {
     ...node.attrs,
     opacity: eff.opacity,
@@ -52,6 +62,6 @@ export function applyEffectiveAttrs(
     // Not an authored attr: the raw gain of the layer that owns this node's
     // display window, so a colormapped factory windows the node exactly as the
     // Layers panel will (`resolveColormapWindow`'s `owner`).
-    windowOwnerGain: windowOwnerGain(sceneGraph, node.path),
+    windowOwnerGain: windowOwnerGainOfChain(chain),
   };
 }

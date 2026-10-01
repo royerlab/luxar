@@ -28,6 +28,7 @@ import * as THREE from 'three';
 import { NodeFactory } from '../../../../rendering/node-factory';
 import { __resetMaterialManagerForTests } from '../../../../rendering/material-manager';
 import { applyEffectiveAttrs } from '../../../../data/scene-loader/view-state/effective-attrs';
+import { SceneNodeIndex } from '../../../../data/scene-loader/view-state/scene-node-index';
 import { collectAncestorNodes } from '../../../../data/attrs-composer';
 import { LayerApplyEngine } from '../../../../ui/layers/layer-apply';
 import { LayerStateManager } from '../../../../ui/layers/layer-state';
@@ -85,7 +86,7 @@ function factoryThenPanel(graph: SceneNode, leafPath: string, layerPath: string)
   root.name = 'LuxarScene';
   const mesh = new NodeFactory().createGSplatsNode(
     leaf.path,
-    applyEffectiveAttrs(graph, leaf),
+    applyEffectiveAttrs(new SceneNodeIndex(graph), leaf),
     leaf.attrs as unknown as GSplatsMetadata,
     {
       centers: new Float32Array([0, 0, 0]),
