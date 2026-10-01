@@ -981,6 +981,40 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     }
   });
 
+  it.fails('culls a partition revealed by its lod_group on the frame it appears (#2944 review B)', () => {
+    // Overview shape: the fine level of a lod_group is a partition wrapper.
+    // The partition pass used to run BEFORE the LOD pass and skip the wrapper
+    // while hidden, so the frame that revealed it drew every part unculled.
+    const reg = makeRegistry();
+    const coarse = makeChild(0);
+    const fine = makeChild(0.5);
+    const lod = makeEntry([coarse, fine], 0, '/g');
+    lod.groupObject.add(coarse.object, fine.object);
+    const part = new THREE.Group(); // a fresh part: visible until the gate runs
+    fine.object.add(part);
+    reg.register(lod);
+    reg.registerPartition({
+      path: '/g/fine',
+      groupObject: fine.object,
+      children: [
+        {
+          path: '/g/fine/part_0',
+          objects: [part],
+          positionBounds: { min: [2, 2, 2], max: [3, 3, 3] }, // outside the frustum
+        },
+      ],
+    });
+    reg.setSelectorMode('/g', { lockLevel: 0 });
+    reg.evaluatePerFrame(); // the coarse level shows; the wrapper stays hidden
+    expect(fine.object.visible).toBe(false);
+    expect(part.visible).toBe(true); // skipped while its wrapper is hidden
+
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+    reg.evaluatePerFrame(); // reveals the wrapper
+    expect(fine.object.visible).toBe(true);
+    expect(part.visible).toBe(false); // culled the same frame, not one late
+  });
+
   it('hides only parts outside the frustum using mapped 2D display dimensions', () => {
     const reg = makeRegistry([1, 3]);
     const groupObject = new THREE.Group();

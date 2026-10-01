@@ -856,6 +856,22 @@ describe('runInitPipeline', () => {
       return { tick, notify };
     }
 
+    it.fails('runs before the projected-density guard (#2944 review B)', async () => {
+      // Same phase ⇒ registration order is run order. The density guard sets
+      // each drawn level's keep fraction, so it must see the level the
+      // selector reveals THIS frame, not draw it one frame on its stale keep.
+      const { factories } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+      await runInitPipeline(ports, {});
+      const anim = factories.animationController.mock.results[0].value as {
+        addPerFrameCallback: ReturnType<typeof vi.fn>;
+      };
+      const ids = anim.addPerFrameCallback.mock.calls.map((call) => call[0] as string);
+      expect(ids.indexOf('lod-group-selector')).toBeGreaterThanOrEqual(0);
+      expect(ids.indexOf('projected-density')).toBeGreaterThan(ids.indexOf('lod-group-selector'));
+    });
+
     function stubRegistry(frame: { levelChanged: boolean; cullChanged: boolean }) {
       const refreshVisibleCounts = vi.fn();
       vi.mocked(getSceneLoader).mockReturnValue({
