@@ -1,13 +1,9 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { parseRange, startServer } from './server.mjs';
-
-// Ports outside the gate's default range (4801+) so a concurrent gate run and
-// this test do not collide.
-let nextPort = 4930 + Math.floor(Math.random() * 60);
 
 let root;
 let dist;
@@ -27,7 +23,7 @@ beforeAll(() => {
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 async function withServer(options, fn) {
-  const server = await startServer({ distDir: dist, dataRoot: data, port: nextPort++, ...options });
+  const server = await startServer({ distDir: dist, dataRoot: data, port: 0, ...options });
   try {
     await fn(server);
   } finally {
@@ -129,7 +125,10 @@ describe('startServer', () => {
       await (
         await fetch(`${s.origin}/datasets/gate/blob.bin`, { headers: { Range: 'bytes=0-9' } })
       ).arrayBuffer();
+      // Client body completion can precede the server's response finish event.
+      await vi.waitFor(() => expect(s.log[0].endMs).not.toBeNull(), { timeout: 5000 });
       await (await fetch(`${s.origin}/datasets/gate/missing.bin`)).arrayBuffer();
+      await vi.waitFor(() => expect(s.log[1].endMs).not.toBeNull(), { timeout: 5000 });
       const log = await (await fetch(`${s.origin}/__gate/requests`)).json();
       expect(log).toHaveLength(2);
       expect(log[0]).toMatchObject({
