@@ -5675,6 +5675,33 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(reg.get('/g')!.displayedChildIndex).toBe(1);
   });
 
+  // #2944 review B: the dissolve must run on the FRAME's clock reading
+  // (``frame.nowMs``), like every other time-driven rule of the registry. It
+  // re-read the clock, so work done earlier in the same frame shifted its start.
+  it.fails('a dissolve is timed on the frame clock, not on a later clock read', () => {
+    const clock = { t: 1000 };
+    let lateReads = false; // later reads within a frame see time that has passed
+    let readsThisFrame = 0;
+    const { reg, zoom } = makeTimedReg(clock, {
+      now: () => clock.t + (lateReads && readsThisFrame++ > 0 ? 50 : 0),
+    });
+    const frame = (): void => {
+      readsThisFrame = 0;
+      reg.evaluatePerFrame();
+    };
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.9);
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    frame();
+    zoom(4);
+    lateReads = true; // a slow frame: the dissolve starts on it
+    frame();
+    lateReads = false;
+    clock.t += FADE_MS / 2;
+    frame();
+    expect(liveOpacity(fine)).toBeCloseTo(0.5, 6); // half a dissolve since its frame
+  });
+
   it('a level change dissolves over fadeMs, then draws the new level alone', () => {
     const clock = { t: 1000 };
     const { reg, zoom } = makeTimedReg(clock);
