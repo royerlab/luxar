@@ -321,6 +321,17 @@ describe('commitLinesGeometry — append fast path (Phase 4 Stage 2, fromInstanc
     expect(getPrefixParent(next.sourceData)).toBeUndefined();
   });
 
+  it.fails('consumes the lineage entry on the NON-pool path too', () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/lines'));
+    commitLinesGeometry(makeStaged(4), root, null, undefined, 0);
+    const committed = (root.children[0].userData as { committedData: object }).committedData;
+    const next = makeStaged(6);
+    setPrefixParent(next.sourceData, committed);
+    commitLinesGeometry(next, root, null, undefined, 1);
+    expect(getPrefixParent(next.sourceData)).toBeUndefined();
+  });
+
   it('does NOT append (fromInstance 0) when there is no prefix lineage (unrelated reload)', () => {
     const root = new THREE.Group();
     root.add(makeMesh('/lines'));
