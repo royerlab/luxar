@@ -25,6 +25,9 @@ The script behind it is `packages/luxar-viewer/scripts/render-gate/run-gate.mjs`
 (pass extra flags with `GATE_ARGS=`, e.g. `GATE_ARGS="--backends webgl --dsf 1"`).
 Reports land in `delme/gate/<label>/`: `report.md`, `report.json` and, for every
 view that differed, a heatmap PNG (black: identical; blue: drift; red: flip).
+An excluded control view also records the A/A HDR and LDR scores, heatmaps,
+pick mismatches, element counts, camera matrices, and within-page stability in
+`report.json`; the report links the control heatmaps and summarizes those fields.
 
 ## How a run works
 

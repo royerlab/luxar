@@ -209,6 +209,7 @@ async function captureArm(browser, origin, c, variant) {
           width: cap.width,
           height: cap.height,
           stable: cap.hdrStable && cap.ldrStable,
+          camera: cap.camera,
           hdr: decode(cap.hdr),
           ldr: decode(cap.ldr),
           pick: cap.pick ? decode({ format: 'f32', data: cap.pick.data }) : null,
@@ -275,6 +276,10 @@ async function runExact(session, servers, outDir) {
         const row = { case: c.id, backend: variant.backend, dsf: variant.dsf, view, cls };
         const aa = scoreFloatBuffers(a.hdr, a2.hdr);
         const aaLdr = scoreFloatBuffers(a.ldr, a2.ldr);
+        const aaPick =
+          a.pick && a2.pick && a.pick.length === a2.pick.length
+            ? scorePickBuffers(a.pick, a2.pick)
+            : null;
         const hdr = scoreFloatBuffers(a.hdr, b.hdr);
         const ldr = scoreFloatBuffers(a.ldr, b.ldr);
         const pick =
@@ -293,9 +298,35 @@ async function runExact(session, servers, outDir) {
         } else if (c.pick && (!pick || pick.hits === 0)) {
           row.status = 'error';
           row.failures = [pick ? 'pick buffer carries no ids' : 'pick buffer not captured'];
-        } else if (!a.stable || !a2.stable || aa.differing > 0 || aaLdr.differing > 0) {
+        } else if (
+          !a.stable ||
+          !a2.stable ||
+          aa.differing > 0 ||
+          aaLdr.differing > 0 ||
+          (aaPick?.mismatches ?? 0) > 0
+        ) {
           row.status = 'excluded';
-          row.failures = [`nondeterministic baseline (A/A differs on ${aa.differing} HDR px)`];
+          row.failures = [
+            `nondeterministic baseline (A/A differs on ${aa.differing} HDR px, ${aaLdr.differing} LDR px)`,
+          ];
+          row.control = {
+            hdr: strip(aa),
+            ldr: strip(aaLdr),
+            pick: aaPick,
+            counts: { first: a.counts, second: a2.counts },
+            camera: { first: a.camera, second: a2.camera },
+            stable: { first: a.stable, second: a2.stable },
+          };
+          if (aa.differing > 0) {
+            const file = `${c.id}-${variant.backend}-dsf${variant.dsf}-${view.replace('#', '')}-control-hdr.png`;
+            writeUlpHeatmap(join(outDir, 'heatmaps', file), aa.perPixelUlp, a.width, a.height);
+            row.control.heatmap = `heatmaps/${file}`;
+          }
+          if (aaLdr.differing > 0) {
+            const file = `${c.id}-${variant.backend}-dsf${variant.dsf}-${view.replace('#', '')}-control-ldr.png`;
+            writeUlpHeatmap(join(outDir, 'heatmaps', file), aaLdr.perPixelUlp, a.width, a.height);
+            row.control.ldrHeatmap = `heatmaps/${file}`;
+          }
         } else if (!sameCounts(a.counts, b.counts)) {
           row.status = cls === 'INTENDED' ? 'changed' : 'fail';
           row.failures = ['drawn element counts differ between builds'];
@@ -470,6 +501,15 @@ function markdown(meta, exact, perf, suites) {
       );
     }
     lines.push('');
+    for (const r of exact.filter((row) => row.control)) {
+      const control = r.control;
+      lines.push(
+        `- ${r.case} ${r.backend} dsf${r.dsf} ${r.view} control: HDR ${fmtScore(control.hdr)}; LDR ${fmtScore(control.ldr)}; pick ${control.pick?.mismatches ?? '-'} mismatches; counts ${sameCounts(control.counts.first, control.counts.second) ? 'equal' : 'differ'}; camera ${JSON.stringify(control.camera.first) === JSON.stringify(control.camera.second) ? 'equal' : 'differs'}; within-page stable ${control.stable.first}/${control.stable.second}.`
+      );
+      if (control.heatmap) lines.push(`  - [A/A HDR heatmap](${control.heatmap})`);
+      if (control.ldrHeatmap) lines.push(`  - [A/A LDR heatmap](${control.ldrHeatmap})`);
+    }
+    if (exact.some((row) => row.control)) lines.push('');
   }
   if (perf) {
     lines.push(
