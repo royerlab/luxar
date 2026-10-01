@@ -176,4 +176,56 @@ describe('LODGroupRegistry — partition part activation (B4)', () => {
     // The old dataset's part must not resync a path of the new one.
     expect(requestReprocess).not.toHaveBeenCalled();
   });
+
+  // #2944 review B: the `requested` flag was cleared only when a pass reached
+  // the part, so a resync that ended without activating it (rejected, or
+  // superseded by a pass targeting other parts) left the part asking for
+  // nothing for the rest of the session.
+  it.fails('asks again for a part whose requested resync never activated it', () => {
+    const requestReprocess = vi.fn<RequestReprocess>(); // the pass never activates
+    let t = 0;
+    let tickRequested = true;
+    const camera = new THREE.Camera();
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getCommittedViewState: () => viewAt(0),
+      requestReprocess,
+      isUpdateInProgress: () => false,
+      now: () => t,
+      requestTick: () => {
+        tickRequested = true;
+      },
+    } as LODGroupRegistryDeps);
+    registerLazyPart(reg, () => Promise.resolve());
+    // An on-demand 60 Hz loop over a parked camera: a frame runs only when
+    // something asked for a tick.
+    for (let frame = 0; frame < 600; frame++) {
+      t += 1000 / 60;
+      if (!tickRequested) continue;
+      tickRequested = false;
+      reg.evaluatePerFrame();
+    }
+    expect(requestReprocess.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(requestReprocess).toHaveBeenLastCalledWith(['/p/part_0']);
+  });
+
+  it.fails('does not keep the loop ticking for a resync nobody can run (no requestReprocess)', () => {
+    const requestTick = vi.fn();
+    const camera = new THREE.Camera();
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getCommittedViewState: () => viewAt(0),
+      isUpdateInProgress: () => false,
+      requestTick,
+    } as LODGroupRegistryDeps);
+    registerLazyPart(reg, () => Promise.resolve());
+    for (let frame = 0; frame < 5; frame++) reg.evaluatePerFrame();
+    requestTick.mockClear();
+    for (let frame = 0; frame < 5; frame++) reg.evaluatePerFrame();
+    expect(requestTick).not.toHaveBeenCalled();
+  });
 });
