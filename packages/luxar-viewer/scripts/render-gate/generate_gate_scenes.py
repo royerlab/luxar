@@ -57,6 +57,7 @@ SCENE_NAMES = (
     "tiny_units_ortho",
     "tp50",
     "sp64",
+    "sp64_closeup_authored",
     "lod_timelapse",
     "pl_timelapse",
     "arrayref_4d",
@@ -584,14 +585,26 @@ def _time_partition(
     }
 
 
-def _spatial_partition(path: Path, name: str, tiles: int, small: bool) -> PoseEntry:
-    """Shared body of ``sp64`` / ``sp500`` / ``sp2000``: one laddered part per tile."""
+def _spatial_partition(
+    path: Path,
+    name: str,
+    tiles: int,
+    small: bool,
+    *,
+    opening: dict[str, Any] | None = None,
+) -> PoseEntry:
+    """Shared body of ``sp64`` / ``sp500`` / ``sp2000``: one laddered part per tile.
+
+    The data depends only on ``tiles`` (it seeds the generator), so a variant
+    that changes ``opening`` (the authored opening camera, default ``full``)
+    holds the same parts as its base store.
+    """
     grid = _GRIDS[tiles]
     extent = np.array(grid, dtype=np.float64) * _CELL
     per_part = 32 if small else _SPLATS_PER_PART
     parts = _tile_parts(np.random.default_rng(tiles), grid, per_part)
     full = _full_view(extent)
-    _write_partition_scene(path, parts, extent, full)
+    _write_partition_scene(path, parts, extent, opening or full)
     return {
         "store": _store_ref(name),
         "poses": {"full": full, "closeup": dict(_CLOSEUP)},
@@ -633,6 +646,21 @@ def write_sp64(path: Path, *, small: bool = False) -> PoseEntry:
     refinement as the camera moves between the two poses.
     """
     return _spatial_partition(path, "sp64", 64, small)
+
+
+def write_sp64_closeup_authored(path: Path, *, small: bool = False) -> PoseEntry:
+    """``sp64``'s data with the CLOSE-UP as its authored opening camera.
+
+    ``viewer_config.camera`` is the ``closeup`` pose (inside the corner cell
+    looking -z, fov 40). Gate case: the opening camera is framed from the
+    store BEFORE any node loads, so a cold load initialises and fetches the
+    ~1 part in the frustum instead of all 64. ``cold_sp64_closeup`` cannot
+    show that: its pose is applied by the harness after navigation, so its
+    initial load still sees the default camera.
+    """
+    return _spatial_partition(
+        path, "sp64_closeup_authored", 64, small, opening=dict(_CLOSEUP)
+    )
 
 
 def write_lod_timelapse(path: Path, *, small: bool = False) -> PoseEntry:
@@ -1037,6 +1065,7 @@ WRITERS: dict[str, Writer] = {
     "tiny_units_ortho": write_tiny_units_ortho,
     "tp50": write_tp50,
     "sp64": write_sp64,
+    "sp64_closeup_authored": write_sp64_closeup_authored,
     "lod_timelapse": write_lod_timelapse,
     "pl_timelapse": write_pl_timelapse,
     "arrayref_4d": write_arrayref_4d,

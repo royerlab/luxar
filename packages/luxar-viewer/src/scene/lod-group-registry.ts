@@ -1452,7 +1452,7 @@ export class LODGroupRegistry {
     let levelChanged = false;
     // Partitions first, so a lod_group nested in a part sees this frame's cull;
     // the wrappers the LOD pass reveals are gated after it (``endFrame``).
-    let cullChanged = this.partitions.beginFrame(displayDims, FRUSTUM_MATRIX_SCRATCH);
+    let cullChanged = this.partitions.beginFrame(displayDims, FRUSTUM_MATRIX_SCRATCH, view.camera);
     let loadsTickUntil = NO_TICK;
     for (const entry of this.entries.values()) {
       if (this.evaluateEntry(entry, frame)) levelChanged = true;

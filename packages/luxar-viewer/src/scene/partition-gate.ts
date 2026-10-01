@@ -104,11 +104,16 @@ const PARTITION_FRUSTUM_SCALE = new THREE.Matrix4();
  * cold parts have no loaded footprint to union, so the pad preloads them
  * before entry and keeps entry and exit symmetric.
  */
-function setPartitionFrustum(projView: THREE.Matrix4): void {
+function setPartitionFrustum(projView: THREE.Matrix4, camera: THREE.Camera): void {
   const pad = 1 / (1 + config.lod.partitionFrustumMargin);
   PARTITION_FRUSTUM_SCALE.makeScale(pad, pad, 1);
   PARTITION_FRUSTUM_MATRIX_SCRATCH.copy(projView).premultiply(PARTITION_FRUSTUM_SCALE);
-  PARTITION_FRUSTUM_SCRATCH.setFromProjectionMatrix(PARTITION_FRUSTUM_MATRIX_SCRATCH);
+  // The camera's clip convention (WebGPU depth range, reversed depth), as #2988.
+  PARTITION_FRUSTUM_SCRATCH.setFromProjectionMatrix(
+    PARTITION_FRUSTUM_MATRIX_SCRATCH,
+    camera.coordinateSystem,
+    camera.reversedDepth
+  );
 }
 
 const FOOTPRINT_BOX3_SCRATCH = new THREE.Box3();
@@ -389,8 +394,12 @@ export class PartitionGate implements TickDemand {
    * recipe's fine level), and {@link endFrame} gates it before that frame
    * draws. Returns whether a part was culled or restored.
    */
-  beginFrame(displayDims: readonly number[], projView: THREE.Matrix4): boolean {
-    setPartitionFrustum(projView);
+  beginFrame(
+    displayDims: readonly number[],
+    projView: THREE.Matrix4,
+    camera: THREE.Camera
+  ): boolean {
+    setPartitionFrustum(projView, camera);
     HIDDEN_PARTITIONS_SCRATCH.length = 0;
     this.visiblePendingResync = false;
     this.lazyRequestUntilMs = NO_TICK;
@@ -748,7 +757,7 @@ export class PartitionGate implements TickDemand {
     const displayDims = this.deps.getDisplayDims();
     const view = this.host.view();
     if (displayDims.length < 2 || view.viewportCss === null) return null;
-    setPartitionFrustum(view.projView);
+    setPartitionFrustum(view.projView, view.camera);
     groupObject.updateWorldMatrix(true, false);
     const inFrustum: boolean[] = [];
     const distance: number[] = [];
