@@ -489,6 +489,51 @@ describe('SceneLoader', () => {
       expect(rollbackToPassStart).toHaveBeenCalledOnce();
     });
 
+    it.fails('a partially failing commit still records the frame it committed (A9)', async () => {
+      // runAtomicCommit commits every sibling and only THEN rethrows. The
+      // siblings' geometry is on screen, so the pass's post-commit bookkeeping
+      // must run too: skipping it left the committed slice (B4 partition
+      // gating), the B5 commit clock and the monitor describing the old frame.
+      const applyCommittedSlice = vi.fn();
+      (sceneLoader as unknown as { lodGroupRegistry: unknown }).lodGroupRegistry = {
+        isPathInPartitionSlice: () => true,
+        activatePartitionParts: vi.fn().mockResolvedValue([]),
+        invalidatePartitionFootprint: vi.fn(),
+        applyCommittedSlice,
+        clear: vi.fn(),
+      };
+      const loaders = (sceneLoader as any).loaders as Map<string, unknown>;
+      loaders.clear();
+      const staged = {
+        pointCount: 1,
+        positions: new Float32Array([1, 2, 3]),
+        metadata: { loadedPoints: 1 },
+      };
+      for (const path of ['/ok', '/bad']) {
+        loaders.set(path, { updateView: vi.fn().mockResolvedValue(staged), dispose: vi.fn() });
+      }
+      const committed: string[] = [];
+      vi.spyOn(sceneLoader as any, 'updatePointsGeometry').mockImplementation((path) => {
+        if (path === '/bad') throw new Error('GPU commit failed');
+        committed.push(path as string);
+        return true;
+      });
+      const now = vi.spyOn(performance, 'now').mockReturnValue(123_456);
+
+      try {
+        await expect(
+          sceneLoader.updateView({ displayDims: [0, 1, 2], slicePosition: [0, 0, 0, 7] })
+        ).rejects.toThrow(AggregateError);
+      } finally {
+        now.mockRestore();
+      }
+
+      expect(committed).toEqual(['/ok']);
+      expect(sceneLoader.committedViewState.slicePosition[3]).toBe(7);
+      expect(applyCommittedSlice).toHaveBeenCalledOnce();
+      expect((sceneLoader as unknown as { _lastCommitAt: number })._lastCommitAt).toBe(123_456);
+    });
+
     it('surfaces an archive fault once and preserves the last committed frame', async () => {
       const fault = new ArchiveFaultError(
         'The archive URL has expired. Refresh the page with a new URL.',
