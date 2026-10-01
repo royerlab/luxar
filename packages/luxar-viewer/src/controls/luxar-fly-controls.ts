@@ -361,6 +361,13 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     initializeFromCameraHelper(this.camera, this.orientation);
   }
 
+  /** Adopt an externally written camera pose and discard residual momentum. */
+  public reinitialize(): void {
+    this.initializeFromCamera();
+    this.velocity.set(0, 0, 0);
+    this.angularVelocity.set(0, 0, 0);
+  }
+
   private updateOrientation(): void {
     updateOrientationHelper(this.camera, this.orientation);
   }
