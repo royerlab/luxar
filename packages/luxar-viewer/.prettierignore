@@ -13,6 +13,7 @@ coverage/
 docs/
 
 # Test and Playwright output
+src/tests/unit/data/codecs/golden-chunks/
 playwright-report/
 test-results/
 test-results-perf/
