@@ -46,7 +46,7 @@ function trackAbortListeners(signal: AbortSignal): () => number {
 }
 
 describe('LuxarHttpRangeReader.probeIdentity — caller signal', () => {
-  it.fails('leaves no abort listener behind on the caller signal', async () => {
+  it('leaves no abort listener behind on the caller signal', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(
@@ -65,7 +65,7 @@ describe('LuxarHttpRangeReader.probeIdentity — caller signal', () => {
     expect(live()).toBe(0);
   });
 
-  it.fails("forwards the caller's abort reason to the probe request", async () => {
+  it("forwards the caller's abort reason to the probe request", async () => {
     const reasons: unknown[] = [];
     vi.stubGlobal(
       'fetch',
@@ -95,7 +95,7 @@ describe('LuxarHttpRangeReader.probeIdentity — caller signal', () => {
 });
 
 describe('LuxarHttpRangeReader.getLength — gated like every other request', () => {
-  it.fails('waits for a metadata-lane slot and bypasses the HTTP cache', async () => {
+  it('waits for a metadata-lane slot and bypasses the HTTP cache', async () => {
     const inits: RequestInit[] = [];
     vi.stubGlobal(
       'fetch',

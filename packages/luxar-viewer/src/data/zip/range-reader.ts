@@ -28,6 +28,7 @@ import { ArchiveFaultError } from '../../cache/chunk-source';
 import {
   fetchWithRetry,
   mergeAbortSignals,
+  type FetchRetryOptions,
 } from '../../cache/multi-level-caching-store/fetch-retry';
 import type { FetchPriority, FetchPriorityCell } from '../../utils/fetch-concurrency';
 import { perfCounters } from '../../profiling/perf-counters';
@@ -91,17 +92,27 @@ function archiveHttpError(url: string, response: Response, context = ''): Error 
   return new RangeUnsupportedError(url, `${status}${context}`);
 }
 
-/** Merge a caller signal with a probe-timeout signal, without a dependency. */
-function mergeProbeSignals(a: AbortSignal | undefined, b: AbortSignal): AbortSignal {
-  if (!a) return b;
-  const controller = new AbortController();
-  const forward = (): void => controller.abort();
-  if (a.aborted || b.aborted) controller.abort();
-  else {
-    a.addEventListener('abort', forward, { once: true });
-    b.addEventListener('abort', forward, { once: true });
-  }
-  return controller.signal;
+/**
+ * A probe's signal: the caller's, merged with a timeout when `timeoutMs` is
+ * set. `dispose` clears the timer and any fallback listener on the caller's
+ * signal (a long-lived caller signal must not collect one per probe); the
+ * merged signal carries whichever reason fired first.
+ */
+function probeScope(
+  signal: AbortSignal | undefined,
+  timeoutMs: number | undefined
+): { signal: AbortSignal | undefined; dispose: () => void } {
+  if (timeoutMs === undefined) return { signal, dispose: () => {} };
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), timeoutMs);
+  const merged = mergeAbortSignals(timeout.signal, signal);
+  return {
+    signal: merged.signal,
+    dispose: () => {
+      clearTimeout(timer);
+      merged.dispose();
+    },
+  };
 }
 
 /** Cancel a probe body we never read; otherwise the server keeps streaming it. */
@@ -431,15 +442,13 @@ export class LuxarHttpRangeReader {
     signal: AbortSignal | undefined,
     timeoutMs: number | undefined
   ): Promise<{ answered: boolean; token: string | null }> {
-    const timeout = timeoutMs === undefined ? undefined : new AbortController();
-    const timer = timeout === undefined ? undefined : setTimeout(() => timeout.abort(), timeoutMs);
-    const merged = timeout === undefined ? signal : mergeProbeSignals(signal, timeout.signal);
+    const scope = probeScope(signal, timeoutMs);
     let response: Response | undefined;
     try {
       response = await fetch(this.url, {
         headers: { Range: `bytes=-${ZIP_TAIL_BYTES}` },
         cache: 'no-store',
-        signal: merged,
+        signal: scope.signal,
       });
       if (!response.ok) return { answered: false, token: null };
 
@@ -476,7 +485,7 @@ export class LuxarHttpRangeReader {
     } catch {
       return { answered: false, token: null };
     } finally {
-      if (timer !== undefined) clearTimeout(timer);
+      scope.dispose();
       // On a host that ignores `Range`, this body is the WHOLE archive and we
       // read none of it. Left alone, the server keeps streaming it.
       releaseProbeBody(response);
@@ -490,12 +499,10 @@ export class LuxarHttpRangeReader {
    * IS the archive total (unlike a 206's, which is the range length).
    */
   async #probeViaHead(signal?: AbortSignal, timeoutMs?: number): Promise<string | null> {
-    const timeout = timeoutMs === undefined ? undefined : new AbortController();
-    const timer = timeout === undefined ? undefined : setTimeout(() => timeout.abort(), timeoutMs);
-    const merged = timeout === undefined ? signal : mergeProbeSignals(signal, timeout.signal);
+    const scope = probeScope(signal, timeoutMs);
     let response: Response | undefined;
     try {
-      response = await fetch(this.url, { method: 'HEAD', cache: 'no-store', signal: merged });
+      response = await fetch(this.url, { method: 'HEAD', cache: 'no-store', signal: scope.signal });
       if (!response.ok) return null;
       const total = Number(response.headers.get('content-length'));
       const knownTotal = Number.isFinite(total) && total > 0 ? total : null;
@@ -504,7 +511,7 @@ export class LuxarHttpRangeReader {
     } catch {
       return null;
     } finally {
-      if (timer !== undefined) clearTimeout(timer);
+      scope.dispose();
       releaseProbeBody(response);
     }
   }
@@ -517,36 +524,40 @@ export class LuxarHttpRangeReader {
    * and signed-URL schemes allow only `GET`. The fallback doubles as an early
    * probe: a host that answers it with `200` is telling us it ignores `Range`,
    * and we would rather say so here than at the first chunk.
+   *
+   * Both requests go through `fetchWithRetry` like every other read here: the
+   * metadata lane of the fetch gate, the retry budget and its timeouts,
+   * `cache: 'no-store'`, and the reader's lifetime signal. An unread body
+   * (the whole archive, from a host that ignores `Range`) is cancelled by it.
    */
   async getLength(): Promise<number> {
     if (this.#length !== undefined) return this.#length;
+    const options = {
+      signal: this.lifetime,
+      cache: 'no-store',
+      lane: 'metadata',
+    } satisfies FetchRetryOptions;
 
-    let head: Response | undefined;
-    try {
-      head = await fetch(this.url, { method: 'HEAD' });
-    } catch {
-      // Network/CORS refusal of HEAD specifically — fall through to the probe.
-    }
-    if (head?.ok) {
-      const declared = Number(head.headers.get('content-length'));
-      if (Number.isFinite(declared) && declared > 0) {
-        this.#length = declared;
-        return declared;
-      }
+    // Undefined on a network/CORS refusal of HEAD specifically (after retries),
+    // NaN on a non-OK or length-less answer: either way, fall through to the probe.
+    const declared = await fetchWithRetry(
+      this.url,
+      { ...options, method: 'HEAD' },
+      async ({ response }) => (response.ok ? Number(response.headers.get('content-length')) : NaN)
+    );
+    if (declared !== undefined && Number.isFinite(declared) && declared > 0) {
+      this.#length = declared;
+      return declared;
     }
 
-    const probe = await fetch(this.url, {
-      headers: { Range: 'bytes=0-0' },
-    });
-    // Released on EVERY exit below — this is the worse of the two probe sites:
-    // on a host that ignores `Range`, the 200 body is the whole archive and each
-    // of these branches throws without reading a byte of it.
-    try {
-      this.#length = this.#lengthFromProbe(probe);
-      return this.#length;
-    } finally {
-      releaseProbeBody(probe);
-    }
+    const total = await fetchWithRetry(
+      this.url,
+      { ...options, headers: { Range: 'bytes=0-0' } },
+      async ({ response }) => this.#lengthFromProbe(response)
+    );
+    if (total === undefined) this.#throwExhausted('the archive length probe', true);
+    this.#length = total;
+    return total;
   }
 
   /** Extract the archive length from a one-byte ranged probe response. */
