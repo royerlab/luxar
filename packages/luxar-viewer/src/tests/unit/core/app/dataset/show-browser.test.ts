@@ -13,8 +13,9 @@
  *   - Wire: inputHandler.setDatasetBrowser(browser) so Escape can
  *     route through close().
  *   - On select: trailing slashes are stripped, options.src is
- *     updated via onSrcChange, host URL is replaced when
- *     updateBrowserUrl is true, and loadDataset receives the clean URL.
+ *     updated via onSrcChange, and loadDataset receives the clean URL.
+ *     The host URL is never written here — the guarded switch
+ *     (`LuxarApp.switchDataset`) owns it (see app.test.ts).
  *   - On close: onClose fires, then inputHandler.setDatasetBrowser(undefined)
  *     clears the close handle.
  */
@@ -86,7 +87,6 @@ function makePorts() {
   };
   return {
     currentSrc: 'http://example.com/initial.zarr' as string | undefined,
-    updateBrowserUrl: true,
     inputHandler: inputHandler as unknown as InputHandler & MockInputHandler,
     onSrcChange: vi.fn(),
     isInitializing: vi.fn().mockReturnValue(false),
@@ -153,36 +153,20 @@ describe('showDatasetBrowser', () => {
       expect(ports.loadDataset).toHaveBeenCalledWith('http://example.com/data.zarr');
     });
 
-    it('updates the host URL when updateBrowserUrl is true', async () => {
+    it('never writes the host URL itself (the guarded switch owns it)', async () => {
       const ports = makePorts();
-      ports.updateBrowserUrl = true;
       showDatasetBrowser(ports);
       const opts = mocks.DatasetBrowserCtor.mock.calls[0][0] as CapturedOpts;
 
       await opts.onDatasetSelect('http://example.com/data.zarr/');
 
-      expect(mocks.replaceBrowserDataSourceUrl).toHaveBeenCalledExactlyOnceWith(
-        'http://example.com/data.zarr'
-      );
-    });
-
-    it('does NOT update the host URL when updateBrowserUrl is false', async () => {
-      const ports = makePorts();
-      ports.updateBrowserUrl = false;
-      showDatasetBrowser(ports);
-      const opts = mocks.DatasetBrowserCtor.mock.calls[0][0] as CapturedOpts;
-
-      await opts.onDatasetSelect('http://example.com/data.zarr');
-
       expect(mocks.replaceBrowserDataSourceUrl).not.toHaveBeenCalled();
-      // …but onSrcChange + loadDataset still run.
       expect(ports.onSrcChange).toHaveBeenCalled();
       expect(ports.loadDataset).toHaveBeenCalled();
     });
 
-    it('skips the URL/src side effects (but still dispatches) when a switch is in flight', async () => {
+    it('skips the src side effect (but still dispatches) when a switch is in flight', async () => {
       const ports = makePorts();
-      ports.updateBrowserUrl = true;
       ports.isSwitchInFlight.mockReturnValue(true);
       ports.loadDataset.mockRejectedValue(new Error('a dataset switch is already in progress'));
       showDatasetBrowser(ports);
@@ -192,9 +176,8 @@ describe('showDatasetBrowser', () => {
         /in progress/
       );
 
-      // The rejected selection must not leave the host URL or the src
-      // snapshot pointing at a dataset that never loaded.
-      expect(mocks.replaceBrowserDataSourceUrl).not.toHaveBeenCalled();
+      // The rejected selection must not leave the src snapshot pointing at a
+      // dataset that never loaded.
       expect(ports.onSrcChange).not.toHaveBeenCalled();
       // The guarded dispatch still runs so the caller observes the rejection.
       expect(ports.loadDataset).toHaveBeenCalledWith('http://example.com/stale.zarr');

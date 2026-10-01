@@ -24,6 +24,7 @@ import { ControlClient } from './app/control/control-client';
 import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';
 import { extractAudioConfig } from '../config/zarr-bridge/audio-config';
 import { resolveKioskMode } from '../config/kiosk';
+import { replaceBrowserDataSourceUrl } from '../config/url-params';
 import { applyKioskMode } from './app/kiosk/apply-kiosk';
 import {
   extractControlPanelConfig,
@@ -269,7 +270,9 @@ export class LuxarApp {
     // works even if the same instance was already initialized and
     // disposed.
     this.isDisposed = false;
-    this.options = options;
+    // A private copy: a dataset switch replaces `src`, and the embedder's own
+    // options object is not ours to write.
+    this.options = { ...options };
 
     applyModuleOverrides(options);
 
@@ -406,7 +409,6 @@ export class LuxarApp {
     if (this.datasetBrowser || this.switchInFlight) return;
     this.datasetBrowser = showDatasetBrowserImpl({
       currentSrc: this.options.src,
-      updateBrowserUrl: this.options.updateBrowserUrl === true,
       inputHandler: this.inputHandler,
       onSrcChange: (src) => {
         this.options = { ...this.options, src };
@@ -1158,7 +1160,8 @@ export class LuxarApp {
    * Load a different dataset into the running viewer, reusing the full
    * teardown+reload path (the same one the built-in dataset browser uses).
    * Resolves when the new scene is loaded; emits `dataset-loaded` /
-   * `dataset-error`.
+   * `dataset-error`. With `updateBrowserUrl: true` the page's `?src` follows
+   * the switch, so a reload reopens the new scene.
    *
    * Rejects if a switch is already in progress (the reload does a full scene
    * teardown — overlapping calls would corrupt state).
@@ -1179,7 +1182,11 @@ export class LuxarApp {
     }
     // A flight aimed at the outgoing scene has nothing to land on.
     this.cameraFlight?.cancel();
-    this.options.src = src;
+    this.options = { ...this.options, src };
+    // An app that owns the page URL keeps `?src` on the scene it shows, so a
+    // reload after a kiosk / remote-control / browser switch reopens it. After
+    // the in-flight guard: a refused switch must not repoint the URL.
+    if (this.options.updateBrowserUrl === true) replaceBrowserDataSourceUrl(src);
     // Re-title the tab for the incoming scene BEFORE the load. Neither of the
     // two things that could be naming it survives a switch: `?title=` names
     // the dataset the server started with (and is dropped from the address bar

@@ -1895,7 +1895,7 @@ describe('LuxarApp', () => {
       expect(onLoaded).toHaveBeenCalledWith({ src: 'http://example.com/other.zarr' });
     });
 
-    it.fails('writes the switched-to dataset into ?src when the app owns the URL', async () => {
+    it('writes the switched-to dataset into ?src when the app owns the URL', async () => {
       // A kiosk / remote-control story switch, then a reload, must reopen the
       // scene on screen — not the one the page started with. Same contract as
       // a dataset-browser selection.
@@ -1919,7 +1919,7 @@ describe('LuxarApp', () => {
       expect(mockReplaceState).not.toHaveBeenCalled();
     });
 
-    it.fails("does not mutate the embedder's options object on a switch", async () => {
+    it("does not mutate the embedder's options object on a switch", async () => {
       const options = { canvas: mockCanvas, src: SRC };
       await app.init(options);
 

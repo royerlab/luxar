@@ -336,21 +336,20 @@ When directory navigation is needed, the app provides an integrated browser:
 private showDatasetBrowser(): void {
   this.datasetBrowser = new DatasetBrowser({
     container: document.body,
-    onDatasetSelect: async (path: string) => {
-      const fullURL = constructFullURL(path);
-
-      // Optional: standalone bootstrap opts in, embeds default out.
-      if (this.options.updateBrowserUrl === true) {
-        replaceBrowserDataSourceUrl(fullURL);
-      }
-
-      // Load selected dataset
-      await this.loadDataset(fullURL);
-    },
+    // Every selection goes through the same guarded switch as the public API.
+    onDatasetSelect: (url: string) => this.switchDataset(url.replace(/\/+$/, '')),
     onClose: () => {
       this.datasetBrowser = undefined;
     }
   });
+}
+
+switchDataset(src: string): Promise<void> {
+  // ...in-flight guard...
+  this.options = { ...this.options, src };
+  // Optional: standalone bootstrap opts in, embeds default out.
+  if (this.options.updateBrowserUrl === true) replaceBrowserDataSourceUrl(src);
+  return this.loadDataset(src);
 }
 ```
 
@@ -657,16 +656,12 @@ this.inputHandler.setRenderingControls(this.renderingControls);
 ### URL and State Management
 
 ```typescript
-// ✅ Good: Opt-in URL synchronization through the centralized helper
-onDatasetSelect: async (path: string) => {
-  const fullURL = constructFullURL(path);
-  if (this.options.updateBrowserUrl === true) {
-    replaceBrowserDataSourceUrl(fullURL);
-  }
-
-  // Load dataset
-  await this.loadDataset(fullURL);
-};
+// ✅ Good: Opt-in URL synchronization through the centralized helper, in the
+// one switch path every dataset change takes (browser, embedder, remote control)
+switchDataset(src: string): Promise<void> {
+  if (this.options.updateBrowserUrl === true) replaceBrowserDataSourceUrl(src);
+  return this.loadDataset(src);
+}
 
 // ✅ Good: URL parameter parsing is centralized in bootstrap/readUrlParams
 const urlParams = readUrlParams();
