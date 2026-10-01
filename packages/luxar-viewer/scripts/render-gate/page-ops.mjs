@@ -517,7 +517,7 @@ export async function wake({ reps = 9 }) {
  * adapter selection). WebGL: the unmasked renderer string, or null when the
  * context is lost (`getParameter` returns null on a lost context).
  *
- * @returns {Promise<{ api: 'webgl'|'webgpu', gpu: string, usable: boolean, why?: string }>}
+ * @returns {Promise<{ api: 'webgl'|'webgpu'|'webgpu-gl', gpu: string, usable: boolean, why?: string }>}
  */
 export async function rendererInfo() {
   const r = window.__luxarDebug.app.sceneManager.renderer;
@@ -535,13 +535,13 @@ export async function rendererInfo() {
     return { api: 'webgpu', gpu, usable: true };
   }
   const gl = backend?.gl ?? r.getContext();
-  if (gl.isContextLost())
-    return { api: 'webgl', gpu: '', usable: false, why: 'WebGL context lost' };
+  const api = r.isWebGPURenderer && backend?.isWebGLBackend ? 'webgpu-gl' : 'webgl';
+  if (gl.isContextLost()) return { api, gpu: '', usable: false, why: 'WebGL context lost' };
   const ext = gl.getExtension('WEBGL_debug_renderer_info');
   const gpu = String(
     ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)
   );
-  return { api: 'webgl', gpu, usable: true };
+  return { api, gpu, usable: true };
 }
 
 // ---------------------------------------------------------------------------

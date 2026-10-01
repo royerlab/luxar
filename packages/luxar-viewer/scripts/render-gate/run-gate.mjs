@@ -7,7 +7,7 @@
  *   node scripts/render-gate/run-gate.mjs --base origin/main --cand HEAD \
  *     [--suite exact|perf|counters|playback|scrub|hosted|trees|cache|all] \
  *     [--class IDENTICAL|ULP] [--intended id,id] [--only id,id] \
- *     [--backends webgl,webgpu] [--rounds 7] [--heavy] [--expect <file.json>] \
+ *     [--backends webgl,webgpu,webgpu-gl] [--rounds 7] [--heavy] [--expect <file.json>] \
  *     [--server-profile local|hosted] [--out <dir>]
  *   node scripts/render-gate/run-gate.mjs --from-json <dir>/report.json
  *     (rewrite <dir>/report.md from a saved report, measuring nothing)

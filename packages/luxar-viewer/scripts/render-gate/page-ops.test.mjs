@@ -1,6 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { motion } from './page-ops.mjs';
+import { motion, rendererInfo } from './page-ops.mjs';
+
+describe('rendererInfo', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('distinguishes WebGPURenderer on WebGL2 from WebGLRenderer', async () => {
+    const gl = {
+      isContextLost: () => false,
+      getExtension: () => null,
+      getParameter: () => 'Hardware GPU',
+    };
+    const renderer = { isWebGPURenderer: true, backend: { isWebGLBackend: true, gl } };
+    vi.stubGlobal('window', { __luxarDebug: { app: { sceneManager: { renderer } } } });
+    expect((await rendererInfo()).api).toBe('webgpu-gl');
+    renderer.isWebGPURenderer = false;
+    expect((await rendererInfo()).api).toBe('webgl');
+  });
+});
 
 /**
  * A fake page whose GPU runs behind its CPU, the way headless Chrome with

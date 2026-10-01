@@ -21,7 +21,8 @@ const SOFTWARE = /swiftshader|llvmpipe|software|basic render/i;
 export function caseUrl(origin, c, backend, dsf, urlParams) {
   const params = [];
   if (c.store) params.push(`src=${origin}/datasets/${c.store}`);
-  params.push('debug', `dpr=${dsf}`, `renderer=${backend}`);
+  params.push('debug', `dpr=${dsf}`, `renderer=${backend === 'webgpu-gl' ? 'webgpu' : backend}`);
+  if (backend === 'webgpu-gl') params.push('webgpuForceWebgl');
   const defaults = c.liveLod
     ? urlParams
         ?.split('&')

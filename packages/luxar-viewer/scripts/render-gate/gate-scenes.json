@@ -6,7 +6,7 @@
       "height": 540
     },
     "dsf": [1, 2],
-    "backends": ["webgl", "webgpu"],
+    "backends": ["webgl", "webgpu", "webgpu-gl"],
     "projections": ["perspective", "ortho"],
     "urlParams": "lodFinest&noLodFade&noPrefetch&noBlendWarmup"
   },
