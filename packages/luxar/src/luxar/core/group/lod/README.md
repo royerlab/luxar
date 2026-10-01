@@ -223,8 +223,11 @@ method="auto"`; dict keys `compression_factor` (`K`), `levels` (`n_lods`),
 coarse levels, default 3.0; `None` disables)).
 The lifted-Gaussian path also accepts `lloyd_iterations` (default 5),
 `candidate_bins_k` (12), `coverage_inflation` (3.0), and `color_weight` (0.0),
-with the same behavior and validation as `make_substitutive_lod`. These controls
-are refused with `coarse="points"`, which uses a different reducer.
+with the same reduction behavior as `make_substitutive_lod`. Values are validated
+before the lift. These controls are refused with `coarse="points"`, which uses a
+different reducer.
+`lloyd_iterations` and `candidate_bins_k` apply only when `method` resolves to
+`kmeans_lloyd` or `greedy_lloyd`; `auto` uses `greedy` for small inputs.
 
 `add_points_substitutive_lod_wrapper_impl` (`adders/points.py`) then:
 
