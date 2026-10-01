@@ -78,7 +78,7 @@ describe('estimateGeometryBytes', () => {
 });
 
 describe('committed mesh byte accounting', () => {
-  it.fails('follows the WebGPU backend widening a mesh index to Uint32 in place', () => {
+  it('follows the WebGPU backend widening a mesh index to Uint32 in place', () => {
     // The WebGPU backend assigns a Uint32Array straight into
     // `index.array` at first upload (`applyMeshIndices` documents it) — after
     // the commit registered the mesh, with no caller left to invalidate a

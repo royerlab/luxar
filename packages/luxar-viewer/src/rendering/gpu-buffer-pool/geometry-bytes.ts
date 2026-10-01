@@ -18,11 +18,16 @@ import * as THREE from 'three';
  *
  * The result is cached on `geometry.userData.cachedByteSize` so repeated
  * stats polls don't re-iterate attribute byteLengths. Grow paths
- * invalidate the cache via `invalidateCachedByteSize()`.
+ * invalidate the cache via `invalidateCachedByteSize()`. The one change no
+ * caller can invalidate for is the index WIDTH: the WebGPU backend rewrites a
+ * narrow (Uint16) index to Uint32 in place at first upload (see
+ * `applyMeshIndices`), after the commit measured it — so the cache is also
+ * keyed on the index array's byte length, an O(1) check per poll.
  */
 export function estimateGeometryBytes(geometry: THREE.BufferGeometry): number {
-  const userData = geometry.userData as { cachedByteSize?: number };
-  if (typeof userData.cachedByteSize === 'number') {
+  const userData = geometry.userData as { cachedByteSize?: number; cachedIndexBytes?: number };
+  const indexBytes = indexByteLength(geometry);
+  if (typeof userData.cachedByteSize === 'number' && userData.cachedIndexBytes === indexBytes) {
     return userData.cachedByteSize;
   }
   let total = 0;
@@ -59,12 +64,7 @@ export function estimateGeometryBytes(geometry: THREE.BufferGeometry): number {
   // InstancedBufferGeometry indices are shared with the base geometry
   // (a single quad), so they're a fixed overhead — small, but include
   // them for correctness.
-  if (geometry.index) {
-    const idxArr = geometry.index.array as ArrayBufferView | undefined;
-    if (idxArr && typeof idxArr.byteLength === 'number') {
-      total += idxArr.byteLength;
-    }
-  }
+  total += indexBytes;
   // GSplat, Points and Lines geometries all carry their element data in an
   // RGBA32F texture (gsplats: 64 B/splat, 4 texels; points: 48 B/point, 3
   // texels; lines: 96 B/segment, 6 texels) riding `userData.elementTexture`
@@ -84,7 +84,14 @@ export function estimateGeometryBytes(geometry: THREE.BufferGeometry): number {
     }
   }
   userData.cachedByteSize = total;
+  userData.cachedIndexBytes = indexBytes;
   return total;
+}
+
+/** Byte length of the geometry's index array (0 without one). */
+function indexByteLength(geometry: THREE.BufferGeometry): number {
+  const idxArr = geometry.index?.array as ArrayBufferView | undefined;
+  return idxArr && typeof idxArr.byteLength === 'number' ? idxArr.byteLength : 0;
 }
 
 /**
