@@ -72,21 +72,21 @@ function isIdentityGain(intensity: number | undefined, offset: number | undefine
 }
 
 /** What a per-leaf write touched: the material, and (also) its pick material. */
-interface LeafWrite {
+export interface LeafWrite {
   applied: boolean;
   pickDirty: boolean;
 }
 
 const NOTHING_WRITTEN: LeafWrite = { applied: false, pickDirty: false };
 
-const PUSHED_KINDS = [
+export const PUSHED_KINDS = [
   'colormap',
   'layerOrder',
   'labelStyle',
   'meshAppearance',
   'physicalKnobs',
 ] as const;
-type PushedKind = (typeof PUSHED_KINDS)[number];
+export type PushedKind = (typeof PUSHED_KINDS)[number];
 
 /**
  * Dependencies injected by the owning {@link LayersPanel}. `getRootGroup` /

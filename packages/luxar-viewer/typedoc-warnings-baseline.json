@@ -36,7 +36,6 @@
     "Failed to resolve link to \"WebGPURenderer.render\" in comment for rendering/post-processing/fullscreen/pass",
     "Failed to resolve link to \"WorkerAbortError\" in comment for data/scene-loader.SceneLoader._datasetAbortController",
     "Failed to resolve link to \"config.defaultZarrPath\" in comment for core/app/options.LuxarAppOptions.src",
-    "Failed to resolve link to \"createFullscreenTriangleGeometry\" in comment for rendering/post-processing/hdr/pixel-utils.readPixelsCompactAsync",
     "Failed to resolve link to \"getCommittedData\" in comment for types/prefix-lineage",
     "Failed to resolve link to \"import('../types/zarr').Matrix4x4\" in comment for data/data-loader-types.SceneNode.attrs.__type.transform",
     "Failed to resolve link to \"import('../types/zarr').Matrix4x4\" in comment for data/scene-loader.SceneLoader.applyEffectiveAttrs.__type.transform",

@@ -54,7 +54,7 @@ export interface CodecPoolPort {
   runDecode<T>(op: string, fn: (api: Remote<DataWorkerAPI>) => Promise<T>): Promise<T>;
 }
 
-interface Pending {
+export interface Pending {
   request: BloscDecodeRequest;
   resolve: (data: Uint8Array) => void;
   reject: (error: unknown) => void;

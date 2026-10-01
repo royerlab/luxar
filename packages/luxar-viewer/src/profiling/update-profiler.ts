@@ -281,7 +281,7 @@ class SessionImpl implements UpdateSession {
   /** Which persistent root tree this session's subtree merges into. */
   private readonly rootName: string;
   /**
-   * Full path of this session in its tree ({@link pathKey}): the root's
+   * Full path of this session in its tree (`pathKey`): the root's
    * path is its rootName, a child's is its parent's path plus its own name.
    * The persistent-tree merge is keyed on it, so two loaders whose children
    * share a name ('Load Arrays', 'Decode', …) never merge into each other.

@@ -130,7 +130,7 @@ export {
  * outgoing level's the complement. It advances at ``1 / config.lod.fadeMs`` per
  * millisecond from ``startProgress`` at ``startMs``.
  */
-interface LevelFade {
+export interface LevelFade {
   /** The outgoing level (drawn at the complement weight). */
   fromIdx: number;
   /** The incoming level — the one displayed. */
@@ -177,7 +177,7 @@ function retargetedFade(
  * landed during this visit, so a release under VRAM pressure is not followed by
  * a reload while the camera stays put (load → evict → load …).
  */
-interface PreloadVisit {
+export interface PreloadVisit {
   idx: number;
   sawReady: boolean;
 }
@@ -1007,7 +1007,7 @@ const SLASH = 0x2f;
  * is a segment prefix of every absolute path — the same match the linear rule
  * `nodePath.startsWith(childPath + '/')` gave it).
  */
-interface PartitionPartRef {
+export interface PartitionPartRef {
   entryPath: string;
   index: number;
 }
@@ -1018,7 +1018,7 @@ interface PartitionPartRef {
  * resync), `running` while that pass's activation is in flight; both clear
  * when the pass declines it, so a part still wanted is asked for again.
  */
-interface LazyPartState {
+export interface LazyPartState {
   requested: boolean;
   /** The in-flight activation, if one is running. */
   running: Promise<void> | null;
@@ -1041,7 +1041,7 @@ interface LazyPartState {
 }
 
 /** Per-part per-frame state of a registered partition (parallel to its children). */
-interface PartitionChildCache {
+export interface PartitionChildCache {
   source: PartitionGroupEntry;
   localBoxScratch: BoundingBox;
   worldBoxOptions: WorldBoxOptions;

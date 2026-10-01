@@ -67,7 +67,7 @@ export interface NativeBloscCtor {
 }
 
 /** Array metadata zarrita hands `fromConfig` (the fields read here). */
-interface ChunkMeta {
+export interface ChunkMeta {
   dataType?: string;
   shape?: number[];
   codecs?: { name: string; configuration?: Record<string, unknown> }[];

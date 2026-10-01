@@ -40,8 +40,11 @@
 
 import type * as THREE from 'three';
 
-type Node = THREE.Object3D;
-interface ChildEvent {
+/** Scene object tracked by the name index. */
+export type Node = THREE.Object3D;
+
+/** Three.js child event delivered when the graph changes. */
+export interface ChildEvent {
   child: Node;
 }
 

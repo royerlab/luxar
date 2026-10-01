@@ -22,7 +22,8 @@
 
 import type { WorkerInstance } from './types';
 
-type WarmState = 'warming' | 'warm';
+/** State of a worker codec warm-up after it has started. */
+export type WarmState = 'warming' | 'warm';
 
 /** What the warm-up needs from the pool (injected, so it stays pool-agnostic). */
 export interface CodecWarmupDeps {
