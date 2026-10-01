@@ -9,6 +9,7 @@
 
 import * as THREE from 'three';
 import { PostProcessingManager } from '../../../rendering';
+import type { GlassMeshSource } from '../../../rendering/post-processing/post-processing-manager';
 import type { Renderer, RendererCapabilities } from '../../../rendering/renderer-capabilities';
 import { type LuxarCamera, updateCameraAspect } from '../../../utils/camera-utils';
 import { log, Modules } from '../../../utils/log';
@@ -28,6 +29,8 @@ export interface CreatePostProcessingOptions {
    * `renderer.getDrawingBufferSize()`.
    */
   onResize: () => void;
+  /** The data meshes the refraction split works over (the app's depth-sort coordinator). */
+  glassSource: GlassMeshSource;
 }
 
 /**
@@ -51,7 +54,8 @@ export function createPostProcessing(options: CreatePostProcessingOptions): Post
     (displaySize, camera) => {
       updateCameraAspect(camera, displaySize.width, displaySize.height);
       options.onResize();
-    }
+    },
+    options.glassSource
   );
 
   log.success(Modules.POST_PROCESSING, 'HDR pipeline initialized');

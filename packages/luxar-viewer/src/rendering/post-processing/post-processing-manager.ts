@@ -37,11 +37,7 @@ import {
 } from './post-processing-manager/resource-lifecycle';
 import { runPipeline, type PipelineCtx } from './post-processing-manager/pipeline';
 import type { DataRefractionSplit } from './post-processing-manager/refraction-split';
-import {
-  applyGlassPartition,
-  collectRefractingGlass,
-  collectUnpartitionedMeshes,
-} from '../depth-sort-coordinator';
+import type { GlassPartition } from '../materials/_shared/glass-partition';
 import {
   captureHDRPixels as captureHDRPixelsImpl,
   captureHDRAsEXR as captureHDRAsEXRImpl,
@@ -59,6 +55,34 @@ import {
   getLensDistortionParams as getLensDistortionParamsImpl,
   type LensDistortionParams,
 } from './post-processing-manager/settings';
+
+/**
+ * The data meshes the refraction split partitions its scene pass around — in
+ * the viewer, the host's `DepthSortCoordinator`, whose node map already IS the
+ * registry of committed data meshes. Injected so this module owns no scene
+ * knowledge.
+ */
+export interface GlassMeshSource {
+  /** The visible refracting (`refract_data`) glass, into a reusable array. */
+  collectRefractingGlass(out: THREE.Mesh[]): THREE.Mesh[];
+  /** The visible meshes three's own materials draw (pass A only). */
+  collectUnpartitionedMeshes(out: THREE.Mesh[]): THREE.Mesh[];
+  /** Broadcast a partition mode to every data material; returns how many changed. */
+  applyGlassPartition(mode: GlassPartition): number;
+}
+
+/** A source with no data meshes: the refraction split never engages. */
+const NO_GLASS_MESHES: GlassMeshSource = {
+  collectRefractingGlass: (out) => {
+    out.length = 0;
+    return out;
+  },
+  collectUnpartitionedMeshes: (out) => {
+    out.length = 0;
+    return out;
+  },
+  applyGlassPartition: () => 0,
+};
 
 /**
  * Manages HDR post-processing: scene → bloom → mega-shader → (FXAA) →
@@ -124,6 +148,9 @@ export class PostProcessingManager {
    *   cached `uResolution` / `maxPointSize` uniforms go
    *   stale on AA toggles and the scene looks subtly wrong until the
    *   next window resize.
+   * @param glassSource  The data meshes the refraction split works over (the
+   *   host's depth-sort coordinator). Omitted, nothing is ever split — the
+   *   right answer for a manager with no Luxar data in its scene.
    */
   constructor(
     private renderer: Renderer,
@@ -131,7 +158,11 @@ export class PostProcessingManager {
     private scene: THREE.Scene,
     private camera: LuxarCamera,
     size: { width: number; height: number },
-    private onResize?: (displaySize: { width: number; height: number }, camera: LuxarCamera) => void
+    private onResize?: (
+      displaySize: { width: number; height: number },
+      camera: LuxarCamera
+    ) => void,
+    private readonly glassSource: GlassMeshSource = NO_GLASS_MESHES
   ) {
     // Keep the renderer's output color space at the working space
     // (linear) so it doesn't auto-encode our output. Both the
@@ -245,9 +276,11 @@ export class PostProcessingManager {
       bloomThreshold: this.bloomThreshold,
       bloomIntensity: this.bloomIntensity,
       allocateBloomFromDefaults: opts.applyDefaults,
-      collectRefractingGlass,
-      collectUnpartitionedMeshes,
-      setGlassPartition: applyGlassPartition,
+      collectRefractingGlass: (out) => this.glassSource.collectRefractingGlass(out),
+      collectUnpartitionedMeshes: (out) => this.glassSource.collectUnpartitionedMeshes(out),
+      setGlassPartition: (mode) => {
+        this.glassSource.applyGlassPartition(mode);
+      },
     });
     this.hdrTarget = r.hdrTarget;
     this.ldrTarget = r.ldrTarget;

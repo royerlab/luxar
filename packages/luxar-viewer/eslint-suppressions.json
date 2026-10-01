@@ -487,9 +487,6 @@
     },
     "max-depth": {
       "count": 1
-    },
-    "max-params": {
-      "count": 1
     }
   },
   "src/data/scene-loader/geometry-descriptors.ts": {

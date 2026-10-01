@@ -969,7 +969,7 @@ export function warmWorkerCodecs(): void {
  *
  * The config guard preserves the existing "Web Workers disabled" contract;
  * warming must not fetch WASM or spawn workers no data path will use. The
- * `Worker` guard mirrors `warmUpDepthSortWorker`: the unit suite runs in
+ * `Worker` guard mirrors `warmUpSortWorker`: the unit suite runs in
  * node/jsdom with no constructor, where spawning would latch the pool's
  * deliberately-sticky rejected `initPromise` for the rest of the file.
  */

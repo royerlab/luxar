@@ -106,7 +106,7 @@ const GSPLATS_LAYOUT: TextureBackedLayout = {
  * - A vouched prior on a geometry whose draw is still HELD is only valid over
  *   the DRAWN prefix, so it is repaired from there instead.
  * - Anything else resets to identity, which re-homes the geometry on slot 0.
- *   The commit path must therefore call noteDepthSortCommit after this update;
+ *   The commit path must therefore call `depthSort.noteCommit` after this update;
  *   its immediate syncSortedIndexSlot pushes the new slot to visual and pick
  *   materials before either can draw (the per-frame pump re-asserts it).
  */

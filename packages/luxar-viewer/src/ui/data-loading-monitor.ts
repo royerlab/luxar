@@ -83,9 +83,6 @@ import {
 } from './data-loading-monitor/timing-panel';
 
 import type { UpdateProfiler } from '../profiling/update-profiler';
-// A session whose SortWorker never came up draws every order-dependent
-// layer in storage order; without this the only trace is one console error.
-import { isDepthSortAvailable } from '../rendering/depth-sort-coordinator';
 import type { PooledGeometryType, AccumulatorProvider } from '../types/data-monitor-types';
 import type { GeometryTypeName } from '../types/format-contract';
 
@@ -355,6 +352,25 @@ export class DataLoadingMonitor {
    */
   public setDensityProvider(provider: DensityProvider | null): void {
     this.providers.setDensityProvider(provider);
+  }
+
+  /**
+   * The app's depth-sort verdict (`DepthSortCoordinator.isAvailable`) for the
+   * performance tab's footer note: a session whose SortWorker never came up
+   * draws every order-dependent layer in storage order, and without the note
+   * the only trace is one console error. App-scoped like the density provider:
+   * wired once by the init pipeline and kept across scene switches. Unwired,
+   * the monitor reports sorting as available (no note).
+   */
+  public setDepthSortAvailabilityProvider(provider: (() => boolean) | null): void {
+    this.depthSortAvailable = provider;
+  }
+
+  private depthSortAvailable: (() => boolean) | null = null;
+
+  /** Whether to show the depth-sort degrade note. */
+  private depthSortUnavailable(): boolean {
+    return this.depthSortAvailable?.() === false;
   }
 
   /**
@@ -1095,7 +1111,7 @@ export class DataLoadingMonitor {
                 timingData,
                 refinementData,
                 depthSortData,
-                !isDepthSortAvailable()
+                this.depthSortUnavailable()
               );
             }
           }
@@ -1384,7 +1400,7 @@ export class DataLoadingMonitor {
           timingData,
           this.providers.profiler?.getRefinementTimings(),
           this.providers.profiler?.getDepthSortTimings(),
-          !isDepthSortAvailable()
+          this.depthSortUnavailable()
         )}
       </div>
     `;

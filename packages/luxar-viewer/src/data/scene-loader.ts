@@ -34,6 +34,7 @@ import {
   type StagedGSplatsCommit,
 } from './scene-loader/process/data-processor-gsplats';
 import { commitMeshGeometry as commitMeshGeometryHelper } from './scene-loader/commit/commit-mesh-geometry';
+import type { GeometryCommitHost } from './scene-loader/commit/commit-host';
 import { processMeshData as processMeshDataHelper } from './scene-loader/process/data-processor-mesh';
 import type { StagedMeshCommit } from './scene-loader/process/data-processor-mesh';
 import type { LoaderFactoryDeps } from './scene-loader/loaders/loader-factory';
@@ -169,7 +170,10 @@ import type {
   MeshViewState,
 } from '../types/mesh';
 import { clearCommittedData } from '../types/committed-data';
-import { releaseDepthSortNode } from '../rendering/depth-sort-coordinator';
+import {
+  releaseDepthSortNode,
+  type DepthSortCoordinator,
+} from '../rendering/depth-sort-coordinator';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { createEmptyMeshGeometry } from '../rendering/mesh-geometry';
 import { invalidateRenderObjectFor } from './scene-loader/commit/invalidate-render-object';
@@ -1007,6 +1011,28 @@ export class SceneLoader {
   /** Install (or clear) the render-loop wake-up callback. */
   setRequestRender(callback: ((drawn: boolean) => void) | null): void {
     this._requestRender = callback;
+  }
+
+  /**
+   * The host's depth-sort coordinator, which every commit reports to. Set by
+   * `loadScene` (`data/zarr-loader.ts`) before the scene loads, from the
+   * coordinator the caller owns — the LuxarApp's `SceneManager.depthSort`, or a
+   * LuxarLayer's own. `null` (tests, a bare loader) leaves the nodes untracked.
+   */
+  private _depthSort: DepthSortCoordinator | null = null;
+
+  /** Install (or clear) the host's depth-sort coordinator. */
+  setDepthSortCoordinator(coordinator: DepthSortCoordinator | null): void {
+    this._depthSort = coordinator;
+  }
+
+  /** The host references the gsplats / lines / points commit helpers take. */
+  private commitHost(): GeometryCommitHost {
+    return {
+      rootGroup: this.rootGroup,
+      gpuBufferPool: this._gpuBufferPool,
+      depthSort: this._depthSort,
+    };
   }
 
   /**
@@ -2487,13 +2513,7 @@ export class SceneLoader {
     // Wake the idle-paused render loop so this commit paints (see
     // _requestRender).
     return this.commitAndRequestRender(staged.path, () =>
-      commitLinesGeometryHelper(
-        staged,
-        this.rootGroup,
-        this._gpuBufferPool,
-        session,
-        loadedViewVersion
-      )
+      commitLinesGeometryHelper(staged, this.commitHost(), session, loadedViewVersion)
     );
   }
 
@@ -2539,13 +2559,7 @@ export class SceneLoader {
     // Wake the idle-paused render loop so this commit paints (see
     // _requestRender).
     return this.commitAndRequestRender(staged.path, () =>
-      commitGSplatsGeometryHelper(
-        staged,
-        this.rootGroup,
-        this._gpuBufferPool,
-        session,
-        loadedViewVersion
-      )
+      commitGSplatsGeometryHelper(staged, this.commitHost(), session, loadedViewVersion)
     );
   }
 
@@ -2584,6 +2598,7 @@ export class SceneLoader {
           rootGroup: this.rootGroup,
           currentVersion: this._updateVersion,
           gpuBufferPool: this._gpuBufferPool,
+          depthSort: this._depthSort,
         },
         staged,
         session,
@@ -2632,7 +2647,7 @@ export class SceneLoader {
         this.clearCommittedDataStamp(path);
         // Also drop the level's depth-sort state + worker-side centers: a
         // demoted level won't sort again until re-promotion re-registers it
-        // (fresh commit → noteDepthSortCommit). Mirrors the coordinator's
+        // (fresh commit → `depthSort.noteCommit`). Mirrors the coordinator's
         // empty-commit release hygiene.
         const mesh = findObjectByName(this.rootGroup, path);
         if (mesh) releaseDepthSortNode(mesh as THREE.Mesh);
@@ -2754,9 +2769,7 @@ export class SceneLoader {
       commitPointsGeometryHelper(
         path,
         data,
-        this.rootGroup,
-        this._gpuBufferPool,
-        this.nodeFactory,
+        { ...this.commitHost(), nodeFactory: this.nodeFactory },
         session,
         loadedViewVersion
       )

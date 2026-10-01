@@ -14,12 +14,13 @@ import {
   hasPendingSortedIndexOrderingApply,
   pumpSortedIndexOrderingApply,
   writeSortedIndexOrdering,
+  type SortedIndexApplyCallbacks,
 } from '../element-storage';
 import { hasCommittedData } from '../../types/committed-data';
 import {
   assignGlobalRenderOrder,
   authoredLayerOrder,
-  clearRenderOrderFrameState,
+  beginRenderOrderFrame,
   collectRenderOrderSlot,
   drawsAfterEmissive,
   drawsBeforeEmissive,
@@ -32,10 +33,11 @@ import { isEffectivelyVisible } from '../../utils/object-visibility';
 import {
   isLiveOrderDependent,
   liveBlendingMode,
-  nodeStates,
+  orderingApplyHooks,
   releaseHeldDraw,
-  shared,
   syncSortElementLimit,
+  workerHost,
+  type CoordinatorState,
 } from './state';
 import {
   computeModelView,
@@ -58,9 +60,9 @@ const ORTHO_BSP_EYE_DISTANCE = 1e15;
  * Request one sort for a registered node, respecting the
  * single-in-flight rule. Queues a re-sort if one is already running.
  */
-export function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
-  const state = nodeStates.get(nodeId);
-  const camera = shared.getCamera?.();
+export function scheduleSort(c: CoordinatorState, mesh: THREE.Mesh, nodeId: string): void {
+  const state = c.nodeStates.get(nodeId);
+  const camera = c.getCamera?.();
   // `api` is wrapped BEFORE `initializeWithGuard` is awaited, so a live handle
   // is not the same thing as a usable worker: between the spawn and 'ready'
   // there is a window in which `sort` would reject NOT_INITIALIZED worker-side
@@ -74,9 +76,9 @@ export function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   // still leaves a pose on record for a sort that never ran — which is exactly
   // what silences the per-frame `!lastSortAxis` recovery dispatch for a node
   // whose first real dispatch raced a null camera.
-  if (!state || !shared.api || shared.workerInitState !== 'ready' || !camera) {
+  if (!state || !workerHost.api || workerHost.workerInitState !== 'ready' || !camera) {
     // Nothing will sort this population, so a held append draw must not wait.
-    if (state) releaseHeldDraw(mesh);
+    if (state) releaseHeldDraw(c, mesh);
     return;
   }
   if (state.inFlight) {
@@ -115,7 +117,7 @@ export function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   // Capture the profiler and its generation HERE too, so the dedicated
   // completion stream records against the same profiler the session merges
   // into and honors the same reset-isolation contract (issue #711).
-  const profiler = shared.getProfiler?.() ?? null;
+  const profiler = c.getProfiler?.() ?? null;
   const session = profiler?.beginDepthSortPass() ?? null;
   const profilerGeneration = profiler?._currentGeneration() ?? 0;
   // The profiler session does not expose its elapsed time (SessionImpl's
@@ -141,12 +143,12 @@ export function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
   // stays unsorted until the next commit/camera trigger re-sorts it.
   void withTimeout(
     'depth-sort',
-    shared.api.sort({ nodeId, generation, modelView: new Float32Array(modelView.elements) }),
+    workerHost.api.sort({ nodeId, generation, modelView: new Float32Array(modelView.elements) }),
     SORT_RPC_TIMEOUT_MS
   )
     .then((result) => {
       const roundTripMs = performance.now() - dispatchedAt;
-      const current = nodeStates.get(nodeId);
+      const current = c.nodeStates.get(nodeId);
       if (!current) {
         session?.end();
         return; // released mid-sort — no ordering staged
@@ -213,8 +215,13 @@ export function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
           // scheduled. Neither writer invokes either unless it ACCEPTS the
           // ordering (returns > 0) — issue #713.
           const resolvedAt = performance.now();
-          const applyCallbacks = session
+          // The owner hooks ride every staged ordering (cancel-sweep tag,
+          // slice-ack frame wake-up, capture bypass); the profiler lifecycle
+          // only when a session is open.
+          const hooks = orderingApplyHooks(c);
+          const applyCallbacks: SortedIndexApplyCallbacks = session
             ? {
+                ...hooks,
                 onApplied: () => {
                   const appliedAt = performance.now();
                   session.setMetadata({
@@ -239,7 +246,7 @@ export function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
                 },
                 onAbandoned: () => session.end(),
               }
-            : undefined;
+            : hooks;
           // Instanced: large orderings apply CHUNKED across frames
           // (element-storage routes internally, perf lever L8) — this call
           // only STAGES the pending state and the per-frame pump streams
@@ -268,7 +275,7 @@ export function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
             // per-frame pump keeps the on-demand loop alive between
             // slices). Indexed: the permutation is already in the buffer,
             // so this is the one frame it needs to reach the screen.
-            shared.requestRender?.();
+            c.requestRender?.();
           }
         }
       }
@@ -279,7 +286,7 @@ export function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       // A sort for the CURRENT population that staged nothing leaves no
       // ordering for a held append draw to wait for. (A stale generation's
       // does not: the newer commit's own sort is queued behind this one.)
-      if (!applyOwnsSession && current.generation === generation) releaseHeldDraw(mesh);
+      if (!applyOwnsSession && current.generation === generation) releaseHeldDraw(c, mesh);
 
       if (current.resortQueued) {
         current.resortQueued = false;
@@ -288,7 +295,7 @@ export function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
         // re-commits — which schedules the sort it actually needs. Dispatching
         // here would burn worker time on an ordering the resolve path is
         // guaranteed to discard.
-        if (stillCommitted) scheduleSort(mesh, nodeId);
+        if (stillCommitted) scheduleSort(c, mesh, nodeId);
       }
     })
     .catch((error) => {
@@ -297,11 +304,11 @@ export function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       // post-handoff step (e.g. requestRender) threw: those callbacks own
       // the close, and ending here would mislabel the applied sample (#713).
       if (!applyOwnsSession) session?.end();
-      const current = nodeStates.get(nodeId);
+      const current = c.nodeStates.get(nodeId);
       log.error(Modules.WORKER_POOL, `SortWorker sort failed for ${nodeId}`, error);
       if (!current) return;
       current.inFlight = false;
-      if (current.generation === generation) releaseHeldDraw(mesh);
+      if (current.generation === generation) releaseHeldDraw(c, mesh);
       // Drain a queued re-sort even on failure — a commit landed while
       // this sort was out, and dropping its request would leave the node
       // stale until the NEXT commit. Bounded: only a real commit sets
@@ -310,7 +317,7 @@ export function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       // re-promotion commit will schedule the sort that matters.
       if (current.resortQueued) {
         current.resortQueued = false;
-        if (hasCommittedData(mesh)) scheduleSort(mesh, nodeId);
+        if (hasCommittedData(mesh)) scheduleSort(c, mesh, nodeId);
       }
     });
 }
@@ -364,8 +371,8 @@ let scratch: EvaluateScratch | null = null;
  * (bounded per node, not globally; simultaneous 10M-scale resolves are
  * already serialized by the per-node single-in-flight sort rule).
  */
-function pumpChunkedOrderingApplies(): void {
-  for (const [nodeId, state] of nodeStates) {
+function pumpChunkedOrderingApplies(c: CoordinatorState): void {
+  for (const [nodeId, state] of c.nodeStates) {
     const geometry = state.mesh.geometry as THREE.InstancedBufferGeometry | undefined;
     if (!geometry) continue;
 
@@ -377,7 +384,7 @@ function pumpChunkedOrderingApplies(): void {
     // is created after the flip. Idempotent and a couple of property
     // writes per node, so re-asserting is cheaper than tracking every
     // way they can desync.
-    syncSortedIndexSlot(state.mesh);
+    syncSortedIndexSlot(c, state.mesh);
 
     if (!hasPendingSortedIndexOrderingApply(geometry)) {
       // The indexed (mesh) path has nothing to stream — its write is atomic
@@ -417,8 +424,8 @@ function pumpChunkedOrderingApplies(): void {
       // The just-completed buffer becomes selected for this frame. This runs
       // before render; the mesh's onAfterRender hook is the separate proof
       // that THREE consumed the update ranges and issued a draw with it.
-      syncSortedIndexSlot(state.mesh);
-      shared.requestRender?.();
+      syncSortedIndexSlot(c, state.mesh);
+      c.requestRender?.();
     }
     if (more) {
       // A STALLED pump made no progress (the previous slice is still
@@ -427,10 +434,10 @@ function pumpChunkedOrderingApplies(): void {
       // DRAWN frame, since each drawn frame's render consumes the prior
       // slice and any subsequent render — camera motion, commit,
       // visibility change — re-runs the pump, which then advances.
-      if (!stalled) shared.requestRender?.();
+      if (!stalled) c.requestRender?.();
     } else if (state.resortQueued) {
       state.resortQueued = false;
-      scheduleSort(state.mesh, nodeId);
+      scheduleSort(c, state.mesh, nodeId);
     }
   }
 }
@@ -474,17 +481,18 @@ function pumpChunkedOrderingApplies(): void {
  *   calls `requestRender` (the pump must keep the loop alive), so both
  *   routes agree.
  */
-export function evaluateDepthSortPerFrame(): boolean {
-  shared.syncSortElementsRemaining = Math.max(0, syncSortElementLimit());
+export function evaluateDepthSortPerFrame(c: CoordinatorState): boolean {
+  c.syncSortElementsRemaining = Math.max(0, syncSortElementLimit());
   // Drop the previous frame's render-order state FIRST — before any
   // early-return — so a disposed/dataset-switched frame can't leave the
-  // module-scoped rank memo holding stale partition-wrapper subtrees alive.
-  clearRenderOrderFrameState();
+  // module-scoped rank memo holding stale partition-wrapper subtrees alive —
+  // and hand this coordinator's display dims to its pass.
+  beginRenderOrderFrame(c.getDisplayDims);
   // Chunked ordering applies advance BEFORE every early-return below:
   // they need neither a camera nor an idle loader (stalling them during
   // a load would postpone convergence to the newest complete ordering),
   // and a paused stream must always resume its bounded drain.
-  pumpChunkedOrderingApplies();
+  pumpChunkedOrderingApplies(c);
   // Deliberately NOT gated on `api`: the cross-node renderOrder pass is
   // pure main-thread and must keep ordering meshes back-to-front even
   // when the SortWorker was never constructed (`api` stays null forever
@@ -492,16 +500,16 @@ export function evaluateDepthSortPerFrame(): boolean {
   // documented degrade-to-unsorted-normal mode). The within-mesh
   // re-sort triggers are worker-dependent, but `scheduleSort` guards
   // both `api` and init readiness itself.
-  if (nodeStates.size === 0) return takeDrawnStateChanged();
-  const camera = shared.getCamera?.();
-  if (!camera) return takeDrawnStateChanged();
-  const loadInProgress = shared.isLoadInProgress?.() ?? false;
+  if (c.nodeStates.size === 0) return takeDrawnStateChanged(c);
+  const camera = c.getCamera?.();
+  if (!camera) return takeDrawnStateChanged(c);
+  const loadInProgress = c.isLoadInProgress?.() ?? false;
   // Keep worker retry behind the load gate: a starved init must not run while
   // a view-update sweep is in flight, since that sweep IS the main-thread
   // saturation that starved it. Everything else the retry needs to know
   // (something visible actually wants sorting, the backoff, an offline
   // capture) it checks itself.
-  if (shared.depthSortEnabled && !loadInProgress) maybeRetryStarvedWorkerInit();
+  if (c.depthSortEnabled && !loadInProgress) maybeRetryStarvedWorkerInit(c);
 
   if (!scratch) {
     scratch = {
@@ -514,11 +522,11 @@ export function evaluateDepthSortPerFrame(): boolean {
   const cosThreshold = Math.cos((config.depthSort.angleThresholdDeg * Math.PI) / 180);
   let viewComputed = false;
 
-  for (const [nodeId, state] of nodeStates) {
+  for (const [nodeId, state] of c.nodeStates) {
     const mesh = state.mesh;
     if (!isEffectivelyVisible(mesh)) continue;
     const mode = liveBlendingMode(mesh);
-    const orderDependent = shared.depthSortEnabled && isLiveOrderDependent(mode);
+    const orderDependent = c.depthSortEnabled && isLiveOrderDependent(mode);
     // A commutative layer carrying an AUTHORED layer_order still takes part in
     // the cross-layer band ordering (`LAYER_ORDER_SPEC.md` D4): its order
     // against other commutative layers is a no-op (addition commutes), but its
@@ -548,7 +556,7 @@ export function evaluateDepthSortPerFrame(): boolean {
       const target = drawsBeforeEmissive(mesh) ? -1 : 0;
       if (mesh.renderOrder !== target) {
         mesh.renderOrder = target;
-        shared.drawnStateChanged = true;
+        c.drawnStateChanged = true;
       }
       continue;
     }
@@ -603,7 +611,7 @@ export function evaluateDepthSortPerFrame(): boolean {
     // commit stamps while the existing geometry stays visible. Those meshes
     // still receive their cross-mesh rank above, but cannot dispatch a worker
     // sort until re-commit. LOD demotion is only a defensive peer case here:
-    // its synchronous release removes the mesh from nodeStates first.
+    // its synchronous release removes the mesh from `nodeStates` first.
     if (!hasCommittedData(mesh)) continue;
     const bs = (mesh.geometry as THREE.BufferGeometry | undefined)?.boundingSphere;
 
@@ -618,7 +626,7 @@ export function evaluateDepthSortPerFrame(): boolean {
       // swap window). The camera exists on this frame; recover with
       // one dispatch. No retry-loop risk: `scheduleSort` records the
       // pose BEFORE the RPC, so even a failing sort leaves this branch.
-      if (state.registered) scheduleSort(mesh, nodeId);
+      if (state.registered) scheduleSort(c, mesh, nodeId);
       continue;
     }
     const e = scratch.mv.elements;
@@ -639,16 +647,16 @@ export function evaluateDepthSortPerFrame(): boolean {
       }
     }
 
-    if (moved) scheduleSort(mesh, nodeId);
+    if (moved) scheduleSort(c, mesh, nodeId);
   }
 
   const ordered = assignGlobalRenderOrder();
-  return takeDrawnStateChanged() || ordered;
+  return takeDrawnStateChanged(c) || ordered;
 }
 
-/** Read and clear {@link drawnStateChanged}. */
-function takeDrawnStateChanged(): boolean {
-  const changed = shared.drawnStateChanged;
-  shared.drawnStateChanged = false;
+/** Read and clear `drawnStateChanged`. */
+function takeDrawnStateChanged(c: CoordinatorState): boolean {
+  const changed = c.drawnStateChanged;
+  c.drawnStateChanged = false;
   return changed;
 }

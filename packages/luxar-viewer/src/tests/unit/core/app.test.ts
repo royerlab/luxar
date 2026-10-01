@@ -190,6 +190,16 @@ describe('LuxarApp', () => {
       getSceneBakedEnvironment: vi.fn().mockReturnValue(null),
       attachEnvironmentRuntime: vi.fn(),
       environment: null,
+      // The app's depth-sort coordinator rides the scene manager.
+      depthSort: {
+        setEnabled: vi.fn(),
+        configure: vi.fn(),
+        warmUp: vi.fn(),
+        evaluatePerFrame: vi.fn(() => false),
+        isAvailable: vi.fn(() => true),
+        resortForCapture: vi.fn(async () => {}),
+        dispose: vi.fn(),
+      },
       dispose: vi.fn(),
       renderer: { domElement: {} },
       scene: {},
@@ -917,6 +927,14 @@ describe('LuxarApp', () => {
       app.dispose();
 
       expect(mockCleanupUI).toHaveBeenCalled();
+    });
+
+    it("disposes the app's own depth-sort coordinator", () => {
+      // Per app, not module-wide: a LuxarLayer sharing the page keeps its own,
+      // and the shared SortWorker survives until the last coordinator goes.
+      app.dispose();
+
+      expect(mockSceneManager.depthSort.dispose).toHaveBeenCalledTimes(1);
     });
 
     it('gives the page its own title back', () => {

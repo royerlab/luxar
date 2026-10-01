@@ -19,6 +19,7 @@ import { log, Modules, LogEmoji } from '../utils/log';
 import { config } from '../config';
 import { simpleDimsToViewState } from './dims-to-view-state';
 import { computeSceneStats } from './stats/scene-stats';
+import type { DepthSortCoordinator } from '../rendering/depth-sort-coordinator';
 
 /**
  * Load a complete scene from a Zarr store.
@@ -28,12 +29,16 @@ import { computeSceneStats } from './stats/scene-stats';
  * @param src - URL or path to the Zarr store
  * @param config - Optional loader configuration
  * @param loaderId - Optional ID to register the created SceneLoader under (default: 'default')
+ * @param depthSort - The host's depth-sort coordinator, which the loader's
+ *   commits report to. `null` leaves the scene's nodes untracked: no
+ *   back-to-front ordering and no cross-node renderOrder.
  * @returns Promise resolving to a THREE.Group containing the scene
  */
 export async function loadScene(
   src: string,
   config?: LoaderConfig,
-  loaderId: string = 'default'
+  loaderId: string = 'default',
+  depthSort: DepthSortCoordinator | null = null
 ): Promise<THREE.Group> {
   log.custom(LogEmoji.START, Modules.LUXAR, 'Loading scene');
 
@@ -44,6 +49,7 @@ export async function loadScene(
   // metadata flush fully drain before the replacement is built), so a dataset
   // switch never races the previous loader's late async teardown.
   const sceneLoader = await manager.createLoaderAsync(loaderId, config);
+  sceneLoader.setDepthSortCoordinator(depthSort);
 
   try {
     // Load the scene

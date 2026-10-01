@@ -255,13 +255,17 @@ const evaluateDepthSortPerFrame = vi.fn((): boolean => false);
 const warmUpDepthSortWorker = vi.fn();
 const releaseDepthSortNode = vi.fn();
 const disposeDepthSort = vi.fn();
+// The layer's OWN coordinator instance; every instance forwards to the spies
+// above (one layer per test).
 vi.mock('../../../rendering/depth-sort-coordinator', () => ({
-  configureDepthSort: (...a: unknown[]) => configureDepthSort(...a),
-  setDepthSortEnabled: (...a: unknown[]) => setDepthSortEnabled(...a),
-  evaluateDepthSortPerFrame: () => evaluateDepthSortPerFrame(),
-  warmUpDepthSortWorker: () => warmUpDepthSortWorker(),
+  DepthSortCoordinator: class {
+    configure = (...a: unknown[]) => configureDepthSort(...a);
+    setEnabled = (...a: unknown[]) => setDepthSortEnabled(...a);
+    evaluatePerFrame = () => evaluateDepthSortPerFrame();
+    warmUp = () => warmUpDepthSortWorker();
+    dispose = () => disposeDepthSort();
+  },
   releaseDepthSortNode: (mesh: THREE.Mesh) => releaseDepthSortNode(mesh),
-  disposeDepthSort: () => disposeDepthSort(),
 }));
 
 const disposeWorkerPool = vi.fn();
@@ -816,14 +820,17 @@ describe('LuxarLayer', () => {
       await expect(layer.load('http://example.test/b.zarr')).resolves.toBeInstanceOf(THREE.Group);
     });
 
-    it('forwards loaderConfig to the loader', async () => {
+    it('forwards loaderConfig, and its own depth-sort coordinator, to the loader', async () => {
       const loaderConfig = { noCache: true } as LuxarLayerOptions['loaderConfig'];
       const layer = new LuxarLayer(makeOptions({ loaderConfig }));
       await layer.load('http://example.test/scene.zarr');
       expect(loadSceneMock).toHaveBeenCalledWith(
         'http://example.test/scene.zarr',
         loaderConfig,
-        expect.any(String)
+        expect.any(String),
+        // The layer's commits report to the layer's coordinator, never to a
+        // LuxarApp's sharing the page.
+        (layer as unknown as { depthSort: unknown }).depthSort
       );
     });
 

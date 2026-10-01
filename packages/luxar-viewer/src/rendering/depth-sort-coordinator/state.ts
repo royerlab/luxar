@@ -1,17 +1,29 @@
 /**
- * The depth-sort coordinator's shared state and the small helpers every part
- * of it uses.
+ * The depth-sort coordinator's state and the small helpers every part of it
+ * uses.
  *
  * The coordinator is split by concern — worker lifecycle
  * (`worker-lifecycle.ts`), ordering apply (`ordering-apply.ts`), the per-frame
  * scheduler (`scheduler.ts`), the offline-capture drain (`capture.ts`) and the
- * public commit/release API (`../depth-sort-coordinator.ts`) — but they share
- * one module-scoped live authority (the `element-texture-layout.ts` pattern:
- * the commit paths and the app lifecycle are far apart, so all talk to the
- * coordinator instead of threading an object through constructors). Every
- * formerly module-level `let` of the coordinator is a field of {@link shared}
- * so the parts read and write the SAME binding; the docs on each field are the
- * originals.
+ * public `DepthSortCoordinator` class (`../depth-sort-coordinator.ts`) — over
+ * TWO state objects with different lifetimes:
+ *
+ * - {@link CoordinatorState}: one per coordinator INSTANCE, i.e. per LuxarApp /
+ *   LuxarLayer. Everything that is about a host — its tracked nodes, its camera,
+ *   its frame wake-up, its capture suppression, the per-frame budget — lives
+ *   here, so two hosts on one page sort their own nodes against their own
+ *   camera and each wakes only its own render loop. Every module function that
+ *   touches host state takes it as its first argument.
+ * - {@link workerHost}: the ONE SortWorker the page shares, with its init
+ *   bookkeeping (epoch, starved-retry budget, status). Node registrations are
+ *   keyed by the render mesh's uuid, which is unique page-wide, and every sort
+ *   RPC resolves through its own promise back into the coordinator that
+ *   dispatched it, so sharing the worker needs no routing table. The host
+ *   tracks which coordinators are attached so a starved-init retry can wake —
+ *   and re-register the nodes of — every one of them, and so only the LAST
+ *   coordinator's dispose terminates the worker.
+ *
+ * The docs on each field are the originals from the module-scoped coordinator.
  *
  * @module rendering/depth-sort-coordinator/state
  */
@@ -19,7 +31,7 @@
 import type * as THREE from 'three';
 import type { Remote } from 'comlink';
 import type { SortWorkerAPI } from '../../workers/sort-worker';
-import { releaseSortedIndexDrawHold } from '../element-storage';
+import { releaseSortedIndexDrawHold, type SortedIndexApplyCallbacks } from '../element-storage';
 import { needsDepthSort } from '../blending-state';
 import { hasCommittedData, invalidateCommittedDataStamp } from '../../types/committed-data';
 import type { BlendingMode } from '../../types/blending';
@@ -85,24 +97,27 @@ export interface NodeSortState {
   triangleSource?: Uint32Array;
 }
 
-/** The coordinator's mutable session state (see the module doc). */
-export interface SharedCoordinatorState {
+/**
+ * The page's one SortWorker and its init bookkeeping (see the module doc for
+ * why the worker is shared while everything else is per coordinator).
+ */
+export interface SortWorkerHost {
   worker: Worker | null;
   api: Remote<SortWorkerAPI> | null;
   initPromise: Promise<void> | null;
   /**
    * Attempt epoch: bumped by everything that INVALIDATES the init attempt
-   * currently in flight (`disposeDepthSort`, and the retry when it
-   * starts a fresh attempt). `ensureWorker` captures it and every module
-   * write past its first `await` is skipped when the captured value no longer
-   * matches.
+   * currently in flight (the host reset when the last coordinator is disposed,
+   * and the retry when it starts a fresh attempt). `ensureWorker` captures it
+   * and every host write past its first `await` is skipped when the captured
+   * value no longer matches.
    *
    * This is the `worker === w` guard's precedent generalized, and it is not
    * optional: the init deadline (`config.depthSort.workerInitTimeoutMs`) lives
    * in a `setTimeout` inside the init closure and only `w.onerror` /
    * `initialize` settling clears it, so NOTHING outside the attempt can cancel
    * that timer. Without an epoch, app A's orphan timer firing one deadline
-   * after `disposeDepthSort()` would classify a
+   * after A's dispose would classify a
    * deadline miss against app B's HEALTHY worker: `workerInitState` flips to
    * 'starved' with a retry armed, the next frame's retry nulls B's RESOLVED
    * `initPromise` and spawns a third worker over the live one (B's worker
@@ -116,29 +131,17 @@ export interface SharedCoordinatorState {
    * worker that no longer exists.
    */
   initEpoch: number;
-  getCamera: (() => THREE.Camera | null) | null;
-  requestRender: (() => void) | null;
-  requestReprocess: (() => void) | null;
-  isLoadInProgress: (() => boolean) | null;
-  getProfiler: (() => UpdateProfiler | null) | null;
-  /**
-   * Session master switch (Phase 3): config `depthSort.enabled` combined with
-   * the `?depthSort=0` URL escape hatch at app init. When false the whole
-   * subsystem is inert — commits keep the identity (storage) ordering, the
-   * worker is never spawned, and the per-frame scheduler no-ops.
-   */
-  depthSortEnabled: boolean;
   /**
    * One-shot flag for the "commit could not reach the SortWorker" error (see
-   * noteDepthSortCommit). Warn-once per EPISODE, not per session: a
-   * successful (possibly retried) init clears it.
+   * `DepthSortCoordinator.noteCommit`). Warn-once per EPISODE, not per
+   * session: a successful (possibly retried) init clears it.
    *
    * What that re-arming does and does not buy: once init has succeeded the
    * cached `initPromise` is resolved forever, so no later commit can reach
    * that catch through a worker failure at all. The re-arm therefore only
    * matters for the catch's OTHER causes — a throwing lazy centers provider,
    * a `transfer()` of an already-detached buffer — and for a fresh
-   * unavailability episode after a dispose/re-init.
+   * unavailability episode after the host was reset and the worker respawned.
    */
   warnedWorkerUnavailable: boolean;
   /**
@@ -153,8 +156,8 @@ export interface SharedCoordinatorState {
   /**
    * True while a RETRYABLE (deadline-miss) init failure is outstanding and
    * attempts remain. Cleared when a retry consumes it, when the attempts run
-   * out, when a later failure turns out to be the permanent kind, and by
-   * `disposeDepthSort` — but only `maybeRetryStarvedWorkerInit`
+   * out, when a later failure turns out to be the permanent kind, and by the
+   * host reset — but only `maybeRetryStarvedWorkerInit`
    * may clear the cached rejected `initPromise` on the strength of it (issue
    * #1694).
    */
@@ -169,11 +172,53 @@ export interface SharedCoordinatorState {
    */
   initRetryWakeTimer: ReturnType<typeof setTimeout> | null;
   /**
+   * The coordinators sharing this worker. Attached by every path that may
+   * need the worker (configure, warm-up, commit) and detached by dispose; the
+   * last detach resets the host and terminates the worker.
+   */
+  coordinators: Set<CoordinatorState>;
+}
+
+/** The page's one {@link SortWorkerHost}. */
+export const workerHost: SortWorkerHost = {
+  worker: null,
+  api: null,
+  initPromise: null,
+  initEpoch: 0,
+  warnedWorkerUnavailable: false,
+  workerInitState: 'idle',
+  initTimeoutRetryPending: false,
+  initTimeoutCount: 0,
+  initRetryNotBeforeMs: 0,
+  initRetryWakeTimer: null,
+  coordinators: new Set(),
+};
+
+/** One coordinator instance's state (see the module doc). */
+export interface CoordinatorState {
+  /** Per-node sort state, keyed by the render mesh's uuid. */
+  nodeStates: Map<string, NodeSortState>;
+  getCamera: (() => THREE.Camera | null) | null;
+  requestRender: (() => void) | null;
+  requestReprocess: (() => void) | null;
+  isLoadInProgress: (() => boolean) | null;
+  getProfiler: (() => UpdateProfiler | null) | null;
+  /** Live displayed-dimension indices, handed to each frame's render-order pass. */
+  getDisplayDims: (() => readonly number[] | null) | null;
+  /**
+   * Master switch (Phase 3): config `depthSort.enabled` combined with the
+   * `?depthSort=0` URL escape hatch at app init. When false this coordinator
+   * is inert — its commits keep the identity (storage) ordering, it never
+   * spawns the worker, and its per-frame scheduler no-ops.
+   */
+  depthSortEnabled: boolean;
+  /**
    * Reentrancy guard for `resortForCapture`'s frame-request suppression.
    * The offline capture nulls `requestRender` so draining can't re-arm the rAF
    * loop it stopped; a depth counter ensures only the OUTERMOST capture call
    * snapshots and restores it, so an overlapping/nested call can never strand
-   * `requestRender` at null.
+   * `requestRender` at null. Non-zero also lifts the chunked apply's upload
+   * back-pressure for THIS coordinator's streams (see `orderingApplyHooks`).
    */
   captureSuppressDepth: number;
   requestRenderBeforeCapture: (() => void) | null;
@@ -188,32 +233,42 @@ export interface SharedCoordinatorState {
   drawnStateChanged: boolean;
 }
 
-/** The one live instance of {@link SharedCoordinatorState}. */
-export const shared: SharedCoordinatorState = {
-  worker: null,
-  api: null,
-  initPromise: null,
-  initEpoch: 0,
-  getCamera: null,
-  requestRender: null,
-  requestReprocess: null,
-  isLoadInProgress: null,
-  getProfiler: null,
-  depthSortEnabled: true,
-  warnedWorkerUnavailable: false,
-  workerInitState: 'idle',
-  initTimeoutRetryPending: false,
-  initTimeoutCount: 0,
-  initRetryNotBeforeMs: 0,
-  initRetryWakeTimer: null,
-  captureSuppressDepth: 0,
-  requestRenderBeforeCapture: null,
-  syncSortElementsRemaining: 0,
-  drawnStateChanged: false,
-};
+/** A fresh, unconfigured {@link CoordinatorState}. */
+export function createCoordinatorState(): CoordinatorState {
+  return {
+    nodeStates: new Map(),
+    getCamera: null,
+    requestRender: null,
+    requestReprocess: null,
+    isLoadInProgress: null,
+    getProfiler: null,
+    getDisplayDims: null,
+    depthSortEnabled: true,
+    captureSuppressDepth: 0,
+    requestRenderBeforeCapture: null,
+    syncSortElementsRemaining: syncSortElementLimit(),
+    drawnStateChanged: false,
+  };
+}
 
-/** Per-node sort state, keyed by the render mesh's uuid. */
-export const nodeStates = new Map<string, NodeSortState>();
+/**
+ * The chunked-apply hooks every ordering THIS coordinator stages carries
+ * (`SortedIndexApplyCallbacks` minus the profiler lifecycle): the owner tag the
+ * per-coordinator cancel sweeps filter on, the frame wake-up a consumed slice
+ * fires to resume an idle stream (issue #715 resume gap), and the
+ * offline-capture back-pressure bypass.
+ *
+ * Both closures read the LIVE fields rather than capturing values:
+ * `resortForCapture` nulls `requestRender` for its drain, and a slice
+ * acknowledged mid-drain must not wake the loop it stopped.
+ */
+export function orderingApplyHooks(c: CoordinatorState): SortedIndexApplyCallbacks {
+  return {
+    owner: c,
+    requestFrame: () => c.requestRender?.(),
+    bypassBackPressure: () => c.captureSuppressDepth > 0,
+  };
+}
 
 export function syncSortElementLimit(): number {
   return config?.depthSort?.syncSortMaxElements ?? 0;
@@ -259,8 +314,8 @@ export function invalidateSortedNodeCommitStamps(mesh: THREE.Mesh): void {
  * `isDepthSortAvailable` (do not announce a degrade about a subsystem
  * this scene never uses).
  */
-export function anyNodeWantsSorting(): boolean {
-  for (const state of nodeStates.values()) {
+export function anyNodeWantsSorting(c: CoordinatorState): boolean {
+  for (const state of c.nodeStates.values()) {
     const mesh = state.mesh;
     if (!isEffectivelyVisible(mesh)) continue;
     if (!hasCommittedData(mesh)) continue;
@@ -306,11 +361,11 @@ export function isLiveOrderDependent(mode: BlendingMode | undefined): boolean {
  * so it wakes a frame itself: under render-on-change the held draw would
  * otherwise stay on screen until something else moved.
  */
-export function releaseHeldDraw(mesh: THREE.Mesh): void {
+export function releaseHeldDraw(c: CoordinatorState, mesh: THREE.Mesh): void {
   const geometry = mesh.geometry as THREE.InstancedBufferGeometry | undefined;
   if (!geometry || !releaseSortedIndexDrawHold(geometry)) return;
-  shared.drawnStateChanged = true;
-  shared.requestRender?.();
+  c.drawnStateChanged = true;
+  c.requestRender?.();
 }
 
 /**
@@ -320,7 +375,7 @@ export function releaseHeldDraw(mesh: THREE.Mesh): void {
  * there, not actionable.
  */
 export function releaseWorkerNode(nodeId: string): void {
-  shared.api?.releaseNode(nodeId).catch(() => {});
+  workerHost.api?.releaseNode(nodeId).catch(() => {});
 }
 
 /**

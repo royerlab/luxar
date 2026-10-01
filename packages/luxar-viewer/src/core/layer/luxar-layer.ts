@@ -9,9 +9,11 @@
  * keeps Luxar's streaming, LOD selection, and depth sorting correct.
  *
  * The seam this rests on is already in the architecture: `SceneLoader.loadScene`
- * returns a plain `THREE.Group`, and `LODGroupRegistryDeps` / `configureDepthSort`
- * are defined purely in terms of injectable getters. Nothing in the data, cache,
- * LOD, or material path needs `SceneManager`.
+ * returns a plain `THREE.Group`, and `LODGroupRegistryDeps` /
+ * `DepthSortCoordinator.configure` are defined purely in terms of injectable
+ * getters. Nothing in the data, cache, LOD, or material path needs `SceneManager`.
+ * The layer owns its own `DepthSortCoordinator`, so it sorts against the host's
+ * camera even when a `LuxarApp` or another layer shares the page.
  *
  * The minimal embed shape:
  *
@@ -127,14 +129,7 @@ import {
   configureBlendModeProgramWarmup,
   warmSceneBlendModePrograms,
 } from '../../rendering/webgl-blend-warmup';
-import {
-  configureDepthSort,
-  setDepthSortEnabled,
-  evaluateDepthSortPerFrame,
-  warmUpDepthSortWorker,
-  releaseDepthSortNode,
-  disposeDepthSort,
-} from '../../rendering/depth-sort-coordinator';
+import { DepthSortCoordinator, releaseDepthSortNode } from '../../rendering/depth-sort-coordinator';
 import { disposeWorkerPool } from '../../workers/worker-pool';
 import type { DatasetFaultPayload } from '../app/embedder/events';
 import { applyModuleOverrides } from '../app/init/module-overrides';
@@ -245,6 +240,14 @@ export class LuxarLayer {
   private readonly bufferSize = new THREE.Vector2();
 
   private rootGroup: THREE.Group | null = null;
+  /**
+   * This layer's own depth-sort coordinator: it tracks only this layer's
+   * nodes, sorts them against `options.getCamera()` and wakes only
+   * `options.requestRender` — so a layer sharing a page with a LuxarApp or
+   * another layer never sorts against, or wakes, someone else's view. The
+   * SortWorker itself is shared page-wide.
+   */
+  private readonly depthSort = new DepthSortCoordinator();
   private disposed = false;
   /** Guards against overlapping `load()` calls — see {@link LuxarLayer.load}. */
   private inFlightLoad: Promise<THREE.Group> | null = null;
@@ -362,7 +365,7 @@ export class LuxarLayer {
     this.clearDatasetFaultLoader();
     let root: THREE.Group;
     try {
-      root = await loadScene(src, this.options.loaderConfig, LOADER_ID);
+      root = await loadScene(src, this.options.loaderConfig, LOADER_ID, this.depthSort);
     } catch (error) {
       // A dataset switch destroys the previous loader before fetching the new
       // scene. If that fetch fails, its old root is backed by dead resources.
@@ -436,7 +439,7 @@ export class LuxarLayer {
     if (!this.rootGroup || this.disposed) return false;
     // Order matters: depth sorting assigns the cross-node render order that a
     // LOD swap may then invalidate, so sorting runs first.
-    const sortChanged = evaluateDepthSortPerFrame();
+    const sortChanged = this.depthSort.evaluatePerFrame();
     const lodChanged = this.evaluateLodFrame();
     // Scene / LOD / partition groups may attach lazily after load(). Three.js
     // replaces the transparent group-order key at every Group boundary, so a
@@ -919,7 +922,7 @@ export class LuxarLayer {
       ],
       ['materialManager', () => materialManager.dispose()],
       ['workerPool', () => disposeWorkerPool()],
-      ['depthSort', () => disposeDepthSort()],
+      ['depthSort', () => this.depthSort.dispose()],
     ];
     for (const [label, step] of steps) {
       try {
@@ -1028,16 +1031,16 @@ export class LuxarLayer {
   }
 
   private installDepthSort(): void {
-    // The module-level flag is what actually gates registration, the per-frame
+    // The coordinator's flag is what actually gates registration, the per-frame
     // cross-node renderOrder pass, and worker spawn. Returning early without
     // clearing it leaves `depthSort: false` doing nothing at all.
     // AND with the build config the same way the app does, so a config that
     // ships depth sorting off is honoured in layer mode too. No behavioural
     // difference while the config default is true — it bites only if that flips.
     const enabled = config.depthSort.enabled && this.options.depthSort !== false;
-    setDepthSortEnabled(enabled);
+    this.depthSort.setEnabled(enabled);
     if (!enabled) return;
-    configureDepthSort({
+    this.depthSort.configure({
       getCamera: () => this.options.getCamera(),
       requestRender: () => this.options.requestRender?.(),
       requestReprocess: () => {
@@ -1050,7 +1053,7 @@ export class LuxarLayer {
     // Spawn the sort worker while the page is idle. Deferring it to the first
     // order-dependent commit puts its initialize() reply on a main thread that
     // is saturated decoding the scene, where it can miss its deadline.
-    warmUpDepthSortWorker();
+    this.depthSort.warmUp();
   }
 
   private assertLive(): void {

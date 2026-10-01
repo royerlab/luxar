@@ -22,6 +22,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { loadScene, updateView, updateSceneForDimensions, dispose } from '../../../data';
 import type { SimpleDims } from '../../../types/dims';
+import type { DepthSortCoordinator } from '../../../rendering/depth-sort-coordinator';
 
 // Mock SceneLoaderManager only — see file header. The real manager depends
 // on zarr I/O and WebGL.
@@ -62,6 +63,7 @@ vi.mock('../../../data/scene-loader-manager', () => {
     // `zarr-loader.loadScene` gates its success log on this — a clean fake load
     // has no failures.
     hasFailures: vi.fn(() => false),
+    setDepthSortCoordinator: vi.fn(),
   };
 
   let isDisposed = false;
@@ -110,6 +112,24 @@ describe('Data Loading Integration', () => {
       expect(typeof scene.userData.sceneDimensions).toBe('object');
       expect(scene.userData.sceneDimensions).not.toBeNull();
       expect(scene.userData.maxRadius).toBe(0.5);
+    });
+
+    it("hands the caller's depth-sort coordinator to the loader BEFORE it loads", async () => {
+      // Each host (LuxarApp, LuxarLayer) owns a coordinator; the loader's
+      // commits must report to the one that loaded it, from the first node on.
+      const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
+      const loader = SceneLoaderManager.getInstance().getDefaultLoader()! as unknown as {
+        setDepthSortCoordinator: ReturnType<typeof vi.fn>;
+        loadScene: ReturnType<typeof vi.fn>;
+      };
+      const depthSort = {} as DepthSortCoordinator;
+
+      await loadScene('http://localhost:8000/test.zarr', undefined, 'default', depthSort);
+
+      expect(loader.setDepthSortCoordinator).toHaveBeenCalledWith(depthSort);
+      expect(loader.setDepthSortCoordinator.mock.invocationCallOrder[0]).toBeLessThan(
+        loader.loadScene.mock.invocationCallOrder[0]
+      );
     });
 
     it('asks the manager for an instance on every load', async () => {

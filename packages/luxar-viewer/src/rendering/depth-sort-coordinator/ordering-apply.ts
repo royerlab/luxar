@@ -22,7 +22,7 @@ import {
 import { sort_splats_by_depth } from '../../wasm/typescript/depth-sort';
 import { acknowledgeTriangleOrderingDraw, writeSortedTriangleOrdering } from './triangle-ordering';
 import { log, Modules } from '../../utils/log';
-import { shared, syncSortElementLimit, type NodeSortState } from './state';
+import { syncSortElementLimit, type CoordinatorState, type NodeSortState } from './state';
 
 /**
  * Push the geometry's active ordering slot onto a material's
@@ -46,24 +46,24 @@ import { shared, syncSortElementLimit, type NodeSortState } from './state';
 function applySortedIndexSlotToMaterial(
   material: THREE.Material | THREE.Material[] | undefined,
   slot: 0 | 1
-): void {
-  if (!material) return;
+): boolean {
+  if (!material) return false;
   // Scalar and array handled without a temporary wrapper array: this runs
   // for every tracked node on every frame (twice with a pick material), so
   // it must stay allocation-free — the per-frame scratch invariant below.
-  if (Array.isArray(material)) {
-    for (const m of material) setSortedIndexSlotUniform(m, slot);
-  } else {
-    setSortedIndexSlotUniform(material, slot);
-  }
+  if (!Array.isArray(material)) return setSortedIndexSlotUniform(material, slot);
+  let changed = false;
+  for (const m of material) changed = setSortedIndexSlotUniform(m, slot) || changed;
+  return changed;
 }
 
-/** Write one material's `uSortedIndexSlot`, if it has one. */
-function setSortedIndexSlotUniform(material: THREE.Material, slot: 0 | 1): void {
+/** Write one material's `uSortedIndexSlot`, if it has one; true when it changed. */
+function setSortedIndexSlotUniform(material: THREE.Material, slot: 0 | 1): boolean {
   const uniform = (material as THREE.ShaderMaterial | undefined)?.uniforms?.uSortedIndexSlot;
-  if (!uniform) return;
-  if (uniform.value !== slot) shared.drawnStateChanged = true;
+  if (!uniform) return false;
+  const changed = uniform.value !== slot;
   uniform.value = slot;
+  return changed;
 }
 
 /**
@@ -72,14 +72,19 @@ function setSortedIndexSlotUniform(material: THREE.Material, slot: 0 | 1): void 
  * the geometry and emits `vElementId` from the same index, so a pick
  * pass reading the other buffer would resolve hovers against a stale
  * permutation.
+ *
+ * Records a changed uniform on `c.drawnStateChanged`, which tells the
+ * render-on-change loop that this frame draws something new.
  */
-export function syncSortedIndexSlot(mesh: THREE.Mesh): void {
+export function syncSortedIndexSlot(c: CoordinatorState, mesh: THREE.Mesh): void {
   const geometry = mesh.geometry as THREE.InstancedBufferGeometry | undefined;
   if (!geometry) return;
   const slot = activeSortedIndexSlot(geometry);
-  applySortedIndexSlotToMaterial(mesh.material, slot);
+  if (applySortedIndexSlotToMaterial(mesh.material, slot)) c.drawnStateChanged = true;
   const pickNode = (mesh.userData as { pickNode?: THREE.Mesh } | undefined)?.pickNode;
-  if (pickNode) applySortedIndexSlotToMaterial(pickNode.material, slot);
+  if (pickNode && applySortedIndexSlotToMaterial(pickNode.material, slot)) {
+    c.drawnStateChanged = true;
+  }
 }
 
 /** Installed post-render acknowledgement hook for each sortable mesh. */
@@ -234,19 +239,20 @@ export function computeModelView(mesh: THREE.Mesh, camera: THREE.Camera): THREE.
  * keeping the ordering current as the camera moves, is unchanged.
  */
 export function trySynchronousFirstSort(
+  c: CoordinatorState,
   mesh: THREE.Mesh,
   centers3: Float32Array | (() => Float32Array),
   count: number,
   triangleSource: Uint32Array | undefined
 ): Float32Array | undefined {
   const limit = syncSortElementLimit();
-  if (limit <= 0 || count > limit || count > shared.syncSortElementsRemaining) return undefined;
+  if (limit <= 0 || count > limit || count > c.syncSortElementsRemaining) return undefined;
   const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
   // A mesh applies through its index buffer instead of `aSortedIndex`.
   if (triangleSource ? !geometry.index : !getActiveSortedIndexAttribute(geometry)) {
     return undefined;
   }
-  const camera = shared.getCamera?.();
+  const camera = c.getCamera?.();
   if (!camera) return undefined;
 
   let buffer: Float32Array;
@@ -271,7 +277,7 @@ export function trySynchronousFirstSort(
     ? writeSortedTriangleOrdering(geometry, triangleSource, ordering, count) === count * 3
     : writeSortedIndexOrderingLive(geometry, ordering, count) === count;
   if (!written) return undefined;
-  shared.syncSortElementsRemaining -= count;
-  shared.requestRender?.();
+  c.syncSortElementsRemaining -= count;
+  c.requestRender?.();
   return buffer;
 }

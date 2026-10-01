@@ -703,10 +703,13 @@ describe('SceneManager', () => {
       await sceneManager.loadSceneData(testUrl);
 
       expect(mockShowLoadingIndicator).toHaveBeenCalled();
-      // The loader config carries the pre-node-load framing hook.
+      // The loader config carries the pre-node-load framing hook, and the
+      // loader's commits report to THIS scene manager's depth-sort coordinator.
       expect(mockLoadScene).toHaveBeenCalledWith(
         testUrl,
-        expect.objectContaining({ onSceneMetadata: expect.any(Function) })
+        expect.objectContaining({ onSceneMetadata: expect.any(Function) }),
+        'default',
+        sceneManager.depthSort
       );
       expect(mockHideLoadingIndicator).toHaveBeenCalled();
     });

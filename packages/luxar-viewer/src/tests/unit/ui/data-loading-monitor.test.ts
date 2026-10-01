@@ -39,16 +39,10 @@ function seedLODStates(monitor: DataLoadingMonitor, states: Map<string, LODProgr
 }
 
 /**
- * The depth-sort verdict the monitor reads, drivable from a test. Only
- * `isDepthSortAvailable` is replaced — everything else in that module stays
- * real, so nothing else in this file's import graph changes behaviour. Default
- * `true` keeps every other test here on the pre-existing path.
+ * The depth-sort verdict the monitor reads, drivable from a test through the
+ * availability provider the app wires (`DepthSortCoordinator.isAvailable`).
  */
 let depthSortAvailable = true;
-vi.mock('../../../rendering/depth-sort-coordinator', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../../rendering/depth-sort-coordinator')>()),
-  isDepthSortAvailable: () => depthSortAvailable,
-}));
 
 // Mock DOM environment
 beforeEach(() => {
@@ -1810,7 +1804,7 @@ describe('Performance tab depth-sort note', () => {
     depthSortAvailable = true;
   });
 
-  // Both `!isDepthSortAvailable()` call sites in data-loading-monitor.ts could
+  // Both depth-sort-verdict call sites in data-loading-monitor.ts could
   // be replaced by a constant with the rest of the suite still green: the
   // footer note is the branch's only user-visible surface and nothing exercised
   // it end to end. This drives the verdict and reads the rendered DOM, on the
@@ -1821,6 +1815,7 @@ describe('Performance tab depth-sort note', () => {
     const container = document.getElementById('test-container')!;
     const monitor = new DataLoadingMonitor(container);
     monitor.setProfiler(makeProfiler());
+    monitor.setDepthSortAvailabilityProvider(() => depthSortAvailable);
     monitor.show();
     // The tabbed timing panel only exists in the expanded (detailed) view.
     monitor.expand();
@@ -1851,6 +1846,12 @@ describe('Performance tab depth-sort note', () => {
 
     // And it tracks a recovery, on the rebuilt structure.
     depthSortAvailable = true;
+    monitor.forceUpdate();
+    expect(footerEl().textContent).not.toContain('UNAVAILABLE');
+
+    // Unwired (no app coordinator) reads as available: no note.
+    depthSortAvailable = false;
+    monitor.setDepthSortAvailabilityProvider(null);
     monitor.forceUpdate();
     expect(footerEl().textContent).not.toContain('UNAVAILABLE');
 

@@ -11,16 +11,17 @@ import {
 } from '../../../../../scene/scene-manager/render-pipeline/scene-disposal';
 import {
   releaseDepthSortNode,
-  releaseAllDepthSortNodes,
+  type DepthSortCoordinator,
 } from '../../../../../rendering/depth-sort-coordinator';
 
-// The disposal helpers call into the depth-sort coordinator (per-mesh
-// release + the dataset-switch wholesale sweep); mock it so these tests
-// assert the WIRING without spinning up worker machinery.
+// The disposal helpers call into the depth-sort coordinator (the routed
+// per-mesh release + the app coordinator's dataset-switch sweep); both are
+// stubbed so these tests assert the WIRING without spinning up worker machinery.
 vi.mock('../../../../../rendering/depth-sort-coordinator', () => ({
   releaseDepthSortNode: vi.fn(),
-  releaseAllDepthSortNodes: vi.fn(),
 }));
+const releaseAllNodes = vi.fn();
+const depthSort = { releaseAllNodes } as unknown as DepthSortCoordinator;
 
 function makeMesh(): {
   mesh: THREE.Mesh;
@@ -142,11 +143,11 @@ describe('disposeObjectTree', () => {
 
 describe('clearLoadedSceneContent', () => {
   it('drops ALL depth-sort registrations wholesale (dataset-switch teardown)', () => {
-    vi.mocked(releaseAllDepthSortNodes).mockClear();
+    releaseAllNodes.mockClear();
     const scene = new THREE.Scene();
     scene.add(makeMesh().mesh);
-    clearLoadedSceneContent(scene);
-    expect(releaseAllDepthSortNodes).toHaveBeenCalledTimes(1);
+    clearLoadedSceneContent(scene, depthSort);
+    expect(releaseAllNodes).toHaveBeenCalledTimes(1);
   });
 
   it('releases the per-mesh depth-sort registration of every mesh (gsplats, points, plain)', () => {
@@ -165,7 +166,7 @@ describe('clearLoadedSceneContent', () => {
     scene.add(gsplats);
     scene.add(points);
     scene.add(plain);
-    clearLoadedSceneContent(scene);
+    clearLoadedSceneContent(scene, depthSort);
     expect(releaseDepthSortNode).toHaveBeenCalledWith(gsplats);
     expect(releaseDepthSortNode).toHaveBeenCalledWith(points);
     expect(releaseDepthSortNode).toHaveBeenCalledWith(plain);
@@ -178,7 +179,7 @@ describe('clearLoadedSceneContent', () => {
     scene.add(a);
     scene.add(b);
 
-    const removed = clearLoadedSceneContent(scene);
+    const removed = clearLoadedSceneContent(scene, depthSort);
     expect(removed).toBe(2);
     expect(scene.children.length).toBe(0);
   });
@@ -190,7 +191,7 @@ describe('clearLoadedSceneContent', () => {
     scene.add(light);
     scene.add(mesh);
 
-    const removed = clearLoadedSceneContent(scene);
+    const removed = clearLoadedSceneContent(scene, depthSort);
     expect(removed).toBe(1);
     expect(scene.children).toContain(light);
     expect(scene.children).not.toContain(mesh);
@@ -204,7 +205,7 @@ describe('clearLoadedSceneContent', () => {
     scene.add(bg);
     scene.add(mesh);
 
-    const removed = clearLoadedSceneContent(scene);
+    const removed = clearLoadedSceneContent(scene, depthSort);
     expect(removed).toBe(1);
     expect(scene.children).toContain(bg);
   });
@@ -214,7 +215,7 @@ describe('clearLoadedSceneContent', () => {
     const { mesh, geometryDispose, materialDispose } = makeMesh();
     scene.add(mesh);
 
-    clearLoadedSceneContent(scene);
+    clearLoadedSceneContent(scene, depthSort);
 
     expect(geometryDispose).toHaveBeenCalledTimes(1);
     expect(materialDispose).toHaveBeenCalledTimes(1);
@@ -222,20 +223,20 @@ describe('clearLoadedSceneContent', () => {
 
   it('returns 0 for an empty scene', () => {
     const scene = new THREE.Scene();
-    expect(clearLoadedSceneContent(scene)).toBe(0);
+    expect(clearLoadedSceneContent(scene, depthSort)).toBe(0);
   });
 });
 
 describe('disposeSceneGraphResources', () => {
   it('drops ALL depth-sort registrations (self-sufficient final shutdown)', () => {
-    // Defense-in-depth: the dispose pipeline calls disposeDepthSort()
+    // Defense-in-depth: the dispose pipeline disposes the coordinator
     // separately, but an embedder driving only this shutdown path must
     // not leave the module-scoped coordinator map pinning old meshes.
-    vi.mocked(releaseAllDepthSortNodes).mockClear();
+    releaseAllNodes.mockClear();
     const scene = new THREE.Scene();
     scene.add(makeMesh().mesh);
-    disposeSceneGraphResources(scene);
-    expect(releaseAllDepthSortNodes).toHaveBeenCalledTimes(1);
+    disposeSceneGraphResources(scene, depthSort);
+    expect(releaseAllNodes).toHaveBeenCalledTimes(1);
   });
 
   it('disposes geometry and material of every renderable in the scene', () => {
@@ -245,7 +246,7 @@ describe('disposeSceneGraphResources', () => {
     scene.add(a);
     scene.add(p);
 
-    disposeSceneGraphResources(scene);
+    disposeSceneGraphResources(scene, depthSort);
 
     expect(aG).toHaveBeenCalledTimes(1);
     expect(aM).toHaveBeenCalledTimes(1);
@@ -258,7 +259,7 @@ describe('disposeSceneGraphResources', () => {
     const { mesh } = makeMesh();
     scene.add(mesh);
 
-    disposeSceneGraphResources(scene);
+    disposeSceneGraphResources(scene, depthSort);
     // Unlike clearLoadedSceneContent, the final-shutdown pass leaves the
     // graph alone — the renderer/scene/camera are about to be dropped anyway.
     expect(scene.children).toContain(mesh);
@@ -274,7 +275,7 @@ describe('disposeSceneGraphResources', () => {
     const mesh = new THREE.Mesh(geometry, [m1, m2]);
     scene.add(mesh);
 
-    disposeSceneGraphResources(scene);
+    disposeSceneGraphResources(scene, depthSort);
     expect(d1).toHaveBeenCalledTimes(1);
     expect(d2).toHaveBeenCalledTimes(1);
   });

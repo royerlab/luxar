@@ -109,9 +109,10 @@ vi.mock('../../../rendering/material-manager', () => ({
 
 // The lazy-LOD demotion path (ctx.releaseLazyGSplats) must also drop the
 // demoted level's depth-sort coordinator state (worker-side transferred
-// centers). Partial mock via importOriginal so only releaseDepthSortNode is
-// intercepted — SceneLoader's commit path imports noteDepthSortCommit from the
-// same module and must keep the real implementation.
+// centers). Partial mock via importOriginal so only the routed
+// releaseDepthSortNode is intercepted — the rest of the module (the
+// DepthSortCoordinator class a host hands the loader) keeps its real
+// implementation.
 vi.mock('../../../rendering/depth-sort-coordinator', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../rendering/depth-sort-coordinator')>();
   return {
@@ -2597,7 +2598,7 @@ describe('SceneLoader', () => {
     // depth-sort coordinator state (worker-side transferred centers,
     // 12 B/splat) — otherwise the SortWorker pins the demoted level's
     // centers until node disposal / dataset switch. Re-promotion
-    // re-registers via the fresh commit's noteDepthSortCommit.
+    // re-registers via the fresh commit's `depthSort.noteCommit`.
     it('releases the demoted mesh from the depth-sort coordinator', () => {
       const rootGroup = new THREE.Group();
       const mesh = new THREE.Mesh();

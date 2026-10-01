@@ -29,12 +29,6 @@ import { log, Modules } from '../../../utils/log';
 import { config } from '../../../config';
 import { getGpuByteBudget, initializeGpuByteBudget } from '../../../rendering/gpu-byte-budget';
 import { getMaxPixelRatio, setHighDPRAllowed } from '../../../rendering/pixel-ratio-cap';
-import {
-  configureDepthSort,
-  setDepthSortEnabled,
-  warmUpDepthSortWorker,
-  evaluateDepthSortPerFrame,
-} from '../../../rendering/depth-sort-coordinator';
 import { materialManager } from '../../../rendering';
 import { createKTX2TextureDecoder } from '../../../rendering/ktx2-texture-decoder';
 import { resolveFactories, type AppFactories } from '../factories';
@@ -386,12 +380,13 @@ export async function runInitPipeline(
   SceneLoaderManager.getInstance().setKTX2TextureDecoder(
     createKTX2TextureDecoder(sceneManager.renderer)
   );
-  // Depth-sort coordinator (Phases 2-3): the gsplats commit path has no
-  // camera (SceneLoader deliberately owns no camera state), so the
-  // coordinator gets the live camera + render wake-up here — the same
-  // dependency-inversion as setRequestRender above.
-  setDepthSortEnabled(config.depthSort.enabled && (ports.options.depthSort ?? true));
-  configureDepthSort({
+  // Depth-sort coordinator (Phases 2-3): THIS app's, owned by its scene
+  // manager. The commit path has no camera (SceneLoader deliberately owns no
+  // camera state), so the coordinator gets the live camera + render wake-up
+  // here — the same dependency-inversion as setRequestRender above.
+  const depthSort = sceneManager.depthSort;
+  depthSort.setEnabled(config.depthSort.enabled && (ports.options.depthSort ?? true));
+  depthSort.configure({
     // A live GETTER, not sceneManager.camera captured by value: the
     // ortho-mode toggle replaces the camera object, and sorts must track
     // whichever camera is current (same pattern as the LOD registry's
@@ -422,8 +417,8 @@ export async function runInitPipeline(
   // scene, and the worker's `initialize()` reply has to be dispatched on
   // this very thread — on a multi-million-element scene it misses its
   // deadline there, which used to disable sorting for the whole session.
-  // Honours `setDepthSortEnabled` above (so `?depthSort=0` spawns nothing).
-  warmUpDepthSortWorker();
+  // Honours `setEnabled` above (so `?depthSort=0` spawns nothing).
+  depthSort.warmUp();
   // Camera-motion re-sort scheduler (Phase 3, spec §6) + global cross-node
   // renderOrder assignment. Same per-frame slot pattern as
   // 'lod-group-selector' below; the evaluation early-outs when no
@@ -431,7 +426,7 @@ export async function runInitPipeline(
   // per-frame order slots — documented in assignGlobalRenderOrder).
   // Returns whether the pass changed a renderOrder or an ordering-buffer slot.
   animationController.addPerFrameCallback('depth-sort-scheduler', () =>
-    evaluateDepthSortPerFrame()
+    depthSort.evaluatePerFrame()
   );
   // Projected-density guard walker (config.densityGuard; `?noDensityGuard`):
   // measures elements per drawing-buffer pixel for every committed data mesh
@@ -654,9 +649,10 @@ export async function runInitPipeline(
       // The density guard is app-scoped (it outlives scenes), so its provider
       // is wired here, once per monitor, rather than through the per-scene
       // monitor wiring in data/ — which cannot import scene/ anyway.
-      mgr
-        .getMonitor(monitorId)
-        ?.setDensityProvider({ getDensityStates: () => densityWiring.densityStates() });
+      const monitor = mgr.getMonitor(monitorId);
+      monitor?.setDensityProvider({ getDensityStates: () => densityWiring.densityStates() });
+      // Same for the depth-sort degrade note: the coordinator is app-scoped.
+      monitor?.setDepthSortAvailabilityProvider(() => sceneManager.depthSort.isAvailable());
     }
     return mgr.getMonitor(monitorId) ?? null;
   });

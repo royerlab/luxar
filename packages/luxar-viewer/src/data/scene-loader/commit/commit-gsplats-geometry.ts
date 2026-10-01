@@ -15,14 +15,14 @@
 import { findObjectByName } from '../../../utils/scene-graph-index';
 import * as THREE from 'three';
 import { updateInstancedGSplatsMesh } from '../../../rendering/gsplat-geometry';
-import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
+import type { GeometryCommitHost } from './commit-host';
 import { clampSplatCapacity } from '../../../rendering/element-texture-layout';
 import { getActiveSortedIndexAttribute } from '../../../rendering/element-storage';
 import { syncGSplatMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import { isGSplatsUserData } from '../../../types/gsplats';
 import { log, LogEmoji, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
-import type { GPUBufferPool, GSplatsUpdateOptions } from '../../../rendering/gpu-buffer-pool';
+import type { GSplatsUpdateOptions } from '../../../rendering/gpu-buffer-pool';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
 import { markFirstCommit } from '../../../profiling/load-timeline';
@@ -106,7 +106,7 @@ function planSameBufferOrdering(
   // Keep the previous depth-sort permutation on a same-node same-count
   // in-place recommit (timepoint scrub): a permutation of [0,count) is a
   // strictly-no-worse prior than storage order for the ≥1 frame until the
-  // re-sort dispatched by noteDepthSortCommit below lands. Every guard is
+  // re-sort dispatched by `depthSort.noteCommit` below lands. Every guard is
   // load-bearing:
   // - !attributesRebuilt / geometry === prevGeometry: pool best-fit reuse
   //   can hand this node a geometry holding ANOTHER node's permutation
@@ -221,11 +221,11 @@ function extendsCommittedPrefix(input: PoolOrderingInput): boolean {
  */
 export function commitGSplatsGeometry(
   staged: StagedGSplatsCommit,
-  rootGroup: THREE.Group | null,
-  gpuBufferPool: GPUBufferPool | null,
+  host: GeometryCommitHost,
   session: UpdateSession | undefined,
   loadedViewVersion: number
 ): void {
+  const { rootGroup, gpuBufferPool, depthSort } = host;
   if (!rootGroup) return;
 
   const mesh = findObjectByName(rootGroup, staged.path) as THREE.Mesh;
@@ -435,7 +435,7 @@ export function commitGSplatsGeometry(
     // to every later commit of this slice) must never be detached: hand the
     // coordinator a lazy COPY instead, paid only when the node actually sorts.
     const { centers3D } = processed;
-    noteDepthSortCommit(
+    depthSort?.noteCommit(
       mesh,
       processed.sharedBuffers ? () => centers3D.slice(0, splatCount * 3) : centers3D,
       splatCount

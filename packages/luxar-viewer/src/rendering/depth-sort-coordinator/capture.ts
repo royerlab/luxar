@@ -8,13 +8,10 @@
  */
 
 import type * as THREE from 'three';
-import {
-  hasPendingSortedIndexOrderingApply,
-  setSortedIndexApplyBackPressureBypassed,
-} from '../element-storage';
+import { hasPendingSortedIndexOrderingApply } from '../element-storage';
 import { hasCommittedData } from '../../types/committed-data';
 import { isEffectivelyVisible } from '../../utils/object-visibility';
-import { isLiveOrderDependent, liveBlendingMode, nodeStates, shared } from './state';
+import { isLiveOrderDependent, liveBlendingMode, workerHost, type CoordinatorState } from './state';
 import { evaluateDepthSortPerFrame, scheduleSort } from './scheduler';
 
 /**
@@ -26,8 +23,8 @@ import { evaluateDepthSortPerFrame, scheduleSort } from './scheduler';
  * ANY of those hold, the drawn permutation is not yet the pose-fresh one.
  * Module-private: the drain loop is the only caller.
  */
-function isCaptureQuiescent(): boolean {
-  for (const state of nodeStates.values()) {
+function isCaptureQuiescent(c: CoordinatorState): boolean {
+  for (const state of c.nodeStates.values()) {
     if (state.inFlight || state.resortQueued) return false;
     const geometry = state.mesh.geometry as THREE.InstancedBufferGeometry | undefined;
     if (geometry && hasPendingSortedIndexOrderingApply(geometry)) return false;
@@ -68,7 +65,7 @@ function isCaptureQuiescent(): boolean {
  * the capture — the loop exits and the frame is captured with whatever
  * ordering is current.
  */
-export async function resortForCapture(maxWaitMs = 3000): Promise<void> {
+export async function resortForCapture(c: CoordinatorState, maxWaitMs = 3000): Promise<void> {
   // `requestRender` is wired to `animationController.requestRender('depthSort')`
   // (core/app/init/pipeline.ts), and the sort resolve/pump paths call
   // `requestRender?.()`. Suppress it for the duration so draining (which we
@@ -79,18 +76,20 @@ export async function resortForCapture(maxWaitMs = 3000): Promise<void> {
   // helper is exposed on `__luxarDebug`, so an overlapping (nested) call
   // could otherwise snapshot `null` and restore `null` permanently, wedging
   // the render loop forever. Only the OUTERMOST call snapshots and restores.
-  if (shared.captureSuppressDepth === 0) shared.requestRenderBeforeCapture = shared.requestRender;
-  shared.captureSuppressDepth++;
-  shared.requestRender = null;
-  // The drain below never draws, but on the chunked (WebGL) path a
-  // multi-slice apply stalls after its first slice until a DRAW's upload
-  // ack releases the #715 back-pressure — so without this bypass any
-  // order-dependent node past one slice (>1M elements, e.g. the 3M-star
-  // gaia demo) could never reach quiescence: every captured frame would
-  // burn the full maxWaitMs and still film a stale ordering. Offline,
-  // folding the slices into one upload on the capture's own render is
-  // exactly acceptable (the union range stays contiguous and current).
-  setSortedIndexApplyBackPressureBypassed(true);
+  //
+  // A non-zero depth ALSO lifts the #715 upload back-pressure for this
+  // coordinator's streams (`orderingApplyHooks`). The drain below never draws,
+  // but on the chunked (WebGL) path a multi-slice apply stalls after its first
+  // slice until a DRAW's upload ack releases it — so without the bypass any
+  // order-dependent node past one slice (>1M elements, e.g. the 3M-star gaia
+  // demo) could never reach quiescence: every captured frame would burn the
+  // full maxWaitMs and still film a stale ordering. Offline, folding the slices
+  // into one upload on the capture's own render is exactly acceptable (the
+  // union range stays contiguous and current). Scoped to THIS coordinator: a
+  // second host's interactive streams on the same page keep their bound.
+  if (c.captureSuppressDepth === 0) c.requestRenderBeforeCapture = c.requestRender;
+  c.captureSuppressDepth++;
+  c.requestRender = null;
   try {
     // FORCE a fresh sort on every eligible node — offline capture can
     // afford a full sort per frame, so the ordering is exact for THIS pose
@@ -104,24 +103,24 @@ export async function resortForCapture(maxWaitMs = 3000): Promise<void> {
     // a node that pass just put in flight would only set `resortQueued` —
     // a SECOND, identical full sort run serially after the first. Force-
     // first, the pass's in-flight skip makes the two compose to one sort.
-    if (shared.depthSortEnabled && shared.getCamera?.() && shared.api) {
-      for (const [nodeId, state] of nodeStates) {
+    if (c.depthSortEnabled && c.getCamera?.() && workerHost.api) {
+      for (const [nodeId, state] of c.nodeStates) {
         const mesh = state.mesh;
         if (!isEffectivelyVisible(mesh)) continue;
         if (!hasCommittedData(mesh)) continue;
         if (!isLiveOrderDependent(liveBlendingMode(mesh))) continue;
-        scheduleSort(mesh, nodeId);
+        scheduleSort(c, mesh, nodeId);
       }
     }
 
     // Cross-node renderOrder pass + pump any pending chunked applies, all
     // for the current pose (its re-sort trigger skips the in-flight nodes
     // the force loop just dispatched).
-    evaluateDepthSortPerFrame();
+    evaluateDepthSortPerFrame(c);
 
     // Nothing to wait for (disabled / no order-dependent node / worker
     // unavailable): return before opening the drain loop.
-    if (isCaptureQuiescent()) return;
+    if (isCaptureQuiescent(c)) return;
 
     // Drain to quiescence, bounded by maxWaitMs. Each iteration yields a
     // macrotask (setTimeout(0)) so worker resolutions land, then pumps one
@@ -130,21 +129,20 @@ export async function resortForCapture(maxWaitMs = 3000): Promise<void> {
     const start = performance.now();
     while (performance.now() - start < maxWaitMs) {
       await new Promise<void>((r) => setTimeout(r, 0));
-      evaluateDepthSortPerFrame();
-      if (isCaptureQuiescent()) return;
+      evaluateDepthSortPerFrame(c);
+      if (isCaptureQuiescent(c)) return;
     }
   } finally {
-    // Clamped, not a bare decrement: disposeDepthSort resets the depth to
-    // 0, and a capture that was in flight across that dispose must not
-    // drive it negative (a later capture would then decrement back to a
-    // non-zero exit and strand `requestRender` at null forever).
-    shared.captureSuppressDepth = Math.max(0, shared.captureSuppressDepth - 1);
-    if (shared.captureSuppressDepth === 0) {
-      shared.requestRender = shared.requestRenderBeforeCapture;
+    // Clamped, not a bare decrement: dispose resets the depth to 0, and a
+    // capture that was in flight across that dispose must not drive it
+    // negative (a later capture would then decrement back to a non-zero exit
+    // and strand `requestRender` at null forever).
+    c.captureSuppressDepth = Math.max(0, c.captureSuppressDepth - 1);
+    if (c.captureSuppressDepth === 0) {
+      c.requestRender = c.requestRenderBeforeCapture;
       // Drop the snapshot so it can't pin the app's closure between
-      // captures (mirrors the dispose-path hygiene below).
-      shared.requestRenderBeforeCapture = null;
-      setSortedIndexApplyBackPressureBypassed(false);
+      // captures (mirrors the dispose-path hygiene).
+      c.requestRenderBeforeCapture = null;
     }
   }
 }

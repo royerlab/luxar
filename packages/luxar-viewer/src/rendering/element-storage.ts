@@ -402,6 +402,39 @@ const chunkedDisposeHooked = new WeakSet<THREE.InstancedBufferGeometry>();
 export interface SortedIndexApplyCallbacks {
   onApplied?: () => void;
   onAbandoned?: () => void;
+  /**
+   * Who staged this ordering. Opaque here; the per-owner teardown sweep
+   * ({@link cancelAllSortedIndexOrderingApplies} with an owner) filters on it,
+   * so one depth-sort coordinator's dataset switch or dispose never abandons
+   * another coordinator's streams on the same page.
+   */
+  owner?: object;
+  /**
+   * "Request one more frame", invoked from a slice's upload acknowledgement
+   * so a drained-but-idle stream resumes the instant the mesh is actually
+   * drawn again (issue #715 resume gap: the coordinator deliberately does NOT
+   * request a render on a stall, so a camera coming to rest exactly as a
+   * culled node becomes drawable would otherwise freeze the stream mid-drain).
+   * A consumed slice means the mesh WAS drawn, so this drives the next pump
+   * precisely — no spin while hidden, because a mesh that is never drawn
+   * never fires the acknowledgement. Per ordering rather than module-wide so
+   * it wakes the render loop of the host that owns the mesh.
+   */
+  requestFrame?: () => void;
+  /**
+   * When it returns true, {@link applyNextSortedIndexChunk} advances past the
+   * #715 upload-acknowledgement back-pressure. The depth-sort coordinator's
+   * offline-capture drain (`resortForCapture`) turns it on for its own
+   * streams: that drain never draws, so the ack that releases the stall can
+   * never fire and a multi-slice stream (>1 slice, e.g. a 3M-element node)
+   * would wedge the drain until its timeout on every captured frame. The
+   * stall exists only to bound the per-DRAWN-frame upload for interactive
+   * smoothness; offline, folding the slices into one upload on the capture's
+   * own render is exactly acceptable, and the range-union discipline keeps
+   * the pending span contiguous and current (a superset upload is correct,
+   * never stale).
+   */
+  bypassBackPressure?: () => boolean;
 }
 
 /**
@@ -426,43 +459,6 @@ export interface SortedIndexApplyCallbacks {
  * texture's `pendingFullUpload` + `texture.onUpdate` acknowledgement.
  */
 const sliceUploadPending = new WeakSet<THREE.InstancedBufferAttribute>();
-
-/**
- * Coordinator-supplied "request one more frame" hook, invoked from a
- * slice's upload acknowledgement so a drained-but-idle stream resumes the
- * instant the mesh is actually drawn again (issue #715 resume gap: the
- * coordinator deliberately does NOT request a render on a stall, so a
- * camera coming to rest exactly as a culled node becomes drawable would
- * otherwise freeze the stream mid-drain). A consumed slice means the mesh
- * WAS drawn, so this drives the next pump precisely — no spin while
- * hidden, because a mesh that is never drawn never fires the callback.
- */
-let requestSliceRender: (() => void) | null = null;
-
-/** Wire (or clear, with `null`) the per-slice render-continuation hook. */
-export function setSortedIndexApplyRequestRender(fn: (() => void) | null): void {
-  requestSliceRender = fn;
-}
-
-/**
- * When true, {@link applyNextSortedIndexChunk} advances past the #715
- * upload-acknowledgement back-pressure. Set by the depth-sort
- * coordinator's offline-capture drain (`resortForCapture`): that drain
- * never draws, so the ack that releases the stall can never fire and a
- * multi-slice stream (>1 slice, e.g. a 3M-element node) would wedge the
- * drain until its timeout on every captured frame. The stall exists only
- * to bound the per-DRAWN-frame upload for interactive smoothness;
- * offline, folding the slices into one upload on the capture's own
- * render is exactly acceptable, and the range-union discipline keeps the
- * pending span contiguous and current (a superset upload is correct,
- * never stale).
- */
-let backPressureBypassed = false;
-
-/** Toggle the offline-capture back-pressure bypass (see above). */
-export function setSortedIndexApplyBackPressureBypassed(bypassed: boolean): void {
-  backPressureBypassed = bypassed;
-}
 
 /** Outcome of one {@link pumpSortedIndexOrderingApply} call. */
 export interface SortedIndexPumpResult {
@@ -592,6 +588,11 @@ function sortedIndexBuffersUsable(geometry: THREE.InstancedBufferGeometry): bool
  *
  * Returns true when more chunks remain after this one.
  */
+/** Whether the streaming ordering's owner has lifted the #715 back-pressure. */
+function isBackPressureBypassed(state: ChunkedOrderingApply): boolean {
+  return state.callbacks?.bypassBackPressure?.() === true;
+}
+
 function applyNextSortedIndexChunk(
   geometry: THREE.InstancedBufferGeometry,
   state: ChunkedOrderingApply
@@ -610,7 +611,7 @@ function applyNextSortedIndexChunk(
   // stream's first slice always proceed.
   if (
     chunkedApplyEnabled &&
-    !backPressureBypassed &&
+    !isBackPressureBypassed(state) &&
     state.cursor > 0 &&
     sliceUploadPending.has(attr)
   ) {
@@ -661,7 +662,7 @@ function applyNextSortedIndexChunk(
       // path), and three's no-range fallback is a FULL `bufferSubData`,
       // so a cleared range can never lose data.
       attr.clearUpdateRanges();
-      if (chunkedApplies.has(geometry)) requestSliceRender?.();
+      chunkedApplies.get(geometry)?.callbacks?.requestFrame?.();
     });
   }
 
@@ -798,24 +799,48 @@ export function cancelSortedIndexOrderingApply(geometry: THREE.InstancedBufferGe
 }
 
 /**
- * Abort every in-flight chunked application (dataset-switch teardown /
- * app dispose — the coordinator's `releaseAllDepthSortNodes` /
- * `disposeDepthSort` sweeps).
+ * Abort every in-flight chunked application staged by `owner` (a depth-sort
+ * coordinator's dataset-switch teardown and dispose — its `releaseAllNodes` /
+ * `dispose`), or EVERY one when no owner is given (module-state reset in
+ * tests). Filtering on the owner rather than on the coordinator's current
+ * node list also catches an apply whose geometry no longer belongs to any of
+ * its nodes, without touching another coordinator's streams on the same page.
  *
- * Each abandoned ordering's `onAbandoned` fires (issue #713). The map is
- * snapshotted and cleared BEFORE any hook runs, so a hook can never
- * observe a half-cleared map or re-enter the sweep.
+ * Each abandoned ordering's `onAbandoned` fires (issue #713). The matching
+ * entries are removed BEFORE any hook runs, so a hook can never observe a
+ * half-cleared map or re-enter the sweep.
  */
-export function cancelAllSortedIndexOrderingApplies(): void {
-  const states = [...chunkedApplies.values()];
-  const selected = [...awaitingDrawAcknowledgement.values()];
-  chunkedApplies.clear();
-  awaitingDrawAcknowledgement.clear();
+export function cancelAllSortedIndexOrderingApplies(owner?: object): void {
+  const states = takeOwnedEntries(chunkedApplies, owner, (state) => applyOwner(state));
+  const selected = takeOwnedEntries(awaitingDrawAcknowledgement, owner, (c) => c.owner);
   for (const state of states) {
     state.callbacks?.onAbandoned?.();
     state.pending?.callbacks?.onAbandoned?.();
   }
   for (const callbacks of selected) callbacks.onAbandoned?.();
+}
+
+/** The owner tag of an in-flight apply (streaming or held ordering). */
+function applyOwner(state: ChunkedOrderingApply): object | undefined {
+  return state.callbacks?.owner ?? state.pending?.callbacks?.owner;
+}
+
+/**
+ * Remove and return the values of `map` owned by `owner` (all of them when
+ * `owner` is undefined).
+ */
+function takeOwnedEntries<K, V>(
+  map: Map<K, V>,
+  owner: object | undefined,
+  ownerOf: (value: V) => object | undefined
+): V[] {
+  const taken: V[] = [];
+  for (const [key, value] of map) {
+    if (owner !== undefined && ownerOf(value) !== owner) continue;
+    taken.push(value);
+    map.delete(key);
+  }
+  return taken;
 }
 
 /**
