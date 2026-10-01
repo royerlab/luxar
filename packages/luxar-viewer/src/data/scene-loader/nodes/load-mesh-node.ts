@@ -210,7 +210,10 @@ export async function loadMeshNode(
     // before the await would let a concurrent updateView sweep run on the same
     // instance mid-flight; registering on failure too is deliberate, so a failed
     // initial load stays retryable through `retryFailedLoader`.
-    ctx.registry.registerMeshLoader(node.path, loader);
+    // A dataset switched away during the load gets nothing registered, as in
+    // the register-only branch above: the registry outlives the dataset.
+    if (ctx.isDatasetLive()) ctx.registry.registerMeshLoader(node.path, loader);
+    else loader.dispose();
   }
   return placeholder;
 }

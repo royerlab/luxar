@@ -247,7 +247,10 @@ export async function loadGSplatsNode(
     // is invisible to them. Registering on FAILURE too is deliberate:
     // retryFailedLoader resolves eager loaders through these maps, so a
     // failed initial load must stay retryable.
-    ctx.registry.registerGSplatsLoader(node.path, loader);
+    // A dataset switched away during the load gets nothing registered, as in
+    // the register-only branch above: the registry outlives the dataset.
+    if (ctx.isDatasetLive()) ctx.registry.registerGSplatsLoader(node.path, loader);
+    else loader.dispose();
   }
   return placeholder;
 }
