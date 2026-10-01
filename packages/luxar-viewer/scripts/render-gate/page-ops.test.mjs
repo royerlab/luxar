@@ -1,6 +1,39 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { motion } from './page-ops.mjs';
+import { motion, rendererInfo } from './page-ops.mjs';
+
+describe('rendererInfo', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('distinguishes WebGPURenderer on WebGL2 from WebGLRenderer', async () => {
+    const gl = {
+      isContextLost: () => false,
+      getExtension: () => null,
+      getParameter: () => 'Hardware GPU',
+    };
+    const renderer = { isWebGPURenderer: true, backend: { isWebGLBackend: true, gl } };
+    vi.stubGlobal('window', { __luxarDebug: { app: { sceneManager: { renderer } } } });
+    expect((await rendererInfo()).api).toBe('webgpu-gl');
+    renderer.isWebGPURenderer = false;
+    expect((await rendererInfo()).api).toBe('webgl');
+  });
+
+  it('reports native WebGPU and an unrecognized backend without claiming the forced arm', async () => {
+    const gl = {
+      isContextLost: () => false,
+      getExtension: () => null,
+      getParameter: () => 'Hardware GPU',
+    };
+    const renderer = { isWebGPURenderer: true, backend: { isWebGPUBackend: true } };
+    vi.stubGlobal('window', { __luxarDebug: { app: { sceneManager: { renderer } } } });
+    vi.stubGlobal('navigator', {
+      gpu: { requestAdapter: async () => ({ info: { vendor: 'Hardware GPU' } }) },
+    });
+    expect(await rendererInfo()).toEqual({ api: 'webgpu', gpu: 'Hardware GPU', usable: true });
+    renderer.backend = { gl };
+    expect(await rendererInfo()).toEqual({ api: 'webgl', gpu: 'Hardware GPU', usable: true });
+  });
+});
 
 /**
  * A fake page whose GPU runs behind its CPU, the way headless Chrome with
