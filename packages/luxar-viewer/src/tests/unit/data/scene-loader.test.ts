@@ -3794,6 +3794,31 @@ describe('SceneLoader', () => {
       warningLog.mockRestore();
     });
 
+    it('counts re-drain rounds per ladder: one that gave up does not use up another’s', async () => {
+      // The backoff round used to be one integer per SceneLoader, so a ladder
+      // retired AFTER another had exhausted its rounds inherited the spent
+      // counter and was left at once, never re-drained.
+      const internals = sceneLoader as unknown as RecoveryInternals;
+      const stuck = flakyLadder(Number.POSITIVE_INFINITY);
+      internals.gsplatLoaders.set('/a', stuck);
+      const warningLog = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      await drain();
+      await vi.advanceTimersByTimeAsync(30 * 60_000);
+      const stuckCalls = stuck.calls;
+
+      const late = flakyLadder(MAX_CONSECUTIVE_REFINEMENT_FAILURES);
+      internals.gsplatLoaders.set('/b', late);
+      await drain();
+      expect(late.loadedLODCount).toBe(1);
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(late.loadedLODCount).toBe(3);
+      // The ladder that gave up for good is not re-opened by the other's round.
+      expect(stuck.calls).toBe(stuckCalls);
+      expect(getLoadTimeline().refinement.complete).toBe(true);
+      warningLog.mockRestore();
+    });
+
     it('a newer view re-opens a retired ladder at once instead of waiting out the backoff', async () => {
       const ladder = flakyLadder(3, 4);
       (sceneLoader as unknown as RecoveryInternals).gsplatLoaders.set('/g', ladder);

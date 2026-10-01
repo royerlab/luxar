@@ -563,9 +563,11 @@ export class SceneLoader {
    */
   private _retryLockWaiters: Array<(owned: boolean) => void> = [];
   // Pending re-drain of ladders the consecutive-failure cap retired, and the
-  // backoff round it is on (#2975). See `scheduleAbandonedRungRetry`.
+  // backoff round EACH retired ladder is on, keyed by node path (#2975). Per
+  // ladder: a ladder retired after another spent its rounds still gets its own.
+  // See `scheduleAbandonedRungRetry`.
   private _abandonedRetryTimer: ReturnType<typeof setTimeout> | null = null;
-  private _abandonedRetryRound = 0;
+  private _abandonedRetryRounds = new Map<string, number>();
   // Set true in dispose(); progressive-refinement loops poll this (via the
   // ctx isActive callback) so they abort promptly when this loader is torn
   // down mid-flight (e.g. a dataset switch) instead of fetching/decoding
@@ -2339,34 +2341,27 @@ export class SceneLoader {
    * @returns Whether a re-drain is pending (the drain is not complete).
    */
   private scheduleAbandonedRungRetry(): boolean {
-    const abandoned = abandonedLadderPaths(this.sweepLoaderEntries());
-    if (abandoned.length === 0) {
-      this._abandonedRetryRound = 0;
-      return false;
+    const entries = this.sweepLoaderEntries();
+    const abandoned = abandonedLadderPaths(entries);
+    // A ladder no longer retired (it recovered, or left the sweep) starts over.
+    for (const path of this._abandonedRetryRounds.keys()) {
+      if (!abandoned.includes(path)) this._abandonedRetryRounds.delete(path);
     }
-    if (this._abandonedRetryTimer !== null) return true;
-    const round = this._abandonedRetryRound;
-    if (round >= MAX_ABANDONED_RUNG_RETRY_ROUNDS) {
-      if (round === MAX_ABANDONED_RUNG_RETRY_ROUNDS) {
-        log.warning(
-          Modules.SCENE_LOADER,
-          `Leaving LOD refinement of ${abandoned.join(', ')} after ${round} re-drains ` +
-            '(a view change or restored connectivity retries it)'
-        );
-        this._abandonedRetryRound = round + 1;
-      }
-      return false;
-    }
+    if (this._abandonedRetryTimer !== null) return abandoned.length > 0;
+    const due = this.abandonedLaddersStillOwedARound(abandoned);
+    if (due.length === 0) return false;
+    const rounds = due.map((path) => this._abandonedRetryRounds.get(path) ?? 0);
     const delayMs = Math.min(
-      ABANDONED_RUNG_RETRY_BASE_MS * 2 ** round,
+      ABANDONED_RUNG_RETRY_BASE_MS * 2 ** Math.min(...rounds),
       ABANDONED_RUNG_RETRY_MAX_MS
     );
-    this._abandonedRetryRound = round + 1;
+    for (const [i, path] of due.entries()) this._abandonedRetryRounds.set(path, rounds[i] + 1);
     log.info(
       Modules.SCENE_LOADER,
-      `Re-draining abandoned LOD rung(s) of ${abandoned.join(', ')} in ${delayMs} ms ` +
-        `(round ${round + 1}/${MAX_ABANDONED_RUNG_RETRY_ROUNDS})`
+      `Re-draining abandoned LOD rung(s) of ${due.join(', ')} in ${delayMs} ms ` +
+        `(round ${Math.min(...rounds) + 1}/${MAX_ABANDONED_RUNG_RETRY_ROUNDS})`
     );
+    const dueSet = new Set(due);
     this._abandonedRetryTimer = setTimeout(() => {
       this._abandonedRetryTimer = null;
       if (this._disposed) return;
@@ -2374,18 +2369,45 @@ export class SceneLoader {
         noteRefinementAborted();
         return;
       }
-      reopenRefinementFailureTrackers(this.sweepLoaderEntries().map(([, loader]) => loader));
+      // Only the ladders this round is for: one that gave up stays retired.
+      reopenRefinementFailureTrackers(
+        this.sweepLoaderEntries()
+          .filter(([path]) => dueSet.has(path))
+          .map(([, loader]) => loader)
+      );
       if (!this.anyLoaderHasMoreLODs()) noteRefinementComplete();
       else this.kickRefinementIfIdle();
     }, delayMs);
     return true;
   }
 
+  /**
+   * The retired ladders still under {@link MAX_ABANDONED_RUNG_RETRY_ROUNDS};
+   * one that just ran out is left, with a single warning.
+   */
+  private abandonedLaddersStillOwedARound(abandoned: readonly string[]): string[] {
+    const due: string[] = [];
+    for (const path of abandoned) {
+      const round = this._abandonedRetryRounds.get(path) ?? 0;
+      if (round < MAX_ABANDONED_RUNG_RETRY_ROUNDS) {
+        due.push(path);
+      } else if (round === MAX_ABANDONED_RUNG_RETRY_ROUNDS) {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Leaving LOD refinement of ${path} after ${round} re-drains ` +
+            '(a view change or restored connectivity retries it)'
+        );
+        this._abandonedRetryRounds.set(path, round + 1);
+      }
+    }
+    return due;
+  }
+
   /** Drop a pending re-drain and its backoff (the retired ladders are re-opened elsewhere). */
   private cancelAbandonedRungRetry(): void {
     if (this._abandonedRetryTimer !== null) clearTimeout(this._abandonedRetryTimer);
     this._abandonedRetryTimer = null;
-    this._abandonedRetryRound = 0;
+    this._abandonedRetryRounds.clear();
   }
 
   /**
