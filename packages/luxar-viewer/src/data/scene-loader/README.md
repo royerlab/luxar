@@ -124,12 +124,11 @@ The subfolders:
   entire retry call so retry-from-inside-retry cannot deadlock and a
   slider event mid-retry is queued in the pending slot instead of
   racing into a concurrent `updateView`.
-- **Dataset abort is wired into the worker pool.** `lifecycle/load-scene.ts`
-  aborts the previous dataset's signal **before** `dispose()` runs so
-  in-flight `runWithTimeout` callers settle immediately;
-  `lifecycle/dispose.ts` clears the pool's signal so the next loader's
-  workers see no signal until `lifecycle/load-scene.ts` installs the
-  new one.
+- **Dataset abort is wired into the worker pool.** A loader loads one
+  dataset (a second `loadScene` throws). `lifecycle/dispose.ts` aborts its
+  dataset signal so in-flight `runWithTimeout` callers settle immediately,
+  then clears the pool's signal so the next loader's workers see no signal
+  until its `lifecycle/load-scene.ts` installs the new one.
 - **Best-effort prefetch.** Predictive prefetch errors are swallowed
   (`view-state/predicted-view-state.ts`, `view-state/view-state-queue.ts`)
   — a failed prefetch must never block the next demand fetch or

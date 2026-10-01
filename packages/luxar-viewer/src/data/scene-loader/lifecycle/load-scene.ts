@@ -2,9 +2,11 @@
  * Initial scene-load orchestrator.
  *
  * Sequence:
- *   1. Reset monitor + abort any in-flight worker tasks from a prior dataset.
- *   2. Dispose the previous loader (caching store, GPU pool, L0 cache,
- *      colormap LUTs, monitor closures) — awaited so stale writes drain.
+ *   1. Reset the monitor's loader bindings and the worker pool's signal (a
+ *      previous dataset's loader — disposed by `SceneLoaderManager` before
+ *      this one was built — may still own both).
+ *   2. (The loader is one-shot: `SceneLoader.loadScene` refuses a second
+ *      load, so there is never an earlier dataset of THIS loader to dispose.)
  *   3. Fresh AbortController wired into the worker pool's signal.
  *   4. Reset the predictive-prefetch baseline (otherwise the first
  *      updateView extrapolates from the prior dataset's slicePosition).
@@ -111,8 +113,6 @@ export interface LoadSceneCtx {
 
   // Lifecycle callbacks the orchestrator owns:
   normalizeURL(url: string): string;
-  /** Await any previous loader's teardown before constructing the new one. */
-  dispose(): Promise<void>;
   /** Reset the predictive-prefetch baseline. */
   clearViewStatePrev(): void;
   /**
@@ -173,8 +173,6 @@ export interface LoadSceneCtx {
   setZarrStore(store: zarr.Readable): void;
   setRootGroup(group: THREE.Group): void;
   setSceneGraph(graph: SceneNode): void;
-  /** Current abort controller — `loadScene` aborts it before disposing. */
-  getDatasetAbortController(): AbortController | null;
 }
 
 /**
@@ -275,34 +273,16 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // Clear any existing loaders from monitor before loading new scene
   ctx.monitor()?.disconnectAllLoaders();
 
-  // Abort any in-flight worker tasks queued by the previous dataset.
-  // Doing this BEFORE `dispose()` settles already-racing
-  // `runWithTimeout` callers immediately so they unwind without
-  // waiting for the worker tasks to complete — the worker keeps
-  // executing the WASM kernels to completion (no WASM cancellation),
-  // but the results are dropped.
-  const prevAbort = ctx.getDatasetAbortController();
-  if (prevAbort) {
-    prevAbort.abort();
-    ctx.setDatasetAbortController(null);
-  }
+  // The worker pool is a module singleton: drop any signal a previous
+  // dataset's loader left on it before this dataset installs its own.
   getWorkerPool().setAbortSignal(undefined);
 
-  // Spawn the data workers NOW, in parallel with the metadata fetch and the
-  // teardown below, rather than letting the first chunk decode pay for it.
+  // Spawn the data workers NOW, in parallel with the metadata fetch, rather
+  // than letting the first chunk decode pay for it.
   // Measured on a hosted demo: lazy creation started the pool 1.93 s after
   // this point, by which time LOD 0's bytes had already arrived and were
   // simply waiting. Fire-and-forget and idempotent across dataset switches.
   warmUpDataWorkerPool();
-
-  // Dispose of any existing loaders. Awaited so the previous caching
-  // store fully drains (prefetcher tear-down, OPFS metadata flush,
-  // validation cancellation) before we construct the next one — without
-  // this, rapid dataset switches let an old store's writes land after
-  // the new store starts initialising.
-  if (ctx.loaders.size > 0) {
-    await ctx.dispose();
-  }
 
   // Fresh abort source for THIS dataset; wire into the worker pool so
   // every subsequent `runWithTimeout` races against it.

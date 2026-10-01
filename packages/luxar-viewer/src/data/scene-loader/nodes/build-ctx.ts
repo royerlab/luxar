@@ -160,7 +160,8 @@ export interface NodeBuildCtx {
   isDatasetLive(): boolean;
   /**
    * Release a lazily-loaded gsplats level's GPU geometry back to the
-   * evictable buffer pool and unregister its loader. Called when the
+   * evictable buffer pool (its loader is never registered: lazy levels stay
+   * out of the sweep, and the lod_group's `ensureLoaded` keeps it). Called when the
    * lod_group selector swaps away from a substitutive level, so resident
    * geometry stays bounded to ≈ the visible set rather than accumulating
    * every level ever shown. The raw chunks remain in the decompressed
@@ -170,7 +171,7 @@ export interface NodeBuildCtx {
 
   /**
    * Release a lazily-loaded points level's GPU geometry back to the evictable
-   * buffer pool and unregister its loader. Peer of :meth:`releaseLazyGSplats`
+   * buffer pool. Peer of :meth:`releaseLazyGSplats`
    * for points lod-group children (the finest level of a points-substitutive
    * ladder). Raw chunks remain in the decompressed cache, so re-selection
    * re-projects cheaply.
@@ -179,7 +180,7 @@ export interface NodeBuildCtx {
 
   /**
    * Release a lazily-loaded lines level's GPU geometry back to the evictable
-   * buffer pool and unregister its loader. Peer of :meth:`releaseLazyPoints` /
+   * buffer pool. Peer of :meth:`releaseLazyPoints` /
    * :meth:`releaseLazyGSplats` for lines lod-group children (the finest level of
    * a lines-substitutive ladder).
    */

@@ -322,18 +322,26 @@ describe('LoaderRegistry — kind-keyed surface', () => {
     expect(r.totalLoaderCount).toBe(4);
   });
 
-  it('generic register/unregister match the named per-type methods', () => {
+  it('generic register matches the named per-type methods', () => {
     const generic = new LoaderRegistry();
     const named = new LoaderRegistry();
 
     generic.register('lines', '/x', makeStub<LinesDataLoader>());
     named.registerLinesLoader('/x', makeStub<LinesDataLoader>());
     expect(generic.getLoaderType('/x')).toBe(named.getLoaderType('/x'));
+  });
 
-    generic.unregister('lines', '/x');
-    named.unregisterLinesLoader('/x');
-    expect(generic.getLoaderType('/x')).toBeNull();
-    expect(named.getLoaderType('/x')).toBeNull();
+  it('kindsWithMoreLODs lists each kind with a ladder left, once, in bucket order', () => {
+    const r = new LoaderRegistry();
+    r.register('gsplats', '/g', { ...makeStub<GSplatsDataLoader>(), hasMoreLODs: true } as never);
+    r.register('lines', '/l0', { ...makeStub<LinesDataLoader>(), hasMoreLODs: false } as never);
+    r.register('lines', '/l1', { ...makeStub<LinesDataLoader>(), hasMoreLODs: true } as never);
+    r.register('lines', '/l2', { ...makeStub<LinesDataLoader>(), hasMoreLODs: true } as never);
+    // A non-progressive loader has no `hasMoreLODs` at all.
+    r.register('points', '/p', makeStub<DataLoader>());
+    expect(r.kindsWithMoreLODs()).toEqual(['lines', 'gsplats']);
+    expect(r.anyHasMoreLODs()).toBe(true);
+    expect(new LoaderRegistry().anyHasMoreLODs()).toBe(false);
   });
 
   it('disposeAll disposes every kind and empties every bucket', () => {

@@ -297,13 +297,11 @@ function concatSweeps<A, B, C, D>(
  * - Dimension metadata management
  * - Memory-efficient loading with proper caching
  *
- * **Lifecycle: one-shot.** Each `loadScene()` call disposes prior
- * loaders + caches and nulls the monitor reference. Reusing a single
- * `SceneLoader` instance across two `loadScene()` calls is unsupported
- * and will leave the second load with a null monitor reference. Use
- * `SceneLoaderManager.createLoader()` (the canonical entry point in
- * `data/zarr-loader.ts`), which constructs a fresh loader per load —
- * the SceneLoaderManager handles the destroy/recreate dance for you.
+ * **Lifecycle: one-shot.** A loader loads exactly one dataset: a second
+ * `loadScene()` — or one after `dispose()`, which is terminal — throws. Use
+ * `SceneLoaderManager.createLoaderAsync()` (the canonical entry point), which
+ * awaits the previous loader's teardown and constructs a fresh loader per
+ * dataset.
  */
 export class SceneLoader {
   private _zarrStore: zarr.Readable | null = null;
@@ -325,15 +323,10 @@ export class SceneLoader {
    * Scene-wide byte-ceiling record for progressive refinement, surfaced on the
    * debug snapshot (#2508); lifetime contract on {@link RefinementResidencyStop}.
    *
-   * DELIBERATELY NOT CLEARED BY `dispose()`, because production reaches a new
-   * scene only through `SceneLoaderManager.createLoaderAsync`, which builds a
-   * fresh loader and reporter — a reset here would be code no path executes.
-   * Only the in-place `dispose()` in `scene-loader/lifecycle/load-scene.ts`
-   * would notice: it nulls `_gpuBufferPool` for good (the pool is constructed
-   * only in this class's constructor, so `SceneLoaderManager.gpuPoolStats()`
-   * then returns `undefined` and `gpuPool` is ABSENT from every later snapshot)
-   * while this `readonly` reporter survives. Latent regardless — reusing one
-   * `SceneLoader` across two `loadScene()` calls is unsupported (class docstring).
+   * DELIBERATELY NOT CLEARED BY `dispose()`: a loader loads one dataset and
+   * `dispose()` is terminal (a second `loadScene()` throws), so a new scene
+   * always gets a fresh loader and reporter through
+   * `SceneLoaderManager.createLoaderAsync`.
    */
   private readonly refinementResidencyReporter = new RefinementResidencyReporter();
   // Projected-density rung gate (density-gate.ts); null = no provider wired
@@ -496,6 +489,8 @@ export class SceneLoader {
   // down mid-flight (e.g. a dataset switch) instead of fetching/decoding
   // against a dead dataset.
   private _disposed = false;
+  /** Set by the first `loadScene`; a loader loads exactly one dataset. */
+  private _loadStarted = false;
   private _sceneGraph: SceneNode | null = null;
   /** See {@link setLeafMaterializedListener}. */
   private _leafMaterializedListener: LeafMaterializedListener | null = null;
@@ -986,6 +981,8 @@ export class SceneLoader {
    *          - bounds: AABB of all points
    *          - nodeCount: Total number of leaf nodes
    *
+   * @throws {Error} If this loader already loaded a scene or was disposed
+   *         (one-shot — see the class doc)
    * @throws {Error} If the Zarr store cannot be opened or is invalid
    * @throws {Error} If consolidated metadata (.zmetadata) is malformed
    * @throws {Error} If required arrays (positions) are missing from point nodes
@@ -1025,6 +1022,16 @@ export class SceneLoader {
    * @see {@link MultiLevelCachingStore} for caching implementation
    */
   async loadScene(url: string): Promise<THREE.Group> {
+    // One-shot (see the class doc): a second load would run against this
+    // loader's spent pass scheduler, caches and abort controller. Refuse it
+    // loudly rather than reuse a half-torn-down instance.
+    if (this._loadStarted || this._disposed) {
+      throw new Error(
+        'SceneLoader.loadScene is one-shot: create a fresh loader ' +
+          '(SceneLoaderManager.createLoaderAsync) for each dataset'
+      );
+    }
+    this._loadStarted = true;
     try {
       return await loadSceneHelper(url, this.makeLoadSceneCtx());
     } catch (error) {
@@ -1047,7 +1054,6 @@ export class SceneLoader {
       profiler: this.profiler,
       lodGroupRegistry: this.lodGroupRegistry,
       normalizeURL: (u) => this.normalizeURL(u),
-      dispose: () => this.dispose(),
       clearViewStatePrev: () => this.viewStateQueue.clearPrev(),
       initializeSceneDimensions: (sd) => this.initializeSceneDimensions(sd),
       makeNodeBuildCtx: () => this.makeNodeBuildCtx(),
@@ -1089,7 +1095,6 @@ export class SceneLoader {
         this._identityWatchdog?.dispose();
         this._identityWatchdog = w;
       },
-      getDatasetAbortController: () => this._datasetAbortController,
     };
   }
 
@@ -2103,10 +2108,10 @@ export class SceneLoader {
       },
       isDatasetLive: () => this._datasetAbortController === ctrl && ctrl?.signal.aborted !== true,
       releaseLazyGSplats: (path) => {
-        // Return the level's GPU buffer to the evictable pool and drop
-        // its loader so the scene-wide updateView sweep won't reload it.
+        // Return the level's GPU buffer to the evictable pool. Its loader was
+        // never registered (lazy levels stay out of the sweep), so there is
+        // nothing to unregister.
         this._gpuBufferPool?.releaseGSplatsGeometry(path);
-        this.registry.unregisterGSplatsLoader(path);
         this.clearCommittedDataStamp(path);
         // Also drop the level's depth-sort state + worker-side centers: a
         // demoted level won't sort again until re-promotion re-registers it
@@ -2117,10 +2122,9 @@ export class SceneLoader {
       },
       releaseLazyPoints: (path) => {
         // Points peer of releaseLazyGSplats: return the level's GPU buffer to
-        // the evictable pool and drop its loader. Re-selection reloads via the
-        // lod_group's ensureLoaded thunk (cheap re-projection from cached chunks).
+        // the evictable pool. Re-selection reloads via the lod_group's
+        // ensureLoaded thunk (cheap re-projection from cached chunks).
         this._gpuBufferPool?.releasePointsGeometry(path);
-        this.registry.unregisterPointsLoader(path);
         this.clearCommittedDataStamp(path);
         // Drop the level's depth-sort state + worker-side centers — the
         // same demotion hygiene as the gsplats branch above.
@@ -2130,7 +2134,6 @@ export class SceneLoader {
       releaseLazyLines: (path) => {
         // Lines peer of releaseLazyGSplats/releaseLazyPoints.
         this._gpuBufferPool?.releaseLinesGeometry(path);
-        this.registry.unregisterLinesLoader(path);
         this.clearCommittedDataStamp(path);
         // Drop the level's depth-sort state + worker-side midpoints —
         // the same demotion hygiene as the gsplats/points branches above.

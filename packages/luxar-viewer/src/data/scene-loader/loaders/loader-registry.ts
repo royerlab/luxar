@@ -178,20 +178,6 @@ export class LoaderRegistry {
   }
 
   /**
-   * Drop a single loader so it no longer participates in scene-wide
-   * ``updateView`` sweeps. Defensive: lazy substitutive LOD levels are never
-   * registered in the first place (they stay out of the sweep by design — see
-   * ``load-lod-group-node.ts``; the registry drives their reloads), so on the
-   * lazy-release path this is a no-op. It exists so a future path that DOES
-   * register such a loader cannot leak it into the sweep after its geometry was
-   * released. The loader object itself stays alive in the lod_group's
-   * ``ensureLoaded`` closure for reload.
-   */
-  unregister<K extends GeometryKind>(kind: K, path: string): void {
-    this.loadersOf(kind).delete(path);
-  }
-
-  /**
    * Register a points loader for a given path.
    */
   registerPointsLoader(path: string, loader: DataLoader): void {
@@ -217,26 +203,6 @@ export class LoaderRegistry {
    */
   registerMeshLoader(path: string, loader: MeshDataLoader): void {
     this.register('mesh', path, loader);
-  }
-
-  /** Peer of {@link unregister}, kept for call-site readability. */
-  unregisterMeshLoader(path: string): void {
-    this.unregister('mesh', path);
-  }
-
-  /** Peer of {@link unregister}, kept for call-site readability. */
-  unregisterGSplatsLoader(path: string): void {
-    this.unregister('gsplats', path);
-  }
-
-  /** Peer of {@link unregister}, kept for call-site readability. */
-  unregisterPointsLoader(path: string): void {
-    this.unregister('points', path);
-  }
-
-  /** Peer of {@link unregister}, kept for call-site readability. */
-  unregisterLinesLoader(path: string): void {
-    this.unregister('lines', path);
   }
 
   // ---------------------------------------------------------------------------

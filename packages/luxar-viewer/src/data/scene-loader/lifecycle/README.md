@@ -17,11 +17,12 @@ builds the ctx and calls into here.
 
 ## Invariants
 
-- **Dataset abort precedes dispose.** `load-scene.ts` aborts the
-  previous dataset's signal before `dispose()` runs so in-flight
-  `runWithTimeout` callers settle immediately; `dispose.ts` then
-  clears the worker pool's signal so the next loader's tasks see a
-  clean slate.
+- **One dataset per loader.** `SceneLoader.loadScene` refuses a second
+  load (and any load after `dispose()`, which is terminal);
+  `SceneLoaderManager.createLoaderAsync` awaits the previous loader's
+  `dispose.ts` teardown — which aborts its dataset signal, so in-flight
+  `runWithTimeout` callers settle immediately, and clears the worker
+  pool's signal — before building the next loader.
 - **Retry is lock-free.** `retry.ts` never touches the serialization
   lock — the orchestrator takes it once around the whole retry call
   (`PassScheduler.acquireForRetry`, which pre-empts a refinement drain
