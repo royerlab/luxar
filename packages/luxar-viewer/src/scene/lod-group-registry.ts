@@ -41,7 +41,7 @@
  *
  * **Partition frustum gating** (``registerPartition`` / ``evaluatePartitionEntry``):
  * a ``kind=partition`` group's parts are tested every frame against a frustum
- * padded by ``PARTITION_FRUSTUM_MARGIN``; a part outside it is hidden and
+ * padded by ``config.lod.partitionFrustumMargin``; a part outside it is hidden and
  * stamped ``userData.partitionFrustumVisible = false``, which the scene
  * loader's sweep and refinement read to skip its loaders. Because a culled part
  * misses slice updates, its RE-ENTRY requests a resync of exactly that part's
@@ -95,7 +95,6 @@ import { config } from '../config';
 import { applyLodFade, FADE_EPSILON, isBlendableSubtree } from './lod-fade';
 import {
   computeEntryWorldBox,
-  MAX_MEDIAN_FOOTPRINT_PX,
   pickChildByFootprintWithHysteresis,
   pickChildWithHysteresis,
   preloadNeighbourIndex,
@@ -182,15 +181,6 @@ export interface PreloadVisit {
   sawReady: boolean;
 }
 
-/**
- * Exit half-width of the preload band, as a fraction of the smaller adjacent
- * inter-threshold gap: a visit ends only once the metric leaves this band, which
- * is wider than the entry band (``config.lod.preloadBandFraction``) so a camera
- * hovering at the entry edge does not start a new visit (and a reload) per
- * wobble. 0.5 is the widest band that cannot reach a neighbouring threshold's.
- */
-const PRELOAD_EXIT_BAND_FRACTION = 0.5;
-
 /** Perf counter: displayed-level changes of a lod group (one per group per frame). */
 const S_LOD_LEVEL_SWAPS = perfCounters.slot('lod.levelSwaps');
 /** Perf counter: group-frames drawing two levels cross-faded (one per group per frame). */
@@ -216,97 +206,6 @@ function countLodDisplay(
     perfCounters.add(S_LOD_BLEND_FRAMES);
   }
 }
-
-/**
- * Milliseconds the view-update version must hold steady before the registry
- * reloads a stale fine level (the settle debounce — see `maybeKickReload`).
- * While the user is actively scrubbing (version changes every frame) only the
- * cheap coarse level shows; the fine level reloads once they pause this long.
- * In milliseconds, like `STALE_HOLD_MS`, so it means the same on any display
- * (it was 8 frames: 130 ms at 60 Hz, 48 ms at 165 Hz).
- *
- * Playback does not wait for it (see {@link PLAYBACK_LOAD_BUDGET_FRACTION}): a
- * playing timelapse bumps the version every period, so it never settles.
- */
-const FINE_RELOAD_SETTLE_MS = 130;
-
-/**
- * During playback the registry aspires to the finest level whose measured
- * load+commit time (``LODGroupChild.loadEwmaMs``) is at most this fraction of
- * the playback period, and reloads it on every timepoint without waiting for
- * the settle debounce. A level the period cannot carry would be stale on
- * every frame and drop the display to the coarsest fresh level; the finest
- * one that CAN keep up is what a video player's "auto quality" would pick.
- * An unmeasured lazy level counts as fitting, so it gets measured.
- */
-const PLAYBACK_LOAD_BUDGET_FRACTION = 0.8;
-
-/**
- * Hysteresis for {@link PLAYBACK_LOAD_BUDGET_FRACTION}: the current aspiration,
- * and any coarser level a demotion steps down to, only needs a reload average
- * within this fraction of the period (a finer level is still admitted at 0.8).
- * Without it a level whose reloads straddle the admission budget flipped with
- * each sample (lod_timelapse at 20 fps on obsidian: an average of 40.6 ms
- * against a 40 ms budget sent the mid level to the coarsest for a second), and
- * a demoted finest level skipped a mid level averaging 45 ms of a 50 ms period.
- */
-const PLAYBACK_KEEP_BUDGET_FRACTION = 1.0;
-
-/** Weight of a new sample in ``LODGroupChild.loadEwmaMs``. */
-const LOAD_EWMA_ALPHA = 0.3;
-
-/**
- * Retry the next capped playback level once per second to measure warm loads.
- * The probe's reload REPLACES the level's average rather than moving it 30%:
- * on lod_timelapse at 20 fps (obsidian) the first loop's cache-miss reloads
- * (80-200 ms) capped the mid level, and blending each warm 5-10 ms probe into
- * that stale average took four to six probes, i.e. seconds at the coarsest level.
- */
-const PLAYBACK_PROBE_INTERVAL_MS = 1000;
-
-/**
- * Milliseconds the registry will keep a STALE previously-displayed level on screen,
- * rather than dropping to a much coarser fresh one, while the aspiration
- * re-commits for a new slice (see ``staleHoldDisplayIndex``).
- *
- * The slice-aware fallback below shows the coarsest FRESH level the instant a
- * scrub invalidates the aspiration. That is right when the aspiration is
- * seconds away, and wrong when it is milliseconds away from a warm cache: on a
- * 151-timepoint gsplat timelapse the coarse level re-commits in ~10 ms and the
- * finest in ~70 ms, so every single step of the Time slider flashed 6,900
- * splats down to 108 and back — 1.6% of the detail, for four frames. A video
- * player holds the previous frame until the next one decodes; so does this.
- *
- * Bounded, because holding is only better while the wait is short. The budget
- * is spent from when the hold STARTS and is not refreshed by further version
- * bumps, so a continuous drag (a new version every frame, the aspiration never
- * committing) exhausts it once and then shows live coarse geometry exactly as
- * before.
- *
- * In MILLISECONDS, deliberately, like the settle debounce above: this is a
- * tolerance for how long a viewer may show the previous slice, which is a
- * wall-clock judgement. Sizing it in frames makes it display-dependent — the
- * first version of this fix used 8 frames and worked on a 60 Hz panel while
- * still flashing on a 165 Hz one, where 8 frames is 48 ms and the re-commit
- * needs ~70.
- *
- * 250 ms is comfortably above the ~70 ms a warm re-slice takes on a 1.6 M-splat
- * timelapse and well below the point where a frozen frame reads as a hang.
- */
-const STALE_HOLD_MS = 250;
-
-/**
- * How much worse the coarse fresh fallback must be, as a fraction of the held
- * level's committed element count, before holding a STALE finer level is worth
- * it (see ``staleHoldDisplayIndex``).
- *
- * Freshness normally wins: showing the right slice matters more than showing
- * more geometry. The exception this ratio carves out is the case where the
- * fallback is not a slightly coarser view of the new slice but a token of it —
- * the 108-of-6,900-splat drop that made a timelapse step read as a flash. At
- * half the detail or better the fallback is taken immediately, as before.
- */
-const STALE_HOLD_MIN_RATIO = 0.5;
 
 /**
  * Unit anchor for the LEGACY ``selector: 'coverage'`` thresholds (older
@@ -466,17 +365,6 @@ export const FILL_FACTOR = 0.5;
  */
 export const SCREEN_FILL_DIAGONAL_RATIO = 2;
 
-/**
- * Milliseconds a lazy level stays in the ``failed`` state before the registry
- * retries its deferred load — long enough to avoid per-frame retry storms
- * after a hard failure, short enough that a transient (network blip) failure
- * self-heals. Wall-clock, not a frame count: a 30 Hz display or a throttled
- * tab would otherwise stretch it, and the registry keeps the loop ticking
- * while a level cools (see ``LODGroupRegistry.isCoolingDown``), so a parked
- * camera still reaches the retry (#2944 A6). See ``maybeKickLoad``.
- */
-const FAILED_RETRY_MS = 2000;
-
 /** One LOD-group child as tracked by the registry. */
 export interface LODGroupChild {
   /**
@@ -590,7 +478,7 @@ export interface LODGroupChild {
   failureReason?: string;
   /**
    * Registry clock (``frame.nowMs``) when ``failed`` was first observed. Drives
-   * the transient-failure retry cooldown (``FAILED_RETRY_MS``): once it
+   * the transient-failure retry cooldown (``config.lod.failedRetryMs``): once it
    * elapses the registry clears ``failed`` and retries the load, so a
    * level that fails on *reload* (after a successful load + byte-eviction)
    * is not stuck on its placeholder forever. Cleared alongside ``failed``.
@@ -723,7 +611,7 @@ export interface LODGroupEntry {
    */
   staleHoldSinceMs?: number;
   /**
-   * True once a stale hold has exhausted `STALE_HOLD_MS` without the
+   * True once a stale hold has exhausted `config.lod.staleHoldMs` without the
    * aspiration recommitting. Latches the coarse fallback for the rest of this
    * scrub; cleared when the aspiration finally lands fresh.
    */
@@ -895,19 +783,25 @@ function pickStampedFootprintChild(
   return pickChildByFootprintWithHysteresis(
     cache.footprintPx,
     entry.activeChildIndex,
-    MAX_MEDIAN_FOOTPRINT_PX / Math.sqrt(options.lodBias)
+    config.lod.maxMedianFootprintPx / Math.sqrt(options.lodBias)
   );
 }
 const PARTITION_FRUSTUM_SCRATCH = new THREE.Frustum();
 const PARTITION_FRUSTUM_MATRIX_SCRATCH = new THREE.Matrix4();
-// Cold parts have no loaded footprint to union, so pad x/y symmetrically to
-// preload them before entry and keep entry/exit behavior from becoming asymmetric.
-const PARTITION_FRUSTUM_MARGIN = 0.1;
-const PARTITION_FRUSTUM_SCALE = new THREE.Matrix4().makeScale(
-  1 / (1 + PARTITION_FRUSTUM_MARGIN),
-  1 / (1 + PARTITION_FRUSTUM_MARGIN),
-  1
-);
+/** The partition frustum's screen-space pad (``config.lod.partitionFrustumMargin``), reused. */
+const PARTITION_FRUSTUM_SCALE = new THREE.Matrix4();
+
+/**
+ * Projection × view padded by ``config.lod.partitionFrustumMargin`` on x/y:
+ * cold parts have no loaded footprint to union, so the pad preloads them
+ * before entry and keeps entry and exit symmetric.
+ */
+function setPartitionFrustum(projView: THREE.Matrix4): void {
+  const pad = 1 / (1 + config.lod.partitionFrustumMargin);
+  PARTITION_FRUSTUM_SCALE.makeScale(pad, pad, 1);
+  PARTITION_FRUSTUM_MATRIX_SCRATCH.copy(projView).premultiply(PARTITION_FRUSTUM_SCALE);
+  PARTITION_FRUSTUM_SCRATCH.setFromProjectionMatrix(PARTITION_FRUSTUM_MATRIX_SCRATCH);
+}
 const WORLD_BOX3_SCRATCH = new THREE.Box3();
 /** projection × view × a group's matrixWorld: local box corners → clip space. */
 const LOCAL_PROJ_SCRATCH = new THREE.Matrix4();
@@ -919,11 +813,6 @@ const PARTITION_BECAME_VISIBLE = 2;
 // ``evaluatePartitionEntry`` and merged into ``partitionResyncPending`` only
 // on a rising edge (rare), so the steady-state per-frame path allocates nothing.
 const RISING_PARTS_SCRATCH = new Set<string>();
-/**
- * How long a deferred part's activation request may wait for a pass to reach
- * it before the per-frame gate asks again (see ``LazyPartState``).
- */
-const LAZY_REQUEST_TIMEOUT_MS = 2000;
 // Partitions skipped this frame because their wrapper was hidden (re-checked
 // after the LOD pass, which may reveal them). Reused: no per-frame allocation.
 const HIDDEN_PARTITIONS_SCRATCH: PartitionGroupEntry[] = [];
@@ -1032,7 +921,7 @@ export interface PartitionPartRef {
  * per-frame gate asked the loader for a pass to activate it (a pending
  * resync), `running` while that pass's activation is in flight; both clear
  * when the pass declines it, so a part still wanted is asked for again. A
- * request no pass has reached within `LAZY_REQUEST_TIMEOUT_MS` (the resync was
+ * request no pass has reached within `config.lod.lazyActivationRequestTimeoutMs` (the resync was
  * rejected, or superseded by a pass targeting other parts) expires, and the
  * registry keeps ticking until then so a parked camera asks again (#2944).
  */
@@ -1200,7 +1089,7 @@ export interface LODGroupRegistryDeps {
   getViewVersion?: () => number;
   /**
    * Monotonic wall clock in milliseconds, for the stale-hold budget (see
-   * `STALE_HOLD_MS`). Injectable so tests can advance it deterministically;
+   * `config.lod.staleHoldMs`). Injectable so tests can advance it deterministically;
    * omitted ⇒ ``performance.now()``.
    */
   now?: () => number;
@@ -1274,7 +1163,7 @@ export interface LODGroupRegistryDeps {
    * when nothing plays (`DimensionAnimationManager.getPlaybackPeriodMs`).
    * While non-null, lazy levels reload on every timepoint without the settle
    * debounce and the aspiration is capped at the finest level whose measured
-   * load time fits (see `PLAYBACK_LOAD_BUDGET_FRACTION`). Omitted ⇒ never
+   * load time fits (see `config.lod.playbackLoadBudgetFraction`). Omitted ⇒ never
    * playing — identical to the pre-feature behaviour.
    */
   getPlaybackPeriodMs?: () => number | null;
@@ -1828,8 +1717,7 @@ export class LODGroupRegistry {
     const displayDims = this.deps.getDisplayDims();
     const view = this.view();
     if (displayDims.length < 2 || view.viewportCss === null) return null;
-    PARTITION_FRUSTUM_MATRIX_SCRATCH.copy(view.projView).premultiply(PARTITION_FRUSTUM_SCALE);
-    PARTITION_FRUSTUM_SCRATCH.setFromProjectionMatrix(PARTITION_FRUSTUM_MATRIX_SCRATCH);
+    setPartitionFrustum(view.projView);
     groupObject.updateWorldMatrix(true, false);
     const inFrustum: boolean[] = [];
     const distance: number[] = [];
@@ -2374,10 +2262,7 @@ export class LODGroupRegistry {
     // eviction, and the per-group projections reuse the matrix.
     FRUSTUM_MATRIX_SCRATCH.copy(view.projView);
     FRUSTUM_SCRATCH.copy(view.frustum);
-    PARTITION_FRUSTUM_MATRIX_SCRATCH.copy(FRUSTUM_MATRIX_SCRATCH).premultiply(
-      PARTITION_FRUSTUM_SCALE
-    );
-    PARTITION_FRUSTUM_SCRATCH.setFromProjectionMatrix(PARTITION_FRUSTUM_MATRIX_SCRATCH);
+    setPartitionFrustum(FRUSTUM_MATRIX_SCRATCH);
 
     // Track whether the (global) view version has settled, to gate deferred
     // fine-level reloads (see ``evaluateEntry``). ``undefined`` view version
@@ -2389,7 +2274,8 @@ export class LODGroupRegistry {
     const version = this.deps.getViewVersion?.();
     if (version != null) this.settleTracker.observe(version, this.frame.nowMs);
     const settled =
-      version == null || this.settleTracker.isSettled(this.frame.nowMs, FINE_RELOAD_SETTLE_MS);
+      version == null ||
+      this.settleTracker.isSettled(this.frame.nowMs, config.lod.fineReloadSettleMs);
 
     let levelChanged = false;
     let cullChanged = false;
@@ -2539,7 +2425,7 @@ export class LODGroupRegistry {
     return (
       c.failed === true &&
       c.failedAtMs !== undefined &&
-      this.frame.nowMs - c.failedAtMs < FAILED_RETRY_MS
+      this.frame.nowMs - c.failedAtMs < config.lod.failedRetryMs
     );
   }
 
@@ -2562,7 +2448,7 @@ export class LODGroupRegistry {
       c.loadEwmaMs =
         c.loadEwmaMs === undefined || samples < 2 || c.playbackProbePending === true
           ? ms
-          : c.loadEwmaMs + LOAD_EWMA_ALPHA * (ms - c.loadEwmaMs);
+          : c.loadEwmaMs + config.lod.loadEwmaAlpha * (ms - c.loadEwmaMs);
       c.loadSamples = samples + 1;
     }
     c.playbackProbePending = undefined;
@@ -2572,7 +2458,7 @@ export class LODGroupRegistry {
 
   /**
    * During playback, the finest level at or below ``desired`` that can reload
-   * within ``PLAYBACK_LOAD_BUDGET_FRACTION`` of the period: an eager level
+   * within ``config.lod.playbackLoadBudgetFraction`` of the period: an eager level
    * (no ``ensureLoaded`` — the per-slice sweep carries it), an unmeasured one,
    * or one whose ``loadEwmaMs`` fits. Once per second, the next finer capped
    * level is probed for a warm-load sample. ``desired`` is unchanged when not
@@ -2591,9 +2477,9 @@ export class LODGroupRegistry {
    * with only its cold first load measured (``loadSamples`` < 2) counts as
    * unmeasured, so one cold sample cannot demote it; a level whose warm
    * reloads are too slow is demoted after its second load. A level finer than
-   * the aspiration must fit ``PLAYBACK_LOAD_BUDGET_FRACTION`` of the period to
+   * the aspiration must fit ``config.lod.playbackLoadBudgetFraction`` of the period to
    * be admitted; the aspiration and the levels below it only need
-   * ``PLAYBACK_KEEP_BUDGET_FRACTION`` (hysteresis).
+   * ``config.lod.playbackKeepBudgetFraction`` (hysteresis).
    */
   private affordablePlaybackLevel(entry: LODGroupEntry, desired: number, periodMs: number): number {
     for (let i = desired; i > 0; i--) {
@@ -2601,8 +2487,8 @@ export class LODGroupRegistry {
       const ewma = (c.loadSamples ?? 0) >= 2 ? c.loadEwmaMs : undefined;
       const fraction =
         i <= entry.activeChildIndex && c.playbackProbeAdmissionPending !== true
-          ? PLAYBACK_KEEP_BUDGET_FRACTION
-          : PLAYBACK_LOAD_BUDGET_FRACTION;
+          ? config.lod.playbackKeepBudgetFraction
+          : config.lod.playbackLoadBudgetFraction;
       if (!c.ensureLoaded || ewma === undefined || ewma <= fraction * periodMs) {
         if (ewma !== undefined) c.playbackProbeAdmissionPending = undefined;
         return i;
@@ -2636,7 +2522,7 @@ export class LODGroupRegistry {
       const now = this.frame.nowMs;
       if (
         now - (next.lastPlaybackProbeMs ?? Number.NEGATIVE_INFINITY) >=
-        PLAYBACK_PROBE_INTERVAL_MS
+        config.lod.playbackProbeIntervalMs
       ) {
         next.lastPlaybackProbeMs = now;
         // ``playbackProbePending`` waits for the reload to start (see
@@ -2815,7 +2701,7 @@ export class LODGroupRegistry {
     if (!wanted || lazy.running || lazy.failed) return;
     if (lazy.requested) {
       // Outstanding: keep ticking until it is reached or expires.
-      if (this.frame.nowMs - lazy.requestedAtMs < LAZY_REQUEST_TIMEOUT_MS) {
+      if (this.frame.nowMs - lazy.requestedAtMs < config.lod.lazyActivationRequestTimeoutMs) {
         this.lazyRequestOutstanding = true;
         return;
       }
@@ -3328,7 +3214,7 @@ export class LODGroupRegistry {
    * Residency is otherwise left to the byte budget: a preloaded level is an
    * ordinary hidden eviction candidate. Once it has landed, a release is not
    * followed by a reload until the metric leaves the wider exit band
-   * (``PRELOAD_EXIT_BAND_FRACTION``) and comes back, so VRAM pressure cannot
+   * (``config.lod.preloadExitBandFraction``) and comes back, so VRAM pressure cannot
    * turn a parked camera into a load/evict loop.
    */
   private preloadNeighbour(
@@ -3389,7 +3275,7 @@ export class LODGroupRegistry {
         thresholds,
         desired,
         metric,
-        PRELOAD_EXIT_BAND_FRACTION
+        config.lod.preloadExitBandFraction
       );
       return visit !== undefined && exitIdx === visit.idx ? null : this.endPreload(path);
     }
@@ -3696,15 +3582,15 @@ export class LODGroupRegistry {
    *   - the previous display is still ready and is FINER than the fallback
    *     (holding something coarser than the fallback would be a downgrade),
    *   - the fallback is a SEVERE downgrade — below
-   *     `STALE_HOLD_MIN_RATIO` of the held level's committed count —
+   *     `config.lod.staleHoldMinRatio` of the held level's committed count —
    *     so a fallback that is nearly as good is taken immediately (it is
    *     fresh, and freshness wins whenever quality is comparable),
-   *   - the hold has not exhausted its `STALE_HOLD_MS` budget.
+   *   - the hold has not exhausted its `config.lod.staleHoldMs` budget.
    *
    * The budget is deliberately spent from when the hold STARTS and is not
    * refreshed by later version bumps, and once exhausted it latches until the
    * aspiration commits fresh. So a continuous drag degrades to exactly the
-   * pre-existing behaviour after `STALE_HOLD_MS`, rather than freezing on
+   * pre-existing behaviour after `config.lod.staleHoldMs`, rather than freezing on
    * one frame for as long as the user keeps dragging. The one exception is
    * playback with the held level's own reload in flight: that hold lasts
    * until the reload lands, and its budget restarts on each such frame.
@@ -3732,7 +3618,7 @@ export class LODGroupRegistry {
     // An unknown count on either side means the comparison cannot be made, so
     // there is no evidence the fallback is severe — take it, as before.
     if (prevCount == null || fallbackCount == null || prevCount <= 0) return undefined;
-    if (fallbackCount >= prevCount * STALE_HOLD_MIN_RATIO) return undefined;
+    if (fallbackCount >= prevCount * config.lod.staleHoldMinRatio) return undefined;
 
     const now = this.frame.nowMs;
     if (entry.staleHoldSinceMs == null) entry.staleHoldSinceMs = now;
@@ -3740,12 +3626,12 @@ export class LODGroupRegistry {
     // flight: keep it until that replacement lands rather than dropping to a
     // token of the new frame for the rest of the wait.
     // The budget counts from the last frame of that exemption, so pausing
-    // mid-reload keeps the hold for a full STALE_HOLD_MS instead of dropping
+    // mid-reload keeps the hold for a full config.lod.staleHoldMs instead of dropping
     // to the coarse level on the first paused frame.
     const replacementInFlight = this.frame.playbackPeriodMs !== null && prev.loading === true;
     if (replacementInFlight) {
       entry.staleHoldSinceMs = now;
-    } else if (now - entry.staleHoldSinceMs >= STALE_HOLD_MS) {
+    } else if (now - entry.staleHoldSinceMs >= config.lod.staleHoldMs) {
       entry.staleHoldExhausted = true;
       entry.staleHoldSinceMs = undefined;
       return undefined;
@@ -3794,7 +3680,7 @@ export class LODGroupRegistry {
    * the failure/cooldown logic lives in exactly one place.
    *
    * A freshly-failed child is stamped with the frame clock; once
-   * ``FAILED_RETRY_MS`` elapse the ``failed`` flag is cleared and the
+   * ``config.lod.failedRetryMs`` elapse the ``failed`` flag is cleared and the
    * load retried — recovering a level that failed on *reload* (after a
    * successful load + byte-eviction), which the old "failed until
    * released" behaviour left permanently stuck (a failed child is never an
@@ -3872,7 +3758,7 @@ export class LODGroupRegistry {
    * level) and ``maybeKickReload`` (refresh of a ready-but-stale level): fire
    * ``ensureLoaded`` unless already loading or inside the failure cooldown. A
    * freshly-failed child is stamped with the frame clock; once
-   * ``FAILED_RETRY_MS`` elapse the ``failed`` flag clears and the load
+   * ``config.lod.failedRetryMs`` elapse the ``failed`` flag clears and the load
    * retries — recovering a level that failed on reload (after a successful load
    * + byte-eviction), which the old "failed until released" behaviour left stuck.
    * The automatic caller separately gates loader-level archive faults. The
@@ -3898,7 +3784,7 @@ export class LODGroupRegistry {
           child.failedAtMs = this.frame.nowMs;
           return false;
         }
-        if (this.frame.nowMs - child.failedAtMs < FAILED_RETRY_MS) return false;
+        if (this.frame.nowMs - child.failedAtMs < config.lod.failedRetryMs) return false;
         // Cooldown elapsed — clear the failure and fall through to retry.
         child.failed = false;
         child.failedAtMs = undefined;

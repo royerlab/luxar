@@ -183,7 +183,8 @@ DEGENERATE_RECT_HALF_EXTENT = 1e-3
 #: homogeneous ``w`` means the camera straddles the box; the metric saturates.
 W_EPSILON = 1e-6
 
-#: ``HYSTERESIS_RATIO`` (``scene/lod-selector-math.ts``).
+#: ``config.lod.hysteresisRatio`` (``config/sections/lod/data.ts``), the default the
+#: viewer's ``pickChildWithHysteresis`` uses.
 HYSTERESIS_RATIO = 0.1
 
 #: The three aspect ratios every group is reported at, as ``(label, value)``.

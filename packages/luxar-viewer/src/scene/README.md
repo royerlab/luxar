@@ -424,7 +424,7 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    sample therefore cannot demote a level whose warm reloads fit, while a
    consistently slow level is still capped after its second load. The
    capped aspiration is reloaded on every timepoint without the settle
-   debounce (`FINE_RELOAD_SETTLE_MS` = 130 ms, which a playing timelapse
+   debounce (`config.lod.fineReloadSettleMs` = 130 ms, which a playing timelapse
    never satisfies). Once per second the next finer capped level gets one
    reload to re-measure it, and that reload REPLACES its average (the
    samples it held are a second or more old — typically the first loop's
@@ -610,7 +610,7 @@ one the selector nominally displays.
 
 **Partition frustum gating + targeted resync:** a `kind=partition`
 group registers through `registerPartition`, and every frame each part
-is tested against a frustum padded by `PARTITION_FRUSTUM_MARGIN` (10 %,
+is tested against a frustum padded by `config.lod.partitionFrustumMargin` (10 %,
 so a cold part preloads just before it enters). A part outside it is
 hidden and stamped `userData.partitionFrustumVisible = false` — on
 EVERY object the part emitted, since one part node may produce several,
