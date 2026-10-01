@@ -52,6 +52,7 @@ function makeSceneLoaderStub() {
   return {
     lodGroupRegistry: {
       evaluatePerFrame: vi.fn(() => ({ levelChanged: false, cullChanged: false })),
+      takeDrawnStateChanged: vi.fn(() => false),
     },
     nodeFactory: { rebuildAfterContextRestore: vi.fn() },
     isUpdateInProgress: vi.fn(() => false),
@@ -250,7 +251,7 @@ vi.mock('../../../utils/input-capabilities', () => ({
 
 const configureDepthSort = vi.fn();
 const setDepthSortEnabled = vi.fn();
-const evaluateDepthSortPerFrame = vi.fn();
+const evaluateDepthSortPerFrame = vi.fn((): boolean => false);
 const warmUpDepthSortWorker = vi.fn();
 const releaseDepthSortNode = vi.fn();
 const disposeDepthSort = vi.fn();
@@ -982,6 +983,40 @@ describe('LuxarLayer', () => {
 
       layer.update();
       expect(evaluateDepthSortPerFrame).not.toHaveBeenCalled();
+    });
+
+    it.fails('asks an on-demand host for the next frame while a fade or cull flip is in motion', async () => {
+      // A LOD fade steps one opacity increment per evaluation and reports it
+      // only through takeDrawnStateChanged(); a host that renders on demand
+      // never runs the next step unless the layer asks for another frame.
+      const requestRender = vi.fn();
+      const registry = sceneLoaderStub.lodGroupRegistry;
+      const layer = new LuxarLayer(makeOptions({ requestRender }));
+      await layer.load('http://example.test/scene.zarr');
+      requestRender.mockClear();
+
+      registry.takeDrawnStateChanged.mockReturnValueOnce(true);
+      expect(layer.update()).toBe(true);
+      expect(registry.takeDrawnStateChanged).toHaveBeenCalledTimes(1);
+      expect(requestRender).toHaveBeenCalledTimes(1);
+
+      registry.evaluatePerFrame.mockReturnValueOnce({ levelChanged: false, cullChanged: true });
+      expect(layer.update()).toBe(true);
+      expect(requestRender).toHaveBeenCalledTimes(2);
+
+      evaluateDepthSortPerFrame.mockReturnValueOnce(true);
+      expect(layer.update()).toBe(true);
+      expect(requestRender).toHaveBeenCalledTimes(3);
+    });
+
+    it.fails('requests nothing on a settled frame', async () => {
+      const requestRender = vi.fn();
+      const layer = new LuxarLayer(makeOptions({ requestRender }));
+      await layer.load('http://example.test/scene.zarr');
+      requestRender.mockClear();
+
+      expect(layer.update()).toBe(false);
+      expect(requestRender).not.toHaveBeenCalled();
     });
   });
 
