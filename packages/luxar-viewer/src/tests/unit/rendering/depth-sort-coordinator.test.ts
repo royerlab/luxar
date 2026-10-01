@@ -5215,6 +5215,23 @@ describe('depth-sort coordinator — synchronous first sort', () => {
     expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
   });
 
+  it.fails('orders a MESH index buffer synchronously too — no unsorted frame on a slice move', async () => {
+    // A mesh commit rewrites geometry.index canonically on every slice move,
+    // so without a synchronous sort each timepoint drew its triangles in
+    // storage order until the worker answered (the #2290 flash, mesh edition).
+    const coord = await loadCoordinator(250_000);
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender });
+    const mesh = makeIndexedMesh(3, 'normal');
+
+    coord.noteDepthSortCommit(mesh, CENTERS.slice(), 3, sourceTriples(3));
+
+    // No flush: the frame the commit returns into.
+    expect(mockApi.sort).not.toHaveBeenCalled();
+    expect(drawnTriples(mesh, 3)).toEqual(['3,4,5', '6,7,8', '0,1,2']);
+    expect(requestRender).toHaveBeenCalled();
+  });
+
   it('does not resolve an indexed mesh provider for a synchronous sort it cannot apply', async () => {
     const coord = await loadCoordinator(250_000);
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
