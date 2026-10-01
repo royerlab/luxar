@@ -7,7 +7,7 @@
  *   node scripts/render-gate/run-gate.mjs --base origin/main --cand HEAD \
  *     [--suite exact|perf|counters|playback|scrub|hosted|trees|cache|all] \
  *     [--class IDENTICAL|ULP] [--intended id,id] [--only id,id] \
- *     [--backends webgl,webgpu] [--rounds 7] [--heavy] [--expect <file.json>] \
+ *     [--backends webgl,webgpu,webgpu-gl] [--rounds 7] [--heavy] [--expect <file.json>] \
  *     [--server-profile local|hosted] [--out <dir>]
  *   node scripts/render-gate/run-gate.mjs --from-json <dir>/report.json
  *     (rewrite <dir>/report.md from a saved report, measuring nothing)
@@ -34,14 +34,14 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { browserKit } from './browser.mjs';
+import { browserKit, selectBackends } from './browser.mjs';
 import { ensureBuild } from './builds.mjs';
 import { judge, scoreBlocks, scoreFloatBuffers, scorePickBuffers } from './exactness.mjs';
 import { writeUlpHeatmap } from './heatmap.mjs';
 import * as ops from './page-ops.mjs';
 import { judgePerf, median, noiseFloor, ROTATIONS } from './perf-stats.mjs';
 import { startServer } from './server.mjs';
-import { loadExpectations, runSuite, suiteMarkdown } from './suites.mjs';
+import { loadExpectations, runSuite, suiteMarkdown, validateMetricDirections } from './suites.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const viewerRoot = resolve(here, '../..');
@@ -99,6 +99,11 @@ const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
 const manifest = JSON.parse(readFileSync(opts.scenes, 'utf8'));
 const log = (m) => console.log(`[render-gate] ${m}`);
 const manifestSuites = manifest.suites ?? {};
+try {
+  validateMetricDirections(manifestSuites);
+} catch (e) {
+  configError(e.message);
+}
 const BUILT_IN = ['exact', 'perf'];
 if (opts.suite !== 'all' && !BUILT_IN.includes(opts.suite) && !manifestSuites[opts.suite]) {
   configError(
@@ -174,9 +179,7 @@ function decode(packed) {
 
 function exactVariants(c) {
   const d = manifest.defaults;
-  const backends = (opts.backends ?? c.backends ?? d.backends).filter((b) =>
-    (c.backends ?? d.backends).includes(b)
-  );
+  const backends = selectBackends(opts.backends, c.backends ?? d.backends);
   const dsfs = opts.dsf ?? c.dsf ?? d.dsf;
   const out = [];
   for (const backend of backends)
@@ -391,7 +394,7 @@ async function runPerf(session, servers) {
   const results = [];
   const cases = manifest.perf.filter((c) => !opts.only || opts.only.includes(c.id));
   for (const c of cases) {
-    for (const backend of opts.backends ?? d.backends) {
+    for (const backend of selectBackends(opts.backends, d.backends)) {
       log(`perf: ${c.id} ${backend} (${rounds} rounds)`);
       const samples = { base: [], base2: [], cand: [] };
       try {

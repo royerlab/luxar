@@ -280,10 +280,9 @@ test.describe('Position Bounds and Clipping Planes', () => {
     // The implementation uses calculateClippingPlanesFromSphere():
     // - Converts bounding box to circumscribed sphere (center + radius)
     // - Expands radius by SPHERE_SAFETY_EXPANSION (5%)
-    // - near = max(minNearForRadius(R), dist - R), far = dist + R
-    //   (minNearForRadius is the scale-aware near floor — authoritative
-    //   definition in scene-manager/clipping/bounds-math.ts; not mirrored
-    //   here, see the outside-sphere note below)
+    // - near = max(nearPlaneFloor(R, far), viewDepth - R), far = dist + R
+    //   (the on-axis camera in this test has viewDepth = dist; the floor's
+    //   authoritative definition is in scene-manager/clipping/bounds-math.ts)
     const info = await page.evaluate(() => {
       const debug = (window as any).__luxarDebug;
       let foundBounds: { min: number[]; max: number[] } | null = null;
@@ -318,8 +317,8 @@ test.describe('Position Bounds and Clipping Planes', () => {
       const dz = cameraPos.z - cz;
       const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-      // The auto-framed camera sits OUTSIDE the sphere (dist > R), where
-      // near = dist - R and the scale-aware floor (minNearForRadius in
+      // The auto-framed camera sits on axis OUTSIDE the sphere (dist > R), where
+      // near = viewDepth - R = dist - R and the scale-aware floor (nearPlaneFloor in
       // bounds-math.ts) is orders of magnitude below — so the expectation
       // needs no floor constants here. If a future variant moves the
       // camera inside the sphere, this expectation goes tiny and the
