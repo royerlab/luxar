@@ -162,6 +162,7 @@ import { LuxarApp } from '../../../core/app';
 import { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import { setDocumentTitle } from '../../../core/document-title';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
+import { notifier } from '../../../utils/cross-layer/notifier';
 import type { ZarrWaypoint } from '../../../types/zarr';
 
 describe('LuxarApp', () => {
@@ -784,6 +785,43 @@ describe('LuxarApp', () => {
       await expect(
         app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })
       ).rejects.toThrow('Load failed');
+    });
+
+    it.fails('keeps the viewer alive when the first dataset fails to load', async () => {
+      // A `?src` typo must not leave a dead page: the error dialog advertises
+      // the dataset browser, so the app (and its browser shortcut) has to
+      // survive the failed load. Subsystem failures still dispose (below).
+      mockFetch.mockResolvedValue({ ok: true });
+      mockSceneManager.loadSceneData.mockRejectedValue(new Error('Load failed'));
+      const notifyError = vi.spyOn(notifier, 'error').mockImplementation(() => {});
+      const datasetErrors: Array<{ src: string; error: Error }> = [];
+      app.on('dataset-error', (payload) => datasetErrors.push(payload));
+
+      await expect(
+        app.init({ canvas: mockCanvas, src: 'http://example.com/typo.zarr' })
+      ).resolves.toBeUndefined();
+
+      expect(app.initialized).toBe(true);
+      expect(mockSceneManager.dispose).not.toHaveBeenCalled();
+      expect(datasetErrors).toEqual([
+        {
+          src: 'http://example.com/typo.zarr',
+          error: expect.objectContaining({ message: 'Load failed' }),
+        },
+      ]);
+      // The persistent dialog names the failure (the notifier backend adds the
+      // dataset-browser hint), and the browser it points at really opens.
+      expect(notifyError).toHaveBeenCalledWith(expect.stringContaining('Load failed'), {
+        persistent: true,
+      });
+      const openBrowser = mockAddEventListener.mock.calls.find(
+        (call) => call[0] === OPEN_DATASET_BROWSER_EVENT
+      )?.[1] as (() => void) | undefined;
+      openBrowser!();
+      expect(DatasetBrowser).toHaveBeenCalled();
+      // ...and a retry through it can reach a fresh load.
+      mockSceneManager.loadSceneData.mockResolvedValue(undefined);
+      await expect(app.switchDataset('http://example.com/fixed.zarr')).resolves.toBeUndefined();
     });
 
     it('disposes partial state when init() throws so the caller can retry', async () => {
