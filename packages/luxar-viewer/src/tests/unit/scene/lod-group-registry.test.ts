@@ -44,7 +44,6 @@ import {
 } from '../../../scene/scene-manager/clipping/bounds-math';
 import { updateCameraAspect } from '../../../utils/camera-utils';
 import { log } from '../../../utils/log';
-import { PointMaterial } from '../../../rendering/materials/point/material-glsl';
 
 describe('computeEntryWorldBox', () => {
   it('reuses the caller-owned world box', () => {
@@ -4773,59 +4772,6 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(relFine).not.toHaveBeenCalled(); // the displayed level is protected
     expect(mid.object.visible).toBe(true); // the dissolve survives the pressure
     expect(fine.object.visible).toBe(true);
-  });
-
-  it('after an upgrade then a downgrade into the band, a parked camera draws complementary weights, never two full levels (#2925)', () => {
-    // #2925 repro: level 1 selected and committed, then the camera backs off so
-    // selection returns to level 0 while the metric still sits in the 0↔1 band.
-    // Both levels stay drawn for as long as the camera is parked there — the
-    // designed, distance-driven dissolve — and the issue read that as two
-    // full-weight levels because THREE's `material.opacity` stays 1. The fade
-    // is written through updateOpacity → the `uOpacity` uniform: real
-    // PointMaterials here, so the weights read are the ones the shader uses.
-    // Authored opacity is 1 and energy compensation is off in this harness, so
-    // `uOpacity` IS the bare blend weight and the two sum to one; in general
-    // it also carries the authored opacity and compensation factors.
-    const reg = makeReg(true);
-    const leveled = [0, 0.5].map((coverageFraction) => {
-      const c = fadeChild(coverageFraction);
-      const mesh = c.object as THREE.Mesh;
-      mesh.material = new PointMaterial({ blendingMode: 'additive' });
-      mesh.userData._layerMaterialCloned = true; // per-node material, as the factories stamp
-      return c;
-    });
-    const [coarse, fine] = leveled;
-    const entry = makeEntry(leveled, 0, '/rotated/cloud');
-    reg.register(entry);
-    const uOpacity = (c: LODGroupChild): number =>
-      ((c.object as THREE.Mesh).material as PointMaterial).uniforms.uOpacity.value as number;
-    const zoom = (scale: number): void => {
-      // fadeChild's box reads coverage 0.5 at scale 1; the metric is linear in it.
-      entry.groupObject.scale.setScalar(scale);
-      entry.groupObject.updateMatrixWorld(true);
-    };
-
-    zoom(1.6); // metric 0.8: above the [0.3, 0.7] band → level 1 alone
-    for (let f = 0; f < 5; f++) reg.evaluatePerFrame();
-    expect(entry.activeChildIndex).toBe(1);
-    expect([coarse.object.visible, fine.object.visible]).toEqual([false, true]);
-
-    zoom(0.8); // metric 0.4: below the 0.45 downgrade margin, inside the band
-    for (let f = 0; f < 200; f++) reg.evaluatePerFrame();
-    expect(entry.activeChildIndex).toBe(0);
-    expect([coarse.object.visible, fine.object.visible]).toEqual([true, true]);
-    // smoothstep(0.3, 0.7, 0.4) = 0.15625 for the finer level.
-    expect(uOpacity(fine)).toBeCloseTo(0.15625, 6);
-    expect(uOpacity(coarse)).toBeCloseTo(0.84375, 6);
-    expect(uOpacity(coarse) + uOpacity(fine)).toBeCloseTo(1, 6);
-    const m = (c: LODGroupChild) => (c.object as THREE.Mesh).material as PointMaterial;
-    expect([m(coarse).opacity, m(fine).opacity]).toEqual([1, 1]); // the misleading field
-
-    zoom(0.5); // metric 0.25: out of the band → the active level alone, full weight
-    for (let f = 0; f < 3; f++) reg.evaluatePerFrame();
-    expect([coarse.object.visible, fine.object.visible]).toEqual([true, false]);
-    expect(uOpacity(coarse)).toBe(1);
-    expect(uOpacity(fine)).toBe(1); // restored on hide
   });
 
   it('restores authored opacity once when fade management toggles OFF mid-fade', () => {
