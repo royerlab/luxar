@@ -1887,7 +1887,7 @@ describe('GSplatsSpatialIndexLoader', () => {
         expect(attributeGets()).toHaveLength(0);
       });
 
-      it.fails('forwards the predicted-view signal to the warm-up it falls back to', async () => {
+      it('forwards the predicted-view signal to the warm-up it falls back to', async () => {
         const current: ViewState = {
           displayDims: [0, 1],
           slicePosition: [0, 0, 1],

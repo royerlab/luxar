@@ -160,7 +160,7 @@ describe('dispatchPredictivePrefetch', () => {
     expect(fallback).not.toHaveBeenCalled();
   });
 
-  it.fails('hands every warm-up a SPECULATIVE signal, not an untagged (demand) one', () => {
+  it('hands every warm-up a SPECULATIVE signal, not an untagged (demand) one', () => {
     const transition = vi.fn().mockResolvedValue(undefined);
     const plain = vi.fn().mockResolvedValue(undefined);
     dispatchPredictivePrefetch(
@@ -174,7 +174,7 @@ describe('dispatchPredictivePrefetch', () => {
     expect(signalPriority(plainSignal)?.value).toBe('speculative');
   });
 
-  it.fails("forwards the caller's signal so a superseded prediction can be cancelled", () => {
+  it("forwards the caller's signal so a superseded prediction can be cancelled", () => {
     const transition = vi.fn().mockResolvedValue(undefined);
     const controller = new AbortController();
     dispatchPredictivePrefetch(

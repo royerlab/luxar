@@ -223,7 +223,7 @@ describe('GSplatsProgressiveLoader — lookahead honours the update signal', () 
     return rungs;
   }
 
-  it.fails('the next-rung lookahead is speculative and aborts with the update that scheduled it', async () => {
+  it('the next-rung lookahead is speculative and aborts with the update that scheduled it', async () => {
     const rungs = coldFirstRung();
     const loader = makeLoader(rungs);
     const pass = new AbortController();
@@ -237,7 +237,7 @@ describe('GSplatsProgressiveLoader — lookahead honours the update signal', () 
     expect(lookahead.aborted).toBe(true);
   });
 
-  it.fails('a pass aborted by the time its rungs land schedules no lookahead and no read-ahead', async () => {
+  it('a pass aborted by the time its rungs land schedules no lookahead and no read-ahead', async () => {
     const rungs = coldFirstRung();
     const loader = makeLoader(rungs);
     await loader.updateView(viewAt(4));

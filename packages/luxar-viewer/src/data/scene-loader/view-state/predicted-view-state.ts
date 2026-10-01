@@ -27,6 +27,7 @@
  */
 
 import type { ViewState } from '../../data-loader-types';
+import { tagSignalPriority } from '../../../utils/fetch-concurrency';
 
 /**
  * Structural type for a loader that supports predictive prefetch.
@@ -37,8 +38,12 @@ import type { ViewState } from '../../data-loader-types';
  * to concrete loader classes.
  */
 export interface PrefetchableLoader {
-  prefetchChunks?: (vs: ViewState) => Promise<void>;
-  prefetchChunkBoundary?: (current: ViewState, predicted: ViewState) => Promise<void>;
+  prefetchChunks?: (vs: ViewState, signal?: AbortSignal) => Promise<void>;
+  prefetchChunkBoundary?: (
+    current: ViewState,
+    predicted: ViewState,
+    signal?: AbortSignal
+  ) => Promise<void>;
 }
 
 /**
@@ -48,7 +53,9 @@ export interface PrefetchableLoader {
  *
  * The dispatcher itself is synchronous (returns after calling each
  * loader's prefetch method once); the underlying prefetch is async
- * and not awaited — that's the point of prefetch.
+ * and not awaited — that's the point of prefetch. Every warm-up runs under
+ * `signal`, tagged `'speculative'` here; the caller aborts it when the next
+ * prediction for the same node supersedes this one (`ViewStateQueue`).
  *
  * Errors from either prefetch method are caught and silently swallowed —
  * prefetch is best-effort cache warming, not a demand fetch, so a
@@ -57,7 +64,8 @@ export interface PrefetchableLoader {
 export function dispatchPredictivePrefetch(
   prev: ViewState | null,
   current: ViewState,
-  loaders: Iterable<PrefetchableLoader>
+  loaders: Iterable<PrefetchableLoader>,
+  signal: AbortSignal = new AbortController().signal
 ): boolean {
   const predicted = predictNextViewState(prev, current);
 
@@ -70,22 +78,42 @@ export function dispatchPredictivePrefetch(
   }
   if (!moved) return false;
 
+  // A prediction is speculative by definition: tag it so the fetch gate and
+  // the decode cache queue it behind frame-blocking reads (an untagged signal
+  // resolves to `demand`). The caller owns the signal and aborts it when a
+  // newer prediction supersedes this one.
+  tagSignalPriority(signal, 'speculative');
   for (const loader of loaders) {
-    try {
-      const result = loader.prefetchChunkBoundary
-        ? loader.prefetchChunkBoundary(current, predicted)
-        : loader.prefetchChunks?.(predicted);
-      if (result && typeof (result as Promise<unknown>).catch === 'function') {
-        (result as Promise<unknown>).catch(() => {
-          // Prefetch is best-effort; swallow errors so demand-path
-          // failures aren't masked by prefetch noise in the console.
-        });
-      }
-    } catch {
-      // Synchronous throw — same policy.
-    }
+    dispatchToLoader(loader, current, predicted, signal);
   }
   return true;
+}
+
+/**
+ * Fire one loader's predicted-view warm-up: the chunk-boundary-aware transition
+ * when it has one, else the one-step `prefetchChunks(predicted)` fallback.
+ * Best-effort — a synchronous throw or a rejection is swallowed so prefetch
+ * noise never masks a demand-path failure.
+ */
+function dispatchToLoader(
+  loader: PrefetchableLoader,
+  current: ViewState,
+  predicted: ViewState,
+  signal: AbortSignal
+): void {
+  try {
+    const result = loader.prefetchChunkBoundary
+      ? loader.prefetchChunkBoundary(current, predicted, signal)
+      : loader.prefetchChunks?.(predicted, signal);
+    if (result && typeof (result as Promise<unknown>).catch === 'function') {
+      (result as Promise<unknown>).catch(() => {
+        // Prefetch is best-effort; swallow errors so demand-path
+        // failures aren't masked by prefetch noise in the console.
+      });
+    }
+  } catch {
+    // Synchronous throw — same policy.
+  }
 }
 
 export function predictNextViewState(prev: ViewState | null, current: ViewState): ViewState {

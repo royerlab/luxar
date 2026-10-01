@@ -889,22 +889,27 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     await prefetchRangesIntoCache(this.prefetchArrays(), ranges, signal);
   }
 
-  async prefetchChunkBoundary(current: ViewState, predicted: ViewState): Promise<void> {
+  async prefetchChunkBoundary(
+    current: ViewState,
+    predicted: ViewState,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (signal?.aborted) return;
     await this._onceInit.ensure(() => this.initialize());
     if (!this.chunkIndex || !this.arrays.positions) {
-      await this.prefetchChunks(predicted);
+      await this.prefetchChunks(predicted, signal);
       return;
     }
     let ranges: PointRange[];
     try {
       ranges = await this.queryVisiblePointRanges(current);
     } catch {
-      await this.prefetchChunks(predicted);
+      await this.prefetchChunks(predicted, signal);
       return;
     }
     const arrays = this.prefetchArrays();
     const views = planChunkBoundaryViewStates(current, predicted, ranges, this.chunkIndex, arrays);
-    await Promise.all(views.map((view) => this.prefetchChunks(view)));
+    await Promise.all(views.map((view) => this.prefetchChunks(view, signal)));
   }
 
   private prefetchArrays(): zarr.Array<zarr.DataType, zarr.Readable>[] {

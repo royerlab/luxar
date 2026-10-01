@@ -219,7 +219,7 @@ describe('ViewStateQueue.dispatchPrefetch', () => {
     expect(dispatchSpy).toHaveBeenCalledTimes(2);
   });
 
-  it.fails('a newer prediction aborts the one it supersedes, keeping its predecessor joinable', async () => {
+  it('a newer prediction aborts the one it supersedes, keeping its predecessor joinable', async () => {
     const at = (t: number): ViewState => ({ ...baseViewState, slicePosition: [0, 0, 0, t] });
     queue.dispatchPrefetch('/a', at(4), {});
     for (const t of [5, 6, 7]) {
@@ -234,7 +234,7 @@ describe('ViewStateQueue.dispatchPrefetch', () => {
     expect(p7?.aborted).toBe(false);
   });
 
-  it.fails('clearPrev aborts every outstanding prediction', async () => {
+  it('clearPrev aborts every outstanding prediction', async () => {
     queue.dispatchPrefetch('/a', baseViewState, {});
     queue.dispatchPrefetch('/a', { ...baseViewState, slicePosition: [0, 0, 0, 5] }, {});
     await Promise.resolve();

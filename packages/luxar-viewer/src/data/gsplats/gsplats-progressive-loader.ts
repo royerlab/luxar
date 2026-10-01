@@ -53,6 +53,7 @@ import {
   awaitShadowStore,
 } from '../loaders/progressive/slice-cache-helper';
 import { planLadderRollback } from '../loaders/progressive/pass-rollback';
+import { createLookaheadController } from '../loaders/progressive/lookahead-signal';
 import { createChildController, type ChildController } from '../loaders/progressive/child-signal';
 import { SPLAT_FLOATS_PER_SPLAT } from '../../rendering/element-texture-layout';
 import {
@@ -816,8 +817,8 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
 
     // Fire-and-forget: prefetch later unloaded LODs to warm cache (free
     // navigation only — see prefetchNextLODs).
-    this.prefetchNextLODs(viewState);
-    if (!isPrefetch) this.readAheadNeighbourSlices(viewState);
+    this.prefetchNextLODs(viewState, signal);
+    if (!isPrefetch) this.readAheadNeighbourSlices(viewState, signal);
 
     // Snapshot into the SliceCache (upgrade-if-longer): full ladders always
     // (instant revisit restore); PREFIXES only while a playback budget is
@@ -913,7 +914,7 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    * no zarr get(), so no output selection is assembled and the accumulator
    * does not run).
    */
-  private prefetchNextLODs(viewState: GSplatsViewState): void {
+  private prefetchNextLODs(viewState: GSplatsViewState, updateSignal?: AbortSignal): void {
     // Same teardown race as the streaming loop: a dispose() between the
     // awaited level and this fire-and-forget clears `lodLoaders`, and
     // indexing it would TypeError before the .catch can swallow anything.
@@ -929,7 +930,8 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
     if (firstLevel >= this.nLods) return;
 
     const headroom = readPrefetchHeadroom(this.lodLoaders[0]);
-    const controller = (this._prefetchController ??= new AbortController());
+    const controller = this.lookaheadController(updateSignal);
+    if (!controller) return;
     const maxLevels = resolvePrefetchDepth(this._metadataWarmStarted, headroom !== null);
     if (maxLevels === 1 || headroom === null || headroom <= 0) {
       this.logPrefetchDepth(1, headroom);
@@ -944,6 +946,25 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
       { firstLevel, maxLevels, headroom, viewState, firstPlan },
       controller
     );
+  }
+
+  /**
+   * The lookahead controller for this view (the lookahead-signal contract,
+   * `../loaders/progressive/lookahead-signal`): speculative priority, aborted on
+   * view change and dispose, AND linked to the update that scheduled it. Reused
+   * across refinement passes of one view while live; replaced once a superseded
+   * update has aborted it. `null` when that update is already aborted — a
+   * superseded pass schedules no new speculative work.
+   */
+  private lookaheadController(updateSignal?: AbortSignal): AbortController | null {
+    if (updateSignal?.aborted) return null;
+    const current = this._prefetchController;
+    if (current && !current.signal.aborted) return current;
+    const controller = createLookaheadController(updateSignal);
+    this._prefetchController = controller;
+    this._prefetchPlanning = false;
+    this._prefetchingLevels.clear();
+    return controller;
   }
 
   private async planDeepLookahead(
@@ -1097,10 +1118,10 @@ export class GSplatsProgressiveLoader implements GSplatsDataLoader {
    * view. Each neighbour gets its own controller, so the step that lands on
    * one keeps its read (see {@link cancelLookaheadPrefetch}).
    */
-  private readAheadNeighbourSlices(viewState: GSplatsViewState): void {
+  private readAheadNeighbourSlices(viewState: GSplatsViewState, updateSignal?: AbortSignal): void {
     const dims = this._scrubDims;
     this._scrubDims = [];
-    if (dims.length === 0 || this.nLods < 2 || this._disposed) return;
+    if (dims.length === 0 || this.nLods < 2 || this._disposed || updateSignal?.aborted) return;
     if (this._frameBudgetMs !== null || this._ladderDepth !== null) return;
     for (const neighbour of neighbourSlices(viewState, dims)) {
       const controller = new AbortController();

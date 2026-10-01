@@ -925,10 +925,15 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     ]);
   }
 
-  async prefetchChunkBoundary(current: LinesViewState, predicted: LinesViewState): Promise<void> {
+  async prefetchChunkBoundary(
+    current: LinesViewState,
+    predicted: LinesViewState,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (signal?.aborted) return;
     await this._onceInit.ensure(() => this.initialize());
     if (!this.chunkIndex || !this.arrays.segments) {
-      await this.prefetchChunks(predicted);
+      await this.prefetchChunks(predicted, signal);
       return;
     }
     const segmentArrays = [this.arrays.segments];
@@ -959,7 +964,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         );
       }
     } catch {
-      await this.prefetchChunks(predicted);
+      await this.prefetchChunks(predicted, signal);
       return;
     }
 
@@ -969,7 +974,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         (left, right) => this.sliceDistance(left, predicted) - this.sliceDistance(right, predicted)
       )
       .slice(0, 2);
-    await Promise.all(nearestViews.map((view) => this.prefetchChunks(view)));
+    await Promise.all(nearestViews.map((view) => this.prefetchChunks(view, signal)));
   }
 
   private prefetchVertexArrays(): zarr.Array<zarr.DataType, zarr.Readable>[] {

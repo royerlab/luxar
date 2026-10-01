@@ -979,7 +979,7 @@ describe('PointsSpatialIndexLoader', () => {
       expect(warmCalls()).toBe(4);
     });
 
-    it.fails('an aborted predicted-view signal stops every boundary warm-up', async () => {
+    it('an aborted predicted-view signal stops every boundary warm-up', async () => {
       const current: ViewState = {
         displayDims: [0, 1, 2],
         slicePosition: [0, 0, 0, 1],

@@ -5,7 +5,7 @@ import { createLookaheadController } from '../../../../../data/loaders/progressi
 import { signalPriority } from '../../../../../utils/fetch-concurrency';
 
 describe('createLookaheadController', () => {
-  it.fails('tags the lookahead SPECULATIVE, so it queues behind frame-blocking reads', () => {
+  it('tags the lookahead SPECULATIVE, so it queues behind frame-blocking reads', () => {
     // Untagged, the MLC resolves the decode to `demand` and the warm-up bypasses
     // the speculative cap while competing with the reads a frame waits on.
     const { signal } = createLookaheadController();

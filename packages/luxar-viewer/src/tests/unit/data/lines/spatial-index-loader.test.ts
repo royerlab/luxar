@@ -1307,7 +1307,7 @@ describe('LinesSpatialIndexLoader', () => {
         expect(warmCalls()).toBe(5);
       });
 
-      it.fails('forwards the predicted-view signal to the warm-up it falls back to', async () => {
+      it('forwards the predicted-view signal to the warm-up it falls back to', async () => {
         const current: ViewState = {
           displayDims: [0, 1, 2],
           slicePosition: [0, 0, 0],
