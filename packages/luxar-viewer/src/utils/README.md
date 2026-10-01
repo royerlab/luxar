@@ -221,6 +221,25 @@ The single answer to "is this a touch-first device, is it an iPhone or an iPad, 
 
 - `raceTimeout(promise, timeoutMs, onTimeout)` — Settle with `promise`, or reject with `onTimeout()`'s value once `timeoutMs` elapses first; clears the timer on settle. `timeoutMs <= 0` or non-finite installs no timer and returns `promise` itself. Settles only the caller: the work keeps running. The worker pool's `withTimeout` wraps it.
 
+### async-gate.ts - Counting Gate with Abort Exit
+
+- `new AsyncGate(capacity, ranks?)` — At most `capacity()` holders (read at every admission); waiters served by rank (`0` most urgent) then FIFO.
+- `acquire(signal?, priority?)` → `Promise<release>` — An abort while queued rejects with the signal's reason (or an `AbortError`) and frees the place; the release is idempotent.
+- `stats()` → `{ active, queued }`; `reset(reason)` rejects waiters and makes earlier releases no-ops (test isolation).
+
+The OPFS read gate is built on it. **Queues and what they honour** — the one place to check which queue cancels and which orders:
+
+| Queue              | Where                                                             | Abort while queued                                                       | Priority                                                                                 | Bound                                                                   |
+| ------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Fetch gate         | `utils/fetch-concurrency.ts`                                      | exits (`withFetchGate` signal)                                           | `demand` > `refinement` > `speculative`, raisable while queued; speculative share capped | per-lane width (24/96 data, 4 metadata), 4+2 per HTTP/1.1 origin        |
+| OPFS read gate     | `cache/multi-level-caching-store/opfs-read-gate.ts` (`AsyncGate`) | exits                                                                    | FIFO                                                                                     | `cache.opfsReadConcurrency`; a lease lasts as long as its held file I/O |
+| Neighbour prefetch | `cache/chunk-prefetcher.ts`                                       | in-flight reads aborted on `dispose()`                                   | newest first                                                                             | 64 queued (oldest dropped), `maxConcurrent` in flight                   |
+| OPFS write queue   | `cache/multi-level-caching-store/opfs-write-queue.ts`             | none (a task re-checks staleness when it runs)                           | `demand` writes evict `speculative` ones                                                 | depth and bytes; overflow DROPS the arrival                             |
+| Validation queue   | `cache/multi-level-caching-store/validation-queue.ts`             | skips the task                                                           | FIFO per dataset                                                                         | one at a time per dataset                                               |
+| Worker pool        | `workers/worker-pool.ts`                                          | no queue: least-busy dispatch; the pool/caller signal settles the caller | none                                                                                     | worker count                                                            |
+
+The fetch gate is not built on `AsyncGate` on purpose: per-origin widths, width tiers, the speculative share and in-place priority raises are its whole job, and forcing them through a generic counter would hide them. The prefetcher is a bounded work queue of KEYS (deduplicated, newest first), not callers awaiting a place, so it keeps its own.
+
 ### platform.ts - Platform Detection
 
 - `isMacPlatform()` — `navigator.platform.startsWith('Mac')`; returns `false` in non-browser contexts. Centralized so tests can stub one export.

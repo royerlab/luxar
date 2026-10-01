@@ -46,7 +46,8 @@ multi-level-caching-store/
 
 ### `opfs-read-gate.ts` — bounded read fan-out
 
-- **`withOpfsReadGate(run)`** — page-wide FIFO gate for chunk reads. Deep
+- **`withOpfsReadGate(run, signal?)`** — page-wide FIFO gate for chunk reads,
+  built on the shared `AsyncGate` (`../../utils/async-gate.ts`). Deep
   progressive passes can fan out several hundred L2 hits at once, and reads
   were the last unbounded browser-filesystem path after writes gained their own
   cap. The reported multi-second L2 stall remains unattributed. Queue wait is
