@@ -373,8 +373,8 @@ export function boundingBoxToSphere(box: BoundingBox): BoundingSphere {
  *
  * `near` uses the nearest view-axis depth on the sphere, floored by
  * {@link nearPlaneFloor} — which is what keeps the near/far ratio (and
- * therefore depth-buffer precision) bounded once the camera moves INSIDE
- * the sphere, the regime where the bare surface distance goes to zero.
+ * therefore depth-buffer precision) bounded whenever the sphere reaches
+ * the camera plane, including when the camera is inside it.
  *
  * @param sphere - Scene bounding sphere
  * @param cameraPosition - Camera position in world coordinates
