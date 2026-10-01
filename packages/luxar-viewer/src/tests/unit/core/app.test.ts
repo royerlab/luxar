@@ -1895,6 +1895,40 @@ describe('LuxarApp', () => {
       expect(onLoaded).toHaveBeenCalledWith({ src: 'http://example.com/other.zarr' });
     });
 
+    it.fails('writes the switched-to dataset into ?src when the app owns the URL', async () => {
+      // A kiosk / remote-control story switch, then a reload, must reopen the
+      // scene on screen — not the one the page started with. Same contract as
+      // a dataset-browser selection.
+      await app.init({ canvas: mockCanvas, src: SRC, updateBrowserUrl: true });
+      mockReplaceState.mockClear();
+
+      await app.switchDataset('http://example.com/other.zarr');
+
+      expect(mockReplaceState).toHaveBeenCalledTimes(1);
+      expect(mockReplaceState.mock.calls[0][2]).toBe(
+        `/?src=${encodeURIComponent('http://example.com/other.zarr')}`
+      );
+    });
+
+    it('leaves the host URL alone on a switch by default', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      mockReplaceState.mockClear();
+
+      await app.switchDataset('http://example.com/other.zarr');
+
+      expect(mockReplaceState).not.toHaveBeenCalled();
+    });
+
+    it.fails("does not mutate the embedder's options object on a switch", async () => {
+      const options = { canvas: mockCanvas, src: SRC };
+      await app.init(options);
+
+      await app.switchDataset('http://example.com/other.zarr');
+
+      expect(options.src).toBe(SRC);
+      expect(app.getViewerState().src).toBe('http://example.com/other.zarr');
+    });
+
     it('re-titles the browser tab for the dataset being switched to', async () => {
       // Whatever named the tab belongs to the outgoing scene: `?title=` names
       // the dataset the server started with, an authored title names the scene
