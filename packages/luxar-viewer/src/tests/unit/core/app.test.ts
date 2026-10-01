@@ -1099,7 +1099,7 @@ describe('LuxarApp', () => {
     it('still disposes singletons + workerPool when an early component throws', async () => {
       // Pre-existing dispose() wrapped everything in one
       // try/catch, so a throw early in the chain (sceneManager etc.)
-      // skipped DataMonitorManager / SceneLoaderManager / disposeWorkerPool
+      // skipped DataMonitorManager / SceneLoaderManager / releaseWorkerPool
       // / managerRegistry. The safeDispose helper guarantees later
       // teardown runs regardless.
       const sceneLoaderModule = await import('../../../data/scene-loader-manager');
@@ -1108,7 +1108,7 @@ describe('LuxarApp', () => {
 
       const sceneLoaderSpy = vi.spyOn(sceneLoaderModule.SceneLoaderManager, 'disposeInstance');
       const dataMonitorSpy = vi.spyOn(dataMonitorModule.DataMonitorManager, 'disposeInstance');
-      const workerPoolSpy = vi.spyOn(workerPoolModule, 'disposeWorkerPool');
+      const workerPoolSpy = vi.spyOn(workerPoolModule, 'releaseWorkerPool');
 
       // Force an early disposer to throw — animationController is the
       // very first call site inside dispose().
@@ -1131,7 +1131,7 @@ describe('LuxarApp', () => {
 
       const sceneLoaderSpy = vi.spyOn(sceneLoaderModule.SceneLoaderManager, 'disposeInstance');
       const dataMonitorSpy = vi.spyOn(dataMonitorModule.DataMonitorManager, 'disposeInstance');
-      const workerPoolSpy = vi.spyOn(workerPoolModule, 'disposeWorkerPool');
+      const workerPoolSpy = vi.spyOn(workerPoolModule, 'releaseWorkerPool');
 
       // sceneManager sits in the middle of the dispose chain — between
       // the UI/scene panels and the singleton/worker teardown.
@@ -1154,7 +1154,7 @@ describe('LuxarApp', () => {
       const workerPoolModule = await import('../../../workers/worker-pool');
 
       const sceneLoaderSpy = vi.spyOn(sceneLoaderModule.SceneLoaderManager, 'disposeInstance');
-      const workerPoolSpy = vi.spyOn(workerPoolModule, 'disposeWorkerPool');
+      const workerPoolSpy = vi.spyOn(workerPoolModule, 'releaseWorkerPool');
 
       app.dispose();
 

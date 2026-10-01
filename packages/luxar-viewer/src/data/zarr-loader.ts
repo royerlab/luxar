@@ -12,44 +12,42 @@
  */
 
 import * as THREE from 'three';
-import { SceneLoaderManager } from './scene-loader-manager';
+import type { SceneLoaderManager } from './scene-loader-manager';
 import { ViewState, LoaderConfig } from './data-loader-types';
 import { SimpleDims } from '../types/dims';
 import { log, Modules, LogEmoji } from '../utils/log';
 import { config } from '../config';
 import { simpleDimsToViewState } from './dims-to-view-state';
 import { computeSceneStats } from './stats/scene-stats';
-import type { DepthSortCoordinator } from '../rendering/depth-sort-coordinator';
 
 /**
  * Load a complete scene from a Zarr store.
  *
  * This is the main entry point for SceneLoader-backed loading.
  *
+ * @param manager - The HOST's loader manager (a LuxarApp's is
+ *   `SceneLoaderManager.getInstance()`; every LuxarLayer owns its own). The new
+ *   loader is registered there and inherits the host wiring the manager
+ *   carries — profiler, monitor and LOD-registry factories, render wake-up,
+ *   depth-sort coordinator — so two hosts on one page never share a loader.
  * @param src - URL or path to the Zarr store
  * @param config - Optional loader configuration
  * @param loaderId - Optional ID to register the created SceneLoader under (default: 'default')
- * @param depthSort - The host's depth-sort coordinator, which the loader's
- *   commits report to. `null` leaves the scene's nodes untracked: no
- *   back-to-front ordering and no cross-node renderOrder.
  * @returns Promise resolving to a THREE.Group containing the scene
  */
 export async function loadScene(
+  manager: SceneLoaderManager,
   src: string,
   config?: LoaderConfig,
-  loaderId: string = 'default',
-  depthSort: DepthSortCoordinator | null = null
+  loaderId: string = 'default'
 ): Promise<THREE.Group> {
   log.custom(LogEmoji.START, Modules.LUXAR, 'Loading scene');
-
-  const manager = SceneLoaderManager.getInstance();
 
   // Always create a fresh scene loader for each load to ensure clean state.
   // Await disposal of any existing loader first (caching-store teardown + OPFS
   // metadata flush fully drain before the replacement is built), so a dataset
   // switch never races the previous loader's late async teardown.
   const sceneLoader = await manager.createLoaderAsync(loaderId, config);
-  sceneLoader.setDepthSortCoordinator(depthSort);
 
   try {
     // Load the scene
@@ -76,11 +74,15 @@ export async function loadScene(
  * This function updates all points when the user navigates
  * through nD space or changes display dimensions.
  *
+ * @param manager - The host's loader manager (see {@link loadScene})
  * @param viewState - New view state to apply
  * @param loaderId - Optional loader ID, defaults to default loader
  */
-export async function updateView(viewState: Partial<ViewState>, loaderId?: string): Promise<void> {
-  const manager = SceneLoaderManager.getInstance();
+export async function updateView(
+  manager: SceneLoaderManager,
+  viewState: Partial<ViewState>,
+  loaderId?: string
+): Promise<void> {
   const sceneLoader = loaderId ? manager.getLoader(loaderId) : manager.getDefaultLoader();
 
   if (!sceneLoader) {
@@ -103,11 +105,13 @@ export async function updateView(viewState: Partial<ViewState>, loaderId?: strin
  * This is a convenience function for dimension navigation that
  * automatically converts dimension state to view state.
  *
+ * @param manager - The host's loader manager (see {@link loadScene})
  * @param dims - Current dimension state
  * @param scene - THREE.Group containing the scene
  * @param loaderId - Optional loader ID, defaults to default loader
  */
 export async function updateSceneForDimensions(
+  manager: SceneLoaderManager,
   dims: SimpleDims,
   scene: THREE.Group,
   loaderId?: string,
@@ -135,7 +139,6 @@ export async function updateSceneForDimensions(
   // state) or a slider event that changed nothing. Re-running the pass would
   // re-query, re-decode, re-project and re-commit every node — and park the
   // post-load refinement kick, which holds the update lock. Skip it.
-  const manager = SceneLoaderManager.getInstance();
   const sceneLoader = loaderId ? manager.getLoader(loaderId) : manager.getDefaultLoader();
   if (sceneLoader?.isAtViewState?.(viewState)) {
     log.info(Modules.LUXAR, 'View state unchanged — skipping the slice update');
@@ -148,7 +151,7 @@ export async function updateSceneForDimensions(
     viewState.ladderDepth = opts.ladderDepth;
   }
 
-  await updateView(viewState, loaderId);
+  await updateView(manager, viewState, loaderId);
 }
 
 /**
@@ -157,6 +160,7 @@ export async function updateSceneForDimensions(
  * fire-and-forget and routed to `SceneLoader.prefetchSlice` — it never
  * moves the real view and is aborted by the next foreground update.
  *
+ * @param manager - The host's loader manager (see {@link loadScene}).
  * @param dims - PREDICTED dimension state (currentStep advanced to the next
  *   playback tick via `DimensionAnimationManager.peekNextValue`).
  * @param scene - THREE.Group containing the scene (for maxRadius).
@@ -167,12 +171,12 @@ export async function updateSceneForDimensions(
  *   deepens to exactly this many rungs (see `ViewState.ladderDepth`).
  */
 export function prefetchSceneForDimensions(
+  manager: SceneLoaderManager,
   dims: SimpleDims,
   scene: THREE.Group,
   loaderId: string | undefined,
   opts: { budgetMs: number; ladderDepth?: number | 'auto' }
 ): void {
-  const manager = SceneLoaderManager.getInstance();
   const sceneLoader = loaderId ? manager.getLoader(loaderId) : manager.getDefaultLoader();
   if (!sceneLoader) return;
 
@@ -188,8 +192,7 @@ export function prefetchSceneForDimensions(
  * Release the default (or given) loader's t+1 prefetch resources (shadow
  * loaders + their accumulators). Called when playback ends.
  */
-export function releasePrefetchResources(loaderId?: string): void {
-  const manager = SceneLoaderManager.getInstance();
+export function releasePrefetchResources(manager: SceneLoaderManager, loaderId?: string): void {
   const sceneLoader = loaderId ? manager.getLoader(loaderId) : manager.getDefaultLoader();
   sceneLoader?.releasePrefetchResources();
 }
@@ -197,11 +200,10 @@ export function releasePrefetchResources(loaderId?: string): void {
 /**
  * Dispose of all resources and clean up.
  *
+ * @param manager - The host's loader manager (see {@link loadScene})
  * @param loaderId - Optional loader ID to dispose, or dispose all if not specified
  */
-export function dispose(loaderId?: string): void {
-  const manager = SceneLoaderManager.getInstance();
-
+export function dispose(manager: SceneLoaderManager, loaderId?: string): void {
   if (loaderId) {
     manager.destroyLoader(loaderId);
     log.custom(LogEmoji.CLEAN, Modules.LUXAR, `Scene loader '${loaderId}' disposed`);

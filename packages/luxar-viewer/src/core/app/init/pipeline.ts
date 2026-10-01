@@ -40,6 +40,7 @@ import { wireSceneEnvironment } from './environment-wiring';
 import { getInputProfile } from '../../../utils/input-capabilities';
 import { eventBus } from '../../../utils/cross-layer/event-bus';
 import { RenderAudit, canvasReadback } from '../../../scene/animation/render-audit';
+import { retainWorkerPool } from '../../../workers/worker-pool';
 
 /**
  * Render-on-change wiring for the loop: the kill switch (`?renderAlways` /
@@ -175,6 +176,9 @@ export async function runInitPipeline(
   // reference behind for the orchestrator's error handler.
   const sceneManager = factories.sceneManager();
   partial.sceneManager = sceneManager;
+  // The data-worker pool is page-wide; the app holds it until its dispose
+  // releases it (a LuxarLayer on the page holds it too).
+  retainWorkerPool(sceneManager);
   await sceneManager.init({
     canvas: ports.options.canvas,
     debug: ports.options.debug,

@@ -432,6 +432,7 @@ vi.mock('../../../scene/scene-manager/render-pipeline/renderer-setup', async () 
 // Import after mocks are set up
 import { SceneManager } from '../../../scene/scene-manager';
 import { loadScene as mockLoadScene } from '../../../data';
+import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 import { attachSceneGraphIndex, sceneGraphIndexOf } from '../../../utils/scene-graph-index';
 import { materialManager } from '../../../rendering/material-manager';
 import { log } from '../../../utils/log';
@@ -706,10 +707,9 @@ describe('SceneManager', () => {
       // The loader config carries the pre-node-load framing hook, and the
       // loader's commits report to THIS scene manager's depth-sort coordinator.
       expect(mockLoadScene).toHaveBeenCalledWith(
+        SceneLoaderManager.getInstance(),
         testUrl,
-        expect.objectContaining({ onSceneMetadata: expect.any(Function) }),
-        'default',
-        sceneManager.depthSort
+        expect.objectContaining({ onSceneMetadata: expect.any(Function) })
       );
       expect(mockHideLoadingIndicator).toHaveBeenCalled();
     });
@@ -972,7 +972,11 @@ describe('SceneManager', () => {
     } {
       const atNodeLoad = { position: null as number[] | null, rootInScene: null as boolean | null };
       (mockLoadScene as any).mockImplementationOnce(
-        async (_src: string, cfg?: { onSceneMetadata?: (root: THREE.Group) => void }) => {
+        async (
+          _manager: unknown,
+          _src: string,
+          cfg?: { onSceneMetadata?: (root: THREE.Group) => void }
+        ) => {
           const T = await import('three');
           const group = new T.Group();
           group.name = 'LuxarScene';

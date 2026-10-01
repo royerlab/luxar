@@ -174,6 +174,7 @@ import {
   releaseDepthSortNode,
   type DepthSortCoordinator,
 } from '../rendering/depth-sort-coordinator';
+import { runWithMaterialManager, type MaterialManager } from '../rendering/material-manager';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { createEmptyMeshGeometry } from '../rendering/mesh-geometry';
 import { invalidateRenderObjectFor } from './scene-loader/commit/invalidate-render-object';
@@ -1026,6 +1027,20 @@ export class SceneLoader {
     this._depthSort = coordinator;
   }
 
+  /**
+   * The host's material manager, or null for the LuxarApp's. Installed by the
+   * host's `SceneLoaderManager`; node creation (the factory) and the commit
+   * stage both run against it, so a LuxarLayer's materials never join the
+   * app's registry (capabilities, camera broadcast, disposal).
+   */
+  private _materials: MaterialManager | null = null;
+
+  /** Install (or clear) the host's material manager. */
+  setMaterialManager(materials: MaterialManager | null): void {
+    this._materials = materials;
+    this.nodeFactory.setMaterialManager(materials);
+  }
+
   /** The host references the gsplats / lines / points commit helpers take. */
   private commitHost(): GeometryCommitHost {
     return {
@@ -1044,7 +1059,8 @@ export class SceneLoader {
   private commitAndRequestRender(path: string, commit: () => void): boolean {
     const node = findObjectByName(this.rootGroup, path);
     const drawnBefore = isEffectivelyVisible(node);
-    commit();
+    if (this._materials) runWithMaterialManager(this._materials, commit);
+    else commit();
     const drawn = node === undefined || drawnBefore || isEffectivelyVisible(node);
     this._requestRender?.(drawn);
     return drawn;

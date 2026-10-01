@@ -3,7 +3,7 @@ import { cleanupUI } from '../../../ui/ui-cleanup';
 import { ThemeManager } from '../../../themes/theme-manager';
 import { DataMonitorManager } from '../../../ui/data-monitor-manager';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
-import { disposeWorkerPool } from '../../../workers/worker-pool';
+import { releaseWorkerPool } from '../../../workers/worker-pool';
 import { disposeConsoleInterceptor } from '../../../utils/console-interceptor';
 import { clearNotifierBackend } from '../../../utils/cross-layer/notifier';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
@@ -207,7 +207,8 @@ export function runDisposePipeline(ports: DisposePipelinePorts): void {
   // call sees the upstream owners gone before being torn down itself.
   safeDispose('dataMonitorManager', () => DataMonitorManager.disposeInstance());
   safeDispose('sceneLoaderManager', () => SceneLoaderManager.disposeInstance());
-  safeDispose('workerPool', () => disposeWorkerPool());
+  // Terminates the shared pool only when no LuxarLayer on the page still uses it.
+  safeDispose('workerPool', () => releaseWorkerPool(ports.sceneManager));
   // Depth-sort coordinator last for the same reason as the pool: any
   // in-flight sort resolves onto already-cleared coordinator state. Its
   // dispose terminates the shared SortWorker only when no other host on the

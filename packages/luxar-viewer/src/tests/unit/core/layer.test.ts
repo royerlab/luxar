@@ -13,8 +13,9 @@
  *     first slice),
  *   - the nD update coalescing, which exists because a scrubbing host outruns
  *     the loader by ~30x,
- *   - teardown actually reaching the process singletons (a leak here strands
- *     the whole data-worker pool on every host remount),
+ *   - teardown actually reaching what the layer owns (its loader manager,
+ *     materials, dimensions) and releasing its data-worker pool lease (a leak
+ *     here strands the whole pool on every host remount),
  *   - the no-op guarantees a host relies on when calling `update()` every
  *     frame from before load until after dispose.
  */
@@ -84,19 +85,27 @@ let currentSceneLoaderStub = sceneLoaderStub;
 const destroyAllAsync = vi.fn(async () => {});
 const destroyLoaderAsync = vi.fn(async (_id: string) => {});
 
+// The layer's OWN manager (it never reaches `SceneLoaderManager.getInstance()`).
+const sceneLoaderManagerOptions: unknown[] = [];
+const setManagerDepthSort = vi.fn();
 vi.mock('../../../data/scene-loader-manager', () => ({
-  SceneLoaderManager: {
-    getInstance: () => ({
-      setLODGroupRegistryFactory,
-      setRequestRender,
-      setKTX2TextureDecoder,
-      getProfiler,
-      destroyAllAsync: () => destroyAllAsync(),
-      destroyLoaderAsync: (id: string) => destroyLoaderAsync(id),
-    }),
-    disposeInstance: () => disposeInstance(),
+  SceneLoaderManager: class {
+    constructor(options: unknown) {
+      sceneLoaderManagerOptions.push(options);
+    }
+    static getInstance(): never {
+      throw new Error('a LuxarLayer must not reach the LuxarApp loader manager');
+    }
+    setLODGroupRegistryFactory = setLODGroupRegistryFactory;
+    setRequestRender = setRequestRender;
+    setKTX2TextureDecoder = setKTX2TextureDecoder;
+    setDepthSortCoordinator = setManagerDepthSort;
+    getProfiler = getProfiler;
+    getLoader = () => currentSceneLoaderStub;
+    destroyAllAsync = () => destroyAllAsync();
+    destroyLoaderAsync = (id: string) => destroyLoaderAsync(id);
+    dispose = () => disposeInstance();
   },
-  getSceneLoader: () => currentSceneLoaderStub,
 }));
 
 vi.mock('../../../scene/lod-group-registry', () => ({
@@ -122,14 +131,15 @@ vi.mock('../../../scene/scene-dims-manager', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../scene/scene-dims-manager')>();
   return {
     ...actual,
-    sceneDimsManager: {
-      initFromScene: (...a: unknown[]) => initFromScene(...a),
-      getDims: () => getDimsMock(),
-      getDimensionNames: () => ['x', 'y', 'z', 'time'],
-      getDimensionMetadata: () => getDimensionMetadataMock(),
-      getDimensionRanges: () => getDimensionRangesMock(),
-      setDimensionValue: (...a: unknown[]) => setDimensionValueMock(...a),
-      reset: () => resetDims(),
+    // The layer's OWN dimension state.
+    SceneDimsManager: class {
+      initFromScene = (...a: unknown[]) => initFromScene(...a);
+      getDims = () => getDimsMock();
+      getDimensionNames = () => ['x', 'y', 'z', 'time'];
+      getDimensionMetadata = () => getDimensionMetadataMock();
+      getDimensionRanges = () => getDimensionRangesMock();
+      setDimensionValue = (...a: unknown[]) => setDimensionValueMock(...a);
+      reset = () => resetDims();
     },
   };
 });
@@ -139,14 +149,15 @@ const updateCameraParams = vi.fn();
 const disposeMaterials = vi.fn();
 const rebuildMaterials = vi.fn();
 const onPhysicalMaterialCreated = vi.fn();
+// The layer's OWN material manager.
 vi.mock('../../../rendering/material-manager', () => ({
-  materialManager: {
-    setCaps: (...a: unknown[]) => setCaps(...a),
-    updateCameraParams: (...a: unknown[]) => updateCameraParams(...a),
-    register: vi.fn(),
-    onPhysicalMaterialCreated: (...a: unknown[]) => onPhysicalMaterialCreated(...a),
-    dispose: () => disposeMaterials(),
-    rebuildAfterContextRestore: () => rebuildMaterials(),
+  MaterialManager: class {
+    setCaps = (...a: unknown[]) => setCaps(...a);
+    updateCameraParams = (...a: unknown[]) => updateCameraParams(...a);
+    register = vi.fn();
+    onPhysicalMaterialCreated = (...a: unknown[]) => onPhysicalMaterialCreated(...a);
+    dispose = () => disposeMaterials();
+    rebuildAfterContextRestore = () => rebuildMaterials();
   },
 }));
 
@@ -236,10 +247,17 @@ vi.mock('../../../rendering/gpu-byte-budget', () => ({
 const configureBlendModeProgramWarmup = vi.fn();
 const warmSceneBlendModePrograms = vi.fn(async (_root: THREE.Object3D) => {});
 const clearBlendModeProgramWarmup = vi.fn();
+// The layer's OWN warm-up manager (registered for commit routing).
+const registerBlendWarmupManager = vi.fn();
+const unregisterBlendWarmupManager = vi.fn();
 vi.mock('../../../rendering/webgl-blend-warmup', () => ({
-  configureBlendModeProgramWarmup: (...a: unknown[]) => configureBlendModeProgramWarmup(...a),
-  warmSceneBlendModePrograms: (root: THREE.Object3D) => warmSceneBlendModePrograms(root),
-  clearBlendModeProgramWarmup: () => clearBlendModeProgramWarmup(),
+  WebGLBlendWarmupManager: class {
+    configure = (...a: unknown[]) => configureBlendModeProgramWarmup(...a);
+    warmScene = (root: THREE.Object3D) => warmSceneBlendModePrograms(root);
+    clear = () => clearBlendModeProgramWarmup();
+  },
+  registerBlendWarmupManager: (m: unknown) => registerBlendWarmupManager(m),
+  unregisterBlendWarmupManager: (m: unknown) => unregisterBlendWarmupManager(m),
 }));
 
 const inputProfile = vi.hoisted(() => ({
@@ -268,8 +286,13 @@ vi.mock('../../../rendering/depth-sort-coordinator', () => ({
   releaseDepthSortNode: (mesh: THREE.Mesh) => releaseDepthSortNode(mesh),
 }));
 
+// The shared pool: the layer holds a lease, and its dispose releases it.
 const disposeWorkerPool = vi.fn();
-vi.mock('../../../workers/worker-pool', () => ({ disposeWorkerPool: () => disposeWorkerPool() }));
+const retainWorkerPool = vi.fn();
+vi.mock('../../../workers/worker-pool', () => ({
+  retainWorkerPool: (host: unknown) => retainWorkerPool(host),
+  releaseWorkerPool: (host: unknown) => disposeWorkerPool(host),
+}));
 
 const applyModuleOverrides = vi.fn();
 vi.mock('../../../core/app/init/module-overrides', () => ({
@@ -824,14 +847,16 @@ describe('LuxarLayer', () => {
       const loaderConfig = { noCache: true } as LuxarLayerOptions['loaderConfig'];
       const layer = new LuxarLayer(makeOptions({ loaderConfig }));
       await layer.load('http://example.test/scene.zarr');
+      const own = layer as unknown as { sceneLoaders: unknown; depthSort: unknown };
+      // Into the layer's OWN loader manager, never the LuxarApp's…
       expect(loadSceneMock).toHaveBeenCalledWith(
+        own.sceneLoaders,
         'http://example.test/scene.zarr',
         loaderConfig,
-        expect.any(String),
-        // The layer's commits report to the layer's coordinator, never to a
-        // LuxarApp's sharing the page.
-        (layer as unknown as { depthSort: unknown }).depthSort
+        expect.any(String)
       );
+      // …whose loaders' commits report to the layer's coordinator.
+      expect(setManagerDepthSort).toHaveBeenCalledWith(own.depthSort);
     });
 
     it('applies the configured renderOrder through nested and lazy groups', async () => {
@@ -1084,6 +1109,7 @@ describe('LuxarLayer', () => {
       layer.prefetchDimensionValue(3, 7, 12);
 
       expect(prefetchSceneForDimensionsMock).toHaveBeenCalledWith(
+        expect.anything(),
         expect.objectContaining({ currentStep: [0, 0, 0, 7] }),
         expect.anything(),
         'default',
@@ -1119,6 +1145,7 @@ describe('LuxarLayer', () => {
       layer.prefetchDimensionValue(3, 16);
 
       expect(prefetchSceneForDimensionsMock).toHaveBeenCalledWith(
+        expect.anything(),
         expect.objectContaining({ currentStep: [0, 0, 0, 11] }),
         expect.anything(),
         'default',
@@ -1696,7 +1723,7 @@ describe('LuxarLayer', () => {
       expect(layer.getDatasetFault()).toBeNull();
     });
 
-    it('detaches the root and tears down the process singletons', async () => {
+    it('detaches the root and tears down what the layer owns, releasing its pool lease', async () => {
       const options = makeOptions();
       const mesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
       const disposeGeometry = vi.spyOn(mesh.geometry, 'dispose');

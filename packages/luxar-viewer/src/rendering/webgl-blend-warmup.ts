@@ -636,6 +636,11 @@ export class WebGLBlendWarmupManager {
   }
 
   /** Snapshot of the warm-up counters (copied; safe to hand to probes). */
+  /** Whether this manager warms `root` (the scene it was configured against). */
+  targets(root: THREE.Object3D): boolean {
+    return this.targetScene !== null && this.targetScene === root;
+  }
+
   getStats(): BlendWarmupStats {
     return { ...this.stats };
   }
@@ -784,7 +789,34 @@ export class WebGLBlendWarmupManager {
   }
 }
 
+/** The LuxarApp's manager (the free functions below drive it). */
 const defaultManager = new WebGLBlendWarmupManager();
+
+/**
+ * Every live manager on the page: the app's, plus one per `LuxarLayer`
+ * ({@link registerBlendWarmupManager}). The shared node-commit paths call
+ * {@link scheduleBlendModeProgramWarmupForObject} without knowing their host, so
+ * that call is routed to the manager whose scene the node lives in — each host
+ * warms its own nodes against its own renderer.
+ */
+const managers = new Set<WebGLBlendWarmupManager>([defaultManager]);
+
+/** Add a host's own manager to the routing set (a LuxarLayer's). */
+export function registerBlendWarmupManager(manager: WebGLBlendWarmupManager): void {
+  managers.add(manager);
+}
+
+/** Drop a host's manager from the routing set (its dispose). */
+export function unregisterBlendWarmupManager(manager: WebGLBlendWarmupManager): void {
+  if (manager !== defaultManager) managers.delete(manager);
+}
+
+/** The scene graph root `object` currently hangs under. */
+function sceneRootOf(object: THREE.Object3D): THREE.Object3D {
+  let root = object;
+  while (root.parent) root = root.parent;
+  return root;
+}
 
 /**
  * Point the session's warm-up at a renderer, camera and scene, and drop
@@ -805,7 +837,13 @@ export function configureBlendModeProgramWarmup(config: WarmupConfig): void {
  * {@link warmSceneBlendModePrograms} has armed the session.
  */
 export function scheduleBlendModeProgramWarmupForObject(object: THREE.Object3D): void {
-  defaultManager.scheduleObject(object);
+  const root = sceneRootOf(object);
+  for (const manager of managers) {
+    if (manager.targets(root)) {
+      manager.scheduleObject(object);
+      return;
+    }
+  }
 }
 
 /**

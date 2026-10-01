@@ -28,7 +28,7 @@ vi.mock('../../../../../ui/ui-cleanup', () => ({
   cleanupUI: vi.fn(),
 }));
 vi.mock('../../../../../workers/worker-pool', () => ({
-  disposeWorkerPool: vi.fn(),
+  releaseWorkerPool: vi.fn(),
 }));
 
 interface DisposableStub {
@@ -281,11 +281,11 @@ describe('runDisposePipeline', () => {
     });
 
     it('disposes singletons last and in order: monitor → loader → workerPool', async () => {
-      const { disposeWorkerPool } = await import('../../../../../workers/worker-pool');
+      const { releaseWorkerPool } = await import('../../../../../workers/worker-pool');
       const order: string[] = [];
       monitorSpy.mockImplementation(() => order.push('monitor'));
       loaderSpy.mockImplementation(() => order.push('loader'));
-      (disposeWorkerPool as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      (releaseWorkerPool as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
         order.push('workerPool')
       );
 

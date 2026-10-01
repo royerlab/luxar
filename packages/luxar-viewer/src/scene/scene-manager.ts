@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { ControlsManager } from '../controls/controls-manager';
 import { loadScene } from '../data';
+import { SceneLoaderManager } from '../data/scene-loader-manager';
 import type { LoaderConfig } from '../data/data-loader-types';
 import { notifier } from '../utils/cross-layer/notifier';
 import { config } from '../config';
@@ -846,20 +847,19 @@ export class SceneManager extends THREE.EventDispatcher<{
       }
 
       const embedderOnSceneMetadata = loaderConfig?.onSceneMetadata;
-      const root = await loadScene(
-        src,
-        {
-          ...loaderConfig,
-          // Frame first, then hand the root to an embedder's own hook, which
-          // then sees the pose the scene opens on (as load-time decisions do).
-          onSceneMetadata: (metaRoot) => {
-            this.frameBeforeNodesLoad(metaRoot, options);
-            embedderOnSceneMetadata?.(metaRoot);
-          },
+      // The LuxarApp's loader manager; its loaders' commits report to this
+      // app's depth-sort coordinator.
+      const sceneLoaders = SceneLoaderManager.getInstance();
+      sceneLoaders.setDepthSortCoordinator(this.depthSort);
+      const root = await loadScene(sceneLoaders, src, {
+        ...loaderConfig,
+        // Frame first, then hand the root to an embedder's own hook, which
+        // then sees the pose the scene opens on (as load-time decisions do).
+        onSceneMetadata: (metaRoot) => {
+          this.frameBeforeNodesLoad(metaRoot, options);
+          embedderOnSceneMetadata?.(metaRoot);
         },
-        'default',
-        this.depthSort
-      );
+      });
       notifier.hideLoading();
       this.scene.add(root);
       this.invalidateBoundsCache();

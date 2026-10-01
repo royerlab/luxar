@@ -22,7 +22,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { loadScene, updateView, updateSceneForDimensions, dispose } from '../../../data';
 import type { SimpleDims } from '../../../types/dims';
-import type { DepthSortCoordinator } from '../../../rendering/depth-sort-coordinator';
+import { SceneLoaderManager } from '../../../data/scene-loader-manager';
+
+/** The LuxarApp's loader manager — what these helpers are handed for the app. */
+const appLoaders = () => SceneLoaderManager.getInstance();
 
 // Mock SceneLoaderManager only — see file header. The real manager depends
 // on zarr I/O and WebGL.
@@ -100,7 +103,7 @@ describe('Data Loading Integration', () => {
 
   describe('loadScene', () => {
     it('delegates to the manager and returns the loaded scene with metadata', async () => {
-      const scene = await loadScene('http://localhost:8000/test.zarr');
+      const scene = await loadScene(appLoaders(), 'http://localhost:8000/test.zarr');
 
       expect(scene).toBeInstanceOf(THREE.Group);
       expect(scene.name).toBe('LuxarScene');
@@ -114,26 +117,22 @@ describe('Data Loading Integration', () => {
       expect(scene.userData.maxRadius).toBe(0.5);
     });
 
-    it("hands the caller's depth-sort coordinator to the loader BEFORE it loads", async () => {
-      // Each host (LuxarApp, LuxarLayer) owns a coordinator; the loader's
-      // commits must report to the one that loaded it, from the first node on.
-      const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
-      const loader = SceneLoaderManager.getInstance().getDefaultLoader()! as unknown as {
-        setDepthSortCoordinator: ReturnType<typeof vi.fn>;
-        loadScene: ReturnType<typeof vi.fn>;
-      };
-      const depthSort = {} as DepthSortCoordinator;
+    it('registers the loader in the manager it is HANDED, not the app one', async () => {
+      // A LuxarLayer passes its own manager; nothing may land in the app's.
+      const created = { ...(await appLoaders().createLoaderAsync('x')) };
+      const own = {
+        createLoaderAsync: vi.fn(async () => created),
+      } as unknown as SceneLoaderManager;
+      vi.mocked(appLoaders().createLoaderAsync).mockClear();
 
-      await loadScene('http://localhost:8000/test.zarr', undefined, 'default', depthSort);
+      await loadScene(own, 'http://localhost:8000/layer.zarr', undefined, 'default');
 
-      expect(loader.setDepthSortCoordinator).toHaveBeenCalledWith(depthSort);
-      expect(loader.setDepthSortCoordinator.mock.invocationCallOrder[0]).toBeLessThan(
-        loader.loadScene.mock.invocationCallOrder[0]
-      );
+      expect(own.createLoaderAsync).toHaveBeenCalledWith('default', undefined);
+      expect(appLoaders().createLoaderAsync).not.toHaveBeenCalled();
     });
 
     it('asks the manager for an instance on every load', async () => {
-      await loadScene('http://localhost:8000/test.zarr');
+      await loadScene(appLoaders(), 'http://localhost:8000/test.zarr');
       const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
       expect(SceneLoaderManager.getInstance).toHaveBeenCalled();
     });
@@ -145,13 +144,13 @@ describe('Data Loading Integration', () => {
       };
       mockManager.getDefaultLoader()!.loadScene.mockRejectedValueOnce(new Error('Network error'));
 
-      await expect(loadScene('http://invalid.url')).rejects.toThrow('Network error');
+      await expect(loadScene(appLoaders(), 'http://invalid.url')).rejects.toThrow('Network error');
     });
   });
 
   describe('updateView', () => {
     beforeEach(async () => {
-      await loadScene('http://localhost:8000/test.zarr');
+      await loadScene(appLoaders(), 'http://localhost:8000/test.zarr');
     });
 
     it('forwards the partial view-state directly to the loader', async () => {
@@ -160,7 +159,7 @@ describe('Data Loading Integration', () => {
         slicePosition: [0, 0, 0, 5],
         tolerance: [0, 0, 0, 0.1],
       };
-      await updateView(viewState);
+      await updateView(appLoaders(), viewState);
 
       const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
       const mockManager = SceneLoaderManager.getInstance() as unknown as {
@@ -170,10 +169,10 @@ describe('Data Loading Integration', () => {
     });
 
     it('warns and short-circuits when no scene is loaded', async () => {
-      dispose();
+      dispose(appLoaders());
       const consoleSpy = vi.spyOn(console, 'warn');
 
-      await updateView({ displayDims: [0, 1, 2] });
+      await updateView(appLoaders(), { displayDims: [0, 1, 2] });
 
       expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('No scene loaded'));
     });
@@ -187,10 +186,10 @@ describe('Data Loading Integration', () => {
 
       // updateView swallows the error rather than re-throw — the system
       // should keep running after a failed view update.
-      await expect(updateView({ displayDims: [0, 1, 2] })).resolves.toBeUndefined();
+      await expect(updateView(appLoaders(), { displayDims: [0, 1, 2] })).resolves.toBeUndefined();
 
       // After the failure the next update still goes through.
-      await updateView({ displayDims: [0, 1, 2] });
+      await updateView(appLoaders(), { displayDims: [0, 1, 2] });
       expect(mockManager.getDefaultLoader().updateView).toHaveBeenCalledTimes(2);
     });
   });
@@ -199,7 +198,7 @@ describe('Data Loading Integration', () => {
     let scene: THREE.Group;
 
     beforeEach(async () => {
-      scene = await loadScene('http://localhost:8000/test.zarr');
+      scene = await loadScene(appLoaders(), 'http://localhost:8000/test.zarr');
     });
 
     it('skips the pass when the loader already holds the requested view state', async () => {
@@ -216,7 +215,7 @@ describe('Data Loading Integration', () => {
         currentStep: [0, 0, 0, 5],
         metadata: [],
       };
-      await updateSceneForDimensions(dims, scene);
+      await updateSceneForDimensions(appLoaders(), dims, scene);
       // The candidate state was offered to the loader, and nothing was re-run:
       // this is what turns the post-load `updateAllNDNodes` into a no-op.
       expect(loader.isAtViewState).toHaveBeenCalledWith(
@@ -225,7 +224,7 @@ describe('Data Loading Integration', () => {
       expect(loader.updateView).not.toHaveBeenCalled();
 
       // A changed state (default mock: not at that state) still goes through.
-      await updateSceneForDimensions({ ...dims, currentStep: [0, 0, 0, 6] }, scene);
+      await updateSceneForDimensions(appLoaders(), { ...dims, currentStep: [0, 0, 0, 6] }, scene);
       expect(loader.updateView).toHaveBeenCalledTimes(1);
     });
 
@@ -245,7 +244,7 @@ describe('Data Loading Integration', () => {
         ],
       };
 
-      await updateSceneForDimensions(dims, scene);
+      await updateSceneForDimensions(appLoaders(), dims, scene);
 
       const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
       const mockManager = SceneLoaderManager.getInstance() as unknown as {
@@ -271,7 +270,7 @@ describe('Data Loading Integration', () => {
         metadata: [],
       };
 
-      await updateSceneForDimensions(dims, scene);
+      await updateSceneForDimensions(appLoaders(), dims, scene);
 
       const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
       const mockManager = SceneLoaderManager.getInstance() as unknown as {
@@ -284,8 +283,8 @@ describe('Data Loading Integration', () => {
 
   describe('resource cleanup', () => {
     it('asks the manager to destroy all loaders on dispose()', async () => {
-      await loadScene('http://localhost:8000/test.zarr');
-      dispose();
+      await loadScene(appLoaders(), 'http://localhost:8000/test.zarr');
+      dispose(appLoaders());
 
       const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
       const manager = SceneLoaderManager.getInstance();
@@ -294,8 +293,8 @@ describe('Data Loading Integration', () => {
 
     it('handles repeated dispose calls without throwing', () => {
       expect(() => {
-        dispose();
-        dispose();
+        dispose(appLoaders());
+        dispose(appLoaders());
       }).not.toThrow();
     });
   });
@@ -303,9 +302,9 @@ describe('Data Loading Integration', () => {
   describe('concurrent operations', () => {
     it('handles concurrent loads — last-writer wins for getDefaultLoader', async () => {
       const scenes = await Promise.all([
-        loadScene('http://localhost:8000/test1.zarr'),
-        loadScene('http://localhost:8000/test2.zarr'),
-        loadScene('http://localhost:8000/test3.zarr'),
+        loadScene(appLoaders(), 'http://localhost:8000/test1.zarr'),
+        loadScene(appLoaders(), 'http://localhost:8000/test2.zarr'),
+        loadScene(appLoaders(), 'http://localhost:8000/test3.zarr'),
       ]);
 
       expect(scenes).toHaveLength(3);
@@ -313,12 +312,12 @@ describe('Data Loading Integration', () => {
     });
 
     it('forwards all concurrent view updates without dropping any', async () => {
-      await loadScene('http://localhost:8000/test.zarr');
+      await loadScene(appLoaders(), 'http://localhost:8000/test.zarr');
 
       await Promise.all([
-        updateView({ displayDims: [0, 1, 2] }),
-        updateView({ slicePosition: [0, 0, 0, 5] }),
-        updateView({ tolerance: [0.1, 0.1, 0.1, 0.2] }),
+        updateView(appLoaders(), { displayDims: [0, 1, 2] }),
+        updateView(appLoaders(), { slicePosition: [0, 0, 0, 5] }),
+        updateView(appLoaders(), { tolerance: [0.1, 0.1, 0.1, 0.2] }),
       ]);
 
       const { SceneLoaderManager } = await import('../../../data/scene-loader-manager');
@@ -331,10 +330,10 @@ describe('Data Loading Integration', () => {
 
   describe('error recovery', () => {
     it('lets loadScene be called again after dispose()', async () => {
-      await loadScene('http://localhost:8000/test1.zarr');
-      dispose();
+      await loadScene(appLoaders(), 'http://localhost:8000/test1.zarr');
+      dispose(appLoaders());
 
-      const scene = await loadScene('http://localhost:8000/test2.zarr');
+      const scene = await loadScene(appLoaders(), 'http://localhost:8000/test2.zarr');
       expect(scene).toBeInstanceOf(THREE.Group);
     });
   });
