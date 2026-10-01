@@ -30,6 +30,17 @@
  * - A name the index does not hold falls back to the walk too (a node inserted
  *   without an event, or a genuinely absent path), and a hit found that way is
  *   indexed so the next lookup is O(1).
+ * - A walk that MISSES is remembered per lookup root, so a path that is not
+ *   built yet (a lazy LOD level, a deferred partition part — looked up on every
+ *   pass) costs one walk, not one per lookup. The memory is invalidated by an
+ *   EPOCH bumped on every event that could turn a miss into a hit: a
+ *   `childadded` anywhere in the tree (a new node, or a member moved into the
+ *   looked-up root) and a member rename. A removal, and the eager-child
+ *   loader's event-less slot flattening, can only SHRINK the set of nodes below
+ *   a root, so they never stale a miss. (A node inserted with no event at all
+ *   would — nothing in the viewer does that, and the property test in
+ *   `tests/unit/utils/scene-graph-index.test.ts` checks every lookup against
+ *   the walk after each edit, flattening included.)
  * - The empty name is never indexed (every unnamed group would collide).
  *
  * A lookup rooted at a node of an indexed tree (not only at the indexed root) is
@@ -86,10 +97,23 @@ function isWithin(node: Node, scope: Node): boolean {
   return false;
 }
 
+/** Bound on remembered misses per lookup root (then the memory starts over). */
+const MAX_MISSES_PER_SCOPE = 4096;
+
+/** Misses remembered for one lookup root, valid for one {@link SceneGraphIndex} epoch. */
+interface MissMemo {
+  epoch: number;
+  names: Set<string>;
+}
+
 /** The path → node map for one attached root. */
 export class SceneGraphIndex {
   /** Name → live members holding it (length > 1 ⇒ ambiguous). */
   private readonly byName = new Map<string, Node[]>();
+  /** Bumped by every edit that could turn a remembered miss into a hit. */
+  private epoch = 0;
+  /** Lookup root → the names a walk from it missed during {@link epoch}. */
+  private misses = new WeakMap<Node, MissMemo>();
   private readonly onChildAdded = (event: ChildEvent): void => {
     this.addSubtree(event.child);
   };
@@ -105,6 +129,8 @@ export class SceneGraphIndex {
   detach(): void {
     this.removeSubtree(this.root);
     this.byName.clear();
+    this.misses = new WeakMap();
+    this.epoch++;
   }
 
   /** Number of distinct indexed names (diagnostics / tests). */
@@ -115,29 +141,62 @@ export class SceneGraphIndex {
   /** `scope.getObjectByName(name)`, answered from the map where it is exact. */
   find(scope: Node, name: string): Node | undefined {
     const holders = name === '' ? undefined : this.byName.get(name);
-    if (holders !== undefined) {
-      // Forget holders detached without an event (stale) first, so one stale
-      // twin cannot leave a name ambiguous forever.
-      if (holders.length > 1) this.pruneDetached(holders);
-      if (holders.length === 1) {
-        const hit = holders[0];
-        if (isWithin(hit, scope)) return hit;
-        // Attached but outside `scope`: the walk is the only exact answer for
-        // an unindexed twin. Detached: forget it.
-        if (!isWithin(hit, this.root)) this.removeNode(hit);
-      }
+    if (holders === undefined) {
+      if (this.isKnownMiss(scope, name)) return undefined;
+    } else {
+      const hit = this.uniqueHolderWithin(holders, scope);
+      if (hit !== undefined) return hit;
     }
+    return this.walk(scope, name);
+  }
+
+  /** The one live holder of a name, when it lies within `scope`. */
+  private uniqueHolderWithin(holders: Node[], scope: Node): Node | undefined {
+    // Forget holders detached without an event (stale) first, so one stale
+    // twin cannot leave a name ambiguous forever.
+    if (holders.length > 1) this.pruneDetached(holders);
+    if (holders.length !== 1) return undefined;
+    const hit = holders[0];
+    if (isWithin(hit, scope)) return hit;
+    // Attached but outside `scope`: the walk is the only exact answer for an
+    // unindexed twin. Detached: forget it.
+    if (!isWithin(hit, this.root)) this.removeNode(hit);
+    return undefined;
+  }
+
+  /** The exact answer by walking, remembering a miss and repairing a hit. */
+  private walk(scope: Node, name: string): Node | undefined {
     const found = scope.getObjectByName(name);
+    if (found === undefined) this.rememberMiss(scope, name);
     // Repair: a node that reached the tree without an event becomes a member,
     // so the next lookup of it is O(1).
-    if (found !== undefined && MEMBERSHIP.get(found) !== this) this.addSubtree(found);
+    else if (MEMBERSHIP.get(found) !== this) this.addSubtree(found);
     return found;
   }
 
   /** @internal — called by a member's `name` accessor. */
   renamed(node: Node, previous: string, next: string): void {
+    this.epoch++;
     this.unkey(node, previous);
     this.key(node, next);
+  }
+
+  private isKnownMiss(scope: Node, name: string): boolean {
+    const memo = this.misses.get(scope);
+    return memo !== undefined && memo.epoch === this.epoch && memo.names.has(name);
+  }
+
+  private rememberMiss(scope: Node, name: string): void {
+    let memo = this.misses.get(scope);
+    if (
+      memo === undefined ||
+      memo.epoch !== this.epoch ||
+      memo.names.size >= MAX_MISSES_PER_SCOPE
+    ) {
+      memo = { epoch: this.epoch, names: new Set() };
+      this.misses.set(scope, memo);
+    }
+    memo.names.add(name);
   }
 
   private pruneDetached(holders: readonly Node[]): void {
@@ -147,6 +206,9 @@ export class SceneGraphIndex {
   }
 
   private addSubtree(top: Node): void {
+    // Even a subtree of existing members (a move) can bring a name below a
+    // root a miss was remembered for.
+    this.epoch++;
     top.traverse((node) => this.addNode(node));
   }
 
@@ -201,6 +263,15 @@ export function attachSceneGraphIndex(root: Node): SceneGraphIndex {
   const existing = MEMBERSHIP.get(root);
   if (existing?.root === root) return existing;
   return new SceneGraphIndex(root);
+}
+
+/**
+ * Stop maintaining the index rooted at `root`, if `root` is an indexed root
+ * (a node that merely belongs to an indexed tree is left alone).
+ */
+export function detachSceneGraphIndex(root: Node): void {
+  const index = MEMBERSHIP.get(root);
+  if (index?.root === root) index.detach();
 }
 
 /** The index serving lookups rooted at `node` (its tree's), if any. */

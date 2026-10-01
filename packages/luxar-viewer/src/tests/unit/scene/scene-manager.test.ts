@@ -719,7 +719,7 @@ describe('SceneManager', () => {
       expect(blendWarmupMocks.warmScene).toHaveBeenCalledExactlyOnceWith(sceneManager.scene);
     });
 
-    it.fails("detaches the outgoing scene's path index when the next load clears it", async () => {
+    it("detaches the outgoing scene's path index when the next load clears it", async () => {
       // The loader indexes its root; a dataset switch must stop maintaining
       // the old tree (listeners on every node) rather than leave it to GC.
       const oldRoot = new THREE.Group();

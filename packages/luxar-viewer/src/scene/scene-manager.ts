@@ -63,6 +63,7 @@ import {
   clearLoadedSceneContent,
   disposeSceneGraphResources,
 } from './scene-manager/render-pipeline/scene-disposal';
+import { detachSceneGraphIndex } from '../utils/scene-graph-index';
 import {
   applyZarrViewerConfig as applyZarrViewerConfigHelper,
   createDefaultPerspectiveCamera,
@@ -1034,6 +1035,9 @@ export class SceneManager extends THREE.EventDispatcher<{
   private clearSceneContent(): void {
     clearBlendModeProgramWarmup();
     this.invalidateBoundsCache();
+    // The outgoing scene root carries the loader's path index (every member
+    // node holds its add/remove listeners): stop maintaining it.
+    for (const child of this.scene.children) detachSceneGraphIndex(child);
     const removed = clearLoadedSceneContent(this.scene);
     log.info(Modules.SCENE_MANAGER, `Cleared ${removed} objects from scene`);
   }

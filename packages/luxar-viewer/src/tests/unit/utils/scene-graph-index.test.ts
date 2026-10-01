@@ -189,7 +189,7 @@ describe('SceneGraphIndex — agrees with getObjectByName', () => {
     }
   });
 
-  it.fails('walks once for a repeated miss, until the graph could make it a hit', () => {
+  it('walks once for a repeated miss, until the graph could make it a hit', () => {
     // A path not built yet (a lazy LOD level, a deferred partition part) is
     // looked up on every pass; each miss used to be a full subtree walk.
     const root = new THREE.Group();
