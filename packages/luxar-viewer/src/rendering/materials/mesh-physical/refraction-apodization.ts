@@ -11,12 +11,12 @@
  *
  * The fix shapes the SHIFT FIELD rather than the sample. Per fragment, with the
  * unshifted point at NDC `b` and the shift `s` (both from the same ray three will
- * trace), each axis has `room = 1 − |b|` to its nearest border and the shift is
+ * trace), each axis has `room = 1 − sign(s)·b` toward the shift's border and is
  * soft-limited to it: identity up to {@link REFRACTION_SHIFT_KNEE}·room, then a
  * tanh roll-off that approaches `room` and never reaches it. The vector keeps its
  * direction — the smaller of the two axis factors scales both — so the field is:
  *
- * - **zero on every screen border** (room 0 there);
+ * - **zero for outward shifts on a screen border** (room 0 there);
  * - **continuous** (and C¹ through the knee), so no seam appears where it engages;
  * - **the identity** wherever the shift stays within the knee of the room, which is
  *   every pixel of an ordinary glass away from the edges — no change in the centre.
@@ -61,7 +61,7 @@ export const DISPERSION_HALF_SPREAD_PER_UNIT = 0.025;
  * Factor by which ONE axis of the shift is scaled: 1 up to the knee, then the soft
  * limit that keeps `|shift|·factor < room`. 0 when there is no room at all.
  * @param shift - Absolute shift along the axis, in NDC units (≥ 0).
- * @param room - Distance from the unshifted point to the nearest border on that axis, NDC.
+ * @param room - Distance from the unshifted point to the border in the shift direction, NDC.
  */
 export function apodizeShiftAxis(shift: number, room: number): number {
   const knee = REFRACTION_SHIFT_KNEE * room;
@@ -78,8 +78,8 @@ export function apodizeShiftAxis(shift: number, room: number): number {
  * @param s - Unshaped NDC shift `[x, y]`.
  */
 export function apodizedShiftFraction(b: readonly number[], s: readonly number[]): number {
-  const roomX = Math.max(1 - Math.abs(b[0]), 0);
-  const roomY = Math.max(1 - Math.abs(b[1]), 0);
+  const roomX = Math.max(1 - Math.sign(s[0]) * b[0], 0);
+  const roomY = Math.max(1 - Math.sign(s[1]) * b[1], 0);
   return Math.min(apodizeShiftAxis(Math.abs(s[0]), roomX), apodizeShiftAxis(Math.abs(s[1]), roomY));
 }
 
@@ -120,9 +120,9 @@ export const REFRACTION_APODIZATION_GLSL_FUNCTIONS = /* glsl */ `
 		vec4 c1 = projMatrix * viewMatrix * vec4( position + ray, 1.0 );
 		if ( c0.w <= 0.0 || c1.w <= 0.0 ) return ${REFRACTION_MIN_RAY_SCALE.toExponential()};
 		vec2 b = c0.xy / c0.w;
-		vec2 s = abs( c1.xy / c1.w - b );
-		vec2 room = max( 1.0 - abs( b ), 0.0 );
-		float kappa = min( luxarApodizeShiftAxis( s.x, room.x ), luxarApodizeShiftAxis( s.y, room.y ) );
+		vec2 s = c1.xy / c1.w - b;
+		vec2 room = max( 1.0 - sign( s ) * b, 0.0 );
+		float kappa = min( luxarApodizeShiftAxis( abs( s.x ), room.x ), luxarApodizeShiftAxis( abs( s.y ), room.y ) );
 		float lambda = kappa * c0.w / ( kappa * c0.w + ( 1.0 - kappa ) * c1.w );
 		return max( lambda, ${REFRACTION_MIN_RAY_SCALE.toExponential()} );
 	}

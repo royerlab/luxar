@@ -142,12 +142,13 @@ Three samples the scene behind a glass at the screen projection of
 is not, the sampler clamps to the border texel and the border smears inward as streaks —
 worst with the camera inside a refracting shell, where every pixel is glass and a
 double-sided shell is refracted twice on WebGL. Per fragment, each axis of the screen
-shift is soft-limited to its room to the nearest border: the identity up to
-`REFRACTION_SHIFT_KNEE` (half) of that room, then a tanh roll-off that never reaches it,
-the stricter axis scaling the whole vector so its direction is kept. The field is
-therefore zero on every border, continuous, and untouched wherever a shift stays clear of
-the edges. It is applied by shortening the ray three traces (`thickness·λ`, with
-`attenuationDistance·λ` keeping the Beer–Lambert absorption unchanged), λ being the exact
+shift is soft-limited to its room toward the border in the shift direction: the identity
+up to `REFRACTION_SHIFT_KNEE` (half) of that room, then a tanh roll-off that never
+reaches it, the stricter axis scaling the whole vector so its direction is kept. The
+field is therefore zero for outward shifts on the border, continuous, and untouched
+wherever a shift stays clear of the edges. It is applied by shortening the ray three
+traces (`thickness·λ`, with `attenuationDistance·λ` keeping the Beer–Lambert absorption
+unchanged), λ being the exact
 perspective-correct scale for the wanted fraction of the screen shift — so it goes through
 three's own refraction on both backends: the WebGL `onBeforeCompile` adds it after the
 alpha pin (`apodizeRefractionShiftGlsl`, anchored in three's real chunks by a unit test),

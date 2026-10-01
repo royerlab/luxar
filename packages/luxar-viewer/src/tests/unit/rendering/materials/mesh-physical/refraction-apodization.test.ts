@@ -1,7 +1,7 @@
 /**
- * The refraction-shift edge apodization: the shaped field is zero on the screen
- * borders, continuous, the identity away from them, never samples off screen — and
- * the WebGL patch lands in three's real chunks where it must.
+ * The refraction-shift edge apodization: outward shifts vanish on the screen
+ * borders, the field is continuous and the identity away from them, and samples
+ * stay on screen. The WebGL patch lands in three's real chunks where it must.
  *
  * The wrong answers here all render something plausible: a limiter that touches the
  * centre bends every glass a little; one that is discontinuous draws a seam where it
@@ -89,17 +89,40 @@ describe('apodizeShiftAxis — one axis of the shaped shift', () => {
 });
 
 describe('apodizedShiftFraction — the whole vector keeps its direction', () => {
-  it('is 1 in the centre for an ordinary shift, and 0 on every border', () => {
+  it('is 1 in the centre for an ordinary shift, and 0 for outward shifts on the border', () => {
     expect(apodizedShiftFraction([0, 0], [0.05, -0.03])).toBe(1);
     expect(apodizedShiftFraction([0.3, -0.2], [0.1, 0.1])).toBe(1);
-    for (const b of [
-      [1, 0],
-      [-1, 0.3],
-      [0.2, 1],
-      [-0.5, -1],
+    for (const [b, s] of [
+      [
+        [1, 0],
+        [0.04, 0],
+      ],
+      [
+        [-1, 0.3],
+        [-0.04, 0],
+      ],
+      [
+        [0.2, 1],
+        [0, 0.02],
+      ],
+      [
+        [-0.5, -1],
+        [0, -0.02],
+      ],
     ]) {
-      expect(apodizedShiftFraction(b, [0.04, 0.02])).toBe(0);
+      expect(apodizedShiftFraction(b, s)).toBe(0);
     }
+  });
+
+  it('preserves inward shifts near and on the border', () => {
+    expect(apodizedShiftFraction([0.95, 0], [-0.2, 0])).toBe(1);
+    expect(apodizedShiftFraction([-0.95, 0], [0.2, 0])).toBe(1);
+    expect(apodizedShiftFraction([1, 0], [-0.2, 0])).toBe(1);
+    expect(apodizedShiftFraction([0, -1], [0, 0.2])).toBe(1);
+    expect(apodizedShiftFraction([0.95, 0], [0.2, 0])).toBeLessThan(1);
+    const acrossScreen = apodizedShiftFraction([0.95, 0], [-3, 0]);
+    expect(acrossScreen).toBeLessThan(1);
+    expect(0.95 - 3 * acrossScreen).toBeGreaterThanOrEqual(-1);
   });
 
   it('takes the stricter axis, so the shaped shift is parallel to the unshaped one', () => {
@@ -286,6 +309,12 @@ describe('the WebGL patch on three’s real chunks', () => {
     expect(patched).toContain('material.attenuationDistance *= luxarRayScale;');
     // The knee in the shader is the reference's knee.
     expect(patched).toContain(`${REFRACTION_SHIFT_KNEE.toFixed(4)} * room`);
+    expect(patched).toContain('if ( c0.w <= 0.0 || c1.w <= 0.0 )');
+    expect(patched).toContain('vec2 s = c1.xy / c1.w - b;');
+    expect(patched).toContain('vec2 room = max( 1.0 - sign( s ) * b, 0.0 );');
+    expect(patched).toContain('luxarApodizeShiftAxis( abs( s.x ), room.x )');
+    expect(patched).toContain('luxarApodizeShiftAxis( abs( s.y ), room.y )');
+    expect(patched).toContain('kappa * c0.w / ( kappa * c0.w + ( 1.0 - kappa ) * c1.w )');
   });
 
   it('leaves a shader without the expanded chunk alone', () => {
