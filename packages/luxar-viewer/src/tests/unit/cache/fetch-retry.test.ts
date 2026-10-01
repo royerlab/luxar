@@ -8,13 +8,18 @@ import {
 } from '../../../cache/multi-level-caching-store/fetch-retry';
 import {
   getFetchLaneLimit,
-  HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
-  MAX_CONCURRENT_CHUNK_FETCHES,
   resetFetchProgressEpoch,
   resetFetchTransport,
   withFetchGate,
 } from '../../../utils/fetch-concurrency';
+import { config } from '../../../config';
 import { log } from '../../../utils/log';
+
+/** The gate's widths, as configured (`config.dataLoading.network.fetchGate`). */
+const {
+  http1MaxChunkFetches: HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
+  maxChunkFetches: MAX_CONCURRENT_CHUNK_FETCHES,
+} = config.dataLoading.network.fetchGate;
 
 function mockResponse(status: number, body: ArrayBuffer | string = ''): Response {
   return {

@@ -31,8 +31,7 @@
  * Within a lane, waiters are served by PRIORITY CLASS — `demand` (a frame is
  * waiting on it), then `refinement` (a finer level of something already shown),
  * then `speculative` (the prefetcher guessing) — FIFO within a class, and
- * speculative requests never hold more than {@link MAX_SPECULATIVE_FETCH_SHARE}
- * of the lane. A queued request's class can be RAISED after it queued (a demand
+ * speculative requests never hold more than `speculativeShare` of the lane. A queued request's class can be RAISED after it queued (a demand
  * caller joining a prefetch) through a {@link FetchPriorityCell}, and a request
  * whose caller aborts while it waits leaves the queue at once.
  *
@@ -42,51 +41,27 @@
  * class that a wider origin could start; FIFO holds across the tiers by
  * enqueue order.
  *
- * The data lane is {@link MAX_CONCURRENT_CHUNK_FETCHES} wide by default and
- * {@link MAX_CONCURRENT_MULTIPLEXED_CHUNK_FETCHES} for an origin that resource
- * timing shows negotiated HTTP/2 or HTTP/3 (`nextHopProtocol`): there the
- * browser multiplexes streams on one connection and the 24-wide lane, not the
- * network, was the measured bottleneck before first frame.
+ * The data lane is `maxChunkFetches` (24) wide by default and
+ * `maxMultiplexedChunkFetches` (96) for an origin that resource timing shows
+ * negotiated HTTP/2 or HTTP/3 (`nextHopProtocol`): there the browser
+ * multiplexes streams on one connection and the 24-wide lane, not the network,
+ * was the measured bottleneck before first frame.
+ *
+ * Every width lives in `config.dataLoading.network.fetchGate` (validated, read
+ * at each admission).
  *
  * Perf counters per lane (`fetch.<lane>.requests`, `.highWater`,
  * `.queueWaitMs`) are tallied here; see `profiling/perf-counters.ts`.
  */
 
+import { config } from '../config';
+import type { FetchGateConfig } from '../config/sections/data-loading/network/types';
 import { perfCounters, type PerfCounterSlot } from '../profiling/perf-counters';
 
-/**
- * Maximum chunk responses in flight across every data path at once, for an
- * HTTP/1.1 or not-yet-identified origin.
- *
- * 24 keeps enough HTTP/2 streams ready to fill ordinary broadband while
- * bounding a representative 500 KiB chunk wave to about 12 MiB. Shared
- * globally — the cap is on total concurrency through response-body
- * consumption, not per store or per node. Metadata has its own lane (four
- * slots normally, two after a plain `http:` URL is seen).
- */
-export const MAX_CONCURRENT_CHUNK_FETCHES = 24;
-
-/**
- * Data-lane width for an origin known to multiplex (h2/h3).
- *
- * Measured on a hosted HTTP/2 simulation (100 ms RTT, 25 Mbps): at 24 the lane
- * sat pinned full before first frame; at 96 first frame improved 14% and
- * settle 15-21% (h2afva). This is also the GLOBAL ceiling of the data lane.
- */
-export const MAX_CONCURRENT_MULTIPLEXED_CHUNK_FETCHES = 96;
-export const MAX_CONCURRENT_METADATA_FETCHES = 4;
-
-/**
- * Lane caps on an HTTP/1.1 origin: together they equal the six sockets every
- * current browser opens per origin, so an admitted request is a dispatched
- * request. Metadata keeps two sockets of its own so a scene-graph probe is not
- * stuck behind four chunk bodies.
- */
-export const HTTP1_MAX_CONCURRENT_CHUNK_FETCHES = 4;
-export const HTTP1_MAX_CONCURRENT_METADATA_FETCHES = 2;
-
-/** Largest fraction of a lane that `speculative` requests may occupy. */
-export const MAX_SPECULATIVE_FETCH_SHARE = 0.25;
+/** The gate's lane widths, read live so a test or tuning can change them. */
+function gateConfig(): FetchGateConfig {
+  return config.dataLoading.network.fetchGate;
+}
 
 export type FetchLane = 'data' | 'metadata';
 
@@ -260,9 +235,9 @@ interface FetchGateState {
   readonly lane: FetchLane;
   active: number;
   /** The lane's default width: its global cap for every origin not known to multiplex. */
-  readonly limit: number;
+  limit(): number;
   /** The per-origin cap of an HTTP/1.1 origin (see {@link noteFetchUrl}). */
-  readonly http1Limit: number;
+  http1Limit(): number;
   speculativeActive: number;
   /** Live leases per origin, so an HTTP/1.1 origin is held to its own sockets. */
   readonly originLeases: Map<string, OriginLeases>;
@@ -280,9 +255,9 @@ function createGate(lane: FetchLane): FetchGateState {
   return {
     lane,
     active: 0,
-    limit: lane === 'data' ? MAX_CONCURRENT_CHUNK_FETCHES : MAX_CONCURRENT_METADATA_FETCHES,
-    http1Limit:
-      lane === 'data' ? HTTP1_MAX_CONCURRENT_CHUNK_FETCHES : HTTP1_MAX_CONCURRENT_METADATA_FETCHES,
+    limit: () => (lane === 'data' ? gateConfig().maxChunkFetches : gateConfig().maxMetadataFetches),
+    http1Limit: () =>
+      lane === 'data' ? gateConfig().http1MaxChunkFetches : gateConfig().http1MaxMetadataFetches,
     speculativeActive: 0,
     originLeases: new Map(),
     queues: Array.from({ length: PRIORITY_CLASSES * WIDTH_TIERS }, () => new Deque<QueueEntry>()),
@@ -380,20 +355,20 @@ function isHttp1(origin: string | undefined): origin is string {
  * ({@link FetchGateState.http1Limit}).
  */
 function laneLimit(gate: FetchGateState, origin: string | undefined): number {
-  if (gate.lane === 'metadata' || isHttp1(origin)) return gate.limit;
+  if (gate.lane === 'metadata' || isHttp1(origin)) return gate.limit();
   return origin !== undefined && multiplexedOrigins.has(origin)
-    ? MAX_CONCURRENT_MULTIPLEXED_CHUNK_FETCHES
-    : gate.limit;
+    ? gateConfig().maxMultiplexedChunkFetches
+    : gate.limit();
 }
 
 /** How many of this lane's requests `origin` may have in flight at once. */
 function originWidth(gate: FetchGateState, origin: string | undefined): number {
-  return isHttp1(origin) ? gate.http1Limit : laneLimit(gate, origin);
+  return isHttp1(origin) ? gate.http1Limit() : laneLimit(gate, origin);
 }
 
 /** Speculative leases allowed out of a width of `limit`. */
 function speculativeCap(limit: number): number {
-  return Math.max(1, Math.floor(limit * MAX_SPECULATIVE_FETCH_SHARE));
+  return Math.max(1, Math.floor(limit * gateConfig().speculativeShare));
 }
 
 // ── Admission ───────────────────────────────────────────────────────────────
@@ -467,8 +442,9 @@ function rankOf(priority: FetchPriorityCell | FetchPriority): number {
 function originAdmits(gate: FetchGateState, origin: string, rank: number): boolean {
   const leases = gate.originLeases.get(origin);
   if (leases === undefined) return true;
-  if (leases.active >= gate.http1Limit) return false;
-  return rank !== SPECULATIVE_RANK || leases.speculative < speculativeCap(gate.http1Limit);
+  const cap = gate.http1Limit();
+  if (leases.active >= cap) return false;
+  return rank !== SPECULATIVE_RANK || leases.speculative < speculativeCap(cap);
 }
 
 function admissible(gate: FetchGateState, origin: string | undefined, rank: number): boolean {
@@ -481,7 +457,7 @@ function admissible(gate: FetchGateState, origin: string | undefined, rank: numb
 /** Width tier of a request from `origin` (see {@link WIDTH_TIERS}). */
 function tierOf(gate: FetchGateState, origin: string | undefined): number {
   if (isHttp1(origin)) return 0;
-  return laneLimit(gate, origin) > gate.limit ? 2 : 1;
+  return laneLimit(gate, origin) > gate.limit() ? 2 : 1;
 }
 
 /** Does any LIVE waiter of `rank` or more urgent sit in `tier`'s queues? */

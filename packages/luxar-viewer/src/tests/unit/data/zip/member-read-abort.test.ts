@@ -13,10 +13,13 @@ import { LuxarZipStore } from '../../../../data/zip/store';
 import { ZipChunkSource } from '../../../../cache/chunk-source/zip-chunk-source';
 import {
   FetchPriorityCell,
-  MAX_CONCURRENT_CHUNK_FETCHES,
   resetFetchTransport,
   withFetchGate,
 } from '../../../../utils/fetch-concurrency';
+import { config } from '../../../../config';
+
+/** The gate's widths, as configured (`config.dataLoading.network.fetchGate`). */
+const { maxChunkFetches: MAX_CONCURRENT_CHUNK_FETCHES } = config.dataLoading.network.fetchGate;
 
 const URL_ = 'https://example.com/abort.luxar.zarr.zip';
 

@@ -1,7 +1,7 @@
 /** Slow-link fetch regressions for #2678. */
 
 import { expect, test, type Page } from '@playwright/test';
-import { HTTP1_MAX_CONCURRENT_CHUNK_FETCHES } from '../../utils/fetch-concurrency';
+import { dataLoadingNetworkConfig } from '../../config/sections/data-loading/network/data';
 import { applyNetworkProfile, type NetworkProfile } from './perf-audit-helpers';
 import { PERF_SLOW_DATA_BASE } from './perf-data-base';
 
@@ -17,7 +17,7 @@ const HOSTED_CHUNKS = [
 const LOCAL_TARGET = `${PERF_SLOW_DATA_BASE}/__luxar_slow_wave__`;
 const HOSTED_REQUESTS = 24;
 // One data-lane cohort: requests queued behind the gate miss the streaming leader.
-const LOCAL_REQUESTS = HTTP1_MAX_CONCURRENT_CHUNK_FETCHES;
+const LOCAL_REQUESTS = dataLoadingNetworkConfig.fetchGate.http1MaxChunkFetches;
 const DEFAULT_PROFILES: NetworkProfile[] = ['slow100k', 'slow1m', 'slow3m'];
 const profiles = (process.env.LUXAR_SLOW_LINK_PROFILES?.split(',').filter(Boolean) ??
   DEFAULT_PROFILES) as NetworkProfile[];
