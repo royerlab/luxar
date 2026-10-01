@@ -38,6 +38,7 @@ import {
 } from '../../../scene/lod-group-registry';
 import type { NodeBuildCtx } from '../../../data/scene-loader/nodes/build-ctx';
 import { getLoadTimeline, resetLoadTimeline } from '../../../profiling/load-timeline';
+import { UpdateProfiler, type TimingEntry } from '../../../profiling/update-profiler';
 import * as gsplatsRefinement from '../../../data/gsplats/lod-refinement';
 import { signalPriority } from '../../../utils/fetch-concurrency';
 import { log, Modules } from '../../../utils/log';
@@ -217,6 +218,30 @@ describe('SceneLoader', () => {
       expect((zarr as any).withMaybeConsolidatedMetadata).toHaveBeenCalled();
       expect(scene).toBeDefined();
       expect(scene.name).toBe('LuxarScene');
+    });
+
+    it.fails('starts each dataset with a fresh update profiler', async () => {
+      // The profiler is a manager-wide singleton; without a reset at loadStart
+      // every row the previous dataset ever produced stays in the tree, and
+      // each merge's stale sweep walks all of them.
+      const profiler = new UpdateProfiler();
+      profiler.beginUpdate();
+      profiler.time('previous-dataset-node', () => undefined);
+      profiler.endUpdate();
+      expect(profiler.getTimings().children.map((c) => c.name)).toContain('previous-dataset-node');
+      const loader = new SceneLoader({}, 'profiled', profiler);
+      try {
+        await loader.loadScene('http://localhost:8000/test.zarr');
+        const names: string[] = [];
+        const walk = (entry: TimingEntry): void => {
+          names.push(entry.name);
+          entry.children.forEach(walk);
+        };
+        walk(profiler.getTimings());
+        expect(names).not.toContain('previous-dataset-node');
+      } finally {
+        await loader.dispose();
+      }
     });
 
     it('should initialize scene dimensions from metadata', async () => {
