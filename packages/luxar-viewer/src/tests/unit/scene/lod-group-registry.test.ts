@@ -981,7 +981,7 @@ describe('LODGroupRegistry — partition frustum selection', () => {
     }
   });
 
-  it.fails('culls a partition revealed by its lod_group on the frame it appears (#2944 review B)', () => {
+  it('culls a partition revealed by its lod_group on the frame it appears (#2944 review B)', () => {
     // Overview shape: the fine level of a lod_group is a partition wrapper.
     // The partition pass used to run BEFORE the LOD pass and skip the wrapper
     // while hidden, so the frame that revealed it drew every part unculled.

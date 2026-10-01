@@ -856,7 +856,7 @@ describe('runInitPipeline', () => {
       return { tick, notify };
     }
 
-    it.fails('runs before the projected-density guard (#2944 review B)', async () => {
+    it('runs before the projected-density guard (#2944 review B)', async () => {
       // Same phase ⇒ registration order is run order. The density guard sets
       // each drawn level's keep fraction, so it must see the level the
       // selector reveals THIS frame, not draw it one frame on its stale keep.

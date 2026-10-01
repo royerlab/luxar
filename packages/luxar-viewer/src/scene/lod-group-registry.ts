@@ -919,6 +919,9 @@ const PARTITION_BECAME_VISIBLE = 2;
 // ``evaluatePartitionEntry`` and merged into ``partitionResyncPending`` only
 // on a rising edge (rare), so the steady-state per-frame path allocates nothing.
 const RISING_PARTS_SCRATCH = new Set<string>();
+// Partitions skipped this frame because their wrapper was hidden (re-checked
+// after the LOD pass, which may reveal them). Reused: no per-frame allocation.
+const HIDDEN_PARTITIONS_SCRATCH: PartitionGroupEntry[] = [];
 /** Scratch for {@link LODGroupRegistry.rankPartitionPartsForLoad} (load time, not per frame). */
 const LOAD_RANK_LOCAL_BOX: BoundingBox = { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } };
 const LOAD_RANK_OPTIONS: WorldBoxOptions = {
@@ -2380,33 +2383,18 @@ export class LODGroupRegistry {
     let cullChanged = false;
     let anyLoading = false;
     let hasVisiblePendingResync = false;
+    // Partitions first, so a lod_group nested in a part sees this frame's cull.
+    // A wrapper hidden now is skipped, and remembered: a lod_group below may
+    // reveal it this frame (the overview recipe's fine level), and it must be
+    // culled before that frame draws, not one frame late.
+    HIDDEN_PARTITIONS_SCRATCH.length = 0;
     for (const entry of this.partitionEntries.values()) {
-      if (!isEffectivelyVisible(entry.groupObject)) continue;
-      RISING_PARTS_SCRATCH.clear();
-      const result = this.evaluatePartitionEntry(
-        entry,
-        displayDims,
-        PARTITION_FRUSTUM_SCRATCH,
-        RISING_PARTS_SCRATCH
-      );
-      if ((result & PARTITION_VISIBILITY_CHANGED) !== 0) {
-        cullChanged = true;
-        this.drawnStateChanged = true;
+      if (!isEffectivelyVisible(entry.groupObject)) {
+        HIDDEN_PARTITIONS_SCRATCH.push(entry);
+        continue;
       }
-      // Only parts with something stale to resync are recorded (a settled
-      // re-entry just re-shows), so an empty set means no resync at all — never
-      // an empty-path request, which the loader would read as a FULL re-sweep.
-      if (RISING_PARTS_SCRATCH.size > 0) {
-        this.notePartitionRisingEdge(entry.path, RISING_PARTS_SCRATCH);
-      }
+      if (this.evaluatePartitionFrame(entry, displayDims)) cullChanged = true;
       if (this.partitionResyncPending.has(entry.path)) hasVisiblePendingResync = true;
-    }
-    RISING_PARTS_SCRATCH.clear();
-    if (this.partitionResyncPending.size > 0 && this.deps.isUpdateInProgress?.() !== true) {
-      this.flushPartitionResyncs();
-    }
-    if (hasVisiblePendingResync && this.partitionResyncPending.size > 0) {
-      this.keepTicking();
     }
     for (const entry of this.entries.values()) {
       if (this.evaluateEntry(entry, view, viewport, displayDims, FRUSTUM_SCRATCH, settled)) {
@@ -2421,6 +2409,19 @@ export class LODGroupRegistry {
       if (this.observeLoads(entry)) anyLoading = true;
     }
     this.probeCandidate = null;
+    // The partitions a level swap just revealed.
+    for (const entry of HIDDEN_PARTITIONS_SCRATCH) {
+      if (!isEffectivelyVisible(entry.groupObject)) continue;
+      if (this.evaluatePartitionFrame(entry, displayDims)) cullChanged = true;
+      if (this.partitionResyncPending.has(entry.path)) hasVisiblePendingResync = true;
+    }
+    HIDDEN_PARTITIONS_SCRATCH.length = 0;
+    if (this.partitionResyncPending.size > 0 && this.deps.isUpdateInProgress?.() !== true) {
+      this.flushPartitionResyncs();
+    }
+    if (hasVisiblePendingResync && this.partitionResyncPending.size > 0) {
+      this.keepTicking();
+    }
     if (anyLoading) this.keepTicking();
     // A dissolve is a function of TIME, so the loop must keep drawing until it
     // lands even when nothing else moves (each step writes a new opacity,
@@ -2439,6 +2440,33 @@ export class LODGroupRegistry {
     // so no per-swap release, hence no reload churn.
     this.enforceByteBudget(camera, FRUSTUM_SCRATCH, displayDims);
     return lodFrameChanges(levelChanged, cullChanged);
+  }
+
+  /**
+   * Frustum- and slice-gate one VISIBLE partition for this frame and record its
+   * rising edges. Returns whether a part was culled or restored.
+   */
+  private evaluatePartitionFrame(
+    entry: PartitionGroupEntry,
+    displayDims: readonly number[]
+  ): boolean {
+    RISING_PARTS_SCRATCH.clear();
+    const result = this.evaluatePartitionEntry(
+      entry,
+      displayDims,
+      PARTITION_FRUSTUM_SCRATCH,
+      RISING_PARTS_SCRATCH
+    );
+    // Only parts with something stale to resync are recorded (a settled
+    // re-entry just re-shows), so an empty set means no resync at all — never
+    // an empty-path request, which the loader would read as a FULL re-sweep.
+    if (RISING_PARTS_SCRATCH.size > 0) {
+      this.notePartitionRisingEdge(entry.path, RISING_PARTS_SCRATCH);
+    }
+    RISING_PARTS_SCRATCH.clear();
+    if ((result & PARTITION_VISIBILITY_CHANGED) === 0) return false;
+    this.drawnStateChanged = true;
+    return true;
   }
 
   /**
