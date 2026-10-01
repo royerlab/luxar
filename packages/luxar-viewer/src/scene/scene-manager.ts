@@ -832,9 +832,15 @@ export class SceneManager extends THREE.EventDispatcher<{
         this.updateMaterialsForCurrentCamera();
       }
 
+      const embedderOnSceneMetadata = loaderConfig?.onSceneMetadata;
       const root = await loadScene(src, {
         ...loaderConfig,
-        onSceneMetadata: (metaRoot) => this.frameBeforeNodesLoad(metaRoot, options),
+        // Frame first, then hand the root to an embedder's own hook, which
+        // then sees the pose the scene opens on (as load-time decisions do).
+        onSceneMetadata: (metaRoot) => {
+          this.frameBeforeNodesLoad(metaRoot, options);
+          embedderOnSceneMetadata?.(metaRoot);
+        },
       });
       notifier.hideLoading();
       this.scene.add(root);

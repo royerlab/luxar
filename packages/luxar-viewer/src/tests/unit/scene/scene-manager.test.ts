@@ -965,7 +965,7 @@ describe('SceneManager', () => {
       return { atNodeLoad };
     }
 
-    it.fails("chains an embedder's onSceneMetadata after its own pre-node framing", async () => {
+    it("chains an embedder's onSceneMetadata after its own pre-node framing", async () => {
       loadSceneRecordingNodeLoad({ positionBounds: { min: [0, 0, 0], max: [40, 40, 40] } });
       const positionAtHook: number[][] = [];
       const embedderHook = vi.fn((_root: THREE.Group) => {
