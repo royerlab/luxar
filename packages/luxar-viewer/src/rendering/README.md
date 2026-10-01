@@ -297,8 +297,9 @@ staleness. Two changes close it, and they compose. First, the commit paths now p
 `repairSortedIndexForCount` instead: the existing permutation is compacted (shrink) or
 extended (grow) into a valid permutation of the new `[0, count)` rather than discarded.
 Second, `noteDepthSortCommit` computes the ordering SYNCHRONOUSLY, on the main thread,
-for eligible instanced nodes within `config.depthSort.syncSortMaxElements` (default
-250,000), and publishes it live via `writeSortedIndexOrderingLive` — no staging, because
+for eligible nodes within `config.depthSort.syncSortMaxElements` (default
+250,000), and publishes it live via `writeSortedIndexOrderingLive` (a mesh: its index
+buffer, `writeSortedTriangleOrdering`) — no staging, because
 a permutation computed in one shot has no partial state to hide. The ceiling is a
 shared element budget between frame evaluations, not a per-node allowance. The kernel
 is the TypeScript reference `sort_splats_by_depth` (exact-parity with the Rust one, and

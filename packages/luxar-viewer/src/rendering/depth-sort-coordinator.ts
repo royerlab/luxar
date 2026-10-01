@@ -1191,7 +1191,7 @@ export function noteDepthSortCommit(
   // Sort NOW when the node is small enough, so the first frame after this
   // commit is already ordered instead of showing the fallback the commit path
   // just wrote. Returns the resolved centers so the copy is paid once.
-  const syncedCenters = trySynchronousFirstSort(mesh, centers3, count);
+  const syncedCenters = trySynchronousFirstSort(mesh, centers3, count, triangleSource);
   const centersForWorker: Float32Array | (() => Float32Array) = syncedCenters ?? centers3;
 
   const generation = state.generation;
@@ -1422,7 +1422,11 @@ function computeModelView(mesh: THREE.Mesh, camera: THREE.Camera): THREE.Matrix4
  *
  * The result is written LIVE rather than staged, because a permutation
  * computed in one shot has no partial state to hide — see
- * {@link writeSortedIndexOrderingLive}.
+ * {@link writeSortedIndexOrderingLive}. A MESH (`triangleSource` present)
+ * sorts its face centroids the same way and writes the permuted triples into
+ * its index buffer (`writeSortedTriangleOrdering`, atomic by construction):
+ * its commit rewrites the index in canonical order on every slice move, so
+ * without this each timepoint drew one storage-order frame.
  *
  * The async pipeline behind this is deliberately left ALONE: the node is still
  * registered and still dispatches its usual first sort. Suppressing that would
@@ -1435,12 +1439,16 @@ function computeModelView(mesh: THREE.Mesh, camera: THREE.Camera): THREE.Matrix4
 function trySynchronousFirstSort(
   mesh: THREE.Mesh,
   centers3: Float32Array | (() => Float32Array),
-  count: number
+  count: number,
+  triangleSource: Uint32Array | undefined
 ): Float32Array | undefined {
   const limit = syncSortElementLimit();
   if (limit <= 0 || count > limit || count > syncSortElementsRemaining) return undefined;
   const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
-  if (!getActiveSortedIndexAttribute(geometry)) return undefined;
+  // A mesh applies through its index buffer instead of `aSortedIndex`.
+  if (triangleSource ? !geometry.index : !getActiveSortedIndexAttribute(geometry)) {
+    return undefined;
+  }
   const camera = getCamera?.();
   if (!camera) return undefined;
 
@@ -1462,7 +1470,10 @@ function trySynchronousFirstSort(
   const modelView = computeModelView(mesh, camera);
   const ordering = new Uint32Array(count);
   sort_splats_by_depth(buffer, new Float32Array(modelView.elements), ordering, count);
-  if (writeSortedIndexOrderingLive(geometry, ordering, count) !== count) return undefined;
+  const written = triangleSource
+    ? writeSortedTriangleOrdering(geometry, triangleSource, ordering, count) === count * 3
+    : writeSortedIndexOrderingLive(geometry, ordering, count) === count;
+  if (!written) return undefined;
   syncSortElementsRemaining -= count;
   requestRender?.();
   return buffer;
