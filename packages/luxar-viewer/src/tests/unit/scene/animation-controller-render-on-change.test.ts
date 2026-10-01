@@ -324,7 +324,7 @@ describe('AnimationController render-on-change', () => {
     expect(renders()).toBe(1);
   });
 
-  it.fails('a callback change on a GPU-blocked tick is drawn once the block lifts', () => {
+  it('a callback change on a GPU-blocked tick is drawn once the block lifts', () => {
     // A per-frame callback that changed drawn state (a LOD swap, a sort apply)
     // on a tick whose render is skipped — context lost, or an offline capture
     // owning the pipeline — has no other record than its return value. The

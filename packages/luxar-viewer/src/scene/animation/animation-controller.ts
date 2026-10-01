@@ -610,8 +610,10 @@ export class AnimationController {
     // The render-skip predicate joins the same early return: an
     // offline capture owns the pipeline for its whole run, so the
     // loop's render would be discarded work drawn between the
-    // capture's own passes. Whatever was dirty stays dirty.
+    // capture's own passes. Whatever was dirty stays dirty — including a
+    // callback's change this tick, whose return value is its only record.
     if (this.isGpuWorkBlocked()) {
+      if (changedBy !== null) this.markDirty('event', `cb:${changedBy}`);
       this.previousTickRendered = false;
       return false;
     }
