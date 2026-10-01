@@ -17,6 +17,7 @@
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
+import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import { OpfsWriteQueue } from '../../../cache/multi-level-caching-store/opfs-write-queue';
 import {
   getBucket,
@@ -344,6 +345,267 @@ describe('OPFSStore orphan reconciliation on open', () => {
     expect(store.getStats().count).toBe(0);
     expect(disk.fileCount()).toBe(0);
     await store.dispose();
+  });
+});
+
+/**
+ * A reload can land at ANY moment, including before the index save that would
+ * have recorded the last chunk writes: a save started during unload never
+ * completes across a navigation (measured on Chromium: a zero-byte index), and
+ * the save itself is debounced. The chunk FILES are durable the moment their
+ * write closes, so what must not depend on the index is whether the next
+ * session can find them — and only once the dataset identity that makes
+ * indexed entries trustworthy has been checked.
+ */
+describe('OPFSStore reload at any moment: chunk files outlive a lost index save', () => {
+  const URL = 'https://example.com/d.zarr';
+  const HASH = 'hash-reload';
+  const N = 24;
+  const bytesOf = (i: number) => new Uint8Array(16).fill(i + 1);
+  const keyOf = (i: number) => `points/c/${i}`;
+
+  type Disk = ReturnType<typeof installBucketed>;
+
+  /** Every `_cache_meta.json` write from now on vanishes: the save the reload killed. */
+  function dropIndexWrites(disk: Disk): void {
+    const base = disk.dir.getFileHandle;
+    disk.dir.getFileHandle = async (name: string, opts?: { create?: boolean }) => {
+      const handle = await base(name, opts);
+      if (name !== META) return handle;
+      return {
+        ...handle,
+        async createWritable() {
+          return { async write() {}, async close() {}, async abort() {} };
+        },
+      };
+    };
+  }
+
+  /**
+   * Hold the background orphan crawl at its first directory listing, so the
+   * reads below are the FIRST-FRAME reads a reload makes before it finishes.
+   */
+  function holdReconcile(disk: Disk): () => void {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const base = disk.dir.keys;
+    disk.dir.keys = async function* () {
+      await gate;
+      yield* base();
+    };
+    return () => {
+      disk.dir.keys = base;
+      release();
+    };
+  }
+
+  /**
+   * A session that validated `hash`, wrote N chunks, and was unloaded before any
+   * index save after the first `savedFirst` writes could land. Abandoned, not
+   * disposed: an unload runs no teardown.
+   */
+  async function interruptedSession(disk: Disk, hash: string, savedFirst = 0): Promise<void> {
+    const intactGetFileHandle = disk.dir.getFileHandle;
+    const s = new OPFSStore('reload', URL, 1e9);
+    await s.init();
+    await settleReconcile(s);
+    s.setContentHash(hash);
+    const meta = (s as unknown as { metadata: { awaitInFlight(): Promise<void> } }).metadata;
+    if (savedFirst === 0) dropIndexWrites(disk);
+    for (let i = 0; i < N; i++) {
+      if (savedFirst > 0 && i === savedFirst) {
+        // The last index save that completed: it lists the first `savedFirst`.
+        s.flushMetadata();
+        await meta.awaitInFlight();
+        dropIndexWrites(disk);
+      }
+      await s.set(keyOf(i), bytesOf(i));
+    }
+    (s as unknown as { metadata: { cancelPendingSave(): void } }).metadata.cancelPendingSave();
+    disk.dir.getFileHandle = intactGetFileHandle; // the next session's saves land
+    expect(disk.fileCount(), 'chunk files the interrupted session left on disk').toBe(N);
+  }
+
+  /** Reopen, validate the same hash, read every chunk before the crawl runs. */
+  async function expectAllServedOnFirstRead(disk: Disk): Promise<void> {
+    const release = holdReconcile(disk);
+    const store = new OPFSStore('reload', URL, 1e9);
+    await store.init();
+    store.setContentHash(HASH); // what a matching validation does before reads
+    const served: number[] = [];
+    for (let i = 0; i < N; i++) {
+      const data = await store.get(keyOf(i));
+      if (data && data.every((b) => b === i + 1) && data.byteLength === 16) served.push(i);
+    }
+    expect(served.length, 'chunks served from L2 on the first read').toBe(N);
+    expect(store.getStats().misses).toBe(0);
+    expect(disk.fileCount(), 'files on disk after the first reads').toBe(N);
+
+    release();
+    await settleReconcile(store);
+    expect(disk.fileCount(), 'files on disk after the reconcile').toBe(N);
+    const stats = store.getStats();
+    expect(stats.count).toBe(N);
+    expect(stats.size).toBe(N * 16);
+    await store.dispose();
+    // The final save now lists every recovered chunk.
+    expect(JSON.parse(disk.rootFiles.get(META) ?? '{"entries":[]}').entries.length).toBe(N);
+  }
+
+  it.fails('no index save ever landed (unload before the first save)', async () => {
+    const disk = installBucketed();
+    await interruptedSession(disk, HASH);
+    expect(disk.rootFiles.has(META)).toBe(false);
+    await expectAllServedOnFirstRead(disk);
+  });
+
+  it.fails('a zero-byte index (a save cut off by the navigation)', async () => {
+    const disk = installBucketed();
+    await interruptedSession(disk, HASH);
+    disk.rootFiles.set(META, '');
+    await expectAllServedOnFirstRead(disk);
+  });
+
+  it.fails('a stale index missing the last writes (reload inside the debounce)', async () => {
+    const disk = installBucketed();
+    await interruptedSession(disk, HASH, N - 6);
+    expect(JSON.parse(disk.rootFiles.get(META)!).entries.length).toBe(N - 6);
+    await expectAllServedOnFirstRead(disk);
+  });
+
+  it.fails('a different content hash still invalidates the unindexed files', async () => {
+    const disk = installBucketed();
+    await interruptedSession(disk, 'hash-old');
+    const store = new OPFSStore('reload', URL, 1e9);
+    await store.init();
+    // Validation compares the remote hash against the cached one; the cached
+    // one must survive the lost index save, or a changed dataset cannot be seen.
+    expect(store.getContentHash()).toBe('hash-old');
+    await store.clear(); // what a mismatching validation does
+    store.setContentHash(HASH);
+    for (let i = 0; i < N; i++) expect(await store.get(keyOf(i))).toBeUndefined();
+    await settleReconcile(store);
+    expect(disk.fileCount()).toBe(0);
+    await store.dispose();
+  });
+
+  it.fails('a zero-byte chunk file (a chunk write cut off before close) is not served', async () => {
+    const disk = installBucketed();
+    await interruptedSession(disk, HASH);
+    const torn = 'points/c/torn';
+    disk.plant(torn, new Uint8Array(0));
+    const store = new OPFSStore('reload', URL, 1e9);
+    await store.init();
+    store.setContentHash(HASH);
+    expect(await store.get(torn)).toBeUndefined();
+    await settleReconcile(store);
+    expect(store.getStats().count).toBe(N);
+    await store.dispose();
+  });
+});
+
+describe('MultiLevelCachingStore reload at any moment: no network for chunks already on disk', () => {
+  const BASE = 'https://example.com/reload.zarr';
+
+  function stubSource(hash: { value: string }) {
+    const chunkFetches: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        const path = String(url).replace(`${BASE}/`, '');
+        const json = (o: unknown) => new TextEncoder().encode(JSON.stringify(o)).buffer;
+        if (path === '.zattrs') {
+          return {
+            ok: true,
+            async arrayBuffer() {
+              return json({ content_hash: hash.value });
+            },
+          };
+        }
+        if (path === 'zarr.json') {
+          return {
+            ok: true,
+            async arrayBuffer() {
+              return json({
+                zarr_format: 3,
+                node_type: 'group',
+                attributes: { content_hash: hash.value },
+              });
+            },
+          };
+        }
+        chunkFetches.push(path);
+        const bytes = new TextEncoder().encode(`${hash.value}:${path}`);
+        return {
+          ok: true,
+          async arrayBuffer() {
+            return bytes.buffer;
+          },
+        };
+      })
+    );
+    return chunkFetches;
+  }
+
+  async function session(): Promise<MultiLevelCachingStore> {
+    const s = new MultiLevelCachingStore(BASE, { l1MaxSize: 20 * 1024 * 1024, l2MaxSize: 1e9 });
+    await s.init();
+    return s;
+  }
+
+  const keys = Array.from({ length: 16 }, (_, i) => `points/c/${i}`);
+
+  async function interrupted(disk: ReturnType<typeof installBucketed>, hash: { value: string }) {
+    stubSource(hash);
+    const a = await session();
+    // The index save never lands — the reload killed it.
+    const base = disk.dir.getFileHandle;
+    disk.dir.getFileHandle = async (name: string, opts?: { create?: boolean }) => {
+      const handle = await base(name, opts);
+      if (name !== META) return handle;
+      return {
+        ...handle,
+        async createWritable() {
+          return { async write() {}, async close() {}, async abort() {} };
+        },
+      };
+    };
+    for (const k of keys) await a.get(k);
+    await (a as unknown as { l2WriteQueue: { drain(): Promise<void> } }).l2WriteQueue.drain();
+    const l2 = (a as unknown as { l2Store: { metadata: { cancelPendingSave(): void } } }).l2Store;
+    l2.metadata.cancelPendingSave();
+    disk.dir.getFileHandle = base;
+    expect(disk.fileCount()).toBeGreaterThanOrEqual(keys.length);
+  }
+
+  it.fails('serves every chunk written before the reload from L2', async () => {
+    const disk = installBucketed();
+    const hash = { value: 'hash-a' };
+    await interrupted(disk, hash);
+
+    const chunkFetches = stubSource(hash);
+    const b = await session();
+    for (const k of keys) {
+      expect(new TextDecoder().decode(await b.get(k))).toBe(`hash-a:${k}`);
+    }
+    expect(chunkFetches, 'chunks re-fetched after the reload').toEqual([]);
+    expect(b.getStats().demand.l2Hits).toBe(keys.length);
+    await b.dispose();
+  });
+
+  it('a changed content hash re-fetches every chunk (no stale bytes)', async () => {
+    const disk = installBucketed();
+    const hash = { value: 'hash-a' };
+    await interrupted(disk, hash);
+
+    hash.value = 'hash-b';
+    const chunkFetches = stubSource(hash);
+    const b = await session();
+    for (const k of keys) {
+      expect(new TextDecoder().decode(await b.get(k))).toBe(`hash-b:${k}`);
+    }
+    expect(chunkFetches.length).toBe(keys.length);
+    await b.dispose();
   });
 });
 
