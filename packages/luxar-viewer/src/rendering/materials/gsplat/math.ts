@@ -245,8 +245,8 @@ export function gsplatVisibleMahalSq(
  */
 export const GLSL_GSPLAT_VISIBLE_FOOTPRINT = /* glsl */ `
     // The peak scale the quad is sized from (CPU mirror gsplatFootprintPeakScale):
-    // the pick shader passes alphaFactor = gain = 1.0, so draw and pick share
-    // one reach-radius rule.
+    // draw and pick pass the same alpha factor (the pick's also carries the node
+    // opacity) and gain, so they share one reach-radius rule.
     float gsplatFootprintPeakScale(float amplitude2D, float invOneMinusC, float alphaFactor, float gain) {
         return amplitude2D * invOneMinusC * alphaFactor * max(gain, 1.0);
     }

@@ -33,30 +33,28 @@ import { PickingSystem } from '../../../../rendering/picking/picking-system';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
-/** The one `projectedExtent` assignment of a vertex shader. */
-function projectedExtentLine(vs: string): string {
-  const lines = vs.split('\n').filter((l) => l.includes('float projectedExtent ='));
-  expect(lines).toHaveLength(1);
-  return lines[0].trim();
-}
-
 describe('gsplat pick coverage fade uses the draw truncation', () => {
-  it('GLSL: the pick coverage extent is the visual one over uCoverageTruncate', () => {
-    const visual = projectedExtentLine(GSPLAT_VERTEX_SHADER);
-    const pick = projectedExtentLine(GSPLAT_PICK_VERTEX_SHADER);
-    expect(pick).toBe(visual.replace('uTruncate', 'uCoverageTruncate'));
+  it('GLSL: both stages run the shared coverage fade; the pick with uCoverageTruncate', () => {
+    // One definition (materials/gsplat/projection-glsl.ts), embedded once per stage.
+    for (const vs of [GSPLAT_VERTEX_SHADER, GSPLAT_PICK_VERTEX_SHADER]) {
+      expect(vs.split('float gsplatCoverageFade(').length - 1).toBe(1);
+    }
+    expect(GSPLAT_VERTEX_SHADER).toContain(
+      'gsplatCoverageFade(Sigma_cam, zDepth, isOrtho, uTruncate);'
+    );
+    expect(GSPLAT_PICK_VERTEX_SHADER).toContain(
+      'gsplatCoverageFade(Sigma_cam, zDepth, isOrtho, uCoverageTruncate);'
+    );
     // The pick FOOTPRINT keeps the tight pick radius.
-    expect(GSPLAT_PICK_VERTEX_SHADER).toContain('float extent1 = uTruncate * sqrt(lambda1);');
+    expect(GSPLAT_PICK_VERTEX_SHADER).toContain('gsplatClampedExtents(uTruncate, lambdas);');
   });
 
-  it('TSL: the pick coverage extent reads uCoverageTruncate', () => {
+  it('TSL: the pick runs the shared coverage fade with uCoverageTruncate', () => {
     const src = readFileSync(
       path.resolve(HERE, '../../../../rendering/picking/gsplat/pick.tsl.ts'),
       'utf8'
     );
-    const block = src.slice(src.indexOf('const projectedExtent'), src.indexOf('const maxExtent'));
-    expect(block).toContain('.mul(uCoverageTruncate)');
-    expect(block).not.toContain('.mul(uTruncate)');
+    expect(src).toMatch(/gsplatCoverageFadeTSL\(\{[^}]*truncate: uCoverageTruncate/);
   });
 
   it.each([
