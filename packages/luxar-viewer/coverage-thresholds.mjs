@@ -71,7 +71,7 @@ export const COVERAGE_THRESHOLDS = {
   'src/utils/**': { lines: 98, functions: 99, branches: 94 },
   // The frame-loop driver and callback tests (#2923) raised measured lines
   // to 96.28 and functions to 89.36, leaving the prior floors stale.
-  'src/scene/**': { lines: 95, functions: 88, branches: 89 },
+  'src/scene/**': { lines: 95, functions: 90, branches: 89 },
   // Cache tests in #2946 raised these floors. The folded-in loading paths
   // lowered function coverage; shared-root tests keep it above the 95 floor.
   'src/cache/**': { lines: 93, functions: 95, branches: 86 },
@@ -130,14 +130,14 @@ export const COVERAGE_THRESHOLDS = {
 /** Last accepted coverage measurements for each floor. */
 export const COVERAGE_RECORDED = {
   lines: 90.55,
-  statements: 89.58,
+  statements: 89.62,
   functions: 88.02,
   branches: 84.11,
   'src/types/**': { lines: 99, functions: 96.77, branches: 98.05 },
   'src/wasm/**': { lines: 98.58, functions: 100, branches: 96.46 },
   'src/config/**': { lines: 96.36, functions: 100, branches: 94.05 },
   'src/utils/**': { lines: 99.6, functions: 100, branches: 94.08 },
-  'src/scene/**': { lines: 96.28, functions: 90.56, branches: 91.15 },
+  'src/scene/**': { lines: 96.28, functions: 91.08, branches: 91.15 },
   'src/cache/**': { lines: 95.03, functions: 95.12, branches: 87.23 },
   'src/controls/**': { lines: 96.32, functions: 91.21, branches: 89.44 },
   'src/data/**': { lines: 93.6, functions: 92.03, branches: 87.31 },

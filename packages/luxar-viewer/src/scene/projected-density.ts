@@ -88,7 +88,8 @@ function isTrackedDataMesh(obj: THREE.Object3D): obj is THREE.Mesh {
  * Project a view-space sphere to its screen ellipse area in buffer pixels.
  *
  * Perspective: radii scale by `P[0]/depth` and `P[5]/depth` (the projection
- * matrix's focal terms); a camera inside or in front of the sphere
+ * matrix's focal terms); the centre also includes P[8]/P[9] for off-axis
+ * projections. A camera inside or in front of the sphere
  * (`depth <= radius`) counts as full-buffer. Orthographic: the focal terms
  * apply without the depth division. Off-screen (the ellipse does not touch
  * the NDC square) returns 0; otherwise the ellipse area, clipped to the
@@ -113,8 +114,8 @@ export function projectSphereAreaPx(
     if (depth <= radius) return { areaPx: full, onScreen: true };
     rx = (radius * p[0]) / depth;
     ry = (radius * p[5]) / depth;
-    cx = (centerView.x * p[0]) / depth;
-    cy = (centerView.y * p[5]) / depth;
+    cx = (centerView.x * p[0] + centerView.z * p[8]) / depth;
+    cy = (centerView.y * p[5] + centerView.z * p[9]) / depth;
   } else {
     rx = radius * p[0];
     ry = radius * p[5];

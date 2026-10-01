@@ -47,13 +47,24 @@ view that differed, a heatmap PNG (black: identical; blue: drift; red: flip).
    `mixed` (all four geometry types, pickable), `env_splats` (splats reflected in a
    scene-captured environment), `partition_normal`, `glass` (`refract_data`),
    `lod_ladder` (one copy under a rotated parent) and `tiny_units_ortho`. Every
-   exact case runs per backend (WebGL, WebGPU), per device scale factor (1 and 2;
+   exact case runs per renderer path (WebGLRenderer, native WebGPURenderer,
+   WebGPURenderer forced onto WebGL2), per device scale factor (1 and 2;
    an odd 1277×719 viewport at 1.5 for two cases), per projection and per pose.
    The device scale factor comes from Playwright, not `?dpr=`, which is clamped to
    the native ratio. Exact cases load with `lodFinest` (deterministic finest
    content) unless the case sets `"liveLod": true`, as `lod_ladder` does, so LOD
    selection itself is compared; a case's own `urlParams` are appended to the
    defaults, not substituted for them.
+
+The forced WebGL2 arm is named `webgpu-gl` in reports and `--backends`. It opens
+`?renderer=webgpu&webgpuForceWebgl`; the gate checks the renderer class and
+active backend before measuring so a silent fallback to a different path fails.
+The arm runs with the default MSAA-off setting; enabling MSAA for a case instead
+exercises the single-pass glass fallback, not the production refraction split.
+It adds one capture path per case, device scale factor, projection and pose;
+expect roughly 1.5× exact-suite runtime when captures dominate (three arms
+instead of two).
+Performance cases retain their separate WebGL and native WebGPU defaults.
 
 ## Exactness
 
@@ -205,7 +216,7 @@ provide the second. Each is a key of the manifest's `suites` block and is run by
 |---|---|
 | `counters` | idle after a small drag (renders, bytes uploaded, stale frame); WebGPU uploads while idle |
 | `playback` | play a hidden time axis (achieved fps, renders, last timepoint shown, duplicate decodes); a slider drag over it |
-| `hosted` | cold loads over the simulated hosted link (first frame, settle, requests and bytes to first frame, concurrency) |
+| `hosted` | cold loads over the simulated hosted link (first frame, settle, requests and bytes to first frame, concurrency, parts initialised under an authored close-up opening camera) |
 | `trees` | single timeline steps on a time-partitioned tree (step latency, lookups, console calls); an orbit over a LOD ladder |
 | `cache` | several playback loops (duplicate decodes, pinned bytes, server requests) |
 
@@ -254,6 +265,17 @@ judged by `judgePerf` against the A/A floor, in the declared `better`
 direction. A metric an arm does not report (an older baseline has no viewer
 counters) reads `n/a`: never a pass for an expected metric.
 
+`better` defaults to `lower`, which is right for costs (renders, uploads,
+decodes, requests, latencies) and wrong for throughput. `METRIC_DIRECTIONS` in
+`suites.mjs` pins the direction of every metric whose meaning fixes it, and the
+runner refuses (exit 2) a manifest, including a derived one passed with
+`--scenes`, that declares one of them the other way. Higher is better for
+`dragFrames` (the rAF callbacks that fired during a scrub drag: a freer main
+thread fires more), `commitsDuringDrag`, `achievedFps`, `ticks`,
+`lastTimepointShown`, `settled` and `maxInflight`. A ratio metric (`of`/`per`)
+takes its numerator's direction. Declaring a new metric in the shipped manifest
+means adding it to the table too (a harness test enforces it).
+
 ### Workloads
 
 The in-page halves are self-contained functions in `page-ops.mjs`. They use only
@@ -297,6 +319,11 @@ Notes on method:
   includes fetching the viewer); `settledMs` is when `isSettled` has held for 3
   frames. A case `pose` is applied at once and again at `sceneLoaded`, because
   loading the scene frames the camera and no URL parameter sets a pose.
+  That pose still arrives after the initial load chose what to fetch, so a
+  harness pose cannot gate the OPENING camera: `cold_sp64_closeup_authored`
+  sets no case pose and instead authors the close-up in the store
+  (`viewer_config.camera` of `sp64_closeup_authored`, the same 64 parts as
+  `sp64`), which the viewer frames before any node loads.
 - `staleFrameCheck: true` screenshots the page without forcing a render, then
   renders once and screenshots again. The PNGs must be byte-identical; a
   candidate arm that differs fails the row with reason `stale-frame` (a stale

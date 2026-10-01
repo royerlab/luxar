@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { judgeMetric, meetsExpectation, serverMetrics, validateExpectations } from './suites.mjs';
+import {
+  judgeMetric,
+  meetsExpectation,
+  METRIC_DIRECTIONS,
+  serverMetrics,
+  validateExpectations,
+  validateMetricDirections,
+} from './suites.mjs';
 
 const manifestSuites = {
   counters: {
@@ -123,6 +130,39 @@ describe('judgeMetric', () => {
       { base: [{}], base2: [{}], cand: [{ x: 1 }] }
     );
     expect(timing.verdict).toBe('n/a');
+  });
+});
+
+describe('validateMetricDirections', () => {
+  const suites = (metrics) => ({ playback: { cases: [{ id: 'scrub', metrics }] } });
+
+  it('pins dragFrames as higher-is-better', () => {
+    expect(METRIC_DIRECTIONS.dragFrames).toBe('higher');
+  });
+
+  it('rejects a manifest that judges dragFrames lower-is-better', () => {
+    // The shape an audit's derived manifest declared: every gain read as a FAIL.
+    const bad = suites([{ name: 'dragFrames', better: 'lower', kind: 'counter' }]);
+    expect(() => validateMetricDirections(bad)).toThrow(
+      /scrub\.dragFrames: declared better: 'lower', but dragFrames is higher-is-better/
+    );
+  });
+
+  it('treats a missing better as lower and checks a ratio by its numerator', () => {
+    expect(() => validateMetricDirections(suites([{ name: 'achievedFps' }]))).toThrow(
+      /achievedFps is higher-is-better/
+    );
+    const ratio = { name: 'gpu.uploadBytes/tick', of: 'gpu.uploadBytes', per: 'ticks' };
+    expect(() => validateMetricDirections(suites([{ ...ratio, better: 'lower' }]))).not.toThrow();
+    expect(() => validateMetricDirections(suites([{ ...ratio, better: 'higher' }]))).toThrow(
+      /gpu\.uploadBytes is lower-is-better/
+    );
+  });
+
+  it('leaves a metric it does not know alone', () => {
+    expect(() =>
+      validateMetricDirections(suites([{ name: 'newCounter', better: 'higher' }]))
+    ).not.toThrow();
   });
 });
 

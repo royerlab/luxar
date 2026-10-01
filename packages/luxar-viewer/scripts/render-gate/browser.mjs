@@ -12,6 +12,11 @@ import * as ops from './page-ops.mjs';
 
 const SOFTWARE = /swiftshader|llvmpipe|software|basic render/i;
 
+/** Keep a requested backend list within the current suite or case. */
+export function selectBackends(requested, allowed) {
+  return (requested ?? allowed).filter((backend) => allowed.includes(backend));
+}
+
 /**
  * A case's URL: the suite defaults, then the case's own `urlParams` appended.
  * `liveLod: true` drops the defaults' `lodFinest`, which every other exact case
@@ -21,7 +26,8 @@ const SOFTWARE = /swiftshader|llvmpipe|software|basic render/i;
 export function caseUrl(origin, c, backend, dsf, urlParams) {
   const params = [];
   if (c.store) params.push(`src=${origin}/datasets/${c.store}`);
-  params.push('debug', `dpr=${dsf}`, `renderer=${backend}`);
+  params.push('debug', `dpr=${dsf}`, `renderer=${backend === 'webgpu-gl' ? 'webgpu' : backend}`);
+  if (backend === 'webgpu-gl') params.push('webgpuForceWebgl');
   const defaults = c.liveLod
     ? urlParams
         ?.split('&')

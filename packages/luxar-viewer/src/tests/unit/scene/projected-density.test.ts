@@ -81,6 +81,27 @@ describe('projectSphereAreaPx', () => {
     const { areaPx } = projectSphereAreaPx({ x: 0, y: 0, z: -50 }, 5, camera, 1600, 1000);
     expect(areaPx).toBeCloseTo(Math.PI * 400 * 500, 3);
   });
+
+  it('uses perspective view offsets when testing whether a sphere is on-screen', () => {
+    const camera = perspective(1000, 1000, 0);
+    camera.setViewOffset(2000, 2000, 0, 0, 1000, 1000);
+    const outside = projectSphereAreaPx({ x: 1, y: 0, z: -10 }, 0.1, camera, 1000, 1000);
+    const inside = projectSphereAreaPx({ x: -3, y: 3, z: -10 }, 0.1, camera, 1000, 1000);
+    const centred = perspective(1000, 1000, 0);
+    centred.setViewOffset(2000, 2000, 500, 500, 1000, 1000);
+    const centredArea = projectSphereAreaPx(
+      { x: 0, y: 0, z: -10 },
+      0.1,
+      centred,
+      1000,
+      1000
+    ).areaPx;
+
+    expect(outside).toEqual({ areaPx: 0, onScreen: false });
+    expect(inside.onScreen).toBe(true);
+    expect(inside.areaPx).toBeGreaterThan(0);
+    expect(inside.areaPx).toBeCloseTo(centredArea);
+  });
 });
 
 describe('ProjectedDensityTracker', () => {
