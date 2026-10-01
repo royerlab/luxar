@@ -83,9 +83,12 @@ class TestResolveSubstitutiveAxisPoints:
         assert resolve_substitutive_axis_points(True)["refine"] == "none"
         resolved = resolve_substitutive_axis_points({"refine": "l2", "refine_iters": 2})
         assert (resolved["refine"], resolved["refine_iters"]) == ("l2", 2)
-        assert resolve_substitutive_axis_points(
-            {"refine": "l2", "refine_iters": np.int64(2)}
-        )["refine_iters"] == 2
+        assert (
+            resolve_substitutive_axis_points(
+                {"refine": "l2", "refine_iters": np.int64(2)}
+            )["refine_iters"]
+            == 2
+        )
 
     @pytest.mark.parametrize(
         ("spec", "message"),
