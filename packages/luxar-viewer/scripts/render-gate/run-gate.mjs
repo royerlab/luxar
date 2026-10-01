@@ -36,7 +36,8 @@ import { fileURLToPath } from 'node:url';
 
 import { browserKit } from './browser.mjs';
 import { ensureBuild } from './builds.mjs';
-import { judge, scoreBlocks, scoreFloatBuffers, scorePickBuffers } from './exactness.mjs';
+import { classifyRow, sameCounts, scoreControlPick, strip } from './classify.mjs';
+import { scoreBlocks, scoreFloatBuffers, scorePickBuffers } from './exactness.mjs';
 import { writeUlpHeatmap } from './heatmap.mjs';
 import * as ops from './page-ops.mjs';
 import { judgePerf, median, noiseFloor, ROTATIONS } from './perf-stats.mjs';
@@ -223,19 +224,6 @@ async function captureArm(browser, origin, c, variant) {
   return { shots, errors };
 }
 
-function sameCounts(a, b) {
-  const ka = Object.keys(a).sort();
-  const kb = Object.keys(b).sort();
-  return ka.length === kb.length && ka.every((k, i) => k === kb[i] && a[k] === b[k]);
-}
-
-/** A score without its per-pixel map, for the JSON report. */
-function strip(score) {
-  const rest = { ...score };
-  delete rest.perPixelUlp;
-  return rest;
-}
-
 async function runExact(session, servers, outDir) {
   const results = [];
   const cases = manifest.exact.filter((c) => !opts.only || opts.only.includes(c.id));
@@ -277,10 +265,7 @@ async function runExact(session, servers, outDir) {
         const row = { case: c.id, backend: variant.backend, dsf: variant.dsf, view, cls };
         const aa = scoreFloatBuffers(a.hdr, a2.hdr);
         const aaLdr = scoreFloatBuffers(a.ldr, a2.ldr);
-        const aaPick =
-          a.pick && a2.pick && a.pick.length === a2.pick.length
-            ? scorePickBuffers(a.pick, a2.pick)
-            : null;
+        const aaPick = scoreControlPick(a.pick, a2.pick);
         const hdr = scoreFloatBuffers(a.hdr, b.hdr);
         const ldr = scoreFloatBuffers(a.ldr, b.ldr);
         const pick =
@@ -289,56 +274,20 @@ async function runExact(session, servers, outDir) {
             : null;
         const blocks = scoreBlocks(a.hdr, b.hdr, a.width, a.height);
         Object.assign(row, { hdr: strip(hdr), ldr: strip(ldr), pick, blocks });
-        if (!a.settled || !b.settled || !a2.settled) {
-          row.status = 'error';
-          row.failures = ['did not settle'];
-        } else if (!(hdr.peak > 0)) {
-          // An empty frame matches an empty frame and certifies nothing.
-          row.status = 'error';
-          row.failures = ['baseline frame is empty (nothing on screen)'];
-        } else if (c.pick && (!pick || pick.hits === 0)) {
-          row.status = 'error';
-          row.failures = [pick ? 'pick buffer carries no ids' : 'pick buffer not captured'];
-        } else if (
-          !a.stable ||
-          !a2.stable ||
-          aa.differing > 0 ||
-          aaLdr.differing > 0 ||
-          (aaPick?.mismatches ?? 0) > 0
-        ) {
-          row.status = 'excluded';
-          row.failures = [
-            `nondeterministic baseline (A/A differs on ${aa.differing} HDR px, ${aaLdr.differing} LDR px)`,
-          ];
-          row.control = {
-            hdr: strip(aa),
-            ldr: strip(aaLdr),
-            pick: aaPick,
-            counts: { first: a.counts, second: a2.counts },
-            camera: { first: a.camera, second: a2.camera },
-            stable: { first: a.stable, second: a2.stable },
-            bufferStability: { first: a.bufferStability, second: a2.bufferStability },
-          };
-          if (aa.differing > 0) {
-            const file = `${c.id}-${variant.backend}-dsf${variant.dsf}-${view.replace('#', '')}-control-hdr.png`;
-            writeUlpHeatmap(join(outDir, 'heatmaps', file), aa.perPixelUlp, a.width, a.height);
-            row.control.heatmap = `heatmaps/${file}`;
-          }
-          if (aaLdr.differing > 0) {
-            const file = `${c.id}-${variant.backend}-dsf${variant.dsf}-${view.replace('#', '')}-control-ldr.png`;
-            writeUlpHeatmap(join(outDir, 'heatmaps', file), aaLdr.perPixelUlp, a.width, a.height);
-            row.control.ldrHeatmap = `heatmaps/${file}`;
-          }
-        } else if (!sameCounts(a.counts, b.counts)) {
-          row.status = cls === 'INTENDED' ? 'changed' : 'fail';
-          row.failures = ['drawn element counts differ between builds'];
-          row.counts = { base: a.counts, cand: b.counts };
-        } else if (cls === 'INTENDED') {
-          row.status = hdr.differing > 0 || ldr.differing > 0 ? 'changed' : 'unchanged';
-        } else {
-          const verdict = judge(cls, hdr, ldr, pick, blocks);
-          row.status = verdict.pass ? 'pass' : 'fail';
-          row.failures = verdict.failures;
+        const requiresPick = !!c.pick;
+        Object.assign(
+          row,
+          classifyRow({ a, a2, b, aa, aaLdr, aaPick, hdr, ldr, pick, blocks, cls, requiresPick })
+        );
+        if (row.control && aa.differing > 0) {
+          const file = `${c.id}-${variant.backend}-dsf${variant.dsf}-${view.replace('#', '')}-control-hdr.png`;
+          writeUlpHeatmap(join(outDir, 'heatmaps', file), aa.perPixelUlp, a.width, a.height);
+          row.control.heatmap = `heatmaps/${file}`;
+        }
+        if (row.control && aaLdr.differing > 0) {
+          const file = `${c.id}-${variant.backend}-dsf${variant.dsf}-${view.replace('#', '')}-control-ldr.png`;
+          writeUlpHeatmap(join(outDir, 'heatmaps', file), aaLdr.perPixelUlp, a.width, a.height);
+          row.control.ldrHeatmap = `heatmaps/${file}`;
         }
         if (hdr.differing > 0) {
           const file = `${c.id}-${variant.backend}-dsf${variant.dsf}-${view.replace('#', '')}.png`;
@@ -472,6 +421,33 @@ function fmtScore(s) {
   return `${s.differing} px, drift ${s.maxDriftUlp.toFixed(1)}, p99.99 ${s.p9999Ulp.toFixed(1)}, flips ${s.flips}`;
 }
 
+/** The bounding box of an A/A score's differing pixels, or '-' when none differ. */
+function fmtBBox(s) {
+  const b = s?.bbox;
+  return b ? `[${b.minX},${b.minY}]-[${b.maxX},${b.maxY}]` : '-';
+}
+
+function fmtControlPick(p) {
+  if (!p) return '-';
+  if (p.lengthMismatch)
+    return `buffer sizes differ (${p.first ?? 'none'} vs ${p.second ?? 'none'})`;
+  return `${p.mismatches} mismatches`;
+}
+
+/** One summary line for an excluded view's A/A control. */
+function fmtControl(r) {
+  const c = r.control;
+  const counts = sameCounts(c.counts.first, c.counts.second) ? 'equal' : 'differ';
+  const camera = JSON.stringify(c.camera.first) === JSON.stringify(c.camera.second);
+  const s = c.bufferStability;
+  return (
+    `- ${r.case} ${r.backend} dsf${r.dsf} ${r.view} control: ` +
+    `HDR ${fmtScore(c.hdr)}, bbox ${fmtBBox(c.hdr)}; LDR ${fmtScore(c.ldr)}, bbox ${fmtBBox(c.ldr)}; ` +
+    `pick ${fmtControlPick(c.pick)}; counts ${counts}; camera ${camera ? 'equal' : 'differs'}; ` +
+    `within-page HDR/LDR stable ${s?.first?.hdr}/${s?.first?.ldr}, ${s?.second?.hdr}/${s?.second?.ldr}.`
+  );
+}
+
 function markdown(meta, exact, perf, suites) {
   const lines = [
     `# Render gate: ${meta.label}`,
@@ -505,9 +481,7 @@ function markdown(meta, exact, perf, suites) {
     lines.push('');
     for (const r of exact.filter((row) => row.control)) {
       const control = r.control;
-      lines.push(
-        `- ${r.case} ${r.backend} dsf${r.dsf} ${r.view} control: HDR ${fmtScore(control.hdr)}; LDR ${fmtScore(control.ldr)}; pick ${control.pick?.mismatches ?? '-'} mismatches; counts ${sameCounts(control.counts.first, control.counts.second) ? 'equal' : 'differ'}; camera ${JSON.stringify(control.camera.first) === JSON.stringify(control.camera.second) ? 'equal' : 'differs'}; within-page HDR/LDR stable ${control.bufferStability?.first?.hdr}/${control.bufferStability?.first?.ldr}, ${control.bufferStability?.second?.hdr}/${control.bufferStability?.second?.ldr}.`
-      );
+      lines.push(fmtControl(r));
       if (control.heatmap) lines.push(`  - [A/A HDR heatmap](${control.heatmap})`);
       if (control.ldrHeatmap) lines.push(`  - [A/A LDR heatmap](${control.ldrHeatmap})`);
     }

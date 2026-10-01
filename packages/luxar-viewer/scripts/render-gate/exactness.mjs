@@ -197,6 +197,36 @@ export function scoreFloatBuffers(base, cand) {
 }
 
 /**
+ * Bounding box of the differing pixels in a per-pixel ULP map, so a report can
+ * say whether a difference is confined to one object or spread over the frame
+ * without opening its heatmap.
+ *
+ * @param {Float64Array} perPixelUlp Row-major per-pixel distance (`y * width + x`), 0 = match.
+ * @param {number} width Frame width in pixels.
+ * @param {number} height Frame height in pixels.
+ * @returns {{ count: number, minX: number, minY: number, maxX: number, maxY: number } | null}
+ *   Inclusive pixel bounds and the number of differing pixels, or `null` when none differ.
+ */
+export function differingBBox(perPixelUlp, width, height) {
+  let count = 0;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!(perPixelUlp[y * width + x] > 0)) continue;
+      count++;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  return count > 0 ? { count, minX, minY, maxX, maxY } : null;
+}
+
+/**
  * Compare two pick-ID captures. A pick pixel encodes an identity, so there is
  * no drift for it — but there are two levels of identity:
  *   - the NODE (channel R): which object the pixel belongs to;

@@ -31,9 +31,9 @@ it('reports the A/A buffers and scene state for an excluded view', () => {
         hdr: score(0),
         ldr: score(0),
         control: {
-          hdr: score(6130),
-          ldr: score(3363),
-          pick: null,
+          hdr: { ...score(6130), bbox: { count: 6130, minX: 10, minY: 20, maxX: 90, maxY: 110 } },
+          ldr: { ...score(3363), bbox: null },
+          pick: { lengthMismatch: true, first: 4096, second: 2048 },
           counts: { first: { lens: 'mesh:1:?:true' }, second: { lens: 'mesh:0:?:true' } },
           camera: { first: { world: [1] }, second: { world: [2] } },
           stable: { first: false, second: true },
@@ -54,7 +54,9 @@ it('reports the A/A buffers and scene state for an excluded view', () => {
   execFileSync(process.execPath, ['scripts/render-gate/run-gate.mjs', '--from-json', jsonPath]);
   const markdown = readFileSync(join(dir, 'report.md'), 'utf8');
   expect(markdown).toContain('control: HDR 6130 px');
-  expect(markdown).toContain('LDR 3363 px');
+  expect(markdown).toContain('bbox [10,20]-[90,110]');
+  expect(markdown).toContain('LDR 3363 px, drift 1.0, p99.99 1.0, flips 0, bbox -');
+  expect(markdown).toContain('pick buffer sizes differ (4096 vs 2048)');
   expect(markdown).toContain('counts differ; camera differs');
   expect(markdown).toContain('within-page HDR/LDR stable true/false, true/true');
   expect(markdown).toContain('[A/A HDR heatmap](heatmaps/glass-control-hdr.png)');
