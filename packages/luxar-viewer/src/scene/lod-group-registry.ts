@@ -1801,7 +1801,11 @@ export class LODGroupRegistry {
     const view = this.view();
     if (displayDims.length < 2 || view.viewportCss === null) return null;
     PARTITION_FRUSTUM_MATRIX_SCRATCH.copy(view.projView).premultiply(PARTITION_FRUSTUM_SCALE);
-    PARTITION_FRUSTUM_SCRATCH.setFromProjectionMatrix(PARTITION_FRUSTUM_MATRIX_SCRATCH);
+    PARTITION_FRUSTUM_SCRATCH.setFromProjectionMatrix(
+      PARTITION_FRUSTUM_MATRIX_SCRATCH,
+      view.camera.coordinateSystem,
+      view.camera.reversedDepth
+    );
     groupObject.updateWorldMatrix(true, false);
     const inFrustum: boolean[] = [];
     const distance: number[] = [];
@@ -2340,8 +2344,7 @@ export class LODGroupRegistry {
     const camera = view.camera;
 
     this.tick++;
-    // ``view.projView`` (projection×view, default WebGL coordinate system, the
-    // NDC convention of the manual divide inside ``projectBoxDiagonalPx``) is
+    // ``view.projView`` (projection×view, using the camera's clip coordinates) is
     // shared three ways: its frustum gates off-screen groups and ranks
     // eviction, and the per-group projections reuse the matrix.
     FRUSTUM_MATRIX_SCRATCH.copy(view.projView);
@@ -2349,7 +2352,11 @@ export class LODGroupRegistry {
     PARTITION_FRUSTUM_MATRIX_SCRATCH.copy(FRUSTUM_MATRIX_SCRATCH).premultiply(
       PARTITION_FRUSTUM_SCALE
     );
-    PARTITION_FRUSTUM_SCRATCH.setFromProjectionMatrix(PARTITION_FRUSTUM_MATRIX_SCRATCH);
+    PARTITION_FRUSTUM_SCRATCH.setFromProjectionMatrix(
+      PARTITION_FRUSTUM_MATRIX_SCRATCH,
+      camera.coordinateSystem,
+      camera.reversedDepth
+    );
 
     // Track whether the (global) view version has settled, to gate deferred
     // fine-level reloads (see ``evaluateEntry``). ``undefined`` view version

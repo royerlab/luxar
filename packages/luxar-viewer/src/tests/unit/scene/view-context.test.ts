@@ -59,6 +59,28 @@ describe('ViewContextProvider', () => {
     expect(provider(() => camera).get().isOrtho).toBe(true);
   });
 
+  it('uses WebGPU clip coordinates for the near plane', () => {
+    const camera = new THREE.PerspectiveCamera(60, 1, 1, 10);
+    camera.coordinateSystem = THREE.WebGPUCoordinateSystem;
+    camera.updateProjectionMatrix();
+    const frustum = provider(() => camera).get().frustum;
+
+    expect(frustum.containsPoint(new THREE.Vector3(0, 0, -0.75))).toBe(false);
+    expect(frustum.containsPoint(new THREE.Vector3(0, 0, -2))).toBe(true);
+  });
+
+  it('rebuilds the frustum when the clip convention changes without a matrix change', () => {
+    const camera = new THREE.PerspectiveCamera(60, 1, 1, 10);
+    camera.coordinateSystem = THREE.WebGPUCoordinateSystem;
+    camera.updateProjectionMatrix();
+    const views = provider(() => camera);
+    const point = new THREE.Vector3(0, 0, -0.75);
+    expect(views.get().frustum.containsPoint(point)).toBe(false);
+
+    camera.coordinateSystem = THREE.WebGLCoordinateSystem;
+    expect(views.get().frustum.containsPoint(point)).toBe(true);
+  });
+
   it('uses the world pose of a parented camera', () => {
     const rig = new THREE.Group();
     rig.position.set(10, 0, 0);
