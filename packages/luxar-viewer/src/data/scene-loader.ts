@@ -557,6 +557,8 @@ export class SceneLoader {
   // time (see that method) — prevents a per-caller pile-up of scheduled
   // re-checks while an update holds the lock for a while.
   private _refinementKickPending = false;
+  // That re-check's timer, so dispose() can cancel it.
+  private _refinementKickTimer: ReturnType<typeof setTimeout> | null = null;
   /**
    * Failed-loader retries waiting for a refinement drain to hand them the
    * serialization lock (A10, see `acquireLockForRetry`). Each resolves `true`
@@ -2030,7 +2032,8 @@ export class SceneLoader {
     if (this._updateInProgress || this._refining) {
       if (this._refinementKickPending) return;
       this._refinementKickPending = true;
-      setTimeout(() => {
+      this._refinementKickTimer = setTimeout(() => {
+        this._refinementKickTimer = null;
         this._refinementKickPending = false;
         this.kickRefinementIfIdle();
       }, REFINEMENT_KICK_RECHECK_MS);
@@ -3175,6 +3178,13 @@ export class SceneLoader {
     this._disposed = true;
     this.clearHoldExpiry();
     this.cancelAbandonedRungRetry();
+    if (this._refinementKickTimer !== null) clearTimeout(this._refinementKickTimer);
+    this._refinementKickTimer = null;
+    this._refinementKickPending = false;
+    // Refinement state of this dataset: a hold reason read after teardown
+    // (the monitor polls `refinementHoldReason`) must not describe it.
+    this.lastResidencyBudget = null;
+    this.refinementDensityGate = null;
     this.archiveFaultListeners.clear();
     this._leafMaterializedListener = null;
     setSceneLineLoad(0);
@@ -3256,6 +3266,7 @@ export class SceneLoader {
     this._gpuBufferPool = null;
     this.cachingStore = null;
     this.l0Cache = null;
+    this.sliceCache = null;
     this.cacheBudgets = null;
     this._zarrStore = null;
     this.rootGroup = null;

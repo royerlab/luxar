@@ -2528,7 +2528,7 @@ describe('SceneLoader', () => {
       expect((sceneLoader as any).rootGroup).toBeNull();
     });
 
-    it.fails('dispose drops its refinement state and cancels a pending kick re-check', async () => {
+    it('dispose drops its refinement state and cancels a pending kick re-check', async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
       type Internals = {
         _updateInProgress: boolean;
