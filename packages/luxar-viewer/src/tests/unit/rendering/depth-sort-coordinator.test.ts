@@ -6030,7 +6030,7 @@ describe('depth-sort coordinator — held append draws', () => {
     expect(isPermutation(mesh, 6)).toBe(true);
   });
 
-  it.fails('an ordering whose length is not the committed count is rejected and releases the hold', async () => {
+  it('an ordering whose length is not the committed count is rejected and releases the hold', async () => {
     // The worker clamps a registration whose centers under-deliver and sorts
     // the clamped count. Applying that short ordering would write a partial
     // permutation, and its flip raises the held draw only for ITS length — so

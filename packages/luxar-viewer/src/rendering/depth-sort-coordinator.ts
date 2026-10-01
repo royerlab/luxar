@@ -174,6 +174,14 @@ interface NodeSortState {
   mesh: THREE.Mesh;
   /** Lifetime-unique non-noop commit stamp (see nextGeneration). */
   generation: number;
+  /**
+   * Element count the CURRENT generation committed. A resolved ordering of
+   * any other length is rejected: the worker clamps a registration whose
+   * centers under-deliver and sorts the clamped count, and a short ordering
+   * is neither a permutation of the population nor the length a held append
+   * draw waits for.
+   */
+  count: number;
   /** True while a sort RPC is outstanding for this node. */
   inFlight: boolean;
   /** A newer commit landed mid-sort — re-sort once the current one resolves. */
@@ -1124,6 +1132,7 @@ export function noteDepthSortCommit(
     state = {
       mesh,
       generation: 0,
+      count: 0,
       inFlight: false,
       resortQueued: false,
       lastSortAxis: null,
@@ -1134,6 +1143,7 @@ export function noteDepthSortCommit(
   }
   ensureDrawAcknowledgementHook(mesh);
   state.generation = ++nextGeneration;
+  state.count = count;
   // A commit SUPERSEDES any indexed ordering that was written but not yet
   // drawn — `updateMeshGeometry` has already overwritten the index buffer by
   // the time this runs, so that ordering will never reach a frame. Without
@@ -1249,6 +1259,27 @@ export function noteDepthSortCommit(
         );
       }
     });
+}
+
+/**
+ * Whether a resolved ordering covers exactly the population its generation
+ * committed. A mismatch means the worker sorted a clamped registration (its
+ * centers under-delivered): the ordering is not a permutation of the drawn
+ * population, so the resolve stages nothing and a held append draw is
+ * released instead of waiting for a length that will never land.
+ */
+function orderingCoversCommit(
+  ordering: Uint32Array,
+  state: NodeSortState,
+  nodeId: string
+): boolean {
+  if (ordering.length === state.count) return true;
+  log.warning(
+    Modules.WORKER_POOL,
+    `Depth-sort ordering for ${nodeId} has ${ordering.length} elements but the commit has ` +
+      `${state.count} — dropped`
+  );
+  return false;
 }
 
 /**
@@ -1423,7 +1454,9 @@ function trySynchronousFirstSort(
     return undefined;
   }
   // A provider that under-delivers (or a detached buffer) is not sortable —
-  // decline rather than sort garbage; the async path re-checks the same way.
+  // decline rather than sort garbage. The async path cannot decline up front
+  // (the worker clamps to the centers it got); its resolve rejects an ordering
+  // whose length is not the committed count instead (orderingCoversCommit).
   if (buffer.length < count * 3) return undefined;
 
   const modelView = computeModelView(mesh, camera);
@@ -1542,7 +1575,12 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       // belong to another node) — the cleared stamp is exactly the signal
       // that the mesh's geometry no longer holds this commit's splats.
       const stillCommitted = hasCommittedData(mesh);
-      if (result && result.generation === current.generation && stillCommitted) {
+      if (
+        result &&
+        result.generation === current.generation &&
+        stillCommitted &&
+        orderingCoversCommit(result.ordering, current, nodeId)
+      ) {
         const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
         // Which apply path this node uses. A retained `triangleSource` is
         // the mesh signal and it is set by the SAME commit whose generation
