@@ -109,6 +109,22 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       // Wait for Luxar to fully initialize
       await waitForLuxarReady(page, 60000);
 
+      if (example === 'mesh_reflections_example.luxar.zarr') {
+        // Scene capture overlaps pool startup. Keep the page alive until every
+        // worker has settled so late init failures cannot escape this smoke test.
+        await page.waitForFunction(
+          () => {
+            const debug = (window as any).__luxarDebug;
+            return (
+              debug?.workers?.getStats().workerCount ===
+              Math.max(1, navigator.hardwareConcurrency - 1)
+            );
+          },
+          null,
+          { timeout: 35000 }
+        );
+      }
+
       // CRITICAL: Check for console errors
       const consoleMessages = await getConsoleMessages(page);
 
