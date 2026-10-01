@@ -10,8 +10,8 @@
  * direction, `positionWorld`). The math, the knee and the floor are the reference
  * module's; see it for the derivation.
  *
- * The NDC flip WebGPU applies to `y` does not matter here: it flips both the
- * unshifted position and shift, leaving their product unchanged.
+ * The NDC flip WebGPU applies to `y` does not matter here: the room is measured to the
+ * nearest border of each axis, which is symmetric in the sign.
  *
  * @module rendering/materials/mesh-physical/refraction-apodization-tsl
  */
@@ -33,7 +33,6 @@ import {
   normalWorld,
   positionWorld,
   refract,
-  sign,
   tanh,
   thickness,
   vec3,
@@ -43,13 +42,14 @@ import type { TSLNode } from '../_shared/tsl-helpers';
 import {
   DISPERSION_HALF_SPREAD_PER_UNIT,
   REFRACTION_MIN_RAY_SCALE,
+  REFRACTION_SHIFT_CEILING,
   REFRACTION_SHIFT_KNEE,
 } from './refraction-apodization';
 
 /** `apodizeShiftAxis`, as a node: the factor for one axis of the shift. */
 function apodizeShiftAxisTSL(shift: TSLNode, room: TSLNode): TSLNode {
   const knee: TSLNode = room.mul(REFRACTION_SHIFT_KNEE).toVar();
-  const span: TSLNode = room.sub(knee).toVar();
+  const span: TSLNode = room.mul(REFRACTION_SHIFT_CEILING - REFRACTION_SHIFT_KNEE).toVar();
   const rolled: TSLNode = knee
     .add(span.mul(tanh(shift.sub(knee).div(max(span, REFRACTION_MIN_RAY_SCALE)))))
     .div(max(shift, REFRACTION_MIN_RAY_SCALE));
@@ -87,11 +87,11 @@ export function refractionRayScaleTSL(withDispersion: boolean): TSLNode {
   const w0: TSLNode = max(c0.w, REFRACTION_MIN_RAY_SCALE);
   const w1: TSLNode = max(c1.w, REFRACTION_MIN_RAY_SCALE);
   const b: TSLNode = c0.xy.div(w0).toVar();
-  const s: TSLNode = c1.xy.div(w1).sub(b).toVar();
-  const room: TSLNode = max(float(1.0).sub(sign(s).mul(b)), 0.0).toVar();
+  const s: TSLNode = abs(c1.xy.div(w1).sub(b)).toVar();
+  const room: TSLNode = max(float(1.0).sub(abs(b)), 0.0).toVar();
   const kappa: TSLNode = min(
-    apodizeShiftAxisTSL(abs(s.x), room.x),
-    apodizeShiftAxisTSL(abs(s.y), room.y)
+    apodizeShiftAxisTSL(s.x, room.x),
+    apodizeShiftAxisTSL(s.y, room.y)
   ).toVar();
   const lambda: TSLNode = kappa.mul(w0).div(kappa.mul(w0).add(float(1.0).sub(kappa).mul(w1)));
   const behind: TSLNode = c0.w.lessThanEqual(0.0).or(c1.w.lessThanEqual(0.0));

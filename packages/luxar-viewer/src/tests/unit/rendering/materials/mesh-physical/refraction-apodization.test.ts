@@ -1,17 +1,19 @@
 /**
- * The refraction-shift edge apodization: outward shifts vanish on the screen
- * borders, the field is continuous and the identity away from them, and samples
- * stay on screen. The WebGL patch lands in three's real chunks where it must.
+ * The refraction-shift edge apodization: the shaped field is zero on the screen
+ * borders, continuous, the identity away from them, never samples off screen, and
+ * never collapses an edge band — and the WebGL patch lands in three's real chunks.
  *
  * The wrong answers here all render something plausible: a limiter that touches the
  * centre bends every glass a little; one that is discontinuous draws a seam where it
- * engages; one that is merely bounded still clamp-streaks at the border pixel.
+ * engages; one that is merely bounded still clamp-streaks at the border pixel; one that
+ * lets the shift fill the whole room smears the border column across an edge band.
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import * as THREE from 'three';
 import {
   REFRACTION_MIN_RAY_SCALE,
+  REFRACTION_SHIFT_CEILING,
   REFRACTION_SHIFT_KNEE,
   TRANSMISSION_NORMAL_LINE,
   TRANSMISSION_PARS_INCLUDE,
@@ -39,22 +41,25 @@ beforeAll(async () => {
 describe('apodizeShiftAxis — one axis of the shaped shift', () => {
   it('is the identity up to the knee, everywhere a shift stays inside it', () => {
     for (const room of [1, 0.5, 0.1, 0.01]) {
-      for (const f of [0, 0.1, 0.3, REFRACTION_SHIFT_KNEE]) {
+      for (const f of [0, 0.1, 0.2, REFRACTION_SHIFT_KNEE]) {
         expect(apodizeShiftAxis(f * room, room)).toBe(1);
       }
     }
   });
 
-  it('never lets the shaped shift reach the border, however large the shift', () => {
+  it('never lets the shaped shift past the ceiling of the room, however large the shift', () => {
     for (const room of [1, 0.5, 0.05, 1e-4]) {
-      for (const shift of [0.6 * room, room, 2 * room, 10, 1e3]) {
+      for (const shift of [0.3 * room, room, 2 * room, 10, 1e3]) {
         const shaped = shift * apodizeShiftAxis(shift, room);
         // Strictly below in exact arithmetic; tanh saturates to 1.0 in floating point
-        // for a huge shift, which lands the sample ON the border — still on screen.
-        expect(shaped).toBeLessThanOrEqual(room);
+        // for a huge shift, which lands exactly on the ceiling — still inside the room.
+        expect(shaped).toBeLessThanOrEqual(REFRACTION_SHIFT_CEILING * room * (1 + 1e-12));
         expect(shaped).toBeGreaterThan(REFRACTION_SHIFT_KNEE * room);
       }
     }
+    // The ceiling is a fraction of the room, so the edge band is stretched, not collapsed.
+    expect(REFRACTION_SHIFT_KNEE).toBeLessThan(REFRACTION_SHIFT_CEILING);
+    expect(REFRACTION_SHIFT_CEILING).toBeLessThan(1);
   });
 
   it('is zero with no room — the field vanishes on the border', () => {
@@ -89,40 +94,31 @@ describe('apodizeShiftAxis — one axis of the shaped shift', () => {
 });
 
 describe('apodizedShiftFraction — the whole vector keeps its direction', () => {
-  it('is 1 in the centre for an ordinary shift, and 0 for outward shifts on the border', () => {
+  it('is 1 in the centre for an ordinary shift, and 0 on every border, whichever way it points', () => {
     expect(apodizedShiftFraction([0, 0], [0.05, -0.03])).toBe(1);
     expect(apodizedShiftFraction([0.3, -0.2], [0.1, 0.1])).toBe(1);
-    for (const [b, s] of [
-      [
-        [1, 0],
-        [0.04, 0],
-      ],
-      [
-        [-1, 0.3],
-        [-0.04, 0],
-      ],
-      [
-        [0.2, 1],
-        [0, 0.02],
-      ],
-      [
-        [-0.5, -1],
-        [0, -0.02],
-      ],
+    for (const b of [
+      [1, 0],
+      [-1, 0.3],
+      [0.2, 1],
+      [-0.5, -1],
     ]) {
-      expect(apodizedShiftFraction(b, s)).toBe(0);
+      for (const sign of [1, -1]) {
+        expect(apodizedShiftFraction(b, [0.04 * sign, 0.02 * sign])).toBe(0);
+      }
     }
   });
 
-  it('preserves inward shifts near and on the border', () => {
-    expect(apodizedShiftFraction([0.95, 0], [-0.2, 0])).toBe(1);
-    expect(apodizedShiftFraction([-0.95, 0], [0.2, 0])).toBe(1);
-    expect(apodizedShiftFraction([1, 0], [-0.2, 0])).toBe(1);
-    expect(apodizedShiftFraction([0, -1], [0, 0.2])).toBe(1);
-    expect(apodizedShiftFraction([0.95, 0], [0.2, 0])).toBeLessThan(1);
-    const acrossScreen = apodizedShiftFraction([0.95, 0], [-3, 0]);
-    expect(acrossScreen).toBeLessThan(1);
-    expect(0.95 - 3 * acrossScreen).toBeGreaterThanOrEqual(-1);
+  it('keeps even a shift across the whole screen on screen', () => {
+    for (const [b, s] of [
+      [0.95, -3],
+      [-0.95, 3],
+      [0.95, 3],
+    ]) {
+      const kappa = apodizedShiftFraction([b, 0], [s, 0]);
+      expect(kappa).toBeLessThan(1);
+      expect(Math.abs(b + s * kappa)).toBeLessThan(1);
+    }
   });
 
   it('takes the stricter axis, so the shaped shift is parallel to the unshaped one', () => {
@@ -173,7 +169,12 @@ describe('the shaped field over a whole frame, camera inside a refracting sphere
    * Trace three's own ray for every pixel of a coarse frame, shape it, and check the
    * properties the field must have where the streaks used to be.
    */
-  function frame(shaped: boolean): { inside: boolean; shift: THREE.Vector2[][] } {
+  function frame(
+    shaped: boolean,
+    thicknessOverRadius = 0.2,
+    W = 64,
+    H = 40
+  ): { inside: boolean; shift: THREE.Vector2[][] } {
     const camera = new THREE.PerspectiveCamera(63, 1.6, 0.001, 100);
     const radius = 1;
     camera.position.set(0, 0, 0.6); // 0.6 R from the centre, looking through it
@@ -184,12 +185,10 @@ describe('the shaped field over a whole frame, camera inside a refracting sphere
       camera.matrixWorldInverse
     );
     const inv = vp.clone().invert();
-    const thickness = 0.2 * radius;
+    const thickness = thicknessOverRadius * radius;
     const eta = 1 / 1.33;
     let inside = true;
     const rows: THREE.Vector2[][] = [];
-    const W = 64;
-    const H = 40;
     for (let j = 0; j < H; j++) {
       const row: THREE.Vector2[] = [];
       for (let i = 0; i < W; i++) {
@@ -233,8 +232,38 @@ describe('the shaped field over a whole frame, camera inside a refracting sphere
   }
 
   it('the unshaped field samples off screen (the streaks), the shaped one never does', () => {
-    expect(frame(false).inside).toBe(false);
-    expect(frame(true).inside).toBe(true);
+    for (const t of [0.2, 1.0]) {
+      expect(frame(false, t).inside).toBe(false);
+      expect(frame(true, t).inside).toBe(true);
+    }
+  });
+
+  it('never collapses an edge band onto the border: the sample map keeps advancing', () => {
+    // The failure the ceiling exists for. A limiter that lets a large shift approach the
+    // WHOLE room parks the sample point on the border for a band of pixels, and that
+    // band shows the border column smeared across it: streaks again, merely on screen.
+    // Whatever three's own field does, shaping may slow the sample map to no less than
+    // half the pixel rate: the edge is stretched at most 2×. The bound is a fixed
+    // REQUIREMENT, not read off the constant, so loosening the constant fails here.
+    // The grid is fine (800 columns) because the band a collapse produces is only as
+    // wide as the shift, a few percent of the frame.
+    const MAX_EDGE_STRETCH = 2;
+    for (const t of [0.2, 1.0]) {
+      const raw = frame(false, t, 800, 9).shift;
+      const { shift } = frame(true, t, 800, 9);
+      const H = shift.length;
+      const W = shift[0].length;
+      const step = 2 / (W - 1);
+      let slowest = Infinity;
+      for (let j = 0; j < H; j++)
+        for (let i = 1; i < W; i++) {
+          const sampled = step + shift[j][i].x - shift[j][i - 1].x;
+          const threes = step + raw[j][i].x - raw[j][i - 1].x;
+          // Where three's own field is already slower, shaping must not make it worse.
+          slowest = Math.min(slowest, sampled / Math.min(threes, step));
+        }
+      expect(slowest).toBeGreaterThan(1 / MAX_EDGE_STRETCH - 0.02);
+    }
   });
 
   it('is zero on the border, untouched in the centre, and has no seam', () => {
@@ -256,7 +285,7 @@ describe('the shaped field over a whole frame, camera inside a refracting sphere
     expect(shift[cj][ci].distanceTo(raw[cj][ci])).toBeLessThan(1e-9);
     // No seam: per axis the shaped shift changes no faster than the shift plus the room
     // (which closes by one grid step per pixel); keeping the direction lets the other
-    // axis follow the stricter factor, hence the margin …
+    // axis follow the stricter factor, hence the margin.
     const maxStep = (f: THREE.Vector2[][], horizontal: boolean): number => {
       let m = 0;
       for (let j = horizontal ? 0 : 1; j < H; j++)
@@ -268,14 +297,6 @@ describe('the shaped field over a whole frame, camera inside a refracting sphere
     };
     expect(maxStep(shift, true)).toBeLessThanOrEqual(2 * (maxStep(raw, true) + 2 / (W - 1)));
     expect(maxStep(shift, false)).toBeLessThanOrEqual(2 * (maxStep(raw, false) + 2 / (H - 1)));
-    // … and the sample map never folds back on itself, so the edge band is squeezed,
-    // not mirrored.
-    for (let j = 0; j < H; j++)
-      for (let i = 1; i < W; i++) {
-        const x0 = (2 * (i - 1)) / (W - 1) - 1 + shift[j][i - 1].x;
-        const x1 = (2 * i) / (W - 1) - 1 + shift[j][i].x;
-        expect(x1).toBeGreaterThan(x0);
-      }
   });
 });
 
@@ -310,10 +331,14 @@ describe('the WebGL patch on three’s real chunks', () => {
     // The knee in the shader is the reference's knee.
     expect(patched).toContain(`${REFRACTION_SHIFT_KNEE.toFixed(4)} * room`);
     expect(patched).toContain('if ( c0.w <= 0.0 || c1.w <= 0.0 )');
-    expect(patched).toContain('vec2 s = c1.xy / c1.w - b;');
-    expect(patched).toContain('vec2 room = max( 1.0 - sign( s ) * b, 0.0 );');
-    expect(patched).toContain('luxarApodizeShiftAxis( abs( s.x ), room.x )');
-    expect(patched).toContain('luxarApodizeShiftAxis( abs( s.y ), room.y )');
+    expect(patched).toContain('vec2 s = abs( c1.xy / c1.w - b );');
+    expect(patched).toContain('vec2 room = max( 1.0 - abs( b ), 0.0 );');
+    expect(patched).toContain('luxarApodizeShiftAxis( s.x, room.x )');
+    expect(patched).toContain('luxarApodizeShiftAxis( s.y, room.y )');
+    // The roll-off span is the ceiling minus the knee, both the reference's.
+    expect(patched).toContain(
+      `float span = ${(REFRACTION_SHIFT_CEILING - REFRACTION_SHIFT_KNEE).toFixed(4)} * room;`
+    );
     expect(patched).toContain('kappa * c0.w / ( kappa * c0.w + ( 1.0 - kappa ) * c1.w )');
   });
 

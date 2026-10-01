@@ -11,15 +11,23 @@
  *
  * The fix shapes the SHIFT FIELD rather than the sample. Per fragment, with the
  * unshifted point at NDC `b` and the shift `s` (both from the same ray three will
- * trace), each axis has `room = 1 − sign(s)·b` toward the shift's border and is
- * soft-limited to it: identity up to {@link REFRACTION_SHIFT_KNEE}·room, then a
- * tanh roll-off that approaches `room` and never reaches it. The vector keeps its
- * direction — the smaller of the two axis factors scales both — so the field is:
+ * trace), each axis has `room = 1 − |b|` to its nearest border and the shift is
+ * soft-limited against it: the identity up to {@link REFRACTION_SHIFT_KNEE}·room, then
+ * a tanh roll-off that approaches {@link REFRACTION_SHIFT_CEILING}·room. The vector
+ * keeps its direction — the smaller of the two axis factors scales both — so the field
+ * is:
  *
- * - **zero for outward shifts on a screen border** (room 0 there);
+ * - **zero on every screen border** (room 0 there);
  * - **continuous** (and C¹ through the knee), so no seam appears where it engages;
  * - **the identity** wherever the shift stays within the knee of the room, which is
- *   every pixel of an ordinary glass away from the edges — no change in the centre.
+ *   every pixel of an ordinary glass away from the edges — no change in the centre;
+ * - **well-conditioned**: the ceiling is what keeps edge detail. Were the shift allowed
+ *   to approach the WHOLE room, a large shift would saturate there, the sample point
+ *   `b + s` would sit on the border for a whole band of pixels, and that band would show
+ *   the border column smeared across it — the very streaks being removed, only on
+ *   screen instead of clamped. Capped at a fraction `c` of the room, the sample point
+ *   still advances at least `(1 − c)` as fast as the pixel, so the edge band is at most
+ *   stretched by `1 / (1 − c)` (2× here), never collapsed.
  *
  * The shaped shift is applied by shortening the ray, not by rewriting the sample
  * coordinate, so it goes through three's own code path on both backends (three's TSL
@@ -43,9 +51,15 @@ import { log, Modules } from '../../../utils/log';
 
 /**
  * Fraction of the room to the border a shift may use before it is shaped. Below it the
- * field is untouched; between it and the border, the tanh roll-off takes over.
+ * field is untouched; above it, the tanh roll-off takes over.
  */
-export const REFRACTION_SHIFT_KNEE = 0.5;
+export const REFRACTION_SHIFT_KNEE = 0.25;
+
+/**
+ * Fraction of the room a shaped shift approaches and never reaches. Bounds how much the
+ * edge band can be stretched, `1 / (1 − ceiling)`: half the room is at most 2×.
+ */
+export const REFRACTION_SHIFT_CEILING = 0.5;
 
 /**
  * Floor on the ray scale. Keeps the attenuation compensation finite (an infinite
@@ -59,14 +73,14 @@ export const DISPERSION_HALF_SPREAD_PER_UNIT = 0.025;
 
 /**
  * Factor by which ONE axis of the shift is scaled: 1 up to the knee, then the soft
- * limit that keeps `|shift|·factor < room`. 0 when there is no room at all.
+ * limit that keeps `|shift|·factor < ceiling·room`. 0 when there is no room at all.
  * @param shift - Absolute shift along the axis, in NDC units (≥ 0).
- * @param room - Distance from the unshifted point to the border in the shift direction, NDC.
+ * @param room - Distance from the unshifted point to the nearest border on that axis, NDC.
  */
 export function apodizeShiftAxis(shift: number, room: number): number {
   const knee = REFRACTION_SHIFT_KNEE * room;
   if (shift <= knee) return 1;
-  const span = room - knee;
+  const span = (REFRACTION_SHIFT_CEILING - REFRACTION_SHIFT_KNEE) * room;
   if (span <= 0) return 0;
   return (knee + span * Math.tanh((shift - knee) / span)) / shift;
 }
@@ -78,8 +92,8 @@ export function apodizeShiftAxis(shift: number, room: number): number {
  * @param s - Unshaped NDC shift `[x, y]`.
  */
 export function apodizedShiftFraction(b: readonly number[], s: readonly number[]): number {
-  const roomX = Math.max(1 - Math.sign(s[0]) * b[0], 0);
-  const roomY = Math.max(1 - Math.sign(s[1]) * b[1], 0);
+  const roomX = Math.max(1 - Math.abs(b[0]), 0);
+  const roomY = Math.max(1 - Math.abs(b[1]), 0);
   return Math.min(apodizeShiftAxis(Math.abs(s[0]), roomX), apodizeShiftAxis(Math.abs(s[1]), roomY));
 }
 
@@ -106,7 +120,7 @@ export const REFRACTION_APODIZATION_GLSL_FUNCTIONS = /* glsl */ `
 	float luxarApodizeShiftAxis( const in float shift, const in float room ) {
 		float knee = ${REFRACTION_SHIFT_KNEE.toFixed(4)} * room;
 		if ( shift <= knee ) return 1.0;
-		float span = room - knee;
+		float span = ${(REFRACTION_SHIFT_CEILING - REFRACTION_SHIFT_KNEE).toFixed(4)} * room;
 		if ( span <= 0.0 ) return 0.0;
 		return ( knee + span * tanh( ( shift - knee ) / span ) ) / shift;
 	}
@@ -120,9 +134,9 @@ export const REFRACTION_APODIZATION_GLSL_FUNCTIONS = /* glsl */ `
 		vec4 c1 = projMatrix * viewMatrix * vec4( position + ray, 1.0 );
 		if ( c0.w <= 0.0 || c1.w <= 0.0 ) return ${REFRACTION_MIN_RAY_SCALE.toExponential()};
 		vec2 b = c0.xy / c0.w;
-		vec2 s = c1.xy / c1.w - b;
-		vec2 room = max( 1.0 - sign( s ) * b, 0.0 );
-		float kappa = min( luxarApodizeShiftAxis( abs( s.x ), room.x ), luxarApodizeShiftAxis( abs( s.y ), room.y ) );
+		vec2 s = abs( c1.xy / c1.w - b );
+		vec2 room = max( 1.0 - abs( b ), 0.0 );
+		float kappa = min( luxarApodizeShiftAxis( s.x, room.x ), luxarApodizeShiftAxis( s.y, room.y ) );
 		float lambda = kappa * c0.w / ( kappa * c0.w + ( 1.0 - kappa ) * c1.w );
 		return max( lambda, ${REFRACTION_MIN_RAY_SCALE.toExponential()} );
 	}
