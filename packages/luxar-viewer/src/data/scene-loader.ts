@@ -917,8 +917,15 @@ export class SceneLoader {
    * So is a pass superseded by a `displayDims` change: an intermediate SLICE
    * is a truthful frame of a drag, but geometry projected for the old display
    * axes is not, so it must never be let through to commit.
+   *
+   * Only a view pass actually RUNNING can be owed anything (A8). The lock is
+   * also held with no pass in flight — across the inter-pass frame yield, the
+   * refinement hand-off frame and a failed-loader retry — and there the timing
+   * fields still describe the pass that already ended: reading them armed the
+   * hold timer against a dead controller and blocked the real arming later.
    */
   private inFlightPassOwesCommit(superseding: Partial<ViewState>): boolean {
+    if (this._passGen === 0) return false;
     const next = superseding.displayDims;
     const current = this.viewState.displayDims;
     if (next && (next.length !== current.length || next.some((d, i) => d !== current[i]))) {
@@ -926,7 +933,6 @@ export class SceneLoader {
     }
     const now = performance.now();
     return (
-      !this._refining &&
       now - this._passStartedAt < DRAG_COMMIT_MAX_HOLD_MS &&
       now - Math.max(this._lastCommitAt, this._passChainStartedAt) >= DRAG_COMMIT_INTERVAL_MS
     );
@@ -1692,6 +1698,9 @@ export class SceneLoader {
     // chunk read so the superseded load bails, and its `aborted` flag gates
     // the geometry commit below.
     const updateController = new AbortController();
+    // A hold timer armed for an earlier pass must not outlive it: one left
+    // set blocks `armHoldExpiry` for this pass (A8).
+    this.clearHoldExpiry();
     this._updateAbortController = updateController;
     this._passStartedAt = performance.now();
     let supersededPassWait: Promise<void> | undefined;
@@ -2060,22 +2069,7 @@ export class SceneLoader {
       let cancelled = false;
       const onCancel = (pendingState: Partial<ViewState>) => {
         cancelled = true;
-        // scheduleFrame: rAF while visible, timer in hidden tabs (rAF is
-        // suspended there — the hand-off used to stall until foregrounded),
-        // synchronous in non-browser contexts.
-        scheduleFrame(() => {
-          this._updateInProgress = false;
-          // A resync parked during this refinement hold rides the pending
-          // state it queued; a real view change takes precedence over it only
-          // in that the full sweep is a superset (the paths are still consumed).
-          this.reenterPending(pendingState).catch((error: unknown) => {
-            log.error(
-              Modules.SCENE_LOADER,
-              `Refinement cancellation re-entry failed: ${getErrorMessage(error)}`,
-              error
-            );
-          });
-        });
+        this.handOffCancelledRefinement(pendingState);
       };
       // Per-run abort controller, published as THIS loader's live update
       // controller: the supersede branch in `updateView` (and `dispose`) abort
@@ -2209,6 +2203,40 @@ export class SceneLoader {
     } finally {
       this._refining = false;
     }
+  }
+
+  /**
+   * A refinement run cancelled by a pending view hands the lock over across
+   * one frame. The state goes back into the pending slot until the frame fires
+   * (A8), exactly as queueNext keeps it there: a view arriving during the
+   * hand-off frame supersedes it through updateView's ordinary branch, and the
+   * newest state is the one re-entered. Synchronous with the loop's take, so
+   * nothing can interleave.
+   */
+  private handOffCancelledRefinement(pendingState: Partial<ViewState>): void {
+    this.viewStateQueue.setPending(pendingState);
+    // scheduleFrame: rAF while visible, timer in hidden tabs (rAF is
+    // suspended there — the hand-off used to stall until foregrounded),
+    // synchronous in non-browser contexts.
+    scheduleFrame(() => {
+      this._updateInProgress = false;
+      const latest = this.viewStateQueue.takePending();
+      if (latest === null) {
+        // Flushed by a teardown during the frame: nothing re-enters.
+        this.resolveCompletedPassWaiters();
+        return;
+      }
+      // A resync parked during this refinement hold rides the pending
+      // state it queued; a real view change takes precedence over it only
+      // in that the full sweep is a superset (the paths are still consumed).
+      this.reenterPending(latest).catch((error: unknown) => {
+        log.error(
+          Modules.SCENE_LOADER,
+          `Refinement cancellation re-entry failed: ${getErrorMessage(error)}`,
+          error
+        );
+      });
+    });
   }
 
   /**

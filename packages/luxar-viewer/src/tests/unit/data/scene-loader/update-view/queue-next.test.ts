@@ -139,7 +139,7 @@ describe('queueNext — pending state + rAF available', () => {
     expect(ctx.spies.resolvePassWaiters).not.toHaveBeenCalled();
   });
 
-  it.fails('re-enters with the NEWEST pending state when one is queued during the yield (A8)', () => {
+  it('re-enters with the NEWEST pending state when one is queued during the yield (A8)', () => {
     // The lock is held across the frame with no pass in flight, so a view
     // arriving then lands in the pending slot. It must win: re-entering the
     // state taken before the yield ran a full stale pass ahead of it.

@@ -1802,7 +1802,7 @@ describe('SceneLoader', () => {
       }
     }
 
-    it.fails('a view arriving during the yield runs instead of the older queued state', async () => {
+    it('a view arriving during the yield runs instead of the older queued state', async () => {
       let now = 0;
       vi.spyOn(performance, 'now').mockImplementation(() => now);
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
@@ -1857,7 +1857,7 @@ describe('SceneLoader', () => {
       expect(calls.map((call) => call.slice)).toEqual([1, 3, 4]);
     });
 
-    it.fails('a view arriving during the refinement hand-off frame wins over the state that cancelled it', async () => {
+    it('a view arriving during the refinement hand-off frame wins over the state that cancelled it', async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       const slices: number[] = [];
@@ -1901,7 +1901,7 @@ describe('SceneLoader', () => {
       expect(sceneLoader.isUpdateInProgress()).toBe(false);
     });
 
-    it.fails('a real view landing in the yield supersedes the queued resync with one full sweep', async () => {
+    it('a real view landing in the yield supersedes the queued resync with one full sweep', async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       let release!: () => void;
