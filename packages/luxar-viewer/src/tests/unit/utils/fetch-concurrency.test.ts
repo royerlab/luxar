@@ -4,7 +4,9 @@ import {
   boundedConcurrencyStore,
   fetchLaneForKey,
   getFetchLaneLimit,
+  getActiveFetchCount,
   noteFetchUrl,
+  originOfUrl,
   resetFetchTransport,
   withFetchGate,
   HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
@@ -27,6 +29,33 @@ describe('fetch-concurrency gate', () => {
     }
     expect(fetchLaneForKey('group/colors/c/3/0')).toBe('data');
     expect(fetchLaneForKey('group/zarr.json/c/0')).toBe('data');
+  });
+
+  it('only keys requests to origins that URL parsing can identify', () => {
+    expect(originOfUrl('https://cdn.example.org/scene.zarr/zarr.json')).toBe(
+      'https://cdn.example.org'
+    );
+    expect(originOfUrl('data:text/plain,chunk')).toBeUndefined();
+    expect(originOfUrl('http://[')).toBeUndefined();
+  });
+
+  it('leaves lane limits alone for an invalid URL', () => {
+    noteFetchUrl('http://[');
+    expect(getFetchLaneLimit('data')).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
+    expect(getFetchLaneLimit('metadata')).toBe(MAX_CONCURRENT_METADATA_FETCHES);
+  });
+
+  it('rejects an already aborted request before taking a slot or calling it', async () => {
+    const controller = new AbortController();
+    const reason = new Error('superseded');
+    controller.abort(reason);
+    const fetch = vi.fn(async () => 1);
+
+    await expect(withFetchGate(fetch, 'data', 'demand', undefined, controller.signal)).rejects.toBe(
+      reason
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    expect(getActiveFetchCount('data')).toBe(0);
   });
 
   it('never exceeds MAX_CONCURRENT_CHUNK_FETCHES concurrent calls', async () => {

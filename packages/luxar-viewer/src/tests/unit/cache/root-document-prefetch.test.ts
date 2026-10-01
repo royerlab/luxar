@@ -11,6 +11,7 @@ import type {
 } from '../../../cache/chunk-source';
 import {
   SharedRootDocumentSource,
+  withSharedRootDocument,
   type RootDocName,
   type RootDocOutcome,
   type RootDocumentFetch,
@@ -98,5 +99,36 @@ describe('SharedRootDocumentSource', () => {
     shared.release();
     expect(await shared.probeIdentityToken({})).toEqual({ hash: 'inner', mode: 'content-hash' });
     expect(shared.identity).toBe(source.identity);
+  });
+});
+
+describe('withSharedRootDocument', () => {
+  it('serves each shared root document once, then reads through to the store', async () => {
+    const get = vi.fn(async () => new Uint8Array([9]));
+    const store = withSharedRootDocument(
+      { get },
+      sharedFetch([['zarr.json', { kind: 'ok', bytes: ROOT_BYTES, etag: null }]])
+    );
+
+    const first = await store.get('/zarr.json');
+    expect(first).toEqual(ROOT_BYTES);
+    expect(first).not.toBe(ROOT_BYTES);
+    expect(get).not.toHaveBeenCalled();
+    expect(await store.get('/zarr.json')).toEqual(new Uint8Array([9]));
+    expect(get).toHaveBeenCalledExactlyOnceWith('/zarr.json', undefined);
+  });
+
+  it('serves a definitive miss once and delegates after release', async () => {
+    const get = vi.fn(async () => new Uint8Array([9]));
+    const store = withSharedRootDocument(
+      { get },
+      sharedFetch([['zarr.json', { kind: 'missing' }]])
+    );
+
+    expect(await store.get('/zarr.json')).toBeUndefined();
+    expect(get).not.toHaveBeenCalled();
+    store.release();
+    expect(await store.get('/zarr.json')).toEqual(new Uint8Array([9]));
+    expect(get).toHaveBeenCalledExactlyOnceWith('/zarr.json', undefined);
   });
 });
