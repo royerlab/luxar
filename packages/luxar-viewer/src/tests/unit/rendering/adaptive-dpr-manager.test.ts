@@ -343,6 +343,47 @@ describe('AdaptiveDPRManager — setEnabled', () => {
   });
 });
 
+describe('AdaptiveDPRManager — off-tick DPR changes', () => {
+  let restore: () => void;
+
+  beforeEach(() => {
+    restore = setNativeDPR(2.0);
+  });
+
+  it.fails('disabling at the ceiling does not resize (and so clear) the canvas', () => {
+    // A resize clears the drawing buffer; from a UI event on an idle loop it
+    // is a blank canvas until something redraws. Nothing changed here.
+    const m = new AdaptiveDPRManager();
+    try {
+      const renderer = makeRenderer();
+      m.setRenderer(renderer);
+      expect(m.getCurrentDPR()).toBe(2.0);
+      m.setEnabled(false);
+      expect(renderer.setAdaptivePixelRatio).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it.fails('a manual DPR change notifies the DPR-change listener like every other change', () => {
+    const m = new AdaptiveDPRManager();
+    try {
+      m.setRenderer(makeRenderer());
+      m.setEnabled(false);
+      const cb = vi.fn();
+      m.setOnDPRChangeCallback(cb);
+
+      m.setManualDPR(1.0);
+      expect(cb).toHaveBeenLastCalledWith(1.0, true);
+      m.setManualDPR(2.0);
+      expect(cb).toHaveBeenLastCalledWith(2.0, false);
+      expect(cb).toHaveBeenCalledTimes(2);
+    } finally {
+      restore();
+    }
+  });
+});
+
 describe('AdaptiveDPRManager — setManualDPR', () => {
   let restore: () => void;
 
