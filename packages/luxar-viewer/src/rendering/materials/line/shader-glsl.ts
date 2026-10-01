@@ -535,7 +535,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
  * full intensity. Under `LUXAR_VOLUMETRIC` the output switches to the
  * emission–absorption branch (τ = κ × the same ray mass every other mode
  * emits). The picking system uses a
- * different fragment shader (see picking/line-picking-material.ts).
+ * different fragment shader (see picking/line/shaders.ts).
  */
 export const LINE_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;

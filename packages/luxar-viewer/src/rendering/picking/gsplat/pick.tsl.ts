@@ -64,7 +64,11 @@ import {
   sanitizeAlpha,
 } from '../../materials/_shared/tsl-helpers';
 import { gsplatQuadFootprintTSL, gsplatRaySigmaTSL } from '../../materials/gsplat/shader-tsl';
-import { computeRayIntegralFactor, GSPLAT_VISIBILITY_FLOOR } from '../../materials/gsplat/math';
+import {
+  computeRayIntegralFactor,
+  GSPLAT_COV2D_DILATION_DEFAULT,
+  GSPLAT_VISIBILITY_FLOOR,
+} from '../../materials/gsplat/math';
 import { pickAlphaFactorTSL, pickVisibilityTSLNodesFromUniforms } from '../_shared/visibility-tsl';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 
@@ -604,6 +608,11 @@ export function gsplatPickWebGPUFactory(
 export function buildGSplatPickTSLNodesFromUniforms(
   uniforms: Record<string, THREE.IUniform>
 ): GSplatPickTSLNodes {
+  // Production defaults (the GSplatPickingMaterial constructor's), with the
+  // shifted-Gaussian constants following the truncation radius in use; the
+  // parity harness states every value it compares explicitly.
+  const truncate = (uniforms.uTruncate?.value as number) ?? 1.5;
+  const shiftC = Math.exp(-0.5 * truncate * truncate);
   return {
     // Splat data texture -- bound from the caller's uniform when present,
     // else a 4x1 RGBA32F placeholder (codegen-only consumers).
@@ -615,25 +624,24 @@ export function buildGSplatPickTSLNodesFromUniforms(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),
     uPixelRatio: uniform((uniforms.uPixelRatio?.value as number) ?? 1),
-    uTruncate: uniform((uniforms.uTruncate?.value as number) ?? 1.5),
-    // 1.5² — keep the default PAIR consistent (9.0 was half-copied from the
-    // visual builder's 3.0/9.0 and sized the quad for 1.5σ while discarding at 3σ).
-    uTruncateSq: uniform((uniforms.uTruncateSq?.value as number) ?? 2.25),
+    uTruncate: uniform(truncate),
+    uTruncateSq: uniform((uniforms.uTruncateSq?.value as number) ?? truncate * truncate),
     uCoverageTruncate: uniform(
       (uniforms.uCoverageTruncate?.value as number) ?? GSPLAT_DEFAULT_TRUNCATION_RADIUS
     ),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
-    uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
-    uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 1.0),
-    // Neutral fallback 0 (harness/snapshot adapter; production sets 0.3).
-    uCov2DDilation: uniform((uniforms.uCov2DDilation?.value as number) ?? 0),
+    uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
+    uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 0.33),
+    uCov2DDilation: uniform(
+      (uniforms.uCov2DDilation?.value as number) ?? GSPLAT_COV2D_DILATION_DEFAULT
+    ),
     // Default 0 = brightness-as-depth (the commutative-mode convention).
     uSurfaceDepth: uniform((uniforms.uSurfaceDepth?.value as number) ?? 0),
     uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
     uLabelFilterIndex: uniform((uniforms.uLabelFilterIndex?.value as number) ?? 0),
-    uShiftC: uniform((uniforms.uShiftC?.value as number) ?? 0.0),
-    uInvOneMinusC: uniform((uniforms.uInvOneMinusC?.value as number) ?? 1.0),
+    uShiftC: uniform((uniforms.uShiftC?.value as number) ?? shiftC),
+    uInvOneMinusC: uniform((uniforms.uInvOneMinusC?.value as number) ?? 1.0 / (1.0 - shiftC)),
     uProjectionMode: uniform((uniforms.uProjectionMode?.value as number) ?? 1),
     uRayIntegralFactor: uniform(
       (uniforms.uRayIntegralFactor?.value as number) ??

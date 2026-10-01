@@ -105,6 +105,7 @@ import {
   VOLUMETRIC_SERIES_C2_DIVISOR,
 } from '../_shared/volumetric';
 import {
+  GSPLAT_COV2D_DILATION_DEFAULT,
   GSPLAT_FOOTPRINT_PEAK_MARGIN,
   GSPLAT_FOOTPRINT_PIXEL_MARGIN,
   GSPLAT_VISIBILITY_FLOOR,
@@ -1046,6 +1047,10 @@ export function applyGSplatMaterialState(
 export function buildGSplatTSLNodesFromUniforms(
   uniforms: Record<string, THREE.IUniform>
 ): GSplatTSLNodes {
+  // The shifted-Gaussian constants follow the truncation radius actually in
+  // use, so a caller supplying only uTruncate gets a coherent falloff.
+  const truncate = (uniforms.uTruncate?.value as number) ?? 3.0;
+  const shiftC = Math.exp(-0.5 * truncate * truncate);
   const nodes: GSplatTSLNodes = {
     // Splat data texture — bound from the caller's uniform when
     // present (harness / material paths), else a 4×1 RGBA32F
@@ -1064,7 +1069,7 @@ export function buildGSplatTSLNodesFromUniforms(
     // in `tests/e2e/harnesses/tsl-harness/gsplats.ts` or `tsl-shader-parity`
     // pixel-compares diverge. Note 9.0 is 3.0² — the pair must be changed
     // together, and in the harness too.
-    uTruncate: uniform((uniforms.uTruncate?.value as number) ?? 3.0),
+    uTruncate: uniform(truncate),
     uTruncateSq: uniform((uniforms.uTruncateSq?.value as number) ?? 9.0),
     uRayIntegralFactor: uniform((uniforms.uRayIntegralFactor?.value as number) ?? 1.0),
     uProjectionMode: uniform((uniforms.uProjectionMode?.value as number) ?? 0),
@@ -1072,12 +1077,14 @@ export function buildGSplatTSLNodesFromUniforms(
     uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
     uDensityAlphaExp: uniform((uniforms.uDensityAlphaExp?.value as number) ?? 1),
     ...glassPartitionNodesFromUniforms(uniforms),
-    uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
-    uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 1.0),
-    // Neutral fallback 0 (no dilation) — matches GLSL's missing-uniform default,
-    // like uMaxExtentFactor's neutral 1.0 above; this adapter is harness/snapshot
-    // only (production materials set the 0.3 default in their own constructor).
-    uCov2DDilation: uniform((uniforms.uCov2DDilation?.value as number) ?? 0),
+    // Production defaults (the GSplatMaterial constructor's), so a caller that
+    // omits one gets the shader production runs; the parity harness states
+    // every value it compares explicitly on both backends.
+    uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
+    uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 0.33),
+    uCov2DDilation: uniform(
+      (uniforms.uCov2DDilation?.value as number) ?? GSPLAT_COV2D_DILATION_DEFAULT
+    ),
     uOpacity: uniform((uniforms.uOpacity?.value as number) ?? 1.0),
     uAbsorption: uniform((uniforms.uAbsorption?.value as number) ?? 1.0),
     uHasElementAlpha: uniform((uniforms.uHasElementAlpha?.value as number) ?? 0),
@@ -1086,8 +1093,8 @@ export function buildGSplatTSLNodesFromUniforms(
     uOffset: uniform((uniforms.uOffset?.value as number) ?? 0.0),
     uLabelColorMode: uniform((uniforms.uLabelColorMode?.value as number) ?? 0),
     uLabelFilterIndex: uniform((uniforms.uLabelFilterIndex?.value as number) ?? 0),
-    uShiftC: uniform((uniforms.uShiftC?.value as number) ?? 0.0),
-    uInvOneMinusC: uniform((uniforms.uInvOneMinusC?.value as number) ?? 1.0),
+    uShiftC: uniform((uniforms.uShiftC?.value as number) ?? shiftC),
+    uInvOneMinusC: uniform((uniforms.uInvOneMinusC?.value as number) ?? 1.0 / (1.0 - shiftC)),
   };
   if (uniforms.uColormapTex) {
     return {

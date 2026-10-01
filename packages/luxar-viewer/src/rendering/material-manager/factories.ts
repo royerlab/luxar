@@ -117,7 +117,7 @@ export interface GSplatMaterialProperties {
   gamma: number;
   intensity: number;
   offset: number;
-  /** Default 3.0 */
+  /** Default `GSPLAT_DEFAULT_TRUNCATION_RADIUS` (2.75). */
   truncationRadius?: number;
 }
 

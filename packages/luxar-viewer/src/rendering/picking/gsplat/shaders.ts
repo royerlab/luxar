@@ -4,8 +4,9 @@
  * Mirrors the visual gsplat shader with picking-specific adjustments:
  *   - `uNodeId` uniform + `vNodeId` / `vElementId` varyings, written
  *     into the RGBA32F pick buffer as `(nodeId, elementId-low16, brightness, elementId-high16)`.
- *   - Tighter truncation: 1.5σ (vs 3σ for visual) so the pick footprint
- *     is the bright core only.
+ *   - Tighter truncation: 1.5σ (vs the node's own T, default 2.75σ, for
+ *     the visual) so the pick footprint is the bright core only; the
+ *     coverage fade still culls with the node's T (`uCoverageTruncate`).
  *   - The VISUAL amplitude and weight: the node's projection (the
  *     sum-projection ray-integral boost included), per-splat alpha, node
  *     opacity and gain (`../_shared/visibility-glsl.ts`), so a splat is

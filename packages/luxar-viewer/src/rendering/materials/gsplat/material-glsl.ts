@@ -273,7 +273,7 @@ export class GSplatMaterial
       // surfaces. THREE's transparent+DoubleSide guard otherwise renders
       // a redundant back-face pass per splat layer (and, under the sorted
       // modes, splits each mesh's draw into two passes independent of the
-      // depth sort). Mirrors the Line/Point materials.
+      // depth sort). Mirrors the Line material.
       forceSinglePass: true,
     });
 
