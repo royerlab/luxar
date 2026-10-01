@@ -151,8 +151,9 @@ blending when exposure should produce smooth surface transparency.
 ## Host responsibilities
 
 - **`update()` once per frame, before rendering.** It runs the depth-sort
-  scheduler and the LOD-group selector, in that order (sorting assigns the
-  cross-node render order that a LOD swap can invalidate). It returns `true`
+  scheduler, the LOD-group selector and the projected-density guard, in that
+  order (sorting assigns the cross-node render order that a LOD swap can
+  invalidate; the guard then measures the levels the frame shows). It returns `true`
   when that frame changed what is drawn (a re-sort, a level swap, a fade step,
   a partition cull flip) and then also calls `requestRender`, so an on-demand
   host keeps ticking until a fade or swap settles.

@@ -45,6 +45,11 @@ export interface DensityGuardWiringDeps {
   energyComp: boolean;
   /** The frame's shared camera snapshot (the tracker builds its own without it). */
   getViewContext?: () => ViewContext;
+  /**
+   * The walk's live sources, read on every frame (the app passes its
+   * SceneManager; layer mode a getter-backed view over its own root, the host
+   * camera and the host drawing buffer).
+   */
   sceneManager: {
     readonly scene: THREE.Object3D | null;
     readonly camera: THREE.Camera | null;

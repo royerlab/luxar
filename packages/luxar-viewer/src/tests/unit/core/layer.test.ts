@@ -44,6 +44,7 @@ vi.mock('../../../data/zarr-loader', () => ({
 const setLODGroupRegistryFactory = vi.fn();
 const setRequestRender = vi.fn();
 const setKTX2TextureDecoder = vi.fn();
+const setRefinementDensityProvider = vi.fn();
 const disposeInstance = vi.fn();
 const getProfiler = vi.fn();
 function makeSceneLoaderStub() {
@@ -56,6 +57,7 @@ function makeSceneLoaderStub() {
     },
     nodeFactory: { rebuildAfterContextRestore: vi.fn() },
     isUpdateInProgress: vi.fn(() => false),
+    resumeDensityDeferredRefinement: vi.fn(() => 0),
     updateView: vi.fn(),
     get archiveFault() {
       return archiveFault;
@@ -90,6 +92,7 @@ vi.mock('../../../data/scene-loader-manager', () => ({
       setLODGroupRegistryFactory,
       setRequestRender,
       setKTX2TextureDecoder,
+      setRefinementDensityProvider,
       getProfiler,
       destroyAllAsync: () => destroyAllAsync(),
       destroyLoaderAsync: (id: string) => destroyLoaderAsync(id),
@@ -274,6 +277,7 @@ vi.mock('../../../core/app/init/module-overrides', () => ({
 
 import { LuxarLayer, type LuxarLayerOptions } from '../../../core/layer/luxar-layer';
 import { DensityGuard } from '../../../scene/density-guard';
+import { getProjectedDensityTracker } from '../../../scene/projected-density';
 
 function makeOptions(overrides: Partial<LuxarLayerOptions> = {}): LuxarLayerOptions {
   const renderer = {
@@ -483,6 +487,7 @@ describe('LuxarLayer', () => {
           'isUpdateInProgress',
           'getResidentByteBudget',
           'getResidentBytes',
+          'getViewContext',
           'getViewVersion',
           'getViewportSize',
           'registerMaterial',
@@ -519,6 +524,20 @@ describe('LuxarLayer', () => {
       };
       const { deps } = factory({ currentViewVersion: 1 });
       expect(deps.getDisplayDims()).toEqual([]);
+    });
+
+    it('wires the density guard like the app does, honouring the option', () => {
+      new LuxarLayer(makeOptions());
+      // On: the refinement rung gate reads the tracker's records.
+      expect(setRefinementDensityProvider).toHaveBeenLastCalledWith(
+        expect.any(Function),
+        expect.objectContaining({ blendable: expect.any(Number) })
+      );
+
+      setRefinementDensityProvider.mockClear();
+      new LuxarLayer(makeOptions({ densityGuard: false }));
+      // Off: bytes-only admission.
+      expect(setRefinementDensityProvider).toHaveBeenLastCalledWith(null, expect.any(Object));
     });
 
     it('threads the LOD flags through to the registry', () => {
@@ -951,11 +970,35 @@ describe('LuxarLayer', () => {
       );
     });
 
+    it('measures projected density after the LOD selector, on the layer root', async () => {
+      const tracker = getProjectedDensityTracker();
+      const evaluate = vi.spyOn(tracker, 'evaluate');
+      const root = new THREE.Group();
+      loadSceneMock.mockResolvedValueOnce(root);
+      const layer = new LuxarLayer(makeOptions());
+      await layer.load('http://example.test/scene.zarr');
+      evaluate.mockClear();
+
+      layer.update();
+
+      expect(evaluate).toHaveBeenCalledTimes(1);
+      // The guard measures the levels this frame shows, so it runs after the
+      // selector has swapped them.
+      expect(evaluate.mock.invocationCallOrder[0]).toBeGreaterThan(
+        (
+          sceneLoaderStub.lodGroupRegistry.evaluatePerFrame as ReturnType<typeof vi.fn>
+        ).mock.invocationCallOrder.at(-1)!
+      );
+      evaluate.mockRestore();
+    });
+
     it('only re-stamps render order after a geometry commit', async () => {
       const root = new THREE.Group();
       const traverse = vi.spyOn(root, 'traverse');
       loadSceneMock.mockResolvedValueOnce(root);
-      const layer = new LuxarLayer(makeOptions());
+      // The density tracker walks the root every frame by design; this test is
+      // about the render-order stamp, so the guard stays out of it.
+      const layer = new LuxarLayer(makeOptions({ densityGuard: false }));
       await layer.load('http://example.test/scene.zarr');
       traverse.mockClear();
 

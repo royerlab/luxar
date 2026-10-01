@@ -11,7 +11,10 @@
  * The seam this rests on is already in the architecture: `SceneLoader.loadScene`
  * returns a plain `THREE.Group`, and `LODGroupRegistryDeps` / `configureDepthSort`
  * are defined purely in terms of injectable getters. Nothing in the data, cache,
- * LOD, or material path needs `SceneManager`.
+ * LOD, or material path needs `SceneManager`. The wiring itself is shared with
+ * the app rather than copied: the renderer backend switches
+ * (`configureRendererBackend`), the LOD registry deps (`buildLodRegistryDeps`)
+ * and the projected-density guard (`wireDensityGuard`).
  *
  * The minimal embed shape:
  *
@@ -103,6 +106,8 @@ import {
 import type { SceneLoader } from '../../data/scene-loader';
 import { SceneLoaderManager, getSceneLoader } from '../../data/scene-loader-manager';
 import { LODGroupRegistry } from '../../scene/lod-group-registry';
+import { ViewContextProvider } from '../../scene/view-context';
+import { getProjectedDensityTracker } from '../../scene/projected-density';
 import { sceneDimsManager, snapDiscreteValue } from '../../scene/scene-dims-manager';
 import { rebaseLodFade, type FadeableMaterial } from '../../scene/lod-fade';
 import { materialManager } from '../../rendering/material-manager';
@@ -118,7 +123,6 @@ import {
   type RendererCapabilities,
 } from '../../rendering/renderer-capabilities';
 import {
-  getGpuByteBudget,
   initializeGpuByteBudget,
   reduceGpuByteBudgetForContextLoss,
 } from '../../rendering/gpu-byte-budget';
@@ -138,6 +142,8 @@ import {
 import { disposeWorkerPool } from '../../workers/worker-pool';
 import type { DatasetFaultPayload } from '../app/embedder/events';
 import { applyModuleOverrides } from '../app/init/module-overrides';
+import { buildLodRegistryDeps } from '../app/init/lod-registry-deps';
+import { wireDensityGuard, type DensityGuardWiring } from '../app/init/density-guard-wiring';
 import { isOrthographicCamera, type LuxarCamera } from '../../utils/camera-utils';
 import { getInputProfile } from '../../utils/input-capabilities';
 import { config } from '../../config';
@@ -208,6 +214,13 @@ export interface LuxarLayerOptions {
    * values are treated as the neutral `1`. Default 1.
    */
   lodBias?: number;
+  /**
+   * Projected-density guard: thin blendable nodes that pack more elements per
+   * drawing-buffer pixel than `config.densityGuard` allows (brightness
+   * compensated), and hold back refinement rungs that would push a node past
+   * it. Default true (and only while `config.densityGuard.enabled`).
+   */
+  densityGuard?: boolean;
   /** Worker-based back-to-front sorting for order-dependent geometry. Default true. */
   depthSort?: boolean;
   /**
@@ -272,6 +285,9 @@ export class LuxarLayer {
   private dimDirty = false;
   private environment: SceneEnvironment | null = null;
   private unsubscribeEnvironment: (() => void) | null = null;
+  /** The frame's shared camera snapshot (LOD selector + density tracker). */
+  private readonly viewContext: ViewContextProvider;
+  private readonly densityGuard: DensityGuardWiring;
 
   constructor(options: LuxarLayerOptions) {
     if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -293,7 +309,16 @@ export class LuxarLayer {
     configureRendererBackend(options.renderer, this.capabilities);
     this.resize();
 
+    this.viewContext = new ViewContextProvider({
+      getCamera: () => this.options.getCamera(),
+      getViewportCss: () => this.options.getViewportSize(),
+      getDrawingBuffer: () => {
+        this.options.renderer.getDrawingBufferSize(this.bufferSize);
+        return { width: this.bufferSize.x, height: this.bufferSize.y };
+      },
+    });
     this.installLodRegistryFactory();
+    this.densityGuard = this.installDensityGuard();
     this.installDepthSort();
   }
 
@@ -434,10 +459,14 @@ export class LuxarLayer {
    */
   update(): boolean {
     if (!this.rootGroup || this.disposed) return false;
+    // One camera snapshot per frame, shared by the selector and the tracker.
+    this.viewContext.invalidate();
     // Order matters: depth sorting assigns the cross-node render order that a
-    // LOD swap may then invalidate, so sorting runs first.
+    // LOD swap may then invalidate, so sorting runs first; the density guard
+    // then measures the levels this frame actually shows.
     const sortChanged = evaluateDepthSortPerFrame();
     const lodChanged = this.evaluateLodFrame();
+    const densityChanged = this.densityGuard.perFrame();
     // Scene / LOD / partition groups may attach lazily after load(). Three.js
     // replaces the transparent group-order key at every Group boundary, so a
     // newly attached default-zero group would otherwise nullify the option.
@@ -446,7 +475,7 @@ export class LuxarLayer {
     // so a non-default exposure has to be re-asserted. Skipped entirely at the
     // authored exposure, which is the common case.
     if (this.exposure !== 1) this.applyExposure();
-    const changed = sortChanged || lodChanged;
+    const changed = sortChanged || lodChanged || densityChanged;
     if (changed) this.options.requestRender?.();
     return changed;
   }
@@ -917,6 +946,8 @@ export class LuxarLayer {
           this.environment = null;
         },
       ],
+      // Drop the tracker's per-node records (they hold this scene's paths).
+      ['densityGuard', () => getProjectedDensityTracker().reset()],
       ['materialManager', () => materialManager.dispose()],
       ['workerPool', () => disposeWorkerPool()],
       ['depthSort', () => disposeDepthSort()],
@@ -947,43 +978,64 @@ export class LuxarLayer {
   }
 
   private installLodRegistryFactory(): void {
-    const { lodFade = true, lodEnergyComp = true, lodFinest = false, lodBias = 1 } = this.options;
+    const { lodFade, lodEnergyComp, lodFinest, lodBias } = this.options;
+    // The same deps the app pipeline builds (lod-registry-deps.ts); a layer has
+    // no playback driver and no tick-only wake, so those two stay omitted.
     SceneLoaderManager.getInstance().setLODGroupRegistryFactory(
       (owner) =>
-        new LODGroupRegistry({
-          getCamera: () => this.options.getCamera(),
-          getViewportSize: () => this.options.getViewportSize(),
-          // Empty, not [0, 1, 2], before dims resolve: the registry's
-          // `displayDims.length < 2` early-return then skips evaluation, whereas
-          // the plausible-looking default projects a 2D scene onto a phantom Z.
-          // Matches `core/app/init/pipeline.ts`.
-          getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
-          hasArchiveFault: () => owner.archiveFault !== null,
-          hasNetworkFailureUnder: (path) => owner.hasNetworkFailureUnder(path),
-          requestReprocess: (paths) => owner.requestReprocess(paths),
-          // A view PASS in flight or queued — not a refinement hold (see the
-          // app pipeline's identical wiring).
-          isUpdateInProgress: () => owner.isLoadPassInProgress(),
-          getCommittedViewState: () => owner.committedViewState,
-          getResidentByteBudget: () => getGpuByteBudget(),
-          // Both halves of the budget are required: `lod-eviction` bails on
-          // `!getResidentBytes`, so supplying only the budget makes it
-          // decorative and no cold level is ever demoted — an unbounded VRAM
-          // climb over a long host session, with nothing to see until it fails.
-          getResidentBytes: () => owner.gpuBufferPool?.getResidentBytes() ?? 0,
-          getViewVersion: () => owner.currentViewVersion,
-          getCrossFadeEnabled: () => lodFade,
-          getEnergyCompEnabled: () => lodEnergyComp,
-          getForceFinestLOD: () => lodFinest,
-          getLodBias: () => lodBias,
-          registerMaterial: (material) => materialManager.register(material),
-          requestRender: () => this.handleGeometryCommit(),
-        })
+        new LODGroupRegistry(
+          buildLodRegistryDeps(owner, {
+            getCamera: () => this.options.getCamera(),
+            getViewportSize: () => this.options.getViewportSize(),
+            getViewContext: () => this.viewContext.get(),
+            requestRender: () => this.handleGeometryCommit(),
+            lodFade,
+            lodEnergyComp,
+            lodFinest,
+            lodBias,
+          })
+        )
     );
     SceneLoaderManager.getInstance().setRequestRender(() => this.handleGeometryCommit());
     SceneLoaderManager.getInstance().setKTX2TextureDecoder(
       createKTX2TextureDecoder(this.options.renderer)
     );
+  }
+
+  /**
+   * The projected-density guard, wired exactly as the app wires it
+   * (density-guard-wiring.ts): the tracker walks the layer's own root once per
+   * {@link update}, thins blendable nodes packing more elements per pixel than
+   * the cap, and gates refinement rungs through the same records.
+   */
+  private installDensityGuard(): DensityGuardWiring {
+    const layer = this;
+    const buffer = new THREE.Vector2();
+    return wireDensityGuard({
+      configEnabled: config.densityGuard.enabled,
+      option: this.options.densityGuard,
+      config: config.densityGuard,
+      energyComp: this.options.lodEnergyComp ?? true,
+      getViewContext: () => this.viewContext.get(),
+      sceneManager: {
+        get scene() {
+          return layer.rootGroup;
+        },
+        get camera() {
+          return layer.options.getCamera();
+        },
+        get renderer() {
+          layer.options.renderer.getDrawingBufferSize(buffer);
+          return { domElement: { width: buffer.x, height: buffer.y } };
+        },
+      },
+      registerMaterial: (material) => materialManager.register(material),
+      setRefinementDensityProvider: (provider, caps) =>
+        SceneLoaderManager.getInstance().setRefinementDensityProvider(provider, caps),
+      getDefaultLoader: () => getSceneLoader(LOADER_ID),
+      getAdaptiveDpr: () => null,
+      requestRender: () => this.options.requestRender?.(),
+    });
   }
 
   private clearDatasetFaultLoader(): void {

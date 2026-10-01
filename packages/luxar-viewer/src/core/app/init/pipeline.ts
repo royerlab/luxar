@@ -23,11 +23,12 @@ import { getViewerContainer } from '../../../utils/viewer-container';
 import { DataMonitorManager } from '../../../ui/data-monitor-manager';
 import { SceneLoaderManager, getSceneLoader } from '../../../data/scene-loader-manager';
 import { LODGroupRegistry } from '../../../scene/lod-group-registry';
+import { buildLodRegistryDeps } from './lod-registry-deps';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { log, Modules } from '../../../utils/log';
 import { config } from '../../../config';
-import { getGpuByteBudget, initializeGpuByteBudget } from '../../../rendering/gpu-byte-budget';
+import { initializeGpuByteBudget } from '../../../rendering/gpu-byte-budget';
 import { getMaxPixelRatio, setHighDPRAllowed } from '../../../rendering/pixel-ratio-cap';
 import {
   configureDepthSort,
@@ -279,90 +280,33 @@ export async function runInitPipeline(
   // app OPTIONS (the standalone bootstrap threads them from the URL params;
   // embedders set them directly — the pipeline never reads window.location)
   // and are captured once at wiring time (a reload re-reads them).
-  const lodCrossFadeEnabled = ports.options.lodFade ?? true;
   const lodEnergyCompEnabled = ports.options.lodEnergyComp ?? true;
-  // Opt-in: force the finest LOD for capture-quality output (?lodFinest).
-  const lodFinestEnabled = ports.options.lodFinest ?? false;
-  // The registry owns the neutral default and validates the live value.
-  const lodBias = ports.options.lodBias;
-  SceneLoaderManager.getInstance().setLODGroupRegistryFactory((owner) => {
-    return new LODGroupRegistry({
-      getCamera: () => sceneManager.camera,
-      getViewportSize: () => viewContext.get().viewportCss ?? { width: 0, height: 0 },
-      getViewContext: () => viewContext.get(),
-      // Return an empty list when scene dimensions aren't initialized
-      // yet rather than the misleading ``[0, 1, 2]`` default — for
-      // 2D scenes the latter projected onto a phantom Z axis. The
-      // registry's existing ``displayDims.length < 2`` early-return
-      // skips evaluation in this state.
-      getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
-      hasArchiveFault: () => owner.archiveFault !== null,
-      hasNetworkFailureUnder: (path) => owner.hasNetworkFailureUnder(path),
-      requestReprocess: (paths) => owner.requestReprocess(paths),
-      // A view PASS in flight or queued — not a refinement hold, which the
-      // loader parks a resync through (see `LODGroupRegistryOwner`).
-      isUpdateInProgress: () => owner.isLoadPassInProgress(),
-      // The view the drawn geometry was committed for: partition parts that miss
-      // its hidden-dim slice are hidden and kept out of refinement (B4).
-      getCommittedViewState: () => owner.committedViewState,
-      // Resident-byte budget for loaded LOD geometry = the single,
-      // adaptive GPU-geometry budget shared with the buffer pool (one VRAM
-      // authority). Read dynamically so context-loss backoff applies live.
-      getResidentByteBudget: () => getGpuByteBudget(),
-      // Measured resident VRAM (active + pooled, real capacities) from the
-      // buffer pool — the single accounting truth the registry uses to
-      // decide when to demote cold levels. Read from the OWNING loader
-      // (the factory receives it) so a non-default loader's registry never
-      // consults the default loader's pool; a null pool (pre-construction /
-      // pooling disabled) reads as 0 bytes, so the registry never evicts in
-      // that state.
-      getResidentBytes: () => owner.gpuBufferPool?.getResidentBytes() ?? 0,
-      // Current view-update version. Lets the registry detect when a level's
-      // committed geometry is stale for the current slice/displayDims (a
-      // re-slice reloads geometry in place without flipping readiness) and
-      // display a coarser FRESH level until the re-slice commits — the
-      // slice-aware coarse-while-reloading fallback. Read from the OWNING
-      // loader for the same per-instance reason as getResidentBytes.
-      getViewVersion: () => owner.currentViewVersion,
-      // Keep the on-demand render loop TICKING while a lazy fine level reloads
-      // (it commits outside the per-slice sweep and can outlast the idle
-      // timeout), so the swap-up to the fresh level fires when it lands. Only
-      // a tick: the landing commit requests the render, and the swap reports
-      // itself through `takeDrawnStateChanged` below.
-      requestRender: () => animationController.requestRender('lod'),
-      requestTick: () => animationController.requestTick(),
-      // LOD cross-fade (ON by default; ?noLodFade disables): the registry
-      // blends adjacent LOD levels' opacity across a zoom transition instead of
-      // a hard swap (blendable modes only: additive/luminous/volumetric).
-      // Read once at wiring time.
-      getCrossFadeEnabled: () => lodCrossFadeEnabled,
-      // Playback period of the fastest playing dimension, or null: lazy LOD
-      // levels reload every timepoint while playing, capped at the finest one
-      // whose measured load fits the period. The input handler (and its
-      // animation manager) is built later in this function, hence the lazy read.
-      getPlaybackPeriodMs: () =>
-        partial.inputHandler?.getAnimationManager()?.getPlaybackPeriodMs() ?? null,
-      // Streaming brightness compensation (ON by default; ?noLodEnergy disables):
-      // scale a streaming additive/luminous/volumetric leaf's opacity by 1/e(k) so its
-      // partial ladder prefix renders at full-level brightness (no brightening
-      // pop as chunks arrive). Read once at wiring time.
-      getEnergyCompEnabled: () => lodEnergyCompEnabled,
-      // Force-finest capture override (?lodFinest via LuxarAppOptions.lodFinest):
-      // always select the finest level and never coarsen off-screen.
-      getForceFinestLOD: () => lodFinestEnabled,
-      // Area-unit threshold bias (?lodBias via LuxarAppOptions.lodBias).
-      getLodBias: () => lodBias,
-      // Register a fade's clone-on-first-use material so it keeps receiving
-      // per-frame camera-uniform updates (an unregistered gsplat clone would
-      // project with stale camera params).
-      // No cast: `register` takes a plain `THREE.Material` and dispatches on
-      // camera-awareness internally. The `as Parameters<typeof register>[0]` that used
-      // to sit here existed only to satisfy an `& CameraAwareMaterial` requirement the
-      // manager no longer imposes — and being self-referential, it would have silently
-      // accepted anything the parameter type later became.
-      registerMaterial: (material) => materialManager.register(material),
-    });
-  });
+  // The deps object itself is shared with layer mode (lod-registry-deps.ts);
+  // only the live sources differ.
+  SceneLoaderManager.getInstance().setLODGroupRegistryFactory(
+    (owner) =>
+      new LODGroupRegistry(
+        buildLodRegistryDeps(owner, {
+          getCamera: () => sceneManager.camera,
+          getViewportSize: () => viewContext.get().viewportCss ?? { width: 0, height: 0 },
+          getViewContext: () => viewContext.get(),
+          // The input handler (and its animation manager) is built later in
+          // this function, hence the lazy read.
+          getPlaybackPeriodMs: () =>
+            partial.inputHandler?.getAnimationManager()?.getPlaybackPeriodMs() ?? null,
+          // Keep the on-demand loop TICKING while a lazy fine level reloads (it
+          // commits outside the per-slice sweep and can outlast the idle
+          // timeout); the swap reports itself through `takeDrawnStateChanged`.
+          requestRender: () => animationController.requestRender('lod'),
+          requestTick: () => animationController.requestTick(),
+          lodFade: ports.options.lodFade,
+          lodEnergyComp: lodEnergyCompEnabled,
+          // Opt-in: force the finest LOD for capture-quality output (?lodFinest).
+          lodFinest: ports.options.lodFinest,
+          lodBias: ports.options.lodBias,
+        })
+      )
+  );
   // Wake the render loop after EVERY geometry commit (forwarded to each
   // SceneLoader). Late commits — progressive-refinement passes, failed-load
   // retries, the online auto-retry — land after the sweep that started
