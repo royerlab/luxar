@@ -21,8 +21,9 @@
  *      neutral appearance (opaque, gain <= 1).
  *   3. TSL codegen snapshots (`src/tests/__codegen__`, themselves pinned to the
  *      live TSL output by the tsl-codegen-snapshot e2e spec): every draw
- *      variant and the pick shader emit the same reach-radius block, up to
- *      variable names, and the same extent + cull use of it.
+ *      variant and the pick shader emit the same reach-radius block and the
+ *      same peak-scale expression, up to variable names, and the same extent
+ *      + cull use of it.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -203,16 +204,19 @@ describe('TSL codegen: every draw variant and the pick shader emit one reach blo
     }
   });
 
-  it('draw peak = pick peak times the draw-only alpha factor and max(gain, 1)', () => {
-    const pickPeak = reachBlock(pickFile).peak;
-    expect(pickPeak).toMatch(/^\( nodeVar\d+ \* nodeUniform\d+ \)$/);
+  it('draw and pick peaks share one shape: amplitude x 1/(1-C) x alpha factor x max(gain, 1)', () => {
+    // The pick fragment test carries the same factors as the draw (the pick's
+    // alpha factor also folds in the node opacity), so both emit the same
+    // peak-scale expression around the same amplitude term; only the alpha
+    // factor expression differs per variant (optical depth under volumetric).
+    const shape =
+      /^\( \( (\( nodeVar\d+ \* nodeUniform\d+ \)) \* .+ \) \* max\( nodeUniform\d+, 1\.0 \) \)$/;
+    const pick = shape.exec(reachBlock(pickFile).peak);
+    expect(pick).not.toBeNull();
     for (const file of drawFiles) {
-      const m =
-        /^\( \( (\( nodeVar\d+ \* nodeUniform\d+ \)) \* .+ \) \* max\( nodeUniform\d+, 1\.0 \) \)$/.exec(
-          reachBlock(file).peak
-        );
+      const m = shape.exec(reachBlock(file).peak);
       expect(m, file).not.toBeNull();
-      expect(normalize(m![1])).toBe(normalize(pickPeak));
+      expect(normalize(m![1]), file).toBe(normalize(pick![1]));
     }
   });
 
