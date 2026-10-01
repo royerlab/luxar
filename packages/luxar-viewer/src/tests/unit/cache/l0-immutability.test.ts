@@ -73,6 +73,35 @@ describe('L0 read-only chunk contract (commit 6.1)', () => {
     expect(Array.from(r2.data as Float32Array)).toEqual([1.5, 2.5, 3.5, 4.5]);
   });
 
+  it.fails('a miss, a coalesced waiter and a hit all see the SAME read-only buffer', async () => {
+    // One contract for every path: L0 chunks are shared and read-only. A
+    // defensive clone on the miss path protected only the first caller while
+    // every hit and coalesced waiter shared a buffer anyway — and it cost one
+    // allocation + memcpy per decoded byte.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const fakeArray: any = {
+      dtype: 'float32',
+      shape: [3],
+      chunks: [3],
+      attrs: {},
+      async getChunk() {
+        await gate;
+        return { data: new Float32Array([7, 8, 9]), shape: [3], stride: [1] };
+      },
+    };
+    const wrapped = wrapWithCache(fakeArray, cache, '/points/values');
+
+    const missing = wrapped.getChunk([0]);
+    const coalesced = wrapped.getChunk([0]);
+    release();
+    const [miss, joined] = await Promise.all([missing, coalesced]);
+    const hit = await wrapped.getChunk([0]);
+
+    expect(joined.data).toBe(miss.data);
+    expect(hit.data).toBe(miss.data);
+  });
+
   it('a consumer loop that reads the chunk does not corrupt later hits', async () => {
     const sourceData = new Float32Array([10, 20, 30]);
     const fakeArray: any = {
