@@ -355,11 +355,19 @@ describe('OverlayManager.loadOverlays', () => {
     vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
     const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
     await manager.loadOverlays(
-      [makeTextOverlay({ name: 'broken', type: 'overlay_video', video_file: 'missing.webm' })],
+      [
+        makeTextOverlay({
+          name: 'broken',
+          type: 'overlay_video',
+          video_file: 'missing.webm',
+          poster_file: 'poster.png',
+        }),
+      ],
       'https://example.com/scene.luxar.zarr/'
     );
     const video = document.querySelector('.luxar-overlay--video video') as HTMLVideoElement;
     expect(video.hasAttribute('src')).toBe(true);
+    expect(video.poster).toBe('https://example.com/scene.luxar.zarr/overlays/broken/poster.png');
 
     video.dispatchEvent(new Event('error'));
     expect(warning).toHaveBeenCalledExactlyOnceWith(
