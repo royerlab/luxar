@@ -53,7 +53,7 @@ function subLoader(splatCount: number, gated: boolean) {
   const releases: Array<() => void> = [];
   const stub = {
     ensureInitialized: vi.fn().mockResolvedValue(undefined),
-    updateViewWithResidency: vi.fn(async () => {
+    updateViewWithResidency: vi.fn(async (..._args: unknown[]) => {
       if (gated) await new Promise<void>((resolve) => releases.push(resolve));
       return { data: lodData(splatCount), allResident: true };
     }),
@@ -151,5 +151,60 @@ describe('GSplatsProgressiveLoader — scrubbing (B5)', () => {
     await loader.updateView(viewAt(5));
 
     expect(signalsAtDemandRead).toEqual({ t3: true, t5: false });
+  });
+});
+
+describe('GSplatsProgressiveLoader — a braked pinned pass cancels its remaining rungs', () => {
+  /** Rungs whose loads record their signal and park until released. */
+  function parkedRungs(count: number) {
+    const rungs = Array.from({ length: count }, (_, i) => subLoader(2 ** i, false));
+    const signals: Array<AbortSignal | undefined> = [];
+    const releases: Array<() => void> = [];
+    rungs.forEach((r, level) =>
+      r.stub.updateViewWithResidency.mockImplementation(async (...args: unknown[]) => {
+        signals[level] = args[2] as AbortSignal | undefined;
+        if (level > 0) await new Promise<void>((resolve) => releases.push(resolve));
+        return { data: lodData(2 ** level), allResident: true };
+      })
+    );
+    return { rungs, signals, release: () => releases.splice(0).forEach((r) => r()) };
+  }
+
+  it.fails('the residency brake aborts and releases the rungs it will never commit', async () => {
+    const { rungs, signals, release } = parkedRungs(3);
+    const loader = makeLoader(rungs);
+    // A 1-byte allowance: rung 0 spends it, so the loop stops right after it.
+    const result = await loader.updateView(viewAt(0, { ladderDepth: 3 }), undefined, undefined, 1);
+    expect(result.splatCount).toBe(1);
+
+    // Rungs 1 and 2 were started up front; the brake must cancel their reads…
+    expect(signals[1]?.aborted).toBe(true);
+    expect(signals[2]?.aborted).toBe(true);
+    // …and drop whatever their accumulators already decoded.
+    expect(rungs[1].stub.releaseAccumulator).toHaveBeenCalled();
+    expect(rungs[2].stub.releaseAccumulator).toHaveBeenCalled();
+    release();
+  });
+
+  it('a committed rung keeps its read: only the discarded remainder is aborted', async () => {
+    const { rungs, signals, release } = parkedRungs(3);
+    const loader = makeLoader(rungs);
+    const pass = new AbortController();
+    const promise = loader.updateView(viewAt(0, { ladderDepth: 3 }), undefined, pass.signal, 1);
+    await promise;
+    expect(signals[0]?.aborted).toBe(false);
+    expect(pass.signal.aborted).toBe(false);
+    release();
+  });
+
+  it('a pass abort still reaches every started rung', async () => {
+    const { rungs, signals } = parkedRungs(3);
+    const loader = makeLoader(rungs);
+    const pass = new AbortController();
+    const promise = loader.updateView(viewAt(0, { ladderDepth: 3 }), undefined, pass.signal);
+    await vi.waitFor(() => expect(signals).toHaveLength(3));
+    pass.abort();
+    expect(signals.every((s) => s?.aborted)).toBe(true);
+    void promise.catch(() => {});
   });
 });
