@@ -48,6 +48,7 @@ import {
   MAX_ABANDONED_RUNG_RETRY_ROUNDS,
   MAX_CONSECUTIVE_REFINEMENT_FAILURES,
 } from '../../../data/scene-loader/progressive/refinement';
+import type { PassScheduler } from '../../../data/scene-loader/update-view/pass-scheduler';
 
 // THREE is NOT mocked here. The classes SceneLoader touches —
 // Group / Points / Mesh / Box3 / Vector3 / Matrix4 /
@@ -568,7 +569,9 @@ describe('SceneLoader', () => {
       expect(committed).toEqual(['/ok']);
       expect(sceneLoader.committedViewState.slicePosition[3]).toBe(7);
       expect(applyCommittedSlice).toHaveBeenCalledOnce();
-      expect((sceneLoader as unknown as { _lastCommitAt: number })._lastCommitAt).toBe(123_456);
+      expect((sceneLoader as unknown as { passes: PassScheduler }).passes.lastCommitAt).toBe(
+        123_456
+      );
     });
 
     it('surfaces an archive fault once and preserves the last committed frame', async () => {
@@ -636,7 +639,7 @@ describe('SceneLoader', () => {
       expect(notifierMocks.error).toHaveBeenCalledOnce();
       expect(onArchiveFault).toHaveBeenCalledOnce();
       expect(prefetch).not.toHaveBeenCalled();
-      expect((sceneLoader as any)._updateInProgress).toBe(false);
+      expect((sceneLoader as any).passes.locked).toBe(false);
     });
 
     it('notifies again when a cleared archive fault recurs', () => {
@@ -765,7 +768,7 @@ describe('SceneLoader', () => {
 
       expect(failingLoader.updateView).toHaveBeenCalledOnce();
       expect(notifierMocks.error).toHaveBeenCalledOnce();
-      expect((sceneLoader as any)._updateInProgress).toBe(false);
+      expect((sceneLoader as any).passes.locked).toBe(false);
     });
 
     it('routes the updateView call through the loader even for empty results (loader decides skip)', async () => {
@@ -939,9 +942,7 @@ describe('SceneLoader', () => {
         expect(target.updateView).toHaveBeenCalledTimes(2); // full pass + targeted resync
       });
       expect(gated.updateView).toHaveBeenCalledTimes(1); // not a target — untouched
-      expect((sceneLoader as unknown as { _updateInProgress: boolean })._updateInProgress).toBe(
-        false
-      );
+      expect((sceneLoader as unknown as { passes: PassScheduler }).passes.locked).toBe(false);
     });
 
     it('a targeted resync arriving during a refinement HOLD queues its own pass instead of waiting', async () => {
@@ -956,16 +957,13 @@ describe('SceneLoader', () => {
       loaders.set('/tiled/part_1/level_0', target);
       loaders.set('/other', other);
       const internals = sceneLoader as unknown as {
-        _updateInProgress: boolean;
-        _refining: boolean;
-        _updateAbortController: AbortController | null;
+        passes: PassScheduler;
         viewStateQueue: ViewStateQueue;
-        takeQueuedResyncOpts(): { resyncPaths?: ReadonlySet<string> };
       };
-      internals._updateInProgress = true;
-      internals._refining = true;
+      internals.passes.locked = true;
+      internals.passes.refining = true;
       const controller = new AbortController();
-      internals._updateAbortController = controller;
+      internals.passes.controller = controller;
       expect(sceneLoader.isLoadPassInProgress()).toBe(false); // a hold is not a pass
 
       sceneLoader.requestReprocess(['/tiled/part_1']);
@@ -979,16 +977,15 @@ describe('SceneLoader', () => {
 
       // The refinement loop's cancellation hand-off: release the lock and
       // re-enter with the pending state plus the queued resync opts.
-      internals._updateInProgress = false;
-      internals._refining = false;
-      const pending = internals.viewStateQueue.takePending() ?? {};
+      internals.passes.locked = false;
+      internals.passes.refining = false;
       const before = sceneLoader.currentViewVersion;
-      await sceneLoader.updateView(pending, internals.takeQueuedResyncOpts());
+      expect(internals.passes.drainPending()).toBe(true);
+      await vi.waitFor(() => expect(target.updateView).toHaveBeenCalledTimes(1));
 
-      expect(target.updateView).toHaveBeenCalledTimes(1);
       expect(other.updateView).not.toHaveBeenCalled();
       expect(sceneLoader.currentViewVersion).toBe(before);
-      expect(internals.takeQueuedResyncOpts()).toEqual({}); // consumed exactly once
+      expect(internals.passes.queuedResyncPaths).toBeNull(); // consumed exactly once
     });
 
     it('a real view change queued after a hold resync sweeps every loader', async () => {
@@ -998,31 +995,27 @@ describe('SceneLoader', () => {
       loaders.set('/tiled/part_1/level_0', target);
       loaders.set('/other', other);
       const internals = sceneLoader as unknown as {
-        _updateInProgress: boolean;
-        _refining: boolean;
-        _updateAbortController: AbortController | null;
+        passes: PassScheduler;
         viewStateQueue: ViewStateQueue;
-        takeQueuedResyncOpts(): { resyncPaths?: ReadonlySet<string> };
       };
-      internals._updateInProgress = true;
-      internals._refining = true;
-      internals._updateAbortController = new AbortController();
+      internals.passes.locked = true;
+      internals.passes.refining = true;
+      internals.passes.controller = new AbortController();
 
       sceneLoader.requestReprocess(['/tiled/part_1']);
       await Promise.resolve();
       const queuedPass = sceneLoader.updateView({ slicePosition: [0, 0, 0, 9] });
 
-      internals._updateInProgress = false;
-      internals._refining = false;
-      const pending = internals.viewStateQueue.takePending() ?? {};
+      internals.passes.locked = false;
+      internals.passes.refining = false;
       const before = sceneLoader.currentViewVersion;
-      await sceneLoader.updateView(pending, internals.takeQueuedResyncOpts());
+      expect(internals.passes.drainPending()).toBe(true);
       await queuedPass;
 
       expect(sceneLoader.currentViewVersion).toBe(before + 1);
       expect(target.updateView).toHaveBeenCalledTimes(1);
       expect(other.updateView).toHaveBeenCalledTimes(1);
-      expect(internals.takeQueuedResyncOpts()).toEqual({});
+      expect(internals.passes.queuedResyncPaths).toBeNull();
     });
 
     it('stashed resync paths never leak into a later, unrelated same-view pass', async () => {
@@ -1038,50 +1031,45 @@ describe('SceneLoader', () => {
       loaders.set('/tiled/part_1/level_0', target);
       loaders.set('/other', other);
       const internals = sceneLoader as unknown as {
-        _updateInProgress: boolean;
-        _refining: boolean;
-        _queuedResyncPaths: Set<string> | null;
+        passes: PassScheduler;
         viewStateQueue: ViewStateQueue;
-        reenterPending(state: Partial<ViewState>): Promise<void>;
       };
-      internals._updateInProgress = true;
-      internals._refining = true;
+      internals.passes.locked = true;
+      internals.passes.refining = true;
       sceneLoader.requestReprocess(['/tiled/part_1']);
       await Promise.resolve();
-      expect(internals._queuedResyncPaths?.size).toBe(1);
+      expect(internals.passes.queuedResyncPaths?.size).toBe(1);
 
-      // Every drain site goes through `reenterPending`, which consumes the stash.
-      internals._updateInProgress = false;
-      internals._refining = false;
-      const drained = internals.viewStateQueue.drain((state) => internals.reenterPending(state));
+      // Every drain site re-enters through the scheduler, which consumes the stash.
+      internals.passes.locked = false;
+      internals.passes.refining = false;
+      const drained = internals.passes.drainPending();
       expect(drained).toBe(true);
       await vi.waitFor(() => {
         expect(target.updateView).toHaveBeenCalledTimes(1);
       });
       expect(other.updateView).not.toHaveBeenCalled(); // the resync itself WAS targeted
-      expect(internals._queuedResyncPaths).toBeNull();
+      expect(internals.passes.queuedResyncPaths).toBeNull();
 
       // Belt and braces: a stash left behind by any other route is dropped the
       // moment a pass starts, so an untargeted reprocess stays untargeted.
-      internals._queuedResyncPaths = new Set(['/tiled/part_1']);
+      internals.passes.queuedResyncPaths = new Set(['/tiled/part_1']);
       await sceneLoader.updateView({});
       expect(other.updateView).toHaveBeenCalledTimes(1);
-      expect(internals._queuedResyncPaths).toBeNull();
+      expect(internals.passes.queuedResyncPaths).toBeNull();
     });
 
     it('a second rising edge during the same hold merges into the stash instead of being dropped', async () => {
       const internals = sceneLoader as unknown as {
-        _updateInProgress: boolean;
-        _refining: boolean;
-        _queuedResyncPaths: Set<string> | null;
+        passes: PassScheduler;
         viewStateQueue: ViewStateQueue;
       };
-      internals._updateInProgress = true;
-      internals._refining = true;
+      internals.passes.locked = true;
+      internals.passes.refining = true;
       sceneLoader.requestReprocess(['/tiled/part_1']);
       sceneLoader.requestReprocess(['/tiled/part_3']); // our own `{}` is already pending
       await Promise.resolve();
-      expect([...(internals._queuedResyncPaths ?? [])].sort()).toEqual([
+      expect([...(internals.passes.queuedResyncPaths ?? [])].sort()).toEqual([
         '/tiled/part_1',
         '/tiled/part_3',
       ]);
@@ -1104,15 +1092,12 @@ describe('SceneLoader', () => {
         loaders.set('/tiled/part_1/level_0', target);
         loaders.set('/other', other);
         const internals = sceneLoader as unknown as {
-          _updateInProgress: boolean;
-          _refining: boolean;
-          _updateAbortController: AbortController | null;
+          passes: PassScheduler;
           viewStateQueue: ViewStateQueue;
-          reenterPending(state: Partial<ViewState>): Promise<void>;
         };
-        internals._updateInProgress = true;
-        internals._refining = true;
-        internals._updateAbortController = new AbortController();
+        internals.passes.locked = true;
+        internals.passes.refining = true;
+        internals.passes.controller = new AbortController();
         if (order.startsWith('untargeted')) {
           void sceneLoader.updateView({}); // depth-sort style: no paths → supersede branch
           sceneLoader.requestReprocess(['/tiled/part_1']);
@@ -1123,9 +1108,9 @@ describe('SceneLoader', () => {
         await Promise.resolve();
         expect(internals.viewStateQueue.hasPending()).toBe(true);
 
-        internals._updateInProgress = false;
-        internals._refining = false;
-        const drained = internals.viewStateQueue.drain((state) => internals.reenterPending(state));
+        internals.passes.locked = false;
+        internals.passes.refining = false;
+        const drained = internals.passes.drainPending();
         expect(drained).toBe(true);
         await vi.waitFor(() => {
           expect(target.updateView).toHaveBeenCalledTimes(1);
@@ -1140,10 +1125,10 @@ describe('SceneLoader', () => {
       // the dimension-animation pacing gate for the rest of the session.
       const internals = sceneLoader as unknown as {
         _archiveFault: ArchiveFaultError | null;
-        _passWaiters: Array<{ gen: number; resolve: () => void }>;
+        passes: { passWaiters: Array<{ gen: number; resolve: () => void }> };
       };
       let settled = false;
-      internals._passWaiters.push({
+      internals.passes.passWaiters.push({
         gen: 1,
         resolve: () => {
           settled = true;
@@ -1152,7 +1137,7 @@ describe('SceneLoader', () => {
       internals._archiveFault = new ArchiveFaultError('container unreadable', 'test');
       await sceneLoader.updateView({ slicePosition: [0, 0, 0, 8] });
       expect(settled).toBe(true);
-      expect(internals._passWaiters).toHaveLength(0);
+      expect(internals.passes.passWaiters).toHaveLength(0);
     });
   });
 
@@ -1339,7 +1324,7 @@ describe('SceneLoader', () => {
       // hands off via noopReleaseLock without draining, so nothing ever resolves
       // that parked waiter. The _disposed guard at updateView's head must settle
       // it immediately instead (resolve-only, never reject).
-      (sceneLoader as unknown as { _updateInProgress: boolean })._updateInProgress = true;
+      (sceneLoader as unknown as { passes: PassScheduler }).passes.locked = true;
       await sceneLoader.dispose();
 
       await expect(
@@ -1364,7 +1349,7 @@ describe('SceneLoader', () => {
   // (adaptive DPR, init pipeline) keeps its broad "the lock is held" meaning.
   describe('isLoadPassInProgress — refinement excluded, queued state included', () => {
     /** The two private flags the two accessors are composed from. */
-    type LockFlags = { _updateInProgress: boolean; _refining: boolean };
+    type LockFlags = { passes: PassScheduler };
 
     it('is true during a load pass and false during a refinement hold', () => {
       const flags = sceneLoader as unknown as LockFlags;
@@ -1373,37 +1358,37 @@ describe('SceneLoader', () => {
       expect(sceneLoader.isUpdateInProgress()).toBe(false);
 
       // An updateView sweep: lock held, not refining.
-      flags._updateInProgress = true;
+      flags.passes.locked = true;
       expect(sceneLoader.isLoadPassInProgress()).toBe(true);
       expect(sceneLoader.isUpdateInProgress()).toBe(true);
 
       // The same lock, now handed to refinement — the load pass is over.
-      flags._refining = true;
+      flags.passes.refining = true;
       expect(sceneLoader.isLoadPassInProgress()).toBe(false);
       // …but the broader accessor its existing consumers read is unchanged.
       expect(sceneLoader.isUpdateInProgress()).toBe(true);
     });
 
-    it('scheduleGSplatsRefinement holds _refining for the whole run', async () => {
+    it('scheduleProgressiveRefinement holds _refining for the whole run', async () => {
       const flags = sceneLoader as unknown as LockFlags;
       // Mirror the hand-off the real kick sites perform: the lock is already
       // held when the orchestrator is entered.
-      flags._updateInProgress = true;
+      flags.passes.locked = true;
 
       const run = (
-        sceneLoader as unknown as { scheduleGSplatsRefinement: () => Promise<void> }
-      ).scheduleGSplatsRefinement();
+        sceneLoader as unknown as { scheduleProgressiveRefinement: () => Promise<void> }
+      ).scheduleProgressiveRefinement();
 
       // Set SYNCHRONOUSLY, before the first await — otherwise a poll landing in
       // the gap between the hand-off and the first phase would read a load pass.
-      expect(flags._refining).toBe(true);
+      expect(flags.passes.refining).toBe(true);
       expect(sceneLoader.isLoadPassInProgress()).toBe(false);
 
       await run;
 
       // Cleared on the way out (the `finally`), so the next real load pass is
       // visible again.
-      expect(flags._refining).toBe(false);
+      expect(flags.passes.refining).toBe(false);
     });
 
     it('dispose leaves a torn-down loader reading idle, whatever state it was in', async () => {
@@ -1415,8 +1400,8 @@ describe('SceneLoader', () => {
       // loader is self-consistently idle regardless — a phase that bails before
       // `finalReleaseLock` runs leaves the lock set, and nothing later clears
       // it.
-      flags._updateInProgress = true;
-      flags._refining = true;
+      flags.passes.locked = true;
+      flags.passes.refining = true;
       // …and a QUEUED view-state is the third input to the predicate, so a
       // disposal must clear it too: a disposed loader never runs its pending
       // pass, so a slot left filled reads busy forever. Parked through the real
@@ -1427,8 +1412,8 @@ describe('SceneLoader', () => {
 
       await sceneLoader.dispose();
 
-      expect(flags._updateInProgress).toBe(false);
-      expect(flags._refining).toBe(false);
+      expect(flags.passes.locked).toBe(false);
+      expect(flags.passes.refining).toBe(false);
       expect(queue.hasPending()).toBe(false);
       expect(sceneLoader.isLoadPassInProgress()).toBe(false);
       expect(sceneLoader.isUpdateInProgress()).toBe(false);
@@ -1440,14 +1425,13 @@ describe('SceneLoader', () => {
       const flags = sceneLoader as unknown as LockFlags;
       const internals = sceneLoader as unknown as {
         viewStateQueue: ViewStateQueue;
-        resolvePassWaiters(): void;
       };
       const queue = internals.viewStateQueue;
 
       // The steady state right after a commit on any laddered dataset: the
       // update tail handed the lock to the refinement orchestrator.
-      flags._updateInProgress = true;
-      flags._refining = true;
+      flags.passes.locked = true;
+      flags.passes.refining = true;
       expect(sceneLoader.isLoadPassInProgress()).toBe(false);
 
       // A keyboard nav lands: driven through the REAL supersede branch (which
@@ -1458,18 +1442,18 @@ describe('SceneLoader', () => {
       const parked = sceneLoader.updateView({ slicePosition: [1, 0, 0] });
       expect(sceneLoader.isLoadPassInProgress()).toBe(true);
 
-      // Cleared at the moment the next pass starts (queueNext / the refinement
-      // loop's cancellation check / finalReleaseLock's drain all take it), so
+      // Cleared at the moment the next pass starts (the scheduler's frame yield
+      // or its release drain take it), so
       // the queued clause cannot latch busy once a pass is running.
       expect(queue.takePending()).not.toBeNull();
       expect(sceneLoader.isLoadPassInProgress()).toBe(false);
 
       // Unpark the caller (no real pass will run here) and drop the simulated
       // hold so the shared afterEach dispose sees a clean loader.
-      internals.resolvePassWaiters();
+      flags.passes.resolveWaiters();
       await parked;
-      flags._updateInProgress = false;
-      flags._refining = false;
+      flags.passes.locked = false;
+      flags.passes.refining = false;
     });
   });
 
@@ -1486,10 +1470,10 @@ describe('SceneLoader', () => {
     it('releases the lock, drains the queued view-state and settles waiters', async () => {
       const internals = sceneLoader as unknown as {
         makeNodeBuildCtx(): unknown;
-        scheduleGSplatsRefinement(): Promise<void>;
+        scheduleProgressiveRefinement(): Promise<void>;
         gsplatLoaders: Map<string, unknown>;
         viewStateQueue: ViewStateQueue;
-        _updateInProgress: boolean;
+        passes: PassScheduler;
       };
 
       // Register a progressive loader mid-load so the post-load kick fires at
@@ -1504,7 +1488,7 @@ describe('SceneLoader', () => {
       const updateViewSpy = vi.spyOn(sceneLoader, 'updateView');
       const navState = { slicePosition: [1, 0, 0, 0] };
       let parked: Promise<void> | null = null;
-      vi.spyOn(internals, 'scheduleGSplatsRefinement').mockImplementation(async () => {
+      vi.spyOn(internals, 'scheduleProgressiveRefinement').mockImplementation(async () => {
         // The lock is held by the kick, so this takes updateView's supersede
         // branch and parks the state — the real init-pipeline race.
         parked = sceneLoader.updateView(navState);
@@ -1534,7 +1518,7 @@ describe('SceneLoader', () => {
       // The lock the kick took is released, and the drained pass released its
       // own — a torn-down double fault leaves the loader idle, not latched.
       await updateViewSpy.mock.results[1].value;
-      expect(internals._updateInProgress).toBe(false);
+      expect(internals.passes.locked).toBe(false);
       expect(sceneLoader.isLoadPassInProgress()).toBe(false);
     });
   });
@@ -1569,15 +1553,14 @@ describe('SceneLoader', () => {
     it('leaves the prefetch running in the QUEUED branch too', async () => {
       const spy = armPrefetcher();
       const internals = sceneLoader as unknown as {
-        _updateInProgress: boolean;
-        resolvePassWaiters(): void;
+        passes: PassScheduler;
       };
-      internals._updateInProgress = true; // simulate an in-flight pass
+      internals.passes.locked = true; // simulate an in-flight pass
       const parked = sceneLoader.updateView({ slicePosition: [0, 0, 0, 8] });
       expect(spy.abortInFlight).not.toHaveBeenCalled();
-      internals.resolvePassWaiters(); // unpark (the simulated pass "completes")
+      internals.passes.resolveWaiters(); // unpark (the simulated pass "completes")
       await parked;
-      internals._updateInProgress = false;
+      internals.passes.locked = false;
     });
 
     it('prefetchSlice never mutates the persistent view state (per-pass shadow copy)', () => {
@@ -1956,15 +1939,15 @@ describe('SceneLoader', () => {
         dispose: vi.fn(),
       };
       const internals = sceneLoader as unknown as {
-        _updateInProgress: boolean;
+        passes: PassScheduler;
         gsplatLoaders: Map<string, unknown>;
-        scheduleGSplatsRefinement(): Promise<void>;
+        scheduleProgressiveRefinement(): Promise<void>;
       };
       internals.gsplatLoaders.set('/g', ladder);
 
       // A refinement run holds the lock, parked on its first frame yield.
-      internals._updateInProgress = true;
-      const run = internals.scheduleGSplatsRefinement();
+      internals.passes.locked = true;
+      const run = internals.scheduleProgressiveRefinement();
       expect(frames).toHaveLength(1);
       // View 2 cancels it: the loop takes it and hands off across a frame.
       void sceneLoader.updateView(view(2));
@@ -2046,7 +2029,8 @@ describe('SceneLoader', () => {
     )(
       'aborts the in-flight $type load after $idleMs ms idle when a newer view supersedes it',
       async ({ map, idleMs }) => {
-        let now = (sceneLoader as unknown as { _lastCommitAt: number })._lastCommitAt + idleMs;
+        let now =
+          (sceneLoader as unknown as { passes: PassScheduler }).passes.lastCommitAt + idleMs;
         vi.spyOn(performance, 'now').mockImplementation(() => now);
         let capturedSignal: AbortSignal | undefined;
         let releaseFirst!: () => void;
@@ -2128,14 +2112,10 @@ describe('SceneLoader', () => {
       'aborts the first pass superseded after a refinement hand-off following idle (resync first: %s)',
       async (resyncFirst) => {
         const internals = sceneLoader as unknown as {
-          _lastCommitAt: number;
-          _updateInProgress: boolean;
-          _refining: boolean;
-          _updateAbortController: AbortController | null;
+          passes: PassScheduler;
           viewStateQueue: ViewStateQueue;
-          reenterPending(state: Partial<ViewState>): Promise<void>;
         };
-        let now = internals._lastCommitAt + 5000;
+        let now = internals.passes.lastCommitAt + 5000;
         vi.spyOn(performance, 'now').mockImplementation(() => now);
         let capturedSignal: AbortSignal | undefined;
         let releaseFirst!: () => void;
@@ -2156,29 +2136,25 @@ describe('SceneLoader', () => {
         (sceneLoader as unknown as { loaders: Map<string, unknown> }).loaders.set('/node', loader);
 
         // Refinement owns the lock, then hands its queued view to the next pass.
-        internals._updateInProgress = true;
-        internals._refining = true;
-        internals._updateAbortController = new AbortController();
+        internals.passes.locked = true;
+        internals.passes.refining = true;
+        internals.passes.controller = new AbortController();
         if (resyncFirst) {
           await sceneLoader.updateView({}, { resyncPaths: new Set(['/node']) });
           expect(internals.viewStateQueue.hasPending()).toBe(true);
         }
         const queued = sceneLoader.updateView({ slicePosition: [0, 0, 0, 1] });
         expect(internals.viewStateQueue.hasPending()).toBe(true);
-        internals._updateInProgress = false;
-        internals._refining = false;
-        const pending = internals.viewStateQueue.takePending();
-        expect(pending).toBeDefined();
-        const first = internals.reenterPending(pending!);
-        await Promise.resolve();
-        expect(capturedSignal).toBeInstanceOf(AbortSignal);
+        internals.passes.locked = false;
+        internals.passes.refining = false;
+        expect(internals.passes.drainPending()).toBe(true);
+        await vi.waitFor(() => expect(capturedSignal).toBeInstanceOf(AbortSignal));
 
         now += 10;
         const winning = sceneLoader.updateView({ slicePosition: [0, 0, 0, 2] });
         expect(capturedSignal?.aborted).toBe(true);
 
         releaseFirst();
-        await first;
         await Promise.all([queued, winning]);
         expect(loader.updateView).toHaveBeenCalledTimes(2);
         expect(sceneLoader.hasFailures()).toBe(false);
@@ -2482,18 +2458,16 @@ describe('SceneLoader', () => {
 
       // Hold the lock exactly as queueNext's refinement branch does, then
       // run the real refinement orchestrator to completion.
-      (sceneLoader as unknown as { _updateInProgress: boolean })._updateInProgress = true;
+      (sceneLoader as unknown as { passes: PassScheduler }).passes.locked = true;
       await (
-        sceneLoader as unknown as { scheduleGSplatsRefinement(): Promise<void> }
-      ).scheduleGSplatsRefinement();
+        sceneLoader as unknown as { scheduleProgressiveRefinement(): Promise<void> }
+      ).scheduleProgressiveRefinement();
 
       // Post-fix: finalReleaseLock drains the stranded state; the re-entered
       // pass completes and settles the waiter. Pre-fix: this never resolves.
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(queuedResolved).toBe(true);
-      expect((sceneLoader as unknown as { _updateInProgress: boolean })._updateInProgress).toBe(
-        false
-      );
+      expect((sceneLoader as unknown as { passes: PassScheduler }).passes.locked).toBe(false);
     });
 
     it('dispose flushes queued-update waiters (no hang across dataset switches)', async () => {
@@ -2531,8 +2505,7 @@ describe('SceneLoader', () => {
     it('dispose drops its refinement state and cancels a pending kick re-check', async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
       type Internals = {
-        _updateInProgress: boolean;
-        _refinementKickPending: boolean;
+        passes: PassScheduler;
         gsplatLoaders: Map<string, unknown>;
         sliceCache: unknown;
         lastResidencyBudget: { isDeclined(path: string): boolean } | null;
@@ -2547,13 +2520,13 @@ describe('SceneLoader', () => {
       );
       internals.refinementDensityGate!.deferred.set('/g', 1e9);
       internals.gsplatLoaders.set('/g', { hasMoreLODs: true, dispose: vi.fn() });
-      internals._updateInProgress = true;
+      internals.passes.locked = true;
       sceneLoader.kickRefinementIfIdle(); // lock busy: one re-check timer
-      expect(internals._refinementKickPending).toBe(true);
+      expect(internals.passes.kickPending).toBe(true);
 
       await sceneLoader.dispose();
 
-      expect(internals._refinementKickPending).toBe(false);
+      expect(internals.passes.kickPending).toBe(false);
       expect(internals.sliceCache).toBeNull();
       expect(internals.lastResidencyBudget).toBeNull();
       expect(internals.refinementDensityGate).toBeNull();
@@ -2829,18 +2802,18 @@ describe('SceneLoader', () => {
       // auto-retry and the monitor's Retry button reported "N still failing"
       // for retries that never ran.
       const internals = sceneLoader as unknown as {
-        _updateInProgress: boolean;
+        passes: PassScheduler;
         registry: { recordFailure(path: string, error: Error): void };
       };
       internals.registry.recordFailure('/points/p', new Error('network down'));
-      internals._updateInProgress = true; // a main update holds the lock
+      internals.passes.locked = true; // a main update holds the lock
       try {
         const result = await sceneLoader.retryAllFailedLoaders();
         expect(result).toEqual({ succeeded: [], failed: ['/points/p'], deferred: true });
         // Nothing was retried: the failure record must survive untouched.
         expect(sceneLoader.hasFailures()).toBe(true);
       } finally {
-        internals._updateInProgress = false;
+        internals.passes.locked = false;
       }
     });
 
@@ -2859,12 +2832,12 @@ describe('SceneLoader', () => {
     // a retry.
     let frames: Array<() => void>;
     type Internals = {
-      _updateInProgress: boolean;
+      passes: PassScheduler;
       gsplatLoaders: Map<string, unknown>;
       loaders: Map<string, unknown>;
       rootGroup: THREE.Group | null;
       registry: { recordFailure(path: string, error: Error): void };
-      scheduleGSplatsRefinement(): Promise<void>;
+      scheduleProgressiveRefinement(): Promise<void>;
     };
 
     beforeEach(async () => {
@@ -2916,8 +2889,8 @@ describe('SceneLoader', () => {
       placeholder.name = '/p';
       internals.rootGroup!.add(placeholder);
       internals.registry.recordFailure('/p', new Error('network down'));
-      internals._updateInProgress = true;
-      void internals.scheduleGSplatsRefinement();
+      internals.passes.locked = true;
+      void internals.scheduleProgressiveRefinement();
       expect(sceneLoader.isUpdateInProgress()).toBe(true);
       return { retried };
     }
@@ -2944,13 +2917,13 @@ describe('SceneLoader', () => {
     it('a retry still defers to a VIEW pass holding the lock', async () => {
       const internals = sceneLoader as unknown as Internals;
       internals.registry.recordFailure('/p', new Error('network down'));
-      internals._updateInProgress = true; // a main update, not refinement
+      internals.passes.locked = true; // a main update, not refinement
       try {
         await expect(sceneLoader.retryAllFailedLoaders()).resolves.toMatchObject({
           deferred: true,
         });
       } finally {
-        internals._updateInProgress = false;
+        internals.passes.locked = false;
       }
     });
   });
@@ -3012,13 +2985,13 @@ describe('SceneLoader', () => {
           ctx.retriggerUpdate(pendingState);
         });
       const internals = sceneLoader as unknown as {
-        _updateInProgress: boolean;
-        scheduleGSplatsRefinement(): Promise<void>;
+        passes: PassScheduler;
+        scheduleProgressiveRefinement(): Promise<void>;
       };
-      internals._updateInProgress = true;
+      internals.passes.locked = true;
 
       try {
-        await internals.scheduleGSplatsRefinement();
+        await internals.scheduleProgressiveRefinement();
         await vi.runOnlyPendingTimersAsync();
         await Promise.resolve();
 
@@ -3032,7 +3005,7 @@ describe('SceneLoader', () => {
         updateView.mockRestore();
         errorLog.mockRestore();
         vi.useRealTimers();
-        internals._updateInProgress = false;
+        internals.passes.locked = false;
       }
     });
   });
@@ -3046,17 +3019,17 @@ describe('SceneLoader', () => {
           seen = ctx.signal;
         });
       const internals = sceneLoader as unknown as {
-        _updateInProgress: boolean;
-        scheduleGSplatsRefinement(): Promise<void>;
+        passes: PassScheduler;
+        scheduleProgressiveRefinement(): Promise<void>;
       };
-      internals._updateInProgress = true;
+      internals.passes.locked = true;
       try {
-        await internals.scheduleGSplatsRefinement();
+        await internals.scheduleProgressiveRefinement();
         expect(seen).toBeDefined();
         expect(signalPriority(seen)?.value).toBe('refinement');
       } finally {
         runRefinement.mockRestore();
-        internals._updateInProgress = false;
+        internals.passes.locked = false;
       }
     });
   });
@@ -3421,16 +3394,14 @@ describe('SceneLoader', () => {
 
   describe('kickRefinementIfIdle — refinement after deferred-group activation', () => {
     interface KickInternals {
-      _updateInProgress: boolean;
-      _refining: boolean;
+      passes: PassScheduler;
       _disposed: boolean;
       _archiveFault: ArchiveFaultError | null;
-      _refinementKickPending: boolean;
       gsplatLoaders: Map<string, unknown>;
       loaders: Map<string, unknown>; // points
       linesLoaders: Map<string, unknown>;
       viewStateQueue: { setPending(s: unknown): void; hasPending(): boolean };
-      scheduleGSplatsRefinement: () => Promise<void>;
+      scheduleProgressiveRefinement: () => Promise<void>;
     }
 
     /** Stub the orchestrator (instance property shadows the prototype method). */
@@ -3438,9 +3409,9 @@ describe('SceneLoader', () => {
       const internals = sceneLoader as unknown as KickInternals;
       const spy = vi.fn(async () => {
         // The real orchestrator's final phase releases the lock on completion.
-        if (releaseLock) internals._updateInProgress = false;
+        if (releaseLock) internals.passes.locked = false;
       });
-      internals.scheduleGSplatsRefinement = spy;
+      internals.scheduleProgressiveRefinement = spy;
       return { internals, spy };
     }
 
@@ -3450,13 +3421,13 @@ describe('SceneLoader', () => {
       try {
         sceneLoader.kickRefinementIfIdle();
         expect(spy).toHaveBeenCalledTimes(1);
-        expect(internals._updateInProgress).toBe(true); // lock taken for the run
+        expect(internals.passes.locked).toBe(true); // lock taken for the run
         // Re-entrant call while the run holds the lock must not double-fire
         // (it schedules a timer re-check instead).
         sceneLoader.kickRefinementIfIdle();
         expect(spy).toHaveBeenCalledTimes(1);
       } finally {
-        internals._updateInProgress = false;
+        internals.passes.locked = false;
         internals.gsplatLoaders.clear();
       }
     });
@@ -3466,7 +3437,7 @@ describe('SceneLoader', () => {
       internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: false });
       sceneLoader.kickRefinementIfIdle();
       expect(spy).not.toHaveBeenCalled();
-      expect(internals._updateInProgress).toBe(false);
+      expect(internals.passes.locked).toBe(false);
       internals.gsplatLoaders.clear();
     });
 
@@ -3517,7 +3488,7 @@ describe('SceneLoader', () => {
         expect(spy).toHaveBeenCalledTimes(1);
         expect((sceneLoader as unknown as GateInternals).refinementDensityGate).toBeNull();
       } finally {
-        internals._updateInProgress = false;
+        internals.passes.locked = false;
         internals.gsplatLoaders.clear();
       }
     });
@@ -3535,7 +3506,7 @@ describe('SceneLoader', () => {
         sceneLoader.kickRefinementIfIdle();
         expect(spy).toHaveBeenCalledTimes(1);
       } finally {
-        internals._updateInProgress = false;
+        internals.passes.locked = false;
         map.clear();
       }
     });
@@ -3545,22 +3516,21 @@ describe('SceneLoader', () => {
       const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
       const { internals, spy } = stubOrchestrator();
       internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: true });
-      internals._updateInProgress = true; // an update holds the lock
+      internals.passes.locked = true; // an update holds the lock
       try {
         sceneLoader.kickRefinementIfIdle();
         sceneLoader.kickRefinementIfIdle(); // second locked kick — must be swallowed
         sceneLoader.kickRefinementIfIdle(); // third too
-        expect(internals._refinementKickPending).toBe(true);
+        expect(internals.passes.kickPending).toBe(true);
         expect(setTimeoutSpy).toHaveBeenCalledTimes(1); // ONE timer, not three
         // The lock frees; the single re-check fires and kicks exactly once.
-        internals._updateInProgress = false;
+        internals.passes.locked = false;
         await vi.runOnlyPendingTimersAsync();
         expect(spy).toHaveBeenCalledTimes(1);
       } finally {
         setTimeoutSpy.mockRestore();
         vi.useRealTimers();
-        internals._updateInProgress = false;
-        internals._refinementKickPending = false;
+        internals.passes.locked = false;
         internals.gsplatLoaders.clear();
       }
     });
@@ -3569,17 +3539,17 @@ describe('SceneLoader', () => {
       vi.useFakeTimers();
       const { internals, spy } = stubOrchestrator();
       internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: true });
-      internals._updateInProgress = true; // an update is mid-flight
+      internals.passes.locked = true; // an update is mid-flight
       try {
         sceneLoader.kickRefinementIfIdle();
         expect(spy).not.toHaveBeenCalled(); // no double-acquire
         // Holder finishes; the pending re-check fires and kicks.
-        internals._updateInProgress = false;
+        internals.passes.locked = false;
         await vi.runOnlyPendingTimersAsync();
         expect(spy).toHaveBeenCalledTimes(1);
       } finally {
         vi.useRealTimers();
-        internals._updateInProgress = false;
+        internals.passes.locked = false;
         internals.gsplatLoaders.clear();
       }
     });
@@ -3594,21 +3564,20 @@ describe('SceneLoader', () => {
       vi.useFakeTimers();
       const { internals, spy } = stubOrchestrator();
       internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: true });
-      internals._updateInProgress = false; // lock already released…
-      internals._refining = true; // …but the run is still draining
+      internals.passes.locked = false; // lock already released…
+      internals.passes.refining = true; // …but the run is still draining
       try {
         sceneLoader.kickRefinementIfIdle();
         expect(spy).not.toHaveBeenCalled();
-        expect(internals._refinementKickPending).toBe(true); // re-check armed
+        expect(internals.passes.kickPending).toBe(true); // re-check armed
         // The first run finishes; the pending re-check kicks exactly once.
-        internals._refining = false;
+        internals.passes.refining = false;
         await vi.runOnlyPendingTimersAsync();
         expect(spy).toHaveBeenCalledTimes(1);
       } finally {
         vi.useRealTimers();
-        internals._refining = false;
-        internals._refinementKickPending = false;
-        internals._updateInProgress = false;
+        internals.passes.refining = false;
+        internals.passes.locked = false;
         internals.gsplatLoaders.clear();
       }
     });
@@ -3617,17 +3586,17 @@ describe('SceneLoader', () => {
       vi.useFakeTimers();
       const { internals, spy } = stubOrchestrator();
       internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: true });
-      internals._updateInProgress = true;
+      internals.passes.locked = true;
       try {
         sceneLoader.kickRefinementIfIdle(); // schedules the re-check
-        internals._updateInProgress = false;
+        internals.passes.locked = false;
         internals._disposed = true; // dataset switch tore the loader down
         await vi.runOnlyPendingTimersAsync();
         expect(spy).not.toHaveBeenCalled();
       } finally {
         vi.useRealTimers();
         internals._disposed = false;
-        internals._updateInProgress = false;
+        internals.passes.locked = false;
         internals.gsplatLoaders.clear();
       }
     });
@@ -3636,32 +3605,32 @@ describe('SceneLoader', () => {
       vi.useFakeTimers();
       const { internals, spy } = stubOrchestrator();
       internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: true });
-      internals._updateInProgress = true;
+      internals.passes.locked = true;
       try {
         sceneLoader.kickRefinementIfIdle();
-        internals._updateInProgress = false;
+        internals.passes.locked = false;
         internals._archiveFault = new ArchiveFaultError('archive unavailable', 'scene.zip');
         await vi.runOnlyPendingTimersAsync();
         expect(spy).not.toHaveBeenCalled();
       } finally {
         vi.useRealTimers();
         internals._archiveFault = null;
-        internals._updateInProgress = false;
+        internals.passes.locked = false;
         internals.gsplatLoaders.clear();
       }
     });
 
     it('an already-scheduled refinement no-ops after an archive fault', async () => {
       const internals = sceneLoader as unknown as KickInternals;
-      internals._updateInProgress = true;
+      internals.passes.locked = true;
       internals._archiveFault = new ArchiveFaultError('archive unavailable', 'scene.zip');
       try {
-        await internals.scheduleGSplatsRefinement();
-        expect(internals._updateInProgress).toBe(true);
-        expect(internals._refining).toBe(false);
+        await internals.scheduleProgressiveRefinement();
+        expect(internals.passes.locked).toBe(true);
+        expect(internals.passes.refining).toBe(false);
       } finally {
         internals._archiveFault = null;
-        internals._updateInProgress = false;
+        internals.passes.locked = false;
       }
     });
 
@@ -3675,7 +3644,7 @@ describe('SceneLoader', () => {
       const rejecting = vi.fn(async () => {
         throw { code: 'EORCHESTRATOR', retryable: false };
       });
-      internals.scheduleGSplatsRefinement = rejecting;
+      internals.scheduleProgressiveRefinement = rejecting;
       const errorLog = vi.spyOn(log, 'error').mockImplementation(() => {});
       const updateViewSpy = vi
         .spyOn(sceneLoader, 'updateView')
@@ -3687,7 +3656,7 @@ describe('SceneLoader', () => {
         expect(rejecting).toHaveBeenCalledTimes(1);
         // Let the rejection catch + drain's microtask settle.
         await new Promise((r) => setTimeout(r, 0));
-        expect(internals._updateInProgress).toBe(false); // lock released
+        expect(internals.passes.locked).toBe(false); // lock released
         expect(internals.viewStateQueue.hasPending()).toBe(false); // drained
         expect(updateViewSpy).toHaveBeenCalledWith(pending); // re-entered
         expect(errorLog).toHaveBeenCalledWith(
@@ -3697,7 +3666,7 @@ describe('SceneLoader', () => {
       } finally {
         errorLog.mockRestore();
         updateViewSpy.mockRestore();
-        internals._updateInProgress = false;
+        internals.passes.locked = false;
         internals.gsplatLoaders.clear();
       }
     });
@@ -3733,11 +3702,11 @@ describe('SceneLoader', () => {
     // so a session that never went offline sat at the coarser rung, idle and
     // reported settled, until the user happened to move something.
     interface RecoveryInternals {
-      _updateInProgress: boolean;
+      passes: PassScheduler;
       rootGroup: THREE.Group | null;
       gsplatLoaders: Map<string, unknown>;
       registry: { recordFailure(path: string, error: Error): void };
-      scheduleGSplatsRefinement: () => Promise<void>;
+      scheduleProgressiveRefinement: () => Promise<void>;
     }
 
     const stallError = () =>
@@ -3783,8 +3752,8 @@ describe('SceneLoader', () => {
     /** Run one refinement drain the way an update tail does (lock held). */
     async function drain(): Promise<void> {
       const internals = sceneLoader as unknown as RecoveryInternals;
-      internals._updateInProgress = true;
-      const run = internals.scheduleGSplatsRefinement();
+      internals.passes.locked = true;
+      const run = internals.scheduleProgressiveRefinement();
       await vi.advanceTimersByTimeAsync(300);
       await run;
     }
@@ -3927,9 +3896,9 @@ describe('SceneLoader', () => {
       internals.gsplatLoaders.set('/g', ladder);
       internals.registry.recordFailure('/g', stallError());
       const refine = vi.fn(async () => {
-        internals._updateInProgress = false;
+        internals.passes.locked = false;
       });
-      internals.scheduleGSplatsRefinement = refine;
+      internals.scheduleProgressiveRefinement = refine;
 
       const result = await sceneLoader.retryAllFailedLoaders();
       await vi.advanceTimersByTimeAsync(300);

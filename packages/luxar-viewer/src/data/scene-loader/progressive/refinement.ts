@@ -182,7 +182,7 @@ export interface ProgressiveRefinementCtx<TLoader> {
   /** Aggregate visible counts into the monitor after each pass. */
   updateVisibleCountsInMonitor(): void;
   /**
-   * Release the SceneLoader's `_updateInProgress` lock when the loop
+   * Release the SceneLoader's serialization lock when the loop
    * completes normally. On cancellation the loop hands the lock to
    * `retriggerUpdate` instead.
    */
@@ -295,9 +295,11 @@ export async function runProgressiveRefinement<TLoader>(
  * gets exactly one step per pass and a loader's own steps stay serial (passes
  * are sequential), so every ladder settles to the same levels as the serial
  * loop did; only the INTERLEAVING of different nodes' fetches and commits
- * changes, and those commits touch disjoint nodes. Workers pull from the live
- * map iterator, as the serial `for…of` did, so a loader registered mid-pass is
- * still visited.
+ * changes, and those commits touch disjoint nodes. Workers pull from one
+ * iterator over `ctx.loaders`, as the serial `for…of` did. That map is the
+ * phase's eligibility SNAPSHOT (`resolveLoadEligibleLoaders`), not the live
+ * registry map: a loader registered mid-run is not visited by this run —
+ * `SceneLoader.kickRefinementIfIdle` re-drains it once the run ends.
  *
  * A throw escaping `processLoader` (the wrappers catch their own) stops the
  * workers from starting further steps; the steps already in flight are awaited,

@@ -22,11 +22,11 @@ builds the ctx and calls into here.
   `runWithTimeout` callers settle immediately; `dispose.ts` then
   clears the worker pool's signal so the next loader's tasks see a
   clean slate.
-- **Retry is lock-free.** `retry.ts` never touches
-  `_updateInProgress` — the orchestrator holds the lock once around
-  the whole retry call so a slider event mid-retry queues as
-  `_pendingViewState` instead of racing into a concurrent
-  `updateView`.
+- **Retry is lock-free.** `retry.ts` never touches the serialization
+  lock — the orchestrator takes it once around the whole retry call
+  (`PassScheduler.acquireForRetry`, which pre-empts a refinement drain
+  rather than deferring to it) so a slider event mid-retry is queued in
+  the pending slot instead of racing into a concurrent `updateView`.
 - **Line retry admission is session-scoped.** Single and batched registered line
   retries acquire the same working-set gate as the eager scene walk; retry-all
   adds only the shared eight-slot worker cap.

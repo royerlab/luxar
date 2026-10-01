@@ -301,7 +301,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    * Recomputing it anyway is actively harmful: without this latch,
    * `hasMoreLODs` stays `true` forever (the loaded-level count never grows on
    * a ladder that is never allowed to fetch a single level), so
-   * `queue-next.ts` keeps scheduling `runMeshRefinement` on every slice
+   * the pass scheduler keeps scheduling `runMeshRefinement` on every slice
    * scrub, which burns `MAX_CONSECUTIVE_REFINEMENT_FAILURES` refinement
    * passes per scrub and toasts "Refinement failed … — showing a partial
    * surface" — false, since zero triangles were ever committed.
@@ -310,7 +310,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    * rethrows the SAME `LoaderError` object with no further `runPreflight()`
    * calls. `hasMoreLODs` also reads this field directly (see above) and
    * reports `false` once it is set, which is what actually removes the dead
-   * node from `queueNext`'s refinement loop rather than merely making its
+   * node from the refinement loop rather than merely making its
    * gate cheap to re-fail.
    *
    * A level's OWN `runPreflight()` rejection stays unlatched — and NOT because

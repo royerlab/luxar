@@ -128,7 +128,7 @@ export function commitMeshGeometry(
     // the index buffer each time. On a reveal ladder "total" means the REVEALED
     // prefix's total, which grows by a level at a time.
     faceCount: data.faceCount,
-    // Structural probe, the same idiom `stampLadderComplete` and `queue-next.ts`
+    // Structural probe, the same idiom `stampLadderComplete` and `LoaderRegistry.kindsWithMoreLODs`
     // use: only the progressive loader has a level count. Tells the geometry that a
     // changed vertex count is this node's normal behaviour rather than buffers and
     // metadata disagreeing.

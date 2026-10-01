@@ -250,6 +250,30 @@ export class LoaderRegistry {
     return total;
   }
 
+  /**
+   * Geometry kinds with at least one registered loader that still has
+   * additive rungs to stream (`hasMoreLODs === true`; non-progressive loaders
+   * have no such property). The one probe the refinement scheduling sites
+   * share.
+   */
+  kindsWithMoreLODs(): GeometryKind[] {
+    const kinds: GeometryKind[] = [];
+    for (const [kind, bucket] of this.byKind) {
+      for (const loader of bucket.values()) {
+        if ((loader as { hasMoreLODs?: boolean }).hasMoreLODs === true) {
+          kinds.push(kind);
+          break;
+        }
+      }
+    }
+    return kinds;
+  }
+
+  /** Whether any registered loader still has additive rungs to stream. */
+  anyHasMoreLODs(): boolean {
+    return this.kindsWithMoreLODs().length > 0;
+  }
+
   /** Whether there are any registered loaders. */
   get hasLoaders(): boolean {
     for (const bucket of this.byKind.values()) if (bucket.size > 0) return true;

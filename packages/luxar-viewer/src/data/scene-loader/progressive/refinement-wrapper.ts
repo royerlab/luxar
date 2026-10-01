@@ -280,7 +280,8 @@ export interface RefinementProgressCallbacks<TLoader> {
  * cosmetic bug — the loop never terminates.
  *
  * @param label Geometry name for the log lines (e.g. `'Points'`).
- * @param loaders The geometry's loader map, read live for `anyHasMoreLODs`.
+ * @param loaders The phase's eligible-loader snapshot (`resolveLoadEligibleLoaders`),
+ *   re-read after every pass for `anyHasMoreLODs`.
  * @param residencyBudget Shared residency ceiling; absent means unbounded.
  * @param isPathVisible Live culling/layer-visibility predicate.
  * @returns The callbacks, ready to spread into the loop context.

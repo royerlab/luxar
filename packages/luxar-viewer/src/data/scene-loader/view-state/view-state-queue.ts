@@ -4,9 +4,10 @@
  * Owns two pieces of update-time state:
  *
  *   1. `_pendingViewState` — the single Partial<ViewState> queued by an
- *      `updateView()` call while a previous retry / refinement loop holds
- *      the in-progress lock. Drained when the lock releases, supersedes
- *      any in-flight refinement.
+ *      `updateView()` call while the serialization lock is held (a pass, the
+ *      frame between passes, a refinement drain or a retry). Its lifecycle —
+ *      when it is taken, drained or flushed — is `PassScheduler`'s
+ *      (`update-view/pass-scheduler.ts`).
  *
  *   2. `_prevPerNodeViewState` — per-node snapshots of the last
  *      successful view-state, used to extrapolate the next-frame view
@@ -73,7 +74,7 @@ export class ViewStateQueue {
    *
    * @returns True when a state was queued and a re-entry has been scheduled;
    *   false when the slot was empty and nothing will run. Callers that also
-   *   settle `_passWaiters` need this: the re-entered pass carries the parked
+   *   settle the pass waiters need this: the re-entered pass carries the parked
    *   waiters to its own commit, so resolving them as well would release them
    *   before the view they asked for has landed.
    */

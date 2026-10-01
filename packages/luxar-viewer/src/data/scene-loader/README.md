@@ -119,9 +119,10 @@ The subfolders:
   `update-view/atomic-commit.ts` downstream so every participating
   mesh updates in the same rendered frame.
 - **Lock-free retry.** `lifecycle/retry.ts` helpers never touch
-  `_updateInProgress`. The orchestrator holds the lock once around the
+  the serialization lock. The orchestrator takes it once
+  (`PassScheduler.acquireForRetry`, which pre-empts a refinement drain) around the
   entire retry call so retry-from-inside-retry cannot deadlock and a
-  slider event mid-retry queues as `_pendingViewState` instead of
+  slider event mid-retry is queued in the pending slot instead of
   racing into a concurrent `updateView`.
 - **Dataset abort is wired into the worker pool.** `lifecycle/load-scene.ts`
   aborts the previous dataset's signal **before** `dispose()` runs so
