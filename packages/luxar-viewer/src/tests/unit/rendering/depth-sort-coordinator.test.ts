@@ -952,7 +952,7 @@ describe('depth-sort coordinator', () => {
     setSortedIndexChunkElementsForTests(null);
   });
 
-  it.fails('a slice upload acknowledged DURING resortForCapture does not wake the loop either', async () => {
+  it('a slice upload acknowledged DURING resortForCapture does not wake the loop either', async () => {
     // The per-slice render hook (#715 resume gap) must honour the capture's
     // requestRender suppression like every other wake path: a draw landing
     // mid-drain acknowledges the slice it uploaded, and that acknowledgement

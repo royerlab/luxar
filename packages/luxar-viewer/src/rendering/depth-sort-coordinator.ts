@@ -373,8 +373,10 @@ export function configureDepthSort(options: {
   setRenderOrderDisplayDimsAccessor(options.getDisplayDims ?? null);
   // A consumed slice's upload acknowledgement resumes an idle chunked
   // stream the instant the mesh is drawn again (issue #715 resume gap —
-  // the pump never requests a render on a stall).
-  setSortedIndexApplyRequestRender(options.requestRender);
+  // the pump never requests a render on a stall). Through the LIVE binding,
+  // not the configured closure: resortForCapture suppresses `requestRender`
+  // for its drain, and a slice acknowledged mid-drain must not wake the loop.
+  setSortedIndexApplyRequestRender(() => requestRender?.());
   syncSortElementsRemaining = syncSortElementLimit();
 }
 
