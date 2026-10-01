@@ -566,11 +566,16 @@ export interface LODGroupChild {
   /** Last playback probe of a level whose measured reload exceeded the budget. */
   lastPlaybackProbeMs?: number;
   /**
-   * Set when a playback probe fires; the next timed load then REPLACES
-   * ``loadEwmaMs`` instead of blending into it. Registry-owned.
+   * Set when a playback probe's reload STARTS (a refused kick sets nothing);
+   * that timed load then REPLACES ``loadEwmaMs`` instead of blending into it.
+   * Cleared when it is folded and when playback stops. Registry-owned.
    */
   playbackProbePending?: boolean;
-  /** A probe may move the aspiration, but cannot grant the 1.0 keep budget. */
+  /**
+   * A probe may move the aspiration, but cannot grant the 1.0 keep budget.
+   * Set on the probe frame, cleared once the level is admitted or playback
+   * stops. Registry-owned.
+   */
   playbackProbeAdmissionPending?: boolean;
   /** Set by the thunk on load failure to stop per-frame retry storms. */
   failed?: boolean;
@@ -1400,6 +1405,12 @@ export class LODGroupRegistry {
     nowMs: 0,
     playbackPeriodMs: null,
   };
+  /**
+   * The level the current entry's playback probe chose this frame, so the kick
+   * that actually starts its reload can mark it (``playbackProbePending``).
+   * Reset per entry in ``evaluateEntry``.
+   */
+  private probeCandidate: LODGroupChild | null = null;
   /**
    * Partition rising edges waiting for their wrapper to be visible and the
    * loader to be idle: wrapper path → the re-entering PART paths. A set that
@@ -2357,7 +2368,9 @@ export class LODGroupRegistry {
     // fine-level reloads (see ``evaluateEntry``). ``undefined`` view version
     // (no wiring / tests) ⇒ treat as settled so the trigger is inert.
     this.frame.nowMs = this.nowMs();
+    const wasPlaying = this.frame.playbackPeriodMs !== null;
     this.frame.playbackPeriodMs = this.deps.getPlaybackPeriodMs?.() ?? null;
+    if (wasPlaying && this.frame.playbackPeriodMs === null) this.clearPlaybackProbes();
     const version = this.deps.getViewVersion?.();
     if (version != null) this.settleTracker.observe(version, this.frame.nowMs);
     const settled =
@@ -2407,6 +2420,7 @@ export class LODGroupRegistry {
       // hot-path invariant. The same walk times the loads that just landed.
       if (this.observeLoads(entry)) anyLoading = true;
     }
+    this.probeCandidate = null;
     if (anyLoading) this.keepTicking();
     // A dissolve is a function of TIME, so the loop must keep drawing until it
     // lands even when nothing else moves (each step writes a new opacity,
@@ -2555,6 +2569,20 @@ export class LODGroupRegistry {
   }
 
   /**
+   * Playback stopped: forget every probe mark, so a later unrelated load (a
+   * paused refinement, a preload) blends into the average instead of
+   * replacing it, and the next playback starts without a stale admission.
+   */
+  private clearPlaybackProbes(): void {
+    for (const entry of this.entries.values()) {
+      for (const c of entry.children) {
+        c.playbackProbePending = undefined;
+        c.playbackProbeAdmissionPending = undefined;
+      }
+    }
+  }
+
+  /**
    * Periodically re-measure the next finer capped level after a cold load. The
    * probe's reload replaces the level's average (``playbackProbePending``): the
    * samples it holds are at least a probe interval old.
@@ -2568,8 +2596,10 @@ export class LODGroupRegistry {
         PLAYBACK_PROBE_INTERVAL_MS
       ) {
         next.lastPlaybackProbeMs = now;
-        next.playbackProbePending = true;
+        // ``playbackProbePending`` waits for the reload to start (see
+        // ``kickDeferredLoad``): a refused kick must leave no mark.
         next.playbackProbeAdmissionPending = true;
+        this.probeCandidate = next;
         return affordable + 1;
       }
     }
@@ -2875,6 +2905,7 @@ export class LODGroupRegistry {
     }
 
     // During playback, no finer than what can reload within the period.
+    this.probeCandidate = null;
     desired = this.playbackAspiration(entry, desired);
 
     // Record what the selector WANTS this frame, before any of the ready /
@@ -3108,7 +3139,9 @@ export class LODGroupRegistry {
     // that fits the period); refinement of a fresh one still waits.
     const playingStale = this.frame.playbackPeriodMs !== null && !aspirationFresh;
     if ((settled || playingStale) && needsReloadOrRefine && aspiration!.ensureLoaded) {
-      this.maybeKickReload(entry, aspiration!);
+      // Only a reload for a new slice is a reload TIMING; a ladder refinement
+      // step of a fresh level is not.
+      this.maybeKickReload(entry, aspiration!, !aspirationFresh);
     }
     this.preloadNeighbour(entry, desired, preloadMetric, version ?? null, settled);
 
@@ -3329,7 +3362,7 @@ export class LODGroupRegistry {
     visit.sawReady = true;
     if (!settled) return;
     const stale = version !== null && !this.childFreshAndCount(child, version).fresh;
-    if (stale || child.hasMoreLODs?.() === true) this.maybeKickReload(entry, child);
+    if (stale || child.hasMoreLODs?.() === true) this.maybeKickReload(entry, child, stale);
   }
 
   /**
@@ -3727,10 +3760,12 @@ export class LODGroupRegistry {
    * refreshing a ready level is the whole point. The stale level stays hidden
    * behind the coarse fallback meanwhile (the display pass), so this never
    * blanks the screen, and the shared ``loading``/cooldown guards make
-   * re-calling it every settled frame safe.
+   * re-calling it every settled frame safe. ``timed`` is false for a ladder
+   * refinement step of a FRESH level: only a full reload is a reload timing
+   * for ``loadEwmaMs``.
    */
-  private maybeKickReload(entry: LODGroupEntry, child: LODGroupChild): void {
-    this.kickDeferredLoadIfVisible(entry, child);
+  private maybeKickReload(entry: LODGroupEntry, child: LODGroupChild, timed: boolean): void {
+    this.kickDeferredLoadIfVisible(entry, child, timed);
   }
 
   /**
@@ -3766,9 +3801,13 @@ export class LODGroupRegistry {
    * explicit request for a retryable child is honoured whatever the layer's
    * visibility or the current archive-fault latch.
    */
-  private kickDeferredLoadIfVisible(entry: LODGroupEntry, child: LODGroupChild): void {
+  private kickDeferredLoadIfVisible(
+    entry: LODGroupEntry,
+    child: LODGroupChild,
+    timed = true
+  ): void {
     if (this.deps.hasArchiveFault?.() || !isEffectivelyVisible(entry.groupObject)) return;
-    this.kickDeferredLoad(child);
+    this.kickDeferredLoad(child, false, timed);
   }
 
   /**
@@ -3782,8 +3821,13 @@ export class LODGroupRegistry {
    * The automatic caller separately gates loader-level archive faults. The
    * per-child latch keeps concurrent failed branches individually addressable
    * by Retry; an explicit retry clears that selected branch as it starts.
+   *
+   * A ``timed`` load (every full load or reload) is measured into
+   * ``loadEwmaMs``; the kick that starts this frame's playback probe marks it
+   * ``playbackProbePending``. An untimed one (a ladder refinement step) is not
+   * measured.
    */
-  private kickDeferredLoad(child: LODGroupChild, explicitRetry = false): boolean {
+  private kickDeferredLoad(child: LODGroupChild, explicitRetry = false, timed = true): boolean {
     if (!child.ensureLoaded || child.loading || (!explicitRetry && child.permanentlyFailed)) {
       return false;
     }
@@ -3809,12 +3853,17 @@ export class LODGroupRegistry {
     // A load that finished this frame, before the post-evaluation walk saw it.
     this.foldLoadTime(child);
     child.loading = true;
-    const startMs = this.nowMs();
-    child.loadStartMs = startMs;
-    child.onLoadSettled = () => {
-      // Only the load this kick started (a release + re-kick restarts it).
-      if (child.loadStartMs === startMs) child.loadEndMs = this.nowMs();
-    };
+    if (timed) {
+      const startMs = this.nowMs();
+      child.loadStartMs = startMs;
+      child.onLoadSettled = () => {
+        // Only the load this kick started (a release + re-kick restarts it).
+        if (child.loadStartMs === startMs) child.loadEndMs = this.nowMs();
+      };
+      if (child === this.probeCandidate) child.playbackProbePending = true;
+    } else {
+      child.onLoadSettled = undefined;
+    }
     child.ensureLoaded();
     return true;
   }

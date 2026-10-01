@@ -4786,7 +4786,7 @@ describe('LODGroupRegistry — playback aspiration', () => {
   // timed reload REPLACES the stale average. The mark must belong to a reload
   // that actually started, must not outlive playback, and only a full
   // (re)load is a reload timing — a ladder refinement step is not.
-  it.fails('a probe whose reload is refused leaves no probe mark behind', () => {
+  it('a probe whose reload is refused leaves no probe mark behind', () => {
     const { reg, children, frame } = playbackHarness([30]);
     children[1].loadEwmaMs = 500;
     children[1].loadSamples = 2; // capped: the 1 Hz probe re-measures it
@@ -4796,7 +4796,7 @@ describe('LODGroupRegistry — playback aspiration', () => {
     expect(children[1].playbackProbePending).toBeUndefined();
   });
 
-  it.fails('stopping playback clears a pending probe admission', () => {
+  it('stopping playback clears a pending probe admission', () => {
     const { children, state, frame } = playbackHarness([30]);
     children[1].loadEwmaMs = 500;
     children[1].loadSamples = 2;
@@ -4808,7 +4808,7 @@ describe('LODGroupRegistry — playback aspiration', () => {
     expect(children[1].playbackProbePending).toBeUndefined();
   });
 
-  it.fails('a ladder refinement step is not folded into the reload average', () => {
+  it('a ladder refinement step is not folded into the reload average', () => {
     // Paused: the fresh fine level keeps refining its ladder (5 ms passes). Its
     // full reload costs 150 ms; the refinement passes must not drag the
     // average down and later admit a level whose reloads cannot keep up.
