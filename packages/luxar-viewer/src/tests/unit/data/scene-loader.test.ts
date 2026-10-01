@@ -2782,6 +2782,110 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('retry during a refinement drain pre-empts it (A10)', () => {
+    // A refinement drain holds the serialization lock for as long as ladders
+    // stream — minutes on a deep ladder. A retry refused for that long made the
+    // online auto-retry give up (10 deferred attempts, 2 s apart) and refused
+    // the monitor's Retry button. A view change pre-empts refinement; so must
+    // a retry.
+    let frames: Array<() => void>;
+    type Internals = {
+      _updateInProgress: boolean;
+      gsplatLoaders: Map<string, unknown>;
+      loaders: Map<string, unknown>;
+      rootGroup: THREE.Group | null;
+      registry: { recordFailure(path: string, error: Error): void };
+      scheduleGSplatsRefinement(): Promise<void>;
+    };
+
+    beforeEach(async () => {
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      frames = [];
+      vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+        frames.push(() => callback(0));
+        return frames.length;
+      });
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    });
+
+    /** Fire queued frames until `done` settles (bounded). */
+    async function pumpUntil(done: Promise<unknown>): Promise<void> {
+      let settled = false;
+      void done.finally(() => {
+        settled = true;
+      });
+      for (let i = 0; i < 50 && !settled; i++) {
+        frames.shift()?.();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
+
+    /** A deep ladder drained by a running refinement, plus one failed points node. */
+    function startDrainWithFailure(): { retried: ReturnType<typeof vi.fn> } {
+      const internals = sceneLoader as unknown as Internals;
+      const ladder = {
+        loadedLODCount: 1,
+        totalLODCount: 1000,
+        get hasMoreLODs() {
+          return ladder.loadedLODCount < ladder.totalLODCount;
+        },
+        updateView: vi.fn(async () => {
+          ladder.loadedLODCount += 1;
+          return null;
+        }),
+        dispose: vi.fn(),
+      };
+      internals.gsplatLoaders.set('/g', ladder);
+      const retried = vi.fn().mockResolvedValue(null);
+      internals.loaders.set('/p', { updateView: retried, dispose: vi.fn() });
+      const placeholder = new THREE.Group();
+      placeholder.name = '/p';
+      internals.rootGroup!.add(placeholder);
+      internals.registry.recordFailure('/p', new Error('network down'));
+      internals._updateInProgress = true;
+      void internals.scheduleGSplatsRefinement();
+      expect(sceneLoader.isUpdateInProgress()).toBe(true);
+      return { retried };
+    }
+
+    it.fails('retryFailedLoader runs instead of reporting deferred', async () => {
+      const { retried } = startDrainWithFailure();
+      const result = sceneLoader.retryFailedLoader('/p');
+      await pumpUntil(result);
+
+      await expect(result).resolves.toBe(true);
+      expect(retried).toHaveBeenCalledOnce();
+      expect(sceneLoader.hasFailures()).toBe(false);
+    });
+
+    it.fails('retryAllFailedLoaders runs instead of reporting deferred', async () => {
+      const { retried } = startDrainWithFailure();
+      const result = sceneLoader.retryAllFailedLoaders();
+      await pumpUntil(result);
+
+      await expect(result).resolves.toEqual({ succeeded: ['/p'], failed: [] });
+      expect(retried).toHaveBeenCalledOnce();
+    });
+
+    it('a retry still defers to a VIEW pass holding the lock', async () => {
+      const internals = sceneLoader as unknown as Internals;
+      internals.registry.recordFailure('/p', new Error('network down'));
+      internals._updateInProgress = true; // a main update, not refinement
+      try {
+        await expect(sceneLoader.retryAllFailedLoaders()).resolves.toMatchObject({
+          deferred: true,
+        });
+      } finally {
+        internals._updateInProgress = false;
+      }
+    });
+  });
+
   describe('fire-and-forget re-entry failures', () => {
     it('logs a rejected requestReprocess update', async () => {
       const errorLog = vi.spyOn(log, 'error').mockImplementation(() => {});
