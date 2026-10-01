@@ -18,6 +18,10 @@ import {
   type SharedTSLGraph,
 } from '../../../../rendering/materials/_shared/shared-graph-tsl';
 import { setDensityAlphaExp } from '../../../../rendering/materials/_shared/density-drop';
+import {
+  configureRenderObjectEviction,
+  invalidateRenderObjectFor,
+} from '../../../../data/scene-loader/commit/invalidate-render-object';
 
 type Leaf = { value: unknown; updateBefore: (frame: { material: unknown }) => void };
 
@@ -170,6 +174,32 @@ describe('shared TSL graph forwarding (gsplat)', () => {
     expect(graph.inputs.uSplatTex.value).toBe(thirdTexture);
     third.dispose();
     expect(graph.inputs.uSplatTex.value).toBe(standIn);
+  });
+
+  it('keeps a live material registered across WebGPU RenderObject eviction', () => {
+    const texA = floatTexture(1024);
+    const texB = floatTexture(1024);
+    const a = new GSplatTSLMaterial({ opacity: 0.3 });
+    const b = new GSplatTSLMaterial({ opacity: 0.7 });
+    a.updateSplatTexture(texA);
+    b.updateSplatTexture(texB);
+    const graph = graphOf(a);
+    expect(graphOf(b)).toBe(graph);
+    expect(draw(graph, a).uSplatTex).toBe(texA);
+    expect(draw(graph, b).uSplatTex).toBe(texB);
+
+    configureRenderObjectEviction(true);
+    try {
+      invalidateRenderObjectFor(new THREE.Mesh(new THREE.BufferGeometry(), a));
+    } finally {
+      configureRenderObjectEviction(false);
+    }
+
+    const afterEviction = draw(graph, a);
+    expect(afterEviction.uSplatTex).toBe(texA);
+    expect(afterEviction.uOpacity).toBe(0.3);
+    a.dispose();
+    expect(graph.inputs.uSplatTex.value).not.toBe(texA);
   });
 
   it('a drawn material that is not registered leaves the forwarded value alone', () => {

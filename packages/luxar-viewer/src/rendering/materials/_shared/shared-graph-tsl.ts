@@ -46,6 +46,7 @@
 import * as THREE from 'three';
 import { texture, uniform } from 'three/tsl';
 import { NodeMaterial, NodeUpdateType } from 'three/webgpu';
+import { SOFT_DISPOSE_FLAG } from '../../material-manager/soft-dispose-flag';
 import type { TSLNode } from './tsl-helpers';
 
 /** A material's leaf set: name → TSL leaf (`uniform()` or `texture()`), or absent. */
@@ -219,6 +220,7 @@ export function applySharedTSLGraph<T extends TSLLeafSet>(
   if (!registeredMaterials.has(material)) {
     registeredMaterials.add(material);
     material.addEventListener('dispose', () => {
+      if ((material as unknown as Record<symbol, boolean>)[SOFT_DISPOSE_FLAG]) return;
       leavesByMaterial.delete(material);
       for (const input of forwardedInputsByMaterial.get(material) ?? []) {
         if (ownerByInput.get(input) === material.uuid) {
