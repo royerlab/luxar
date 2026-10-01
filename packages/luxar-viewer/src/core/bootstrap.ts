@@ -18,7 +18,6 @@
 
 import { LuxarApp, type LuxarAppOptions } from './app';
 import { parseBookmark, restoreBookmark } from './app/bookmark-state';
-import { KeyAction } from '../input';
 import { dataSourceDocumentTitle, setDocumentTitle } from './document-title';
 import { config } from '../config';
 import { archiveFaultFrom } from '../cache/chunk-source';
@@ -34,7 +33,8 @@ import { setInputProfileOverride } from '../utils/input-capabilities';
 import { setLineJoinOverride } from '../types/line-join';
 import { setLinePrimitiveOverride, setLinePrimitivePolicy } from '../types/line-primitive';
 import { StorageKeys } from '../utils/storage-keys';
-import { showError, clearError } from '../ui/error-overlay';
+import { clearError } from '../ui/error-overlay';
+import { showViewerError } from './app/error-dialog';
 import { showToast } from '../ui/toast';
 import { showHelpOverlay, hideHelpOverlay } from '../ui/help-overlay';
 import { showLoadingIndicator, hideLoadingIndicator } from '../ui/loading-indicator';
@@ -223,13 +223,9 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // that's what keeps the dependency-cruiser layer order clean.
   setNotifierBackend({
     showError: (message, options) =>
-      showError(
+      showViewerError(
         message,
         shortcutForAction,
-        {
-          datasetBrowser: KeyAction.toggleDatasetBrowser,
-          help: KeyAction.toggleHelp,
-        },
         options?.persistent ? { autoDismiss: false } : undefined
       ),
     showToast,
@@ -433,11 +429,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       getPerf: () => computePerfSnapshot(),
       getPerfRecords: (kind: string) => perfCounters.records(kind),
       resetPerfCounters: () => perfCounters.reset(),
-      showError: (message) =>
-        showError(message, shortcutForAction, {
-          datasetBrowser: KeyAction.toggleDatasetBrowser,
-          help: KeyAction.toggleHelp,
-        }),
+      showError: (message) => showViewerError(message, shortcutForAction),
     };
     log.custom(LogEmoji.CONSOLE, Modules.LUXAR, 'Debug interface available at window.__luxarDebug');
   }
@@ -473,15 +465,11 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     // names the version, the supported set and the remedy). Everything else
     // is a programming/environment error and keeps the generic text.
     const surfaced = archiveFaultFrom(error) ?? unsupportedFormatVersionFrom(error);
-    showError(
+    showViewerError(
       surfaced
         ? surfaced.message
         : 'Failed to start the application. Please check the console for details.',
       shortcutForAction,
-      {
-        datasetBrowser: KeyAction.toggleDatasetBrowser,
-        help: KeyAction.toggleHelp,
-      },
       { autoDismiss: false }
     );
     throw error;

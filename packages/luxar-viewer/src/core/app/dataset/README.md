@@ -23,6 +23,7 @@ dataset/
 ├── show-browser.ts           # Open the DatasetBrowser modal + wire callbacks
 ├── browser-shortcut.ts       # `luxar-open-dataset-browser` window-event listener
 ├── dataset-error-message.ts  # User-facing text for a failed dataset load
+├── dataset-session.ts        # DatasetSession — everything one loaded dataset owns in the app
 └── load-dataset.ts           # Scene load + scene-dependent UI init sequence
 ```
 

@@ -1608,7 +1608,8 @@ describe('LuxarApp', () => {
         audioEngine,
         layersPanel,
         sceneManager: mockSceneManager,
-        waypointDriver,
+        // The dataset session owns the installed waypoint driver.
+        session: { waypointDriver, dispose: vi.fn() },
       });
 
       (app as unknown as { installAudio(audio: unknown): void }).installAudio(undefined);

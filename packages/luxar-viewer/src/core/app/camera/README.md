@@ -7,10 +7,11 @@ Part of the remote-control design — see `docs/guides/specs/REMOTE_CONTROL_SPEC
 
 ## Modules
 
-| File                 | Description                                                                                                                                                                                               |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `camera-flight.ts`   | `CameraFlight` (the driver), `buildFlightPath` (pure interpolant between two snapshots), `easeFlight`, `FlyToOptions` / `FlightResult`.                                                                   |
-| `waypoint-driver.ts` | `WaypointDriver` + the pure `waypointMatches` / `matchWaypoint` / `resolveWaypointPose`: binds `viewer_config.waypoints` (authored camera poses keyed on hidden-dimension positions) to the dims manager. |
+| File                   | Description                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `camera-flight.ts`     | `CameraFlight` (the driver), `buildFlightPath` (pure interpolant between two snapshots), `easeFlight`, `FlyToOptions` / `FlightResult`.                                                                                                                                                                                                           |
+| `install-waypoints.ts` | `installStoryWaypoints(waypoints, ports)` — builds the scene's `WaypointDriver` over app ports (camera snapshot/restore, flight, rendering patches, embedder + sound events, overlay reveal), registers its dims listener, snaps to the opening match, and returns the `InstalledWaypoints` binding (driver + teardown) the dataset session owns. |
+| `waypoint-driver.ts`   | `WaypointDriver` + the pure `waypointMatches` / `matchWaypoint` / `resolveWaypointPose`: binds `viewer_config.waypoints` (authored camera poses keyed on hidden-dimension positions) to the dims manager.                                                                                                                                         |
 
 ## Behaviour
 
@@ -72,9 +73,10 @@ with the waypoint's `duration_ms` / `easing` (`0` snaps), applies its optional
 the match is unchanged or when nothing matches. `resolveWaypointPose` starts
 from the LIVE pose so omitted camera fields keep their value (re-aim without
 moving); `target_node` resolves through `resolveTargetNodeCenter` and beats
-`target`. `LuxarApp.installWaypoints` owns the lifecycle: built in
-`applyViewerConfigState` after `dimensions.current_step` is applied, torn down
-at the start of the next `loadDataset` and on dispose.
+`target`. `installStoryWaypoints` (called from `LuxarApp.installWaypoints`)
+builds it in `applyViewerConfigState` after `dimensions.current_step` is
+applied; the dataset session owns the binding, so it is torn down at the start
+of the next `loadDataset` and on dispose.
 
 A waypoint authored `reveal: "on_arrival"` also gates the story's overlays on
 its flight. `inTransit` is true from the moment such a waypoint is matched

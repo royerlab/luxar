@@ -14,7 +14,7 @@
  * @module core/app/kiosk/apply-kiosk
  */
 
-import type { KioskMode } from '../../../config/kiosk';
+import { resolveKioskMode, type KioskMode, type ZarrKioskConfig } from '../../../config/kiosk';
 import { startKioskWatchdog, type KioskWatchdog } from './watchdog';
 
 /** What applying kiosk mode needs from the app. */
@@ -68,4 +68,22 @@ export function applyKioskMode(mode: KioskMode, ports: KioskPorts): () => void {
     reload: ports.reload ?? (() => window.location.reload()),
   });
   return () => watchdog.dispose();
+}
+
+/**
+ * Lock the display down when the scene or the URL asks for it: resolve the mode
+ * from the authored `ui.kiosk` block and `?kiosk` (the URL wins — see
+ * `config/kiosk.ts`), then apply it with the ports `ports()` builds. Returns
+ * the watchdog teardown (a no-op when kiosk mode is off), which the dataset
+ * session owns, so neither a switch nor a dispose can leave a watchdog running.
+ */
+export function applySceneKiosk(
+  authored: ZarrKioskConfig | null | undefined,
+  urlKiosk: boolean,
+  ports: () => KioskPorts
+): () => void {
+  const mode = resolveKioskMode(authored, urlKiosk);
+  // Ports are built only for a mode that is on: the viewer-config pass can run
+  // on a partially constructed app, and "kiosk off" must not touch it.
+  return mode.enabled ? applyKioskMode(mode, ports()) : () => undefined;
 }
