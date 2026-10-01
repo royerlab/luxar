@@ -143,6 +143,12 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   // Data accumulator for object pooling.
   private _accumulator: LoadedPointsDataAccumulator | null = null;
   private _accumulatorConfig: { capacity: number; ndim: number; totalPoints: number } | null = null;
+  /**
+   * Bumped by {@link dispose}. A load that started before the bump was
+   * abandoned on purpose (dataset switch) and must not finish — see the
+   * disposed-during-load guard in `loadPointsInternal`.
+   */
+  private _disposeGeneration = 0;
 
   /**
    * Components per color item, learned from the zarr `colors` shape at
@@ -554,6 +560,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     queryId: string,
     startTime: number
   ): Promise<LoadedPointsData> {
+    const disposeGeneration = this._disposeGeneration;
     await this._onceInit.ensure(() => this.initialize());
 
     // Check if loader is properly initialized (chunk index OR fallback with total points count)
@@ -778,6 +785,16 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         ? Math.round(positions.length / totalPoints)
         : this.chunkIndex?.metadata.ndim || 3;
     const wasm = await getPointsBackend(ndimForBackend);
+
+    // Disposed mid-load (dataset switch tore this loader down while the chunk
+    // reads or the backend load were in flight): the update was abandoned on
+    // purpose. Bail as a cancellation — run-loader-updates' isAbortError branch
+    // stages null quietly — instead of projecting into a disposed accumulator
+    // and handing back a payload for a loader that no longer exists. The
+    // Points counterpart of the Lines/GSplats accumulator-identity guard.
+    if (this._disposeGeneration !== disposeGeneration) {
+      throw new DOMException(`Points loader disposed during load: ${this.node.path}`, 'AbortError');
+    }
 
     let result: LoadedPointsData;
     if (session) {
@@ -1523,6 +1540,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * Clean up resources
    */
   dispose(): void {
+    this._disposeGeneration++;
     this.chunkIndex = null;
     this.arrays = {};
     this._onceInit.reset();

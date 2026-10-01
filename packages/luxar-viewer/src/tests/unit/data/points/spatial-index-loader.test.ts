@@ -1060,7 +1060,7 @@ describe('PointsSpatialIndexLoader', () => {
       await loadPromise;
     });
 
-    it.fails('a load disposed mid-flight settles as a cancellation, not as data', async () => {
+    it('a load disposed mid-flight settles as a cancellation, not as data', async () => {
       // The Lines/GSplats siblings bail with an AbortError when the loader was
       // torn down while the chunk reads were in flight (run-loader-updates then
       // stages null quietly). Points used to carry on and project a payload for
