@@ -95,7 +95,7 @@ function leafSignature(name: string, node: TSLNode): string {
   if (isTextureLeaf(node)) {
     const tex = node.value as THREE.Texture | null | undefined;
     const depth = (tex as { isDepthTexture?: boolean } | null)?.isDepthTexture === true;
-    return `${name}:tex:${tex?.type}:${tex?.format}:${depth ? 'd' : 'c'}`;
+    return `${name}:tex:${tex?.type}:${tex?.format}:${depth ? 'd' : 'c'}:${tex?.minFilter}:${tex?.magFilter}`;
   }
   return `${name}:${(node as { nodeType?: string | null }).nodeType ?? '?'}`;
 }
@@ -133,6 +133,14 @@ function standInTexture(source: THREE.Texture): THREE.Texture {
   standIn.type = source.type;
   standIn.format = source.format;
   standIn.colorSpace = source.colorSpace;
+  standIn.minFilter = source.minFilter;
+  standIn.magFilter = source.magFilter;
+  standIn.wrapS = source.wrapS;
+  standIn.wrapT = source.wrapT;
+  standIn.generateMipmaps = source.generateMipmaps;
+  if (source instanceof THREE.DepthTexture && standIn instanceof THREE.DepthTexture) {
+    standIn.compareFunction = source.compareFunction;
+  }
   return standIn;
 }
 

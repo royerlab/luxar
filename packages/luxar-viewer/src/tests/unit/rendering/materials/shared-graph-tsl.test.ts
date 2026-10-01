@@ -10,10 +10,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
+import { texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { GSplatTSLMaterial } from '../../../../rendering/materials/gsplat/material-tsl';
 import {
   getSharedTSLGraph,
+  forwardTSLLeaves,
   sharedTSLGraphKey,
   type SharedTSLGraph,
 } from '../../../../rendering/materials/_shared/shared-graph-tsl';
@@ -231,5 +233,41 @@ describe('shared TSL graph forwarding (gsplat)', () => {
     expect(sharedTSLGraphKey('x', {}, f)).not.toBe(sharedTSLGraphKey('x', {}, {}));
     expect(sharedTSLGraphKey('x', {}, f)).not.toBe(sharedTSLGraphKey('y', {}, f));
     expect(sharedTSLGraphKey('x', { a: 1 }, f)).not.toBe(sharedTSLGraphKey('x', { a: 2 }, f));
+  });
+
+  it('seeds forwarding textures with sampler state and separates filter modes', () => {
+    const linear = colormap();
+    linear.minFilter = THREE.LinearMipmapLinearFilter;
+    linear.magFilter = THREE.LinearFilter;
+    linear.wrapS = THREE.RepeatWrapping;
+    linear.wrapT = THREE.MirroredRepeatWrapping;
+    linear.generateMipmaps = true;
+    const nearest = colormap();
+    nearest.minFilter = THREE.NearestFilter;
+    nearest.magFilter = THREE.NearestFilter;
+
+    const linearLeaves = { uTex: texture(linear) };
+    const nearestLeaves = { uTex: texture(nearest) };
+    const seed = forwardTSLLeaves(linearLeaves).uTex.value as THREE.Texture;
+    expect(seed).not.toBe(linear);
+    expect(seed.minFilter).toBe(linear.minFilter);
+    expect(seed.magFilter).toBe(linear.magFilter);
+    expect(seed.wrapS).toBe(linear.wrapS);
+    expect(seed.wrapT).toBe(linear.wrapT);
+    expect(seed.generateMipmaps).toBe(linear.generateMipmaps);
+    expect(sharedTSLGraphKey('filter', {}, linearLeaves)).not.toBe(
+      sharedTSLGraphKey('filter', {}, nearestLeaves)
+    );
+    const magOnly = colormap();
+    magOnly.minFilter = linear.minFilter;
+    magOnly.magFilter = THREE.NearestFilter;
+    expect(sharedTSLGraphKey('filter', {}, linearLeaves)).not.toBe(
+      sharedTSLGraphKey('filter', {}, { uTex: texture(magOnly) })
+    );
+
+    const depth = new THREE.DepthTexture(1, 1);
+    depth.compareFunction = THREE.LessEqualCompare;
+    const depthSeed = forwardTSLLeaves({ uTex: texture(depth) }).uTex.value as THREE.DepthTexture;
+    expect(depthSeed.compareFunction).toBe(depth.compareFunction);
   });
 });
