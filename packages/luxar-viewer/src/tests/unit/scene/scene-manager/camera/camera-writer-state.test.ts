@@ -11,7 +11,11 @@ import {
 const domElements: HTMLElement[] = [];
 const managers: ControlsManager[] = [];
 
-function makeControls(): { camera: THREE.PerspectiveCamera; controls: ControlsManager } {
+function makeControls(): {
+  camera: THREE.PerspectiveCamera;
+  controls: ControlsManager;
+  element: HTMLElement;
+} {
   const element = document.createElement('div');
   document.body.appendChild(element);
   domElements.push(element);
@@ -19,7 +23,7 @@ function makeControls(): { camera: THREE.PerspectiveCamera; controls: ControlsMa
   camera.position.set(4, 3, 12);
   const controls = new ControlsManager(camera, element);
   managers.push(controls);
-  return { camera, controls };
+  return { camera, controls, element };
 }
 
 afterEach(() => {
@@ -58,7 +62,7 @@ describe('camera writers with live controls', () => {
     controls.addEventListener('change', changed);
 
     centerOnOrigin(camera, controls);
-    if (changed.mock.calls.length === 0) controls.dispatchEvent({ type: 'change' });
+    expect(changed).toHaveBeenCalledTimes(1);
     controls.update();
 
     expect(changed).toHaveBeenCalledTimes(1);
@@ -75,7 +79,7 @@ describe('camera writers with live controls', () => {
       { min: { x: -2, y: -2, z: -2 }, max: { x: 2, y: 2, z: 2 } },
       { lookAtTarget: new THREE.Vector3(1, 2, 3) }
     );
-    if (changed.mock.calls.length === 0) controls.dispatchEvent({ type: 'change' });
+    expect(changed).toHaveBeenCalledTimes(1);
     controls.update();
 
     expect(changed).toHaveBeenCalledTimes(1);
@@ -90,6 +94,18 @@ describe('camera writers with live controls', () => {
     controls.update();
     expect(changed).toHaveBeenCalledTimes(1);
     expect(changed).toHaveBeenCalledWith(expect.objectContaining({ controlType: 'fly' }));
+
+    changed.mockClear();
+    controls.setControlType('orbit');
+    controls.update();
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ controlType: 'orbit' }));
+
+    changed.mockClear();
+    controls.setControlType('ortho');
+    controls.update();
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ controlType: 'ortho' }));
 
     changed.mockClear();
     controls.setControlType('orbit');
@@ -114,5 +130,27 @@ describe('camera writers with live controls', () => {
 
     controls.update();
     expect(camera.getWorldDirection(new THREE.Vector3()).distanceTo(direction)).toBeLessThan(1e-6);
+  });
+
+  it('discards fly glide and roll when a bounds fit writes a new pose', () => {
+    const { camera, controls, element } = makeControls();
+    controls.setControlType('fly');
+    const fly = controls.getFlyControls();
+    expect(fly).not.toBeNull();
+    element.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
+    element.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, shiftKey: true }));
+
+    fitCameraToBounds(
+      camera,
+      controls,
+      { min: { x: -2, y: -2, z: -2 }, max: { x: 2, y: 2, z: 2 } },
+      { lookAtTarget: controls.getFocusTarget(), preserveControlsTarget: true }
+    );
+    const position = camera.position.clone();
+    const quaternion = camera.quaternion.clone();
+    fly!.update(1 / 60);
+
+    expect(camera.position.distanceTo(position)).toBeLessThan(1e-6);
+    expect(camera.quaternion.angleTo(quaternion)).toBeLessThan(1e-6);
   });
 });
