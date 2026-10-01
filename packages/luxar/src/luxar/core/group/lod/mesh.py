@@ -8,17 +8,18 @@ wrapper over the shared :func:`luxar.core.group.lod.group.resolve_substitutive_a
 
 Points and Lines share one implementation because they coarsen the same way:
 both LIFT their elements to gsplats and run the gsplat substitutive pipeline. So
-they share its whole vocabulary, including four keys that exist only because of
+they share its whole vocabulary, including six keys that exist only because of
 that lift —
 
 * ``truncation_radius`` — feeds ``lift_points_to_gsplats`` / ``lift_lines_to_gsplats``
 * ``max_aspect`` — caps per-splat anisotropy on the merged coarse levels
 * ``device`` / ``seed`` — the mixture reduction's compute placement and RNG
+* ``refine`` / ``refine_iters`` — Gaussian mixture refinement and its step count
 
 Mesh does not lift. It coarsens by DECIMATION: merge vertices, reindex the faces,
-drop the triangles that collapsed. None of those four keys names anything the
+drop the triangles that collapsed. None of those six keys names anything the
 decimator can do, and there is no Gaussian mixture for ``method="kmeans"`` to
-reduce. Widening the shared resolver would therefore have meant accepting five
+reduce. Widening the shared resolver would therefore have meant accepting seven
 words that quietly do nothing — which is exactly the class of bug the geometry
 capability table exists to prevent, one layer down.
 

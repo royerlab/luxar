@@ -1171,9 +1171,14 @@ def _resolve_lift_refine_controls(
             or not isinstance(refine_iters, Integral)
             or refine_iters < 1
         ):
-            raise ValueError("refine_iters must be an integer >= 1")
+            raise ValueError(
+                f"substitutive_lod for {geometry}: refine_iters must be an integer >= 1; "
+                f"got {refine_iters!r}"
+            )
         if refine != "l2":
-            raise ValueError("refine_iters requires refine='l2'")
+            raise ValueError(
+                f"substitutive_lod for {geometry}: refine_iters requires refine='l2'"
+            )
         refine_iters = int(refine_iters)
     return refine, refine_iters
 

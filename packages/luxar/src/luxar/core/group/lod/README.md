@@ -223,13 +223,16 @@ iteration count requires `refine="l2"`, while omission uses the reducer default)
 `[0, MAX_COVERAGE_FRACTION]` = `[0, 4]`), `coarsen_dims`, `max_aspect`
 (per-splat anisotropy cap on the
 coarse levels, default 3.0; `None` disables)).
-`add_points_substitutive_lod_wrapper_impl` (`adders/points.py`) then:
-
 `refine="volume"` is unavailable because Points have no source volume;
 `coarse="points"` has no Gaussian levels to refine. `conserve_mass` is not a
 lifted-path option: the reducer uses per-bin mass-preserving amplitudes, and
 the final render-light normalization conserves the level total even after
 refinement. Lines follow the same rule for their default Gaussian coarse path.
+Refinement is opt-in; its cost grows with the number of barrier groups (one per
+occupied hidden coordinate under default `coarsen_dims`), so long Points/Lines
+timelapses are the slow case.
+
+`add_points_substitutive_lod_wrapper_impl` (`adders/points.py`) then:
 
 With the default `coarse="gsplats"`, it:
 

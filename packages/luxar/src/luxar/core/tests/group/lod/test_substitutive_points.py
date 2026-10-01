@@ -109,6 +109,18 @@ class TestResolveSubstitutiveAxisPoints:
         with pytest.raises((TypeError, ValueError), match=message):
             resolve_substitutive_axis_points(spec)
 
+    def test_refine_iters_error_context(self) -> None:
+        with pytest.raises(ValueError) as exc:
+            resolve_substitutive_axis_points({"refine": "l2", "refine_iters": 0})
+        assert str(exc.value) == (
+            "substitutive_lod for Points: refine_iters must be an integer >= 1; got 0"
+        )
+        with pytest.raises(ValueError) as exc:
+            resolve_substitutive_axis_points({"refine_iters": 2})
+        assert str(exc.value) == (
+            "substitutive_lod for Points: refine_iters requires refine='l2'"
+        )
+
     @pytest.mark.parametrize("level_stats", [[1, 2], "x", 3.0, object()])
     def test_quality_attrs_reject_non_mapping_stats(self, level_stats) -> None:
         with pytest.raises(TypeError, match="level_stats must be a JSON-safe mapping"):
