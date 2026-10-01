@@ -25,6 +25,10 @@ import {
   PHYSICAL_PROGRAM_CACHE_KEY,
 } from '../../../../../rendering/materials/mesh-physical/config';
 import { PhysicalMeshMaterial } from '../../../../../rendering/materials/mesh-physical/material-glsl';
+import {
+  applyRefractionApodizationTSL,
+  refractionRayScaleTSL,
+} from '../../../../../rendering/materials/mesh-physical/refraction-apodization-tsl';
 import { loadTslMaterials } from '../../../../../rendering/tsl/load';
 import { requireTslMaterials } from '../../../../../rendering/tsl/slot';
 
@@ -309,5 +313,13 @@ describe('the WebGPU twin', () => {
       prototype: { setupVariants: unknown };
     };
     expect(Object.prototype.hasOwnProperty.call(Ctor.prototype, 'setupVariants')).toBe(true);
+  });
+
+  it('builds the ray-scale node graph with and without dispersion', () => {
+    // Compiling it needs a GPU (the cross-backend pixel check lives in E2E); this pins
+    // that the graph is well-formed TSL, which is where a renamed three export breaks.
+    expect((refractionRayScaleTSL(true) as { isNode?: boolean }).isNode).toBe(true);
+    expect((refractionRayScaleTSL(false) as { isNode?: boolean }).isNode).toBe(true);
+    expect(() => applyRefractionApodizationTSL(true)).not.toThrow();
   });
 });
