@@ -11,6 +11,8 @@
  */
 
 import * as zarr from '../zarr';
+import { LoaderLifetime } from '../loaders/loader-lifetime';
+import { createChildController } from '../loaders/progressive/child-signal';
 import {
   tagSignalPriority,
   type FetchPriority,
@@ -278,6 +280,8 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
   private zarrLocation: zarr.Location<zarr.Readable>;
   private node: SceneNode;
   private _onceInit = new OnceInit();
+  /** Disposed latch + lifetime signal (see `LoaderLifetime`). */
+  private readonly _lifetime = new LoaderLifetime();
   /** Priority cell of an in-flight PRIORITISED initialisation (see `ensureInitialized`). */
   private _initPriority: FetchPriorityCell | null = null;
   private rangeLoader: RangeLoader;
@@ -604,15 +608,27 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
    * `prefetchChunkBoundary`) pass `'speculative'`: they are not a frame
    * waiting on the index, and an untagged call from them would raise a
    * refinement-class warm to demand.
+   *
+   * Runs under the disposed latch (`LoaderLifetime.guardInit`): a disposed
+   * loader refuses to re-initialize, and one still in flight at
+   * {@link dispose} is discarded rather than repopulating the loader.
    */
   async ensureInitialized(priority?: FetchPriority): Promise<void> {
     if (priority === undefined) this._initPriority?.raise('demand');
-    await this._onceInit.ensure(() => {
-      if (priority === undefined) return this.initialize();
-      const signal = new AbortController().signal;
-      this._initPriority = tagSignalPriority(signal, priority);
-      return this.initialize(signal);
-    });
+    await this._onceInit.ensure(() =>
+      this._lifetime.guardInit(
+        `GSplats loader ${this.node.path}`,
+        () => {
+          if (priority === undefined) return this.initialize();
+          // A prioritised (warm-up) initialisation has no caller signal of its
+          // own; it rides the loader lifetime so dispose() cancels its reads.
+          const { signal } = createChildController(this._lifetime.signal).controller;
+          this._initPriority = tagSignalPriority(signal, priority);
+          return this.initialize(signal);
+        },
+        () => this.dispose()
+      )
+    );
   }
 
   /**
@@ -1426,6 +1442,7 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
    * Clean up resources
    */
   dispose(): void {
+    this._lifetime.dispose();
     this.chunkIndex = null;
     this.arrays = {};
     this._onceInit.reset();

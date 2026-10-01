@@ -1326,7 +1326,7 @@ describe('LinesSpatialIndexLoader', () => {
     });
 
     describe('resource cleanup', () => {
-      it.fails('an initialize still in flight at dispose does not repopulate the loader', async () => {
+      it('an initialize still in flight at dispose does not repopulate the loader', async () => {
         // dispose() resets the one-shot initializer and clears the arrays, but an
         // initialize() already awaiting its metadata opens used to finish afterwards
         // and write chunkIndex / arrays back into the disposed loader.
@@ -1353,7 +1353,7 @@ describe('LinesSpatialIndexLoader', () => {
         expect((bodyLoader as any).arrays).toEqual({});
       });
 
-      it.fails('a disposed loader refuses to re-initialize', async () => {
+      it('a disposed loader refuses to re-initialize', async () => {
         bodyLoader.dispose();
         (zarr.open as unknown as ReturnType<typeof vi.fn>).mockClear();
         await expect(

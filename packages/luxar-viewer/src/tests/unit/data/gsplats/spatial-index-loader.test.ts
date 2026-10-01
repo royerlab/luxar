@@ -1676,7 +1676,7 @@ describe('GSplatsSpatialIndexLoader', () => {
     });
 
     describe('resource cleanup', () => {
-      it.fails('an initialize still in flight at dispose does not repopulate the loader', async () => {
+      it('an initialize still in flight at dispose does not repopulate the loader', async () => {
         // dispose() resets the one-shot initializer and clears the arrays, but an
         // initialize() already awaiting its metadata opens used to finish afterwards
         // and write chunkIndex / arrays back into the disposed loader.
@@ -1703,7 +1703,7 @@ describe('GSplatsSpatialIndexLoader', () => {
         expect((bodyLoader as any).arrays).toEqual({});
       });
 
-      it.fails("dispose aborts a speculative initialization's chunk_bounds read", async () => {
+      it("dispose aborts a speculative initialization's chunk_bounds read", async () => {
         // ensureInitialized('speculative') minted its own never-aborted signal,
         // so a warm-up of a rung that was then torn down kept its index read
         // on the wire for a loader nothing will use.
@@ -1728,7 +1728,7 @@ describe('GSplatsSpatialIndexLoader', () => {
         await init;
       });
 
-      it.fails('a disposed loader refuses to re-initialize', async () => {
+      it('a disposed loader refuses to re-initialize', async () => {
         bodyLoader.dispose();
         (zarr.open as unknown as ReturnType<typeof vi.fn>).mockClear();
         await expect(

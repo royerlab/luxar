@@ -7,6 +7,7 @@
  */
 
 import * as zarr from '../zarr';
+import { LoaderLifetime } from '../loaders/loader-lifetime';
 import { isArrayListed } from '../loaders/optional-array-listing';
 import { log, LogEmoji, Modules } from '../../utils/log';
 import { clamp } from '../../utils/clamp';
@@ -128,6 +129,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   private zarrLocation: zarr.Location<zarr.Readable>;
   private node: SceneNode;
   private _onceInit = new OnceInit();
+  /** Disposed latch + lifetime signal (see `LoaderLifetime`). */
+  private readonly _lifetime = new LoaderLifetime();
   private arrays: {
     positions?: zarr.Array<zarr.DataType, zarr.Readable>;
     colors?: zarr.Array<zarr.DataType, zarr.Readable>;
@@ -256,6 +259,21 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
    */
   private registerBounds(arrayName: string, array: zarr.Array<zarr.DataType, zarr.Readable>): void {
     registerPointsArrayBounds(this.prefetcher, this.node.path, arrayName, array);
+  }
+
+  /**
+   * Initialize once, under the disposed latch: a disposed loader refuses to
+   * re-initialize, and an initialization still in flight when {@link dispose}
+   * runs is discarded instead of repopulating the loader.
+   */
+  private ensureInit(): Promise<void> {
+    return this._onceInit.ensure(() =>
+      this._lifetime.guardInit(
+        `Points loader ${this.node.path}`,
+        () => this.initialize(),
+        () => this.dispose()
+      )
+    );
   }
 
   /**
@@ -561,7 +579,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     startTime: number
   ): Promise<LoadedPointsData> {
     const disposeGeneration = this._disposeGeneration;
-    await this._onceInit.ensure(() => this.initialize());
+    await this.ensureInit();
 
     // Check if loader is properly initialized (chunk index OR fallback with total points count)
     if (!this.chunkIndex && this.totalPointsNoIndex === 0) {
@@ -888,7 +906,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
    */
   async prefetchChunks(viewState: ViewState, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) return;
-    await this._onceInit.ensure(() => this.initialize());
+    await this.ensureInit();
 
     if (!this.arrays.positions) return;
 
@@ -912,7 +930,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     signal?: AbortSignal
   ): Promise<void> {
     if (signal?.aborted) return;
-    await this._onceInit.ensure(() => this.initialize());
+    await this.ensureInit();
     if (!this.chunkIndex || !this.arrays.positions) {
       await this.prefetchChunks(predicted, signal);
       return;
@@ -1540,6 +1558,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
    * Clean up resources
    */
   dispose(): void {
+    this._lifetime.dispose();
     this._disposeGeneration++;
     this.chunkIndex = null;
     this.arrays = {};

@@ -12,6 +12,7 @@
  */
 
 import * as zarr from '../zarr';
+import { LoaderLifetime } from '../loaders/loader-lifetime';
 import { log, LogEmoji, Modules } from '../../utils/log';
 import type {
   LinesMetadata,
@@ -115,6 +116,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   private zarrLocation: zarr.Location<zarr.Readable>;
   private node: SceneNode;
   private _onceInit = new OnceInit();
+  /** Disposed latch + lifetime signal (see `LoaderLifetime`). */
+  private readonly _lifetime = new LoaderLifetime();
   private rangeLoader: RangeLoader;
   private zarrStore: zarr.Readable | null = null;
 
@@ -230,6 +233,21 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    */
   private registerBounds(arrayName: string, array: zarr.Array<zarr.DataType, zarr.Readable>): void {
     registerLinesArrayBounds(this.prefetcher, this.node.path, arrayName, array);
+  }
+
+  /**
+   * Initialize once, under the disposed latch: a disposed loader refuses to
+   * re-initialize, and an initialization still in flight when {@link dispose}
+   * runs is discarded instead of repopulating the loader.
+   */
+  private ensureInit(): Promise<void> {
+    return this._onceInit.ensure(() =>
+      this._lifetime.guardInit(
+        `Lines loader ${this.node.path}`,
+        () => this.initialize(),
+        () => this.dispose()
+      )
+    );
   }
 
   /**
@@ -480,7 +498,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     queryId: string,
     startTime: number
   ): Promise<LoadedLinesData> {
-    await this._onceInit.ensure(() => this.initialize());
+    await this.ensureInit();
 
     if (!this.arrays.vertices || !this.arrays.segments) {
       throw new Error('[LinesLoader] Loader not properly initialized');
@@ -903,7 +921,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    */
   async prefetchChunks(viewState: LinesViewState, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) return;
-    await this._onceInit.ensure(() => this.initialize());
+    await this.ensureInit();
 
     if (!this.arrays.segments) return;
 
@@ -931,7 +949,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     signal?: AbortSignal
   ): Promise<void> {
     if (signal?.aborted) return;
-    await this._onceInit.ensure(() => this.initialize());
+    await this.ensureInit();
     if (!this.chunkIndex || !this.arrays.segments) {
       await this.prefetchChunks(predicted, signal);
       return;
@@ -1226,6 +1244,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    * Clean up resources
    */
   dispose(): void {
+    this._lifetime.dispose();
     this.chunkIndex = null;
     this.arrays = {};
     this._onceInit.reset();
