@@ -27,7 +27,8 @@
  *   the border column smeared across it — the very streaks being removed, only on
  *   screen instead of clamped. Capped at a fraction `c` of the room, the sample point
  *   still advances at least `(1 − c)` as fast as the pixel, so the edge band is at most
- *   stretched by `1 / (1 − c)` (2× here), never collapsed.
+ *   stretched by `1 / (1 − c)` (4× at most here; about 2× where the roll-off begins,
+ *   `1 / (1 − knee)`), never collapsed.
  *
  * The shaped shift is applied by shortening the ray, not by rewriting the sample
  * coordinate, so it goes through three's own code path on both backends (three's TSL
@@ -51,15 +52,17 @@ import { log, Modules } from '../../../utils/log';
 
 /**
  * Fraction of the room to the border a shift may use before it is shaped. Below it the
- * field is untouched; above it, the tanh roll-off takes over.
+ * field is untouched; above it, the tanh roll-off takes over. Half: a shift is left
+ * alone until it would carry the sample halfway from its pixel to the screen edge, so
+ * only refraction that already reaches toward the border is ever changed.
  */
-export const REFRACTION_SHIFT_KNEE = 0.25;
+export const REFRACTION_SHIFT_KNEE = 0.5;
 
 /**
  * Fraction of the room a shaped shift approaches and never reaches. Bounds how much the
- * edge band can be stretched, `1 / (1 − ceiling)`: half the room is at most 2×.
+ * edge band can be stretched, `1 / (1 − ceiling)`: three quarters of the room is 4×.
  */
-export const REFRACTION_SHIFT_CEILING = 0.5;
+export const REFRACTION_SHIFT_CEILING = 0.75;
 
 /**
  * Floor on the ray scale. Keeps the attenuation compensation finite (an infinite

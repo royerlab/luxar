@@ -143,15 +143,18 @@ is not, the sampler clamps to the border texel and the border smears inward as s
 worst with the camera inside a refracting shell, where every pixel is glass and a
 double-sided shell is refracted twice on WebGL. Per fragment, each axis of the screen
 shift is soft-limited against its room to the nearest border: the identity up to
-`REFRACTION_SHIFT_KNEE` (a quarter) of that room, then a tanh roll-off toward
-`REFRACTION_SHIFT_CEILING` (half), the stricter axis scaling the whole vector so its
+`REFRACTION_SHIFT_KNEE` (half) of that room, then a tanh roll-off toward
+`REFRACTION_SHIFT_CEILING` (three quarters), the stricter axis scaling the whole vector so its
 direction is kept. The field is therefore zero on every border, continuous, and untouched
 wherever a shift stays clear of the edges. The ceiling is not decoration: a limiter that
 let a large shift approach the WHOLE room would park the sample on the border for a band
 of pixels and smear the border column across it — the streaks again, only on screen. At
-half the room the sample still advances at least half as fast as the pixel, so the edge
-band is stretched at most 2×, never collapsed (pinned by a unit test with that bound
-hard-coded, which fails for a near-1 ceiling). It is applied by shortening the ray three traces (`thickness·λ`, with
+three quarters of the room the sample still advances at least a quarter as fast as the
+pixel, so the edge band is stretched at most 4× (about 2× where the roll-off begins),
+never collapsed (pinned by a unit test with that bound hard-coded, which fails for a
+near-1 ceiling). The knee is half because a lower one reaches into the frame: on the
+render gate's thick lens three's own shifts reach a fifth of the room at the median and
+most of it at the rim, and a quarter-room knee changed the plain outside view. It is applied by shortening the ray three traces (`thickness·λ`, with
 `attenuationDistance·λ` keeping the Beer–Lambert absorption unchanged), λ being the exact
 perspective-correct scale for the wanted fraction of the screen shift — so it goes through
 three's own refraction on both backends: the WebGL `onBeforeCompile` adds it after the
