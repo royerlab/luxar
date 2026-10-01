@@ -385,9 +385,10 @@ unwrapCachedArray(cached);
 
 Cached zarr chunks are **read-only** to every loader downstream of `wrapWithCache`.
 
-The L0 cache stores the same `ArrayBufferView` it returns to subsequent
-hit-path callers — no defensive clone on hit. Mutating that view in
-place would corrupt the cached entry for the next caller. Loaders MUST
+The L0 cache stores the same `ArrayBufferView` it returns to the caller
+whose miss decoded it, to waiters that joined that decode, and to every
+later hit — no defensive clone on any path. Mutating that view in place
+would corrupt the cached entry for the next caller. Loaders MUST
 treat chunk data as immutable input and copy into accumulator buffers,
 output `BufferAttribute` allocations, or fresh `TypedArray`s before
 mutating.
@@ -400,11 +401,11 @@ loader that does mutate `chunk.data`, either copy first or — if the
 mutation is unavoidable — switch the wrapped array to skip caching for
 that path.
 
-The miss-path clone in `wrapWithCache` (via `cloneArrayBufferView`)
-gives the _first caller_ a private buffer they can technically mutate
-without poisoning the cache, but this should not be relied upon: the
-contract is "read-only on every path" so future cache changes (e.g.
-removing the miss-path clone for a perf win) don't break loaders.
+There is no miss-path clone either: the first caller gets the very
+buffer L0 stores (`cloneArrayBufferView` runs only for a view into a
+larger buffer, so L0 never retains bytes it does not account for). The
+contract is "read-only on every path", and `l0-immutability.test.ts`
+pins that a miss, a coalesced waiter and a hit share one buffer.
 
 ## Intelligent Prefetching
 

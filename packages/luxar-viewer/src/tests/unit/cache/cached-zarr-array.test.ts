@@ -596,7 +596,8 @@ describe('cached-zarr-array perf counters', () => {
     expect(perfCounters.get('decode.count')).toBe(1);
     expect(perfCounters.get('decode.count.foreground')).toBe(1);
     expect(perfCounters.get('decode.bytes')).toBe(6 * 4);
-    expect(perfCounters.get('l0.cloneBytes')).toBe(6 * 4);
+    // The decoded view spans its own buffer, so L0 stores it as is (no clone).
+    expect(perfCounters.get('l0.cloneBytes')).toBe(0);
     expect(perfCounters.get('decode.duplicates')).toBe(0);
   });
 
