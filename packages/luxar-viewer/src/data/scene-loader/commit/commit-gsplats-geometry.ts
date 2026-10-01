@@ -335,6 +335,10 @@ export function commitGSplatsGeometry(
         }
       }
     } else {
+      // Consume-and-clear on this path too (prefix-lineage.ts retention
+      // contract): no append gate reads the lineage here, and leaving it set
+      // would keep the parent concat's CPU arrays pinned for the payload's life.
+      setPrefixParent(staged.sourceData, null);
       // Non-pool path: a size change swaps in a fresh geometry+texture
       // pair — evict Three's cached RenderObject exactly like the pool
       // branch above (stale `vertexBuffers` on the WebGPU backend
@@ -342,12 +346,12 @@ export function commitGSplatsGeometry(
       //
       // Same preserve-ordering predicate as the pool branch (see the
       // comment there), minus the pool-reuse guards: nothing has swapped
-      // `mesh.geometry` yet at this point (a size change swaps it INSIDE
+      // `mesh.geometry` at this point (a size change swaps it INSIDE
       // updateInstancedGSplatsMesh, whose rebuild branch always writes
       // identity regardless of the flag — fresh geometries are
-      // zero-filled), so geometry identity + count are the guards.
-      const sameMeshBuffers = hadCommittedData && mesh.geometry === prevGeometry;
-      const preserveOrdering = sameMeshBuffers && prevCount === splatCount;
+      // zero-filled), so geometry identity holds by construction and the
+      // count is the only guard.
+      const preserveOrdering = hadCommittedData && prevCount === splatCount;
       const rebuilt = updateInstancedGSplatsMesh(
         mesh,
         {
@@ -372,44 +376,44 @@ export function commitGSplatsGeometry(
     // chokepoint decomposition as points/lines. The pick material has no
     // such uniform: picking stays brightness-as-depth, alpha-free.)
 
-    if (isGSplatsUserData(mesh.userData)) {
-      mesh.userData.visibleSplatCount = splatCount;
-      mesh.userData.requestedElementCount = processed.splatCount;
-      mesh.userData.droppedElementCount = processed.splatCount - splatCount;
-      // Append-fast-path bookkeeping (depth-sorting Phase 4 Stage 2): record
-      // the truncate baked into the GPU texels and mark the GPU prefix intact.
-      // A full rewrite re-establishes both, so the next commit may append; a
-      // context restore clears gpuPrefixIntact to force a full rewrite.
-      mesh.userData.committedTruncate = readTruncate(mesh);
-      mesh.userData.gpuPrefixIntact = true;
-      mesh.userData.labelIndices = processed.labelIndices;
-      mesh.userData.labelVocabulary = processed.labelVocabulary;
-      // Stamp the view-version this geometry was loaded for so the LOD registry
-      // can distinguish "fresh for the current slice" from merely "ready" (a
-      // re-slice overwrites the buffers in place above without flipping any
-      // readiness flag). Shared with the points/lines commits via the helper.
-      stampLoadedViewVersion(mesh.userData, loadedViewVersion);
-      // Ladder-completeness stamp for the never-downgrade display gate
-      // (see stamp-view-version.ts) — commit-synchronized with the count above.
-      stampLadderComplete(mesh.userData);
-      markFirstCommit('gsplats');
-      // Record the committed data reference — a later update returning the
-      // SAME reference (memoized progressive concat) can then take the
-      // stamp-only no-op path instead of re-projecting + re-uploading.
-      setCommittedData(mesh, staged.sourceData);
-      // The slot → on-disk map is only known after projection, so it is a
-      // MESH-level stamp written here rather than a field on the payload:
-      // `staged.sourceData` may be a SliceCache-owned snapshot handed back by
-      // reference on a cache hit, whose byte size was measured at store time —
-      // mutating it would under-count the cache and break its never-mutated
-      // invariant. Written in lockstep with `setCommittedData` above (no early
-      // return between them) so the map always describes the buffers now on
-      // the GPU, and cleared when this commit has none, so a previous commit's
-      // map can never outlive the geometry it described. The stamp-only noop
-      // branch at the top touches neither: its geometry is unchanged, so the
-      // existing pair still describes exactly what the GPU holds.
-      setElementIdMap(mesh, staged.processed.elementIds);
-    }
+    // `mesh.userData` is GSplats userData: the guard at the top of this
+    // function returned otherwise, and nothing above reassigns it.
+    mesh.userData.visibleSplatCount = splatCount;
+    mesh.userData.requestedElementCount = processed.splatCount;
+    mesh.userData.droppedElementCount = processed.splatCount - splatCount;
+    // Append-fast-path bookkeeping (depth-sorting Phase 4 Stage 2): record
+    // the truncate baked into the GPU texels and mark the GPU prefix intact.
+    // A full rewrite re-establishes both, so the next commit may append; a
+    // context restore clears gpuPrefixIntact to force a full rewrite.
+    mesh.userData.committedTruncate = readTruncate(mesh);
+    mesh.userData.gpuPrefixIntact = true;
+    mesh.userData.labelIndices = processed.labelIndices;
+    mesh.userData.labelVocabulary = processed.labelVocabulary;
+    // Stamp the view-version this geometry was loaded for so the LOD registry
+    // can distinguish "fresh for the current slice" from merely "ready" (a
+    // re-slice overwrites the buffers in place above without flipping any
+    // readiness flag). Shared with the points/lines commits via the helper.
+    stampLoadedViewVersion(mesh.userData, loadedViewVersion);
+    // Ladder-completeness stamp for the never-downgrade display gate
+    // (see stamp-view-version.ts) — commit-synchronized with the count above.
+    stampLadderComplete(mesh.userData);
+    markFirstCommit('gsplats');
+    // Record the committed data reference — a later update returning the
+    // SAME reference (memoized progressive concat) can then take the
+    // stamp-only no-op path instead of re-projecting + re-uploading.
+    setCommittedData(mesh, staged.sourceData);
+    // The slot → on-disk map is only known after projection, so it is a
+    // MESH-level stamp written here rather than a field on the payload:
+    // `staged.sourceData` may be a SliceCache-owned snapshot handed back by
+    // reference on a cache hit, whose byte size was measured at store time —
+    // mutating it would under-count the cache and break its never-mutated
+    // invariant. Written in lockstep with `setCommittedData` above (no early
+    // return between them) so the map always describes the buffers now on
+    // the GPU, and cleared when this commit has none, so a previous commit's
+    // map can never outlive the geometry it described. The stamp-only noop
+    // branch at the top touches neither: its geometry is unchanged, so the
+    // existing pair still describes exactly what the GPU holds.
+    setElementIdMap(mesh, staged.processed.elementIds);
 
     if (splatCount === 0) {
       log.verbose(

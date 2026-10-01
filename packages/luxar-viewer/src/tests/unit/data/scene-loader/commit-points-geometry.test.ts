@@ -615,7 +615,7 @@ describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstan
     expect(getPrefixParent(next)).toBeUndefined();
   });
 
-  it.fails('consumes the lineage entry on the NON-pool path too', () => {
+  it('consumes the lineage entry on the NON-pool path too', () => {
     // The consume-and-clear ran only in the pool branch, so a non-pool commit
     // kept the parent concat's CPU arrays pinned for as long as the payload
     // lived (prefix-lineage.ts retention contract).

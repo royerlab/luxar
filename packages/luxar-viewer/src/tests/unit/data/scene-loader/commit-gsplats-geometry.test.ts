@@ -749,7 +749,7 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     expect(getPrefixParent(next.sourceData)).toBeUndefined();
   });
 
-  it.fails('consumes the lineage entry on the NON-pool path too', () => {
+  it('consumes the lineage entry on the NON-pool path too', () => {
     const root = new THREE.Group();
     root.add(makeMesh('/g'));
     commitGSplatsGeometry(makeStaged(4), root, null, undefined, V);
