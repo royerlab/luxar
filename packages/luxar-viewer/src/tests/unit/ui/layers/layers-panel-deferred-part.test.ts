@@ -32,6 +32,7 @@ vi.mock(import('../../../../data/scene-loader/loaders/loader-factory'), async (i
 
 import { LayersPanel } from '../../../../ui/layers/layers-panel';
 import { NodeFactory } from '../../../../rendering/node-factory';
+import { getColormapTexture } from '../../../../rendering/colormap-textures';
 import { __resetMaterialManagerForTests } from '../../../../rendering/material-manager';
 import { computeScalarRangeUniforms } from '../../../../rendering/materials/_shared/scalar-range';
 import { loadSceneNodes } from '../../../../data/scene-loader/nodes/load-scene-nodes';
@@ -51,9 +52,9 @@ import { configureDepthSort, disposeDepthSort } from '../../../../rendering/dept
 
 const AMPLITUDE_RANGE: [number, number] = [5.409804826328468e-10, 0.06948927677778476];
 
-function part(index: number): SceneNode {
+function part(index: number, parent = '/nuclei'): SceneNode {
   return {
-    path: `/nuclei/part_${index}`,
+    path: `${parent}/part_${index}`,
     type: 'gsplats',
     attrs: {
       type: 'gsplats',
@@ -73,9 +74,10 @@ function part(index: number): SceneNode {
   };
 }
 
-function sceneGraph(): SceneNode {
+function sceneGraph(nested = false): SceneNode {
+  const wrapperPath = nested ? '/outer/n' : '/nuclei';
   const wrapper: SceneNode = {
-    path: '/nuclei',
+    path: wrapperPath,
     type: 'group',
     attrs: {
       type: 'group',
@@ -90,14 +92,23 @@ function sceneGraph(): SceneNode {
       blending_mode: 'volumetric',
     } as SceneNode['attrs'],
     hasSpatialIndex: false,
-    children: [part(0), part(1)],
+    children: [part(0, wrapperPath), part(1, wrapperPath)],
   };
+  const outer: SceneNode = nested
+    ? {
+        path: '/outer',
+        type: 'group',
+        attrs: { type: 'group', layer: true, display_type: 'gsplats' } as SceneNode['attrs'],
+        hasSpatialIndex: false,
+        children: [wrapper],
+      }
+    : wrapper;
   return {
     path: '/',
     type: 'scene',
     attrs: {} as SceneNode['attrs'],
     hasSpatialIndex: false,
-    children: [wrapper],
+    children: [outer],
   };
 }
 
@@ -233,6 +244,33 @@ describe('LayersPanel — a partition part activated after the panel initialised
     expect(fresh.uScalarMin.value).toBeCloseTo(expected.scalarMin, 9);
     expect(fresh.uScalarScale.value / expected.scalarScale).toBeCloseTo(1, 6);
     expect(appearance(fresh)).toEqual(appearance(eager));
+  });
+
+  it('replays nested colormap edits in push order for a deferred part', async () => {
+    const h = await loadAndInitPanel(sceneGraph(true));
+    h.panel.setLayer('/outer/n', { colormap: 'viridis' });
+    h.panel.setLayer('/outer', { colormap: 'plasma' });
+
+    await h.deferred.activate!();
+
+    const eager = uniformsOf(h.root, '/outer/n/part_1').uColormapTex.value;
+    const fresh = uniformsOf(h.root, '/outer/n/part_0').uColormapTex.value;
+    expect(eager).toBe(getColormapTexture('plasma'));
+    expect(fresh).toBe(eager);
+  });
+
+  it('uses the latest push when a nested layer is edited again', async () => {
+    const h = await loadAndInitPanel(sceneGraph(true));
+    h.panel.setLayer('/outer/n', { colormap: 'viridis' });
+    h.panel.setLayer('/outer', { colormap: 'plasma' });
+    h.panel.setLayer('/outer/n', { colormap: 'viridis' });
+
+    await h.deferred.activate!();
+
+    const eager = uniformsOf(h.root, '/outer/n/part_1').uColormapTex.value;
+    const fresh = uniformsOf(h.root, '/outer/n/part_0').uColormapTex.value;
+    expect(eager).toBe(getColormapTexture('viridis'));
+    expect(fresh).toBe(eager);
   });
 
   it.each(['points', 'lines', 'mesh'] as const)(

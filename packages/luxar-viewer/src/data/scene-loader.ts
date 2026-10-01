@@ -6,6 +6,7 @@
  */
 
 import { findObjectByName } from '../utils/scene-graph-index';
+import { isEffectivelyVisible } from '../utils/object-visibility';
 import { tagSignalPriority } from '../utils/fetch-concurrency';
 import { bumpFailedLoadsVersion, failedLoadsVersion } from '../utils/failed-loads-version';
 import * as zarr from './zarr';
@@ -975,13 +976,35 @@ export class SceneLoader {
    * early-outs while animating and re-arms the idle timer), so per-node
    * calls inside an atomic sweep are harmless. Null in bare/test
    * loaders → no-op.
+   *
+   * `drawn` is false when the committed node was not drawn either side of
+   * the commit (itself or an ancestor hidden: an LOD level the registry
+   * keeps off screen, a hidden layer), so the frame cannot have changed and
+   * the receiver only keeps the loop ticking. It must still wake it: the LOD
+   * registry polls per frame and may now show the level that just
+   * committed, and that visibility flip requests its own redraw.
    */
-  private _requestRender: (() => void) | null = null;
+  private _requestRender: ((drawn: boolean) => void) | null = null;
   private readonly decodeKTX2: KTX2TextureDecoder | null;
 
   /** Install (or clear) the render-loop wake-up callback. */
-  setRequestRender(callback: (() => void) | null): void {
+  setRequestRender(callback: ((drawn: boolean) => void) | null): void {
     this._requestRender = callback;
+  }
+
+  /**
+   * Run a commit of the node at `path`, then wake the render loop (see
+   * {@link _requestRender}), saying whether the commit can have changed the
+   * drawn frame: the node was effectively visible before or after it. A node
+   * that cannot be resolved counts as drawn. Returns that verdict.
+   */
+  private commitAndRequestRender(path: string, commit: () => void): boolean {
+    const node = findObjectByName(this.rootGroup, path);
+    const drawnBefore = isEffectivelyVisible(node);
+    commit();
+    const drawn = node === undefined || drawnBefore || isEffectivelyVisible(node);
+    this._requestRender?.(drawn);
+    return drawn;
   }
 
   /** Install (or clear) the notification used to arm online failure retries. */
@@ -2337,18 +2360,19 @@ export class SceneLoader {
     staged: StagedLinesCommit,
     session?: UpdateSession,
     loadedViewVersion: number = this._updateVersion
-  ): void {
+  ): boolean {
     this.lodGroupRegistry?.invalidatePartitionFootprint(staged.path);
-    commitLinesGeometryHelper(
-      staged,
-      this.rootGroup,
-      this._gpuBufferPool,
-      session,
-      loadedViewVersion
-    );
     // Wake the idle-paused render loop so this commit paints (see
     // _requestRender).
-    this._requestRender?.();
+    return this.commitAndRequestRender(staged.path, () =>
+      commitLinesGeometryHelper(
+        staged,
+        this.rootGroup,
+        this._gpuBufferPool,
+        session,
+        loadedViewVersion
+      )
+    );
   }
 
   /**
@@ -2386,18 +2410,19 @@ export class SceneLoader {
     staged: StagedGSplatsCommit,
     session?: UpdateSession,
     loadedViewVersion: number = this._updateVersion
-  ): void {
+  ): boolean {
     this.lodGroupRegistry?.invalidatePartitionFootprint(staged.path);
-    commitGSplatsGeometryHelper(
-      staged,
-      this.rootGroup,
-      this._gpuBufferPool,
-      session,
-      loadedViewVersion
-    );
     // Wake the idle-paused render loop so this commit paints (see
     // _requestRender).
-    this._requestRender?.();
+    return this.commitAndRequestRender(staged.path, () =>
+      commitGSplatsGeometryHelper(
+        staged,
+        this.rootGroup,
+        this._gpuBufferPool,
+        session,
+        loadedViewVersion
+      )
+    );
   }
 
   /**
@@ -2427,19 +2452,20 @@ export class SceneLoader {
     staged: StagedMeshCommit,
     session?: UpdateSession,
     loadedViewVersion: number = this._updateVersion
-  ): void {
+  ): boolean {
     this.lodGroupRegistry?.invalidatePartitionFootprint(staged.path);
-    commitMeshGeometryHelper(
-      {
-        rootGroup: this.rootGroup,
-        currentVersion: this._updateVersion,
-        gpuBufferPool: this._gpuBufferPool,
-      },
-      staged,
-      session,
-      loadedViewVersion
+    return this.commitAndRequestRender(staged.path, () =>
+      commitMeshGeometryHelper(
+        {
+          rootGroup: this.rootGroup,
+          currentVersion: this._updateVersion,
+          gpuBufferPool: this._gpuBufferPool,
+        },
+        staged,
+        session,
+        loadedViewVersion
+      )
     );
-    this._requestRender?.();
   }
 
   /**
@@ -2596,20 +2622,21 @@ export class SceneLoader {
     // the slice it actually loaded (the registry then re-reloads for the newer
     // version) rather than being mis-stamped fresh.
     loadedViewVersion: number = this._updateVersion
-  ): void {
+  ): boolean {
     this.lodGroupRegistry?.invalidatePartitionFootprint(path);
-    commitPointsGeometryHelper(
-      path,
-      data,
-      this.rootGroup,
-      this._gpuBufferPool,
-      this.nodeFactory,
-      session,
-      loadedViewVersion
-    );
     // Wake the idle-paused render loop so this commit paints (see
     // _requestRender).
-    this._requestRender?.();
+    return this.commitAndRequestRender(path, () =>
+      commitPointsGeometryHelper(
+        path,
+        data,
+        this.rootGroup,
+        this._gpuBufferPool,
+        this.nodeFactory,
+        session,
+        loadedViewVersion
+      )
+    );
   }
 
   /**

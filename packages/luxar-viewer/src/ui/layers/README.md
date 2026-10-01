@@ -76,14 +76,16 @@ styles it before any data reaches it: the innermost owning layer's composed
 state (opacity, absorption, window, gamma, blend) through the same per-leaf
 code an edit runs, plus every kind of non-composed state the panel has pushed
 for a layer on its ancestry (colormap, draw order, label style, mesh
-appearance, physical knobs). The depth-sort blend-switch hook is skipped: the
-leaf has no commit yet, and its first commit registers it with the sorter
-under the live mode (reporting the switch would queue a full re-sweep per
-activated part). A hidden layer whose object is as new as the leaf — the leaf
-itself, or a group built with it inside the same deferred part — is stamped
-hidden. Kinds the panel never pushed are left at the factory's authored value,
-which is exactly what the already-drawn leaves still carry. A leaf of a
-different scene graph than the panel's is ignored.
+appearance, physical knobs). Pushed writes replay in edit order, so a later
+outer-layer edit wins over an earlier nested-layer edit on late leaves too.
+The depth-sort blend-switch hook is skipped: the leaf has no commit yet, and
+its first commit registers it with the sorter under the live mode (reporting
+the switch would queue a full re-sweep per activated part). A hidden layer
+whose object is as new as the leaf — the leaf itself, or a group built with it
+inside the same deferred part — is stamped hidden. Kinds the panel never
+pushed are left at the factory's authored value, which is exactly what the
+already-drawn leaves still carry. A leaf of a different scene graph than the
+panel's is ignored.
 
 ### Load-failure badge
 

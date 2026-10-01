@@ -3433,6 +3433,16 @@ describe('SceneLoader', () => {
           String(message).startsWith('Leaving LOD refinement')
         )
       ).toHaveLength(1);
+      for (let slice = 1; slice <= 3; slice++) {
+        const update = sceneLoader.updateView({ slicePosition: [0, 0, 0, slice] });
+        await vi.advanceTimersByTimeAsync(500);
+        await update;
+      }
+      expect(
+        notifierMocks.toast.mock.calls.filter(([message]) =>
+          String(message).startsWith('Refinement failed')
+        )
+      ).toHaveLength(1);
       warningLog.mockRestore();
     });
 

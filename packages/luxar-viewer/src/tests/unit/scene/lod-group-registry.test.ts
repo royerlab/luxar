@@ -347,6 +347,61 @@ describe('projectBoxDiagonalPx', () => {
       expect(projectBoxAreaFraction(box, identityCamera())).toBeCloseTo(1.0, 6);
     });
 
+    it('reaches exactly 1 for an off-axis perspective ellipse containing the viewport', () => {
+      const box: BoundingBox = {
+        min: { x: 0, y: 0, z: -100 },
+        max: { x: 1000, y: 1000, z: 100 },
+      };
+      const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 2000);
+      cam.position.set(200, 200, 260);
+      cam.lookAt(300, 300, 0);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      expect(projectBoxAreaFraction(box, cam)).toBe(1);
+    });
+
+    it('does not treat a tilted ellipse AABB as full viewport coverage', () => {
+      const box: BoundingBox = {
+        min: { x: -2, y: -0.2, z: 0 },
+        max: { x: 2, y: 0.2, z: 0 },
+      };
+      const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
+      cam.position.set(0, 0, 5);
+      cam.rotation.z = Math.PI / 4;
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      const coverage = projectBoxAreaFraction(box, cam);
+      expect(coverage).toBeGreaterThan(0);
+      expect(coverage).toBeLessThan(1);
+    });
+
+    it('gives the same coverage when anisotropic scale moves from bounds to the group transform', () => {
+      const worldBox: BoundingBox = {
+        min: { x: -256, y: -256, z: -200 },
+        max: { x: 256, y: 256, z: 200 },
+      };
+      const localBox: BoundingBox = {
+        min: { x: -256, y: -256, z: -50 },
+        max: { x: 256, y: 256, z: 50 },
+      };
+      const scale = new THREE.Matrix4().makeScale(1, 1, 4);
+      const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 3000);
+      for (const degrees of [0, 40, 60]) {
+        const radians = THREE.MathUtils.degToRad(degrees);
+        cam.position.set(1400 * Math.sin(radians), 0, 1400 * Math.cos(radians));
+        cam.lookAt(0, 0, 0);
+        cam.updateMatrixWorld(true);
+        cam.updateProjectionMatrix();
+        const boxToClip = new THREE.Matrix4()
+          .multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)
+          .multiply(scale);
+        expect(projectBoxAreaFraction(localBox, cam, boxToClip)).toBeCloseTo(
+          projectBoxAreaFraction(worldBox, cam),
+          6
+        );
+      }
+    });
+
     it('clips to the viewport: a huge rect intersecting only a screen corner reads its small VISIBLE fraction', () => {
       // Rect spans NDC [0.5, 10] on both axes — enormous unclipped (~22.5 area
       // units) but only the [0.5, 1]² corner is on screen: visible fraction =
@@ -453,6 +508,199 @@ describe('projectBoxDiagonalPx', () => {
       const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
       expect(projectBoxAreaFraction(box, orthoAtOrigin())).toBeCloseTo(0.25, 6);
     });
+
+    /** Perspective camera at `position`, looking at the origin. */
+    function perspectiveLookingAtOrigin(x: number, y: number, z: number): THREE.PerspectiveCamera {
+      const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+      cam.position.set(x, y, z);
+      cam.lookAt(0, 0, 0);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      return cam;
+    }
+
+    /**
+     * The legacy ``screen-area`` metric, computed independently from the box's 8
+     * projected corners: the viewport-clipped half-extents of their NDC AABB,
+     * multiplied. The reference the near-depth ellipse is sized against.
+     */
+    function legacyCornerRectArea(box: BoundingBox, cam: THREE.Camera): number {
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      for (let i = 0; i < 8; i++) {
+        const p = new THREE.Vector3(
+          i & 1 ? box.max.x : box.min.x,
+          i & 2 ? box.max.y : box.min.y,
+          i & 4 ? box.max.z : box.min.z
+        ).project(cam);
+        minX = Math.min(minX, p.x);
+        maxX = Math.max(maxX, p.x);
+        minY = Math.min(minY, p.y);
+        maxY = Math.max(maxY, p.y);
+      }
+      const w = Math.max(0, Math.min(maxX, 1) - Math.max(minX, -1)) * 0.5;
+      const h = Math.max(0, Math.min(maxY, 1) - Math.max(minY, -1)) * 0.5;
+      return w * h;
+    }
+
+    it('does not inflate a flat card as its plane tilts in perspective', () => {
+      const card: BoundingBox = { min: { x: -10, y: -10, z: 0 }, max: { x: 10, y: 10, z: 0 } };
+      const coverage: number[] = [];
+      for (const degrees of [0, 30, 60]) {
+        const radians = (degrees * Math.PI) / 180;
+        const cam = new THREE.PerspectiveCamera(50, 1.5, 0.1, 1000);
+        cam.position.set(30 * Math.sin(radians), 0, 30 * Math.cos(radians));
+        cam.lookAt(0, 0, 0);
+        cam.updateMatrixWorld(true);
+        cam.updateProjectionMatrix();
+        coverage.push(projectBoxAreaFraction(card, cam));
+      }
+      expect(coverage[0]).toBeCloseTo(0.341, 2);
+      expect(coverage[1]).toBeCloseTo(0.308, 2);
+      expect(coverage[2]).toBeCloseTo(0.194, 2);
+      expect(coverage[0]).toBeGreaterThan(coverage[1]);
+      expect(coverage[1]).toBeGreaterThan(coverage[2]);
+    });
+
+    it('is orientation-stable: an orbit of a cube at 10 half-extents varies by at most 1% (legacy rect: far more)', () => {
+      // The box's screen RECT grows by up to ~1.7x between a face-on and a
+      // corner-on view, so a rect metric walks a lod ladder up and down during
+      // one revolution at a FIXED distance. The inscribed ellipsoid of a cube
+      // is a sphere, whose projected SHAPE depends only on the distance. The
+      // ellipse is sized from its view-axis half-chord, which is the same
+      // in every direction for a sphere. The corner rect changes sharply
+      // with orientation; the ellipse still tracks near-face depth face-on.
+      const cube: BoundingBox = { min: { x: -1, y: -1, z: -1 }, max: { x: 1, y: 1, z: 1 } };
+      const radius = 10;
+      const values: number[] = [];
+      const legacy: number[] = [];
+      for (const elevation of [0, Math.PI / 5, Math.atan(Math.SQRT1_2)]) {
+        for (let k = 0; k < 24; k++) {
+          const azimuth = (k / 24) * 2 * Math.PI;
+          const cam = perspectiveLookingAtOrigin(
+            radius * Math.cos(elevation) * Math.sin(azimuth),
+            radius * Math.sin(elevation),
+            radius * Math.cos(elevation) * Math.cos(azimuth)
+          );
+          values.push(projectBoxAreaFraction(cube, cam));
+          legacy.push(legacyCornerRectArea(cube, cam));
+        }
+      }
+      const swing = (xs: number[]): number => (Math.max(...xs) - Math.min(...xs)) / Math.max(...xs);
+      expect(Math.min(...values)).toBeGreaterThan(0);
+      expect(swing(values)).toBeLessThanOrEqual(0.01);
+      expect(swing(legacy)).toBeGreaterThan(2 * swing(values));
+    });
+
+    it('face-on in perspective it tracks the legacy rect for boxes of any thickness', () => {
+      // The ellipse outline sits near the box's MIDDLE plane while the legacy
+      // rect is set by its NEAR face, so an unsized ellipse of a thick box
+      // close to the camera read far less than the rect. Sized by its
+      // view-axis half-chord it tracks the rect for every thickness.
+      const cam = perspectiveLookingAtOrigin(0, 0, 6);
+      for (const hz of [0, 0.25, 0.5, 1, 2]) {
+        for (const [cx, cy] of [
+          [0, 0],
+          [0.8, -0.5],
+        ]) {
+          const box: BoundingBox = {
+            min: { x: cx - 1, y: cy - 0.6, z: -hz },
+            max: { x: cx + 1, y: cy + 0.6, z: hz },
+          };
+          const legacy = legacyCornerRectArea(box, cam);
+          const metric = projectBoxAreaFraction(box, cam);
+          // On the view axis the sized ellipse IS the near-face rect; off it the
+          // two drift apart only for a box as deep as 2/3 of its distance (8%).
+          const tolerance = cx === 0 ? 1e-9 : hz <= 1 ? 0.02 : 0.1;
+          expect(Math.abs(metric / legacy - 1), `hz=${hz} c=(${cx},${cy})`).toBeLessThan(tolerance);
+        }
+      }
+    });
+
+    it('hosted zebrafish endoderm at its opening view reads the legacy rect coverage and picks child_2', () => {
+      // gsplats_4d_zebrafish_timelapse: /endoderm is a kind=lod screen-area
+      // ladder [0, 0.125, 0.25, 0.5] whose box is ~0.4 times as deep as it is
+      // wide, 7 half-depths from the opening camera. The legacy corner rect
+      // reads 0.315 (child_2); the unsized ellipsoid read 0.237 and dropped the
+      // opening view to child_1 — 2.5-4x fewer, coarser splats every timepoint.
+      const box: BoundingBox = {
+        min: { x: -389.16583251953125, y: -382.4560852050781, z: -154.47067260742188 },
+        max: { x: 375.7462463378906, y: 394.1980895996094, z: 154.47067260742188 },
+      };
+      const cam = new THREE.PerspectiveCamera(63, 1000 / 700, 0.1, 10000);
+      cam.position.set(0, 0, 1092.41);
+      cam.lookAt(0, 0, 0);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      const legacy = legacyCornerRectArea(box, cam);
+      expect(legacy).toBeCloseTo(0.315, 2);
+      const metric = projectBoxAreaFraction(box, cam);
+      expect(Math.abs(metric / legacy - 1)).toBeLessThan(0.02);
+      expect(pickChildWithHysteresis([0, 0.125, 0.25, 0.5], 0, metric)).toBe(2);
+    });
+
+    it('saturates to +Infinity when the eye plane cuts a box corner but misses its ellipsoid', () => {
+      // The nearest corner is behind the eye, so no finite near depth exists —
+      // the same saturation the legacy corner rect applied.
+      const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
+      const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
+      // Eye plane 5.6 from the centre: outside the inscribed sphere (radius 5)
+      // but inside the box's corner reach (5·sqrt(3)); corner (5, 5, 5) is behind.
+      cam.position.set(0, 0, 7);
+      cam.lookAt(-0.424, -0.424, 6.2);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      expect(projectBoxAreaFraction(box, cam)).toBe(Number.POSITIVE_INFINITY);
+    });
+
+    it('an orthographic camera sizes a thick box exactly like a flat one (w is constant)', () => {
+      const cam = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
+      cam.position.set(0, 0, 100);
+      cam.lookAt(0, 0, 0);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      const flat: BoundingBox = { min: { x: -4, y: -2, z: 0 }, max: { x: 4, y: 2, z: 0 } };
+      const thick: BoundingBox = { min: { x: -4, y: -2, z: -30 }, max: { x: 4, y: 2, z: 30 } };
+      expect(projectBoxAreaFraction(flat, cam)).toBeCloseTo(0.08, 9);
+      expect(projectBoxAreaFraction(thick, cam)).toBeCloseTo(0.08, 9);
+    });
+
+    it('face-on it equals the legacy rect product, so derived thresholds keep their meaning', () => {
+      // A flat quad parallel to the image plane, off-centre: its screen rect
+      // spans NDC x in [-0.1, 0.3] and y in [-0.2, 0.2] (half-extents 0.2 and
+      // 0.2) → the legacy rect product 0.04.
+      const quad: BoundingBox = { min: { x: -0.5, y: -1, z: 0 }, max: { x: 1.5, y: 1, z: 0 } };
+      const cam = new THREE.PerspectiveCamera(90, 1, 0.1, 1000);
+      cam.position.set(0, 0, 5);
+      cam.lookAt(0, 0, -1);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      expect(projectBoxAreaFraction(quad, cam)).toBeCloseTo(0.04, 9);
+    });
+
+    it('reads exactly 0 for a box entirely off-screen under a perspective camera', () => {
+      const cam = perspectiveLookingAtOrigin(0, 0, 10);
+      const box: BoundingBox = { min: { x: 40, y: -1, z: -1 }, max: { x: 42, y: 1, z: 1 } };
+      expect(projectBoxAreaFraction(box, cam)).toBe(0);
+    });
+
+    it('saturates to +Infinity when the camera is inside the box, looking in any direction', () => {
+      const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
+      for (const [x, y, z] of [
+        [1, 0.5, 0],
+        [0, 1, 1],
+        [-1, -1, 2],
+      ]) {
+        const cam = new THREE.PerspectiveCamera(50, 1.5, 0.1, 1000);
+        cam.position.set(0.5, -0.5, 0.25);
+        cam.lookAt(x, y, z);
+        cam.updateMatrixWorld(true);
+        cam.updateProjectionMatrix();
+        expect(projectBoxAreaFraction(box, cam)).toBe(Number.POSITIVE_INFINITY);
+      }
+    });
   });
 });
 
@@ -540,6 +788,17 @@ function makeRegistry(
         }
       : {}),
   });
+}
+
+/**
+ * A registry clock that advances one 60 Hz frame per read. The registry reads
+ * it once per ``evaluatePerFrame`` (plus the stale-hold budget, when one runs),
+ * so a loop of evaluations spans real-looking time for the ms-based settle
+ * debounce without each test threading its own clock.
+ */
+function frameClock(): () => number {
+  let t = 0;
+  return () => (t += 1000 / 60);
 }
 
 /**
@@ -1812,11 +2071,14 @@ describe('LODGroupRegistry — auto evaluation', () => {
   });
 
   it('sizes a rotated group by its own corners, not by its world bounding box', () => {
-    // A 4 × 4 card 10 units in front of the camera covers 0.090 of the screen
-    // facing it. Turned 30° about the vertical it covers LESS (0.088), but the
-    // corners of its world AABB — wider and deeper — cover 0.097, which
-    // used to cross a 0.093 threshold and upgrade the level.
-    function selectedAt(yawDeg: number): number {
+    // A 4 × 0.4 bar 10 units in front of the camera covers 0.009 of the
+    // screen. Rolled 45° about the view axis it covers exactly as much (the
+    // ellipse only turns), but the corners of its world AABB — a 3.1 × 3.1
+    // square — cover 0.054, which would cross a 0.02 threshold and upgrade
+    // the level. (Pre-ellipsoid this pinned a 30° yaw of a square card; the
+    // near-depth ellipse now reads such a yawed card slightly LARGER than
+    // face-on, like its AABB, so that pose no longer tells the boxes apart.)
+    function selectedAt(rollDeg: number): number {
       const camera = new THREE.PerspectiveCamera(60, 4 / 3, 0.1, 1000);
       camera.updateMatrixWorld(true);
       const reg = new LODGroupRegistry({
@@ -1824,18 +2086,18 @@ describe('LODGroupRegistry — auto evaluation', () => {
         getViewportSize: () => ({ width: 800, height: 600 }),
         getDisplayDims: () => [0, 1, 2],
       });
-      const card = { min: [-2, -2, -0.01], max: [2, 2, 0.01] };
-      const children = [0, 0.093].map((t) => ({ ...makeChild(t), positionBounds: card }));
-      const entry = makeEntry(children, 0, `/rotated-card-${yawDeg}`);
+      const bar = { min: [-2, -0.2, -0.01], max: [2, 0.2, 0.01] };
+      const children = [0, 0.02].map((t) => ({ ...makeChild(t), positionBounds: bar }));
+      const entry = makeEntry(children, 0, `/rotated-bar-${rollDeg}`);
       entry.selector = 'screen-area';
       entry.groupObject.position.set(0, 0, -10);
-      entry.groupObject.rotation.y = (yawDeg * Math.PI) / 180;
+      entry.groupObject.rotation.z = (rollDeg * Math.PI) / 180;
       reg.register(entry);
       reg.evaluatePerFrame();
       return entry.activeChildIndex;
     }
     expect(selectedAt(0)).toBe(0);
-    expect(selectedAt(30)).toBe(0);
+    expect(selectedAt(45)).toBe(0);
   });
 
   it('selects from the camera pose as written, not a stale matrixWorldInverse', () => {
@@ -3506,6 +3768,94 @@ function makeCountedChild(
 }
 
 describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
+  it('starts an explicit retry at the current clock time, not the last frame', () => {
+    const state = { clock: 0 };
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => state.clock
+    );
+    const child = makeLazyChild(0.5, () => {});
+    child.nodePath = '/g/child_1';
+    child.failed = true;
+    reg.register(makeEntry([makeChild(0), child], 0, '/g'));
+    reg.evaluatePerFrame();
+    state.clock = 60_000;
+    expect(reg.retryLazyChildByNodePath(child.nodePath)).toBe(true);
+    expect(child.loadStartMs).toBe(60_000);
+    state.clock += 20;
+    child.loading = false;
+    reg.evaluatePerFrame();
+    expect(child.loadEwmaMs).toBe(20);
+  });
+
+  // A load is timed to when it RESOLVED. The fold used to run at the first
+  // evaluated frame after ``loading`` cleared, so a hidden tab (no frames) or
+  // a skipped evaluate (collapsed canvas) counted idle time as load time and
+  // capped playback coarse for ~19 s.
+  it('times a load to its resolution, not to the next evaluated frame', () => {
+    const state = { clock: 0 };
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => state.clock
+    );
+    const child = makeLazyChild(0.5, () => {});
+    // What the loader's thunk does when its load settles.
+    const finish = (): void => {
+      child.loading = false;
+      (child as { onLoadSettled?: () => void }).onLoadSettled?.();
+    };
+    child.nodePath = '/g/child_1';
+    child.failed = true;
+    reg.register(makeEntry([makeChild(0), child], 0, '/g'));
+    reg.evaluatePerFrame();
+    state.clock = 1_000;
+    expect(reg.retryLazyChildByNodePath(child.nodePath)).toBe(true);
+    state.clock += 30;
+    finish();
+    state.clock += 5_000; // the tab was hidden: no frame ran
+    reg.evaluatePerFrame();
+    expect(child.loadEwmaMs).toBe(30);
+  });
+
+  it('never folds a negative sample when a retry lands between evaluates', () => {
+    const state = { clock: 0 };
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => state.clock
+    );
+    const child = makeLazyChild(0.5, () => {});
+    // What the loader's thunk does when its load settles.
+    const finish = (): void => {
+      child.loading = false;
+      (child as { onLoadSettled?: () => void }).onLoadSettled?.();
+    };
+    child.nodePath = '/g/child_1';
+    child.failed = true;
+    reg.register(makeEntry([makeChild(0), child], 0, '/g'));
+    reg.evaluatePerFrame(); // the frame clock reads 0 from here on
+    state.clock = 60_000;
+    expect(reg.retryLazyChildByNodePath(child.nodePath)).toBe(true);
+    state.clock += 20;
+    finish();
+    // A second retry before any evaluate folds the first load on the spot.
+    state.clock += 1_000;
+    child.failed = true;
+    expect(reg.retryLazyChildByNodePath(child.nodePath)).toBe(true);
+    expect(child.loadEwmaMs).toBe(20);
+  });
+
   it('clears the failure cooldown and re-kicks ensureLoaded for a named lazy leaf', () => {
     const reg = makeRegistry();
     const ensureLoaded = vi.fn();
@@ -4052,7 +4402,7 @@ describe('LODGroupRegistry — group-typed LOD child freshness', () => {
 // ────────────────────────────────────────────────────────────────────────
 // Settle-gated reload of a stale fine level (B2 decoupling). A lazy fine level
 // that has left the per-slice sweep is reloaded by the REGISTRY — but only once
-// the scrub has settled (the view version held steady for FINE_RELOAD_SETTLE_TICKS
+// the scrub has settled (the view version held steady for FINE_RELOAD_SETTLE_MS
 // frames), so active scrubbing shows only the cheap coarse level.
 // ────────────────────────────────────────────────────────────────────────
 
@@ -4089,12 +4439,12 @@ describe('LODGroupRegistry — settle-gated fine reload', () => {
   it('reloads the stale fine level exactly once after the scrub settles', () => {
     const ensureLoaded = vi.fn();
     const children = [makeGsplatChild(0, 2), makeStaleLazyFine(0.5, 1, ensureLoaded)];
-    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2); // version fixed at 2
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2, undefined, frameClock()); // version fixed at 2
     reg.register(makeEntry(children, 0, '/g'));
     // A few frames: not yet settled → no reload.
     for (let i = 0; i < 4; i++) reg.evaluatePerFrame();
     expect(ensureLoaded).not.toHaveBeenCalled();
-    // Hold steady long enough to settle (FINE_RELOAD_SETTLE_TICKS ~ 8).
+    // Hold steady long enough to settle (FINE_RELOAD_SETTLE_MS = 130).
     for (let i = 0; i < 10; i++) reg.evaluatePerFrame();
     // Fired once; the loading guard prevents re-firing every subsequent frame.
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
@@ -4131,7 +4481,7 @@ describe('LODGroupRegistry — settle-gated fine reload', () => {
 
   it('clear() resets the settle clock so a reused registry reloads promptly after a dataset switch', () => {
     const first = vi.fn();
-    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2, undefined, frameClock());
     reg.register(makeEntry([makeGsplatChild(0, 2), makeStaleLazyFine(0.5, 1, first)], 0, '/a'));
     for (let i = 0; i < 40; i++) reg.evaluatePerFrame(); // settle clock seeded at tick 1, tick now 40
     expect(first).toHaveBeenCalledTimes(1);
@@ -4156,6 +4506,248 @@ describe('LODGroupRegistry — settle-gated fine reload', () => {
     expect(() => {
       for (let i = 0; i < 12; i++) reg.evaluatePerFrame();
     }).not.toThrow();
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Playback aspiration. A playing timelapse bumps the view version every
+// period, so a frame-counted "has the user stopped scrubbing" debounce never
+// fires: the lazy fine level is never reloaded for the new timepoint, the
+// stale hold runs out, and the display collapses to the coarsest level for
+// the rest of the playback. During playback the registry instead aspires to
+// the finest level whose measured reload fits the period, and reloads it
+// every step.
+// ────────────────────────────────────────────────────────────────────────
+
+describe('LODGroupRegistry — playback aspiration', () => {
+  const FRAME_MS = 1000 / 60;
+
+  /**
+   * A lod group whose coarse level is eager (the sweep re-stamps it every
+   * step) and whose finer levels are lazy, committed, and take `reloadMs[i]`
+   * to reload for a new timepoint (a function gets the 0-based load count). `frame()` advances the clock one display
+   * frame, steps the timepoint every `periodMs` while playing, lands due
+   * reloads for the timepoint they were started on, then evaluates.
+   */
+  function playbackHarness(reloadMs: Array<number | ((n: number) => number)>, periodMs = 100) {
+    const state = { t: 1000, version: 1, playing: true, nextStepAt: 1000 + periodMs };
+    const coarse = makeGsplatChild(0, 1);
+    coarse.object.userData.visibleSplatCount = 10;
+    const children: LODGroupChild[] = [coarse];
+    const pending = new Map<LODGroupChild, { due: number; version: number }>();
+    reloadMs.forEach((ms, i) => {
+      const child = makeGsplatChild((i + 1) / (reloadMs.length + 1), 1);
+      child.object.userData.visibleSplatCount = 1000 * (i + 1);
+      child.ready = true;
+      let loads = 0;
+      child.ensureLoaded = () => {
+        const dur = typeof ms === 'number' ? ms : ms(loads);
+        loads++;
+        pending.set(child, { due: state.t + dur, version: state.version });
+      };
+      children.push(child);
+    });
+    const camera = new THREE.Camera();
+    camera.matrixWorldInverse.identity();
+    camera.projectionMatrix.identity();
+    const deps = {
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getViewVersion: () => state.version,
+      now: () => state.t,
+      getPlaybackPeriodMs: () => (state.playing ? periodMs : null),
+    } as ConstructorParameters<typeof LODGroupRegistry>[0];
+    const reg = new LODGroupRegistry(deps);
+    reg.register(makeEntry(children, 0, '/g'));
+    const frame = (): void => {
+      state.t += FRAME_MS;
+      if (state.playing && state.t >= state.nextStepAt) {
+        state.version++;
+        state.nextStepAt += periodMs;
+        coarse.object.userData.loadedViewVersion = state.version; // sweep-driven
+      }
+      for (const [child, job] of pending) {
+        if (state.t < job.due) continue;
+        pending.delete(child);
+        child.loading = false;
+        child.object.userData.loadedViewVersion = job.version;
+      }
+      reg.evaluatePerFrame();
+    };
+    return { reg, state, children, frame };
+  }
+
+  it('a playing timelapse keeps its fine level instead of collapsing to the coarsest', () => {
+    const { reg, frame } = playbackHarness([30]);
+    for (let f = 0; f < 20; f++) frame(); // warm-up: the first reloads
+    let fine = 0;
+    const frames = 90; // 1.5 s, 15 timepoints
+    for (let f = 0; f < frames; f++) {
+      frame();
+      if (reg.get('/g')!.displayedChildIndex === 1) fine++;
+    }
+    expect(fine / frames).toBeGreaterThanOrEqual(0.9);
+  });
+
+  it('re-probes a level capped by a cold load and recovers after warm reloads', () => {
+    const { reg, children, frame } = playbackHarness([30]);
+    children[1].loadEwmaMs = 500;
+    children[1].loadSamples = 2; // a measured (not cold-only) slow average
+    let fineInLastSecond = 0;
+    for (let f = 0; f < 600; f++) {
+      frame();
+      if (f >= 540 && reg.get('/g')!.displayedChildIndex === 1) fineInLastSecond++;
+    }
+    expect(children[1].loadEwmaMs).toBeLessThan(80);
+    expect(fineInLastSecond).toBeGreaterThan(50);
+  });
+
+  /** How many times the displayed level changes over `frames` frames after the first. */
+  function countSwaps(reg: LODGroupRegistry, frame: () => void, frames: number): number {
+    frame(); // the first evaluate commits the initial selection
+    let swaps = 0;
+    let last = reg.get('/g')!.displayedChildIndex;
+    for (let f = 0; f < frames; f++) {
+      frame();
+      const shown = reg.get('/g')!.displayedChildIndex;
+      if (shown !== last) swaps++;
+      last = shown;
+    }
+    return swaps;
+  }
+
+  // The first load of a level is cold (cache miss, connection and decoder
+  // warm-up) and says nothing about what a warm per-timepoint reload costs.
+  // Seeding the average from it capped playback at the coarse level until the
+  // ~1 Hz probe measured a warm reload: two level swaps on a timelapse whose
+  // fine level keeps up easily (render-gate `playback_lod_timelapse`).
+  it('a slow cold first load does not demote a level whose warm reloads fit', () => {
+    const { reg, frame } = playbackHarness([(n) => (n === 0 ? 500 : 30)]);
+    expect(countSwaps(reg, frame, 300)).toBe(0); // 5 s, 50 timepoints
+    expect(reg.get('/g')!.displayedChildIndex).toBe(1);
+  });
+
+  it('a level whose reloads are consistently too slow is still demoted promptly', () => {
+    const { reg, frame } = playbackHarness([150]);
+    for (let f = 0; f < 40; f++) frame(); // two 150 ms reloads measured
+    let coarse = 0;
+    const frames = 90;
+    for (let f = 0; f < frames; f++) {
+      frame();
+      if (reg.get('/g')!.displayedChildIndex === 0) coarse++;
+    }
+    expect(coarse / frames).toBeGreaterThanOrEqual(0.7);
+  });
+
+  // Measured on obsidian (lod_timelapse, 20 fps, WebGL, 3 rounds x 8 s): once
+  // warm, the mid level's reload average hovered at the 40 ms budget
+  // (0.8 x 50 ms), and one average of 40.6 ms demoted it to the coarsest level
+  // for a second, until the next probe. A level whose reloads straddle the
+  // budget must not flip each time its average crosses it: holding a level (or
+  // stepping down to one) only needs its reloads to fit the whole period.
+  it('a level whose reload average straddles the budget is not flipped in and out', () => {
+    // 40 / 100 ms alternating: the average swings either side of the 80 ms
+    // budget of a 100 ms period, while the reloads fit the period on average.
+    const { reg, frame } = playbackHarness([(n) => (n % 2 === 0 ? 40 : 100)]);
+    for (let f = 0; f < 180; f++) frame(); // warm-up (3 s): the average converges
+    expect(countSwaps(reg, frame, 600)).toBe(0); // 10 s, 100 timepoints
+    expect(reg.get('/g')!.displayedChildIndex).toBe(1);
+  });
+
+  // Same run, cold first loop: the finest level (reloads ~65-100 ms) was
+  // demoted past a mid level averaging ~45 ms, inside the 50 ms period but
+  // over the 40 ms admission budget, down to the coarsest level for up to
+  // four seconds.
+  it('a demoted level steps down to the next level whose reloads fit the period', () => {
+    // mid 70 ms (over the 80 ms budget once frame-quantised, inside the
+    // 100 ms period); fine 150 ms (over the period).
+    const { reg, frame } = playbackHarness([70, 150]);
+    for (let f = 0; f < 60; f++) frame(); // both averages measured
+    let mid = 0;
+    const frames = 300;
+    for (let f = 0; f < frames; f++) {
+      frame();
+      if (reg.get('/g')!.displayedChildIndex === 1) mid++;
+    }
+    expect(mid / frames).toBeGreaterThanOrEqual(0.9);
+  });
+
+  // Measured on obsidian (lod_timelapse, 20 fps, WebGL, 5 rounds): the first
+  // loop's reloads are cache misses (80-200 ms), which cap the mid level; once
+  // the cache is warm its reloads take 5-10 ms, but a capped level is only
+  // re-measured by the 1 Hz probe, and each probe moved the average 30% of the
+  // way from the stale cold value (108 -> 92 -> 85 -> 61 -> 49 -> 41 ms): four
+  // to six seconds at the coarsest level. A probe is a fresh measurement after
+  // a gap of a second or more, so it must replace the stale average.
+  it('a capped level recovers on the first warm probe, not after the cold average decays', () => {
+    // Six cold (cache-miss) reloads of 200 ms, then warm 10 ms reloads.
+    const { reg, frame } = playbackHarness([(n) => (n < 6 ? 200 : 10)]);
+    for (let f = 0; f < 360; f++) frame(); // 6 s: the cold loads are spent (by the 5th probe)
+    let mid = 0;
+    const frames = 120; // the next 2 s: one warm probe has landed
+    for (let f = 0; f < frames; f++) {
+      frame();
+      if (reg.get('/g')!.displayedChildIndex === 1) mid++;
+    }
+    expect(mid / frames).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('a probe does not admit a capped level whose warm reload still exceeds the admission budget', () => {
+    // The 70 ms reload lands after five 60 Hz frames (83 ms): it fits the
+    // 100 ms period but exceeds the 80 ms admission budget.
+    const { reg, children, frame } = playbackHarness([(n) => (n < 6 ? 200 : 70)]);
+    for (let f = 0; f < 360; f++) frame(); // cold reloads are spent
+    let fine = 0;
+    for (let f = 0; f < 180; f++) {
+      frame();
+      if (reg.get('/g')!.displayedChildIndex === 1) fine++;
+    }
+    expect(children[1].loadEwmaMs).toBeGreaterThan(80);
+    expect(children[1].loadEwmaMs).toBeLessThan(100); // warm probes did run
+    expect(fine).toBeLessThan(20); // only the occasional probe may show it
+  });
+
+  it('aspires to the finest level whose reload fits the playback period, and to the finest again once paused', () => {
+    // mid reloads in 20 ms, fine in 150 ms: at a 100 ms period only mid can
+    // keep up (the budget is 0.8 × the period).
+    const { reg, state, frame } = playbackHarness([20, 150]);
+    for (let f = 0; f < 40; f++) frame(); // warm-up: both reload times measured
+    let mid = 0;
+    const frames = 90;
+    for (let f = 0; f < frames; f++) {
+      frame();
+      if (reg.get('/g')!.displayedChildIndex === 1) mid++;
+    }
+    expect(mid / frames).toBeGreaterThanOrEqual(0.9);
+
+    state.playing = false; // pause: the timepoint stops changing
+    for (let f = 0; f < 30; f++) frame(); // settle + the 150 ms fine reload
+    expect(reg.get('/g')!.activeChildIndex).toBe(2);
+    expect(reg.get('/g')!.displayedChildIndex).toBe(2);
+  });
+
+  it('pausing while the held level reloads does not flash the coarse level', () => {
+    // The reload was measured fast (so playback aspires to it) but this one
+    // takes 400 ms: the stale hold outlives STALE_HOLD_MS under the playback
+    // exemption. Pausing ends the exemption; the hold's budget must count from
+    // there, not from when the hold started, or the first paused frame drops
+    // to the 10-splat coarse level.
+    const { reg, state, children, frame } = playbackHarness([400]);
+    children[1].loadEwmaMs = 30;
+    const shown: number[] = [];
+    while (state.t < 1_400) {
+      frame();
+      shown.push(reg.get('/g')!.displayedChildIndex ?? -1);
+    }
+    expect(shown.every((d) => d === 1)).toBe(true); // held through playback
+    state.playing = false;
+    const paused: number[] = [];
+    for (let f = 0; f < 5; f++) {
+      frame();
+      paused.push(reg.get('/g')!.displayedChildIndex ?? -1);
+    }
+    expect(paused).toEqual([1, 1, 1, 1, 1]);
   });
 });
 
@@ -4230,7 +4822,7 @@ describe('LODGroupRegistry — progressive refinement of a lazy level', () => {
     fine.ensureLoaded = ensureLoaded;
     fine.hasMoreLODs = () => more;
     const children = [makeGsplatChild(0, 2), fine];
-    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2, undefined, frameClock());
     reg.register(makeEntry(children, 0, '/g'));
 
     // Settle (~8 frames) then several refinement passes.
@@ -4557,7 +5149,7 @@ describe('LODGroupRegistry — never-downgrade display gate', () => {
   });
 
   it('keeps advancing the held aspiration ladder while the previous level stays visible', () => {
-    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2);
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => 2, undefined, frameClock());
     const coarse = makeCountedChild(0, 2, 100);
     const fine = makeStreamingChild(0.5, 2, 10);
     fine.ensureLoaded = vi.fn(() => {
@@ -4572,15 +5164,15 @@ describe('LODGroupRegistry — never-downgrade display gate', () => {
 });
 
 // ────────────────────────────────────────────────────────────────────────
-// Coverage-band cross-fade (on by default; ?noLodFade disables) — two adjacent
-// blendable (additive/luminous/volumetric) levels
-// render with complementary opacity as the DISTANCE (coverage metric) crosses
-// their boundary. Distance-driven, independent of streaming. Off / non-blendable
+// Level dissolve (on by default; ?noLodFade disables) — when a blendable
+// (additive/luminous/volumetric) group changes its displayed level, the
+// outgoing and incoming levels render with complementary opacity for
+// config.lod.fadeMs (time-driven, independent of streaming). Off / non-blendable
 // / off-screen ⇒ the byte-identical hard swap. A small tile
 // ([0,0,0]–[0.3,0.3,0.3]) under the identity test camera (800×600 viewport,
 // fitted axis 600) projects to a coverage metric of exactly 0.5
-// (150 px diagonal ÷ (FILL_FACTOR·600) = 150/300), so placing
-// the finer level's threshold at/near 0.5 lands the metric in its blend band.
+// (150 px diagonal ÷ (FILL_FACTOR·600) = 150/300); scaling the projection
+// matrix by k scales it to 0.5·k.
 // ────────────────────────────────────────────────────────────────────────
 
 describe('LODGroupRegistry — coverage-band cross-fade', () => {
@@ -4644,12 +5236,8 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
   const liveOpacity = (c: LODGroupChild): number =>
     ((c.object as THREE.Mesh).material as unknown as FadeMatStub).getOpacity();
 
-  it('blends the two levels 50/50 exactly at the boundary (metric == threshold)', () => {
-    const reg = makeReg(true);
-    const coarse = fadeChild(0); // threshold 0
-    const fine = fadeChild(0.5); // boundary at 0.5 == the metric
-    reg.register(makeEntry([coarse, fine], 0, '/g'));
-    reg.evaluatePerFrame();
+  it('draws the two levels 50/50 halfway through a dissolve', () => {
+    const { coarse, fine } = dissolveHalfway('additive');
     expect(coarse.object.visible).toBe(true);
     expect(fine.object.visible).toBe(true);
     expect(liveOpacity(fine)).toBeCloseTo(0.5, 6);
@@ -4659,28 +5247,19 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
   });
 
   it('does not blend a held-stale aspiration with a fresh partner', () => {
-    const state = { version: 2, clock: 0 };
-    const reg = makeReg(
-      true,
-      () => state.version,
-      () => state.clock
-    );
-    const coarse = fadeChild(0);
-    const fine = fadeChild(0.5);
-    (coarse.object.userData as { visibleSplatCount: number }).visibleSplatCount = 10;
-    reg.register(makeEntry([coarse, fine], 0, '/g'));
-
-    reg.evaluatePerFrame();
+    const state = { version: 2 };
+    const { reg, coarse, fine } = dissolveHalfway('additive', {
+      getViewVersion: () => state.version,
+    });
     expect(coarse.object.visible).toBe(true);
     expect(fine.object.visible).toBe(true);
-    expect(liveOpacity(coarse)).toBeCloseTo(0.5, 6);
     expect(liveOpacity(fine)).toBeCloseTo(0.5, 6);
 
+    // A new slice: the coarse level has already committed it, the fine one
+    // has not — the fine level is held on screen, stale, and must not be
+    // dissolved against the fresh coarse one.
     state.version = 3;
-    Object.assign(coarse.object.userData, {
-      loadedViewVersion: 3,
-      visibleSplatCount: 10,
-    });
+    Object.assign(coarse.object.userData, { loadedViewVersion: 3, visibleSplatCount: 10 });
     reg.evaluatePerFrame();
 
     expect(reg.get('/g')!.displayedChildIndex).toBe(1);
@@ -4689,19 +5268,11 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(liveOpacity(fine)).toBe(1);
   });
 
-  it('weights shift with the metric position in the band (finer boundary just above the metric ⇒ coarse dominant)', () => {
-    // Proportional band: boundary 0.625, gap 0.625 → half-width 0.4·0.625=0.25,
-    // band [0.375,0.875]. metric 0.5 → finer weight smoothstep(0.375,0.875,0.5)=0.15625.
-    const reg = makeReg(true);
-    const coarse = fadeChild(0);
-    const fine = fadeChild(0.625);
-    reg.register(makeEntry([coarse, fine], 0, '/g'));
-    reg.evaluatePerFrame();
-    expect(coarse.object.visible).toBe(true);
-    expect(fine.object.visible).toBe(true);
-    expect(liveOpacity(fine)).toBeCloseTo(0.15625, 5);
-    expect(liveOpacity(coarse)).toBeCloseTo(0.84375, 5);
-    expect(liveOpacity(fine) + liveOpacity(coarse)).toBeCloseTo(1, 6);
+  it('the dissolve weight depends on time only, not on how far past the threshold the camera is', () => {
+    const near = dissolveHalfway('additive', {}, 2);
+    const far = dissolveHalfway('additive', {}, 8);
+    expect(liveOpacity(near.fine)).toBeCloseTo(liveOpacity(far.fine), 9);
+    expect(liveOpacity(near.coarse)).toBeCloseTo(liveOpacity(far.coarse), 9);
   });
 
   it('shows a single level (no partner) when the metric is outside every band', () => {
@@ -4741,12 +5312,8 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(liveOpacity(coarse)).toBe(1);
   });
 
-  it('volumetric mode ⇒ blends 50/50 at the boundary (opacity scales τ, so the fade is well-behaved)', () => {
-    const reg = makeReg(true);
-    const coarse = fadeChild(0, { mode: 'volumetric' });
-    const fine = fadeChild(0.5, { mode: 'volumetric' });
-    reg.register(makeEntry([coarse, fine], 0, '/g'));
-    reg.evaluatePerFrame();
+  it('volumetric mode ⇒ dissolves too (opacity scales τ, so the fade is well-behaved)', () => {
+    const { coarse, fine } = dissolveHalfway('volumetric');
     expect(coarse.object.visible).toBe(true);
     expect(fine.object.visible).toBe(true);
     expect(liveOpacity(fine)).toBeCloseTo(0.5, 6);
@@ -4765,7 +5332,7 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(liveOpacity(coarse)).toBe(1);
   });
 
-  it('brightness invariance: the two levels’ opacities always sum to 1 across the band', () => {
+  it('brightness invariance: the two levels’ opacities always sum to 1 through the dissolve', () => {
     // The physics guarantee (additive shader = energy·opacity, mass-conserved
     // levels ⇒ equal integrated E): blendedDC = E·(1−w) + E·w = E for all w. The
     // JS-side invariant underwriting it is exactly-complementary opacities.
@@ -4775,19 +5342,23 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     // between the two levels' absorptions, EXACT only where both present the
     // same per-ray τ. See the volumetric-math suite for the general case; the
     // JS-side complementary-weight invariant is what this test pins.)
-    for (const boundary of [0.4, 0.45, 0.5, 0.55, 0.6]) {
-      const reg = makeReg(true);
-      const coarse = fadeChild(0);
-      const fine = fadeChild(boundary);
-      reg.register(makeEntry([coarse, fine], 0, '/g'));
+    const clock = { t: 1000 };
+    const { reg, zoom } = makeTimedReg(clock);
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.9);
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    zoom(4);
+    for (let f = 0; f < 20; f++) {
       reg.evaluatePerFrame();
       if (coarse.object.visible && fine.object.visible) {
         expect(liveOpacity(coarse) + liveOpacity(fine)).toBeCloseTo(1, 6);
       }
+      clock.t += 16;
     }
   });
 
-  it('kicks the finer level’s load (no blend yet) when it is not resident, so the next crossing blends', () => {
+  it('kicks the finer level’s load (no blend yet) when it is not resident', () => {
     const reg = makeReg(true);
     const coarse = fadeChild(0);
     let loaded = false;
@@ -4797,8 +5368,8 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     };
     reg.register(makeEntry([coarse, fine], 0, '/g'));
     reg.evaluatePerFrame();
-    // Partner (finer) not resident → no two-level blend this frame, but its load
-    // is kicked so a subsequent crossing can fade against it.
+    // The finer level is selected but not resident: its load is kicked, and the
+    // coarse level stays on screen alone until it lands (then dissolves).
     expect(loaded).toBe(true);
     expect(fine.object.visible).toBe(false);
   });
@@ -4810,9 +5381,6 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     // ordinary candidate and got released MID-FADE — half the dissolve
     // vanished and a visible-but-not-ready level was left behind. The evictor
     // must never release anything on screen (``object.visible === true``).
-    const camera = new THREE.Camera();
-    camera.matrixWorldInverse.identity();
-    camera.projectionMatrix.identity();
     let budget = 1e15;
     const relMid = vi.fn(() => {
       mid.ready = false;
@@ -4820,25 +5388,27 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     const relFine = vi.fn(() => {
       fine.ready = false;
     });
-    // fadeChild's 0.3-box bounds → coverage metric 0.5 = the 1↔2 boundary of
-    // thresholds [0, 0.25, 0.5] (gap 0.25 → band [0.4, 0.6]) → exact 50/50 blend.
     const coarse = fadeChild(0); // eager fallback: no release, never evictable
     const mid = fadeChild(0.25);
     mid.release = relMid as () => void;
     const fine = fadeChild(0.5);
     fine.release = relFine as () => void;
     const children = [coarse, mid, fine];
-    const reg = new LODGroupRegistry({
-      getCamera: () => camera,
-      getViewportSize: () => ({ width: 800, height: 600 }),
-      getDisplayDims: () => [0, 1, 2],
-      getViewVersion: () => 2,
-      getCrossFadeEnabled: () => true,
+    const clock = { t: 1000 };
+    const { reg, zoom } = makeTimedReg(clock, {
       getResidentByteBudget: () => budget,
       getResidentBytes: () => children.reduce((s, c) => s + (c.ready !== false ? 100 : 0), 0),
     });
     reg.register(makeEntry(children, 0, '/g'));
-    reg.evaluatePerFrame(); // steady blend: [mid, fine] visible at 50/50
+    zoom(0.6); // metric 0.3: the mid level
+    reg.evaluatePerFrame();
+    clock.t += FADE_MS; // let the coarse → mid dissolve land
+    reg.evaluatePerFrame();
+    expect(drawn(children)).toEqual([1]);
+    zoom(4); // the fine level: the mid → fine dissolve starts
+    reg.evaluatePerFrame();
+    clock.t += FADE_MS / 2;
+    reg.evaluatePerFrame(); // mid-dissolve: [mid, fine] visible at 50/50
     expect(mid.object.visible).toBe(true);
     expect(fine.object.visible).toBe(true);
 
@@ -4856,29 +5426,271 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     // restore branch (``manageFade === false``) and stranded opacity 0.5
     // forever. The falling-edge restore must return every faded leaf to its
     // authored opacity on the next frame.
-    const camera = new THREE.Camera();
-    camera.matrixWorldInverse.identity();
-    camera.projectionMatrix.identity();
-    let crossFade = true;
-    const reg = new LODGroupRegistry({
-      getCamera: () => camera,
-      getViewportSize: () => ({ width: 800, height: 600 }),
-      getDisplayDims: () => [0, 1, 2],
-      getViewVersion: () => 2,
-      getCrossFadeEnabled: () => crossFade,
+    const flags = { crossFade: true };
+    const { reg, coarse, fine } = dissolveHalfway('additive', {
+      getCrossFadeEnabled: () => flags.crossFade,
     });
-    const coarse = fadeChild(0);
-    const fine = fadeChild(0.5); // boundary at fadeChild's metric 0.5 → 50/50
-    reg.register(makeEntry([coarse, fine], 0, '/g'));
-    reg.evaluatePerFrame();
     expect(liveOpacity(fine)).toBeCloseTo(0.5, 6); // mid-fade
 
-    crossFade = false; // both anti-popping flags now off
+    flags.crossFade = false; // both anti-popping flags now off
     for (let f = 0; f < 3; f++) reg.evaluatePerFrame();
     expect(liveOpacity(fine)).toBe(1); // authored opacity restored, not stranded
     expect(liveOpacity(coarse)).toBe(1);
     expect(fine.object.visible).toBe(true); // hard swap to the finest level
     expect(coarse.object.visible).toBe(false);
+  });
+
+  // ── Time-based dissolve (config.lod.fadeMs) ──
+  // The dissolve is a function of TIME since the displayed level changed, not
+  // of the camera's distance to a threshold: a parked camera must end up
+  // drawing ONE level (#2925), whatever its coverage metric.
+  const FADE_MS = 250;
+  /** Registry whose identity camera can be zoomed by `scale` (metric = 0.5·scale). */
+  function makeTimedReg(
+    clock: { t: number },
+    deps: Partial<ConstructorParameters<typeof LODGroupRegistry>[0]> = {}
+  ) {
+    const camera = new THREE.Camera();
+    camera.matrixWorldInverse.identity();
+    camera.projectionMatrix.identity();
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getViewVersion: () => 2,
+      getCrossFadeEnabled: () => true,
+      now: () => clock.t,
+      ...deps,
+    });
+    const zoom = (scale: number): void => {
+      camera.projectionMatrix.makeScale(scale, scale, 1);
+    };
+    return { reg, zoom };
+  }
+  /**
+   * A coarse → fine change (fine threshold 0.9; metric 0.5 → 0.5·`zoomTo`),
+   * evaluated half a dissolve after it started.
+   */
+  function dissolveHalfway(
+    mode: string,
+    deps: Partial<ConstructorParameters<typeof LODGroupRegistry>[0]> = {},
+    zoomTo = 4
+  ) {
+    const clock = { t: 1000 };
+    const { reg, zoom } = makeTimedReg(clock, deps);
+    const coarse = fadeChild(0, { mode });
+    const fine = fadeChild(0.9, { mode });
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    zoom(zoomTo);
+    reg.evaluatePerFrame();
+    clock.t += FADE_MS / 2;
+    reg.evaluatePerFrame();
+    return { reg, coarse, fine, clock };
+  }
+  const drawn = (children: LODGroupChild[]): number[] =>
+    children.flatMap((c, i) => (c.object.visible ? [i] : []));
+  const isAnimating = (reg: LODGroupRegistry): boolean | undefined =>
+    (reg as unknown as { isAnimating?: () => boolean }).isAnimating?.();
+
+  it('a parked camera draws a single level at full weight (#2925)', () => {
+    // fadeChild's box reads metric 0.5, EXACTLY the fine level's threshold: the
+    // spot where a distance-driven band blends the two levels 50/50 for as
+    // long as the camera stays there.
+    const clock = { t: 1000 };
+    const { reg } = makeTimedReg(clock);
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.5);
+    const children = [coarse, fine];
+    reg.register(makeEntry(children, 0, '/g'));
+    for (let f = 0; f < 60; f++) {
+      reg.evaluatePerFrame();
+      clock.t += 16;
+    }
+    expect(drawn(children)).toEqual([1]);
+    expect(liveOpacity(fine)).toBe(1);
+    expect(reg.get('/g')!.displayedChildIndex).toBe(1);
+  });
+
+  it('a level change dissolves over fadeMs, then draws the new level alone', () => {
+    const clock = { t: 1000 };
+    const { reg, zoom } = makeTimedReg(clock);
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.9);
+    const children = [coarse, fine];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame(); // metric 0.5 < 0.9: the coarse level alone
+    expect(drawn(children)).toEqual([0]);
+    expect(isAnimating(reg)).toBe(false);
+
+    zoom(4); // metric 2.0: far past the fine threshold, no distance band anywhere near
+    clock.t += 16;
+    reg.evaluatePerFrame();
+    expect(drawn(children)).toEqual([0, 1]);
+    expect(liveOpacity(fine) + liveOpacity(coarse)).toBeCloseTo(1, 6);
+    expect(isAnimating(reg)).toBe(true);
+
+    clock.t += FADE_MS / 2;
+    reg.evaluatePerFrame();
+    expect(drawn(children)).toEqual([0, 1]);
+    expect(liveOpacity(fine)).toBeCloseTo(0.5, 2);
+    expect(liveOpacity(fine) + liveOpacity(coarse)).toBeCloseTo(1, 6);
+
+    clock.t += FADE_MS / 2;
+    reg.evaluatePerFrame();
+    expect(drawn(children)).toEqual([1]);
+    expect(liveOpacity(fine)).toBe(1);
+    expect(isAnimating(reg)).toBe(false);
+  });
+
+  it('a retarget mid-dissolve starts from the current opacities (no pop)', () => {
+    const clock = { t: 1000 };
+    const { reg, zoom } = makeTimedReg(clock);
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.9);
+    const children = [coarse, fine];
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.evaluatePerFrame();
+    zoom(4);
+    reg.evaluatePerFrame(); // the coarse → fine dissolve starts
+    clock.t += 0.4 * FADE_MS;
+    reg.evaluatePerFrame();
+    const fineBefore = liveOpacity(fine);
+    const coarseBefore = liveOpacity(coarse);
+    expect(fineBefore).toBeGreaterThan(0.05);
+    expect(fineBefore).toBeLessThan(0.95);
+
+    zoom(1); // back below the fine threshold (past its hysteresis): coarse again
+    reg.evaluatePerFrame();
+    expect(drawn(children)).toEqual([0, 1]);
+    expect(liveOpacity(fine)).toBeCloseTo(fineBefore, 6);
+    expect(liveOpacity(coarse)).toBeCloseTo(coarseBefore, 6);
+
+    // The reversal only has to undo what the first dissolve did: it lands
+    // after 0.4·fadeMs, not a whole fadeMs.
+    clock.t += 0.4 * FADE_MS + 1;
+    reg.evaluatePerFrame();
+    expect(drawn(children)).toEqual([0]);
+    expect(liveOpacity(coarse)).toBe(1);
+  });
+
+  it('reports the dissolve landing as a level change, so the monitor recounts', () => {
+    // The outgoing level leaves ALONE when the dissolve lands (its partner
+    // has been on screen since the dissolve started): the visible tally
+    // changes then, not only when the incoming level first showed.
+    const clock = { t: 1000 };
+    const { reg, zoom } = makeTimedReg(clock);
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.9);
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    zoom(4);
+    expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED); // the incoming level shows
+    clock.t += FADE_MS / 2;
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE); // mid-dissolve
+    clock.t += FADE_MS;
+    expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED); // the outgoing level leaves
+    expect(coarse.object.visible).toBe(false);
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
+  });
+
+  // Only ``evaluatePerFrame`` retires a dissolve, on the one end rule it draws
+  // by. A poll between evaluates (the offline capture drain, the debug settle
+  // probe) used to delete a fade whose wall-clock end had passed, while the
+  // DRAWN frame still showed both levels.
+  it('stays capture-unquiescent until an evaluate lands the dissolve, however late the poll', () => {
+    const { reg, coarse, clock } = dissolveHalfway('additive');
+    clock.t += FADE_MS; // over by the clock, but no evaluate has drawn the landing
+    expect(coarse.object.visible).toBe(true);
+    expect(reg.isAnimating()).toBe(true);
+    expect(reg.isCaptureQuiescent()).toBe(false);
+    reg.evaluatePerFrame();
+    expect(coarse.object.visible).toBe(false);
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('a poll of isAnimating between evaluates keeps the landing recount', () => {
+    const { reg, clock } = dissolveHalfway('additive');
+    clock.t += FADE_MS;
+    reg.isAnimating(); // e.g. the capture drain or the debug settle probe
+    expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED);
+  });
+
+  it('recounts when a skipped frame drops a dissolve before its landing', () => {
+    let viewport = { width: 800, height: 600 };
+    const { reg, coarse } = dissolveHalfway('additive', { getViewportSize: () => viewport });
+    viewport = { width: 0, height: 0 };
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
+    expect(reg.isAnimating()).toBe(false);
+    expect(coarse.object.visible).toBe(true);
+
+    viewport = { width: 800, height: 600 };
+    expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED);
+    expect(coarse.object.visible).toBe(false);
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
+  });
+
+  it('recounts when missing bounds drop a dissolve before its landing', () => {
+    const { reg, coarse, fine } = dissolveHalfway('additive');
+    const coarseBounds = coarse.positionBounds;
+    const fineBounds = fine.positionBounds;
+    coarse.positionBounds = fine.positionBounds = { min: [], max: [] };
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
+    expect(reg.isAnimating()).toBe(false);
+    expect(coarse.object.visible).toBe(true);
+
+    coarse.positionBounds = coarseBounds;
+    fine.positionBounds = fineBounds;
+    expect(reg.evaluatePerFrame()).toEqual(LEVEL_CHANGED);
+    expect(coarse.object.visible).toBe(false);
+    expect(reg.evaluatePerFrame()).toEqual(NO_CHANGE);
+  });
+
+  it('a retarget to a third level keeps the more opaque level, at its current opacity', () => {
+    const clock = { t: 1000 };
+    const { reg, zoom } = makeTimedReg(clock);
+    const coarse = fadeChild(0);
+    const mid = fadeChild(0.25);
+    const fine = fadeChild(0.5);
+    const children = [coarse, mid, fine];
+    reg.register(makeEntry(children, 0, '/g'));
+    zoom(0.2); // metric 0.1: the coarse level
+    reg.evaluatePerFrame();
+    zoom(0.6); // metric 0.3: coarse → mid starts
+    reg.evaluatePerFrame();
+    clock.t += 0.2 * FADE_MS;
+    reg.evaluatePerFrame();
+    const coarseBefore = liveOpacity(coarse);
+    expect(coarseBefore).toBeGreaterThan(0.5); // mid is still the fainter one
+
+    zoom(4); // the fine level, mid-dissolve: coarse stays as the outgoing level
+    reg.evaluatePerFrame();
+    expect(drawn(children)).toEqual([0, 2]);
+    expect(liveOpacity(coarse)).toBeCloseTo(coarseBefore, 6);
+    expect(liveOpacity(coarse) + liveOpacity(fine)).toBeCloseTo(1, 6);
+  });
+
+  it('isCaptureQuiescent waits out a dissolve in flight (wall time is not capture time)', () => {
+    const { reg, clock } = dissolveHalfway('additive');
+    expect(reg.isAnimating()).toBe(true);
+    expect(reg.isCaptureQuiescent()).toBe(false);
+    clock.t += FADE_MS;
+    reg.evaluatePerFrame();
+    expect(reg.isAnimating()).toBe(false);
+    expect(reg.isCaptureQuiescent()).toBe(true);
+  });
+
+  it('keeps the loop ticking while a dissolve is in flight, and stops when it lands', () => {
+    const ticks = { n: 0 };
+    const { reg, clock } = dissolveHalfway('additive', { requestTick: () => ticks.n++ });
+    ticks.n = 0;
+    reg.evaluatePerFrame();
+    expect(ticks.n).toBeGreaterThan(0);
+    clock.t += FADE_MS;
+    reg.evaluatePerFrame(); // lands: the frame that hides the outgoing level
+    ticks.n = 0;
+    reg.evaluatePerFrame();
+    expect(ticks.n).toBe(0);
   });
 });
 
@@ -5014,13 +5826,30 @@ describe('LODGroupRegistry — streaming energy compensation', () => {
   });
 
   it('composes with the cross-fade so rendered energy stays E (opacity·e sums to 1)', () => {
-    // Both flags on. Boundary 0.5, metric 0.5 ⇒ 50/50 coverage. The finer level's
-    // prefix carries e=0.5, so its opacity = 0.5 (coverage) × 2 (1/e) = 1.0; the
-    // complete coarse = 0.5 × 1 = 0.5. Rendered energy 1.0·0.5 + 0.5·1.0 = 1.0 = E.
-    const reg = makeReg(true, true);
+    // Both flags on, halfway through a coarse → fine dissolve (50/50). The finer
+    // level's prefix carries e=0.5, so its opacity = 0.5 (dissolve) × 2 (1/e) =
+    // 1.0; the complete coarse = 0.5 × 1 = 0.5. Rendered energy 1.0·0.5 + 0.5·1.0
+    // = 1.0 = E.
+    const clock = { t: 1000 };
+    const camera = new THREE.Camera();
+    camera.matrixWorldInverse.identity();
+    camera.projectionMatrix.identity();
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getViewVersion: () => 2,
+      getCrossFadeEnabled: () => true,
+      getEnergyCompEnabled: () => true,
+      now: () => clock.t,
+    });
     const coarse = fadeChild(0); // complete (e = 1)
-    const fine = fadeChild(0.5, { energy: 0.5 });
+    const fine = fadeChild(0.9, { energy: 0.5 });
     reg.register(makeEntry([coarse, fine], 0, '/g'));
+    reg.evaluatePerFrame();
+    camera.projectionMatrix.makeScale(4, 4, 1);
+    reg.evaluatePerFrame();
+    clock.t += 125; // half of config.lod.fadeMs
     reg.evaluatePerFrame();
     expect(coarse.object.visible).toBe(true);
     expect(fine.object.visible).toBe(true);
@@ -5127,7 +5956,14 @@ describe('LODGroupRegistry — blending-mode-switch stamp-clear recovery (depth-
     // display must never blank meanwhile (a brief coarse fallback is the
     // documented staleness behavior, same as any re-slice).
     const version = 1;
-    const reg = makeRegistry([0, 1, 2], undefined, undefined, () => version);
+    const reg = makeRegistry(
+      [0, 1, 2],
+      undefined,
+      undefined,
+      () => version,
+      undefined,
+      frameClock()
+    );
     const coarse = makeCountedChild(0, version, 100); // eager, complete
     const ensureLoaded = vi.fn();
     const fine = makeCountedChild(0.5, version, 1000); // resident lazy level

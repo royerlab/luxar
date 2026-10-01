@@ -62,9 +62,10 @@ export class SceneLoaderManager {
    * `AnimationController.startAnimation` so late geometry commits
    * (refinement, retries, lazy LOD loads) repaint after the rAF loop
    * has idle-paused. Null (tests / embedders) means commits never
-   * wake a loop — SceneLoader treats it as a no-op.
+   * wake a loop — SceneLoader treats it as a no-op. `drawn` is false for a
+   * commit that cannot have changed the frame (see `SceneLoader.setRequestRender`).
    */
-  private requestRender: (() => void) | null = null;
+  private requestRender: ((drawn: boolean) => void) | null = null;
   private autoRetryableFailureCallback: (() => void) | null = null;
   /**
    * Projected-density provider + caps for the refinement rung gate, forwarded
@@ -109,7 +110,7 @@ export class SceneLoaderManager {
    * from the init pipeline; forwarded to each subsequently created
    * ``SceneLoader`` (see the ``requestRender`` field).
    */
-  setRequestRender(callback: (() => void) | null): void {
+  setRequestRender(callback: ((drawn: boolean) => void) | null): void {
     this.requestRender = callback;
   }
 

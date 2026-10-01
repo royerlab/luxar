@@ -67,6 +67,7 @@ interface PointMaterialTSLNodeTable {
   radiusScale: TSLNode;
   uSortedIndexSlot: TSLNode;
   uDensityDrop: TSLNode;
+  uDensityAlphaExp: TSLNode;
   uGlassPartition: TSLNode;
   uGlassDepth: TSLNode;
   uNearCull: TSLNode;
@@ -143,6 +144,7 @@ export class PointTSLMaterial
       radiusScale: uniform(materialConfig.radiusScale ?? 1.0),
       uSortedIndexSlot: uniform(0),
       uDensityDrop: uniform(0),
+      uDensityAlphaExp: uniform(1),
       // Refraction split: mode 0 outside the split; the shared glass depth texture.
       ...glassPartitionNodes(),
       uNearCull: uniform(0.1),
@@ -170,6 +172,7 @@ export class PointTSLMaterial
       radiusScale: proxyIUniform(this.tslNodes.radiusScale),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
+      uDensityAlphaExp: proxyIUniform(this.tslNodes.uDensityAlphaExp),
       uGlassPartition: proxyIUniform(this.tslNodes.uGlassPartition),
       uGlassDepth: proxyIUniform(this.tslNodes.uGlassDepth),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),

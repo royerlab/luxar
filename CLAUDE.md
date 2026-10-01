@@ -887,7 +887,8 @@ luxar gsplat lod in.gsplats.zarr out.gsplats.zarr --recipe levels --coarsen-dims
 # LOD switch thresholds (ANY recipe with a kind=lod group — overview,
 # levels, adaptive) are auto-derived by SCREEN-OCCUPANCY HALVING (count-
 # independent), stamped as selector="screen-area": each coverage_fraction is a
-# literal screen-area fraction (projected bbox rect area / viewport area). For
+# literal screen-area fraction (projected area of the box's inscribed
+# ellipsoid, sized at its near depth, over the viewport area). For
 # `levels` (a WHOLE-OBJECT ladder) the finest level shows while the object
 # occupies at least HALF THE SCREEN (finest anchor 0.5) and each halving of
 # occupied area steps one level coarser (NDC-fraction metric → identical on

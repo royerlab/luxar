@@ -3,18 +3,18 @@
  * mechanisms, kept together (and THREE/camera-free) so both are unit-testable
  * over plain numbers, like `lod-freshness.ts` / `lod-display-gate.ts`.
  *
- * The two mechanisms act on independent axes and compose by multiplying their
- * opacity factors:
+ * The two mechanisms act on independent axes (a change BETWEEN two levels; the
+ * stream WITHIN one level) and compose by multiplying their opacity factors:
  *
- * 1. **Coverage cross-fade (distance axis)** — {@link coverageBlendPlan}. As the
- *    camera zooms across a `kind=lod` boundary, blend the two adjacent levels'
- *    opacity instead of a hard `object.visible` swap. Driven ENTIRELY by the
- *    group's selector metric (projected size); which level to show is a
- *    function of distance (`coverage_fraction`). Brightness across the switch is
- *    preserved by the levels' build-time mass conservation (both integrate to
- *    the same DC).
+ * 1. **Level dissolve (between levels)** — {@link smoothstep}. When a
+ *    `kind=lod` group changes its displayed level, the registry dissolves the
+ *    outgoing level into the incoming one over `config.lod.fadeMs` instead of
+ *    a hard `object.visible` swap: the incoming at `smoothstep(elapsed/fadeMs)`,
+ *    the outgoing at the complement (see `LODGroupRegistry.levelFade`).
+ *    Brightness across the switch is preserved by the levels' build-time mass
+ *    conservation (both integrate to the same DC).
  *
- * 2. **Streaming brightness compensation (time axis)** — {@link
+ * 2. **Streaming brightness compensation (within a level)** — {@link
  *    energyCompensation}. As a single level's additive ladder streams in over
  *    time, its rendered energy climbs from `e(k)·E` toward `E` (additive/luminous
  *    compositing sums energy; the ladder commits highest-energy splats first),
@@ -47,88 +47,6 @@ export function smoothstep(edge0: number, edge1: number, x: number): number {
   if (edge1 <= edge0) return x < edge0 ? 0 : 1;
   const t = clamp01((x - edge0) / (edge1 - edge0));
   return t * t * (3 - 2 * t);
-}
-
-/**
- * A coverage-band cross-fade plan: the two adjacent levels bracketing the LOD
- * boundary the metric is currently crossing, and the FINER level's weight.
- * `lo` = coarser child index, `hi` = finer child index (== `lo + 1`),
- * `hiWeight` ∈ [0, 1] = the finer level's opacity (the coarser gets
- * `1 − hiWeight`). `hiWeight` = 0.5 exactly at the boundary.
- */
-export interface CoverageBlend {
-  lo: number;
-  hi: number;
-  hiWeight: number;
-}
-
-/**
- * Decide the coverage-band cross-fade for a scalar `metric` — whatever the
- * group's `selector` names, i.e. the viewport AREA fraction under
- * `'screen-area'` (what derived ladders stamp) or the normalised diagonal
- * (projected bbox diagonal ÷ `FILL_FACTOR·fittedAxisPx`, where `fittedAxisPx`
- * is `min(viewport.width, viewport.height)`) under the legacy `'coverage'` —
- * against a level's ascending per-child `coverage_fraction` thresholds
- * (coarsest 0 → finest 0.5 whole-object / 1.0 partition-bound under
- * `'screen-area'`; finest 1 for a legacy whole-object ladder, up to
- * `SCREEN_FILL_DIAGONAL_RATIO / FILL_FACTOR` for an explicitly authored or
- * partition-bound one). Everything here is proportional to the inter-threshold
- * gaps, so the band scales with the ladder either way.
- *
- * Each inter-level boundary is the activation threshold of the finer level
- * (`thresholds[i+1]`). The band half-width is PROPORTIONAL to the local
- * inter-level spacing — `Δ_i = fraction · min(gapBelow, gapAbove)` — because the
- * `coverage_fraction` thresholds are geometrically spaced either way (a derived
- * `'screen-area'` ladder halves EXACTLY per coarser level, whatever the
- * compression factor K; a derived legacy `'coverage'` one steps by `√K`, from
- * the retired `sqrt(N_i/N_finest)` derivation), so a constant band would be a
- * clean dissolve at the finest step yet many times wider than the whole step at
- * the coarse end (perpetually-blended coarse levels, overlapping bands).
- * Scaling to the smaller adjacent gap makes the dissolve feel the same fraction
- * of a step at every level and guarantees no two bands overlap (for
- * `fraction ≤ 0.5`).
- *
- * When the metric is within `±Δ_i` of the NEAREST such boundary, the two levels
- * straddling it cross-fade: the finer level's weight is
- * `smoothstep(boundary − Δ_i, boundary + Δ_i, metric)`, so it rises 0→1 across
- * the band and is 0.5 at the boundary. The blend is continuous through the hard
- * selection flip (which happens at the boundary): the same `(lo, hi)` pair and a
- * continuous `hiWeight` govern both sides.
- *
- * Returns `null` when no boundary's band contains the metric (a single level
- * suffices), when `fraction <= 0` (cross-fade disabled → hard step), or when
- * there are fewer than two levels. Direction-agnostic — zoom-in and zoom-out
- * cross the same band symmetrically.
- */
-export function coverageBlendPlan(
-  thresholds: readonly number[],
-  metric: number,
-  fraction: number
-): CoverageBlend | null {
-  if (fraction <= 0 || thresholds.length < 2) return null;
-  const n = thresholds.length;
-  // Nearest inter-level boundary whose (proportional) band contains the metric.
-  let best = -1;
-  let bestDist = Infinity;
-  let bestHalf = 0;
-  for (let i = 0; i + 1 < n; i++) {
-    const boundary = thresholds[i + 1];
-    const gapBelow = boundary - thresholds[i];
-    // Finest boundary has no coarser-side neighbour above it → reuse gapBelow.
-    const gapAbove = i + 2 < n ? thresholds[i + 2] - boundary : gapBelow;
-    const half = fraction * Math.min(gapBelow, gapAbove);
-    if (half <= 0) continue; // degenerate: coincident thresholds
-    const dist = Math.abs(metric - boundary);
-    if (dist < half && dist < bestDist) {
-      bestDist = dist;
-      best = i;
-      bestHalf = half;
-    }
-  }
-  if (best < 0) return null;
-  const boundary = thresholds[best + 1];
-  const hiWeight = smoothstep(boundary - bestHalf, boundary + bestHalf, metric);
-  return { lo: best, hi: best + 1, hiWeight };
 }
 
 /**

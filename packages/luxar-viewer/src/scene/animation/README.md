@@ -88,6 +88,15 @@ per-frame callback, or call `requestRender` / `startAnimation` from its event.
 `?debug&renderAudit` verifies it (see `render-audit.ts` and the
 `render-on-change-audit.spec.ts` E2E).
 
+The converse holds too: a geometry commit to a node that is not drawn (it or
+an ancestor hidden — an LOD level the registry keeps off screen, a hidden
+layer) calls `requestTick()`, not `requestRender` (`SceneLoader.setRequestRender`
+and `geometry-committed` carry `drawn`). The loop still wakes, so the LOD
+registry sees the commit; if it then shows that level, its visibility flip is
+the redraw. During LOD timelapse playback the eager coarse level re-commits
+every timepoint under the held fine level, and redrawing for it cost a second,
+unchanged render per tick.
+
 ## Invariants
 
 - **One render loop, many callbacks.** `AnimationController` is a

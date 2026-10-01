@@ -178,6 +178,37 @@ describe('runAtomicCommit — happy path', () => {
   });
 });
 
+describe('runAtomicCommit — whether the pass changed the drawn frame', () => {
+  it('tells markPickingDirty the frame is unchanged when every commit was undrawn', () => {
+    // A timelapse tick that only re-commits the hidden eager level of an LOD
+    // group: the pick cache still goes stale, but nothing on screen moved.
+    const ctx = makeCtx();
+    ctx.spies.updatePointsGeometry.mockReturnValue(false);
+    ctx.spies.commitGSplatsGeometry.mockReturnValue(false);
+    runAtomicCommit(makePointsStaged(1), [], makeGSplatsStaged(1), [], ctx);
+    expect(ctx.spies.markPickingDirty).toHaveBeenCalledTimes(1);
+    expect(ctx.spies.markPickingDirty).toHaveBeenCalledWith(false);
+  });
+
+  it('reports a drawn frame when any one commit was drawn', () => {
+    const ctx = makeCtx();
+    ctx.spies.updatePointsGeometry.mockReturnValue(false);
+    ctx.spies.commitGSplatsGeometry.mockReturnValue(true);
+    runAtomicCommit(makePointsStaged(1), [], makeGSplatsStaged(1), [], ctx);
+    expect(ctx.spies.markPickingDirty).toHaveBeenCalledWith(true);
+  });
+
+  it('counts a commit that threw as drawn (it may have half-written a visible node)', () => {
+    const ctx = makeCtx();
+    ctx.spies.updatePointsGeometry.mockImplementation(() => {
+      throw new Error('upload failed');
+    });
+    ctx.spies.commitGSplatsGeometry.mockReturnValue(false);
+    expect(() => runAtomicCommit(makePointsStaged(1), [], makeGSplatsStaged(1), [], ctx)).toThrow();
+    expect(ctx.spies.markPickingDirty).toHaveBeenCalledWith(true);
+  });
+});
+
 describe('runAtomicCommit — gpuBufferPool null', () => {
   it('skips beginCommit but still runs commits and markPickingDirty', () => {
     const ctx = makeCtx({ gpuBufferPool: null });

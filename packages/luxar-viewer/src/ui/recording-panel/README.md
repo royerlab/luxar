@@ -322,12 +322,13 @@ skip the off-screen gate outright, but a capture visits the whole scene:
 peak residency would become the entire dataset, which is exactly what the
 resident-byte budget exists to prevent. Waiting costs time, not memory.
 
+The drain also waits out the registry's level dissolve: it follows WALL
+time, which an offline capture does not, so `isCaptureQuiescent` reports
+false while one is in flight, and the export shows a clean cut instead of a
+dissolve whose progress depended on how fast each frame rendered.
+
 Also deliberately left alone:
 
-- **The distance-driven coverage cross-fade.** Its weight is a function
-  of projected bbox area, not wall-clock, so across a turntable it
-  already spreads smoothly over consecutive exported frames — draining it
-  would turn a dissolve into a hard cut.
 - **The realtime WebM route** (above): `MediaRecorder` records the canvas
   as it is painted, so there is no per-frame point at which the loop
   could wait.

@@ -53,18 +53,18 @@ layout( std140 ) uniform object {
 	float nodeUniform12;
 	float nodeUniform13;
 	float nodeUniform14;
-	mat3 nodeUniform16;
-	uint nodeUniform17;
-	mat3 nodeUniform18;
-	uint nodeUniform19;
-	mat3 nodeUniform20;
-	uint nodeUniform21;
-	mat3 nodeUniform22;
-	uint nodeUniform23;
-	mat4 nodeUniform25;
-	float nodeUniform27;
-	vec2 nodeUniform28;
-	float nodeUniform29;
+	float nodeUniform15;
+	mat3 nodeUniform17;
+	uint nodeUniform18;
+	mat3 nodeUniform19;
+	uint nodeUniform20;
+	mat3 nodeUniform21;
+	uint nodeUniform22;
+	mat3 nodeUniform23;
+	uint nodeUniform24;
+	mat4 nodeUniform26;
+	float nodeUniform28;
+	vec2 nodeUniform29;
 	float nodeUniform30;
 	float nodeUniform31;
 	float nodeUniform32;
@@ -75,6 +75,7 @@ layout( std140 ) uniform object {
 	float nodeUniform37;
 	float nodeUniform38;
 	float nodeUniform39;
+	float nodeUniform40;
 };
 uniform sampler2D nodeUniform1;
 
@@ -100,8 +101,11 @@ float nodeVar9;
 float nodeVar10;
 float nodeVar11;
 vec3 nodeVar13;
+float nodeVar14;
+float nodeVar15;
+vec3 nodeVar16;
 vec4 Output;
-vec4 nodeVar14;
+vec4 nodeVar17;
 
 // codes
 
@@ -179,12 +183,24 @@ void main() {
 
 	}
 
-	DiffuseColor = vec4( ( ( pow( nodeVar13, vec3( nodeUniform11 ) ) * vec3( nodeVar11 ) ) * vec3( nodeUniform12 ) ), clamp( ( nodeVar11 * nodeUniform12 ), 0.0, 1.0 ) );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform13 );
-	nodeVar14 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar14;
+	nodeVar14 = clamp( ( nodeVar11 * nodeUniform11 ), 0.0, 1.0 );
+	nodeVar15 = nodeVar14;
+	nodeVar16 = ( ( pow( nodeVar13, vec3( nodeUniform12 ) ) * vec3( nodeVar11 ) ) * vec3( nodeUniform11 ) );
+
+	if ( ( nodeUniform13 > 1.0 ) ) {
+
+		nodeVar15 = ( 1.0 - pow( max( ( 1.0 - nodeVar14 ), 0.0 ), nodeUniform13 ) );
+		nodeVar16 = ( nodeVar16 * vec3( ( nodeVar15 / max( nodeVar14, 0.000001 ) ) ) );
+
+
+	}
+
+	DiffuseColor = vec4( nodeVar16, nodeVar15 );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform14 );
+	nodeVar17 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar17;
 
 	// result
-	fragColor = nodeVar14;
+	fragColor = nodeVar17;
 
 }

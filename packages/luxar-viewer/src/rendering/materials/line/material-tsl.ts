@@ -61,6 +61,7 @@ interface LineMaterialTSLNodeTable {
   uIsOrtho: TSLNode;
   uSortedIndexSlot: TSLNode;
   uDensityDrop: TSLNode;
+  uDensityAlphaExp: TSLNode;
   uGlassPartition: TSLNode;
   uGlassDepth: TSLNode;
   uNearCull: TSLNode;
@@ -119,6 +120,7 @@ export class LineTSLMaterial
       uIsOrtho: uniform(0),
       uSortedIndexSlot: uniform(0),
       uDensityDrop: uniform(0),
+      uDensityAlphaExp: uniform(1),
       // Refraction split: mode 0 outside the split; the shared glass depth texture.
       ...glassPartitionNodes(),
       // 0.1 matches the point/gsplat ctor default (pre-first-broadcast only).
@@ -150,6 +152,7 @@ export class LineTSLMaterial
       uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
+      uDensityAlphaExp: proxyIUniform(this.tslNodes.uDensityAlphaExp),
       uGlassPartition: proxyIUniform(this.tslNodes.uGlassPartition),
       uGlassDepth: proxyIUniform(this.tslNodes.uGlassDepth),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),

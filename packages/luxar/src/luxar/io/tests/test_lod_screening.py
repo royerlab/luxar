@@ -1664,3 +1664,270 @@ def test_an_overview_cap_binds_on_its_own_partition_child(tmp_path: Path) -> Non
     assert group.rederived_thresholds[-1] == PARTITION_FINEST_AREA
     # The cap's fine branch is sized by the SUM over its parts, not one of them.
     assert group.element_counts == [10, 80]
+
+
+# --------------------------------------------------------------------------- #
+# The screen-area metric, pinned to the VIEWER's own numbers. Every expected
+# value below is what `lod-selector-math.ts::projectBoxAreaFraction` returns for
+# the same box and a THREE camera placed with `position.set` + `lookAt` (cases
+# ported from `lod-group-registry.test.ts`), so a drift between the two sides
+# fails here rather than surfacing as a plausible wrong verdict.
+# --------------------------------------------------------------------------- #
+
+
+def _look_at_proj_view(
+    fov: float,
+    aspect: float,
+    eye: tuple[float, float, float],
+    *,
+    far: float = 1000.0,
+) -> np.ndarray:
+    """``P·V`` of a THREE ``PerspectiveCamera`` at ``eye`` after ``lookAt(0)``.
+
+    THREE's camera ``lookAt`` builds ``z = normalize(eye − target)``,
+    ``x = normalize(up × z)``, ``y = z × x`` with ``up = +Y``; the view matrix
+    is the inverse of that rigid pose. The near plane is THREE's ``0.1``.
+    """
+    eye_v = np.asarray(eye, dtype=np.float64)
+    z_axis = eye_v / np.linalg.norm(eye_v)
+    x_axis = np.cross((0.0, 1.0, 0.0), z_axis)
+    x_axis /= np.linalg.norm(x_axis)
+    y_axis = np.cross(z_axis, x_axis)
+    view = np.eye(4)
+    view[0, :3], view[1, :3], view[2, :3] = x_axis, y_axis, z_axis
+    view[:3, 3] = -view[:3, :3] @ eye_v
+    return perspective_matrix(fov, aspect, 0.1, far) @ view
+
+
+def _legacy_corner_rect_area(box: Box3, proj_view: np.ndarray) -> float:
+    """The pre-ellipsoid metric: the clipped product of the corner rect's half-spans."""
+    rect = project_box_ndc_rect(box, proj_view)
+    assert rect is not None
+    half_w = max(0.0, min(rect.max_x, 1.0) - max(rect.min_x, -1.0)) * 0.5
+    half_h = max(0.0, min(rect.max_y, 1.0) - max(rect.min_y, -1.0)) * 0.5
+    return half_w * half_h
+
+
+def _rotation_y(degrees: float) -> np.ndarray:
+    """A row-major rotation about ``+Y``."""
+    c, s = math.cos(math.radians(degrees)), math.sin(math.radians(degrees))
+    return np.array(
+        [[c, 0.0, s, 0.0], [0.0, 1.0, 0.0, 0.0], [-s, 0.0, c, 0.0], [0, 0, 0, 1.0]]
+    )
+
+
+def test_the_look_at_helper_reproduces_the_viewer_camera_matrix() -> None:
+    """The fixture matrix itself, element for element against THREE's.
+
+    Camera at 30 degrees on a radius-30 circle, FOV 50, aspect 1.5 — the tilted
+    card's middle pose — so every pinned value below rests on a camera the
+    viewer would actually build.
+    """
+    angle = math.radians(30.0)
+    proj_view = _look_at_proj_view(
+        50.0, 1.5, (30.0 * math.sin(angle), 0.0, 30.0 * math.cos(angle))
+    )
+    three_column_major = [
+        1.2381316478352091,
+        0.0,
+        -0.500100010001,
+        -0.49999999999999994,
+        0.0,
+        2.1445069205095586,
+        0.0,
+        0.0,
+        -0.7148356401698528,
+        0.0,
+        -0.8661986261874359,
+        -0.8660254037844387,
+        0.0,
+        0.0,
+        29.805980598059808,
+        30.0,
+    ]
+    np.testing.assert_allclose(
+        proj_view, mat4_from_column_major(three_column_major), rtol=0, atol=1e-12
+    )
+
+
+@pytest.mark.parametrize(
+    ("half_depth", "centre", "expected"),
+    [
+        (0.25, (0.0, 0.0), 0.08345847891926),
+        (0.25, (0.8, -0.5), 0.08355526688611063),
+        (1.0, (0.0, 0.0), 0.11037383837072136),
+        (1.0, (0.8, -0.5), 0.11245826677297673),
+        (2.0, (0.0, 0.0), 0.17245912245425213),
+        (2.0, (0.8, -0.5), 0.1862882298786539),
+    ],
+)
+def test_a_face_on_thick_box_reads_the_viewer_value(
+    half_depth: float, centre: tuple[float, float], expected: float
+) -> None:
+    """Face-on at distance 6: on the view axis the metric IS the near-face rect.
+
+    Off the axis the sized ellipse and the corner rect drift apart (the viewer
+    allows 2%-10% there), which is exactly where a rect mirror goes wrong.
+    """
+    cx, cy = centre
+    box = Box3((cx - 1, cy - 0.6, -half_depth), (cx + 1, cy + 0.6, half_depth))
+    proj_view = _look_at_proj_view(50.0, 1.0, (0.0, 0.0, 6.0))
+    assert project_box_area_fraction(box, proj_view) == pytest.approx(
+        expected, rel=1e-9
+    )
+    if centre == (0.0, 0.0):
+        assert expected == pytest.approx(
+            _legacy_corner_rect_area(box, proj_view), rel=1e-9
+        )
+
+
+def test_an_orbit_of_a_cube_reads_one_value_from_every_direction() -> None:
+    """A cube's inscribed ellipsoid is a sphere, so orbiting it moves nothing.
+
+    Radius 10, three elevations x 24 azimuths. The corner rect of the same cube
+    swings by far more over the same orbit — the ladder flipping the ellipsoid
+    metric exists to stop.
+    """
+    cube = Box3((-1.0, -1.0, -1.0), (1.0, 1.0, 1.0))
+    values: List[float] = []
+    legacy: List[float] = []
+    for elevation in (0.0, math.pi / 5, math.atan(math.sqrt(0.5))):
+        for k in range(24):
+            azimuth = k / 24 * 2 * math.pi
+            proj_view = _look_at_proj_view(
+                50.0,
+                1.0,
+                (
+                    10 * math.cos(elevation) * math.sin(azimuth),
+                    10 * math.sin(elevation),
+                    10 * math.cos(elevation) * math.cos(azimuth),
+                ),
+            )
+            values.append(project_box_area_fraction(cube, proj_view))
+            legacy.append(_legacy_corner_rect_area(cube, proj_view))
+    for value in values:
+        assert value == pytest.approx(0.056776665828560, rel=1e-9)
+    assert (max(legacy) - min(legacy)) / max(legacy) > 0.1
+
+
+def test_the_zebrafish_endoderm_opening_view_reads_0_3147_and_picks_child_2() -> None:
+    """The hosted ``gsplats_4d_zebrafish_timelapse`` ``/endoderm`` opening frame.
+
+    A screen-area ladder ``[0, 0.125, 0.25, 0.5]`` whose box is ~0.4 times as
+    deep as it is wide, FOV 63 at 1000x700. The viewer reads 0.31470 and opens
+    on ``child_2``; the unsized ellipsoid read 0.237 and dropped to ``child_1``.
+    """
+    box = Box3(
+        (-389.16583251953125, -382.4560852050781, -154.47067260742188),
+        (375.7462463378906, 394.1980895996094, 154.47067260742188),
+    )
+    proj_view = _look_at_proj_view(
+        63.0, 1000.0 / 700.0, (0.0, 0.0, 1092.41), far=10_000.0
+    )
+    metric = project_box_area_fraction(box, proj_view)
+    assert metric == pytest.approx(0.31469620282386906, rel=1e-9)
+    assert pick_child_with_hysteresis([0.0, 0.125, 0.25, 0.5], 0, metric) == 2
+
+
+def test_a_tilting_flat_card_reads_the_viewer_values() -> None:
+    """A flat 20x20 card orbited 0/30/60 degrees at radius 30, FOV 50, aspect 1.5.
+
+    A flat box has no view-axis chord, so the ellipse is not resized; what it
+    reads is the inscribed ELLIPSE's area, not the corner rect's — so it must
+    not match a rect mirror once the card tilts.
+    """
+    card = Box3((-10.0, -10.0, 0.0), (10.0, 10.0, 0.0))
+    expected = {
+        0: 0.34065999497136223,
+        30: 0.3077538197645617,
+        60: 0.19407696022634585,
+    }
+    for degrees, value in expected.items():
+        angle = math.radians(degrees)
+        proj_view = _look_at_proj_view(
+            50.0, 1.5, (30 * math.sin(angle), 0.0, 30 * math.cos(angle))
+        )
+        assert project_box_area_fraction(card, proj_view) == pytest.approx(
+            value, rel=1e-9
+        ), degrees
+
+
+def test_a_scaled_group_measures_its_local_box_like_the_same_world_box() -> None:
+    """Anisotropic group scale may move between the bounds and the transform.
+
+    A ``±50``-deep local box under ``scale(1, 1, 4)`` is the ``±200``-deep world
+    box; both must read the viewer's value from every orbit angle. The view-axis
+    chord is taken along the cross product of the clip x/y rows, which a scale
+    does not tilt the way it tilts the plain ``w`` gradient.
+    """
+    local = Box3((-256.0, -256.0, -50.0), (256.0, 256.0, 50.0))
+    world = Box3((-256.0, -256.0, -200.0), (256.0, 256.0, 200.0))
+    scale = np.diag([1.0, 1.0, 4.0, 1.0])
+    expected = {
+        0: 0.20930150091040492,
+        40: 0.19816087121110298,
+        60: 0.18809117731965316,
+    }
+    for degrees, value in expected.items():
+        angle = math.radians(degrees)
+        proj_view = _look_at_proj_view(
+            50.0,
+            1.0,
+            (1400 * math.sin(angle), 0.0, 1400 * math.cos(angle)),
+            far=3000.0,
+        )
+        assert project_box_area_fraction(local, proj_view @ scale) == pytest.approx(
+            value, rel=1e-9
+        ), degrees
+        assert project_box_area_fraction(world, proj_view) == pytest.approx(
+            value, rel=1e-9
+        ), degrees
+
+
+def test_a_rotated_group_is_measured_from_its_own_corners() -> None:
+    """The metric projects the LOCAL box through ``P·V·matrixWorld``.
+
+    A ``512x512x100`` slab turned 30 degrees about ``Y``, seen face-on from
+    ``+Z``: the viewer reads 0.14740. The rotated slab's world AABB is bigger
+    than the slab, so projecting it instead reads more.
+    """
+    local = Box3((-256.0, -256.0, -50.0), (256.0, 256.0, 50.0))
+    rotation = _rotation_y(30.0)
+    proj_view = _look_at_proj_view(50.0, 1.0, (0.0, 0.0, 1400.0), far=3000.0)
+    assert project_box_area_fraction(local, proj_view @ rotation) == pytest.approx(
+        0.14740075475593595, rel=1e-9
+    )
+    world_aabb = transform_box(local, rotation)
+    assert project_box_area_fraction(world_aabb, proj_view) > 0.16
+
+
+def test_the_screen_measures_a_rotated_group_like_the_unrotated_one(
+    tmp_path: Path,
+) -> None:
+    """End to end: a cube group turned about its own centre reads the same metric.
+
+    The cube's inscribed ellipsoid is a sphere, so the viewer's metric of the
+    group does not depend on its rotation. The screen must therefore report the
+    same ``area_metric`` at every aspect, which it can only do by projecting the
+    group's LOCAL box through its world matrix, as the viewer does, rather than
+    the rotation-inflated world AABB.
+    """
+    child = {
+        "type": "points",
+        "position_bounds": {"min": [-1.0, -1.0, -1.0], "max": [1.0, 1.0, 1.0]},
+    }
+    bounds = {
+        "c0": {**child, "n_points": 10, "child_index": 0, "coverage_fraction": 0.0},
+        "c1": {**child, "n_points": 100, "child_index": 1, "coverage_fraction": 1.0},
+    }
+    straight = _handmade_store(tmp_path / "straight.luxar.zarr", group_bounds=bounds)
+    turned = _handmade_store(tmp_path / "turned.luxar.zarr", group_bounds=bounds)
+    root = open_group(turned, mode="r+")
+    root["lod"].attrs["transform"] = _rotation_y(37.0).T.ravel().tolist()
+    consolidate(root)
+
+    expected = screen_lod_store(straight).groups[0].measurements
+    measured = screen_lod_store(turned).groups[0].measurements
+    assert [m.label for m in measured] == [m.label for m in expected]
+    for got, want in zip(measured, expected, strict=True):
+        assert got.area_metric == pytest.approx(want.area_metric, rel=1e-9), got.label

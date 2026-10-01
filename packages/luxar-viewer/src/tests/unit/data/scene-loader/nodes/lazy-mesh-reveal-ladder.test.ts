@@ -10,7 +10,7 @@
  * mesh branch of `attachLazyChild` passes a `hasMoreLODs` probe (reading the
  * real `MeshProgressiveLoader.hasMoreLODs` getter) as its final argument, and
  * `LODGroupRegistry.evaluateEntry` re-fires `ensureLoaded` (settle-gated, see
- * `FINE_RELOAD_SETTLE_TICKS`) for as long as that probe reports `true`. Drop
+ * `FINE_RELOAD_SETTLE_MS`) for as long as that probe reports `true`. Drop
  * that probe (pass `undefined` instead, the pre-#1499 shape) and the level
  * still gets its FIRST commit — the initial not-ready kick that promotes the
  * level from cheap-attached to displayed is unconditional — but nothing ever
@@ -241,19 +241,23 @@ function makeStubLoc(): never {
  * coordinates straight to NDC, so a [0,0,0]-[10,10,10] box with thresholds
  * [0, 0.5] resolves the fine child as `desired` from the very first frame — a
  * proven-working pattern, not something re-derived here. `getViewVersion` is
- * the fixed `VIEW_VERSION` constant so the settle tracker genuinely counts
- * quiet frames (`FINE_RELOAD_SETTLE_TICKS` ~ 8) rather than being permanently
- * inert.
+ * the fixed `VIEW_VERSION` constant so the settle tracker genuinely times
+ * quiet milliseconds (`FINE_RELOAD_SETTLE_MS` = 130) rather than being
+ * permanently inert. Its clock advances one 60 Hz frame per read — the
+ * registry reads it once per `evaluatePerFrame` — so the frame loop below
+ * spans that debounce in test time.
  */
 function makeMeshLadderRegistry(): LODGroupRegistry {
   const camera = new THREE.Camera();
   camera.matrixWorldInverse.identity();
   camera.projectionMatrix.identity();
+  let clock = 0;
   return new LODGroupRegistry({
     getCamera: () => camera,
     getViewportSize: () => ({ width: 800, height: 600 }),
     getDisplayDims: () => [0, 1, 2],
     getViewVersion: () => VIEW_VERSION,
+    now: () => (clock += 1000 / 60),
   });
 }
 

@@ -41,7 +41,7 @@ import { resolveFactories, type AppFactories } from '../factories';
 import type { LuxarAppOptions } from '../options';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import { wireDensityGuard } from './density-guard-wiring';
-import { buildLoadActivityPredicate } from './load-activity';
+import { buildEnvironmentSettledPredicate, buildLoadActivityPredicate } from './load-activity';
 import { wireSceneEnvironment } from './environment-wiring';
 import { getInputProfile } from '../../../utils/input-capabilities';
 import { eventBus } from '../../../utils/cross-layer/event-bus';
@@ -336,6 +336,12 @@ export async function runInitPipeline(
       // a hard swap (blendable modes only: additive/luminous/volumetric).
       // Read once at wiring time.
       getCrossFadeEnabled: () => lodCrossFadeEnabled,
+      // Playback period of the fastest playing dimension, or null: lazy LOD
+      // levels reload every timepoint while playing, capped at the finest one
+      // whose measured load fits the period. The input handler (and its
+      // animation manager) is built later in this function, hence the lazy read.
+      getPlaybackPeriodMs: () =>
+        partial.inputHandler?.getAnimationManager()?.getPlaybackPeriodMs() ?? null,
       // Streaming brightness compensation (ON by default; ?noLodEnergy disables):
       // scale a streaming additive/luminous/volumetric leaf's opacity by 1/e(k) so its
       // partial ladder prefix renders at full-level brightness (no brightening
@@ -364,14 +370,19 @@ export async function runInitPipeline(
   // the stale frame until the next user input. startAnimation is
   // idempotent (early-out while animating + idle-timer re-arm), so
   // per-node calls inside an atomic sweep are harmless.
-  SceneLoaderManager.getInstance().setRequestRender(() =>
-    animationController.requestRender('geometry')
-  );
+  // A commit to a node that is not drawn (an LOD level the registry keeps
+  // hidden — during playback the eager coarse level re-commits every timepoint
+  // under a held fine level — or a hidden layer) cannot change the frame: it
+  // only keeps the loop ticking, so the registry sees it and, if it now shows
+  // that level, its visibility flip requests the redraw.
+  const onCommit = (drawn: boolean | undefined): void => {
+    if (drawn === false) animationController.requestTick();
+    else animationController.requestRender('geometry');
+  };
+  SceneLoaderManager.getInstance().setRequestRender(onCommit);
   // Belt and braces for the same moment from the node factory (pick-buffer
   // invalidation): any commit path that reaches it redraws too.
-  ports.events.add(
-    eventBus.on('geometry-committed', () => animationController.requestRender('geometry'))
-  );
+  ports.events.add(eventBus.on('geometry-committed', ({ drawn }) => onCommit(drawn)));
   SceneLoaderManager.getInstance().setKTX2TextureDecoder(
     createKTX2TextureDecoder(sceneManager.renderer)
   );
@@ -505,21 +516,22 @@ export async function runInitPipeline(
   // learning for those samples. Same predicate the perf probes read as
   // `getPerf().isSettled`, inverted.
   // TRUE while load activity is in flight (the adaptive-DPR manager's sense).
-  const isLoadActive = buildLoadActivityPredicate({
+  const loadActivitySources = {
     getDefaultLoader: () => getSceneLoader('default'),
     isAnyLoadPassInProgress: () => SceneLoaderManager.getInstance().isAnyLoadPassInProgress(),
-  });
+  };
+  const isLoadActive = buildLoadActivityPredicate(loadActivitySources);
   adaptiveDPRManager.setLoadActivityPredicate(isLoadActive);
 
   // The scene environment's live behaviour (re-capture on commit / slice /
-  // appearance change once SETTLED — the same predicate, inverted) and the
-  // `?bakeEnv` one-shot.
+  // appearance change once SETTLED — the same predicate, inverted, that also
+  // waits out a LOD level dissolve) and the `?bakeEnv` one-shot.
   wireSceneEnvironment({
     sceneManager,
     animationController,
     events: ports.events,
     options: ports.options,
-    isSettled: () => !isLoadActive(),
+    isSettled: buildEnvironmentSettledPredicate(loadActivitySources, isLoadActive),
   });
 
   // Dataset/layer changes invalidate the learned DPR bounds (the floor

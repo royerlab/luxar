@@ -104,7 +104,7 @@ import type { SceneLoader } from '../../data/scene-loader';
 import { SceneLoaderManager, getSceneLoader } from '../../data/scene-loader-manager';
 import { LODGroupRegistry } from '../../scene/lod-group-registry';
 import { sceneDimsManager, snapDiscreteValue } from '../../scene/scene-dims-manager';
-import type { FadeableMaterial } from '../../scene/lod-fade';
+import { rebaseLodFade, type FadeableMaterial } from '../../scene/lod-fade';
 import { materialManager } from '../../rendering/material-manager';
 import { resolveMaterialBackend } from '../../rendering/material-manager/factories';
 import {
@@ -709,15 +709,11 @@ export class LuxarLayer {
       }
 
       const next = base * this.exposure;
-      // An in-flight LOD fade recomputes `_lodFadeBase x fadeProduct` every
-      // frame, so writing the uniform here would be overwritten on the next
-      // fade frame. Rebase the fade's snapshot instead — the same contract
-      // `ui/layers/layer-apply.ts` follows for the Layers panel.
-      if (mesh.userData._lodFadeBase != null) {
-        mesh.userData._lodFadeBase = next;
-      } else {
-        mat.updateOpacity(next);
-      }
+      // A live LOD fade holds the uniform at `_lodFadeBase x fadeProduct`, so
+      // writing `next` here would be overwritten (or, on a density-thinned
+      // node, drop its compensation). Rebase the fade instead — the same
+      // contract `ui/layers/layer-apply.ts` follows for the Layers panel.
+      if (!rebaseLodFade(mesh, mat, next)) mat.updateOpacity(next);
       this.appliedExposure.set(mat, this.exposure);
     });
   }

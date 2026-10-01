@@ -172,6 +172,8 @@ function attachLazyChild(
         );
       } finally {
         entryChild.loading = false;
+        // Lets the registry time the load to now, not to its next frame.
+        entryChild.onLoadSettled?.();
       }
     })();
   };
