@@ -104,6 +104,36 @@ def test_colors_none_leaves_unset():
     assert colors is None or np.asarray(colors).shape[0] == 4
 
 
+@pytest.mark.parametrize(
+    ("control", "field"),
+    [
+        ({"lloyd_iterations": 0}, "centers"),
+        ({"candidate_bins_k": 1}, "centers"),
+        ({"color_weight": 10.0}, "centers"),
+        ({"coverage_inflation": 1.0}, "cholesky_factors"),
+    ],
+)
+def test_gaussian_reduction_controls_change_coarse_output(control, field):
+    rng = np.random.default_rng(13)
+    positions = rng.normal(size=(120, 3)).astype(np.float32)
+    colors = rng.uniform(size=(120, 3)).astype(np.float32)
+    lifted = lift_points_to_gsplats(positions, 0.1, colors)
+    options = dict(
+        compression_factor=4,
+        levels=1,
+        method="kmeans_lloyd",
+        seed=3,
+        device="cpu",
+        quality_stamps=False,
+    )
+    baseline = coarse_substitutive_levels(lifted, **options)[0]
+    tuned = coarse_substitutive_levels(lifted, **options, **control)[0]
+    before = np.asarray(getattr(baseline, field))
+    after = np.asarray(getattr(tuned, field))
+    assert before.shape == after.shape
+    assert not np.allclose(before, after)
+
+
 def test_radius_scale_applied():
     # radius_scale mirrors the shader dtype normalisation.
     d_unscaled = lift_points_to_gsplats(np.zeros((1, 3), np.float32), 255.0, None)

@@ -282,6 +282,20 @@ def _build(tmp_path, *, n=6000, levels=3, radius_scale=1.0, **kw):
 
 
 class TestAddPointsSubstitutiveLod:
+    @pytest.mark.parametrize(
+        ("control", "message"),
+        [
+            ({"coverage_inflation": 0.5}, "coverage_inflation must be >= 1"),
+            ({"color_weight": -0.1}, "color_weight must be finite and >= 0"),
+            ({"color_weight": np.nan}, "color_weight must be finite and >= 0"),
+        ],
+    )
+    def test_invalid_gaussian_controls_reach_reducer(
+        self, tmp_path, control: dict, message: str
+    ) -> None:
+        with pytest.raises(ValueError, match=message):
+            _build(tmp_path, n=24, levels=1, **control)
+
     def test_gaussian_controls_change_written_coarse_level(self, tmp_path) -> None:
         default, _ = _build(tmp_path / "default", n=96, levels=1)
         tuned, _ = _build(

@@ -221,6 +221,11 @@ method="auto"`; dict keys `compression_factor` (`K`), `levels` (`n_lods`),
 `[0, MAX_COVERAGE_FRACTION]` = `[0, 4]`), `coarsen_dims`, `max_aspect`
 (per-splat anisotropy cap on the
 coarse levels, default 3.0; `None` disables)).
+The lifted-Gaussian path also accepts `lloyd_iterations` (default 5),
+`candidate_bins_k` (12), `coverage_inflation` (3.0), and `color_weight` (0.0),
+with the same behavior and validation as `make_substitutive_lod`. These controls
+are refused with `coarse="points"`, which uses a different reducer.
+
 `add_points_substitutive_lod_wrapper_impl` (`adders/points.py`) then:
 
 With the default `coarse="gsplats"`, it:
@@ -383,6 +388,10 @@ resolver — a thin wrapper over the shared
 `group.resolve_substitutive_axis(spec, "Lines")` (one body, shared with Points,
 so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
 (`adders/lines.py`) then:
+
+The lifted-Gaussian path accepts the same `lloyd_iterations`,
+`candidate_bins_k`, `coverage_inflation`, and `color_weight` controls as Points.
+They are refused with `coarse="lines"`.
 
 1. **Lifts** each segment to a string of isotropic **bead** Gaussians
    (`gsplats.lift.lift_lines_to_gsplats`): beads spaced `σ_perp = 2w/T` along the
