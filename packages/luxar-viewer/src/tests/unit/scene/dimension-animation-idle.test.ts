@@ -80,3 +80,41 @@ describe('DimensionAnimationManager: render-loop liveness (#2944 A1)', () => {
     expect(controller.hasPerFrameCallback('dimension-animation')).toBe(true);
   });
 });
+
+describe('DimensionAnimationManager: step reporting (#2944 review B)', () => {
+  it.fails('a tick that leaves the playhead where it was reports no step', () => {
+    // A single-timepoint discrete dim playing in loop mode: every tick wraps
+    // back onto the same value, which setDimensionValue ignores. The frame
+    // callback must not report a new slice for it.
+    const scene = new THREE.Scene();
+    scene.userData.sceneDimensions = {
+      dimensions: [
+        { name: 'x', unit: 'um', range: [0, 100], step: 1, display: true },
+        { name: 'y', unit: 'um', range: [0, 100], step: 1, display: true },
+        { name: 'z', unit: 'um', range: [0, 50], step: 1, display: true },
+        { name: 'time', unit: 's', range: [2, 2], step: 1, display: false, discrete: true },
+      ],
+    };
+    const dims = new SceneDimsManager();
+    dims.initFromScene(scene);
+    const controller = new AnimationController(
+      {} as unknown as ControlsManager,
+      {} as unknown as PostProcessingManager
+    );
+    vi.spyOn(controller, 'startAnimation').mockImplementation(() => {});
+    const register = vi.spyOn(controller, 'addPerFrameCallback');
+    let now = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => now);
+    try {
+      const manager = new DimensionAnimationManager(dims, controller);
+      manager.play(3, { targetFPS: 10, loopMode: 'loop' });
+      const onFrame = register.mock.calls[0][1];
+      now += 200; // past the 100 ms tick period: a tick is due
+      expect(dims.getDims()!.currentStep[3]).toBe(2);
+      expect(onFrame()).toBe(false);
+      expect(dims.getDims()!.currentStep[3]).toBe(2);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+});
