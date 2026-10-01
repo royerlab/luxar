@@ -2188,6 +2188,8 @@ def add_lines_substitutive_lod_wrapper_impl(
         candidate_bins_k=spec["candidate_bins_k"],
         coverage_inflation=spec["coverage_inflation"],
         color_weight=spec["color_weight"],
+        refine=str(spec["refine"]),
+        refine_iters=spec["refine_iters"],
     )
 
     # Degenerate -> flat Lines node. Covers BOTH no coarse levels AND an

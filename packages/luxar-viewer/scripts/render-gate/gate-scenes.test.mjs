@@ -7,6 +7,14 @@ const manifest = JSON.parse(readFileSync(new URL('./gate-scenes.json', import.me
 const generator = readFileSync(new URL('./generate_gate_scenes.py', import.meta.url), 'utf8');
 
 describe('render-gate scene manifest', () => {
+  it('runs every default exact case on all three renderer paths', () => {
+    expect(manifest.defaults.backends).toEqual(['webgl', 'webgpu', 'webgpu-gl']);
+    for (const scene of manifest.exact) {
+      expect(scene.backends ?? manifest.defaults.backends).toContain('webgpu-gl');
+    }
+    expect(manifest.perfDefaults.backends).toEqual(['webgl', 'webgpu']);
+  });
+
   it('references only generated stores with the correct archive extension', () => {
     const sceneLists = [
       ...generator.matchAll(/^(?:SCENE_NAMES|HEAVY_SCENE_NAMES) = \(\n([\s\S]*?)\n\)/gm),

@@ -47,13 +47,24 @@ view that differed, a heatmap PNG (black: identical; blue: drift; red: flip).
    `mixed` (all four geometry types, pickable), `env_splats` (splats reflected in a
    scene-captured environment), `partition_normal`, `glass` (`refract_data`),
    `lod_ladder` (one copy under a rotated parent) and `tiny_units_ortho`. Every
-   exact case runs per backend (WebGL, WebGPU), per device scale factor (1 and 2;
+   exact case runs per renderer path (WebGLRenderer, native WebGPURenderer,
+   WebGPURenderer forced onto WebGL2), per device scale factor (1 and 2;
    an odd 1277×719 viewport at 1.5 for two cases), per projection and per pose.
    The device scale factor comes from Playwright, not `?dpr=`, which is clamped to
    the native ratio. Exact cases load with `lodFinest` (deterministic finest
    content) unless the case sets `"liveLod": true`, as `lod_ladder` does, so LOD
    selection itself is compared; a case's own `urlParams` are appended to the
    defaults, not substituted for them.
+
+The forced WebGL2 arm is named `webgpu-gl` in reports and `--backends`. It opens
+`?renderer=webgpu&webgpuForceWebgl`; the gate checks the renderer class and
+active backend before measuring so a silent fallback to a different path fails.
+The arm runs with the default MSAA-off setting; enabling MSAA for a case instead
+exercises the single-pass glass fallback, not the production refraction split.
+It adds one capture path per case, device scale factor, projection and pose;
+expect roughly 1.5× exact-suite runtime when captures dominate (three arms
+instead of two).
+Performance cases retain their separate WebGL and native WebGPU defaults.
 
 ## Exactness
 

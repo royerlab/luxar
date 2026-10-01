@@ -173,10 +173,11 @@ export function capsuleLineWebGPUFactory(
     // === Line-texture fetch (6 texels/segment) ===
     const lineBase: TSLNode = int(aSortedIndex).mul(int(6)).toVar();
     const lineTexW: TSLNode = int(
-      resolveElementTextureWidth(
-        LINE_TEXTURE_LAYOUT,
-        (nodes.uLineTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
-      )
+      config.elementTextureWidth ??
+        resolveElementTextureWidth(
+          LINE_TEXTURE_LAYOUT,
+          (nodes.uLineTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
+        )
     ).toVar();
     const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
     const texelY: TSLNode = lineBase.div(lineTexW).toVar();

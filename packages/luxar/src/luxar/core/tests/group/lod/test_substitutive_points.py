@@ -161,6 +161,48 @@ class TestResolveSubstitutiveAxisPoints:
         with pytest.raises(TypeError, match="quality_stamps must be bool"):
             resolve_substitutive_axis_points({"quality_stamps": "no"})
 
+    def test_l2_refine_controls(self) -> None:
+        assert resolve_substitutive_axis_points(True)["refine"] == "none"
+        resolved = resolve_substitutive_axis_points({"refine": "l2", "refine_iters": 2})
+        assert (resolved["refine"], resolved["refine_iters"]) == ("l2", 2)
+        assert (
+            resolve_substitutive_axis_points(
+                {"refine": "l2", "refine_iters": np.int64(2)}
+            )["refine_iters"]
+            == 2
+        )
+
+    @pytest.mark.parametrize(
+        ("spec", "message"),
+        [
+            ({"refine": "volume"}, "refine"),
+            ({"refine": "bogus"}, "refine"),
+            ({"refine": None}, "refine"),
+            ({"refine_iters": 0}, "refine_iters"),
+            ({"refine_iters": -1}, "refine_iters"),
+            ({"refine_iters": 2.0}, "refine_iters"),
+            ({"refine_iters": 2.5}, "refine_iters"),
+            ({"refine_iters": True}, "refine_iters"),
+            ({"refine_iters": np.bool_(True)}, "refine_iters"),
+            ({"refine_iters": 2}, "refine='l2'"),
+        ],
+    )
+    def test_invalid_refine_controls(self, spec, message) -> None:
+        with pytest.raises((TypeError, ValueError), match=message):
+            resolve_substitutive_axis_points(spec)
+
+    def test_refine_iters_error_context(self) -> None:
+        with pytest.raises(ValueError) as exc:
+            resolve_substitutive_axis_points({"refine": "l2", "refine_iters": 0})
+        assert str(exc.value) == (
+            "substitutive_lod for Points: refine_iters must be an integer >= 1; got 0"
+        )
+        with pytest.raises(ValueError) as exc:
+            resolve_substitutive_axis_points({"refine_iters": 2})
+        assert str(exc.value) == (
+            "substitutive_lod for Points: refine_iters requires refine='l2'"
+        )
+
     @pytest.mark.parametrize("level_stats", [[1, 2], "x", 3.0, object()])
     def test_quality_attrs_reject_non_mapping_stats(self, level_stats) -> None:
         with pytest.raises(TypeError, match="level_stats must be a JSON-safe mapping"):
@@ -184,6 +226,11 @@ class TestResolveSubstitutiveAxisPoints:
     def test_points_coarse_refuses_lift_only_keys(self, key: str) -> None:
         with pytest.raises(ValueError, match=rf"{key!r} does not apply"):
             resolve_substitutive_axis_points(dict(coarse="points", **{key: 2.0}))
+
+    @pytest.mark.parametrize("key", ["refine", "refine_iters"])
+    def test_points_coarse_refuses_refinement(self, key: str) -> None:
+        with pytest.raises(ValueError, match=rf"{key!r} does not apply"):
+            resolve_substitutive_axis_points(dict(coarse="points", **{key: "l2"}))
 
     @pytest.mark.parametrize("method", ["subsample", "merge"])
     def test_points_coarse_methods(self, method: str) -> None:
@@ -382,6 +429,25 @@ class TestAddPointsSubstitutiveLod:
                     radii=1.0,
                     substitutive_lod={"levels": 1, "color_weight": 1.0},
                 )
+
+    def test_l2_refinement_changes_written_coarse_output(self, tmp_path) -> None:
+        def coarse_centers(name: str, **controls):
+            group, _ = _build(
+                tmp_path / name,
+                n=48,
+                levels=1,
+                radius_scale=20.0,
+                quality_stamps=False,
+                **controls,
+            )
+            child = group["child_0"]
+            return ArrayDecoder().decode(child["centers"], child)
+
+        plain = coarse_centers("plain")
+        one_step = coarse_centers("one", refine="l2", refine_iters=1)
+        three_steps = coarse_centers("three", refine="l2", refine_iters=3)
+        assert not np.array_equal(plain, one_step)
+        assert not np.array_equal(one_step, three_steps)
 
     def test_lifted_quality_stamps_can_be_disabled(self, tmp_path) -> None:
         group, _ = _build(tmp_path, n=96, levels=1, quality_stamps=False)

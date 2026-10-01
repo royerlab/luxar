@@ -8,7 +8,7 @@ wrapper over the shared :func:`luxar.core.group.lod.group.resolve_substitutive_a
 
 Points and Lines share one implementation because they coarsen the same way:
 both LIFT their elements to gsplats and run the gsplat substitutive pipeline. So
-they share its whole vocabulary, including controls that exist only because of
+they share its whole vocabulary, including ten keys that exist only because of
 that lift or its Gaussian reduction —
 
 * ``truncation_radius`` — feeds ``lift_points_to_gsplats`` / ``lift_lines_to_gsplats``
@@ -16,11 +16,12 @@ that lift or its Gaussian reduction —
 * ``device`` / ``seed`` — the mixture reduction's compute placement and RNG
 * ``lloyd_iterations`` / ``candidate_bins_k`` — Lloyd refinement settings
 * ``coverage_inflation`` / ``color_weight`` — Gaussian footprint and color controls
+* ``refine`` / ``refine_iters`` — Gaussian mixture refinement and its step count
 
 Mesh does not lift. It coarsens by DECIMATION: merge vertices, reindex the faces,
-drop the triangles that collapsed. None of these controls names anything the
+drop the triangles that collapsed. None of those ten keys names anything the
 decimator can do, and there is no Gaussian mixture for ``method="kmeans"`` to
-reduce. Widening the shared resolver would therefore have meant accepting
+reduce. Widening the shared resolver would therefore have meant accepting eleven
 words that quietly do nothing — which is exactly the class of bug the geometry
 capability table exists to prevent, one layer down.
 
@@ -89,6 +90,12 @@ _LIFT_ONLY_KEYS: Dict[str, str] = {
             "color_weight",
         )
     },
+    "refine": (
+        "it refines merged Gaussians, while mesh levels use triangle decimation"
+    ),
+    "refine_iters": (
+        "it controls Gaussian refinement, while mesh levels use triangle decimation"
+    ),
 }
 
 

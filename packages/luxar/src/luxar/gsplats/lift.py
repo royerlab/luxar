@@ -1072,6 +1072,8 @@ def coarse_substitutive_levels(
     candidate_bins_k: int = 12,
     coverage_inflation: float = 3.0,
     color_weight: float = 0.0,
+    refine: str = "none",
+    refine_iters: Optional[int] = None,
 ) -> "List[GSplatData]":
     """Coarse substitutive levels of a lifted point cloud (render-light conserved).
 
@@ -1089,6 +1091,12 @@ def coarse_substitutive_levels(
     amplitudes** so its :func:`render_light` equals the finest (lifted)
     level's (a near-no-op safety net under mass amplitudes; it also absorbs
     the cull of zero-amplitude bins).
+
+    ``refine="l2"`` optimizes each merged level against its fine mixture
+    without a source volume; ``refine_iters`` controls its Adam steps. The
+    reducer's ``conserve_mass`` switch is deliberately not exposed here:
+    ``amplitude="mass"`` already conserves each bin's mass, and the final
+    render-light rescale enforces the same total after refinement and capping.
 
     Returns the coarse levels **finest → coarsest** (substitutive index 1..L),
     each a flat :class:`GSplatData` — one entry per synthesised coarser level.
@@ -1113,6 +1121,8 @@ def coarse_substitutive_levels(
         candidate_bins_k=candidate_bins_k,
         coverage_inflation=coverage_inflation,
         color_weight=color_weight,
+        refine=cast(Any, refine),
+        refine_iters=refine_iters,
     )
     light0 = render_light(pyramid.at_substitutive(0))
     out: List[GSplatData] = []

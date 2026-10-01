@@ -28,13 +28,11 @@ so the per-frame `ensure()` re-walks the graph each frame (see the
 - **Sphere, not box, for clipping.** The dynamic and auto-adjust
   paths convert the cached `BoundingBox` to a circumscribed
   `BoundingSphere` (with `SPHERE_SAFETY_EXPANSION = 1.05`) before
-  computing near/far. The sphere is direction-independent, so near
-  values transition smoothly as the camera moves around the scene
+  computing near/far. Its view-axis depth changes smoothly as the camera moves around the scene
   instead of jumping at box edges/corners. No exponential smoothing
   is needed.
-- **Inside-sphere clamp is RATIO-BOUNDED.** When
-  `dist(camera, center) < R * 1.05` the sphere-surface distance is
-  meaningless, so near becomes the floor
+- **Near-depth clamp is RATIO-BOUNDED.** When the sphere center's view-axis
+  depth is at most its safety-expanded radius, near becomes the floor
   `nearPlaneFloor(R, far) = max(minNearForRadius(R), far / MAX_NEAR_FAR_RATIO)`.
   The `far / MAX_NEAR_FAR_RATIO` term is the operative one and it exists for
   DEPTH-BUFFER PRECISION: depth quantization goes as

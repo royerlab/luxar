@@ -24,11 +24,17 @@
 import * as THREE from 'three';
 import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { lineWebGPUFactory, type LineTSLNodes } from './shader-tsl';
+import {
+  applyLineMaterialState,
+  lineWebGPUFactory,
+  type LineTSLConfig,
+  type LineTSLNodes,
+} from './shader-tsl';
+import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
 import { capsuleLineWebGPUFactory } from './shader-tsl-capsule';
 import { isGammaOne, isNoGOG, type LineMaterialConfig } from './material-glsl';
 import { resolveLinePrimitive, type LinePrimitive } from '../../../types/line-primitive';
-import type { LineJoinStyle } from '../../../types/line-join';
+import { resolveLineJoin, type LineJoinStyle } from '../../../types/line-join';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma } from '../_shared/uniform-helpers';
@@ -36,7 +42,11 @@ import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
 } from '../../material-colormap-helpers';
-import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import {
+  getPlaceholderElementTexture,
+  LINE_TEXTURE_LAYOUT,
+  resolveElementTextureWidth,
+} from '../../element-texture-layout';
 import {
   applyBlendingStateToMaterial,
   getCompleteBlendingState,
@@ -309,17 +319,30 @@ export class LineTSLMaterial
     );
     const isCapsule = primitive === 'capsule';
     const factory = isCapsule ? capsuleLineWebGPUFactory : lineWebGPUFactory;
-    factory(
-      this.tslNodes as LineTSLNodes,
-      {
-        useColormap,
-        gammaOne,
-        noGOG,
-        isOrtho,
-        join: this.userData.lineJoin as LineJoinStyle | undefined,
-        blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
-      },
-      this
+    const config: LineTSLConfig = {
+      useColormap,
+      gammaOne,
+      noGOG,
+      isOrtho,
+      join: this.userData.lineJoin as LineJoinStyle | undefined,
+      blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
+      elementTextureWidth: resolveElementTextureWidth(
+        LINE_TEXTURE_LAYOUT,
+        this.tslNodes.uLineTex.value as { image?: { width?: number } } | null
+      ),
+    };
+    // ONE graph per configuration, shared by every line material of it
+    // (see shared-graph-tsl.ts). The key carries the primitive and the
+    // RESOLVED join (the factory resolves the session `?lineJoin=` override
+    // at build time, so it selects code too).
+    const key = { ...config, primitive, resolvedJoin: resolveLineJoin(config.join) };
+    applySharedTSLGraph(this, 'line', key, this.tslNodes, (inputs, scratch) => {
+      factory(inputs as LineTSLNodes, config, scratch);
+    });
+    applyLineMaterialState(
+      this,
+      config.blendingMode ?? 'additive',
+      (this.tslNodes.uOpacity.value as number | undefined) ?? 1.0
     );
     // Re-apply the explicit constructor overrides over the factory
     // tail's mode-derived blending state — on EVERY rebuild, not just
