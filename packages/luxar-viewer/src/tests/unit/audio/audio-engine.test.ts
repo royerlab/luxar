@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import { AudioEngine, type AudioEngineDeps } from '../../../audio/audio-engine';
 import type { SoundSourceDescriptor } from '../../../types/audio';
 import type { SceneNode } from '../../../data/data-loader-types';
+import { SceneNodeIndex } from '../../../data/scene-loader/view-state/scene-node-index';
 import type { SimpleDims } from '../../../types/dims';
 import { StorageKeys } from '../../../utils/storage-keys';
 import {
@@ -715,5 +716,47 @@ describe('AudioEngine — a context the browser has not released', () => {
     expect(h.engine.isBlocked()).toBe(false);
     vi.advanceTimersByTime(1);
     expect(h.engine.getState().playing).toEqual(['bed']);
+  });
+});
+
+describe('AudioEngine — scene-node index', () => {
+  it.fails("reads a sound's world nd_transform from the loader's scene-node index, never walking the graph", async () => {
+    const h = makeHarness();
+    // `/sounds` shifts the story axis by +1, so a row authored at local story 1
+    // sits at world story 2.
+    const leaf = { path: '/sounds/hum', type: 'sound', attrs: {}, children: [] };
+    const group = {
+      path: '/sounds',
+      type: 'group',
+      attrs: { nd_transform: { story: { scale: 1, offset: 1 } } },
+      children: [leaf],
+    };
+    const graph = { path: '', type: 'scene', attrs: {}, children: [group] } as unknown as SceneNode;
+    const index = new SceneNodeIndex(graph);
+    // After the index is built, any walk from the root is a failure: the
+    // derivation must be O(1) through the index, not a DFS per evaluation.
+    let walks = 0;
+    Object.defineProperty(graph, 'children', {
+      get() {
+        walks++;
+        throw new Error('scene graph walked from the root');
+      },
+    });
+    // Both ports: the bare graph (what the engine read before the index port
+    // existed) and the index, so a walk through either is caught.
+    const deps = (h.engine as unknown as { deps: Record<string, unknown> }).deps;
+    deps.getSceneGraph = () => graph;
+    deps.getSceneNodeIndex = () => index;
+    h.root.add(soundPlaceholder('/sounds/hum', { trigger: 'continuous' }, [[1, 0, 0, 0]]));
+    h.dims = storyDims(1);
+    h.engine.attachScene(h.root);
+    await flush();
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual([]);
+
+    h.setStep(2);
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual(['hum']);
+    expect(walks).toBe(0);
   });
 });
