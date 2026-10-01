@@ -57,6 +57,7 @@ vi.mock('../../../../../data/zarr', () => ({
 }));
 
 import { SlicePrefetcher } from '../../../../../data/scene-loader/prefetch/slice-prefetcher';
+import { SceneNodeIndex } from '../../../../../data/scene-loader/view-state/scene-node-index';
 
 function makeNode(path: string): SceneNode {
   return { path, type: 'gsplats', attrs: {}, hasSpatialIndex: true, children: [] };
@@ -111,6 +112,7 @@ describe('SlicePrefetcher ↔ SliceCache pins and in-flight stores', () => {
     ]);
     prefetcher = new SlicePrefetcher({
       getSceneGraph: () => graph,
+      getSceneNodeIndex: () => new SceneNodeIndex(graph),
       factoryDeps: () => ({ zarrStore: {}, sliceCache: sc }) as never,
       registry: {
         loaders: new Map(),

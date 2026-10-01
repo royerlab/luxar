@@ -246,7 +246,7 @@ import {
 } from '../profiling/load-timeline';
 import { viewStatesEqual } from './loaders/progressive/view-state-equal';
 import { tryRollbackToPassStart } from './loaders/progressive/pass-rollback';
-import { computeWorldNdTransform } from './transforms/nd-transform';
+import { SceneNodeIndex } from './scene-loader/view-state/scene-node-index';
 
 import {
   RefinementResidencyBudget,
@@ -492,6 +492,12 @@ export class SceneLoader {
   /** Set by the first `loadScene`; a loader loads exactly one dataset. */
   private _loadStarted = false;
   private _sceneGraph: SceneNode | null = null;
+  /**
+   * `path → node + world nD transform` index of {@link _sceneGraph}, built once
+   * with it (the graph never changes afterwards). Every per-node derivation and
+   * prefetch lookup reads it instead of walking the graph.
+   */
+  private _sceneNodeIndex: SceneNodeIndex | null = null;
   /** See {@link setLeafMaterializedListener}. */
   private _leafMaterializedListener: LeafMaterializedListener | null = null;
 
@@ -566,6 +572,7 @@ export class SceneLoader {
     if (!this._slicePrefetcher) {
       this._slicePrefetcher = new SlicePrefetcher({
         getSceneGraph: () => this._sceneGraph,
+        getSceneNodeIndex: () => this._sceneNodeIndex,
         factoryDeps: () => this.factoryDeps(),
         registry: this.registry,
         applyEffectiveAttrs: (node) => this.applyEffectiveAttrs(node),
@@ -1088,6 +1095,7 @@ export class SceneLoader {
       },
       setSceneGraph: (g) => {
         this._sceneGraph = g;
+        this._sceneNodeIndex = new SceneNodeIndex(g);
       },
       setIdentityWatchdog: (w) => {
         // Defensive: loadScene is one-shot per loader, but never leak a
@@ -1136,7 +1144,7 @@ export class SceneLoader {
       extendedToleranceCache?: Map<string, number[]>;
     }
   ): { skip: false; viewState: ViewState } {
-    return deriveNodeViewStateHelper(path, attrs, this.viewState, this._sceneGraph, opts);
+    return deriveNodeViewStateHelper(path, attrs, this.viewState, this._sceneNodeIndex, opts);
   }
 
   /**
@@ -2099,9 +2107,7 @@ export class SceneLoader {
       nodeFactory: this.nodeFactory,
       viewState: this.viewState,
       getSliceView: () => this.viewState,
-      pathHasNdTransform: (path) =>
-        this._sceneGraph !== null &&
-        Object.keys(computeWorldNdTransform(this._sceneGraph, path)).length > 0,
+      pathHasNdTransform: (path) => this._sceneNodeIndex?.hasNdTransform(path) === true,
       factoryDeps: this.factoryDeps(),
       onLeafMaterialized: (path, object) => {
         if (this._sceneGraph) this._leafMaterializedListener?.(this._sceneGraph, path, object);
@@ -2733,6 +2739,7 @@ export class SceneLoader {
     this._zarrStore = null;
     this.rootGroup = null;
     this._sceneGraph = null;
+    this._sceneNodeIndex = null;
     this.monitor = null;
   }
 }

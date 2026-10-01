@@ -94,11 +94,14 @@ import { isObjectViewEligible, isUnderAny } from '../loaders/run-loader-updates'
 import type { SliceCache } from '../../../cache/slice-cache';
 import { beginShadowStore, sliceKeyFor } from '../../loaders/progressive/slice-cache-helper';
 import type * as THREE from 'three';
+import type { SceneNodeIndex } from '../view-state/scene-node-index';
 
 /** Everything the prefetcher may read off its owning SceneLoader. */
 export interface SlicePrefetcherCtx {
   /** Live scene graph root (null before a scene is loaded). */
   getSceneGraph(): SceneNode | null;
+  /** Path index of that graph (node + world nD transform per path; null before load). */
+  getSceneNodeIndex(): SceneNodeIndex | null;
   /** Per-call dependency snapshot for the loader factory (incl. sliceCache). */
   factoryDeps(): LoaderFactoryDeps;
   /** The foreground loader registry — its keys are the nodes to prefetch. */
@@ -115,17 +118,6 @@ export interface SlicePrefetcherCtx {
  * a hand-written union here would silently stay 3-wide as the vocabulary grows.
  */
 type AnyShadowLoader = AnyDataLoader;
-
-/** Depth-first exact-path lookup in the scene graph. */
-function findNodeByPath(root: SceneNode | null, path: string): SceneNode | null {
-  if (!root) return null;
-  if (root.path === path) return root;
-  for (const child of root.children ?? []) {
-    const found = findNodeByPath(child, path);
-    if (found) return found;
-  }
-  return null;
-}
 
 /** True when at least one dimension is hidden (S-cache eligibility gate). */
 function hasHiddenDims(view: ViewState): boolean {
@@ -383,14 +375,14 @@ export class SlicePrefetcher {
     }
   ): Promise<void> {
     const { viewState, budgetMs, ladderDepth, signal, object } = request;
-    const graph = this.ctx.getSceneGraph();
-    const node = findNodeByPath(graph, path);
+    const index = this.ctx.getSceneNodeIndex();
+    const node = index?.node(path) ?? null;
     if (!node) return Promise.resolve();
 
     // Same derivation the handlers apply (extend_to_all + nd_transform),
     // reading the per-kind partial-extend rule from the descriptor table so
     // this cannot drift from the initial-load and retry paths.
-    const derived = deriveNodeViewState(path, node.attrs, viewState, graph, {
+    const derived = deriveNodeViewState(path, node.attrs, viewState, index, {
       applyPartialExtendTolerance: GEOMETRY_DESCRIPTORS[kind].applyPartialExtendTolerance,
     });
     if (!hasHiddenDims(derived.viewState)) return Promise.resolve(); // S-cache would skip it anyway

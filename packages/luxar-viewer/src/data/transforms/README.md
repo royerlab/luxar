@@ -165,11 +165,14 @@ index, so a wrong row lights up visibly.
 
 ## Caller
 
-`../scene-loader/view-state/derive-node-view-state.ts` is the sole consumer: it
-calls `computeWorldNdTransform(sceneGraph, path)` then
-`invertNdTransformForQuery(...)` to convert the orchestrator's
-world-space `ViewState` into the per-node local-space query that goes
-into the spatial index.
+`../scene-loader/view-state/derive-node-view-state.ts` composes the world
+transform, then calls `invertNdTransformForQuery(...)` to convert the
+orchestrator's world-space `ViewState` into the per-node local-space query
+that goes into the spatial index. The SceneLoader hands it a
+`SceneNodeIndex` (`../scene-loader/view-state/scene-node-index.ts`), which
+composes every node's world transform once with `composeNdTransforms`;
+`computeWorldNdTransform(sceneGraph, path)` remains the walk for callers
+holding a bare graph.
 
 ## See also
 

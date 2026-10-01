@@ -145,9 +145,9 @@ The subfolders:
   `lifecycle/dispose.ts`.
 - `../attrs-composer.ts` — `getEffectiveAttrs` used by
   `view-state/effective-attrs.ts`.
-- `../transforms/nd-transform.ts` — `computeWorldNdTransform` /
-  `invertNdTransformForQuery` used by
-  `view-state/derive-node-view-state.ts`.
+- `../transforms/nd-transform.ts` — `composeNdTransforms` (used by
+  `view-state/scene-node-index.ts`), `computeWorldNdTransform` /
+  `invertNdTransformForQuery` (used by `view-state/derive-node-view-state.ts`).
 - `../view-state-manager.ts` — dimension validation invoked by
   `nodes/initialize-scene-dimensions.ts`.
 - `../../workers/worker-pool.ts` — `setAbortSignal` consumed by

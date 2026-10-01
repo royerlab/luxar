@@ -29,6 +29,7 @@ import {
   validateExtendDims,
 } from './extend-tolerance';
 import { computeWorldNdTransform, invertNdTransformForQuery } from '../../transforms/nd-transform';
+import { SceneNodeIndex } from './scene-node-index';
 
 export type DerivedNodeViewState = { skip: false; viewState: ViewState };
 
@@ -50,7 +51,7 @@ export function deriveNodeViewState(
   path: string,
   attrs: { extend_to_all?: string[] } | undefined,
   baseViewState: ViewState,
-  sceneGraph: SceneNode | null,
+  sceneGraph: SceneNodeIndex | SceneNode | null,
   opts: DeriveOpts
 ): DerivedNodeViewState {
   // Never trust the raw attr shape: a malformed `extend_to_all` (e.g. an
@@ -104,7 +105,12 @@ export function deriveNodeViewState(
 
   // Step 3: nd_transform inverse for world→local query mapping.
   if (sceneGraph && derived.dimensions) {
-    const worldNdT = computeWorldNdTransform(sceneGraph, path);
+    // O(1) through the loader's path index; a bare graph (a caller without
+    // one) is walked from the root.
+    const worldNdT =
+      sceneGraph instanceof SceneNodeIndex
+        ? sceneGraph.worldNdTransform(path)
+        : computeWorldNdTransform(sceneGraph, path);
     if (hasOwnProperties(worldNdT)) {
       const inverted = invertNdTransformForQuery(
         derived.slicePosition,
