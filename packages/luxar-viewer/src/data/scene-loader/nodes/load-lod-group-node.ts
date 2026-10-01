@@ -48,6 +48,7 @@
  */
 
 import { latchChildFailure } from '../../../utils/lod-child-failure';
+import { findObjectByName } from '../../../utils/scene-graph-index';
 import * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { archiveFaultFrom } from '../../../cache/chunk-source';
@@ -171,6 +172,8 @@ function attachLazyChild(
         );
       } finally {
         entryChild.loading = false;
+        // Lets the registry time the load to now, not to its next frame.
+        entryChild.onLoadSettled?.();
       }
     })();
   };
@@ -618,7 +621,7 @@ export async function loadLodGroupNode(
       releaseWorkingSet();
     }
 
-    const childObject = lodThreeGroup.getObjectByName(child.path);
+    const childObject = findObjectByName(lodThreeGroup, child.path);
     if (!childObject) {
       log.warning(
         Modules.SCENE_LOADER,

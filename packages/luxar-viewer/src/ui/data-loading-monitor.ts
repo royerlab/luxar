@@ -43,7 +43,7 @@ import { SceneGraphModel } from './data-loading-monitor/scene-graph-model';
 import { updateSceneGraphBadges } from './data-loading-monitor/tabs/scene-graph-badges';
 import { compactTooltip, presentHeadlineCounts } from './data-loading-monitor/headline-counts';
 import { escapeHtml } from '../utils/escape-html';
-import { log, Modules } from '../utils/log';
+import { log, LogEmoji, Modules } from '../utils/log';
 import { config } from '../config';
 import { notifier } from '../utils/cross-layer/notifier';
 import type { FailedLoadsProviderPort } from '../data/scene-loader-monitor-port';
@@ -202,7 +202,7 @@ export class DataLoadingMonitor {
    * Connect a loader for monitoring
    */
   public connectLoader(path: string, loader: LoaderMonitor): void {
-    log.info(Modules.DATA_MONITOR, `Connecting loader for ${path}`);
+    log.verbose(LogEmoji.INFO, Modules.DATA_MONITOR, `Connecting loader for ${path}`);
 
     this.loaders.set(path, loader);
     loader.addEventListener(this.eventListener);

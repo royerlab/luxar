@@ -39,6 +39,14 @@ import { nextRoundRobin } from './worker-pool/selection/round-robin';
 import { DispatchTracker } from './worker-pool/selection/dispatch-tracker';
 import { computeStats, computeQueueDepth, type PoolStats } from './worker-pool/stats';
 import { markLoad } from '../profiling/load-timeline';
+import {
+  areWorkerCodecsEnabled,
+  setBloscDecodeBackend,
+  setWorkerCodecsEnabled,
+} from '../data/codecs/worker-blosc';
+import { hasUrlFlag, URL_PARAM_KEYS } from '../config/url-params';
+import { BloscDecodeDispatcher } from './worker-pool/codec-dispatch';
+import { CodecWarmup } from './worker-pool/codec-warmup';
 
 export type { WorkerInstance };
 export {
@@ -113,6 +121,15 @@ export class WorkerPool {
   private nextWorkerIndex = 0;
   /** Worker-side in-flight accounting for the `worker.*` perf counters only. */
   private readonly dispatchTracker = new DispatchTracker();
+  /** Lazy, one-worker-first blosc codec warm-up (see `worker-pool/codec-warmup.ts`). */
+  private readonly codecWarmup = new CodecWarmup({
+    workers: () => this.workers,
+    run: (entry, call) =>
+      this.withTimeout('warmCodecs', call, this.pickTimeoutMs('decode'), entry.worker),
+    enabled: areWorkerCodecsEnabled,
+    onError: (error) =>
+      log.warning(Modules.WORKER_POOL, 'Worker codec warm-up failed (decodes will retry)', error),
+  });
   /**
    * Pool-wide abort signal. When set (by `setAbortSignal`), every
    * `runWithTimeout` call additionally races against this signal so
@@ -666,13 +683,19 @@ export class WorkerPool {
    * step after the usability await. Marking later (after the caller resumes)
    * let every concurrent dispatch read the same worker as idle.
    */
-  private async acquireTrackedWorker(): Promise<TrackedWorkerHandle> {
+  private async acquireTrackedWorker(
+    eligible: (w: WorkerInstance) => boolean = () => true
+  ): Promise<TrackedWorkerHandle> {
     await this.whenUsable();
     if (this.workers.length === 0) {
       throw new WorkerUnavailableError('[WorkerPool] No workers available after initialization');
     }
     // No await between selection and marking — see the method doc.
-    const tracked = selectLeastBusy(this.workers);
+    const candidates = this.workers.filter(eligible);
+    if (candidates.length === 0) {
+      throw new WorkerUnavailableError('[WorkerPool] No worker eligible for this task');
+    }
+    const tracked = selectLeastBusy(candidates);
     tracked.markQueryStart();
     return tracked;
   }
@@ -706,6 +729,54 @@ export class WorkerPool {
       () => tracked.markQueryEnd()
     );
     return workerPromise;
+  }
+
+  /**
+   * Run a chunk-decode task on the least-busy WARM worker (see
+   * `CodecWarmup.isWarm`; none warm rejects, and the codec decodes on the main
+   * thread instead), timeout-guarded but NOT
+   * raced against the pool-wide abort signal: a decode is a few milliseconds
+   * of work whose result the L0 cache keeps, and abandoning it on a dataset
+   * switch would only make the codec fall back to decoding it on the main
+   * thread. Used by the blosc codec dispatcher (`worker-pool/codec-dispatch.ts`).
+   */
+  async runDecode<T>(op: string, fn: (api: Remote<DataWorkerAPI>) => Promise<T>): Promise<T> {
+    const tracked = await this.acquireTrackedWorker((w) => this.codecWarmup.isWarm(w));
+    return this.dispatchTracked(op, 'decode', tracked, fn);
+  }
+
+  /** Workers with no task in flight. */
+  getIdleWorkerCount(): number {
+    return this.workers.reduce((n, w) => n + (w.activeQueries === 0 ? 1 : 0), 0);
+  }
+
+  /** Idle workers whose codec is warm (the codec dispatcher spreads batches over these). */
+  getIdleWarmWorkerCount(): number {
+    return this.workers.reduce(
+      (n, w) => n + (w.activeQueries === 0 && this.codecWarmup.isWarm(w) ? 1 : 0),
+      0
+    );
+  }
+
+  /**
+   * True when a worker's blosc codec is warm, so a chunk decode may be
+   * offloaded. Otherwise warms ONE worker (the others follow once it finished,
+   * reading the codec chunk from the HTTP cache) and returns false: decode on
+   * the main thread meanwhile. Never warms under `?mainThreadCodecs`, and a
+   * warm-up never counts as a query. Called by the codec dispatcher for each
+   * chunk above its offload floor, so a store with no such chunk never makes a
+   * worker download its codec.
+   */
+  ensureCodecsWarm(): boolean {
+    return this.codecWarmup.ensureWarm();
+  }
+
+  /**
+   * Start warming the workers' blosc codec now, one worker first (see
+   * {@link ensureCodecsWarm}). Fire-and-forget and idempotent.
+   */
+  warmCodecs(): void {
+    this.codecWarmup.ensureWarm();
   }
 
   /**
@@ -857,8 +928,30 @@ let workerPoolInstance: WorkerPool | null = null;
 export function getWorkerPool(): WorkerPool {
   if (!workerPoolInstance) {
     workerPoolInstance = new WorkerPool();
+    installCodecBackend(workerPoolInstance);
   }
   return workerPoolInstance;
+}
+
+/**
+ * Route the zarr blosc codec's chunk decodes through `pool` (see
+ * `worker-pool/codec-dispatch.ts`). The dispatcher declines — the codec then
+ * decodes on the main thread — until the pool has a usable worker, so this is
+ * safe to install before any worker exists. `?mainThreadCodecs` is the kill
+ * switch (keeps every decode on the main thread).
+ */
+function installCodecBackend(pool: WorkerPool): void {
+  setWorkerCodecsEnabled(!hasUrlFlag(URL_PARAM_KEYS.mainThreadCodecs));
+  setBloscDecodeBackend(new BloscDecodeDispatcher(pool));
+}
+
+/**
+ * Start warming the data workers' blosc codec (fire-and-forget; one worker
+ * first, the rest once it finished). Nothing warms it eagerly: the first chunk
+ * decode above the offload floor does, so this only front-loads that.
+ */
+export function warmWorkerCodecs(): void {
+  workerPoolInstance?.warmCodecs();
 }
 
 /**
@@ -904,6 +997,9 @@ export function disposeWorkerPool(): void {
       workerPoolInstance.dispose();
     } finally {
       workerPoolInstance = null;
+      // Drop the codec route with the pool: blosc decodes run on the main
+      // thread until a new pool is created.
+      setBloscDecodeBackend(null);
     }
   }
 }

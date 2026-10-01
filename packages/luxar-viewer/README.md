@@ -833,6 +833,7 @@ the native WKWebView launcher fall back to L1-only caching; see the
 - `?cacheStats` — Open the data-loading monitor on its Cache tab after initialization
 - `?noPrefetch` — Disable adjacent-chunk prefetching (caches still active)
 - `?prefetchDebug` — Verbose prefetch logging
+- `?mainThreadCodecs` — Decompress zarr blosc chunks on the main thread instead of the data workers (safety valve / A/B switch; decoded bytes are identical either way)
 - `?noLodFade` — Disable replacement-LOD cross-fading (enabled by default)
 - `?noLodEnergy` — Disable stream-ladder energy compensation (enabled by default)
 - `?lodFinest` — Force the finest replacement LOD regardless of projected coverage

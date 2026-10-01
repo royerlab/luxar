@@ -8,7 +8,7 @@
  * @module cache/chunk-source/http-chunk-source
  */
 
-import type { ChunkFetchOutcome, ChunkSource } from '../chunk-source';
+import type { ChunkFetchOutcome, ChunkSource, ChunkSourceGetOptions } from '../chunk-source';
 import { buildUrl, fetchWithRetry } from '../multi-level-caching-store/fetch-retry';
 import {
   getRemoteContentHash,
@@ -38,7 +38,11 @@ export class HttpChunkSource implements ChunkSource {
     return this.baseUrl;
   }
 
-  async get(key: string, signal?: AbortSignal): Promise<ChunkFetchOutcome> {
+  async get(
+    key: string,
+    signal?: AbortSignal,
+    options?: ChunkSourceGetOptions
+  ): Promise<ChunkFetchOutcome> {
     let exhaustedCause: unknown;
     try {
       const outcome = await fetchWithRetry(
@@ -46,6 +50,7 @@ export class HttpChunkSource implements ChunkSource {
         {
           signal,
           lane: fetchLaneForKey(key),
+          ...(options?.priority ? { priority: options.priority } : {}),
           onExhausted: (error) => (exhaustedCause = error),
         },
         async (attempt) => {

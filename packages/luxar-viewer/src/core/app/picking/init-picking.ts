@@ -11,6 +11,7 @@ import { installCanvasActions, type ElementPointerPayload } from '../interaction
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { OverlayManager } from '../../../ui/overlay-manager';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
+import type { SceneNode } from '../../../data/data-loader-types';
 
 /**
  * Result of {@link initPicking}. All four fields are `undefined` when
@@ -98,6 +99,77 @@ export function disposePickingSession(ports: {
   ports.previous.keyLoader?.dispose();
 }
 
+/** The per-node attrs {@link initPicking} reads to decide whether to pick. */
+interface PickAttrs {
+  has_labels?: unknown;
+  has_label_ids?: unknown;
+  has_image_labels?: unknown;
+  has_keys?: unknown;
+  link?: unknown;
+  copy?: unknown;
+}
+
+/** What the scene declares that a pick can serve (see {@link scanPickAttrs}). */
+interface PickDeclarations {
+  labels: boolean;
+  labelIds: boolean;
+  imageLabels: boolean;
+  keys: boolean;
+  interaction: boolean;
+  /** Each distinct link template, with the first node carrying it and its fault. */
+  linkDiagnostics: Map<string, { nodeName: string; rejection: string | null }>;
+}
+
+function emptyPickDeclarations(): PickDeclarations {
+  return {
+    labels: false,
+    labelIds: false,
+    imageLabels: false,
+    keys: false,
+    interaction: false,
+    linkDiagnostics: new Map(),
+  };
+}
+
+/** Fold one node's attrs into `found`. */
+function scanPickAttrs(
+  attrs: PickAttrs | undefined,
+  nodeName: string,
+  found: PickDeclarations
+): void {
+  if (!attrs) return;
+  if (attrs.has_labels) found.labels = true;
+  if (attrs.has_label_ids) found.labelIds = true;
+  if (attrs.has_image_labels) found.imageLabels = true;
+  if (attrs.has_keys) found.keys = true;
+  // A layer can carry a click action WITHOUT labels — a link built purely
+  // from `{hover_index}` is perfectly usable — and such a scene auto-injects
+  // no hover overlay either. Without this it would fall through the gate
+  // in initPicking and never pick at all, so the link would silently never
+  // fire (#1917).
+  if (typeof attrs.link === 'string' || typeof attrs.copy === 'string') found.interaction = true;
+  // Inspect each distinct template once. Partition adders copy non-
+  // compositing attrs onto every part, so warning directly in this traversal
+  // would flood the console with one identical line per leaf.
+  // Deliberately only element-INDEPENDENT faults (bad scheme, relative URL,
+  // over-length): a per-element miss such as an unlabelled element is normal
+  // and must not log per hover. The Python writer refuses these at authoring
+  // time, so reaching here means a hand-edited or third-party store.
+  if (typeof attrs.link === 'string' && !found.linkDiagnostics.has(attrs.link)) {
+    found.linkDiagnostics.set(attrs.link, {
+      nodeName,
+      rejection: explainLinkRejection(attrs.link),
+    });
+  }
+}
+
+/** Visit every node of a scene graph, depth first. */
+function walkSceneNodes(node: SceneNode | null, visit: (node: SceneNode) => void): void {
+  if (!node) return;
+  visit(node);
+  for (const child of node.children ?? []) walkSceneNodes(child, visit);
+}
+
 /**
  * (Re-)build the GPU picking pipeline for the current scene.
  *
@@ -143,48 +215,24 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     };
   }
 
-  let hasAnyLabels = false;
-  let hasAnyLabelIds = false;
-  let hasAnyImageLabels = false;
-  let hasAnyKeys = false;
-  let hasAnyInteraction = false;
-  const linkDiagnostics = new Map<string, { nodeName: string; rejection: string | null }>();
-  root.traverse((obj) => {
-    const attrs = obj.userData?.attrs;
-    if (attrs?.has_labels) {
-      hasAnyLabels = true;
-    }
-    if (attrs?.has_label_ids) {
-      hasAnyLabelIds = true;
-    }
-    if (attrs?.has_image_labels) {
-      hasAnyImageLabels = true;
-    }
-    if (attrs?.has_keys) {
-      hasAnyKeys = true;
-    }
-    // A layer can carry a click action WITHOUT labels — a link built purely
-    // from `{hover_index}` is perfectly usable — and such a scene auto-injects
-    // no hover overlay either. Without this it would fall through the gate
-    // below and never pick at all, so the link would silently never fire
-    // (#1917).
-    if (typeof attrs?.link === 'string' || typeof attrs?.copy === 'string') {
-      hasAnyInteraction = true;
-    }
-    // Inspect each distinct template once. Partition adders copy non-
-    // compositing attrs onto every part, so warning directly in this traversal
-    // would flood the console with one identical line per leaf.
-    // Deliberately only element-INDEPENDENT faults (bad scheme, relative URL,
-    // over-length): a per-element miss such as an unlabelled element is normal
-    // and must not log per hover. The Python writer refuses these at authoring
-    // time, so reaching here means a hand-edited or third-party store.
-    if (typeof attrs?.link === 'string' && !linkDiagnostics.has(attrs.link)) {
-      linkDiagnostics.set(attrs.link, {
-        nodeName: obj.name,
-        rejection: explainLinkRejection(attrs.link),
-      });
-    }
-  });
+  // Walk the drawn objects AND the scene graph: a deferred partition part (B4)
+  // is an empty slot until a pass first shows it, so a labelled partition with
+  // no part in the opening view has no object carrying its attrs yet — and
+  // picking is decided once per session.
+  const sceneLoader = getSceneLoader('default');
+  const found = emptyPickDeclarations();
+  root.traverse((obj) => scanPickAttrs(obj.userData?.attrs, obj.name, found));
+  walkSceneNodes(sceneLoader?.sceneGraph ?? null, (node) =>
+    scanPickAttrs(node.attrs as PickAttrs, node.path, found)
+  );
+  const {
+    labels: hasAnyLabels,
+    labelIds: hasAnyLabelIds,
+    imageLabels: hasAnyImageLabels,
+    keys: hasAnyKeys,
+    interaction: hasAnyInteraction,
+    linkDiagnostics,
+  } = found;
   for (const { nodeName, rejection } of linkDiagnostics.values()) {
     if (rejection) {
       log.warning(Modules.APP, `Invalid link template on node "${nodeName}": ${rejection}`);
@@ -212,8 +260,7 @@ export async function initPicking(ports: InitPickingPorts): Promise<InitPickingR
     };
   }
 
-  // Get the scene loader for store/rootLoc access
-  const sceneLoader = getSceneLoader('default');
+  // The scene loader, for store/rootLoc access
   if (!sceneLoader) {
     return {
       pickingSystem: undefined,

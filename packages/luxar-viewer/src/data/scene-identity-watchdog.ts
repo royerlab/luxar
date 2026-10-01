@@ -223,6 +223,22 @@ export interface SceneIdentityWatchdogOptions {
  */
 export type SceneIdentityVerdict = 'ok' | 'changed' | 'unreachable';
 
+/**
+ * The load-time root fetch's validator, offered to the first poll
+ * ({@link SceneIdentityWatchdog.seedFromLoad}). Carries EVIDENCE that the
+ * document it names is the scene that was loaded — never trusted on its own.
+ */
+export interface LoadTimeValidator {
+  /** Which root document the load fetched. */
+  doc: (typeof ROOT_ATTR_DOCS)[number];
+  /** That response's `ETag`. */
+  etag: string;
+  /** Its `content_hash`, when already known (cache validation derived it). */
+  contentHash?: string | null;
+  /** Its bytes, when the hash is not known or the scene is hash-less. */
+  body?: Uint8Array;
+}
+
 export class SceneIdentityWatchdog {
   private readonly url: string;
   /** Candidate root-attribute addresses, newest format first (query-preserving). */
@@ -250,6 +266,8 @@ export class SceneIdentityWatchdog {
   private conditionalRequestsEnabled = true;
   /** ETag seen by the in-flight probe; promoted by {@link probe} on `ok`. */
   private pendingETag: string | null = null;
+  /** The load-time validator, verified and adopted by the first probe. */
+  private loadSeed: LoadTimeValidator | null = null;
   private readonly expectedHash: string | null;
   private readonly expectedAttrsJson: string | null;
   private readonly intervalMs: number;
@@ -331,6 +349,50 @@ export class SceneIdentityWatchdog {
     notifier.hideSceneIdentityBanner();
   }
 
+  /**
+   * Offer the load-time root fetch's ETag to the first poll.
+   *
+   * The load fetched the root document once and read its `ETag`; without this,
+   * the first poll (15 s local / 120 s remote) was an unconditional full GET of
+   * that same document — three root downloads per cold load on a host that
+   * sends ETags. With it, that poll is a conditional request answered by a
+   * bodyless `304`.
+   *
+   * Held to the same bar as a probe's ETag: it is adopted only if its document
+   * is verified to be the scene loaded (its `content_hash` against the loaded
+   * hash, or its canonical attrs against the loaded attrs for a hash-less
+   * scene). The check runs at the first probe, off the load's critical path.
+   * Ignored once a probe has established its own ETag. A cross-origin host whose
+   * CORS preflight rejects `If-None-Match` takes the same unconditional fallback
+   * a probe's ETag does.
+   */
+  seedFromLoad(seed: LoadTimeValidator): void {
+    if (this.disposed || this.resolvedETag !== null) return;
+    this.loadSeed = seed;
+  }
+
+  /** Verify and adopt {@link loadSeed}, once. */
+  private adoptLoadSeed(): void {
+    const seed = this.loadSeed;
+    this.loadSeed = null;
+    if (seed === null || this.resolvedETag !== null || !this.conditionalRequestsEnabled) return;
+    if (this.judgeSeed(seed) !== 'ok') return;
+    this.resolvedAttrsUrl = buildAttrsUrl(this.url, seed.doc);
+    this.resolvedETag = seed.etag;
+  }
+
+  /** Whether a load-time seed's document is the scene loaded. */
+  private judgeSeed(seed: LoadTimeValidator): SceneIdentityVerdict {
+    // Nothing to confirm (reachability-only): `judgeBody` answers `ok` for any
+    // body, so a seed would be trusted on no evidence at all.
+    if (this.expectedHash === null && this.expectedAttrsJson === null) return 'changed';
+    if (this.expectedHash !== null && typeof seed.contentHash === 'string') {
+      return seed.contentHash === this.expectedHash ? 'ok' : 'changed';
+    }
+    if (seed.body === undefined) return 'changed';
+    return this.judgeBody(new TextDecoder().decode(seed.body), seed.doc);
+  }
+
   /** One identity probe; exposed for tests (never rejects). */
   async probe(): Promise<void> {
     const now = Date.now();
@@ -344,6 +406,7 @@ export class SceneIdentityWatchdog {
     }
     this.probeInFlight = true;
     this.lastProbeAt = now;
+    this.adoptLoadSeed();
     try {
       const verdict = await this.fetchVerdict();
       // Promote the ETag ONLY for a document we just confirmed still matches
@@ -454,11 +517,16 @@ export class SceneIdentityWatchdog {
       this.inFlightAbort = null;
     }
 
+    return this.judgeBody(body, this.servedDocName());
+  }
+
+  /** Compare a root document's body against the loaded scene's identity. */
+  private judgeBody(body: string, docName: string | undefined): SceneIdentityVerdict {
     if (this.expectedHash !== null) {
       try {
-        // `resolvedAttrsUrl` is the document that actually answered, so the
-        // format follows from its NAME rather than from the body's content.
-        const attrs = rootAttributes(JSON.parse(body), this.servedDocName());
+        // The document that actually answered, so the format follows from its
+        // NAME rather than from the body's content.
+        const attrs = rootAttributes(JSON.parse(body), docName);
         return attrs.content_hash === this.expectedHash ? 'ok' : 'changed';
       } catch {
         return 'changed';
@@ -470,8 +538,7 @@ export class SceneIdentityWatchdog {
     // first probe is caught.
     if (this.expectedAttrsJson !== null) {
       try {
-        return canonicalJson(rootAttributes(JSON.parse(body), this.servedDocName())) ===
-          this.expectedAttrsJson
+        return canonicalJson(rootAttributes(JSON.parse(body), docName)) === this.expectedAttrsJson
           ? 'ok'
           : 'changed';
       } catch {

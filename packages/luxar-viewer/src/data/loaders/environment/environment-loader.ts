@@ -11,15 +11,22 @@
  * changed since the bake; the map is ignored with a console line and the viewer falls
  * back to its configured source or the room.
  *
- * Absence is the normal case and costs one metadata probe. Every failure path degrades
- * to "no baked map" rather than failing the scene load — the environment is lighting,
- * not data.
+ * Absence is the normal case and costs NO request when the root index was fetched from
+ * the network this load: `luxar env attach` re-consolidates after writing the group, so
+ * a FRESH index is authoritative and one that lists no `environment` node means there is
+ * none. A CACHED index is not: the L2 tier revalidates the root only by `content_hash`,
+ * which `env attach` deliberately leaves unchanged, so a warm cache can keep serving the
+ * pre-attach index. That case, and a store without an index, is probed (zarrita's format
+ * guess: up to three 404s), and a genuine absence is remembered per dataset for the
+ * session, so a revisit does not pay it again. Every failure path degrades to "no baked
+ * map" rather than failing the scene load — the environment is lighting, not data.
  *
  * @module data/loaders/environment/environment-loader
  */
 
 import * as zarr from '../../zarr';
 import { log, Modules } from '../../../utils/log';
+import { hasContentsMethod } from '../../../types/zarr';
 import {
   ENVIRONMENT_FACE_ORDER,
   ENVIRONMENT_FORMAT,
@@ -32,21 +39,74 @@ import {
 const TAG = '[🌐] [Environment]';
 
 /**
+ * Datasets (by the caller's store key — the normalized dataset URL) whose probe
+ * found no environment group this session. Only a NOT-FOUND is recorded: a network
+ * fault says nothing about the sidecar and must be retried on the next load.
+ */
+const knownAbsent = new Set<string>();
+
+/** Forget every remembered absence (tests only). */
+export function resetEnvironmentProbeCacheForTests(): void {
+  knownAbsent.clear();
+}
+
+/**
+ * Whether the store's consolidated index lists the environment group: `true` /
+ * `false` when there is an index, `undefined` when there is none (the answer
+ * then needs a probe).
+ */
+async function indexListsEnvironment(store: unknown): Promise<boolean | undefined> {
+  if (!hasContentsMethod(store)) return undefined;
+  try {
+    const contents = await store.contents();
+    return contents.some(
+      (entry) => entry.path.replace(/^\/+/, '') === ENVIRONMENT_GROUP && entry.kind === 'group'
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The environment group's attrs, or `null` when the store has none. An index that
+ * does not list the group is trusted only when `indexFresh` (see the module doc).
+ */
+async function readEnvironmentAttrs(
+  rootLoc: zarr.Location<zarr.Readable>,
+  storeKey: string | undefined,
+  indexFresh: boolean
+): Promise<Record<string, unknown> | null> {
+  const listed = await indexListsEnvironment(rootLoc.store);
+  if (listed === false && indexFresh) return null;
+  // Not listed by a trustworthy index: this read is a probe, whose 404 is remembered.
+  const probeKey = listed === true ? undefined : storeKey;
+  if (probeKey !== undefined && knownAbsent.has(probeKey)) return null;
+  try {
+    const group = await zarr.open(rootLoc.resolve(ENVIRONMENT_GROUP), { kind: 'group' });
+    return (group.attrs ?? {}) as Record<string, unknown>;
+  } catch (error) {
+    if (probeKey !== undefined && zarr.isNotFoundError(error)) knownAbsent.add(probeKey);
+    return null; // no environment group — the normal case
+  }
+}
+
+/**
  * Read the baked map, or `null` when the store has none / it is stale / it is
  * malformed. `rootContentHash` is the root `content_hash` from the freshly fetched
- * root document (the same value the cache validation reads).
+ * root document (the same value the cache validation reads). `storeKey` (the
+ * normalized dataset URL) scopes the session's negative cache for probed stores; omit
+ * it to always probe. `indexFresh` says the store's consolidated index came from the
+ * network this load (not a cache tier), so its silence about `environment` is proof of
+ * absence; the default `false` probes instead.
  */
 export async function loadBakedEnvironment(
   rootLoc: zarr.Location<zarr.Readable>,
-  rootContentHash: string | undefined
+  rootContentHash: string | undefined,
+  storeKey?: string,
+  indexFresh = false
 ): Promise<BakedEnvironment | null> {
-  let attrs: Record<string, unknown>;
-  try {
-    const group = await zarr.open(rootLoc.resolve(ENVIRONMENT_GROUP), { kind: 'group' });
-    attrs = (group.attrs ?? {}) as Record<string, unknown>;
-  } catch {
-    return null; // no environment group — the normal case
-  }
+  const attrs = await readEnvironmentAttrs(rootLoc, storeKey, indexFresh);
+  if (attrs === null) return null;
 
   const verdict = judgeEnvironmentAttrs(attrs, rootContentHash);
   if ('reject' in verdict) return reject(verdict.reject);

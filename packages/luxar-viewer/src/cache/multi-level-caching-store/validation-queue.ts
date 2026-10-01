@@ -183,24 +183,39 @@ export async function getRemoteContentHash(
       break;
     }
     if (!data) return null;
-
-    const attrs = rootAttributes(
-      JSON.parse(new TextDecoder().decode(data)),
-      servedDoc ?? undefined
-    );
-    const stamped = attrs?.content_hash;
-    if (typeof stamped === 'string' && stamped.length > 0) {
-      return { hash: stamped, mode: 'content-hash' };
-    }
-
-    // Implicit token: hash the exact bytes served. Any rewrite of the root
-    // attrs (Luxar writers always bump `timestamp`) changes the token.
-    // Digest a Uint8Array view rather than the raw ArrayBuffer: `instanceof
-    // ArrayBuffer` checks fail across realms (jsdom/worker), and a view
-    // carries explicit byteOffset/byteLength either way.
-    const digest = await sha256Hex(data);
-    return { hash: `zattrs:${digest}`, mode: 'zattrs-hash' };
+    return await validationTokenFromDocument(data, servedDoc ?? undefined);
   } catch {
     return null;
   }
+}
+
+/**
+ * The validation token a fetched root document yields: its `content_hash` attr
+ * when stamped (`content-hash` mode), else the SHA-256 of the exact bytes served
+ * (`zattrs-hash` mode — any rewrite of the root attrs changes it, since Luxar
+ * writers always bump `timestamp`).
+ *
+ * Shared by {@link getRemoteContentHash} and the load-time root-document fetch
+ * (`cache/root-document-prefetch.ts`), which hands validation the same response
+ * the store open reads, so both must derive the token identically.
+ *
+ * @param data - The document bytes exactly as served.
+ * @param servedDoc - Which root document answered; the format follows from the
+ *   NAME, so the parse never has to infer it from the content.
+ * @throws SyntaxError when the body is not JSON (callers treat it as no token).
+ */
+export async function validationTokenFromDocument(
+  data: Uint8Array,
+  servedDoc: (typeof ROOT_ATTR_DOCS)[number] | undefined
+): Promise<RemoteValidationToken> {
+  const attrs = rootAttributes(JSON.parse(new TextDecoder().decode(data)), servedDoc);
+  const stamped = attrs?.content_hash;
+  if (typeof stamped === 'string' && stamped.length > 0) {
+    return { hash: stamped, mode: 'content-hash' };
+  }
+  // Digest a Uint8Array view rather than the raw ArrayBuffer: `instanceof
+  // ArrayBuffer` checks fail across realms (jsdom/worker), and a view carries
+  // explicit byteOffset/byteLength either way.
+  const digest = await sha256Hex(data);
+  return { hash: `zattrs:${digest}`, mode: 'zattrs-hash' };
 }

@@ -165,7 +165,8 @@ extracted to keep `node.py` readable.
   `1.0`, and a *legacy* authored list may run up to
   `MAX_COVERAGE_FRACTION` = `4.0`. The `selector` names the units of that
   comparison: under `"screen-area"` each threshold is a literal fraction of the
-  viewport AREA covered by the projected bbox rect, while under the legacy
+  viewport AREA covered by the box's projected inscribed ellipsoid (sized at its
+  near depth; the near-face rect face-on), while under the legacy
   `"coverage"` the viewer projects the group's bbox *diagonal* to pixels and
   compares it against the threshold times half of the current viewport's fitted
   screen axis (`min(width, height)`).

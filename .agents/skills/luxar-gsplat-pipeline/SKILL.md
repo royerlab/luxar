@@ -764,7 +764,8 @@ does (a) for you and writes a ready-to-serve scene.
   `gsplat additive` to ladder every leaf of an existing tree structure-preservingly.
 - LOD switch thresholds are auto-derived by SCREEN-AREA occupancy halving and
   stamped `selector="screen-area"`: each `coverage_fraction` is a literal screen-area
-  fraction (projected bbox rect area / viewport area), so a whole-object `levels`
+  fraction (projected area of the box's inscribed ellipsoid, sized at its near
+  depth, over the viewport area), so a whole-object `levels`
   ladder shows full detail while the object occupies at least half the screen and
   steps one level coarser per halving. No threshold knob, and RESOLUTION-independent
   (an NDC-area fraction, so the same framing reads the same on any monitor size).

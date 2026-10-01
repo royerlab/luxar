@@ -716,4 +716,83 @@ describe('SceneIdentityWatchdog', () => {
     local.dispose();
     remote.dispose();
   });
+  // --- Load-time validator seed ------------------------------------------
+  //
+  // The load already fetched the root document (once, shared by validation and
+  // the store open) and saw its ETag. Without adopting it the FIRST poll was an
+  // unconditional full GET of the root document even on a host that sends
+  // ETags: three root downloads per cold load.
+
+  describe('seedFromLoad', () => {
+    function seededWatchdog(fetchImpl: FetchStub, opts: { hashless?: boolean } = {}) {
+      return new SceneIdentityWatchdog({
+        datasetUrl: 'https://data.example.com/scene.luxar.zarr/',
+        expectedContentHash: opts.hashless ? null : HASH,
+        expectedAttrsJson: opts.hashless ? canonicalJson(JSON.parse(ATTRS)) : null,
+        intervalMs: 5000,
+        fetchImpl: fetchImpl as typeof fetch,
+      });
+    }
+
+    it('the first poll sends the load-time ETag as If-None-Match', async () => {
+      const sent: Array<[string, string | null]> = [];
+      const wd = seededWatchdog(async (url, init) => {
+        sent.push([probedUrl(url), new Headers(init?.headers).get('if-none-match')]);
+        return notModified();
+      });
+      wd.seedFromLoad({ doc: 'zarr.json', etag: '"v0"', contentHash: HASH });
+      wd.start();
+      await tick(5000);
+      expect(sent).toEqual([['https://data.example.com/scene.luxar.zarr/zarr.json', '"v0"']]);
+      // The conditional 304 confirms identity: no banner.
+      expect(banner.shown).toEqual([]);
+      wd.dispose();
+    });
+
+    it('verifies a hash-less seed against the loaded attrs before trusting it', async () => {
+      const sent: Array<string | null> = [];
+      const wd = seededWatchdog(
+        async (_url, init) => {
+          sent.push(new Headers(init?.headers).get('if-none-match'));
+          return notModified();
+        },
+        { hashless: true }
+      );
+      wd.seedFromLoad({ doc: '.zattrs', etag: '"v0"', body: new TextEncoder().encode(ATTRS) });
+      wd.start();
+      await tick(5000);
+      expect(sent).toEqual(['"v0"']);
+      wd.dispose();
+    });
+
+    it('ignores a seed whose document is not the scene that was loaded', async () => {
+      const sent: Array<string | null> = [];
+      const wd = seededWatchdog(async (_url, init) => {
+        sent.push(new Headers(init?.headers).get('if-none-match'));
+        return okWithETag(ATTRS, '"v1"');
+      });
+      wd.seedFromLoad({ doc: 'zarr.json', etag: '"v0"', contentHash: 'zzz999' });
+      wd.start();
+      await tick(5000);
+      expect(sent).toEqual([null]);
+      wd.dispose();
+    });
+
+    it('keeps the unconditional fallback when CORS preflight rejects If-None-Match', async () => {
+      const sent: Array<string | null> = [];
+      const wd = seededWatchdog(async (_url, init) => {
+        const etag = new Headers(init?.headers).get('if-none-match');
+        sent.push(etag);
+        if (etag !== null) throw new TypeError('Failed to fetch');
+        return okWithETag(ATTRS, '"v1"');
+      });
+      wd.seedFromLoad({ doc: 'zarr.json', etag: '"v0"', contentHash: HASH });
+      wd.start();
+      await tick(5000);
+      await tick(5000);
+      expect(sent).toEqual(['"v0"', null, null]);
+      expect(banner.shown).toEqual([]);
+      wd.dispose();
+    });
+  });
 });

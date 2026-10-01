@@ -414,6 +414,15 @@ export interface ProcessedLinesData {
    * onto the loaded payload — that payload may be a SliceCache-owned snapshot.
    */
   elementIds?: Uint32Array;
+
+  /**
+   * The typed arrays are SHARED — retained by the post-projection stage cache
+   * (`data/scene-loader/process/projection-stage-cache.ts`) and handed to every
+   * later commit of the same slice. The commit must neither mutate nor
+   * transfer them (the lines commit already hands the depth sort a freshly
+   * computed midpoint array, never a view of these).
+   */
+  sharedBuffers?: boolean;
 }
 
 // ============================================================================

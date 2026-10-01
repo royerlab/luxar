@@ -37,9 +37,10 @@ function serveArchive(onRequest?: (init: RequestInit) => void) {
       } as unknown as Response;
     }
     const header = (init.headers as Record<string, string> | undefined)?.Range ?? '';
-    const [, start, end] = /bytes=(\d+)-(\d+)/.exec(header) ?? [];
-    const from = Number(start);
-    const to = Number(end);
+    const [, start, end] = /bytes=(\d*)-(\d+)/.exec(header) ?? [];
+    // Suffix form (`bytes=-n`): the LAST n bytes, clamped to the archive.
+    const from = start === '' ? Math.max(0, ARCHIVE.length - Number(end)) : Number(start);
+    const to = start === '' ? ARCHIVE.length - 1 : Number(end);
     const slice = ARCHIVE.slice(from, to + 1);
     return {
       ok: true,
@@ -144,7 +145,8 @@ describe('LuxarZipStore', () => {
       'fetch',
       vi.fn(async (_url: string, init: RequestInit = {}) => {
         // Record the deadline indirectly: a budget means a signal is attached.
-        if (init.method === 'HEAD') seen.push(init.signal ? 1 : undefined);
+        // (The probe's first request is the tail suffix GET, not a HEAD.)
+        seen.push(init.signal ? 1 : undefined);
         return {
           ok: true,
           status: 200,

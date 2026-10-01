@@ -38,7 +38,7 @@ import {
   type CameraAwareMaterial,
 } from './materials/_shared/camera-aware-material';
 import type { RendererCapabilities } from './renderer-capabilities';
-import { log, Modules } from '../utils/log';
+import { log, LogEmoji, Modules } from '../utils/log';
 import {
   VISUAL_FACTORIES,
   PICKING_FACTORIES,
@@ -302,7 +302,7 @@ export class MaterialManager {
       this.currentPixelRatio
     );
 
-    log.info(Modules.RENDERER, `Created per-node point material (${backend})`);
+    log.verbose(LogEmoji.INFO, Modules.RENDERER, `Created per-node point material (${backend})`);
     return material;
   }
 
@@ -350,7 +350,7 @@ export class MaterialManager {
       this.currentPixelRatio
     );
 
-    log.info(Modules.RENDERER, `Created per-node line material (${backend})`);
+    log.verbose(LogEmoji.INFO, Modules.RENDERER, `Created per-node line material (${backend})`);
     return material;
   }
 
@@ -395,7 +395,7 @@ export class MaterialManager {
       this.currentPixelRatio
     );
 
-    log.info(Modules.RENDERER, `Created per-node gsplat material (${backend})`);
+    log.verbose(LogEmoji.INFO, Modules.RENDERER, `Created per-node gsplat material (${backend})`);
     return material;
   }
 
@@ -454,7 +454,7 @@ export class MaterialManager {
       this.currentPixelRatio
     );
 
-    log.info(Modules.RENDERER, `Created per-node mesh material (${backend})`);
+    log.verbose(LogEmoji.INFO, Modules.RENDERER, `Created per-node mesh material (${backend})`);
     return material;
   }
 
@@ -479,7 +479,11 @@ export class MaterialManager {
     this.createCount++;
     this.register(material);
     for (const listener of this.physicalMaterialListeners) listener();
-    log.info(Modules.RENDERER, `Created per-node physical mesh material (${backend})`);
+    log.verbose(
+      LogEmoji.INFO,
+      Modules.RENDERER,
+      `Created per-node physical mesh material (${backend})`
+    );
     return material;
   }
 

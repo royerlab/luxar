@@ -19,6 +19,7 @@ import {
 } from '../decompressed-chunk-cache';
 import type { ResidencyProbe } from '../residency-probe';
 import { perfCounters, type PerfCounterSlot } from '../../profiling/perf-counters';
+import { signalPriority, tagSignalPriority } from '../../utils/fetch-concurrency';
 import { signalOrigin } from './decode-origin';
 import { WARM_CHUNK_DEFAULT_ORIGIN, WARM_CHUNK_METHOD, type WarmableArray } from './warm-chunk';
 
@@ -376,6 +377,7 @@ function acquireChunk(ctx: AcquireContext, req: AcquireRequest): Promise<Decoded
     perfCounters.add(S_L0_COALESCED);
     req.probe?.record(true);
     pending.waiters++;
+    raiseSharedDecodePriority(pending, req.signal);
     return raceWaiter(cache, req.key, pending, req.signal);
   }
 
@@ -384,6 +386,16 @@ function acquireChunk(ctx: AcquireContext, req: AcquireRequest): Promise<Decoded
   req.probe?.record(false);
   const entry = startDecode(ctx, req);
   return raceWaiter(cache, req.key, entry, req.signal);
+}
+
+/**
+ * A caller joining an in-flight decode lifts that decode's fetch class to its
+ * own (an untagged caller is `demand`), so a frame waiting on a chunk that a
+ * refinement read started does not queue behind the refinement class.
+ */
+function raiseSharedDecodePriority(entry: InflightDecode, signal: AbortSignal | undefined): void {
+  const shared = signalPriority(entry.controller.signal);
+  if (shared) shared.raise(signalPriority(signal)?.value ?? 'demand');
 }
 
 /** Mutable view of an {@link InflightDecode} while it is being built. */
@@ -402,6 +414,12 @@ function startDecode(ctx: AcquireContext, req: AcquireRequest): InflightDecode {
     waiters: 1,
     promise: undefined as unknown as Promise<DecodedChunkResult>,
   };
+  // The decode fetches under its OWN signal, so carry the starting caller's
+  // fetch class onto it (a refinement read stays `refinement` at the store).
+  // A fresh cell, not the caller's: a later demand joiner raises THIS decode
+  // only, never every read of the caller's run.
+  const callerPriority = signalPriority(req.signal);
+  if (callerPriority) tagSignalPriority(entry.controller.signal, callerPriority.value);
   entry.promise = (async () => {
     // Cache miss — call original getChunk (triggers Blosc decompression)
     const chunk = await req.run(entry.controller.signal);

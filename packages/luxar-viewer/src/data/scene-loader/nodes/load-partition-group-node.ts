@@ -26,12 +26,19 @@
 import * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { log, Modules } from '../../../utils/log';
-import type { SceneNode } from '../../data-loader-types';
+import type { GeometryKind, SceneNode, ViewState } from '../../data-loader-types';
 import type { BspTreeNode, PartitionGroupMetadata } from '../../../types/partition-group';
 import type { NodeBuildCtx } from './build-ctx';
 import type { PartitionGroupChild } from '../../../scene/lod-group-registry';
-import { loadChildrenConcurrently, type LoadSceneChildren } from './load-children-concurrently';
+import {
+  acquireEagerWorkingSet,
+  loadChildrenConcurrently,
+  type LoadSceneChildren,
+} from './load-children-concurrently';
 import { perfCounters } from '../../../profiling/perf-counters';
+import { normalizeExtendDims } from '../view-state/extend-tolerance';
+import { partBoundsIntersectSlice } from '../view-state/partition-slice-gate';
+import { isUnderAny } from '../loaders/run-loader-updates';
 
 /** Perf counter: partition parts whose subtree load (loader init) resolved. */
 const S_PARTS_INITIALISED = perfCounters.slot('partition.partsInitialised');
@@ -255,6 +262,255 @@ function validatedBspTree(tree: unknown, children: SceneNode[]): BspTreeValidati
   }
 }
 
+/** Per-part slice-gate inputs (B4), by load index. */
+interface PartGate {
+  /** An `nd_transform` on the part's path or in its subtree: never slice-gate it. */
+  sliceExempt: boolean;
+  /** Every `extend_to_all` name in the part's subtree (never gated on). */
+  extendDims: string[];
+}
+
+function hasNdTransform(attrs: Record<string, unknown>): boolean {
+  const transform = attrs.nd_transform;
+  return typeof transform === 'object' && transform !== null && Object.keys(transform).length > 0;
+}
+
+function collectSubtreeGate(node: SceneNode, gate: PartGate): void {
+  const attrs = node.attrs as Record<string, unknown>;
+  if (hasNdTransform(attrs)) gate.sliceExempt = true;
+  for (const name of normalizeExtendDims(attrs.extend_to_all)) {
+    if (!gate.extendDims.includes(name)) gate.extendDims.push(name);
+  }
+  for (const child of node.children ?? []) collectSubtreeGate(child, gate);
+}
+
+function partGates(children: SceneNode[], ctx: NodeBuildCtx): PartGate[] {
+  return children.map((child) => {
+    const gate: PartGate = {
+      sliceExempt: ctx.pathHasNdTransform?.(child.path) === true,
+      extendDims: [],
+    };
+    collectSubtreeGate(child, gate);
+    return gate;
+  });
+}
+
+/** Everything the gated part load needs, bundled (indices are load indices). */
+interface PartitionLoadJob {
+  node: SceneNode;
+  group: THREE.Group;
+  children: SceneNode[];
+  parentLoc: zarr.Location<zarr.Readable>;
+  ctx: NodeBuildCtx;
+  loadPart: LoadSceneChildren;
+  partBounds: PositionBounds[] | null;
+  gates: PartGate[];
+}
+
+/** Which parts to load now and in what order (indices are load indices). */
+interface PartitionLoadPlan {
+  deferred: Set<number>;
+  order?: number[];
+}
+
+/** Whether a part can draw anything for `view` (see `partition-slice-gate.ts`). */
+function partInSlice(bounds: PositionBounds, gate: PartGate, view: ViewState): boolean {
+  return gate.sliceExempt || partBoundsIntersectSlice(bounds, view, gate.extendDims);
+}
+
+/**
+ * Gated loading (B4): load now only the ACTIVE parts — in the padded frustum
+ * of the current camera (when the registry can rank them) AND able to draw
+ * something for the current hidden-dim slice — nearest first. Every other part
+ * is deferred: it keeps an empty slot and is activated by the LOD registry the
+ * first time a loader pass needs it. No registry, or unusable part bounds,
+ * means nothing can activate a deferred part, so everything loads (pre-B4).
+ */
+function planPartitionLoad(job: PartitionLoadJob): PartitionLoadPlan {
+  const { children, ctx, partBounds } = job;
+  const registry = ctx.lodGroupRegistry;
+  if (!registry || !partBounds) return { deferred: new Set() };
+  const bounds = children.map((child, index) => partBounds[partIndexForChild(child, index)]);
+  const ranking = registry.rankPartitionPartsForLoad?.(job.group, bounds) ?? null;
+  const view = ctx.getSliceView?.() ?? ctx.viewState;
+  const deferred = new Set<number>();
+  for (let index = 0; index < children.length; index++) {
+    const inFrustum = ranking === null || ranking.inFrustum[index];
+    if (!inFrustum || !partInSlice(bounds[index], job.gates[index], view)) deferred.add(index);
+  }
+  return { deferred, order: ranking?.order };
+}
+
+/**
+ * One idempotent activation thunk per deferred part: load its subtree into its
+ * slot. `registerOnly` (the registry's activators) attaches and registers the
+ * part's loaders without loading their data — the loader pass that activates
+ * the part sweeps them (see `NodeBuildCtx.registerOnly`). A failed activation
+ * is forgotten, so the next call (a Retry re-arming the part) runs it again.
+ */
+function deferredActivators(
+  job: PartitionLoadJob,
+  slots: THREE.Group[],
+  deferred: ReadonlySet<number>,
+  registerOnly: boolean
+): Map<number, () => Promise<void>> {
+  const ctx = registerOnly ? { ...job.ctx, registerOnly: true } : job.ctx;
+  const activators = new Map<number, () => Promise<void>>();
+  for (const index of deferred) {
+    let started: Promise<void> | null = null;
+    activators.set(index, () => {
+      started ??= activateDeferredPart(job, job.children[index], slots[index], ctx).catch(
+        (error: unknown) => {
+          started = null;
+          throw error;
+        }
+      );
+      return started;
+    });
+  }
+  return activators;
+}
+
+/**
+ * Load one deferred part into its slot, unless its dataset is no longer live
+ * (a fire-and-forget activation can outlive a dataset switch). A failure — the
+ * part's loader construction, which is not a leaf `LoaderError` — is recorded
+ * on the part's path so Retry lists it, after discarding whatever the part had
+ * attached or registered, so a re-run starts clean.
+ */
+async function activateDeferredPart(
+  job: PartitionLoadJob,
+  child: SceneNode,
+  slot: THREE.Group,
+  ctx: NodeBuildCtx
+): Promise<void> {
+  const releaseWorkingSet = await acquireEagerWorkingSet(child, ctx);
+  try {
+    if (!ctx.isDatasetLive()) return;
+    await job.loadPart(child, slot, job.parentLoc.resolve(child.path.slice(1)), ctx);
+    if (ctx.registerOnly) ctx.registry.clearFailure(child.path);
+  } catch (error) {
+    if (!ctx.isDatasetLive()) return;
+    discardPartialPart(slot, ctx, child.path);
+    ctx.registry.recordFailure(
+      child.path,
+      error instanceof Error ? error : new Error(String(error))
+    );
+    throw error;
+  } finally {
+    releaseWorkingSet();
+  }
+}
+
+const LOADER_KINDS: readonly GeometryKind[] = ['points', 'lines', 'gsplats', 'mesh'];
+
+/** Drop the placeholders and loaders a failed part activation left behind. */
+function discardPartialPart(slot: THREE.Group, ctx: NodeBuildCtx, partPath: string): void {
+  const under = new Set([partPath]);
+  for (const kind of LOADER_KINDS) {
+    const loaders = ctx.registry.loadersOf(kind);
+    for (const [path, loader] of loaders) {
+      if (!isUnderAny(path, under)) continue;
+      loaders.delete(path);
+      loader.dispose();
+    }
+  }
+  slot.clear();
+}
+
+/** The registry entry of each part, by part index (`undefined` = no scene object). */
+function registryChildrenFor(
+  job: PartitionLoadJob,
+  partBounds: PositionBounds[],
+  activators: Map<number, () => Promise<void>> | null
+): Array<PartitionGroupChild | undefined> {
+  const { children, group, gates } = job;
+  const registryChildren: Array<PartitionGroupChild | undefined> = new Array(children.length).fill(
+    undefined
+  );
+  for (let loadIndex = 0; loadIndex < children.length; loadIndex++) {
+    const partIndex = partIndexForChild(children[loadIndex], loadIndex);
+    const objects = group.children.filter(
+      (candidate) => candidate.userData.partIndex === partIndex
+    );
+    if (objects.length === 0) continue;
+    const activate = activators?.get(loadIndex);
+    registryChildren[partIndex] = {
+      path: children[loadIndex].path,
+      objects,
+      positionBounds: partBounds[partIndex],
+      sliceExempt: gates[loadIndex].sliceExempt,
+      extendDims: gates[loadIndex].extendDims,
+      ...(activate ? { activate } : {}),
+    };
+  }
+  return registryChildren;
+}
+
+/**
+ * Register the parts for frustum + slice gating. Returns whether the
+ * partition was registered (a deferred part can only be activated if so).
+ */
+function registerPartitionParts(
+  job: PartitionLoadJob,
+  activators: Map<number, () => Promise<void>> | null
+): boolean {
+  const { node, partBounds, ctx } = job;
+  const registry = ctx.lodGroupRegistry;
+  if (!registry) return false;
+  if (!partBounds) {
+    log.warning(
+      Modules.SCENE_LOADER,
+      `Partition frustum selection disabled for ${node.path}: part bounds are missing, invalid, or inconsistent`
+    );
+    return false;
+  }
+  const registryChildren = registryChildrenFor(job, partBounds, activators);
+  if (!registryChildren.every((child) => child !== undefined)) {
+    log.warning(
+      Modules.SCENE_LOADER,
+      `Partition frustum selection disabled for ${node.path}: one or more parts produced no scene object`
+    );
+    return false;
+  }
+  registry.registerPartition({
+    path: node.path,
+    groupObject: job.group,
+    children: registryChildren as PartitionGroupChild[],
+  });
+  return true;
+}
+
+/** Load the active parts, then register every part (deferred ones as lazy). */
+async function loadAndRegisterParts(job: PartitionLoadJob): Promise<void> {
+  const plan = planPartitionLoad(job);
+  const slots = await loadChildrenConcurrently(
+    job.children,
+    job.group,
+    job.parentLoc,
+    job.ctx,
+    job.loadPart,
+    {
+      configureSlot: (slot, child, index) => {
+        slot.userData.partIndex = partIndexForChild(child, index);
+      },
+      configureLoadedChild: (object, child, index) => {
+        object.userData.partIndex = partIndexForChild(child, index);
+      },
+      deferred: plan.deferred,
+      order: plan.order,
+    }
+  );
+  const activators =
+    plan.deferred.size > 0 ? deferredActivators(job, slots, plan.deferred, true) : null;
+  // Registration is what activates a deferred part; without it, load them now
+  // (fully: no pass will sweep them for their first data).
+  if (!registerPartitionParts(job, activators) && activators) {
+    const eager = deferredActivators(job, slots, plan.deferred, false);
+    await Promise.all([...eager.values()].map((activate) => activate()));
+  }
+}
+
 /**
  * Load a kind=`partition` `Group` on initial scene construction.
  *
@@ -309,53 +565,16 @@ export async function loadPartitionGroupNode(
     await loadChildren(child, parent, loc, childCtx);
     perfCounters.add(S_PARTS_INITIALISED);
   };
-  await loadChildrenConcurrently(sceneChildren, partitionGroup, parentLoc, ctx, loadPart, {
-    configureSlot: (slot, child, index) => {
-      slot.userData.partIndex = partIndexForChild(child, index);
-    },
-    configureLoadedChild: (object, child, index) => {
-      object.userData.partIndex = partIndexForChild(child, index);
-    },
+  await loadAndRegisterParts({
+    node,
+    group: partitionGroup,
+    children: sceneChildren,
+    parentLoc,
+    ctx,
+    loadPart,
+    partBounds: indexedPartBounds(sceneChildren),
+    gates: partGates(sceneChildren, ctx),
   });
-
-  const partBounds = indexedPartBounds(sceneChildren);
-  if (ctx.lodGroupRegistry) {
-    if (!partBounds) {
-      log.warning(
-        Modules.SCENE_LOADER,
-        `Partition frustum selection disabled for ${node.path}: part bounds are missing, invalid, or inconsistent`
-      );
-    } else {
-      const registryChildren: Array<PartitionGroupChild | undefined> = new Array(
-        sceneChildren.length
-      ).fill(undefined);
-      for (let loadIndex = 0; loadIndex < sceneChildren.length; loadIndex++) {
-        const partIndex = partIndexForChild(sceneChildren[loadIndex], loadIndex);
-        const objects = partitionGroup.children.filter(
-          (candidate) => candidate.userData.partIndex === partIndex
-        );
-        if (objects.length > 0) {
-          registryChildren[partIndex] = {
-            path: sceneChildren[loadIndex].path,
-            objects,
-            positionBounds: partBounds[partIndex],
-          };
-        }
-      }
-      if (registryChildren.every((child) => child !== undefined)) {
-        ctx.lodGroupRegistry.registerPartition({
-          path: node.path,
-          groupObject: partitionGroup,
-          children: registryChildren as PartitionGroupChild[],
-        });
-      } else {
-        log.warning(
-          Modules.SCENE_LOADER,
-          `Partition frustum selection disabled for ${node.path}: one or more parts produced no scene object`
-        );
-      }
-    }
-  }
 
   // Stash the BSP split-plane tree (when present) for the coordinator's exact
   // back-to-front part ordering; absent for streamed grid/content merges, where

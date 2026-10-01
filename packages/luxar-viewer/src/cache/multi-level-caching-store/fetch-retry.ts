@@ -5,7 +5,10 @@ import {
   getFetchProgressEpoch,
   noteFetchProgress,
   noteFetchUrl,
+  originOfUrl,
   type FetchLane,
+  type FetchPriority,
+  type FetchPriorityCell,
   withFetchGate,
 } from '../../utils/fetch-concurrency';
 import { getErrorMessage } from '../../utils/format-error';
@@ -42,6 +45,17 @@ export interface FetchRetryOptions {
   headers?: HeadersInit;
   onExhausted?: (error: unknown) => void;
   lane?: FetchLane;
+  /**
+   * HTTP cache mode for the request. The zip range reader passes `no-store`:
+   * with the default mode Chrome serialises same-URL `Range` GETs through its
+   * HTTP-cache writer lock, which held a hosted archive at two reads in flight.
+   */
+  cache?: RequestCache;
+  /**
+   * Gate priority class (default `demand`), or a cell a coalescing caller may
+   * raise while the request is queued. See `utils/fetch-concurrency.ts`.
+   */
+  priority?: FetchPriority | FetchPriorityCell;
 }
 
 class FetchConsumerError {
@@ -300,44 +314,53 @@ async function runFetchAttempt<T>(
 ): Promise<T> {
   const lane = options?.lane ?? 'data';
   noteFetchUrl(url);
-  return withFetchGate(async () => {
-    // Start the per-attempt timer only after acquiring the gate. Queue wait is
-    // controlled by the caller signal and must not consume the request budget.
-    // That holds only while the gate is no wider than the browser's socket
-    // pool, which `noteFetchUrl` keeps true on HTTP/1.1 origins.
-    const timeoutController = new AbortController();
-    const timeoutId = setTimeout(
-      () =>
-        timeoutController.abort(
-          new Error(`response headers timed out after ${timeoutPerAttemptMs} ms`)
-        ),
-      timeoutPerAttemptMs
-    );
-    const abortScope = mergeAbortSignals(timeoutController.signal, options?.signal);
-    let response: Response | undefined;
-    try {
-      response = await fetch(url, {
-        signal: abortScope.signal,
-        ...(options?.headers ? { headers: options.headers } : {}),
-      });
-      clearTimeout(timeoutId);
-      if (isRetryableResponse(response)) throw new Error(`HTTP ${response.status} for ${url}`);
-      return await consumeResponse(
-        response,
-        {
-          timeoutController,
-          signal: abortScope.signal,
-          stallTimeoutMs: timeoutPerAttemptMs,
-          lane,
-        },
-        consume
+  return withFetchGate(
+    async () => {
+      // Start the per-attempt timer only after acquiring the gate. Queue wait is
+      // controlled by the caller signal and must not consume the request budget.
+      // That holds only while the gate is no wider than the browser's socket
+      // pool, which `noteFetchUrl` keeps true on HTTP/1.1 origins.
+      const timeoutController = new AbortController();
+      const timeoutId = setTimeout(
+        () =>
+          timeoutController.abort(
+            new Error(`response headers timed out after ${timeoutPerAttemptMs} ms`)
+          ),
+        timeoutPerAttemptMs
       );
-    } finally {
-      clearTimeout(timeoutId);
-      if (response) releaseUnconsumedBody(response);
-      abortScope.dispose();
-    }
-  }, lane);
+      const abortScope = mergeAbortSignals(timeoutController.signal, options?.signal);
+      let response: Response | undefined;
+      try {
+        response = await fetch(url, {
+          signal: abortScope.signal,
+          ...(options?.headers ? { headers: options.headers } : {}),
+          ...(options?.cache ? { cache: options.cache } : {}),
+        });
+        clearTimeout(timeoutId);
+        if (isRetryableResponse(response)) throw new Error(`HTTP ${response.status} for ${url}`);
+        return await consumeResponse(
+          response,
+          {
+            timeoutController,
+            signal: abortScope.signal,
+            stallTimeoutMs: timeoutPerAttemptMs,
+            lane,
+          },
+          consume
+        );
+      } finally {
+        clearTimeout(timeoutId);
+        if (response) releaseUnconsumedBody(response);
+        abortScope.dispose();
+      }
+    },
+    lane,
+    options?.priority ?? 'demand',
+    originOfUrl(url),
+    // An abort while still queued frees the queue place (a dead read-ahead
+    // must not hold one ahead of live speculative requests).
+    options?.signal
+  );
 }
 
 /**

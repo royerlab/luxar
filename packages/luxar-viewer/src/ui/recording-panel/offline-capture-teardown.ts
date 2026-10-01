@@ -14,6 +14,7 @@
  */
 
 import { Modules, log } from '../../utils/log';
+import { getDensityGuard } from '../../scene/density-guard';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import type { CaptureContext, OfflineCaptureDriver } from './drivers/offline-capture-driver';
 import type { RecordingSession } from './session';
@@ -72,6 +73,7 @@ export async function runCaptureTeardown(t: CaptureTeardown): Promise<void> {
   // below a no-op — the viewer stuck at capture resolution with
   // resize locked until a page reload.
   session.isOfflineCaptureActive = false;
+  getDensityGuard().setCaptureActive(false); // the density guard resumes
   session.isEXRSequenceRecording = false;
   t.cleanupOverlay();
   session.restoreAutoRotate();

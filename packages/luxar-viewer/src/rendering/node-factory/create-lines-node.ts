@@ -21,7 +21,7 @@ import type { LinesMetadata, LinesUserData, LinesDataLoader } from '../../types/
 import { log, Modules } from '../../utils/log';
 import type { PickingSystem } from '../picking/picking-system';
 import { applyTransform } from './transforms';
-import { resolveColormapWindow } from '../display-range';
+import { resolveColormapWindow, type DisplayUniforms } from '../display-range';
 import { parseLineJoinStyle, LINE_JOIN_STYLES } from '../../types/line-join';
 import { lineNodeLoadFromAttrs, resolveLinePrimitiveForNode } from '../../types/line-primitive';
 
@@ -123,7 +123,8 @@ export function createLinesNode(
             intensity: (leafRaw.intensity as number | undefined) ?? 1.0,
             offset: (leafRaw.offset as number | undefined) ?? 0.0,
           },
-          { intensity: composedIntensity, offset: composedOffset }
+          { intensity: composedIntensity, offset: composedOffset },
+          nodeAttrs.windowOwnerGain as DisplayUniforms | undefined
         );
         material.updateScalarRange(lnScalarRange[0], lnScalarRange[1]);
         // The window now drives the LUT lookup; clear the post-LUT gain the
@@ -204,16 +205,15 @@ export function createEmptyLinesNode(
     endJointCode: new Float32Array(0),
     segmentCount: 0,
   };
-  // When the node carries a scalar field + colormap, declare empty
+  // When the node carries a scalar field, declare empty
   // scalar arrays on the placeholder so `createInstancedLinesMesh`
   // stamps `userData.hasScalars = true` and the fail-closed colormap
   // guard in `createLinesNode` passes at material-creation time.
   // Without them the guard sees no scalars, logs "Colormap suppressed",
   // and nothing ever re-enables the LUT once real scalars stream in.
-  // Gate on the SAME `nodeAttrs` fields the colormap-application path
-  // above reads, so the placeholder matches exactly when colormap will
-  // apply. Mirrors `create-points-node.ts::createEmptyPointsNode`.
-  if (nodeAttrs.colormap && nodeAttrs.has_scalars) {
+  // A colormap selected later in the Layers panel must pass that guard
+  // before data streams in. Mirrors `create-points-node.ts::createEmptyPointsNode`.
+  if (nodeAttrs.has_scalars) {
     emptyConfig.startScalars = new Float32Array(0);
     emptyConfig.endScalars = new Float32Array(0);
   }

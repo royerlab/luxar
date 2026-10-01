@@ -37,6 +37,7 @@ import {
 import { clampLineCapacity } from '../element-texture-layout';
 import type { ProcessedLinesData } from '../../types/lines';
 import type { PooledBuffer } from './pool-stats';
+import { FreeBucketMap } from './byte-tracked-maps';
 import { chooseCapacity } from './capacity';
 
 /**
@@ -111,7 +112,7 @@ export interface LinesAdapterHost {
 
 export class LinesBufferAdapter {
   /** @internal — pool-bucketed reusable line geometries. */
-  readonly lineBuffers = new Map<number, PooledBuffer[]>();
+  readonly lineBuffers = new FreeBucketMap();
 
   constructor(private readonly host: LinesAdapterHost) {}
 
@@ -199,25 +200,24 @@ export class LinesBufferAdapter {
     // BEST-fit, not first-fit — see the gsplats adapter for rationale.
     // The fixed texel layout means any pooled lines geometry fits any
     // lines node: capacity is the only matching criterion.
-    let bestList: PooledBuffer[] | null = null;
+    let bestBucket: number | null = null;
     let bestIndex = -1;
     let bestCapacity = Infinity;
-    for (const pooled of this.lineBuffers.values()) {
+    for (const [bucket, pooled] of this.lineBuffers) {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
         // Skip a free-bucket resident disposed out-of-band — see the
         // points adapter's twin comment.
         if (candidate.geometry.userData.luxarInvalidated) continue;
         if (candidate.capacity >= segmentCount && candidate.capacity < bestCapacity) {
-          bestList = pooled;
+          bestBucket = bucket;
           bestIndex = i;
           bestCapacity = candidate.capacity;
         }
       }
     }
-    if (bestList) {
-      const candidate = bestList[bestIndex];
-      bestList.splice(bestIndex, 1);
+    if (bestBucket !== null) {
+      const candidate = this.lineBuffers.takeAt(bestBucket, bestIndex);
       // Adopted geometry may still carry the previous tenant's
       // instanceCount + texels; draw nothing until this node's write
       // sets the real count (a throwing write must not render the
@@ -274,16 +274,12 @@ export class LinesBufferAdapter {
       host.activeBuffers.delete(nodeId);
     }
 
-    for (const pooled of this.lineBuffers.values()) {
-      const index = pooled.indexOf(released);
-      if (index !== -1) {
-        pooled.splice(index, 1);
-        released.inUse = true;
-        released.lastUsedCommit = host.commitCount;
-        host.activeBuffers.set(nodeId, released);
-        this.disposeReplacementAfterReclaim(current);
-        return;
-      }
+    if (this.lineBuffers.removeFirst((buffer) => buffer === released, false)) {
+      released.inUse = true;
+      released.lastUsedCommit = host.commitCount;
+      host.activeBuffers.set(nodeId, released);
+      this.disposeReplacementAfterReclaim(current);
+      return;
     }
     this.disposeReplacementAfterReclaim(current);
   }
@@ -322,10 +318,7 @@ export class LinesBufferAdapter {
     buffer.lastUsedCommit = host.commitCount;
 
     const bucket = host.getBucket(buffer.capacity);
-    if (!this.lineBuffers.has(bucket)) {
-      this.lineBuffers.set(bucket, []);
-    }
-    this.lineBuffers.get(bucket)!.push(buffer);
+    this.lineBuffers.pushBuffer(bucket, buffer);
 
     host.evictUnused();
   }

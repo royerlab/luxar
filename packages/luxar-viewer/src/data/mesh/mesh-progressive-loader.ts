@@ -738,7 +738,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
       this._loadedLODCount++;
 
       if (!this._initialLoadDone) {
-        log.custom(
+        log.verbose(
           LogEmoji.BROADCAST,
           Modules.SCENE_LOADER,
           `Mesh reveal ${this.path} LOD ${level}/${this.nLods - 1}: ` +

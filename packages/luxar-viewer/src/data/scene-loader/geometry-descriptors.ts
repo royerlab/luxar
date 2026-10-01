@@ -20,6 +20,7 @@
  * @module data/scene-loader/geometry-descriptors
  */
 
+import { findObjectByName } from '../../utils/scene-graph-index';
 import type * as THREE from 'three';
 import type * as zarr from '../zarr';
 import type { GeometryKind, SceneNode, ViewState, DataLoader } from '../data-loader-types';
@@ -163,7 +164,7 @@ export const GEOMETRY_DESCRIPTORS: Record<GeometryKind, GeometryDescriptor> = {
       // The attrs come off the committed object's `userData`, which is where the
       // retry path can reach them: `RetryCtx` carries no node attrs, and mesh needs
       // `normal_dims` + `double_sided` to decide winding.
-      const attrs = ctx.rootGroup?.getObjectByName(path)?.userData as
+      const attrs = findObjectByName(ctx.rootGroup, path)?.userData as
         { attrs?: MeshMetadata } | undefined;
       const staged = await ctx.processMeshData(path, data, meshViewState, {
         normal_dims: attrs?.attrs?.normal_dims,

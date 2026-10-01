@@ -14,6 +14,7 @@
  * are never out of sync.
  */
 
+import { findObjectByName } from '../../../utils/scene-graph-index';
 import type * as THREE from 'three';
 import type { LoadedPointsData, ViewState } from '../../data-loader-types';
 import type { LinesDataLoader, LinesViewState } from '../../../types/lines';
@@ -107,7 +108,7 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
     // extend_to_all / nd_transform adjustments as the main update path.
     // Passing a raw view state here silently renders an incorrect query
     // region for transformed or extended nodes.
-    const obj = ctx.rootGroup?.getObjectByName(path) as
+    const obj = findObjectByName(ctx.rootGroup, path) as
       THREE.Object3D | THREE.Mesh | THREE.Points | undefined;
     const attrs = obj?.userData?.attrs as
       (LineWorkingSetNode['attrs'] & { extend_to_all?: string[] }) | undefined;
@@ -121,7 +122,7 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
     // fetched + commit silently no-op'd") and clear the failure,
     // hiding the broken state from `hasFailures()`.
     const verifyAndClear = (kind: string): boolean => {
-      if (!ctx.rootGroup?.getObjectByName(path)) {
+      if (!findObjectByName(ctx.rootGroup, path)) {
         log.warning(
           Modules.SCENE_LOADER,
           `Retry of ${path} fetched data but no scene object exists; not clearing failure`

@@ -70,6 +70,7 @@ import {
   type TSLNode,
   sortedIndexNode,
   densityDroppedNode,
+  densityAlphaNode,
 } from '../_shared/tsl-helpers';
 import {
   ALPHA_CLAMP,
@@ -167,6 +168,11 @@ export interface PointTSLNodes {
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
   readonly uDensityDrop: TSLNode;
+  /**
+   * Alpha-over compensation exponent of a thinned `normal` node (1 = identity;
+   * absent on graphs that never read it, e.g. picking).
+   */
+  readonly uDensityAlphaExp?: TSLNode;
   /** Refraction split (glass-partition-tsl.ts): mode + shared glass depth texture. */
   readonly uGlassPartition: GlassPartitionTSLNodes['uGlassPartition'];
   readonly uGlassDepth: GlassPartitionTSLNodes['uGlassDepth'];
@@ -547,6 +553,10 @@ export function pointWebGPUFactory(
       // RGB premultiplied by alpha — CustomBlending + MaxEquation.
       return vec4(finalColor.mul(alpha), alpha);
     }
+    if (config.blendingMode === 'normal' && nodes.uDensityAlphaExp) {
+      // Alpha-over density-guard compensation (GLSL luxarDensityAlpha twin).
+      return vec4(finalColor, densityAlphaNode(alpha, nodes.uDensityAlphaExp));
+    }
     return vec4(finalColor, alpha);
   });
 
@@ -601,6 +611,7 @@ export function buildPointTSLNodesFromUniforms(
     radiusScale: uniform((uniforms.radiusScale?.value as number) ?? 1.0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
+    uDensityAlphaExp: uniform((uniforms.uDensityAlphaExp?.value as number) ?? 1),
     ...glassPartitionNodesFromUniforms(uniforms),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
     uPixelRatio: uniform((uniforms.uPixelRatio?.value as number) ?? 1),

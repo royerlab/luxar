@@ -16,7 +16,9 @@
  *   8. Persist `viewer_config` + `position_bounds` onto the root group's
  *      userData for the UI to read.
  *   9. Build the scene graph (zarr group enumeration → SceneNode tree).
- *  10. Recursively load every leaf via `loadSceneNodes`.
+ *  10. Hand the root to `config.onSceneMetadata` (the scene manager frames
+ *      the opening camera from the metadata), then recursively load every
+ *      leaf via `loadSceneNodes`.
  *  11. Load overlay configs (screen-space annotations).
  *  12. Wire post-load monitor providers (cache stats, loader maps, etc.).
  *  13. Schedule progressive GSplats LOD refinement when any multi-LOD
@@ -33,6 +35,7 @@ import * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { log, Modules, LogEmoji } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
+import { attachSceneGraphIndex } from '../../../utils/scene-graph-index';
 import { getWorkerPool, warmUpDataWorkerPool } from '../../../workers/worker-pool';
 import { markLoad, noteRefinementComplete } from '../../../profiling/load-timeline';
 import type { RefinementHoldReason } from '../../../types/data-monitor-types';
@@ -65,6 +68,7 @@ import { buildSceneGraph } from '../nodes/build-scene-graph';
 import { loadSceneNodes } from '../nodes/load-scene-nodes';
 import { reportLoadOutcome } from '../loaders/failure-report';
 import { SceneIdentityWatchdog, canonicalJson } from '../../scene-identity-watchdog';
+import type { RootDocumentFetch } from '../../../cache/root-document-prefetch';
 import type { NodeBuildCtx } from '../nodes/build-ctx';
 
 /**
@@ -237,6 +241,33 @@ function synthesizeSceneDimensionsFromNode(
 }
 
 /**
+ * Hand the load-time root fetch's `ETag` to the identity watchdog, so its first
+ * poll is conditional rather than a third full download of the root document.
+ *
+ * Asynchronous and non-blocking: by the time the root is open the shared fetch
+ * has settled (the open read it, or validation did), and a fetch that has not
+ * simply leaves the first poll unconditional, as before. The evidence passed is
+ * the cheapest available — the token validation already derived when there is
+ * one, else the bytes for the watchdog to check at its first probe.
+ */
+function seedWatchdogFromLoad(
+  watchdog: SceneIdentityWatchdog,
+  rootDocument: Promise<RootDocumentFetch> | null
+): void {
+  if (!rootDocument) return;
+  void rootDocument.then((result) => {
+    const served = result.served;
+    if (!served?.etag) return;
+    const token = result.peekToken();
+    watchdog.seedFromLoad(
+      token?.mode === 'content-hash'
+        ? { doc: served.doc, etag: served.etag, contentHash: token.hash }
+        : { doc: served.doc, etag: served.etag, body: served.bytes }
+    );
+  });
+}
+
+/**
  * Execute the full initial-load sequence and return the populated root
  * THREE.Group. Mutates the orchestrator's resource references via the
  * ctx setters.
@@ -310,6 +341,11 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // Create root THREE.js group
   const rootGroup = new THREE.Group();
   rootGroup.name = 'LuxarScene';
+  // Path lookups (commit / process / sweep / release hooks) resolve through this
+  // index instead of an O(scene) `getObjectByName` walk each (B9a). It maintains
+  // itself from the graph's own add/remove/rename events, so no builder below has
+  // to know about it; a dataset switch builds a fresh root and a fresh index.
+  attachSceneGraphIndex(rootGroup);
   ctx.setRootGroup(rootGroup);
 
   // Load scene metadata
@@ -345,9 +381,13 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
       expectedContentHash: typeof loadedHash === 'string' ? loadedHash : null,
       expectedAttrsJson: attrsJson,
     });
+    seedWatchdogFromLoad(watchdog, cacheResult.rootDocument);
     watchdog.start();
     ctx.setIdentityWatchdog(watchdog);
   }
+  // The root is open: validation and the store open are both past the shared
+  // load-time fetch, so let its bytes go (a later re-read reaches the server).
+  cacheResult.releaseRootDocument();
 
   // Format-version policy, shared with the Python reader (data/format-version.ts
   // mirrors typing_utils/format_version.py): a supported version loads
@@ -442,6 +482,9 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   ctx.setSceneGraph(sceneGraph);
   setSceneLineLoad(sceneEffectiveLineLoad(sceneGraph));
 
+  // The opening camera is framed from this metadata before any node reads the view.
+  ctx.config.onSceneMetadata?.(rootGroup);
+
   // Load points / lines / gsplats / nested groups recursively
   await loadSceneNodes(sceneGraph, rootGroup, rootLoc, ctx.makeNodeBuildCtx());
 
@@ -464,9 +507,13 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // A baked environment map (`luxar env attach`), if the store carries one that
   // matches this scene's digest. Parked on the root; `load-dataset.ts` hands it to
   // the scene environment together with the authored `viewer_config.environment`.
+  // The index's silence is trusted only when it came from the network: `env
+  // attach` keeps content_hash, so a warm L2 may still hold the pre-attach index.
   const bakedEnvironment = await loadBakedEnvironment(
     rootLoc,
-    (sceneAttrs as Record<string, unknown> | undefined)?.content_hash as string | undefined
+    (sceneAttrs as Record<string, unknown> | undefined)?.content_hash as string | undefined,
+    normalizedUrl,
+    cacheResult.rootIndexFromNetwork()
   );
   if (bakedEnvironment) rootGroup.userData.bakedEnvironment = bakedEnvironment;
 

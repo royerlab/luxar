@@ -47,6 +47,7 @@ import {
 } from '../scene-loader/progressive/residency-budget';
 import { viewStatesEqual } from '../loaders/progressive/view-state-equal';
 import type { SliceCache } from '../../cache/slice-cache';
+import { setSliceCacheOrigin, type SliceCacheOrigin } from '../../cache/slice-cache-origin';
 import { log, Modules, LogEmoji } from '../../utils/log';
 import { timeLodStageWithResult } from '../scene-loader/lod-load-stats';
 import { createLookaheadController } from '../loaders/progressive/lookahead-signal';
@@ -279,6 +280,9 @@ export class LinesProgressiveLoader implements LinesDataLoader {
   private _payloadsAtPassStart = 0;
   private _restoredFullLadderAtPassStart = false;
   private _retryFoldedPass = false;
+  // The S-cache entry `loadedLODs` holds exactly (see the GSplats twin):
+  // stamped on concatenations built from it alone, for the stage cache.
+  private _restoredOrigin: SliceCacheOrigin | null = null;
   // Per-sub-LOD cumulative energy fractions e(k) (the build-time
   // `lod_stats.energy_fraction_cum` stamps), normalized at construction:
   // non-null only when EVERY sub-LOD carries a stamp (a partially stamped
@@ -397,6 +401,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       this._retryFoldedPass = true;
       return 0;
     }
+    this._restoredOrigin = null;
     if (plan.action === 'unwind-restored-full') {
       this.loadedLODs = [];
       this._loadedLODCount = 0;
@@ -511,6 +516,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       // levels and must never mutate the cache's payload array (elements
       // stay shared read-only). Mirrors GSplatsProgressiveLoader.
       this.loadedLODs = restored ? [...restored.lods] : [];
+      this._restoredOrigin = restored?.origin ?? null;
       this._loadedLODCount = restored?.depth ?? 0;
       this._levelsAtPassStart = 0;
       this._payloadsAtPassStart = 0;
@@ -584,11 +590,12 @@ export class LinesProgressiveLoader implements LinesDataLoader {
       const elapsed = performance.now() - t0;
 
       this.loadedLODs.push(lodData);
+      this._restoredOrigin = null;
       this._loadedLODCount++;
       this._lastAllResident = allResident;
 
       if (!this._initialLoadDone) {
-        log.custom(
+        log.verbose(
           LogEmoji.BROADCAST,
           Modules.LINES_LOADER,
           `LOD ${level}/${this.nLods - 1}: ${lodData.segmentCount} segments (${elapsed.toFixed(1)}ms${allResident ? '' : ', miss'})`
@@ -713,6 +720,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
           : null;
       const result = concatenateLinesData(this.loadedLODs);
       setPrefixParent(result, prevMemo);
+      if (this._restoredOrigin) setSliceCacheOrigin(result, this._restoredOrigin);
       // Keep only the cumulative payload, and release the sub-loaders' pooled
       // buffers that back the decoded rung views. Retaining either copy keeps
       // roughly the same bytes as `result` and doubles terminal residency.
@@ -788,6 +796,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
     }
     this.lodLoaders = [];
     this.loadedLODs = [];
+    this._restoredOrigin = null;
     this._loadedLODCount = 0;
     this._retryFoldedPass = false;
     this.lastViewState = null;

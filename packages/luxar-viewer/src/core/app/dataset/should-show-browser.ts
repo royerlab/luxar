@@ -18,6 +18,18 @@ function isZarrStoreSuffix(src: string): boolean {
 }
 
 /**
+ * Whether {@link shouldShowBrowser} will send `src` straight to the loader
+ * without a network probe — a non-directory URL whose path names a store
+ * (`.zarr`) or an archive (`.zip`). Synchronous, so bootstrap can start the
+ * root-document fetch before `app.init` for exactly the URLs the loader is
+ * certain to open, and never for one that may end in the dataset browser.
+ */
+export function loadsDirectlyWithoutProbe(src: string | undefined | null): boolean {
+  if (classifyBrowserUrl(src) === 'must-browse' || !src) return false;
+  return isZippedStoreUrl(src) || isZarrStoreSuffix(src);
+}
+
+/**
  * Decide whether to open the dataset browser or load `src` directly.
  *
  * Order of checks:

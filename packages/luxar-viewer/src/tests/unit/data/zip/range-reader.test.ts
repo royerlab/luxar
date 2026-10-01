@@ -134,6 +134,24 @@ describe('LuxarHttpRangeReader.read', () => {
     expect(headers.Range).toBe('bytes=10-12');
   });
 
+  it('bypasses the HTTP cache on member reads, like the identity probe does', async () => {
+    // Every member read is a Range GET against ONE URL. With the default cache
+    // mode Chrome serialises same-URL range GETs behind its HTTP-cache writer
+    // lock, which held a hosted `.zarr.zip` at two requests in flight (CT zip:
+    // first frame 88.3 s -> 5.9 s once reads carried `no-store`).
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      response(new Uint8Array([7, 8, 9]), {
+        status: 206,
+        headers: { 'content-range': 'bytes 10-12/100' },
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await new LuxarHttpRangeReader(URL_).read(10, 3);
+
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ cache: 'no-store' });
+  });
+
   it('short-circuits a zero-length read without touching the network', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);

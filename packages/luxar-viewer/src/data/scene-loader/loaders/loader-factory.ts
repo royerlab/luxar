@@ -38,7 +38,7 @@ import type { KTX2TextureDecoder, MeshDataLoader, MeshMetadata } from '../../../
 import { ArrayRefRegistry } from '../../array-decoder/decoder';
 import { MAX_MESH_VERTICES } from '../../../config/constants';
 import { LoaderError } from '../nodes/load-leaf-error-dispatch';
-import { log, Modules } from '../../../utils/log';
+import { log, LogEmoji, Modules } from '../../../utils/log';
 import type { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
 import type { SliceCache } from '../../../cache/slice-cache';
 import type { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
@@ -92,7 +92,11 @@ export function createPointsLoader(
   deps: LoaderFactoryDeps
 ): PointsSpatialIndexLoader {
   const nodeLoc = resolveNodeLoc(node, loc, deps.zarrStore);
-  log.query(Modules.SCENE_LOADER, `Using PointsSpatialIndexLoader for ${node.path}`);
+  log.verbose(
+    LogEmoji.QUERY,
+    Modules.SCENE_LOADER,
+    `Using PointsSpatialIndexLoader for ${node.path}`
+  );
   return new PointsSpatialIndexLoader(
     nodeLoc,
     node,
@@ -114,7 +118,11 @@ export function createLinesLoader(
   deps: LoaderFactoryDeps
 ): LinesDataLoader {
   const nodeLoc = resolveNodeLoc(node, loc, deps.zarrStore);
-  log.query(Modules.SCENE_LOADER, `Using LinesSpatialIndexLoader for ${node.path}`);
+  log.verbose(
+    LogEmoji.QUERY,
+    Modules.SCENE_LOADER,
+    `Using LinesSpatialIndexLoader for ${node.path}`
+  );
   return new LinesSpatialIndexLoader(
     nodeLoc,
     node,
@@ -136,7 +144,11 @@ export function createGSplatsLoader(
   deps: LoaderFactoryDeps
 ): GSplatsDataLoader {
   const nodeLoc = resolveNodeLoc(node, loc, deps.zarrStore);
-  log.query(Modules.SCENE_LOADER, `Using GSplatsSpatialIndexLoader for ${node.path}`);
+  log.verbose(
+    LogEmoji.QUERY,
+    Modules.SCENE_LOADER,
+    `Using GSplatsSpatialIndexLoader for ${node.path}`
+  );
   return new GSplatsSpatialIndexLoader(
     nodeLoc,
     node,
@@ -174,7 +186,8 @@ export async function createProgressiveGSplatsLoader(
 ): Promise<GSplatsDataLoader> {
   const parentLoc = zarr.root(deps.zarrStore).resolve(node.path === '/' ? '' : node.path.slice(1));
 
-  log.query(
+  log.verbose(
+    LogEmoji.QUERY,
     Modules.SCENE_LOADER,
     `Creating progressive GSplats loader for ${node.path} (${nAdditive} additive sub-LODs)`
   );
@@ -251,7 +264,7 @@ export function createMeshLoader(
   deps: LoaderFactoryDeps
 ): MeshDataLoader {
   const nodeLoc = resolveNodeLoc(node, loc, deps.zarrStore);
-  log.query(Modules.SCENE_LOADER, `Using MeshWholeNodeLoader for ${node.path}`);
+  log.verbose(LogEmoji.QUERY, Modules.SCENE_LOADER, `Using MeshWholeNodeLoader for ${node.path}`);
   return new MeshWholeNodeLoader(node.path, node.attrs as unknown as MeshMetadata, nodeLoc, {
     zarrStore: deps.zarrStore,
     arrayRefRegistry: deps.arrayRefRegistry,
@@ -325,7 +338,8 @@ export async function createProgressiveMeshLoader(
     );
   }
 
-  log.query(
+  log.verbose(
+    LogEmoji.QUERY,
     Modules.SCENE_LOADER,
     `Creating progressive Mesh loader for ${node.path} (${nAdditive} additive sub-LODs)`
   );
@@ -488,7 +502,8 @@ export async function createProgressivePointsLoader(
 ): Promise<PointsDataLoader> {
   const parentLoc = zarr.root(deps.zarrStore).resolve(node.path === '/' ? '' : node.path.slice(1));
 
-  log.query(
+  log.verbose(
+    LogEmoji.QUERY,
     Modules.SCENE_LOADER,
     `Creating progressive Points loader for ${node.path} (${nAdditive} additive sub-LODs)`
   );
@@ -650,7 +665,8 @@ export async function createProgressiveLinesLoader(
 ): Promise<LinesDataLoader> {
   const parentLoc = zarr.root(deps.zarrStore).resolve(node.path === '/' ? '' : node.path.slice(1));
 
-  log.query(
+  log.verbose(
+    LogEmoji.QUERY,
     Modules.SCENE_LOADER,
     `Creating progressive Lines loader for ${node.path} (${nAdditive} additive sub-LODs)`
   );

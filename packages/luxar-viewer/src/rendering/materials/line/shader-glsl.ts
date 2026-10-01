@@ -57,6 +57,7 @@ import {
   GLSL_SORTED_INDEX,
   GLSL_LINE_JOINT_CODE,
   GLSL_LINE_JOIN,
+  GLSL_DENSITY_ALPHA,
 } from '../_shared/glsl-lib';
 import {
   GLSL_GLASS_PARTITION_GUARD,
@@ -539,6 +540,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
 export const LINE_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
     ${GLSL_GLASS_PARTITION_UNIFORMS}
+    ${GLSL_DENSITY_ALPHA}
     ${GLSL_NEAR_FADE_FUNCTIONS}
 
     uniform int uIsOrtho;   // shared with the vertex stage
@@ -749,8 +751,10 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       float a = intensity * uOpacity;
       fragColor = vec4(gammaColor * a, a);
       #else
+      // Additive and normal: alpha carries the density guard's alpha-over
+      // thinning compensation (identity unless a normal node is thinned).
       vec3 finalColor = gammaColor;
-      fragColor = vec4(finalColor, intensity * uOpacity);
+      fragColor = vec4(finalColor, luxarDensityAlpha(intensity * uOpacity));
       #endif
     }
   `;

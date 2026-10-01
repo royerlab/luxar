@@ -118,6 +118,27 @@ describe('commitGSplatsGeometry', () => {
     expect(payload.splatCount).toBe(11);
   });
 
+  it('hands the depth sort a lazy COPY of shared (stage-cached) centers, never the buffer', () => {
+    // A stage-cached projection is committed again on every revisit of the
+    // slice; the coordinator TRANSFERS whatever centers it resolves, so the
+    // shared buffer itself must never reach it.
+    mockNoteDepthSortCommit.mockReset();
+    const root = new THREE.Group();
+    const mesh = makeMesh('/g');
+    root.add(mesh);
+    const staged = makeStaged(4);
+    if (staged.noop) throw new Error('expected a geometry staged commit');
+    staged.processed.centers3D.set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    staged.processed.sharedBuffers = true;
+    commitGSplatsGeometry(staged, root, null, undefined, V);
+    const provider = mockNoteDepthSortCommit.mock.calls[0][1] as () => Float32Array;
+    expect(typeof provider).toBe('function');
+    const copy = provider();
+    expect(copy).not.toBe(staged.processed.centers3D);
+    expect(copy.buffer).not.toBe(staged.processed.centers3D.buffer);
+    expect(Array.from(copy)).toEqual(Array.from(staged.processed.centers3D));
+  });
+
   it('stamps loadedViewVersion (the explicit commit arg) onto the mesh user-data', () => {
     // Drives the slice-aware LOD fallback: the registry reads this stamp to tell
     // whether the level's geometry is fresh for the current view version.

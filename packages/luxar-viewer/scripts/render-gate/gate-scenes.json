@@ -299,6 +299,15 @@
       }
     },
     {
+      "id": "perf-splats-10m-normal",
+      "synthetic": {
+        "type": "gsplats",
+        "count": 10000000,
+        "seed": 5,
+        "blending": "normal"
+      }
+    },
+    {
       "id": "perf-splats-5m-volumetric",
       "synthetic": {
         "type": "gsplats",
@@ -437,19 +446,97 @@
           "store": "gate/tp50.luxar.zarr",
           "workload": { "kind": "playback", "fps": 10, "durationMs": 6000 },
           "metrics": [
-            { "name": "worker.misroutes", "better": "lower", "kind": "counter", "relTol": 0.05 },
             {
-              "name": "ext.gpuUploadBytesBuffer",
+              "name": "ext.gpuUploadBytesBuffer/tick",
+              "of": "ext.gpuUploadBytesBuffer",
+              "per": "ticks",
               "better": "lower",
               "kind": "counter",
               "relTol": 0.05
             },
-            { "name": "gpu.uploadBytes", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            {
+              "name": "gpu.uploadBytes/tick",
+              "of": "gpu.uploadBytes",
+              "per": "ticks",
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
+            {
+              "name": "render.count/tick",
+              "of": "render.count",
+              "per": "ticks",
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
+            { "name": "worker.misroutes", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            {
+              "name": "ext.gpuUploadBytesBuffer",
+              "report": true,
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
+            {
+              "name": "gpu.uploadBytes",
+              "report": true,
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
             { "name": "achievedFps", "better": "higher", "kind": "timing" },
-            { "name": "render.count", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            {
+              "name": "render.count",
+              "report": true,
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
             { "name": "lastTimepointShown", "better": "higher", "kind": "counter" },
             { "name": "decode.duplicates", "better": "lower", "kind": "counter" },
             { "name": "console.calls", "better": "lower", "kind": "counter", "relTol": 0.05 }
+          ]
+        },
+        {
+          "id": "playback_pl_timelapse",
+          "store": "gate/pl_timelapse.luxar.zarr",
+          "workload": { "kind": "playback", "fps": 10, "durationMs": 6000 },
+          "metrics": [
+            {
+              "name": "gpu.uploadBytes.texture/tick",
+              "of": "gpu.uploadBytes.texture",
+              "per": "ticks",
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
+            {
+              "name": "gpu.uploadBytes/tick",
+              "of": "gpu.uploadBytes",
+              "per": "ticks",
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
+            {
+              "name": "render.count/tick",
+              "of": "render.count",
+              "per": "ticks",
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
+            {
+              "name": "gpu.uploadBytes.texture",
+              "report": true,
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
+            { "name": "achievedFps", "better": "higher", "kind": "timing" },
+            { "name": "lastTimepointShown", "better": "higher", "kind": "counter" },
+            { "name": "decode.duplicates", "better": "lower", "kind": "counter" }
           ]
         },
         {
@@ -457,8 +544,52 @@
           "store": "gate/lod_timelapse.luxar.zarr",
           "workload": { "kind": "playback", "fps": 10, "durationMs": 6000 },
           "metrics": [
+            {
+              "name": "gpu.uploadBytes/tick",
+              "of": "gpu.uploadBytes",
+              "per": "ticks",
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
+            {
+              "name": "gpu.uploadBytes.texture/tick",
+              "of": "gpu.uploadBytes.texture",
+              "per": "ticks",
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
+            {
+              "name": "render.count/tick",
+              "of": "render.count",
+              "per": "ticks",
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
+            {
+              "name": "gpu.uploadBytes",
+              "report": true,
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
+            {
+              "name": "gpu.uploadBytes.texture",
+              "report": true,
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
             { "name": "achievedFps", "better": "higher", "kind": "timing" },
-            { "name": "render.count", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            {
+              "name": "render.count",
+              "report": true,
+              "better": "lower",
+              "kind": "counter",
+              "relTol": 0.05
+            },
             { "name": "lastTimepointShown", "better": "higher", "kind": "counter" },
             { "name": "lod.levelSwaps", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "decode.duplicates", "better": "lower", "kind": "counter" }
@@ -469,7 +600,7 @@
           "store": "gate/tp50.luxar.zarr",
           "workload": { "kind": "scrub", "mode": "drag", "steps": 20, "intervalMs": 50 },
           "metrics": [
-            { "name": "commitsDuringDrag", "better": "lower", "kind": "counter", "relTol": 0.05 },
+            { "name": "commitsDuringDrag", "better": "higher", "kind": "counter", "relTol": 0.05 },
             { "name": "render.count", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "decode.count", "better": "lower", "kind": "counter", "relTol": 0.05 }
           ]

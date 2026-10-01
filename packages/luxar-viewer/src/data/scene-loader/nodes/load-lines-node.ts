@@ -16,7 +16,7 @@
 
 import type * as THREE from 'three';
 import * as zarr from '../../zarr';
-import { log, Modules } from '../../../utils/log';
+import { log, LogEmoji, Modules } from '../../../utils/log';
 import { LoaderError, classifyLoaderError } from './load-leaf-error-dispatch';
 import {
   createLinesLoader as createLinesLoaderHelper,
@@ -79,15 +79,16 @@ export async function loadLinesNodeCheap(
   loc: zarr.Location<zarr.Readable>,
   ctx: NodeBuildCtx
 ): Promise<LinesCheapLoad> {
-  log.custom('📐', Modules.SCENE_LOADER, `Loading lines: ${node.path}`);
+  log.verbose('📐', Modules.SCENE_LOADER, `Loading lines: ${node.path}`);
 
   const attrs = node.attrs as unknown as LinesMetadata;
-  log.info(Modules.SCENE_LOADER, `  Segments: ${attrs.n_segments || 'unknown'}`);
-  log.info(Modules.SCENE_LOADER, `  Vertices: ${attrs.n_vertices || 'unknown'}`);
+  log.verbose(LogEmoji.INFO, Modules.SCENE_LOADER, `  Segments: ${attrs.n_segments || 'unknown'}`);
+  log.verbose(LogEmoji.INFO, Modules.SCENE_LOADER, `  Vertices: ${attrs.n_vertices || 'unknown'}`);
 
   const nAdditive = (node.attrs as { n_additive_sublods?: number }).n_additive_sublods ?? 0;
   if (nAdditive > 1) {
-    log.info(
+    log.verbose(
+      LogEmoji.INFO,
       Modules.SCENE_LOADER,
       `  Additive sub-LODs: ${nAdditive} (progressive loading enabled)`
     );
@@ -109,6 +110,7 @@ export async function loadLinesNodeCheap(
     loader
   );
   parentThree.add(placeholder);
+  ctx.onLeafMaterialized?.(node.path, placeholder);
 
   return { placeholder, loader };
 }
@@ -191,6 +193,15 @@ export async function loadLinesNode(
   ctx: NodeBuildCtx
 ): Promise<THREE.Mesh | null> {
   const { placeholder, loader } = await loadLinesNodeCheap(node, parentThree, loc, ctx);
+  // A registry-activated partition part: the activating pass sweeps it (B4).
+  if (ctx.registerOnly) {
+    // Built after a dataset switch (the activation is fire-and-forget): the
+    // loader registry outlives the dataset, so a dead dataset's loader is
+    // disposed, never registered where the next dataset's passes sweep.
+    if (ctx.isDatasetLive()) ctx.registry.registerLinesLoader(node.path, loader);
+    else loader.dispose();
+    return placeholder;
+  }
   try {
     await loadLinesNodeExpensive(node, ctx, loader);
   } finally {

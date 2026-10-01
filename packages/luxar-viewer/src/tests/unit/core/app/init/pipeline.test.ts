@@ -23,6 +23,7 @@ import {
   type InitPipelinePorts,
 } from '../../../../../core/app/init/pipeline';
 import { EventGroup } from '../../../../../utils/cross-layer/event-group';
+import { eventBus } from '../../../../../utils/cross-layer/event-bus';
 import type { DimensionSlidersConfig } from '../../../../../input/input-handler/panel-capabilities';
 import type { SliderConfig } from '../../../../../ui/dimension-sliders';
 
@@ -831,6 +832,134 @@ describe('runInitPipeline', () => {
         // The module mock is shared; restore the suite-wide default.
         vi.mocked(getSceneLoader).mockReturnValue(null as never);
       }
+    });
+  });
+
+  describe("'lod-group-selector' per-frame callback", () => {
+    async function wireSelector() {
+      const { factories } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+      const partial: Partial<InitPipelineResult> = {};
+      await runInitPipeline(ports, partial);
+      const anim = factories.animationController.mock.results[0].value as {
+        addPerFrameCallback: ReturnType<typeof vi.fn>;
+      };
+      const entry = anim.addPerFrameCallback.mock.calls.find(
+        (call) => call[0] === 'lod-group-selector'
+      );
+      if (!entry) throw new Error("'lod-group-selector' was never registered");
+      const tick = entry[1] as () => boolean;
+      const notify = (
+        partial.adaptiveDPRManager as unknown as { notifyContentChanged: ReturnType<typeof vi.fn> }
+      ).notifyContentChanged;
+      return { tick, notify };
+    }
+
+    function stubRegistry(frame: { levelChanged: boolean; cullChanged: boolean }) {
+      const refreshVisibleCounts = vi.fn();
+      vi.mocked(getSceneLoader).mockReturnValue({
+        refreshVisibleCounts,
+        lodGroupRegistry: {
+          evaluatePerFrame: vi.fn(() => frame),
+          // False on purpose: the redraw must follow from the frame's own
+          // report, not from a drawn-state flag the stub happens to raise.
+          takeDrawnStateChanged: vi.fn(() => false),
+        },
+      } as never);
+      return { refreshVisibleCounts };
+    }
+
+    it('a partition cull flip redraws but does NOT reset adaptive-DPR learning', async () => {
+      // An orbit over a partitioned scene flips part visibility constantly; that
+      // is the same content seen from elsewhere, not new content. Treating it as
+      // a content change pulled learned floors forward and confounded every probe.
+      const { tick, notify } = await wireSelector();
+      try {
+        const { refreshVisibleCounts } = stubRegistry({ levelChanged: false, cullChanged: true });
+        const drew = tick();
+        expect(notify).not.toHaveBeenCalled();
+        expect(drew).toBe(true);
+        // The visible tally still tracks the parts actually drawn.
+        expect(refreshVisibleCounts).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.mocked(getSceneLoader).mockReturnValue(null as never);
+      }
+    });
+
+    it('a level swap redraws AND notifies adaptive DPR of a content change', async () => {
+      const { tick, notify } = await wireSelector();
+      try {
+        const { refreshVisibleCounts } = stubRegistry({ levelChanged: true, cullChanged: false });
+        const drew = tick();
+        expect(notify).toHaveBeenCalledTimes(1);
+        expect(drew).toBe(true);
+        expect(refreshVisibleCounts).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.mocked(getSceneLoader).mockReturnValue(null as never);
+      }
+    });
+
+    it('a no-op frame neither redraws nor notifies', async () => {
+      const { tick, notify } = await wireSelector();
+      try {
+        const { refreshVisibleCounts } = stubRegistry({ levelChanged: false, cullChanged: false });
+        const drew = tick();
+        expect(notify).not.toHaveBeenCalled();
+        expect(drew).toBe(false);
+        expect(refreshVisibleCounts).not.toHaveBeenCalled();
+      } finally {
+        vi.mocked(getSceneLoader).mockReturnValue(null as never);
+      }
+    });
+  });
+
+  describe('geometry-commit render requests', () => {
+    // A commit to a node the frame does not draw (the hidden eager level of an
+    // LOD group re-committed every playback tick) must keep the loop ticking,
+    // since the registry may now show that level, but must not force a render
+    // of an unchanged frame (#2944 C3: 2 renders per playback tick).
+    async function wireCommits() {
+      const { factories } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+      await runInitPipeline(ports, {});
+      const anim = factories.animationController.mock.results[0].value as {
+        requestRender: ReturnType<typeof vi.fn>;
+        requestTick: ReturnType<typeof vi.fn>;
+      };
+      const manager = SceneLoaderManager.getInstance() as unknown as {
+        setRequestRender: ReturnType<typeof vi.fn>;
+      };
+      const onCommit = manager.setRequestRender.mock.calls.at(-1)![0] as (drawn: boolean) => void;
+      anim.requestRender.mockClear();
+      anim.requestTick.mockClear();
+      return { anim, onCommit, ports };
+    }
+
+    it('a drawn loader commit requests a render', async () => {
+      const { anim, onCommit, ports } = await wireCommits();
+      onCommit(true);
+      expect(anim.requestRender).toHaveBeenCalledWith('geometry');
+      ports.events.dispose();
+    });
+
+    it('an undrawn loader commit only keeps the loop ticking', async () => {
+      const { anim, onCommit, ports } = await wireCommits();
+      onCommit(false);
+      expect(anim.requestRender).not.toHaveBeenCalled();
+      expect(anim.requestTick).toHaveBeenCalled();
+      ports.events.dispose();
+    });
+
+    it("an undrawn 'geometry-committed' only keeps the loop ticking", async () => {
+      const { anim, ports } = await wireCommits();
+      eventBus.emit('geometry-committed', { drawn: false });
+      expect(anim.requestRender).not.toHaveBeenCalled();
+      expect(anim.requestTick).toHaveBeenCalled();
+      eventBus.emit('geometry-committed', { drawn: true });
+      expect(anim.requestRender).toHaveBeenCalledWith('geometry');
+      ports.events.dispose();
     });
   });
 

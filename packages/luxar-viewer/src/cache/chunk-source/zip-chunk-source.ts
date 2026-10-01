@@ -6,19 +6,30 @@
  * with the {@link ChunkSource} seam it just asks this for bytes, and L1/L2 keep
  * keying on whole chunks exactly as they do for a directory store.
  *
- * Caching matters more here than for a directory store, not less. Measured on
- * #1716: reading an archive costs ~2 HTTP requests per member — `unzipit` reads
- * each member's 30-byte local file header in a separate, strictly sequential
- * round trip before its data — and a repeat read cannot be served from the
- * browser's HTTP cache the way a repeat GET of a per-chunk URL can, because
- * every member read is a `Range` request against the same URL. The chunk cache
- * is what makes those repeats free.
+ * Caching matters more here than for a directory store, not less. Every
+ * member read is a `Range` request against the SAME URL, so a repeat read cannot
+ * be served from the browser's HTTP cache the way a repeat GET of a per-chunk
+ * URL can — the reader deliberately sends `cache: 'no-store'`, because Chrome
+ * serialises same-URL range GETs through its HTTP-cache writer lock otherwise.
+ * The chunk cache is what makes those repeats free.
+ *
+ * Each member costs ONE ranged GET: `LuxarZipStore` sizes a window from the
+ * central directory (local header + name + extra field + slack + compressed
+ * payload) and answers both of `unzipit`'s serial reads — the 30-byte local
+ * header, then the payload — from it. (A local extra field larger than the slack
+ * costs one more GET for that member.) Opening the archive is ONE suffix GET too,
+ * shared with the identity probe when that runs first.
  *
  * @module cache/chunk-source/zip-chunk-source
  */
 
 import { ArchiveFaultError } from '../chunk-source';
-import type { ArchiveByteReader, ChunkFetchOutcome, ChunkSource } from '../chunk-source';
+import type {
+  ArchiveByteReader,
+  ChunkFetchOutcome,
+  ChunkSource,
+  ChunkSourceGetOptions,
+} from '../chunk-source';
 import type { RemoteValidationToken } from '../multi-level-caching-store/validation-queue';
 
 /** Reads chunks out of a zipped zarr store. */
@@ -49,10 +60,14 @@ export class ZipChunkSource implements ChunkSource {
     return this.archiveUrl;
   }
 
-  async get(key: string, signal?: AbortSignal): Promise<ChunkFetchOutcome> {
+  async get(
+    key: string,
+    signal?: AbortSignal,
+    options?: ChunkSourceGetOptions
+  ): Promise<ChunkFetchOutcome> {
     if (signal?.aborted) return { kind: 'aborted' };
     try {
-      const data = await this.reader.get(key, signal);
+      const data = await this.reader.get(key, signal, options);
       if (signal?.aborted) return { kind: 'aborted' };
       // A key absent from the central directory is a plain miss — and, unlike
       // the directory store's 404, it costs no request at all.
@@ -83,8 +98,8 @@ export class ZipChunkSource implements ChunkSource {
    * the WHOLE store instead, which is both cheaper and a stronger guarantee
    * than a single document's hash.
    *
-   * The reader owns the request so its `HEAD` also seeds the archive length,
-   * which the zip reader would otherwise fetch a second time. Requires the
+   * The reader owns the request so the one suffix GET it makes also seeds the
+   * archive length and retains the tail that opening reads next. Requires the
    * headers to be readable cross-origin; `luxar serve` exposes them.
    */
   async probeIdentityToken(options: {

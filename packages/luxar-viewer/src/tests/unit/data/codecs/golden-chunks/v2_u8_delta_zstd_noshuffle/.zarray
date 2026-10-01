@@ -1,0 +1,29 @@
+{
+  "shape": [
+    4096,
+    4
+  ],
+  "chunks": [
+    4096,
+    4
+  ],
+  "dtype": "|u1",
+  "fill_value": 0,
+  "order": "C",
+  "filters": [
+    {
+      "id": "luxar_delta_v1",
+      "cols": 4,
+      "bits": 8
+    }
+  ],
+  "dimension_separator": ".",
+  "compressor": {
+    "id": "blosc",
+    "cname": "zstd",
+    "clevel": 5,
+    "shuffle": 0,
+    "blocksize": 0
+  },
+  "zarr_format": 2
+}

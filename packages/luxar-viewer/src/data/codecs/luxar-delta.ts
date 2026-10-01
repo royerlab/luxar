@@ -31,6 +31,37 @@
 
 type CodeArray = Uint8Array | Uint16Array;
 
+/**
+ * Buffers whose delta has ALREADY been undone — by a data worker that ran it
+ * fused with the preceding blosc decode (see `./worker-blosc.ts`). The worker
+ * hands back finished codes; the main-thread pipeline still walks its codec
+ * chain (blosc -> bytes -> luxar_delta), and this is how the delta step knows
+ * to pass that one chunk through instead of undoing the delta a second time.
+ *
+ * Keyed on the ArrayBuffer because the `bytes` codec between the two re-wraps
+ * the data in a new typed-array VIEW over the same buffer. An entry is
+ * consumed by the delta step it was meant for, so it applies exactly once;
+ * nothing else ever carries one of these buffers (they are freshly received
+ * from a worker), and a WeakSet keeps an unconsumed entry from leaking.
+ */
+const DELTA_ALREADY_DECODED = new WeakSet<ArrayBufferLike>();
+
+/** Mark `buffer` as holding already delta-decoded codes (fused worker decode). */
+export function markDeltaDecoded(buffer: ArrayBufferLike): void {
+  DELTA_ALREADY_DECODED.add(buffer);
+}
+
+/** True — and forgets the mark — when `buffer` was marked by {@link markDeltaDecoded}. */
+function consumeDeltaDecoded(buffer: ArrayBufferLike): boolean {
+  return DELTA_ALREADY_DECODED.delete(buffer);
+}
+
+/** Codec-config fields of a fused delta, as handed to a worker. */
+export interface LuxarDeltaSpec {
+  cols: number;
+  bits: 8 | 16;
+}
+
 /** Structural twin of zarrita's `Chunk`: flat typed array + shape/stride. */
 interface CodeChunk {
   data: CodeArray;
@@ -125,8 +156,22 @@ export class LuxarDeltaCodec {
     return { data: out, shape: chunk.shape, stride: chunk.stride };
   }
 
-  /** Columnar zigzag residuals -> row-major codes (the hot path). */
+  /** The config this instance decodes with (for a fused worker decode). */
+  get spec(): LuxarDeltaSpec {
+    return { cols: this.cols, bits: this.mask === 0xff ? 8 : 16 };
+  }
+
+  /**
+   * Columnar zigzag residuals -> row-major codes (the hot path). A chunk a
+   * data worker already delta-decoded (fused with blosc) passes through.
+   */
   decode(chunk: CodeChunk): CodeChunk {
+    if (consumeDeltaDecoded(chunk.data.buffer)) return chunk;
+    return this.decodeResiduals(chunk);
+  }
+
+  /** The delta decode itself — what a worker runs for a fused chunk. */
+  decodeResiduals(chunk: CodeChunk): CodeChunk {
     const { cols, mask } = this;
     const src = chunk.data;
     const rows = this.rowsOf(src);

@@ -31,6 +31,7 @@ import {
 import { clampSplatCapacity } from '../element-texture-layout';
 import type { GSplatsProjectionBounds } from '../../types/gsplats';
 import type { PooledBuffer } from './pool-stats';
+import { FreeBucketMap } from './byte-tracked-maps';
 import { chooseCapacity } from './capacity';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../config/constants';
 
@@ -179,7 +180,7 @@ function writeCommitOrdering(
 
 export class GSplatsBufferAdapter {
   /** @internal — pool-bucketed reusable gsplat geometries. */
-  readonly gsplatBuffers = new Map<number, PooledBuffer[]>();
+  readonly gsplatBuffers = new FreeBucketMap();
 
   constructor(private readonly host: GSplatsAdapterHost) {}
 
@@ -244,25 +245,24 @@ export class GSplatsBufferAdapter {
     // smallest adequate one. Map iteration order is bucket-insertion
     // order, so first-fit could pin an arbitrarily oversized buffer
     // (e.g. a 52 MB 1M-capacity buffer) to a small node until release.
-    let bestList: PooledBuffer[] | null = null;
+    let bestBucket: number | null = null;
     let bestIndex = -1;
     let bestCapacity = Infinity;
-    for (const pooled of this.gsplatBuffers.values()) {
+    for (const [bucket, pooled] of this.gsplatBuffers) {
       for (let i = pooled.length - 1; i >= 0; i--) {
         const candidate = pooled[i];
         // Skip a free-bucket resident disposed out-of-band — see the
         // points adapter's twin comment.
         if (candidate.geometry.userData.luxarInvalidated) continue;
         if (candidate.capacity >= splatCount && candidate.capacity < bestCapacity) {
-          bestList = pooled;
+          bestBucket = bucket;
           bestIndex = i;
           bestCapacity = candidate.capacity;
         }
       }
     }
-    if (bestList) {
-      const candidate = bestList[bestIndex];
-      bestList.splice(bestIndex, 1);
+    if (bestBucket !== null) {
+      const candidate = this.gsplatBuffers.takeAt(bestBucket, bestIndex);
       // See the points adapter's twin comment: no previous-tenant
       // content may draw through a throwing write.
       (candidate.geometry as THREE.InstancedBufferGeometry).instanceCount = 0;
@@ -317,16 +317,12 @@ export class GSplatsBufferAdapter {
       host.activeBuffers.delete(nodeId);
     }
 
-    for (const pooled of this.gsplatBuffers.values()) {
-      const index = pooled.indexOf(released);
-      if (index !== -1) {
-        pooled.splice(index, 1);
-        released.inUse = true;
-        released.lastUsedCommit = host.commitCount;
-        host.activeBuffers.set(nodeId, released);
-        this.disposeReplacementAfterReclaim(current);
-        return;
-      }
+    if (this.gsplatBuffers.removeFirst((buffer) => buffer === released, false)) {
+      released.inUse = true;
+      released.lastUsedCommit = host.commitCount;
+      host.activeBuffers.set(nodeId, released);
+      this.disposeReplacementAfterReclaim(current);
+      return;
     }
     this.disposeReplacementAfterReclaim(current);
   }
@@ -366,10 +362,7 @@ export class GSplatsBufferAdapter {
     buffer.lastUsedCommit = host.commitCount;
 
     const bucket = host.getBucket(buffer.capacity);
-    if (!this.gsplatBuffers.has(bucket)) {
-      this.gsplatBuffers.set(bucket, []);
-    }
-    this.gsplatBuffers.get(bucket)!.push(buffer);
+    this.gsplatBuffers.pushBuffer(bucket, buffer);
 
     host.evictUnused();
   }

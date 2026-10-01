@@ -7,6 +7,7 @@
  * @module data/mesh/handler
  */
 
+import { findObjectByName } from '../../utils/scene-graph-index';
 import * as THREE from 'three';
 import type { GeometryKind, ViewState } from '../data-loader-types';
 import type { MeshDataLoader, MeshMetadata, MeshViewState } from '../../types/mesh';
@@ -76,7 +77,7 @@ export async function loadAndStage(
   session: UpdateSession,
   ctx: MeshHandlerCtx
 ): Promise<StagedMeshCommit | null> {
-  const obj = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+  const obj = findObjectByName(ctx.rootGroup, path) as THREE.Mesh | undefined;
   const meshAttrs = obj?.userData?.attrs as MeshMetadata | undefined;
   const derived = ctx.deriveNodeViewState(
     path,

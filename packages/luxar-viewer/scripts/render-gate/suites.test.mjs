@@ -62,6 +62,26 @@ describe('meetsExpectation', () => {
 describe('judgeMetric', () => {
   const arm = (vals, key) => vals.map((v) => ({ [key]: v }));
 
+  it('judges a per-tick ratio, not the timed total', () => {
+    // A faster build plays 10% more ticks in the window and uploads 10% more
+    // bytes in total: the same work per tick.
+    const s = (bytes, ticks) => ({ 'gpu.uploadBytes': bytes, ticks });
+    const m = { name: 'gpu.uploadBytes/tick', of: 'gpu.uploadBytes', per: 'ticks', relTol: 0.05 };
+    const samples = {
+      base: [s(1000, 50), s(1000, 50), s(1000, 50)],
+      base2: [s(1000, 50), s(1000, 50), s(1000, 50)],
+      cand: [s(1100, 55), s(1100, 55), s(1100, 55)],
+    };
+    expect(judgeMetric(m, samples)).toMatchObject({
+      verdict: 'pass',
+      baseMedian: 20,
+      candMedian: 20,
+    });
+    expect(judgeMetric({ name: 'gpu.uploadBytes' }, samples).verdict).toBe('fail');
+    const noTicks = { ...samples, cand: [s(1100, 0), s(1100, 0), s(1100, 0)] };
+    expect(judgeMetric(m, noTicks).verdict).toBe('n/a');
+  });
+
   it('judges counters exactly and timings with direction', () => {
     const counter = judgeMetric(
       { name: 'render.count', kind: 'counter' },

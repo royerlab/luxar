@@ -6,9 +6,40 @@ This directory holds codec implementations registered with the zarrita codec reg
 
 ## Modules
 
-| File             | Codec ID         | Status       | Description                                                                                                                     |
-| ---------------- | ---------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `luxar-delta.ts` | `luxar_delta_v1` | **Internal** | Columnar per-chunk delta + zigzag filter for quantized uint8/uint16 codes. Registered by `../zarr.ts` module-scope initializer. |
+| File              | Codec ID                   | Status       | Description                                                                                                                             |
+| ----------------- | -------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `luxar-delta.ts`  | `luxar_delta_v1`           | **Internal** | Columnar per-chunk delta + zigzag filter for quantized uint8/uint16 codes. Registered by `../zarr.ts` module-scope initializer.         |
+| `worker-blosc.ts` | `blosc`, `numcodecs.blosc` | **Internal** | Replaces zarrita's blosc: decompresses in a data worker (fusing a directly-following `luxar_delta_v1`), main-thread numcodecs fallback. |
+
+## Worker-offloaded blosc (`worker-blosc.ts`)
+
+`../zarr.ts` captures zarrita's own numcodecs Blosc thunk (exposed as
+`loadNativeBlosc()`), then registers `WorkerBloscCodec` under `blosc` (format 3)
+and `numcodecs.blosc` (format 2). Per chunk:
+
+1. If a decode backend is installed (the data-worker pool installs
+   `workers/worker-pool/codec-dispatch.ts` when the pool singleton is created)
+   the pool has a usable worker and the chunk decodes to ≥ 16 KB (smaller ones are cheaper than the round trip), the compressed bytes are **copied** (L1
+   owns the originals) and transferred to a worker, batched per microtask
+   (≤ 8 chunks / ≤ 8 MB decoded per message) and spread over idle workers.
+   The worker (`workers/data-worker/decode/blosc.ts`) runs numcodecs blosc and,
+   when the chain is `[luxar_delta_v1, bytes(little), blosc]` (format 2:
+   `[luxar_delta_v1, blosc]`), the delta decode too; the decoded bytes are
+   transferred back.
+2. A fused result's ArrayBuffer is marked (`markDeltaDecoded`); the
+   main-thread `LuxarDeltaCodec` instance still in zarrita's chain passes that
+   one chunk through, so the delta is applied exactly once.
+3. No backend, no usable worker yet, `?mainThreadCodecs`, or ANY worker
+   failure → the native codec decodes the original bytes on the main thread
+   (the pre-offload pipeline). Blosc headers are self-describing, so the
+   worker needs no per-array config.
+
+Byte identity with the main-thread pipeline is gated by
+`src/tests/unit/data/worker-codec-identity.test.ts` over real chunks in
+`src/tests/unit/data/codecs/golden-chunks/` (zstd / lz4 / blosclz ×
+noshuffle / shuffle / bitshuffle, delta u8 / u16, formats 2 and 3). Perf
+counters: `codec.blosc.worker`, `codec.blosc.main`, `codec.blosc.fallback`,
+`codec.delta.fused`.
 
 ## Delta Codec (`luxar_delta_v1`)
 

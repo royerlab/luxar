@@ -27,6 +27,7 @@
  * @module data/scene-loader/commit/commit-points-geometry
  */
 
+import { findObjectByName } from '../../../utils/scene-graph-index';
 import * as THREE from 'three';
 import type { LoadedPointsData } from '../../data-loader-types';
 import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
@@ -84,7 +85,7 @@ export function commitPointsGeometry(
 ): void {
   if (!rootGroup) return;
 
-  const points = rootGroup.getObjectByName(path) as THREE.Mesh;
+  const points = findObjectByName(rootGroup, path) as THREE.Mesh;
   // Parity with lines/gsplats commit helpers — verify the named
   // object actually IS a Points node (not e.g. a stray Group with the
   // same name). Guards against bugs where a placeholder of the wrong

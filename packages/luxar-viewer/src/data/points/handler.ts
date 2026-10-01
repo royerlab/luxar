@@ -9,6 +9,7 @@
  * @module data/points/handler
  */
 
+import { findObjectByName } from '../../utils/scene-graph-index';
 import * as THREE from 'three';
 import type { DataLoader, GeometryKind, LoadedPointsData, ViewState } from '../data-loader-types';
 import { log, Modules } from '../../utils/log';
@@ -69,7 +70,7 @@ export async function loadAndStage(
   session: UpdateSession,
   ctx: PointsHandlerCtx
 ): Promise<StagedPointsCommit | null> {
-  const obj = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+  const obj = findObjectByName(ctx.rootGroup, path) as THREE.Mesh | undefined;
   const attrs = obj?.userData?.attrs as { extend_to_all?: string[] } | undefined;
   const derived = ctx.deriveNodeViewState(path, attrs, {
     applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.points,

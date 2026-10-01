@@ -19,6 +19,10 @@
  *     (`workers/data-worker/projection/in-process`); any other failure —
  *     a rejection from the worker, a timeout — propagates instead, since the
  *     fallback shares the kernel and would only block the UI thread,
+ *   - a slice the loader restored from the S-cache reuses the projection
+ *     cached on its entry when every other projection input is unchanged
+ *     (post-projection stage cache, `projection-stage-cache.ts`); the output is
+ *     then marked `sharedBuffers` and the commit must not transfer it,
  *   - first-update info logs are gated by `updateVersion <= 1`,
  *   - commits use the GPU buffer pool when enabled, otherwise
  *     `updateInstancedGSplatsMesh`.
@@ -26,6 +30,7 @@
  * @module data/scene-loader/process/data-processor-gsplats
  */
 
+import { findObjectByName } from '../../../utils/scene-graph-index';
 import * as THREE from 'three';
 import type {
   LoadedGSplatsData,
@@ -46,7 +51,26 @@ import { isStandardGSplats3D } from '../../../workers/data-worker/projection/gsp
 import { projectGSplatLabelIndices } from '../../gsplats/label-channel';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 import type { UpdateSession } from '../../../profiling/update-profiler';
+import { perfCounters } from '../../../profiling/perf-counters';
 import type { StagedNoopCommit } from '../commit/noop-commit';
+import {
+  canStoreStageOutput,
+  getSliceCacheOrigin,
+  lookupStageOutput,
+  storeStageOutput,
+} from '../../../cache/slice-cache-origin';
+import {
+  buffersIntact,
+  hasWastefulBuffers,
+  projectionStageSig,
+  retainedBufferBytes,
+  tightCopy,
+} from './projection-stage-cache';
+
+/** Counter: gsplats projections dispatched to a worker (`runWithTimeout`). */
+const P_WORKER_CALLS = perfCounters.slot('projection.gsplats.worker');
+/** Counter: gsplats projections answered by the post-projection stage cache. */
+const P_STAGE_HITS = perfCounters.slot('projection.gsplats.stageHits');
 
 /**
  * Worker-projection thresholds (splat count, exclusive). nD projections run a
@@ -241,6 +265,7 @@ export async function projectGSplatsTo3DUsingWorker(
     // restored slice hands the loader's cached arrays straight into projection,
     // and transferring them would neuter (detach) the cached snapshot. Do not
     // add a transfer list for the inputs here.
+    perfCounters.add(P_WORKER_CALLS);
     const workerResult = await getWorkerPool().runWithTimeout(
       'projectGSplatsTo3D',
       'projection',
@@ -281,6 +306,66 @@ export async function projectGSplatsTo3DUsingWorker(
   }
 }
 
+/** Every typed array a gsplats stage output keeps alive. */
+function gsplatsStageArrays(p: ProcessedGSplatsData): Array<ArrayBufferView | undefined> {
+  return [p.centers3D, p.choleskyFactors3D, p.amplitudes, p.colors, p.labelIndices, p.elementIds];
+}
+
+/**
+ * The cached projection for `data` under `sig`, if one is attached to its
+ * S-cache entry and its buffers are intact (a detached buffer would commit an
+ * empty frame — the commit contract forbids it, this is the backstop).
+ */
+function lookupGSplatsStage(
+  data: LoadedGSplatsData,
+  sig: string
+): ProcessedGSplatsData | undefined {
+  const cached = lookupStageOutput(data, sig) as ProcessedGSplatsData | undefined;
+  if (!cached) return undefined;
+  const n = cached.splatCount;
+  const intact = buffersIntact([
+    [cached.centers3D, n * 3],
+    [cached.choleskyFactors3D, n * 6],
+    [cached.amplitudes, n],
+    [cached.colors, n * (cached.colorComponents ?? 3)],
+  ]);
+  if (intact) perfCounters.add(P_STAGE_HITS);
+  return intact ? cached : undefined;
+}
+
+/**
+ * Offer a fresh projection to `data`'s S-cache entry. Returns what the commit
+ * should use: the retained (`sharedBuffers`) output when it was admitted —
+ * tight copies when the projection culled enough that its worst-case buffers
+ * would pin dead tail — else `processed` untouched (the commit then owns it).
+ */
+function retainGSplatsStage(
+  data: LoadedGSplatsData,
+  sig: string,
+  processed: ProcessedGSplatsData,
+  scan: boolean
+): ProcessedGSplatsData {
+  const arrays = gsplatsStageArrays(processed);
+  const tighten = hasWastefulBuffers(arrays);
+  const bytes = tighten
+    ? arrays.reduce((s, a) => s + (a?.byteLength ?? 0), 0)
+    : retainedBufferBytes(arrays);
+  if (!canStoreStageOutput(data, bytes, { scan })) return processed;
+  const shared: ProcessedGSplatsData = tighten
+    ? {
+        ...processed,
+        centers3D: tightCopy(processed.centers3D),
+        choleskyFactors3D: tightCopy(processed.choleskyFactors3D),
+        amplitudes: tightCopy(processed.amplitudes),
+        colors: tightCopy(processed.colors),
+        labelIndices: tightCopy(processed.labelIndices),
+        elementIds: tightCopy(processed.elementIds),
+        sharedBuffers: true,
+      }
+    : { ...processed, sharedBuffers: true };
+  return storeStageOutput(data, { sig, value: shared, bytes }, { scan }) ? shared : processed;
+}
+
 /**
  * Async process step for a single gsplats node: project nD → 3D
  * (worker or main thread) and return staged commit data — without
@@ -298,7 +383,7 @@ export async function processGSplatsData(
 ): Promise<StagedGSplatsCommit | null> {
   if (!rootGroup) return null;
 
-  const mesh = rootGroup.getObjectByName(path) as THREE.Mesh;
+  const mesh = findObjectByName(rootGroup, path) as THREE.Mesh;
   if (!mesh || mesh.userData?.nodeType !== 'gsplats') {
     log.warning(
       Modules.SCENE_LOADER,
@@ -323,9 +408,19 @@ export async function processGSplatsData(
 
   const truncate = readTruncate(mesh);
 
+  // Post-projection stage cache (#2944 B2): a slice restored from the S-cache
+  // with unchanged projection params reuses the projection stored on its
+  // entry. The signature is built from the very params the kernel receives
+  // (see projection-stage-cache.ts), so it cannot miss a projection input.
+  const stageSig = getSliceCacheOrigin(data)
+    ? projectionStageSig('gsplats', buildGSplatsParams(data, viewState, truncate))
+    : null;
+  const cached = stageSig !== null ? lookupGSplatsStage(data, stageSig) : undefined;
+
   let processed: ProcessedGSplatsData;
 
   const project = async () => {
+    if (cached) return cached;
     if (useWorkerProjection) {
       return projectGSplatsTo3DUsingWorker(data, viewState, truncate, updateVersion, signal);
     }
@@ -349,6 +444,8 @@ export async function processGSplatsData(
   } else {
     processed = await project();
   }
+  if (!cached && stageSig !== null)
+    processed = retainGSplatsStage(data, stageSig, processed, viewState.frameBudgetMs != null);
 
   // All-loaded-but-none-visible is unusual enough to warrant a warning;
   // most often it indicates a slice/displayDims combination that doesn't

@@ -286,6 +286,68 @@ describe('runProgressiveRefinement', () => {
   });
 });
 
+describe('runProgressiveRefinement — bounded concurrency (B9c)', () => {
+  /** Resolve after `ms` real milliseconds (so steps genuinely overlap). */
+  const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  /**
+   * Ten laddered loaders with uneven step latencies. Each step "commits" its
+   * next level into `committed`, the loader's settled state. Returns what the
+   * loop left committed plus the peak number of steps in flight at once.
+   */
+  async function runLadders(): Promise<{
+    committed: Map<string, number[]>;
+    peak: number;
+  }> {
+    const levels = [3, 1, 4, 2, 5, 3, 2, 4, 1, 3];
+    const loaders = new Map<string, FakeLoader>(
+      levels.map((_, i) => [`/p/${i}`, { hasMoreLODs: true, loadedLevels: 0 }])
+    );
+    const committed = new Map<string, number[]>([...loaders.keys()].map((p) => [p, []]));
+    let inFlight = 0;
+    let peak = 0;
+    let step = 0;
+    await runProgressiveRefinement<FakeLoader>({
+      loaders,
+      viewStateQueue: makeQueue([]) as never,
+      getLoaderProgress: (path, l) =>
+        l.hasMoreLODs ? { loaded: l.loadedLevels, total: levels[Number(path.slice(3))] } : null,
+      processLoader: async (path, l) => {
+        if (!l.hasMoreLODs) return false;
+        inFlight++;
+        peak = Math.max(peak, inFlight);
+        try {
+          await sleep((step++ * 7) % 5);
+          l.loadedLevels++;
+          committed.get(path)!.push(l.loadedLevels);
+          l.hasMoreLODs = l.loadedLevels < levels[Number(path.slice(3))];
+          return true;
+        } finally {
+          inFlight--;
+        }
+      },
+      anyHasMoreLODs: () => [...loaders.values()].some((l) => l.hasMoreLODs),
+      updateVisibleCountsInMonitor: vi.fn(),
+      releaseLock: vi.fn(),
+      retriggerUpdate: vi.fn(),
+    });
+    return { committed, peak };
+  }
+
+  it('keeps up to 4 loader steps in flight, never more', async () => {
+    const { peak } = await runLadders();
+    expect(peak).toBe(4);
+  });
+
+  it('settles to exactly the serial result: every ladder complete, each in level order', async () => {
+    const { committed } = await runLadders();
+    const levels = [3, 1, 4, 2, 5, 3, 2, 4, 1, 3];
+    levels.forEach((n, i) => {
+      expect(committed.get(`/p/${i}`)).toEqual(Array.from({ length: n }, (_, k) => k + 1));
+    });
+  });
+});
+
 describe('RefinementFailureTracker', () => {
   it('exhausts a path only after the configured consecutive failures', () => {
     const t = new RefinementFailureTracker(3);
@@ -329,6 +391,24 @@ describe('RefinementFailureTracker', () => {
     expect(t.isExhausted('/a')).toBe(false);
     expect(t.isExhausted('/b')).toBe(false);
     expect(t.reset()).toBe(false);
+  });
+
+  it('preserves toast state across retries and view changes until the path succeeds', () => {
+    const t = new RefinementFailureTracker(1);
+    expect(t.recordFailure('/a')).toBe(true);
+    expect(t.shouldNotify('/a')).toBe(true);
+    expect(t.shouldNotify('/a')).toBe(false);
+
+    t.reopen();
+    expect(t.isExhausted('/a')).toBe(false);
+    expect(t.recordFailure('/a')).toBe(true);
+    expect(t.shouldNotify('/a')).toBe(false);
+    expect(t.shouldNotify('/b')).toBe(true);
+
+    expect(t.reset()).toBe(true);
+    expect(t.shouldNotify('/a')).toBe(false);
+    t.recordSuccess('/a');
+    expect(t.shouldNotify('/a')).toBe(true);
   });
 
   it('tracks paths independently', () => {

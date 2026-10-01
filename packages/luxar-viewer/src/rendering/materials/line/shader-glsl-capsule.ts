@@ -29,6 +29,7 @@ import {
   GLSL_LINE_SCALE,
   GLSL_LINE_JOINT_CODE,
   GLSL_SORTED_INDEX,
+  GLSL_DENSITY_ALPHA,
 } from '../_shared/glsl-lib';
 import {
   GLSL_GLASS_PARTITION_GUARD,
@@ -479,6 +480,7 @@ export const CAPSULE_LINE_VERTEX_SHADER = /* glsl */ `
 export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
     ${GLSL_GLASS_PARTITION_UNIFORMS}
+    ${GLSL_DENSITY_ALPHA}
 
     uniform float uOpacity;
     uniform float uInvGamma;
@@ -685,7 +687,8 @@ export const CAPSULE_LINE_FRAGMENT_SHADER = /* glsl */ `
       float a = intensity * uOpacity;
       fragColor = vec4(gammaColor * a, a);
       #else
-      fragColor = vec4(gammaColor, intensity * uOpacity);
+      // Density-guard alpha-over compensation — identical to the quad's.
+      fragColor = vec4(gammaColor, luxarDensityAlpha(intensity * uOpacity));
       #endif
     }
 `;

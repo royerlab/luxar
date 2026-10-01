@@ -468,9 +468,10 @@ describe('LineMaterial', () => {
       expect(material.fragmentShader).not.toContain('uniform bool uLuminous');
       expect(material.fragmentShader).not.toContain('if (uLuminous)');
 
-      // Check for alpha output for AdditiveBlending (SrcAlpha, One)
+      // Check for alpha output for AdditiveBlending (SrcAlpha, One); the
+      // density-guard helper is the identity unless a normal node is thinned.
       expect(material.fragmentShader).toContain(
-        'fragColor = vec4(finalColor, intensity * uOpacity)'
+        'fragColor = vec4(finalColor, luxarDensityAlpha(intensity * uOpacity))'
       );
     });
 

@@ -29,6 +29,17 @@
  */
 
 import type { RemoteValidationToken } from './multi-level-caching-store/validation-queue';
+import type { FetchPriorityCell } from '../utils/fetch-concurrency';
+
+/** Per-read hints from the caching store to a source. */
+export interface ChunkSourceGetOptions {
+  /**
+   * The read's fetch-gate class: `demand`, `refinement` or `speculative`. A
+   * cell because the store coalesces same-key reads, and a demand caller that
+   * joins a queued prefetch RAISES it (see `utils/fetch-concurrency.ts`).
+   */
+  priority?: FetchPriorityCell;
+}
 
 /**
  * Result of asking a source for one key.
@@ -109,7 +120,11 @@ export interface ArchiveByteReader {
    * signal only to stop early and to label the outcome. Do not read a passed
    * signal as a guarantee that the bytes stopped arriving.
    */
-  get(key: string, signal?: AbortSignal): Promise<Uint8Array | undefined>;
+  get(
+    key: string,
+    signal?: AbortSignal,
+    options?: ChunkSourceGetOptions
+  ): Promise<Uint8Array | undefined>;
   /**
    * Fresh identity of the container, bypassing caches — an opaque token, so
    * this layer needs to know nothing about ETags or HTTP. `null` means "cannot
@@ -139,7 +154,11 @@ export interface ChunkSource {
   readonly describe: string;
 
   /** Fetch one key. Must not throw: failures come back as an outcome. */
-  get(key: string, signal?: AbortSignal): Promise<ChunkFetchOutcome>;
+  get(
+    key: string,
+    signal?: AbortSignal,
+    options?: ChunkSourceGetOptions
+  ): Promise<ChunkFetchOutcome>;
 
   /**
    * Re-read the source's identity token, bypassing every cache tier, so the

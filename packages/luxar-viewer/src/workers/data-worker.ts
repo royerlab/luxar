@@ -10,6 +10,8 @@
  *   nD visibility/culling is computed INSIDE projection — clip mask,
  *   effective radius, attenuation — not as a standalone task)
  * - Array decoding (LUT, quantization, log-space)
+ * - Zarr chunk decompression (blosc + a fused luxar_delta), on behalf of the
+ *   main thread's codec pipeline (`data/codecs/worker-blosc.ts`)
  *
  * NOT handled here (stays on main thread):
  * - Zarr chunk fetching (needs caching store)
@@ -32,6 +34,7 @@ import { decodeGeologScalar as decodeGeologScalarImpl } from './data-worker/deco
 import { decodePerChannel as decodePerChannelImpl } from './data-worker/decode/perchannel';
 import { decodeLUT as decodeLUTImpl } from './data-worker/decode/lut';
 import { decodeBroadcasted as decodeBroadcastedImpl } from './data-worker/decode/broadcasted';
+import { decodeBloscBatch, warmCodecs } from './data-worker/decode/blosc';
 
 // Re-export the projection/effective-radius types that the loader needs.
 // Points projection runs on the main thread (WASM-accelerated, see
@@ -64,6 +67,11 @@ export const workerAPI = {
   decodeLUT: (p: Parameters<typeof decodeLUTImpl>[1]) => decodeLUTImpl(state, p),
   decodeBroadcasted: (p: Parameters<typeof decodeBroadcastedImpl>[1]) =>
     decodeBroadcastedImpl(state, p),
+  // Zarr chunk decompression offloaded from the main thread's codec pipeline
+  // (blosc + an optionally fused luxar_delta; see data/codecs/worker-blosc.ts).
+  // Needs no WASM ctx: it runs numcodecs' own blosc WASM.
+  decodeBloscBatch,
+  warmCodecs,
   // Projection functions (nD → 3D, CPU-intensive). Points project on the
   // main thread (WASM + zero-alloc accumulator), so only Lines/GSplats here.
   projectLinesTo3D: (p: Parameters<typeof projectLinesTo3DImpl>[1]) =>

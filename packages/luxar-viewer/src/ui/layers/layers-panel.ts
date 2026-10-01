@@ -19,6 +19,7 @@
  * lives in `luxar-material.ts` and is re-exported here for existing importers.
  */
 
+import { findObjectByName } from '../../utils/scene-graph-index';
 import * as THREE from 'three';
 import type { SceneNode } from '../../data/data-loader-types';
 import type { FailedLoadsProviderPort } from '../../data/scene-loader-monitor-port';
@@ -374,6 +375,21 @@ export class LayersPanel {
   }
 
   /**
+   * Style a data leaf the scene loader built AFTER this panel initialised (a
+   * partition part activated by the LOD registry, a lazily built level) with
+   * its layers' CURRENT state, before it is first drawn. Wired by
+   * `core/app/dataset/load-dataset.ts` to `SceneLoader.setLeafMaterializedListener`.
+   *
+   * `sceneGraph` is the graph the leaf belongs to; a leaf of any graph other than
+   * the one this panel was initialised from (a load still running under a
+   * previous dataset's panel) is left alone — its own `initFromScene` styles it.
+   */
+  applyLayerStateToNewLeaf(sceneGraph: SceneNode, path: string, object: THREE.Object3D): void {
+    if (sceneGraph !== this.sceneGraph || this.state.count === 0) return;
+    this.applyEngine.applyToNewLeaf(path, object);
+  }
+
+  /**
    * Inject the shared failed-loads provider so per-row error badges can surface
    * a node whose loader threw (corrupt data / network failure). The app wires
    * the SAME provider the data monitor uses, after `initFromScene`. Resets the
@@ -515,7 +531,7 @@ export class LayersPanel {
   /** Row: layer verbs + appearance submenus. */
   private buildRowMenuItems(layer: LayerInfo): ContextMenuItem[] {
     const soloed = this.state.soloedPath === layer.path;
-    const obj = this.rootGroup?.getObjectByName(layer.path) ?? null;
+    const obj = findObjectByName(this.rootGroup, layer.path) ?? null;
     const items: ContextMenuItem[] = [
       {
         label: soloed ? 'Un-solo (restore visibility)' : 'Solo — hide all others',
@@ -879,6 +895,7 @@ export class LayersPanel {
     // unconditionally.
     this.animationController.removePerFrameCallback('layers-lod-status');
     this.sceneGraph = null;
+    this.applyEngine.resetPushed();
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     // Reset visibility and GUI position before removing the panel DOM

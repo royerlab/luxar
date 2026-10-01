@@ -27,6 +27,7 @@ describe('computePerfSnapshot', () => {
       updateInProgress: null,
       loadPassInProgress: null,
       lodLevelLoading: null,
+      lodFadeInFlight: null,
       visiblePartitionResyncPending: null,
       refinementComplete: false,
     });
@@ -38,11 +39,12 @@ describe('computePerfSnapshot', () => {
     expect(snap.cache).toBe(stats);
   });
 
-  it('isSettled requires no update, no load pass, no lazy level, and refinement complete', () => {
+  it('isSettled requires no update, no load pass, no lazy level, no LOD dissolve, and refinement complete', () => {
     const hooks = {
       isUpdateInProgress: () => false,
       isAnyLoadPassInProgress: () => false,
       isAnyLodLevelLoading: () => false,
+      isAnyLodFadeInFlight: () => false,
       hasVisiblePendingPartitionResync: () => false,
     };
     markLoad('loadStart');
@@ -60,6 +62,9 @@ describe('computePerfSnapshot', () => {
     expect(computePerfSnapshot({ ...hooks, isAnyLodLevelLoading: () => true }).isSettled).toBe(
       false
     );
+    const fading = computePerfSnapshot({ ...hooks, isAnyLodFadeInFlight: () => true });
+    expect(fading.isSettled).toBe(false);
+    expect(fading.settle.lodFadeInFlight).toBe(true);
     expect(
       computePerfSnapshot({ ...hooks, hasVisiblePendingPartitionResync: () => true }).isSettled
     ).toBe(false);

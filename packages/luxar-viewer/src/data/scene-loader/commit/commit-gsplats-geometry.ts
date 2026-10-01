@@ -12,6 +12,7 @@
  * @module data/scene-loader/commit/commit-gsplats-geometry
  */
 
+import { findObjectByName } from '../../../utils/scene-graph-index';
 import * as THREE from 'three';
 import { updateInstancedGSplatsMesh } from '../../../rendering/gsplat-geometry';
 import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
@@ -227,7 +228,7 @@ export function commitGSplatsGeometry(
 ): void {
   if (!rootGroup) return;
 
-  const mesh = rootGroup.getObjectByName(staged.path) as THREE.Mesh;
+  const mesh = findObjectByName(rootGroup, staged.path) as THREE.Mesh;
   if (!mesh || !isGSplatsUserData(mesh.userData)) return;
 
   if (staged.noop) {
@@ -426,7 +427,15 @@ export function commitGSplatsGeometry(
     // detaches it (safe — the memoized-concat noop keys on `sourceData`).
     // The CLAMPED count keeps the SortWorker's permutation values inside
     // [0, textureCapacity) — the worker clamps its own count to it.
-    noteDepthSortCommit(mesh, processed.centers3D, splatCount);
+    // SHARED buffers (retained by the post-projection stage cache and handed
+    // to every later commit of this slice) must never be detached: hand the
+    // coordinator a lazy COPY instead, paid only when the node actually sorts.
+    const { centers3D } = processed;
+    noteDepthSortCommit(
+      mesh,
+      processed.sharedBuffers ? () => centers3D.slice(0, splatCount * 3) : centers3D,
+      splatCount
+    );
   } finally {
     bufferSession?.end();
   }

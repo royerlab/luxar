@@ -216,6 +216,7 @@ Append parameters to the viewer URL to control startup behavior.
 | `clearCache` | flag | Clear all caches on startup. |
 | `noPrefetch` | flag | Disable adjacent-chunk prefetching. |
 | `prefetchDebug` | flag | Enable prefetch logging to the browser console. |
+| `mainThreadCodecs` | flag | Decompress zarr blosc chunks on the main thread instead of the data workers (a safety valve and A/B switch; the decoded bytes are identical). |
 | `cacheStats` | flag | Auto-open the data-loading monitor expanded on the Cache tab (L0/L1/L2 hit rates). |
 | `noLodFade` | flag | Disable the replacement-LOD cross-fade (on by default): adjacent levels then swap hard instead of blending across the coverage boundary. |
 | `noLodEnergy` | flag | Disable streaming brightness compensation for additive ladders (on by default): a partial prefix then brightens up as chunks arrive instead of rendering at full-level brightness. |

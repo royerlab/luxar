@@ -43,6 +43,16 @@ is set and the element count exceeds `workerThreshold` (default 1000), with a
 main-thread fallback through `ArrayDecoder` on worker failure. `WorkerAbortError`
 is re-thrown rather than swallowed so cancelled loads propagate cleanly.
 
+The per-channel, quantized (linear / log / geolog scalar) and LUT loaders send
+ONE worker call per attribute, not one per range (`packed-ranges.ts`): every
+range is read concurrently, then packed at its precomputed destination offset
+(in stored units — `offsets / k` for LUT row mode) and decoded as one buffer.
+The decodes are element-wise, and the packed index is the global flattened
+index, so the result — per-channel column phase included — is identical to the
+per-range decode; a short range's gap decodes to junk that is never copied out.
+Measured motivation: ~40k `decodePerChannel` messages per 6 s playback loop on a
+Points timelapse.
+
 ## File Structure
 
 ```
@@ -53,6 +63,7 @@ range-loader/
 ├── quantized.ts         # loadQuantized — uint8/uint16 → float (linear or log)
 ├── perchannel.ts        # loadPerChannel — per-column (col_lo/col_hi) dequant → float32
 ├── lut.ts               # loadLUT       — index → palette row/scalar lookup
+├── packed-ranges.ts     # readRanges / packRanges / scatterDecoded — one decode call per attribute
 ├── broadcasted.ts       # loadBroadcasted — one value replicated to N items
 ├── array-ref.ts         # loadArrayRef  — unresolved ref guard (throws)
 ├── ref-resolution.ts    # RefTargetMemo / resolveArrayRef — array_ref targets

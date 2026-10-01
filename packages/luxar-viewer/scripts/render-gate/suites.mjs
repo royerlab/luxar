@@ -92,13 +92,23 @@ export function meetsExpectation(want, judged, kind) {
 /**
  * Judge one declared metric over the three arms.
  *
- * @param {{ name: string, better?: 'lower'|'higher', kind?: 'counter'|'timing', tol?: number, relTol?: number }} m
+ * @param {{ name: string, of?: string, per?: string, better?: 'lower'|'higher', kind?: 'counter'|'timing', tol?: number, relTol?: number }} m
+ *   With `of` and `per`, the judged value is `sample[of] / sample[per]`.
  * @param {{ base: object[], base2: object[], cand: object[] }} samples
  */
 export function judgeMetric(m, samples) {
   const better = m.better ?? 'lower';
   const kind = m.kind ?? 'counter';
-  const pick = (arm) => samples[arm].map((s) => s[m.name]);
+  // `of`/`per` judge a ratio of two sample fields, e.g. upload bytes per
+  // playback tick: a timed workload runs more ticks on a faster build, so its
+  // totals rise with throughput even when the work per tick is unchanged.
+  const value = (s) => {
+    if (!m.of) return s[m.name];
+    const num = s[m.of];
+    const den = s[m.per];
+    return typeof num === 'number' && typeof den === 'number' && den > 0 ? num / den : undefined;
+  };
+  const pick = (arm) => samples[arm].map(value);
   const base = pick('base');
   const base2 = pick('base2');
   const cand = pick('cand');
@@ -382,7 +392,10 @@ export async function runSuite({
         continue;
       }
       for (const m of c.metrics ?? []) row.metrics[m.name] = judgeMetric(m, samples);
-      if (Object.values(row.metrics).some((v) => v.verdict === 'fail')) {
+      // A `report` metric is judged and shown but cannot fail the row (a timed
+      // total whose per-tick twin is the one that gates).
+      const gating = (c.metrics ?? []).filter((m) => !m.report);
+      if (gating.some((m) => row.metrics[m.name].verdict === 'fail')) {
         row.status = 'fail';
         row.reasons.push('regression');
         row.failures.push('a metric regressed beyond its floor');

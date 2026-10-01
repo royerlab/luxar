@@ -140,8 +140,9 @@ function addDensityGuardControls(
       '  the rest to match — the composited brightness stays the same\n' +
       '• Also holds back detail levels the current framing cannot resolve\n' +
       '  (they load as you zoom in)\n' +
-      '• Only for additive / luminous / volumetric blending; max, normal and\n' +
-      '  opaque nodes are never thinned\n' +
+      '• Additive / luminous / volumetric and normal blending (normal raises\n' +
+      "  each kept element's alpha instead); max and opaque are never thinned\n" +
+      '• Off during offline capture\n' +
       '• OFF: every element is drawn (the ?noDensityGuard URL flag does the\n' +
       '  same for one session)'
   );

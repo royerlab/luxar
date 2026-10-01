@@ -13,7 +13,7 @@
 
 import type * as THREE from 'three';
 import * as zarr from '../../zarr';
-import { log, Modules } from '../../../utils/log';
+import { log, LogEmoji, Modules } from '../../../utils/log';
 import { LoaderError, classifyLoaderError } from './load-leaf-error-dispatch';
 import {
   createGSplatsLoader as createGSplatsLoaderHelper,
@@ -92,11 +92,16 @@ export async function loadGSplatsNodeCheap(
 ): Promise<GSplatsCheapLoad> {
   const attrs = node.attrs as unknown as GSplatsMetadata;
   const nAdditive = attrs.n_additive_sublods ?? 0;
-  log.custom('🔮', Modules.SCENE_LOADER, `Loading gsplats: ${node.path}`);
-  log.info(Modules.SCENE_LOADER, `  Splats: ${attrs.n_splats?.toLocaleString() || 'unknown'}`);
-  log.info(Modules.SCENE_LOADER, `  Dimensions: ${attrs.ndim || 'unknown'}D`);
+  log.verbose('🔮', Modules.SCENE_LOADER, `Loading gsplats: ${node.path}`);
+  log.verbose(
+    LogEmoji.INFO,
+    Modules.SCENE_LOADER,
+    `  Splats: ${attrs.n_splats?.toLocaleString() || 'unknown'}`
+  );
+  log.verbose(LogEmoji.INFO, Modules.SCENE_LOADER, `  Dimensions: ${attrs.ndim || 'unknown'}D`);
   if (nAdditive > 1) {
-    log.info(
+    log.verbose(
+      LogEmoji.INFO,
       Modules.SCENE_LOADER,
       `  Additive sub-LODs: ${nAdditive} (progressive loading enabled)`
     );
@@ -117,6 +122,7 @@ export async function loadGSplatsNodeCheap(
     loader
   );
   parentThree.add(placeholder);
+  ctx.onLeafMaterialized?.(node.path, placeholder);
 
   return { placeholder, loader };
 }
@@ -217,6 +223,15 @@ export async function loadGSplatsNode(
   ctx: NodeBuildCtx
 ): Promise<THREE.Mesh | null> {
   const { placeholder, loader } = await loadGSplatsNodeCheap(node, parentThree, loc, ctx);
+  // A registry-activated partition part: the activating pass sweeps it (B4).
+  if (ctx.registerOnly) {
+    // Built after a dataset switch (the activation is fire-and-forget): the
+    // loader registry outlives the dataset, so a dead dataset's loader is
+    // disposed, never registered where the next dataset's passes sweep.
+    if (ctx.isDatasetLive()) ctx.registry.registerGSplatsLoader(node.path, loader);
+    else loader.dispose();
+    return placeholder;
+  }
   try {
     await loadGSplatsNodeExpensive(node, ctx, loader);
   } finally {

@@ -13,6 +13,7 @@
  * to mid-flight viewState mutation by a concurrent updateView.
  */
 
+import type * as THREE from 'three';
 import type { LoaderRegistry } from '../loaders/loader-registry';
 import type { LoaderFactoryDeps } from '../loaders/loader-factory';
 import type { NodeFactory } from '../../../rendering/node-factory';
@@ -45,6 +46,16 @@ export interface LineWorkingSetGate {
   acquire(node: LineWorkingSetNode): Promise<() => void>;
 }
 
+/**
+ * Told about every data leaf a scene loader attaches to the scene, with the
+ * graph it belongs to. See {@link NodeBuildCtx.onLeafMaterialized}.
+ */
+export type LeafMaterializedListener = (
+  sceneGraph: SceneNode,
+  path: string,
+  object: THREE.Object3D
+) => void;
+
 export interface NodeBuildCtx {
   /** Shared loader bookkeeping (registration + failure recording). */
   registry: LoaderRegistry;
@@ -71,6 +82,31 @@ export interface NodeBuildCtx {
    */
   viewState: ViewState;
   /**
+   * The orchestrator's LIVE view state (not the snapshot above). The partition
+   * loader gates its parts on the current hidden-dim slice with it (B4); a
+   * nested partition can be loaded long after this ctx was built (a deferred
+   * part's activation), when `viewState` is stale. Optional: absent ⇒ the
+   * snapshot is used.
+   */
+  getSliceView?(): ViewState;
+  /**
+   * `true` ⇒ each leaf attaches its placeholder and registers its loader but
+   * does NOT load its first data. Set for a partition part activated by the LOD
+   * registry (B4): the loader pass that activated it sweeps the new loaders
+   * itself, with that pass's directives (playback budget, pinned rungs), and
+   * commits them with the rest of the pass — one commit, no initial-load
+   * lookahead, and nothing loaded for a view the pass is not showing. A
+   * `kind=lod` group clears it for its subtree (its lazy levels load outside
+   * any pass). Absent ⇒ the leaf loads eagerly.
+   */
+  registerOnly?: boolean;
+  /**
+   * Whether `path`'s world `nd_transform` chain (root → node) is non-empty. A
+   * transformed part's bounds do not live in the space of the world slice, so
+   * the partition loader never slice-gates it. Optional: absent ⇒ `false`.
+   */
+  pathHasNdTransform?(path: string): boolean;
+  /**
    * The orchestrator's CURRENT view-update version (live, not the snapshot). A
    * deferred / registry-driven reload captures this at derive-time and stamps
    * the committed geometry with it (see the commit callbacks below) so the LOD
@@ -81,6 +117,15 @@ export interface NodeBuildCtx {
   factoryDeps: LoaderFactoryDeps;
   /** Compose effective rendering attrs along the scene-graph ancestry. */
   applyEffectiveAttrs(node: SceneNode): SceneNode['attrs'];
+  /**
+   * Called by each leaf loader right after it attaches its placeholder — before
+   * any data is loaded into it, so before it can be drawn. The factory styles
+   * that placeholder from AUTHORED attrs; a leaf built after the Layers panel
+   * initialised (a registry-activated partition part, a lazy level) needs the
+   * panel's LIVE layer state instead, and this is where the app hands it over.
+   * Optional: absent ⇒ nobody is listening.
+   */
+  onLeafMaterialized?(path: string, object: THREE.Object3D): void;
   /** Derive the per-node view state (same single source of truth used by retry/update). */
   deriveNodeViewState(
     path: string,

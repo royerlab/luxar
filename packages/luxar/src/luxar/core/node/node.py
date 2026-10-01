@@ -568,7 +568,8 @@ class Node:
         ``coverage_fraction`` threshold; ``selector`` names the UNITS of those
         thresholds. Under ``selector="screen-area"`` (what every auto-derived
         ladder stamps) a threshold is a literal screen-area fraction — the
-        node's projected bbox rect area over the viewport area — so a derived
+        projected area of the node box's inscribed ellipsoid, sized at its near
+        depth, over the viewport area — so a derived
         whole-object ladder reads ``[0, …, 1/4, 1/2]`` (full detail while the
         node occupies at least half the screen; one level coarser per halving
         of occupied area) and a partition tile anchors at ``1.0``

@@ -24,6 +24,14 @@ import {
   type CacheBudgets,
 } from '../../../cache/heap-budget';
 import { ZipChunkSource } from '../../../cache/chunk-source/zip-chunk-source';
+import { HttpChunkSource } from '../../../cache/chunk-source/http-chunk-source';
+import {
+  claimRootDocument,
+  releaseRootDocument as releaseRootDocumentEntry,
+  SharedRootDocumentSource,
+  withSharedRootDocument,
+  type RootDocumentFetch,
+} from '../../../cache/root-document-prefetch';
 import { isZippedStoreUrl } from '../../zip/entries';
 import { LuxarZipStore } from '../../zip/store';
 import { config as appConfig } from '../../../config';
@@ -73,6 +81,26 @@ export interface CacheSetupResult {
    * user what their budget actually resolved to.
    */
   budgets: CacheBudgets;
+  /**
+   * The load-time root-document fetch validation and the store open share
+   * (`cache/root-document-prefetch.ts`), or `null` for a URL it does not apply
+   * to (zipped / presigned / non-http). The loader reads the response's ETag from
+   * it for the identity watchdog.
+   */
+  rootDocument: Promise<RootDocumentFetch> | null;
+  /**
+   * Stop answering from {@link rootDocument} and drop the registry's reference —
+   * call once the root has been opened. Later root reads (an invalidation) then
+   * reach the server as before. Idempotent.
+   */
+  releaseRootDocument: () => void;
+  /**
+   * True when the root metadata the store opened with came from the network this
+   * load (no cache tier served it), so its consolidated index is current. False
+   * when L2 served it: L2 revalidates by `content_hash` alone, which a sidecar
+   * edit such as `luxar env attach` leaves unchanged.
+   */
+  rootIndexFromNetwork: () => boolean;
 }
 
 /**
@@ -91,6 +119,9 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
   const noCache = flags.noCache ?? false;
   const noSliceCache = flags.noSliceCache ?? false;
   const noOpfs = flags.noOpfs ?? false;
+  // Claim the root-document fetch FIRST, so it is on the wire while OPFS
+  // initializes (or, when bootstrap already started it, adopt that one).
+  const rootDocument = claimRootDocument(url);
   const cacheDebug = flags.cacheDebug ?? false;
   const clearCache = flags.clearCache ?? false;
   const noPrefetch = flags.noPrefetch ?? false;
@@ -171,10 +202,11 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
 
   let rawStore: zarr.AsyncReadable;
   let cachingStore: MultiLevelCachingStore | null = null;
+  const releasers: Array<() => void> = [];
 
   if (l1Enabled) {
     cachingStore = new MultiLevelCachingStore(
-      zipped ? new ZipChunkSource(url, new LuxarZipStore(url)) : url,
+      chunkSourceFor(url, zipped, rootDocument, releasers),
       {
         l1MaxSize: budgets.l1Bytes,
         l2MaxSize: appConfig.cache.l2MaxSizeMB * 1024 * 1024,
@@ -230,7 +262,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
 
     rawStore = cachingStore;
   } else {
-    rawStore = zarr.createStoreForUrl(url);
+    rawStore = plainStoreFor(url, rootDocument, releasers);
   }
 
   // Resolve the telemetry state. URL flag wins (most user-visible);
@@ -248,5 +280,61 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
     telemetryState = { kind: 'enabled' };
   }
 
-  return { l0Cache, sliceCache, cachingStore, rawStore, telemetryState, budgets };
+  const releaseRootDocument = onceReleaser(url, rootDocument, releasers);
+  return {
+    l0Cache,
+    sliceCache,
+    cachingStore,
+    rawStore,
+    telemetryState,
+    budgets,
+    rootDocument,
+    releaseRootDocument,
+    rootIndexFromNetwork: () => !(cachingStore?.servedRootMetadataFromL2() ?? false),
+  };
+}
+
+/** The cache-less store (`?noCache`), answering its root read from the shared fetch. */
+function plainStoreFor(
+  url: string,
+  rootDocument: Promise<RootDocumentFetch> | null,
+  releasers: Array<() => void>
+): zarr.AsyncReadable {
+  if (!rootDocument) return zarr.createStoreForUrl(url);
+  const shared = withSharedRootDocument(zarr.createStoreForUrl(url), rootDocument);
+  releasers.push(() => shared.release());
+  return shared;
+}
+
+/** One idempotent release for every holder of the shared root-document fetch. */
+function onceReleaser(
+  url: string,
+  rootDocument: Promise<RootDocumentFetch> | null,
+  releasers: Array<() => void>
+): () => void {
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    for (const releaser of releasers) releaser();
+    if (rootDocument) releaseRootDocumentEntry(url, rootDocument);
+  };
+}
+
+/**
+ * The caching store's byte source: the zip reader for an archive, else the HTTP
+ * directory source — wrapped, when there is a shared root-document fetch, so the
+ * validation probe and the root read are both answered from it.
+ */
+function chunkSourceFor(
+  url: string,
+  zipped: boolean,
+  rootDocument: Promise<RootDocumentFetch> | null,
+  releasers: Array<() => void>
+): string | ZipChunkSource | SharedRootDocumentSource {
+  if (zipped) return new ZipChunkSource(url, new LuxarZipStore(url));
+  if (!rootDocument) return url;
+  const source = new SharedRootDocumentSource(new HttpChunkSource(url), rootDocument);
+  releasers.push(() => source.release());
+  return source;
 }

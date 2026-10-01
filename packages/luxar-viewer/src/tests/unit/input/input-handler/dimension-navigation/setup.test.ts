@@ -88,7 +88,7 @@ function makeCtx(overrides: Partial<DimNavSetupCtx> = {}): DimNavSetupCtx {
 
   return {
     sceneManager,
-    animationController: { startAnimation: vi.fn() } as never,
+    animationController: { startAnimation: vi.fn(), requestTick: vi.fn() } as never,
     dimensionSlidersFactory: undefined,
     panelCoordinator,
     recordingPanel: undefined,
@@ -273,6 +273,35 @@ describe('initDimensionSliders', () => {
     expect(factory).toHaveBeenCalledWith(
       expect.objectContaining({ selectedDimension: 1, dims, dimensionRanges })
     );
+  });
+
+  it('a dimension change keeps the loop ticking without an extra render', async () => {
+    (sceneDimsManager.initFromScene as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (sceneDimsManager.getDims as ReturnType<typeof vi.fn>).mockReturnValue({
+      ndim: 4,
+      displayed: [0, 1, 2],
+      currentStep: [0, 0, 0, 0],
+    });
+    (sceneDimsManager.getDimensionRanges as ReturnType<typeof vi.fn>).mockReturnValue([
+      [0, 1],
+      [0, 1],
+      [0, 1],
+      [0, 10],
+    ]);
+    (sceneDimsManager.hasNonDisplayedDimensions as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    const startAnimation = vi.fn();
+    const requestTick = vi.fn();
+    const ctx = makeCtx({ animationController: { startAnimation, requestTick } as never });
+    initDimensionSliders(ctx);
+    const listener = (sceneDimsManager.addListener as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as () => Promise<void>;
+    startAnimation.mockClear();
+    requestTick.mockClear();
+    await listener();
+    // The slice's own commits request the render; a wake here drew the old
+    // slice again on every playback tick.
+    expect(startAnimation).not.toHaveBeenCalled();
+    expect(requestTick).toHaveBeenCalled();
   });
 
   it('registers exactly one sceneDimsManager listener even when invoked twice', () => {

@@ -80,6 +80,7 @@ import {
   type TSLNode,
   sortedIndexNode,
   densityDroppedNode,
+  densityAlphaNode,
   tslLineEndPixelWidth,
   tslLineJoin,
   tslLineJointCapSuppression,
@@ -175,6 +176,11 @@ export interface LineTSLNodes {
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
   readonly uDensityDrop: TSLNode;
+  /**
+   * Alpha-over compensation exponent of a thinned `normal` node (1 = identity;
+   * absent on graphs that never read it, e.g. picking).
+   */
+  readonly uDensityAlphaExp?: TSLNode;
   /** Refraction split (glass-partition-tsl.ts): mode + shared glass depth texture. */
   readonly uGlassPartition: GlassPartitionTSLNodes['uGlassPartition'];
   readonly uGlassDepth: GlassPartitionTSLNodes['uGlassDepth'];
@@ -850,6 +856,10 @@ export function lineWebGPUFactory(
     if (premultiplyRGB) {
       return vec4(gammaColor.mul(alpha), alpha);
     }
+    if (config.blendingMode === 'normal' && nodes.uDensityAlphaExp) {
+      // Alpha-over density-guard compensation (GLSL luxarDensityAlpha twin).
+      return vec4(gammaColor, densityAlphaNode(alpha, nodes.uDensityAlphaExp));
+    }
     return vec4(gammaColor, alpha);
   });
 
@@ -901,6 +911,7 @@ export function buildLineTSLNodesFromUniforms(
     uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
+    uDensityAlphaExp: uniform((uniforms.uDensityAlphaExp?.value as number) ?? 1),
     ...glassPartitionNodesFromUniforms(uniforms),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),

@@ -7,6 +7,7 @@
  * @module data/gsplats/handler
  */
 
+import { findObjectByName } from '../../utils/scene-graph-index';
 import * as THREE from 'three';
 import type { GeometryKind, ViewState } from '../data-loader-types';
 import type {
@@ -68,7 +69,7 @@ export async function loadAndStage(
   session: UpdateSession,
   ctx: GSplatsHandlerCtx
 ): Promise<StagedGSplatsCommit | null> {
-  const mesh = ctx.rootGroup?.getObjectByName(path) as THREE.Mesh | undefined;
+  const mesh = findObjectByName(ctx.rootGroup, path) as THREE.Mesh | undefined;
   const attrs = mesh?.userData?.attrs as GSplatsMetadata | undefined;
   const derived = ctx.deriveNodeViewState(path, attrs, {
     applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.gsplats,

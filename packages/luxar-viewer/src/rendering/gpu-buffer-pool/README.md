@@ -14,6 +14,8 @@ gpu-buffer-pool/
 ├── byte-budget-evictor.ts   # Cross-type eviction loop — evictUntilUnderByteBudget()
 ├── geometry-bytes.ts        # Cached per-geometry byte estimate
 │                              (estimateGeometryBytes, invalidateCachedByteSize)
+├── byte-tracked-maps.ts     # ActiveBufferMap / FreeBucketMap — Map subclasses
+│                              keeping incremental active/pooled byte totals
 ├── capacity.ts              # Buffer-capacity sizing primitive
 │                              (chooseCapacity, __setMinInstanceCapacityForTesting)
 ├── points-adapter.ts        # PointsBufferAdapter — acquire/release/update for points
@@ -46,6 +48,10 @@ Points (texel2.x) and lines (texel5.xy) always carry scalar texel slots, written
 ### Capacity sizing
 
 `capacity.ts::chooseCapacity(requested)` is the single sizing primitive every adapter calls on each allocate / grow: it rounds up to `requested × 1.5` (headroom so the next update rarely re-grows) but never below a `DEFAULT_MIN_INSTANCE_CAPACITY` floor of 256 instances. The headroom is **capped at `MAX_CAPACITY_HEADROOM` = 262,144 elements**, so the factor does not scale into hundreds of wasted MiB on a very large node: headroom absorbs a per-slice count wobble of a few thousand elements, not a fixed share of however big the node is, and it is charged against a real per-element cost (a Lines geometry is 96 B/segment of element texture plus 8 B/segment of ordering pair, so an uncapped 1.5× is 52 B of slack per segment). `cosmicflows_laniakea_full` — nine sibling Lines nodes, 11.4M segments, no LOD ladder so all of it is resident — needed 1702 MiB of pool against a 2000 MiB budget and died with "Array buffer allocation failed"; the cap brings it to 1369 MiB. Nodes under 524,288 elements are unaffected and keep the full factor. Living in this leaf module lets the three adapters import it without a cycle against the parent `gpu-buffer-pool.ts` barrel (which re-exports `chooseCapacity` and the `__setMinInstanceCapacityForTesting` test hook). `__setMinInstanceCapacityForTesting(value | null)` lowers the floor so unit tests can exercise the grow paths at small instance counts.
+
+### Incremental byte totals
+
+`GPUBufferPool.getResidentBytes()` (active + pooled bytes — the VRAM figure the LOD registry polls every frame and the byte pass reads on every acquire/release) is O(1): `activeBuffers` is an `ActiveBufferMap` and each adapter's free buckets a `FreeBucketMap` (`byte-tracked-maps.ts`), both `Map` subclasses that keep a running `bytes` total. `ActiveBufferMap` charges on `set` and uncharges on `delete`/`clear`/replacement. `FreeBucketMap` remembers each bucket's charge and RESYNCS it on `set(bucket, array)`/`delete`/`clear`, so an in-place `push`/`splice` on a bucket array is exact once that bucket is re-`set` or deleted; the adapters use its `pushBuffer`/`takeAt`/`removeFirst` helpers, and the byte evictor re-`set`s each bucket after every splice (before the dispose, so a throwing dispose listener cannot desync it). `getStats()` still walks every buffer (it needs per-type and largest-buffer figures, and is a stats poll, not a per-frame query). `gpu-pool-resident-bytes.property.test.ts` checks the incremental totals against a from-scratch walk after each of 10,000 seeded random operations.
 
 ### LRU ageing is counted in commits
 

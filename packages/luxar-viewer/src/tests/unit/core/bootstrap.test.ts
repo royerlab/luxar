@@ -100,6 +100,7 @@ import { setDocumentTitle } from '../../../core/document-title';
 import { log } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
 import type { UrlParams } from '../../../config/url-params';
+import { resetRootDocumentPrefetchForTests } from '../../../cache/root-document-prefetch';
 import {
   defaultUserSettings,
   saveUserSettings,
@@ -154,10 +155,26 @@ const EMPTY_PARAMS: UrlParams = {
   envResolution: null,
 };
 
+/** URLs the stubbed `fetch` was asked for (bootstrap's root-document prefetch). */
+let fetched: string[] = [];
+
 describe('bootstrapStandalone', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.disposeCleanups.splice(0).forEach((cleanup) => cleanup());
+    // Bootstrap starts the dataset's root-document fetch itself; never let a
+    // test reach a real network.
+    fetched = [];
+    resetRootDocumentPrefetchForTests();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        fetched.push(
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+        );
+        return new Response('', { status: 404 });
+      })
+    );
     mocks.init.mockResolvedValue(undefined);
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
     delete window.__luxarBuild;
@@ -170,6 +187,39 @@ describe('bootstrapStandalone', () => {
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
     delete window.__luxarBuild;
     localStorage.clear();
+    resetRootDocumentPrefetchForTests();
+    vi.unstubAllGlobals();
+  });
+
+  describe('root-document prefetch', () => {
+    it('requests the root document BEFORE app init (renderer init) completes', async () => {
+      // A slow renderer init: app.init does not settle until released.
+      let release!: () => void;
+      mocks.init.mockImplementationOnce(() => new Promise<void>((r) => (release = r)));
+      const booted = bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, src: 'https://data.example/scene.luxar.zarr' },
+      });
+      await vi.waitFor(() =>
+        expect(fetched).toContain('https://data.example/scene.luxar.zarr/zarr.json')
+      );
+      expect(release).toBeTypeOf('function'); // init is still in flight
+      release();
+      await booted;
+    });
+
+    it('does not prefetch for a URL that may open the dataset browser', async () => {
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, src: 'http://127.0.0.1:8000' },
+      });
+      await bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, src: 'https://data.example/datasets/' },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+      expect(fetched).toEqual([]);
+    });
   });
 
   describe('session overrides', () => {

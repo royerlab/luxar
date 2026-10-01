@@ -9,6 +9,7 @@ import { sceneConfig, shaderConfig } from './sections/scene/data';
 import { adaptiveDPRConfig } from './sections/adaptive-dpr/data';
 import { densityGuardConfig } from './sections/density-guard/data';
 import { depthSortConfig } from './sections/depth-sort/data';
+import { lodConfig } from './sections/lod/data';
 import { cacheConfig } from './sections/cache/data';
 import { dimensionAnimationConfig } from './sections/dimension-animation/data';
 import { webglConfig } from './sections/webgl/data';
@@ -35,6 +36,8 @@ export const config: AppConfig = {
   densityGuard: densityGuardConfig,
 
   depthSort: depthSortConfig,
+
+  lod: lodConfig,
 
   scene: sceneConfig,
 

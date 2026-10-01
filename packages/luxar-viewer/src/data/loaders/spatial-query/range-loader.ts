@@ -26,6 +26,7 @@ import { loadPerChannel } from './range-loader/perchannel';
 import { loadDirect } from './range-loader/direct';
 import { loadArrayRef } from './range-loader/array-ref';
 import { RefTargetMemo, type RefTargetWrapper } from './range-loader/ref-resolution';
+import { isVerboseLogging } from '../../../utils/log';
 
 export type { LoadRange, RangeLoaderConfig, EncodingType, RefTargetWrapper };
 
@@ -49,6 +50,15 @@ export class RangeLoader {
   /** Suppress detail logs after initial load */
   setVerbose(verbose: boolean): void {
     this._verbose = verbose;
+  }
+
+  /**
+   * Whether this load prints its per-array decode detail: on a loader's first
+   * load, and only under `?verboseLog` — every partition part is a loader, and
+   * a slice step can bring several into the slice for the first time.
+   */
+  private get verbose(): boolean {
+    return this._verbose && isVerboseLogging();
   }
 
   /**
@@ -84,7 +94,7 @@ export class RangeLoader {
     ranges: LoadRange[],
     output: DirectOutputBuffer
   ): Promise<number> {
-    const ctx = { config: this.config, verbose: this._verbose, signal: this._getSignal?.() };
+    const ctx = { config: this.config, verbose: this.verbose, signal: this._getSignal?.() };
     return loadDirect(ctx, array, ranges, output);
   }
 
@@ -106,7 +116,7 @@ export class RangeLoader {
     totalElements: number,
     elementsPerItem: number = 1
   ): Promise<number> {
-    const ctx = { config: this.config, verbose: this._verbose, signal: this._getSignal?.() };
+    const ctx = { config: this.config, verbose: this.verbose, signal: this._getSignal?.() };
     switch (detectEncoding(attrs)) {
       case 'broadcasted':
         await loadBroadcasted(ctx, array, attrs!, output, totalElements, elementsPerItem);
@@ -141,7 +151,7 @@ export class RangeLoader {
     zarrStore: zarr.Readable,
     logPrefix?: string
   ): Promise<number> {
-    const ctx = { config: this.config, verbose: this._verbose };
+    const ctx = { config: this.config, verbose: this.verbose };
     const resolved = await this.refTargets.resolve(ctx, attrs, zarrStore, logPrefix);
     return resolved
       ? this.loadRanges(

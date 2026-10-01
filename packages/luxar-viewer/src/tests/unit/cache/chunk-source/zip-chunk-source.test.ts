@@ -149,9 +149,10 @@ describe('ZipChunkSource — outcomes', () => {
         }
 
         const range = new Headers(init.headers).get('Range') ?? '';
-        const [, start, end] = /bytes=(\d+)-(\d+)/.exec(range) ?? [];
-        const from = Number(start);
-        const to = Number(end);
+        const [, start, end] = /bytes=(\d*)-(\d+)/.exec(range) ?? [];
+        // Suffix form (`bytes=-n`): the LAST n bytes, clamped to the archive.
+        const from = start === '' ? Math.max(0, archive.length - Number(end)) : Number(start);
+        const to = start === '' ? archive.length - 1 : Number(end);
         const slice = archive.slice(from, to + 1);
         return new Response(slice, {
           status: 206,

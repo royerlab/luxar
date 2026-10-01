@@ -71,7 +71,11 @@ describe('slice-cache-helper — prefix ladders', () => {
     storeLadder(sc, PATH, view, [makeLod(17)], { ladderDepth: 3, totalLODCount: 3 });
 
     const restored = restoreLadderSnapshot<FakeLod>(sc, PATH, view, N_LODS);
-    expect(restored).toEqual({ lods: [expect.objectContaining({ count: 17 })], depth: 3 });
+    expect(restored).toEqual({
+      lods: [expect.objectContaining({ count: 17 })],
+      depth: 3,
+      origin: expect.objectContaining({ cache: sc }),
+    });
     expect(sc.getStats().ladderDepthHistogram).toEqual({ '3/3': 1 });
   });
 

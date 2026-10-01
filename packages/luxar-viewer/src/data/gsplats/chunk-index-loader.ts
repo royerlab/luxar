@@ -42,7 +42,8 @@ import type { GSplatsMetadata } from '../../types/gsplats';
  */
 export async function loadGSplatsChunkIndex(
   zarrLocation: zarr.Location<zarr.Readable>,
-  attrs: GSplatsMetadata
+  attrs: GSplatsMetadata,
+  signal?: AbortSignal
 ): Promise<ChunkSpatialIndex | null> {
   if (attrs.ordering === 'none') {
     log.info(
@@ -56,7 +57,8 @@ export async function loadGSplatsChunkIndex(
     zarrLocation,
     'chunk_bounds',
     Modules.GSPLATS_SPATIAL_INDEX_LOADER,
-    'No chunk bounds found - GSplats dataset has no spatial indexing'
+    'No chunk bounds found - GSplats dataset has no spatial indexing',
+    signal
   );
   if (!result) return null;
 
