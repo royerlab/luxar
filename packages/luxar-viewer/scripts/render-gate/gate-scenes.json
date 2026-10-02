@@ -322,6 +322,29 @@
       "urlParams": "linePrimitive=capsule"
     },
     {
+      "id": "perf-lines-10m-ortho",
+      "synthetic": {
+        "type": "lines",
+        "count": 10000000,
+        "seed": 3,
+        "blending": "additive"
+      },
+      "projection": "ortho"
+    },
+    {
+      "id": "perf-capsule-2m-ortho",
+      "synthetic": {
+        "type": "lines",
+        "count": 2000000,
+        "seed": 4,
+        "blending": "additive",
+        "width": 3.0,
+        "turnAngle": 0.3
+      },
+      "urlParams": "linePrimitive=capsule",
+      "projection": "ortho"
+    },
+    {
       "id": "perf-splats-1m-normal",
       "synthetic": {
         "type": "gsplats",
