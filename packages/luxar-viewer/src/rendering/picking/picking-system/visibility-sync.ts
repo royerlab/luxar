@@ -45,13 +45,13 @@ import type { BlendingMode } from '../../../types/blending';
 import { isMeshPickAwareMaterial } from '../mesh/pick-mode';
 import { isSurfacePickAwareMaterial } from '../_shared/surface-pick';
 
-interface UniformHolder {
+export interface UniformHolder {
   uniforms?: Record<string, { value: unknown } | undefined>;
   getOpacity?: () => number;
 }
 
 /** One mirrored input: the pick uniform, and how to read its value off the visual material. */
-interface PickSyncInput {
+export interface PickSyncInput {
   readonly pick: string;
   readonly read: (visual: UniformHolder, mode: BlendingMode) => unknown;
 }

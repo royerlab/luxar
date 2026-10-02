@@ -65,7 +65,7 @@ export const LINE_RUNTIME_UNIFORMS = [
 /** Runtime uniforms a mesh material clone must carry over (GLSL and TSL twins). */
 export const MESH_RUNTIME_UNIFORMS = ['uInvGamma', 'uNearCull'] as const;
 
-interface UniformRecord {
+export interface UniformRecord {
   uniforms: Record<string, { value: unknown } | undefined>;
 }
 
