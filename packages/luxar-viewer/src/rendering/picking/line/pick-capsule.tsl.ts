@@ -70,7 +70,7 @@ import { pickWeightTSL } from '../_shared/visibility-tsl';
  */
 export function capsuleLinePickWebGPUFactory(
   nodes: LinePickTSLNodes,
-  _config: LinePickTSLConfig = {},
+  config: LinePickTSLConfig = {},
   outMaterial?: NodeMaterial
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
@@ -119,10 +119,15 @@ export function capsuleLinePickWebGPUFactory(
   const vertexBody = Fn(() => {
     const lineBase: TSLNode = int(aSortedIndex).mul(int(6)).toVar();
     const lineTexW: TSLNode = int(
-      resolveElementTextureWidth(
-        LINE_TEXTURE_LAYOUT,
-        (nodes.uLineTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
-      )
+      // From the config FIRST: under a shared graph (#2992) the leaf is a
+      // forwarding twin over a 1x1 stand-in texture, so its own width is not
+      // the bound texture's (the wrappers pass the real one; see
+      // ../_shared/shared-pick-graph-tsl.ts).
+      config.elementTextureWidth ??
+        resolveElementTextureWidth(
+          LINE_TEXTURE_LAYOUT,
+          (nodes.uLineTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
+        )
     ).toVar();
     const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
     const texelY: TSLNode = lineBase.div(lineTexW).toVar();

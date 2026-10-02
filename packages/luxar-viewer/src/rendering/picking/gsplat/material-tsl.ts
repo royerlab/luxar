@@ -160,7 +160,8 @@ export class GSplatPickingTSLMaterial
       ),
     };
     applySharedPickGraph(this, 'gsplat-pick', key, this.tslNodes, (inputs, scratch) => {
-      gsplatPickWebGPUFactory(inputs, scratch);
+      // The width from the key, not from the forwarding leaf (a stand-in).
+      gsplatPickWebGPUFactory(inputs, scratch, key);
     });
   }
 

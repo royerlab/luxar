@@ -35,6 +35,13 @@ export function applyPickMaterialState(material: NodeMaterial): void {
  * @param key - everything the factory reads at build time that selects code
  *   (the baked element-texture width, the line projection/join/primitive…);
  *   leaf presence and texture types are added automatically.
+ *
+ * `build` receives FORWARDING leaves, and a forwarding texture leaf wraps an
+ * independent 1x1 stand-in texture (so the shared graph never pins a
+ * material's texture). A factory must therefore never read a value it bakes
+ * into code off its `inputs`: the element-texture width in particular is
+ * passed explicitly (`elementTextureWidth` in the factory config), from the
+ * texture the material actually binds.
  */
 export function applySharedPickGraph<T extends TSLLeafSet>(
   material: NodeMaterial,

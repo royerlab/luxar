@@ -55,6 +55,7 @@ import {
   cameraProjectionMatrix,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
+import type { PickTextureWidthConfig } from '../gsplat/pick.tsl';
 import { applyPickMaterialState } from '../_shared/shared-pick-graph-tsl';
 import {
   FALLOFF_FLOOR,
@@ -124,7 +125,8 @@ export interface PointPickTSLNodes extends PickVisibilityTSLNodes {
  */
 export function pointPickWebGPUFactory(
   nodes: PointPickTSLNodes,
-  outMaterial?: NodeMaterial
+  outMaterial?: NodeMaterial,
+  config: PickTextureWidthConfig = {}
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
   // Draw-slot -> storage-slot mapping; point data comes from the point
@@ -193,10 +195,15 @@ export function pointPickWebGPUFactory(
     // Safe because the width is a per-layout session constant, capped
     // at 4096 on every device (element-texture-layout.ts).
     const pointTexW: TSLNode = int(
-      resolveElementTextureWidth(
-        POINT_TEXTURE_LAYOUT,
-        (nodes.uPointTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
-      )
+      // From the config FIRST: under a shared graph (#2992) the leaf is a
+      // forwarding twin over a 1x1 stand-in texture, so its own width is not
+      // the bound texture's (the wrappers pass the real one; see
+      // ../_shared/shared-pick-graph-tsl.ts).
+      config.elementTextureWidth ??
+        resolveElementTextureWidth(
+          POINT_TEXTURE_LAYOUT,
+          (nodes.uPointTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
+        )
     ).toVar();
     const texelX: TSLNode = pointBase.mod(pointTexW).toVar();
     const texelY: TSLNode = pointBase.div(pointTexW).toVar();

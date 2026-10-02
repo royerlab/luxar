@@ -131,6 +131,16 @@ export interface GSplatPickTSLNodes {
 }
 
 /**
+ * Build-time options of a pick factory that has no other config. Mirrors the
+ * visual factories' `elementTextureWidth`: the baked element-texture width
+ * must come from the texture the material BINDS — under a shared graph the
+ * factory's own leaf is a forwarding twin over a stand-in texture.
+ */
+export interface PickTextureWidthConfig {
+  readonly elementTextureWidth?: number;
+}
+
+/**
  * GSplat picking material TSL factory.
  *
  * Consumes pre-created `UniformNode` references; the wrapper
@@ -139,7 +149,8 @@ export interface GSplatPickTSLNodes {
  */
 export function gsplatPickWebGPUFactory(
   nodes: GSplatPickTSLNodes,
-  outMaterial?: NodeMaterial
+  outMaterial?: NodeMaterial,
+  config: PickTextureWidthConfig = {}
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
   // Draw-slot -> storage-slot mapping; splat data comes from the splat
@@ -214,10 +225,15 @@ export function gsplatPickWebGPUFactory(
     // Safe because the width is a per-layout session constant, capped
     // at 4096 on every device (element-texture-layout.ts).
     const splatTexW: TSLNode = int(
-      resolveElementTextureWidth(
-        SPLAT_TEXTURE_LAYOUT,
-        (nodes.uSplatTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
-      )
+      // From the config FIRST: under a shared graph (#2992) the leaf is a
+      // forwarding twin over a 1x1 stand-in texture, so its own width is not
+      // the bound texture's (the wrappers pass the real one; see
+      // ../_shared/shared-pick-graph-tsl.ts).
+      config.elementTextureWidth ??
+        resolveElementTextureWidth(
+          SPLAT_TEXTURE_LAYOUT,
+          (nodes.uSplatTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
+        )
     ).toVar();
     const texelX: TSLNode = splatBase.mod(splatTexW).toVar();
     const texelY: TSLNode = splatBase.div(splatTexW).toVar();

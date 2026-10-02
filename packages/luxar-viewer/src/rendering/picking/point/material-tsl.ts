@@ -126,7 +126,8 @@ export class PointPickingTSLMaterial
       ),
     };
     applySharedPickGraph(this, 'point-pick', key, this.tslNodes, (inputs, scratch) => {
-      pointPickWebGPUFactory(inputs, scratch);
+      // The width from the key, not from the forwarding leaf (a stand-in).
+      pointPickWebGPUFactory(inputs, scratch, key);
     });
   }
 

@@ -130,6 +130,12 @@ export interface LinePickTSLConfig {
    * per draw from `cameraProjectionMatrix` (`isOrthoProjectionTSL()`).
    */
   readonly join?: LineJoinStyle;
+  /**
+   * The bound line texture's width, baked as the addressing constant. Must be
+   * the texture the material BINDS: under a shared graph (#2992) the factory's
+   * own leaf is a forwarding twin over a stand-in texture.
+   */
+  readonly elementTextureWidth?: number;
 }
 
 export function linePickWebGPUFactory(
@@ -216,10 +222,15 @@ export function linePickWebGPUFactory(
     // Width baked as a literal — see the visual factory
     // (shader-tsl.ts) for the strength-reduction rationale.
     const lineTexW: TSLNode = int(
-      resolveElementTextureWidth(
-        LINE_TEXTURE_LAYOUT,
-        (nodes.uLineTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
-      )
+      // From the config FIRST: under a shared graph (#2992) the leaf is a
+      // forwarding twin over a 1x1 stand-in texture, so its own width is not
+      // the bound texture's (the wrappers pass the real one; see
+      // ../_shared/shared-pick-graph-tsl.ts).
+      config.elementTextureWidth ??
+        resolveElementTextureWidth(
+          LINE_TEXTURE_LAYOUT,
+          (nodes.uLineTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
+        )
     ).toVar();
     const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
     const texelY: TSLNode = lineBase.div(lineTexW).toVar();

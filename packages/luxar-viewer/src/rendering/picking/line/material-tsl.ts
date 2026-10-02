@@ -146,18 +146,19 @@ export class LinePickingTSLMaterial
     const primitive = resolveLinePrimitive(
       this.userData.linePrimitive as LinePrimitive | undefined
     );
-    const config = this._currentConfig();
     // ONE graph per configuration (`../_shared/shared-pick-graph-tsl.ts`):
     // the primitive, the build-time join variant and the baked line-texture
-    // width are what select code (the projection is read per draw).
-    const key = {
-      primitive,
-      ...config,
+    // width are what select code (the projection is read per draw). The width
+    // is the BOUND texture's, handed to the factory explicitly: the shared
+    // graph's own leaf is a forwarding twin over a stand-in texture.
+    const config = {
+      ...this._currentConfig(),
       elementTextureWidth: resolveElementTextureWidth(
         LINE_TEXTURE_LAYOUT,
         this.tslNodes.uLineTex.value as { image?: { width?: number } } | null
       ),
     };
+    const key = { primitive, ...config };
     applySharedPickGraph(this, 'line-pick', key, this.tslNodes, (inputs, scratch) => {
       if (primitive === 'capsule') {
         capsuleLinePickWebGPUFactory(inputs, config, scratch);

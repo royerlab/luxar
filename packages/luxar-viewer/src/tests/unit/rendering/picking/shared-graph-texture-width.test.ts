@@ -137,7 +137,7 @@ describe.each([
 ] as const)(
   '%s pick: the shared graph bakes the bound texture width',
   (_n, family, width, make, bind) => {
-    it.fails('two materials binding one width share a graph built for that width', () => {
+    it('two materials binding one width share a graph built for that width', () => {
       const a = make(1) as unknown as Bindable & Record<string, (t: THREE.DataTexture) => void>;
       const b = make(2) as unknown as Bindable & Record<string, (t: THREE.DataTexture) => void>;
       baked[family].length = 0;
