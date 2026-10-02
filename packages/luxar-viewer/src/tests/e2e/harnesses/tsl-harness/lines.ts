@@ -2270,3 +2270,45 @@ export const LINE_SHADERS: Record<string, RegistryEntry> = {
     buildMesh: (material) => buildJoinMesh(buildShortPartnerJoinTexelSource(), material),
   },
 };
+
+/**
+ * The PRODUCTION screen-space quad graphs: `LineTSLMaterial` /
+ * `LinePickingTSLMaterial` build the quad with a compile-time projection
+ * variant chosen per draw from the drawn camera (`projection-variant.ts`),
+ * not the runtime-ortho graph the entries above exercise. Same fixtures and
+ * cameras as `line` / `line-pick` (ortho) and `line-crossing` /
+ * `line-pick-crossing` (perspective, near-plane clip reached), so codegen pins the variant code and the
+ * parity harness can compare it against GLSL.
+ */
+function quadVariantEntry(
+  base: string,
+  projection: 'ortho' | 'perspective',
+  pick: boolean
+): RegistryEntry {
+  const entry = LINE_SHADERS[base];
+  return {
+    ...entry,
+    buildTSLMaterial: (uniforms) => {
+      if (pick) {
+        return linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(uniforms), {
+          projection,
+        }) as unknown as THREE.Material;
+      }
+      const m = lineWebGPUFactory(buildLineTSLNodesFromUniforms(uniforms, {}), {
+        projection,
+      }) as unknown as THREE.Material;
+      m.transparent = false;
+      m.blending = THREE.NoBlending;
+      return m;
+    },
+  };
+}
+
+LINE_SHADERS['line-variant-ortho'] = quadVariantEntry('line', 'ortho', false);
+LINE_SHADERS['line-variant-persp'] = quadVariantEntry('line-crossing', 'perspective', false);
+LINE_SHADERS['line-pick-variant-ortho'] = quadVariantEntry('line-pick', 'ortho', true);
+LINE_SHADERS['line-pick-variant-persp'] = quadVariantEntry(
+  'line-pick-crossing',
+  'perspective',
+  true
+);

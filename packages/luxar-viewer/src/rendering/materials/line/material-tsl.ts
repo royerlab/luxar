@@ -32,6 +32,10 @@ import {
 } from './shader-tsl';
 import { copyRuntimeUniforms, LINE_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
 import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
+import {
+  isOrthographicProjection,
+  type ProjectionVariantMaterial,
+} from '../_shared/projection-variant';
 import { capsuleLineWebGPUFactory } from './shader-tsl-capsule';
 import { isGammaOne, isNoGOG, type LineMaterialConfig } from './material-glsl';
 import { resolveLinePrimitive, type LinePrimitive } from '../../../types/line-primitive';
@@ -87,9 +91,13 @@ interface LineMaterialTSLNodeTable {
   uScalarScale?: TSLNode;
 }
 
+/** A camera whose projection reads orthographic (for `clone()`'s variant carry-over). */
+const ORTHO_PROBE = new THREE.OrthographicCamera();
+const PERSPECTIVE_PROBE = new THREE.PerspectiveCamera();
+
 export class LineTSLMaterial
   extends NodeMaterial
-  implements CameraAwareMaterial, ColormapAwareMaterial
+  implements CameraAwareMaterial, ColormapAwareMaterial, ProjectionVariantMaterial
 {
   /** Public uniforms table, same shape as `LineMaterial.uniforms`. */
   uniforms: Record<string, THREE.IUniform>;
@@ -113,6 +121,9 @@ export class LineTSLMaterial
    */
   private _explicitDepthTest?: boolean;
   private _explicitTransparent?: boolean;
+
+  /** The projection kind of the camera last drawn with (quad variant only). */
+  private _orthoVariant = false;
 
   constructor(materialConfig: LineMaterialConfig = {}) {
     super();
@@ -300,10 +311,20 @@ export class LineTSLMaterial
    * PointTSLMaterial).
    */
   private rebuildGraph(): void {
+    this.rebuildColormapNodes(!!this.defines && 'USE_COLORMAP' in this.defines);
+    this.applyGraph();
+  }
+
+  /**
+   * Point the material at the shared graph of its current configuration
+   * (defines, primitive, join, texture width and — for the quad — the
+   * projection variant) and re-apply the per-material blending state. No leaf
+   * is recreated, so a projection-variant switch costs a cache lookup.
+   */
+  private applyGraph(): void {
     const useColormap = !!this.defines && 'USE_COLORMAP' in this.defines;
     const gammaOne = !!this.defines && 'LUXAR_GAMMA_ONE' in this.defines;
     const noGOG = !!this.defines && 'LUXAR_NO_GOG' in this.defines;
-    this.rebuildColormapNodes(useColormap);
     // The primitive picks the factory (#1352) — the TSL counterpart of the
     // GLSL twin's shader-source pair selection.
     const primitive = resolveLinePrimitive(
@@ -316,6 +337,7 @@ export class LineTSLMaterial
       gammaOne,
       noGOG,
       join: this.userData.lineJoin as LineJoinStyle | undefined,
+      ...this.projectionConfig(isCapsule),
       blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
       elementTextureWidth: resolveElementTextureWidth(
         LINE_TEXTURE_LAYOUT,
@@ -335,10 +357,28 @@ export class LineTSLMaterial
       config.blendingMode ?? 'additive',
       (this.tslNodes.uOpacity.value as number | undefined) ?? 1.0
     );
-    // Re-apply the explicit constructor overrides over the factory
-    // tail's mode-derived blending state — on EVERY rebuild, not just
-    // the constructor's, so a texture/gamma/colormap rebuild can't
-    // silently revert them (see the `_explicitDepthTest` field doc).
+    this.applyExplicitOverrides();
+    this.needsUpdate = true;
+  }
+
+  /** Take over a source material's last-drawn projection variant (clone). */
+  private adoptProjectionVariant(ortho: boolean): void {
+    this.selectProjectionVariant(ortho ? ORTHO_PROBE : PERSPECTIVE_PROBE);
+  }
+
+  /** The quad's compile-time projection variant; the capsule has none. */
+  private projectionConfig(isCapsule: boolean): Pick<LineTSLConfig, 'projection'> {
+    if (isCapsule) return {};
+    return { projection: this._orthoVariant ? 'ortho' : 'perspective' };
+  }
+
+  /**
+   * Re-apply the explicit constructor overrides over the factory tail's
+   * mode-derived blending state — on EVERY rebuild, not just the
+   * constructor's, so a texture/gamma/colormap rebuild can't silently revert
+   * them (see the `_explicitDepthTest` field doc).
+   */
+  private applyExplicitOverrides(): void {
     if (this._explicitTransparent !== undefined) {
       this.transparent = this._explicitTransparent;
     }
@@ -346,7 +386,6 @@ export class LineTSLMaterial
       this.depthTest = this._explicitDepthTest;
       this.userData.depthTest = this._explicitDepthTest;
     }
-    this.needsUpdate = true;
   }
 
   /**
@@ -409,6 +448,30 @@ export class LineTSLMaterial
     }
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
     this.uniforms.uPixelRatio.value = pixelRatio;
+  }
+
+  /**
+   * Select the screen-space quad's projection variant for the camera this draw
+   * uses (`ProjectionVariantMaterial`; called from the line mesh's
+   * `onBeforeRender`, `_shared/projection-variant.ts`). The quad's graph bakes
+   * the ortho test as a constant (a runtime switch measured +4.6% on the
+   * ortho quad under WebGPU), so the material re-points at the other kind's
+   * SHARED graph — built once per configuration and kind, then a cache hit —
+   * only when the drawn camera's kind differs from the last one. Nothing is
+   * pushed from the CPU, so the environment capture's cube faces and the main
+   * view each get their own variant. The capsule reads the ortho test at
+   * runtime and ignores this.
+   */
+  selectProjectionVariant(camera: THREE.Camera): void {
+    const ortho = isOrthographicProjection(camera);
+    if (ortho === this._orthoVariant) return;
+    this._orthoVariant = ortho;
+    if (
+      resolveLinePrimitive(this.userData.linePrimitive as LinePrimitive | undefined) === 'capsule'
+    ) {
+      return;
+    }
+    this.applyGraph();
   }
 
   updateOpacity(opacity: number): void {
@@ -586,6 +649,9 @@ export class LineTSLMaterial
 
     // Runtime state a fresh clone would reset (LINE_RUNTIME_UNIFORMS, ../_shared/runtime-uniforms.ts).
     copyRuntimeUniforms(this, cloned, LINE_RUNTIME_UNIFORMS);
+    // The last-drawn projection variant rides along so the clone's first draw
+    // through the same camera kind is not a variant switch.
+    cloned.adoptProjectionVariant(this._orthoVariant);
     // Rebind the line data texture (its own rebuild re-bakes the texture
     // width). No-op when still on the placeholder.
     const lineTex = this.uniforms.uLineTex?.value as THREE.DataTexture | null | undefined;

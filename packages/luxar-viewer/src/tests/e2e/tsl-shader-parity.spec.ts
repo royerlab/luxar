@@ -1928,6 +1928,33 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     ).toBeLessThan(2.0);
   });
 
+  // The production TSL quad is a compile-time projection VARIANT chosen per
+  // draw from the drawn camera (projection-variant.ts). Each variant must
+  // render EXACTLY what the runtime-ortho graph renders through the same
+  // camera (it only folds the projection test to a constant), and must agree
+  // with the GLSL twin like its runtime entry does.
+  for (const [variant, runtime] of [
+    ['line-variant-ortho', 'line'],
+    ['line-variant-persp', 'line-crossing'],
+    ['line-pick-variant-ortho', 'line-pick'],
+    ['line-pick-variant-persp', 'line-pick-crossing'],
+  ] as const) {
+    test(`${variant}: the compile-time variant renders exactly its runtime graph`, async ({
+      page,
+    }) => {
+      await bootHarness(page);
+      const glslPixels = await runGLSL(page, variant);
+      const variantPixels = (await runTSL(page, variant)).pixels;
+      const runtimePixels = (await runTSL(page, runtime)).pixels;
+      assertBothRendered(glslPixels, variantPixels, variant);
+      expect(variantPixels, `${variant} == ${runtime} (TSL)`).toEqual(runtimePixels);
+      expect(
+        meanAbsDiffPerCoveredPixel(glslPixels, variantPixels),
+        `${variant}: GLSL parity`
+      ).toBeLessThan(2.0);
+    });
+  }
+
   test('point-pick: tight sprite with nodeId / elementId / brightness output', async ({ page }) => {
     await bootHarness(page);
 

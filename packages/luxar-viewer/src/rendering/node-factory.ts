@@ -64,6 +64,7 @@ import { isPhysicalMeshMaterial } from './materials/mesh-physical/config';
 import type { GeometryTypeName } from '../types/format-contract';
 import { lineJoinStyleFromUniform, type LineJoinStyle } from '../types/line-join';
 import type { LinePrimitive } from '../types/line-primitive';
+import { installProjectionVariantHook } from './materials/_shared/projection-variant';
 // Picking materials are constructed via `materialManager.create*PickingMaterial`
 // helpers so the GLSL vs. TSL dispatch on `caps.apiSurface` lives in one place. The
 // concrete types are still imported elsewhere (e.g. material-sync-helpers).
@@ -130,7 +131,12 @@ const PICK_MATERIAL_RECIPES: Record<GeometryTypeName, PickMaterialRecipe> = {
         join: lineJoinStyleFromVisual(obj),
         primitive: linePrimitiveFromVisual(obj),
       }),
-    afterRegister: syncLineMaterialWithGeometry,
+    afterRegister: (obj) => {
+      syncLineMaterialWithGeometry(obj);
+      // The TSL pick quad picks its projection variant per draw (projection-variant.ts).
+      const pickNode = obj.userData.pickNode as THREE.Object3D | undefined;
+      if (pickNode instanceof THREE.Mesh) installProjectionVariantHook(pickNode);
+    },
   },
   gsplats: {
     build: (_obj, pickId) => materialManager.createGSplatPickingMaterial({ nodeId: pickId }),

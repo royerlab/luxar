@@ -16,6 +16,7 @@ import { getColormapTexture } from '../colormap-textures';
 import { supportsScalarColormap } from '../material-colormap-helpers';
 import { syncLineMaterialWithGeometry } from '../material-sync-helpers';
 import { createInstancedLinesMesh, type InstancedLinesMeshConfig } from '../line-geometry';
+import { installProjectionVariantHook } from '../materials/_shared/projection-variant';
 import { clampLineCapacity } from '../element-texture-layout';
 import type { LinesMetadata, LinesUserData, LinesDataLoader } from '../../types/lines';
 import { log, Modules } from '../../utils/log';
@@ -172,6 +173,8 @@ export function createLinesNode(
     materialManager.register(pickMaterial);
     // Share the same InstancedBufferGeometry — only material differs.
     const pickNode = new THREE.Mesh(mesh.geometry, pickMaterial);
+    // Per-draw projection variant of the TSL pick quad (see the visual mesh).
+    installProjectionVariantHook(pickNode);
     pickNode.matrixWorld.copy(mesh.matrixWorld);
     pickingSystem.registerNode(mesh, pickNode, pickId);
     // Bind the geometry-owned line texture on BOTH materials (the

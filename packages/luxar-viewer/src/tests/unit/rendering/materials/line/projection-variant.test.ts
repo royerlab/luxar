@@ -55,7 +55,7 @@ describe.each([
       new LinePickingTSLMaterial({ nodeId: 1, primitive: 'screen-space' }) as unknown as Drawable,
   ],
 ])('%s: projection variant chosen per draw from the camera', (_n, make) => {
-  it.fails('draws through an ortho camera with a different graph than a perspective one', () => {
+  it('draws through an ortho camera with a different graph than a perspective one', () => {
     const m = make();
     const mesh = meshWith(m);
     draw(mesh, persp());
@@ -93,7 +93,7 @@ describe.each([
     expect(m.version).toBe(version);
   });
 
-  it.fails('a CPU camera push selects no variant: only the drawn camera does', () => {
+  it('a CPU camera push selects no variant: only the drawn camera does', () => {
     const m = make();
     const mesh = meshWith(m);
     draw(mesh, ortho());

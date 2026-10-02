@@ -29,6 +29,7 @@ import * as THREE from 'three';
 import {
   Fn,
   If,
+  bool,
   uniform,
   attribute,
   varying,
@@ -76,6 +77,7 @@ import {
   LINE_TEXTURE_LAYOUT,
 } from '../../element-texture-layout';
 import { resolveLineJoin, type LineJoinStyle } from '../../../types/line-join';
+import type { LineProjectionVariant } from '../../materials/_shared/projection-variant';
 import {
   pickVisibilityTSLNodesFromUniforms,
   pickWeightTSL,
@@ -136,6 +138,8 @@ export interface LinePickTSLConfig {
    * own leaf is a forwarding twin over a stand-in texture.
    */
   readonly elementTextureWidth?: number;
+  /** Compile-time projection variant — see `LineTSLConfig.projection`. */
+  readonly projection?: LineProjectionVariant;
 }
 
 export function linePickWebGPUFactory(
@@ -191,7 +195,9 @@ export function linePickWebGPUFactory(
   const vAlpha: TSLNode = varying(float(1.0));
   // View-space z to the fragment (fade computed per-fragment; see the
   // visual line TSL; identically 1 under ortho).
-  const vViewZ: TSLNode = varying(float(0.0));
+  const fixedOrtho: boolean | undefined =
+    config.projection === undefined ? undefined : config.projection === 'ortho';
+  const vViewZ: TSLNode | null = fixedOrtho === true ? null : varying(float(0.0));
   const vCapSuppressStart: TSLNode = varying(float(0.0)).setInterpolation('flat');
   const vCapSuppressEnd: TSLNode = varying(float(0.0)).setInterpolation('flat');
   const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat');
@@ -254,7 +260,9 @@ export function linePickWebGPUFactory(
     const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5).toVar();
     // The draw's ortho test (visual-factory parity; GLSL twin:
     // `luxarLineIsOrtho`), materialised ahead of every `If` block.
-    const isOrtho: TSLNode = isOrthoProjectionTSL().equal(int(1)).toVar();
+    const isOrtho: TSLNode = (
+      fixedOrtho === undefined ? isOrthoProjectionTSL().equal(int(1)) : bool(fixedOrtho)
+    ).toVar();
     const isPersp: TSLNode = isOrtho.not().toVar();
     const startW: TSLNode = sanitizeNonNegative(aStartWidth, float(0.0));
     const endW: TSLNode = sanitizeNonNegative(aEndWidth, float(0.0));
@@ -473,7 +481,7 @@ export function linePickWebGPUFactory(
     vAlpha.assign(mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), tEff));
     vPixelWidth.assign(rawPixelWidth);
     vWidthFade.assign(vWidthFadeVal);
-    vViewZ.assign(mvPos.z);
+    if (vViewZ) vViewZ.assign(mvPos.z);
     // texel4.yz hold a per-endpoint joint CODE, not a [0, 1] scalar. Reading
     // it as one let capFactor scale with the partner's slot index (200.5 for a
     // segment joining slot 399, -0.5 for a hub, 0.0 for a slice-clipped end).
@@ -540,7 +548,15 @@ export function linePickWebGPUFactory(
         .mul(perpFalloff)
         .mul(widthScale)
         .mul(vWidthFade)
-        .mul(perspectiveNearFadeTSL(isOrthoProjectionTSL(), vViewZ, nearCull))
+        .mul(
+          vViewZ
+            ? perspectiveNearFadeTSL(
+                fixedOrtho === undefined ? isOrthoProjectionTSL() : int(0),
+                vViewZ,
+                nearCull
+              )
+            : float(1.0)
+        )
         // ...weighted by the visual factors (per-endpoint alpha, node
         // opacity, max(gain, 1)) — GLSL twin: luxarPickWeight.
         .mul(pickWeightTSL(vAlpha, nodes))

@@ -36,13 +36,23 @@ import {
   resolveElementTextureWidth,
 } from '../../element-texture-layout';
 import { applySharedPickGraph } from '../_shared/shared-pick-graph-tsl';
+import {
+  isOrthographicProjection,
+  type ProjectionVariantMaterial,
+} from '../../materials/_shared/projection-variant';
 import type { LinePickingMaterialConfig } from './material';
+
+/** A camera whose projection reads orthographic (for `clone()`'s variant carry-over). */
+const ORTHO_PROBE = new THREE.OrthographicCamera();
 
 export class LinePickingTSLMaterial
   extends NodeMaterial
-  implements CameraAwareMaterial, SurfacePickAwareMaterial
+  implements CameraAwareMaterial, SurfacePickAwareMaterial, ProjectionVariantMaterial
 {
   uniforms: Record<string, THREE.IUniform>;
+
+  /** The projection kind of the camera last drawn with (quad variant only). */
+  private _orthoVariant = false;
 
   private tslNodes: {
     uLineTex: TSLNode;
@@ -133,9 +143,32 @@ export class LinePickingTSLMaterial
    * Build the per-rebuild factory config from current uniforms.
    */
   private _currentConfig(): LinePickTSLConfig {
+    const quad =
+      resolveLinePrimitive(this.userData.linePrimitive as LinePrimitive | undefined) !== 'capsule';
     return {
       join: this.userData.lineJoin as LineJoinStyle | undefined,
+      // The quad's compile-time projection variant (see selectProjectionVariant).
+      ...(quad ? { projection: this._orthoVariant ? 'ortho' : 'perspective' } : {}),
     };
+  }
+
+  /**
+   * Select the screen-space quad's projection variant for the camera this pick
+   * draw uses — the visual twin's rule (`LineTSLMaterial.selectProjectionVariant`):
+   * a re-point at the other kind's cached shared graph, only on a kind change,
+   * never driven by a CPU push. The capsule ignores it.
+   */
+  selectProjectionVariant(camera: THREE.Camera): void {
+    const ortho = isOrthographicProjection(camera);
+    if (ortho === this._orthoVariant) return;
+    this._orthoVariant = ortho;
+    if (
+      resolveLinePrimitive(this.userData.linePrimitive as LinePrimitive | undefined) === 'capsule'
+    ) {
+      return;
+    }
+    this._rebuild();
+    this.needsUpdate = true;
   }
 
   /**
@@ -147,10 +180,10 @@ export class LinePickingTSLMaterial
       this.userData.linePrimitive as LinePrimitive | undefined
     );
     // ONE graph per configuration (`../_shared/shared-pick-graph-tsl.ts`):
-    // the primitive, the build-time join variant and the baked line-texture
-    // width are what select code (the projection is read per draw). The width
-    // is the BOUND texture's, handed to the factory explicitly: the shared
-    // graph's own leaf is a forwarding twin over a stand-in texture.
+    // the primitive, the build-time join and projection variants and the baked
+    // line-texture width are what select code. The width is the BOUND
+    // textures, handed to the factory explicitly: the shared graphs own leaf
+    // is a forwarding twin over a stand-in texture.
     const config = {
       ...this._currentConfig(),
       elementTextureWidth: resolveElementTextureWidth(
@@ -197,6 +230,8 @@ export class LinePickingTSLMaterial
     cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
     copyPickVisibilityUniforms(this.uniforms, cloned.uniforms);
     cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
+    // Carry the last-drawn projection variant (no switch on the clone's first draw).
+    if (this._orthoVariant) cloned.selectProjectionVariant(ORTHO_PROBE);
     return cloned as this;
   }
 

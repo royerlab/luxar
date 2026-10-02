@@ -394,6 +394,13 @@ const SHADERS = [
   'line-capsule-volumetric',
   'line-capsule-colormap',
   'line-capsule-pick-sideon',
+  // The PRODUCTION screen-space quad: a compile-time projection variant per
+  // drawn camera kind (`projection-variant.ts`), visual and pick. Kept LAST so
+  // their render-group member order cannot reorder any snapshot above.
+  'line-variant-ortho',
+  'line-variant-persp',
+  'line-pick-variant-ortho',
+  'line-pick-variant-persp',
 ] as const;
 
 test.describe('TSL → generated-shader snapshots', () => {

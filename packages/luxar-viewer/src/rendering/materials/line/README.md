@@ -17,14 +17,14 @@ semantics — `MaterialManager.getLineMaterial` dispatches on
 
 ## Module map
 
-| File                     | Role                                                                                                                                                                                                                                   |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `material-glsl.ts`       | `LineMaterial extends THREE.ShaderMaterial` — wraps the GLSL3 vertex/fragment pair, owns `uniforms`, manages variant `defines`, applies the canonical blending state. WebGL2 path.                                                     |
-| `material-tsl.ts`        | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or the line texture change. WebGPU path.         |
-| `shader-glsl.ts`         | `LINE_VERTEX_SHADER` + `LINE_FRAGMENT_SHADER` GLSL3 source strings and the `LINE_SOURCE: ShaderSource` registry entry. The `webgpu` field re-enters `lineWebGPUFactory` so the parity harness can drive both backends from one symbol. |
-| `shader-tsl.ts`          | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                 |
-| `shader-glsl-capsule.ts` | `CAPSULE_LINE_VERTEX_SHADER` + `CAPSULE_LINE_FRAGMENT_SHADER` + `CAPSULE_LINE_SOURCE` — the capsule primitive's GLSL pair (see the section below).                                                                                     |
-| `shader-tsl-capsule.ts`  | `capsuleLineWebGPUFactory(nodes, config, outMaterial?)` — TSL twin of the capsule pair; same `LineTSLNodes`/`LineTSLConfig` contract as the screen-space factory.                                                                      |
+| File                     | Role                                                                                                                                                                                                                                                                                                         |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `material-glsl.ts`       | `LineMaterial extends THREE.ShaderMaterial` — wraps the GLSL3 vertex/fragment pair, owns `uniforms`, manages variant `defines`, applies the canonical blending state. WebGL2 path.                                                                                                                           |
+| `material-tsl.ts`        | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or the line texture change, and picks the quad's projection variant per draw (`selectProjectionVariant`). WebGPU path. |
+| `shader-glsl.ts`         | `LINE_VERTEX_SHADER` + `LINE_FRAGMENT_SHADER` GLSL3 source strings and the `LINE_SOURCE: ShaderSource` registry entry. The `webgpu` field re-enters `lineWebGPUFactory` so the parity harness can drive both backends from one symbol.                                                                       |
+| `shader-tsl.ts`          | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                                                                                       |
+| `shader-glsl-capsule.ts` | `CAPSULE_LINE_VERTEX_SHADER` + `CAPSULE_LINE_FRAGMENT_SHADER` + `CAPSULE_LINE_SOURCE` — the capsule primitive's GLSL pair (see the section below).                                                                                                                                                           |
+| `shader-tsl-capsule.ts`  | `capsuleLineWebGPUFactory(nodes, config, outMaterial?)` — TSL twin of the capsule pair; same `LineTSLNodes`/`LineTSLConfig` contract as the screen-space factory.                                                                                                                                            |
 
 ## Rendering model in one paragraph
 
@@ -524,23 +524,33 @@ so THREE's program cache recompiles; the TSL wrapper calls
 `rebuildGraph()`, which points the material at the SHARED graph of its new
 configuration (`../_shared/shared-graph-tsl.ts` — built once per
 configuration, since three keys its node-build cache on node ids). The key
-carries every define above plus the primitive, the resolved join and the
-baked line-texture width — **not** the projection mode. Both backends read the
-ortho branch from the projection matrix of the draw: GLSL as
+carries every define above plus the primitive, the resolved join, the baked
+line-texture width and — for the TSL screen-space quad only — the projection
+kind.
+
+No wrapper is ever TOLD the projection: neither binds an ortho uniform and
+`updateCameraParams` takes no camera-kind argument. GLSL and the TSL capsule
+read the ortho branch from the projection matrix of the draw — GLSL as
 `luxarLineIsOrtho` (assigned with `luxarLineScale` at the top of `main()` and
-handed to the fragment stage as a flat varying), TSL as
-`isOrthoProjectionTSL()` (a bool var materialised in the vertex prologue ahead
-of every `If`; the quad fragment re-reads it for the near fade, as the mesh
-graphs do). Neither wrapper binds an ortho uniform, `updateCameraParams`
-takes no camera-kind argument at all, and a camera-kind flip rebuilds no graph and
-moves no material to another shared-graph key — so a draw through a different
-projection than the broadcast camera's (the scene environment capture's cube
-faces under an orthographic main camera) needs no push. The ortho/perspective
-branches are both present in the one graph (the GLSL twin's runtime branch;
-the near-plane segment clip is a real `If`, the rest `select()`s), which is
-why the ortho- and perspective-camera visual codegen snapshots are identical
-(`line` / `line-behind`, `line-capsule-sideon` / `line-capsule-endon-persp`;
-the pick pair differs only in three's own camera-class-dependent `depth` node).
+handed to the fragment stage as a flat varying), the capsule as
+`isOrthoProjectionTSL()` (a bool var materialised in its vertex prologue). The
+TSL screen-space quad (visual and pick) instead carries a COMPILE-TIME
+projection variant (`config.projection`: the ortho test is a constant and the
+ortho variant has no view-z varying), because its single runtime-ortho graph
+measured +4.6% of the GPU pass on the 10M-segment ortho quad under WebGPU and
+only a constant ortho test recovered it. The variant is chosen PER DRAW from
+the drawn camera: the line mesh's `onBeforeRender`
+(`installProjectionVariantHook`, `../_shared/projection-variant.ts`) calls
+`selectProjectionVariant(camera)`, which re-points the material at the other
+kind's shared graph only when the kind changes. Both graphs are built once and
+cached, so a switch is a lookup; and because three keys render objects per
+render context (render target), the environment capture's cube faces keep a
+perspective render object of their own while the orthographic main view keeps
+its own — alternating between them builds nothing. A main-camera
+ortho/perspective toggle re-keys the main view's render object once.
+`tsl-codegen-snapshot.spec.ts` pins the production variants as
+`line-variant-*` / `line-pick-variant-*`; the runtime entries (`line`,
+`line-behind`, …) keep pinning the runtime form the parity harness compares.
 
 ## Shared helpers from `_shared/`
 

@@ -38,6 +38,7 @@ import * as THREE from 'three';
 import {
   Fn,
   If,
+  bool,
   uniform,
   attribute,
   varying,
@@ -87,6 +88,7 @@ import {
   tslLineJointCapSuppression,
 } from '../_shared/tsl-helpers';
 import { resolveLineJoin, type LineJoinStyle } from '../../../types/line-join';
+import type { LineProjectionVariant } from '../_shared/projection-variant';
 import {
   ALPHA_CLAMP,
   VOLUMETRIC_SERIES_C1,
@@ -140,6 +142,18 @@ export interface LineTSLConfig {
    * a camera-kind flip rebuilds nothing.
    */
   readonly join?: LineJoinStyle;
+  /**
+   * Compile-time projection variant (screen-space quad only). `'ortho'` /
+   * `'perspective'` bake the ortho test into the graph as a constant, so the
+   * compiler drops the other projection's code (a single runtime-ortho graph
+   * measured +4.6% of the GPU pass on the 10M-segment ortho quad under
+   * WebGPU); the ortho variant also carries no view-z varying. The wrapper
+   * picks the variant PER DRAW from the drawn camera's projection matrix
+   * (`selectProjectionVariant`, `_shared/projection-variant.ts`) — nothing is
+   * pushed from the CPU. Unset: the ortho test is read at runtime from
+   * `cameraProjectionMatrix` (the parity harness / `ShaderSource` path).
+   */
+  readonly projection?: LineProjectionVariant;
   /**
    * The line texture's width, baked into the vertex addressing as a
    * literal. Defaults to the width resolved from `nodes.uLineTex.value`;
@@ -318,7 +332,11 @@ export function lineWebGPUFactory(
   // segments (fade(lerp(z)) != lerp(fade(z)); one endpoint at the
   // camera plane would dim mid-segment fragments far outside the fade
   // band). Under ortho the fragment's fade is identically 1.
-  const vViewZ: TSLNode = varying(float(0.0));
+  // The ortho VARIANT carries no view-z varying at all (its fade is the
+  // constant 1.0, and an unused interpolant still costs every fragment).
+  const fixedOrtho: boolean | undefined =
+    config.projection === undefined ? undefined : config.projection === 'ortho';
+  const vViewZ: TSLNode | null = fixedOrtho === true ? null : varying(float(0.0));
   // Continuous [0, 1] cap-suppression scalars, one per endpoint —
   // per-instance, same across all 4 quad verts.
   const vCapSuppressStart: TSLNode = varying(float(0.0)).setInterpolation('flat');
@@ -387,7 +405,9 @@ export function lineWebGPUFactory(
     // different camera (the environment capture's cube faces) needs no
     // CPU-pushed flag and no graph rebuild. Materialised here, ahead of every
     // `If` block, so its first use never lands inside a branch.
-    const isOrtho: TSLNode = isOrthoProjectionTSL().equal(int(1)).toVar();
+    const isOrtho: TSLNode = (
+      fixedOrtho === undefined ? isOrthoProjectionTSL().equal(int(1)) : bool(fixedOrtho)
+    ).toVar();
     const isPersp: TSLNode = isOrtho.not().toVar();
 
     // Project endpoints to view space FIRST — the near-plane segment
@@ -677,7 +697,7 @@ export function lineWebGPUFactory(
     vWidthAtT.assign(width);
     vPixelWidth.assign(rawPixelWidth);
     vWidthFade.assign(vWidthFadeVal);
-    vViewZ.assign(mvPos.z);
+    if (vViewZ) vViewZ.assign(mvPos.z);
     // texel4.yz hold a per-endpoint joint CODE, not a [0, 1] scalar. Reading
     // it as one let capFactor scale with the partner's slot index (200.5 for a
     // segment joining slot 399, -0.5 for a hub, 0.0 for a slice-clipped end).
@@ -773,7 +793,15 @@ export function lineWebGPUFactory(
       .mul(vWidthFade)
       // The fragment stage reads the same per-draw ortho test (the GLSL twin
       // hands it over as the flat `vLineIsOrtho`); the fade is 1.0 under ortho.
-      .mul(perspectiveNearFadeTSL(isOrthoProjectionTSL(), vViewZ, nearCull));
+      .mul(
+        vViewZ
+          ? perspectiveNearFadeTSL(
+              fixedOrtho === undefined ? isOrthoProjectionTSL() : int(0),
+              vViewZ,
+              nearCull
+            )
+          : float(1.0)
+      );
 
     // GOG. uIntensity (gain) + uOffset apply in BOTH modes so the layer
     // intensity/offset controls work for a colormapped line too (GLSL
