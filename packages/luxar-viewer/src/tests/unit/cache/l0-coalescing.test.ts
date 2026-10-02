@@ -20,6 +20,7 @@ import {
   wrapWithCache,
   resetDecodeHistory,
 } from '../../../cache/decompressed-chunk-cache/cached-zarr-array';
+import { warmChunk } from '../../../cache/decompressed-chunk-cache/warm-chunk';
 import { perfCounters } from '../../../profiling/perf-counters';
 
 interface Counter {
@@ -287,5 +288,55 @@ describe('L0 in-flight map and cache.clear()', () => {
     expect(cache.inflightCount).toBe(0);
     expect(await outcome(p1)).toBe('ok');
     expect(cache.has(DecompressedChunkCache.makeKey('/n/centers', [0, 0]))).toBe(false);
+  });
+});
+
+describe('L0 — a cancelled read-ahead whose decode is already past its fetch', () => {
+  beforeEach(() => {
+    perfCounters.reset();
+    resetDecodeHistory();
+  });
+
+  // A speculative warm (B5 read-ahead, lookahead, predicted view) is aborted on
+  // the next view change. When that lands after the chunk's bytes arrived, the
+  // decode cannot stop and runs to completion anyway. It used to be
+  // DEREGISTERED at the abort and its result DISCARDED, so the foreground read
+  // of the same chunk a moment later fetched and decoded it again — counted as
+  // `decode.duplicates` (WebGPU scrub_pl_drag: 1 -> 6, decodes +28%).
+  it.fails('the foreground read joins the cancelled warm instead of decoding again', async () => {
+    const cache = new DecompressedChunkCache({ maxSize: 1 << 20 });
+    const counter: Counter = { decodes: 0, starts: 0, aborted: 0 };
+    const { array, releaseFirst } = signalDeafArray(counter);
+    const a = wrapWithCache(array as never, cache, '/n/centers');
+    const warm = new AbortController();
+    const warming = warmChunk(a as never, [0, 0], { signal: warm.signal });
+    warm.abort(); // the next drag step supersedes the read-ahead
+    expect(await outcome(warming)).toBe('AbortError');
+
+    const foreground = a.getChunk([0, 0]);
+    releaseFirst(); // the cancelled warm's decode completes regardless
+    const chunk = await foreground;
+
+    expect((chunk.data as Float32Array)[0]).toBe(1); // the warm's own bytes
+    expect(counter.starts).toBe(1);
+    expect(counter.decodes).toBe(1);
+    expect(perfCounters.get('decode.duplicates')).toBe(0);
+  });
+
+  it.fails('a cancelled warm that completes with no joiner still lands in L0', async () => {
+    const cache = new DecompressedChunkCache({ maxSize: 1 << 20 });
+    const counter: Counter = { decodes: 0, starts: 0, aborted: 0 };
+    const { array, releaseFirst } = signalDeafArray(counter);
+    const a = wrapWithCache(array as never, cache, '/n/centers');
+    const warm = new AbortController();
+    const warming = warmChunk(a as never, [0, 0], { signal: warm.signal });
+    warm.abort();
+    expect(await outcome(warming)).toBe('AbortError');
+    releaseFirst();
+    await new Promise((r) => setTimeout(r, 0));
+
+    await a.getChunk([0, 0]); // an L0 hit: the paid-for decode was kept
+    expect(counter.starts).toBe(1);
+    expect(perfCounters.get('l0.hits')).toBe(1);
   });
 });
