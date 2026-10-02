@@ -29,6 +29,7 @@
  */
 import { ALPHA_CLAMP } from '../../materials/_shared/volumetric';
 
+/** Shared GLSL visibility weight used by point, line and gsplat pick shaders. */
 export const GLSL_PICK_VISIBILITY = /* glsl */ `
 // Pick visibility inputs, synced from the visual material per pick render.
 uniform mediump float uIntensity;   // node gain
