@@ -28,7 +28,8 @@
 
 import { ResidencyAccumulator, type ResidencyProbe } from '../../cache/residency-probe';
 
-interface SignalEntry {
+/** Active call signal entry. Do not un-export: TypeDoc needs this name. */
+export interface SignalEntry {
   readonly signal: AbortSignal | null;
 }
 

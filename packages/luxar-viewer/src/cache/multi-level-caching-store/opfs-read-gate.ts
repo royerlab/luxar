@@ -104,13 +104,17 @@ export function withOpfsReadGate<T>(
   const acquiredEpoch = epoch;
   return acquire(signal).then(async () => {
     let pending = 1;
+    let released = false;
     const settle = (): void => {
       pending -= 1;
-      if (pending > 0 || acquiredEpoch !== epoch) return;
+      if (pending > 0 || released) return;
+      released = true;
+      if (acquiredEpoch !== epoch) return;
       active -= 1;
       startNext();
     };
     const hold = <R>(io: Promise<R>): Promise<R> => {
+      if (released) return io;
       pending += 1;
       void io.then(settle, settle);
       return io;

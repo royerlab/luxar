@@ -698,18 +698,20 @@ export class OPFSStore {
     }
 
     try {
-      const data = await withOpfsReadGate(async () => {
+      const data = await withOpfsReadGate(async (hold) => {
         const root = this.readableRoot(key, signal);
         if (!root) return undefined;
         return this.timed(
-          (async () => {
-            const fileHandle = await this.buckets.navigateToFile(root, key, false);
-            const file = await fileHandle.getFile();
-            return new Uint8Array(await file.arrayBuffer());
-          })(),
+          hold(
+            (async () => {
+              const fileHandle = await this.buckets.navigateToFile(root, key, false);
+              const file = await fileHandle.getFile();
+              return new Uint8Array(await file.arrayBuffer());
+            })()
+          ),
           `get(${key})`
         );
-      });
+      }, signal);
 
       if (!data) {
         this.countUnavailableRead(signal);
@@ -738,7 +740,7 @@ export class OPFSStore {
       if (msg.startsWith('OPFS timeout')) {
         log.warning(Modules.CACHE, msg);
       }
-      this.missCount++;
+      this.countUnavailableRead(signal);
       return undefined;
     }
   }
@@ -791,18 +793,20 @@ export class OPFSStore {
   /** The bytes at `key`'s file path, or undefined (absent, unreadable, timed out). */
   private async readUnindexed(key: string, signal?: AbortSignal): Promise<Uint8Array | undefined> {
     try {
-      return await withOpfsReadGate(async () => {
+      return await withOpfsReadGate(async (hold) => {
         const root = this.opfsRoot;
         if (!root || !this.canProbeUnindexed(key, signal)) return undefined;
         return this.timed(
-          (async () => {
-            const fileHandle = await this.buckets.navigateToFile(root, key, false);
-            const file = await fileHandle.getFile();
-            return new Uint8Array(await file.arrayBuffer());
-          })(),
+          hold(
+            (async () => {
+              const fileHandle = await this.buckets.navigateToFile(root, key, false);
+              const file = await fileHandle.getFile();
+              return new Uint8Array(await file.arrayBuffer());
+            })()
+          ),
           `get(${key})`
         );
-      });
+      }, signal);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       if (msg.startsWith('OPFS timeout')) log.warning(Modules.CACHE, msg);
