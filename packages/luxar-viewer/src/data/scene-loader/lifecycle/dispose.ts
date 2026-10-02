@@ -14,8 +14,8 @@
  *   - the data-loading monitor's loader-bound closures.
  *
  * Worker pool itself is NOT terminated here — it's bounded and lives
- * across dataset switches. `disposeWorkerPool()` in core/app.ts owns
- * that lifecycle at app shutdown.
+ * across dataset switches. Hosts retain it via `retainWorkerPool` and
+ * release it via `releaseWorkerPool`; the last host's release terminates it.
  */
 
 import { log, Modules } from '../../../utils/log';

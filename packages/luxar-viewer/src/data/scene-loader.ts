@@ -3215,8 +3215,8 @@ export class SceneLoader {
    * do NOT terminate workers — the pool is bounded, and tearing it down
    * per switch would force a fresh worker spin-up on the next load
    * (10s of ms of WASM re-init on each cycle). Workers are terminated
-   * only at app shutdown via `disposeWorkerPool()` in `core/app.ts`,
-   * which is the right scope for that lifecycle.
+   * when the last host releases its lease via `releaseWorkerPool()`
+   * (`LuxarApp` in `core/app/lifecycle/dispose-pipeline.ts`, or `LuxarLayer`).
    */
   async dispose(): Promise<void> {
     // Signal any in-flight progressive-refinement loop to abort before we
