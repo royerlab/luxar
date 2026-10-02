@@ -1430,7 +1430,6 @@ export class LuxarApp {
     // listens on the canvas and owns a reload timer that would otherwise
     // reload the page after the app is gone.
     this.session.dispose();
-    this.session = new DatasetSession(undefined);
 
     runDisposePipeline({
       events: this.events,
