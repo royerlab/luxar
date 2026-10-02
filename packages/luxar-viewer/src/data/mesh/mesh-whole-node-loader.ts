@@ -257,8 +257,7 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
    * each hold a per-call `_calls` context and wire the identical
    * `setSignalSource(() => this._calls.signal)` one line into their constructors, so
    * this looks like a symmetry break — it is a lifetime difference. Their signal is
-   * per-UPDATE: set at the top of every `updateView` and cleared in its `finally`,
-   * live whenever the loader is doing anything. Mesh is whole-node resident, so it
+   * per call, including concurrent updates. Mesh is whole-node resident, so it
    * fetches ONCE and then serves every later `updateView` from `this.data` without
    * any I/O; this field is live only for that single fetch and is `null` during the
    * scrubs that make up almost all of a session. Calling it "active" would claim the
@@ -861,9 +860,8 @@ export class MeshWholeNodeLoader implements MeshDataLoader {
   /**
    * Clear all cached state.
    *
-   * State-clearing rather than terminal, matching the sibling loaders (the points
-   * loader's `dispose` likewise drops its arrays and calls `_onceInit.reset()`):
-   * a subsequent `loadMesh` re-initializes and re-fetches rather than throwing.
+   * Mesh can be reused after clearing: a subsequent `loadMesh` re-initializes
+   * and re-fetches. The spatial-index sibling loaders have a terminal dispose latch.
    */
   dispose(): void {
     this.generation++;
