@@ -28,6 +28,7 @@ import {
   type PhysicalMeshKnobKey,
   type PhysicalMeshMaterialConfig,
 } from './config';
+import { applyRefractionApodizationTSL } from './refraction-apodization-tsl';
 
 /**
  * Three's physical lighting model with the transmitted alpha pinned to 1 — the WebGPU
@@ -65,6 +66,15 @@ export class PhysicalMeshTSLMaterial extends MeshPhysicalNodeMaterial {
   constructor(config: PhysicalMeshMaterialConfig = {}) {
     super();
     applyPhysicalMeshConfig(this, config);
+  }
+
+  /**
+   * Three's variants, then the refraction-shift edge apodization (the twin of the GLSL
+   * wrapper's `onBeforeCompile` patch — see `./refraction-apodization.ts`).
+   */
+  setupVariants(builder: NodeBuilder): void {
+    super.setupVariants(builder);
+    if (this.useTransmission) applyRefractionApodizationTSL(this.useDispersion);
   }
 
   /** The same six feature flags three passes, into the alpha-pinning subclass. */

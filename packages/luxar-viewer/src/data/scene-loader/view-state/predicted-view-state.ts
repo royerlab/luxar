@@ -54,8 +54,8 @@ export interface PrefetchableLoader {
  * The dispatcher itself is synchronous (returns after calling each
  * loader's prefetch method once); the underlying prefetch is async
  * and not awaited — that's the point of prefetch. Every warm-up runs under
- * `signal`, tagged `'speculative'` here; the caller aborts it when the next
- * prediction for the same node supersedes this one (`ViewStateQueue`).
+ * `signal`, tagged `'speculative'` here; the caller aborts it once two newer
+ * predictions for the same node supersede it (`ViewStateQueue`).
  *
  * Errors from either prefetch method are caught and silently swallowed —
  * prefetch is best-effort cache warming, not a demand fetch, so a

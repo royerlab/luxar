@@ -30,6 +30,11 @@ import {
   type FetchPriorityCell,
 } from '../../utils/fetch-concurrency';
 
+/**
+ * One leaf loader's lifetime: owns the disposal latch and the loader-scoped
+ * abort signal (see the module notes). Created with the loader and disposed
+ * with it; never reused.
+ */
 export class LoaderLifetime {
   private readonly aborter = new AbortController();
   private readonly once = new OnceInit();
@@ -98,9 +103,12 @@ export class LoaderLifetime {
         what,
         () => {
           if (priority === undefined) return init();
-          const { signal } = createChildController(this.signal).controller;
+          // A completed warm-up detaches from the lifetime signal, so its
+          // abort listener does not outlive it.
+          const { controller, detach } = createChildController(this.signal);
+          const { signal } = controller;
           this.initPriority = tagSignalPriority(signal, priority);
-          return init(signal);
+          return init(signal).finally(detach);
         },
         discard
       )

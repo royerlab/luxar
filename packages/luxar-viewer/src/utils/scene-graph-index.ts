@@ -101,7 +101,8 @@ function isWithin(node: Node, scope: Node): boolean {
 const MAX_MISSES_PER_SCOPE = 4096;
 
 /** Misses remembered for one lookup root, valid for one {@link SceneGraphIndex} epoch. */
-interface MissMemo {
+/** Cached miss for one scene-graph search epoch. Do not un-export: TypeDoc needs this name. */
+export interface MissMemo {
   epoch: number;
   names: Set<string>;
 }

@@ -179,13 +179,15 @@ test('a host that ignores Range shows a persistent actionable failure', async ({
     )
   ).toBe(true);
   expect(pageErrors).toEqual([]);
+  // A failed first dataset load keeps the app alive (the dataset browser the
+  // dialog advertises must still work), so the runtime is up behind the dialog.
   expect(
     await page.evaluate(() => ({
       initialized: window.__luxarDebug?.app.initialized,
       runtimeReady: window.__luxarDebug?.runtimeReady,
       hasGetState: typeof window.__luxarDebug?.getState === 'function',
     }))
-  ).toEqual({ initialized: false, runtimeReady: undefined, hasGetState: false });
+  ).toEqual({ initialized: true, runtimeReady: true, hasGetState: true });
 
   await page.waitForTimeout(uiConfig.timings.errorAutoDismissMs + 500);
   await expect(message).toBeVisible();

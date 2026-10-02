@@ -1160,7 +1160,26 @@ class TestControlPanelConfig:
         with pytest.raises(ValueError, match="must be a ControlPanelConfig"):
             ViewerConfig(control_panel={"title": "nope"})  # type: ignore[arg-type]
 
-    @pytest.mark.parametrize("field_name", ["label", "sublabel"])
+    def test_short_texts_round_trip_in_the_store_spelling(self) -> None:
+        # The viewer reads exactly these snake_case keys.
+        chapter = Chapter(
+            label="Insect odorant receptors",
+            sublabel="Seventy-five arthropod clusters, in a region of their own",
+            short_label="Odorant receptors",
+            short_sublabel="Seventy-five arthropod clusters",
+        )
+        assert chapter.to_dict() == {
+            "label": "Insect odorant receptors",
+            "sublabel": "Seventy-five arthropod clusters, in a region of their own",
+            "short_label": "Odorant receptors",
+            "short_sublabel": "Seventy-five arthropod clusters",
+        }
+        assert Chapter.from_dict(chapter.to_dict()) == chapter
+        assert Chapter(short_sublabel="Brief").to_dict() == {"short_sublabel": "Brief"}
+
+    @pytest.mark.parametrize(
+        "field_name", ["label", "sublabel", "short_label", "short_sublabel"]
+    )
     def test_chapter_rejects_a_blank_override(self, field_name: str) -> None:
         with pytest.raises(ValueError, match="non-empty string"):
             Chapter(**{field_name: "   "})

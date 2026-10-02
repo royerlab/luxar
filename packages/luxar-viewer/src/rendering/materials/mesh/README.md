@@ -24,13 +24,13 @@ Full design rationale: `docs/specs/MESH_NODE_SPEC.md` §6.
 
 ## Files
 
-| File               | Role                                                                                                                                               |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `shader-glsl.ts`   | Hand-written GLSL3 vertex + fragment pair, and the readable reference for the shading math                                                         |
-| `shader-tsl.ts`    | `meshWebGPUFactory` — the `NodeMaterial` twin, plus `buildMeshTSLNodesFromUniforms` for the harness                                                |
-| `material-glsl.ts` | `MeshMaterial` (`THREE.ShaderMaterial`) — uniforms, defines, `applyBlendingMode`, `clone`                                                          |
-| `material-tsl.ts`  | `MeshTSLMaterial` (`NodeMaterial`) — same surface, with graph rebuilds where the GLSL twin toggles a define                                        |
-| `appearance.ts`    | `MESH_DEFAULTS`, the normal-validity epsilon, the supported-mode list, and the mode → emission-shape map — every value both backends must agree on |
+| File               | Role                                                                                                                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shader-glsl.ts`   | Hand-written GLSL3 vertex + fragment pair, and the readable reference for the shading math                                                                                            |
+| `shader-tsl.ts`    | `meshWebGPUFactory` — the `NodeMaterial` twin, plus `buildMeshTSLNodesFromUniforms` for the harness                                                                                   |
+| `material-glsl.ts` | `MeshMaterial` (`THREE.ShaderMaterial`) — uniforms, defines, `applyBlendingMode`, `clone`                                                                                             |
+| `material-tsl.ts`  | `MeshTSLMaterial` (`NodeMaterial`) — same surface, with graph rebuilds where the GLSL twin toggles a define; the graph is shared per configuration (`../_shared/shared-graph-tsl.ts`) |
+| `appearance.ts`    | `MESH_DEFAULTS`, the normal-validity epsilon, the supported-mode list, and the mode → emission-shape map — every value both backends must agree on                                    |
 
 ## The shading model (§6.2)
 

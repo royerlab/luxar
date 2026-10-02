@@ -334,6 +334,50 @@ describe('OPFSStore', () => {
       }
     });
 
+    it('keeps a timed-out file read leased and removes an aborted queued read', async () => {
+      await store.set('slow-file', new Uint8Array([1]));
+      const originalLimit = config.cache.opfsReadConcurrency;
+      const originalTimeout = config.cache.opfsOperationTimeoutMs;
+      config.cache.opfsReadConcurrency = 1;
+      config.cache.opfsOperationTimeoutMs = 20;
+      let releaseFile!: () => void;
+      const fileBlocked = new Promise<void>((resolve) => {
+        releaseFile = resolve;
+      });
+      const originalGetFileHandle = mockFS.datasetDir.getFileHandle.bind(mockFS.datasetDir);
+      mockFS.datasetDir.getFileHandle = async (...args: unknown[]) => {
+        const handle = await originalGetFileHandle(...args);
+        const originalGetFile = handle.getFile.bind(handle);
+        return {
+          ...handle,
+          async getFile() {
+            await fileBlocked;
+            return originalGetFile();
+          },
+        };
+      };
+      try {
+        const timedOut = store.get('slow-file');
+        await vi.waitFor(() => expect(getOpfsReadGateStats().active).toBe(1));
+        expect(await timedOut).toBeUndefined();
+        expect(getOpfsReadGateStats()).toEqual({ active: 1, queued: 0 });
+
+        const controller = new AbortController();
+        const queued = store.get('slow-file', { signal: controller.signal });
+        await vi.waitFor(() => expect(getOpfsReadGateStats().queued).toBe(1));
+        controller.abort();
+        expect(await queued).toBeUndefined();
+        expect(getOpfsReadGateStats()).toEqual({ active: 1, queued: 0 });
+
+        releaseFile();
+        await vi.waitFor(() => expect(getOpfsReadGateStats().active).toBe(0));
+      } finally {
+        releaseFile();
+        config.cache.opfsReadConcurrency = originalLimit;
+        config.cache.opfsOperationTimeoutMs = originalTimeout;
+      }
+    });
+
     it('re-checks the index after queueing before touching the filesystem', async () => {
       await store.set('evicted-while-queued', new Uint8Array([1]));
       let releaseSlots!: () => void;

@@ -37,6 +37,7 @@ import {
   type PhysicalMeshKnobKey,
   type PhysicalMeshMaterialConfig,
 } from './config';
+import { apodizeRefractionShiftGlsl } from './refraction-apodization';
 
 /**
  * Three's `MeshPhysicalMaterial` behind the Luxar leaf-material surface (WebGL).
@@ -52,14 +53,15 @@ export class PhysicalMeshMaterial extends THREE.MeshPhysicalMaterial {
   }
 
   /**
-   * Pin the transmitted alpha to 1 (see `TRANSMISSION_ALPHA_MIX_LINE` in `./config.ts`).
-   * A prototype method rather than an instance property so `clone()` — which the WebGL
-   * blend warm-up uses for its keeper materials — carries it too.
+   * Pin the transmitted alpha to 1 (see `TRANSMISSION_ALPHA_MIX_LINE` in `./config.ts`),
+   * then edge-apodize the refraction shift (`./refraction-apodization.ts`), which
+   * anchors in the chunk the pin expands. A prototype method rather than an instance
+   * property so `clone()` — which the WebGL blend warm-up uses for its keeper
+   * materials — carries it too.
    */
   onBeforeCompile(parameters: THREE.WebGLProgramParametersWithUniforms): void {
-    parameters.fragmentShader = pinTransmittedAlphaGlsl(
-      parameters.fragmentShader,
-      THREE.ShaderChunk.transmission_fragment
+    parameters.fragmentShader = apodizeRefractionShiftGlsl(
+      pinTransmittedAlphaGlsl(parameters.fragmentShader, THREE.ShaderChunk.transmission_fragment)
     );
   }
 

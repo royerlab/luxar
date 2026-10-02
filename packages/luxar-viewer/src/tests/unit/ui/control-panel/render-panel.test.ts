@@ -2,9 +2,8 @@
 /**
  * Tests for the control panel's DOM.
  *
- * jsdom rather than a real browser: everything asserted here is structure and
- * event wiring, which is exactly what jsdom is good for and what a Playwright
- * run would pay a WebGL context to tell us more slowly.
+ * jsdom rather than a real browser: structure, event wiring, and grid choice
+ * against measured tile sizes need no WebGL context.
  */
 
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
@@ -199,6 +198,121 @@ describe('createControlPanel', () => {
       'the molecule of breath'
     );
     expect(tiles()[0].querySelector('.luxar-control-tile-sublabel')).toBeNull();
+  });
+
+  it('renders an authored short text beside the full one', () => {
+    // Both versions are in the tile and the GRID says which shows, so the text
+    // fit can try a step with one attribute instead of rewriting every tile.
+    panel.render(tourSource(STORIES), {
+      sublabels: { 1: 'One fold in four places, from animals to bacteria', 2: 'A chaperone' },
+      shortSublabels: { 1: 'One fold, four places', 2: 'A chaperone' },
+      shortLabels: { 2: 'Hsp' },
+    });
+    const [first, second, third] = tiles();
+    const variants = (tile: HTMLElement, role: string): Array<[string, string]> =>
+      Array.from(tile.querySelectorAll<HTMLElement>(`.luxar-control-tile-${role}`)).map((node) => [
+        node.dataset.variant ?? '',
+        node.textContent ?? '',
+      ]);
+    expect(variants(second, 'sublabel')).toEqual([
+      ['full', 'One fold in four places, from animals to bacteria'],
+      ['short', 'One fold, four places'],
+    ]);
+    expect(second.dataset.shortSublabel).toBe('true');
+    expect(variants(third, 'label')).toEqual([
+      ['full', 'Hsp70'],
+      ['short', 'Hsp'],
+    ]);
+    expect(third.dataset.shortLabel).toBe('true');
+    // A short text identical to the full one is no alternative at all.
+    expect(variants(third, 'sublabel')).toEqual([['full', 'A chaperone']]);
+    expect(third.dataset.shortSublabel).toBeUndefined();
+    expect(first.dataset.shortLabel).toBeUndefined();
+  });
+
+  it('fits the tile text, pinned columns or not', () => {
+    // jsdom lays out nothing, so every tile "fits" and the top of the ladder
+    // is what lands; the walk itself is covered in fit-tile-text.test.ts.
+    for (const columns of [null, 2]) {
+      panel.render(tourSource(STORIES), { columns, sublabels: { 0: 'Sub' } });
+      const grid = root.querySelector<HTMLElement>('.luxar-control-grid');
+      expect(grid?.dataset).toMatchObject({
+        labelText: 'full',
+        sublabelText: 'full',
+        tileIndex: 'shown',
+        labelWrap: 'words',
+      });
+    }
+  });
+
+  it('keeps the grid shape that needs the least text loss, restoring its step', () => {
+    // Three tiles in a square box rank as 2, 1, then 3 columns. The first
+    // shape needs to drop its sublabel; the second fits the authored short
+    // sublabel; the third needs the last resort. The winner must be restored
+    // after the third candidate was applied.
+    const box = vi
+      .spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockImplementation(() => new DOMRect(0, 0, 300, 300));
+    const height = vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(80);
+    const tried = new Set<string>();
+    const content = vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(function (
+      this: Element
+    ) {
+      const grid = this.parentElement as HTMLElement;
+      const columns = grid.dataset.gridColumns ?? '';
+      tried.add(columns);
+      if (columns === '1' && grid.dataset.sublabelText === 'short') return 70;
+      if (columns === '2' && grid.dataset.sublabelText === 'none') return 70;
+      return 120;
+    });
+    try {
+      panel.render(tourSource(STORIES), {
+        sublabels: { 0: 'A long description' },
+        shortSublabels: { 0: 'Short' },
+      });
+      const grid = root.querySelector<HTMLElement>('.luxar-control-grid');
+      expect(tried).toEqual(new Set(['2', '1', '3']));
+      expect(grid?.dataset).toMatchObject({
+        gridColumns: '1',
+        sublabelText: 'short',
+        tileIndex: 'shown',
+      });
+      expect(grid?.style.getPropertyValue(CONTROL_COLUMNS_PROPERTY)).toBe('1');
+    } finally {
+      content.mockRestore();
+      height.mockRestore();
+      box.mockRestore();
+    }
+  });
+
+  it('keeps the better-shaped grid when two shapes need the same text step', () => {
+    const box = vi
+      .spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockImplementation(() => new DOMRect(0, 0, 300, 300));
+    const height = vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(80);
+    const content = vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(function (
+      this: Element
+    ) {
+      const grid = this.parentElement as HTMLElement;
+      return grid.dataset.gridColumns !== '3' && grid.dataset.sublabelText === 'short' ? 70 : 120;
+    });
+    try {
+      panel.render(tourSource(STORIES), {
+        sublabels: { 0: 'A long description' },
+        shortSublabels: { 0: 'Short' },
+      });
+      const grid = root.querySelector<HTMLElement>('.luxar-control-grid');
+      expect(grid?.dataset).toMatchObject({
+        gridColumns: '2',
+        sublabelText: 'short',
+        tileIndex: 'shown',
+      });
+      expect(grid?.style.getPropertyValue(CONTROL_COLUMNS_PROPERTY)).toBe('2');
+    } finally {
+      content.mockRestore();
+      height.mockRestore();
+      box.mockRestore();
+    }
   });
 
   it('never interprets a label as markup', () => {

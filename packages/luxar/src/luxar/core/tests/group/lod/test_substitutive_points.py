@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+import inspect
 import warnings
 
 import numpy as np
@@ -35,6 +36,7 @@ from luxar.gsplats.lift import (
     lift_points_to_gsplats,
     render_light,
 )
+from luxar.gsplats.lod.substitutive import make_substitutive_lod
 from luxar.io.compiler import LuxarZarrCompiler
 
 from .same_type_assertions import assert_only_geometry_leaves
@@ -67,6 +69,86 @@ class TestResolveSubstitutiveAxisPoints:
         assert r["compression_factor"] == 8
         assert r["levels"] == 2
 
+    def test_gaussian_reduction_controls(self) -> None:
+        r = resolve_substitutive_axis_points(
+            dict(
+                lloyd_iterations=2,
+                candidate_bins_k=4,
+                coverage_inflation=1.5,
+                color_weight=0.25,
+            )
+        )
+        assert (r["lloyd_iterations"], r["candidate_bins_k"]) == (2, 4)
+        assert (r["coverage_inflation"], r["color_weight"]) == (1.5, 0.25)
+
+    @pytest.mark.parametrize(
+        "key",
+        ["lloyd_iterations", "candidate_bins_k", "coverage_inflation", "color_weight"],
+    )
+    def test_gaussian_defaults_match_reducer(self, key: str) -> None:
+        expected = inspect.signature(make_substitutive_lod).parameters[key].default
+        assert resolve_substitutive_axis_points(True)[key] == expected
+        assert (
+            inspect.signature(coarse_substitutive_levels).parameters[key].default
+            == expected
+        )
+
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [
+            ("lloyd_iterations", -1),
+            ("lloyd_iterations", True),
+            ("lloyd_iterations", np.bool_(True)),
+            ("lloyd_iterations", 2.7),
+            ("lloyd_iterations", "abc"),
+            ("candidate_bins_k", 0),
+            ("candidate_bins_k", False),
+            ("candidate_bins_k", np.bool_(False)),
+            ("candidate_bins_k", 1.5),
+            ("candidate_bins_k", "abc"),
+            ("coverage_inflation", 0.5),
+            ("coverage_inflation", np.nan),
+            ("coverage_inflation", np.inf),
+            ("color_weight", -0.1),
+            ("color_weight", np.nan),
+            ("color_weight", np.inf),
+        ],
+    )
+    def test_invalid_gaussian_control_rejected_before_lift(
+        self, key: str, value
+    ) -> None:
+        with pytest.raises((TypeError, ValueError), match=key):
+            resolve_substitutive_axis_points({key: value})
+
+    def test_gaussian_controls_cast_numeric_strings(self) -> None:
+        r = resolve_substitutive_axis_points(
+            {
+                "lloyd_iterations": "2",
+                "candidate_bins_k": "4",
+                "coverage_inflation": "2",
+                "color_weight": "0.5",
+            }
+        )
+        assert (
+            r["lloyd_iterations"],
+            r["candidate_bins_k"],
+            r["coverage_inflation"],
+            r["color_weight"],
+        ) == (2, 4, 2.0, 0.5)
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "lloyd_iterations",
+            "candidate_bins_k",
+            "coverage_inflation",
+            "color_weight",
+        ],
+    )
+    def test_same_type_refuses_gaussian_controls(self, key: str) -> None:
+        with pytest.raises(ValueError, match=rf"{key!r} does not apply"):
+            resolve_substitutive_axis_points({"coarse": "points", key: 2})
+
     def test_quality_stamps_can_be_disabled(self) -> None:
         assert (
             resolve_substitutive_axis_points({"quality_stamps": False})[
@@ -78,6 +160,48 @@ class TestResolveSubstitutiveAxisPoints:
     def test_quality_stamps_must_be_bool(self) -> None:
         with pytest.raises(TypeError, match="quality_stamps must be bool"):
             resolve_substitutive_axis_points({"quality_stamps": "no"})
+
+    def test_l2_refine_controls(self) -> None:
+        assert resolve_substitutive_axis_points(True)["refine"] == "none"
+        resolved = resolve_substitutive_axis_points({"refine": "l2", "refine_iters": 2})
+        assert (resolved["refine"], resolved["refine_iters"]) == ("l2", 2)
+        assert (
+            resolve_substitutive_axis_points(
+                {"refine": "l2", "refine_iters": np.int64(2)}
+            )["refine_iters"]
+            == 2
+        )
+
+    @pytest.mark.parametrize(
+        ("spec", "message"),
+        [
+            ({"refine": "volume"}, "refine"),
+            ({"refine": "bogus"}, "refine"),
+            ({"refine": None}, "refine"),
+            ({"refine_iters": 0}, "refine_iters"),
+            ({"refine_iters": -1}, "refine_iters"),
+            ({"refine_iters": 2.0}, "refine_iters"),
+            ({"refine_iters": 2.5}, "refine_iters"),
+            ({"refine_iters": True}, "refine_iters"),
+            ({"refine_iters": np.bool_(True)}, "refine_iters"),
+            ({"refine_iters": 2}, "refine='l2'"),
+        ],
+    )
+    def test_invalid_refine_controls(self, spec, message) -> None:
+        with pytest.raises((TypeError, ValueError), match=message):
+            resolve_substitutive_axis_points(spec)
+
+    def test_refine_iters_error_context(self) -> None:
+        with pytest.raises(ValueError) as exc:
+            resolve_substitutive_axis_points({"refine": "l2", "refine_iters": 0})
+        assert str(exc.value) == (
+            "substitutive_lod for Points: refine_iters must be an integer >= 1; got 0"
+        )
+        with pytest.raises(ValueError) as exc:
+            resolve_substitutive_axis_points({"refine_iters": 2})
+        assert str(exc.value) == (
+            "substitutive_lod for Points: refine_iters requires refine='l2'"
+        )
 
     @pytest.mark.parametrize("level_stats", [[1, 2], "x", 3.0, object()])
     def test_quality_attrs_reject_non_mapping_stats(self, level_stats) -> None:
@@ -102,6 +226,11 @@ class TestResolveSubstitutiveAxisPoints:
     def test_points_coarse_refuses_lift_only_keys(self, key: str) -> None:
         with pytest.raises(ValueError, match=rf"{key!r} does not apply"):
             resolve_substitutive_axis_points(dict(coarse="points", **{key: 2.0}))
+
+    @pytest.mark.parametrize("key", ["refine", "refine_iters"])
+    def test_points_coarse_refuses_refinement(self, key: str) -> None:
+        with pytest.raises(ValueError, match=rf"{key!r} does not apply"):
+            resolve_substitutive_axis_points(dict(coarse="points", **{key: "l2"}))
 
     @pytest.mark.parametrize("method", ["subsample", "merge"])
     def test_points_coarse_methods(self, method: str) -> None:
@@ -257,6 +386,69 @@ def _build(tmp_path, *, n=6000, levels=3, radius_scale=1.0, **kw):
 
 
 class TestAddPointsSubstitutiveLod:
+    @pytest.mark.parametrize(
+        ("key", "value", "field"),
+        [
+            ("lloyd_iterations", 0, "centers"),
+            ("candidate_bins_k", 1, "centers"),
+            ("coverage_inflation", 1.0, "cholesky_factors_diag"),
+            ("color_weight", 10.0, "centers"),
+        ],
+    )
+    def test_gaussian_control_changes_written_coarse_level(
+        self, tmp_path, key: str, value, field: str
+    ) -> None:
+        method = (
+            "kmeans_lloyd"
+            if key in ("lloyd_iterations", "candidate_bins_k")
+            else "auto"
+        )
+        default, _ = _build(tmp_path / "default", n=96, levels=1, method=method)
+        tuned, _ = _build(
+            tmp_path / "tuned",
+            n=96,
+            levels=1,
+            method=method,
+            **{key: value},
+        )
+        decoder = ArrayDecoder()
+        before = decoder.decode(default["child_0"][field], default)
+        after = decoder.decode(tuned["child_0"][field], tuned)
+        assert before.shape != after.shape or not np.allclose(before, after)
+
+    def test_color_weight_requires_colors(self, tmp_path) -> None:
+        out = tmp_path / "uncolored.luxar.zarr"
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(
+                ValueError, match="color_weight > 0 requires colors= on add_points"
+            ):
+                scene.add_points(
+                    "p",
+                    np.arange(24, dtype=np.float32).reshape(8, 3),
+                    radii=1.0,
+                    substitutive_lod={"levels": 1, "color_weight": 1.0},
+                )
+
+    def test_l2_refinement_changes_written_coarse_output(self, tmp_path) -> None:
+        def coarse_centers(name: str, **controls):
+            group, _ = _build(
+                tmp_path / name,
+                n=48,
+                levels=1,
+                radius_scale=20.0,
+                quality_stamps=False,
+                **controls,
+            )
+            child = group["child_0"]
+            return ArrayDecoder().decode(child["centers"], child)
+
+        plain = coarse_centers("plain")
+        one_step = coarse_centers("one", refine="l2", refine_iters=1)
+        three_steps = coarse_centers("three", refine="l2", refine_iters=3)
+        assert not np.array_equal(plain, one_step)
+        assert not np.array_equal(one_step, three_steps)
+
     def test_lifted_quality_stamps_can_be_disabled(self, tmp_path) -> None:
         group, _ = _build(tmp_path, n=96, levels=1, quality_stamps=False)
         children = [group[f"child_{i}"] for i in range(2)]

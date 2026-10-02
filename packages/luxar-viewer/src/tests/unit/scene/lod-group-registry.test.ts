@@ -657,6 +657,27 @@ describe('projectBoxDiagonalPx', () => {
       expect(projectBoxAreaFraction(box, cam)).toBeCloseTo(1, 9);
     });
 
+    it('clips a box beside the eye at the same physical near plane on WebGL and WebGPU', () => {
+      const box: BoundingBox = {
+        min: { x: 0.02, y: 0, z: -0.2 },
+        max: { x: 0.04, y: 0.02, z: 0.2 },
+      };
+      const cam = new THREE.PerspectiveCamera(90, 1, 0.1, 100);
+      cam.updateMatrixWorld(true);
+      cam.coordinateSystem = THREE.WebGLCoordinateSystem;
+      cam.updateProjectionMatrix();
+      const glArea = projectBoxAreaFraction(box, cam);
+      expect(glArea).toBeCloseTo(0.015, 9);
+      const glDiagonal = projectBoxDiagonalPx(box, cam, { width: 800, height: 800 });
+      cam.coordinateSystem = THREE.WebGPUCoordinateSystem;
+      cam.updateProjectionMatrix();
+      expect(projectBoxAreaFraction(box, cam)).toBeCloseTo(glArea, 9);
+      expect(projectBoxDiagonalPx(box, cam, { width: 800, height: 800 })).toBeCloseTo(
+        glDiagonal,
+        9
+      );
+    });
+
     it('an orthographic camera sizes a thick box exactly like a flat one (w is constant)', () => {
       const cam = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
       cam.position.set(0, 0, 100);
@@ -3548,39 +3569,49 @@ describe('LODGroupRegistry — lazy children', () => {
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the loop ticking through the failure cooldown so a parked camera retries (#2944 A6)', () => {
-    // An on-demand loop: a frame runs only when the registry (or someone)
-    // asks for a tick. Nothing else moves here, so if the registry stops
-    // asking while the level cools, the retry never happens.
-    const ensureLoaded = vi.fn();
-    const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
-    children[1].failed = true;
-    let t = 0;
-    let tickRequested = true;
-    const reg = new LODGroupRegistry({
-      getCamera: () => {
-        const camera = new THREE.Camera();
-        camera.matrixWorldInverse.identity();
-        camera.projectionMatrix.identity();
-        return camera;
-      },
-      getViewportSize: () => ({ width: 800, height: 600 }),
-      getDisplayDims: () => [0, 1, 2],
-      now: () => t,
-      requestTick: () => {
-        tickRequested = true;
-      },
-    });
-    reg.register(makeEntry(children, 0, '/g'));
-    reg.setSelectorMode('/g', { lockLevel: 1 });
+  it('lets a parked loop idle between repeated failures and wakes with backoff', () => {
+    vi.useFakeTimers();
+    try {
+      const ensureLoaded = vi.fn();
+      const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
+      children[1].failed = true;
+      const requestTick = vi.fn();
+      const reg = new LODGroupRegistry({
+        getCamera: () => {
+          const camera = new THREE.Camera();
+          camera.matrixWorldInverse.identity();
+          camera.projectionMatrix.identity();
+          return camera;
+        },
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        now: () => Date.now(),
+        requestTick,
+      });
+      reg.register(makeEntry(children, 0, '/g'));
+      reg.setSelectorMode('/g', { lockLevel: 1 });
 
-    for (let frame = 0; frame < 200 && ensureLoaded.mock.calls.length === 0; frame++) {
-      t += 1000 / 30; // 30 Hz display
-      if (!tickRequested) continue; // the loop idles: no frame runs
-      tickRequested = false;
       reg.evaluatePerFrame();
+      vi.advanceTimersByTime(1999);
+      expect(requestTick).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(requestTick).toHaveBeenCalledTimes(1);
+      reg.evaluatePerFrame();
+      expect(ensureLoaded).toHaveBeenCalledTimes(1);
+      children[1].loading = false;
+      children[1].failed = true;
+      reg.evaluatePerFrame();
+      requestTick.mockClear();
+      vi.advanceTimersByTime(3999);
+      expect(requestTick).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(requestTick).toHaveBeenCalledTimes(1);
+      reg.evaluatePerFrame();
+      expect(ensureLoaded).toHaveBeenCalledTimes(2);
+      reg.clear();
+    } finally {
+      vi.useRealTimers();
     }
-    expect(ensureLoaded).toHaveBeenCalledTimes(1);
   });
 
   it('pauses automatic lazy loads during an archive fault and resumes on the next frame', () => {

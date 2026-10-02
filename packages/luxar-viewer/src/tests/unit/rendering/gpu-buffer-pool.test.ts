@@ -602,6 +602,9 @@ describe('GPUBufferPool', () => {
 
     it('gsplats: a throw during grow re-claims the released buffer', () => {
       const geom1 = pool.acquireGSplatsGeometry('grow-oom-g', 300); // capacity 450
+      writeSortedIndexOrderingLive(geom1, new Uint32Array([2, 1, 0]), 3);
+      geom1.instanceCount = holdSortedIndexDrawForAppend(geom1, 3, 4);
+      expect(sortedIndexDrawHoldTarget(geom1)).toBe(4);
 
       withThrowingEvict(() => pool.acquireGSplatsGeometry('grow-oom-g', 1000));
 
@@ -609,6 +612,8 @@ describe('GPUBufferPool', () => {
       expect(active).toBeDefined();
       expect(active!.geometry).toBe(geom1);
       expect(active!.inUse).toBe(true);
+      expect(sortedIndexDrawHoldTarget(geom1)).toBeUndefined();
+      expect(geom1.instanceCount).toBe(4);
       for (const buffers of pool.gsplats.gsplatBuffers.values()) {
         expect(buffers).not.toContain(active);
       }

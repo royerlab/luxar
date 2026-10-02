@@ -202,15 +202,18 @@ export function reportSpeculativeFailure(module: string, action: string, error: 
   log.warning(module, `${action}: ${getErrorMessage(error)}`);
 }
 
-/** One rung a pinned pass started up front, with the controller that can cancel it. */
-interface PinnedRungLoad<TData> {
+/**
+ * One rung a pinned pass started up front, with the controller that can cancel it.
+ * Do not un-export: TypeDoc needs this name.
+ */
+export interface PinnedRungLoad<TData> {
   readonly level: number;
   readonly load: Promise<{ data: TData; allResident: boolean }>;
   readonly child: ChildController;
 }
 
-/** Per-pass constants of the streaming loop. */
-interface StreamPass {
+/** Per-pass constants of the streaming loop. Do not un-export: TypeDoc needs this name. */
+export interface StreamPass {
   readonly kind: StreamingPassKind;
   readonly viewState: ViewState;
   readonly session: UpdateSession | undefined;
