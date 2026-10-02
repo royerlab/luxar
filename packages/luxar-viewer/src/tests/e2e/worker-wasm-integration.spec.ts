@@ -43,6 +43,7 @@ test.describe('Worker Integration E2E', () => {
   // "should fallback to main thread if worker fails" carries the fallback story
   // in the meantime.
   test('should bring up the data worker pool', async ({ page }) => {
+    test.setTimeout(90000);
     // Wait for points to load
     await waitForPointsLoaded(page);
     await waitForConsoleInterceptor(page);
@@ -71,17 +72,13 @@ test.describe('Worker Integration E2E', () => {
     // fire-and-forget in the scene loader and Points decode on the main thread,
     // so pool-ready is not strictly ordered before `waitForPointsLoaded`.
     //
-    // Both waits below are explicitly bounded, and the two budgets are chosen
-    // together against this file's 60 s per-test timeout (it raises no timeout of
-    // its own, and Playwright charges `beforeEach` to the same slot). 20 s clears
-    // the worst justified delay: `worker-pool.ts` logs the line only after
-    // `await Promise.allSettled(workerPromises)`, so one stuck worker holds it
-    // behind that worker's whole init budget — a 3 s shared-WASM compile deadline
-    // plus `workerInitTimeoutMs` (10 s by default), ~13 s — and that clock starts
-    // at warm-up, well before `waitForPointsLoaded` returns. The read that follows
+    // Both waits below are explicitly bounded. 40 s clears the pool's 30 s
+    // init budget plus the shared-WASM compile deadline and scheduling slack:
+    // `worker-pool.ts` logs the line only after all workers settle. The read
+    // that follows
     // is capped at 10 s instead of the helper's 45 s default for the same reason:
     // on the failing path the budget has to survive long enough to PRINT what the
-    // pool logged, and a bare "Test timeout of 60000ms exceeded" would throw away
+    // pool logged, and a bare "Test timeout of 90000ms exceeded" would throw away
     // the diff that is the entire point of the assertion's shape.
     //
     // The wait is a single in-page predicate, not `expect.poll` over
@@ -104,7 +101,7 @@ test.describe('Worker Integration E2E', () => {
           );
         },
         null,
-        { timeout: 20000 }
+        { timeout: 40000 }
       )
       .catch(() => {
         // Fall through: the assertion below reports what the pool DID log.

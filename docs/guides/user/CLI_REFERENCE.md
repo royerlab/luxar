@@ -78,8 +78,8 @@ chunk-layout report warns when the mean chunk is under 32 KB; re-chunk with the
 Caddy) in front of the data server for hosting.
 
 `luxar export` also requires a directory store; passing an archive fails with
-`Invalid zarr store: Path is not a directory`. Its exported preview server does
-not add byte-range support for archives. See the
+`Invalid zarr store: Path is not a directory`. Its exported `serve.py` honours
+HTTP `Range` requests for files in the directory store. See the
 [viewer guide](./VIEWER_GUIDE.md#opening-a-zipped-scene) for the direct-URL form
 and the full limitations.
 

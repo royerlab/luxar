@@ -35,7 +35,10 @@ function viewAt(t: number): ViewState {
 
 type RequestReprocess = (paths: readonly string[]) => void;
 
-function makeRegistry(requestReprocess: RequestReprocess): LODGroupRegistry {
+function makeRegistry(
+  requestReprocess: RequestReprocess,
+  requestTick?: () => void
+): LODGroupRegistry {
   const camera = new THREE.Camera();
   camera.matrixWorldInverse.identity();
   camera.projectionMatrix.identity();
@@ -45,6 +48,7 @@ function makeRegistry(requestReprocess: RequestReprocess): LODGroupRegistry {
     getDisplayDims: () => [0, 1, 2],
     getCommittedViewState: () => viewAt(0),
     requestReprocess,
+    requestTick,
     isUpdateInProgress: () => false,
   };
   return new LODGroupRegistry(deps);
@@ -71,6 +75,32 @@ function registerLazyPart(reg: LODGroupRegistry, activate: () => Promise<void>) 
 }
 
 describe('LODGroupRegistry — partition part activation (B4)', () => {
+  it('idles between unanswered requests and backs off the next wake', () => {
+    vi.useFakeTimers();
+    try {
+      const requestReprocess = vi.fn<RequestReprocess>();
+      const requestTick = vi.fn();
+      const reg = makeRegistry(requestReprocess, requestTick);
+      registerLazyPart(reg, () => Promise.resolve());
+      reg.evaluatePerFrame();
+      expect(requestReprocess).toHaveBeenCalledOnce();
+      vi.advanceTimersByTime(1999);
+      expect(requestTick).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(requestTick).toHaveBeenCalledOnce();
+      reg.evaluatePerFrame();
+      expect(requestReprocess).toHaveBeenCalledTimes(2);
+      requestTick.mockClear();
+      vi.advanceTimersByTime(3999);
+      expect(requestTick).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(requestTick).toHaveBeenCalledOnce();
+      reg.clear();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('resyncs a part whose claiming pass was aborted while its activation ran', async () => {
     const requestReprocess = vi.fn<RequestReprocess>();
     const reg = makeRegistry(requestReprocess);
@@ -175,40 +205,6 @@ describe('LODGroupRegistry — partition part activation (B4)', () => {
 
     // The old dataset's part must not resync a path of the new one.
     expect(requestReprocess).not.toHaveBeenCalled();
-  });
-
-  // #2944 review B: the `requested` flag was cleared only when a pass reached
-  // the part, so a resync that ended without activating it (rejected, or
-  // superseded by a pass targeting other parts) left the part asking for
-  // nothing for the rest of the session.
-  it('asks again for a part whose requested resync never activated it', () => {
-    const requestReprocess = vi.fn<RequestReprocess>(); // the pass never activates
-    let t = 0;
-    let tickRequested = true;
-    const camera = new THREE.Camera();
-    const reg = new LODGroupRegistry({
-      getCamera: () => camera,
-      getViewportSize: () => ({ width: 800, height: 600 }),
-      getDisplayDims: () => [0, 1, 2],
-      getCommittedViewState: () => viewAt(0),
-      requestReprocess,
-      isUpdateInProgress: () => false,
-      now: () => t,
-      requestTick: () => {
-        tickRequested = true;
-      },
-    } as LODGroupRegistryDeps);
-    registerLazyPart(reg, () => Promise.resolve());
-    // An on-demand 60 Hz loop over a parked camera: a frame runs only when
-    // something asked for a tick.
-    for (let frame = 0; frame < 600; frame++) {
-      t += 1000 / 60;
-      if (!tickRequested) continue;
-      tickRequested = false;
-      reg.evaluatePerFrame();
-    }
-    expect(requestReprocess.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(requestReprocess).toHaveBeenLastCalledWith(['/p/part_0']);
   });
 
   it('does not keep the loop ticking for a resync nobody can run (no requestReprocess)', () => {

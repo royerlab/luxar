@@ -36,6 +36,7 @@ scene/
 ├── partition-gate.ts               # kind=partition culling, re-entry resync, lazy part activation
 ├── capture-quiescence.ts           # Offline-capture "frame is final" predicate
 ├── tick-demand.ts                  # Liveness contract: until when a component needs ticks
+├── retry-wakes.ts                  # One-shot, backed-off wakes for failure cooldowns / unanswered part requests
 ├── lod-selector-math.ts            # Selector math: world-box fold, box→area/diagonal projections, hysteresis pick
 ├── lod-blend.ts                    # Pure opacity math: level-dissolve curve + energy compensation
 ├── lod-fade.ts                     # Material-level fade appliers (clone-on-first-fade)
@@ -1361,15 +1362,20 @@ _For implementation details, see the source files in this directory._
     only when its reload starts and cleared when playback stops).
   - `partition-gate.ts` — `PartitionGate`: per-part frustum/slice culling,
     the coalesced re-entry resync, deferred-part (B4) activation and its
-    request timeout; ticks while a visible resync or an activation request
-    is outstanding (only when `requestReprocess` is wired).
+    request timeout; ticks while a visible resync is outstanding (only when
+    `requestReprocess` is wired).
+  - `retry-wakes.ts` — `RetryWakes`: waits that only have to END (a failed
+    level's retry cooldown, an unanswered part activation request) tick
+    nothing; each schedules one wake at its expiry, and each consecutive
+    retry of the same key doubles the wait (capped at 30 s). A success or an
+    explicit Retry resets it.
   - `capture-quiescence.ts` — `isCaptureQuiescent`, the offline-capture
     drain predicate over lod_groups and partitions.
 - `lod-selector-math.ts` — The selector's camera-geometry math:
   `computeEntryWorldBox` (nD raw or robust bounds → world box via
   displayDims), `projectBoxAreaFraction` (world box → fraction of the
   viewport area) and `projectBoxDiagonalPx` (→ screen-space pixel
-  diagonal) — both with near-plane saturation — and
+  diagonal) — both saturate when the eye is inside the box and near-clip a box beside it — and
   `pickChildWithHysteresis`.
 - `lod-fade.ts` — Material-level appliers for the two LOD anti-popping
   mechanisms: `applyLodFade` (write dissolve-weight × `1/e(k)` opacity

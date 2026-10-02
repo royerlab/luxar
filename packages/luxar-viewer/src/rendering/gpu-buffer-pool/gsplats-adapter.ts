@@ -24,6 +24,7 @@ import {
   holdSortedIndexDrawForAppend,
   holdSortedIndexDrawFromSeed,
   repairSortedIndexForCount,
+  releaseSortedIndexDrawHold,
   sortedIndexDrawHoldTarget,
   writeSortedIndexIdentity,
 } from '../element-storage';
@@ -317,6 +318,8 @@ export class GSplatsBufferAdapter {
     }
 
     if (this.gsplatBuffers.removeFirst((buffer) => buffer === released, false)) {
+      // The failed replacement has no commit to end the old draw hold.
+      releaseSortedIndexDrawHold(released.geometry as THREE.InstancedBufferGeometry);
       released.inUse = true;
       released.lastUsedCommit = host.commitCount;
       host.activeBuffers.set(nodeId, released);

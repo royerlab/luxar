@@ -101,6 +101,7 @@ import { LodDissolves, type DissolveHost, type LevelFade } from './lod-dissolve'
 import { PartitionGate, type PartitionGroupEntry } from './partition-gate';
 import { isCaptureQuiescent, type CaptureQuiescenceSource } from './capture-quiescence';
 import { NO_TICK, UNTIL_RESOLVED } from './tick-demand';
+import { RetryWakes } from './retry-wakes';
 import { perfCounters } from '../profiling/perf-counters';
 import type { PartitionSliceView } from '../data/scene-loader/view-state/partition-slice-gate';
 
@@ -432,7 +433,8 @@ export interface LODGroupChild {
   failureReason?: string;
   /**
    * Registry clock (``frame.nowMs``) when ``failed`` was first observed. Drives
-   * the transient-failure retry cooldown (``config.lod.failedRetryMs``): once it
+   * the transient-failure retry cooldown (starting at ``config.lod.failedRetryMs``,
+   * backed off per consecutive failure — ``retry-wakes.ts``): once it
    * elapses the registry clears ``failed`` and retries the load, so a
    * level that fails on *reload* (after a successful load + byte-eviction)
    * is not stuck on its placeholder forever. Cleared alongside ``failed``.
@@ -1089,6 +1091,11 @@ export class LODGroupRegistry {
   };
   /** Playback aspiration: reload timing, admission, probes (``playback-aspiration.ts``). */
   private readonly playback = new PlaybackAspiration();
+  /** One-shot wakes for failure cooldowns and unanswered part requests (``retry-wakes.ts``). */
+  private readonly retryWakes = new RetryWakes(
+    () => this.deps.requestTick !== undefined || this.deps.requestRender !== undefined,
+    () => this.keepTicking()
+  );
   /** The registry clock, bound once (``foldLoadTime`` reads it lazily). */
   private readonly clock = (): number => this.nowMs();
 
@@ -1116,6 +1123,7 @@ export class LODGroupRegistry {
         this.drawnStateChanged = true;
       },
       frame: this.frame,
+      retryWakes: this.retryWakes,
     });
     this.ownViews = deps.getViewContext
       ? null
@@ -1135,6 +1143,7 @@ export class LODGroupRegistry {
 
   /** Register a newly-loaded lod_group (called by the scene loader). */
   register(entry: LODGroupEntry): void {
+    this.cancelEntryRetryWakes(entry.path);
     const footprintDims = entry.children[0]?.footprintDims;
     bumpForFailedEntryReplacement(this.entries.get(entry.path), entry);
     this.entries.set(entry.path, entry);
@@ -1245,6 +1254,7 @@ export class LODGroupRegistry {
 
   /** Drop an lod_group from the registry (called on scene teardown). */
   unregister(path: string): void {
+    this.cancelEntryRetryWakes(path);
     this.partitions.unregister(path);
     if (this.entries.get(path)?.children.some((child) => child.permanentlyFailed)) {
       bumpFailedLoadsVersion();
@@ -1259,6 +1269,7 @@ export class LODGroupRegistry {
 
   /** Clear all entries (called on full scene tear-down). */
   clear(): void {
+    this.retryWakes.cancelAll();
     this.partitions.clear();
     if (
       [...this.entries.values()].some((entry) =>
@@ -1510,11 +1521,12 @@ export class LODGroupRegistry {
    * End an evaluated frame.
    *
    * Liveness (``tick-demand.ts``): keep the on-demand loop ticking while any
-   * component still has work only a later frame can do — a load landing or a
-   * failed level's cooldown ending (the swap / retry fires on that frame), a
-   * dissolve advancing (a function of TIME: each step writes a new opacity,
-   * which marks the frame dirty through ``takeDrawnStateChanged``), a
-   * partition resync or part activation waiting for the loader.
+   * component still has work only a later frame can do — a load landing (the
+   * swap fires on that frame), a dissolve advancing (a function of TIME: each
+   * step writes a new opacity, which marks the frame dirty through
+   * ``takeDrawnStateChanged``), a partition resync waiting for the loader. A
+   * failed level's cooldown and an unanswered part activation request need no
+   * ticks: each wakes the loop once at its expiry (``retry-wakes.ts``).
    *
    * Record whether fade management was ON this frame — the falling-edge
    * detector behind the one-shot residual-opacity restore (see
@@ -1573,10 +1585,12 @@ export class LODGroupRegistry {
 
   /**
    * Until when ``entry``'s children need the loop ticking: while one is loading
-   * (its swap fires on the frame it lands) or cooling down after a failure (the
-   * frame after the cooldown retries it, #2944 A6) — and, for each child whose
-   * ``ensureLoaded`` has finished since it was fired, fold the measured
-   * load+commit time into its ``loadEwmaMs`` (a failure is not a timing).
+   * (its swap fires on the frame it lands). A child cooling down after a
+   * failure needs no ticks — one wake at the cooldown's end lets a parked
+   * camera retry it (#2944 A6) — and a child neither failed nor loading drops
+   * its retry backoff. For each child whose ``ensureLoaded`` has finished since
+   * it was fired, fold the measured load+commit time into its ``loadEwmaMs`` (a
+   * failure is not a timing).
    */
   private observeLoads(entry: LODGroupEntry): number {
     let until = NO_TICK;
@@ -1584,10 +1598,18 @@ export class LODGroupRegistry {
       if (c.loading) until = UNTIL_RESOLVED;
       else foldLoadTime(c, this.clock);
       if (c.failed === true && c.failedAtMs !== undefined) {
-        until = Math.max(until, c.failedAtMs + config.lod.failedRetryMs);
+        const retryAtMs = c.failedAtMs + this.retryWakes.delay(c, config.lod.failedRetryMs);
+        if (retryAtMs > this.frame.nowMs) this.retryWakes.schedule(c, retryAtMs - this.frame.nowMs);
+      } else if (c.failed !== true && !c.loading) {
+        this.retryWakes.reset(c);
       }
     }
     return until;
+  }
+
+  /** Cancel the retry wakes of the lod_group registered at ``path``. */
+  private cancelEntryRetryWakes(path: string): void {
+    for (const child of this.entries.get(path)?.children ?? []) this.retryWakes.cancel(child);
   }
 
   /**
@@ -2603,9 +2625,9 @@ export class LODGroupRegistry {
    * both the desired-target swap path and the active-child self-heal so
    * the failure/cooldown logic lives in exactly one place.
    *
-   * A freshly-failed child is stamped with the frame clock; once
-   * ``config.lod.failedRetryMs`` elapse the ``failed`` flag is cleared and the
-   * load retried — recovering a level that failed on *reload* (after a
+   * A freshly-failed child is stamped with the frame clock; once its cooldown
+   * (``config.lod.failedRetryMs``, backed off per consecutive failure) elapses
+   * the ``failed`` flag is cleared and the load retried — recovering a level that failed on *reload* (after a
    * successful load + byte-eviction), which the old "failed until
    * released" behaviour left permanently stuck (a failed child is never an
    * eviction candidate).
@@ -2681,9 +2703,9 @@ export class LODGroupRegistry {
    * Shared lazy-load gate for ``maybeKickLoad`` (initial load of a not-ready
    * level) and ``maybeKickReload`` (refresh of a ready-but-stale level): fire
    * ``ensureLoaded`` unless already loading or inside the failure cooldown. A
-   * freshly-failed child is stamped with the frame clock; once
-   * ``config.lod.failedRetryMs`` elapse the ``failed`` flag clears and the load
-   * retries — recovering a level that failed on reload (after a successful load
+   * freshly-failed child is stamped with the frame clock; once its cooldown
+   * (``config.lod.failedRetryMs``, backed off) elapses the ``failed`` flag clears
+   * and the load retries — recovering a level that failed on reload (after a successful load
    * + byte-eviction), which the old "failed until released" behaviour left stuck.
    * The automatic caller separately gates loader-level archive faults. The
    * per-child latch keeps concurrent failed branches individually addressable
@@ -2701,7 +2723,9 @@ export class LODGroupRegistry {
     if (child.failed) {
       // A cooldown that has not elapsed refuses an automatic retry; an explicit
       // one clears the failure at once.
-      if (!explicitRetry && !this.failureCooledDown(child)) return false;
+      if (explicitRetry) this.retryWakes.reset(child);
+      else if (this.failureCooledDown(child)) this.retryWakes.backOff(child);
+      else return false;
       child.failed = false;
       child.failedAtMs = undefined;
     }
@@ -2740,11 +2764,14 @@ export class LODGroupRegistry {
    * observes the failure starts the cooldown clock (and so answers no).
    */
   private failureCooledDown(child: LODGroupChild): boolean {
+    const cooldownMs = this.retryWakes.delay(child, config.lod.failedRetryMs);
     if (child.failedAtMs == null) {
       child.failedAtMs = this.frame.nowMs;
+      // Nothing else may wake a parked camera: one wake at the cooldown's end.
+      this.retryWakes.schedule(child, cooldownMs);
       return false;
     }
-    return this.frame.nowMs - child.failedAtMs >= config.lod.failedRetryMs;
+    return this.frame.nowMs - child.failedAtMs >= cooldownMs;
   }
 
   /**

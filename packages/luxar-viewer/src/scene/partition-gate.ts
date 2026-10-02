@@ -23,10 +23,11 @@
  * flushes the pending resyncs.
  *
  * Liveness ({@link TickDemand}): the loop must keep ticking while a visible
- * resync waits for the loader, and while a deferred part's activation request
- * waits for a pass (until ``config.lod.lazyActivationRequestTimeoutMs``, when
- * it is asked again) — only when ``requestReprocess`` is wired, since nothing
- * else can serve either.
+ * resync waits for the loader — only when ``requestReprocess`` is wired, since
+ * nothing else can serve it. A deferred part's activation request that no pass
+ * reaches needs no ticks: one wake at its expiry
+ * (``config.lod.lazyActivationRequestTimeoutMs``, backed off per unanswered
+ * request — ``retry-wakes.ts``) asks again.
  *
  * @module scene/partition-gate
  */
@@ -48,6 +49,7 @@ import {
   type PartitionSliceView,
 } from '../data/scene-loader/view-state/partition-slice-gate';
 import { NO_TICK, UNTIL_RESOLVED, type TickDemand } from './tick-demand';
+import type { RetryWakes } from './retry-wakes';
 
 /** Perf counter: deferred partition parts initialised on activation (B4). */
 const S_PARTS_ACTIVATED = perfCounters.slot('partition.partsActivated');
@@ -89,6 +91,8 @@ export interface PartitionGateHost {
   markDrawn(): void;
   /** The registry's per-frame clock reading (``frame.nowMs``). */
   readonly frame: { readonly nowMs: number };
+  /** The registry's one-shot retry wakes (unanswered activation requests). */
+  readonly retryWakes: RetryWakes;
 }
 
 /** Reused per frame: one scratch box for the frustum tests. */
@@ -233,8 +237,8 @@ export interface PartitionPartRef {
  * resync), `running` while that pass's activation is in flight; both clear
  * when the pass declines it, so a part still wanted is asked for again. A
  * request no pass has reached within `config.lod.lazyActivationRequestTimeoutMs` (the resync was
- * rejected, or superseded by a pass targeting other parts) expires, and the
- * registry keeps ticking until then so a parked camera asks again (#2944).
+ * rejected, or superseded by a pass targeting other parts) expires, and a
+ * one-shot wake at expiry lets a parked camera ask again (#2944).
  */
 export interface LazyPartState {
   requested: boolean;
@@ -346,8 +350,6 @@ export class PartitionGate implements TickDemand {
   private readonly matrixScratch: number[] = new Array(16).fill(0);
   /** This frame: a visible wrapper has a resync pending. */
   private visiblePendingResync = false;
-  /** This frame: until when an outstanding activation request needs ticks. */
-  private lazyRequestUntilMs = NO_TICK;
 
   constructor(
     private readonly deps: LODGroupRegistryDeps,
@@ -366,6 +368,7 @@ export class PartitionGate implements TickDemand {
 
   /** Drop the partition at ``path`` (restoring its parts' visibility), if any. */
   unregister(path: string): void {
+    this.cancelRetryWakes(path);
     const partition = this.partitionEntries.get(path);
     if (partition) this.restorePartitionChildren(partition);
     this.partitionResyncPending.delete(path);
@@ -402,7 +405,6 @@ export class PartitionGate implements TickDemand {
     setPartitionFrustum(projView, camera);
     HIDDEN_PARTITIONS_SCRATCH.length = 0;
     this.visiblePendingResync = false;
-    this.lazyRequestUntilMs = NO_TICK;
     let cullChanged = false;
     for (const entry of this.partitionEntries.values()) {
       if (!isEffectivelyVisible(entry.groupObject)) {
@@ -436,7 +438,7 @@ export class PartitionGate implements TickDemand {
     // Nobody can run a resync without ``requestReprocess``: nothing to wait for.
     if (!this.deps.requestReprocess) return NO_TICK;
     if (this.visiblePendingResync && this.partitionResyncPending.size > 0) return UNTIL_RESOLVED;
-    return this.lazyRequestUntilMs;
+    return NO_TICK;
   }
 
   /** {@link evaluatePartitionFrame} for one visible wrapper, noting a pending resync. */
@@ -446,14 +448,16 @@ export class PartitionGate implements TickDemand {
     return changed;
   }
 
-  /** An activation request is outstanding: tick until it is reached or expires. */
-  private noteLazyRequest(lazy: LazyPartState): void {
-    const until = lazy.requestedAtMs + config.lod.lazyActivationRequestTimeoutMs;
-    if (until > this.lazyRequestUntilMs) this.lazyRequestUntilMs = until;
+  /** Cancel the retry wakes of the partition registered at ``path``'s deferred parts. */
+  private cancelRetryWakes(path: string): void {
+    for (const child of this.partitionCaches.get(path)?.children ?? []) {
+      if (child.lazy) this.host.retryWakes.cancel(child.lazy);
+    }
   }
 
   /** Register a partition whose children are independently frustum-gated. */
   registerPartition(entry: PartitionGroupEntry): void {
+    this.cancelRetryWakes(entry.path);
     this.forgetPartitionParts(entry.path);
     this.partitionEntries.set(entry.path, entry);
     this.indexPartitionParts(entry);
@@ -658,7 +662,11 @@ export class PartitionGate implements TickDemand {
     if (!lazy || !child.activate || lazy.failed) return null;
     const partKey = child.path || entry.path;
     if (targets && !isPartTargeted(partKey, entry.path, targets)) return null;
-    if (!lazy.running) lazy.requested = false;
+    if (!lazy.running) {
+      // A pass reached the part: its request is answered.
+      lazy.requested = false;
+      this.host.retryWakes.reset(lazy);
+    }
     if (!this.partActivationWanted(entry, child, childCache, view)) return null;
     // Already loading (activated ahead of this view): the caller still waits for it.
     lazy.running ??= this.runActivation(entry, partKey, child, childCache, lazy);
@@ -701,6 +709,7 @@ export class PartitionGate implements TickDemand {
         // clears `failed` (see `retryLazyChildByNodePath`).
         lazy.running = null;
         lazy.requested = false;
+        this.host.retryWakes.cancel(lazy);
         lazy.claims = [];
         lazy.failed = true;
       }
@@ -724,6 +733,7 @@ export class PartitionGate implements TickDemand {
     lazy: LazyPartState
   ): void {
     child.activate = undefined;
+    this.host.retryWakes.cancel(lazy);
     if (childCache.lazy === lazy) childCache.lazy = null;
     childCache.footprintDirty = true;
     if (this.partitionEntries.get(entry.path) !== entry) return;
@@ -923,16 +933,16 @@ export class PartitionGate implements TickDemand {
     wanted: boolean
   ): void {
     if (!wanted || lazy.running || lazy.failed) return;
+    const wakes = this.host.retryWakes;
+    const timeoutMs = wakes.delay(lazy, config.lod.lazyActivationRequestTimeoutMs);
     if (lazy.requested) {
-      // Outstanding: keep ticking until it is reached or expires.
-      if (this.host.frame.nowMs - lazy.requestedAtMs < config.lod.lazyActivationRequestTimeoutMs) {
-        this.noteLazyRequest(lazy);
-        return;
-      }
+      // Outstanding: one wake (scheduled with the request) asks again at expiry.
+      if (this.host.frame.nowMs - lazy.requestedAtMs < timeoutMs) return;
+      wakes.backOff(lazy);
     }
     lazy.requested = true;
     lazy.requestedAtMs = this.host.frame.nowMs;
-    this.noteLazyRequest(lazy);
+    wakes.schedule(lazy, wakes.delay(lazy, config.lod.lazyActivationRequestTimeoutMs));
     noteRisingPart(risingParts, child.path, entryPath);
   }
 

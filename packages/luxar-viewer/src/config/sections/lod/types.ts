@@ -117,15 +117,17 @@ export interface LodConfig {
    * Milliseconds a lazy level stays in the `failed` state before the registry
    * retries its deferred load — long enough to avoid per-frame retry storms
    * after a hard failure, short enough that a transient (network blip) failure
-   * self-heals. Wall-clock, not a frame count; the registry keeps the loop
-   * ticking while a level cools, so a parked camera still reaches the retry.
+   * self-heals. Wall-clock, not a frame count. A one-shot wake at cooldown
+   * expiry lets a parked camera retry without per-frame ticking; each
+   * consecutive failure doubles the wait (``scene/retry-wakes.ts``).
    */
   failedRetryMs: number;
   /**
    * How long (ms) a deferred partition part's activation request may wait for
    * a loader pass to reach it before the per-frame gate asks again (the resync
-   * was rejected, or superseded by a pass targeting other parts). The registry
-   * keeps ticking until then.
+   * was rejected, or superseded by a pass targeting other parts). A one-shot
+   * wake at expiry asks again; each unanswered request doubles the wait
+   * (``scene/retry-wakes.ts``).
    */
   lazyActivationRequestTimeoutMs: number;
   /**

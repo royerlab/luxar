@@ -44,6 +44,8 @@ interface RenderCall {
   screenQuadInScene: boolean;
   restoreQuadInScene: boolean;
   glassMasks: number[];
+  /** Each glass material's `side` during the draw (inside a shell: BackSide in pass B). */
+  glassSides: THREE.Side[];
   unpartitionedMasks: number[];
   /** `scene.background` at the draw (a colour forces a clear on every render). */
   background: THREE.Scene['background'];
@@ -106,6 +108,7 @@ function makeRig(
         screenQuadInScene: split ? scene.children.includes(split.screenQuad) : false,
         restoreQuadInScene: split ? scene.children.includes(split.restoreQuad) : false,
         glassMasks: meshes.glass.map((g) => g.layers.mask),
+        glassSides: meshes.glass.map((g) => (g.material as THREE.Material).side),
         unpartitionedMasks: unpartitioned.map((g) => g.layers.mask),
         background: scene.background,
       });
@@ -510,5 +513,81 @@ describe('renderSceneToHdr — the refraction split (spec §3.4 Phase 3)', () =>
     expect(rig.raw.setRenderTarget).toHaveBeenLastCalledWith(null);
     expect(rig.raw.autoClear).toBe(true);
     expect(DEPTH_TARGET(split)).toBe(split.glassDepthTarget);
+  });
+});
+
+describe('the refraction split — one refraction from inside a double-sided glass', () => {
+  /** A closed double-sided glass sphere of radius 2 around the origin. */
+  function shell(): THREE.Mesh {
+    const mesh = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(2, 2),
+      new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
+    );
+    mesh.updateMatrixWorld(true);
+    return mesh;
+  }
+
+  function frame(cameraAt: [number, number, number], webgpu = false) {
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera();
+    camera.position.set(...cameraAt);
+    camera.updateMatrixWorld(true);
+    const glass = shell();
+    scene.add(glass);
+    const rig = makeRig(scene, { glass: [glass] }, { webgpu });
+    const split = rig.split();
+    const { ctx } = makeCtx(rig.renderer, scene, camera, split);
+    renderSceneToHdr(ctx);
+    return { rig, glass };
+  }
+
+  it('WebGL, camera inside: pass B draws the shell back faces only, then hands DoubleSide back', () => {
+    const { rig, glass } = frame([0.3, -0.2, 0.5]);
+    const passB = rig.calls.filter((c) => c.what === 'scene')[1];
+    expect(passB.cameraMask).toBe(GLASS);
+    // BackSide is what makes three skip its back-face pre-pass into the transmission
+    // texture, so the far wall refracts the data once rather than its own image again.
+    expect(passB.glassSides).toEqual([THREE.BackSide]);
+    expect((glass.material as THREE.Material).side).toBe(THREE.DoubleSide);
+  });
+
+  it('WebGL, camera outside: the shell stays double-sided (a solid shows its far wall)', () => {
+    const { rig } = frame([0, 0, 9]);
+    for (const call of rig.calls) expect(call.glassSides).toEqual([THREE.DoubleSide]);
+  });
+
+  it('WebGL keeps an open glass sheet double-sided when its ray crosses the sheet', () => {
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera();
+    camera.position.z = -0.5;
+    camera.updateMatrixWorld(true);
+    const glass = new THREE.Mesh(
+      new THREE.PlaneGeometry(4, 4),
+      new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
+    );
+    glass.rotation.y = Math.PI;
+    glass.updateMatrixWorld(true);
+    scene.add(glass);
+    const rig = makeRig(scene, { glass: [glass] });
+    const { ctx } = makeCtx(rig.renderer, scene, camera, rig.split());
+    renderSceneToHdr(ctx);
+    for (const call of rig.calls) expect(call.glassSides).toEqual([THREE.DoubleSide]);
+  });
+
+  it('WebGPU, camera inside: untouched — its back faces sample the live framebuffer', () => {
+    const { rig } = frame([0.3, -0.2, 0.5], true);
+    for (const call of rig.calls) expect(call.glassSides).toEqual([THREE.DoubleSide]);
+  });
+
+  it('hands DoubleSide back even when a pass throws', () => {
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera();
+    camera.updateMatrixWorld(true);
+    const glass = shell();
+    scene.add(glass);
+    const rig = makeRig(scene, { glass: [glass] }, { throwOnCall: 4 });
+    const { ctx } = makeCtx(rig.renderer, scene, camera, rig.split());
+    expect(() => renderSceneToHdr(ctx)).toThrow('lost context mid-pass');
+    expect((glass.material as THREE.Material).side).toBe(THREE.DoubleSide);
   });
 });

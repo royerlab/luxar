@@ -16,21 +16,21 @@ registry's business (`scene/lod-group-registry.ts`, `scene/lod-selector-math.ts`
 Registry tunables (were module constants of `scene/lod-group-registry.ts` /
 `scene/lod-selector-math.ts`; same values):
 
-| field | default | what it tunes |
-|---|---|---|
-| `preloadExitBandFraction` | 0.5 | exit half-width of the preload band |
-| `fineReloadSettleMs` | 130 | settle debounce before a stale fine level reloads |
-| `playbackLoadBudgetFraction` | 0.8 | share of the playback period a finer level's reload must fit to be admitted |
-| `playbackKeepBudgetFraction` | 1.0 | share the current aspiration (and levels below) must fit to be kept |
-| `loadEwmaAlpha` | 0.3 | weight of a new load sample in the reload EWMA |
-| `playbackProbeIntervalMs` | 1000 | how often a capped level is re-measured during playback |
-| `staleHoldMs` | 250 | how long a stale finer level may stay up while the aspiration re-commits |
-| `staleHoldMinRatio` | 0.5 | how much coarser the fresh fallback must be before that hold is worth it |
-| `failedRetryMs` | 2000 | failure cooldown before a lazy level is retried |
-| `lazyActivationRequestTimeoutMs` | 2000 | how long a deferred part's activation request waits for a pass |
-| `partitionFrustumMargin` | 0.1 | screen-space pad of the partition frustum gate |
-| `hysteresisRatio` | 0.1 | downgrade hysteresis of the threshold and footprint picks (mirrored in `luxar.io.lod_screening`) |
-| `maxMedianFootprintPx` | 1.5 | GSplat footprint pick's median-sigma limit (CSS px) |
+| field                            | default | what it tunes                                                                                         |
+| -------------------------------- | ------- | ----------------------------------------------------------------------------------------------------- |
+| `preloadExitBandFraction`        | 0.5     | exit half-width of the preload band                                                                   |
+| `fineReloadSettleMs`             | 130     | settle debounce before a stale fine level reloads                                                     |
+| `playbackLoadBudgetFraction`     | 0.8     | share of the playback period a finer level's reload must fit to be admitted                           |
+| `playbackKeepBudgetFraction`     | 1.0     | share the current aspiration (and levels below) must fit to be kept                                   |
+| `loadEwmaAlpha`                  | 0.3     | weight of a new load sample in the reload EWMA                                                        |
+| `playbackProbeIntervalMs`        | 1000    | how often a capped level is re-measured during playback                                               |
+| `staleHoldMs`                    | 250     | how long a stale finer level may stay up while the aspiration re-commits                              |
+| `staleHoldMinRatio`              | 0.5     | how much coarser the fresh fallback must be before that hold is worth it                              |
+| `failedRetryMs`                  | 2000    | first failure cooldown before a lazy level is retried (doubles per consecutive failure, 30 s cap)     |
+| `lazyActivationRequestTimeoutMs` | 2000    | how long a deferred part's activation request first waits for a pass (doubles per unanswered request) |
+| `partitionFrustumMargin`         | 0.1     | screen-space pad of the partition frustum gate                                                        |
+| `hysteresisRatio`                | 0.1     | downgrade hysteresis of the threshold and footprint picks (mirrored in `luxar.io.lod_screening`)      |
+| `maxMedianFootprintPx`           | 1.5     | GSplat footprint pick's median-sigma limit (CSS px)                                                   |
 
 `fadeMs` is the duration of the dissolve between the outgoing and the incoming
 level when a blendable (additive / luminous / volumetric) group changes level.

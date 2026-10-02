@@ -16,6 +16,11 @@
 
 import { abortReason } from './abortable-wait';
 
+/**
+ * One leaf loader's lifetime: owns the disposal latch and the loader-scoped
+ * abort signal (see the module notes). Created with the loader and disposed
+ * with it; never reused.
+ */
 export class LoaderLifetime {
   private readonly aborter = new AbortController();
 

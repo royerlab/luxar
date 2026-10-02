@@ -99,7 +99,8 @@ let firstCommit: Partial<Record<LoadGeometryKind, number>> = {};
 let refinement: RefinementCounters = freshCounters();
 
 /** Milestones of process-lifetime resources (see the module docstring). */
-type ProcessMilestone = 'poolReady' | 'wasmReady';
+/** Process-wide load milestone. Do not un-export: TypeDoc needs this name. */
+export type ProcessMilestone = 'poolReady' | 'wasmReady';
 const PROCESS_MILESTONES: readonly ProcessMilestone[] = ['poolReady', 'wasmReady'];
 /** Process milestones reached and not since released. */
 let processReady = new Set<ProcessMilestone>();

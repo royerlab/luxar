@@ -36,10 +36,9 @@
  * caller joining a prefetch) through a {@link FetchPriorityCell}, and a request
  * whose caller aborts while it waits leaves the queue at once.
  *
- * Each class is queued per lane WIDTH (HTTP/1.1 origins with their socket cap,
- * the default origins, and the multiplexed ones with the wider lane), so a head
- * held only by its own origin's width never holds back a waiter of the same
- * class that a wider origin could start; FIFO holds across the tiers by
+ * Each class is queued per lane WIDTH, with a separate FIFO for each
+ * HTTP/1.1 origin. A saturated origin cannot hold back another origin with
+ * free sockets; FIFO holds within each origin and across admissible heads by
  * enqueue order.
  *
  * The data lane is {@link MAX_CONCURRENT_CHUNK_FETCHES} wide by default and
@@ -268,6 +267,8 @@ interface FetchGateState {
   readonly originLeases: Map<string, OriginLeases>;
   /** One FIFO per (priority class, width tier): index `rank * WIDTH_TIERS + tier`. */
   readonly queues: Deque<QueueEntry>[];
+  /** HTTP/1.1 FIFO per origin and priority, so one saturated origin cannot block another. */
+  readonly http1Queues: Map<string, Deque<QueueEntry>[]>;
   /** `fetch.<lane>.requests`: every gated call, queued or not. */
   readonly sRequests: PerfCounterSlot;
   /** `fetch.<lane>.highWater`: max leases in flight at once. */
@@ -286,6 +287,7 @@ function createGate(lane: FetchLane): FetchGateState {
     speculativeActive: 0,
     originLeases: new Map(),
     queues: Array.from({ length: PRIORITY_CLASSES * WIDTH_TIERS }, () => new Deque<QueueEntry>()),
+    http1Queues: new Map(),
     sRequests: perfCounters.slot(`fetch.${lane}.requests`),
     sHighWater: perfCounters.slot(`fetch.${lane}.highWater`),
     sQueueWaitMs: perfCounters.slot(`fetch.${lane}.queueWaitMs`),
@@ -485,9 +487,15 @@ function tierOf(gate: FetchGateState, origin: string | undefined): number {
 }
 
 /** Does any LIVE waiter of `rank` or more urgent sit in `tier`'s queues? */
-function hasQueuedAtOrAbove(gate: FetchGateState, rank: number, tier: number): boolean {
+function hasQueuedAtOrAbove(
+  gate: FetchGateState,
+  rank: number,
+  tier: number,
+  origin?: string
+): boolean {
+  const queues = tier === 0 && origin ? gate.http1Queues.get(origin) : undefined;
   for (let r = 0; r <= rank; r++) {
-    if (liveHead(gate, r * WIDTH_TIERS + tier)) return true;
+    if (liveQueueHead(queues?.[r] ?? gate.queues[r * WIDTH_TIERS + tier])) return true;
   }
   return false;
 }
@@ -512,8 +520,7 @@ function tallyOriginLease(
 }
 
 /** Head of one queue, discarding entries left dead by a promotion or an abort. */
-function liveHead(gate: FetchGateState, index: number): QueueEntry | undefined {
-  const queue = gate.queues[index];
+function liveQueueHead(queue: Deque<QueueEntry>): QueueEntry | undefined {
   let head = queue.peek();
   while (head && !head.live) {
     queue.shift();
@@ -528,20 +535,39 @@ function enqueue(gate: FetchGateState, waiter: Waiter): void {
   const entry: QueueEntry = { waiter, seq: nextSeq++, live: true };
   waiter.entry = entry;
   const index = rankOf(waiter.priority) * WIDTH_TIERS + tierOf(gate, waiter.origin);
-  gate.queues[index].push(entry);
+  if (isHttp1(waiter.origin)) {
+    let queues = gate.http1Queues.get(waiter.origin);
+    if (!queues) {
+      queues = Array.from({ length: PRIORITY_CLASSES }, () => new Deque<QueueEntry>());
+      gate.http1Queues.set(waiter.origin, queues);
+    }
+    queues[rankOf(waiter.priority)].push(entry);
+  } else {
+    gate.queues[index].push(entry);
+  }
 }
 
-/** The queue index of `rank`'s earliest-enqueued admissible head, or -1. */
-function admissibleHead(gate: FetchGateState, rank: number): number {
-  let best = -1;
+/** The earliest admissible queue head in this priority class. */
+function admissibleHead(gate: FetchGateState, rank: number): Deque<QueueEntry> | undefined {
+  let best: Deque<QueueEntry> | undefined;
   let bestSeq = Infinity;
-  for (let tier = 0; tier < WIDTH_TIERS; tier++) {
+  for (let tier = 1; tier < WIDTH_TIERS; tier++) {
     const index = rank * WIDTH_TIERS + tier;
-    const head = liveHead(gate, index);
+    const queue = gate.queues[index];
+    const head = liveQueueHead(queue);
     if (head && head.seq < bestSeq && admissible(gate, head.waiter.origin, rank)) {
-      best = index;
+      best = queue;
       bestSeq = head.seq;
     }
+  }
+  for (const [origin, queues] of gate.http1Queues) {
+    const queue = queues[rank];
+    const head = liveQueueHead(queue);
+    if (head && head.seq < bestSeq && admissible(gate, origin, rank)) {
+      best = queue;
+      bestSeq = head.seq;
+    }
+    if (queues.every((candidate) => !liveQueueHead(candidate))) gate.http1Queues.delete(origin);
   }
   return best;
 }
@@ -549,7 +575,8 @@ function admissibleHead(gate: FetchGateState, rank: number): number {
 /**
  * Start every queued waiter that may start now, most urgent class first.
  *
- * Each queue is inspected at its HEAD only, so this is O(1) per start: a
+ * Each queue is inspected at its HEAD only, scanning the active HTTP/1.1
+ * origins once per start: a
  * speculative head blocked by its share does not stop a demand head, and a head
  * blocked by its origin's lane width (mixed origins) stops only its own width
  * tier — a multiplexed origin's waiter of the same class still starts.
@@ -558,8 +585,7 @@ function dispatch(gate: FetchGateState): void {
   for (;;) {
     let started = false;
     for (let rank = 0; rank < PRIORITY_CLASSES && !started; rank++) {
-      const index = admissibleHead(gate, rank);
-      const head = index < 0 ? undefined : gate.queues[index].shift();
+      const head = admissibleHead(gate, rank)?.shift();
       if (!head) continue;
       head.live = false;
       head.waiter.entry = undefined;
@@ -663,7 +689,7 @@ export function withFetchGate<T>(
   const tier = tierOf(gate, origin);
   if (signal?.aborted) {
     acquire = Promise.reject(abortReason(signal));
-  } else if (!hasQueuedAtOrAbove(gate, rank, tier) && admissible(gate, origin, rank)) {
+  } else if (!hasQueuedAtOrAbove(gate, rank, tier, origin) && admissible(gate, origin, rank)) {
     take();
     acquire = Promise.resolve();
   } else {

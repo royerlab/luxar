@@ -34,19 +34,38 @@
  * | `--luxar-control-columns` | grid column count |
  * | `[data-chapter-count]` | how many tiles the grid holds |
  * | `[data-grid-columns]` | the fitted column count, mirrored for tests/CSS |
+ * | `[data-variant]` | `"full"` or `"short"` on a label or sublabel |
+ * | `[data-short-label]` / `[data-short-sublabel]` | `"true"` on a tile with a short text |
+ * | `[data-label-text]` / `[data-sublabel-text]` | on the grid: the version shown |
+ * | `[data-tile-index]` | on the grid: `"shown"` or `"hidden"` |
+ * | `[data-label-wrap]` | on the grid: `"words"`, or `"anywhere"` as a last resort |
+ * | `--luxar-control-sublabel-lines` | on the grid: a sublabel's line limit |
+ * | `--luxar-control-label-scale` | on the grid: multiplier on the label size |
+ *
+ * The grid-level hooks are the tile-text fit (`fit-tile-text.ts`): they say
+ * how much of each tile's text the screen had room for, so an authored
+ * stylesheet can follow the same decision rather than fight it.
  *
  * A lock test pins these names, because a rename would silently break every
  * authored stylesheet in the field.
  */
 
 import type { ChapterSource } from '../../config/control-panel/derive-chapters';
-import { fitGrid } from '../../config/control-panel/fit-grid';
+import { rankGrids } from '../../config/control-panel/fit-grid';
+import { tileTextLadder, type TileTextStep } from '../../config/control-panel/tile-text-fit';
+import { fitTileText } from './fit-tile-text';
 import { EventGroup } from '../../utils/cross-layer/event-group';
 
 /** CSS class prefix for everything this module creates. */
 export const CONTROL_PANEL_CLASS = 'luxar-control-panel';
 /** Custom property carrying the grid's column count. */
 export const CONTROL_COLUMNS_PROPERTY = '--luxar-control-columns';
+/**
+ * How many of the best-shaped grids the text fit may choose between. Past the
+ * third the cells are far from the preferred shape, and a tile that keeps one
+ * more line of text is not worth a grid that looks wrong.
+ */
+export const CONTROL_GRID_TEXT_CANDIDATES = 3;
 
 /** What the renderer needs from the page around it. */
 export interface ControlPanelPorts {
@@ -73,6 +92,12 @@ export interface ControlPanelOptions {
   columns?: number | null;
   /** Per-chapter extra line, keyed by chapter index. */
   sublabels?: Record<number, string>;
+  /**
+   * Shorter versions, keyed the same way, shown instead of the full text when
+   * a tile is too small for it (`config/control-panel/tile-text-fit.ts`).
+   */
+  shortLabels?: Record<number, string>;
+  shortSublabels?: Record<number, string>;
 }
 
 export interface ControlPanelView {
@@ -96,6 +121,41 @@ function element<K extends keyof HTMLElementTagNameMap>(
   // which are untrusted input by the same reasoning as `overlay_html`.
   if (text !== undefined) node.textContent = text;
   return node;
+}
+
+/**
+ * Append a tile's label or sublabel, with its short version beside it.
+ *
+ * Both are in the DOM and the stylesheet shows one, so switching between them
+ * is an attribute on the grid rather than a rewrite of every tile — which is
+ * what lets the text fit try a step with one layout. The hidden one is
+ * `display: none`, so a screen reader hears only the version on screen.
+ */
+function appendText(
+  tile: HTMLElement,
+  role: 'label' | 'sublabel',
+  full: string,
+  short: string | undefined
+): void {
+  const node = element('span', `luxar-control-tile-${role}`, full);
+  node.dataset.variant = 'full';
+  tile.append(node);
+  if (!short || short === full) return;
+  const shortNode = element('span', `luxar-control-tile-${role}`, short);
+  shortNode.dataset.variant = 'short';
+  tile.append(shortNode);
+  tile.dataset[role === 'label' ? 'shortLabel' : 'shortSublabel'] = 'true';
+}
+
+/** The text ladder for what this grid's tiles actually carry. */
+function ladderFor(source: ChapterSource, options: ControlPanelOptions): TileTextStep[] {
+  const has = (map: Record<number, string> | undefined): boolean =>
+    source.chapters.some((chapter) => Boolean(map?.[chapter.index]));
+  return tileTextLadder({
+    sublabels: has(options.sublabels),
+    shortSublabels: has(options.sublabels) && has(options.shortSublabels),
+    shortLabels: has(options.shortLabels),
+  });
 }
 
 /** Build the tile grid for `source`. */
@@ -129,13 +189,87 @@ function buildGrid(
     );
     numeral.setAttribute('aria-hidden', 'true');
     tile.append(numeral);
-    tile.append(element('span', 'luxar-control-tile-label', chapter.label));
+    appendText(tile, 'label', chapter.label, options.shortLabels?.[chapter.index]);
     const sublabel = options.sublabels?.[chapter.index];
-    if (sublabel) tile.append(element('span', 'luxar-control-tile-sublabel', sublabel));
+    if (sublabel) {
+      appendText(tile, 'sublabel', sublabel, options.shortSublabels?.[chapter.index]);
+    }
     events.on(tile, 'click', () => onPick(chapter.index));
     grid.append(tile);
   }
   return grid;
+}
+
+/** Commit a column count, and re-centre the last row for it. */
+function applyColumns(grid: HTMLElement, count: number, columns: number): void {
+  grid.style.setProperty(CONTROL_COLUMNS_PROPERTY, String(columns));
+  grid.dataset.gridColumns = String(columns);
+  centreFinalRow(grid, count, columns);
+}
+
+/**
+ * Size the grid to its own box so the tiles form one full page, then fit
+ * the text into the tiles.
+ *
+ * Measured rather than expressed in CSS because `repeat(auto-fill,
+ * minmax(...))` cannot say "fit exactly N cells in this box" — it fills from
+ * a minimum width and overflows once N outgrows the viewport, which is the
+ * scrolling this page exists to avoid.
+ *
+ * The best-SHAPED grid is tried first and kept whenever its tiles hold all
+ * their text, which is every roomy screen. Only when text has to give way
+ * are the next shapes tried, and the one that gives up least wins (ties to
+ * the better shape). On a small phone that is the difference between four
+ * columns of titles broken mid-word and three columns of whole ones.
+ */
+function fitLayout(grid: HTMLElement, count: number, ladder: readonly TileTextStep[]): void {
+  const box = grid.getBoundingClientRect();
+  const candidates = rankGrids(count, box.width / box.height).slice(
+    0,
+    CONTROL_GRID_TEXT_CANDIDATES
+  );
+  let best = { columns: 0, step: Number.POSITIVE_INFINITY };
+  let applied = 0;
+  for (const { columns } of candidates) {
+    applyColumns(grid, count, columns);
+    applied = columns;
+    const step = fitTileText(grid, ladder);
+    if (step < best.step) best = { columns, step };
+    if (step === 0) break;
+  }
+  if (best.columns !== applied) {
+    applyColumns(grid, count, best.columns);
+    fitTileText(grid, ladder);
+  }
+}
+
+/**
+ * Nudge the last row so a partial one sits centred under the full ones.
+ *
+ * Eleven chapters in four columns leave one hole, and a hole at the end of
+ * the bottom row reads as a mistake on a screen a visitor is looking at.
+ *
+ * The grid is laid out in HALF-tile tracks (see the stylesheet) precisely so
+ * this is expressible: centring an odd leftover needs a half-tile shift,
+ * which whole columns cannot describe. Each tile spans two tracks, so the
+ * first tile of the last row starts `leftover` tracks in — one track per
+ * half-tile — and the row ends up symmetric.
+ */
+function centreFinalRow(grid: HTMLElement, count: number, columns: number): void {
+  const tiles = Array.from(grid.querySelectorAll<HTMLElement>('.luxar-control-tile'));
+  // Always clear first: a re-fit to a different column count changes both
+  // which tile begins the last row and how far it should move.
+  for (const tile of tiles) tile.style.removeProperty('grid-column');
+  const remainder = count % columns;
+  if (remainder === 0) return;
+  const leftover = columns - remainder;
+  const firstOfLastRow = tiles[count - remainder];
+  if (firstOfLastRow === undefined) return;
+  // `grid-column`, not `grid-column-start`. Writing only the start resets
+  // the span to 1 — the stylesheet's `span 2` lives in the same shorthand —
+  // so the centred tile came out half the width of every other one. The
+  // span has to be restated here.
+  firstOfLastRow.style.setProperty('grid-column', `${1 + leftover} / span 2`);
 }
 
 /**
@@ -163,52 +297,7 @@ export function createControlPanel(ports: ControlPanelPorts): ControlPanelView {
   };
 
   /**
-   * Size the grid to its own box so the tiles form one full page.
-   *
-   * Measured rather than expressed in CSS because `repeat(auto-fill,
-   * minmax(...))` cannot say "fit exactly N cells in this box" — it fills from
-   * a minimum width and overflows once N outgrows the viewport, which is the
-   * scrolling this page exists to avoid.
-   */
-  const applyFit = (grid: HTMLElement, count: number): void => {
-    const box = grid.getBoundingClientRect();
-    const { columns } = fitGrid(count, box.width / box.height);
-    grid.style.setProperty(CONTROL_COLUMNS_PROPERTY, String(columns));
-    grid.dataset.gridColumns = String(columns);
-    centreFinalRow(grid, count, columns);
-  };
-
-  /**
-   * Nudge the last row so a partial one sits centred under the full ones.
-   *
-   * Eleven chapters in four columns leave one hole, and a hole at the end of
-   * the bottom row reads as a mistake on a screen a visitor is looking at.
-   *
-   * The grid is laid out in HALF-tile tracks (see the stylesheet) precisely so
-   * this is expressible: centring an odd leftover needs a half-tile shift,
-   * which whole columns cannot describe. Each tile spans two tracks, so the
-   * first tile of the last row starts `leftover` tracks in — one track per
-   * half-tile — and the row ends up symmetric.
-   */
-  const centreFinalRow = (grid: HTMLElement, count: number, columns: number): void => {
-    const tiles = Array.from(grid.querySelectorAll<HTMLElement>('.luxar-control-tile'));
-    // Always clear first: a re-fit to a different column count changes both
-    // which tile begins the last row and how far it should move.
-    for (const tile of tiles) tile.style.removeProperty('grid-column');
-    const remainder = count % columns;
-    if (remainder === 0) return;
-    const leftover = columns - remainder;
-    const firstOfLastRow = tiles[count - remainder];
-    if (firstOfLastRow === undefined) return;
-    // `grid-column`, not `grid-column-start`. Writing only the start resets
-    // the span to 1 — the stylesheet's `span 2` lives in the same shorthand —
-    // so the centred tile came out half the width of every other one. The
-    // span has to be restated here.
-    firstOfLastRow.style.setProperty('grid-column', `${1 + leftover} / span 2`);
-  };
-
-  /**
-   * Re-fit whenever the grid's box changes.
+   * Re-fit whenever the grid's box changes: the columns, then the text.
    *
    * A ResizeObserver rather than a `window.resize` listener: a tablet rotating
    * fires resize, but so does the on-screen keyboard, a browser-chrome change
@@ -217,10 +306,10 @@ export function createControlPanel(ports: ControlPanelPorts): ControlPanelView {
    * the question that actually matters. Guarded because jsdom has no
    * ResizeObserver, and the renderer's tests run there.
    */
-  const observeFit = (grid: HTMLElement, count: number): void => {
-    applyFit(grid, count);
+  const observeFit = (grid: HTMLElement, layout: () => void): void => {
+    layout();
     if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => applyFit(grid, count));
+    const observer = new ResizeObserver(layout);
     observer.observe(grid);
     events.add(() => observer.disconnect());
   };
@@ -272,9 +361,16 @@ export function createControlPanel(ports: ControlPanelPorts): ControlPanelView {
       root.append(...nodes);
       // AFTER append, or the grid has no box to measure yet. An author who
       // pinned `columns` keeps it: their number is already on the element and
-      // re-fitting would overwrite a deliberate choice.
-      if (grid !== null && chapterCount > 0 && (options.columns == null || options.columns <= 0)) {
-        observeFit(grid, chapterCount);
+      // re-fitting would overwrite a deliberate choice. The text is fitted
+      // either way, and after the columns, since they decide the tile size.
+      if (grid !== null && next !== null && chapterCount > 0) {
+        const fitted = grid;
+        const pinned = options.columns != null && options.columns > 0;
+        const ladder = ladderFor(next, options);
+        observeFit(fitted, () => {
+          if (pinned) fitTileText(fitted, ladder);
+          else fitLayout(fitted, chapterCount, ladder);
+        });
       }
     },
 
