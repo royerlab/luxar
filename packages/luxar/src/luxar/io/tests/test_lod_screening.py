@@ -177,6 +177,16 @@ def test_a_box_beside_the_camera_reads_its_clipped_visible_area() -> None:
     assert math.isfinite(project_box_diagonal_px(beside, proj_view, 1920, 1080))
 
 
+def test_eye_plane_box_clips_at_the_physical_near_distance() -> None:
+    """Explicit near clipping agrees with the WebGL matrix's own near plane."""
+    box = Box3((0.02, 0.0, -0.2), (0.04, 0.02, 0.2))
+    near = 0.1
+    projection = perspective_matrix(FOV90, 1.0, near, 100.0)
+    metric = project_box_area_fraction(box, projection, near)
+    assert metric == pytest.approx(0.015, rel=1e-9)
+    assert metric == pytest.approx(project_box_area_fraction(box, projection), rel=1e-9)
+
+
 def test_zero_thickness_rect_ramps_to_its_full_linear_span() -> None:
     """A flat (edge-on) box reads its clipped LINEAR span, not a zero area.
 

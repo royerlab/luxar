@@ -4,9 +4,10 @@
  * An ORPHAN is a chunk file on disk that the persisted index
  * (`_cache_meta.json`) does not list: the index is saved on a debounce, so a
  * session killed (or navigated away) between a chunk write and the next index
- * save leaves files the next session cannot see. Nothing else ever reclaims
- * them, so without this crawl disk use grows across interrupted sessions while
- * every one of those chunks is re-fetched from the network.
+ * save leaves files the index cannot name. Without this crawl they would never
+ * be reclaimed (disk use grows across interrupted sessions) nor accounted in the
+ * index's size and LRU. Serving them does not wait for it: until the crawl is
+ * complete, `OPFSStore.get()` reads an unindexed key's file directly.
  *
  * This module only WALKS the bucket directories and hands each unlisted file to
  * the caller, under a hard per-session budget; the decision (re-index vs

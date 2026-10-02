@@ -31,7 +31,13 @@
 import * as THREE from 'three';
 import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { pointWebGPUFactory, type PointTSLNodes } from './shader-tsl';
+import {
+  applyPointMaterialState,
+  pointWebGPUFactory,
+  type PointTSLConfig,
+  type PointTSLNodes,
+} from './shader-tsl';
+import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
 import type { PointMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
@@ -41,7 +47,11 @@ import {
   applyColormapTextureToMaterial,
   applyScalarRangeToMaterial,
 } from '../../material-colormap-helpers';
-import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import {
+  getPlaceholderElementTexture,
+  POINT_TEXTURE_LAYOUT,
+  resolveElementTextureWidth,
+} from '../../element-texture-layout';
 import {
   applyBlendingStateToMaterial,
   getPointBlendingState,
@@ -306,15 +316,25 @@ export class PointTSLMaterial
   private rebuildGraph(): void {
     const useColormap = !!this.defines && 'USE_COLORMAP' in this.defines;
     this.rebuildColormapNodes(useColormap);
-    pointWebGPUFactory(
-      this.tslNodes as PointTSLNodes,
-      {
-        useColormap,
-        gammaOne: !!this.defines && 'LUXAR_GAMMA_ONE' in this.defines,
-        noGOG: !!this.defines && 'LUXAR_NO_GOG' in this.defines,
-        blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
-      },
-      this
+    const config: PointTSLConfig = {
+      useColormap,
+      gammaOne: !!this.defines && 'LUXAR_GAMMA_ONE' in this.defines,
+      noGOG: !!this.defines && 'LUXAR_NO_GOG' in this.defines,
+      blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
+      elementTextureWidth: resolveElementTextureWidth(
+        POINT_TEXTURE_LAYOUT,
+        this.tslNodes.uPointTex.value as { image?: { width?: number } } | null
+      ),
+    };
+    // ONE graph per configuration, shared by every point material of it
+    // (see shared-graph-tsl.ts): the build cache keys on node ids.
+    applySharedTSLGraph(this, 'point', config, this.tslNodes, (inputs, scratch) => {
+      pointWebGPUFactory(inputs as PointTSLNodes, config, scratch);
+    });
+    applyPointMaterialState(
+      this,
+      config.blendingMode ?? 'additive',
+      (this.tslNodes.uOpacity.value as number | undefined) ?? 1.0
     );
     // Re-apply the explicit constructor overrides over the factory
     // tail's mode-derived blending state — on EVERY rebuild, not just

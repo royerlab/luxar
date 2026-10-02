@@ -117,7 +117,16 @@ fragments IN FRONT of the glass, crisp on top. The two modes are complements of 
 predicate, so every data fragment is drawn exactly once and the glass paints over nothing
 nearer than itself; emissive layers still write no depth, the classification happens in
 their fragment shaders (`uGlassPartition` / `uGlassDepth`, GLSL and TSL). Compositing is
-otherwise identical: translucent, no depth write, `NormalBlending`.
+otherwise identical: translucent, no depth write, `NormalBlending`. From INSIDE a
+double-sided refracting glass the WebGL split draws it back-faces-only for the frame:
+three pre-renders a double-sided glass's back faces into the very texture those faces then
+sample, which from outside is hidden behind the near wall but from inside refracts the far
+wall twice. Whether the camera is inside is a ray-parity test against the mesh's own
+drawn triangles (`post-processing-manager/inside-closed-mesh.ts`); open surfaces and
+meshes above the 20,000-triangle topology limit stay double-sided. In a non-convex
+closed shell, the back-faces-only draw can hide farther front faces visible from
+inside a cavity.
+WebGPU needs nothing: its back faces sample the live framebuffer.
 `transmissionResolutionScale` (config `renderingControls.refraction`, 0.5) applies to the
 glass pass only; WebGPU has no equivalent knob.
 
@@ -135,6 +144,32 @@ WebGPU wrapper's `LuxarPhysicalLightingModel` saves `diffuseColor.a` into a prop
 before three's `start` and restores it after. A pixel no-op for the glass-first path,
 whose transmission target only ever holds alpha-1 content; an `opaque`-mode house layer
 or a cutout mesh seen THROUGH glass now follows the same rule.
+
+**The refraction shift is edge-apodized on both backends** (`refraction-apodization.ts`).
+Three samples the scene behind a glass at the screen projection of
+`position + refract(…)·thickness` and never checks that it is still on screen; where it
+is not, the sampler clamps to the border texel and the border smears inward as streaks —
+worst with the camera inside a refracting shell, where every pixel is glass and a
+double-sided shell is refracted twice on WebGL. Per fragment, each axis of the screen
+shift is soft-limited against its room to the nearest border: the identity up to
+`REFRACTION_SHIFT_KNEE` (half) of that room, then a tanh roll-off toward
+`REFRACTION_SHIFT_CEILING` (three quarters), the stricter axis scaling the whole vector so its
+direction is kept. The field is therefore zero on every border, continuous, and untouched
+wherever a shift stays clear of the edges. The ceiling is not decoration: a limiter that
+let a large shift approach the WHOLE room would park the sample on the border for a band
+of pixels and smear the border column across it — the streaks again, only on screen. At
+three quarters of the room the sample still advances at least a quarter as fast as the
+pixel, so the edge-band stretch rises smoothly from 1× at the knee toward at most 4×
+near the border, never collapsing (pinned by a unit test with that bound, which fails for a
+near-1 ceiling). The knee is half because a lower one reaches into the frame: on the
+render gate's thick lens three's own shifts reach a fifth of the room at the median and
+most of it at the rim, and a quarter-room knee changed the plain outside view. It is applied by shortening the ray three traces (`thickness·λ`, with
+`attenuationDistance·λ` keeping the Beer–Lambert absorption unchanged), λ being the exact
+perspective-correct scale for the wanted fraction of the screen shift — so it goes through
+three's own refraction on both backends: the WebGL `onBeforeCompile` adds it after the
+alpha pin (`apodizeRefractionShiftGlsl`, anchored in three's real chunks by a unit test),
+and the WebGPU twin rescales the `thickness` / `attenuationDistance` property nodes at
+the end of `setupVariants` (`refraction-apodization-tsl.ts`).
 
 ## Colour pipeline
 

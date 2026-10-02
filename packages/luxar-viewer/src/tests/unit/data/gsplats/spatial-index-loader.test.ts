@@ -1710,9 +1710,16 @@ describe('GSplatsSpatialIndexLoader', () => {
         const get = zarr.get as unknown as ReturnType<typeof vi.fn>;
         const original = get.getMockImplementation() as (...args: unknown[]) => unknown;
         let seen: AbortSignal | undefined;
+        let release!: () => void;
+        const blocked = new Promise<void>((resolve) => {
+          release = resolve;
+        });
         get.mockImplementation((...args: unknown[]) => {
           const opts = args[2] as { signal?: AbortSignal } | undefined;
-          if (opts?.signal) seen = opts.signal;
+          if (opts?.signal) {
+            seen = opts.signal;
+            return blocked.then(() => original(...args));
+          }
           return original(...args);
         });
         const fresh = new GSplatsSpatialIndexLoader(
@@ -1725,7 +1732,20 @@ describe('GSplatsSpatialIndexLoader', () => {
         fresh.dispose();
 
         expect(seen!.aborted).toBe(true);
+        release();
         await init;
+      });
+
+      it('detaches a completed speculative initialization from the loader lifetime', async () => {
+        const fresh = new GSplatsSpatialIndexLoader(
+          mockZarrLocation as unknown as ConstructorParameters<typeof GSplatsSpatialIndexLoader>[0],
+          makeGSplatsNode()
+        );
+        const lifetimeSignal = (fresh as any)._lifetime.signal as AbortSignal;
+        const remove = vi.spyOn(lifetimeSignal, 'removeEventListener');
+        await fresh.ensureInitialized('speculative');
+        expect(remove.mock.calls.some(([event]) => event === 'abort')).toBe(true);
+        fresh.dispose();
       });
 
       it('a disposed loader refuses to re-initialize', async () => {

@@ -27,7 +27,11 @@
 import { log, Modules } from '../../../utils/log';
 import { getErrorMessage } from '../../../utils/format-error';
 import type { ViewState } from '../../data-loader-types';
-import { dispatchPredictivePrefetch, type PrefetchableLoader } from './predicted-view-state';
+import {
+  dispatchPredictivePrefetch,
+  predictNextViewState,
+  type PrefetchableLoader,
+} from './predicted-view-state';
 
 /**
  * How many predicted-view prefetches stay live per node: the newest plus its
@@ -40,7 +44,7 @@ export class ViewStateQueue {
   private _prevPerNodeViewState: Map<string, ViewState> = new Map();
   /**
    * The live predicted-view prefetches per node, oldest first, at most
-   * {@link LIVE_PREDICTIONS_PER_NODE}. A new prediction aborts the oldest — the
+   * `LIVE_PREDICTIONS_PER_NODE`. A new prediction aborts the oldest — the
    * user has moved past it — but NOT its immediate predecessor: consecutive
    * predictions overlap (one chunk spans several slices), and aborting the
    * predecessor before the new one's reads join its in-flight fetches would
@@ -122,6 +126,9 @@ export class ViewStateQueue {
     // observes this snapshot as `prev` and the user's first
     // scrub-direction delta is captured then.
     if (prev === null) return;
+
+    const predicted = predictNextViewState(prev, snapshot);
+    if (predicted.slicePosition.every((value, i) => value === snapshot.slicePosition[i])) return;
 
     const controller = this.startPrediction(path);
     queueMicrotask(() => {

@@ -5,7 +5,7 @@
  * node's attrs with `opacity`, `absorption`, `gamma`, `intensity`,
  * `offset`, `blending_mode`, `join`, `layer_order`, and `colormap` (with its
  * `customLutBytes`) replaced by the values from
- * {@link getEffectiveAttrs}. Falls back to the raw attrs when the
+ * {@link getEffectiveAttrsOfChain}. Falls back to the raw attrs when the
  * scene graph is unavailable.
  *
  * Centralized here so the scene loader's class method becomes a

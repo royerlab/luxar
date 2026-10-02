@@ -297,7 +297,9 @@ class Group(Node):
                 ``device``, ``seed``, ``coverage_fractions``, ``coarsen_dims``,
                 ``max_aspect`` (anisotropy cap on the coarse levels, default
                 3.0; ``None`` disables), and ``quality_stamps`` (measure
-                per-level quality, default ``True``).
+                per-level quality, default ``True``), ``refine`` (``"none"``
+                or volume-free ``"l2"``), and ``refine_iters`` (positive
+                integer Adam steps for ``"l2"``).
                 ``coarse="points"`` accepts ``method="subsample"`` or
                 ``method="merge"``. Merge writes moment-matched representatives,
                 preserves discrete hidden coordinates, uses quantized colour as

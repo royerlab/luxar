@@ -85,6 +85,26 @@ def _resolve_lines_representation(kwargs: dict) -> tuple[str, Union[str, float],
                 "it selects Gaussian merge dimensions, and same-type line "
                 "levels preserve discrete hidden coordinates automatically"
             ),
+            "refine": (
+                "it refines merged Gaussian levels, and same-type line "
+                "levels contain no Gaussians"
+            ),
+            "refine_iters": (
+                "it controls Gaussian refinement, and same-type line "
+                "levels contain no Gaussians"
+            ),
+            **{
+                key: (
+                    "it controls Gaussian partitioning, while same-type line "
+                    "levels use a separate sampler or merger"
+                )
+                for key in (
+                    "lloyd_iterations",
+                    "candidate_bins_k",
+                    "coverage_inflation",
+                    "color_weight",
+                )
+            },
         },
     )
 

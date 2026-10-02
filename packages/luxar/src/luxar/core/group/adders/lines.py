@@ -2167,6 +2167,12 @@ def add_lines_substitutive_lod_wrapper_impl(
         group._find_scene(), int(lifted.ndim), spec.get("coarsen_dims")
     )
 
+    if spec["color_weight"] > 0 and lifted.colors is None:
+        raise ValueError(
+            "substitutive_lod color_weight > 0 requires colors= on add_lines "
+            "or scalars= with colormap="
+        )
+
     # Synthesise coarse gsplat levels (level 0 dropped, render-light conserved).
     coarse = coarse_substitutive_levels(
         lifted,
@@ -2178,6 +2184,12 @@ def add_lines_substitutive_lod_wrapper_impl(
         coarsen_dims=coarsen_dims,
         max_aspect=spec.get("max_aspect", 3.0),
         quality_stamps=bool(spec["quality_stamps"]),
+        lloyd_iterations=spec["lloyd_iterations"],
+        candidate_bins_k=spec["candidate_bins_k"],
+        coverage_inflation=spec["coverage_inflation"],
+        color_weight=spec["color_weight"],
+        refine=str(spec["refine"]),
+        refine_iters=spec["refine_iters"],
     )
 
     # Degenerate -> flat Lines node. Covers BOTH no coarse levels AND an

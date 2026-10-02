@@ -2523,9 +2523,15 @@ describe('SceneLoader', () => {
       internals.passes.locked = true;
       sceneLoader.kickRefinementIfIdle(); // lock busy: one re-check timer
       expect(internals.passes.kickPending).toBe(true);
+      const timer = (internals.passes as unknown as { kickTimer: ReturnType<typeof setTimeout> })
+        .kickTimer;
+      expect(timer).not.toBeNull();
+      const clear = vi.spyOn(globalThis, 'clearTimeout');
 
       await sceneLoader.dispose();
 
+      expect(clear).toHaveBeenCalledWith(timer);
+      clear.mockRestore();
       expect(internals.passes.kickPending).toBe(false);
       expect(internals.sliceCache).toBeNull();
       expect(internals.lastResidencyBudget).toBeNull();

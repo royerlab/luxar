@@ -1043,6 +1043,12 @@ class TestVocabulary:
             ("max_aspect", 2.0),
             ("device", "cpu"),
             ("seed", 7),
+            ("lloyd_iterations", 2),
+            ("candidate_bins_k", 4),
+            ("coverage_inflation", 2.0),
+            ("color_weight", 0.5),
+            ("refine", "l2"),
+            ("refine_iters", 2),
         ],
     )
     def test_each_lift_only_key_is_refused_with_its_own_reason(

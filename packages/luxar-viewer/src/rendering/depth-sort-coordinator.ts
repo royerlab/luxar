@@ -182,6 +182,8 @@ interface NodeSortState {
    * draw waits for.
    */
   count: number;
+  /** Generation already warned about a short worker ordering. */
+  warnedMismatchGeneration?: number;
   /** True while a sort RPC is outstanding for this node. */
   inFlight: boolean;
   /** A newer commit landed mid-sort — re-sort once the current one resolves. */
@@ -1274,11 +1276,14 @@ function orderingCoversCommit(
   nodeId: string
 ): boolean {
   if (ordering.length === state.count) return true;
-  log.warning(
-    Modules.WORKER_POOL,
-    `Depth-sort ordering for ${nodeId} has ${ordering.length} elements but the commit has ` +
-      `${state.count} — dropped`
-  );
+  if (state.warnedMismatchGeneration !== state.generation) {
+    state.warnedMismatchGeneration = state.generation;
+    log.warning(
+      Modules.WORKER_POOL,
+      `Depth-sort ordering for ${nodeId} has ${ordering.length} elements but the commit has ` +
+        `${state.count} — dropped`
+    );
+  }
   return false;
 }
 

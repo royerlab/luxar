@@ -6065,6 +6065,21 @@ describe('depth-sort coordinator — held append draws', () => {
     await applyStagedOrdering(mesh);
     expect(drawnCount(mesh)).toBe(6);
     expect(isPermutation(mesh, 6)).toBe(true);
+
+    const { log } = await import('../../../utils/log');
+    const mismatches = () =>
+      (log.warning as unknown as { mock: { calls: unknown[][] } }).mock.calls.filter((call) =>
+        String(call[1]).includes('Depth-sort ordering for')
+      );
+    expect(mismatches()).toHaveLength(1);
+    const repeat = coord.resortForCapture(200);
+    const latest = mockApi.sort.mock.calls.length - 1;
+    sortResolvers[latest]({
+      generation: mockApi.sort.mock.calls[latest][0].generation as number,
+      ordering: new Uint32Array([4, 3, 2, 1, 0]),
+    });
+    await repeat;
+    expect(mismatches()).toHaveLength(1);
   });
 
   it('a failed sort RPC releases the hold', async () => {
