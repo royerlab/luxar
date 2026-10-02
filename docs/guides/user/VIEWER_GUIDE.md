@@ -788,8 +788,13 @@ The viewer acts on a change of *matched waypoint*, not on every slider tick. At
 load it snaps to whichever waypoint matches the opening dimension state (ahead
 of the plain `camera` block). Afterwards stepping the story dimension — the
 `[` / `]` keys, the slider, or an external controller — flies to the new
-waypoint with its own `duration_ms` (default 1500; `0` snaps) and `easing`
-(`"ease-in-out"` or `"linear"`); moves that stay inside the same waypoint's
+waypoint with its own `duration_ms` (default 1500; `0` snaps), `easing`
+(`"ease-in-out"`, `"smooth"` — smootherstep, with no acceleration jump at
+take-off or landing — or `"linear"`) and `trajectory`: `"orbit"` (default)
+moves the focus target in a straight line, while `"zoom-pan"` follows van Wijk &
+Nuij's smooth zooming and panning, pulling back as it travels and diving in at
+the end so a long jump crosses the screen at an even pace (perspective only). Moves
+that stay inside the same waypoint's
 ranges do nothing, and leaving every waypoint leaves the camera where it is.
 Any mouse, touch or key input during a flight cancels it where it is. The
 optional `reveal="on_arrival"` holds newly matching dimension-bound overlays

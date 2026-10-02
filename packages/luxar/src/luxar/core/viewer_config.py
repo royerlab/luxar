@@ -443,7 +443,8 @@ class AnimationConfig:
         )
 
 
-VALID_WAYPOINT_EASINGS = ("linear", "ease-in-out")
+VALID_WAYPOINT_EASINGS = ("linear", "ease-in-out", "smooth")
+VALID_WAYPOINT_TRAJECTORIES = ("orbit", "zoom-pan")
 VALID_WAYPOINT_REVEALS = ("immediate", "on_arrival")
 
 # A `when` clause: dimension NAME -> exact value, or an inclusive (min, max)
@@ -479,7 +480,17 @@ class Waypoint:
             ``target_node``) to re-aim without moving.
         duration_ms: Flight duration in milliseconds; ``None`` uses the viewer
             default (1500). ``0`` snaps.
-        easing: ``"ease-in-out"`` (default) or ``"linear"``.
+        easing: ``"ease-in-out"`` (default, smoothstep), ``"smooth"``
+            (smootherstep: also starts and lands with zero ACCELERATION, so a
+            flight has no kick at departure or arrival) or ``"linear"``.
+        trajectory: The path between poses. ``"orbit"`` (default) moves the
+            focus target in a straight line while the distance and direction
+            interpolate on their own. ``"zoom-pan"`` is van Wijk & Nuij's
+            smooth zooming and panning (2003): it pulls back while it travels
+            and dives in at the end, the path that minimises perceived motion,
+            so a long jump across a dataset no longer races past the screen at
+            close range. Perspective poses only; an orthographic flight keeps
+            ``"orbit"``. Direction and up still interpolate as in ``"orbit"``.
         rendering: Optional rendering overrides applied on arrival, using the
             same snake_case keys as ``ViewerConfig`` itself (``exposure``,
             ``bloom_strength``, ``tone_mapping``, ...). Validated against that
@@ -503,6 +514,7 @@ class Waypoint:
     easing: Optional[str] = None
     rendering: Optional[Dict[str, Any]] = None
     reveal: Optional[str] = None
+    trajectory: Optional[str] = None
 
     def __post_init__(self) -> None:
         self._validate_when()
@@ -522,6 +534,15 @@ class Waypoint:
         if self.easing is not None and self.easing not in VALID_WAYPOINT_EASINGS:
             raise ValueError(
                 f"easing must be one of {VALID_WAYPOINT_EASINGS}, got '{self.easing}'"
+            )
+
+        if (
+            self.trajectory is not None
+            and self.trajectory not in VALID_WAYPOINT_TRAJECTORIES
+        ):
+            raise ValueError(
+                f"trajectory must be one of {VALID_WAYPOINT_TRAJECTORIES}, "
+                f"got '{self.trajectory}'"
             )
 
         if self.reveal is not None and self.reveal not in VALID_WAYPOINT_REVEALS:
@@ -588,6 +609,8 @@ class Waypoint:
             result["rendering"] = dict(self.rendering)
         if self.reveal is not None:
             result["reveal"] = self.reveal
+        if self.trajectory is not None:
+            result["trajectory"] = self.trajectory
         return result
 
     @classmethod
@@ -605,6 +628,7 @@ class Waypoint:
             easing=data.get("easing"),
             rendering=data.get("rendering"),
             reveal=data.get("reveal"),
+            trajectory=data.get("trajectory"),
         )
 
 

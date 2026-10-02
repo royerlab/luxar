@@ -14,6 +14,7 @@ import {
   buildFlightPath,
   easeFlight,
   keepOrientationPose,
+  zoomPanProfile,
   type FlightFrameDriver,
 } from '../../../../../core/app/camera/camera-flight';
 import type { CameraSnapshot } from '../../../../../core/app/snapshot/viewer-snapshot';
@@ -102,6 +103,70 @@ describe('easeFlight', () => {
     expect(easeFlight(0.75, 'ease-in-out')).toBeGreaterThan(0.75);
     expect(easeFlight(0.3, 'linear')).toBe(0.3);
   });
+
+  it('smooth (smootherstep) also starts and lands with zero acceleration', () => {
+    const h = 1e-4;
+    const accel = (t: number, e: 'ease-in-out' | 'smooth'): number =>
+      (easeFlight(t + h, e) - 2 * easeFlight(t, e) + easeFlight(t - h, e)) / (h * h);
+    // smoothstep jumps to an acceleration of 6 the instant it departs; smootherstep
+    // ramps from 0 — that jump is the "kick" a long flight shows at take-off.
+    expect(accel(h, 'ease-in-out')).toBeCloseTo(6, 1);
+    expect(Math.abs(accel(h, 'smooth'))).toBeLessThan(0.01);
+    expect(Math.abs(accel(1 - h, 'smooth'))).toBeLessThan(0.01);
+    expect(easeFlight(0.5, 'smooth')).toBeCloseTo(0.5);
+    for (let t = 0; t < 1; t += 0.05) {
+      expect(easeFlight(t + 0.05, 'smooth')).toBeGreaterThanOrEqual(easeFlight(t, 'smooth'));
+    }
+  });
+});
+
+describe('zoomPanProfile (van Wijk & Nuij)', () => {
+  it('starts and ends on the two views', () => {
+    const p = zoomPanProfile(40, 2, 3);
+    expect(p.at(0).along).toBeCloseTo(0, 9);
+    expect(p.at(0).width).toBeCloseTo(2, 9);
+    expect(p.at(1).along).toBeCloseTo(1, 9);
+    expect(p.at(1).width).toBeCloseTo(3, 9);
+  });
+
+  it('pulls back on a long jump, by more the longer the jump', () => {
+    const peak = (travel: number): number => {
+      const p = zoomPanProfile(travel, 2, 2);
+      let w = 0;
+      for (let f = 0; f <= 1; f += 0.01) w = Math.max(w, p.at(f).width);
+      return w;
+    };
+    expect(peak(40)).toBeGreaterThan(10);
+    expect(peak(40)).toBeGreaterThan(peak(10));
+    // A short hop barely zooms out at all.
+    expect(peak(0.5)).toBeLessThan(2.2);
+  });
+
+  it('moves the view at an even pace: screen-space speed is constant along the path', () => {
+    // The property that makes it smooth. In view-width units the path moves at a
+    // constant rate per unit of path parameter, which is why content neither races
+    // nor crawls mid-flight. The metric is van Wijk & Nuij's, sqrt(ρ²du² + dw²/ρ²)/w.
+    const travel = 40;
+    const p = zoomPanProfile(travel, 2, 2);
+    const rho = Math.SQRT2;
+    const speeds: number[] = [];
+    for (let f = 0.02; f < 0.98; f += 0.04) {
+      const a = p.at(f);
+      const b = p.at(f + 1e-4);
+      const du = ((b.along - a.along) * travel) / a.width;
+      const dw = (b.width - a.width) / a.width;
+      speeds.push(Math.sqrt(rho * rho * du * du + (dw * dw) / (rho * rho)) / 1e-4);
+    }
+    const lo = Math.min(...speeds);
+    const hi = Math.max(...speeds);
+    expect(hi / lo).toBeLessThan(1.01);
+  });
+
+  it('degrades to a pure zoom when the target does not move', () => {
+    const p = zoomPanProfile(0, 1, 8);
+    expect(p.at(0.5).width).toBeCloseTo(Math.sqrt(8), 6);
+    expect(p.S).toBeCloseTo(Math.log(8) / Math.SQRT2, 6);
+  });
 });
 
 describe('buildFlightPath', () => {
@@ -150,6 +215,39 @@ describe('buildFlightPath', () => {
     expect(up.length()).toBeCloseTo(1, 6);
     expect(up.y).toBeCloseTo(Math.SQRT1_2, 5);
     expect(up.z).toBeCloseTo(Math.SQRT1_2, 5);
+  });
+
+  it('zoom-pan: same end poses, but pulls back mid-flight on a long jump', () => {
+    const near: CameraSnapshot = { ...from, position: [0, 0, 2], target: [0, 0, 0], fov: 60 };
+    const away: CameraSnapshot = {
+      ...from,
+      position: [40, 0, 2],
+      target: [40, 0, 0],
+      fov: 60,
+      near: 0.1,
+      far: 1000,
+    };
+    const orbit = buildFlightPath(near, away, 'orbit');
+    const zp = buildFlightPath(near, away, 'zoom-pan');
+    for (const s of [0, 1]) {
+      const a = zp.at(s);
+      const b = orbit.at(s);
+      a.position.forEach((v, i) => expect(v).toBeCloseTo(b.position[i], 6));
+      a.target.forEach((v, i) => expect(v).toBeCloseTo(b.target[i], 6));
+    }
+    const dist = (q: CameraSnapshot): number =>
+      new THREE.Vector3(...q.position).distanceTo(new THREE.Vector3(...q.target));
+    expect(dist(orbit.at(0.5))).toBeCloseTo(2, 6); // orbit stays close the whole way
+    expect(dist(zp.at(0.5))).toBeGreaterThan(8); // zoom-pan rises over the jump
+    // The planes follow the pull-back, so the data is not clipped at the top.
+    const mid = zp.at(0.5);
+    expect(mid.far / dist(mid)).toBeCloseTo(1000 / 2, 1);
+  });
+
+  it('zoom-pan falls back to orbit for an orthographic flight', () => {
+    const o0: CameraSnapshot = { ...from, isOrtho: true, fov: undefined, zoom: 1 };
+    const o1: CameraSnapshot = { ...DEST, isOrtho: true, fov: undefined, zoom: 4 };
+    expect(buildFlightPath(o0, o1, 'zoom-pan').at(0.5)).toEqual(buildFlightPath(o0, o1).at(0.5));
   });
 
   it('carries ortho zoom when both ends have one', () => {

@@ -12,6 +12,13 @@
  *   is slerped in direction and log-interpolated in distance, and `up` is
  *   slerped. A straight-line position lerp between two orbit poses passes
  *   through the object (and through the target) — this one keeps the arc.
+ * - The `zoom-pan` trajectory replaces the target/distance half of that with
+ *   van Wijk & Nuij's smooth zooming and panning ("Smooth and efficient zooming
+ *   and panning", InfoVis 2003): the path through (target, view width) space
+ *   that minimises perceived motion. It pulls back while it travels and dives
+ *   in at the end, so content crosses the screen at an even, moderate speed
+ *   instead of racing past at close range on a long jump. Direction and up are
+ *   slerped along it as in `orbit`.
  * - Every frame ends with the same hand-off `restoreCamera()` performs:
  *   `controls.setTarget()` + `controls.reinitialize()` + a controls `change`
  *   event, so the orbit state never snaps back, the render loop wakes, and
@@ -41,14 +48,29 @@ import {
   type CameraSnapshot,
 } from '../snapshot/viewer-snapshot';
 
-/** Easing curve applied to normalised flight time. */
-export type FlightEasing = 'linear' | 'ease-in-out';
+/**
+ * Easing curve applied to normalised flight time. `ease-in-out` is smoothstep
+ * (zero velocity at both ends); `smooth` is smootherstep, which also starts and
+ * ends with zero ACCELERATION — no kick at departure, no jolt on landing.
+ */
+export type FlightEasing = 'linear' | 'ease-in-out' | 'smooth';
+
+/** The path between the two poses (see the module doc). */
+export type FlightTrajectory = 'orbit' | 'zoom-pan';
+
+/**
+ * Van Wijk & Nuij's ρ: how much the path trades zooming for panning. √2 is the
+ * value their user study found most comfortable (and d3's default).
+ */
+export const ZOOM_PAN_RHO = Math.SQRT2;
 
 export interface FlyToOptions {
   /** Flight duration in milliseconds. `0` (or negative) applies the pose immediately. Default 1500. */
   durationMs?: number;
   /** Easing curve. Default `'ease-in-out'` (smoothstep). */
   easing?: FlightEasing;
+  /** Path between the poses. Default `'orbit'`; `'zoom-pan'` needs perspective at both ends. */
+  trajectory?: FlightTrajectory;
   /**
    * Keep the CURRENT viewing direction and up vector; only the focus target,
    * the distance to it, and the projection parameters (fov / zoom / planes)
@@ -110,6 +132,7 @@ function isEditableKeyTarget(target: EventTarget | null): boolean {
 export function easeFlight(t: number, easing: FlightEasing): number {
   const x = t < 0 ? 0 : t > 1 ? 1 : t;
   if (easing === 'linear') return x;
+  if (easing === 'smooth') return x * x * x * (x * (6 * x - 15) + 10);
   return x * x * (3 - 2 * x);
 }
 
@@ -141,10 +164,104 @@ export interface FlightPath {
 }
 
 /**
- * Build the interpolant between two camera snapshots. Exported so the path
- * geometry can be tested without a render loop.
+ * Van Wijk & Nuij's optimal zoom-pan profile between a view of width `w0` and
+ * one of width `w1` whose centres are `travel` apart. `at(f)` returns, for the
+ * fraction `f` of the path's length, how far along the travel the view centre
+ * is (`along`, 0 → 1) and the view width there. The path length `S` is in
+ * their units (zoom-pan "distance"); pure zooms and no-ops are handled. Mirrors
+ * d3-interpolate's `interpolateZoom`. Exported for tests.
  */
-export function buildFlightPath(from: CameraSnapshot, to: CameraSnapshot): FlightPath {
+export function zoomPanProfile(
+  travel: number,
+  w0: number,
+  w1: number,
+  rho: number = ZOOM_PAN_RHO
+): { S: number; at(f: number): { along: number; width: number } } {
+  const rho2 = rho * rho;
+  const rho4 = rho2 * rho2;
+  if (travel < 1e-12 * Math.max(w0, w1, 1e-30)) {
+    const S = Math.log(w1 / w0) / rho;
+    return {
+      S: Math.abs(S),
+      at: (f) => ({ along: f, width: w0 * Math.exp(rho * f * S) }),
+    };
+  }
+  const d2 = travel * travel;
+  const b0 = (w1 * w1 - w0 * w0 + rho4 * d2) / (2 * w0 * rho2 * travel);
+  const b1 = (w1 * w1 - w0 * w0 - rho4 * d2) / (2 * w1 * rho2 * travel);
+  const r0 = Math.log(Math.sqrt(b0 * b0 + 1) - b0);
+  const r1 = Math.log(Math.sqrt(b1 * b1 + 1) - b1);
+  const S = (r1 - r0) / rho;
+  const coshR0 = Math.cosh(r0);
+  return {
+    S,
+    at(f: number) {
+      const s = f * S;
+      const along = (w0 / (rho2 * travel)) * (coshR0 * Math.tanh(rho * s + r0) - Math.sinh(r0));
+      return { along, width: (w0 * coshR0) / Math.cosh(rho * s + r0) };
+    },
+  };
+}
+
+/** View height at `dist` under a vertical field of view of `fovDeg` degrees. */
+function viewHeight(dist: number, fovDeg: number): number {
+  return 2 * dist * Math.tan(THREE.MathUtils.degToRad(fovDeg) / 2);
+}
+
+/**
+ * Build the interpolant between two camera snapshots. Exported so the path
+ * geometry can be tested without a render loop. `zoom-pan` falls back to
+ * `orbit` unless both ends are perspective with a known field of view.
+ */
+export function buildFlightPath(
+  from: CameraSnapshot,
+  to: CameraSnapshot,
+  trajectory: FlightTrajectory = 'orbit'
+): FlightPath {
+  const orbit = buildOrbitPath(from, to);
+  if (trajectory !== 'zoom-pan' || from.isOrtho || to.isOrtho) return orbit;
+  if (from.fov === undefined || to.fov === undefined) return orbit;
+  return buildZoomPanPath(from, to, orbit);
+}
+
+/**
+ * The zoom-pan path: target and distance from {@link zoomPanProfile}, the
+ * view width measured as the frame HEIGHT at the target; direction, up, fov and
+ * the near/far RATIOS to the distance from the orbit path (the planes follow
+ * the pull-back, or the data would clip at the top of the arc).
+ */
+function buildZoomPanPath(from: CameraSnapshot, to: CameraSnapshot, orbit: FlightPath): FlightPath {
+  const target0 = vec3(from.target);
+  const target1 = vec3(to.target);
+  const dist0 = vec3(from.position).sub(target0).length();
+  const dist1 = vec3(to.position).sub(target1).length();
+  if (!(dist0 > 0) || !(dist1 > 0)) return orbit;
+  const fov0 = from.fov as number;
+  const fov1 = to.fov as number;
+  const travel = target0.distanceTo(target1);
+  const profile = zoomPanProfile(travel, viewHeight(dist0, fov0), viewHeight(dist1, fov1));
+  return {
+    at(s: number): CameraSnapshot {
+      const base = orbit.at(s);
+      const { along, width } = profile.at(s);
+      const target = target0.clone().lerp(target1, along);
+      const fov = base.fov ?? fov1;
+      const dist = width / viewHeight(1, fov);
+      const dir = vec3(base.position).sub(vec3(base.target)).normalize();
+      const position = target.clone().addScaledVector(dir, dist);
+      const ratio = THREE.MathUtils.lerp;
+      return {
+        ...base,
+        position: [position.x, position.y, position.z],
+        target: [target.x, target.y, target.z],
+        near: ratio(from.near / dist0, to.near / dist1, s) * dist,
+        far: ratio(from.far / dist0, to.far / dist1, s) * dist,
+      };
+    },
+  };
+}
+
+function buildOrbitPath(from: CameraSnapshot, to: CameraSnapshot): FlightPath {
   const target0 = vec3(from.target);
   const target1 = vec3(to.target);
   const offset0 = vec3(from.position).sub(target0);
@@ -266,7 +383,7 @@ export class CameraFlight {
     const from = captureSnapshot(this.deps.sceneManager).camera;
     return new Promise<FlightResult>((resolve) => {
       this.active = {
-        path: buildFlightPath(from, pose),
+        path: buildFlightPath(from, pose, opts?.trajectory ?? 'orbit'),
         pose,
         startedAt: this.now(),
         durationMs,

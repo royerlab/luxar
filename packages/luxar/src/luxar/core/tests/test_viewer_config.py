@@ -901,6 +901,20 @@ class TestWaypoint:
         # Zero is a legal "snap".
         assert Waypoint(when={"story": 0}, camera=cam, duration_ms=0).duration_ms == 0
 
+    def test_smooth_easing_and_zoom_pan_trajectory_round_trip(self) -> None:
+        cam = CameraConfig(position=(0, 0, 1))
+        wp = Waypoint(
+            when={"story": 1}, camera=cam, easing="smooth", trajectory="zoom-pan"
+        )
+        d = wp.to_dict()
+        assert d["easing"] == "smooth"
+        assert d["trajectory"] == "zoom-pan"
+        back = Waypoint.from_dict(json.loads(json.dumps(d)))
+        assert (back.easing, back.trajectory) == ("smooth", "zoom-pan")
+        with pytest.raises(ValueError, match="trajectory"):
+            Waypoint(when={"story": 0}, camera=cam, trajectory="spline")
+        assert "trajectory" not in Waypoint(when={"story": 0}, camera=cam).to_dict()
+
     def test_reveal_is_validated_and_round_trips(self) -> None:
         cam = CameraConfig(position=(0, 0, 1))
         with pytest.raises(ValueError, match="reveal"):

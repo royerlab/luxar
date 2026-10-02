@@ -146,6 +146,19 @@ from luxar.utils.paths import get_demos_output_dir
 # an audience is the wrong place to discover a hallucinated statistic.
 
 
+#: How a tour flies between stops, shared by both protein tours. ``zoom-pan`` is
+#: van Wijk & Nuij's path: it pulls back while it travels and dives in at the end,
+#: so a jump across the map crosses the screen at an even pace instead of racing
+#: past at close range. ``smooth`` (smootherstep) starts and lands with zero
+#: acceleration, so the camera neither kicks off nor jolts to a stop.
+TOUR_FLIGHT_TRAJECTORY = "zoom-pan"
+TOUR_FLIGHT_EASING = "smooth"
+#: Flight time to an ordinary stop, and to the Overview or a stop that frames the
+#: whole map, where the camera travels furthest.
+TOUR_FLIGHT_MS = 5000
+TOUR_LONG_FLIGHT_MS = 6000
+
+
 @dataclass(frozen=True)
 class Story:
     """One stop of the tour: which proteins, where to look, what to say."""
@@ -176,7 +189,7 @@ class Story:
     frame_fraction: float = 0.46
     #: A safety floor only: the smallest bubble (radius 0.35) frames at ~1.2.
     min_distance: float = 1.0
-    flight_ms: int = 2500
+    flight_ms: int = TOUR_FLIGHT_MS
     tags: tuple[str, ...] = field(default_factory=tuple)
     #: Representative PDB entry rendered as the left-hand turntable ("" = none).
     pdb_id: str = ""
@@ -360,7 +373,7 @@ STORIES: tuple[Story, ...] = (
         radius=1.2,
         kingdom="Viruses",
         frame_fraction=0.72,
-        flight_ms=3000,
+        flight_ms=TOUR_LONG_FLIGHT_MS,
         facts=(
             # Class I fusion proteins share the six-helix-bundle mechanism
             # (J. Virol. 77:8801 (2003); reviews PMC9166635, PMC8709411).
@@ -1382,7 +1395,9 @@ def build_stories_scene(
                 camera=CameraConfig(
                     position=overview_position, target=(0.0, 0.0, 0.0), up=(0, 1, 0)
                 ),
-                duration_ms=3000,
+                duration_ms=TOUR_LONG_FLIGHT_MS,
+                easing=TOUR_FLIGHT_EASING,
+                trajectory=TOUR_FLIGHT_TRAJECTORY,
                 reveal="on_arrival",
             )
         ]
@@ -1392,6 +1407,8 @@ def build_stories_scene(
                     when={STORY_DIM: k},
                     camera=story_camera(c, s, global_centre),
                     duration_ms=s.flight_ms,
+                    easing=TOUR_FLIGHT_EASING,
+                    trajectory=TOUR_FLIGHT_TRAJECTORY,
                     reveal="on_arrival",
                 )
             )

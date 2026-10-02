@@ -318,6 +318,7 @@ export class WaypointDriver {
     const opts: FlyToOptions = {};
     if (typeof wp.duration_ms === 'number') opts.durationMs = wp.duration_ms;
     if (wp.easing) opts.easing = wp.easing;
+    if (wp.trajectory) opts.trajectory = wp.trajectory;
     if (this.ports.autoRotateActive()) opts.keepOrientation = true;
     return opts;
   }

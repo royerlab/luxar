@@ -168,6 +168,30 @@ describe('WaypointDriver', () => {
     expect(ports.flyTo).toHaveBeenLastCalledWith(expect.anything(), {});
   });
 
+  it('passes an authored easing and trajectory through to the flight', () => {
+    const current = { step: [0, 0, 0, 0, 0] };
+    const ports = makePorts(current);
+    const smooth: ZarrWaypoint[] = [
+      { when: { story: 0 }, camera: { position: [0, 0, 5] } },
+      {
+        when: { story: 1 },
+        camera: { position: [5, 0, 0] },
+        duration_ms: 5000,
+        easing: 'smooth',
+        trajectory: 'zoom-pan',
+      },
+    ];
+    const driver = new WaypointDriver(smooth, ports);
+    driver.evaluate('snap');
+    current.step = [0, 0, 0, 1, 0];
+    driver.evaluate('fly');
+    expect(ports.flyTo).toHaveBeenCalledWith(expect.anything(), {
+      durationMs: 5000,
+      easing: 'smooth',
+      trajectory: 'zoom-pan',
+    });
+  });
+
   it('snaps at load and flies on a change of matched waypoint', () => {
     const current = { step: [0, 0, 0, 0, 0] };
     const ports = makePorts(current);

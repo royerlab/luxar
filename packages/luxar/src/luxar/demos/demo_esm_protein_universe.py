@@ -199,6 +199,9 @@ from luxar.demos.demo_esm3_protein_stories import (
     PANEL_WIDTH,
     SPHERE_LAYER_ORDER,
     STORY_DIM,
+    TOUR_FLIGHT_EASING,
+    TOUR_FLIGHT_TRAJECTORY,
+    TOUR_LONG_FLIGHT_MS,
     TURNTABLE_CACHE,
     TURNTABLE_CAPTION_POSITION,
     TURNTABLE_POSITION,
@@ -1268,7 +1271,7 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
         # across the frame like a river, not a dot in the distance.
         side_on=True,
         frame_fraction=1.2,
-        flight_ms=3000,
+        flight_ms=TOUR_LONG_FLIGHT_MS,
         facts=(
             # Linton & Higgins, Mol. Microbiol. 28:5 (1998): ~5% of the E. coli
             # genome encodes ABC transporter components.
@@ -2154,7 +2157,7 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
         scatter=True,
         color=(1.0, 1.0, 0.95),
         frame_fraction=1.0,
-        flight_ms=3000,
+        flight_ms=TOUR_LONG_FLIGHT_MS,
         facts=(
             "Levodopa is the mainstay of Parkinson's treatment, and it only "
             "works if it reaches the brain. Gut bacteria carrying tyrosine "
@@ -3158,7 +3161,9 @@ def build_universe_scene(
                 camera=CameraConfig(
                     position=pull_in(overview_raw), target=(0.0, 0.0, 0.0), up=(0, 1, 0)
                 ),
-                duration_ms=3000,
+                duration_ms=TOUR_LONG_FLIGHT_MS,
+                easing=TOUR_FLIGHT_EASING,
+                trajectory=TOUR_FLIGHT_TRAJECTORY,
                 reveal="on_arrival",
             )
         ]
@@ -3174,6 +3179,8 @@ def build_universe_scene(
                         figure=figures.get(s.key),
                     ),
                     duration_ms=s.flight_ms,
+                    easing=TOUR_FLIGHT_EASING,
+                    trajectory=TOUR_FLIGHT_TRAJECTORY,
                     reveal="on_arrival",
                 )
             )
