@@ -16,10 +16,8 @@ import type * as THREE from 'three';
 
 import type { LODGroupRegistryOwner } from '../../../data/scene-loader';
 import type { LODGroupRegistryDeps } from '../../../scene/lod-group-registry';
-import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { ViewContext } from '../../../scene/view-context';
 import { getGpuByteBudget } from '../../../rendering/gpu-byte-budget';
-import { materialManager } from '../../../rendering/material-manager';
 
 /** What the render-loop owner supplies; every accessor is read live. */
 export interface LodRegistryWiring {
@@ -27,6 +25,10 @@ export interface LodRegistryWiring {
   getCamera(): THREE.Camera;
   /** Viewport size in CSS pixels. */
   getViewportSize(): { width: number; height: number };
+  /** Displayed dimensions from this render-loop owner's scene. */
+  getDisplayDims(): number[];
+  /** Register fade clones with this owner's material manager. */
+  registerMaterial(material: THREE.Material): void;
   /** The frame's shared camera snapshot; omitted ⇒ the registry builds its own. */
   getViewContext?(): ViewContext;
   /**
@@ -68,7 +70,7 @@ export function buildLodRegistryDeps(
     // Empty, not [0, 1, 2], before dims resolve: the registry's
     // `displayDims.length < 2` early-return then skips evaluation, whereas the
     // plausible-looking default projects a 2D scene onto a phantom Z.
-    getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
+    getDisplayDims: () => wiring.getDisplayDims(),
     hasArchiveFault: () => owner.archiveFault !== null,
     hasNetworkFailureUnder: (path) => owner.hasNetworkFailureUnder(path),
     requestReprocess: (paths) => owner.requestReprocess(paths),
@@ -97,6 +99,6 @@ export function buildLodRegistryDeps(
     getLodBias: () => lodBias,
     // A fade's clone-on-first-use material keeps receiving per-frame camera
     // uniforms (an unregistered gsplat clone would project with stale params).
-    registerMaterial: (material) => materialManager.register(material),
+    registerMaterial: (material) => wiring.registerMaterial(material),
   };
 }

@@ -954,7 +954,7 @@ export function warmWorkerCodecs(): void {
  *
  * The config guard preserves the existing "Web Workers disabled" contract;
  * warming must not fetch WASM or spawn workers no data path will use. The
- * `Worker` guard mirrors `warmUpDepthSortWorker`: the unit suite runs in
+ * `Worker` guard mirrors `warmUpSortWorker`: the unit suite runs in
  * node/jsdom with no constructor, where spawning would latch the pool's
  * deliberately-sticky rejected `initPromise` for the rest of the file.
  */
@@ -971,7 +971,34 @@ export function warmUpDataWorkerPool(): void {
 }
 
 /**
- * Dispose the global worker pool (for testing/cleanup)
+ * The Luxar hosts (the LuxarApp, each LuxarLayer) currently using the shared
+ * data-worker pool. The pool is page-wide on purpose — one set of workers per
+ * page is the right resource model — so a host's teardown must not terminate it
+ * while another host still decodes through it.
+ */
+const workerPoolHosts = new Set<object>();
+
+/** Declare that `host` uses the shared pool (idempotent). */
+export function retainWorkerPool(host: object): void {
+  workerPoolHosts.add(host);
+}
+
+/**
+ * `host` is done with the shared pool. The pool is disposed once no host holds
+ * it any more — including when `host` never retained it (a teardown after a
+ * failed init), so a pool nobody else holds is still cleaned up. Returns whether
+ * this call disposed the pool.
+ */
+export function releaseWorkerPool(host: object | undefined): boolean {
+  if (host) workerPoolHosts.delete(host);
+  if (workerPoolHosts.size > 0) return false;
+  disposeWorkerPool();
+  return true;
+}
+
+/**
+ * Dispose the global worker pool unconditionally (tests; the last host's
+ * {@link releaseWorkerPool}).
  */
 export function disposeWorkerPool(): void {
   if (workerPoolInstance) {

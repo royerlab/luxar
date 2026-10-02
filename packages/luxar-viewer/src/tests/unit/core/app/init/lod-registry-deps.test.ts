@@ -26,11 +26,32 @@ function makeOwner(): LODGroupRegistryOwner {
 }
 
 describe('buildLodRegistryDeps', () => {
+  it('reads live display dims and registers fade materials with its owner', () => {
+    let displayed = [1, 2, 3];
+    const registerMaterial = vi.fn();
+    const deps = buildLodRegistryDeps(makeOwner(), {
+      getCamera: () => new THREE.PerspectiveCamera(),
+      getViewportSize: () => ({ width: 10, height: 20 }),
+      getDisplayDims: () => displayed,
+      registerMaterial,
+      requestRender: vi.fn(),
+    });
+    expect(deps.getDisplayDims()).toEqual([1, 2, 3]);
+    displayed = [0, 2];
+    expect(deps.getDisplayDims()).toEqual([0, 2]);
+
+    const material = new THREE.MeshBasicMaterial();
+    deps.registerMaterial?.(material);
+    expect(registerMaterial).toHaveBeenCalledExactlyOnceWith(material);
+  });
+
   it('routes every loader-derived dep to the owning loader', () => {
     const owner = makeOwner();
     const deps = buildLodRegistryDeps(owner, {
       getCamera: () => new THREE.PerspectiveCamera(),
       getViewportSize: () => ({ width: 10, height: 20 }),
+      getDisplayDims: () => [0, 1, 2],
+      registerMaterial: vi.fn(),
       requestRender: vi.fn(),
     });
 
@@ -50,6 +71,8 @@ describe('buildLodRegistryDeps', () => {
     const deps = buildLodRegistryDeps(makeOwner(), {
       getCamera: () => new THREE.PerspectiveCamera(),
       getViewportSize: () => ({ width: 1, height: 1 }),
+      getDisplayDims: () => [0, 1, 2],
+      registerMaterial: vi.fn(),
       requestRender: vi.fn(),
     });
     expect(deps.getCrossFadeEnabled?.()).toBe(true);
@@ -62,6 +85,8 @@ describe('buildLodRegistryDeps', () => {
     const bare = buildLodRegistryDeps(makeOwner(), {
       getCamera: () => new THREE.PerspectiveCamera(),
       getViewportSize: () => ({ width: 1, height: 1 }),
+      getDisplayDims: () => [0, 1, 2],
+      registerMaterial: vi.fn(),
       requestRender: vi.fn(),
     });
     expect('requestTick' in bare).toBe(false);
@@ -72,6 +97,8 @@ describe('buildLodRegistryDeps', () => {
     const full = buildLodRegistryDeps(makeOwner(), {
       getCamera: () => new THREE.PerspectiveCamera(),
       getViewportSize: () => ({ width: 1, height: 1 }),
+      getDisplayDims: () => [0, 1, 2],
+      registerMaterial: vi.fn(),
       requestRender: vi.fn(),
       requestTick,
       getPlaybackPeriodMs: () => 40,

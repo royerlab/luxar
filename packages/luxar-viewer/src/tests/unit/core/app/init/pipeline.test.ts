@@ -49,6 +49,16 @@ function makeSceneStub(opts: { initThrows?: boolean } = {}) {
     // runtime here; `environment` stays null so the per-frame tick is a no-op.
     attachEnvironmentRuntime: vi.fn(),
     environment: null,
+    // The app's depth-sort coordinator, owned by the scene manager; stubbed so
+    // the wiring and warm-up are observable (and no real SortWorker/WASM is
+    // spawned here).
+    depthSort: {
+      configure: vi.fn(),
+      setEnabled: vi.fn(),
+      warmUp: vi.fn(),
+      evaluatePerFrame: vi.fn(),
+      isAvailable: vi.fn(() => true),
+    },
   };
 }
 function makeAnimationStub() {
@@ -202,14 +212,6 @@ vi.mock('../../../../../data/scene-loader-manager', () => ({
 vi.mock('../../../../../utils/cross-layer/notifier', () => ({
   notifier: { error: vi.fn() },
 }));
-// The coordinator is module-scoped live authority; mocked so the warm-up
-// call is observable (and so no real SortWorker/WASM is spawned here).
-vi.mock('../../../../../rendering/depth-sort-coordinator', () => ({
-  configureDepthSort: vi.fn(),
-  setDepthSortEnabled: vi.fn(),
-  warmUpDepthSortWorker: vi.fn(),
-  evaluateDepthSortPerFrame: vi.fn(),
-}));
 vi.mock('../../../../../utils/input-capabilities', () => ({
   getInputProfile: () => inputProfile,
 }));
@@ -223,11 +225,7 @@ vi.mock('../../../../../rendering/gpu-byte-budget', async (importOriginal) => ({
 import { InputHandler, KeyAction } from '../../../../../input';
 import { ControlRail } from '../../../../../ui/control-rail';
 import { getSceneLoader, SceneLoaderManager } from '../../../../../data/scene-loader-manager';
-import {
-  configureDepthSort,
-  setDepthSortEnabled,
-  warmUpDepthSortWorker,
-} from '../../../../../rendering/depth-sort-coordinator';
+import { DataMonitorManager } from '../../../../../ui/data-monitor-manager';
 import {
   DEFAULT_MAX_PIXEL_RATIO,
   setMaxPixelRatioCap,
@@ -695,21 +693,44 @@ describe('runInitPipeline', () => {
       // for the main thread and misses its init deadline at a few million
       // elements, which used to disable sorting for the session.
       //
-      // Order is load-bearing, not cosmetic: `warmUpDepthSortWorker` early-outs
-      // on the `depthSortEnabled` flag, so warming up before
-      // `setDepthSortEnabled` would spawn a worker (and load WASM) for a
-      // `?depthSort=0` session, and before `configureDepthSort` a starved
-      // retry's self-wake would have no `requestRender` to call.
-      const { factories } = makeFactoryOverrides();
+      // Order is load-bearing, not cosmetic: `warmUp` early-outs on the
+      // coordinator's enabled flag, so warming up before `setEnabled` would
+      // spawn a worker (and load WASM) for a `?depthSort=0` session, and before
+      // `configure` a starved retry's self-wake would have no `requestRender`
+      // to call.
+      const { factories, sceneStub } = makeFactoryOverrides();
       const ports = makePorts();
       ports.options.factories = factories as never;
 
       await runInitPipeline(ports, {});
 
-      expect(warmUpDepthSortWorker).toHaveBeenCalledTimes(1);
-      const warmUpOrder = vi.mocked(warmUpDepthSortWorker).mock.invocationCallOrder[0];
-      expect(vi.mocked(setDepthSortEnabled).mock.invocationCallOrder[0]).toBeLessThan(warmUpOrder);
-      expect(vi.mocked(configureDepthSort).mock.invocationCallOrder[0]).toBeLessThan(warmUpOrder);
+      const depthSort = sceneStub.depthSort;
+      expect(depthSort.warmUp).toHaveBeenCalledTimes(1);
+      const warmUpOrder = depthSort.warmUp.mock.invocationCallOrder[0];
+      expect(depthSort.setEnabled.mock.invocationCallOrder[0]).toBeLessThan(warmUpOrder);
+      expect(depthSort.configure.mock.invocationCallOrder[0]).toBeLessThan(warmUpOrder);
+    });
+
+    it("wires the app coordinator's verdict into each monitor the factory creates", async () => {
+      // The degrade note reads THIS app's coordinator, not a module-wide one.
+      const { factories, sceneStub } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+      await runInitPipeline(ports, {});
+
+      const monitor = { setDensityProvider: vi.fn(), setDepthSortAvailabilityProvider: vi.fn() };
+      const manager = vi.mocked(DataMonitorManager.getInstance)();
+      vi.mocked(manager.hasMonitor).mockReturnValueOnce(false);
+      vi.mocked(manager.getMonitor).mockReturnValue(monitor as never);
+      const factory = vi.mocked(SceneLoaderManager.getInstance().setMonitorFactory).mock
+        .calls[0][0]!;
+      factory('default');
+
+      const provider = monitor.setDepthSortAvailabilityProvider.mock.calls[0][0] as () => boolean;
+      sceneStub.depthSort.isAvailable.mockReturnValueOnce(false);
+      expect(provider()).toBe(false);
+      expect(sceneStub.depthSort.isAvailable).toHaveBeenCalled();
+      vi.mocked(manager.getMonitor).mockReturnValue(null as never);
     });
   });
 

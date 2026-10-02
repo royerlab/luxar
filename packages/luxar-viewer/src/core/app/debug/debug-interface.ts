@@ -21,11 +21,7 @@ import {
 import { getBlendModeProgramWarmupStats } from '../../../rendering/webgl-blend-warmup';
 import { materialManager, type BlendingMode } from '../../../rendering/material-manager';
 import { normalizeBlendingMode } from '../../../rendering/blending-state';
-import {
-  getDepthSortWorkerStatus,
-  noteDepthSortCommit,
-  resortForCapture,
-} from '../../../rendering/depth-sort-coordinator';
+import { getDepthSortWorkerStatus } from '../../../rendering/depth-sort-coordinator';
 import { setCommittedData } from '../../../types/committed-data';
 import { resolveLinePrimitiveForNode } from '../../../types/line-primitive';
 import type { LoadedPointsData } from '../../../types/points';
@@ -207,7 +203,8 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     // depth-sort scheduler dead — without this each frame renders the
     // permutation frozen at the pre-orbit pose. Resolves when ordering is
     // settled (or after an internal safety timeout).
-    resortDepthOrderingForCapture: (maxWaitMs?: number) => resortForCapture(maxWaitMs),
+    resortDepthOrderingForCapture: (maxWaitMs?: number) =>
+      ports.sceneManager.depthSort.resortForCapture(maxWaitMs),
 
     // Why the scene may be drawn UNSORTED (issue #1694). `idle` = the sort
     // worker was never spawned or its init is still in flight; `ready` =
@@ -262,7 +259,7 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
     // ('additive') while points/gsplats default to 'normal' so the
     // depth-sort subsystem engages; `spec.blending` overrides either.
     // Points/gsplats also stamp `committedData` and call
-    // `noteDepthSortCommit` — the same signals the production commit
+    // `depthSort.noteCommit` — the same signals the production commit
     // path emits — so the SortWorker registers the node and orderings
     // actually apply (the coordinator drops orderings for meshes
     // without the stamp).
@@ -385,7 +382,11 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
           // live mode is order-dependent. The thunk hands the worker a
           // FRESH buffer (it is transferred) and only pays the copy on
           // the sorted path.
-          noteDepthSortCommit(mesh, () => cfg.centers.slice(0, clamped * 3), clamped);
+          ports.sceneManager.depthSort.noteCommit(
+            mesh,
+            () => cfg.centers.slice(0, clamped * 3),
+            clamped
+          );
           ports.animationController.startAnimation();
           return { type: 'gsplats', splatCount: cfg.splatCount, elementCount: clamped, mesh };
         }
@@ -441,7 +442,11 @@ export function installDebugInterface(ports: InstallDebugInterfacePorts): void {
           syncPointMaterialWithGeometry(mesh);
           setCommittedData(mesh, data);
           scene.add(mesh);
-          noteDepthSortCommit(mesh, () => cfg.positions.slice(0, clamped * 3), clamped);
+          ports.sceneManager.depthSort.noteCommit(
+            mesh,
+            () => cfg.positions.slice(0, clamped * 3),
+            clamped
+          );
           ports.animationController.startAnimation();
           return { type: 'points', pointCount: cfg.pointCount, elementCount: clamped, mesh };
         }

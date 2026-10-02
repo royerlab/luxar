@@ -88,7 +88,7 @@ export const COVERAGE_THRESHOLDS = {
   // characterization tests (2026-09) lifted the subtree 89.2 -> 91.2. Raised
   // because check-coverage-slack.mjs flagged the old floor as stale, which is
   // the ratchet working: tests move the measurement, the guard moves the floor.
-  'src/data/**': { lines: 92, functions: 90, branches: 86 },
+  'src/data/**': { lines: 92, functions: 92, branches: 86 },
   // functions 88 -> 90 after the worker-pool startup tests (first-worker-ready,
   // warm-up, shared-module) reached the gate/publish/warm-up paths nothing had
   // called: the subtree went 90.60 -> 91.41 and check-coverage-slack.mjs flagged
@@ -142,7 +142,7 @@ export const COVERAGE_RECORDED = {
   'src/scene/**': { lines: 96.28, functions: 91.08, branches: 91.15 },
   'src/cache/**': { lines: 95.03, functions: 95.12, branches: 87.23 },
   'src/controls/**': { lines: 96.32, functions: 91.21, branches: 89.44 },
-  'src/data/**': { lines: 93.6, functions: 92.03, branches: 87.31 },
+  'src/data/**': { lines: 93.6, functions: 93.08, branches: 87.31 },
   'src/workers/**': { lines: 93.8, functions: 94.05, branches: 88.52 },
   'src/ui/**': { lines: 92.0, functions: 86.95, branches: 79.58 },
   'src/core/**': { lines: 92.15, functions: 81.03, branches: 86.94 },

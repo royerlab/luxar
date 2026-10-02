@@ -190,6 +190,16 @@ describe('LuxarApp', () => {
       getSceneBakedEnvironment: vi.fn().mockReturnValue(null),
       attachEnvironmentRuntime: vi.fn(),
       environment: null,
+      // The app's depth-sort coordinator rides the scene manager.
+      depthSort: {
+        setEnabled: vi.fn(),
+        configure: vi.fn(),
+        warmUp: vi.fn(),
+        evaluatePerFrame: vi.fn(() => false),
+        isAvailable: vi.fn(() => true),
+        resortForCapture: vi.fn(async () => {}),
+        dispose: vi.fn(),
+      },
       dispose: vi.fn(),
       renderer: { domElement: {} },
       scene: {},
@@ -919,6 +929,14 @@ describe('LuxarApp', () => {
       expect(mockCleanupUI).toHaveBeenCalled();
     });
 
+    it("disposes the app's own depth-sort coordinator", () => {
+      // Per app, not module-wide: a LuxarLayer sharing the page keeps its own,
+      // and the shared SortWorker survives until the last coordinator goes.
+      app.dispose();
+
+      expect(mockSceneManager.depthSort.dispose).toHaveBeenCalledTimes(1);
+    });
+
     it('gives the page its own title back', () => {
       // document.title is a host-page global: an embedder that removes the
       // viewer must not be left with a tab named after a torn-down scene.
@@ -1081,7 +1099,7 @@ describe('LuxarApp', () => {
     it('still disposes singletons + workerPool when an early component throws', async () => {
       // Pre-existing dispose() wrapped everything in one
       // try/catch, so a throw early in the chain (sceneManager etc.)
-      // skipped DataMonitorManager / SceneLoaderManager / disposeWorkerPool
+      // skipped DataMonitorManager / SceneLoaderManager / releaseWorkerPool
       // / managerRegistry. The safeDispose helper guarantees later
       // teardown runs regardless.
       const sceneLoaderModule = await import('../../../data/scene-loader-manager');
@@ -1090,7 +1108,7 @@ describe('LuxarApp', () => {
 
       const sceneLoaderSpy = vi.spyOn(sceneLoaderModule.SceneLoaderManager, 'disposeInstance');
       const dataMonitorSpy = vi.spyOn(dataMonitorModule.DataMonitorManager, 'disposeInstance');
-      const workerPoolSpy = vi.spyOn(workerPoolModule, 'disposeWorkerPool');
+      const workerPoolSpy = vi.spyOn(workerPoolModule, 'releaseWorkerPool');
 
       // Force an early disposer to throw — animationController is the
       // very first call site inside dispose().
@@ -1113,7 +1131,7 @@ describe('LuxarApp', () => {
 
       const sceneLoaderSpy = vi.spyOn(sceneLoaderModule.SceneLoaderManager, 'disposeInstance');
       const dataMonitorSpy = vi.spyOn(dataMonitorModule.DataMonitorManager, 'disposeInstance');
-      const workerPoolSpy = vi.spyOn(workerPoolModule, 'disposeWorkerPool');
+      const workerPoolSpy = vi.spyOn(workerPoolModule, 'releaseWorkerPool');
 
       // sceneManager sits in the middle of the dispose chain — between
       // the UI/scene panels and the singleton/worker teardown.
@@ -1136,7 +1154,7 @@ describe('LuxarApp', () => {
       const workerPoolModule = await import('../../../workers/worker-pool');
 
       const sceneLoaderSpy = vi.spyOn(sceneLoaderModule.SceneLoaderManager, 'disposeInstance');
-      const workerPoolSpy = vi.spyOn(workerPoolModule, 'disposeWorkerPool');
+      const workerPoolSpy = vi.spyOn(workerPoolModule, 'releaseWorkerPool');
 
       app.dispose();
 

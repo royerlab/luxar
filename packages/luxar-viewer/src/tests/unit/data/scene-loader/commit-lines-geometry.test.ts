@@ -13,9 +13,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 
 const mockNoteDepthSortCommit = vi.fn();
-vi.mock('../../../../rendering/depth-sort-coordinator', () => ({
-  noteDepthSortCommit: (...args: unknown[]) => mockNoteDepthSortCommit(...args),
-}));
 
 // Mock the GPU update fn so the no-pool path's actual dispatch can be
 // asserted (a mutant that drops this call would otherwise still pass the
@@ -31,6 +28,8 @@ vi.mock('../../../../rendering/line-geometry', () => ({
 }));
 
 import { commitLinesGeometry } from '../../../../data/scene-loader/commit/commit-lines-geometry';
+import type { DepthSortCoordinator } from '../../../../rendering/depth-sort-coordinator';
+import type { GPUBufferPool } from '../../../../rendering/gpu-buffer-pool';
 import {
   configureElementTextureLayout,
   resetElementTextureLayoutForTests,
@@ -40,6 +39,14 @@ import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import { configureRenderObjectEviction } from '../../../../data/scene-loader/commit/invalidate-render-object';
 import type { StagedLinesCommit } from '../../../../data/scene-loader/process/data-processor-lines';
 import type { ProcessedLinesData } from '../../../../types/lines';
+
+/** The commit host; its coordinator only records `noteCommit` calls. */
+function testHost(rootGroup: THREE.Group | null, gpuBufferPool: GPUBufferPool | null) {
+  const depthSort = {
+    noteCommit: (...args: unknown[]) => mockNoteDepthSortCommit(...args),
+  } as unknown as DepthSortCoordinator;
+  return { rootGroup, gpuBufferPool, depthSort };
+}
 
 function makeProcessed(segmentCount = 2): ProcessedLinesData {
   return {
@@ -89,7 +96,7 @@ describe('commitLinesGeometry', () => {
       sourceData: makeSourceData(),
       processed: makeProcessed(),
     };
-    expect(() => commitLinesGeometry(staged, null, null, undefined, 0)).not.toThrow();
+    expect(() => commitLinesGeometry(staged, testHost(null, null), undefined, 0)).not.toThrow();
   });
 
   it('no-ops silently when the mesh has gone missing', () => {
@@ -99,7 +106,7 @@ describe('commitLinesGeometry', () => {
       sourceData: makeSourceData(),
       processed: makeProcessed(),
     };
-    expect(() => commitLinesGeometry(staged, root, null, undefined, 0)).not.toThrow();
+    expect(() => commitLinesGeometry(staged, testHost(root, null), undefined, 0)).not.toThrow();
   });
 
   it('writes visibleSegmentCount on the mesh userData', () => {
@@ -109,7 +116,7 @@ describe('commitLinesGeometry', () => {
     root.add(mesh);
     const processed = makeProcessed(7);
     const staged: StagedLinesCommit = { path: '/lines', sourceData: makeSourceData(), processed };
-    commitLinesGeometry(staged, root, null, undefined, 0);
+    commitLinesGeometry(staged, testHost(root, null), undefined, 0);
     expect(mesh.userData.visibleSegmentCount).toBe(7);
     expect(mesh.userData.requestedElementCount).toBe(7);
     // C6[P2][P11]: pin the actual GPU dispatch — a mutant dropping the
@@ -133,7 +140,7 @@ describe('commitLinesGeometry', () => {
       sourceData: makeSourceData(4),
       processed: makeProcessed(4),
     };
-    commitLinesGeometry(staged, root, null, undefined, 9);
+    commitLinesGeometry(staged, testHost(root, null), undefined, 9);
     expect((mesh.userData as { loadedViewVersion?: number }).loadedViewVersion).toBe(9);
   });
 
@@ -160,7 +167,7 @@ describe('commitLinesGeometry', () => {
       processed: makeProcessed(11),
     };
     mockUpdateInstancedLinesMesh.mockReset();
-    expect(() => commitLinesGeometry(staged, root, mockPool, undefined, 0)).not.toThrow();
+    expect(() => commitLinesGeometry(staged, testHost(root, mockPool), undefined, 0)).not.toThrow();
     expect(mesh.userData.visibleSegmentCount).toBe(11);
     // Pool path must NOT fall through to the no-pool instanced-mesh update.
     expect(mockUpdateInstancedLinesMesh).not.toHaveBeenCalled();
@@ -194,7 +201,7 @@ describe('commitLinesGeometry', () => {
       sourceData: makeSourceData(3),
       processed: makeProcessed(3),
     };
-    expect(() => commitLinesGeometry(staged, root, pool as never, undefined, 0)).toThrow(
+    expect(() => commitLinesGeometry(staged, testHost(root, pool as never), undefined, 0)).toThrow(
       'upload failed'
     );
 
@@ -228,7 +235,7 @@ describe('commitLinesGeometry', () => {
       sourceData: makeSourceData(2),
       processed: makeProcessed(2),
     };
-    commitLinesGeometry(first, root, pool as never, undefined, 1);
+    commitLinesGeometry(first, testHost(root, pool as never), undefined, 1);
     expect((mesh.userData as { gpuPrefixIntact?: boolean }).gpuPrefixIntact).toBe(true);
 
     pool.updateLinesGeometry.mockImplementation(() => {
@@ -239,7 +246,7 @@ describe('commitLinesGeometry', () => {
       sourceData: makeSourceData(5),
       processed: makeProcessed(5),
     };
-    expect(() => commitLinesGeometry(second, root, pool as never, undefined, 2)).toThrow(
+    expect(() => commitLinesGeometry(second, testHost(root, pool as never), undefined, 2)).toThrow(
       'upload failed'
     );
 
@@ -264,7 +271,7 @@ describe('commitLinesGeometry', () => {
       sourceData: makeSourceData(11),
       processed: makeProcessed(11),
     };
-    commitLinesGeometry(staged, root, pool as never, undefined, 0);
+    commitLinesGeometry(staged, testHost(root, pool as never), undefined, 0);
 
     expect(mesh.geometry).toBe(newGeometry);
     expect(mesh.geometry).not.toBe(beforeGeom);
@@ -300,7 +307,7 @@ describe('commitLinesGeometry — append fast path (Phase 4 Stage 2, fromInstanc
     prevCount: number,
     newCount: number
   ): StagedLinesCommit => {
-    commitLinesGeometry(makeStaged(prevCount), root, pool as never, undefined, 0);
+    commitLinesGeometry(makeStaged(prevCount), testHost(root, pool as never), undefined, 0);
     const committed = (root.children[0].userData as { committedData: object }).committedData;
     const next = makeStaged(newCount);
     setPrefixParent(next.sourceData, committed); // forward-chain lineage
@@ -312,7 +319,7 @@ describe('commitLinesGeometry — append fast path (Phase 4 Stage 2, fromInstanc
     root.add(makeMesh('/lines'));
     const pool = makePool(new THREE.BufferGeometry());
     const next = primeAndExtend(root, pool, 4, 6);
-    commitLinesGeometry(next, root, pool as never, undefined, 1);
+    commitLinesGeometry(next, testHost(root, pool as never), undefined, 1);
     expect(lastOpts(pool).fromInstance).toBe(4);
     // Positive-path bookkeeping stamp re-enables the NEXT append.
     expect((root.children[0].userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(true);
@@ -324,11 +331,11 @@ describe('commitLinesGeometry — append fast path (Phase 4 Stage 2, fromInstanc
   it('consumes the lineage entry on the NON-pool path too', () => {
     const root = new THREE.Group();
     root.add(makeMesh('/lines'));
-    commitLinesGeometry(makeStaged(4), root, null, undefined, 0);
+    commitLinesGeometry(makeStaged(4), testHost(root, null), undefined, 0);
     const committed = (root.children[0].userData as { committedData: object }).committedData;
     const next = makeStaged(6);
     setPrefixParent(next.sourceData, committed);
-    commitLinesGeometry(next, root, null, undefined, 1);
+    commitLinesGeometry(next, testHost(root, null), undefined, 1);
     expect(getPrefixParent(next.sourceData)).toBeUndefined();
   });
 
@@ -336,9 +343,9 @@ describe('commitLinesGeometry — append fast path (Phase 4 Stage 2, fromInstanc
     const root = new THREE.Group();
     root.add(makeMesh('/lines'));
     const pool = makePool(new THREE.BufferGeometry());
-    commitLinesGeometry(makeStaged(4), root, pool as never, undefined, 0);
+    commitLinesGeometry(makeStaged(4), testHost(root, pool as never), undefined, 0);
     // A larger commit with NO lineage stamp: full rewrite.
-    commitLinesGeometry(makeStaged(6), root, pool as never, undefined, 1);
+    commitLinesGeometry(makeStaged(6), testHost(root, pool as never), undefined, 1);
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
@@ -348,7 +355,7 @@ describe('commitLinesGeometry — append fast path (Phase 4 Stage 2, fromInstanc
     const pool = makePool(new THREE.BufferGeometry());
     const next = primeAndExtend(root, pool, 4, 6);
     (root.children[0].userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact = false;
-    commitLinesGeometry(next, root, pool as never, undefined, 1);
+    commitLinesGeometry(next, testHost(root, pool as never), undefined, 1);
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
@@ -360,7 +367,7 @@ describe('commitLinesGeometry — append fast path (Phase 4 Stage 2, fromInstanc
     // Grow handed back a different geometry with rebuilt attributes.
     pool.acquireLinesGeometry.mockReturnValue(new THREE.BufferGeometry());
     pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
-    commitLinesGeometry(next, root, pool as never, undefined, 1);
+    commitLinesGeometry(next, testHost(root, pool as never), undefined, 1);
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
@@ -369,14 +376,14 @@ describe('commitLinesGeometry — append fast path (Phase 4 Stage 2, fromInstanc
     root.add(makeMesh('/lines'));
     const pool = makePool(new THREE.BufferGeometry());
     const same = primeAndExtend(root, pool, 5, 5); // same count, lineage set
-    commitLinesGeometry(same, root, pool as never, undefined, 1);
+    commitLinesGeometry(same, testHost(root, pool as never), undefined, 1);
     expect(lastOpts(pool).fromInstance).toBe(0);
     const shrunk = makeStaged(3);
     setPrefixParent(
       shrunk.sourceData,
       (root.children[0].userData as { committedData: object }).committedData
     );
-    commitLinesGeometry(shrunk, root, pool as never, undefined, 2);
+    commitLinesGeometry(shrunk, testHost(root, pool as never), undefined, 2);
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
@@ -389,7 +396,7 @@ describe('commitLinesGeometry — append fast path (Phase 4 Stage 2, fromInstanc
     const pool = makePool(new THREE.BufferGeometry());
     const next = primeAndExtend(root, pool, 4, 6); // committed sourceData.colors = null
     (next.sourceData as { colors: Float32Array | null }).colors = new Float32Array(6 * 2 * 3);
-    commitLinesGeometry(next, root, pool as never, undefined, 1);
+    commitLinesGeometry(next, testHost(root, pool as never), undefined, 1);
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
@@ -405,7 +412,7 @@ describe('commitLinesGeometry — append fast path (Phase 4 Stage 2, fromInstanc
     // Committed prefix: RGB colors (colorComponents unset → 3).
     const first = makeStaged(4);
     (first.sourceData as { colors: Float32Array | null }).colors = new Float32Array(4 * 2 * 3);
-    commitLinesGeometry(first, root, pool as never, undefined, 0);
+    commitLinesGeometry(first, testHost(root, pool as never), undefined, 0);
     const committed = (root.children[0].userData as { committedData: object }).committedData;
     // Genuine extension in every other respect — lineage intact, count
     // grew, colors present — but declared RGBA.
@@ -413,7 +420,7 @@ describe('commitLinesGeometry — append fast path (Phase 4 Stage 2, fromInstanc
     (next.sourceData as { colors: Float32Array | null }).colors = new Float32Array(6 * 2 * 4);
     (next.sourceData as { colorComponents?: 3 | 4 }).colorComponents = 4;
     setPrefixParent(next.sourceData, committed);
-    commitLinesGeometry(next, root, pool as never, undefined, 1);
+    commitLinesGeometry(next, testHost(root, pool as never), undefined, 1);
     expect(lastOpts(pool).fromInstance).toBe(0); // full rewrite, not an append
   });
 });
@@ -429,7 +436,7 @@ describe('commitLinesGeometry — no-op commit skip (committedData)', () => {
       sourceData: makeSourceData(3),
       processed: makeProcessed(3),
     };
-    commitLinesGeometry(staged, root, null, undefined, 4);
+    commitLinesGeometry(staged, testHost(root, null), undefined, 4);
     if (staged.noop) throw new Error('expected geometry staged commit');
     expect((mesh.userData as { committedData?: unknown }).committedData).toBe(staged.sourceData);
   });
@@ -446,7 +453,7 @@ describe('commitLinesGeometry — no-op commit skip (committedData)', () => {
       noop: true,
       sourceData: makeSourceData(3),
     };
-    commitLinesGeometry(noop, root, null, undefined, 9);
+    commitLinesGeometry(noop, testHost(root, null), undefined, 9);
 
     expect((mesh.userData as { loadedViewVersion?: number }).loadedViewVersion).toBe(9);
     expect(mesh.geometry).toBe(geometryBefore);
@@ -472,7 +479,7 @@ describe('commitLinesGeometry — elementIdMap stamp', () => {
       sourceData: makeSourceData(3),
       processed: { ...makeProcessed(3), elementIds },
     };
-    commitLinesGeometry(staged, root, null, undefined, 1);
+    commitLinesGeometry(staged, testHost(root, null), undefined, 1);
     if (staged.noop) throw new Error('expected geometry staged commit');
     expect(stampOf(mesh)).toBe(elementIds);
     expect((mesh.userData as { committedData?: unknown }).committedData).toBe(staged.sourceData);
@@ -491,8 +498,7 @@ describe('commitLinesGeometry — elementIdMap stamp', () => {
         sourceData: makeSourceData(3),
         processed: { ...makeProcessed(3), elementIds: new Uint32Array([7, 8, 9]) },
       },
-      root,
-      null,
+      testHost(root, null),
       undefined,
       1
     );
@@ -500,8 +506,7 @@ describe('commitLinesGeometry — elementIdMap stamp', () => {
 
     commitLinesGeometry(
       { path: '/lines', sourceData: makeSourceData(2), processed: makeProcessed(2) },
-      root,
-      null,
+      testHost(root, null),
       undefined,
       2
     );
@@ -519,14 +524,13 @@ describe('commitLinesGeometry — elementIdMap stamp', () => {
       sourceData: makeSourceData(3),
       processed: { ...makeProcessed(3), elementIds: new Uint32Array([5, 102, 103]) },
     };
-    commitLinesGeometry(first, root, null, undefined, 1);
+    commitLinesGeometry(first, testHost(root, null), undefined, 1);
     const stampAfterCommit = stampOf(mesh);
     const committedAfterCommit = (mesh.userData as { committedData?: unknown }).committedData;
 
     commitLinesGeometry(
       { path: '/lines', noop: true, sourceData: makeSourceData(3) },
-      root,
-      null,
+      testHost(root, null),
       undefined,
       9
     );
@@ -547,8 +551,7 @@ describe('commitLinesGeometry — committedLadderComplete stamp', () => {
     root.add(mesh);
     commitLinesGeometry(
       { path: '/lines', sourceData: makeSourceData(3), processed: makeProcessed(3) },
-      root,
-      null,
+      testHost(root, null),
       undefined,
       0
     );
@@ -563,8 +566,7 @@ describe('commitLinesGeometry — committedLadderComplete stamp', () => {
       root.add(mesh);
       commitLinesGeometry(
         { path: '/lines', sourceData: makeSourceData(2), processed: makeProcessed(2) },
-        root,
-        null,
+        testHost(root, null),
         undefined,
         0
       );
@@ -579,7 +581,7 @@ describe('commitLinesGeometry — committedLadderComplete stamp', () => {
     mesh.userData.committedLadderComplete = true; // stale value from a previous view
     root.add(mesh);
     const noop: StagedLinesCommit = { path: '/lines', noop: true, sourceData: makeSourceData(2) };
-    commitLinesGeometry(noop, root, null, undefined, 0);
+    commitLinesGeometry(noop, testHost(root, null), undefined, 0);
     expect(ladderComplete(mesh)).toBe(false); // refreshed from the live loader
   });
 });
@@ -595,8 +597,7 @@ describe('commitLinesGeometry — committedEnergyFraction stamp', () => {
     root.add(mesh);
     commitLinesGeometry(
       { path: '/lines', sourceData: makeSourceData(3), processed: makeProcessed(3) },
-      root,
-      null,
+      testHost(root, null),
       undefined,
       0
     );
@@ -611,8 +612,7 @@ describe('commitLinesGeometry — committedEnergyFraction stamp', () => {
     root.add(mesh);
     commitLinesGeometry(
       { path: '/lines', sourceData: makeSourceData(3), processed: makeProcessed(3) },
-      root,
-      null,
+      testHost(root, null),
       undefined,
       0
     );
@@ -624,8 +624,7 @@ describe('commitLinesGeometry — committedEnergyFraction stamp', () => {
     root2.add(plain);
     commitLinesGeometry(
       { path: '/lines', sourceData: makeSourceData(2), processed: makeProcessed(2) },
-      root2,
-      null,
+      testHost(root2, null),
       undefined,
       0
     );
@@ -664,8 +663,7 @@ describe('commitLinesGeometry — RenderObject invalidation on non-pool rebuild'
     const saw = softDisposeSeen(mesh);
     commitLinesGeometry(
       { path: '/lines', sourceData: makeSourceData(3), processed: makeProcessed(3) },
-      root,
-      null,
+      testHost(root, null),
       undefined,
       0
     );
@@ -681,8 +679,7 @@ describe('commitLinesGeometry — RenderObject invalidation on non-pool rebuild'
     const saw = softDisposeSeen(mesh);
     commitLinesGeometry(
       { path: '/lines', sourceData: makeSourceData(3), processed: makeProcessed(3) },
-      root,
-      null,
+      testHost(root, null),
       undefined,
       0
     );
@@ -717,7 +714,7 @@ describe('commitLinesGeometry — depth-sort integration (lines sort registratio
     staged.processed.startPositions.set([0, 2, 4, 10, 20, 30]);
     staged.processed.endPositions.set([2, 4, 6, 30, 40, 50]);
     const pool = makePool(new THREE.BufferGeometry());
-    commitLinesGeometry(staged, root, pool as never, undefined, 0);
+    commitLinesGeometry(staged, testHost(root, pool as never), undefined, 0);
 
     expect(mockNoteDepthSortCommit).toHaveBeenCalledTimes(1);
     const [calledMesh, provider, count] = mockNoteDepthSortCommit.mock.calls[0] as [
@@ -744,14 +741,14 @@ describe('commitLinesGeometry — depth-sort integration (lines sort registratio
     const root = new THREE.Group();
     const mesh = makeMesh('/lines');
     root.add(mesh);
-    commitLinesGeometry(makeStaged(4), root, null, undefined, 0);
+    commitLinesGeometry(makeStaged(4), testHost(root, null), undefined, 0);
     expect(mockNoteDepthSortCommit).toHaveBeenCalledTimes(1);
     expect(mockNoteDepthSortCommit.mock.calls[0][0]).toBe(mesh);
     expect(mockNoteDepthSortCommit.mock.calls[0][2]).toBe(4);
   });
 
   it('is success-only: a throwing GPU write must NOT bump the sort generation', () => {
-    // Mirrors the points/gsplats ordering (noteDepthSortCommit after the
+    // Mirrors the points/gsplats ordering (`depthSort.noteCommit` after the
     // write block): the texture holds partially-written data, committedData
     // was not stamped, and the next commit full-rewrites + registers.
     const root = new THREE.Group();
@@ -760,9 +757,9 @@ describe('commitLinesGeometry — depth-sort integration (lines sort registratio
     pool.updateLinesGeometry.mockImplementation(() => {
       throw new Error('device lost');
     });
-    expect(() => commitLinesGeometry(makeStaged(3), root, pool as never, undefined, 0)).toThrow(
-      'device lost'
-    );
+    expect(() =>
+      commitLinesGeometry(makeStaged(3), testHost(root, pool as never), undefined, 0)
+    ).toThrow('device lost');
     expect(mockNoteDepthSortCommit).not.toHaveBeenCalled();
   });
 
@@ -770,14 +767,14 @@ describe('commitLinesGeometry — depth-sort integration (lines sort registratio
     const root = new THREE.Group();
     root.add(makeMesh('/lines'));
     const noop: StagedLinesCommit = { path: '/lines', noop: true, sourceData: makeSourceData(3) };
-    commitLinesGeometry(noop, root, null, undefined, 1);
+    commitLinesGeometry(noop, testHost(root, null), undefined, 1);
     expect(mockNoteDepthSortCommit).not.toHaveBeenCalled();
   });
 
   it('reports count 0 on an empty commit (coordinator release path)', () => {
     const root = new THREE.Group();
     root.add(makeMesh('/lines'));
-    commitLinesGeometry(makeStaged(0), root, null, undefined, 0);
+    commitLinesGeometry(makeStaged(0), testHost(root, null), undefined, 0);
     expect(mockNoteDepthSortCommit).toHaveBeenCalledTimes(1);
     expect(mockNoteDepthSortCommit.mock.calls[0][2]).toBe(0);
   });
@@ -797,7 +794,7 @@ describe('commitLinesGeometry — depth-sort integration (lines sort registratio
       const mesh = makeMesh('/lines');
       root.add(mesh);
       const pool = makePool(new THREE.BufferGeometry());
-      commitLinesGeometry(makeStaged(100), root, pool as never, undefined, 0);
+      commitLinesGeometry(makeStaged(100), testHost(root, pool as never), undefined, 0);
 
       expect((mesh.userData as { visibleSegmentCount: number }).visibleSegmentCount).toBe(6);
       expect((mesh.userData as { requestedElementCount: number }).requestedElementCount).toBe(100);
@@ -839,13 +836,13 @@ describe('commitLinesGeometry — preserve-ordering on same-node same-count reco
     const pool = makePool(new THREE.BufferGeometry());
     // First commit: no committedData stamp yet → the geometry's ordering
     // is unvouched-for, identity must be written.
-    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 0);
+    commitLinesGeometry(makeStaged(7), testHost(root, pool as never), undefined, 0);
     expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
     // Same-node same-count recommit on the SAME pooled geometry: the
     // previous permutation of [0,7) is still valid — keep it as a
     // no-worse prior until the commit-triggered re-sort lands. Equal
     // count is NOT an append, so fromInstance stays 0.
-    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 1);
+    commitLinesGeometry(makeStaged(7), testHost(root, pool as never), undefined, 1);
     expect(lastOpts(pool)).toEqual({ preserveOrdering: true, fromInstance: 0 });
   });
 
@@ -853,7 +850,7 @@ describe('commitLinesGeometry — preserve-ordering on same-node same-count reco
     const root = new THREE.Group();
     root.add(makeMesh('/lines'));
     const pool = makePool(new THREE.BufferGeometry());
-    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 0);
+    commitLinesGeometry(makeStaged(7), testHost(root, pool as never), undefined, 0);
     // A permutation of [0,7) is not a permutation of [0,9) — true, and the
     // reason `preserveOrdering` stays false. But it is REBUILT over the new
     // population rather than given up: `repairFromCount` carries the previous
@@ -861,7 +858,7 @@ describe('commitLinesGeometry — preserve-ordering on same-node same-count reco
     // of falling back to storage order. This is the branch an nD re-slice
     // actually takes at almost every step, and the unsorted frame it used to
     // draw is #2290's per-timepoint flash.
-    commitLinesGeometry(makeStaged(9), root, pool as never, undefined, 1);
+    commitLinesGeometry(makeStaged(9), testHost(root, pool as never), undefined, 1);
     expect(lastOpts(pool)).toEqual({
       preserveOrdering: false,
       repairFromCount: 7,
@@ -874,9 +871,9 @@ describe('commitLinesGeometry — preserve-ordering on same-node same-count reco
     const mesh = makeMesh('/lines');
     root.add(mesh);
     const pool = makePool(new THREE.BufferGeometry());
-    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 0);
+    commitLinesGeometry(makeStaged(7), testHost(root, pool as never), undefined, 0);
     delete (mesh.userData as { committedData?: unknown }).committedData;
-    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 1);
+    commitLinesGeometry(makeStaged(7), testHost(root, pool as never), undefined, 1);
     expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
   });
 
@@ -884,13 +881,13 @@ describe('commitLinesGeometry — preserve-ordering on same-node same-count reco
     const root = new THREE.Group();
     root.add(makeMesh('/lines'));
     const pool = makePool(new THREE.BufferGeometry());
-    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 0);
+    commitLinesGeometry(makeStaged(7), testHost(root, pool as never), undefined, 0);
     // Best-fit reuse handed the node a DIFFERENT geometry (holding some
     // other node's permutation over a different prior count) and reported
     // an attribute rebuild — identity must be written.
     pool.acquireLinesGeometry.mockReturnValue(new THREE.BufferGeometry());
     pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
-    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 1);
+    commitLinesGeometry(makeStaged(7), testHost(root, pool as never), undefined, 1);
     expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
   });
 
@@ -903,11 +900,11 @@ describe('commitLinesGeometry — preserve-ordering on same-node same-count reco
     const root = new THREE.Group();
     root.add(makeMesh('/lines'));
     const pool = makePool(new THREE.BufferGeometry());
-    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 0);
+    commitLinesGeometry(makeStaged(7), testHost(root, pool as never), undefined, 0);
     pool.acquireLinesGeometry.mockReturnValue(new THREE.BufferGeometry());
     // didLastAcquireRebuildAttributes stays FALSE (makePool default) —
     // the geometry-identity conjunct must gate alone.
-    commitLinesGeometry(makeStaged(7), root, pool as never, undefined, 1);
+    commitLinesGeometry(makeStaged(7), testHost(root, pool as never), undefined, 1);
     expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
   });
 });

@@ -15,12 +15,12 @@
  * lines geometry fits ANY lines node (mirroring the points/gsplats
  * adapters): reuse keys on capacity alone.
  *
- * The top-level GPUBufferPool owns only shared coordination logic
- * (eviction, commit counter, dispose); this adapter owns Lines-specific
- * buffer layout and update behavior.
+ * The acquire/release/dispose lifecycle is shared with the points and
+ * gsplats adapters (`texture-backed-adapter.ts`); this file owns the
+ * Lines texel layout hook and the update path.
  */
 
-import * as THREE from 'three';
+import type * as THREE from 'three';
 import {
   attachLineStorage,
   computeLineBounds,
@@ -28,306 +28,43 @@ import {
   stampLinePresenceFlags,
   writeLineTexels,
 } from '../line-geometry';
-import {
-  cancelSortedIndexOrderingApply,
-  writeSortedIndexIdentity,
-  writeSortedIndexIdentityRange,
-  repairSortedIndexForCount,
-} from '../element-storage';
 import { clampLineCapacity } from '../element-texture-layout';
 import type { ProcessedLinesData } from '../../types/lines';
-import type { PooledBuffer } from './pool-stats';
-import { FreeBucketMap } from './byte-tracked-maps';
-import { chooseCapacity } from './capacity';
+import type { FreeBucketMap } from './byte-tracked-maps';
+import {
+  TextureBackedAdapter,
+  prepareInstancedQuadForDraw,
+  writeInstancedCommitOrdering,
+  type InstancedOrderingOptions,
+  type PoolAdapterHost,
+  type TextureBackedLayout,
+} from './texture-backed-adapter';
 
 /**
- * Lines render as instanced unit quads, so the indexed draw range is
- * always the 2-triangle base quad (6 indices) while `instanceCount`
- * carries the number of segments.
- *
- * Called ONLY from `updateGeometry`, AFTER the texel write succeeds —
- * never at acquire time. Bumping `instanceCount` before the write would
- * let a throwing write draw the new count over stale/zero texels; the
- * points/gsplats adapters have the same ordering.
+ * Lines: 6 texels/segment, so a per-node bound of width × maxTextureSize / 6
+ * (2.79M segments on a 4096-class device).
  */
-function prepareLinesGeometryForDraw(
-  geometry: THREE.BufferGeometry,
-  segmentCount: number
-): THREE.InstancedBufferGeometry {
-  const instanced = geometry as THREE.InstancedBufferGeometry;
-  instanced.instanceCount = segmentCount;
-  instanced.setDrawRange(0, 6);
-  return instanced;
-}
+const LINES_LAYOUT: TextureBackedLayout = {
+  type: 'lines',
+  clampCapacity: clampLineCapacity,
+  attachStorage: attachLineStorage,
+};
 
-function createLinesGeometry(segmentCapacity: number): THREE.InstancedBufferGeometry {
-  const geometry = new THREE.InstancedBufferGeometry();
-  const quadCorners = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
-  const indices = new Uint16Array([0, 1, 2, 2, 1, 3]);
-  geometry.setAttribute('aQuadCorner', new THREE.BufferAttribute(quadCorners, 2));
-  geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-  geometry.instanceCount = 0;
-  geometry.setDrawRange(0, 6);
+export class LinesBufferAdapter extends TextureBackedAdapter {
+  constructor(host: PoolAdapterHost) {
+    super(host, LINES_LAYOUT);
+  }
 
-  // Segment data lives in the RGBA32F texture attached here (disposed BY
-  // the geometry's dispose event, so every pool dispose site frees it);
-  // The `aSortedIndex`/`aSortedIndexB` ordering pair is the only
-  // per-instance data (two distinct buffers from attach, so a new ordering
-  // swaps atomically and the vertex layout never changes under a cached
-  // WebGPU pipeline).
-  attachLineStorage(geometry, segmentCapacity);
-  // Ownership marker: the commit handoff disposes a replaced geometry
-  // ONLY when it is not pool-owned (pool geometries are released back to
-  // the free list by acquire, never disposed by the commit layer).
-  geometry.userData.luxarPooled = true;
-  return geometry;
-}
-
-/**
- * Shared-state surface the lines adapter reads/writes on the parent
- * GPUBufferPool. Kept narrow so the adapter can be unit-tested with a
- * minimal stub instead of a full pool instance.
- */
-export interface LinesAdapterHost {
-  activeBuffers: Map<string, PooledBuffer>;
-  readonly commitCount: number;
-  stats: {
-    allocations: number;
-    reuses: number;
-    evictions: number;
-    capacityGrowths: number;
-    deferredEvictions: number;
-    byteBudgetEvictions: number;
-  };
-  typeStats: {
-    points: { allocations: number; reuses: number; evictions: number };
-    lines: { allocations: number; reuses: number; evictions: number };
-    gsplats: { allocations: number; reuses: number; evictions: number };
-  };
-  _lastAcquireRebuilt: boolean;
-  getBucket(count: number): number;
-  evictUnused(fromAcquire?: boolean): number;
-  registerPooledGeometryInvalidation(geometry: THREE.BufferGeometry): void;
-}
-
-export class LinesBufferAdapter {
   /** @internal — pool-bucketed reusable line geometries. */
-  readonly lineBuffers = new FreeBucketMap();
-
-  constructor(private readonly host: LinesAdapterHost) {}
-
-  acquireGeometry(nodeId: string, segmentCount: number): THREE.InstancedBufferGeometry {
-    const host = this.host;
-    host._lastAcquireRebuilt = false;
-
-    // Per-node texture bound: width × maxTextureSize / 6 texels (2.79M
-    // segments on a 4096-class device). Warns once; the update path
-    // clamps its written count to the texture capacity to match.
-    segmentCount = clampLineCapacity(segmentCount);
-
-    const active = host.activeBuffers.get(nodeId);
-    // See the points adapter: `luxarInvalidated` guards a geometry whose
-    // out-of-band `dispose()` already fired (defense-in-depth).
-    if (active && active.type === 'lines' && !active.geometry.userData.luxarInvalidated) {
-      if (active.capacity >= segmentCount) {
-        active.lastUsedCommit = host.commitCount;
-        host.stats.reuses++;
-        host.typeStats.lines.reuses++;
-        return active.geometry as THREE.InstancedBufferGeometry;
-      }
-      // Grow = RELEASE + REACQUIRE — an in-place rebuild strands the
-      // old GL/GPU buffer in the renderer caches (hard leak under the
-      // WebGPU renderer via the strong Info.memoryMap). See the points
-      // adapter for the full rationale. (The interleaved era's scalar
-      // spec-set mismatch branch is gone: the fixed texel layout always
-      // carries the scalar slots.)
-      host.stats.capacityGrowths++;
-      // OOM RE-CLAIM WINDOW — see the points adapter's twin comment.
-      // The released buffer can never be picked by the best-fit scan
-      // for this call: its capacity < segmentCount.
-      const released = active;
-      let grown: THREE.InstancedBufferGeometry;
-      try {
-        this.releaseGeometry(nodeId);
-        grown = this.adoptOrAllocate(nodeId, segmentCount);
-      } catch (error) {
-        this.reclaimAfterFailedGrow(nodeId, released);
-        throw error;
-      }
-      // POST-GROW RECLAIM. Without this the pair released above is stranded
-      // for the lifetime of the scene, by two independent mechanisms:
-      //
-      //  - the sweep inside `releaseGeometry` IS unconditional, but it runs
-      //    before the larger replacement is registered active, so it measures
-      //    `budget - sumActiveBytes()` against PRE-GROWTH accounting, sees
-      //    headroom that no longer exists, and evicts nothing;
-      //  - the acquire-side sweep in `adoptOrAllocate` does see the new
-      //    accounting, but runs with `graceCommit = commitCount` while
-      //    `releaseGeometry` has just stamped the released pair with that same
-      //    commit — so the grace skips exactly the buffer we need it to take.
-      //    (And on the ADOPT path there is no acquire sweep at all.)
-      //
-      // So it escapes both. One unconditional pass here, with the replacement
-      // already registered, closes it — re-running the EXISTING policy at the
-      // right moment rather than adding a disposal path of its own.
-      //
-      // Deliberately OUTSIDE the try: a throwing dispose listener must not be
-      // mistaken for a failed grow and send us into `reclaimAfterFailedGrow`,
-      // which would try to reinstate a buffer this node has already replaced.
-      //
-      // On the grace it overrides: that grace exists for the DATASET SWITCH
-      // (release everything, re-acquire in the same commit — without it each
-      // allocation's sweep disposes buffers later acquires would have
-      // best-fit). A growth is not that shape: the released pair is by
-      // construction SMALLER than what this node now needs, and co-growing
-      // siblings are moving up too, so it is a poor adoption candidate. That
-      // is an argument, not a measurement — `reuses` across a dataset switch
-      // is the check that keeps it honest.
-      host.evictUnused(false);
-      return grown;
-    }
-
-    return this.adoptOrAllocate(nodeId, segmentCount);
-  }
-
-  /**
-   * Best-fit adoption from the free buckets, else a fresh allocation —
-   * see the points adapter's twin comment.
-   */
-  private adoptOrAllocate(nodeId: string, segmentCount: number): THREE.InstancedBufferGeometry {
-    const host = this.host;
-
-    // BEST-fit, not first-fit — see the gsplats adapter for rationale.
-    // The fixed texel layout means any pooled lines geometry fits any
-    // lines node: capacity is the only matching criterion.
-    let bestBucket: number | null = null;
-    let bestIndex = -1;
-    let bestCapacity = Infinity;
-    for (const [bucket, pooled] of this.lineBuffers) {
-      for (let i = pooled.length - 1; i >= 0; i--) {
-        const candidate = pooled[i];
-        // Skip a free-bucket resident disposed out-of-band — see the
-        // points adapter's twin comment.
-        if (candidate.geometry.userData.luxarInvalidated) continue;
-        if (candidate.capacity >= segmentCount && candidate.capacity < bestCapacity) {
-          bestBucket = bucket;
-          bestIndex = i;
-          bestCapacity = candidate.capacity;
-        }
-      }
-    }
-    if (bestBucket !== null) {
-      const candidate = this.lineBuffers.takeAt(bestBucket, bestIndex);
-      // Adopted geometry may still carry the previous tenant's
-      // instanceCount + texels; draw nothing until this node's write
-      // sets the real count (a throwing write must not render the
-      // previous tenant's content under this node's transform).
-      (candidate.geometry as THREE.InstancedBufferGeometry).instanceCount = 0;
-      candidate.inUse = true;
-      candidate.lastUsedCommit = host.commitCount;
-      host.activeBuffers.set(nodeId, candidate);
-      host.stats.reuses++;
-      host.typeStats.lines.reuses++;
-      host._lastAcquireRebuilt = true;
-      return candidate.geometry as THREE.InstancedBufferGeometry;
-    }
-
-    host._lastAcquireRebuilt = true;
-    // Growth headroom (1.5×) can itself cross the texture bound; clamp
-    // the chosen capacity too (still >= segmentCount, which was clamped).
-    const capacity = clampLineCapacity(chooseCapacity(segmentCount), false);
-    const geometry = createLinesGeometry(capacity);
-    // Self-invalidation — see the points adapter's twin comment.
-    host.registerPooledGeometryInvalidation(geometry);
-
-    const newBuffer: PooledBuffer = {
-      geometry,
-      capacity,
-      type: 'lines',
-      inUse: true,
-      lastUsedCommit: host.commitCount,
-    };
-
-    host.activeBuffers.set(nodeId, newBuffer);
-    // Both allocation counters bump together, BEFORE the sweep — a
-    // throwing sweep must not desync them (see the points adapter twin).
-    host.stats.allocations++;
-    host.typeStats.lines.allocations++;
-    // Fresh allocations count against the byte budget too — sweep idle
-    // pooled buffers (see growth-path note above).
-    host.evictUnused(true);
-    return geometry;
-  }
-
-  /**
-   * Undo a failed grow — see the points adapter's twin comment for the
-   * full sub-case breakdown (replacement-entry disposal + free-bucket
-   * re-claim; a buffer the release-time sweep disposed stays gone).
-   */
-  private reclaimAfterFailedGrow(nodeId: string, released: PooledBuffer): void {
-    const host = this.host;
-
-    // Reinstate FIRST, dispose the replacement LAST — see the points
-    // adapter's twin comment.
-    const current = host.activeBuffers.get(nodeId);
-    if (current && current !== released) {
-      host.activeBuffers.delete(nodeId);
-    }
-
-    if (this.lineBuffers.removeFirst((buffer) => buffer === released, false)) {
-      released.inUse = true;
-      released.lastUsedCommit = host.commitCount;
-      host.activeBuffers.set(nodeId, released);
-      this.disposeReplacementAfterReclaim(current);
-      return;
-    }
-    this.disposeReplacementAfterReclaim(current);
-  }
-
-  /** See the points adapter's twin comment. */
-  private disposeReplacementAfterReclaim(current: PooledBuffer | undefined): void {
-    if (!current) return;
-    try {
-      current.geometry.dispose();
-    } catch {
-      // Swallow: the original acquire error is already propagating.
-    }
-  }
-
-  releaseGeometry(nodeId: string): void {
-    const host = this.host;
-    const buffer = host.activeBuffers.get(nodeId);
-    if (!buffer || buffer.type !== 'lines') return;
-
-    host.activeBuffers.delete(nodeId);
-    buffer.inUse = false;
-    // A released buffer is no longer drawn, so an ordering still
-    // streaming into it is dead work — and `chunkedApplies` keys its
-    // state by GEOMETRY in a strong Map, so leaving it would pin this
-    // geometry AND its ordering (4 B/element — ~32 MB for an 8M node)
-    // on the free list until the buffer is re-acquired or evicted.
-    // Dispose already cancels via the geometry's own listener; release
-    // is the other exit from "in use" and needs the same treatment.
-    cancelSortedIndexOrderingApply(buffer.geometry as THREE.InstancedBufferGeometry);
-
-    // Stamp the release commit so acquire-triggered byte sweeps later in
-    // this same commit grace the buffer (see EvictorCtx.graceCommit) — a
-    // released buffer otherwise carries the commit of its last ACQUIRE
-    // and the dataset-switch grace never matches. Also makes the
-    // just-released buffer the freshest LRU reuse candidate.
-    buffer.lastUsedCommit = host.commitCount;
-
-    const bucket = host.getBucket(buffer.capacity);
-    this.lineBuffers.pushBuffer(bucket, buffer);
-
-    host.evictUnused();
+  get lineBuffers(): FreeBucketMap {
+    return this.buffers;
   }
 
   updateGeometry(
     geometry: THREE.InstancedBufferGeometry,
     data: ProcessedLinesData,
     count: number,
-    options?: { preserveOrdering?: boolean; repairFromCount?: number; fromInstance?: number }
+    options?: InstancedOrderingOptions
   ): void {
     const instanced = geometry;
     const texture = getLineTexture(instanced);
@@ -352,50 +89,17 @@ export class LinesBufferAdapter {
     // clamp in instanceCount so a bound-clamped node never draws
     // instances whose texels were not written.
     count = writeLineTexels(texture, data, count, { fromSegment: fromInstance });
-    if (fromInstance > 0) {
-      // Append: keep the prefix's existing ordering and give the appended
-      // segments identity until a re-sort lands (fromInstance and
-      // preserveOrdering are mutually exclusive — append needs
-      // count > prev, preserveOrdering needs count === prev).
-      writeSortedIndexIdentityRange(instanced, fromInstance, count);
-    } else if (!options?.preserveOrdering) {
-      // `preserveOrdering` (commit path decides) keeps a same-count recommit's
-      // existing depth-sort permutation as a no-worse prior until the re-sort
-      // lands. When the count CHANGED, `repairFromCount` carries the previous
-      // count and the existing permutation is rebuilt over the new population
-      // instead of being thrown away — an nD re-slice changes the resident
-      // count at almost every step, so this is the case a timelapse actually
-      // takes. Only a commit with neither falls back to storage order.
-      const repairFrom = options?.repairFromCount;
-      if (repairFrom !== undefined && repairFrom > 0) {
-        repairSortedIndexForCount(instanced, repairFrom, count);
-      } else {
-        writeSortedIndexIdentity(instanced, count);
-      }
-    }
+    writeInstancedCommitOrdering(instanced, count, options);
 
-    prepareLinesGeometryForDraw(geometry, count);
+    prepareInstancedQuadForDraw(instanced, count);
 
     // Scalar presence stamp (drives `supportsScalarColormap`) — refreshed
     // on EVERY update; pool geometries are reused across tenants.
     stampLinePresenceFlags(instanced, data);
 
-    // CRITICAL: Force THREE.js to recalculate _maxInstanceCount.
-    delete (geometry as unknown as { _maxInstanceCount?: number })._maxInstanceCount;
-
     // CRITICAL: Recompute bounding box after position updates, expanded
     // by max width so the rendered footprint is covered by frustum
     // culling (shared helper — see line-geometry.ts).
     computeLineBounds(instanced, data, count);
-  }
-
-  dispose(): void {
-    // Drain the buckets BEFORE disposing — see the points adapter.
-    const geometries: THREE.BufferGeometry[] = [];
-    for (const buffers of this.lineBuffers.values()) {
-      for (const buffer of buffers) geometries.push(buffer.geometry);
-    }
-    this.lineBuffers.clear();
-    for (const geometry of geometries) geometry.dispose();
   }
 }

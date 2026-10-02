@@ -1332,7 +1332,7 @@ _For implementation details, see the source files in this directory._
 
 - `scene-manager.ts` — `SceneManager` orchestrator: renderer, camera,
   controls, post-processing, resize, disposal.
-- `scene-dims-manager.ts` — Singleton dimension state across all nD
+- `scene-dims-manager.ts` — Dimension state across all nD (the `sceneDimsManager` singleton is the LuxarApp's; a `LuxarLayer` constructs its own `SceneDimsManager` and resolves it from its own root)
   objects in the scene (exported as both class `SceneDimsManager`
   and lazy-Proxy singleton `sceneDimsManager`).
 - `dimension-loading.ts` — Applies the current scene-dimension selection,
@@ -1413,7 +1413,7 @@ _For implementation details, see the source files in this directory._
   GSplats get valid lower-triangular Cholesky factors with varied
   scale, anisotropy, and orientation so depth-sorted 'normal'
   blending is order-dependent; the injector emits the production
-  commit signals (`committedData` stamp + `noteDepthSortCommit`) so
+  commit signals (`committedData` stamp + `depthSort.noteCommit`) so
   the sort subsystem engages on injected nodes.
 
 ## Subpackages

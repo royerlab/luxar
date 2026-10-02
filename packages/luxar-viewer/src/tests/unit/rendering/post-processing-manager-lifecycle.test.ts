@@ -427,6 +427,11 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
       scene: new THREE.Scene(),
       camera,
       onResize: vi.fn(),
+      glassSource: {
+        collectRefractingGlass: (out) => out,
+        collectUnpartitionedMeshes: (out) => out,
+        applyGlassPartition: () => 0,
+      },
     });
 
     mgr.setSSAAEnabled(true);

@@ -34,6 +34,7 @@ import {
   type StagedGSplatsCommit,
 } from './scene-loader/process/data-processor-gsplats';
 import { commitMeshGeometry as commitMeshGeometryHelper } from './scene-loader/commit/commit-mesh-geometry';
+import type { GeometryCommitHost } from './scene-loader/commit/commit-host';
 import { processMeshData as processMeshDataHelper } from './scene-loader/process/data-processor-mesh';
 import type { StagedMeshCommit } from './scene-loader/process/data-processor-mesh';
 import type { LoaderFactoryDeps } from './scene-loader/loaders/loader-factory';
@@ -169,7 +170,11 @@ import type {
   MeshViewState,
 } from '../types/mesh';
 import { clearCommittedData } from '../types/committed-data';
-import { releaseDepthSortNode } from '../rendering/depth-sort-coordinator';
+import {
+  releaseDepthSortNode,
+  type DepthSortCoordinator,
+} from '../rendering/depth-sort-coordinator';
+import { runWithMaterialManager, type MaterialManager } from '../rendering/material-manager';
 import { GPUBufferPool } from '../rendering/gpu-buffer-pool';
 import { createEmptyMeshGeometry } from '../rendering/mesh-geometry';
 import { invalidateRenderObjectFor } from './scene-loader/commit/invalidate-render-object';
@@ -1010,6 +1015,42 @@ export class SceneLoader {
   }
 
   /**
+   * The host's depth-sort coordinator, which every commit reports to. Set by
+   * `loadScene` (`data/zarr-loader.ts`) before the scene loads, from the
+   * coordinator the caller owns — the LuxarApp's `SceneManager.depthSort`, or a
+   * LuxarLayer's own. `null` (tests, a bare loader) leaves the nodes untracked.
+   */
+  private _depthSort: DepthSortCoordinator | null = null;
+
+  /** Install (or clear) the host's depth-sort coordinator. */
+  setDepthSortCoordinator(coordinator: DepthSortCoordinator | null): void {
+    this._depthSort = coordinator;
+  }
+
+  /**
+   * The host's material manager, or null for the LuxarApp's. Installed by the
+   * host's `SceneLoaderManager`; node creation (the factory) and the commit
+   * stage both run against it, so a LuxarLayer's materials never join the
+   * app's registry (capabilities, camera broadcast, disposal).
+   */
+  private _materials: MaterialManager | null = null;
+
+  /** Install (or clear) the host's material manager. */
+  setMaterialManager(materials: MaterialManager | null): void {
+    this._materials = materials;
+    this.nodeFactory.setMaterialManager(materials);
+  }
+
+  /** The host references the gsplats / lines / points commit helpers take. */
+  private commitHost(): GeometryCommitHost {
+    return {
+      rootGroup: this.rootGroup,
+      gpuBufferPool: this._gpuBufferPool,
+      depthSort: this._depthSort,
+    };
+  }
+
+  /**
    * Run a commit of the node at `path`, then wake the render loop (see
    * {@link _requestRender}), saying whether the commit can have changed the
    * drawn frame: the node was effectively visible before or after it. A node
@@ -1018,7 +1059,8 @@ export class SceneLoader {
   private commitAndRequestRender(path: string, commit: () => void): boolean {
     const node = findObjectByName(this.rootGroup, path);
     const drawnBefore = isEffectivelyVisible(node);
-    commit();
+    if (this._materials) runWithMaterialManager(this._materials, commit);
+    else commit();
     const drawn = node === undefined || drawnBefore || isEffectivelyVisible(node);
     this._requestRender?.(drawn);
     return drawn;
@@ -2487,13 +2529,7 @@ export class SceneLoader {
     // Wake the idle-paused render loop so this commit paints (see
     // _requestRender).
     return this.commitAndRequestRender(staged.path, () =>
-      commitLinesGeometryHelper(
-        staged,
-        this.rootGroup,
-        this._gpuBufferPool,
-        session,
-        loadedViewVersion
-      )
+      commitLinesGeometryHelper(staged, this.commitHost(), session, loadedViewVersion)
     );
   }
 
@@ -2539,13 +2575,7 @@ export class SceneLoader {
     // Wake the idle-paused render loop so this commit paints (see
     // _requestRender).
     return this.commitAndRequestRender(staged.path, () =>
-      commitGSplatsGeometryHelper(
-        staged,
-        this.rootGroup,
-        this._gpuBufferPool,
-        session,
-        loadedViewVersion
-      )
+      commitGSplatsGeometryHelper(staged, this.commitHost(), session, loadedViewVersion)
     );
   }
 
@@ -2584,6 +2614,7 @@ export class SceneLoader {
           rootGroup: this.rootGroup,
           currentVersion: this._updateVersion,
           gpuBufferPool: this._gpuBufferPool,
+          depthSort: this._depthSort,
         },
         staged,
         session,
@@ -2632,7 +2663,7 @@ export class SceneLoader {
         this.clearCommittedDataStamp(path);
         // Also drop the level's depth-sort state + worker-side centers: a
         // demoted level won't sort again until re-promotion re-registers it
-        // (fresh commit → noteDepthSortCommit). Mirrors the coordinator's
+        // (fresh commit → `depthSort.noteCommit`). Mirrors the coordinator's
         // empty-commit release hygiene.
         const mesh = findObjectByName(this.rootGroup, path);
         if (mesh) releaseDepthSortNode(mesh as THREE.Mesh);
@@ -2771,9 +2802,7 @@ export class SceneLoader {
       commitPointsGeometryHelper(
         path,
         data,
-        this.rootGroup,
-        this._gpuBufferPool,
-        this.nodeFactory,
+        { ...this.commitHost(), nodeFactory: this.nodeFactory },
         session,
         loadedViewVersion
       )
@@ -3186,8 +3215,8 @@ export class SceneLoader {
    * do NOT terminate workers — the pool is bounded, and tearing it down
    * per switch would force a fresh worker spin-up on the next load
    * (10s of ms of WASM re-init on each cycle). Workers are terminated
-   * only at app shutdown via `disposeWorkerPool()` in `core/app.ts`,
-   * which is the right scope for that lifecycle.
+   * when the last host releases its lease via `releaseWorkerPool()`
+   * (`LuxarApp` in `core/app/lifecycle/dispose-pipeline.ts`, or `LuxarLayer`).
    */
   async dispose(): Promise<void> {
     // Signal any in-flight progressive-refinement loop to abort before we

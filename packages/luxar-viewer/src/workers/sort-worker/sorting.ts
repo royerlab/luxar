@@ -105,12 +105,12 @@ export function sortNode(ctx: SortWorkerCtx, params: SortParams): SortResult | n
   );
 }
 
-/** Drop a node's registration (node disposal / pool release). */
+/**
+ * Drop a node's registration (node disposal / pool release / a host's dataset
+ * switch). There is deliberately no "release everything": the worker is shared
+ * by every host's coordinator on the page, so a host releases only its own
+ * nodes, one by one.
+ */
 export function releaseNode(ctx: SortWorkerCtx, nodeId: string): void {
   ctx.nodes.delete(nodeId);
-}
-
-/** Drop every registration (dataset switch / app teardown). */
-export function releaseAllNodes(ctx: SortWorkerCtx): void {
-  ctx.nodes.clear();
 }

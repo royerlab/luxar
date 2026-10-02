@@ -18,12 +18,22 @@ vi.mock('../../../../../rendering/post-processing/post-processing-manager', () =
 });
 
 import { createPostProcessing } from '../../../../../scene/scene-manager/render-pipeline/post-processing-setup';
-import { PostProcessingManager } from '../../../../../rendering/post-processing/post-processing-manager';
+import {
+  PostProcessingManager,
+  type GlassMeshSource,
+} from '../../../../../rendering/post-processing/post-processing-manager';
 import { ControlsManager } from '../../../../../controls/controls-manager';
 import type {
   Renderer,
   RendererCapabilities,
 } from '../../../../../rendering/renderer-capabilities';
+
+/** A glass source with no data meshes (the coordinator's role in production). */
+const glassSource: GlassMeshSource = {
+  collectRefractingGlass: (out) => out,
+  collectUnpartitionedMeshes: (out) => out,
+  applyGlassPartition: () => 0,
+};
 
 function makeRenderer(width: number, height: number): Renderer {
   const canvas = document.createElement('canvas');
@@ -40,7 +50,7 @@ describe('createPostProcessing', () => {
     const camera = new THREE.PerspectiveCamera();
     const onResize = vi.fn();
 
-    createPostProcessing({ renderer, capabilities, scene, camera, onResize });
+    createPostProcessing({ renderer, capabilities, scene, camera, onResize, glassSource });
 
     expect(PostProcessingManager).toHaveBeenCalledTimes(1);
     const args = vi.mocked(PostProcessingManager).mock.calls[0];
@@ -52,6 +62,8 @@ describe('createPostProcessing', () => {
     expect(args[5]).toEqual(expect.any(Function));
     args[5]!({ width: 1024, height: 768 }, camera);
     expect(onResize).toHaveBeenCalledTimes(1);
+    // The refraction split's mesh source (the app's depth-sort coordinator).
+    expect(args[6]).toBe(glassSource);
   });
 
   it('restores the target projection from logical display size across physical scales', () => {
@@ -74,6 +86,7 @@ describe('createPostProcessing', () => {
       scene,
       camera,
       onResize: vi.fn(),
+      glassSource,
     });
     const resizeCallback = vi.mocked(PostProcessingManager).mock.calls.at(-1)![5]!;
     const focusBefore = controls.getFocusTarget();
@@ -111,6 +124,7 @@ describe('createPostProcessing', () => {
       scene,
       camera,
       onResize: vi.fn(),
+      glassSource,
     });
 
     const args = vi.mocked(PostProcessingManager).mock.calls.at(-1)!;

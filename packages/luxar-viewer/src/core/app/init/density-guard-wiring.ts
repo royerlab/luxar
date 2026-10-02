@@ -72,7 +72,7 @@ export interface DensityGuardWiringDeps {
    * which elements are pickable, and a still camera dirties nothing else.
    */
   invalidatePickBuffer?(): void;
-  /** Injection points for tests; production uses the module singletons. */
+  /** The app uses module singletons; layers pass their own instances. */
   tracker?: ProjectedDensityTracker;
   guard?: DensityGuard;
 }

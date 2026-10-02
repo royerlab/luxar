@@ -126,10 +126,12 @@ export class SceneDimsManager {
    * - Set non-displayed dimensions to their minimum values
    * - Identify which dimensions should be displayed (max 3)
    *
-   * @param scene - THREE.js scene containing nD objects with metadata
+   * @param scene - THREE.js scene (or a single Luxar root group, which carries the
+   *   metadata itself — what a LuxarLayer passes so a host scene holding several
+   *   layers cannot hand one layer another's dimensions)
    * @returns True if dimensions were successfully initialized, false if no metadata found
    */
-  initFromScene(scene: THREE.Scene): boolean {
+  initFromScene(scene: THREE.Object3D): boolean {
     // Step 1: Search for scene dimensions metadata
     let sceneDimensions = scene.userData.sceneDimensions;
 
