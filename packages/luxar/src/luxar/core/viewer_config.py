@@ -22,6 +22,13 @@ from urllib.parse import urlsplit
 
 from ..typing_utils._format_contract import TONE_MAPPINGS
 from ..validation.overlays import validate_visible_range
+from .trajectories import (
+    TRAJECTORY_NAMES,
+    Trajectory,
+    trajectory_from_json,
+    trajectory_to_json,
+    validate_trajectory,
+)
 
 # Tone-mapping operator names: single-sourced from
 # `format-contract/contract.yaml::tone_mappings` (the viewer's
@@ -444,7 +451,7 @@ class AnimationConfig:
 
 
 VALID_WAYPOINT_EASINGS = ("linear", "ease-in-out", "smooth", "cruise")
-VALID_WAYPOINT_TRAJECTORIES = ("orbit", "zoom-pan")
+VALID_WAYPOINT_TRAJECTORIES = TRAJECTORY_NAMES
 VALID_WAYPOINT_REVEALS = ("immediate", "on_arrival")
 
 # A `when` clause: dimension NAME -> exact value, or an inclusive (min, max)
@@ -486,20 +493,18 @@ class Waypoint:
             ramps over the first and last fifth, a constant speed between:
             paced travel, the camera visibly moving for nearly all of the
             flight) or ``"linear"``.
-        trajectory: The path between poses. ``"orbit"`` (default) moves the
-            focus target in a straight line while the distance and direction
-            interpolate on their own. ``"zoom-pan"`` is van Wijk & Nuij's
-            smooth zooming and panning (2003): it pulls back while it travels
-            and dives in at the end, the path that minimises perceived motion,
-            so a long jump across a dataset no longer races past the screen at
-            close range. Perspective poses only; an orthographic flight keeps
-            ``"orbit"``. Direction and up still interpolate as in ``"orbit"``.
-        speed: Pace a ``"zoom-pan"`` flight instead of timing it: it lasts its
-            path length divided by ``speed`` (van Wijk & Nuij units per second).
-            That length counts panning in view widths and zooming in log scale,
-            so it is the PERCEIVED distance, zoom included: a long jump takes
-            longer, a short hop less, all at one cruising speed. ``duration_ms``
-            still times an orbit or orthographic flight.
+        trajectory: The path between poses: a trajectory object from
+            :mod:`luxar.core.trajectories` (``Orbit``, ``ZoomPan(rho=...)``,
+            ``Arc(lift=...)``, ``Straight``, ``Swing(pivot=...)``,
+            ``FlyThrough(look_ahead=..., turn=...)``, ``Via(camera=...)``) or the
+            name of one for its defaults (``"zoom-pan"``). ``None`` is
+            ``"orbit"``. See that module for what each does and when to use it.
+        speed: Pace the flight instead of timing it: it lasts its path's
+            perceived length divided by ``speed`` (units per second). The length
+            counts panning in view heights, zooming in log scale and turning in
+            radians, so travel time follows the distance the viewer perceives,
+            zoom included, for every trajectory. Takes precedence over
+            ``duration_ms``.
         duration_range_ms: ``(min, max)`` bounds on a paced flight's duration;
             the viewer default (1500, 8000) when ``None``.
         rendering: Optional rendering overrides applied on arrival, using the
@@ -525,7 +530,7 @@ class Waypoint:
     easing: Optional[str] = None
     rendering: Optional[Dict[str, Any]] = None
     reveal: Optional[str] = None
-    trajectory: Optional[str] = None
+    trajectory: Optional[Union[str, Trajectory]] = None
     speed: Optional[float] = None
     duration_range_ms: Optional[Tuple[float, float]] = None
 
@@ -566,14 +571,8 @@ class Waypoint:
                     f"got {self.duration_range_ms}"
                 )
 
-        if (
-            self.trajectory is not None
-            and self.trajectory not in VALID_WAYPOINT_TRAJECTORIES
-        ):
-            raise ValueError(
-                f"trajectory must be one of {VALID_WAYPOINT_TRAJECTORIES}, "
-                f"got '{self.trajectory}'"
-            )
+        if self.trajectory is not None:
+            validate_trajectory(self.trajectory)
 
         if self.reveal is not None and self.reveal not in VALID_WAYPOINT_REVEALS:
             raise ValueError(
@@ -640,7 +639,7 @@ class Waypoint:
         if self.reveal is not None:
             result["reveal"] = self.reveal
         if self.trajectory is not None:
-            result["trajectory"] = self.trajectory
+            result["trajectory"] = trajectory_to_json(self.trajectory)
         if self.speed is not None:
             result["speed"] = self.speed
         if self.duration_range_ms is not None:
@@ -662,7 +661,7 @@ class Waypoint:
             easing=data.get("easing"),
             rendering=data.get("rendering"),
             reveal=data.get("reveal"),
-            trajectory=data.get("trajectory"),
+            trajectory=trajectory_from_json(data.get("trajectory")),
             speed=data.get("speed"),
             duration_range_ms=(
                 tuple(data["duration_range_ms"])

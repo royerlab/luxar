@@ -187,14 +187,17 @@ describe('flightDurationMs — paced by the perceived length of the path', () =>
     expect(flightDurationMs(z100, paced) / flightDurationMs(z10, paced)).toBeCloseTo(2, 6);
   });
 
-  it('clamps to the range, and falls back to durationMs where there is no path length', () => {
+  it('clamps to the range; without a speed the fixed duration times the flight', () => {
     const tiny = buildFlightPath(at([0, 0, 0], 2), at([0.001, 0, 0], 2), 'zoom-pan');
     expect(flightDurationMs(tiny, { speed: 0.7, durationRangeMs: [2500, 8000] })).toBe(2500);
     const huge = buildFlightPath(at([0, 0, 0], 0.01), at([1000, 0, 0], 0.01), 'zoom-pan');
     expect(flightDurationMs(huge, { speed: 0.7, durationRangeMs: [2500, 8000] })).toBe(8000);
+    // Every trajectory is paced by the same measure: orbit has a length too.
     const orbit = buildFlightPath(at([0, 0, 0], 2), at([40, 0, 0], 2), 'orbit');
-    expect(orbit.length).toBeUndefined();
-    expect(flightDurationMs(orbit, { speed: 0.7, durationMs: 4000 })).toBe(4000);
+    expect(orbit.length).toBeGreaterThan(0);
+    expect(flightDurationMs(orbit, paced)).toBeCloseTo((orbit.length / 0.7) * 1000, 6);
+    // Without a speed, the fixed duration (or the default) times the flight.
+    expect(flightDurationMs(orbit, { durationMs: 4000 })).toBe(4000);
     expect(flightDurationMs(orbit)).toBe(1500);
   });
 });
@@ -534,6 +537,24 @@ describe('CameraFlight', () => {
     expect(camera.position.distanceTo(target)).toBeCloseTo(10, 5);
     expect(dir.z).toBeCloseTo(-1, 5); // landed where the spin had got to
     expect(camera.fov).toBe(40); // projection parameters still arrive
+  });
+
+  it('a trajectory that owns the view direction takes it over from the turntable', async () => {
+    const { flight, camera, controls } = makeFlight();
+    // swing: the direction along the way IS the trajectory, so keepOrientation
+    // must not overwrite it, and the landing is the authored pose.
+    const done = flight.flyTo(DEST, {
+      durationMs: 1000,
+      easing: 'linear',
+      keepOrientation: true,
+      trajectory: 'swing',
+    });
+    now = 2001;
+    camera.position.set(0, 50, 0); // a turntable step that a swing must ignore
+    driver.tick();
+    await expect(done).resolves.toEqual({ completed: true });
+    expect(controls.getFocusTarget().toArray()).toEqual([10, 0, 0]);
+    expect(camera.position.toArray().map((v) => +v.toFixed(6))).toEqual([20, 0, 0]);
   });
 
   it('keepOrientation with a zero duration reseats the pose immediately', async () => {

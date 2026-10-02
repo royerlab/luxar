@@ -35,7 +35,10 @@ throws a clear `... called before init()` error when used too early.
 ### 2.1 Camera flight
 
 ```ts
-flyTo(pose: CameraSnapshot, opts?: { durationMs?: number; easing?: 'linear' | 'ease-in-out' | 'smooth' | 'cruise'; trajectory?: 'orbit' | 'zoom-pan'; speed?: number; durationRangeMs?: [number, number] })
+flyTo(pose: CameraSnapshot, opts?: { durationMs?: number; easing?: 'linear' | 'ease-in-out' | 'smooth' | 'cruise'; trajectory?: FlightTrajectorySpec; speed?: number; durationRangeMs?: [number, number] })
+// FlightTrajectorySpec: a name ('orbit' | 'zoom-pan' | 'arc' | 'straight' | 'swing' | 'fly-through')
+// or a parameterised object ({ kind: 'arc', lift }, { kind: 'via', via }, …); see
+// core/app/camera/flight-trajectories.ts and VIEWER_GUIDE.md "Waypoint trajectories".
   : Promise<{ completed: boolean }>
 ```
 

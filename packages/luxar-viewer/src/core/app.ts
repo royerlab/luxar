@@ -98,6 +98,7 @@ import { getSceneLoader, SceneLoaderManager } from '../data/scene-loader-manager
 import type { SceneLoader } from '../data/scene-loader';
 import { notifier } from '../utils/cross-layer/notifier';
 import { initScaleBar as initScaleBarImpl } from './app/overlays/init-scale-bar';
+import { computeBoundsFromMetadata } from '../scene/scene-manager/clipping/scene-bounds-cache';
 
 import type { LuxarAppOptions } from './app/options';
 export type { LuxarAppOptions } from './app/options';
@@ -644,6 +645,13 @@ export class LuxarApp {
         }),
       snapTo: (pose) => restoreCamera(this.sceneManager, pose),
       autoRotateActive: () => this.sceneManager.controls.isAutoRotateActive(),
+      // The default pivot of a `swing` flight: the centre of the scene's data.
+      sceneCentre: () => {
+        const scene = this.sceneManager.scene;
+        const b = typeof scene?.traverse === 'function' ? computeBoundsFromMetadata(scene) : null;
+        if (!b) return null;
+        return [(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2];
+      },
       flyTo: (pose, opts) => {
         // The first load's config pass runs before setupEmbedderHooks(), so the
         // flight driver may not exist yet; a snap is the faithful fallback.
