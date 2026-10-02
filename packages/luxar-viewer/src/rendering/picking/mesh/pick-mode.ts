@@ -15,9 +15,9 @@
  * and then let a dim mesh in front occlude a brighter node behind it. Deriving both
  * from the mode in ONE place makes that combination unreachable.
  *
- * The gsplat pick wrapper's `SurfacePickAwareMaterial` covers only the depth half —
- * gsplats have no cutout — so mesh needs its own capability rather than widening
- * that one. `PickingSystem.renderPickBuffer` prefers this interface when present and
+ * The point/line/gsplat pick wrappers' `SurfacePickAwareMaterial`
+ * (`../_shared/surface-pick.ts`) covers only the depth half — they have no cutout —
+ * so mesh needs its own capability rather than widening that one. `PickingSystem.renderPickBuffer` prefers this interface when present and
  * falls back to `setSurfacePickDepth` otherwise, reading the mode exactly once
  * either way.
  *

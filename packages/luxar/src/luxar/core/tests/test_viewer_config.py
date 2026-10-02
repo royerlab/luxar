@@ -911,6 +911,44 @@ class TestWaypoint:
         # Zero is a legal "snap".
         assert Waypoint(when={"story": 0}, camera=cam, duration_ms=0).duration_ms == 0
 
+    def test_smooth_easing_and_zoom_pan_trajectory_round_trip(self) -> None:
+        cam = CameraConfig(position=(0, 0, 1))
+        wp = Waypoint(
+            when={"story": 1}, camera=cam, easing="smooth", trajectory="zoom-pan"
+        )
+        d = wp.to_dict()
+        assert d["easing"] == "smooth"
+        assert d["trajectory"] == "zoom-pan"
+        back = Waypoint.from_dict(json.loads(json.dumps(d)))
+        assert (back.easing, back.trajectory) == ("smooth", "zoom-pan")
+        with pytest.raises(ValueError, match="trajectory"):
+            Waypoint(when={"story": 0}, camera=cam, trajectory="spline")
+        assert "trajectory" not in Waypoint(when={"story": 0}, camera=cam).to_dict()
+
+    def test_paced_flights_round_trip_and_are_validated(self) -> None:
+        cam = CameraConfig(position=(0, 0, 1))
+        wp = Waypoint(
+            when={"story": 1},
+            camera=cam,
+            easing="cruise",
+            trajectory="zoom-pan",
+            speed=0.7,
+            duration_range_ms=(2500, 8000),
+        )
+        d = json.loads(json.dumps(wp.to_dict()))
+        assert d["speed"] == 0.7 and d["duration_range_ms"] == [2500, 8000]
+        back = Waypoint.from_dict(d)
+        assert (back.easing, back.speed, back.duration_range_ms) == (
+            "cruise",
+            0.7,
+            (2500, 8000),
+        )
+        for bad in (0, -1, float("inf")):
+            with pytest.raises(ValueError, match="speed"):
+                Waypoint(when={"story": 0}, camera=cam, speed=bad)
+        with pytest.raises(ValueError, match="duration_range_ms"):
+            Waypoint(when={"story": 0}, camera=cam, duration_range_ms=(8000, 2500))
+
     def test_reveal_is_validated_and_round_trips(self) -> None:
         cam = CameraConfig(position=(0, 0, 1))
         with pytest.raises(ValueError, match="reveal"):

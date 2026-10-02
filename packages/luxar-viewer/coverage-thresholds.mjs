@@ -48,7 +48,9 @@ export const MAX_EROSION_POINTS = 1;
 
 export const COVERAGE_THRESHOLDS = {
   // Global — every file in the report, the subtrees below included.
-  lines: 88,
+  // The trajectory tests raised the merged dev measurement to 91.00, leaving
+  // the previous floor more than three points below measured coverage.
+  lines: 90,
   statements: 87,
   // functions 84 -> 86 after the chunk-boundary prefetch planner/loader tests
   // (#2686): measured 86.61 -> 87.01 and check-coverage-slack flagged the old
@@ -109,7 +111,7 @@ export const COVERAGE_THRESHOLDS = {
   // bumps above.
   // Remote-control orchestration and wire-value tests lifted this subtree;
   // keep the floor within the three-point slack budget.
-  'src/core/**': { lines: 90, functions: 76, branches: 85 },
+  'src/core/**': { lines: 90, functions: 80, branches: 85 },
   // input jumped when ui-actions-surface.test.ts began invoking the command
   // table InputHandler builds in registerAllKeyBindings (27 thunks no test
   // had ever called): functions 76.0 -> 90.39.
@@ -124,12 +126,12 @@ export const COVERAGE_THRESHOLDS = {
   // is how a metric starts lying. Revisit once the job is required.
   // lines 74 -> 76 after the bloom live-texture binding tests moved measured
   // line coverage to 77.18 and check-coverage-slack flagged the old floor.
-  'src/rendering/**': { lines: 78, functions: 79, branches: 74 },
+  'src/rendering/**': { lines: 78, functions: 79, branches: 76 },
 };
 
 /** Last accepted coverage measurements for each floor. */
 export const COVERAGE_RECORDED = {
-  lines: 90.55,
+  lines: 91.0,
   statements: 89.62,
   functions: 88.02,
   branches: 84.11,
@@ -143,7 +145,7 @@ export const COVERAGE_RECORDED = {
   'src/data/**': { lines: 93.6, functions: 92.03, branches: 87.31 },
   'src/workers/**': { lines: 93.8, functions: 94.05, branches: 88.52 },
   'src/ui/**': { lines: 92.0, functions: 86.95, branches: 79.58 },
-  'src/core/**': { lines: 91.11, functions: 78.49, branches: 86.94 },
+  'src/core/**': { lines: 92.15, functions: 81.03, branches: 86.94 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
-  'src/rendering/**': { lines: 79, functions: 80.73, branches: 75.88 },
+  'src/rendering/**': { lines: 79, functions: 80.73, branches: 77.44 },
 };

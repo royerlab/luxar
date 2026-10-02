@@ -22,10 +22,10 @@
  * The pick buffer encodes: R=nodeId, G=elementId low 16 bits,
  * B=brightness, A=elementId high 16 bits (split so an index past f32's
  * 24-bit exact range survives — see picking-system/pick-render.ts)
- * Brightness-as-depth (gl_FragDepth = 1 - brightness) ensures the
- * brightest element at each pixel wins the depth test. Exception:
- * gsplat nodes in surface ('normal') blending mode write real projected
- * depth instead (front-most wins) — renderPickBuffer syncs the
+ * Brightness-as-depth (gl_FragDepth = 1 / (1 + brightness)) ensures the
+ * brightest element at each pixel wins the depth test. Exception: nodes
+ * in the depth-ordered surface modes ('opaque' / 'normal') write real
+ * projected depth instead (front-most wins) — renderPickBuffer syncs the
  * convention from each main material's blendingMode per render.
  *
  * Caching: the pick buffer is only re-rendered when dirty (camera move,
@@ -38,7 +38,7 @@ import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing/post-processing-manager';
 import { isCameraAwareMaterial } from '../materials/_shared/camera-aware-material';
 import { getDensityDrop, setDensityDrop } from '../materials/_shared/density-drop';
-import { isSurfacePickAwareMaterial } from './gsplat/material';
+import { isSurfacePickAwareMaterial } from './_shared/surface-pick';
 import { isMeshPickAwareMaterial } from './mesh/pick-mode';
 import { alignProvokingVertexWithWebGPU } from './mesh/provoking-vertex';
 import { isNormalMode, isOpaqueMode } from '../blending-state';
@@ -54,6 +54,7 @@ import { MAX_PICK_NODE_ID, voteWinner, type VoteEntry } from './picking-system/p
 import { SettleScheduler } from './picking-system/settle-scheduler';
 import { resolveOnDiskElementId } from './picking-system/element-id-map';
 import { applyLensDistortion } from './picking-system/lens-distortion';
+import { syncPickVisibilityInputs } from './picking-system/visibility-sync';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import { readPixelsCompactAsync } from '../post-processing/hdr/pixel-utils';
 import { isOrthographicCamera } from '../../utils/camera-utils';
@@ -133,6 +134,18 @@ export function computePickBufferSize(drawW: number, drawH: number): { w: number
     w: Math.max(1, Math.floor(halfW * scale)),
     h: Math.max(1, Math.floor(halfH * scale)),
   };
+}
+
+/**
+ * The blending mode a node's visual material composites with: a physical mesh
+ * follows its own translucency (three's PBR material carries no Luxar mode),
+ * every other material its `userData.blendingMode` (additive when unset).
+ */
+function effectiveBlendingMode(material: THREE.Material | undefined): BlendingMode {
+  if (material && isPhysicalMeshMaterial(material)) {
+    return material.transparent ? 'normal' : 'opaque';
+  }
+  return (material?.userData.blendingMode ?? 'additive') as BlendingMode;
 }
 
 export class PickingSystem {
@@ -867,6 +880,15 @@ export class PickingSystem {
       // index), or hovering a thinned-away element would resolve a pick the
       // user cannot see. Cheap no-op when unchanged.
       setDensityDrop(mat, getDensityDrop((entry.main as THREE.Mesh).material));
+      // entry.main is typed Object3D — non-mesh mains have no material.
+      const mainMat = (entry.main as THREE.Mesh).material as
+        THREE.Material | THREE.Material[] | undefined;
+      const single = Array.isArray(mainMat) ? mainMat[0] : mainMat;
+      const mode = effectiveBlendingMode(single);
+      // Visibility inputs the visual pass alone is written with (truncation,
+      // coverage limit, opacity, gain, alpha, projection): the pick pass must
+      // see exactly what the draw shows.
+      syncPickVisibilityInputs(mat, mainMat, mode);
 
       // Pick-depth convention sync: under the depth-ordered surface
       // modes — 'normal' (sorted alpha-over) and 'opaque' (depth-
@@ -879,8 +901,9 @@ export class PickingSystem {
       // needsDepthSort): it is emissive, so phase 1 keeps additive-style
       // brightness picking — a heavily-absorbed back splat can still win
       // the pick if brightest; front-most-beyond-a-τ-threshold is a
-      // spec'd follow-up (VOLUMETRIC_BLENDING_SPEC.md §5.2). Points and
-      // lines implement neither capability and are unaffected.
+      // spec'd follow-up (VOLUMETRIC_BLENDING_SPEC.md §5.2). Points, lines
+      // and gsplats share this capability (`_shared/surface-pick.ts`): an
+      // opaque atom behind another must not win just for being brighter.
       //
       // MESH implements the richer MeshPickAwareMaterial instead, because
       // its blending mode has a SECOND pick-pass consequence the boolean
@@ -890,16 +913,6 @@ export class PickingSystem {
       // view-facing, but a mesh whose back faces are culled on screen must
       // not rasterize them into the pick buffer at true surface depth.
       if (isMeshPickAwareMaterial(mat) || isSurfacePickAwareMaterial(mat)) {
-        // entry.main is typed Object3D — non-mesh mains have no material.
-        const mainMat = (entry.main as THREE.Mesh).material as
-          THREE.Material | THREE.Material[] | undefined;
-        const single = Array.isArray(mainMat) ? mainMat[0] : mainMat;
-        const mode =
-          single && isPhysicalMeshMaterial(single)
-            ? single.transparent
-              ? 'normal'
-              : 'opaque'
-            : ((single?.userData.blendingMode ?? 'additive') as BlendingMode);
         if (isMeshPickAwareMaterial(mat)) {
           mat.setPickMode(mode);
           if (single) mat.setPickSide(single.side);

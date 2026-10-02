@@ -15,7 +15,9 @@ import type { AudioEngine } from '../../../audio/audio-engine';
 import { extractAudioConfig } from '../../../config/zarr-bridge/audio-config';
 import type { SoundWaypointCondition } from '../../../types/audio';
 
+/** What {@link installSceneAudio} needs from the app. */
 export interface SceneAudioPorts {
+  /** The app's sound engine (only the scene-binding surface). */
   audioEngine: Pick<
     AudioEngine,
     'detachScene' | 'applySceneConfig' | 'attachScene' | 'notifyWaypoint'
@@ -28,6 +30,10 @@ export interface SceneAudioPorts {
   openingWaypointWhen: SoundWaypointCondition | undefined;
 }
 
+/**
+ * Apply `audio` (the scene's raw `viewer_config.audio`) and attach the scene's
+ * sound nodes to the engine, replaying the opening waypoint's arrival.
+ */
 export function installSceneAudio(audio: unknown, ports: SceneAudioPorts): void {
   const { audioEngine } = ports;
   audioEngine.detachScene();

@@ -13,7 +13,7 @@
  *   - A: the same elementId's HIGH 16 bits (one f32 channel cannot carry the
  *     whole index exactly — see `luxarElementIdSplit`)
  *
- * Depth = `1 - brightness` (brightest wins), or the real fragment depth when
+ * Depth = `1 / (1 + brightness)` (brightest wins), or the real fragment depth when
  * `uSurfaceDepth == 1` (the depth-ordered `opaque`/`normal` surface modes:
  * front-most wins). Both selectors are runtime uniforms, so a layers-panel
  * blending-mode switch never rebuilds this graph.
@@ -98,6 +98,8 @@ export interface MeshPickTSLNodes {
   readonly uSurfaceDepth: TSLNode;
   /** Near-fade start distance, world units (scene-relative). */
   readonly uNearCull: TSLNode;
+  /** 1 = apply the near fade; 0 = none (a physical visual has no near fade). */
+  readonly uNearFade: TSLNode;
   /**
    * The visual material's base-colour texture, when the node has one.
    *
@@ -137,6 +139,7 @@ export function meshPickWebGPUFactory(
   const uAlphaCutout = nodes.uAlphaCutout;
   const uSurfaceDepth = nodes.uSurfaceDepth;
   const uNearCull = nodes.uNearCull;
+  const uNearFade = nodes.uNearFade;
 
   // ---- Varyings ----
   // Flat for the two ids (see the module doc — mandatory, not stylistic); smooth
@@ -237,7 +240,12 @@ export function meshPickWebGPUFactory(
     // visual graph — pick coverage must keep matching visible coverage as the camera
     // flies into the surface. Per FRAGMENT, because a triangle spans depth.
     nearFade.assign(
-      perspectiveNearFadeTSL(isOrthoProjectionTSL(), vViewZ, max(uNearCull, float(1e-20)))
+      int(uNearFade)
+        .equal(int(1))
+        .select(
+          perspectiveNearFadeTSL(isOrthoProjectionTSL(), vViewZ, max(uNearCull, float(1e-20))),
+          float(1.0)
+        )
     );
     // Assigned before `brightness`, whose select reads it, and before the cutout
     // `Discard` in `colorNode` reads it.
@@ -281,7 +289,7 @@ export function meshPickWebGPUFactory(
     fragmentPrologue();
     return int(uSurfaceDepth)
       .equal(int(1))
-      .select(depth as unknown as TSLNode, float(1.0).sub(brightness));
+      .select(depth as unknown as TSLNode, float(1.0).div(float(1.0).add(brightness)));
   });
 
   const material = outMaterial ?? new NodeMaterial();
@@ -334,6 +342,7 @@ export function buildMeshPickTSLNodesFromUniforms(
     // 0.1 is the near-cull default every wrapper constructs with (overridden
     // per scene by updateCameraParams).
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
+    uNearFade: uniform((uniforms.uNearFade?.value as number) ?? 1),
     // PRESENCE-keyed, not defaulted: an absent uniform means the node has no
     // texture, and binding a blank one would build the sampling variant for a node
     // whose geometry has no `uv` attribute — a bound-but-unfilled attribute reads as

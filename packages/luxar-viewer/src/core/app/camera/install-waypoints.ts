@@ -12,6 +12,7 @@ import type * as THREE from 'three';
 
 import { config } from '../../../config';
 import { resolveTargetNodeCenter } from '../../../scene/scene-manager/camera/camera-setup';
+import { computeBoundsFromMetadata } from '../../../scene/scene-manager/clipping/scene-bounds-cache';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { ZarrWaypoint } from '../../../types/zarr';
@@ -78,6 +79,13 @@ export function installStoryWaypoints(
       }),
     snapTo: (pose) => restoreCamera(sceneManager, pose),
     autoRotateActive: () => sceneManager.controls.isAutoRotateActive(),
+    // The default pivot of a `swing` flight: the centre of the scene's data.
+    sceneCentre: () => {
+      const scene = sceneManager.scene;
+      const b = typeof scene?.traverse === 'function' ? computeBoundsFromMetadata(scene) : null;
+      if (!b) return null;
+      return [(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2];
+    },
     flyTo: (pose, opts) => {
       // The first load's config pass runs before the embedder hooks build the
       // flight driver; a snap is the faithful fallback.

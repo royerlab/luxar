@@ -8,10 +8,9 @@
  * exactly. Per the shared pick contract it drops the colour machinery and
  * adds the `uNodeId` uniform and `vNodeId` / `vElementId` varyings,
  * emitting `(nodeId, elementId-low16, brightness, elementId-high16)` with
- * brightness-as-depth (`gl_FragDepth = 1 − brightness`), identical to the
- * screen-space pick variant. Like it, the pick pass
- * ignores per-element alpha and node opacity — faint-but-hoverable stays
- * consistent across primitives.
+ * brightness-as-depth (`gl_FragDepth = 1 / (1 + brightness)`), identical to the
+ * screen-space pick variant. Like it, pick salience includes per-element
+ * alpha, node opacity and gain.
  *
  * Model + constants: `_shared/line-capsule.ts` (the visual twin's header
  * documents the exactness relaxations; they apply here identically).
@@ -33,6 +32,7 @@ import {
   CAPSULE_STENCIL_APRON_PX,
 } from '../../materials/_shared/line-capsule';
 import { requireTslMaterials } from '../../tsl/slot';
+import { GLSL_PICK_VISIBILITY } from '../_shared/visibility-glsl';
 
 const G = {
   RADIUS_FACTOR: CAPSULE_RADIUS_PER_QUAD_HALFWIDTH.toFixed(7),
@@ -58,7 +58,6 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
     uniform highp sampler2D uLineTex;
     uniform vec2 uResolution;
     uniform float uPixelRatio;
-    uniform int uIsOrtho;
     uniform float uNodeId;
     uniform float uNearCull;
     uniform float uMaxLinePixelWidth;
@@ -75,6 +74,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
     flat out float vAbLen;
     out float vFade;
     out float vSharp;
+    out float vAlpha;       // per-element alpha along the span (visual-twin parity)
     flat out highp float vNodeId;
     flat out highp vec2 vElementId;
 
@@ -100,6 +100,8 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
     void main() {
       // Line pixel-width scale for this draw: resY * |P11| (glsl-lib GLSL_LINE_SCALE).
       luxarLineScale = uResolution.y * luxarProjectionSizeScale();
+      // Ortho branch from the projection this draw uses (glsl-lib GLSL_LINE_SCALE).
+      luxarLineIsOrtho = luxarIsOrthoProjection();
       vNodeId = uNodeId;
       vElementId = luxarElementIdParts();
 
@@ -116,18 +118,18 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float nearCull = max(uNearCull, 1e-20);
       float startDepth = -mvStart.z;
       float endDepth = -mvEnd.z;
-      if ((uIsOrtho == 0) && startDepth < nearCull && endDepth < nearCull) {
+      if ((luxarLineIsOrtho == 0) && startDepth < nearCull && endDepth < nearCull) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
         vLocal = vec2(0.0);
         vCutN = vec4(-1.0, 0.0, 1.0, 0.0);
         vPack = uvec4(0u, 0u, packHalf2x16(vec2(1.0, 1.0)), packHalf2x16(vec2(1.0, 0.0)));
         vAbLen = 1.0;
-        vFade = 0.0; vSharp = 0.5;
+        vFade = 0.0; vSharp = 0.5; vAlpha = 1.0;
         return;
       }
       float tA = 0.0;
       float tB = 1.0;
-      if (uIsOrtho == 0) {
+      if (luxarLineIsOrtho == 0) {
         if (startDepth < nearCull && endDepth >= nearCull) {
           tA = (nearCull - startDepth) / (endDepth - startDepth);
         } else if (endDepth < nearCull && startDepth >= nearCull) {
@@ -140,6 +142,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
       vec4 lineT2 = texelFetch(uLineTex, ivec2(texel0.x + 2, texel0.y), 0);
       vec4 lineT3 = texelFetch(uLineTex, ivec2(texel0.x + 3, texel0.y), 0);
+      vec4 lineT5 = texelFetch(uLineTex, ivec2(texel0.x + 5, texel0.y), 0);
 
       float w0 = sanitizeNonNegative(lineT0.w, 0.0);
       float w1 = sanitizeNonNegative(lineT1.w, 0.0);
@@ -158,7 +161,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
       float rawA;
       float rawB;
-      if (uIsOrtho == 1) {
+      if (luxarLineIsOrtho == 1) {
         rawA = wEffA * luxarLineScale * ${G.RADIUS_FACTOR};
         rawB = wEffB * luxarLineScale * ${G.RADIUS_FACTOR};
       } else {
@@ -198,7 +201,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
         if (farA.w >= 0.0) {
           vec4 mvFarA = modelViewMatrix * vec4(farA.xyz, 1.0);
           float farDepthA = -mvFarA.z;
-          if (uIsOrtho == 0 && farDepthA < nearCull) {
+          if (luxarLineIsOrtho == 0 && farDepthA < nearCull) {
             float tF = (startDepth - nearCull) / max(startDepth - farDepthA, 1e-20);
             mvFarA = mix(mvStart, mvFarA, clamp(tF, 0.0, 1.0));
           }
@@ -221,7 +224,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
                     (dot(qq / ql, u) > 0.5 && min(rawA, rawB) >= minRadius)) {
                   float wFarA = farA.w;
                   float rpFarA;
-                  if (uIsOrtho == 1) {
+                  if (luxarLineIsOrtho == 1) {
                     rpFarA = wFarA * luxarLineScale * ${G.RADIUS_FACTOR};
                   } else {
                     rpFarA = wFarA * luxarLineScale * ${G.RADIUS_FACTOR} / max(-mvFarA.z, nearCull);
@@ -272,7 +275,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
         if (farB.w >= 0.0) {
           vec4 mvFarB = modelViewMatrix * vec4(farB.xyz, 1.0);
           float farDepthB = -mvFarB.z;
-          if (uIsOrtho == 0 && farDepthB < nearCull) {
+          if (luxarLineIsOrtho == 0 && farDepthB < nearCull) {
             float tF = (endDepth - nearCull) / max(endDepth - farDepthB, 1e-20);
             mvFarB = mix(mvEnd, mvFarB, clamp(tF, 0.0, 1.0));
           }
@@ -291,7 +294,7 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
                     (dot(qq / ql, u) < -0.5 && min(rawA, rawB) >= minRadius)) {
                   float wFarB = farB.w;
                   float rpFarB;
-                  if (uIsOrtho == 1) {
+                  if (luxarLineIsOrtho == 1) {
                     rpFarB = wFarB * luxarLineScale * ${G.RADIUS_FACTOR};
                   } else {
                     rpFarB = wFarB * luxarLineScale * ${G.RADIUS_FACTOR} / max(-mvFarB.z, nearCull);
@@ -356,8 +359,10 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       // taper (the zoomed near-axial case).
       float rawC = mix(rawA, rawB, tc);
       float widthScale = min(rawC / minRadius, 1.0);
-      vFade = perspectiveNearFade(uIsOrtho, mix(mvStart.z, mvEnd.z, tc), nearCull) * widthScale;
+      vFade = perspectiveNearFade(luxarLineIsOrtho, mix(mvStart.z, mvEnd.z, tc), nearCull) * widthScale;
       vSharp = mix(s0, s1, tOrig);
+      // Each endpoint sanitized BEFORE the mix, exactly as the visual twin.
+      vAlpha = mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), tOrig);
 
       vec4 clipMix = mix(clipA, clipB, tc);
       float wMix = max(clipMix.w, 1e-6);
@@ -369,6 +374,10 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
 
 export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
+    ${GLSL_PICK_VISIBILITY}
+    // 1 = surface modes (opaque/normal): real projected depth (front-most
+    // wins). 0 = commutative modes: brightness-as-depth (brightest wins).
+    uniform int uSurfaceDepth;
 
     in vec2 vLocal;
     flat in vec4 vCutN;
@@ -376,6 +385,7 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
     flat in float vAbLen;
     in float vFade;
     in float vSharp;
+    in float vAlpha;
     flat in highp float vNodeId;
     flat in highp vec2 vElementId;
 
@@ -477,11 +487,17 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
           if (profile <= 0.0) discard;
         }
       }
-      float brightness = profile * vFade;
+      // Weighted by what the visual pass scales the line by (per-element
+      // alpha, node opacity, max(gain, 1)) — see ../_shared/visibility-glsl.ts.
+      float brightness = profile * vFade * luxarPickWeight(vAlpha);
       if (brightness < 1e-4) discard;
 
       fragColor = vec4(vNodeId, vElementId.x, brightness, vElementId.y);
-      gl_FragDepth = 1.0 - clamp(brightness, 0.0, 1.0);
+      // Pick depth convention, synced from the visual node's blending mode:
+      // the surface modes (opaque/normal) write the real projected depth so
+      // the FRONT-MOST element wins; the commutative modes keep
+      // brightness-as-depth (BRIGHTEST wins).
+      gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 / (1.0 + brightness);
     }
 `;
 

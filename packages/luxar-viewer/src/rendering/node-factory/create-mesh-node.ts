@@ -491,9 +491,10 @@ export function createEmptyMeshNode(
     const pickId = pickingSystem.allocatePickId();
     mesh.userData.pickId = pickId;
     // The pick material reads the same coverage the visual one does, so it starts
-    // from the same node opacity and cutoff. Both are re-pushed by the layers panel
-    // through `syncMeshPickAppearance`; seeding them here keeps the FIRST pick
-    // (which can precede any panel interaction) consistent with the screen.
+    // from the same node opacity and cutoff. The cutoff is re-pushed by the layers
+    // panel through `syncMeshPickAppearance`, and the live opacity is copied from
+    // the visual material on every pick render (picking-system/visibility-sync.ts);
+    // seeding both here keeps the pick material consistent from the start.
     const pickPlaceholder = attrs.has_texture ? new THREE.Texture() : null;
     const pickMaterial = materialManager.createMeshPickingMaterial({
       nodeId: pickId,
@@ -542,9 +543,11 @@ export function createEmptyMeshNode(
  *
  * `opacity` and `alpha_cutoff` are the two visual values the pick pass reads (they
  * are the whole coverage term and the cutout threshold — §6.5), and the layers panel
- * can change either at runtime. Without this the pick pass would keep the
- * load-time values: dragging opacity below the cutoff would dissolve the mesh on
- * screen while leaving every triangle pickable.
+ * can change either at runtime. The opacity is ALSO reconciled from the visual
+ * material's live uniform on every pick render (picking-system/visibility-sync.ts —
+ * that is what covers the LOD cross-fade and the embedder exposure path), so for
+ * opacity this push matters for the invalidation its return value drives; the
+ * cutoff has no other route.
  *
  * A no-op for a node with no pick material (picking disabled, or a test-built node).
  *

@@ -627,6 +627,10 @@ export class PointTSLMaterial
     // geometry draws from slot 1 would otherwise read the stale buffer
     // until the coordinator's next per-frame re-assert.
     cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
+    // The density guard's thinning state rides along too (it is re-asserted
+    // only on the guard's next visit, which an off-screen node never gets).
+    cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
+    cloned.uniforms.uDensityAlphaExp.value = this.uniforms.uDensityAlphaExp.value;
 
     return cloned as this;
   }

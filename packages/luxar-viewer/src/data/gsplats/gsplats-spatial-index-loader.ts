@@ -460,7 +460,11 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
       this.chunkIndex = await this.loadChunkBounds(attrs, signal);
 
       if (!this.chunkIndex) {
-        log.info(
+        // Verbose, not info: every single-chunk rung takes this path (see
+        // loadGSplatsChunkIndex), so at info level a partitioned timelapse
+        // printed one line per rung per timepoint.
+        log.verbose(
+          LogEmoji.QUERY,
           Modules.GSPLATS_SPATIAL_INDEX_LOADER,
           `No spatial index for GSplats ${this.node.path} - will load all data`
         );

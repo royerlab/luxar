@@ -125,6 +125,8 @@ export interface InitPipelinePorts {
   restorePanelVisibilityStates: (states: Map<string, boolean>) => void;
   /** Emit a public embedder event (the audio engine's `sound-started` / `sound-ended`). */
   emitEmbedderEvent: (event: 'sound-started' | 'sound-ended', payload: { name: string }) => void;
+  /** Mark the current dataset's cached pick buffer dirty (no-op without picking). */
+  invalidatePickBuffer?: () => void;
 }
 
 /**
@@ -398,6 +400,7 @@ export async function runInitPipeline(
     getDefaultLoader: () => getSceneLoader('default'),
     getAdaptiveDpr: () => partial.adaptiveDPRManager,
     requestRender: () => animationController.requestRender('densityGuard'),
+    invalidatePickBuffer: ports.invalidatePickBuffer,
   });
   animationController.addPerFrameCallback('lod-group-selector', () => {
     const loader = getSceneLoader('default');
