@@ -30,6 +30,7 @@
 
 const ORDERING_AND_DENSITY = ['uSortedIndexSlot', 'uDensityDrop', 'uDensityAlphaExp'] as const;
 
+/** Runtime uniforms a gsplat material clone must carry over (GLSL and TSL twins). */
 export const GSPLAT_RUNTIME_UNIFORMS = [
   'uResolution',
   'uPixelRatio',
@@ -39,6 +40,7 @@ export const GSPLAT_RUNTIME_UNIFORMS = [
   ...ORDERING_AND_DENSITY,
 ] as const;
 
+/** Runtime uniforms a point material clone must carry over (GLSL and TSL twins). */
 export const POINT_RUNTIME_UNIFORMS = [
   'maxPointSize',
   'uInvGamma',
@@ -49,6 +51,7 @@ export const POINT_RUNTIME_UNIFORMS = [
   ...ORDERING_AND_DENSITY,
 ] as const;
 
+/** Runtime uniforms a line material clone must carry over (GLSL and TSL twins). */
 export const LINE_RUNTIME_UNIFORMS = [
   'uResolution',
   'uNearCull',
@@ -59,6 +62,7 @@ export const LINE_RUNTIME_UNIFORMS = [
   ...ORDERING_AND_DENSITY,
 ] as const;
 
+/** Runtime uniforms a mesh material clone must carry over (GLSL and TSL twins). */
 export const MESH_RUNTIME_UNIFORMS = ['uInvGamma', 'uNearCull'] as const;
 
 interface UniformRecord {

@@ -34,7 +34,6 @@ import {
   registerElementTexelDirtyRange,
   releaseSortedIndexDrawHold,
   sortedIndexDrawHoldTarget,
-  setSortedIndexApplyRequestRender,
   setSortedIndexChunkElementsForTests,
   writeSortedIndexIdentity,
   writeSortedIndexIdentityRange,
@@ -1331,10 +1330,6 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     cancelAllSortedIndexOrderingApplies();
     setSortedIndexChunkElementsForTests(null);
     configureSortedIndexChunkedApply(true);
-    // `requestSliceRender` is module-global and this file never resets
-    // modules, so a spy left wired would fire in later tests that drain
-    // streams (issue #715 resume hook). Always clear it.
-    setSortedIndexApplyRequestRender(null);
   });
 
   function makeGeometry(capacity: number): { geometry: THREE.InstancedBufferGeometry } {
@@ -1607,16 +1602,16 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     expect(back.updateRanges[0]).toMatchObject({ start: CHUNK, count: CHUNK });
   });
 
-  it('a consumed-slice upload ack drives a continuation render while pending, and is a no-op once cleared (#715 resume hook)', () => {
+  it('a consumed-slice upload ack drives a continuation render while pending, and is a no-op without one (#715 resume hook)', () => {
     // The coordinator deliberately does NOT request a render on a stall,
     // so a stream that drains as the mesh becomes drawable would freeze
     // mid-way without this hook: a consumed slice's onUpload ack drives the
-    // next frame. Guards both the `requestSliceRender?.()` in the onUpload
-    // callback and the `setSortedIndexApplyRequestRender` wiring.
+    // next frame. Guards the `requestFrame` call in the onUpload callback,
+    // which comes from the STREAMING ordering's own callbacks (so it wakes
+    // the render loop of the host that staged it).
     const spy = vi.fn();
-    setSortedIndexApplyRequestRender(spy);
     const { geometry } = makeGeometry(16);
-    writeSortedIndexOrdering(geometry, reversed(12), 12); // 3 slices of CHUNK
+    writeSortedIndexOrdering(geometry, reversed(12), 12, { requestFrame: spy }); // 3 slices
     const back = geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute;
 
     // Writing a slice arms the flag + wires onUpload, but does NOT itself
@@ -1624,7 +1619,7 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     pumpSortedIndexOrderingApply(geometry);
     spy.mockClear();
     back.onUploadCallback();
-    expect(spy).toHaveBeenCalledTimes(1); // fails if requestSliceRender?.() is removed
+    expect(spy).toHaveBeenCalledTimes(1); // fails if the ack stops calling requestFrame
 
     // Once the stream completes and leaves chunkedApplies, a later ack must
     // NOT request a render (guards the `chunkedApplies.has(geometry)` check).
@@ -1634,10 +1629,8 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     back.onUploadCallback();
     expect(spy).not.toHaveBeenCalled();
 
-    // A cleared hook is a safe no-op (teardown hygiene: no throw, no stale
-    // closure), even with a pending stream so the ack's `has` check passes
-    // and reaches the now-null `requestSliceRender?.()`.
-    setSortedIndexApplyRequestRender(null);
+    // An ordering staged without the hook is a safe no-op (no throw), even
+    // with a pending stream so the ack finds an entry to read it from.
     writeSortedIndexOrdering(geometry, reversed(12), 12);
     pumpSortedIndexOrderingApply(geometry);
     const active = getActiveSortedIndexAttribute(geometry);
@@ -1925,6 +1918,54 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     expect(hasPendingSortedIndexOrderingApply(b.geometry)).toBe(true);
     cancelAllSortedIndexOrderingApplies();
     expect(hasPendingSortedIndexOrderingApply(b.geometry)).toBe(false);
+  });
+
+  it("an owner-scoped sweep abandons only that owner's streams and selected orderings", () => {
+    // Two depth-sort coordinators on one page share this module: one host's
+    // dataset switch must not abandon the other host's streams.
+    const ownerA = {};
+    const ownerB = {};
+    const a = makeGeometry(16);
+    const b = makeGeometry(16);
+    const abandonedA = vi.fn();
+    const abandonedB = vi.fn();
+    writeSortedIndexOrdering(a.geometry, reversed(12), 12, {
+      owner: ownerA,
+      onAbandoned: abandonedA,
+    });
+    writeSortedIndexOrdering(b.geometry, reversed(12), 12, {
+      owner: ownerB,
+      onAbandoned: abandonedB,
+    });
+
+    cancelAllSortedIndexOrderingApplies(ownerA);
+    expect(hasPendingSortedIndexOrderingApply(a.geometry)).toBe(false);
+    expect(abandonedA).toHaveBeenCalledTimes(1);
+    expect(hasPendingSortedIndexOrderingApply(b.geometry)).toBe(true);
+    expect(abandonedB).not.toHaveBeenCalled();
+
+    // B's ordering finishes streaming and waits, SELECTED, for its draw: the
+    // acknowledgement map is swept by owner too.
+    drainSortedIndexApply(b.geometry);
+    cancelAllSortedIndexOrderingApplies(ownerA);
+    expect(abandonedB).not.toHaveBeenCalled();
+    cancelAllSortedIndexOrderingApplies(ownerB);
+    expect(abandonedB).toHaveBeenCalledTimes(1);
+  });
+
+  it('a stream whose owner lifts the back-pressure advances without upload acks (offline capture)', () => {
+    // `resortForCapture` never draws, so the #715 acknowledgement that
+    // releases a stalled stream can never fire; the bypass belongs to the
+    // ordering's owner, so only the capturing host's streams fold.
+    let bypass = true;
+    const { geometry } = makeGeometry(16);
+    writeSortedIndexOrdering(geometry, reversed(12), 12, { bypassBackPressure: () => bypass });
+    expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ more: true, stalled: false });
+    // No draw consumed slice 1, yet slice 2 is written.
+    expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ more: true, stalled: false });
+    // Lifted again: the unacknowledged slice 2 stalls slice 3.
+    bypass = false;
+    expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ more: true, stalled: true });
   });
 
   it('slicing disabled (WebGPU backends): one slice, then the same atomic flip', () => {

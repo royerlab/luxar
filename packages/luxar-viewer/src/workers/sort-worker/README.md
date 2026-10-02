@@ -16,7 +16,7 @@ The SortWorker is a single **persistent** Comlink worker (NOT part of the round-
 sort-worker/
 ├── initialize.ts    — Bootstrap: honor wasmPath override, load compiled WASM with TS fallback
 ├── state.ts         — Shared SortWorkerCtx: wasm module, per-node center registry
-└── sorting.ts       — Task bodies: registerNode, sortNode, releaseNode, releaseAllNodes
+└── sorting.ts       — Task bodies: registerNode, sortNode, releaseNode
 ```
 
 The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` import) wires the task functions into `workerAPI` and `expose()`s it — the same layout as `data-worker.ts`.
@@ -49,7 +49,6 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 - `registerNode(ctx, params)` — store/refresh a node's centers
 - `sortNode(ctx, params)` — compute back-to-front ordering, return transferred result or null (stale-drop)
 - `releaseNode(ctx, nodeId)` — drop a node's registration
-- `releaseAllNodes(ctx)` — drop every registration (dataset switch / app teardown)
 
 ### SortWorkerCtx (Shared State)
 
@@ -76,7 +75,7 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 
 ### Spawn (Main Thread → Worker)
 
-1. Main thread calls `ensureWorker()` (depth-sort-coordinator.ts) — at APP INIT via `warmUpDepthSortWorker()`, not on the first order-dependent commit. That commit arrives while the loader saturates the main thread, which is where the init deadline below used to be missed
+1. Main thread calls `ensureWorker()` (`depth-sort-coordinator/worker-lifecycle.ts`) — at APP INIT via `DepthSortCoordinator.warmUp()`, not on the first order-dependent commit. That commit arrives while the loader saturates the main thread, which is where the init deadline below used to be missed
 2. Constructs `new SortWorker()` (Vite `?worker` import) or `new Worker(sortWorkerUrlOverride)` (embedder override)
 3. Wraps via Comlink: `api = wrap<SortWorkerAPI>(worker)`
 4. Calls `api.initialize(sortWorkerWasmPathOverride)` through the shared `worker-pool/lifecycle/init-with-guard.ts` — `config.depthSort.workerInitTimeoutMs` deadline + `onerror`/`onmessageerror` guard (see the failure taxonomy in the depth-sort-coordinator README)
@@ -89,7 +88,7 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 2. `ctx.wasm = await initWasm()` — loads compiled WASM or falls back to TypeScript
 3. Returns `{ wasmFallback: isWasmFallback(ctx.wasm) }`
 
-**Error handling**: If WASM initialization fails, throws `'WASM unavailable. Luxar requires WebAssembly support...'`. The main thread catches this, terminates the wedged worker, and degrades to unsorted normal mode (all later commits land in a warn-once catch — see `noteDepthSortCommit` in depth-sort-coordinator.ts).
+**Error handling**: If WASM initialization fails, throws `'WASM unavailable. Luxar requires WebAssembly support...'`. The main thread catches this, terminates the wedged worker, and degrades to unsorted normal mode (all later commits land in a warn-once catch — see `DepthSortCoordinator.noteCommit` in depth-sort-coordinator.ts).
 
 ### Register Node (Worker)
 
@@ -112,7 +111,7 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 2. Log a warning if clamped
 3. Store/replace `ctx.nodes.set(nodeId, { generation, centers3, count })`
 
-**Called** on every non-noop commit of an order-dependent node (main thread `noteDepthSortCommit`). Replaces any previous registration wholesale.
+**Called** on every non-noop commit of an order-dependent node (main thread `DepthSortCoordinator.noteCommit`). Replaces any previous registration wholesale.
 
 **Transfer semantics**: `centers3.buffer` is TRANSFERRED from the main thread (detached), so the main thread must hand over a buffer with no other readers. Gsplats pass `processed.centers3D` (the commit's texture-write loops are the last main-thread readers); points pass a lazy provider that fresh-copies `data.positions` only on the sorted path; lines pass a lazy provider computing fresh segment midpoints.
 
@@ -154,15 +153,11 @@ The facade `workers/sort-worker.ts` (entry point bundled by Vite's `?worker` imp
 
 Deletes `ctx.nodes.delete(nodeId)`. Called on node disposal / pool release / mode-switch-away (main thread).
 
-### Release All Nodes (Worker)
-
-`releaseAllNodes(ctx: SortWorkerCtx): void`
-
-Clears `ctx.nodes.clear()`. Called on dataset switch / app teardown (main thread).
+There is deliberately no "release every registration" RPC: the worker is shared by every host's coordinator on the page (a LuxarApp and its LuxarLayers), so a dataset switch releases only ITS host's registrations, node by node (`DepthSortCoordinator.releaseAllNodes`).
 
 ### Terminate (Main Thread → Worker)
 
-`disposeDepthSort()` (depth-sort-coordinator.ts) terminates the worker and resets all main-thread module state. The worker's async module evaluation is interrupted, and any in-flight RPC promises reject.
+The LAST coordinator's `DepthSortCoordinator.dispose()` (`detachCoordinator` in `depth-sort-coordinator/worker-lifecycle.ts`) terminates the worker and resets the shared worker host; an earlier one only releases its own registrations. The worker's async module evaluation is interrupted, and any in-flight RPC promises reject.
 
 ## Generation Contract (Spec §5)
 
@@ -172,7 +167,7 @@ Clears `ctx.nodes.clear()`. Called on dataset switch / app teardown (main thread
 - **Unique across lifetimes**, not just within one: `releaseDepthSortNode` deletes the node state, and a re-promotion recommit would otherwise restart the counter — letting a stale in-flight sort from the previous life pass the guard and apply a CORRUPT permutation over the new (differently-sized) commit
 - Enforced at **two checkpoints**:
   1. **Worker side** (here, `sortNode` line 87): returns `null` when `node.generation !== params.generation`
-  2. **Main thread** (depth-sort-coordinator.ts, `scheduleSort`'s resolve handler): applies the ordering only when `result.generation === current.generation` AND `hasCommittedData(mesh)` (LOD demotion signal)
+  2. **Main thread** (`depth-sort-coordinator/scheduler.ts`, `scheduleSort`'s resolve handler): applies the ordering only when `result.generation === current.generation` AND `hasCommittedData(mesh)` (LOD demotion signal)
 
 **Why the double-check?** The worker check catches a re-registration that raced the RPC (new centers transferred mid-flight). The main-thread check catches a commit or LOD demotion that raced the RPC's return.
 
@@ -198,35 +193,38 @@ The worker uses the same `wasm/` module as the data workers:
   registerNode: (params: RegisterNodeParams) => void;
   sort: (params: SortParams) => SortResult | null;
   releaseNode: (nodeId: string) => void;
-  releaseAllNodes: () => void;
 }
 ```
 
-**Used by** `depth-sort-coordinator.ts::api` (Comlink-wrapped Remote<SortWorkerAPI>).
+**Used by** `workerHost.api` in `depth-sort-coordinator/state.ts` (Comlink-wrapped Remote<SortWorkerAPI>).
 
 ## Integration Points
 
-### Main Thread (depth-sort-coordinator.ts)
+### Main Thread (depth-sort-coordinator.ts and its `depth-sort-coordinator/` modules)
 
 (Line numbers deliberately omitted — the previous ones had drifted by ~70 lines and quietly misled.)
 
-- **Warm up**: `warmUpDepthSortWorker()` — fire-and-forget `ensureWorker()` at app init
-- **Spawn**: `ensureWorker()` — constructs worker, wraps via Comlink, calls `initialize()` under the shared init guard
-- **Register**: `noteDepthSortCommit()` — transfers centers, calls `api.registerNode()`
-- **Sort**: `scheduleSort()` — calls `withTimeout('depth-sort', api.sort(...), SORT_RPC_TIMEOUT_MS)`
-- **Release node**: `releaseDepthSortNode()` — calls `releaseWorkerNode()` → `api.releaseNode()` (fire-and-forget)
-- **Release all**: `releaseAllDepthSortNodes()` — calls `api.releaseAllNodes()` (fire-and-forget)
-- **Terminate**: `disposeDepthSort()` — calls `worker.terminate()`
+One `DepthSortCoordinator` per host (the LuxarApp's on its `SceneManager`, one per `LuxarLayer`), all sharing this one worker:
+
+- **Warm up**: `DepthSortCoordinator.warmUp()` — fire-and-forget `ensureWorker()` at host init
+- **Spawn**: `ensureWorker()` (`worker-lifecycle.ts`) — constructs worker, wraps via Comlink, calls `initialize()` under the shared init guard
+- **Register**: `DepthSortCoordinator.noteCommit()` — transfers centers, calls `api.registerNode()`
+- **Sort**: `scheduleSort()` (`scheduler.ts`) — calls `withTimeout('depth-sort', api.sort(...), SORT_RPC_TIMEOUT_MS)`; the RPC's own promise resolves into the coordinator that dispatched it, so no routing id crosses the boundary
+- **Release node**: `releaseDepthSortNode()` (routed to the mesh's coordinator) — calls `releaseWorkerNode()` → `api.releaseNode()` (fire-and-forget)
+- **Release a host's nodes**: `DepthSortCoordinator.releaseAllNodes()` — `api.releaseNode()` per node of THAT host (fire-and-forget)
+- **Terminate**: the last coordinator's `DepthSortCoordinator.dispose()` — calls `worker.terminate()`
 
 ### Commit Paths (geometry commits)
 
-- **GSplats**: `data/scene-loader/commit/commit-gsplats-geometry.ts` → `noteDepthSortCommit(mesh, processed.centers3D, count)`
-- **Points**: `data/scene-loader/commit/commit-points-geometry.ts` → `noteDepthSortCommit(mesh, () => freshCopy(data.positions), count)`
-- **Lines**: `data/scene-loader/commit/commit-lines-geometry.ts` → `noteDepthSortCommit(mesh, () => computeSegmentMidpoints(data), count)`
+Each commit helper reaches its host's coordinator through the `GeometryCommitHost` the SceneLoader hands it (`host.depthSort`):
 
-### Per-Frame Scheduler (depth-sort-coordinator.ts)
+- **GSplats**: `data/scene-loader/commit/commit-gsplats-geometry.ts` → `depthSort.noteCommit(mesh, processed.centers3D, count)`
+- **Points**: `data/scene-loader/commit/commit-points-geometry.ts` → `depthSort.noteCommit(mesh, () => freshCopy(data.positions), count)`
+- **Lines**: `data/scene-loader/commit/commit-lines-geometry.ts` → `depthSort.noteCommit(mesh, () => computeSegmentMidpoints(data), count)`
 
-`evaluateDepthSortPerFrame()` — registered as the `'depth-sort-scheduler'` per-frame callback:
+### Per-Frame Scheduler (depth-sort-coordinator/scheduler.ts)
+
+`DepthSortCoordinator.evaluatePerFrame()` (→ `evaluateDepthSortPerFrame(state)`) — registered as the host's `'depth-sort-scheduler'` per-frame callback (a `LuxarLayer` calls it from `update()`):
 
 - Compares live camera pose against `lastSortAxis` / `lastSortOffset` for each registered node
 - Dispatches a re-sort via `scheduleSort()` when the angle or translation threshold is crossed
@@ -253,7 +251,7 @@ Worker may already be terminating → RPC rejects → swallowed (fire-and-forget
 
 ### Single Worker Instance
 
-Only one SortWorker exists per session. Spawned at app init (`warmUpDepthSortWorker()`), terminated on app dispose. NOT part of the data worker pool (no round-robin) — but it now shares the pool's `init-with-guard.ts`, so the two cannot drift apart on startup semantics.
+Only one SortWorker exists per page, shared by every host's coordinator. Spawned at host init (`DepthSortCoordinator.warmUp()`), terminated when the last coordinator is disposed. NOT part of the data worker pool (no round-robin) — but it now shares the pool's `init-with-guard.ts`, so the two cannot drift apart on startup semantics.
 
 ### Transfer Semantics
 

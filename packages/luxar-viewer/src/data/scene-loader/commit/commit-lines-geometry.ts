@@ -17,9 +17,8 @@ import * as THREE from 'three';
 import { isLinesUserData } from '../../../types/lines';
 import { log, LogEmoji, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
-import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { updateInstancedLinesMesh } from '../../../rendering/line-geometry';
-import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
+import type { GeometryCommitHost } from './commit-host';
 import { clampLineCapacity } from '../../../rendering/element-texture-layout';
 import { syncLineMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
@@ -51,11 +50,11 @@ export { syncLineMaterialWithGeometry };
  */
 export function commitLinesGeometry(
   staged: StagedLinesCommit,
-  rootGroup: THREE.Group | null,
-  gpuBufferPool: GPUBufferPool | null,
+  host: GeometryCommitHost,
   session: UpdateSession | undefined,
   loadedViewVersion: number
 ): void {
+  const { rootGroup, gpuBufferPool, depthSort } = host;
   if (!rootGroup) return;
 
   const mesh = findObjectByName(rootGroup, staged.path) as THREE.Mesh;
@@ -120,7 +119,7 @@ export function commitLinesGeometry(
       // Keep the previous depth-sort permutation on a same-node
       // same-count in-place recommit (timepoint scrub): a permutation of
       // [0,count) is a strictly-no-worse prior than storage order for
-      // the ≥1 frame until the re-sort dispatched by noteDepthSortCommit
+      // the ≥1 frame until the re-sort dispatched by `depthSort.noteCommit`
       // below lands. Guards mirror the points/gsplats twins.
       // The same-buffer prior splits in two on the count.
       //
@@ -278,7 +277,7 @@ export function commitLinesGeometry(
     // points/gsplats twins, success-only, with the CLAMPED count so
     // permutation values stay inside [0, textureCapacity). The lazy
     // provider defers the O(N) midpoint computation to the sorted path.
-    noteDepthSortCommit(mesh, sortCenters3, segmentCount);
+    depthSort?.noteCommit(mesh, sortCenters3, segmentCount);
   } finally {
     bufferSession?.end();
   }

@@ -28,10 +28,56 @@ one WebGL context, one camera, one set of controls.
 
 The seam predates this module. `SceneLoader.loadScene()` returns a plain
 `THREE.Group` (its own docstring says `threeScene.add(scene)`), and both
-`LODGroupRegistryDeps` and `configureDepthSort()` are defined purely in terms of
-injectable getters — `getCamera()`, `getViewportSize()`, `getDisplayDims()`.
-Nothing in the data, cache, LOD, or material path reaches for `SceneManager`.
-`LuxarLayer` supplies those getters from the host instead.
+`LODGroupRegistryDeps` and `DepthSortCoordinator.configure()` are defined purely
+in terms of injectable getters — `getCamera()`, `getViewportSize()`,
+`getDisplayDims()`. Nothing in the data, cache, LOD, or material path reaches for
+`SceneManager`. `LuxarLayer` supplies those getters from the host instead.
+
+## Several hosts on one page
+
+One `LuxarApp` and any number of `LuxarLayer`s may share a page (or layers
+alone). Each layer owns everything that is about a host, so no host's load,
+camera, resize or teardown reaches another:
+
+| Per layer (never the app's)                            | Why it matters                                                                                                       |
+| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `SceneLoaderManager` (its loaders, profiler, wiring)   | an app and a layer both use loader id `'default'`; a shared manager let one host's load dispose the other's loader   |
+| `SceneDimsManager`, resolved from the layer's own root | a host scene holding two layers handed the second the first's dims                                                   |
+| `MaterialManager`                                      | materials take the layer's renderer capabilities and only its camera broadcast; its dispose frees only its materials |
+| `DepthSortCoordinator`                                 | its nodes sort against the host camera and wake only `requestRender`                                                 |
+| `WebGLBlendWarmupManager` (registered)                 | commits in the host scene warm against the host renderer, not the app's                                              |
+
+The LuxarApp's instances are the module singletons
+(`SceneLoaderManager.getInstance()`, `sceneDimsManager`, `materialManager` outside
+a layer's node-creation bracket); a layer never touches them. Two LuxarApps on one
+page remain unsupported: the app also owns page-global UI (`document.title`,
+`__luxarDebug`, DOM panels, keyboard).
+
+Shared on purpose, page-wide:
+
+- the **data-worker pool** and the **SortWorker** — one set of workers per page;
+  each host holds a lease and only the last host's dispose terminates them;
+- the **GPU byte budget** (`initializeGpuByteBudget`) — one GPU; the last host to
+  configure it sets the ceiling;
+- the **renderer-backend switches** (`configureRendererBackend`: element-texture
+  layout, chunked ordering apply, RenderObject eviction) — so every Luxar host on
+  a page must render through the **same backend** (all WebGL2 or all WebGPU);
+- asset-URL overrides (`wasmPath`, `workerPath`), the `config` object, the
+  `eventBus` (a layer's commits also wake an app's loop — an extra frame, never a
+  wrong one) and the cross-layer `notifier` backend (an app's toasts show a
+  layer's errors).
+
+### Two layers in one THREE.Scene
+
+Supported, with a stated limit. Each layer depth-sorts and render-orders only
+its own nodes, and stamps its `renderOrder` option on every Group it owns — which
+three compares before any per-mesh rank. So two layers' transparent geometry
+does **not** interleave by depth: the layer with the lower `renderOrder` draws
+first as a whole, and with equal values (both default to 10) the order between
+them is undefined. The second layer to attach logs a warning saying so. Give
+each layer a distinct `renderOrder` (e.g. annotations always over a volume), or
+render them in separate scenes. Interleaving would need one ordering domain
+spanning both hosts, which is deliberately not built.
 
 ## Usage
 
@@ -146,7 +192,7 @@ blending when exposure should produce smooth surface transparency.
 | `onDatasetFault(fn)`               | Subscribe to faults; replays current state; returns unsubscribe   |
 | `handleContextLost()`              | Back off the Luxar GPU budget after WebGL context loss            |
 | `handleContextRestored()`          | Rebuild Luxar resources after host WebGL context recovery         |
-| `dispose()`                        | Async full teardown of Luxar in the page                          |
+| `dispose()`                        | Async teardown of this layer and its shared-worker leases         |
 
 ## Host responsibilities
 
@@ -180,10 +226,9 @@ blending when exposure should produce smooth surface transparency.
 
 ## Limits
 
-- **One layer per page, and never alongside a `LuxarApp`.** `SceneLoaderManager`,
-  `sceneDimsManager`, `materialManager`, and the worker pool are process
-  singletons. Two owners share, then corrupt, each other's state. Same
-  restriction as `LuxarApp`, same reason.
+- **Multi-host limits** are listed under "Several hosts on one page": one
+  renderer backend per page, and no depth interleaving between two layers in one
+  scene.
 - **No near-cull is pushed.** `SceneManager` derives a near-cull distance from
   its dynamic scene-bounds cache and passes it as a third argument to
   `updateCameraParams`, which fades geometry approaching the near plane.
@@ -241,10 +286,10 @@ blending when exposure should produce smooth surface transparency.
   scene's authored `opacity` plus `setExposure()` — and `max` is the one blending
   mode that cannot saturate at all.
 
-- **`dispose()` is async** and tears down process singletons — the loader and its
-  caches, the data-worker pool, the depth-sort worker, the material cache. It is
-  a full teardown of Luxar in the page, not a partial one, which is consistent
-  with the single-instance rule.
+- **`dispose()` is async** and tears down this layer's loaders, caches, materials,
+  depth-sort coordinator and blend warm-up. It releases the layer's leases on the
+  shared data-worker pool and SortWorker; those workers remain alive while another
+  host uses them.
 
 ## Files
 

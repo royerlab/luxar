@@ -51,8 +51,9 @@ async function bootSynthetic(page: Page, type: 'points' | 'gsplats'): Promise<vo
     // landing between the renders being compared.
     const result = await dbg.injectSyntheticScene({
       type: t,
-      // Keep below the measured SwiftShader capture-cost cliff: flat at 10k,
-      // minutes by 12k (#2970). Restore 20k when that issue is fixed.
+      // Keep this shader-plumbing check within its 60 s timeout: even after
+      // #2970, 20k takes about 72 s for points and 102 s for splats in setup
+      // and full-frame transfers (see PLAYWRIGHT_GUIDE.md).
       count: 5000,
       seed: 7,
       blending: 'additive',

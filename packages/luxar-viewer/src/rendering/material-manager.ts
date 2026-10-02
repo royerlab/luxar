@@ -666,27 +666,69 @@ export class MaterialManager {
 }
 
 /**
- * Page-level singleton instance of the material manager.
+ * The LuxarApp's material manager (one LuxarApp per page), built lazily. Every
+ * `LuxarLayer` constructs its own `MaterialManager`, so its materials take its
+ * own capabilities and camera parameters and are disposed by its own teardown.
+ */
+let _materialManagerInstance: MaterialManager | undefined;
+
+/**
+ * The manager installed by {@link runWithMaterialManager} for the synchronous
+ * call in progress, or undefined outside one.
+ */
+let _scopedMaterialManager: MaterialManager | undefined;
+
+/** The LuxarApp's manager instance (never the scoped one). */
+export function getPageMaterialManager(): MaterialManager {
+  _materialManagerInstance ??= new MaterialManager();
+  return _materialManagerInstance;
+}
+
+/**
+ * Run `fn` with {@link materialManager} resolving to `manager`.
+ *
+ * The node-factory and commit paths are shared by every host but reach the
+ * materials through the module export, so the host that owns a loader brackets
+ * its synchronous node-creation and commit calls with its own manager: a
+ * LuxarLayer's nodes then get the layer's capabilities, camera broadcast and
+ * disposal, never the app's. Synchronous by contract — node creation and the
+ * commit stage never await — and re-entrant (the previous scope is restored).
+ */
+export function runWithMaterialManager<T>(manager: MaterialManager, fn: () => T): T {
+  const previous = _scopedMaterialManager;
+  _scopedMaterialManager = manager;
+  try {
+    return fn();
+  } finally {
+    _scopedMaterialManager = previous;
+  }
+}
+
+/** The manager a `materialManager` access resolves to right now. */
+function activeMaterialManager(): MaterialManager {
+  return _scopedMaterialManager ?? getPageMaterialManager();
+}
+
+/**
+ * The material manager for the code running now: the host manager a
+ * {@link runWithMaterialManager} bracket installed, else the LuxarApp's.
  *
  * Construction is **deferred until first access** via a Proxy. Tests can
  * call {@link __resetMaterialManagerForTests} to start fresh between
  * cases. Call-site syntax is unchanged from a directly-exported instance.
  */
-let _materialManagerInstance: MaterialManager | undefined;
-
 export const materialManager: MaterialManager = new Proxy({} as MaterialManager, {
   get(_target, prop, _receiver) {
-    _materialManagerInstance ??= new MaterialManager();
-    const value = Reflect.get(_materialManagerInstance, prop, _materialManagerInstance);
-    return typeof value === 'function' ? value.bind(_materialManagerInstance) : value;
+    const active = activeMaterialManager();
+    const value = Reflect.get(active, prop, active);
+    return typeof value === 'function' ? value.bind(active) : value;
   },
   set(_target, prop, value, _receiver) {
-    _materialManagerInstance ??= new MaterialManager();
-    return Reflect.set(_materialManagerInstance, prop, value, _materialManagerInstance);
+    const active = activeMaterialManager();
+    return Reflect.set(active, prop, value, active);
   },
   has(_target, prop) {
-    _materialManagerInstance ??= new MaterialManager();
-    return prop in _materialManagerInstance;
+    return prop in activeMaterialManager();
   },
 });
 

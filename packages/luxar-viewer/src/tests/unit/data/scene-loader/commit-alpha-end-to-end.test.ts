@@ -42,6 +42,15 @@ import type { LoadedLinesData, ProcessedLinesData } from '../../../../types/line
 import type { LoadedPointsData } from '../../../../types/points';
 import type { NodeFactory } from '../../../../rendering/node-factory';
 
+/** The commit host, with no depth-sort coordinator: these tests are about alpha. */
+function testHost(
+  rootGroup: THREE.Group | null,
+  gpuBufferPool: GPUBufferPool | null,
+  nodeFactory?: NodeFactory
+) {
+  return { rootGroup, gpuBufferPool, depthSort: null, nodeFactory: nodeFactory! };
+}
+
 /** Read the alpha-presence uniform off a real material. */
 function alphaUniform(mesh: THREE.Mesh): number {
   return (mesh.material as GSplatMaterial | PointMaterial | LineMaterial).uniforms.uHasElementAlpha
@@ -101,7 +110,7 @@ describe('commit alpha end-to-end — gsplats (real pool + real GSplatMaterial)'
     const pool = new GPUBufferPool(20, 300);
     expect(alphaUniform(mesh)).toBe(0); // constructor default
 
-    commitGSplatsGeometry(makeGSplatsStaged(4, /*rgba=*/ true), root, pool, undefined, 1);
+    commitGSplatsGeometry(makeGSplatsStaged(4, /*rgba=*/ true), testHost(root, pool), undefined, 1);
 
     expect(alphaUniform(mesh)).toBe(1);
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(4);
@@ -110,10 +119,15 @@ describe('commit alpha end-to-end — gsplats (real pool + real GSplatMaterial)'
   it('RGB recommit on the same mesh returns the uniform to 0 (pool tenant refresh)', () => {
     const { root, mesh } = makeGSplatsMesh();
     const pool = new GPUBufferPool(20, 300);
-    commitGSplatsGeometry(makeGSplatsStaged(4, /*rgba=*/ true), root, pool, undefined, 1);
+    commitGSplatsGeometry(makeGSplatsStaged(4, /*rgba=*/ true), testHost(root, pool), undefined, 1);
     expect(alphaUniform(mesh)).toBe(1);
 
-    commitGSplatsGeometry(makeGSplatsStaged(4, /*rgba=*/ false), root, pool, undefined, 2);
+    commitGSplatsGeometry(
+      makeGSplatsStaged(4, /*rgba=*/ false),
+      testHost(root, pool),
+      undefined,
+      2
+    );
 
     expect(alphaUniform(mesh)).toBe(0);
   });
@@ -122,7 +136,7 @@ describe('commit alpha end-to-end — gsplats (real pool + real GSplatMaterial)'
     const { root, mesh } = makeGSplatsMesh();
     const pool = new GPUBufferPool(20, 300);
     const staged = makeGSplatsStaged(4, /*rgba=*/ true);
-    commitGSplatsGeometry(staged, root, pool, undefined, 1);
+    commitGSplatsGeometry(staged, testHost(root, pool), undefined, 1);
     expect(alphaUniform(mesh)).toBe(1);
 
     // Sentinel: if the noop path wrongly re-ran the sync helper, the
@@ -130,8 +144,7 @@ describe('commit alpha end-to-end — gsplats (real pool + real GSplatMaterial)'
     pokeAlphaUniform(mesh, 0);
     commitGSplatsGeometry(
       { path: '/g', noop: true, sourceData: staged.sourceData },
-      root,
-      pool,
+      testHost(root, pool),
       undefined,
       7
     );
@@ -191,9 +204,7 @@ describe('commit alpha end-to-end — points (real pool + real PointMaterial)', 
     commitPointsGeometry(
       '/p',
       makePointsData(3, /*rgba=*/ true),
-      root,
-      pool,
-      throwingNodeFactory,
+      testHost(root, pool, throwingNodeFactory),
       undefined,
       1
     );
@@ -208,9 +219,7 @@ describe('commit alpha end-to-end — points (real pool + real PointMaterial)', 
     commitPointsGeometry(
       '/p',
       makePointsData(3, /*rgba=*/ true),
-      root,
-      pool,
-      throwingNodeFactory,
+      testHost(root, pool, throwingNodeFactory),
       undefined,
       1
     );
@@ -219,9 +228,7 @@ describe('commit alpha end-to-end — points (real pool + real PointMaterial)', 
     commitPointsGeometry(
       '/p',
       makePointsData(3, /*rgba=*/ false),
-      root,
-      pool,
-      throwingNodeFactory,
+      testHost(root, pool, throwingNodeFactory),
       undefined,
       2
     );
@@ -233,12 +240,12 @@ describe('commit alpha end-to-end — points (real pool + real PointMaterial)', 
     const { root, mesh } = makePointsMesh();
     const pool = new GPUBufferPool(20, 300);
     const data = makePointsData(3, /*rgba=*/ true);
-    commitPointsGeometry('/p', data, root, pool, throwingNodeFactory, undefined, 1);
+    commitPointsGeometry('/p', data, testHost(root, pool, throwingNodeFactory), undefined, 1);
     expect(alphaUniform(mesh)).toBe(1);
 
     // Sentinel — a wrongly re-run sync would restore 1 from the stamp.
     pokeAlphaUniform(mesh, 0);
-    commitPointsGeometry('/p', data, root, pool, throwingNodeFactory, undefined, 7);
+    commitPointsGeometry('/p', data, testHost(root, pool, throwingNodeFactory), undefined, 7);
 
     expect(alphaUniform(mesh)).toBe(0); // untouched
     expect((mesh.userData as { loadedViewVersion?: number }).loadedViewVersion).toBe(7);
@@ -307,7 +314,7 @@ describe('commit alpha end-to-end — lines (real pool + real LineMaterial)', ()
     const pool = new GPUBufferPool(20, 300);
     expect(alphaUniform(mesh)).toBe(0); // constructor default
 
-    commitLinesGeometry(makeLinesStaged(2, /*rgba=*/ true), root, pool, undefined, 1);
+    commitLinesGeometry(makeLinesStaged(2, /*rgba=*/ true), testHost(root, pool), undefined, 1);
 
     expect(alphaUniform(mesh)).toBe(1);
     expect((mesh.userData as { visibleSegmentCount: number }).visibleSegmentCount).toBe(2);
@@ -316,10 +323,10 @@ describe('commit alpha end-to-end — lines (real pool + real LineMaterial)', ()
   it('RGB recommit on the same mesh returns the uniform to 0 (pool tenant refresh)', () => {
     const { root, mesh } = makeLinesMesh();
     const pool = new GPUBufferPool(20, 300);
-    commitLinesGeometry(makeLinesStaged(2, /*rgba=*/ true), root, pool, undefined, 1);
+    commitLinesGeometry(makeLinesStaged(2, /*rgba=*/ true), testHost(root, pool), undefined, 1);
     expect(alphaUniform(mesh)).toBe(1);
 
-    commitLinesGeometry(makeLinesStaged(2, /*rgba=*/ false), root, pool, undefined, 2);
+    commitLinesGeometry(makeLinesStaged(2, /*rgba=*/ false), testHost(root, pool), undefined, 2);
 
     expect(alphaUniform(mesh)).toBe(0);
   });
@@ -328,15 +335,14 @@ describe('commit alpha end-to-end — lines (real pool + real LineMaterial)', ()
     const { root, mesh } = makeLinesMesh();
     const pool = new GPUBufferPool(20, 300);
     const staged = makeLinesStaged(2, /*rgba=*/ true);
-    commitLinesGeometry(staged, root, pool, undefined, 1);
+    commitLinesGeometry(staged, testHost(root, pool), undefined, 1);
     expect(alphaUniform(mesh)).toBe(1);
 
     // Sentinel — a wrongly re-run sync would restore 1 from the stamp.
     pokeAlphaUniform(mesh, 0);
     commitLinesGeometry(
       { path: '/l', noop: true, sourceData: staged.sourceData },
-      root,
-      pool,
+      testHost(root, pool),
       undefined,
       7
     );

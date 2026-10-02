@@ -83,7 +83,7 @@ Usage:
     python -m luxar.demos.demo_esm_protein_universe
     python -m luxar.demos.demo_esm_protein_universe --no-serve
     python -m luxar.demos.demo_esm_protein_universe --no-audio --no-turntables
-    python -m luxar.demos.demo_esm_protein_universe --high-quality   # kiosk: SSAA + full DPR + 95% dolly
+    python -m luxar.demos.demo_esm_protein_universe --high-quality   # kiosk: SSAA + 95% dolly
     python -m luxar.demos.demo_esm_protein_universe --coords X.parquet --annotations Y.parquet
 
 Touch panel (off by default):
@@ -199,6 +199,11 @@ from luxar.demos.demo_esm3_protein_stories import (
     PANEL_WIDTH,
     SPHERE_LAYER_ORDER,
     STORY_DIM,
+    TOUR_FLIGHT_DURATION_RANGE_MS,
+    TOUR_FLIGHT_EASING,
+    TOUR_FLIGHT_SPEED,
+    TOUR_FLIGHT_TRAJECTORY,
+    TOUR_LONG_FLIGHT_MS,
     TURNTABLE_CACHE,
     TURNTABLE_CAPTION_POSITION,
     TURNTABLE_POSITION,
@@ -1268,7 +1273,7 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
         # across the frame like a river, not a dot in the distance.
         side_on=True,
         frame_fraction=1.2,
-        flight_ms=3000,
+        flight_ms=TOUR_LONG_FLIGHT_MS,
         facts=(
             # Linton & Higgins, Mol. Microbiol. 28:5 (1998): ~5% of the E. coli
             # genome encodes ABC transporter components.
@@ -2154,7 +2159,7 @@ _STORY_POOL: tuple[UniverseStory, ...] = (
         scatter=True,
         color=(1.0, 1.0, 0.95),
         frame_fraction=1.0,
-        flight_ms=3000,
+        flight_ms=TOUR_LONG_FLIGHT_MS,
         facts=(
             "Levodopa is the mainstay of Parkinson's treatment, and it only "
             "works if it reaches the brain. Gut bacteria carrying tyrosine "
@@ -2780,15 +2785,17 @@ def _viewer_config(
         if auto_rotate
         else None,
         auto_dolly_period=58.5 if auto_rotate else None,
-        # Render quality (2026-09-10 review): supersampling and rendering above
-        # CSS resolution are what make the kiosk build crisp, and also what made
-        # it crawl on an ordinary laptop — SSAA is a 4x fragment cost on top of
-        # the 4x a 2x display already asks for. The shipped default is the
-        # laptop build: SSAA off and the DPR capped at 1.0 (`allow_high_dpr`
-        # False is that cap). `--high-quality` (the kiosk / big-GPU switch)
-        # turns both back on.
+        # Render quality: supersampling is a 4x fragment cost on top of the 4x a
+        # 2x display already asks for, so it stays on the `--high-quality`
+        # (kiosk / big-GPU) switch. The display's full device pixel ratio is
+        # always allowed and held fixed rather than adapted: the map's fine
+        # structure is what the tour is about, and a resolution that drops while
+        # the camera travels and recovers on arrival reads as the map going soft
+        # in flight. The Density Guard (a viewer default) still sheds load where
+        # points pile up.
         ssaa_enabled=high_quality,
-        allow_high_dpr=high_quality,
+        allow_high_dpr=True,
+        adaptive_dpr_enabled=False,
         environment=EnvironmentConfig(source="scene", probe="auto"),
         waypoints=waypoints,
         audio=AudioConfig(
@@ -3126,9 +3133,8 @@ def build_universe_scene(
 ) -> int:
     """Write the universe scene. Returns the number of clusters in the backdrop.
 
-    ``high_quality`` re-enables the kiosk settings (SSAA, rendering at the
-    display's full device pixel ratio, and the 95% dolly swing); the default is
-    the laptop build.
+    ``high_quality`` re-enables kiosk supersampling and the 95% dolly swing;
+    both builds use the display's full device pixel ratio.
     """
     n = len(universe)
     assets: dict[str, TurntableAssets] = {}
@@ -3158,7 +3164,11 @@ def build_universe_scene(
                 camera=CameraConfig(
                     position=pull_in(overview_raw), target=(0.0, 0.0, 0.0), up=(0, 1, 0)
                 ),
-                duration_ms=3000,
+                duration_ms=TOUR_LONG_FLIGHT_MS,
+                easing=TOUR_FLIGHT_EASING,
+                trajectory=TOUR_FLIGHT_TRAJECTORY,
+                speed=TOUR_FLIGHT_SPEED,
+                duration_range_ms=TOUR_FLIGHT_DURATION_RANGE_MS,
                 reveal="on_arrival",
             )
         ]
@@ -3174,6 +3184,10 @@ def build_universe_scene(
                         figure=figures.get(s.key),
                     ),
                     duration_ms=s.flight_ms,
+                    easing=TOUR_FLIGHT_EASING,
+                    trajectory=TOUR_FLIGHT_TRAJECTORY,
+                    speed=TOUR_FLIGHT_SPEED,
+                    duration_range_ms=TOUR_FLIGHT_DURATION_RANGE_MS,
                     reveal="on_arrival",
                 )
             )
@@ -3307,8 +3321,8 @@ def main() -> None:
     auto_rotate = "--no-auto-rotate" not in sys.argv
     turntables = "--no-turntables" not in sys.argv
     audio = "--no-audio" not in sys.argv
-    # Kiosk / big-GPU build: SSAA, full device resolution, and the 95% dolly
-    # swing. Off by default so the hosted demo runs on an ordinary laptop.
+    # Kiosk / big-GPU build: SSAA and the 95% dolly swing. Off by default so
+    # the hosted demo runs on an ordinary laptop; full DPR applies to both.
     high_quality = "--high-quality" in sys.argv
     try:
         annotations = find_input(ANNOTATIONS_PARQUET, parse_path_arg("annotations"))

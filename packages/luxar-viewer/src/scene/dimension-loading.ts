@@ -10,6 +10,7 @@ import {
   releasePrefetchResources,
   updateSceneForDimensions,
 } from '../data';
+import { SceneLoaderManager } from '../data/scene-loader-manager';
 import { sceneDimsManager } from './scene-dims-manager';
 import type { AnimationController } from './animation/animation-controller';
 import type { DimensionAnimationManager } from './animation/dimension-animation-manager';
@@ -122,7 +123,10 @@ export async function updateAllNDNodes(ctx: DimensionLoadingContext): Promise<vo
   const pinnedScrub = frameBudgetMs === undefined && ladderDepth !== undefined;
 
   // Use the new loader architecture's update mechanism
+  // The LuxarApp's loaders (this module drives the app's slice; a LuxarLayer
+  // runs its own `updateSceneForDimensions` against its own manager).
   await updateSceneForDimensions(
+    SceneLoaderManager.getInstance(),
     dims,
     ctx.sceneManager.scene as unknown as THREE.Group,
     undefined,
@@ -154,6 +158,7 @@ export async function updateAllNDNodes(ctx: DimensionLoadingContext): Promise<vo
     const budgetMs = anim.getFrameBudgetMs();
     if (predictedAny && budgetMs !== null) {
       prefetchSceneForDimensions(
+        SceneLoaderManager.getInstance(),
         { ...dims, currentStep: nextStep },
         ctx.sceneManager.scene as unknown as THREE.Group,
         undefined,
@@ -163,7 +168,7 @@ export async function updateAllNDNodes(ctx: DimensionLoadingContext): Promise<vo
   } else {
     // Playback ended (this branch includes the pause refine re-trigger
     // pass): free the shadow loaders' accumulators until the next play.
-    releasePrefetchResources();
+    releasePrefetchResources(SceneLoaderManager.getInstance());
     if (pinnedScrub) scheduleScrubSettle(ctx);
   }
 

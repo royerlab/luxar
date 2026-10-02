@@ -1,6 +1,7 @@
 /**
- * Pure timeout-race helper. Lifted from `WorkerPool.withTimeout` so
- * the pool's class method becomes a 1-line delegate.
+ * The worker pool's timeout race: the shared `raceTimeout`
+ * (`utils/race-timeout.ts`) plus the pool's logging, eviction callback and
+ * `WorkerTimeoutError`. `WorkerPool.withTimeout` is a 1-line delegate.
  *
  * On timeout the supplied `onTimeoutEvict` callback (optional) is
  * invoked so the calling pool can prune the responsible worker.
@@ -9,6 +10,7 @@
  */
 
 import { log, Modules } from '../../../utils/log';
+import { raceTimeout } from '../../../utils/race-timeout';
 import { WorkerTimeoutError } from '../errors';
 
 /**
@@ -34,26 +36,14 @@ export function withTimeout<T>(
   onTimeoutEvict?: (worker: Worker, reason: string) => void,
   worker?: Worker
 ): Promise<T> {
-  if (timeoutMs <= 0 || !Number.isFinite(timeoutMs)) {
-    return call;
-  }
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      log.error(
-        Modules.WORKER_POOL,
-        `Worker call '${operation}' timed out after ${timeoutMs}ms; evicting worker`
-      );
-      if (worker && onTimeoutEvict) {
-        onTimeoutEvict(worker, `timeout(${operation}, ${timeoutMs}ms)`);
-      }
-      reject(new WorkerTimeoutError(operation, timeoutMs));
-    }, timeoutMs);
+  return raceTimeout(call, timeoutMs, () => {
+    log.error(
+      Modules.WORKER_POOL,
+      `Worker call '${operation}' timed out after ${timeoutMs}ms; evicting worker`
+    );
+    if (worker && onTimeoutEvict) {
+      onTimeoutEvict(worker, `timeout(${operation}, ${timeoutMs}ms)`);
+    }
+    return new WorkerTimeoutError(operation, timeoutMs);
   });
-  return Promise.race([
-    call.finally(() => {
-      if (timer !== undefined) clearTimeout(timer);
-    }),
-    timeout,
-  ]);
 }

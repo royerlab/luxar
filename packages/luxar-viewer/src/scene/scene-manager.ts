@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { ControlsManager } from '../controls/controls-manager';
 import { loadScene } from '../data';
+import { SceneLoaderManager } from '../data/scene-loader-manager';
 import type { LoaderConfig } from '../data/data-loader-types';
 import { notifier } from '../utils/cross-layer/notifier';
 import { config } from '../config';
@@ -98,6 +99,7 @@ import {
 import { type LuxarCamera, isPerspectiveCamera, isOrthographicCamera } from '../utils/camera-utils';
 import { isDocumentFullscreen } from '../utils/fullscreen';
 import type { ControlType } from '../controls/controls-manager';
+import { DepthSortCoordinator } from '../rendering/depth-sort-coordinator';
 import type { AutoRotateAxis } from '../controls/types';
 
 /** Default scene up (world +Y) — overridden per scene by `viewer_config.up`. */
@@ -180,6 +182,16 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   public environment: SceneEnvironment | null = null;
   private unsubscribeEnvironment: (() => void) | null = null;
+
+  /**
+   * This app's depth-sort coordinator: the scene loader's commits report to it,
+   * the post-processing glass split reads its node registry, and the dataset
+   * switch releases its nodes. Owned here because the scene manager is the one
+   * per-app object every one of those already reaches; the init pipeline wires
+   * its camera and render loop (`configure`) and the app's dispose pipeline
+   * disposes it.
+   */
+  public readonly depthSort = new DepthSortCoordinator();
 
   /**
    * Capabilities snapshot for the active renderer. Hides raw-GL queries
@@ -795,6 +807,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       capabilities: this.capabilities,
       scene: this.scene,
       camera: this.camera,
+      glassSource: this.depthSort,
       onResize: () => {
         if (this.camera) this.updateMaterialsForCurrentCamera();
       },
@@ -834,7 +847,11 @@ export class SceneManager extends THREE.EventDispatcher<{
       }
 
       const embedderOnSceneMetadata = loaderConfig?.onSceneMetadata;
-      const root = await loadScene(src, {
+      // The LuxarApp's loader manager; its loaders' commits report to this
+      // app's depth-sort coordinator.
+      const sceneLoaders = SceneLoaderManager.getInstance();
+      sceneLoaders.setDepthSortCoordinator(this.depthSort);
+      const root = await loadScene(sceneLoaders, src, {
         ...loaderConfig,
         // Frame first, then hand the root to an embedder's own hook, which
         // then sees the pose the scene opens on (as load-time decisions do).
@@ -1035,7 +1052,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     // The outgoing scene root carries the loader's path index (every member
     // node holds its add/remove listeners): stop maintaining it.
     for (const child of this.scene.children) detachSceneGraphIndex(child);
-    const removed = clearLoadedSceneContent(this.scene);
+    const removed = clearLoadedSceneContent(this.scene, this.depthSort);
     log.info(Modules.SCENE_MANAGER, `Cleared ${removed} objects from scene`);
   }
 
@@ -1544,7 +1561,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     // (WebGL resources are not garbage collected). Delegated to
     // scene-manager/render-pipeline/scene-disposal so the same one-shot
     // final-dispose pass is unit-testable in isolation.
-    disposeSceneGraphResources(this.scene);
+    disposeSceneGraphResources(this.scene, this.depthSort);
   }
 
   /**

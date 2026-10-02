@@ -49,9 +49,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { loadScene } from '../../../data';
+import { loadScene, SceneLoaderManager } from '../../../data';
 import * as zarrita from 'zarrita';
 import * as THREE from 'three';
+
+/** The LuxarApp's loader manager — what these helpers are handed for the app. */
+const appLoaders = () => SceneLoaderManager.getInstance();
 
 // Mock THREE.js (exact pattern from scene-loader.test.ts which works)
 // Group.add now appends to a real `children` array so tests can assert the
@@ -294,7 +297,7 @@ describe('zarr-loader', () => {
       mockOpenResult = mockRoot;
       mockGetResult = () => mockRoot;
 
-      await loadScene('http://localhost:8000/test.zarr');
+      await loadScene(appLoaders(), 'http://localhost:8000/test.zarr');
 
       // The consolidated-metadata wrapper must be invoked exactly once per
       // load (it is the documented seam for `.zmetadata` consolidation).
@@ -313,7 +316,7 @@ describe('zarr-loader', () => {
       mockOpenResult = mockRoot;
       mockGetResult = (item: any) => (item?.path === '/' ? mockRoot : null);
 
-      const scene = await loadScene('http://localhost:8000/empty.zarr');
+      const scene = await loadScene(appLoaders(), 'http://localhost:8000/empty.zarr');
 
       // THREE.Group is constructed (at minimum, for the root wrapper).
       expect(THREE.Group).toHaveBeenCalled();
@@ -360,7 +363,7 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      await loadScene('http://localhost:8000/multi.zarr');
+      await loadScene(appLoaders(), 'http://localhost:8000/multi.zarr');
 
       // Group is invoked at least twice: root wrapper + per-node groups.
       // The exact construction count belongs to per-node tests, so we
@@ -393,7 +396,7 @@ describe('zarr-loader', () => {
       // Mock consolidated metadata opening through the facade backend.
       (zarrita as any).withMaybeConsolidatedMetadata.mockResolvedValue(mockFetchStore);
 
-      await loadScene('http://localhost:8000/consolidated.zarr');
+      await loadScene(appLoaders(), 'http://localhost:8000/consolidated.zarr');
 
       expect((zarrita as any).withMaybeConsolidatedMetadata).toHaveBeenCalledTimes(1);
     });
@@ -413,7 +416,7 @@ describe('zarr-loader', () => {
         throw new Error('Failed to fetch');
       });
 
-      await expect(loadScene('invalid-url')).rejects.toThrow();
+      await expect(loadScene(appLoaders(), 'invalid-url')).rejects.toThrow();
     });
 
     it('rejects when the store contents() call rejects (timeout-like)', async () => {
@@ -421,7 +424,7 @@ describe('zarr-loader', () => {
         contents: vi.fn().mockRejectedValue(new Error('Network timeout')),
       }));
 
-      await expect(loadScene('http://timeout.test/data.zarr')).rejects.toThrow();
+      await expect(loadScene(appLoaders(), 'http://timeout.test/data.zarr')).rejects.toThrow();
     });
 
     it('rejects when open() returns null (missing .zgroup)', async () => {
@@ -433,7 +436,7 @@ describe('zarr-loader', () => {
       mockOpenResult = null; // open() returns null
       mockGetResult = () => null;
 
-      await expect(loadScene('http://test/missing.zarr')).rejects.toThrow();
+      await expect(loadScene(appLoaders(), 'http://test/missing.zarr')).rejects.toThrow();
     });
 
     it('does not throw on malformed root/child attrs (defensive load)', async () => {
@@ -471,7 +474,7 @@ describe('zarr-loader', () => {
         return null;
       };
 
-      const scene = await loadScene('http://localhost:8000/malformed.zarr');
+      const scene = await loadScene(appLoaders(), 'http://localhost:8000/malformed.zarr');
       expect(scene).toBeTruthy();
       expect((zarrita as any).withMaybeConsolidatedMetadata).toHaveBeenCalled();
     });

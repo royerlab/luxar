@@ -227,3 +227,61 @@ describe('validateDataLoadingNetwork', () => {
     );
   });
 });
+
+describe('validateDataLoadingNetwork — fetchGate', () => {
+  it('ships the measured widths as defaults and validates them', () => {
+    const cfg = cloneConfig();
+    expect(cfg.dataLoading.network.fetchGate).toEqual({
+      maxChunkFetches: 24,
+      maxMultiplexedChunkFetches: 96,
+      maxMetadataFetches: 4,
+      http1MaxChunkFetches: 4,
+      http1MaxMetadataFetches: 2,
+      speculativeShare: 0.25,
+    });
+    const result = invokeValidator(validateDataLoadingNetwork, cfg);
+    expect(result.valid).toBe(true);
+    expect(result.warnings.filter((w) => w.includes('fetchGate'))).toEqual([]);
+  });
+
+  it.each([
+    ['maxChunkFetches', 0],
+    ['maxMetadataFetches', 1.5],
+    ['http1MaxChunkFetches', -1],
+    ['http1MaxMetadataFetches', Number.NaN],
+  ] as const)('errors on a non-positive-integer %s (%s)', (lane, value) => {
+    const cfg = cloneConfig();
+    cfg.dataLoading.network.fetchGate[lane] = value;
+    const result = invokeValidator(validateDataLoadingNetwork, cfg);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContainEqual(expect.stringContaining(`Invalid fetchGate.${lane}`));
+  });
+
+  it('errors when the multiplexed lane is narrower than the default lane', () => {
+    const cfg = cloneConfig();
+    cfg.dataLoading.network.fetchGate.maxMultiplexedChunkFetches = 8;
+    const result = invokeValidator(validateDataLoadingNetwork, cfg);
+    expect(result.errors).toContainEqual(
+      expect.stringContaining('Invalid fetchGate.maxMultiplexedChunkFetches')
+    );
+  });
+
+  it.each([0, -0.1, 1.5, Number.NaN])('errors on a speculativeShare of %s', (share) => {
+    const cfg = cloneConfig();
+    cfg.dataLoading.network.fetchGate.speculativeShare = share;
+    const result = invokeValidator(validateDataLoadingNetwork, cfg);
+    expect(result.errors).toContainEqual(
+      expect.stringContaining('Invalid fetchGate.speculativeShare')
+    );
+  });
+
+  it('warns when the HTTP/1.1 caps do not add up to six sockets', () => {
+    const cfg = cloneConfig();
+    cfg.dataLoading.network.fetchGate.http1MaxChunkFetches = 8;
+    const result = invokeValidator(validateDataLoadingNetwork, cfg);
+    expect(result.valid).toBe(true);
+    expect(result.warnings).toContainEqual(
+      expect.stringContaining('fetchGate HTTP/1.1 caps total 10')
+    );
+  });
+});
