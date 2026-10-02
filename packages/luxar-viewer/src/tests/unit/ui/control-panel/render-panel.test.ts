@@ -2,9 +2,8 @@
 /**
  * Tests for the control panel's DOM.
  *
- * jsdom rather than a real browser: everything asserted here is structure and
- * event wiring, which is exactly what jsdom is good for and what a Playwright
- * run would pay a WebGL context to tell us more slowly.
+ * jsdom rather than a real browser: structure, event wiring, and grid choice
+ * against measured tile sizes need no WebGL context.
  */
 
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
@@ -243,6 +242,76 @@ describe('createControlPanel', () => {
         tileIndex: 'shown',
         labelWrap: 'words',
       });
+    }
+  });
+
+  it('keeps the grid shape that needs the least text loss, restoring its step', () => {
+    // Three tiles in a square box rank as 2, 1, then 3 columns. The first
+    // shape needs to drop its sublabel; the second fits the authored short
+    // sublabel; the third needs the last resort. The winner must be restored
+    // after the third candidate was applied.
+    const box = vi
+      .spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockImplementation(() => new DOMRect(0, 0, 300, 300));
+    const height = vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(80);
+    const tried = new Set<string>();
+    const content = vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(function (
+      this: Element
+    ) {
+      const grid = this.parentElement as HTMLElement;
+      const columns = grid.dataset.gridColumns ?? '';
+      tried.add(columns);
+      if (columns === '1' && grid.dataset.sublabelText === 'short') return 70;
+      if (columns === '2' && grid.dataset.sublabelText === 'none') return 70;
+      return 120;
+    });
+    try {
+      panel.render(tourSource(STORIES), {
+        sublabels: { 0: 'A long description' },
+        shortSublabels: { 0: 'Short' },
+      });
+      const grid = root.querySelector<HTMLElement>('.luxar-control-grid');
+      expect(tried).toEqual(new Set(['2', '1', '3']));
+      expect(grid?.dataset).toMatchObject({
+        gridColumns: '1',
+        sublabelText: 'short',
+        tileIndex: 'shown',
+      });
+      expect(grid?.style.getPropertyValue(CONTROL_COLUMNS_PROPERTY)).toBe('1');
+    } finally {
+      content.mockRestore();
+      height.mockRestore();
+      box.mockRestore();
+    }
+  });
+
+  it('keeps the better-shaped grid when two shapes need the same text step', () => {
+    const box = vi
+      .spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockImplementation(() => new DOMRect(0, 0, 300, 300));
+    const height = vi.spyOn(Element.prototype, 'clientHeight', 'get').mockReturnValue(80);
+    const content = vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(function (
+      this: Element
+    ) {
+      const grid = this.parentElement as HTMLElement;
+      return grid.dataset.gridColumns !== '3' && grid.dataset.sublabelText === 'short' ? 70 : 120;
+    });
+    try {
+      panel.render(tourSource(STORIES), {
+        sublabels: { 0: 'A long description' },
+        shortSublabels: { 0: 'Short' },
+      });
+      const grid = root.querySelector<HTMLElement>('.luxar-control-grid');
+      expect(grid?.dataset).toMatchObject({
+        gridColumns: '2',
+        sublabelText: 'short',
+        tileIndex: 'shown',
+      });
+      expect(grid?.style.getPropertyValue(CONTROL_COLUMNS_PROPERTY)).toBe('2');
+    } finally {
+      content.mockRestore();
+      height.mockRestore();
+      box.mockRestore();
     }
   });
 
