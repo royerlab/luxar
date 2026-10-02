@@ -141,9 +141,8 @@ workers/
 │   │   ├── least-busy.ts                       — runWithTimeout selection
 │   │   └── round-robin.ts                      — direct getWorker() rotation
 │   └── timeout/
-│       ├── with-timeout.ts                     — Promise.race + timer
-│       ├── pick-timeout-ms.ts                  — kind → config knob
-│       └── combine-signals.ts                  — AbortSignal.any + fallback
+│       ├── with-timeout.ts                     — utils/race-timeout + evict
+│       └── pick-timeout-ms.ts                  — kind → config knob
 ├── data-worker.ts                              — Worker entry (Vite ?worker
 │                                                 target). Imports task helpers
 │                                                 from data-worker/ and exposes

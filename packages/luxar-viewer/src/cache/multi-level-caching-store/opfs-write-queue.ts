@@ -105,9 +105,12 @@ export interface OpfsWriteQueueStats {
 
 /**
  * A per-instance bounded-concurrency FIFO write queue with per-key coalescing.
- * Models the acquire/release/FIFO shape of `utils/fetch-concurrency.ts`, but is
- * per-instance, configurable, and bounded by both task count and retained
- * bytes (that gate is an unbounded global singleton).
+ * Unlike the page-wide gates (`utils/fetch-concurrency.ts`, and the OPFS read
+ * gate on `utils/async-gate.ts`), which hold every waiter until a slot frees,
+ * this one is per-instance, configurable, and bounded by both task count and
+ * retained bytes: past its bounds it DROPS writes instead of queuing them. It
+ * has no abort exit — a queued task re-checks staleness when it runs (see the
+ * module doc). `utils/README.md` tabulates what each queue honours.
  */
 export class OpfsWriteQueue {
   /**

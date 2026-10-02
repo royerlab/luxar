@@ -47,6 +47,7 @@ import {
   countFromUserData,
   isFresh,
   isReady,
+  isTrackedLeaf,
   visibleElementCount,
   type FreshnessChild,
 } from './lod-freshness';
@@ -408,4 +409,87 @@ export function shouldHoldPreviousDisplay(
   // registry passes it explicitly from the child indices.
   if (isUpgrade && asp.energy != null && asp.energy >= ENERGY_RELEASE_THRESHOLD) return false;
   return asp.count < prevProgress.count;
+}
+
+/**
+ * Freshness + committed element count of a child, resolving a GROUP-typed LOD
+ * child (a deferred ``kind=partition`` / nested ``lod`` subtree — the
+ * ``overview`` recipe) through {@link subtreeDisplayProgress} rather than the
+ * leaf-only stamps. A bare ``THREE.Group`` carries no leaf ``nodeType``, so
+ * ``isFresh`` would report it unconditionally fresh and ``visibleElementCount``
+ * would return ``null`` — hiding a stale re-slice and defeating the empty
+ * guard. Mirrors the never-downgrade gate's ``sideProgress`` so both paths
+ * agree on what "fresh" means for a group. Leaf children (a direct count
+ * stamp) keep the exact pre-existing behaviour.
+ *
+ * **``fresh`` implies ``ready``** for every child shape: the leaf branch's
+ * ``isFresh`` is ready-gated, and a NOT-ready group child (a deferred
+ * placeholder whose subtree never committed, or a released level awaiting
+ * reload) reports ``fresh: false`` regardless of any stamps its subtree may
+ * retain — it cannot draw, so no display path (slice-aware fallback,
+ * empty-guard redirect, blend pairing) may ever elect it. A READY group with
+ * no stamped leaf (nested group with no slice-dependent geometry) carries no
+ * per-slice staleness signal and reports ``fresh: true, count: null``.
+ *
+ * ``subtreeLadderComplete`` is the third answer, folded from the same walk
+ * (``SubtreeDisplayProgress.complete``): false when any visible stamped leaf
+ * under the subtree has committed only a prefix of its additive ladder. A
+ * tracked LEAF has no subtree to fold, so it answers with its OWN
+ * ``committedLadderComplete`` stamp.
+ *
+ * That stamp rather than the child's ``hasMoreLODs()`` thunk, because the
+ * thunk does not exist on every leaf: ``load-lod-group-node`` attaches it
+ * only on the DEFERRED path, so the eagerly-loaded default level — whose
+ * ladder is advanced by the sweep-driven background refinement loop — has
+ * none, and reporting an unconditional ``true`` here declared a still-
+ * streaming coarse level complete. The stamp is also the safer of the two
+ * where both exist (see ``lod-display-gate``'s "committed state only" note:
+ * a live getter flips when the last fetch resolves, frames before the commit
+ * lands). Callers still read ``hasMoreLODs()`` directly on top of this, since
+ * it is what re-fires ``ensureLoaded`` to advance a lazy ladder. Only
+ * ``isCaptureQuiescent`` (``capture-quiescence.ts``) consults this field; the display paths ignore
+ * it.
+ *
+ * ``version === null`` means no view-version tracking is wired: the per-slice
+ * staleness test is skipped and every READY child reads fresh — which is
+ * exactly what the ``version != null`` guards at the display call sites
+ * already assume, so those are unaffected.
+ */
+export function childFreshAndCount(
+  child: FreshnessChild,
+  version: number | null
+): { fresh: boolean; count: number | null; subtreeLadderComplete: boolean } {
+  // Leaf detection is by tracked nodeType, NOT by "has a count stamp": a leaf
+  // that has not committed a count yet is still a leaf whose freshness is its
+  // own ``loadedViewVersion`` stamp. Only a genuine group subtree folds.
+  if (isTrackedLeaf(child)) {
+    return {
+      fresh: version == null ? isReady(child) : isFresh(child, version),
+      count: visibleElementCount(child),
+      // The leaf's own commit stamp — absent (never committed, or a
+      // non-progressive loader) reads as complete, so an unstamped leaf
+      // never blocks. See the doc above for why not ``hasMoreLODs()``.
+      subtreeLadderComplete: child.object.userData?.committedLadderComplete !== false,
+    };
+  }
+  // Ready gate for group children (the leaf branch gets it from ``isFresh``).
+  // Without it, a not-ready deferred-group placeholder (no stamped leaves →
+  // ``!aggregate`` below) would read fresh-with-unknown-count and the
+  // empty-level guard could redirect display onto a level that CANNOT draw,
+  // blanking the group permanently. Nothing has committed, so no completeness
+  // can be claimed either.
+  if (!isReady(child)) return { fresh: false, count: null, subtreeLadderComplete: false };
+  const aggregate = subtreeDisplayProgress(child.object as unknown as ProgressNode, version);
+  // Ready, but no stamped leaf under the subtree (nested group with no
+  // slice-dependent geometry): no per-slice staleness signal, so treat as
+  // fresh — exactly the pre-existing ``isFresh`` behaviour for a ready
+  // non-leaf. Only a subtree that DOES carry stamped-but-stale leaves (a
+  // non-null aggregate with ``fresh === false``) triggers the coarse fallback.
+  // No stamped leaf likewise means no ladder to be waiting on: complete.
+  if (!aggregate) return { fresh: true, count: null, subtreeLadderComplete: true };
+  return {
+    fresh: aggregate.fresh,
+    count: aggregate.count,
+    subtreeLadderComplete: aggregate.complete,
+  };
 }

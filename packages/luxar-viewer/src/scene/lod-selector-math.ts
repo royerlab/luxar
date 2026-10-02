@@ -25,11 +25,9 @@
 
 import * as THREE from 'three';
 import type { ViewContext } from './view-context';
+import { config } from '../config';
 
 import { type BoundingBox, transformBoundingBox } from './scene-manager/clipping/bounds-math';
-
-/** Asymmetric hysteresis on the "downgrade to coarser" direction. */
-const HYSTERESIS_RATIO = 0.1;
 
 /**
  * Module-scope scratch for standalone callers' projection × view product.
@@ -602,7 +600,7 @@ function projectBoxNdcRect(
 
 /**
  * Pick the desired child index given a scalar view ``metric`` and the
- * current active index. Applies 10% asymmetric hysteresis on the
+ * current active index. Applies asymmetric hysteresis (`config.lod.hysteresisRatio`, 10%) on the
  * downgrade direction.
  *
  * ``metric`` is whatever scalar the group's ``selector`` names — the viewport
@@ -635,7 +633,7 @@ export function pickChildWithHysteresis(
   thresholds: readonly number[],
   currentIdx: number,
   metric: number,
-  hysteresisRatio: number = HYSTERESIS_RATIO
+  hysteresisRatio: number = config.lod.hysteresisRatio
 ): number {
   if (thresholds.length === 0) return -1;
 
@@ -729,19 +727,12 @@ function bandDistance(
   return half > 0 && dist < half ? dist : -1;
 }
 
-/**
- * Current viewer median-sigma limit in logical CSS pixels. GSplats draw to about
- * 3σ, so 1.5 px corresponds to a typical rendered blob about 9 px across. The
- * #2685 sweep retained this policy.
- */
-export const MAX_MEDIAN_FOOTPRINT_PX = 1.5;
-
 /** Pick the coarsest acceptable footprint, resisting only coarser downgrades. */
 export function pickChildByFootprintWithHysteresis(
   footprintsPx: readonly number[],
   currentIdx: number,
-  maxFootprintPx: number = MAX_MEDIAN_FOOTPRINT_PX,
-  hysteresisRatio: number = HYSTERESIS_RATIO
+  maxFootprintPx: number = config.lod.maxMedianFootprintPx,
+  hysteresisRatio: number = config.lod.hysteresisRatio
 ): number {
   if (footprintsPx.length === 0) return -1;
   let natural = footprintsPx.length - 1;

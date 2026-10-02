@@ -121,6 +121,79 @@ function peek(mgr: PostProcessingManager): ManagerInternals {
   return mgr as unknown as ManagerInternals;
 }
 
+describe('PostProcessingManager → capture guard', () => {
+  it('requests one repaint when the outermost capture releases, including on failure', async () => {
+    const mgr = makeManager();
+    const released = vi.fn();
+    mgr.setCaptureReleasedCallback(released);
+    let finishFirst!: () => void;
+    const first = mgr.suspendFrameRendersDuring(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirst = resolve;
+        })
+    );
+
+    await mgr.suspendFrameRendersDuring(async () => {});
+    expect(released).not.toHaveBeenCalled();
+    finishFirst();
+    await first;
+    expect(released).toHaveBeenCalledTimes(1);
+    expect(mgr.isCaptureInProgress).toBe(false);
+
+    await expect(
+      mgr.suspendFrameRendersDuring(async () => {
+        throw new Error('readback failed');
+      })
+    ).rejects.toThrow('readback failed');
+    expect(released).toHaveBeenCalledTimes(2);
+    expect(mgr.isCaptureInProgress).toBe(false);
+    mgr.dispose();
+  });
+
+  it('keeps draws suppressed until every capture settles, including after a rejection', async () => {
+    const mgr = makeManager();
+    let finishFirst!: () => void;
+    const first = mgr.suspendFrameRendersDuring(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirst = resolve;
+        })
+    );
+    expect(mgr.isCaptureInProgress).toBe(true);
+
+    await expect(
+      mgr.suspendFrameRendersDuring(async () => {
+        throw new Error('readback failed');
+      })
+    ).rejects.toThrow('readback failed');
+    expect(mgr.isCaptureInProgress).toBe(true);
+
+    finishFirst();
+    await first;
+    expect(mgr.isCaptureInProgress).toBe(false);
+    mgr.dispose();
+  });
+
+  it('does not restart rendering when a pending capture settles after disposal', async () => {
+    const mgr = makeManager();
+    const released = vi.fn();
+    mgr.setCaptureReleasedCallback(released);
+    let finish!: () => void;
+    const capture = mgr.suspendFrameRendersDuring(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        })
+    );
+
+    mgr.dispose();
+    finish();
+    await capture;
+    expect(released).not.toHaveBeenCalled();
+  });
+});
+
 describe('PostProcessingManager → dispose lifecycle', () => {
   beforeEach(() => {
     materialManager.setCaps(mockCaps('webgl2'));

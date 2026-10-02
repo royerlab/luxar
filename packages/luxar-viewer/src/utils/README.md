@@ -220,6 +220,39 @@ The single answer to "is this a touch-first device, is it an iPhone or an iPad, 
 
 `attachLongPress(el, { onLongPress, durationMs = 500, slopPx = 12 })` arms a delegated long-press on `el` for touch-like pointers only (`isTouchLikePointer`; a mouse keeps its right button and never sees a timer). Cancels on movement past the slop, on release, on `pointercancel`/`pointerleave`, or when a second finger lands (a pinch). The callback runs after `durationMs`, or immediately when a platform `contextmenu` arrives mid-press, and returns whether it handled the press. Only a handled press becomes the SINGLE opener across platforms: it swallows that `contextmenu` (iOS never fires one) so a press cannot open two menus, and swallows the release `click` so the button's primary action does not run under the menu that just opened. Returns a disposer. Used by the control rail (context popovers), the dimension sliders' play button (animation settings) and the layers panel (row / eye / header menus); the canvas has its own long-press inside `core/app/interaction/canvas-actions.ts` because its release path is `pointerup`, not `click`.
 
+### fetch-concurrency.ts - Global Fetch Gate
+
+- `withFetchGate(fn, lane, priority, origin, signal)` — Every network read (caching store, zip range reader, no-cache `boundedConcurrencyStore`) holds a lease here. Separate `data` and `metadata` lanes; waiters served `demand` > `refinement` > `speculative` (a `FetchPriorityCell` may be raised while queued), FIFO within a class; speculative leases capped at `speculativeShare` of a lane; an abort while queued frees the place.
+- Widths come from `config.dataLoading.network.fetchGate` (read at each admission): 24 data / 4 metadata by default, 96 data for an origin resource timing shows on h2/h3 (`noteOriginProtocol`), and 4 data + 2 metadata of its own for an origin `noteFetchUrl` saw over plain `http:` (its six HTTP/1.1 sockets). `getFetchLaneLimit(lane, origin?)` reports an origin's width.
+- `tagSignalPriority` / `signalPriority` class all reads made under one abort signal; `fetchLaneForKey` routes zarr metadata keys to the metadata lane.
+
+### abort-signals.ts - Abort-Signal Combinator
+
+- `combineAbortSignals(a, b?)` — The viewer's one "abort when either aborts" merge (fetch retry, caching store, zip reader, worker pool, mesh loader). Returns a scope `{ signal, dispose }`: native `AbortSignal.any` when present, else a relay that carries the first abort's reason and whose idempotent `dispose()` removes its source listeners — call it when the work using `signal` settles. One input is returned as is; none gives `undefined`.
+
+### race-timeout.ts - Promise-vs-Timer Race
+
+- `raceTimeout(promise, timeoutMs, onTimeout)` — Settle with `promise`, or reject with `onTimeout()`'s value once `timeoutMs` elapses first; clears the timer on settle. `timeoutMs <= 0` or non-finite installs no timer and returns `promise` itself. Settles only the caller: the work keeps running. The worker pool's `withTimeout` wraps it.
+
+### async-gate.ts - Counting Gate with Abort Exit
+
+- `new AsyncGate(capacity, ranks?)` — At most `capacity()` holders (read at every admission); waiters served by rank (`0` most urgent) then FIFO.
+- `acquire(signal?, priority?)` → `Promise<release>` — An abort while queued rejects with the signal's reason (or an `AbortError`) and frees the place; the release is idempotent.
+- `stats()` → `{ active, queued }`; `reset(reason)` rejects waiters and makes earlier releases no-ops (test isolation).
+
+The OPFS read gate is built on it. **Queues and what they honour** — the one place to check which queue cancels and which orders:
+
+| Queue              | Where                                                             | Abort while queued                                                       | Priority                                                                                 | Bound                                                                   |
+| ------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Fetch gate         | `utils/fetch-concurrency.ts`                                      | exits (`withFetchGate` signal)                                           | `demand` > `refinement` > `speculative`, raisable while queued; speculative share capped | per-lane width (24/96 data, 4 metadata), 4+2 per HTTP/1.1 origin        |
+| OPFS read gate     | `cache/multi-level-caching-store/opfs-read-gate.ts` (`AsyncGate`) | exits                                                                    | FIFO                                                                                     | `cache.opfsReadConcurrency`; a lease lasts as long as its held file I/O |
+| Neighbour prefetch | `cache/chunk-prefetcher.ts`                                       | in-flight reads aborted on `dispose()`                                   | newest first                                                                             | 64 queued (oldest dropped), `maxConcurrent` in flight                   |
+| OPFS write queue   | `cache/multi-level-caching-store/opfs-write-queue.ts`             | none (a task re-checks staleness when it runs)                           | `demand` writes evict `speculative` ones                                                 | depth and bytes; overflow DROPS the arrival                             |
+| Validation queue   | `cache/multi-level-caching-store/validation-queue.ts`             | skips the task                                                           | FIFO per dataset                                                                         | one at a time per dataset                                               |
+| Worker pool        | `workers/worker-pool.ts`                                          | no queue: least-busy dispatch; the pool/caller signal settles the caller | none                                                                                     | worker count                                                            |
+
+The fetch gate is not built on `AsyncGate` on purpose: per-origin widths, width tiers, the speculative share and in-place priority raises are its whole job, and forcing them through a generic counter would hide them. The prefetcher is a bounded work queue of KEYS (deduplicated, newest first), not callers awaiting a place, so it keeps its own.
+
 ### platform.ts - Platform Detection
 
 - `isMacPlatform()` — `navigator.platform.startsWith('Mac')`; returns `false` in non-browser contexts. Centralized so tests can stub one export.

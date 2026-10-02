@@ -654,11 +654,20 @@ export async function runInitPipeline(
   // paints a blown-out frame under the translucent overlay, because the
   // capture holds raw-HDR shader flags across its async readback. The
   // loop itself keeps running (per-frame callbacks must follow the
-  // camera); only its render is skipped. Offline-only: the real-time
-  // path records the canvas the loop paints. Keyed on the narrow
-  // render-suppression flag rather than the capture's mutual-exclusion
-  // flag, so a wedged capture teardown can't freeze the viewport.
-  animationController.setRenderSkipPredicate(() => recordingPanel.isLoopRenderSuppressed());
+  // camera); only its render is skipped. A pending pixel readback also
+  // owns the target, even outside offline recording. Skipping here keeps
+  // adaptive DPR from treating draw-free frames as fast frames and
+  // reallocating that target mid-readback. The real-time recording path
+  // still paints the canvas between captures.
+  animationController.setRenderSkipPredicate(
+    () => recordingPanel.isLoopRenderSuppressed() || sceneManager.postProcessing.isCaptureInProgress
+  );
+  // Skipped ticks can let the loop reach its idle timeout during a slow readback.
+  // Repaint once the final capture releases, including a camera or chunk change
+  // that arrived while draws were suppressed.
+  sceneManager.postProcessing.setCaptureReleasedCallback(() =>
+    animationController.startAnimation()
+  );
   // Frame pacing must stay off for the whole of a capture, because both
   // capture families depend on the loop's untouched cadence: the real-time
   // MediaRecorder path records the canvas the loop paints (a paced gap is a

@@ -56,7 +56,7 @@ config/
 │   ├── adaptive-dpr/       {data,types,validate}.ts
 │   ├── depth-sort/         {data,types,validate}.ts
 │   ├── density-guard/      {data,types,validate}.ts   # projected-density guard caps + keep ladder
-│   ├── lod/                {data,types,validate}.ts   # LOD display policy (fadeMs, preloadBandFraction)
+│   ├── lod/                {data,types,validate}.ts   # LOD display policy + registry timing/budget tunables
 │   ├── scene/              {data,types,validate}.ts   # includes ShaderConfig
 │   ├── ui/                 {data,types}.ts            # includes DebugConsoleConfig, UIComponentsConfig
 │   ├── rendering-controls/ {data,types,validate}.ts   # includes RenderingSettings, validateBloomConsistency

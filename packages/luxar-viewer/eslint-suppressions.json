@@ -1025,20 +1025,6 @@
       "count": 1
     }
   },
-  "src/scene/lod-group-registry.ts": {
-    "complexity": {
-      "count": 5
-    },
-    "max-depth": {
-      "count": 1
-    },
-    "max-lines-per-function": {
-      "count": 1
-    },
-    "max-params": {
-      "count": 1
-    }
-  },
   "src/scene/lod-selector-math.ts": {
     "complexity": {
       "count": 2
