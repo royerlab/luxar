@@ -216,11 +216,30 @@ kwarg (`None`/`False` no-op; `True`/`dict()` defaults `K=4, levels=3,
 method="auto"`; dict keys `compression_factor` (`K`), `levels` (`n_lods`),
 `coarse`, `brightness_compensation`, `method`, `truncation_radius`, `device`,
 `seed`, `quality_stamps` (measure per-level quality, default `True`),
+`refine="l2"` and `refine_iters` (volume-free Gaussian refinement; a positive
+iteration count requires `refine="l2"`, while omission uses the reducer default),
 `coverage_fractions`
 (explicit per-level viewport-relative thresholds, strict-ascending in
 `[0, MAX_COVERAGE_FRACTION]` = `[0, 4]`), `coarsen_dims`, `max_aspect`
 (per-splat anisotropy cap on the
 coarse levels, default 3.0; `None` disables)).
+The lifted-Gaussian path also accepts `lloyd_iterations` (default 5),
+`candidate_bins_k` (12), `coverage_inflation` (3.0), and `color_weight` (0.0),
+with the same reduction behavior as `make_substitutive_lod`. Values are validated
+before the lift. These controls are refused with `coarse="points"`, which uses a
+different reducer.
+`lloyd_iterations` and `candidate_bins_k` apply only when `method` resolves to
+`kmeans_lloyd` or `greedy_lloyd`; `auto` uses `greedy` for small inputs.
+
+`refine="volume"` is unavailable because Points have no source volume;
+`coarse="points"` has no Gaussian levels to refine. `conserve_mass` is not a
+lifted-path option: the reducer uses per-bin mass-preserving amplitudes, and
+the final render-light normalization conserves the level total even after
+refinement. Lines follow the same rule for their default Gaussian coarse path.
+Refinement is opt-in; its cost grows with the number of barrier groups (one per
+occupied hidden coordinate under default `coarsen_dims`), so long Points/Lines
+timelapses are the slow case.
+
 `add_points_substitutive_lod_wrapper_impl` (`adders/points.py`) then:
 
 With the default `coarse="gsplats"`, it:
@@ -383,6 +402,10 @@ resolver — a thin wrapper over the shared
 `group.resolve_substitutive_axis(spec, "Lines")` (one body, shared with Points,
 so the two can't drift). `add_lines_substitutive_lod_wrapper_impl`
 (`adders/lines.py`) then:
+
+The lifted-Gaussian path accepts the same `lloyd_iterations`,
+`candidate_bins_k`, `coverage_inflation`, and `color_weight` controls as Points.
+They are refused with `coarse="lines"`.
 
 1. **Lifts** each segment to a string of isotropic **bead** Gaussians
    (`gsplats.lift.lift_lines_to_gsplats`): beads spaced `σ_perp = 2w/T` along the

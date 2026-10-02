@@ -235,7 +235,7 @@ describe('shared TSL graph forwarding (gsplat)', () => {
     expect(sharedTSLGraphKey('x', { a: 1 }, f)).not.toBe(sharedTSLGraphKey('x', { a: 2 }, f));
   });
 
-  it('seeds forwarding textures with sampler state and separates filter modes', () => {
+  it('seeds forwarding textures with sampler state and separates filter and wrap modes', () => {
     const linear = colormap();
     linear.minFilter = THREE.LinearMipmapLinearFilter;
     linear.magFilter = THREE.LinearFilter;
@@ -263,6 +263,18 @@ describe('shared TSL graph forwarding (gsplat)', () => {
     magOnly.magFilter = THREE.NearestFilter;
     expect(sharedTSLGraphKey('filter', {}, linearLeaves)).not.toBe(
       sharedTSLGraphKey('filter', {}, { uTex: texture(magOnly) })
+    );
+    const wrapped = colormap();
+    wrapped.minFilter = nearest.minFilter;
+    wrapped.magFilter = nearest.magFilter;
+    wrapped.wrapS = THREE.RepeatWrapping;
+    expect(sharedTSLGraphKey('filter', {}, nearestLeaves)).not.toBe(
+      sharedTSLGraphKey('filter', {}, { uTex: texture(wrapped) })
+    );
+    wrapped.wrapS = nearest.wrapS;
+    wrapped.wrapT = THREE.MirroredRepeatWrapping;
+    expect(sharedTSLGraphKey('filter', {}, nearestLeaves)).not.toBe(
+      sharedTSLGraphKey('filter', {}, { uTex: texture(wrapped) })
     );
 
     const depth = new THREE.DepthTexture(1, 1);

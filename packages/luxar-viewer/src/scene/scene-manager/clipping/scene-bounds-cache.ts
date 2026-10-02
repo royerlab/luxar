@@ -4,6 +4,8 @@
  * Holds the lazily-computed 3D bounding box (projected from the
  * loaded scene's `position_bounds` metadata to the current display
  * dimensions) plus its derived bounding sphere and near-cull margin.
+ * The compiler's scene-level bounds already include authored node transforms;
+ * the standalone viewer leaves the containing root group at identity.
  *
  * Invalidated on scene load / clear. Lazy `ensure(scene)` is called
  * by callers that need a value; first call walks the scene graph

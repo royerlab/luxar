@@ -74,6 +74,12 @@ def _build(
 
 
 class TestResolveSubstitutiveAxisLines:
+    def test_l2_refine_controls(self) -> None:
+        resolved = resolve_substitutive_axis_lines({"refine": "l2", "refine_iters": 2})
+        assert (resolved["refine"], resolved["refine_iters"]) == ("l2", 2)
+        with pytest.raises(ValueError, match="refine"):
+            resolve_substitutive_axis_lines({"refine": "volume"})
+
     def test_shares_points_vocabulary(self) -> None:
         assert resolve_substitutive_axis_lines(None) is None
         assert resolve_substitutive_axis_lines(False) is None
@@ -88,6 +94,31 @@ class TestResolveSubstitutiveAxisLines:
             resolve_substitutive_axis_lines({"quality_stamps": False})["quality_stamps"]
             is False
         )
+
+    def test_gaussian_reduction_controls(self) -> None:
+        r = resolve_substitutive_axis_lines(
+            dict(
+                lloyd_iterations=2,
+                candidate_bins_k=4,
+                coverage_inflation=1.5,
+                color_weight=0.25,
+            )
+        )
+        assert (r["lloyd_iterations"], r["candidate_bins_k"]) == (2, 4)
+        assert (r["coverage_inflation"], r["color_weight"]) == (1.5, 0.25)
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "lloyd_iterations",
+            "candidate_bins_k",
+            "coverage_inflation",
+            "color_weight",
+        ],
+    )
+    def test_same_type_refuses_gaussian_controls(self, key: str) -> None:
+        with pytest.raises(ValueError, match=rf"{key!r} does not apply"):
+            resolve_substitutive_axis_lines({"coarse": "lines", key: 2})
 
     def test_max_aspect_key_resolved(self) -> None:
         assert resolve_substitutive_axis_lines(True)["max_aspect"] == 3.0
@@ -137,6 +168,11 @@ class TestResolveSubstitutiveAxisLines:
         with pytest.raises(ValueError, match=rf"{key!r} does not apply"):
             resolve_substitutive_axis_lines(dict(coarse="lines", **{key: 2.0}))
 
+    @pytest.mark.parametrize("key", ["refine", "refine_iters"])
+    def test_lines_coarse_refuses_refinement(self, key: str) -> None:
+        with pytest.raises(ValueError, match=rf"{key!r} does not apply"):
+            resolve_substitutive_axis_lines(dict(coarse="lines", **{key: "l2"}))
+
     @pytest.mark.parametrize("method", ["subsample", "merge"])
     def test_lines_coarse_methods(self, method: str) -> None:
         resolved = resolve_substitutive_axis_lines(dict(coarse="lines", method=method))
@@ -182,6 +218,70 @@ class TestResolveSubstitutiveAxisLines:
 
 
 class TestAddLinesSubstitutiveLod:
+    @pytest.mark.parametrize(
+        ("key", "value", "field"),
+        [
+            ("lloyd_iterations", 0, "centers"),
+            ("candidate_bins_k", 1, "centers"),
+            ("coverage_inflation", 1.0, "cholesky_factors_diag"),
+            ("color_weight", 10.0, "centers"),
+        ],
+    )
+    def test_gaussian_control_changes_written_coarse_level(
+        self, tmp_path, key: str, value, field: str
+    ) -> None:
+        method = (
+            "kmeans_lloyd"
+            if key in ("lloyd_iterations", "candidate_bins_k")
+            else "auto"
+        )
+        default, _ = _build(tmp_path / "default", n_seg=96, levels=1, method=method)
+        tuned, _ = _build(
+            tmp_path / "tuned",
+            n_seg=96,
+            levels=1,
+            method=method,
+            **{key: value},
+        )
+        decoder = ArrayDecoder()
+        before = decoder.decode(default["child_0"][field], default)
+        after = decoder.decode(tuned["child_0"][field], tuned)
+        assert before.shape != after.shape or not np.allclose(before, after)
+
+    def test_color_weight_requires_colors(self, tmp_path) -> None:
+        out = tmp_path / "uncolored.luxar.zarr"
+        with LuxarZarrCompiler(out) as compiler:
+            scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+            with pytest.raises(
+                ValueError, match="color_weight > 0 requires colors= on add_lines"
+            ):
+                scene.add_lines(
+                    "l",
+                    _segments(8),
+                    1.0,
+                    line_type="segments",
+                    substitutive_lod={"levels": 1, "color_weight": 1.0},
+                )
+
+    def test_l2_refinement_changes_written_coarse_output(self, tmp_path) -> None:
+        def coarse_centers(name: str, **controls):
+            group, _ = _build(
+                tmp_path / name,
+                n_seg=24,
+                levels=1,
+                widths=12.0,
+                quality_stamps=False,
+                **controls,
+            )
+            child = group["child_0"]
+            return ArrayDecoder().decode(child["centers"], child)
+
+        plain = coarse_centers("plain")
+        one_step = coarse_centers("one", refine="l2", refine_iters=1)
+        three_steps = coarse_centers("three", refine="l2", refine_iters=3)
+        assert not np.array_equal(plain, one_step)
+        assert not np.array_equal(one_step, three_steps)
+
     def test_lifted_quality_stamps_can_be_disabled(self, tmp_path) -> None:
         group, _ = _build(tmp_path, n_seg=96, levels=1, quality_stamps=False)
         children = [group[f"child_{i}"] for i in range(2)]
