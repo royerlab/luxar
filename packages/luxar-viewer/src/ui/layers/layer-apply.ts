@@ -697,9 +697,11 @@ export class LayerApplyEngine {
     const identityLayerWindow = layer.scalarWindow && !isColormapActive(mat);
     const eff = this.composeEffective(leaf.path, layer.path, identityLayerWindow, ancestors);
     if (!eff) return;
-    const pickUniforms = (mat as LuxarMaterial & {
-      uniforms?: { uOpacity?: { value: number }; uIntensity?: { value: number } };
-    }).uniforms;
+    const pickUniforms = (
+      mat as LuxarMaterial & {
+        uniforms?: { uOpacity?: { value: number }; uIntensity?: { value: number } };
+      }
+    ).uniforms;
     const previousOpacity = pickUniforms?.uOpacity?.value;
     const previousIntensity = pickUniforms?.uIntensity?.value;
     // A live LOD fade (cross-fade, streaming energy or density-guard

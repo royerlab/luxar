@@ -306,7 +306,7 @@ describe('GSplatPickingMaterial', () => {
     const material = new GSplatPickingMaterial({ nodeId: 1 });
     expect(material.fragmentShader).toContain('uniform int uSurfaceDepth;');
     expect(material.fragmentShader).toContain(
-      'gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 - brightness;'
+      'gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 / (1.0 + salience);'
     );
     material.dispose();
   });

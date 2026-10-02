@@ -31,6 +31,8 @@ import type { AnimationController } from '../../../../scene/animation/animation-
 import type { FailedLoadsProviderPort } from '../../../../data/scene-loader-monitor-port';
 import { MESH_DEFAULTS } from '../../../../rendering/materials/mesh/appearance';
 import { PhysicalMeshMaterial } from '../../../../rendering/materials/mesh-physical/material-glsl';
+import { PointMaterial } from '../../../../rendering/materials/point/material-glsl';
+import { PointPickingMaterial } from '../../../../rendering/picking/point/material';
 import { clearChildFailure } from '../../../../utils/lod-child-failure';
 import type { LODGroupChild } from '../../../../scene/lod-group-registry';
 import { failedLoadsVersion } from '../../../../utils/failed-loads-version';
@@ -3623,34 +3625,14 @@ describe('LayersPanel — blend select drives the leaf material', () => {
 
   it('a non-mesh opacity or gain edit invalidates the cached pick buffer once', () => {
     const invalidate = vi.fn();
-    const pickMat: Record<string, unknown> = { updateOpacityUniform: vi.fn() };
-    const visualMat: Record<string, unknown> = {
-      userData: { blendingMode: 'additive' },
-      uniforms: { uOpacity: { value: 1.0 }, uIntensity: { value: 1.0 } },
-      defines: {},
-      updateIntensity: vi.fn((value: number) => {
-        (visualMat.uniforms as { uIntensity: { value: number } }).uIntensity.value = value;
-      }),
-      updateOffset: vi.fn(),
-      updateGamma: vi.fn(),
-      updateOpacity: vi.fn((value: number) => {
-        (visualMat.uniforms as { uOpacity: { value: number } }).uOpacity.value = value;
-      }),
-      applyBlendingMode: vi.fn(),
-    };
-    visualMat.clone = vi.fn(() => visualMat);
+    const visualMat = new PointMaterial({ blendingMode: 'additive' });
+    const pickMat = new PointPickingMaterial({ nodeId: 1 });
 
-    const points = new THREE.Points(
-      new THREE.BufferGeometry(),
-      visualMat as unknown as THREE.Material
-    );
+    const points = new THREE.Points(new THREE.BufferGeometry(), visualMat);
     points.name = '/cloud';
     points.userData._layerMaterialCloned = true;
     points.userData.nodeType = 'points';
-    points.userData.pickNode = new THREE.Mesh(
-      points.geometry,
-      pickMat as unknown as THREE.Material
-    );
+    points.userData.pickNode = new THREE.Mesh(points.geometry, pickMat);
     const rootGroup = new THREE.Group();
     rootGroup.add(points);
 
@@ -3670,16 +3652,20 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     ).applyEngine.applyOpacity(layer);
 
     expect(invalidate).toHaveBeenCalledTimes(1);
-    expect((visualMat.uniforms as { uOpacity: { value: number } }).uOpacity.value).toBe(0.3);
+    expect(visualMat.uniforms.uOpacity.value).toBe(0.3);
 
     invalidate.mockClear();
-    (panel as unknown as { applyEngine: { applyOpacity(l: unknown): void } }).applyEngine.applyOpacity(layer);
+    (
+      panel as unknown as { applyEngine: { applyOpacity(l: unknown): void } }
+    ).applyEngine.applyOpacity(layer);
     expect(invalidate).not.toHaveBeenCalled();
 
     layer.displayMax = 0.5;
-    (panel as unknown as { applyEngine: { applyDisplayRange(l: unknown): void } }).applyEngine.applyDisplayRange(layer);
+    (
+      panel as unknown as { applyEngine: { applyDisplayRange(l: unknown): void } }
+    ).applyEngine.applyDisplayRange(layer);
     expect(invalidate).toHaveBeenCalledTimes(1);
-    expect((visualMat.uniforms as { uIntensity: { value: number } }).uIntensity.value).toBe(2);
+    expect(visualMat.uniforms.uIntensity.value).toBe(2);
   });
 });
 
