@@ -94,6 +94,9 @@ test.describe('L2 persistence across page reload (R7)', () => {
     browserName,
   }) => {
     test.skip(browserName !== 'chromium', 'Real OPFS persistence is Chromium-only in CI');
+    // Two cold-ish loads (the staggered first load, then the post-reload one)
+    // plus the wait for the reload window: about twice a plain load test.
+    test.setTimeout(90_000);
     const context = page.context();
 
     // Spread the cold load's chunk responses ~120 ms apart, so its L2 writes keep

@@ -32,6 +32,11 @@ interface SignalEntry {
   readonly signal: AbortSignal | null;
 }
 
+/**
+ * The set of demand loads currently running on one leaf loader, published to
+ * its L0 proxies as one merged abort signal and one fanned-out residency probe
+ * (see the module notes for the merge rules).
+ */
 export class ActiveLoadContext {
   private readonly signals: SignalEntry[] = [];
   private readonly probes: ResidencyAccumulator[] = [];
