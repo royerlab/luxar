@@ -557,6 +557,11 @@ function sortedIndexBuffersUsable(geometry: THREE.InstancedBufferGeometry): bool
   return (front.array as Uint32Array).length === (back.array as Uint32Array).length;
 }
 
+/** Whether the streaming ordering's owner has lifted the #715 back-pressure. */
+function isBackPressureBypassed(state: ChunkedOrderingApply): boolean {
+  return state.callbacks?.bypassBackPressure?.() === true;
+}
+
 /**
  * Write the next pending slice into `aSortedIndex` and register ITS
  * update range (not the collapsed `[0, …)` prefix — re-registering the
@@ -588,11 +593,6 @@ function sortedIndexBuffersUsable(geometry: THREE.InstancedBufferGeometry): bool
  *
  * Returns true when more chunks remain after this one.
  */
-/** Whether the streaming ordering's owner has lifted the #715 back-pressure. */
-function isBackPressureBypassed(state: ChunkedOrderingApply): boolean {
-  return state.callbacks?.bypassBackPressure?.() === true;
-}
-
 function applyNextSortedIndexChunk(
   geometry: THREE.InstancedBufferGeometry,
   state: ChunkedOrderingApply
