@@ -48,7 +48,9 @@ export const MAX_EROSION_POINTS = 1;
 
 export const COVERAGE_THRESHOLDS = {
   // Global — every file in the report, the subtrees below included.
-  lines: 88,
+  // The trajectory tests raised the merged dev measurement to 91.00, leaving
+  // the previous floor more than three points below measured coverage.
+  lines: 90,
   statements: 87,
   // functions 84 -> 86 after the chunk-boundary prefetch planner/loader tests
   // (#2686): measured 86.61 -> 87.01 and check-coverage-slack flagged the old
@@ -129,7 +131,7 @@ export const COVERAGE_THRESHOLDS = {
 
 /** Last accepted coverage measurements for each floor. */
 export const COVERAGE_RECORDED = {
-  lines: 90.55,
+  lines: 91.0,
   statements: 89.62,
   functions: 88.02,
   branches: 84.11,
@@ -143,7 +145,7 @@ export const COVERAGE_RECORDED = {
   'src/data/**': { lines: 93.6, functions: 92.03, branches: 87.31 },
   'src/workers/**': { lines: 93.8, functions: 94.05, branches: 88.52 },
   'src/ui/**': { lines: 92.0, functions: 86.95, branches: 79.58 },
-  'src/core/**': { lines: 91.11, functions: 79.62, branches: 86.94 },
+  'src/core/**': { lines: 92.15, functions: 79.62, branches: 86.94 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
   'src/rendering/**': { lines: 79, functions: 80.73, branches: 75.88 },
 };
