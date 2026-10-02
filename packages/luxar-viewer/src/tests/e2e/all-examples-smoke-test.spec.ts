@@ -109,6 +109,26 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
       // Wait for Luxar to fully initialize
       await waitForLuxarReady(page, 60000);
 
+      // Pool warm-up overlaps scene loading. Keep each page alive until its
+      // workers have settled so late init errors reach the console check.
+      await page
+        .waitForFunction(
+          () => {
+            const debug = (window as any).__luxarDebug;
+            const messages = debug?.consoleInterceptor?.getBufferedMessages?.() ?? [];
+            return messages.some((message: { args?: unknown[] }) =>
+              (message.args ?? []).some(
+                (arg) => typeof arg === 'string' && arg.includes('Worker pool ready with')
+              )
+            );
+          },
+          null,
+          { timeout: 35000 }
+        )
+        .catch(() => {
+          // Fall through so the assertion below reports the pool's errors.
+        });
+
       // CRITICAL: Check for console errors
       const consoleMessages = await getConsoleMessages(page);
 
@@ -137,6 +157,10 @@ test.describe('ALL Examples - Systematic Smoke Tests', () => {
         });
       }
       expect(actualErrors.length).toBe(0);
+      expect(
+        consoleMessages.all.some((message) => message.includes('Worker pool ready with')),
+        `${example}: worker pool did not finish initialization; console logs: ${consoleMessages.all.join('\n')}`
+      ).toBe(true);
 
       // Get scene state
       const state: DebugState = await getLuxarState(page);

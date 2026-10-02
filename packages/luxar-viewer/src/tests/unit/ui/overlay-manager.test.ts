@@ -315,30 +315,141 @@ describe('OverlayManager.loadOverlays', () => {
     // its media loads); the wish is kept on the element for the visibility sync.
     expect(video.autoplay).toBe(false);
     expect(video.dataset.autoplay).toBe('1');
-    expect(video.preload).toBe('metadata');
     expect(video.playbackRate).toBe(1.5);
     expect(video.defaultPlaybackRate).toBe(1.5);
-    expect(video.src).toBe('https://example.com/scene.luxar.zarr/overlays/turntable/video.webm');
     expect(video.poster).toBe('https://example.com/scene.luxar.zarr/overlays/turntable/poster.png');
     expect(video.style.width).toBe('26vw');
     expect(video.style.height).toBe('auto');
 
-    // Hidden at story 0: never asked to play.
+    // Hidden at story 0: never asked to play, and holds NO source — a hidden
+    // clip must not own one of the origin's few connections (only the poster).
     expect(playSpy).not.toHaveBeenCalled();
+    expect(video.hasAttribute('src')).toBe(false);
 
-    // Story 2 shows it → play(); leaving → pause().
+    // Story 2 shows it → the source is attached and it plays.
     setStory(2);
+    expect(video.src).toBe('https://example.com/scene.luxar.zarr/overlays/turntable/video.webm');
     expect(video.preload).toBe('auto');
     expect(playSpy).toHaveBeenCalledTimes(1);
+    // Leaving → paused AND released (no fade: at once), so the socket is free.
     pausedSpy.mockReturnValue(false);
     setStory(0);
-    expect(pauseSpy).toHaveBeenCalledTimes(1);
+    expect(pauseSpy).toHaveBeenCalled();
+    expect(video.hasAttribute('src')).toBe(false);
+    // Coming back re-attaches the same source.
+    pausedSpy.mockReturnValue(true);
+    setStory(2);
+    expect(video.src).toBe('https://example.com/scene.luxar.zarr/overlays/turntable/video.webm');
+    expect(playSpy).toHaveBeenCalledTimes(2);
 
     manager.dispose();
     mockDimsState.current = null;
     playSpy.mockRestore();
     pauseSpy.mockRestore();
     pausedSpy.mockRestore();
+  });
+
+  it('keeps a failed video on its poster when shown again', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(() => Promise.resolve());
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
+    const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({
+          name: 'broken',
+          type: 'overlay_video',
+          video_file: 'missing.webm',
+          poster_file: 'poster.png',
+        }),
+      ],
+      'https://example.com/scene.luxar.zarr/'
+    );
+    const video = document.querySelector('.luxar-overlay--video video') as HTMLVideoElement;
+    expect(video.hasAttribute('src')).toBe(true);
+    expect(video.poster).toBe('https://example.com/scene.luxar.zarr/overlays/broken/poster.png');
+
+    video.dispatchEvent(new Event('error'));
+    expect(warning).toHaveBeenCalledExactlyOnceWith(
+      Modules.UI,
+      'Video overlay "broken" failed to load missing.webm — showing poster only'
+    );
+    manager.hide();
+    expect(video.hasAttribute('src')).toBe(false);
+    manager.show();
+    expect(video.hasAttribute('src')).toBe(false);
+    expect(warning).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a fading clip until its fade-out ends, then releases it; stepping quickly frees every one', async () => {
+    const playSpy = vi
+      .spyOn(HTMLMediaElement.prototype, 'play')
+      .mockImplementation(() => Promise.resolve());
+    const pauseSpy = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    const loadSpy = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
+    const setStory = (value: number): void => {
+      mockDimsState.current = {
+        ndim: 2,
+        currentStep: [0, value],
+        displayed: [0],
+        metadata: [
+          { name: 'x', unit: '', scale: 1 },
+          { name: 'story', unit: '', scale: 1 },
+        ],
+      };
+      manager.updateVisibility();
+    };
+    setStory(0);
+    await manager.loadOverlays(
+      [1, 2, 3, 4, 5, 6, 7, 8].map((k) =>
+        makeTextOverlay({
+          name: `turntable_${k}`,
+          type: 'overlay_video',
+          video_file: 'video.webm',
+          poster_file: 'poster.png',
+          transition: 'fade',
+          transition_duration: 0.3,
+          visible_range: { story: k },
+        })
+      ),
+      'https://example.com/scene.luxar.zarr/'
+    );
+    vi.useFakeTimers();
+    const videos = Array.from(
+      document.querySelectorAll('.luxar-overlay--video video')
+    ) as HTMLVideoElement[];
+    expect(videos).toHaveLength(8);
+    expect(videos.filter((v) => v.hasAttribute('src'))).toHaveLength(0);
+
+    // Story 1 shown, then left: the clip keeps its last frame for the 300 ms fade.
+    setStory(1);
+    expect(videos[0].hasAttribute('src')).toBe(true);
+    setStory(0);
+    vi.advanceTimersByTime(299);
+    expect(videos[0].hasAttribute('src')).toBe(true);
+    // Back before the fade ends: the pending release is cancelled, not run later.
+    setStory(1);
+    vi.advanceTimersByTime(1000);
+    expect(videos[0].hasAttribute('src')).toBe(true);
+
+    // A quick tour through every story, faster than the fades: at most the clip on
+    // screen and the one fading out hold a source at any moment, and once the tour
+    // stops only the current one does — never one per story visited.
+    for (let k = 2; k <= 8; k++) {
+      setStory(k);
+      vi.advanceTimersByTime(150);
+      expect(videos.filter((v) => v.hasAttribute('src')).length).toBeLessThanOrEqual(2);
+    }
+    vi.advanceTimersByTime(300);
+    expect(videos.filter((v) => v.hasAttribute('src'))).toEqual([videos[7]]);
+
+    manager.dispose();
+    expect(videos.filter((v) => v.hasAttribute('src'))).toHaveLength(0);
+    vi.useRealTimers();
+    mockDimsState.current = null;
+    playSpy.mockRestore();
+    pauseSpy.mockRestore();
+    loadSpy.mockRestore();
   });
 
   it('builds the compositor canvas only while a stacked-matte clip is on screen', async () => {

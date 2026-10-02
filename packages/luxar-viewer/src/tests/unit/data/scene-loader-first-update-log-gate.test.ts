@@ -56,4 +56,35 @@ describe('processor first-update log gate reads the pass counter', () => {
     expect(helper.mock.calls[0][4]).toBe(4);
     await loader.dispose();
   });
+
+  it.each([0, 1])(
+    'suppresses background logs even when the pass count is %i',
+    async (passCount) => {
+      const loader = new SceneLoader();
+      const internals = loader as unknown as Internals;
+      internals._passCount = passCount;
+      await internals.processLinesData('/node', {}, {});
+      await internals.processGSplatsData('/node', {}, {});
+      expect(processors.lines.mock.lastCall?.[4]).toBe(2);
+      expect(processors.gsplats.mock.lastCall?.[4]).toBe(2);
+      await loader.dispose();
+    }
+  );
+
+  it('retains first-load logging for the initial node-build context', async () => {
+    const loader = new SceneLoader();
+    const internals = loader as unknown as Internals & {
+      makeNodeBuildCtx(): {
+        processLinesData(path: string, data: unknown, viewState: unknown): Promise<unknown>;
+        processGSplatsData(path: string, data: unknown, viewState: unknown): Promise<unknown>;
+      };
+    };
+    internals._passCount = 0;
+    const initial = internals.makeNodeBuildCtx();
+    await initial.processLinesData('/node', {}, {});
+    await initial.processGSplatsData('/node', {}, {});
+    expect(processors.lines.mock.lastCall?.[4]).toBe(0);
+    expect(processors.gsplats.mock.lastCall?.[4]).toBe(0);
+    await loader.dispose();
+  });
 });

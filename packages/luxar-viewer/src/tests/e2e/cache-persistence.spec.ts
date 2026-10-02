@@ -8,7 +8,7 @@
  * across Playwright contexts is unreliable).
  */
 
-import type { Page } from '@playwright/test';
+import type { Page, Route } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { waitForLuxarReady, waitForCacheStable } from './helpers';
 
@@ -41,7 +41,137 @@ async function persistedIndexEntries(page: Page): Promise<number> {
   });
 }
 
+/**
+ * The OPFS L2 state as the page sees it right now: every COMPLETED chunk file
+ * (non-empty: a write's bytes only land at close) decoded back to its cache key,
+ * and the number of entries the largest parsable on-disk index lists (-1 while
+ * none parses: no index save has landed yet).
+ */
+async function l2OnDisk(page: Page): Promise<{ keys: string[]; indexed: number }> {
+  return page.evaluate(async () => {
+    const decode = (name: string): string => {
+      const b64 = name.replace(/-/g, '+').replace(/_/g, '/');
+      const bin = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4));
+      return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+    };
+    const keys: string[] = [];
+    let indexed = -1;
+    try {
+      const root = await navigator.storage.getDirectory();
+      const namespace = await root.getDirectoryHandle('luxar');
+      for await (const dataset of (namespace as any).values()) {
+        if (dataset.kind !== 'directory') continue;
+        for await (const entry of dataset.values()) {
+          if (entry.kind === 'file' && entry.name === '_cache_meta.json') {
+            try {
+              const text = await (await entry.getFile()).text();
+              indexed = Math.max(indexed, JSON.parse(text).entries?.length ?? 0);
+            } catch {
+              // Zero-byte (a save cut off) or mid-write: not an index yet.
+            }
+          }
+          if (entry.kind !== 'directory' || !/^[0-9a-f]{2}$/.test(entry.name)) continue;
+          for await (const file of entry.values()) {
+            if (file.kind !== 'file' || (await file.getFile()).size === 0) continue;
+            try {
+              keys.push(decode(file.name));
+            } catch {
+              // Not a cache-key file name.
+            }
+          }
+        }
+      }
+    } catch {
+      // No namespace dir yet.
+    }
+    return { keys, indexed };
+  });
+}
+
 test.describe('L2 persistence across page reload (R7)', () => {
+  test('a reload inside the index-save debounce loses no chunk written before it', async ({
+    page,
+    browserName,
+  }) => {
+    test.skip(browserName !== 'chromium', 'Real OPFS persistence is Chromium-only in CI');
+    // Two cold-ish loads (the staggered first load, then the post-reload one)
+    // plus the wait for the reload window: about twice a plain load test.
+    test.setTimeout(90_000);
+    const context = page.context();
+
+    // Spread the cold load's chunk responses ~120 ms apart, so its L2 writes keep
+    // arriving after the index's 150 ms leading-edge save and the gaps between
+    // them never reach the 1 s trailing debounce. Metadata documents are not
+    // delayed, so the scene opens at once.
+    const metadataDoc = /(^|\/)(\.zattrs|\.zarray|\.zgroup|\.zmetadata|zarr\.json)$/;
+    let delayed = 0;
+    const stagger = async (route: Route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (!metadataDoc.test(path)) {
+        const wait = 120 * delayed++;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 6000)));
+      }
+      await route.continue();
+    };
+    await context.route(`${DATASET}/**`, stagger);
+
+    await page.goto(`/?src=${DATASET}&debug`);
+    await waitForLuxarReady(page);
+
+    // Reload the moment the window this test is about is open: the leading
+    // save has landed (an index parses), chunk files exist that it does not list,
+    // and the last L2 write is under 300 ms old. Polling in the page keeps the
+    // gap between the decision and the reload to one round trip.
+    const writes = () =>
+      page.evaluate(() => (window as any).__luxarDebug.cache.getStats().l2?.writes ?? 0);
+    let lastWrites = await writes();
+    let lastWriteAt = Date.now();
+    let onDisk: { keys: string[]; indexed: number } = { keys: [], indexed: -1 };
+    await expect
+      .poll(
+        async () => {
+          const now = await writes();
+          if (now !== lastWrites) {
+            lastWrites = now;
+            lastWriteAt = Date.now();
+          }
+          onDisk = await l2OnDisk(page);
+          return (
+            onDisk.indexed >= 0 &&
+            onDisk.keys.length > onDisk.indexed &&
+            Date.now() - lastWriteAt < 300
+          );
+        },
+        { timeout: 20000, intervals: [25] }
+      )
+      .toBe(true);
+    const beforeReload = onDisk.keys.map((k) => k.replace(/^\/+/, ''));
+
+    // Everything the reloaded page fetches from the network, unthrottled.
+    await context.unroute(`${DATASET}/**`, stagger);
+    const fetched: string[] = [];
+    context.on('request', (request) => {
+      const url = request.url();
+      if (url.startsWith(`${DATASET}/`)) fetched.push(url.slice(DATASET.length + 1));
+    });
+    await page.reload();
+    await waitForLuxarReady(page);
+    await waitForCacheStable(page);
+
+    // Validation re-fetches the root metadata documents with a cache bypass:
+    // those requests are not L2 misses.
+    const isRootDoc = (key: string) => !key.includes('/') && metadataDoc.test(key);
+    const refetched = beforeReload.filter((key) => !isRootDoc(key) && fetched.includes(key));
+    expect(
+      { refetched, onDiskBeforeReload: beforeReload.length, indexedBeforeReload: onDisk.indexed },
+      'chunks on disk before the reload that were fetched again after it'
+    ).toEqual({
+      refetched: [],
+      onDiskBeforeReload: beforeReload.length,
+      indexedBeforeReload: onDisk.indexed,
+    });
+  });
+
   test('L2 entries survive a full page reload (Chromium real OPFS)', async ({
     page,
     browserName,

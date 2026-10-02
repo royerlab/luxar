@@ -354,7 +354,7 @@ switchDataset(src: string): Promise<void> {
 
 ### Error Recovery
 
-The `init()` method uses a single top-level try/catch. All initialization steps (the subsystem-building pipeline, dataset routing, dispose/focus/browser/debug handler installation) run inside this block. If any step fails, `init()` calls `dispose()` to tear down whatever partial state was constructed, then re-throws to the caller:
+The `init()` method keeps the app alive if the first dataset fails to load, so the dataset browser can still be used. Listen for `dataset-error` to report that failure in an embed. Errors while building the app subsystems still dispose the partial app and reject `init()`:
 
 ```typescript
 async init(options: LuxarAppOptions): Promise<void> {
@@ -362,7 +362,7 @@ async init(options: LuxarAppOptions): Promise<void> {
     // 1. runInitPipeline — builds scene/animation/input/UI subsystems
     //    (each assigned to `partial` so dispose() can find them after a throw)
     // 2. setupDatasetBrowserShortcut()
-    // 3. Dataset routing — showDatasetBrowser() or loadDataset()
+    // 3. Dataset routing — showDatasetBrowser() or loadInitialDataset()
     // 4. setupDisposeOnUnload / setupFocusHandling / setupDebugInterface
   } catch (error) {
     log.error(Modules.APP, 'Failed to initialize Luxar app:', error);
@@ -374,19 +374,14 @@ async init(options: LuxarAppOptions): Promise<void> {
 }
 ```
 
-`bootstrapStandalone()` catches and displays startup errors. Authored archive
-faults carry safe, actionable remedies; unrecognized failures keep the generic
-fallback. Fatal startup dialogs remain until the user dismisses them:
+`bootstrapStandalone()` catches and displays fatal startup errors. Dataset
+failures during `init()` emit `dataset-error`; the standalone app also shows a
+persistent dialog through its notifier. An embedder should register a listener
+before calling `init()`:
 
 ```typescript
-app.init({ canvas, src }).catch((error) => {
-  console.error('Failed to start Luxar application:', error);
-  const message =
-    error instanceof ArchiveFaultError
-      ? error.message
-      : 'Failed to start the application. Please check the console for details.';
-  showError(message, shortcutForAction, shortcutActions, { autoDismiss: false });
-});
+app.on('dataset-error', ({ src, error }) => showDatasetError(src, error));
+await app.init({ canvas, src });
 ```
 
 ### User-Friendly Error Display

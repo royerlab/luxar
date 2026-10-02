@@ -53,6 +53,19 @@ describe('extractControlPanelConfig', () => {
     expect(settings?.chapters).toEqual({ 0: { label: 'Start' }, 7: { sublabel: 'seventh' } });
   });
 
+  it('reads the short texts a small tile falls back to', () => {
+    const settings = extractControlPanelConfig({
+      chapters: {
+        '2': { label: 'Insect odorant receptors', short_label: ' Odorant receptors ' },
+        '5': { short_sublabel: 'Four places', short_label: '   ' },
+      },
+    });
+    expect(settings?.chapters).toEqual({
+      2: { label: 'Insect odorant receptors', shortLabel: 'Odorant receptors' },
+      5: { shortSublabel: 'Four places' },
+    });
+  });
+
   it('drops chapter entries that carry nothing', () => {
     // An all-default `Chapter()` is not an override; emitting a key for it
     // would make the panel think position 3 was authored.

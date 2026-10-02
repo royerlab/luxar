@@ -82,4 +82,13 @@ describe('OPFS read gate', () => {
     expect(whileReading).toEqual({ active: cap, queued: 1, started: false });
     expect(getOpfsReadGateStats()).toEqual({ active: 0, queued: 0 });
   });
+
+  it('a late hold cannot release the same slot twice', async () => {
+    let hold!: <T>(io: Promise<T>) => Promise<T>;
+    await withOpfsReadGate(async (lease) => {
+      hold = lease;
+    });
+    await hold(Promise.resolve());
+    expect(getOpfsReadGateStats()).toEqual({ active: 0, queued: 0 });
+  });
 });

@@ -14,6 +14,8 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { WorkerInitTimeoutError } from '../../../../../workers/worker-pool/errors';
+import { initializeWithGuard } from '../../../../../workers/worker-pool/lifecycle/init-with-guard';
 
 interface MockWorker {
   index: number;
@@ -143,6 +145,41 @@ describe('WorkerPool.initializeWithGuard — workerInitTimeoutMs:0 disables guar
     const err = await inited;
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).toContain('Failed to initialize any data workers');
+  });
+});
+
+describe('initializeWithGuard — delayed main-thread reply', () => {
+  beforeEach(() => vi.useFakeTimers());
+
+  it('accepts an init reply queued for the same deadline as the guard', async () => {
+    const worker = { onerror: null, onmessageerror: null } as unknown as Worker;
+    const restoreHandlers = vi.fn();
+    const api = {
+      initialize: () => new Promise<void>((resolve) => setTimeout(resolve, 100)),
+    };
+    const outcome = initializeWithGuard(worker, api, 'Worker 1', 100, restoreHandlers).then(
+      () => 'ready',
+      (error: unknown) => error
+    );
+
+    await vi.advanceTimersByTimeAsync(101);
+
+    expect(await outcome).toBe('ready');
+    expect(restoreHandlers).toHaveBeenCalledOnce();
+  });
+
+  it('still rejects a worker that never replies', async () => {
+    const worker = { onerror: null, onmessageerror: null } as unknown as Worker;
+    const restoreHandlers = vi.fn();
+    const api = { initialize: () => new Promise<void>(() => {}) };
+    const outcome = initializeWithGuard(worker, api, 'Worker 2', 100, restoreHandlers).catch(
+      (error: unknown) => error
+    );
+
+    await vi.advanceTimersByTimeAsync(101);
+
+    expect(await outcome).toBeInstanceOf(WorkerInitTimeoutError);
+    expect(restoreHandlers).toHaveBeenCalledOnce();
   });
 });
 

@@ -25,6 +25,17 @@ export interface ArchivedOverlayMedia {
   poster?: Uint8Array;
 }
 
+/**
+ * Stop a clip and give back its media resource — the decoder, the buffered
+ * frames and, for a URL source, the connection. `load()` on an element with no
+ * `src` aborts the fetch and returns it to the poster.
+ */
+function releaseVideoMedia(video: HTMLVideoElement): void {
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+}
+
 function isOverlayInteractive(config: OverlayConfig): boolean {
   if (config.interactive) return true;
   return config.type === 'overlay_video' && config.autoplay === false;
@@ -206,6 +217,27 @@ export class OverlayManager {
   private objectUrls = new Set<string>();
   /** Video overlays by name, so visibility can start/stop playback. */
   private videoElements = new Map<string, HTMLVideoElement>();
+  /**
+   * Each clip's media URL, held here rather than on the element: a `<video>`
+   * owns a NETWORK CONNECTION only while it is on screen.
+   *
+   * A paused video keeps its download open — the browser stops reading and
+   * holds the socket, and against a server without byte ranges it cannot let
+   * go at all — so every clip a tour had shown kept one. An HTTP/1.1 origin
+   * gives a page six connections, none of them visible to the fetch limiter,
+   * so stepping quickly through a handful of stories left every socket on a
+   * paused turntable and the scene's own chunks timed out waiting ("data server
+   * unreachable"), the next clip included. Measured on the exported kiosk:
+   * 60 of 96 chunk fetches past the 7.5 s header timeout with the clips merely
+   * paused, none once hidden clips drop their source. So a clip attaches its
+   * source when shown and detaches it once its fade-out has finished; the
+   * poster stands in meanwhile, and a hidden clip never touches the network.
+   */
+  private videoSources = new Map<string, string>();
+  /** Clips whose media failed to load; revisiting them keeps the poster. */
+  private videoFailed = new Set<string>();
+  /** Fade-out timers after which a hidden clip releases its media. */
+  private videoReleaseTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /**
    * Stacked-alpha-matte compositors, for the VISIBLE clips only.
    *
@@ -562,17 +594,17 @@ export class OverlayManager {
 
     for (const timer of this.matteHideTimers.values()) clearTimeout(timer);
     this.matteHideTimers.clear();
+    for (const timer of this.videoReleaseTimers.values()) clearTimeout(timer);
+    this.videoReleaseTimers.clear();
     for (const matte of this.matteCompositors.values()) matte.dispose();
     this.matteCompositors.clear();
     this.matteSpecs.clear();
     this.matteAbandoned.clear();
-    for (const video of this.videoElements.values()) {
-      // Stop decoding and release the media resource before the element goes.
-      video.pause();
-      video.removeAttribute('src');
-      video.load();
-    }
+    // Stop decoding and release the media resource before the element goes.
+    for (const video of this.videoElements.values()) releaseVideoMedia(video);
     this.videoElements.clear();
+    this.videoSources.clear();
+    this.videoFailed.clear();
     for (const el of this.overlayElements.values()) {
       el.remove();
     }
@@ -703,7 +735,7 @@ export class OverlayManager {
     video.dataset.autoplay = config.autoplay !== false ? '1' : '0';
     video.controls = config.autoplay === false;
     video.playsInline = true;
-    video.preload = 'metadata';
+    video.preload = 'auto';
     video.disablePictureInPicture = true;
     if (typeof config.playback_rate === 'number' && config.playback_rate > 0) {
       video.defaultPlaybackRate = config.playback_rate;
@@ -711,6 +743,9 @@ export class OverlayManager {
     }
     if (!this.setVideoMedia(video, config, archivedVideo, archivedPoster)) return;
     video.onerror = () => {
+      // Releasing a clip empties its source; only a real load failure counts.
+      if (!video.hasAttribute('src') || this.videoFailed.has(config.name)) return;
+      this.videoFailed.add(config.name);
       log.warning(
         Modules.UI,
         `Video overlay "${config.name}" failed to load ${config.video_file} — showing poster only`
@@ -881,7 +916,9 @@ export class OverlayManager {
   ): boolean {
     const base = `${this.baseUrl}overlays/${config.name}/`;
     if (!isZippedStoreUrl(this.baseUrl)) {
-      video.src = `${base}${config.video_file}`;
+      // The source is attached on first show (see `videoSources`); the poster
+      // is a single small image and is what a hidden clip displays.
+      this.videoSources.set(config.name, `${base}${config.video_file}`);
       if (config.poster_file) video.poster = `${base}${config.poster_file}`;
       return true;
     }
@@ -897,7 +934,9 @@ export class OverlayManager {
       new Blob([blobBytes], { type: detectMimeType(blobBytes) })
     );
     this.objectUrls.add(objectUrl);
-    video.src = objectUrl;
+    // Also attached only while shown: a blob holds no socket, but a loaded clip
+    // still holds a decoder and its buffered frames.
+    this.videoSources.set(config.name, objectUrl);
     if (archivedPoster) {
       const posterBytes = Uint8Array.from(archivedPoster);
       const posterUrl = URL.createObjectURL(
@@ -915,20 +954,54 @@ export class OverlayManager {
     if (!video) return;
     // A stacked-matte clip gets its compositor (and its WebGL context) only
     // while it is on screen; see the note on `matteCompositors`.
-    if (visible) this.showMatte(name)?.start();
-    else this.scheduleMatteHide(name, this.matteHideDelayMs(name));
     if (visible) {
-      video.preload = 'auto';
-      if (video.paused && video.dataset.autoplay === '1') {
-        // jsdom returns undefined and gesture-gated browsers reject; a rejected
-        // promise must not surface as an unhandled rejection from a
-        // visibility update.
-        const p: unknown = video.play();
-        if (p instanceof Promise) p.catch(() => {});
-      }
-    } else if (!video.paused) {
-      video.pause();
+      this.showMatte(name)?.start();
+      this.showVideo(name, video);
+    } else {
+      this.scheduleMatteHide(name, this.matteHideDelayMs(name));
+      if (!video.paused) video.pause();
+      this.scheduleVideoRelease(name, video, this.matteHideDelayMs(name));
     }
+  }
+
+  /** Attach a shown clip's source (see `videoSources`) and start it if it autoplays. */
+  private showVideo(name: string, video: HTMLVideoElement): void {
+    this.cancelVideoRelease(name);
+    if (this.videoFailed.has(name)) return;
+    const source = this.videoSources.get(name);
+    if (source && !video.hasAttribute('src')) video.src = source;
+    if (video.paused && video.dataset.autoplay === '1') {
+      // jsdom returns undefined and gesture-gated browsers reject; a rejected
+      // promise must not surface as an unhandled rejection from a
+      // visibility update.
+      const p: unknown = video.play();
+      if (p instanceof Promise) p.catch(() => {});
+    }
+  }
+
+  /**
+   * Release a hidden clip's media once its fade-out has finished, so the last
+   * frame stays on screen while it fades (see `videoSources` for why it must go).
+   */
+  private scheduleVideoRelease(name: string, video: HTMLVideoElement, delayMs: number): void {
+    if (!video.hasAttribute('src') || this.videoReleaseTimers.has(name)) return;
+    if (delayMs <= 0) {
+      releaseVideoMedia(video);
+      return;
+    }
+    const timer = setTimeout(() => {
+      if (this.videoReleaseTimers.get(name) !== timer) return;
+      this.videoReleaseTimers.delete(name);
+      releaseVideoMedia(video);
+    }, delayMs);
+    this.videoReleaseTimers.set(name, timer);
+  }
+
+  private cancelVideoRelease(name: string): void {
+    const timer = this.videoReleaseTimers.get(name);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    this.videoReleaseTimers.delete(name);
   }
 
   /** Apply common positioning, transitions, and interaction styles. */

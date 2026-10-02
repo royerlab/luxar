@@ -505,6 +505,10 @@ scene.viewer_config.control_panel = ControlPanelConfig(
 )
 ```
 
+A `Chapter` may also carry `short_label` and `short_sublabel`: shorter texts
+the panel shows instead of the full ones when a tile is too small for them.
+See *Tile text* below for when each one is used.
+
 **`chapters` is a keyed map of overrides, not a second list.** The tiles are
 derived from the dimension's own `categories`, so a parallel list of chapter
 titles would drift the first time a story was added — the panel would show
@@ -542,6 +546,36 @@ will use once. Tracks are half-tile wide (2× columns, each tile spanning 2) —
 that is what makes a partial final row expressible as centred rather than
 trailing a hole. Labels size against the tile with `cqmin`, not the viewport,
 since the cell shrinks as chapters are added while the screen does not.
+
+**Tile text gives way in a fixed order.** On a phone with twenty chapters, a
+tile is too small for a sentence-long sublabel at any readable size. After
+layout the panel measures every tile and walks a ladder, stopping at the first
+step where every tile fits (`config/control-panel/tile-text-fit.ts`,
+`ui/control-panel/fit-tile-text.ts`):
+
+1. the full texts;
+2. the `short_sublabel`;
+3. the sublabel limited to three, two, then one line, ending in an ellipsis;
+4. no sublabel;
+5. no tour numeral;
+6. the `short_label`;
+7. the label at 90%, then 80%, of its size;
+8. a label that may break inside a word.
+
+Labels otherwise break only between words. A word too long for its tile is
+caught as horizontal overflow and answered by a later step. The step applies
+to the whole grid, so the tiles stay alike: the tile with the longest text
+decides for all of them. Steps for texts the scene does not have are skipped.
+The grid shape and the text are fitted together. The best-shaped grid is kept
+whenever its tiles hold all their text. When they cannot, the next two shapes
+are also tried, and the one that gives up the least wins. On a small phone
+that means three columns of whole titles rather than four columns of broken
+words. The chosen step is exposed on the grid as
+`data-label-text`, `data-sublabel-text`, `data-tile-index`, `data-label-wrap`,
+`--luxar-control-sublabel-lines` and `--luxar-control-label-scale`, so an
+authored stylesheet can follow the same decision. Tile content is centred with
+auto margins rather than `justify-content: center`, so anything that still
+overflows runs off the bottom of the tile, never the top.
 
 ### 4.5 Where the hub lives (implemented)
 

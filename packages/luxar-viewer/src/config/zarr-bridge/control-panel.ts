@@ -28,7 +28,19 @@ export const MAX_CONTROL_COLUMNS = 12;
 export interface ControlChapterOverride {
   label?: string;
   sublabel?: string;
+  /** Shown instead of `label` on a tile too small for it. */
+  shortLabel?: string;
+  /** Shown instead of `sublabel` on a tile too small for it. */
+  shortSublabel?: string;
 }
+
+/** Store key -> override field, for every per-chapter text. */
+const CHAPTER_TEXT_FIELDS: ReadonlyArray<[string, keyof ControlChapterOverride]> = [
+  ['label', 'label'],
+  ['sublabel', 'sublabel'],
+  ['short_label', 'shortLabel'],
+  ['short_sublabel', 'shortSublabel'],
+];
 
 export interface ControlPanelSettings {
   title?: string;
@@ -108,13 +120,12 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 /** One chapter's overrides, or `null` when it carries nothing usable. */
 function chapterOverride(value: unknown): ControlChapterOverride | null {
   if (!isPlainObject(value)) return null;
-  const label = trimmedString(value.label);
-  const sublabel = trimmedString(value.sublabel);
-  if (label === undefined && sublabel === undefined) return null;
   const override: ControlChapterOverride = {};
-  if (label !== undefined) override.label = label;
-  if (sublabel !== undefined) override.sublabel = sublabel;
-  return override;
+  for (const [key, field] of CHAPTER_TEXT_FIELDS) {
+    const text = trimmedString(value[key]);
+    if (text !== undefined) override[field] = text;
+  }
+  return Object.keys(override).length > 0 ? override : null;
 }
 
 function extractChapters(raw: unknown): Record<number, ControlChapterOverride> | undefined {
@@ -179,6 +190,19 @@ export function extractControlPanelConfig(raw: unknown): ControlPanelSettings | 
   return Object.keys(settings).length > 0 ? settings : null;
 }
 
+/** The wire's camelCase chapter overrides, back in the store's spelling. */
+function storeChapters(raw: unknown): unknown {
+  if (!isPlainObject(raw)) return raw;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!isPlainObject(value)) continue;
+    out[key] = Object.fromEntries(
+      CHAPTER_TEXT_FIELDS.map(([storeKey, field]) => [storeKey, value[field]])
+    );
+  }
+  return out;
+}
+
 /** Re-validate the camelCase settings copy returned over the control wire. */
 export function validateControlPanelSettings(raw: unknown): ControlPanelSettings | null {
   if (!isPlainObject(raw)) return null;
@@ -189,6 +213,6 @@ export function validateControlPanelSettings(raw: unknown): ControlPanelSettings
     columns: raw.columns,
     idle_reset_s: raw.idleResetS,
     stylesheet: raw.stylesheet,
-    chapters: raw.chapters,
+    chapters: storeChapters(raw.chapters),
   });
 }

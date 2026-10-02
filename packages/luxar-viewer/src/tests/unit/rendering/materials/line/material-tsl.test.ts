@@ -114,11 +114,13 @@ describe('LineTSLMaterial updateLineTexture', () => {
     expect(mat.uniforms.uLineTex).toBe(proxyAfterBind);
     expect(mat.vertexNode).toBe(vertexNodeAfterBind);
 
-    // Identity change: rebinds (and the factory re-ran → new vertexNode).
+    // Identity change: rebinds. A same-width, same-format texture is a
+    // VALUE of the configuration's shared graph (shared-graph-tsl.ts), so
+    // the graph itself is unchanged — the draw forwards the new texture.
     const tex2 = makeLineTex();
     mat.updateLineTexture(tex2);
     expect(mat.uniforms.uLineTex.value).toBe(tex2);
-    expect(mat.vertexNode).not.toBe(vertexNodeAfterBind);
+    expect(mat.vertexNode).toBe(vertexNodeAfterBind);
   });
 
   it('clone carries the bound line texture', () => {

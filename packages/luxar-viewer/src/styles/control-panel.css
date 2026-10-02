@@ -52,6 +52,10 @@
      real count measured from the container. */
   --luxar-control-gap: clamp(0.5rem, 1.2vmin, 1rem);
   --luxar-control-radius: clamp(14px, 2.4vmin, 28px);
+  --luxar-control-tile-padding: clamp(0.5rem, 1.5vmin, 1.25rem);
+  /* Where the tour numeral sits, measured from the tile's border edge. */
+  --luxar-control-index-inset-block: clamp(0.4rem, 1.2vmin, 0.9rem);
+  --luxar-control-index-inset-inline: clamp(0.5rem, 1.4vmin, 1.1rem);
   /* The glass itself, in one place so a theme can retint it. */
   --luxar-control-glass-fill-top: rgb(255 255 255 / 13%);
   --luxar-control-glass-fill-bottom: rgb(255 255 255 / 4%);
@@ -198,11 +202,16 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  /* Centred rather than bottom-aligned: the tile is a cell of a matrix whose
-     height the grid decides, so its text belongs in the middle of it. */
-  justify-content: center;
+  /* Centred, but SAFELY: the centring comes from the auto margins on the
+     numeral and on the spacer below (`::before`), not from
+     `justify-content: center`. Content that overflows a `center`-justified
+     box spills out of BOTH ends, so a too-long tile lost the top of its title
+     as well as the end of its sublabel. Auto margins absorb only free space
+     and fall to zero when there is none, so an overflow can only ever run off
+     the bottom. The text fit (`fit-tile-text.ts`) keeps it from overflowing
+     at all; this is what makes a miss harmless. */
+  justify-content: flex-start;
   align-items: center;
-  gap: 0.3em;
   /* No `min-height`. The grid hands each tile an equal share of the viewport,
      and a floor here would reintroduce overflow on a short screen or a scene
      with many chapters. Touch-target size is guaranteed by the row count
@@ -210,7 +219,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: clamp(0.5rem, 1.5vmin, 1.25rem);
+  padding: var(--luxar-control-tile-padding);
   border: 1px solid var(--luxar-control-glass-rim);
   border-radius: var(--luxar-control-radius);
   /* Two layers: a translucent white sheet for the glass, over a semi-opaque
@@ -334,18 +343,61 @@
 }
 
 /* Small, faint, and out of the way: it tells a visitor where they are in the
-   tour without competing with the name of the thing. Absolutely positioned so
-   it never shifts the centred label. */
+   tour without competing with the name of the thing.
+
+   IN the flow, with its band mirrored by the spacer below, rather than
+   absolutely positioned. Positioned, it took no room, so on a small tile a
+   two-line title ran straight underneath it. In the flow its band is
+   reserved, and the matching spacer keeps the text centred between them.
+   The negative margins put it back at its corner inset, inside the tile's
+   padding, so a roomy tile looks exactly as before. */
 .luxar-control-tile-index {
-  position: absolute;
-  top: clamp(0.4rem, 1.2vmin, 0.9rem);
-  left: clamp(0.5rem, 1.4vmin, 1.1rem);
+  position: relative;
   z-index: 1;
+  flex: none;
+  align-self: flex-start;
+  margin-block: calc(var(--luxar-control-index-inset-block) - var(--luxar-control-tile-padding))
+    auto;
+  margin-inline-start: calc(
+    var(--luxar-control-index-inset-inline) - var(--luxar-control-tile-padding)
+  );
   font-size: clamp(0.65rem, 5cqmin, 1rem);
+  line-height: 1.2;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.06em;
   color: rgb(255 255 255 / 45%);
+}
+
+/* The numeral's mirror at the bottom, so the text centres between equal
+   bands. The same height as the numeral's line box: the same container-
+   relative font size times the same line height. `order` puts it last; a
+   `::before` is otherwise the first flex item. */
+.luxar-control-tile::before {
+  content: '';
+  order: 1;
+  flex: none;
+  height: calc(1.2 * clamp(0.65rem, 5cqmin, 1rem));
+  margin-block: auto
+    calc(var(--luxar-control-index-inset-block) - var(--luxar-control-tile-padding));
+}
+
+/* No numeral: both bands collapse, and so do their insets, which would
+   otherwise pull the text into the padding. The auto margins stay, so the
+   text is still centred. */
+.luxar-control-grid[data-tile-index='hidden'] .luxar-control-tile-index,
+.luxar-control-grid[data-tile-index='hidden'] .luxar-control-tile::before {
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+
+.luxar-control-grid[data-tile-index='hidden'] .luxar-control-tile-index {
+  margin-block: 0 auto;
+}
+
+.luxar-control-grid[data-tile-index='hidden'] .luxar-control-tile::before {
+  margin-block: auto 0;
 }
 
 .luxar-control-tile[data-active='true'] .luxar-control-tile-index {
@@ -365,16 +417,23 @@
      2.4rem cap left the labels looking timid), and the 0.75rem floor is for
      320x480 with a full tour, where a larger floor pushed a two-word label
      past the tile's clipped edge. */
-  font-size: clamp(0.75rem, 11cqmin, 3.2rem);
+  font-size: calc(clamp(0.75rem, 11cqmin, 3.2rem) * var(--luxar-control-label-scale, 1));
+  flex: none;
   font-weight: 600;
   line-height: 1.15;
   letter-spacing: -0.01em;
   /* Glass is a busy background. A soft shadow keeps the label readable over
      whichever part of the aurora happens to sit behind this tile. */
   text-shadow: 0 1px 8px rgb(0 0 0 / 45%);
-  /* A long chapter name wraps rather than escaping a tile that cannot grow. */
-  overflow-wrap: anywhere;
+  /* Whole words. A word too long for its tile overflows sideways instead,
+     which the text fit sees and answers by shrinking the label; breaking
+     inside a word ("chemoreceptor / s") is its last step, below. */
+  overflow-wrap: normal;
   text-wrap: balance;
+}
+
+.luxar-control-grid[data-label-wrap='anywhere'] .luxar-control-tile-label {
+  overflow-wrap: anywhere;
 }
 
 .luxar-control-tile-sublabel {
@@ -387,6 +446,40 @@
   color: rgb(255 255 255 / 68%);
   text-shadow: 0 1px 6px rgb(0 0 0 / 45%);
   overflow-wrap: anywhere;
+  flex: none;
+  margin-block-start: 0.3rem;
+  /* A line limit the text fit can set: past it the sublabel ends in an
+     ellipsis rather than being cut through a line. `-webkit-box` is the
+     display every engine needs for `line-clamp`, Firefox included. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--luxar-control-sublabel-lines, none);
+  overflow: hidden;
+}
+
+/*
+ * Full and short versions of a text. Both are in the tile and the grid says
+ * which one shows (`data-label-text` / `data-sublabel-text`). A tile with no
+ * short version keeps its full one at every step.
+ */
+.luxar-control-tile-label[data-variant='short'],
+.luxar-control-tile-sublabel[data-variant='short'],
+.luxar-control-grid[data-label-text='short']
+  .luxar-control-tile[data-short-label='true']
+  .luxar-control-tile-label[data-variant='full'],
+.luxar-control-grid[data-sublabel-text='short']
+  .luxar-control-tile[data-short-sublabel='true']
+  .luxar-control-tile-sublabel[data-variant='full'],
+.luxar-control-grid[data-sublabel-text='none'] .luxar-control-tile-sublabel {
+  display: none;
+}
+
+.luxar-control-grid[data-label-text='short'] .luxar-control-tile-label[data-variant='short'] {
+  display: block;
+}
+
+.luxar-control-grid[data-sublabel-text='short'] .luxar-control-tile-sublabel[data-variant='short'] {
+  display: -webkit-box;
 }
 
 /* A generated label is still a label, but it should not shout like a title

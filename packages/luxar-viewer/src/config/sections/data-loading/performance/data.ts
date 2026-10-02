@@ -22,10 +22,11 @@ export const dataLoadingPerformanceConfig: DataLoadingPerformanceConfig = {
   workerProjectionTimeoutMs: 60000,
   // Worker pool init timeout: protects against unreachable worker
   // scripts (404 on the chunk URL, blocked by route, dev-server
-  // misconfig). 10s is generous for any healthy environment;
-  // anything longer suggests a real load problem and the app should
-  // fall back to main-thread execution rather than hang on boot.
-  workerInitTimeoutMs: 10000,
+  // misconfig). GPU readback can stall the main thread while scene
+  // environment capture drains queued frame draws; 10s incorrectly timed
+  // out most of the pool on the mesh reflections example. Keep it finite
+  // so a blocked worker still settles and the app can fall back.
+  workerInitTimeoutMs: 30000,
 
   // GPU buffer pool — multi-type support (Float32Array, Uint8Array,
   // Uint16Array with auto normalization). Reuses geometries when
