@@ -52,8 +52,13 @@ import {
  * Easing curve applied to normalised flight time. `ease-in-out` is smoothstep
  * (zero velocity at both ends); `smooth` is smootherstep, which also starts and
  * ends with zero ACCELERATION — no kick at departure, no jolt on landing.
+ * `cruise` ramps up over the first {@link CRUISE_RAMP} of the flight, holds a
+ * constant speed, and ramps down over the last: paced travel rather than a
+ * jump, since the camera visibly moves for nearly all of the flight. Its
+ * ramps are smoothstep in VELOCITY, so acceleration is continuous and zero at
+ * both ends.
  */
-export type FlightEasing = 'linear' | 'ease-in-out' | 'smooth';
+export type FlightEasing = 'linear' | 'ease-in-out' | 'smooth' | 'cruise';
 
 /** The path between the two poses (see the module doc). */
 export type FlightTrajectory = 'orbit' | 'zoom-pan';
@@ -64,6 +69,12 @@ export type FlightTrajectory = 'orbit' | 'zoom-pan';
  */
 export const ZOOM_PAN_RHO = Math.SQRT2;
 
+/** Fraction of a `cruise` flight spent ramping up (and, again, ramping down). */
+export const CRUISE_RAMP = 0.2;
+
+/** Duration bounds for a paced (`speed`) flight when the caller gives none. */
+export const DEFAULT_PACED_DURATION_RANGE_MS: readonly [number, number] = [1500, 8000];
+
 export interface FlyToOptions {
   /** Flight duration in milliseconds. `0` (or negative) applies the pose immediately. Default 1500. */
   durationMs?: number;
@@ -71,6 +82,17 @@ export interface FlyToOptions {
   easing?: FlightEasing;
   /** Path between the poses. Default `'orbit'`; `'zoom-pan'` needs perspective at both ends. */
   trajectory?: FlightTrajectory;
+  /**
+   * Pace a `zoom-pan` flight instead of timing it: the flight lasts its path
+   * length divided by this speed (van Wijk & Nuij units per second), clamped to
+   * {@link durationRangeMs}. The path length counts panning in view widths and
+   * zooming in log scale, so it is the PERCEIVED distance — a long jump takes
+   * longer, a short hop less, all at the same cruising speed. Ignored for an
+   * orbit or orthographic flight, which use `durationMs`.
+   */
+  speed?: number;
+  /** `[min, max]` duration of a paced flight. Default {@link DEFAULT_PACED_DURATION_RANGE_MS}. */
+  durationRangeMs?: readonly [number, number];
   /**
    * Keep the CURRENT viewing direction and up vector; only the focus target,
    * the distance to it, and the projection parameters (fov / zoom / planes)
@@ -133,7 +155,25 @@ export function easeFlight(t: number, easing: FlightEasing): number {
   const x = t < 0 ? 0 : t > 1 ? 1 : t;
   if (easing === 'linear') return x;
   if (easing === 'smooth') return x * x * x * (x * (6 * x - 15) + 10);
+  if (easing === 'cruise') return cruiseEase(x, CRUISE_RAMP);
   return x * x * (3 - 2 * x);
+}
+
+/**
+ * Ramp–cruise–ramp position profile. Velocity rises as smoothstep over `ramp`,
+ * holds its peak `1 / (1 − ramp)`, and falls symmetrically, so the position
+ * covers exactly 0 → 1. ∫₀ˣ smoothstep = x³ − x⁴/2 gives the ramp's position.
+ */
+function cruiseEase(x: number, ramp: number): number {
+  if (!(ramp > 0)) return x;
+  const peak = 1 / (1 - ramp);
+  const up = (t: number): number => {
+    const u = t / ramp;
+    return peak * ramp * (u * u * u - (u * u * u * u) / 2);
+  };
+  if (x <= ramp) return up(x);
+  if (x >= 1 - ramp) return 1 - up(1 - x);
+  return peak * (ramp / 2 + (x - ramp));
 }
 
 type Vec3Tuple = readonly [number, number, number];
@@ -161,6 +201,8 @@ function slerpDirection(from: THREE.Vector3, to: THREE.Vector3, s: number): THRE
 /** A pre-computed interpolation between two poses; `at(s)` yields the pose at eased time `s`. */
 export interface FlightPath {
   at(s: number): CameraSnapshot;
+  /** Van Wijk & Nuij path length, for a `zoom-pan` path; `undefined` for `orbit`. */
+  readonly length?: number;
 }
 
 /**
@@ -203,6 +245,20 @@ export function zoomPanProfile(
   };
 }
 
+/**
+ * How long a flight along `path` lasts: paced by `opts.speed` when the path has a
+ * length (zoom-pan), clamped to the duration range; otherwise `opts.durationMs`
+ * or the default. Exported for tests.
+ */
+export function flightDurationMs(path: FlightPath, opts?: FlyToOptions): number {
+  const speed = opts?.speed;
+  if (speed !== undefined && speed > 0 && path.length !== undefined) {
+    const [lo, hi] = opts?.durationRangeMs ?? DEFAULT_PACED_DURATION_RANGE_MS;
+    return THREE.MathUtils.clamp((path.length / speed) * 1000, lo, hi);
+  }
+  return opts?.durationMs ?? DEFAULT_FLIGHT_DURATION_MS;
+}
+
 /** View height at `dist` under a vertical field of view of `fovDeg` degrees. */
 function viewHeight(dist: number, fovDeg: number): number {
   return 2 * dist * Math.tan(THREE.MathUtils.degToRad(fovDeg) / 2);
@@ -241,6 +297,7 @@ function buildZoomPanPath(from: CameraSnapshot, to: CameraSnapshot, orbit: Fligh
   const travel = target0.distanceTo(target1);
   const profile = zoomPanProfile(travel, viewHeight(dist0, fov0), viewHeight(dist1, fov1));
   return {
+    length: profile.S,
     at(s: number): CameraSnapshot {
       const base = orbit.at(s);
       const { along, width } = profile.at(s);
@@ -373,17 +430,18 @@ export class CameraFlight {
   flyTo(pose: CameraSnapshot, opts?: FlyToOptions): Promise<FlightResult> {
     this.cancel();
 
-    const durationMs = opts?.durationMs ?? DEFAULT_FLIGHT_DURATION_MS;
     const keepOrientation = opts?.keepOrientation === true;
+    const from = captureSnapshot(this.deps.sceneManager).camera;
+    const path = buildFlightPath(from, pose, opts?.trajectory ?? 'orbit');
+    const durationMs = flightDurationMs(path, opts);
     if (!(durationMs > 0)) {
       restoreCamera(this.deps.sceneManager, keepOrientation ? this.reseat(pose) : pose);
       return Promise.resolve({ completed: true });
     }
 
-    const from = captureSnapshot(this.deps.sceneManager).camera;
     return new Promise<FlightResult>((resolve) => {
       this.active = {
-        path: buildFlightPath(from, pose, opts?.trajectory ?? 'orbit'),
+        path,
         pose,
         startedAt: this.now(),
         durationMs,

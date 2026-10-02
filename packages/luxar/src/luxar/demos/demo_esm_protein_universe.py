@@ -199,7 +199,9 @@ from luxar.demos.demo_esm3_protein_stories import (
     PANEL_WIDTH,
     SPHERE_LAYER_ORDER,
     STORY_DIM,
+    TOUR_FLIGHT_DURATION_RANGE_MS,
     TOUR_FLIGHT_EASING,
+    TOUR_FLIGHT_SPEED,
     TOUR_FLIGHT_TRAJECTORY,
     TOUR_LONG_FLIGHT_MS,
     TURNTABLE_CACHE,
@@ -3164,6 +3166,8 @@ def build_universe_scene(
                 duration_ms=TOUR_LONG_FLIGHT_MS,
                 easing=TOUR_FLIGHT_EASING,
                 trajectory=TOUR_FLIGHT_TRAJECTORY,
+                speed=TOUR_FLIGHT_SPEED,
+                duration_range_ms=TOUR_FLIGHT_DURATION_RANGE_MS,
                 reveal="on_arrival",
             )
         ]
@@ -3181,6 +3185,8 @@ def build_universe_scene(
                     duration_ms=s.flight_ms,
                     easing=TOUR_FLIGHT_EASING,
                     trajectory=TOUR_FLIGHT_TRAJECTORY,
+                    speed=TOUR_FLIGHT_SPEED,
+                    duration_range_ms=TOUR_FLIGHT_DURATION_RANGE_MS,
                     reveal="on_arrival",
                 )
             )

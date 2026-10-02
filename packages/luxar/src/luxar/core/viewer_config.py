@@ -443,7 +443,7 @@ class AnimationConfig:
         )
 
 
-VALID_WAYPOINT_EASINGS = ("linear", "ease-in-out", "smooth")
+VALID_WAYPOINT_EASINGS = ("linear", "ease-in-out", "smooth", "cruise")
 VALID_WAYPOINT_TRAJECTORIES = ("orbit", "zoom-pan")
 VALID_WAYPOINT_REVEALS = ("immediate", "on_arrival")
 
@@ -482,7 +482,10 @@ class Waypoint:
             default (1500). ``0`` snaps.
         easing: ``"ease-in-out"`` (default, smoothstep), ``"smooth"``
             (smootherstep: also starts and lands with zero ACCELERATION, so a
-            flight has no kick at departure or arrival) or ``"linear"``.
+            flight has no kick at departure or arrival), ``"cruise"`` (smooth
+            ramps over the first and last fifth, a constant speed between:
+            paced travel, the camera visibly moving for nearly all of the
+            flight) or ``"linear"``.
         trajectory: The path between poses. ``"orbit"`` (default) moves the
             focus target in a straight line while the distance and direction
             interpolate on their own. ``"zoom-pan"`` is van Wijk & Nuij's
@@ -491,6 +494,14 @@ class Waypoint:
             so a long jump across a dataset no longer races past the screen at
             close range. Perspective poses only; an orthographic flight keeps
             ``"orbit"``. Direction and up still interpolate as in ``"orbit"``.
+        speed: Pace a ``"zoom-pan"`` flight instead of timing it: it lasts its
+            path length divided by ``speed`` (van Wijk & Nuij units per second).
+            That length counts panning in view widths and zooming in log scale,
+            so it is the PERCEIVED distance, zoom included: a long jump takes
+            longer, a short hop less, all at one cruising speed. ``duration_ms``
+            still times an orbit or orthographic flight.
+        duration_range_ms: ``(min, max)`` bounds on a paced flight's duration;
+            the viewer default (1500, 8000) when ``None``.
         rendering: Optional rendering overrides applied on arrival, using the
             same snake_case keys as ``ViewerConfig`` itself (``exposure``,
             ``bloom_strength``, ``tone_mapping``, ...). Validated against that
@@ -515,6 +526,8 @@ class Waypoint:
     rendering: Optional[Dict[str, Any]] = None
     reveal: Optional[str] = None
     trajectory: Optional[str] = None
+    speed: Optional[float] = None
+    duration_range_ms: Optional[Tuple[float, float]] = None
 
     def __post_init__(self) -> None:
         self._validate_when()
@@ -535,6 +548,23 @@ class Waypoint:
             raise ValueError(
                 f"easing must be one of {VALID_WAYPOINT_EASINGS}, got '{self.easing}'"
             )
+
+        if self.speed is not None and not (
+            math.isfinite(self.speed) and self.speed > 0
+        ):
+            raise ValueError(f"speed must be finite and > 0, got {self.speed}")
+
+        if self.duration_range_ms is not None:
+            rng = tuple(self.duration_range_ms)
+            if not (
+                len(rng) == 2
+                and all(math.isfinite(v) and v >= 0 for v in rng)
+                and rng[0] <= rng[1]
+            ):
+                raise ValueError(
+                    "duration_range_ms must be (min, max) with 0 <= min <= max, "
+                    f"got {self.duration_range_ms}"
+                )
 
         if (
             self.trajectory is not None
@@ -611,6 +641,10 @@ class Waypoint:
             result["reveal"] = self.reveal
         if self.trajectory is not None:
             result["trajectory"] = self.trajectory
+        if self.speed is not None:
+            result["speed"] = self.speed
+        if self.duration_range_ms is not None:
+            result["duration_range_ms"] = list(self.duration_range_ms)
         return result
 
     @classmethod
@@ -629,6 +663,12 @@ class Waypoint:
             rendering=data.get("rendering"),
             reveal=data.get("reveal"),
             trajectory=data.get("trajectory"),
+            speed=data.get("speed"),
+            duration_range_ms=(
+                tuple(data["duration_range_ms"])
+                if data.get("duration_range_ms") is not None
+                else None
+            ),
         )
 
 

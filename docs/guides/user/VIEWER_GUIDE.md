@@ -790,10 +790,16 @@ of the plain `camera` block). Afterwards stepping the story dimension — the
 `[` / `]` keys, the slider, or an external controller — flies to the new
 waypoint with its own `duration_ms` (default 1500; `0` snaps), `easing`
 (`"ease-in-out"`, `"smooth"` — smootherstep, with no acceleration jump at
-take-off or landing — or `"linear"`) and `trajectory`: `"orbit"` (default)
-moves the focus target in a straight line, while `"zoom-pan"` follows van Wijk &
-Nuij's smooth zooming and panning, pulling back as it travels and diving in at
-the end so a long jump crosses the screen at an even pace (perspective only). Moves
+take-off or landing — `"cruise"` — smooth ramps over the first and last fifth
+and a constant speed between — or `"linear"`) and `trajectory`: `"orbit"`
+(default) moves the focus target in a straight line, while `"zoom-pan"` follows
+van Wijk & Nuij's smooth zooming and panning, pulling back as it travels and
+diving in at the end so a long jump crosses the screen at an even pace
+(perspective only). A zoom-pan waypoint may set `speed` instead of relying on
+`duration_ms`: the flight then lasts its path length over that speed, clamped to
+`duration_range_ms` (default 1.5–8 s). The length counts panning in view widths
+and zooming in log scale, so travel time follows the perceived distance, zoom
+included. Moves
 that stay inside the same waypoint's
 ranges do nothing, and leaving every waypoint leaves the camera where it is.
 Any mouse, touch or key input during a flight cancels it where it is. The

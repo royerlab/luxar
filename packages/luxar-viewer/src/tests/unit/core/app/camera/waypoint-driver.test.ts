@@ -168,7 +168,7 @@ describe('WaypointDriver', () => {
     expect(ports.flyTo).toHaveBeenLastCalledWith(expect.anything(), {});
   });
 
-  it('passes an authored easing and trajectory through to the flight', () => {
+  it('passes an authored easing, trajectory and pace through to the flight', () => {
     const current = { step: [0, 0, 0, 0, 0] };
     const ports = makePorts(current);
     const smooth: ZarrWaypoint[] = [
@@ -179,6 +179,8 @@ describe('WaypointDriver', () => {
         duration_ms: 5000,
         easing: 'smooth',
         trajectory: 'zoom-pan',
+        speed: 0.7,
+        duration_range_ms: [2500, 8000],
       },
     ];
     const driver = new WaypointDriver(smooth, ports);
@@ -189,6 +191,8 @@ describe('WaypointDriver', () => {
       durationMs: 5000,
       easing: 'smooth',
       trajectory: 'zoom-pan',
+      speed: 0.7,
+      durationRangeMs: [2500, 8000],
     });
   });
 

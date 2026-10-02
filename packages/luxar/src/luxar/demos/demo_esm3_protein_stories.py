@@ -146,15 +146,22 @@ from luxar.utils.paths import get_demos_output_dir
 # an audience is the wrong place to discover a hallucinated statistic.
 
 
-#: How a tour flies between stops, shared by both protein tours. ``zoom-pan`` is
-#: van Wijk & Nuij's path: it pulls back while it travels and dives in at the end,
-#: so a jump across the map crosses the screen at an even pace instead of racing
-#: past at close range. ``smooth`` (smootherstep) starts and lands with zero
-#: acceleration, so the camera neither kicks off nor jolts to a stop.
+#: How a tour flies between stops, shared by both protein tours: paced travel, not
+#: a jump. ``zoom-pan`` is van Wijk & Nuij's path, which pulls back while it
+#: travels and dives in at the end, so a jump across the map crosses the screen at
+#: an even pace instead of racing past at close range. Its length measures pan in
+#: view widths and zoom in log scale, so ``TOUR_FLIGHT_SPEED`` times every flight
+#: by its perceived distance: on these maps the steps run from almost nothing to
+#: about 5.4 units (median 3.2-3.5), so 0.7 units a second puts the typical flight
+#: near 5 s and the longest near 8 s. ``cruise`` holds that speed for the middle
+#: three fifths of the flight, between smooth ramps.
 TOUR_FLIGHT_TRAJECTORY = "zoom-pan"
-TOUR_FLIGHT_EASING = "smooth"
-#: Flight time to an ordinary stop, and to the Overview or a stop that frames the
-#: whole map, where the camera travels furthest.
+TOUR_FLIGHT_EASING = "cruise"
+TOUR_FLIGHT_SPEED = 0.7
+TOUR_FLIGHT_DURATION_RANGE_MS = (2500.0, 8000.0)
+#: The duration a flight falls back to when it cannot follow the zoom-pan path
+#: (an orthographic view): to an ordinary stop, and to the Overview or a stop that
+#: frames the whole map.
 TOUR_FLIGHT_MS = 5000
 TOUR_LONG_FLIGHT_MS = 6000
 
@@ -1398,6 +1405,8 @@ def build_stories_scene(
                 duration_ms=TOUR_LONG_FLIGHT_MS,
                 easing=TOUR_FLIGHT_EASING,
                 trajectory=TOUR_FLIGHT_TRAJECTORY,
+                speed=TOUR_FLIGHT_SPEED,
+                duration_range_ms=TOUR_FLIGHT_DURATION_RANGE_MS,
                 reveal="on_arrival",
             )
         ]
@@ -1409,6 +1418,8 @@ def build_stories_scene(
                     duration_ms=s.flight_ms,
                     easing=TOUR_FLIGHT_EASING,
                     trajectory=TOUR_FLIGHT_TRAJECTORY,
+                    speed=TOUR_FLIGHT_SPEED,
+                    duration_range_ms=TOUR_FLIGHT_DURATION_RANGE_MS,
                     reveal="on_arrival",
                 )
             )

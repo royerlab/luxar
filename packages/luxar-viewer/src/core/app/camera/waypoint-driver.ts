@@ -319,6 +319,8 @@ export class WaypointDriver {
     if (typeof wp.duration_ms === 'number') opts.durationMs = wp.duration_ms;
     if (wp.easing) opts.easing = wp.easing;
     if (wp.trajectory) opts.trajectory = wp.trajectory;
+    if (typeof wp.speed === 'number') opts.speed = wp.speed;
+    if (wp.duration_range_ms) opts.durationRangeMs = wp.duration_range_ms;
     if (this.ports.autoRotateActive()) opts.keepOrientation = true;
     return opts;
   }

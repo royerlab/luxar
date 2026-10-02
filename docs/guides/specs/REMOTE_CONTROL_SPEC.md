@@ -35,7 +35,7 @@ throws a clear `... called before init()` error when used too early.
 ### 2.1 Camera flight
 
 ```ts
-flyTo(pose: CameraSnapshot, opts?: { durationMs?: number; easing?: 'linear' | 'ease-in-out' | 'smooth'; trajectory?: 'orbit' | 'zoom-pan' })
+flyTo(pose: CameraSnapshot, opts?: { durationMs?: number; easing?: 'linear' | 'ease-in-out' | 'smooth' | 'cruise'; trajectory?: 'orbit' | 'zoom-pan'; speed?: number; durationRangeMs?: [number, number] })
   : Promise<{ completed: boolean }>
 ```
 

@@ -142,10 +142,14 @@ export interface ZarrWaypoint {
   camera: ZarrCameraConfig;
   /** Flight duration in ms; absent = viewer default, 0 = snap. */
   duration_ms?: number;
-  /** `ease-in-out` (smoothstep, default), `smooth` (smootherstep) or `linear`. */
-  easing?: 'linear' | 'ease-in-out' | 'smooth';
+  /** `ease-in-out` (smoothstep, default), `smooth` (smootherstep), `cruise` or `linear`. */
+  easing?: 'linear' | 'ease-in-out' | 'smooth' | 'cruise';
   /** `orbit` (default) or `zoom-pan` (van Wijk & Nuij; see `camera-flight.ts`). */
   trajectory?: 'orbit' | 'zoom-pan';
+  /** Pace a zoom-pan flight: duration = path length / speed (units per second). */
+  speed?: number;
+  /** `[min, max]` duration of a paced flight, ms. */
+  duration_range_ms?: [number, number];
   /** Rendering overrides (snake_case ViewerConfig keys) applied on arrival. */
   rendering?: Record<string, unknown>;
   /**

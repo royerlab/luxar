@@ -15,6 +15,8 @@ import {
   easeFlight,
   keepOrientationPose,
   zoomPanProfile,
+  flightDurationMs,
+  CRUISE_RAMP,
   type FlightFrameDriver,
 } from '../../../../../core/app/camera/camera-flight';
 import type { CameraSnapshot } from '../../../../../core/app/snapshot/viewer-snapshot';
@@ -117,6 +119,83 @@ describe('easeFlight', () => {
     for (let t = 0; t < 1; t += 0.05) {
       expect(easeFlight(t + 0.05, 'smooth')).toBeGreaterThanOrEqual(easeFlight(t, 'smooth'));
     }
+  });
+});
+
+describe("easeFlight('cruise') — ramp, cruise, ramp", () => {
+  const e = (t: number): number => easeFlight(t, 'cruise');
+  const v = (t: number): number => (e(t + 1e-5) - e(t - 1e-5)) / 2e-5;
+
+  it('covers 0 → 1, symmetrically and monotonically', () => {
+    expect(e(0)).toBe(0);
+    expect(e(1)).toBeCloseTo(1, 12);
+    expect(e(0.5)).toBeCloseTo(0.5, 12);
+    for (let t = 0.05; t < 1; t += 0.05) {
+      expect(e(t)).toBeCloseTo(1 - e(1 - t), 12);
+      expect(e(t)).toBeGreaterThan(e(t - 0.05));
+    }
+  });
+
+  it('holds one constant speed between the ramps — paced travel, not a jump', () => {
+    const peak = 1 / (1 - CRUISE_RAMP);
+    for (let t = CRUISE_RAMP + 0.01; t < 1 - CRUISE_RAMP - 0.01; t += 0.05) {
+      expect(v(t)).toBeCloseTo(peak, 4);
+    }
+    // smootherstep's peak speed is 1.875; the cruise peaks at only 1.25.
+    expect(peak).toBeLessThan(1.3);
+  });
+
+  it('starts and stops with zero speed and zero acceleration, continuous through the ramps', () => {
+    expect(v(1e-4)).toBeLessThan(1e-3);
+    expect(v(1 - 1e-4)).toBeLessThan(1e-3);
+    const a = (t: number): number => (v(t + 1e-4) - v(t - 1e-4)) / 2e-4;
+    expect(Math.abs(a(2e-4))).toBeLessThan(0.05);
+    // No velocity jump where a ramp meets the cruise.
+    expect(v(CRUISE_RAMP - 1e-4)).toBeCloseTo(v(CRUISE_RAMP + 1e-4), 2);
+  });
+});
+
+describe('flightDurationMs — paced by the perceived length of the path', () => {
+  const at = (target: [number, number, number], dist: number): CameraSnapshot => ({
+    position: [target[0], target[1], target[2] + dist],
+    target,
+    up: [0, 1, 0],
+    isOrtho: false,
+    fov: 63,
+    near: 0.01,
+    far: 1000,
+  });
+  const paced = { speed: 0.7, durationRangeMs: [0, 1e9] as const };
+
+  it('is proportional to the zoom-pan length: a longer jump takes longer', () => {
+    const short = buildFlightPath(at([0, 0, 0], 2), at([2, 0, 0], 2), 'zoom-pan');
+    const long = buildFlightPath(at([0, 0, 0], 2), at([40, 0, 0], 2), 'zoom-pan');
+    const tShort = flightDurationMs(short, paced);
+    const tLong = flightDurationMs(long, paced);
+    expect(tShort).toBeCloseTo(((short.length as number) / 0.7) * 1000, 6);
+    expect(tLong).toBeGreaterThan(tShort * 2);
+  });
+
+  it('is zoom-aware: the same pan costs more up close, and a pure zoom costs its log factor', () => {
+    // Pan 10 units: from 1 unit away that is many screen-widths; from 20 away, half of one.
+    const close = buildFlightPath(at([0, 0, 0], 1), at([10, 0, 0], 1), 'zoom-pan');
+    const far = buildFlightPath(at([0, 0, 0], 20), at([10, 0, 0], 20), 'zoom-pan');
+    expect(flightDurationMs(close, paced)).toBeGreaterThan(flightDurationMs(far, paced) * 3);
+    // Zooming in 10x and 100x without moving: the cost goes as log(factor).
+    const z10 = buildFlightPath(at([0, 0, 0], 10), at([0, 0, 0], 1), 'zoom-pan');
+    const z100 = buildFlightPath(at([0, 0, 0], 100), at([0, 0, 0], 1), 'zoom-pan');
+    expect(flightDurationMs(z100, paced) / flightDurationMs(z10, paced)).toBeCloseTo(2, 6);
+  });
+
+  it('clamps to the range, and falls back to durationMs where there is no path length', () => {
+    const tiny = buildFlightPath(at([0, 0, 0], 2), at([0.001, 0, 0], 2), 'zoom-pan');
+    expect(flightDurationMs(tiny, { speed: 0.7, durationRangeMs: [2500, 8000] })).toBe(2500);
+    const huge = buildFlightPath(at([0, 0, 0], 0.01), at([1000, 0, 0], 0.01), 'zoom-pan');
+    expect(flightDurationMs(huge, { speed: 0.7, durationRangeMs: [2500, 8000] })).toBe(8000);
+    const orbit = buildFlightPath(at([0, 0, 0], 2), at([40, 0, 0], 2), 'orbit');
+    expect(orbit.length).toBeUndefined();
+    expect(flightDurationMs(orbit, { speed: 0.7, durationMs: 4000 })).toBe(4000);
+    expect(flightDurationMs(orbit)).toBe(1500);
   });
 });
 
