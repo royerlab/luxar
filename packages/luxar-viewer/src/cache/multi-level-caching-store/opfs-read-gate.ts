@@ -44,11 +44,17 @@ export function withOpfsReadGate<T>(
 ): Promise<T> {
   return gate.acquire(signal).then(async (release) => {
     let pending = 1;
+    let released = false;
     const settle = (): void => {
       pending -= 1;
-      if (pending === 0) release();
+      // The lease ends once: a hold arriving after it ended passes its I/O
+      // straight through instead of re-opening the count.
+      if (pending > 0 || released) return;
+      released = true;
+      release();
     };
     const hold = <R>(io: Promise<R>): Promise<R> => {
+      if (released) return io;
       pending += 1;
       void io.then(settle, settle);
       return io;

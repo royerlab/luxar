@@ -65,9 +65,9 @@ on either side should move both:
 **What is deliberately NOT modelled.** Dynamic near/far clipping: the near and
 far planes are set far outside the fitted scene (:func:`_near_far_for`) so only
 the four SIDE planes can gate. That costs nothing, because the near-plane hazard
-the metrics actually care about is the homogeneous-``w`` straddle of the box's
-corners (:func:`project_box_ndc_rect`, and the same test ahead of the ellipse in
-:func:`project_box_area_fraction`), which does not read ``camera.near`` at all.
+the metrics actually care about is a box crossing the eye plane: a camera
+inside the box saturates, while a box beside it is clipped at the near plane
+(:func:`project_box_ndc_rect` and :func:`project_box_area_fraction`).
 Nor is the viewer's projected-FOOTPRINT pick for GSplat ladders carrying
 complete footprint stamps (``lod-group-registry.ts::pickStampedFootprintChild``),
 which runs ahead of the occupancy metric there; the screen reports occupancy only.
@@ -180,7 +180,7 @@ FILL_FACTOR = 0.5
 DEGENERATE_RECT_HALF_EXTENT = 1e-3
 
 #: ``W_EPSILON`` (``scene/lod-selector-math.ts``) — a corner at or below this
-#: homogeneous ``w`` means the camera straddles the box; the metric saturates.
+#: homogeneous ``w`` means the box crosses the eye plane; only a camera inside saturates.
 W_EPSILON = 1e-6
 
 #: ``HYSTERESIS_RATIO`` (``scene/lod-selector-math.ts``).
@@ -490,7 +490,9 @@ def project_bounds_to_display_dims(
     return Box3((lo[0], lo[1], lo[2]), (hi[0], hi[1], hi[2]))
 
 
-def project_box_ndc_rect(box: Box3, proj_view: np.ndarray) -> Optional[NdcRect]:
+def project_box_ndc_rect(
+    box: Box3, proj_view: np.ndarray, near: Optional[float] = None
+) -> Optional[NdcRect]:
     """The box's screen-space AABB in NDC, or ``None`` with the camera inside it.
 
     ``lod-selector-math.ts::projectBoxNdcRect``: the eight corners go through
@@ -514,7 +516,7 @@ def project_box_ndc_rect(box: Box3, proj_view: np.ndarray) -> Optional[NdcRect]:
     if bool((w <= W_EPSILON).any()):
         if _eye_inside_box(box, proj_view):
             return None
-        return _clipped_ndc_rect(box, proj_view) or NdcRect(0.0, 0.0, 0.0, 0.0)
+        return _clipped_ndc_rect(box, proj_view, near) or NdcRect(0.0, 0.0, 0.0, 0.0)
     ndc_x = projected[:, 0] / w
     ndc_y = projected[:, 1] / w
     return NdcRect(
@@ -554,16 +556,24 @@ def _eye_inside_box(box: Box3, m: np.ndarray) -> bool:
     return all(box.min[i] <= float(eye[i]) <= box.max[i] for i in range(3))
 
 
-def _clipped_ndc_rect(box: Box3, m: np.ndarray) -> Optional[NdcRect]:
+def _clipped_ndc_rect(
+    box: Box3, m: np.ndarray, near_distance: Optional[float] = None
+) -> Optional[NdcRect]:
     """The NDC AABB of the part of ``box`` in front of the near plane.
 
-    ``lod-selector-math.ts::clippedNdcRect``: the corners with clip
-    ``z + w >= 0`` (and ``w > 0``), plus every edge's crossing of that plane,
+    ``lod-selector-math.ts::clippedNdcRect``: the corners with view depth
+    ``w >= near_distance`` (and ``w > 0``), plus every edge's crossing of that plane,
     each divided by its ``w`` — the box as the renderer clips it. Unclamped.
     ``None`` when nothing is in front.
     """
     clip = _box_corners(box) @ m.T
-    near = clip[:, 2] + clip[:, 3]
+    # With no explicit near distance, the Python mirror's WebGL projection
+    # makes z+w the same physical plane. The runtime passes near explicitly.
+    near = (
+        clip[:, 3] - near_distance
+        if near_distance is not None
+        else clip[:, 2] + clip[:, 3]
+    )
     points = [clip[n] for n in range(8) if near[n] >= 0 and clip[n, 3] > 0]
     for p, q in _BOX_EDGES:
         if (near[p] >= 0) == (near[q] >= 0):
@@ -579,7 +589,9 @@ def _clipped_ndc_rect(box: Box3, m: np.ndarray) -> Optional[NdcRect]:
     return NdcRect(min(ndc_x), max(ndc_x), min(ndc_y), max(ndc_y))
 
 
-def _straddling_area_fraction(box: Box3, m: np.ndarray) -> float:
+def _straddling_area_fraction(
+    box: Box3, m: np.ndarray, near: Optional[float] = None
+) -> float:
     """:func:`project_box_area_fraction` when the eye plane cuts the box.
 
     ``lod-selector-math.ts::straddlingAreaFraction``: ``+inf`` with the eye
@@ -588,7 +600,7 @@ def _straddling_area_fraction(box: Box3, m: np.ndarray) -> float:
     """
     if _eye_inside_box(box, m):
         return math.inf
-    rect = _clipped_ndc_rect(box, m)
+    rect = _clipped_ndc_rect(box, m, near)
     if rect is None:
         return 0.0
     overlap_w = min(rect.max_x, 1.0) - max(rect.min_x, -1.0)
@@ -744,7 +756,9 @@ def _viewport_inside_ellipse(ellipse: _Ellipse, det: float) -> bool:
     return True
 
 
-def project_box_area_fraction(box: Box3, proj_view: np.ndarray) -> float:
+def project_box_area_fraction(
+    box: Box3, proj_view: np.ndarray, near: Optional[float] = None
+) -> float:
     """The ``selector="screen-area"`` metric: the visible viewport area fraction.
 
     ``lod-selector-math.ts::projectBoxAreaFraction``, ported exactly. The box is
@@ -780,7 +794,7 @@ def project_box_area_fraction(box: Box3, proj_view: np.ndarray) -> float:
     ellipse = _project_near_depth_ellipse(box, proj_view)
     if isinstance(ellipse, str):
         if ellipse == _ELLIPSE_STRADDLES:
-            return _straddling_area_fraction(box, proj_view)
+            return _straddling_area_fraction(box, proj_view, near)
         return 0.0
     # A zero-extent axis leaves a diagonal entry at rounding noise, which may be
     # a hair below zero; that axis is simply zero-width.
@@ -806,7 +820,11 @@ def project_box_area_fraction(box: Box3, proj_view: np.ndarray) -> float:
 
 
 def project_box_diagonal_px(
-    box: Box3, proj_view: np.ndarray, width: float, height: float
+    box: Box3,
+    proj_view: np.ndarray,
+    width: float,
+    height: float,
+    near: Optional[float] = None,
 ) -> float:
     """The box's UNCLIPPED projected screen diagonal in pixels.
 
@@ -824,7 +842,7 @@ def project_box_diagonal_px(
     Returns:
         The pixel diagonal, or ``+inf`` with the camera inside the box.
     """
-    rect = project_box_ndc_rect(box, proj_view)
+    rect = project_box_ndc_rect(box, proj_view, near)
     if rect is None:
         return math.inf
     return math.hypot(rect.half_w * width, rect.half_h * height)
@@ -1624,13 +1642,15 @@ def _measure(
         # `P·V·matrixWorld` — the box's own 8 corners as oriented on screen. The
         # world AABB (the frustum gate's box) inflates a rotated group.
         box_to_clip = proj_view @ geometry.world_matrix
-        area_metric = project_box_area_fraction(geometry.metric_local, box_to_clip)
+        area_metric = project_box_area_fraction(
+            geometry.metric_local, box_to_clip, near
+        )
         if geometry.has_lod_bounds:
             # The thin-rect ramp is not monotone under containment, so robust
             # bounds may only REDUCE the raw-bounds metric.
             area_metric = min(
                 area_metric,
-                project_box_area_fraction(geometry.raw_local, box_to_clip),
+                project_box_area_fraction(geometry.raw_local, box_to_clip, near),
             )
         today_metric = (
             area_metric

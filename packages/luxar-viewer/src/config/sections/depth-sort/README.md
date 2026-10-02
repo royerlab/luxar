@@ -31,8 +31,8 @@ busy), the bounded per-frame retry then spawns a FRESH worker after a backoff,
 and a retry that lands forces a re-registration sweep. Shortening it therefore
 buys faster failure detection at the cost of extra worker spawns + WASM
 instantiations and that forced re-commit of every sorted node, which is why
-it is deliberately more generous than the data pool's
-`dataLoading.performance.workerInitTimeoutMs` (10 s) — erring long costs only a
+it shares the data pool's 30 s default
+(`dataLoading.performance.workerInitTimeoutMs`) — erring long costs only a
 later first sort. `0` installs no timer at all, so a worker that neither answers
 nor errors leaves `initialize()` pending and every order-dependent commit parks
 another continuation on it: a debugging escape hatch, not a tuning option. See

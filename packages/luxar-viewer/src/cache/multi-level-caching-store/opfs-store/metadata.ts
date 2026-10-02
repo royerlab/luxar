@@ -40,6 +40,54 @@ export interface LoadOutcome {
 
 const METADATA_FILE = '_cache_meta.json';
 
+/**
+ * The directory's dataset IDENTITY: the content hash its chunk files were
+ * written under. Separate from the index because the index is rewritten on a
+ * debounce and a reload can land before any save of it completes, while this
+ * file changes only when the hash does and is written BEFORE the first chunk
+ * under that hash (`OPFSStore.doSet` waits for it). So every chunk file in the
+ * directory has a known provenance even when the index never landed.
+ */
+export const IDENTITY_FILE = '_cache_identity.json';
+
+interface PersistedIdentity {
+  contentHash: string | null;
+  encodingVersion: number;
+}
+
+/**
+ * Read the persisted dataset identity. Returns the content hash, or null when
+ * the file is missing, empty (a first write cut off before close), unparsable,
+ * hashless, or from another key encoding — every case where the files'
+ * provenance is unknown.
+ */
+export async function loadIdentity(root: FileSystemDirectoryHandle): Promise<string | null> {
+  try {
+    const file = await (await root.getFileHandle(IDENTITY_FILE)).getFile();
+    const text = await file.text();
+    if (text.length === 0) return null;
+    const identity = JSON.parse(text) as Partial<PersistedIdentity>;
+    if (identity.encodingVersion !== OPFS_ENCODING_VERSION) return null;
+    return typeof identity.contentHash === 'string' && identity.contentHash.length > 0
+      ? identity.contentHash
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Write the dataset identity (see {@link IDENTITY_FILE}). Throws on failure. */
+export async function writeIdentity(
+  root: FileSystemDirectoryHandle,
+  contentHash: string | null
+): Promise<void> {
+  const handle = await root.getFileHandle(IDENTITY_FILE, { create: true });
+  const writable = await handle.createWritable();
+  const identity: PersistedIdentity = { contentHash, encodingVersion: OPFS_ENCODING_VERSION };
+  await writable.write(JSON.stringify(identity));
+  await writable.close();
+}
+
 /** Arguments of {@link OPFSMetadataManager.scheduleSave}. */
 export interface ScheduleSaveParams {
   root: FileSystemDirectoryHandle;

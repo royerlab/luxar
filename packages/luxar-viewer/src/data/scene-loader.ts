@@ -2463,9 +2463,9 @@ export class SceneLoader {
       data,
       viewState,
       this.rootGroup,
-      // First-update log gate: a PASS counter (see `_passCount`). The view
-      // version stays at 1 on a static scene, logging every refinement rung.
-      this._passCount,
+      // Background refinement/retry is never the first projection, even when
+      // the initial view has not incremented `_passCount` yet.
+      Math.max(2, this._passCount),
       session,
       signal
     );
@@ -2515,9 +2515,9 @@ export class SceneLoader {
       data,
       viewState,
       this.rootGroup,
-      // First-update log gate: a PASS counter (see `_passCount`). The view
-      // version stays at 1 on a static scene, logging every refinement rung.
-      this._passCount,
+      // Background refinement/retry is never the first projection, even when
+      // the initial view has not incremented `_passCount` yet.
+      Math.max(2, this._passCount),
       session,
       signal
     );
@@ -2692,11 +2692,28 @@ export class SceneLoader {
       commitPointsGeometry: (staged, session, loadedViewVersion) =>
         this.commitPointsGeometry(staged, session, loadedViewVersion),
       processLinesData: (path, data, viewState, session, signal) =>
-        this.processLinesData(path, data, viewState, session, signal),
+        // Initial node build is the one path allowed to log a first projection.
+        processLinesDataHelper(
+          path,
+          data,
+          viewState,
+          this.rootGroup,
+          this._passCount,
+          session,
+          signal
+        ),
       commitLinesGeometry: (staged, session, loadedViewVersion) =>
         this.commitLinesGeometry(staged, session, loadedViewVersion),
       processGSplatsData: (path, data, viewState, session, signal) =>
-        this.processGSplatsData(path, data, viewState, session, signal),
+        processGSplatsDataHelper(
+          path,
+          data,
+          viewState,
+          this.rootGroup,
+          this._passCount,
+          session,
+          signal
+        ),
       commitGSplatsGeometry: (staged, session, loadedViewVersion) =>
         this.commitGSplatsGeometry(staged, session, loadedViewVersion),
       processMeshData: (path, data, viewState, attrs) =>

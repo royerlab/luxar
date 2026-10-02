@@ -229,6 +229,37 @@ describe('fetch-concurrency gate', () => {
     expect(peak).toBeLessThanOrEqual(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
     expect(active).toBe(0);
   });
+
+  it('starts a second HTTP/1.1 origin while the first origin has queued waiters', async () => {
+    const a = 'http://localhost:8011';
+    const b = 'http://localhost:8012';
+    noteFetchUrl(`${a}/zarr.json`);
+    noteFetchUrl(`${b}/zarr.json`);
+    const release: Array<() => void> = [];
+    const started: string[] = [];
+    const fire = (origin: string) =>
+      withFetchGate(
+        () => {
+          started.push(origin);
+          return new Promise<void>((resolve) => release.push(resolve));
+        },
+        'data',
+        'demand',
+        origin
+      );
+    const first = Array.from({ length: HTTP1_MAX_CONCURRENT_CHUNK_FETCHES + 1 }, () => fire(a));
+    await Promise.resolve();
+    expect(started).toEqual(Array(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES).fill(a));
+    const second = fire(b);
+    await Promise.resolve();
+    expect(started.at(-1)).toBe(b);
+    while (release.length) {
+      release.shift()!();
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+    await Promise.all([...first, second]);
+  });
 });
 
 describe('fetch-concurrency perf counters', () => {

@@ -71,15 +71,31 @@ export function fitGrid(
   containerAspect: number,
   options: FitGridOptions = {}
 ): GridFit {
-  if (!Number.isFinite(count) || count <= 0) return { columns: 1, rows: 1 };
+  return rankGrids(count, containerAspect, options)[0] as GridFit;
+}
+
+/**
+ * Every candidate grid, best first: the ranking {@link fitGrid} takes the head
+ * of.
+ *
+ * Exposed because the shape is not the whole story. Cell shape is all this
+ * module can see, but on a small screen the deciding question is how much of
+ * each tile's TEXT survives, which only layout can answer — so the renderer
+ * tries the leading few and keeps the one that loses least
+ * (`ui/control-panel/render-panel.ts`).
+ */
+export function rankGrids(
+  count: number,
+  containerAspect: number,
+  options: FitGridOptions = {}
+): GridFit[] {
+  if (!Number.isFinite(count) || count <= 0) return [{ columns: 1, rows: 1 }];
   const tiles = Math.floor(count);
   const aspect = Number.isFinite(containerAspect) && containerAspect > 0 ? containerAspect : 1;
   const target = options.targetAspect ?? CONTROL_TILE_TARGET_ASPECT;
   const maxColumns = Math.max(1, Math.min(tiles, options.maxColumns ?? tiles));
 
-  let best: GridFit = { columns: 1, rows: tiles };
-  let bestScore = Number.POSITIVE_INFINITY;
-
+  const scored: Array<{ fit: GridFit; score: number }> = [];
   for (let columns = 1; columns <= maxColumns; columns += 1) {
     const rows = Math.ceil(tiles / columns);
     // Each cell is (width/columns) by (height/rows), so its aspect is the
@@ -90,13 +106,12 @@ export function fitGrid(
     // cells, since aspect is bounded below by 0 but not above.
     const aspectCost = Math.abs(Math.log(cellAspect / target));
     const emptyCost = (columns * rows - tiles) / tiles;
-    const score = aspectCost + CONTROL_GRID_EMPTY_WEIGHT * emptyCost;
-    // Strictly less than, so a tie keeps the FEWER columns — larger tiles,
-    // which is the better default for a touch target.
-    if (score < bestScore) {
-      bestScore = score;
-      best = { columns, rows };
-    }
+    scored.push({
+      fit: { columns, rows },
+      score: aspectCost + CONTROL_GRID_EMPTY_WEIGHT * emptyCost,
+    });
   }
-  return best;
+  // A STABLE sort over ascending column counts, so a tie keeps the FEWER
+  // columns — larger tiles, which is the better default for a touch target.
+  return scored.sort((a, b) => a.score - b.score).map(({ fit }) => fit);
 }

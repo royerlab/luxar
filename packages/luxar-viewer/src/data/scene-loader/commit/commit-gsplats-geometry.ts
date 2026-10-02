@@ -255,8 +255,8 @@ export function commitGSplatsGeometry(
   // BEFORE the writers run: the pool branch reassigns `mesh.geometry`,
   // and `visibleSplatCount` is overwritten near the end of this function.
   const prevGeometry = mesh.geometry;
-  // A pool grow releases the old geometry and ends its held draw, which may
-  // raise instanceCount. Preserve the count that was actually on screen.
+  // A pool grow releases the old geometry without ending its held draw.
+  // Preserve the count that was actually on screen.
   const prevDrawnCount = (prevGeometry as THREE.InstancedBufferGeometry).instanceCount;
   const hadCommittedData = hasCommittedData(mesh);
   const prevCount = mesh.userData.visibleSplatCount;

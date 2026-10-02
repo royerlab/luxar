@@ -13,6 +13,7 @@ import {
   CONTROL_GRID_EMPTY_WEIGHT,
   CONTROL_TILE_TARGET_ASPECT,
   fitGrid,
+  rankGrids,
 } from '../../../../config/control-panel/fit-grid';
 
 /** Screens a kiosk plausibly runs on, both ways up. */
@@ -143,5 +144,30 @@ describe('fitGrid', () => {
       expect(Number.isInteger(rows)).toBe(true);
       expect(columns * rows).toBeGreaterThanOrEqual(11);
     });
+  });
+});
+
+describe('rankGrids', () => {
+  it('ranks every column count once, with fitGrid at its head', () => {
+    for (const [, aspect] of SCREENS) {
+      for (const count of [1, 7, 11, 21]) {
+        const ranked = rankGrids(count, aspect);
+        expect(ranked[0]).toEqual(fitGrid(count, aspect));
+        expect(ranked.map((fit) => fit.columns).sort((a, b) => a - b)).toEqual(
+          Array.from({ length: count }, (_, i) => i + 1)
+        );
+        for (const fit of ranked) expect(fit.columns * fit.rows).toBeGreaterThanOrEqual(count);
+      }
+    }
+  });
+
+  it('puts the near-miss shapes right behind the best one', () => {
+    // What the renderer falls back to when the best shape cannot hold the
+    // text: on a phone held upright, the neighbours of 3 columns, not 1 or 21.
+    const columns = rankGrids(21, 335 / 470)
+      .slice(0, 3)
+      .map((fit) => fit.columns);
+    expect(columns).toContain(3);
+    expect(columns.every((c) => c >= 2 && c <= 5)).toBe(true);
   });
 });

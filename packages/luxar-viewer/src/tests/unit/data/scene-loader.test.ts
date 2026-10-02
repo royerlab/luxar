@@ -2533,6 +2533,7 @@ describe('SceneLoader', () => {
       type Internals = {
         _updateInProgress: boolean;
         _refinementKickPending: boolean;
+        _refinementKickTimer: ReturnType<typeof setTimeout> | null;
         gsplatLoaders: Map<string, unknown>;
         sliceCache: unknown;
         lastResidencyBudget: { isDeclined(path: string): boolean } | null;
@@ -2550,9 +2551,14 @@ describe('SceneLoader', () => {
       internals._updateInProgress = true;
       sceneLoader.kickRefinementIfIdle(); // lock busy: one re-check timer
       expect(internals._refinementKickPending).toBe(true);
+      const timer = internals._refinementKickTimer;
+      expect(timer).not.toBeNull();
+      const clear = vi.spyOn(globalThis, 'clearTimeout');
 
       await sceneLoader.dispose();
 
+      expect(clear).toHaveBeenCalledWith(timer);
+      clear.mockRestore();
       expect(internals._refinementKickPending).toBe(false);
       expect(internals.sliceCache).toBeNull();
       expect(internals.lastResidencyBudget).toBeNull();

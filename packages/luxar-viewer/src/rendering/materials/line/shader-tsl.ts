@@ -143,6 +143,14 @@ export interface LineTSLConfig {
    * calls `rebuildGraph()` when it changes. Omitted ⇒ the session default.
    */
   readonly join?: LineJoinStyle;
+  /**
+   * The line texture's width, baked into the vertex addressing as a
+   * literal. Defaults to the width resolved from `nodes.uLineTex.value`;
+   * a wrapper building a SHARED graph (`shared-graph-tsl.ts`) passes it so
+   * it is part of the graph's configuration key. Read by both line
+   * factories (quad and capsule).
+   */
+  readonly elementTextureWidth?: number;
 }
 
 /**
@@ -351,10 +359,11 @@ export function lineWebGPUFactory(
     // Safe because the width is a per-layout session constant, capped
     // at 4096 on every device (element-texture-layout.ts).
     const lineTexW: TSLNode = int(
-      resolveElementTextureWidth(
-        LINE_TEXTURE_LAYOUT,
-        (nodes.uLineTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
-      )
+      config.elementTextureWidth ??
+        resolveElementTextureWidth(
+          LINE_TEXTURE_LAYOUT,
+          (nodes.uLineTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
+        )
     ).toVar();
     const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
     const texelY: TSLNode = lineBase.div(lineTexW).toVar();
@@ -866,18 +875,31 @@ export function lineWebGPUFactory(
   const material = outMaterial ?? new NodeMaterial();
   material.vertexNode = clipPos;
   material.colorNode = colorNode();
-  material.toneMapped = false;
-
-  // Wire blending state from the shared helper. This factory tail is
-  // the ONLY state writer at TSL construction (the ctor never calls
-  // applyBlendingMode, unlike the GLSL twin) AND re-runs on every
-  // rebuildGraph — so it must derive the state from the same mode the
-  // output branch above used.
-  const blendingMode: BlendingMode = config.blendingMode ?? 'additive';
-  const opacityValue = (nodes.uOpacity.value as number | undefined) ?? 1.0;
-  const blendingState = getCompleteBlendingState(blendingMode, opacityValue);
-  applyBlendingStateToMaterial(material, blendingState);
+  applyLineMaterialState(
+    material,
+    config.blendingMode ?? 'additive',
+    (nodes.uOpacity.value as number | undefined) ?? 1.0
+  );
   return material;
+}
+
+/**
+ * The non-graph material state both line factories derive from the mode
+ * (`toneMapped` + blending). Exported so a wrapper taking its graph from a
+ * shared build (`shared-graph-tsl.ts`) applies the same state to itself.
+ *
+ * This tail is the ONLY state writer at TSL construction (the ctor never
+ * calls applyBlendingMode, unlike the GLSL twin) AND re-runs on every
+ * rebuildGraph — so it must derive the state from the same mode the
+ * graph's output branch used.
+ */
+export function applyLineMaterialState(
+  material: NodeMaterial,
+  blendingMode: BlendingMode,
+  opacityValue: number
+): void {
+  material.toneMapped = false;
+  applyBlendingStateToMaterial(material, getCompleteBlendingState(blendingMode, opacityValue));
 }
 
 /**

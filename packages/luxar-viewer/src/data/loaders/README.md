@@ -428,10 +428,14 @@ attach` re-consolidates), so a scene without the sidecar costs NO request. An
   S-cache restore → internal load → query close-out → S-cache store, with the
   abort-aware error branch), `recordLoadMetrics(ctx, arrayName, elements, output)`
   (per-array load metrics + 'load' event), and
-  `runWithActiveSignal` / `runWithResidencyProbe` (the `updateView` /
-  `updateViewWithResidency` bodies: per-update abort-signal publication and
-  cache-residency probing). Each used to exist as three byte-identical
-  private methods.
+  the abort-aware read path. The owning loader now keeps each call's signal
+  and residency probe in its own `ActiveLoadContext`.
+- **`active-load-context.ts`** — per-call signal and residency-probe context;
+  concurrent updates cannot overwrite each other's state.
+- **`loader-lifetime.ts`** — terminal dispose latch and lifetime signal for
+  shared initialization and fetches.
+- **`abortable-wait.ts`** — lets one caller leave a shared fetch on abort
+  without canceling another caller's read.
 - **`monitor-events.ts`** — `LoaderEventEmitter`: owns the listener `Set` for
   a `LoaderMonitor` implementation. Per-listener try/catch isolates one bad
   listener from the rest; `clear()` is called on dispose.

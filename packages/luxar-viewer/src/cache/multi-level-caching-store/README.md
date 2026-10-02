@@ -113,13 +113,14 @@ Key behaviours:
   ceiling and a 150 ms leading edge (the first write after a quiet second is
   indexed within 150 ms), flushed on `pagehide` / hidden (`flushAllMetadata`)
   and on `dispose()`. Neither unload-time write survives a navigation: measured
-  on Chromium, a reload stops the save after `getFileHandle(create)`, so entries
-  written since the last completed save are lost (the leading edge keeps a
-  load's first burst out of that window). The zero-byte file
-  this leaves is read as a cold start, not as corruption. An open-time,
-  per-session-budgeted orphan reconcile re-indexes
-  or deletes chunk files the index never recorded (see `../README.md`,
-  "L2 index persistence").
+  on Chromium, a reload stops the save after `getFileHandle(create)`, leaving a
+  zero-byte index that is read as a cold start, not as corruption. No chunk is
+  lost to that: the validated content hash is persisted in
+  `_cache_identity.json` before any chunk is written under it, an L2 lookup of
+  a key the index does not list reads the key's (deterministic) file path while
+  unindexed files may remain, and an open-time, per-session-budgeted orphan
+  reconcile re-indexes or deletes the files the index never recorded (see
+  `../README.md`, "L2 index persistence").
 - **Quota estimate cache** — `navigator.storage.estimate()` is re-run at most
   every 30 s / 64 MB written, or when the debited cached headroom cannot cover
   a write.

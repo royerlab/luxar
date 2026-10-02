@@ -88,7 +88,8 @@ function readPrefetchHeadroom(loader: GSplatsSpatialIndexLoader | undefined): nu
 }
 
 /** One rung a pinned pass started up front, with the controller that can cancel it. */
-interface PinnedRungLoad {
+/** In-flight pinned rung and its cancellation state. Do not un-export: TypeDoc needs this name. */
+export interface PinnedRungLoad {
   readonly level: number;
   readonly load: Promise<{ data: LoadedGSplatsData; allResident: boolean }>;
   readonly child: ChildController;

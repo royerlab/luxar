@@ -27,6 +27,7 @@ resident and has no per-slice payload to cache.
 ```
 progressive/
 ├── concat-helpers.ts      # Generic typed-array field concatenation across LOD parts
+├── child-signal.ts        # Per-rung child controller linked to a pass signal
 ├── constants.ts           # CACHE_HIT_THRESHOLD_MS — the shared streaming threshold
 ├── lookahead-signal.ts    # 'lookahead'-tagged controller for the next-rung prefetch (free
 │                          # navigation only; linked to the scheduling update's abort signal)

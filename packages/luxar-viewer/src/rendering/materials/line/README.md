@@ -521,10 +521,14 @@ is gone.
 
 The GLSL wrapper toggles `this.needsUpdate = true` when a define changes
 so THREE's program cache recompiles; the TSL wrapper calls
-`rebuildGraph()` and re-runs the factory. Projection mode (`uIsOrtho`) is
-**not** a uniform branch in TSL — it's read from `nodes.uIsOrtho.value`
-at build time and emits a single-branch graph, so a mode flip in
-`updateCameraParams` triggers an explicit rebuild.
+`rebuildGraph()`, which points the material at the SHARED graph of its new
+configuration (`../_shared/shared-graph-tsl.ts` — built once per
+configuration, since three keys its node-build cache on node ids). The key
+carries every define above plus the primitive, the resolved join, the
+projection mode and the baked line-texture width. Projection mode
+(`uIsOrtho`) is **not** a uniform branch in TSL — it's read from
+`nodes.uIsOrtho.value` at build time and emits a single-branch graph, so a
+mode flip in `updateCameraParams` triggers an explicit rebuild.
 
 ## Shared helpers from `_shared/`
 

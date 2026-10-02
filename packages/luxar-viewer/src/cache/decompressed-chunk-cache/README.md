@@ -18,7 +18,7 @@ ignored) returns a
    bails on the hit, coalesced-pending, and miss paths alike — zarrita's own
    `throwIfAborted` only fires between chunks of a multi-chunk selection, so
    this is what makes warm-cache scrubs cancel. The accessor reads the owning
-   loader's transient `_activeSignal`, so it is per-caller and never aborts a
+   loader's per-call `ActiveLoadContext` signal, so it never aborts a
    coalesced chunk another live caller awaits.
 1. Build a key via `DecompressedChunkCache.makeKey(arrayPath, coords)`.
 2. On L0 hit, return the cached `{ data, shape, stride }` immediately
