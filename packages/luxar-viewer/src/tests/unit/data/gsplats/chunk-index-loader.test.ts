@@ -62,7 +62,7 @@ describe('loadGSplatsChunkIndex', () => {
     expect(infoSpy).toHaveBeenCalled();
   });
 
-  it.fails('skips the chunk_bounds request when the node holds a single chunk', async () => {
+  it('skips the chunk_bounds request when the node holds a single chunk', async () => {
     // A one-chunk node's index can only answer "load chunk 0 or not", and the
     // load-all fallback is the superset of that answer. tp50's rungs are 64
     // splats in one 64-splat chunk: the 48-byte probe was one request per rung.
