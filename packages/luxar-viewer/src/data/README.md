@@ -52,7 +52,7 @@ data/
 │                                  #   which seeds its first poll's If-None-Match from the
 │                                  #   load-time root fetch's ETag (seedFromLoad);
 │                                  #   disposed by SceneLoader.dispose
-├── scene-loader-manager.ts        # Singleton manager for SceneLoader instances
+├── scene-loader-manager.ts        # Per-host manager for SceneLoader instances
 ├── scene-loader-monitor-port.ts   # Port interface bridging SceneLoader → DataLoadingMonitor
 ├── data-loader-types.ts           # TypeScript interfaces and types
 ├── view-state-manager.ts          # Centralized ViewState initialization and validation
@@ -179,7 +179,9 @@ and it is shared with the identity probe when that runs first. See
 
 ### State Management Architecture
 
-The data package uses a **clean singleton pattern** for instance management, completely avoiding global variables:
+Each host has a `SceneLoaderManager` for its loader instances. `getInstance()` returns
+the `LuxarApp` manager; each `LuxarLayer` constructs its own manager with its material
+manager. Loader IDs, profilers and teardown are scoped to the host.
 
 ```
 ┌─────────────────────────────────────┐
@@ -190,8 +192,8 @@ The data package uses a **clean singleton pattern** for instance management, com
                ▼
 ┌─────────────────────────────────────┐
 │       SceneLoaderManager             │
-│  (Singleton - manages instances)     │
-│  ✓ No global variables              │
+│  (one manager per host)              │
+│  ✓ Host-scoped loader IDs            │
 │  ✓ Multiple loader support          │
 │  ✓ Clean lifecycle management       │
 └──────────────┬──────────────────────┘
@@ -200,7 +202,7 @@ The data package uses a **clean singleton pattern** for instance management, com
 ┌─────────────────────────────────────┐
 │      SceneLoader Instances          │
 │  ✓ Independent instances            │
-│  ✓ Use DataMonitorManager           │
+│  ✓ Host monitor factory injected    │
 │  ✓ No direct monitor creation       │
 │  ✓ Proper resource cleanup          │
 └─────────────────────────────────────┘
@@ -208,11 +210,11 @@ The data package uses a **clean singleton pattern** for instance management, com
 
 **Key Benefits:**
 
-- **No Global State**: Window object remains unpolluted
+- **Host Isolation**: App and layers manage their own loaders
 - **Testability**: Easy reset functionality for testing
 - **Multiple Instances**: Support for independent loaders
 - **Memory Safety**: Proper cleanup and disposal
-- **Centralized Management**: Single source of truth
+- **Centralized Management**: One loader registry per host
 
 **Note**: Datasets with Morton/Hilbert ordering (chunk_bounds) will load much faster due to efficient spatial queries. Small 3D datasets without spatial ordering will fall back to loading all points (acceptable for <100K points).
 
@@ -1168,7 +1170,7 @@ location /data/ {
 | `dispose(loaderId?)`                                      | Clean up resources (specific or all)                                                                                                             |
 
 Cache inspection and clearing are not on the `zarr-loader.ts` surface;
-get the loader via `SceneLoaderManager.getDefaultLoader()` (or
+get the loader via the host's `SceneLoaderManager.getDefaultLoader()` (or
 `getLoader(id)`) and call `getCacheStats()`, `clearL2Cache()`, or
 `clearAllCaches()` directly on the `SceneLoader` instance.
 
@@ -1176,8 +1178,9 @@ get the loader via `SceneLoaderManager.getDefaultLoader()` (or
 
 | Class/Method                                    | Description                                                                                    |
 | ----------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `SceneLoaderManager`                            | Singleton manager for SceneLoader instances                                                    |
-| `getInstance()`                                 | Get the singleton manager instance                                                             |
+| `SceneLoaderManager`                            | Per-host manager for SceneLoader instances                                                     |
+| `new SceneLoaderManager({ materials })`         | Create a layer's manager with its material manager                                             |
+| `getInstance()`                                 | Get the `LuxarApp` manager instance                                                            |
 | `createLoader(id, config?, setAsDefault?)`      | Create a new loader instance                                                                   |
 | `createLoaderAsync(id, config?, setAsDefault?)` | Like `createLoader` but awaits the previous same-ID loader's full disposal (dataset switches). |
 | `getLoader(id)`                                 | Get a specific loader by ID                                                                    |
@@ -1191,8 +1194,10 @@ get the loader via `SceneLoaderManager.getDefaultLoader()` (or
 | `setMonitorFactory(factory)`                    | Inject a `SceneLoaderMonitorFactory` (called from `core/app.ts`).                              |
 | `setLODGroupRegistryFactory(factory)`           | Inject the LOD-group registry factory (app init pipeline owns SceneManager + camera).          |
 | `setRequestRender(callback)`                    | Inject the render-loop wake-up for every loader; `drawn=false` (hidden node) ticks, no redraw. |
-| `getProfiler()`                                 | Return the shared `UpdateProfiler` singleton.                                                  |
-| `disposeInstance()`                             | Dispose the singleton (call from app dispose; preserved for re-init)                           |
+| `setDepthSortCoordinator(coordinator)`          | Route existing and future loaders' commits to this host's coordinator.                         |
+| `getProfiler()`                                 | Return this manager's `UpdateProfiler`, shared by its loaders.                                 |
+| `dispose()`                                     | Tear down this host's loaders and decoder (non-awaiting).                                      |
+| `disposeInstance()`                             | Dispose the `LuxarApp` manager and reset its static slot.                                      |
 
 ### Scene Loading (scene-loader.ts)
 
