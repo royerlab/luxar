@@ -13,7 +13,7 @@
  *   - A: the same elementId's HIGH 16 bits (one f32 channel cannot carry the
  *     whole index exactly — see `luxarElementIdSplit`)
  *
- * Depth = `1 - brightness` (brightest wins), or the real fragment depth when
+ * Depth = `1 / (1 + brightness)` (brightest wins), or the real fragment depth when
  * `uSurfaceDepth == 1` (the depth-ordered `opaque`/`normal` surface modes:
  * front-most wins). Both selectors are runtime uniforms, so a layers-panel
  * blending-mode switch never rebuilds this graph.
@@ -289,7 +289,7 @@ export function meshPickWebGPUFactory(
     fragmentPrologue();
     return int(uSurfaceDepth)
       .equal(int(1))
-      .select(depth as unknown as TSLNode, float(1.0).sub(brightness));
+      .select(depth as unknown as TSLNode, float(1.0).div(float(1.0).add(brightness)));
   });
 
   const material = outMaterial ?? new NodeMaterial();

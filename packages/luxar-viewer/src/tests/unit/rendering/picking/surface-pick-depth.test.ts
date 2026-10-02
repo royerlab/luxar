@@ -31,6 +31,7 @@ import { PointPickingMaterial } from '../../../../rendering/picking/point/materi
 import { PointPickingTSLMaterial } from '../../../../rendering/picking/point/material-tsl';
 import { POINT_PICK_FRAGMENT_SHADER } from '../../../../rendering/picking/point/shaders';
 import { GSPLAT_PICK_FRAGMENT_SHADER } from '../../../../rendering/picking/gsplat/shaders';
+import { MESH_PICK_FRAGMENT_SHADER } from '../../../../rendering/picking/mesh/shaders';
 import { makePickHarness, uniformValue } from './render-pick-helper';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -67,6 +68,13 @@ it('gsplat commutative depth uses unclamped salience in both shader backends', (
   expect(src('gsplat/pick.tsl.ts')).toContain('float(1.0).div(float(1.0).add(intensity))');
   const depth = (salience: number): number => 1 / (1 + salience);
   expect(depth(2.25)).toBeLessThan(depth(1.5));
+});
+
+it('mesh commutative depth uses the same scale as other geometry in both backends', () => {
+  expect(MESH_PICK_FRAGMENT_SHADER).toContain(
+    'gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 / (1.0 + brightness);'
+  );
+  expect(src('mesh/pick.tsl.ts')).toContain('float(1.0).div(float(1.0).add(brightness))');
 });
 
 const PAIRS = [
