@@ -324,6 +324,30 @@ describe('AnimationController render-on-change', () => {
     expect(renders()).toBe(1);
   });
 
+  it('a callback change on a GPU-blocked tick is drawn once the block lifts', () => {
+    // A per-frame callback that changed drawn state (a LOD swap, a sort apply)
+    // on a tick whose render is skipped — context lost, or an offline capture
+    // owning the pipeline — has no other record than its return value. The
+    // change must survive the skip the way an explicit request does.
+    let lost = false;
+    controller.setContextLostPredicate(() => lost);
+    let changed = false;
+    controller.addPerFrameCallback('lod-group-selector', () => changed);
+    controller.startAnimation();
+    runFrames(2);
+    expect(renders()).toBe(1);
+
+    lost = true;
+    changed = true;
+    runFrame();
+    changed = false;
+    expect(renders()).toBe(1);
+
+    lost = false;
+    runFrame();
+    expect(renders()).toBe(2);
+  });
+
   it('renderOnce on a running loop marks the next tick dirty', () => {
     controller.startAnimation();
     runFrames(2);

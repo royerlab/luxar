@@ -12,6 +12,8 @@
  */
 
 import * as zarr from '../zarr';
+import { ActiveLoadContext } from '../loaders/active-load-context';
+import { LoaderLifetime } from '../loaders/loader-lifetime';
 import { log, LogEmoji, Modules } from '../../utils/log';
 import type {
   LinesMetadata,
@@ -37,8 +39,6 @@ import {
   buildSpatialIndexMetrics,
   loadSliceWithCache,
   recordLoadMetrics,
-  runWithActiveSignal,
-  runWithResidencyProbe,
   type SpatialFacadeCtx,
   LoaderEventEmitter,
   OnceInit,
@@ -56,7 +56,6 @@ import { config as appConfig } from '../../config';
 import type { UpdateSession } from '../../profiling/update-profiler';
 import { DecompressedChunkCache } from '../../cache/decompressed-chunk-cache';
 import { wrapWithCache } from '../../cache/decompressed-chunk-cache/cached-zarr-array';
-import { ResidencyAccumulator } from '../../cache/residency-probe';
 import { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 import type { SliceCache } from '../../cache/slice-cache';
 import {
@@ -115,6 +114,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   private zarrLocation: zarr.Location<zarr.Readable>;
   private node: SceneNode;
   private _onceInit = new OnceInit();
+  /** Disposed latch + lifetime signal (see `LoaderLifetime`). */
+  private readonly _lifetime = new LoaderLifetime();
   private rangeLoader: RangeLoader;
   private zarrStore: zarr.Readable | null = null;
 
@@ -130,13 +131,13 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
   // L0 decompressed chunk cache (optional, avoids Blosc decompression on repeat access)
   private l0Cache: DecompressedChunkCache | null = null;
 
-  // Active cache-residency probe for the in-flight demand load (see
-  // updateViewWithResidency); null at all other times.
-  private _activeProbe: ResidencyAccumulator | null = null;
-  // Per-update abort signal for the in-flight `updateView`; set at its top and
-  // cleared in `finally`. Read by the `wrapWithCache` L0 proxy so a superseded
-  // update bails before fetch/decode. Mirrors `_activeProbe`'s lifetime.
-  private _activeSignal: AbortSignal | null = null;
+  // The in-flight demand loads' abort signals and residency probes, published
+  // to the wrapped arrays' getChunk through the `() => this._calls.signal` /
+  // `() => this._calls.probe` thunks below. Per call and reentrant: each
+  // `updateView` / `updateViewWithResidency` registers its own entry and
+  // withdraws exactly that one (see `ActiveLoadContext`). Empty between loads,
+  // so prefetch traffic is neither recorded nor cancelled by a demand load.
+  private readonly _calls = new ActiveLoadContext();
 
   // Chunk prefetcher (optional, for registering array bounds to suppress 404s)
   private prefetcher: ChunkPrefetcher | null = null;
@@ -188,7 +189,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     this.rangeLoader = new RangeLoader(refRegistry || new ArrayRefRegistry());
     // Forward the per-update abort signal into worker decodes (LUT/quantized/
     // broadcasted) so a superseded update's decode bails before dispatch.
-    this.rangeLoader.setSignalSource(() => this._activeSignal);
+    this.rangeLoader.setSignalSource(() => this._calls.signal);
     this.zarrStore = zarrStore || null;
     this.l0Cache = l0Cache || null;
     // array_ref targets: opened once per (store, target) and read through L0
@@ -198,8 +199,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       this.rangeLoader.setRefTargetWrapper({
         wrap: (array, targetPath) =>
           wrapWithCache(array, l0Cache, targetPath, {
-            getProbe: () => this._activeProbe,
-            getSignal: () => this._activeSignal,
+            getProbe: () => this._calls.probe,
+            getSignal: () => this._calls.signal,
             aliasOnMiss: L0_ALIAS_ON_MISS,
           }),
         epoch: () => l0Cache.generation,
@@ -219,7 +220,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       nextQueryId: () => this.nextQueryId++,
       accumulatorMemoryMB: () => this.getAccumulatorStats()?.memoryMB ?? 0,
       emit: (event) => this.emitEvent(event),
-      activeSignal: () => this._activeSignal,
+      activeSignal: () => this._calls.signal,
     };
   }
 
@@ -230,6 +231,21 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    */
   private registerBounds(arrayName: string, array: zarr.Array<zarr.DataType, zarr.Readable>): void {
     registerLinesArrayBounds(this.prefetcher, this.node.path, arrayName, array);
+  }
+
+  /**
+   * Initialize once, under the disposed latch: a disposed loader refuses to
+   * re-initialize, and an initialization still in flight when {@link dispose}
+   * runs is discarded instead of repopulating the loader.
+   */
+  private ensureInit(): Promise<void> {
+    return this._onceInit.ensure(() =>
+      this._lifetime.guardInit(
+        `Lines loader ${this.node.path}`,
+        () => this.initialize(),
+        () => this.dispose()
+      )
+    );
   }
 
   /**
@@ -277,13 +293,13 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       // Wrap with L0 cache if enabled (caches decoded chunks to avoid Blosc decompression)
       if (this.l0Cache) {
         verticesArray = wrapWithCache(verticesArray, this.l0Cache, `${this.node.path}/vertices`, {
-          getProbe: () => this._activeProbe,
-          getSignal: () => this._activeSignal,
+          getProbe: () => this._calls.probe,
+          getSignal: () => this._calls.signal,
           aliasOnMiss: L0_ALIAS_ON_MISS,
         });
         segmentsArray = wrapWithCache(segmentsArray, this.l0Cache, `${this.node.path}/segments`, {
-          getProbe: () => this._activeProbe,
-          getSignal: () => this._activeSignal,
+          getProbe: () => this._calls.probe,
+          getSignal: () => this._calls.signal,
           aliasOnMiss: L0_ALIAS_ON_MISS,
         });
       }
@@ -304,8 +320,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         this.registerBounds('widths', widthsArray);
         if (this.l0Cache) {
           widthsArray = wrapWithCache(widthsArray, this.l0Cache, `${this.node.path}/widths`, {
-            getProbe: () => this._activeProbe,
-            getSignal: () => this._activeSignal,
+            getProbe: () => this._calls.probe,
+            getSignal: () => this._calls.signal,
             aliasOnMiss: L0_ALIAS_ON_MISS,
           });
         }
@@ -327,8 +343,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         this.colorComponents = colorComponentsOf(colorsArray);
         if (this.l0Cache) {
           colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`, {
-            getProbe: () => this._activeProbe,
-            getSignal: () => this._activeSignal,
+            getProbe: () => this._calls.probe,
+            getSignal: () => this._calls.signal,
             aliasOnMiss: L0_ALIAS_ON_MISS,
           });
         }
@@ -355,8 +371,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
             this.l0Cache,
             `${this.node.path}/sharpnesses`,
             {
-              getProbe: () => this._activeProbe,
-              getSignal: () => this._activeSignal,
+              getProbe: () => this._calls.probe,
+              getSignal: () => this._calls.signal,
               aliasOnMiss: L0_ALIAS_ON_MISS,
             }
           );
@@ -378,8 +394,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         this.registerBounds('scalars', scalarsArray);
         if (this.l0Cache) {
           scalarsArray = wrapWithCache(scalarsArray, this.l0Cache, `${this.node.path}/scalars`, {
-            getProbe: () => this._activeProbe,
-            getSignal: () => this._activeSignal,
+            getProbe: () => this._calls.probe,
+            getSignal: () => this._calls.signal,
             aliasOnMiss: L0_ALIAS_ON_MISS,
           });
         }
@@ -480,7 +496,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     queryId: string,
     startTime: number
   ): Promise<LoadedLinesData> {
-    await this._onceInit.ensure(() => this.initialize());
+    await this.ensureInit();
 
     if (!this.arrays.vertices || !this.arrays.segments) {
       throw new Error('[LinesLoader] Loader not properly initialized');
@@ -858,33 +874,26 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     session?: UpdateSession,
     signal?: AbortSignal
   ): Promise<LoadedLinesData> {
-    return runWithActiveSignal(
-      (s) => (this._activeSignal = s),
-      signal,
-      async () => {
-        const result = await this.loadLines(viewState, session);
-        if (!this._initialLoadDone) {
-          this._initialLoadDone = true;
-          this.rangeLoader.setVerbose(false);
-        }
-        return result;
+    return this._calls.runWithSignal(signal, async () => {
+      const result = await this.loadLines(viewState, session);
+      if (!this._initialLoadDone) {
+        this._initialLoadDone = true;
+        this.rangeLoader.setVerbose(false);
       }
-    );
+      return result;
+    });
   }
 
   /**
    * Like {@link updateView} but also reports whether the load was served
-   * entirely from cache (see `runWithResidencyProbe`).
+   * entirely from cache (see `ActiveLoadContext.runWithProbe`).
    */
   async updateViewWithResidency(
     viewState: LinesViewState,
     session?: UpdateSession,
     signal?: AbortSignal
   ): Promise<{ data: LoadedLinesData; allResident: boolean }> {
-    return runWithResidencyProbe(
-      (p) => (this._activeProbe = p),
-      () => this.updateView(viewState, session, signal)
-    );
+    return this._calls.runWithProbe(() => this.updateView(viewState, session, signal));
   }
 
   /**
@@ -903,7 +912,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    */
   async prefetchChunks(viewState: LinesViewState, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) return;
-    await this._onceInit.ensure(() => this.initialize());
+    await this.ensureInit();
 
     if (!this.arrays.segments) return;
 
@@ -925,10 +934,15 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     ]);
   }
 
-  async prefetchChunkBoundary(current: LinesViewState, predicted: LinesViewState): Promise<void> {
-    await this._onceInit.ensure(() => this.initialize());
+  async prefetchChunkBoundary(
+    current: LinesViewState,
+    predicted: LinesViewState,
+    signal?: AbortSignal
+  ): Promise<void> {
+    if (signal?.aborted) return;
+    await this.ensureInit();
     if (!this.chunkIndex || !this.arrays.segments) {
-      await this.prefetchChunks(predicted);
+      await this.prefetchChunks(predicted, signal);
       return;
     }
     const segmentArrays = [this.arrays.segments];
@@ -959,7 +973,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         );
       }
     } catch {
-      await this.prefetchChunks(predicted);
+      await this.prefetchChunks(predicted, signal);
       return;
     }
 
@@ -969,7 +983,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         (left, right) => this.sliceDistance(left, predicted) - this.sliceDistance(right, predicted)
       )
       .slice(0, 2);
-    await Promise.all(nearestViews.map((view) => this.prefetchChunks(view)));
+    await Promise.all(nearestViews.map((view) => this.prefetchChunks(view, signal)));
   }
 
   private prefetchVertexArrays(): zarr.Array<zarr.DataType, zarr.Readable>[] {
@@ -1221,6 +1235,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    * Clean up resources
    */
   dispose(): void {
+    this._lifetime.dispose();
     this.chunkIndex = null;
     this.arrays = {};
     this._onceInit.reset();

@@ -74,6 +74,20 @@ describe('projectSphereAreaPx', () => {
     });
   });
 
+  it('is off-screen when the sphere lies wholly behind the camera (#2944 A4)', () => {
+    const camera = perspective(1600, 1000, 100);
+    // view-space z > 0 is behind the eye; the sphere does not reach z = 0.
+    expect(projectSphereAreaPx({ x: 0, y: 0, z: 100 }, 5, camera, 1600, 1000)).toEqual({
+      areaPx: 0,
+      onScreen: false,
+    });
+    // Straddling the eye plane (camera inside the sphere's depth span) stays full.
+    expect(projectSphereAreaPx({ x: 0, y: 0, z: 3 }, 5, camera, 1600, 1000)).toEqual({
+      areaPx: 1_600_000,
+      onScreen: true,
+    });
+  });
+
   it('handles an orthographic camera without the depth division', () => {
     const camera = new THREE.OrthographicCamera(-10, 10, 5, -5, 0.1, 100);
     camera.updateProjectionMatrix();

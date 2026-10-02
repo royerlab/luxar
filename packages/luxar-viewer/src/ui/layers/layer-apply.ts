@@ -103,7 +103,7 @@ export interface LayerApplyEngineDeps {
   requestReprocess: (paths: readonly string[]) => void;
   /**
    * Marks the cached GPU pick buffer dirty so it re-renders after a panel edit
-   * changed a mesh's pick coverage (opacity/cutoff/blending/physical knobs).
+   * changed pick coverage (opacity/gain/cutoff/blending/physical knobs).
    * No-op when picking is inactive.
    */
   invalidatePickBuffer?: () => void;
@@ -697,6 +697,13 @@ export class LayerApplyEngine {
     const identityLayerWindow = layer.scalarWindow && !isColormapActive(mat);
     const eff = this.composeEffective(leaf.path, layer.path, identityLayerWindow, ancestors);
     if (!eff) return;
+    const pickUniforms = (
+      mat as LuxarMaterial & {
+        uniforms?: { uOpacity?: { value: number }; uIntensity?: { value: number } };
+      }
+    ).uniforms;
+    const previousOpacity = pickUniforms?.uOpacity?.value;
+    const previousIntensity = pickUniforms?.uIntensity?.value;
     // A live LOD fade (cross-fade, streaming energy or density-guard
     // compensation) owns the live opacity uniform as `_lodFadeBase × product`
     // (scene/lod-fade.ts), so a direct write of the authored value would be
@@ -711,13 +718,9 @@ export class LayerApplyEngine {
     // (rendering/picking/picking-system/visibility-sync.ts), which also covers
     // the writers that never come through this panel — the LOD cross-fade and
     // the embedder exposure path. What this call adds is the pick-buffer
-    // invalidation: when it touched a mesh pick material, a stationary-camera
-    // layers-panel edit invalidates nothing else, so hover would otherwise keep
-    // naming vertices of the pre-edit coverage. A no-op for the other three
-    // types. Run OUTSIDE the LOD-fade branch above so either branch invalidates.
-    if (syncMeshPickAppearance(obj as THREE.Mesh, { opacity: eff.opacity })) {
-      this.deps.invalidatePickBuffer?.();
-    }
+    // invalidation: a stationary-camera panel edit otherwise keeps the cached
+    // pre-edit coverage. Run outside the LOD-fade branch above.
+    const meshPickDirty = syncMeshPickAppearance(obj as THREE.Mesh, { opacity: eff.opacity });
     // All three geometry-material families implement it (gsplats
     // phase 1, points phase 3, lines phase 4); optional-chained for
     // non-Luxar materials.
@@ -732,6 +735,14 @@ export class LayerApplyEngine {
       ? this.leafScalarWindow(leaf, layer, eff, ancestors)
       : undefined;
     applyColorAdjustments(mat, eff.gamma, eff.intensity, eff.offset, scalarWindow);
+    if (
+      meshPickDirty ||
+      (obj.userData.pickNode &&
+        (previousOpacity !== pickUniforms?.uOpacity?.value ||
+          previousIntensity !== pickUniforms?.uIntensity?.value))
+    ) {
+      this.deps.invalidatePickBuffer?.();
+    }
     const prevBlendingMode = mat.userData?.blendingMode as BlendingMode | undefined;
     // An unset ancestry composes to `undefined`; apply this leaf's per-type
     // default (mesh → opaque, emissive → additive) — the same mode the

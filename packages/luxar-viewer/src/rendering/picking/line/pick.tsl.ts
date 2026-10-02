@@ -17,7 +17,7 @@
  * in the vertex stage and indexed by `aSortedIndex` (visual-factory
  * parity, shader-tsl.ts).
  *
- * Depth = 1.0 - brightness (brightness-as-depth tie-breaking).
+ * Depth = 1 / (1 + unclamped salience) (brightness-as-depth tie-breaking).
  *
  * Lines use FULL width for picking (no half-radius like points) —
  * thin lines would be impossible to pick otherwise.
@@ -561,11 +561,11 @@ export function linePickWebGPUFactory(
     // three first BUILDS it — which is unconditional top-level flow in either entry
     // point only while this body contains no `if`. So the depth convention is a
     // `mix` on the 0/1 `uSurfaceDepth` flag, not a select: 0 = brightness-as-depth
-    // (brightest wins; commutative modes), exactly the old expression (x·1 + y·0);
+    // (brightest wins; commutative modes), using unclamped salience;
     // 1 = the real fragment depth (front-most wins; opaque/normal — GLSL twin:
     // `gl_FragCoord.z`).
     return mix(
-      float(1.0).sub(clamp(brightness, 0.0, 1.0)),
+      float(1.0).div(float(1.0).add(brightness)),
       depth as unknown as TSLNode,
       float(uSurfaceDepth)
     );

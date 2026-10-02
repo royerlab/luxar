@@ -432,6 +432,7 @@ vi.mock('../../../scene/scene-manager/render-pipeline/renderer-setup', async () 
 // Import after mocks are set up
 import { SceneManager } from '../../../scene/scene-manager';
 import { loadScene as mockLoadScene } from '../../../data';
+import { attachSceneGraphIndex, sceneGraphIndexOf } from '../../../utils/scene-graph-index';
 import { materialManager } from '../../../rendering/material-manager';
 import { log } from '../../../utils/log';
 import { createWebGPURenderer as mockedCreateWebGPURenderer } from '../../../scene/scene-manager/render-pipeline/renderer-setup';
@@ -718,6 +719,23 @@ describe('SceneManager', () => {
       expect(blendWarmupMocks.warmScene).toHaveBeenCalledExactlyOnceWith(sceneManager.scene);
     });
 
+    it("detaches the outgoing scene's path index when the next load clears it", async () => {
+      // The loader indexes its root; a dataset switch must stop maintaining
+      // the old tree (listeners on every node) rather than leave it to GC.
+      const oldRoot = new THREE.Group();
+      oldRoot.name = 'LuxarScene';
+      oldRoot.add(new THREE.Mesh());
+      attachSceneGraphIndex(oldRoot);
+      sceneManager.scene.add(oldRoot);
+      expect(sceneGraphIndexOf(oldRoot)).toBeDefined();
+
+      await sceneManager.loadSceneData('http://example.com/next.zarr');
+
+      expect(oldRoot.parent).toBeNull();
+      expect(sceneGraphIndexOf(oldRoot)).toBeUndefined();
+      expect(sceneGraphIndexOf(oldRoot.children[0])).toBeUndefined();
+    });
+
     it('should clear existing scene before loading new one', async () => {
       // Add some objects to the scene
       const existingObject = new THREE.Mesh();
@@ -964,6 +982,23 @@ describe('SceneManager', () => {
       );
       return { atNodeLoad };
     }
+
+    it("chains an embedder's onSceneMetadata after its own pre-node framing", async () => {
+      loadSceneRecordingNodeLoad({ positionBounds: { min: [0, 0, 0], max: [40, 40, 40] } });
+      const positionAtHook: number[][] = [];
+      const embedderHook = vi.fn((_root: THREE.Group) => {
+        positionAtHook.push(sceneManager.camera.position.toArray());
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr', {
+        onSceneMetadata: embedderHook,
+      });
+
+      expect(embedderHook).toHaveBeenCalledTimes(1);
+      expect((embedderHook.mock.calls[0][0] as THREE.Group).name).toBe('LuxarScene');
+      // The embedder sees the opening pose, as load-time decisions do.
+      expect(positionAtHook[0]).toEqual(sceneManager.camera.position.toArray());
+    });
 
     it('places the AUTHORED opening camera before the scene nodes load', async () => {
       const { atNodeLoad } = loadSceneRecordingNodeLoad({
@@ -2038,9 +2073,11 @@ describe('SceneManager', () => {
       // via the sphere formula — not arbitrary positive values. Compute the
       // expectation from the same [-5,5] bounds and the camera's actual pose.
       const cam = sceneManager.camera.position;
+      const direction = sceneManager.camera.getWorldDirection(new THREE.Vector3());
       const expected = calculateClippingPlanesFromSphere(
         boundingBoxToSphere({ min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } }),
-        { x: cam.x, y: cam.y, z: cam.z }
+        { x: cam.x, y: cam.y, z: cam.z },
+        direction
       );
       expect(result.near).toBeCloseTo(expected.near, 4);
       expect(result.far).toBeCloseTo(expected.far, 4);

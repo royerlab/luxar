@@ -304,10 +304,11 @@ export class SceneDimsManager {
    * @param dimIndex - Index of dimension to update
    * @param value - New position value in dimension units
    * @param options.force - Re-notify listeners at the current value to refine a pinned slice
+   * @returns whether the position changed (a forced re-notify at the same value is not a change)
    */
-  setDimensionValue(dimIndex: number, value: number, options: { force?: boolean } = {}): void {
+  setDimensionValue(dimIndex: number, value: number, options: { force?: boolean } = {}): boolean {
     if (!this.dims || dimIndex < 0 || dimIndex >= this.dims.ndim) {
-      return;
+      return false;
     }
 
     // Reject non-finite (NaN, ±Infinity) inputs — silently writing NaN into
@@ -317,7 +318,7 @@ export class SceneDimsManager {
         Modules.SCENE_DIMS,
         `setDimensionValue: ignoring non-finite value ${value} for dim ${dimIndex}`
       );
-      return;
+      return false;
     }
 
     value = constrainDimensionValue(
@@ -327,9 +328,10 @@ export class SceneDimsManager {
     );
 
     const changed = value !== this.dims.currentStep[dimIndex];
-    if (!changed && !options.force) return;
+    if (!changed && !options.force) return false;
     this.dims.currentStep[dimIndex] = value;
     this.notifyListeners(changed); // Trigger reactive updates throughout the system
+    return changed;
   }
 
   /**

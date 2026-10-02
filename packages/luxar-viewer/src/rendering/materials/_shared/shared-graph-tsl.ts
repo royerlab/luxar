@@ -101,9 +101,9 @@ function leafEntries(leaves: TSLLeafSet): [string, TSLNode][] {
  */
 function leafSignature(name: string, node: TSLNode): string {
   if (isTextureLeaf(node)) {
-    const tex = node.value as THREE.Texture | null | undefined;
-    const depth = (tex as { isDepthTexture?: boolean } | null)?.isDepthTexture === true;
-    return `${name}:tex:${tex?.type}:${tex?.format}:${depth ? 'd' : 'c'}:${tex?.minFilter}:${tex?.magFilter}`;
+    const tex = (node.value ?? {}) as Partial<THREE.Texture> & { isDepthTexture?: boolean };
+    const depth = tex.isDepthTexture === true;
+    return `${name}:tex:${tex.type}:${tex.format}:${depth ? 'd' : 'c'}:${tex.minFilter}:${tex.magFilter}:${tex.wrapS}:${tex.wrapT}`;
   }
   return `${name}:${(node as { nodeType?: string | null }).nodeType ?? '?'}`;
 }

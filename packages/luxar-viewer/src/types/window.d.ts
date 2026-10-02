@@ -222,7 +222,10 @@ declare global {
       perfReady?: boolean;
       /** Structured perf records of one kind (`profiling/perf-counters.ts`), oldest first. */
       getPerfRecords?: (kind: string) => unknown[];
-      /** Zero every perf counter and drop every perf record. */
+      /**
+       * Start a new perf window: zero every counter and high-water mark and
+       * drop every record. Gauges keep their current value.
+       */
       resetPerfCounters?: () => void;
       /**
        * The scene environment (`rendering/environment/`): what lights

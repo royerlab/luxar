@@ -187,10 +187,12 @@ describe('Zarr facade contract', () => {
 
   it('narrows the fetch lane when creating a plain HTTP store', () => {
     zarr.createFetchStore('https://example.test/data.zarr');
-    expect(getFetchLaneLimit('data')).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
+    expect(getFetchLaneLimit('data', 'https://example.test')).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
 
     zarr.createFetchStore('http://example.test/data.zarr');
-    expect(getFetchLaneLimit('data')).toBe(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
+    expect(getFetchLaneLimit('data', 'http://example.test')).toBe(
+      HTTP1_MAX_CONCURRENT_CHUNK_FETCHES
+    );
   });
 
   it('wires nested archive entries to slash-prefixed Zarr keys', async () => {

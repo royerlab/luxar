@@ -212,7 +212,7 @@ export const POINT_PICK_FRAGMENT_SHADER = /* glsl */ `
       // the surface modes (opaque/normal) write the real projected depth so
       // the FRONT-MOST element wins; the commutative modes keep
       // brightness-as-depth (BRIGHTEST wins).
-      gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 - clamp(brightness, 0.0, 1.0);
+      gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 / (1.0 + brightness);
     }
 `;
 

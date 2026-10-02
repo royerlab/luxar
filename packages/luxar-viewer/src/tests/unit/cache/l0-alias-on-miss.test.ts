@@ -1,13 +1,12 @@
 /**
- * `wrapWithCache(..., { aliasOnMiss: true })` — store the decoded chunk in L0
- * WITHOUT the defensive clone.
+ * L0 stores the decoded chunk WITHOUT a defensive clone — on every array.
  *
- * The clone exists because a `getChunk` caller could mutate the view it is
- * handed. zarrita `get()` never does: it copies each chunk into its own freshly
- * allocated output (`setter.setFromChunk`), so for an array read exclusively
- * through `get()` the clone is pure waste (one extra allocation + memcpy of
- * every decoded byte). The opt-in keeps the clone as the default
- * (`l0-immutability.test.ts` still pins it).
+ * A clone would protect only the caller that decoded the chunk: every hit and
+ * every coalesced waiter shares the stored buffer anyway, so the contract is
+ * "L0 chunks are read-only" (`l0-immutability.test.ts`). zarrita `get()` keeps
+ * it by construction — it copies each chunk into its own freshly allocated
+ * output (`setter.setFromChunk`). The deprecated `aliasOnMiss` hook no longer
+ * changes anything.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -62,7 +61,7 @@ function fakeArray(decoded: Float32Array) {
 
 const KEY = DecompressedChunkCache.makeKey('/n/values', [0]);
 
-describe('L0 aliasOnMiss', () => {
+describe('L0 stores decoded chunks without a clone', () => {
   let cache: DecompressedChunkCache;
 
   beforeEach(() => {
@@ -71,12 +70,12 @@ describe('L0 aliasOnMiss', () => {
     resetDecodeHistory();
   });
 
-  it('default: the miss path stores a CLONE of the decoded buffer', async () => {
+  it('the miss path stores the decoded buffer itself (no clone), hook or not', async () => {
     const decoded = new Float32Array([1, 2, 3]);
     const wrapped = wrapWithCache(fakeArray(decoded) as never, cache, '/n/values');
     await wrapped.getChunk([0]);
-    expect(cache.get(KEY)!.data).not.toBe(decoded);
-    expect(perfCounters.get('l0.cloneBytes')).toBe(decoded.byteLength);
+    expect(cache.get(KEY)!.data).toBe(decoded);
+    expect(perfCounters.get('l0.cloneBytes')).toBe(0);
   });
 
   it('aliasOnMiss: the miss path stores the decoded buffer itself (no clone)', async () => {

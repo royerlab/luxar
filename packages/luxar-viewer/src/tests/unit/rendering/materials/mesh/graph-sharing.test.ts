@@ -1,4 +1,6 @@
 /** Mesh TSL materials of one configuration share one node graph (see graph-sharing-cases.ts). */
+import * as THREE from 'three';
+import { expect, it } from 'vitest';
 import { MeshTSLMaterial } from '../../../../../rendering/materials/mesh/material-tsl';
 import { colormapTexture, describeGraphSharing } from '../graph-sharing-cases';
 
@@ -21,4 +23,24 @@ describeGraphSharing('MeshTSLMaterial', {
     set: (m) => m.updateShading('flat'),
     unset: (m) => m.updateShading('smooth'),
   },
+});
+
+it('separates nearest-filtered mesh graphs with different texture wrapping', () => {
+  const makeTexture = (wrapS: THREE.Wrapping, wrapT: THREE.Wrapping): THREE.DataTexture => {
+    const texture = new THREE.DataTexture(new Uint8Array(16), 2, 2, THREE.RGBAFormat);
+    texture.minFilter = THREE.NearestFilter;
+    texture.magFilter = THREE.NearestFilter;
+    texture.wrapS = wrapS;
+    texture.wrapT = wrapT;
+    return texture;
+  };
+  const clamp = new MeshTSLMaterial({});
+  const repeatU = new MeshTSLMaterial({});
+  clamp.updateBaseColorTexture(makeTexture(THREE.ClampToEdgeWrapping, THREE.ClampToEdgeWrapping));
+  repeatU.updateBaseColorTexture(makeTexture(THREE.RepeatWrapping, THREE.ClampToEdgeWrapping));
+  expect(repeatU.colorNode).not.toBe(clamp.colorNode);
+
+  const repeatV = new MeshTSLMaterial({});
+  repeatV.updateBaseColorTexture(makeTexture(THREE.RepeatWrapping, THREE.RepeatWrapping));
+  expect(repeatV.colorNode).not.toBe(repeatU.colorNode);
 });

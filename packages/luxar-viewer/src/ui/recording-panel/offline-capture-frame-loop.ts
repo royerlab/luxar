@@ -8,12 +8,14 @@
  * sequence of stages it always was.
  *
  * The per-frame ORDER is the invariant: schedule the orbit callback, spend one
- * rAF so it runs, remove it (fixing the pose), only THEN drain and grab. See
+ * rAF so it runs, remove it (fixing the pose), only THEN drain (LOD, then
+ * depth order) and grab. See
  * the comments inline — each step is ordered against the next for a reason.
  */
 
 import { Modules, log } from '../../utils/log';
 import { showToast } from '../toast';
+import { resortForCapture } from '../../rendering/depth-sort-coordinator';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import type { LuxarOrbitControls } from '../../controls/luxar-orbit-controls';
 import type { CaptureProgress } from './offline-capture-overlay';
@@ -121,6 +123,16 @@ export async function runFrameLoop(deps: FrameLoopDeps): Promise<FrameLoopResult
     // finest level across a tiled partition would make peak residency the
     // entire dataset. Waiting costs time, not memory.
     await lodSettle.waitForFrame();
+
+    // ── Depth ordering for this pose ──
+    // After the LOD settle, so a level that just landed is sorted too; before
+    // the grab, so the frame is drawn with its own pose's permutation. Bounded
+    // by the coordinator's maxWaitMs, and a no-op when nothing is
+    // order-dependent. The loop's own render is suppressed for the whole
+    // capture and the per-frame scheduler re-sorts only past its angle
+    // threshold, so without this a `normal` / `volumetric` node is filmed
+    // with an ordering from an earlier pose.
+    await resortForCapture();
 
     if (sessionAbort.signal.aborted) break;
 

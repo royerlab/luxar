@@ -275,6 +275,11 @@ function seedWatchdogFromLoad(
 export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.Group> {
   log.custom(LogEmoji.SCENE, Modules.SCENE_LOADER, `Loading scene from ${url}`);
   markLoad('loadStart', { url });
+  // The profiler is manager-wide: drop the previous dataset's rows, or they
+  // accumulate across switches and every merge's stale sweep walks them all.
+  // reset() bumps the profiler's generation, so a session still in flight from
+  // the outgoing dataset ends as a no-op instead of merging into the new tree.
+  ctx.profiler?.reset();
   setSceneLineLoad(0);
 
   // Clear any existing loaders from monitor before loading new scene

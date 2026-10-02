@@ -137,7 +137,7 @@ void main() {
 
 	} else {
 
-		nodeVar6 = ( 1.0 - gsplatPickBrightness );
+		nodeVar6 = ( 1.0 / ( 1.0 + gsplatPickIntensity ) );
 
 	}
 

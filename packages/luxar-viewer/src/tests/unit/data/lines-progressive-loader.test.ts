@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { log } from '../../../utils/log';
 import { LinesProgressiveLoader } from '../../../data/lines/lines-progressive-loader';
 import type { LinesSpatialIndexLoader } from '../../../data/lines/lines-spatial-index-loader';
 import type { LinesViewState, LoadedLinesData } from '../../../types/lines';
@@ -2144,5 +2145,25 @@ describe('LinesProgressiveLoader — no pin after the shadow pass is torn down',
       await pending;
     });
     expect(pins).toBe(0);
+  });
+});
+
+describe('LinesProgressiveLoader — per-pass logging', () => {
+  it('a streaming pass logs its ladder summary at verbose, never at info', async () => {
+    const info = vi.spyOn(log, 'info');
+    const verbose = vi.spyOn(log, 'verbose');
+    const lods = [makeSubLoader(makeLodData(20, 10)), makeSubLoader(makeLodData(10, 5))];
+    const l = new LinesProgressiveLoader(
+      lods as unknown as LinesSpatialIndexLoader[],
+      2,
+      '/lines-log'
+    );
+    await l.updateView(baseViewState);
+    expect(info).not.toHaveBeenCalled();
+    expect(
+      verbose.mock.calls.some((call) => String(call.at(-1)).includes('Progressive Lines'))
+    ).toBe(true);
+    info.mockRestore();
+    verbose.mockRestore();
   });
 });

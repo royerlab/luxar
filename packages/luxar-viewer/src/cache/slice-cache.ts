@@ -301,10 +301,13 @@ export class SliceCache {
     // Stage outputs are the cheaper loss: drop them before the LRU would
     // evict a decoded slice to make room for this one.
     this.shedStagesFor(entry.bytes - (previous?.bytes ?? 0), key, opts?.scan === true);
-    this.cache.set(key, entry, { evictMostRecent: opts?.scan });
-    if (this.cache.peek(key) === entry) this.noteStored(key, entry, previous);
-    if (opts?.pin) this.cache.pin(key);
-    this.tallyPin(key, opts?.pin === true);
+    // A rejected (over-budget) entry also drops `previous` through onEvict, so
+    // there is nothing left under `key` to note or to pin.
+    if (this.cache.set(key, entry, { evictMostRecent: opts?.scan })) {
+      this.noteStored(key, entry, previous);
+      if (opts?.pin) this.cache.pin(key);
+      this.tallyPin(key, opts?.pin === true);
+    }
     // Freshly cached: a later miss on this key is only thrash if it gets
     // evicted AGAIN (recordTombstone re-adds it then).
     this.tombstones.delete(key);

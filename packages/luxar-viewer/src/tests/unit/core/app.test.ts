@@ -162,6 +162,7 @@ import { LuxarApp } from '../../../core/app';
 import { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import { setDocumentTitle } from '../../../core/document-title';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
+import { notifier } from '../../../utils/cross-layer/notifier';
 import type { ZarrWaypoint } from '../../../types/zarr';
 
 describe('LuxarApp', () => {
@@ -774,16 +775,41 @@ describe('LuxarApp', () => {
       expect(app.initialized).toBe(false);
     });
 
-    it('propagates loadSceneData errors out of init() so the caller can handle them', async () => {
+    it('keeps the viewer alive when the first dataset fails to load', async () => {
+      // A `?src` typo must not leave a dead page: the error dialog advertises
+      // the dataset browser, so the app (and its browser shortcut) has to
+      // survive the failed load. Subsystem failures still dispose (below).
       mockFetch.mockResolvedValue({ ok: true });
       mockSceneManager.loadSceneData.mockRejectedValue(new Error('Load failed'));
+      const notifyError = vi.spyOn(notifier, 'error').mockImplementation(() => {});
+      const datasetErrors: Array<{ src: string; error: Error }> = [];
+      app.on('dataset-error', (payload) => datasetErrors.push(payload));
 
-      // Contract: init() does NOT swallow loadSceneData failures. The previous
-      // name ("should continue if data loading fails") contradicted the
-      // assertion — the test always asserted the throw.
       await expect(
-        app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })
-      ).rejects.toThrow('Load failed');
+        app.init({ canvas: mockCanvas, src: 'http://example.com/typo.zarr' })
+      ).resolves.toBeUndefined();
+
+      expect(app.initialized).toBe(true);
+      expect(mockSceneManager.dispose).not.toHaveBeenCalled();
+      expect(datasetErrors).toEqual([
+        {
+          src: 'http://example.com/typo.zarr',
+          error: expect.objectContaining({ message: 'Load failed' }),
+        },
+      ]);
+      // The persistent dialog names the failure (the notifier backend adds the
+      // dataset-browser hint), and the browser it points at really opens.
+      expect(notifyError).toHaveBeenCalledWith(expect.stringContaining('Load failed'), {
+        persistent: true,
+      });
+      const openBrowser = mockAddEventListener.mock.calls.find(
+        (call) => call[0] === OPEN_DATASET_BROWSER_EVENT
+      )?.[1] as (() => void) | undefined;
+      openBrowser!();
+      expect(DatasetBrowser).toHaveBeenCalled();
+      // ...and a retry through it can reach a fresh load.
+      mockSceneManager.loadSceneData.mockResolvedValue(undefined);
+      await expect(app.switchDataset('http://example.com/fixed.zarr')).resolves.toBeUndefined();
     });
 
     it('disposes partial state when init() throws so the caller can retry', async () => {
@@ -1270,11 +1296,15 @@ describe('LuxarApp', () => {
 
     it('removes the early browser listener and clears initializing state when init fails', async () => {
       mockFetch.mockResolvedValue({ ok: true });
-      mockSceneManager.loadSceneData.mockRejectedValueOnce(new Error('initial load failed'));
+      // A wiring failure AFTER routing (the embedder hooks subscribe to the
+      // controls' change stream) — a dataset failure no longer fails init().
+      mockSceneManager.controls.addEventListener.mockImplementation((type: string) => {
+        if (type === 'change') throw new Error('initial wiring failed');
+      });
 
       await expect(
         app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })
-      ).rejects.toThrow('initial load failed');
+      ).rejects.toThrow('initial wiring failed');
 
       const browserRegistration = mockAddEventListener.mock.calls.find(
         (call) => call[0] === OPEN_DATASET_BROWSER_EVENT
@@ -1837,6 +1867,31 @@ describe('LuxarApp', () => {
       expect(state.layers).toEqual([]);
     });
 
+    it('stops the kiosk watchdog on dispose', async () => {
+      // A watchdog left listening after dispose() reloads the page on the next
+      // context loss of a canvas the app no longer owns.
+      const canvas = { addEventListener: vi.fn(), removeEventListener: vi.fn() };
+      mockSceneManager.renderer = { domElement: canvas };
+      await app.init({ canvas: mockCanvas, src: SRC });
+      const internals = app as unknown as {
+        applyKiosk: (config: {
+          ui: { kiosk: { enabled: boolean; watchdog_reload: boolean } };
+        }) => void;
+      };
+      internals.applyKiosk({ ui: { kiosk: { enabled: true, watchdog_reload: true } } });
+      expect(canvas.addEventListener).toHaveBeenCalledWith(
+        'webglcontextlost',
+        expect.any(Function)
+      );
+
+      app.dispose();
+
+      expect(canvas.removeEventListener).toHaveBeenCalledWith(
+        'webglcontextlost',
+        canvas.addEventListener.mock.calls.find((call) => call[0] === 'webglcontextlost')?.[1]
+      );
+    });
+
     it('keeps authored scene overlays visible in kiosk mode', async () => {
       await app.init({ canvas: mockCanvas, src: SRC });
       const hideOverlay = vi.fn();
@@ -1863,6 +1918,40 @@ describe('LuxarApp', () => {
       await app.switchDataset('http://example.com/other.zarr');
 
       expect(onLoaded).toHaveBeenCalledWith({ src: 'http://example.com/other.zarr' });
+    });
+
+    it('writes the switched-to dataset into ?src when the app owns the URL', async () => {
+      // A kiosk / remote-control story switch, then a reload, must reopen the
+      // scene on screen — not the one the page started with. Same contract as
+      // a dataset-browser selection.
+      await app.init({ canvas: mockCanvas, src: SRC, updateBrowserUrl: true });
+      mockReplaceState.mockClear();
+
+      await app.switchDataset('http://example.com/other.zarr');
+
+      expect(mockReplaceState).toHaveBeenCalledTimes(1);
+      expect(mockReplaceState.mock.calls[0][2]).toBe(
+        `/?src=${encodeURIComponent('http://example.com/other.zarr')}`
+      );
+    });
+
+    it('leaves the host URL alone on a switch by default', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      mockReplaceState.mockClear();
+
+      await app.switchDataset('http://example.com/other.zarr');
+
+      expect(mockReplaceState).not.toHaveBeenCalled();
+    });
+
+    it("does not mutate the embedder's options object on a switch", async () => {
+      const options = { canvas: mockCanvas, src: SRC };
+      await app.init(options);
+
+      await app.switchDataset('http://example.com/other.zarr');
+
+      expect(options.src).toBe(SRC);
+      expect(app.getViewerState().src).toBe('http://example.com/other.zarr');
     });
 
     it('re-titles the browser tab for the dataset being switched to', async () => {

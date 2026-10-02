@@ -979,6 +979,24 @@ describe('PointsSpatialIndexLoader', () => {
       expect(warmCalls()).toBe(4);
     });
 
+    it('an aborted predicted-view signal stops every boundary warm-up', async () => {
+      const current: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 1],
+        tolerance: [0, 0, 0, 0.1],
+      };
+      const predicted = { ...current, slicePosition: [0, 0, 0, 2] };
+      await loader.loadPoints(current);
+      vi.clearAllMocks();
+      mockExecute.mockResolvedValue([{ start: 100, end: 200 }]);
+      const superseded = new AbortController();
+      superseded.abort();
+
+      await loader.prefetchChunkBoundary(current, predicted, superseded.signal);
+
+      expect(warmCalls()).toBe(0);
+    });
+
     it('skips fetches when the spatial query returns no ranges', async () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
@@ -1005,6 +1023,48 @@ describe('PointsSpatialIndexLoader', () => {
   });
 
   describe('resource cleanup', () => {
+    it('an initialize still in flight at dispose does not repopulate the loader', async () => {
+      // dispose() resets the one-shot initializer and clears the arrays, but an
+      // initialize() already awaiting its metadata opens used to finish afterwards
+      // and write chunkIndex / arrays back into the disposed loader.
+      const view: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+      const open = zarr.open as any;
+      const original = open.getMockImplementation() as (...args: unknown[]) => unknown;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      open.mockImplementation((...args: unknown[]) => gate.then(() => original(...args)));
+      const load = loader.loadPoints(view);
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+
+      loader.dispose();
+      release();
+
+      await expect(load).rejects.toMatchObject({ name: 'AbortError' });
+      expect((loader as any).chunkIndex).toBeNull();
+      expect((loader as any).arrays).toEqual({});
+    });
+
+    it('a disposed loader refuses to re-initialize', async () => {
+      loader.dispose();
+      (zarr.open as unknown as ReturnType<typeof vi.fn>).mockClear();
+      await expect(
+        loader.loadPoints({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0, 5],
+          tolerance: [0, 0, 0, 0.1],
+        })
+      ).rejects.toMatchObject({
+        name: 'AbortError',
+      });
+      expect(zarr.open).not.toHaveBeenCalled();
+    });
+
     it('dispose clears the active-query map (mid-flight leak guard)', async () => {
       // Regression (×3 symmetric): points dispose() historically omitted
       // activeQueries.clear(), so a dispose mid-flight leaked the tracked
@@ -1041,6 +1101,38 @@ describe('PointsSpatialIndexLoader', () => {
       release();
       await loadPromise;
     });
+
+    it('a load disposed mid-flight settles as a cancellation, not as data', async () => {
+      // The Lines/GSplats siblings bail with an AbortError when the loader was
+      // torn down while the chunk reads were in flight (run-loader-updates then
+      // stages null quietly). Points used to carry on and project a payload for
+      // a loader that no longer exists.
+      const baseViewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+      await loader.loadPoints(baseViewState);
+
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      (zarr.get as any).mockImplementation(() =>
+        gate.then(() => ({ data: new Float32Array(400) }))
+      );
+      const loadPromise = loader.loadPoints({
+        ...baseViewState,
+        slicePosition: [0.5, 0.5, 0.5, 5],
+      });
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      loader.dispose();
+      release();
+
+      await expect(loadPromise).rejects.toMatchObject({ name: 'AbortError' });
+    });
+
     it('should dispose resources properly', async () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],

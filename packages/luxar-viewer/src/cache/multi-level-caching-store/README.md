@@ -51,7 +51,11 @@ multi-level-caching-store/
   were the last unbounded browser-filesystem path after writes gained their own
   cap. The reported multi-second L2 stall remains unattributed. Queue wait is
   outside each operation's timeout, so healthy backpressure is never
-  misclassified as hung I/O.
+  misclassified as hung I/O. `run` receives `hold(io)`: a lease lasts until
+  every held file-I/O promise settles too, so a read whose timeout gave up
+  still occupies its slot while the browser finishes it. The optional
+  `signal` lets a queued read leave the queue on abort (rejecting with the
+  signal's reason).
 - **`getOpfsReadGateStats()`** — exposes active and queued reads to the cache
   monitor so a live stall distinguishes backend work from gate backpressure.
 - **`resetOpfsReadGate()`** — clears module-global gate state for test isolation;
@@ -62,7 +66,8 @@ multi-level-caching-store/
 `SegmentedLRUCache` wraps two `LRUCache<Uint8Array>` instances and routes
 incoming keys by filename pattern. Zarr metadata keys (`.zmetadata`,
 `.zarray`, `.zattrs`, `zarr.json`) go to a dedicated **metadata
-segment** sized at 20% of the total budget with a 10MB floor; everything
+segment** sized at 20% of the total budget with a 10MB floor (capped at half
+the total on a small budget); everything
 else goes to the **chunks segment** sized at the remaining 80%. This
 protects small, high-traffic metadata files from being evicted when a
 single navigation pulls in many large chunks.
@@ -104,10 +109,17 @@ Key behaviours:
   `getStats()` and the cache monitor's "Errors" card (plus
   `orphansReindexed`).
 - **Index persistence** — the index save is a 1 s debounce with a 2 s
-  ceiling, flushed on `pagehide` / hidden (`flushAllMetadata`) and on
-  `dispose()`; an open-time, per-session-budgeted orphan reconcile re-indexes
-  or deletes chunk files the index never recorded (see `../README.md`,
-  "L2 index persistence").
+  ceiling and a 150 ms leading edge (the first write after a quiet second is
+  indexed within 150 ms), flushed on `pagehide` / hidden (`flushAllMetadata`)
+  and on `dispose()`. Neither unload-time write survives a navigation: measured
+  on Chromium, a reload stops the save after `getFileHandle(create)`, leaving a
+  zero-byte index that is read as a cold start, not as corruption. No chunk is
+  lost to that: the validated content hash is persisted in
+  `_cache_identity.json` before any chunk is written under it, an L2 lookup of
+  a key the index does not list reads the key's (deterministic) file path while
+  unindexed files may remain, and an open-time, per-session-budgeted orphan
+  reconcile re-indexes or deletes the files the index never recorded (see
+  `../README.md`, "L2 index persistence").
 - **Quota estimate cache** — `navigator.storage.estimate()` is re-run at most
   every 30 s / 64 MB written, or when the debited cached headroom cannot cover
   a write.
@@ -145,10 +157,10 @@ Key behaviours:
   at a 16 KiB/s aggregate floor shared across at most eight active leases, or
   eight stall windows shared across at most four leases when the length is
   unavailable. Metadata probes use a separate lane from data bodies: the caps
-  are 24 data + 4 metadata in TLS-only sessions, with the data lane widened to 96
-  for an origin whose resource timing shows it negotiated h2/h3, and both lanes
-  shrink to 4 data + 2 metadata once an `http:` URL is seen (HTTP/1.1's six
-  sockets). `priority` (`demand` > `refinement` > `speculative`, or a
+  are 24 data + 4 metadata, with the data lane widened to 96 for an origin
+  whose resource timing shows it negotiated h2/h3, and an origin seen over a
+  plain `http:` URL held to 4 data + 2 metadata of its own (HTTP/1.1's six
+  sockets) while other origins keep their width. `priority` (`demand` > `refinement` > `speculative`, or a
   `FetchPriorityCell` a coalescing caller may raise) orders the gate's queue;
   speculative requests never hold more than a quarter of a lane. The store
   passes `speculative` for prefetcher reads and raises a pending read to
@@ -214,9 +226,11 @@ than the full data-fetch timeout.
   exhausted retry budgets log a warning and return `undefined`; a consumer's
   own error propagates unchanged so status and archive validation failures
   keep their domain-specific type.
-- **Metadata segment never starves.** `SegmentedLRUCache` enforces a
-  10MB floor on the metadata segment regardless of `totalSize` — small
-  L1 budgets only shrink the chunks segment.
+- **Metadata segment never starves.** `SegmentedLRUCache` gives the
+  metadata segment a 10MB floor, capped at half of `totalSize`: a heap- or
+  `?cacheBudgetMB`-scaled L1 below 20MB splits evenly rather than leaving
+  the chunks segment at zero (every L1 chunk rejected) and the two segments
+  over budget.
 - **URL hash is part of the on-disk format.** `hashUrl` is a SHA-256
   prefix; changing the prefix length or hash function orphans every
   existing OPFS dataset directory.

@@ -9,7 +9,7 @@
  *   - B: brightness clamped to [0, 1]
  *   - A: the same elementId's HIGH 16 bits (one f32 channel cannot
  *     carry the whole index exactly — see `luxarElementIdParts`)
- * Depth = 1.0 - brightness (brightness-as-depth tie-breaking) — or the
+ * Depth = 1 / (1 + unclamped salience) (brightness-as-depth tie-breaking) — or the
  * real fragment depth when `uSurfaceDepth == 1` (surface/'normal' mode:
  * front-most wins, matching the depth-sorted occluding surface).
  *
@@ -530,7 +530,7 @@ export function gsplatPickWebGPUFactory(
     fragmentPrologue();
     return int(uSurfaceDepth)
       .equal(int(1))
-      .select(depth as unknown as TSLNode, float(1.0).sub(brightness));
+      .select(depth as unknown as TSLNode, float(1.0).div(float(1.0).add(intensity)));
   });
 
   const material = outMaterial ?? new NodeMaterial();

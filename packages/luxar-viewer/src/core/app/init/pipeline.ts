@@ -458,7 +458,6 @@ export async function runInitPipeline(
     requestRender: () => animationController.requestRender('densityGuard'),
     invalidatePickBuffer: ports.invalidatePickBuffer,
   });
-  animationController.addPerFrameCallback('projected-density', densityWiring.perFrame);
   animationController.addPerFrameCallback('lod-group-selector', () => {
     const loader = getSceneLoader('default');
     const registry = loader?.lodGroupRegistry;
@@ -484,6 +483,10 @@ export async function runInitPipeline(
     const drawnStateChanged = registry.takeDrawnStateChanged();
     return drawnStateChanged || levelChanged || cullChanged;
   });
+  // AFTER the selector (same phase ⇒ registration order): the guard sets the
+  // keep fraction of what is drawn, so it must see the level revealed this
+  // frame rather than draw it once on a stale keep (#2944 review B).
+  animationController.addPerFrameCallback('projected-density', densityWiring.perFrame);
 
   // Seed the pixel-ratio cap from config BEFORE anything sizes a frame.
   // The renderer boundary (dpr-policy.getActivePixelRatio) reads the cap

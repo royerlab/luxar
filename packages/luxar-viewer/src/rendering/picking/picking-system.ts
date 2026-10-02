@@ -22,7 +22,7 @@
  * The pick buffer encodes: R=nodeId, G=elementId low 16 bits,
  * B=brightness, A=elementId high 16 bits (split so an index past f32's
  * 24-bit exact range survives — see picking-system/pick-render.ts)
- * Brightness-as-depth (gl_FragDepth = 1 - brightness) ensures the
+ * Brightness-as-depth (gl_FragDepth = 1 / (1 + brightness)) ensures the
  * brightest element at each pixel wins the depth test. Exception: nodes
  * in the depth-ordered surface modes ('opaque' / 'normal') write real
  * projected depth instead (front-most wins) — renderPickBuffer syncs the

@@ -44,7 +44,9 @@ export interface LuxarAppOptions {
   gpuPoolMaxBytes?: number | null;
   /**
    * Reflect the loaded dataset URL in the browser address bar via
-   * `history.replaceState` so the page can be reloaded or shared.
+   * `history.replaceState` so the page can be reloaded or shared. Applies to
+   * every dataset switch — a dataset-browser selection and a
+   * `LuxarApp.switchDataset` call (kiosk, remote control) alike.
    *
    * Defaults to `false` for programmatic/embedded safety. The standalone
    * bootstrap sets this to `true` explicitly.

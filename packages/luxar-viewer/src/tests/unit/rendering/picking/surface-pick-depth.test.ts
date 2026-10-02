@@ -30,6 +30,8 @@ import { CAPSULE_LINE_PICK_FRAGMENT_SHADER } from '../../../../rendering/picking
 import { PointPickingMaterial } from '../../../../rendering/picking/point/material';
 import { PointPickingTSLMaterial } from '../../../../rendering/picking/point/material-tsl';
 import { POINT_PICK_FRAGMENT_SHADER } from '../../../../rendering/picking/point/shaders';
+import { GSPLAT_PICK_FRAGMENT_SHADER } from '../../../../rendering/picking/gsplat/shaders';
+import { MESH_PICK_FRAGMENT_SHADER } from '../../../../rendering/picking/mesh/shaders';
 import { makePickHarness, uniformValue } from './render-pick-helper';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -44,7 +46,7 @@ describe('GLSL point/line pick fragments switch the depth convention', () => {
   ])('%s', (_n, fs) => {
     expect(fs).toContain('uniform int uSurfaceDepth;');
     expect(fs).toMatch(
-      /gl_FragDepth = \(uSurfaceDepth == 1\) \? gl_FragCoord\.z : 1\.0 - clamp\(brightness, 0\.0, 1\.0\);/
+      /gl_FragDepth = \(uSurfaceDepth == 1\) \? gl_FragCoord\.z : 1\.0 \/ \(1\.0 \+ brightness\);/
     );
   });
 });
@@ -57,7 +59,22 @@ describe('TSL point/line pick factories switch the depth convention', () => {
     // Branchless: a mix on the 0/1 flag (a branch would bury the shared
     // brightness assignment in one arm — see the factories' comments).
     expect(depthBody).toMatch(/mix\([\s\S]*float\(uSurfaceDepth\)/);
+    expect(depthBody).toContain('float(1.0).div(float(1.0).add(brightness))');
   });
+});
+
+it('gsplat commutative depth uses unclamped salience in both shader backends', () => {
+  expect(GSPLAT_PICK_FRAGMENT_SHADER).toContain('1.0 / (1.0 + salience)');
+  expect(src('gsplat/pick.tsl.ts')).toContain('float(1.0).div(float(1.0).add(intensity))');
+  const depth = (salience: number): number => 1 / (1 + salience);
+  expect(depth(2.25)).toBeLessThan(depth(1.5));
+});
+
+it('mesh commutative depth uses the same scale as other geometry in both backends', () => {
+  expect(MESH_PICK_FRAGMENT_SHADER).toContain(
+    'gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 / (1.0 + brightness);'
+  );
+  expect(src('mesh/pick.tsl.ts')).toContain('float(1.0).div(float(1.0).add(brightness))');
 });
 
 const PAIRS = [

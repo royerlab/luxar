@@ -225,6 +225,10 @@ export function commitLinesGeometry(
         }
       }
     } else {
+      // Consume-and-clear on this path too (prefix-lineage.ts retention
+      // contract): no append gate reads the lineage here, and leaving it set
+      // would keep the parent concat's CPU arrays pinned for the payload's life.
+      setPrefixParent(staged.sourceData, null);
       // Non-pool path: a size change rebuilds a fresh exact-size
       // geometry+texture pair — evict Three's cached RenderObject and
       // rebind the texture exactly like the pool branch above.

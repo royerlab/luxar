@@ -75,10 +75,13 @@ function cacheIdentity(cache: DecompressedChunkCache): number {
   return id;
 }
 
-/** Forget the decode history (tests; perf-counter resets do not need it). */
+/** Forget the decode history (tests, and every perf-counter reset below). */
 export function resetDecodeHistory(): void {
   decodeHistory.clear();
 }
+// A perf-counter reset opens a new measurement window: a decode from the
+// previous window must not make this window's first decode a "duplicate".
+perfCounters.onReset(resetDecodeHistory);
 
 /** Tally one completed miss decode (count, bytes, origin, duplicate check). */
 function recordDecode(historyKey: string, origin: string, bytes: number): void {
@@ -164,16 +167,9 @@ export interface CachedArrayHooks {
    */
   getOrigin?: () => string;
   /**
-   * Store a miss's decoded buffer in L0 WITHOUT the defensive clone (default
-   * `false` = clone). Only safe for an array whose every consumer reads it
-   * through zarrita `get()` (`readArray`) or `warmChunk`: `get()` copies each
-   * chunk into its own freshly allocated output (`setter.setFromChunk`) and
-   * never hands the chunk view out, so nothing can mutate the cached buffer.
-   * A direct `getChunk()` caller that mutates what it receives would corrupt
-   * L0 — do not enable it for such an array. A decoded view that does not span
-   * its whole `ArrayBuffer` (e.g. an uncompressed chunk sliced out of a larger
-   * shard/archive buffer) is still cloned, so L0 never retains more bytes than
-   * it accounts for.
+   * @deprecated No effect: L0 ALWAYS stores a miss's decoded buffer without a
+   * defensive clone (see {@link wrapWithCache}'s read-only contract). Still
+   * accepted because the spatial-index loaders pass it; remove it there.
    */
   aliasOnMiss?: boolean;
 }
@@ -188,6 +184,16 @@ export interface CachedArrayHooks {
  *    `cache` — joins that decode instead of starting another (the in-flight
  *    map lives on the {@link DecompressedChunkCache}, not on the proxy)
  * 4. On miss: calls original `getChunk()`, caches result, returns data
+ *
+ * READ-ONLY CONTRACT: every caller — the miss that decoded a chunk, the
+ * waiters that joined that decode, and every later hit — receives the SAME
+ * buffer L0 holds, so no consumer may mutate a chunk it is handed. zarrita
+ * `get()` (`readArray`) satisfies this by construction: it copies each chunk
+ * into its own freshly allocated output (`setter.setFromChunk`). A direct
+ * `getChunk()` caller must copy before writing. A decoded view that does not
+ * span its whole `ArrayBuffer` (e.g. an uncompressed chunk sliced out of a
+ * larger shard/archive buffer) is still copied for storage, so L0 never
+ * retains more bytes than it accounts for.
  *
  * Abort isolation: the shared decode runs under its own `AbortController`,
  * never under a caller's signal. Each caller races the decode against its own
@@ -232,7 +238,6 @@ export function wrapWithCache<D extends zarr.DataType>(
   const ctx: AcquireContext = {
     cache,
     historyPrefix: `${cacheIdentity(cache)}|`,
-    aliasOnMiss: hooks.aliasOnMiss === true,
   };
 
   return new Proxy(array, {
@@ -335,8 +340,6 @@ interface AcquireContext {
   cache: DecompressedChunkCache;
   /** `<L0 cache id>|` — prefix of the decode-history identity. */
   historyPrefix: string;
-  /** Store miss decodes without cloning (see {@link CachedArrayHooks.aliasOnMiss}). */
-  aliasOnMiss: boolean;
 }
 
 /** One L0 acquisition: a lookup that joins or starts a decode on a miss. */
@@ -427,7 +430,7 @@ function startDecode(ctx: AcquireContext, req: AcquireRequest): InflightDecode {
     const decodedBytes = (chunk.data as { byteLength?: number }).byteLength ?? 0;
     recordDecode(historyPrefix + req.key, origin, decodedBytes);
     if (cache.getInflight(req.key) === entry) {
-      cache.set(req.key, toCacheEntry(chunk, ctx.aliasOnMiss));
+      cache.set(req.key, toCacheEntry(chunk));
     }
     return chunk;
   })();
@@ -445,21 +448,19 @@ function spansWholeBuffer(view: ArrayBufferView): boolean {
 }
 
 /**
- * Build the L0 entry for a freshly decoded chunk. By default clone the data to
- * prevent callers from mutating the cached copy (ArrayBufferViews are
- * references to underlying ArrayBuffers); with `alias` (an array read only via
- * `get()`, see {@link CachedArrayHooks.aliasOnMiss}) store the decoded view
- * itself when it spans its whole buffer. cloneArrayBufferView branches on
- * TypedArray vs DataView — the union type's public d.ts doesn't expose a common
- * slice() so a single cast hid the DataView gap. zarrita's TypedArray<D> union
- * includes object-dtype as unknown[], which is not an ArrayBufferView; cast
- * through ArrayBufferView since numeric chunks (the only kind we cache) always
- * are.
+ * Build the L0 entry for a freshly decoded chunk: the decoded view itself (the
+ * read-only contract, see {@link wrapWithCache}), copied only when it does not
+ * span its whole buffer so L0 never retains bytes it does not account for.
+ * cloneArrayBufferView branches on TypedArray vs DataView — the union type's
+ * public d.ts doesn't expose a common slice() so a single cast hid the DataView
+ * gap. zarrita's TypedArray<D> union includes object-dtype as unknown[], which
+ * is not an ArrayBufferView; cast through ArrayBufferView since numeric chunks
+ * (the only kind we cache) always are.
  */
-function toCacheEntry(chunk: DecodedChunkResult, alias: boolean): DecompressedChunk {
+function toCacheEntry(chunk: DecodedChunkResult): DecompressedChunk {
   const view = chunk.data as ArrayBufferView;
   let data = view;
-  if (!alias || !spansWholeBuffer(view)) {
+  if (!spansWholeBuffer(view)) {
     data = cloneArrayBufferView(view);
     perfCounters.add(S_L0_CLONE_BYTES, (data as { byteLength?: number }).byteLength ?? 0);
   }

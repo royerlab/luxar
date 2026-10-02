@@ -89,8 +89,9 @@ function isTrackedDataMesh(obj: THREE.Object3D): obj is THREE.Mesh {
  *
  * Perspective: radii scale by `P[0]/depth` and `P[5]/depth` (the projection
  * matrix's focal terms); the centre also includes P[8]/P[9] for off-axis
- * projections. A camera inside or in front of the sphere
- * (`depth <= radius`) counts as full-buffer. Orthographic: the focal terms
+ * projections. A sphere straddling the eye plane (`|depth| <= radius`)
+ * counts as full-buffer, and one wholly behind the eye (`depth < -radius`)
+ * as off-screen. Orthographic: the focal terms
  * apply without the depth division. Off-screen (the ellipse does not touch
  * the NDC square) returns 0; otherwise the ellipse area, clipped to the
  * buffer. The clip is a coarse min, not an exact intersection — the guard
@@ -111,6 +112,8 @@ export function projectSphereAreaPx(
   let cy: number;
   if ((camera as THREE.PerspectiveCamera).isPerspectiveCamera) {
     const depth = -centerView.z;
+    // Wholly behind the eye: nothing of it is drawn (#2944 A4).
+    if (depth < -radius) return { areaPx: 0, onScreen: false };
     if (depth <= radius) return { areaPx: full, onScreen: true };
     rx = (radius * p[0]) / depth;
     ry = (radius * p[5]) / depth;

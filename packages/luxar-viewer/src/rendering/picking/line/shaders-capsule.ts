@@ -8,10 +8,9 @@
  * exactly. Per the shared pick contract it drops the colour machinery and
  * adds the `uNodeId` uniform and `vNodeId` / `vElementId` varyings,
  * emitting `(nodeId, elementId-low16, brightness, elementId-high16)` with
- * brightness-as-depth (`gl_FragDepth = 1 − brightness`), identical to the
- * screen-space pick variant. Like it, the pick pass
- * ignores per-element alpha and node opacity — faint-but-hoverable stays
- * consistent across primitives.
+ * brightness-as-depth (`gl_FragDepth = 1 / (1 + brightness)`), identical to the
+ * screen-space pick variant. Like it, pick salience includes per-element
+ * alpha, node opacity and gain.
  *
  * Model + constants: `_shared/line-capsule.ts` (the visual twin's header
  * documents the exactness relaxations; they apply here identically).
@@ -498,7 +497,7 @@ export const CAPSULE_LINE_PICK_FRAGMENT_SHADER = /* glsl */ `
       // the surface modes (opaque/normal) write the real projected depth so
       // the FRONT-MOST element wins; the commutative modes keep
       // brightness-as-depth (BRIGHTEST wins).
-      gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 - clamp(brightness, 0.0, 1.0);
+      gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 / (1.0 + brightness);
     }
 `;
 

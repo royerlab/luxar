@@ -162,7 +162,7 @@ function attachLazyChild(
         const archiveFault = archiveFaultFrom(error);
         if (archiveFault) {
           latchChildFailure(entryChild, archiveFault.message);
-          entryChild.failedTick = undefined;
+          entryChild.failedAtMs = undefined;
           // A container fault makes the whole archive unreadable, not just this lazy level.
           if (ctx.isDatasetLive()) ctx.reportArchiveFault(archiveFault);
         }
@@ -187,7 +187,7 @@ function attachLazyChild(
       entryChild.loading = false;
       if (!entryChild.permanentlyFailed) {
         entryChild.failed = false;
-        entryChild.failedTick = undefined;
+        entryChild.failedAtMs = undefined;
       }
     };
   }

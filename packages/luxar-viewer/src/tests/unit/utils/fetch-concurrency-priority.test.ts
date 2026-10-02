@@ -235,20 +235,27 @@ describe('fetch gate adaptive lane size', () => {
     }
   });
 
-  it('does not widen a multiplexed origin once an http: URL has capped the gate', async () => {
-    // A plain http: URL means HTTP/1.1's six sockets; widening any origin past
-    // the cap would park admitted requests in the browser's own queue with
-    // their header timers already running.
-    const origin = 'https://h2.example';
-    noteOriginProtocol(origin, 'h2');
-    noteFetchUrl('http://localhost:8000/scene.luxar.zarr/zarr.json');
-    const calls = Array.from({ length: HTTP1_MAX_CONCURRENT_CHUNK_FETCHES + 4 }, () =>
-      holder('demand', origin)
+  it('keeps an http: origin at its socket cap without narrowing a multiplexed one', async () => {
+    // A plain http: URL means HTTP/1.1's six sockets for THAT origin; widening
+    // it past the cap would park admitted requests in the browser's own queue
+    // with their header timers already running. Other origins are unaffected.
+    const h2 = 'https://h2.example';
+    const lan = 'http://localhost:8000';
+    noteOriginProtocol(h2, 'h2');
+    noteFetchUrl(`${lan}/scene.luxar.zarr/zarr.json`);
+    const local = Array.from({ length: HTTP1_MAX_CONCURRENT_CHUNK_FETCHES + 4 }, () =>
+      holder('demand', lan)
+    );
+    const wide = Array.from({ length: MAX_CONCURRENT_CHUNK_FETCHES + 4 }, () =>
+      holder('demand', h2)
     );
     await flush();
-    expect(calls.filter((h) => h.started)).toHaveLength(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
-    for (const h of calls) h.release();
-    await Promise.all(calls.map((h) => h.done));
+    const localStarted = local.filter((h) => h.started).length;
+    const wideStarted = wide.filter((h) => h.started).length;
+    for (const h of [...local, ...wide]) h.release();
+    await Promise.all([...local, ...wide].map((h) => h.done));
+    expect(localStarted).toBe(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
+    expect(wideStarted).toBe(MAX_CONCURRENT_CHUNK_FETCHES + 4);
   });
 
   it("a waiter held by ITS origin's lane width does not hold back a multiplexed origin", async () => {
@@ -297,8 +304,11 @@ describe('fetch gate adaptive lane size', () => {
   });
 
   it('an aborted waiter leaves the queue at once and never runs', async () => {
-    noteFetchUrl('http://localhost:8000/scene.luxar.zarr/zarr.json');
-    const busy = Array.from({ length: HTTP1_MAX_CONCURRENT_CHUNK_FETCHES }, () => holder());
+    const lan = 'http://localhost:8000';
+    noteFetchUrl(`${lan}/scene.luxar.zarr/zarr.json`);
+    const busy = Array.from({ length: HTTP1_MAX_CONCURRENT_CHUNK_FETCHES }, () =>
+      holder('demand', lan)
+    );
     await flush();
     const controller = new AbortController();
     let deadRan = false;
@@ -308,12 +318,12 @@ describe('fetch gate adaptive lane size', () => {
       },
       'data',
       'speculative',
-      undefined,
+      lan,
       controller.signal
     );
     let deadError: unknown;
     dead.catch((error: unknown) => (deadError = error));
-    const live = holder('speculative');
+    const live = holder('speculative', lan);
     controller.abort();
     await flush();
     expect((deadError as { name?: string } | undefined)?.name).toBe('AbortError');

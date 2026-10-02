@@ -420,9 +420,11 @@ describe('DimensionAnimationManager', () => {
     it('bounce boundary: peeks the turnaround value WITHOUT flipping the live direction', () => {
       sceneDimsManager.setDimensionValue(3, 10);
       manager.play(3, { loopMode: 'bounce' });
-      expect(manager.peekNextValue(3)).toBe(10); // clamped at max
+      // Started ON the max: the next tick turns and steps away at once
+      // (#2944 review B — no second period on the endpoint).
+      expect(manager.peekNextValue(3)).toBe(9);
       expect(manager.getState(3)?.direction).toBe('forward'); // state unmutated
-      expect(manager.peekNextValue(3)).toBe(10); // repeatable
+      expect(manager.peekNextValue(3)).toBe(9); // repeatable
     });
 
     it("returns null for 'once' at the boundary (nothing to prefetch)", () => {
@@ -484,9 +486,13 @@ describe('DimensionAnimationManager', () => {
       expect(perFrameCallback?.()).toBe(false);
       mockTime += 200; // past it: one step
       expect(perFrameCallback?.()).toBe(true);
+      // pause() unregisters the callback (#2944 A1); a frame already in
+      // flight may still run it, and must report no step.
+      const inFlight = perFrameCallback!;
       manager.pause(3);
+      expect(perFrameCallback).toBeNull();
       mockTime += 200;
-      expect(perFrameCallback?.()).toBe(false);
+      expect(inFlight()).toBe(false);
     });
 
     it('pacing gate: does not advance while waitForUpdate is unresolved (data-bound playback)', () => {

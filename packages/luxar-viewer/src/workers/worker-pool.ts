@@ -38,7 +38,7 @@ import { selectLeastBusy, type TrackedWorkerHandle } from './worker-pool/selecti
 import { nextRoundRobin } from './worker-pool/selection/round-robin';
 import { DispatchTracker } from './worker-pool/selection/dispatch-tracker';
 import { computeStats, computeQueueDepth, type PoolStats } from './worker-pool/stats';
-import { markLoad } from '../profiling/load-timeline';
+import { markLoad, noteLoadResourceReleased } from '../profiling/load-timeline';
 import {
   areWorkerCodecsEnabled,
   setBloscDecodeBackend,
@@ -362,8 +362,8 @@ export class WorkerPool {
         this.pendingWorkers.clear();
         // Note: we deliberately keep `initPromise` (the rejected one) so
         // subsequent `getWorker()` / `runWithTimeout` calls fail FAST rather
-        // than re-running the 10s init guard for every nD load. A blocked
-        // worker chunk would otherwise stack 10s × N delays and blow past
+        // than re-running the 30s init guard for every nD load. A blocked
+        // worker chunk would otherwise stack 30s × N delays and blow past
         // the page's `waitForLuxarReady` timeout. To opt back in to a fresh
         // init attempt (e.g. after a transient network blip), call
         // `reinitialize()`.
@@ -518,7 +518,7 @@ export class WorkerPool {
    *
    * Routine "init failed once, fall back" cases should NOT call this —
    * letting the rejected promise stick keeps subsequent calls fast
-   * (instant reject) instead of stacking 10s init guards.
+   * (instant reject) instead of stacking 30s init guards.
    */
   reinitialize(): void {
     // Same "is the attempt actually over?" test as `handleWorkerFailure`:
@@ -1000,6 +1000,8 @@ export function disposeWorkerPool(): void {
       // Drop the codec route with the pool: blosc decodes run on the main
       // thread until a new pool is created.
       setBloscDecodeBackend(null);
+      // A new pool marks `poolReady` again; the next load must wait for it.
+      noteLoadResourceReleased('poolReady');
     }
   }
 }

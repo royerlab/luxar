@@ -641,9 +641,11 @@ describe('projectBoxDiagonalPx', () => {
       expect(pickChildWithHysteresis([0, 0.125, 0.25, 0.5], 0, metric)).toBe(2);
     });
 
-    it('saturates to +Infinity when the eye plane cuts a box corner but misses its ellipsoid', () => {
-      // The nearest corner is behind the eye, so no finite near depth exists —
-      // the same saturation the legacy corner rect applied.
+    it('near-clips, not saturates, when the eye plane cuts a box corner but misses its ellipsoid', () => {
+      // The nearest corner is behind the eye, so no finite near depth exists
+      // to size the ellipse at. The eye is OUTSIDE the box, so the metric is
+      // the near-clipped rect (#2944 review B) — here the near face fills the
+      // view: full coverage, not +Infinity.
       const box: BoundingBox = { min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } };
       const cam = new THREE.PerspectiveCamera(50, 1, 0.1, 1000);
       // Eye plane 5.6 from the centre: outside the inscribed sphere (radius 5)
@@ -652,7 +654,28 @@ describe('projectBoxDiagonalPx', () => {
       cam.lookAt(-0.424, -0.424, 6.2);
       cam.updateMatrixWorld(true);
       cam.updateProjectionMatrix();
-      expect(projectBoxAreaFraction(box, cam)).toBe(Number.POSITIVE_INFINITY);
+      expect(projectBoxAreaFraction(box, cam)).toBeCloseTo(1, 9);
+    });
+
+    it('clips a box beside the eye at the same physical near plane on WebGL and WebGPU', () => {
+      const box: BoundingBox = {
+        min: { x: 0.02, y: 0, z: -0.2 },
+        max: { x: 0.04, y: 0.02, z: 0.2 },
+      };
+      const cam = new THREE.PerspectiveCamera(90, 1, 0.1, 100);
+      cam.updateMatrixWorld(true);
+      cam.coordinateSystem = THREE.WebGLCoordinateSystem;
+      cam.updateProjectionMatrix();
+      const glArea = projectBoxAreaFraction(box, cam);
+      expect(glArea).toBeCloseTo(0.015, 9);
+      const glDiagonal = projectBoxDiagonalPx(box, cam, { width: 800, height: 800 });
+      cam.coordinateSystem = THREE.WebGPUCoordinateSystem;
+      cam.updateProjectionMatrix();
+      expect(projectBoxAreaFraction(box, cam)).toBeCloseTo(glArea, 9);
+      expect(projectBoxDiagonalPx(box, cam, { width: 800, height: 800 })).toBeCloseTo(
+        glDiagonal,
+        9
+      );
     });
 
     it('an orthographic camera sizes a thick box exactly like a flat one (w is constant)', () => {
@@ -684,6 +707,39 @@ describe('projectBoxDiagonalPx', () => {
       const cam = perspectiveLookingAtOrigin(0, 0, 10);
       const box: BoundingBox = { min: { x: 40, y: -1, z: -1 }, max: { x: 42, y: 1, z: 1 } };
       expect(projectBoxAreaFraction(box, cam)).toBe(0);
+    });
+
+    // #2944 review B: the eye plane cutting a box the eye is NOT inside (a long
+    // box running past the camera, its far end behind it) has a finite visible
+    // footprint — the part in front of the eye, clipped to the viewport — and
+    // must not force the finest level.
+    it('a box beside the camera that the eye plane cuts reads its clipped visible area', () => {
+      // fov 90, aspect 1: NDC x = x / depth. The box x ∈ [2, 3] runs from 4 in
+      // front of the eye to 1 behind it. In front it covers NDC x ∈ [0.5, 1]
+      // (its near end runs off the right edge) over the full height, so the
+      // clipped rect is 0.5 × 2 of the 2 × 2 viewport: 0.25.
+      const cam = new THREE.PerspectiveCamera(90, 1, 0.1, 1000);
+      cam.position.set(0, 0, 0);
+      cam.lookAt(0, 0, -1);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      const box: BoundingBox = { min: { x: 2, y: -0.5, z: -4 }, max: { x: 3, y: 0.5, z: 1 } };
+      expect(projectBoxAreaFraction(box, cam)).toBeCloseTo(0.25, 9);
+      expect(
+        pickChildWithHysteresis([0, 0.125, 0.2, 0.5], 3, projectBoxAreaFraction(box, cam))
+      ).toBe(2);
+    });
+
+    it('the diagonal metric of a box beside the camera stays finite', () => {
+      const cam = new THREE.PerspectiveCamera(90, 1, 0.1, 1000);
+      cam.position.set(0, 0, 0);
+      cam.lookAt(0, 0, -1);
+      cam.updateMatrixWorld(true);
+      cam.updateProjectionMatrix();
+      const box: BoundingBox = { min: { x: 2, y: -0.5, z: -4 }, max: { x: 3, y: 0.5, z: 1 } };
+      expect(Number.isFinite(projectBoxDiagonalPx(box, cam, { width: 800, height: 600 }))).toBe(
+        true
+      );
     });
 
     it('saturates to +Infinity when the camera is inside the box, looking in any direction', () => {
@@ -792,7 +848,7 @@ function makeRegistry(
 
 /**
  * A registry clock that advances one 60 Hz frame per read. The registry reads
- * it once per ``evaluatePerFrame`` (plus the stale-hold budget, when one runs),
+ * it once per ``evaluatePerFrame`` (plus load start/end stamps, when one runs),
  * so a loop of evaluations spans real-looking time for the ms-based settle
  * debounce without each test threading its own clock.
  */
@@ -1050,6 +1106,40 @@ describe('LODGroupRegistry — partition frustum selection', () => {
       expect(object.visible).toBe(true);
       expect(object.userData.partitionFrustumVisible).toBeUndefined();
     }
+  });
+
+  it('culls a partition revealed by its lod_group on the frame it appears (#2944 review B)', () => {
+    // Overview shape: the fine level of a lod_group is a partition wrapper.
+    // The partition pass used to run BEFORE the LOD pass and skip the wrapper
+    // while hidden, so the frame that revealed it drew every part unculled.
+    const reg = makeRegistry();
+    const coarse = makeChild(0);
+    const fine = makeChild(0.5);
+    const lod = makeEntry([coarse, fine], 0, '/g');
+    lod.groupObject.add(coarse.object, fine.object);
+    const part = new THREE.Group(); // a fresh part: visible until the gate runs
+    fine.object.add(part);
+    reg.register(lod);
+    reg.registerPartition({
+      path: '/g/fine',
+      groupObject: fine.object,
+      children: [
+        {
+          path: '/g/fine/part_0',
+          objects: [part],
+          positionBounds: { min: [2, 2, 2], max: [3, 3, 3] }, // outside the frustum
+        },
+      ],
+    });
+    reg.setSelectorMode('/g', { lockLevel: 0 });
+    reg.evaluatePerFrame(); // the coarse level shows; the wrapper stays hidden
+    expect(fine.object.visible).toBe(false);
+    expect(part.visible).toBe(true); // skipped while its wrapper is hidden
+
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+    reg.evaluatePerFrame(); // reveals the wrapper
+    expect(fine.object.visible).toBe(true);
+    expect(part.visible).toBe(false); // culled the same frame, not one late
   });
 
   it('hides only parts outside the frustum using mapped 2D display dimensions', () => {
@@ -3443,20 +3533,85 @@ describe('LODGroupRegistry — lazy children', () => {
     const ensureLoaded = vi.fn();
     const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
     children[1].failed = true; // a prior reload attempt failed
-    const reg = makeRegistry();
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, undefined, undefined, frameClock());
     reg.register(makeEntry(children, 0, '/g'));
     reg.setSelectorMode('/g', { lockLevel: 1 }); // desired = the failed level
 
     // Within the cooldown window the failed level is not retried.
-    reg.evaluatePerFrame(); // stamps failedTick
+    reg.evaluatePerFrame(); // stamps failedAtMs
     reg.evaluatePerFrame();
     expect(ensureLoaded).not.toHaveBeenCalled();
 
-    // Advance past FAILED_RETRY_FRAMES (120) of frames; the cooldown clears
-    // and the next selection retries the load exactly once.
+    // Advance past FAILED_RETRY_MS (2 s ≈ 120 frames at 60 Hz); the cooldown
+    // clears and the next selection retries the load exactly once.
     for (let i = 0; i < 121; i++) reg.evaluatePerFrame();
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
     expect(children[1].failed).not.toBe(true);
+  });
+
+  it('the failure cooldown is wall-clock time, not a frame count (#2944 A6)', () => {
+    const ensureLoaded = vi.fn();
+    const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
+    children[1].failed = true;
+    let t = 0;
+    const reg = makeRegistry([0, 1, 2], undefined, undefined, undefined, undefined, () => t);
+    reg.register(makeEntry(children, 0, '/g'));
+    reg.setSelectorMode('/g', { lockLevel: 1 });
+
+    reg.evaluatePerFrame(); // observes the failure: the cooldown starts
+    t = 1000;
+    reg.evaluatePerFrame();
+    expect(ensureLoaded).not.toHaveBeenCalled(); // still cooling
+    // ~2 s later, however few frames ran in between (a 30 Hz display, a
+    // throttled tab), the next frame retries.
+    t = 2100;
+    reg.evaluatePerFrame();
+    expect(ensureLoaded).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a parked loop idle between repeated failures and wakes with backoff', () => {
+    vi.useFakeTimers();
+    try {
+      const ensureLoaded = vi.fn();
+      const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];
+      children[1].failed = true;
+      const requestTick = vi.fn();
+      const reg = new LODGroupRegistry({
+        getCamera: () => {
+          const camera = new THREE.Camera();
+          camera.matrixWorldInverse.identity();
+          camera.projectionMatrix.identity();
+          return camera;
+        },
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        now: () => Date.now(),
+        requestTick,
+      });
+      reg.register(makeEntry(children, 0, '/g'));
+      reg.setSelectorMode('/g', { lockLevel: 1 });
+
+      reg.evaluatePerFrame();
+      vi.advanceTimersByTime(1999);
+      expect(requestTick).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(requestTick).toHaveBeenCalledTimes(1);
+      reg.evaluatePerFrame();
+      expect(ensureLoaded).toHaveBeenCalledTimes(1);
+      children[1].loading = false;
+      children[1].failed = true;
+      reg.evaluatePerFrame();
+      requestTick.mockClear();
+      vi.advanceTimersByTime(3999);
+      expect(requestTick).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(requestTick).toHaveBeenCalledTimes(1);
+      reg.evaluatePerFrame();
+      expect(ensureLoaded).toHaveBeenCalledTimes(2);
+      reg.clear();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('pauses automatic lazy loads during an archive fault and resumes on the next frame', () => {
@@ -3497,7 +3652,7 @@ describe('LODGroupRegistry — lazy children', () => {
 
     expect(ensureLoaded).not.toHaveBeenCalled();
     expect(children[1].failed).toBe(true);
-    expect(children[1].failedTick).toBeUndefined();
+    expect(children[1].failedAtMs).toBeUndefined();
   });
 
   it('clear() resets the monotonic tick', () => {
@@ -3933,13 +4088,13 @@ describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
     const child = makeLazyChild(0.5, ensureLoaded);
     child.nodePath = '/g/child_1';
     child.failed = true;
-    child.failedTick = 42;
+    child.failedAtMs = 42;
     reg.register(makeEntry([makeChild(0), child], 0, '/g'));
 
     expect(reg.retryLazyChildByNodePath('/g/child_1')).toBe(true);
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
     expect(child.failed).toBe(false);
-    expect(child.failedTick).toBeUndefined();
+    expect(child.failedAtMs).toBeUndefined();
     // kickDeferredLoad owns the loading flag (the thunk never sets it).
     expect(child.loading).toBe(true);
   });
@@ -3970,7 +4125,7 @@ describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
     const child = makeLazyChild(0.5, ensureLoaded);
     child.nodePath = '/g/child_1';
     child.failed = true;
-    child.failedTick = 42;
+    child.failedAtMs = 42;
     child.permanentlyFailed = true;
     child.failureReason = 'archive fault';
     reg.register(makeEntry([makeChild(0), child], 0, '/g'));
@@ -3979,7 +4134,7 @@ describe('LODGroupRegistry — retryLazyChildByNodePath', () => {
     expect(reg.retryLazyChildByNodePath('/g/child_1')).toBe(true);
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
     expect(child.failed).toBe(false);
-    expect(child.failedTick).toBeUndefined();
+    expect(child.failedAtMs).toBeUndefined();
     expect(child.permanentlyFailed).toBe(false);
     expect(child.failureReason).toBeUndefined();
     expect(reg.getFailedLazyChildPaths()).toEqual([]);
@@ -4798,6 +4953,45 @@ describe('LODGroupRegistry — playback aspiration', () => {
     expect(reg.get('/g')!.displayedChildIndex).toBe(2);
   });
 
+  // #2944 review B (probe flags). A probe marks the capped level so its next
+  // timed reload REPLACES the stale average. The mark must belong to a reload
+  // that actually started, must not outlive playback, and only a full
+  // (re)load is a reload timing — a ladder refinement step is not.
+  it('a probe whose reload is refused leaves no probe mark behind', () => {
+    const { reg, children, frame } = playbackHarness([30]);
+    children[1].loadEwmaMs = 500;
+    children[1].loadSamples = 2; // capped: the 1 Hz probe re-measures it
+    reg.get('/g')!.groupObject.visible = false; // hidden layer: no load may start
+    for (let f = 0; f < 90; f++) frame(); // 1.5 s: at least one probe
+    expect(children[1].lastPlaybackProbeMs).toBeDefined(); // a probe was attempted
+    expect(children[1].playbackProbePending).toBeUndefined();
+  });
+
+  it('stopping playback clears a pending probe admission', () => {
+    const { children, state, frame } = playbackHarness([30]);
+    children[1].loadEwmaMs = 500;
+    children[1].loadSamples = 2;
+    for (let f = 0; f < 90 && children[1].playbackProbeAdmissionPending !== true; f++) frame();
+    expect(children[1].playbackProbeAdmissionPending).toBe(true);
+    state.playing = false;
+    for (let f = 0; f < 30; f++) frame();
+    expect(children[1].playbackProbeAdmissionPending).toBeUndefined();
+    expect(children[1].playbackProbePending).toBeUndefined();
+  });
+
+  it('a ladder refinement step is not folded into the reload average', () => {
+    // Paused: the fresh fine level keeps refining its ladder (5 ms passes). Its
+    // full reload costs 150 ms; the refinement passes must not drag the
+    // average down and later admit a level whose reloads cannot keep up.
+    const { children, state, frame } = playbackHarness([5]);
+    state.playing = false;
+    children[1].loadEwmaMs = 150;
+    children[1].loadSamples = 5;
+    children[1].hasMoreLODs = () => true;
+    for (let f = 0; f < 60; f++) frame();
+    expect(children[1].loadEwmaMs).toBe(150);
+  });
+
   it('pausing while the held level reloads does not flash the coarse level', () => {
     // The reload was measured fast (so playback aspires to it) but this one
     // takes 400 ms: the stale hold outlives STALE_HOLD_MS under the playback
@@ -5581,6 +5775,33 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(drawn(children)).toEqual([1]);
     expect(liveOpacity(fine)).toBe(1);
     expect(reg.get('/g')!.displayedChildIndex).toBe(1);
+  });
+
+  // #2944 review B: the dissolve must run on the FRAME's clock reading
+  // (``frame.nowMs``), like every other time-driven rule of the registry. It
+  // re-read the clock, so work done earlier in the same frame shifted its start.
+  it('a dissolve is timed on the frame clock, not on a later clock read', () => {
+    const clock = { t: 1000 };
+    let lateReads = false; // later reads within a frame see time that has passed
+    let readsThisFrame = 0;
+    const { reg, zoom } = makeTimedReg(clock, {
+      now: () => clock.t + (lateReads && readsThisFrame++ > 0 ? 50 : 0),
+    });
+    const frame = (): void => {
+      readsThisFrame = 0;
+      reg.evaluatePerFrame();
+    };
+    const coarse = fadeChild(0);
+    const fine = fadeChild(0.9);
+    reg.register(makeEntry([coarse, fine], 0, '/g'));
+    frame();
+    zoom(4);
+    lateReads = true; // a slow frame: the dissolve starts on it
+    frame();
+    lateReads = false;
+    clock.t += FADE_MS / 2;
+    frame();
+    expect(liveOpacity(fine)).toBeCloseTo(0.5, 6); // half a dissolve since its frame
   });
 
   it('a level change dissolves over fadeMs, then draws the new level alone', () => {

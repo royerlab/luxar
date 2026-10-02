@@ -24,6 +24,7 @@ import { ControlClient } from './app/control/control-client';
 import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';
 import { extractAudioConfig } from '../config/zarr-bridge/audio-config';
 import { resolveKioskMode } from '../config/kiosk';
+import { replaceBrowserDataSourceUrl } from '../config/url-params';
 import { applyKioskMode } from './app/kiosk/apply-kiosk';
 import {
   extractControlPanelConfig,
@@ -74,6 +75,7 @@ import { runDisposePipeline } from './app/lifecycle/dispose-pipeline';
 import { shouldShowBrowser as shouldShowBrowserImpl } from './app/dataset/should-show-browser';
 import { showDatasetBrowser as showDatasetBrowserImpl } from './app/dataset/show-browser';
 import { loadDataset as loadDatasetImpl } from './app/dataset/load-dataset';
+import { datasetLoadErrorMessage } from './app/dataset/dataset-error-message';
 import { dataSourceDocumentTitle, setDocumentTitle } from './document-title';
 import { installDebugInterface } from './app/debug/debug-interface';
 import {
@@ -194,7 +196,7 @@ export class LuxarApp {
   /**
    * Teardown for the kiosk watchdog, if one is running.
    *
-   * Held so `switchDataset` cannot leave the previous scene's watchdog
+   * Held so neither `switchDataset` nor `dispose` can leave a watchdog
    * listening on a canvas whose context state it no longer describes.
    */
   private kioskTeardown: (() => void) | null = null;
@@ -228,16 +230,21 @@ export class LuxarApp {
    * even during long load operations.
    *
    * @param options - Init-time options. URL parameters are not consulted
-   *                  here — main.ts is responsible for reading them and
-   *                  passing the result.
+   *                  here — the standalone bootstrap (`core/bootstrap.ts`)
+   *                  reads them and passes the result.
    *
-   * @returns Promise that resolves when initialization is complete and
-   *          dataset loading has started (may still be loading in background).
-   *          Does NOT wait for all chunks to load.
+   * @returns Promise that resolves once the subsystems are wired and the first
+   *          dataset has loaded (its first slice committed) or failed, or the
+   *          dataset browser has opened. Progressive refinement keeps
+   *          streaming afterwards.
    *
    * @throws {Error} If WebGL is not supported by browser
-   * @throws {Error} If scene manager initialization fails
-   * @throws {Error} Dataset loading errors are caught and displayed to user
+   * @throws {Error} If a subsystem (scene manager, input, panels, …) fails to
+   *                 initialize — the partial app is disposed first.
+   *
+   * A failed first DATASET load does not throw: the app stays initialized,
+   * emits `dataset-error`, and shows a persistent error dialog whose
+   * dataset-browser hint works (see {@link loadInitialDataset}).
    *
    * @example
    * ```typescript
@@ -263,7 +270,9 @@ export class LuxarApp {
     // works even if the same instance was already initialized and
     // disposed.
     this.isDisposed = false;
-    this.options = options;
+    // A private copy: a dataset switch replaces `src`, and the embedder's own
+    // options object is not ours to write.
+    this.options = { ...options };
 
     applyModuleOverrides(options);
 
@@ -352,7 +361,7 @@ export class LuxarApp {
           );
         }
       } else {
-        await this.loadDataset(result.sceneSrc);
+        await this.loadInitialDataset(result.sceneSrc);
       }
 
       this.setupDisposeOnUnload();
@@ -402,7 +411,6 @@ export class LuxarApp {
     if (this.datasetBrowser || this.switchInFlight) return;
     this.datasetBrowser = showDatasetBrowserImpl({
       currentSrc: this.options.src,
-      updateBrowserUrl: this.options.updateBrowserUrl === true,
       inputHandler: this.inputHandler,
       onSrcChange: (src) => {
         this.options = { ...this.options, src };
@@ -420,6 +428,23 @@ export class LuxarApp {
         this.datasetBrowser = undefined;
       },
     });
+  }
+
+  /**
+   * The first dataset load. A DATASET failure (a `?src` typo, a 404, a refused
+   * format version) leaves the viewer running: {@link loadDataset} has already
+   * emitted `dataset-error`, the persistent dialog names the failure and
+   * points at the dataset browser, and that browser works because the app is
+   * alive. Only a subsystem failure — anything init() throws outside this call
+   * — still disposes the app.
+   */
+  private async loadInitialDataset(src: string): Promise<void> {
+    try {
+      await this.loadDataset(src);
+    } catch (error) {
+      log.error(Modules.APP, `Initial dataset load failed: ${getErrorMessage(error)}`, error);
+      notifier.error(datasetLoadErrorMessage(error), { persistent: true });
+    }
   }
 
   /**
@@ -1137,7 +1162,8 @@ export class LuxarApp {
    * Load a different dataset into the running viewer, reusing the full
    * teardown+reload path (the same one the built-in dataset browser uses).
    * Resolves when the new scene is loaded; emits `dataset-loaded` /
-   * `dataset-error`.
+   * `dataset-error`. With `updateBrowserUrl: true` the page's `?src` follows
+   * the switch, so a reload reopens the new scene.
    *
    * Rejects if a switch is already in progress (the reload does a full scene
    * teardown — overlapping calls would corrupt state).
@@ -1158,7 +1184,11 @@ export class LuxarApp {
     }
     // A flight aimed at the outgoing scene has nothing to land on.
     this.cameraFlight?.cancel();
-    this.options.src = src;
+    this.options = { ...this.options, src };
+    // An app that owns the page URL keeps `?src` on the scene it shows, so a
+    // reload after a kiosk / remote-control / browser switch reopens it. After
+    // the in-flight guard: a refused switch must not repoint the URL.
+    if (this.options.updateBrowserUrl === true) replaceBrowserDataSourceUrl(src);
     // Re-title the tab for the incoming scene BEFORE the load. Neither of the
     // two things that could be naming it survives a switch: `?title=` names
     // the dataset the server started with (and is dropped from the address bar
@@ -1498,6 +1528,10 @@ export class LuxarApp {
     this.datasetFaultUnsubscribe = undefined;
     this.datasetFaultLoader = undefined;
     this.currentDatasetSrc = undefined;
+    // The kiosk watchdog listens on the canvas and owns a reload timer; left
+    // running it would reload the page after the app is gone.
+    this.kioskTeardown?.();
+    this.kioskTeardown = null;
 
     runDisposePipeline({
       events: this.events,

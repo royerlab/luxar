@@ -112,8 +112,6 @@ export {
 export {
   loadSliceWithCache,
   recordLoadMetrics,
-  runWithActiveSignal,
-  runWithResidencyProbe,
   type SpatialFacadeCtx,
   type FacadeViewState,
   type FacadeMetrics,

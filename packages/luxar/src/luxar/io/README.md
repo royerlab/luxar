@@ -540,8 +540,11 @@ displaying fewer than two dimensions is skipped too —
 `lod-group-registry.ts::evaluatePerFrame` bails there before it evaluates any
 group.
 Dynamic near/far clipping is deliberately NOT modelled — the near-plane hazard
-that matters is the homogeneous-`w` straddle of the box's corners, which never
-reads `camera.near`. Neither is the viewer's projected-footprint pick for GSplat
+that matters is the homogeneous-`w` straddle of the box's corners. Only a box
+the eye plane cuts with the camera OUTSIDE it reads the projection's near plane
+(the metric is the rect of its part in front of that plane, as in the viewer),
+and there a different dynamic near only matters when the clipped face lands
+inside the viewport. Neither is the viewer's projected-footprint pick for GSplat
 ladders with complete footprint stamps; the screen reports occupancy only.
 
 The `screen-area` metric is the viewer's own, ported line for line from

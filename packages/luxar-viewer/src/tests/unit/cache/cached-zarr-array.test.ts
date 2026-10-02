@@ -596,7 +596,8 @@ describe('cached-zarr-array perf counters', () => {
     expect(perfCounters.get('decode.count')).toBe(1);
     expect(perfCounters.get('decode.count.foreground')).toBe(1);
     expect(perfCounters.get('decode.bytes')).toBe(6 * 4);
-    expect(perfCounters.get('l0.cloneBytes')).toBe(6 * 4);
+    // The decoded view spans its own buffer, so L0 stores it as is (no clone).
+    expect(perfCounters.get('l0.cloneBytes')).toBe(0);
     expect(perfCounters.get('decode.duplicates')).toBe(0);
   });
 
@@ -632,6 +633,21 @@ describe('cached-zarr-array perf counters', () => {
     await wrapped.getChunk([0]);
     expect(perfCounters.get('decode.duplicates')).toBe(1);
     expect(perfCounters.get('decode.count')).toBe(3);
+  });
+
+  it('starts a fresh duplicate window on a perf-counter reset', async () => {
+    // resetPerfCounters() opens a new measurement window; a decode from the
+    // previous window must not make the first decode of this one a
+    // "duplicate" (the gate's decode.duplicates would charge the candidate
+    // for work done before the window opened).
+    const wrapped = wrapWithCache(createMockZarrArray(), cache, '/p/positions');
+    await wrapped.getChunk([0]);
+    cache.clear();
+    perfCounters.reset();
+    nowMs += 1;
+    await wrapped.getChunk([0]);
+    expect(perfCounters.get('decode.count')).toBe(1);
+    expect(perfCounters.get('decode.duplicates')).toBe(0);
   });
 
   it('does not treat the same path in a different L0 cache (scene) as a duplicate', async () => {

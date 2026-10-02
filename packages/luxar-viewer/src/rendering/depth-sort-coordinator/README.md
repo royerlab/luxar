@@ -432,13 +432,18 @@ animationController.addPerFrameCallback('depth-sort-scheduler', () => evaluateDe
 
 ### Commit-Time First Sort
 
-Eligible instanced nodes publish their first ordering synchronously inside the
+Eligible nodes publish their first ordering synchronously inside the
 commit so the next frame does not wait for the SortWorker round trip.
 `depthSort.syncSortMaxElements` is both the per-node ceiling and the shared
 element budget between `evaluateDepthSortPerFrame()` calls; once spent, later
 commits keep the repaired prior ordering and use the normal async pipeline.
-Indexed Mesh nodes skip this path because they apply orderings through
-`geometry.index`, not `aSortedIndex`.
+Instanced nodes write `aSortedIndex` live; indexed Mesh nodes sort their face
+centroids and write the permuted triples into `geometry.index`
+(`writeSortedTriangleOrdering`) — a mesh commit rewrites the index in canonical
+order on every slice move, so this is what keeps nD playback from drawing one
+storage-order frame per timepoint. A resolved worker ordering whose length is
+not the committed count (the worker clamps an under-delivering registration) is
+dropped, and a held append draw is released rather than left waiting.
 
 ### Disposal
 

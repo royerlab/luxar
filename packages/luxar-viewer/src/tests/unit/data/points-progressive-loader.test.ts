@@ -2447,3 +2447,25 @@ describe('PointsProgressiveLoader — no pin after the shadow pass is torn down'
     expect(pins).toBe(0);
   });
 });
+
+describe('PointsProgressiveLoader — per-pass logging', () => {
+  it('a streaming pass logs its ladder summary at verbose, never at info', async () => {
+    // A pass runs on every view tick; an info line per pass floods the console
+    // the GSplats sibling keeps quiet (it uses log.verbose for the same line).
+    const info = vi.spyOn(log, 'info');
+    const verbose = vi.spyOn(log, 'verbose');
+    const lods = [makeSubLoader(makeLodData(10)), makeSubLoader(makeLodData(5))];
+    const l = new PointsProgressiveLoader(
+      lods as unknown as PointsSpatialIndexLoader[],
+      2,
+      '/points-log'
+    );
+    await l.updateView(baseViewState);
+    expect(info).not.toHaveBeenCalled();
+    expect(
+      verbose.mock.calls.some((call) => String(call.at(-1)).includes('Progressive Points'))
+    ).toBe(true);
+    info.mockRestore();
+    verbose.mockRestore();
+  });
+});

@@ -372,9 +372,14 @@ export class NodeFactory {
    * and re-create them via {@link registerExistingSceneNodes}, which
    * produces fresh pick materials against the new context.
    *
-   * Mirror of `MaterialManager.rebuildAfterContextRestore` — both are
-   * called from `SceneManager.contextRestoredHandler` in the order
-   * post-processing → materials → nodes.
+   * The last step of the restore sequence in
+   * `scene/scene-manager/render-pipeline/webgl-context-recovery.ts`
+   * (post-processing → materials → nodes): that module dispatches
+   * `webgl-context-restored`, whose subscriber (`core/app/init/pipeline.ts`,
+   * or `LuxarLayer` for a host renderer) calls this. The materials step,
+   * `MaterialManager.rebuildAfterContextRestore`, is a deliberate no-op —
+   * materials are per node, so the registrations rebuilt here are the
+   * per-context state that actually needs work.
    *
    * Also re-uploads geometry GPU buffers for every POOLED geometry type. A
    * context loss zeroes the GPU-side storage — the element textures +

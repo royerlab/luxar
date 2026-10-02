@@ -31,6 +31,6 @@ weight is the visual one shared with the screen-space primitive — per-element
 alpha, node opacity, `max(gain, 1)` (`../_shared/visibility-glsl.ts`).
 Output contract:
 `vec4(nodeId, elementId-low16, brightness, elementId-high16)`,
-`gl_FragDepth = 1 − brightness`. Footprint
+`gl_FragDepth = 1 / (1 + brightness)`. Footprint
 agreement is pinned in `tsl-shader-parity.spec.ts` against the fat visual
 footprint (1-px quantisation ribbon).

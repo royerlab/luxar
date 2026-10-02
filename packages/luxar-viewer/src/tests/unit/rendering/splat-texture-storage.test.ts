@@ -1005,6 +1005,26 @@ describe('gsplat append commit — held draw until the grown ordering lands', ()
     expect(geom.instanceCount).toBe(6);
   });
 
+  it('releasing a held geometry to the free list does no repair and no upload', () => {
+    // Every pool GROW releases the node's old geometry. Repairing its ordering
+    // over the held population there is O(target) work plus a full-range
+    // ordering upload for a geometry nobody draws; the next commit that writes
+    // it resolves the hold (a new tenant's full write discards it, a vouched
+    // recommit repairs from the drawn prefix — the test below).
+    const geom = pool.acquireGSplatsGeometry('node', 16);
+    sortedPrefix(geom);
+    pool.updateGSplatsGeometry(geom, packed(6), 6, 3.0, { fromInstance: 3 });
+    const attr = getActiveSortedIndexAttribute(geom)!;
+    attr.clearUpdateRanges();
+    const before = Array.from(attr.array as Uint32Array);
+
+    pool.releaseGSplatsGeometry('node');
+
+    expect(attr.updateRanges).toEqual([]);
+    expect(Array.from(attr.array as Uint32Array)).toEqual(before);
+    expect(geom.instanceCount).toBe(3);
+  });
+
   it('a vouched recommit while held repairs from the DRAWN prefix, never the unsorted tail', () => {
     // `preserveOrdering` vouches for the buffer over the committed count, but
     // a held draw's buffer is only a permutation over what it DRAWS.

@@ -330,7 +330,7 @@ export const GSPLAT_PICK_FRAGMENT_SHADER = /* glsl */ `
         //     gl_FragCoord.z is the true depth) — FRONT-MOST wins.
         //   - commutative modes (additive/max/luminous):
         //     brightness-as-depth — BRIGHTEST wins.
-        gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 - brightness;
+        gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 / (1.0 + salience);
     }
 `;
 

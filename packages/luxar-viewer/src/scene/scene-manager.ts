@@ -63,6 +63,7 @@ import {
   clearLoadedSceneContent,
   disposeSceneGraphResources,
 } from './scene-manager/render-pipeline/scene-disposal';
+import { detachSceneGraphIndex } from '../utils/scene-graph-index';
 import {
   applyZarrViewerConfig as applyZarrViewerConfigHelper,
   createDefaultPerspectiveCamera,
@@ -832,9 +833,15 @@ export class SceneManager extends THREE.EventDispatcher<{
         this.updateMaterialsForCurrentCamera();
       }
 
+      const embedderOnSceneMetadata = loaderConfig?.onSceneMetadata;
       const root = await loadScene(src, {
         ...loaderConfig,
-        onSceneMetadata: (metaRoot) => this.frameBeforeNodesLoad(metaRoot, options),
+        // Frame first, then hand the root to an embedder's own hook, which
+        // then sees the pose the scene opens on (as load-time decisions do).
+        onSceneMetadata: (metaRoot) => {
+          this.frameBeforeNodesLoad(metaRoot, options);
+          embedderOnSceneMetadata?.(metaRoot);
+        },
       });
       notifier.hideLoading();
       this.scene.add(root);
@@ -1025,6 +1032,9 @@ export class SceneManager extends THREE.EventDispatcher<{
   private clearSceneContent(): void {
     clearBlendModeProgramWarmup();
     this.invalidateBoundsCache();
+    // The outgoing scene root carries the loader's path index (every member
+    // node holds its add/remove listeners): stop maintaining it.
+    for (const child of this.scene.children) detachSceneGraphIndex(child);
     const removed = clearLoadedSceneContent(this.scene);
     log.info(Modules.SCENE_MANAGER, `Cleared ${removed} objects from scene`);
   }
@@ -1283,6 +1293,11 @@ export class SceneManager extends THREE.EventDispatcher<{
    * This method is called by the AdaptiveDPRManager when FPS drops below
    * acceptable thresholds, and by the manual DPR control when adaptive
    * mode is disabled.
+   *
+   * Unlike {@link resizeToCanvas} this does NOT dispatch `change`, although
+   * the resize clears the canvas: the idle restore resizes right after the
+   * loop stops and draws its own frame, and a `change` would wake the loop
+   * again. A caller outside a tick (a UI control) requests the repaint.
    *
    * @param dpr - The new device pixel ratio to use
    */

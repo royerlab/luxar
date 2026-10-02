@@ -11,7 +11,13 @@
  *
  * Milestones are recorded ONCE per load: `markLoad('loadStart')` resets the
  * timeline, and a repeated milestone name within the same load is ignored so
- * a retry path cannot overwrite the first observation. Per-geometry first
+ * a retry path cannot overwrite the first observation. The two PROCESS
+ * milestones (`poolReady`, `wasmReady`) describe resources that outlive a
+ * dataset switch and are marked once per process, so a later `loadStart`
+ * carries them over at the load's own start time (measure 0, detail
+ * `{ carried: true }`) until their owner reports them released
+ * ({@link noteLoadResourceReleased}); a real mark replaces a carried one.
+ * Per-geometry first
  * commits use `markFirstCommit(kind)`; refinement passes are counted rather
  * than marked (a 4-D scene with 16 nodes produces hundreds of passes).
  *
@@ -92,6 +98,19 @@ let milestones: Partial<Record<LoadMilestone, number>> = {};
 let firstCommit: Partial<Record<LoadGeometryKind, number>> = {};
 let refinement: RefinementCounters = freshCounters();
 
+/** Milestones of process-lifetime resources (see the module docstring). */
+/** Process-wide load milestone. Do not un-export: TypeDoc needs this name. */
+export type ProcessMilestone = 'poolReady' | 'wasmReady';
+const PROCESS_MILESTONES: readonly ProcessMilestone[] = ['poolReady', 'wasmReady'];
+/** Process milestones reached and not since released. */
+let processReady = new Set<ProcessMilestone>();
+/** Process milestones this load inherited at `loadStart` rather than observed. */
+let carried = new Set<LoadMilestone>();
+
+function isProcessMilestone(name: LoadMilestone): name is ProcessMilestone {
+  return (PROCESS_MILESTONES as readonly LoadMilestone[]).includes(name);
+}
+
 function freshCounters(): RefinementCounters {
   return { passes: 0, rungs: 0, rungsFromCache: 0, complete: false, densityDeferred: 0 };
 }
@@ -135,13 +154,33 @@ function push(name: string, t: number, detail?: Record<string, unknown>): void {
  */
 export function markLoad(name: LoadMilestone, detail?: Record<string, unknown>): void {
   if (name === 'loadStart') {
-    resetLoadTimeline();
-  } else if (milestones[name] !== undefined) {
+    clearCurrentLoad();
+  } else if (milestones[name] !== undefined && !carried.has(name)) {
     return;
   }
+  carried.delete(name);
+  if (isProcessMilestone(name)) processReady.add(name);
   const t = now();
   milestones[name] = t;
   push(name, t, detail);
+  if (name === 'loadStart') carryProcessMilestones(t);
+}
+
+/** Re-state the still-ready process milestones at a new load's start time. */
+function carryProcessMilestones(t: number): void {
+  for (const name of processReady) {
+    milestones[name] = t;
+    carried.add(name);
+    push(name, t, { carried: true });
+  }
+}
+
+/**
+ * A process-lifetime resource was torn down (the worker pool disposed): the
+ * next load must observe its milestone again instead of inheriting it.
+ */
+export function noteLoadResourceReleased(name: ProcessMilestone): void {
+  processReady.delete(name);
 }
 
 /**
@@ -186,12 +225,19 @@ export function noteRefinementComplete(): void {
   markLoad('refinementComplete', { passes: refinement.passes, rungs: refinement.rungs });
 }
 
-/** Forget everything recorded so far (called by `markLoad('loadStart')`). */
-export function resetLoadTimeline(): void {
+/** Drop the current load's record (`markLoad('loadStart')`); process state stays. */
+function clearCurrentLoad(): void {
   marks = [];
   milestones = {};
   firstCommit = {};
   refinement = freshCounters();
+  carried = new Set();
+}
+
+/** Forget everything recorded so far, process milestones included (tests). */
+export function resetLoadTimeline(): void {
+  clearCurrentLoad();
+  processReady = new Set();
 }
 
 function since(start: number | undefined, end: number | undefined): number | null {

@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+import torch
 
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.lift import (
@@ -12,7 +13,113 @@ from luxar.gsplats.lift import (
     lift_points_to_gsplats,
     render_light,
 )
+from luxar.gsplats.lod._kernels import bin_squared_norm_torch
+from luxar.gsplats.lod.substitutive import make_substitutive_lod
 from luxar.gsplats.utils.trils import pack_tril, unpack_tril
+
+
+def _relative_mixture_l2(reference: GSplatData, coarse: GSplatData) -> float:
+    """Exact relative L² of two small Gaussian mixtures."""
+
+    def tensors(data: GSplatData):
+        centers = torch.from_numpy(np.array(data.centers, dtype=np.float64))
+        cholesky = torch.from_numpy(
+            unpack_tril(np.array(data.cholesky_factors, dtype=np.float64), data.ndim)
+        )
+        amplitudes = torch.from_numpy(np.array(data.amplitudes, dtype=np.float64))
+        return centers, cholesky, amplitudes
+
+    ref_centers, ref_cholesky, ref_amplitudes = tensors(reference)
+    coarse_centers, coarse_cholesky, coarse_amplitudes = tensors(coarse)
+    difference = bin_squared_norm_torch(
+        torch.cat((ref_centers, coarse_centers)),
+        torch.cat((ref_cholesky, coarse_cholesky)),
+        torch.cat((ref_amplitudes, -coarse_amplitudes)),
+    )
+    reference_energy = bin_squared_norm_torch(ref_centers, ref_cholesky, ref_amplitudes)
+    return float(torch.sqrt(difference / reference_energy))
+
+
+def test_l2_refinement_improves_lifted_mixture() -> None:
+    rng = np.random.default_rng(0)
+    lifted = lift_points_to_gsplats(
+        rng.normal(size=(300, 3)).astype(np.float32),
+        np.full(300, 0.2, dtype=np.float32),
+    )
+    options = dict(levels=1, device="cpu", seed=0, amplitude="mass")
+    plain = make_substitutive_lod(lifted, refine="none", **options)
+    refined = make_substitutive_lod(lifted, refine="l2", refine_iters=50, **options)
+    plain_error = _relative_mixture_l2(lifted, plain.at_substitutive(1).flattened())
+    refined_error = _relative_mixture_l2(lifted, refined.at_substitutive(1).flattened())
+    assert refined_error < plain_error
+
+    wrapped_plain = coarse_substitutive_levels(
+        lifted, levels=1, device="cpu", seed=0, quality_stamps=False
+    )[0]
+    wrapped_refined = coarse_substitutive_levels(
+        lifted,
+        levels=1,
+        device="cpu",
+        seed=0,
+        refine="l2",
+        refine_iters=50,
+        quality_stamps=False,
+    )[0]
+    assert _relative_mixture_l2(lifted, wrapped_refined) < _relative_mixture_l2(
+        lifted, wrapped_plain
+    )
+
+
+def test_lifted_mass_switch_is_inert_and_refinement_conserves_light():
+    rng = np.random.default_rng(2)
+    lifted = lift_points_to_gsplats(
+        rng.normal(size=(32, 3)).astype(np.float32),
+        np.full(32, 4.0, dtype=np.float32),
+    )
+    for refine, refine_iters in (("none", None), ("l2", 3)):
+        reduced = [
+            make_substitutive_lod(
+                lifted,
+                levels=1,
+                device="cpu",
+                amplitude="mass",
+                conserve_mass=flag,
+                refine=refine,
+                refine_iters=refine_iters,
+            )
+            .at_substitutive(1)
+            .flattened()
+            for flag in (False, True)
+        ]
+        for field in ("centers", "amplitudes", "cholesky_factors"):
+            np.testing.assert_array_equal(
+                getattr(reduced[0], field), getattr(reduced[1], field)
+            )
+
+    final = coarse_substitutive_levels(
+        lifted,
+        levels=1,
+        device="cpu",
+        refine="l2",
+        refine_iters=3,
+        quality_stamps=False,
+    )[0]
+    assert render_light(final) == pytest.approx(render_light(lifted), rel=1e-5)
+
+    empty = lift_points_to_gsplats(
+        np.zeros((4, 3), dtype=np.float32), np.zeros(4, dtype=np.float32)
+    )
+    assert (
+        coarse_substitutive_levels(
+            empty,
+            levels=1,
+            device="cpu",
+            refine="l2",
+            refine_iters=1,
+            quality_stamps=False,
+        )[0].n_splats
+        == 0
+    )
 
 
 def test_ray_integral_factor_matches_ts_reference():
@@ -102,6 +209,36 @@ def test_colors_none_leaves_unset():
     data = lift_points_to_gsplats(np.zeros((4, 3), np.float32), 1.0, None)
     colors = data.flattened().colors
     assert colors is None or np.asarray(colors).shape[0] == 4
+
+
+@pytest.mark.parametrize(
+    ("control", "field"),
+    [
+        ({"lloyd_iterations": 0}, "centers"),
+        ({"candidate_bins_k": 1}, "centers"),
+        ({"color_weight": 10.0}, "centers"),
+        ({"coverage_inflation": 1.0}, "cholesky_factors"),
+    ],
+)
+def test_gaussian_reduction_controls_change_coarse_output(control, field):
+    rng = np.random.default_rng(13)
+    positions = rng.normal(size=(120, 3)).astype(np.float32)
+    colors = rng.uniform(size=(120, 3)).astype(np.float32)
+    lifted = lift_points_to_gsplats(positions, 0.1, colors)
+    options = dict(
+        compression_factor=4,
+        levels=1,
+        method="kmeans_lloyd",
+        seed=3,
+        device="cpu",
+        quality_stamps=False,
+    )
+    baseline = coarse_substitutive_levels(lifted, **options)[0]
+    tuned = coarse_substitutive_levels(lifted, **options, **control)[0]
+    before = np.asarray(getattr(baseline, field))
+    after = np.asarray(getattr(tuned, field))
+    assert before.shape == after.shape
+    assert not np.allclose(before, after)
 
 
 def test_radius_scale_applied():

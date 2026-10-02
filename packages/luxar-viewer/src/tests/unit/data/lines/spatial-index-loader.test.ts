@@ -1306,9 +1306,68 @@ describe('LinesSpatialIndexLoader', () => {
         // The predicted view alone: segment chunk 0 + chunk 1 of four vertex arrays.
         expect(warmCalls()).toBe(5);
       });
+
+      it('forwards the predicted-view signal to the warm-up it falls back to', async () => {
+        const current: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+        const predicted = { ...current, slicePosition: [0, 0, 1] };
+        mockExecute.mockRejectedValueOnce(new Error('malformed current view'));
+        mockExecute.mockResolvedValue([{ start: 10, end: 20 }]);
+        const spy = vi.spyOn(bodyLoader, 'prefetchChunks');
+        const signal = new AbortController().signal;
+
+        await bodyLoader.prefetchChunkBoundary(current, predicted, signal);
+
+        expect(spy).toHaveBeenCalledWith(predicted, signal);
+      });
     });
 
     describe('resource cleanup', () => {
+      it('an initialize still in flight at dispose does not repopulate the loader', async () => {
+        // dispose() resets the one-shot initializer and clears the arrays, but an
+        // initialize() already awaiting its metadata opens used to finish afterwards
+        // and write chunkIndex / arrays back into the disposed loader.
+        const view: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+        const open = zarr.open as any;
+        const original = open.getMockImplementation() as (...args: unknown[]) => unknown;
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        open.mockImplementation((...args: unknown[]) => gate.then(() => original(...args)));
+        const load = bodyLoader.loadLines(view);
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+
+        bodyLoader.dispose();
+        release();
+
+        await expect(load).rejects.toMatchObject({ name: 'AbortError' });
+        expect((bodyLoader as any).chunkIndex).toBeNull();
+        expect((bodyLoader as any).arrays).toEqual({});
+      });
+
+      it('a disposed loader refuses to re-initialize', async () => {
+        bodyLoader.dispose();
+        (zarr.open as unknown as ReturnType<typeof vi.fn>).mockClear();
+        await expect(
+          bodyLoader.loadLines({
+            displayDims: [0, 1, 2],
+            slicePosition: [0, 0, 0],
+            tolerance: [0, 0, 0],
+          })
+        ).rejects.toMatchObject({
+          name: 'AbortError',
+        });
+        expect(zarr.open).not.toHaveBeenCalled();
+      });
+
       it('dispose clears the active-query map (mid-flight leak guard)', async () => {
         // Regression (×3 symmetric): points dispose() historically omitted
         // activeQueries.clear(), so a dispose mid-flight leaked the tracked

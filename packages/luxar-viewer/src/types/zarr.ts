@@ -287,6 +287,9 @@ export interface ZarrViewerConfig {
   adaptive_dpr_enabled?: boolean;
   allow_high_dpr?: boolean;
 
+  // Projected-density guard
+  density_guard_enabled?: boolean;
+
   // UI panel visibility
   ui?: {
     show_help?: boolean;

@@ -1094,8 +1094,11 @@ export class AdaptiveDPRManager {
       // "ignore the allow-high-DPR setting".
       this.syncNativeDPR();
       const ceiling = this.ceiling();
+      // Only when it moves: a resize clears the canvas, and this runs off-tick
+      // (a UI toggle, a capture starting), where nothing redraws by itself.
+      const moved = Math.abs(ceiling - this.currentDPR) >= 0.01;
       this.currentDPR = ceiling;
-      this.applyDPR();
+      if (moved) this.applyDPR();
       this.isReducedResolution = false;
       this.hysteresis.clear();
       this.probeController.void_();
@@ -1245,6 +1248,10 @@ export class AdaptiveDPRManager {
     this.applyDPR();
 
     log.info(Modules.ADAPTIVE_DPR, `Manual DPR set to ${clampedDPR.toFixed(2)}`);
+
+    if (this.onDPRChange) {
+      this.onDPRChange(this.currentDPR, this.isReducedResolution);
+    }
   }
 
   /**

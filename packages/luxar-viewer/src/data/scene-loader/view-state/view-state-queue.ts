@@ -26,11 +26,32 @@
 import { log, Modules } from '../../../utils/log';
 import { getErrorMessage } from '../../../utils/format-error';
 import type { ViewState } from '../../data-loader-types';
-import { dispatchPredictivePrefetch, type PrefetchableLoader } from './predicted-view-state';
+import {
+  dispatchPredictivePrefetch,
+  predictNextViewState,
+  type PrefetchableLoader,
+} from './predicted-view-state';
+
+/**
+ * How many predicted-view prefetches stay live per node: the newest plus its
+ * predecessor, whose in-flight fetches the newest may still be about to join.
+ */
+const LIVE_PREDICTIONS_PER_NODE = 2;
 
 export class ViewStateQueue {
   private _pendingViewState: Partial<ViewState> | null = null;
   private _prevPerNodeViewState: Map<string, ViewState> = new Map();
+  /**
+   * The live predicted-view prefetches per node, oldest first, at most
+   * `LIVE_PREDICTIONS_PER_NODE`. A new prediction aborts the oldest — the
+   * user has moved past it — but NOT its immediate predecessor: consecutive
+   * predictions overlap (one chunk spans several slices), and aborting the
+   * predecessor before the new one's reads join its in-flight fetches would
+   * cancel those fetches outright and make the new prediction refetch them.
+   * A dataset switch / retry baseline ({@link clearPrev}) and
+   * {@link forgetPath} abort them all.
+   */
+  private _predictionControllers: Map<string, AbortController[]> = new Map();
 
   /** Queue a view-state for a future drain. Overwrites any previous pending state. */
   setPending(state: Partial<ViewState>): void {
@@ -105,14 +126,36 @@ export class ViewStateQueue {
     // scrub-direction delta is captured then.
     if (prev === null) return;
 
+    const predicted = predictNextViewState(prev, snapshot);
+    if (predicted.slicePosition.every((value, i) => value === snapshot.slicePosition[i])) return;
+
+    const controller = this.startPrediction(path);
     queueMicrotask(() => {
-      dispatchPredictivePrefetch(prev, snapshot, [loader as PrefetchableLoader]);
+      if (controller.signal.aborted) return;
+      dispatchPredictivePrefetch(prev, snapshot, [loader as PrefetchableLoader], controller.signal);
     });
+  }
+
+  /** Register a new prediction for `path`, aborting the ones it supersedes. */
+  private startPrediction(path: string): AbortController {
+    const live = this._predictionControllers.get(path) ?? [];
+    while (live.length >= LIVE_PREDICTIONS_PER_NODE) live.shift()?.abort();
+    const controller = new AbortController();
+    live.push(controller);
+    this._predictionControllers.set(path, live);
+    return controller;
+  }
+
+  /** Abort every live prediction for `path`. */
+  private abortPredictions(path: string): void {
+    for (const controller of this._predictionControllers.get(path) ?? []) controller.abort();
+    this._predictionControllers.delete(path);
   }
 
   /** Drop the saved per-node previous view-state for a single path. */
   forgetPath(path: string): void {
     this._prevPerNodeViewState.delete(path);
+    this.abortPredictions(path);
   }
 
   /**
@@ -122,5 +165,6 @@ export class ViewStateQueue {
    */
   clearPrev(): void {
     this._prevPerNodeViewState.clear();
+    for (const path of [...this._predictionControllers.keys()]) this.abortPredictions(path);
   }
 }

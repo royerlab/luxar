@@ -89,3 +89,34 @@ describe('register-only leaves of a dead dataset register nothing', () => {
     expect(loaders[0].dispose).toHaveBeenCalledOnce();
   });
 });
+
+// The EAGER path registers in its `finally`, once the initial load settled. A
+// dataset switched away during that load must not get its loader registered
+// either: the same guard as the register-only sibling above.
+describe('eager leaves of a dataset disposed mid-load register nothing', () => {
+  it.each(CASES)('%s', async (type, load) => {
+    const node: SceneNode = {
+      path: '/leaf',
+      type,
+      attrs: { type, normal_dims: [0, 1, 2] } as unknown as SceneNode['attrs'],
+      hasSpatialIndex: false,
+      children: [],
+    };
+    const ctx = makeTestNodeBuildCtx({
+      isDatasetLive: () => false,
+      nodeFactory: {
+        createEmptyPointsNode: vi.fn(() => new THREE.Mesh()),
+        createEmptyLinesNode: vi.fn(() => new THREE.Mesh()),
+        createEmptyGSplatsNode: vi.fn(() => new THREE.Mesh()),
+        createEmptyMeshNode: vi.fn(() => new THREE.Mesh()),
+      } as unknown as NodeBuildCtx['nodeFactory'],
+    });
+    loaders.length = 0;
+
+    await load(node, new THREE.Group(), {} as never, ctx).catch(() => undefined);
+
+    expect(registeredPaths(ctx)).toEqual([]);
+    expect(loaders).toHaveLength(1);
+    expect(loaders[0].dispose).toHaveBeenCalledOnce();
+  });
+});

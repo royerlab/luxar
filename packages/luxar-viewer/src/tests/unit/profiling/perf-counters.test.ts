@@ -48,7 +48,7 @@ describe('PerfCounters', () => {
     expect(c.records('other')).toEqual([]);
   });
 
-  it('reset zeroes values and drops records but keeps slots valid', () => {
+  it('reset zeroes counters and drops records but keeps slots valid', () => {
     const c = new PerfCounters();
     const s = c.slot('s');
     c.add(s, 2);
@@ -58,6 +58,24 @@ describe('PerfCounters', () => {
     expect(c.records('r')).toEqual([]);
     c.add(s);
     expect(c.get('s')).toBe(1);
+  });
+
+  it('reset keeps gauges: a gauge describes current state, not a window', () => {
+    // Owners republish a gauge only when it CHANGES (the slice cache's
+    // pinned-bytes gauge does), so zeroing it would make a gated reading
+    // report 0 until the next change.
+    const c = new PerfCounters();
+    const pinned = c.slot('scache.pinnedBytes');
+    const hw = c.slot('fetch.highWater');
+    c.gauge(pinned, 4096);
+    c.max(hw, 7);
+    c.inc('render.count', 3);
+    c.reset();
+    expect(c.get('scache.pinnedBytes')).toBe(4096);
+    expect(c.get('fetch.highWater')).toBe(0);
+    expect(c.get('render.count')).toBe(0);
+    c.gauge(pinned, 1024);
+    expect(c.get('scache.pinnedBytes')).toBe(1024);
   });
 
   it('is exposed through getPerf().counters, even before the runtime is wired', () => {

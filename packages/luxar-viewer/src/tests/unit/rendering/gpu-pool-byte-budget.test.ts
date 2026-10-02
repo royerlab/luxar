@@ -77,6 +77,28 @@ describe('estimateGeometryBytes', () => {
   });
 });
 
+describe('committed mesh byte accounting', () => {
+  it('follows the WebGPU backend widening a mesh index to Uint32 in place', () => {
+    // The WebGPU backend assigns a Uint32Array straight into
+    // `index.array` at first upload (`applyMeshIndices` documents it) — after
+    // the commit registered the mesh, with no caller left to invalidate a
+    // cached byte size. A static mesh would otherwise be charged at the
+    // narrow width for the rest of the session.
+    const pool = new GPUBufferPool();
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(30, 3)); // 120 B
+    g.setIndex(new THREE.BufferAttribute(new Uint16Array(300), 1)); // 600 B
+    pool.registerMeshGeometry('mesh', g);
+    const before = pool.getResidentBytes();
+    expect(before).toBe(120 + 600);
+
+    g.index!.array = new Uint32Array(g.index!.array);
+
+    expect(pool.getResidentBytes()).toBe(before + 600);
+    pool.dispose();
+  });
+});
+
 describe('GPU pool getStats() byte counters', () => {
   it('reports activeBytes for an acquired buffer', () => {
     const pool = new GPUBufferPool(20, 300, 5, () => 0); // byte budget disabled

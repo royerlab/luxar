@@ -7,7 +7,9 @@ registry's business (`scene/lod-group-registry.ts`, `scene/lod-selector-math.ts`
 - `data.ts` — `lodConfig: LodConfig`. `fadeMs: 250`, `preloadBandFraction: 0.4`.
 - `types.ts` — `LodConfig`.
 - `validate.ts` — `validateLod`: `fadeMs` must be finite and ≥ 0;
-  `preloadBandFraction` must be in [0, 0.5].
+  `preloadBandFraction` must be in [0, 0.5) — strictly below the 0.5 exit band,
+  or the entry and exit bands coincide and a camera at the edge restarts a
+  visit (and a reload) per wobble.
 
 `fadeMs` is the duration of the dissolve between the outgoing and the incoming
 level when a blendable (additive / luminous / volumetric) group changes level.

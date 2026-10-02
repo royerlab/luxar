@@ -244,11 +244,14 @@ describe('fetchWithRetry', () => {
     global.fetch = fetchMock as unknown as typeof fetch;
 
     await fetchWithRetry('https://example.com/x');
-    expect(getFetchLaneLimit('data')).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
+    expect(getFetchLaneLimit('data', 'https://example.com')).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
 
     await fetchWithRetry('http://example.com/x');
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(getFetchLaneLimit('data')).toBe(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
+    expect(getFetchLaneLimit('data', 'http://example.com')).toBe(
+      HTTP1_MAX_CONCURRENT_CHUNK_FETCHES
+    );
+    expect(getFetchLaneLimit('data', 'https://example.com')).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
   });
 
   it('returns the response on first success', async () => {

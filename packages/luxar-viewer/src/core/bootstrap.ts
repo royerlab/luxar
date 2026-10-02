@@ -46,6 +46,7 @@ import { log, Modules, LogEmoji, setVerboseLogging } from '../utils/log';
 import { getErrorMessage } from '../utils/format-error';
 import { codecRegistry } from '../data/zarr';
 import { computePerfSnapshot } from './app/debug/perf-snapshot';
+import { installDebugPerfInstruments } from './app/debug/perf-instruments';
 import { perfCounters } from '../profiling/perf-counters';
 import { prefetchRootDocument } from '../cache/root-document-prefetch';
 import { normalizeURL } from '../data/scene-loader/lifecycle/url-normalization';
@@ -394,6 +395,10 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   app = new LuxarApp();
 
   if (isDebugMode) {
+    // Instrument the FIRST load too: probes read getPerf() while it runs. The
+    // renderer is resolved per frame, so it reads as absent until init() has
+    // built the scene manager.
+    installDebugPerfInstruments(() => app?.components.sceneManager?.renderer);
     // Seed the debug surface before init() so consumers (e.g. Playwright)
     // that hook into `window.__luxarDebug` can rely on `.app` being there
     // even while init() is still in flight. LuxarApp.setupDebugInterface()
@@ -444,6 +449,16 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       if (bookmark) {
         try {
           await restoreBookmark(app, bookmark);
+          // A cross-dataset switch rewrites ?src and drops the old view.
+          // Keep the just-restored bookmark in the URL for a reload.
+          if (!window.location.hash.startsWith('#view=')) {
+            const hash = new URLSearchParams({ view: raw }).toString();
+            window.history.replaceState(
+              window.history.state,
+              '',
+              `${window.location.pathname}${window.location.search}#${hash}`
+            );
+          }
         } catch (error) {
           log.warning(Modules.LUXAR, 'Could not restore view bookmark:', error);
         }

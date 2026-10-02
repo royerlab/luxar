@@ -33,6 +33,11 @@ panel) and mirrored into an allocation-free in-memory snapshot read by
 | `initUpdateDone`     | first `updateAllNDNodes` after load resolved               |
 | `refinementComplete` | final refinement phase ran every ladder to completion      |
 
+`poolReady` and `wasmReady` describe resources that outlive a dataset switch,
+so a later `loadStart` re-states them at its own start time (`{ carried: true }`,
+measure 0) until the worker pool is disposed (`noteLoadResourceReleased`); a
+real mark replaces a carried one.
+
 `getLoadTimeline().measures` derives `ttfpMs` (earliest first commit),
 `sceneLoadedMs`, `initUpdateDoneMs`, `refinementCompleteMs`, … relative to
 `loadStart`; `refinement` counts passes and rungs. Everything is best-effort:
@@ -51,7 +56,10 @@ store per event (`perfCounters.add(S, n)`); `max` keeps a high-water mark and
 
 Read them through `__luxarDebug.getPerf().counters` (a flat `name -> number`
 map, available from bootstrap on), `__luxarDebug.getPerfRecords(kind)`, and
-reset with `__luxarDebug.resetPerfCounters()`. Counters are the base for every
+reset with `__luxarDebug.resetPerfCounters()`. A reset starts a new measurement
+window — counters, high-water marks and records clear — but a gauge keeps its
+value: it describes current state, and its owner republishes it only on change.
+Counters are the base for every
 gated perf comparison, so a counter must exist on both the base and the
 candidate build before a commit can be judged on it.
 

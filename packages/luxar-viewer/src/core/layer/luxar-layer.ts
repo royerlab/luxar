@@ -144,6 +144,7 @@ import { isLuxarMaterial } from '../../ui/layers/luxar-material';
 import { clamp } from '../../utils/clamp';
 import { log, Modules } from '../../utils/log';
 import { markSceneResourcesDirtyForContextRestore } from '../../scene/scene-manager/render-pipeline/webgl-context-recovery';
+import { configureRendererBackend } from '../../scene/scene-manager/render-pipeline/renderer-setup';
 import type { Renderer } from '../../rendering/renderer-capabilities';
 import type { LoaderConfig } from '../../data/data-loader-types';
 import type { EmbedderDimensions } from '../app/embedder/events';
@@ -175,9 +176,11 @@ export interface LuxarLayerOptions {
   scene: THREE.Scene;
   /**
    * Called when new geometry commits outside the host's own interaction —
-   * progressive refinement, lazy LOD loads, retries. Hosts with an on-demand
-   * render loop must wire this or late commits will not repaint. Hosts that
-   * render continuously can omit it.
+   * progressive refinement, lazy LOD loads, retries — and from
+   * {@link LuxarLayer.update} when a frame's sort / LOD evaluation changed what
+   * is drawn (a fade advances one step per frame). Hosts with an on-demand
+   * render loop must wire this or late commits will not repaint and fades
+   * freeze. Hosts that render continuously can omit it.
    */
   requestRender?: () => void;
   /** Cache and prefetch flags forwarded to the data loader. */
@@ -283,6 +286,10 @@ export class LuxarLayer {
     // them, and a node created first would get the wrong backend.
     this.capabilities = createRendererCapabilities(options.renderer);
     materialManager.setCaps(this.capabilities);
+    // The same per-backend switches the app sets for its own renderer: left at
+    // their classic-WebGL defaults, a host WebGPU renderer stalls large sorts
+    // after their first slice and never evicts stale RenderObjects.
+    configureRendererBackend(options.renderer, this.capabilities);
     this.resize();
 
     this.installLodRegistryFactory();
@@ -415,13 +422,21 @@ export class LuxarLayer {
    *
    * Cheap and self-gating: it early-outs before a scene is loaded, and both
    * inner evaluations early-out when nothing needs re-sorting or swapping.
+   *
+   * Returns whether this frame's evaluation changed what is drawn — a
+   * cross-node render order or ordering-buffer slot, a LOD level shown or
+   * hidden, a cross-fade / energy-compensation opacity step, a partition part
+   * culled or restored. Those are multi-frame motions (a fade advances one step
+   * per evaluation), so on a change the layer also calls `requestRender`: a
+   * host that renders on demand then keeps ticking until the motion settles,
+   * and a host that renders continuously can ignore both.
    */
-  update(): void {
-    if (!this.rootGroup || this.disposed) return;
+  update(): boolean {
+    if (!this.rootGroup || this.disposed) return false;
     // Order matters: depth sorting assigns the cross-node render order that a
     // LOD swap may then invalidate, so sorting runs first.
-    evaluateDepthSortPerFrame();
-    getSceneLoader(LOADER_ID)?.lodGroupRegistry?.evaluatePerFrame();
+    const sortChanged = evaluateDepthSortPerFrame();
+    const lodChanged = this.evaluateLodFrame();
     // Scene / LOD / partition groups may attach lazily after load(). Three.js
     // replaces the transparent group-order key at every Group boundary, so a
     // newly attached default-zero group would otherwise nullify the option.
@@ -430,6 +445,21 @@ export class LuxarLayer {
     // so a non-default exposure has to be re-asserted. Skipped entirely at the
     // authored exposure, which is the common case.
     if (this.exposure !== 1) this.applyExposure();
+    const changed = sortChanged || lodChanged;
+    if (changed) this.options.requestRender?.();
+    return changed;
+  }
+
+  /**
+   * Run the LOD selector for this frame and report whether the drawn state
+   * changed. `takeDrawnStateChanged()` is taken every frame (as the app's
+   * `'lod-group-selector'` callback does) so the flag never carries over.
+   */
+  private evaluateLodFrame(): boolean {
+    const registry = getSceneLoader(LOADER_ID)?.lodGroupRegistry;
+    if (!registry) return false;
+    const { levelChanged, cullChanged } = registry.evaluatePerFrame();
+    return registry.takeDrawnStateChanged() || levelChanged || cullChanged;
   }
 
   /**

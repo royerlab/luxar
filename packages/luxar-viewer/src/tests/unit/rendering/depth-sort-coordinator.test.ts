@@ -952,6 +952,47 @@ describe('depth-sort coordinator', () => {
     setSortedIndexChunkElementsForTests(null);
   });
 
+  it('a slice upload acknowledged DURING resortForCapture does not wake the loop either', async () => {
+    // The per-slice render hook (#715 resume gap) must honour the capture's
+    // requestRender suppression like every other wake path: a draw landing
+    // mid-drain acknowledges the slice it uploaded, and that acknowledgement
+    // used to call the ORIGINAL requestRender captured at configure time.
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ getCamera: () => camera, requestRender });
+
+    const { setSortedIndexChunkElementsForTests, configureSortedIndexChunkedApply } =
+      await import('../../../rendering/element-storage');
+    configureSortedIndexChunkedApply(true);
+    setSortedIndexChunkElementsForTests(1);
+
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteDepthSortCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([0, 2, 1]),
+    });
+    await flush();
+    await applyStagedOrdering(mesh);
+
+    const before = mockApi.sort.mock.calls.length;
+    const rrBefore = requestRender.mock.calls.length;
+    const p = coord.resortForCapture(2000);
+    sortResolvers[sortResolvers.length - 1]({
+      generation: mockApi.sort.mock.calls[before][0].generation as number,
+      ordering: new Uint32Array([2, 0, 1]),
+    });
+    // Let the drain write its first slice, then draw the mesh mid-drain.
+    await new Promise<void>((r) => setTimeout(r, 0));
+    simulateMeshRender(mesh);
+    await p;
+
+    expect(requestRender.mock.calls.length).toBe(rrBefore);
+    setSortedIndexChunkElementsForTests(null);
+  });
+
   it('derives the model-view from fresh matrices, not renderer-maintained caches', async () => {
     // A commit can fire before the next render (first commit of a load,
     // idle-paused loop): camera.matrixWorldInverse and mesh.matrixWorld
@@ -5174,7 +5215,24 @@ describe('depth-sort coordinator — synchronous first sort', () => {
     expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
   });
 
-  it('does not resolve an indexed mesh provider for a synchronous sort it cannot apply', async () => {
+  it('orders a MESH index buffer synchronously too — no unsorted frame on a slice move', async () => {
+    // A mesh commit rewrites geometry.index canonically on every slice move,
+    // so without a synchronous sort each timepoint drew its triangles in
+    // storage order until the worker answered (the #2290 flash, mesh edition).
+    const coord = await loadCoordinator(250_000);
+    const requestRender = vi.fn();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender });
+    const mesh = makeIndexedMesh(3, 'normal');
+
+    coord.noteDepthSortCommit(mesh, CENTERS.slice(), 3, sourceTriples(3));
+
+    // No flush: the frame the commit returns into.
+    expect(mockApi.sort).not.toHaveBeenCalled();
+    expect(drawnTriples(mesh, 3)).toEqual(['3,4,5', '6,7,8', '0,1,2']);
+    expect(requestRender).toHaveBeenCalled();
+  });
+
+  it('resolves an indexed mesh provider exactly ONCE across the synchronous sort and the worker', async () => {
     const coord = await loadCoordinator(250_000);
     coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
     const mesh = makeIndexedMesh(3, 'normal');
@@ -5987,6 +6045,41 @@ describe('depth-sort coordinator — held append draws', () => {
     coord.noteDepthSortCommit(mesh, centers(6), 6);
     expect(drawnCount(mesh)).toBe(6);
     expect(isPermutation(mesh, 6)).toBe(true);
+  });
+
+  it('an ordering whose length is not the committed count is rejected and releases the hold', async () => {
+    // The worker clamps a registration whose centers under-deliver and sorts
+    // the clamped count. Applying that short ordering would write a partial
+    // permutation, and its flip raises the held draw only for ITS length — so
+    // a hold waiting for the committed 6 would never end.
+    const coord = await loadCoordinator();
+    coord.configureDepthSort({ getCamera: () => makeCamera(), requestRender: vi.fn() });
+    const mesh = await heldMesh('normal');
+    coord.noteDepthSortCommit(mesh, centers(6), 6);
+    await flush();
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([4, 3, 2, 1, 0]),
+    });
+    await flush();
+    await applyStagedOrdering(mesh);
+    expect(drawnCount(mesh)).toBe(6);
+    expect(isPermutation(mesh, 6)).toBe(true);
+
+    const { log } = await import('../../../utils/log');
+    const mismatches = () =>
+      (log.warning as unknown as { mock: { calls: unknown[][] } }).mock.calls.filter((call) =>
+        String(call[1]).includes('Depth-sort ordering for')
+      );
+    expect(mismatches()).toHaveLength(1);
+    const repeat = coord.resortForCapture(200);
+    const latest = mockApi.sort.mock.calls.length - 1;
+    sortResolvers[latest]({
+      generation: mockApi.sort.mock.calls[latest][0].generation as number,
+      ordering: new Uint32Array([4, 3, 2, 1, 0]),
+    });
+    await repeat;
+    expect(mismatches()).toHaveLength(1);
   });
 
   it('a failed sort RPC releases the hold', async () => {

@@ -78,11 +78,13 @@ encodingVersion, validationMode, lastValidatedAt}`.
     the persisted value disagrees with the sum by more than 1 byte.
     Entries are sorted by ascending `order` so `Map` insertion order
     equals LRU order.
-- **`scheduleSave({ root, getSnapshot, delayMs, maxWaitMs?, onError })`** —
+- **`scheduleSave({ root, getSnapshot, delayMs, maxWaitMs?, leadingDelayMs?, onError })`** —
   debounced save, BOUNDED by `maxWaitMs`: each call re-arms the timer
   (last-writer-wins) but never past `maxWaitMs` after the first unsaved
   call, so a continuous write stream still saves (a pure trailing debounce
-  never fired during playback). On fire, calls `getSnapshot()` to capture
+  never fired during playback). With `leadingDelayMs`, the first call after a
+  quiet period (no write started for `delayMs`) is written within that delay,
+  and later calls cannot push it back. On fire, calls `getSnapshot()` to capture
   the latest state and writes it. Writes never overlap: a save due while
   one is in flight is coalesced into ONE follow-up write. The in-flight
   promise is tracked so `dispose()` can await it.
@@ -92,6 +94,15 @@ encodingVersion, validationMode, lastValidatedAt}`.
   `save(...)`** — the four primitives `OPFSStore.dispose()` uses to
   flush cleanly: cancel the timer, optionally write a final synchronous
   snapshot, then await whatever the timer had already started.
+- **`loadIdentity(root)` / `writeIdentity(root, hash)`** — the dataset
+  identity file `_cache_identity.json` (`{contentHash, encodingVersion}`): the
+  hash the directory's chunk files were written under. Written by
+  `OPFSStore.setContentHash` only when the hash changes, and every chunk write
+  waits for it, so it survives a reload that the debounced index save does not.
+  `loadIdentity` returns `null` for a missing, empty, unparsable, hashless or
+  other-encoding file. `OPFSStore` recovers unindexed files only under this hash
+  (or, with no identity file, under a parsed index's hash), and uses it as the
+  cached hash when no index landed.
 - **`cleanupOrphans(root, expectedFileNames)`** — iterate every
   hex-named bucket directory and delete files not in the expected set.
   Increments `orphansRemoved`. Unbounded; `OPFSStore` itself now uses the
@@ -104,9 +115,12 @@ shouldStop, onOrphan })`** — walk the hex buckets, listing each bucket's
   names before acting on them, and hand every name missing from the index
   snapshot to `onOrphan` (with the decoded key, or `null`), until a budget is
   spent or `shouldStop()`. `OPFSStore.reconcileOrphans` decides per file:
-  re-index (trusted index, key hashes to that bucket, fits under `maxSize`)
-  or delete, re-checking its live index / pending writes before each action
-  and registering deletes in the same-key delete barrier (#1073).
+  re-index (a recovery hash is set, key hashes to that bucket, non-empty, fits
+  under `maxSize`) or delete, re-checking its live index / pending writes before
+  each action and registering deletes in the same-key delete barrier (#1073).
+  The crawl runs in the background, so until it has COMPLETED `OPFSStore.get()`
+  also reads an unindexed key's file directly (the path is a function of the
+  key) and indexes a hit: a reload's first reads do not wait for the crawl.
 
 Counters `parseFailures` and `orphansRemoved` are surfaced through
 `OPFSStore.getStats()` (mapped to `metadataParseFailures` and

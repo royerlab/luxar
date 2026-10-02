@@ -29,7 +29,7 @@
 
 import { findObjectByName } from '../../../utils/scene-graph-index';
 import type * as THREE from 'three';
-import { log, Modules } from '../../../utils/log';
+import { log, LogEmoji, Modules } from '../../../utils/log';
 import { updateMeshGeometry } from '../../../rendering/mesh-geometry';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
 import {
@@ -244,8 +244,11 @@ export function commitMeshGeometry(
   stampLadderComplete(object.userData);
   markFirstCommit('mesh');
 
+  // Verbose, not info: a slice scrub across a region the surface does not
+  // reach commits one of these per tick.
   if (projected.visibleFaceCount === 0) {
-    log.info(
+    log.verbose(
+      LogEmoji.INFO,
       Modules.SCENE_LOADER,
       `No visible triangles for ${staged.path} at this slice — the surface's ` +
         'vertices all fall outside the nD slab'

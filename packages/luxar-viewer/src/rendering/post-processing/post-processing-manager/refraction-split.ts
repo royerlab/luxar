@@ -38,6 +38,19 @@
  *    inside a double-sided refracting glass, the front-face proxy writes no depth and
  *    the shell can paint over enclosed data.
  *
+ * **From inside a double-sided glass, WebGL refracts once, not twice.** Three's
+ * `renderTransmissionPass` pre-renders every double-sided transmissive mesh's BACK faces
+ * into the transmission texture (so a solid seen from outside shows its far wall through
+ * its near one), and the main pass then draws those same back faces sampling that
+ * texture. From outside the near wall covers them; from inside there is no near wall,
+ * so every pixel is the far wall refracting its own already-refracted image — the shift
+ * applied twice, and an edge that clamps or stretches twice as far. While the camera is
+ * inside a closed glass (`isPointInsideClosedMesh`: drawn-surface closure and ray parity),
+ * pass B draws it `BackSide` only, which three's pre-pass skips; the far wall then
+ * refracts the data once. In a non-convex closed shell, this can also hide farther
+ * front faces visible from inside a cavity. WebGPU is unaffected — its back faces
+ * sample the live framebuffer, which holds the data and not the glass.
+ *
  * **Under MSAA the copies are load-bearing, not an optimisation.** Three's WebGL
  * renderer resolves a multisampled target's colour to its texture at the end of every
  * `render()` and then INVALIDATES the multisampled colour attachment (the depth
@@ -93,6 +106,7 @@ import {
   type GlassPartition,
 } from '../../materials/_shared/glass-partition';
 import { log, Modules } from '../../../utils/log';
+import { isPointInsideClosedMesh } from './inside-closed-mesh';
 
 /** How the split is built (all from the orchestrator). */
 export interface DataRefractionSplitOptions {
@@ -277,6 +291,9 @@ export class DataRefractionSplit {
   private readonly unpartitionedScratch: THREE.Mesh[] = [];
   private readonly maskScratch: number[] = [];
   private readonly unpartitionedMaskScratch: number[] = [];
+  /** Glass drawn `BackSide` for this frame because the camera is inside it (WebGL). */
+  private readonly singleSidedScratch: THREE.Material[] = [];
+  private readonly cameraScratch = new THREE.Vector3();
 
   constructor(opts: DataRefractionSplitOptions) {
     this.copyTarget = createRefractionCopyTarget(opts.width, opts.height);
@@ -373,6 +390,7 @@ export class DataRefractionSplit {
       unpartitionedMasks.push(mesh.layers.mask);
       mesh.layers.set(RENDER_LAYER_UNPARTITIONED);
     }
+    this.refractOnceFromInside(glass, camera);
     return {
       cameraMask: camera.layers.mask,
       autoClear: r.autoClear,
@@ -405,6 +423,31 @@ export class DataRefractionSplit {
     const unpartitioned = this.unpartitionedScratch;
     for (let i = 0; i < unpartitioned.length; i++) {
       unpartitioned[i].layers.mask = this.unpartitionedMaskScratch[i];
+    }
+    for (const material of this.singleSidedScratch) {
+      material.side = THREE.DoubleSide;
+      material.needsUpdate = true;
+    }
+    this.singleSidedScratch.length = 0;
+  }
+
+  /**
+   * WebGL: draw a double-sided glass the camera is inside as `BackSide` for this frame,
+   * so three's back-face pre-pass skips it and its far wall refracts once (module doc).
+   * Three's own pre-pass flips `side` and `needsUpdate` the same way every frame, so the
+   * two program variants stay cached and the toggle costs a lookup, not a compile.
+   */
+  private refractOnceFromInside(glass: readonly THREE.Mesh[], camera: THREE.Camera): void {
+    this.singleSidedScratch.length = 0;
+    if (!this.isWebGL) return;
+    const eye = camera.getWorldPosition(this.cameraScratch);
+    for (const mesh of glass) {
+      const material = mesh.material;
+      if (Array.isArray(material) || material.side !== THREE.DoubleSide) continue;
+      if (!isPointInsideClosedMesh(mesh, eye)) continue;
+      material.side = THREE.BackSide;
+      material.needsUpdate = true;
+      this.singleSidedScratch.push(material);
     }
   }
 

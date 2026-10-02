@@ -44,7 +44,7 @@
  * orthographic camera to `viewZToOrthographicDepth`, which is exactly the
  * orthographic `gl_FragCoord.z`. So the two backends write the SAME value per
  * fragment, and cross-node depth comparisons — including against the commutative
- * modes' `1 - brightness` fragments sharing this buffer — resolve identically.
+ * modes' `1 / (1 + brightness)` fragments sharing this buffer — resolve identically.
  *
  * Recording this because `mesh-pick.fragment.glsl.txt` is easy to misread as a
  * divergence: the snapshot expands `depth` to the LINEAR
@@ -274,7 +274,7 @@ export const MESH_PICK_FRAGMENT_SHADER = /* glsl */ `
       // PickingSystem.renderPickBuffer(). Writing gl_FragDepth at all forfeits
       // early-z; the pick pass is half-resolution and the sibling gsplat pick
       // makes the same trade.
-      gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 - brightness;
+      gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 / (1.0 + brightness);
     }
   `;
 

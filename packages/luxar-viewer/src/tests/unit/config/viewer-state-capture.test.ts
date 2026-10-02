@@ -202,6 +202,37 @@ describe('captureViewerState', () => {
     expect(state.allow_high_dpr).toBe(true);
   });
 
+  it('exports the Density Guard toggle and warns only for truly unknown keys', async () => {
+    // fov / fovPreset / near / far are captured into the camera block, and the
+    // orbit / fly-look tuning is viewer-local; none of them is "unknown". A
+    // fresh module so the once-per-key warning set is empty.
+    vi.resetModules();
+    const { captureViewerState: capture } =
+      await import('../../../config/zarr-bridge/viewer-state-capture');
+    const { log } = await import('../../../utils/log');
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const renderingControls = createMockRenderingControls();
+    Object.assign(renderingControls.settings, {
+      densityGuardEnabled: false,
+      orbitZoomSpeed: 1,
+      orbitDampingFactor: 0.1,
+      flyLookSpeed: 0.2,
+      notARealSetting: 1,
+    });
+
+    const result = capture(
+      createMockSceneManager(),
+      renderingControls,
+      createMockSceneDimsManager() as never
+    );
+
+    expect((result as Record<string, unknown>).density_guard_enabled).toBe(false);
+    const warned = warn.mock.calls.map((call) => String(call[1]));
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toContain('notARealSetting');
+    warn.mockRestore();
+  });
+
   it('should capture theme', () => {
     const state = captureViewerState(
       createMockSceneManager(),

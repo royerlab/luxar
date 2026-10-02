@@ -714,7 +714,7 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | Cinematic | `cinematic_mode`, `vignette_enabled`, `chromatic_lens_distortion_enabled` |
 | Detector noise | `detector_noise_enabled`, `detector_noise_readout_sigma`, `detector_noise_photon_gain` |
 | Anti-aliasing | `fxaa_enabled`, `msaa_enabled`, `ssaa_enabled` |
-| Performance | `adaptive_dpr_enabled`, `allow_high_dpr` |
+| Performance | `adaptive_dpr_enabled`, `allow_high_dpr`, `density_guard_enabled` |
 | Fly controls | `fly_movement_speed`, `fly_rotation_speed`, `fly_inertial_mode`, `fly_damping` |
 | UI visibility | `ui.show_help`, `ui.show_rendering_controls`, `ui.show_dimensions`, `ui.show_performance_monitor`, `ui.show_scale_bar`, `ui.show_layers` |
 | Dimensions | `dimensions.current_step`, `dimensions.selected_dimension` |

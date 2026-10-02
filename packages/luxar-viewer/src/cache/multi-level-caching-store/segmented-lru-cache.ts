@@ -7,6 +7,13 @@ import type { CacheStats } from '../types';
  */
 export class SegmentedLRUCache {
   private static readonly MIN_METADATA_SIZE = 10 * 1024 * 1024; // 10MB floor
+  /**
+   * The floor gives way on a small budget: never more than this share of the
+   * total. A heap- or `?cacheBudgetMB`-scaled L1 can be far below 10 MB (40 MB
+   * total gives ~8 MB), and a fixed floor there left the chunk segment at zero —
+   * every L1 chunk rejected — with the segments together over the budget.
+   */
+  private static readonly MAX_METADATA_FLOOR_SHARE = 0.5;
 
   // Metadata file patterns - these go to metadata segment
   private static readonly METADATA_PATTERNS = [
@@ -16,7 +23,8 @@ export class SegmentedLRUCache {
     'zarr.json', // zarr v3 metadata
   ];
 
-  // Metadata segment: zarr metadata files (20% of cache, min 10MB)
+  // Metadata segment: zarr metadata files (20% of cache, min 10MB or half the
+  // cache, whichever is smaller)
   private metadata: LRUCache<Uint8Array>;
 
   // Chunks segment: data chunks (80% of cache)
@@ -28,8 +36,12 @@ export class SegmentedLRUCache {
   constructor(totalSize: number) {
     this.totalSize = totalSize;
     const getSize = (v: Uint8Array) => v.byteLength;
-    const metadataSize = Math.max(totalSize * 0.2, SegmentedLRUCache.MIN_METADATA_SIZE);
-    // Guard: if totalSize < MIN_METADATA_SIZE, chunksSize would go negative
+    const floor = Math.min(
+      SegmentedLRUCache.MIN_METADATA_SIZE,
+      totalSize * SegmentedLRUCache.MAX_METADATA_FLOOR_SHARE
+    );
+    const metadataSize = Math.max(totalSize * 0.2, floor);
+    // Guard: a non-positive totalSize must not give a negative segment.
     const chunksSize = Math.max(0, totalSize - metadataSize);
 
     this.metadata = new LRUCache(metadataSize, getSize);

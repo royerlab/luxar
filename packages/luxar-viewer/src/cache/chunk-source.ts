@@ -112,13 +112,12 @@ export interface ArchiveByteReader {
   /**
    * Read one member.
    *
-   * `signal` is ADVISORY. A container whose reader has no per-call channel — a
-   * zip, whose `unzipit` reader is `read(offset, size)` — cannot cancel an
-   * individual member read, and an ambient "current signal" would be raced by
-   * concurrent gets. Such an implementation scopes real cancellation to its own
-   * lifetime instead, aborting in flight reads from `dispose()`, and uses this
-   * signal only to stop early and to label the outcome. Do not read a passed
-   * signal as a guarantee that the bytes stopped arriving.
+   * `signal` cancels the read as far as the container can. The zip reader
+   * cancels the member's one-GET window fetch with it (queued in the fetch gate
+   * or in flight); a follow-up read `unzipit` issues outside that window — its
+   * reader is `read(offset, size)`, with no per-call channel — is scoped to the
+   * container's lifetime instead and aborted only by `dispose()`. So do not read
+   * a passed signal as a guarantee that every byte stopped arriving.
    */
   get(
     key: string,

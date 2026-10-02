@@ -152,12 +152,16 @@ blending when exposure should produce smooth surface transparency.
 
 - **`update()` once per frame, before rendering.** It runs the depth-sort
   scheduler and the LOD-group selector, in that order (sorting assigns the
-  cross-node render order that a LOD swap can invalidate).
+  cross-node render order that a LOD swap can invalidate). It returns `true`
+  when that frame changed what is drawn (a re-sort, a level swap, a fade step,
+  a partition cull flip) and then also calls `requestRender`, so an on-demand
+  host keeps ticking until a fade or swap settles.
 - **`resize()`** after a viewport, DPR, or camera-projection change. The layer
   cannot observe the host's canvas.
 - **`requestRender`** if the host renders on demand. Without it, geometry that
   commits outside a user interaction — progressive refinement, lazy LOD loads,
-  retries — will not repaint. Hosts that render continuously can omit it.
+  retries — will not repaint, and a LOD cross-fade freezes after its first
+  step. Hosts that render continuously can omit it.
 - **Draw order for the host's own geometry.** `renderOrder` defaults to 10 and is
   stamped onto every Group in the Luxar subtree, including groups that stream in
   later. Three.js compares that Group key before per-mesh `renderOrder`, so host

@@ -311,6 +311,10 @@ export function commitPointsGeometry(
         }
       }
     } else {
+      // Consume-and-clear on this path too (prefix-lineage.ts retention
+      // contract): no append gate reads the lineage here, and leaving it set
+      // would keep the parent concat's CPU arrays pinned for the payload's life.
+      setPrefixParent(data, null);
       // Pool disabled: recreate unconditionally. Recreation handles all
       // the dtype logic (divisor-based widenToFloat32 for Uint8/Uint16,
       // Float16 widening, bounds/footprint, radiusScale userData) via

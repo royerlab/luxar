@@ -467,13 +467,15 @@ export const FILL_FACTOR = 0.5;
 export const SCREEN_FILL_DIAGONAL_RATIO = 2;
 
 /**
- * Frames a lazy level stays in the ``failed`` state before the registry
- * retries its deferred load. ~2 s at 60 fps — long enough to avoid
- * per-frame retry storms after a hard failure, short enough that a
- * transient (network blip) failure self-heals once the camera revisits
- * the level. See ``LODGroupRegistry.maybeKickLoad``.
+ * Milliseconds a lazy level stays in the ``failed`` state before the registry
+ * retries its deferred load — long enough to avoid per-frame retry storms
+ * after a hard failure, short enough that a transient (network blip) failure
+ * self-heals. Wall-clock, not a frame count: a 30 Hz display or a throttled
+ * tab would otherwise stretch it. A one-shot wake at cooldown expiry lets a
+ * parked camera retry without per-frame ticking; repeated failures back off.
+ * See ``maybeKickLoad``.
  */
-const FAILED_RETRY_FRAMES = 120;
+const FAILED_RETRY_MS = 2000;
 
 /** One LOD-group child as tracked by the registry. */
 export interface LODGroupChild {
@@ -564,11 +566,16 @@ export interface LODGroupChild {
   /** Last playback probe of a level whose measured reload exceeded the budget. */
   lastPlaybackProbeMs?: number;
   /**
-   * Set when a playback probe fires; the next timed load then REPLACES
-   * ``loadEwmaMs`` instead of blending into it. Registry-owned.
+   * Set when a playback probe's reload STARTS (a refused kick sets nothing);
+   * that timed load then REPLACES ``loadEwmaMs`` instead of blending into it.
+   * Cleared when it is folded and when playback stops. Registry-owned.
    */
   playbackProbePending?: boolean;
-  /** A probe may move the aspiration, but cannot grant the 1.0 keep budget. */
+  /**
+   * A probe may move the aspiration, but cannot grant the 1.0 keep budget.
+   * Set on the probe frame, cleared once the level is admitted or playback
+   * stops. Registry-owned.
+   */
   playbackProbeAdmissionPending?: boolean;
   /** Set by the thunk on load failure to stop per-frame retry storms. */
   failed?: boolean;
@@ -582,13 +589,13 @@ export interface LODGroupChild {
   /** Human-readable reason retained for monitor rows after the loader latch clears. */
   failureReason?: string;
   /**
-   * Registry tick when ``failed`` was first observed. Drives the
-   * transient-failure retry cooldown (``FAILED_RETRY_FRAMES``): once it
+   * Registry clock (``frame.nowMs``) when ``failed`` was first observed. Drives
+   * the transient-failure retry cooldown (starting at ``FAILED_RETRY_MS``): once it
    * elapses the registry clears ``failed`` and retries the load, so a
    * level that fails on *reload* (after a successful load + byte-eviction)
    * is not stuck on its placeholder forever. Cleared alongside ``failed``.
    */
-  failedTick?: number;
+  failedAtMs?: number;
   /**
    * Idempotent fire-and-forget loader for a lazy child. Kicks the
    * deferred geometry load; on success sets ``ready=true`` and clears
@@ -912,6 +919,14 @@ const PARTITION_BECAME_VISIBLE = 2;
 // ``evaluatePartitionEntry`` and merged into ``partitionResyncPending`` only
 // on a rising edge (rare), so the steady-state per-frame path allocates nothing.
 const RISING_PARTS_SCRATCH = new Set<string>();
+/**
+ * How long a deferred part's activation request may wait for a pass to reach
+ * it before the per-frame gate asks again (see ``LazyPartState``).
+ */
+const LAZY_REQUEST_TIMEOUT_MS = 2000;
+// Partitions skipped this frame because their wrapper was hidden (re-checked
+// after the LOD pass, which may reveal them). Reused: no per-frame allocation.
+const HIDDEN_PARTITIONS_SCRATCH: PartitionGroupEntry[] = [];
 /** Scratch for {@link LODGroupRegistry.rankPartitionPartsForLoad} (load time, not per frame). */
 const LOAD_RANK_LOCAL_BOX: BoundingBox = { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } };
 const LOAD_RANK_OPTIONS: WorldBoxOptions = {
@@ -1016,10 +1031,15 @@ export interface PartitionPartRef {
  * A deferred part's activation state (B4). `requested` is set when the
  * per-frame gate asked the loader for a pass to activate it (a pending
  * resync), `running` while that pass's activation is in flight; both clear
- * when the pass declines it, so a part still wanted is asked for again.
+ * when the pass declines it, so a part still wanted is asked for again. A
+ * request no pass has reached within `LAZY_REQUEST_TIMEOUT_MS` (the resync was
+ * rejected, or superseded by a pass targeting other parts) expires, and the
+ * registry keeps ticking until then so a parked camera asks again (#2944).
  */
 export interface LazyPartState {
   requested: boolean;
+  /** Registry clock (``frame.nowMs``) of the outstanding request. */
+  requestedAtMs: number;
   /** The in-flight activation, if one is running. */
   running: Promise<void> | null;
   /**
@@ -1399,6 +1419,15 @@ export class LODGroupRegistry {
     playbackPeriodMs: null,
   };
   /**
+   * The level the current entry's playback probe chose this frame, so the kick
+   * that actually starts its reload can mark it (``playbackProbePending``).
+   * Reset per entry in ``evaluateEntry``.
+   */
+  private probeCandidate: LODGroupChild | null = null;
+  /** One-shot wakes for failure cooldowns and unanswered lazy requests. */
+  private readonly retryWakes = new Map<object, ReturnType<typeof setTimeout>>();
+  private readonly retryCounts = new WeakMap<object, number>();
+  /**
    * Partition rising edges waiting for their wrapper to be visible and the
    * loader to be idle: wrapper path → the re-entering PART paths. A set that
    * contains the wrapper path itself means "resync the whole partition" (a
@@ -1429,6 +1458,7 @@ export class LODGroupRegistry {
 
   /** Register a newly-loaded lod_group (called by the scene loader). */
   register(entry: LODGroupEntry): void {
+    this.clearEntryRetryWakes(entry.path);
     const footprintDims = entry.children[0]?.footprintDims;
     bumpForFailedEntryReplacement(this.entries.get(entry.path), entry);
     this.entries.set(entry.path, entry);
@@ -1497,6 +1527,7 @@ export class LODGroupRegistry {
 
   /** Register a partition whose children are independently frustum-gated. */
   registerPartition(entry: PartitionGroupEntry): void {
+    this.clearPartitionRetryWakes(entry.path);
     this.forgetPartitionParts(entry.path);
     this.partitionEntries.set(entry.path, entry);
     this.indexPartitionParts(entry);
@@ -1518,7 +1549,7 @@ export class LODGroupRegistry {
         footprintDirty: true,
         inFrustum: true,
         lazy: child.activate
-          ? { requested: false, running: null, claims: [], failed: false }
+          ? { requested: false, requestedAtMs: 0, running: null, claims: [], failed: false }
           : null,
       })),
     });
@@ -1701,7 +1732,11 @@ export class LODGroupRegistry {
     if (!lazy || !child.activate || lazy.failed) return null;
     const partKey = child.path || entry.path;
     if (targets && !isPartTargeted(partKey, entry.path, targets)) return null;
-    if (!lazy.running) lazy.requested = false;
+    if (!lazy.running) {
+      lazy.requested = false;
+      this.clearRetryWake(lazy);
+      this.retryCounts.delete(lazy);
+    }
     if (!this.partActivationWanted(entry, child, childCache, view)) return null;
     // Already loading (activated ahead of this view): the caller still waits for it.
     lazy.running ??= this.runActivation(entry, partKey, child, childCache, lazy);
@@ -1744,6 +1779,7 @@ export class LODGroupRegistry {
         // clears `failed` (see `retryLazyChildByNodePath`).
         lazy.running = null;
         lazy.requested = false;
+        this.clearRetryWake(lazy);
         lazy.claims = [];
         lazy.failed = true;
       }
@@ -1767,6 +1803,7 @@ export class LODGroupRegistry {
     lazy: LazyPartState
   ): void {
     child.activate = undefined;
+    this.clearRetryWake(lazy);
     if (childCache.lazy === lazy) childCache.lazy = null;
     childCache.footprintDirty = true;
     if (this.partitionEntries.get(entry.path) !== entry) return;
@@ -1835,6 +1872,8 @@ export class LODGroupRegistry {
   /** Drop an lod_group from the registry (called on scene teardown). */
   unregister(path: string): void {
     const partition = this.partitionEntries.get(path);
+    this.clearEntryRetryWakes(path);
+    this.clearPartitionRetryWakes(path);
     if (partition) this.restorePartitionChildren(partition);
     this.partitionResyncPending.delete(path);
     if (this.entries.get(path)?.children.some((child) => child.permanentlyFailed)) {
@@ -1854,6 +1893,8 @@ export class LODGroupRegistry {
 
   /** Clear all entries (called on full scene tear-down). */
   clear(): void {
+    for (const timer of this.retryWakes.values()) clearTimeout(timer);
+    this.retryWakes.clear();
     for (const partition of this.partitionEntries.values()) {
       this.restorePartitionChildren(partition);
     }
@@ -2235,7 +2276,7 @@ export class LODGroupRegistry {
    * GROUP placeholders remain addressable without duplicating scene identity
    * onto the THREE object.
    *
-   * Clears the failure cooldown (``failed``/``failedTick``) through the shared
+   * Clears the failure cooldown (``failed``/``failedAtMs``) through the shared
    * ``kickDeferredLoad`` gate, which owns setting ``loading`` before firing
    * ``ensureLoaded`` (the thunk itself never sets ``loading`` — only the
    * registry does; keep that invariant here).
@@ -2363,7 +2404,9 @@ export class LODGroupRegistry {
     // fine-level reloads (see ``evaluateEntry``). ``undefined`` view version
     // (no wiring / tests) ⇒ treat as settled so the trigger is inert.
     this.frame.nowMs = this.nowMs();
+    const wasPlaying = this.frame.playbackPeriodMs !== null;
     this.frame.playbackPeriodMs = this.deps.getPlaybackPeriodMs?.() ?? null;
+    if (wasPlaying && this.frame.playbackPeriodMs === null) this.clearPlaybackProbes();
     const version = this.deps.getViewVersion?.();
     if (version != null) this.settleTracker.observe(version, this.frame.nowMs);
     const settled =
@@ -2373,33 +2416,18 @@ export class LODGroupRegistry {
     let cullChanged = false;
     let anyLoading = false;
     let hasVisiblePendingResync = false;
+    // Partitions first, so a lod_group nested in a part sees this frame's cull.
+    // A wrapper hidden now is skipped, and remembered: a lod_group below may
+    // reveal it this frame (the overview recipe's fine level), and it must be
+    // culled before that frame draws, not one frame late.
+    HIDDEN_PARTITIONS_SCRATCH.length = 0;
     for (const entry of this.partitionEntries.values()) {
-      if (!isEffectivelyVisible(entry.groupObject)) continue;
-      RISING_PARTS_SCRATCH.clear();
-      const result = this.evaluatePartitionEntry(
-        entry,
-        displayDims,
-        PARTITION_FRUSTUM_SCRATCH,
-        RISING_PARTS_SCRATCH
-      );
-      if ((result & PARTITION_VISIBILITY_CHANGED) !== 0) {
-        cullChanged = true;
-        this.drawnStateChanged = true;
+      if (!isEffectivelyVisible(entry.groupObject)) {
+        HIDDEN_PARTITIONS_SCRATCH.push(entry);
+        continue;
       }
-      // Only parts with something stale to resync are recorded (a settled
-      // re-entry just re-shows), so an empty set means no resync at all — never
-      // an empty-path request, which the loader would read as a FULL re-sweep.
-      if (RISING_PARTS_SCRATCH.size > 0) {
-        this.notePartitionRisingEdge(entry.path, RISING_PARTS_SCRATCH);
-      }
+      if (this.evaluatePartitionFrame(entry, displayDims)) cullChanged = true;
       if (this.partitionResyncPending.has(entry.path)) hasVisiblePendingResync = true;
-    }
-    RISING_PARTS_SCRATCH.clear();
-    if (this.partitionResyncPending.size > 0 && this.deps.isUpdateInProgress?.() !== true) {
-      this.flushPartitionResyncs();
-    }
-    if (hasVisiblePendingResync && this.partitionResyncPending.size > 0) {
-      this.keepTicking();
     }
     for (const entry of this.entries.values()) {
       if (this.evaluateEntry(entry, view, viewport, displayDims, FRUSTUM_SCRATCH, settled)) {
@@ -2413,6 +2441,21 @@ export class LODGroupRegistry {
       // hot-path invariant. The same walk times the loads that just landed.
       if (this.observeLoads(entry)) anyLoading = true;
     }
+    this.probeCandidate = null;
+    // The partitions a level swap just revealed.
+    for (const entry of HIDDEN_PARTITIONS_SCRATCH) {
+      if (!isEffectivelyVisible(entry.groupObject)) continue;
+      if (this.evaluatePartitionFrame(entry, displayDims)) cullChanged = true;
+      if (this.partitionResyncPending.has(entry.path)) hasVisiblePendingResync = true;
+    }
+    HIDDEN_PARTITIONS_SCRATCH.length = 0;
+    if (this.partitionResyncPending.size > 0 && this.deps.isUpdateInProgress?.() !== true) {
+      this.flushPartitionResyncs();
+    }
+    if (hasVisiblePendingResync && this.partitionResyncPending.size > 0) {
+      this.keepTicking();
+    }
+    // Pending lazy requests wake the selector once at expiry.
     if (anyLoading) this.keepTicking();
     // A dissolve is a function of TIME, so the loop must keep drawing until it
     // lands even when nothing else moves (each step writes a new opacity,
@@ -2431,6 +2474,33 @@ export class LODGroupRegistry {
     // so no per-swap release, hence no reload churn.
     this.enforceByteBudget(camera, FRUSTUM_SCRATCH, displayDims);
     return lodFrameChanges(levelChanged, cullChanged);
+  }
+
+  /**
+   * Frustum- and slice-gate one VISIBLE partition for this frame and record its
+   * rising edges. Returns whether a part was culled or restored.
+   */
+  private evaluatePartitionFrame(
+    entry: PartitionGroupEntry,
+    displayDims: readonly number[]
+  ): boolean {
+    RISING_PARTS_SCRATCH.clear();
+    const result = this.evaluatePartitionEntry(
+      entry,
+      displayDims,
+      PARTITION_FRUSTUM_SCRATCH,
+      RISING_PARTS_SCRATCH
+    );
+    // Only parts with something stale to resync are recorded (a settled
+    // re-entry just re-shows), so an empty set means no resync at all — never
+    // an empty-path request, which the loader would read as a FULL re-sweep.
+    if (RISING_PARTS_SCRATCH.size > 0) {
+      this.notePartitionRisingEdge(entry.path, RISING_PARTS_SCRATCH);
+    }
+    RISING_PARTS_SCRATCH.clear();
+    if ((result & PARTITION_VISIBILITY_CHANGED) === 0) return false;
+    this.drawnStateChanged = true;
+    return true;
   }
 
   /**
@@ -2473,8 +2543,47 @@ export class LODGroupRegistry {
     for (const c of entry.children) {
       if (c.loading) anyLoading = true;
       else this.foldLoadTime(c);
+      if (c.failed && c.failedAtMs !== undefined) {
+        const remaining = c.failedAtMs + this.retryDelay(c) - this.frame.nowMs;
+        if (remaining > 0) this.scheduleRetryWake(c, remaining);
+      } else if (!c.failed && !c.loading) {
+        this.clearRetryWake(c);
+        this.retryCounts.delete(c);
+      }
     }
     return anyLoading;
+  }
+
+  private retryDelay(key: object, baseMs = FAILED_RETRY_MS): number {
+    return Math.min(30_000, baseMs * 2 ** (this.retryCounts.get(key) ?? 0));
+  }
+
+  private clearRetryWake(key: object): void {
+    const timer = this.retryWakes.get(key);
+    if (timer !== undefined) clearTimeout(timer);
+    this.retryWakes.delete(key);
+  }
+
+  private clearEntryRetryWakes(path: string): void {
+    for (const child of this.entries.get(path)?.children ?? []) this.clearRetryWake(child);
+  }
+
+  private clearPartitionRetryWakes(path: string): void {
+    for (const child of this.partitionCaches.get(path)?.children ?? []) {
+      if (child.lazy) this.clearRetryWake(child.lazy);
+    }
+  }
+
+  private scheduleRetryWake(key: object, delayMs: number): void {
+    if (this.retryWakes.has(key) || !(this.deps.requestTick || this.deps.requestRender)) return;
+    const timer = setTimeout(
+      () => {
+        this.retryWakes.delete(key);
+        this.keepTicking();
+      },
+      Math.max(0, delayMs)
+    );
+    this.retryWakes.set(key, timer);
   }
 
   /**
@@ -2546,6 +2655,20 @@ export class LODGroupRegistry {
   }
 
   /**
+   * Playback stopped: forget every probe mark, so a later unrelated load (a
+   * paused refinement, a preload) blends into the average instead of
+   * replacing it, and the next playback starts without a stale admission.
+   */
+  private clearPlaybackProbes(): void {
+    for (const entry of this.entries.values()) {
+      for (const c of entry.children) {
+        c.playbackProbePending = undefined;
+        c.playbackProbeAdmissionPending = undefined;
+      }
+    }
+  }
+
+  /**
    * Periodically re-measure the next finer capped level after a cold load. The
    * probe's reload replaces the level's average (``playbackProbePending``): the
    * samples it holds are at least a probe interval old.
@@ -2559,8 +2682,10 @@ export class LODGroupRegistry {
         PLAYBACK_PROBE_INTERVAL_MS
       ) {
         next.lastPlaybackProbeMs = now;
-        next.playbackProbePending = true;
+        // ``playbackProbePending`` waits for the reload to start (see
+        // ``kickDeferredLoad``): a refused kick must leave no mark.
         next.playbackProbeAdmissionPending = true;
+        this.probeCandidate = next;
         return affordable + 1;
       }
     }
@@ -2608,7 +2733,12 @@ export class LODGroupRegistry {
    */
   private flushPartitionResyncs(): void {
     const requestReprocess = this.deps.requestReprocess;
-    if (!requestReprocess) return;
+    if (!requestReprocess) {
+      // Unwired (an embedder without a loader pass): nothing will ever run
+      // these, and a pending set would keep the loop ticking every frame.
+      this.partitionResyncPending.clear();
+      return;
+    }
     let resyncPaths: string[] | null = null;
     for (const [path, parts] of this.partitionResyncPending) {
       const entry = this.partitionEntries.get(path);
@@ -2725,8 +2855,17 @@ export class LODGroupRegistry {
     lazy: LazyPartState,
     wanted: boolean
   ): void {
-    if (!wanted || lazy.requested || lazy.running || lazy.failed) return;
+    if (!wanted || lazy.running || lazy.failed) return;
+    if (lazy.requested) {
+      // Outstanding: one timer wakes the selector when it expires.
+      if (this.frame.nowMs - lazy.requestedAtMs < this.retryDelay(lazy, LAZY_REQUEST_TIMEOUT_MS))
+        return;
+      this.clearRetryWake(lazy);
+      this.retryCounts.set(lazy, (this.retryCounts.get(lazy) ?? 0) + 1);
+    }
     lazy.requested = true;
+    lazy.requestedAtMs = this.frame.nowMs;
+    this.scheduleRetryWake(lazy, this.retryDelay(lazy, LAZY_REQUEST_TIMEOUT_MS));
     noteRisingPart(risingParts, child.path, entryPath);
   }
 
@@ -2866,6 +3005,7 @@ export class LODGroupRegistry {
     }
 
     // During playback, no finer than what can reload within the period.
+    this.probeCandidate = null;
     desired = this.playbackAspiration(entry, desired);
 
     // Record what the selector WANTS this frame, before any of the ready /
@@ -3099,7 +3239,9 @@ export class LODGroupRegistry {
     // that fits the period); refinement of a fresh one still waits.
     const playingStale = this.frame.playbackPeriodMs !== null && !aspirationFresh;
     if ((settled || playingStale) && needsReloadOrRefine && aspiration!.ensureLoaded) {
-      this.maybeKickReload(entry, aspiration!);
+      // Only a reload for a new slice is a reload TIMING; a ladder refinement
+      // step of a fresh level is not.
+      this.maybeKickReload(entry, aspiration!, !aspirationFresh);
     }
     this.preloadNeighbour(entry, desired, preloadMetric, version ?? null, settled);
 
@@ -3320,7 +3462,7 @@ export class LODGroupRegistry {
     visit.sawReady = true;
     if (!settled) return;
     const stale = version !== null && !this.childFreshAndCount(child, version).fresh;
-    if (stale || child.hasMoreLODs?.() === true) this.maybeKickReload(entry, child);
+    if (stale || child.hasMoreLODs?.() === true) this.maybeKickReload(entry, child, stale);
   }
 
   /**
@@ -3492,7 +3634,7 @@ export class LODGroupRegistry {
     version: number | null
   ): LevelFade | null {
     const fadeMs = config.lod.fadeMs;
-    const now = this.nowMs();
+    const now = this.frame.nowMs;
     let fade = this.fades.get(entry.path) ?? null;
     const prev = entry.displayedChildIndex;
     if (prev !== undefined && prev !== displayIdx && fadeMs > 0) {
@@ -3635,7 +3777,7 @@ export class LODGroupRegistry {
     if (prevCount == null || fallbackCount == null || prevCount <= 0) return undefined;
     if (fallbackCount >= prevCount * STALE_HOLD_MIN_RATIO) return undefined;
 
-    const now = this.deps.now?.() ?? performance.now();
+    const now = this.frame.nowMs;
     if (entry.staleHoldSinceMs == null) entry.staleHoldSinceMs = now;
     // During playback the held level's own reload for the new timepoint is in
     // flight: keep it until that replacement lands rather than dropping to a
@@ -3694,8 +3836,8 @@ export class LODGroupRegistry {
    * both the desired-target swap path and the active-child self-heal so
    * the failure/cooldown logic lives in exactly one place.
    *
-   * A freshly-failed child is stamped with the current tick; once
-   * ``FAILED_RETRY_FRAMES`` elapse the ``failed`` flag is cleared and the
+   * A freshly-failed child is stamped with the frame clock; once
+   * ``FAILED_RETRY_MS`` elapse the ``failed`` flag is cleared and the
    * load retried — recovering a level that failed on *reload* (after a
    * successful load + byte-eviction), which the old "failed until
    * released" behaviour left permanently stuck (a failed child is never an
@@ -3718,10 +3860,12 @@ export class LODGroupRegistry {
    * refreshing a ready level is the whole point. The stale level stays hidden
    * behind the coarse fallback meanwhile (the display pass), so this never
    * blanks the screen, and the shared ``loading``/cooldown guards make
-   * re-calling it every settled frame safe.
+   * re-calling it every settled frame safe. ``timed`` is false for a ladder
+   * refinement step of a FRESH level: only a full reload is a reload timing
+   * for ``loadEwmaMs``.
    */
-  private maybeKickReload(entry: LODGroupEntry, child: LODGroupChild): void {
-    this.kickDeferredLoadIfVisible(entry, child);
+  private maybeKickReload(entry: LODGroupEntry, child: LODGroupChild, timed: boolean): void {
+    this.kickDeferredLoadIfVisible(entry, child, timed);
   }
 
   /**
@@ -3757,41 +3901,55 @@ export class LODGroupRegistry {
    * explicit request for a retryable child is honoured whatever the layer's
    * visibility or the current archive-fault latch.
    */
-  private kickDeferredLoadIfVisible(entry: LODGroupEntry, child: LODGroupChild): void {
+  private kickDeferredLoadIfVisible(
+    entry: LODGroupEntry,
+    child: LODGroupChild,
+    timed = true
+  ): void {
     if (this.deps.hasArchiveFault?.() || !isEffectivelyVisible(entry.groupObject)) return;
-    this.kickDeferredLoad(child);
+    this.kickDeferredLoad(child, false, timed);
   }
 
   /**
    * Shared lazy-load gate for ``maybeKickLoad`` (initial load of a not-ready
    * level) and ``maybeKickReload`` (refresh of a ready-but-stale level): fire
    * ``ensureLoaded`` unless already loading or inside the failure cooldown. A
-   * freshly-failed child is stamped with the current tick; once
-   * ``FAILED_RETRY_FRAMES`` elapse the ``failed`` flag clears and the load
+   * freshly-failed child is stamped with the frame clock; once
+   * ``FAILED_RETRY_MS`` elapse the ``failed`` flag clears and the load
    * retries — recovering a level that failed on reload (after a successful load
    * + byte-eviction), which the old "failed until released" behaviour left stuck.
    * The automatic caller separately gates loader-level archive faults. The
    * per-child latch keeps concurrent failed branches individually addressable
    * by Retry; an explicit retry clears that selected branch as it starts.
+   *
+   * A ``timed`` load (every full load or reload) is measured into
+   * ``loadEwmaMs``; the kick that starts this frame's playback probe marks it
+   * ``playbackProbePending``. An untimed one (a ladder refinement step) is not
+   * measured.
    */
-  private kickDeferredLoad(child: LODGroupChild, explicitRetry = false): boolean {
+  private kickDeferredLoad(child: LODGroupChild, explicitRetry = false, timed = true): boolean {
     if (!child.ensureLoaded || child.loading || (!explicitRetry && child.permanentlyFailed)) {
       return false;
     }
     if (child.failed) {
       if (explicitRetry) {
+        this.clearRetryWake(child);
+        this.retryCounts.delete(child);
         child.failed = false;
-        child.failedTick = undefined;
+        child.failedAtMs = undefined;
       } else {
-        if (child.failedTick == null) {
+        if (child.failedAtMs == null) {
           // First frame we observe the failure — start the cooldown clock.
-          child.failedTick = this.tick;
+          child.failedAtMs = this.frame.nowMs;
+          this.scheduleRetryWake(child, this.retryDelay(child));
           return false;
         }
-        if (this.tick - child.failedTick < FAILED_RETRY_FRAMES) return false;
+        if (this.frame.nowMs - child.failedAtMs < this.retryDelay(child)) return false;
         // Cooldown elapsed — clear the failure and fall through to retry.
+        this.clearRetryWake(child);
+        this.retryCounts.set(child, (this.retryCounts.get(child) ?? 0) + 1);
         child.failed = false;
-        child.failedTick = undefined;
+        child.failedAtMs = undefined;
       }
     }
     if (explicitRetry) {
@@ -3800,12 +3958,17 @@ export class LODGroupRegistry {
     // A load that finished this frame, before the post-evaluation walk saw it.
     this.foldLoadTime(child);
     child.loading = true;
-    const startMs = this.nowMs();
-    child.loadStartMs = startMs;
-    child.onLoadSettled = () => {
-      // Only the load this kick started (a release + re-kick restarts it).
-      if (child.loadStartMs === startMs) child.loadEndMs = this.nowMs();
-    };
+    if (timed) {
+      const startMs = this.nowMs();
+      child.loadStartMs = startMs;
+      child.onLoadSettled = () => {
+        // Only the load this kick started (a release + re-kick restarts it).
+        if (child.loadStartMs === startMs) child.loadEndMs = this.nowMs();
+      };
+      if (child === this.probeCandidate) child.playbackProbePending = true;
+    } else {
+      child.onLoadSettled = undefined;
+    }
     child.ensureLoaded();
     return true;
   }

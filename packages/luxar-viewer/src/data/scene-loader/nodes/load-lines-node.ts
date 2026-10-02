@@ -209,7 +209,7 @@ export async function loadLinesNode(
     // Registering before the await let a concurrent updateView sweep call
     // loader.updateView while the initial load was mid-flight on the same
     // instance — interleaving the shared accumulator buffers and clobbering
-    // the per-update _activeSignal slot (routine during deferred-group
+    // the per-update signal slot (routine during deferred-group
     // activation, where zoom-triggered loads overlap slice scrubs). Nothing
     // during the load resolves the loader through the registry maps (commit
     // helpers use rootGroup.getObjectByName), and load-scene's post-load
@@ -217,7 +217,10 @@ export async function loadLinesNode(
     // is invisible to them. Registering on FAILURE too is deliberate:
     // retryFailedLoader resolves eager loaders through these maps, so a
     // failed initial load must stay retryable.
-    ctx.registry.registerLinesLoader(node.path, loader);
+    // A dataset switched away during the load gets nothing registered, as in
+    // the register-only branch above: the registry outlives the dataset.
+    if (ctx.isDatasetLive()) ctx.registry.registerLinesLoader(node.path, loader);
+    else loader.dispose();
   }
   return placeholder;
 }

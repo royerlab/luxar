@@ -189,7 +189,7 @@ void main() {
 
 	} else {
 
-		nodeVar12 = ( 1.0 - meshPickBrightness );
+		nodeVar12 = ( 1.0 / ( 1.0 + meshPickBrightness ) );
 
 	}
 

@@ -366,9 +366,12 @@ which end of a ladder renders, so consumers must agree on them):
   the camera merely orbits to a corner-on view; the sized ellipse of a cube
   stays constant at a fixed distance, though an elongated box changes size
   when viewed from different directions.
-  The eye plane cutting the bbox (nearest corner at `w <= 1e-6`: camera
-  inside or beside the node) saturates to the finest level; a bbox wholly
-  behind the camera reads `0`.
+  The eye plane cutting the bbox (nearest corner at `w <= 1e-6`) saturates
+  to the finest level only with the camera INSIDE the bbox; with the camera
+  beside it (a node running past the camera) the metric is the visible area of
+  the screen rect of the part in front of the near plane, so a node grazing a
+  corner of the view does not force the finest level. A bbox wholly behind the
+  camera reads `0`.
 
 * **Visible occupancy.** The ellipse's area is scaled, per axis, by the
   visible fraction of its screen AABB (exact for an axis-aligned ellipse); an
@@ -376,9 +379,11 @@ which end of a ladder renders, so consumers must agree on them):
   (coarsest). When all four viewport corners lie inside the ellipse's image
   conic, full coverage reads exactly `1.0` even for a tilted ellipse
   (thresholds are satisfied inclusively, `threshold <= metric`). Under a PERSPECTIVE camera,
-  a node the eye plane cuts has no meaningful projection, so the metric
-  saturates to the finest level — the counterpart of the near-plane guard
-  the legacy diagonal metric applies to the bbox corners. An ORTHOGRAPHIC projection never
+  a node the eye plane cuts has no meaningful ellipse projection: with the
+  camera inside the node the metric saturates to the finest level — the
+  counterpart of the near-plane guard the legacy diagonal metric applies to
+  the bbox corners — and otherwise it reads the near-clipped rect described
+  above (the legacy diagonal likewise measures the near-clipped corners). An ORTHOGRAPHIC projection never
   degenerates (`w` stays 1), so no saturation applies and the plain clipped
   metric is used directly: a camera inside a large node still reads full
   coverage naturally (its ellipse spans the viewport), and both selectors

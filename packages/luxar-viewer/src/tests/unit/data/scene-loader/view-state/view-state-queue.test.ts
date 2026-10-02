@@ -12,9 +12,15 @@ import type { ViewState } from '../../../../../data/data-loader-types';
 import { log, Modules } from '../../../../../utils/log';
 
 const dispatchSpy = vi.fn();
-vi.mock('../../../../../data/scene-loader/view-state/predicted-view-state', () => ({
-  dispatchPredictivePrefetch: (...args: unknown[]) => dispatchSpy(...args),
-}));
+vi.mock(
+  '../../../../../data/scene-loader/view-state/predicted-view-state',
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import('../../../../../data/scene-loader/view-state/predicted-view-state')
+    >()),
+    dispatchPredictivePrefetch: (...args: unknown[]) => dispatchSpy(...args),
+  })
+);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -217,6 +223,43 @@ describe('ViewStateQueue.dispatchPrefetch', () => {
     queue.dispatchPrefetch('/b', { ...baseViewState, slicePosition: [0, 0, 0, 6] }, loader);
     await new Promise((r) => queueMicrotask(() => r(null)));
     expect(dispatchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('a newer prediction aborts the one it supersedes, keeping its predecessor joinable', async () => {
+    const at = (t: number): ViewState => ({ ...baseViewState, slicePosition: [0, 0, 0, t] });
+    queue.dispatchPrefetch('/a', at(4), {});
+    for (const t of [5, 6, 7]) {
+      queue.dispatchPrefetch('/a', at(t), {});
+      await Promise.resolve();
+    }
+    const [p5, p6, p7] = dispatchSpy.mock.calls.map((call) => call[3] as AbortSignal | undefined);
+    // p6's reads may still be joining p5's in-flight fetches when p7 starts; p5
+    // has two newer predictions and is cancelled.
+    expect(p5?.aborted).toBe(true);
+    expect(p6?.aborted).toBe(false);
+    expect(p7?.aborted).toBe(false);
+  });
+
+  it('same-view passes leave an in-flight prediction live', async () => {
+    const at = (t: number): ViewState => ({ ...baseViewState, slicePosition: [0, 0, 0, t] });
+    queue.dispatchPrefetch('/a', at(4), {});
+    queue.dispatchPrefetch('/a', at(5), {});
+    await Promise.resolve();
+    const signal = dispatchSpy.mock.calls[0][3] as AbortSignal;
+    queue.dispatchPrefetch('/a', at(5), {});
+    queue.dispatchPrefetch('/a', at(5), {});
+    await Promise.resolve();
+    expect(dispatchSpy).toHaveBeenCalledTimes(1);
+    expect(signal.aborted).toBe(false);
+  });
+
+  it('clearPrev aborts every outstanding prediction', async () => {
+    queue.dispatchPrefetch('/a', baseViewState, {});
+    queue.dispatchPrefetch('/a', { ...baseViewState, slicePosition: [0, 0, 0, 5] }, {});
+    await Promise.resolve();
+    const signal = dispatchSpy.mock.calls[0][3] as AbortSignal | undefined;
+    queue.clearPrev();
+    expect(signal?.aborted).toBe(true);
   });
 
   it('forgetPath drops the saved snapshot for one path only', async () => {

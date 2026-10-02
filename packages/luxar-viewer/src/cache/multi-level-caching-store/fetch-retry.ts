@@ -42,6 +42,8 @@ export interface FetchAttempt {
 export interface FetchRetryOptions {
   timeoutMsOverride?: number;
   signal?: AbortSignal;
+  /** HTTP method (default `GET`); the zip reader's length fallback sends `HEAD`. */
+  method?: string;
   headers?: HeadersInit;
   onExhausted?: (error: unknown) => void;
   lane?: FetchLane;
@@ -333,6 +335,7 @@ async function runFetchAttempt<T>(
       try {
         response = await fetch(url, {
           signal: abortScope.signal,
+          ...(options?.method ? { method: options.method } : {}),
           ...(options?.headers ? { headers: options.headers } : {}),
           ...(options?.cache ? { cache: options.cache } : {}),
         });

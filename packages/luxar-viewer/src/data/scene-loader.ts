@@ -249,6 +249,7 @@ import {
   noteRefinementStarted,
 } from '../profiling/load-timeline';
 import { viewStatesEqual } from './loaders/progressive/view-state-equal';
+import { tryRollbackToPassStart } from './loaders/progressive/pass-rollback';
 import { computeWorldNdTransform } from './transforms/nd-transform';
 
 import {
@@ -556,10 +557,20 @@ export class SceneLoader {
   // time (see that method) — prevents a per-caller pile-up of scheduled
   // re-checks while an update holds the lock for a while.
   private _refinementKickPending = false;
+  // That re-check's timer, so dispose() can cancel it.
+  private _refinementKickTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Failed-loader retries waiting for a refinement drain to hand them the
+   * serialization lock (A10, see `acquireLockForRetry`). Each resolves `true`
+   * when it now owns the lock, `false` when it must report the retry deferred.
+   */
+  private _retryLockWaiters: Array<(owned: boolean) => void> = [];
   // Pending re-drain of ladders the consecutive-failure cap retired, and the
-  // backoff round it is on (#2975). See `scheduleAbandonedRungRetry`.
+  // backoff round EACH retired ladder is on, keyed by node path (#2975). Per
+  // ladder: a ladder retired after another spent its rounds still gets its own.
+  // See `scheduleAbandonedRungRetry`.
   private _abandonedRetryTimer: ReturnType<typeof setTimeout> | null = null;
-  private _abandonedRetryRound = 0;
+  private _abandonedRetryRounds = new Map<string, number>();
   // Set true in dispose(); progressive-refinement loops poll this (via the
   // ctx isActive callback) so they abort promptly when this loader is torn
   // down mid-flight (e.g. a dataset switch) instead of fetching/decoding
@@ -917,8 +928,15 @@ export class SceneLoader {
    * So is a pass superseded by a `displayDims` change: an intermediate SLICE
    * is a truthful frame of a drag, but geometry projected for the old display
    * axes is not, so it must never be let through to commit.
+   *
+   * Only a view pass actually RUNNING can be owed anything (A8). The lock is
+   * also held with no pass in flight — across the inter-pass frame yield, the
+   * refinement hand-off frame and a failed-loader retry — and there the timing
+   * fields still describe the pass that already ended: reading them armed the
+   * hold timer against a dead controller and blocked the real arming later.
    */
   private inFlightPassOwesCommit(superseding: Partial<ViewState>): boolean {
+    if (this._passGen === 0) return false;
     const next = superseding.displayDims;
     const current = this.viewState.displayDims;
     if (next && (next.length !== current.length || next.some((d, i) => d !== current[i]))) {
@@ -926,7 +944,6 @@ export class SceneLoader {
     }
     const now = performance.now();
     return (
-      !this._refining &&
       now - this._passStartedAt < DRAG_COMMIT_MAX_HOLD_MS &&
       now - Math.max(this._lastCommitAt, this._passChainStartedAt) >= DRAG_COMMIT_INTERVAL_MS
     );
@@ -1692,6 +1709,9 @@ export class SceneLoader {
     // chunk read so the superseded load bails, and its `aborted` flag gates
     // the geometry commit below.
     const updateController = new AbortController();
+    // A hold timer armed for an earlier pass must not outlive it: one left
+    // set blocks `armHoldExpiry` for this pass (A8).
+    this.clearHoldExpiry();
     this._updateAbortController = updateController;
     this._passStartedAt = performance.now();
     let supersededPassWait: Promise<void> | undefined;
@@ -1799,9 +1819,7 @@ export class SceneLoader {
           updateController.signal
         ),
       ]);
-      const [pointsStaged, linesStaged, gsplatsStaged, meshStaged] = activated
-        ? concatSweeps(swept, activated)
-        : swept;
+      const staged = activated ? concatSweeps(swept, activated) : swept;
 
       if (sweepArchiveFault) {
         this.reportArchiveFault(sweepArchiveFault);
@@ -1817,39 +1835,21 @@ export class SceneLoader {
       // Stage 2: Atomic commit — ALL geometry mutations in one sync block.
       // Implementation in scene-loader/update-view/atomic-commit.ts.
       // ================================================================
-      runAtomicCommit(pointsStaged, linesStaged, gsplatsStaged, meshStaged, {
-        gpuBufferPool: this._gpuBufferPool,
-        nodeFactory: this.nodeFactory,
-        // When this update was superseded mid-flight, skip the geometry
-        // commits so a stale/partial frame never reaches the GPU; profiler
-        // sessions are still ended inside runAtomicCommit regardless. Keep
-        // abort reserved for supersession/cancellation so profiler and log
-        // semantics stay accurate; archive faults discard independently.
-        signal: updateController.signal,
-        discard: sweepArchiveFault !== undefined,
-        updatePointsGeometry: (path, data, session) =>
-          this.updatePointsGeometry(path, data, session),
-        commitLinesGeometry: (staged, session) => this.commitLinesGeometry(staged, session),
-        commitGSplatsGeometry: (staged, session) => this.commitGSplatsGeometry(staged, session),
-        commitMeshGeometry: (staged, session) => this.commitMeshGeometry(staged, session),
-        onCommitFailed: (path) => {
-          const loader =
-            this.loaders.get(path) ??
-            this.linesLoaders.get(path) ??
-            this.gsplatLoaders.get(path) ??
-            this.meshLoaders.get(path);
-          (
-            loader as typeof loader & {
-              rollbackToPassStart?: () => number;
-            }
-          )?.rollbackToPassStart?.();
-        },
-      });
+      // A failing node commit is rethrown only AFTER every sibling committed
+      // (an AggregateError), so the frame IS on screen: hold the error until
+      // the post-commit bookkeeping below has recorded it (A9).
+      let commitFailure: { error: unknown } | null = null;
+      try {
+        this.runPassCommit(staged, updateController.signal, sweepArchiveFault !== undefined);
+      } catch (error) {
+        commitFailure = { error };
+      }
 
       // Post-commit bookkeeping is meaningful only for a committed frame. A
       // superseded update committed nothing (and its loaders may have aborted
       // mid-attribute) — skip the monitor refresh and the failed-loader
-      // warning; the winning update runs both with correct state.
+      // warning; the winning update runs both with correct state. A partially
+      // failed commit DID commit its siblings, so it is recorded like any other.
       if (!updateController.signal.aborted && !sweepArchiveFault) {
         // This view is now what is drawn: re-gate partition parts on its slice
         // before anything renders or refinement reads the stamps (B4).
@@ -1863,6 +1863,7 @@ export class SceneLoader {
         // Warn user if any loaders failed (shared with the end-of-load report).
         warnFailedLoaders(Array.from(this.failedLoaders.keys()));
       }
+      if (commitFailure !== null) throw commitFailure.error;
     } finally {
       // End profiling update cycle (always, even if errors)
       this.profiler?.endUpdate();
@@ -1921,6 +1922,43 @@ export class SceneLoader {
       }
     }
     await supersededPassWait;
+  }
+
+  /**
+   * Stage 2 of a view pass: the synchronous atomic commit of every staged node
+   * (`update-view/atomic-commit.ts`). Skipped wholesale when the pass was
+   * superseded (`signal`) or hit an archive fault (`discard`); a failing node
+   * commit is rolled back to its pass start and rethrown after its siblings.
+   */
+  private runPassCommit(
+    [pointsStaged, linesStaged, gsplatsStaged, meshStaged]: Awaited<
+      ReturnType<SceneLoader['sweepLoaders']>
+    >,
+    signal: AbortSignal,
+    discard: boolean
+  ): void {
+    runAtomicCommit(pointsStaged, linesStaged, gsplatsStaged, meshStaged, {
+      gpuBufferPool: this._gpuBufferPool,
+      nodeFactory: this.nodeFactory,
+      // When this update was superseded mid-flight, skip the geometry
+      // commits so a stale/partial frame never reaches the GPU; profiler
+      // sessions are still ended inside runAtomicCommit regardless. Keep
+      // abort reserved for supersession/cancellation so profiler and log
+      // semantics stay accurate; archive faults discard independently.
+      signal,
+      discard,
+      updatePointsGeometry: (path, data, session) => this.updatePointsGeometry(path, data, session),
+      commitLinesGeometry: (staged, session) => this.commitLinesGeometry(staged, session),
+      commitGSplatsGeometry: (staged, session) => this.commitGSplatsGeometry(staged, session),
+      commitMeshGeometry: (staged, session) => this.commitMeshGeometry(staged, session),
+      onCommitFailed: (path) => {
+        const kind = this.registry.getLoaderType(path);
+        const loader = kind ? this.registry.loadersOf(kind).get(path) : undefined;
+        // Like every other rollback site: a throwing rollback is logged and
+        // the commit failure stays the one reported.
+        if (loader) tryRollbackToPassStart(loader as { rollbackToPassStart?: () => number });
+      },
+    });
   }
 
   /** Any registered loader (points / lines / gsplats / mesh) with LODs left to stream. */
@@ -1994,7 +2032,8 @@ export class SceneLoader {
     if (this._updateInProgress || this._refining) {
       if (this._refinementKickPending) return;
       this._refinementKickPending = true;
-      setTimeout(() => {
+      this._refinementKickTimer = setTimeout(() => {
+        this._refinementKickTimer = null;
         this._refinementKickPending = false;
         this.kickRefinementIfIdle();
       }, REFINEMENT_KICK_RECHECK_MS);
@@ -2048,6 +2087,7 @@ export class SceneLoader {
     // (see the `_refining` field). Cleared in the `finally` below so every exit
     // path — early return, cancellation hand-off, disposal, throw — clears it.
     this._refining = true;
+    let cancelled = false;
     try {
       // Orchestrate progressive refinement across all four leaf types in
       // sequence: gsplats first (its progressive-loader was the original
@@ -2056,26 +2096,13 @@ export class SceneLoader {
       // refinement) the cancelling phase hands the lock to
       // retriggerUpdate's rAF and the orchestrator exits early so the
       // later phases don't fire on stale state. On normal completion of
-      // the FINAL phase, the lock is released.
-      let cancelled = false;
+      // the FINAL phase, the lock is released. A failed-loader retry pre-empts
+      // the run the same way (A10): `isActive` turns false, every phase exits,
+      // and the `finally` hands the still-held lock to the retry.
+      const isActive = () => !this._disposed && this._retryLockWaiters.length === 0;
       const onCancel = (pendingState: Partial<ViewState>) => {
         cancelled = true;
-        // scheduleFrame: rAF while visible, timer in hidden tabs (rAF is
-        // suspended there — the hand-off used to stall until foregrounded),
-        // synchronous in non-browser contexts.
-        scheduleFrame(() => {
-          this._updateInProgress = false;
-          // A resync parked during this refinement hold rides the pending
-          // state it queued; a real view change takes precedence over it only
-          // in that the full sweep is a superset (the paths are still consumed).
-          this.reenterPending(pendingState).catch((error: unknown) => {
-            log.error(
-              Modules.SCENE_LOADER,
-              `Refinement cancellation re-entry failed: ${getErrorMessage(error)}`,
-              error
-            );
-          });
-        });
+        this.handOffCancelledRefinement(pendingState);
       };
       // Per-run abort controller, published as THIS loader's live update
       // controller: the supersede branch in `updateView` (and `dispose`) abort
@@ -2113,6 +2140,8 @@ export class SceneLoader {
         /* lock stays held; next phase owns it */
       };
       const finalReleaseLock = () => {
+        // A pre-empting retry takes the lock over in the `finally` below.
+        if (!isActive() && !this._disposed) return;
         this._updateInProgress = false;
         // dispose() flushes waiters itself; never re-enter a dead loader.
         if (this._disposed) return;
@@ -2141,12 +2170,12 @@ export class SceneLoader {
         updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
         releaseLock: noopReleaseLock,
         retriggerUpdate: onCancel,
-        isActive: () => !this._disposed,
+        isActive,
         signal: refinementController.signal,
         profiler: this.profiler,
         residencyBudget,
       });
-      if (cancelled || this._disposed) return;
+      if (cancelled || !isActive()) return;
 
       await runPointsRefinement({
         viewStateQueue: this.viewStateQueue,
@@ -2158,12 +2187,12 @@ export class SceneLoader {
         updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
         releaseLock: noopReleaseLock,
         retriggerUpdate: onCancel,
-        isActive: () => !this._disposed,
+        isActive,
         signal: refinementController.signal,
         profiler: this.profiler,
         residencyBudget,
       });
-      if (cancelled || this._disposed) return;
+      if (cancelled || !isActive()) return;
 
       await runLinesRefinement({
         viewStateQueue: this.viewStateQueue,
@@ -2176,12 +2205,12 @@ export class SceneLoader {
         updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
         releaseLock: noopReleaseLock,
         retriggerUpdate: onCancel,
-        isActive: () => !this._disposed,
+        isActive,
         signal: refinementController.signal,
         profiler: this.profiler,
         residencyBudget,
       });
-      if (cancelled || this._disposed) return;
+      if (cancelled || !isActive()) return;
 
       // Mesh runs LAST and therefore owns `finalReleaseLock`. Order within the four
       // phases is otherwise historical (gsplats was the template), but the final slot
@@ -2200,7 +2229,7 @@ export class SceneLoader {
         updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
         releaseLock: finalReleaseLock,
         retriggerUpdate: onCancel,
-        isActive: () => !this._disposed,
+        isActive,
         signal: refinementController.signal,
         profiler: this.profiler,
         residencyBudget,
@@ -2208,7 +2237,77 @@ export class SceneLoader {
       this.noteRefinementOutcome(cancelled);
     } finally {
       this._refining = false;
+      this.handLockToRetryWaiters(cancelled);
     }
+  }
+
+  /**
+   * Take the serialization lock for a failed-loader retry (A10). A free lock is
+   * taken at once. A refinement drain holding it, with no view queued to run
+   * next, is pre-empted the way a view change pre-empts it — its reads are
+   * aborted and it hands the lock over as it unwinds. A view pass holding it
+   * (or one queued behind the drain) keeps it: the retry is reported deferred,
+   * as before.
+   *
+   * @returns Whether the caller now holds the lock (and must release it).
+   */
+  private acquireLockForRetry(): Promise<boolean> {
+    if (!this._updateInProgress) {
+      this._updateInProgress = true;
+      return Promise.resolve(true);
+    }
+    if (!this._refining || this.viewStateQueue.hasPending()) return Promise.resolve(false);
+    const owned = new Promise<boolean>((resolve) => this._retryLockWaiters.push(resolve));
+    this._updateAbortController?.abort();
+    return owned;
+  }
+
+  /**
+   * Settle the retries waiting on a refinement run that just unwound. Unless
+   * the lock went to a view hand-off (`lockHandedOff`) or the loader was
+   * disposed, the first one inherits the lock the run still holds; the rest
+   * defer.
+   */
+  private handLockToRetryWaiters(lockHandedOff: boolean): void {
+    const waiters = this._retryLockWaiters;
+    if (waiters.length === 0) return;
+    this._retryLockWaiters = [];
+    const lockHeld = !lockHandedOff && !this._disposed;
+    waiters.forEach((resolve, i) => resolve(lockHeld && i === 0));
+  }
+
+  /**
+   * A refinement run cancelled by a pending view hands the lock over across
+   * one frame. The state goes back into the pending slot until the frame fires
+   * (A8), exactly as queueNext keeps it there: a view arriving during the
+   * hand-off frame supersedes it through updateView's ordinary branch, and the
+   * newest state is the one re-entered. Synchronous with the loop's take, so
+   * nothing can interleave.
+   */
+  private handOffCancelledRefinement(pendingState: Partial<ViewState>): void {
+    this.viewStateQueue.setPending(pendingState);
+    // scheduleFrame: rAF while visible, timer in hidden tabs (rAF is
+    // suspended there — the hand-off used to stall until foregrounded),
+    // synchronous in non-browser contexts.
+    scheduleFrame(() => {
+      this._updateInProgress = false;
+      const latest = this.viewStateQueue.takePending();
+      if (latest === null) {
+        // Flushed by a teardown during the frame: nothing re-enters.
+        this.resolveCompletedPassWaiters();
+        return;
+      }
+      // A resync parked during this refinement hold rides the pending
+      // state it queued; a real view change takes precedence over it only
+      // in that the full sweep is a superset (the paths are still consumed).
+      this.reenterPending(latest).catch((error: unknown) => {
+        log.error(
+          Modules.SCENE_LOADER,
+          `Refinement cancellation re-entry failed: ${getErrorMessage(error)}`,
+          error
+        );
+      });
+    });
   }
 
   /**
@@ -2217,7 +2316,8 @@ export class SceneLoader {
    * hand-off (the next update re-kicks refinement) and not on a dead loader.
    */
   private noteRefinementOutcome(cancelled: boolean): void {
-    if (cancelled || this._disposed) return;
+    // A retry pre-empting the run (A10) is a cancellation too: its resume re-kicks.
+    if (cancelled || this._disposed || this._retryLockWaiters.length > 0) return;
     // A ladder retired mid-way is still owed its rungs: stay unsettled while
     // its re-drain is pending, so capture / isSettled do not report done.
     if (this.scheduleAbandonedRungRetry()) return;
@@ -2240,34 +2340,27 @@ export class SceneLoader {
    * @returns Whether a re-drain is pending (the drain is not complete).
    */
   private scheduleAbandonedRungRetry(): boolean {
-    const abandoned = abandonedLadderPaths(this.sweepLoaderEntries());
-    if (abandoned.length === 0) {
-      this._abandonedRetryRound = 0;
-      return false;
+    const entries = this.sweepLoaderEntries();
+    const abandoned = abandonedLadderPaths(entries);
+    // A ladder no longer retired (it recovered, or left the sweep) starts over.
+    for (const path of this._abandonedRetryRounds.keys()) {
+      if (!abandoned.includes(path)) this._abandonedRetryRounds.delete(path);
     }
-    if (this._abandonedRetryTimer !== null) return true;
-    const round = this._abandonedRetryRound;
-    if (round >= MAX_ABANDONED_RUNG_RETRY_ROUNDS) {
-      if (round === MAX_ABANDONED_RUNG_RETRY_ROUNDS) {
-        log.warning(
-          Modules.SCENE_LOADER,
-          `Leaving LOD refinement of ${abandoned.join(', ')} after ${round} re-drains ` +
-            '(a view change or restored connectivity retries it)'
-        );
-        this._abandonedRetryRound = round + 1;
-      }
-      return false;
-    }
+    if (this._abandonedRetryTimer !== null) return abandoned.length > 0;
+    const due = this.abandonedLaddersStillOwedARound(abandoned);
+    if (due.length === 0) return false;
+    const rounds = due.map((path) => this._abandonedRetryRounds.get(path) ?? 0);
     const delayMs = Math.min(
-      ABANDONED_RUNG_RETRY_BASE_MS * 2 ** round,
+      ABANDONED_RUNG_RETRY_BASE_MS * 2 ** Math.min(...rounds),
       ABANDONED_RUNG_RETRY_MAX_MS
     );
-    this._abandonedRetryRound = round + 1;
+    for (const [i, path] of due.entries()) this._abandonedRetryRounds.set(path, rounds[i] + 1);
     log.info(
       Modules.SCENE_LOADER,
-      `Re-draining abandoned LOD rung(s) of ${abandoned.join(', ')} in ${delayMs} ms ` +
-        `(round ${round + 1}/${MAX_ABANDONED_RUNG_RETRY_ROUNDS})`
+      `Re-draining abandoned LOD rung(s) of ${due.join(', ')} in ${delayMs} ms ` +
+        `(round ${Math.min(...rounds) + 1}/${MAX_ABANDONED_RUNG_RETRY_ROUNDS})`
     );
+    const dueSet = new Set(due);
     this._abandonedRetryTimer = setTimeout(() => {
       this._abandonedRetryTimer = null;
       if (this._disposed) return;
@@ -2275,18 +2368,45 @@ export class SceneLoader {
         noteRefinementAborted();
         return;
       }
-      reopenRefinementFailureTrackers(this.sweepLoaderEntries().map(([, loader]) => loader));
+      // Only the ladders this round is for: one that gave up stays retired.
+      reopenRefinementFailureTrackers(
+        this.sweepLoaderEntries()
+          .filter(([path]) => dueSet.has(path))
+          .map(([, loader]) => loader)
+      );
       if (!this.anyLoaderHasMoreLODs()) noteRefinementComplete();
       else this.kickRefinementIfIdle();
     }, delayMs);
     return true;
   }
 
+  /**
+   * The retired ladders still under {@link MAX_ABANDONED_RUNG_RETRY_ROUNDS};
+   * one that just ran out is left, with a single warning.
+   */
+  private abandonedLaddersStillOwedARound(abandoned: readonly string[]): string[] {
+    const due: string[] = [];
+    for (const path of abandoned) {
+      const round = this._abandonedRetryRounds.get(path) ?? 0;
+      if (round < MAX_ABANDONED_RUNG_RETRY_ROUNDS) {
+        due.push(path);
+      } else if (round === MAX_ABANDONED_RUNG_RETRY_ROUNDS) {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Leaving LOD refinement of ${path} after ${round} re-drains ` +
+            '(a view change or restored connectivity retries it)'
+        );
+        this._abandonedRetryRounds.set(path, round + 1);
+      }
+    }
+    return due;
+  }
+
   /** Drop a pending re-drain and its backoff (the retired ladders are re-opened elsewhere). */
   private cancelAbandonedRungRetry(): void {
     if (this._abandonedRetryTimer !== null) clearTimeout(this._abandonedRetryTimer);
     this._abandonedRetryTimer = null;
-    this._abandonedRetryRound = 0;
+    this._abandonedRetryRounds.clear();
   }
 
   /**
@@ -2343,7 +2463,9 @@ export class SceneLoader {
       data,
       viewState,
       this.rootGroup,
-      this._updateVersion,
+      // Background refinement/retry is never the first projection, even when
+      // the initial view has not incremented `_passCount` yet.
+      Math.max(2, this._passCount),
       session,
       signal
     );
@@ -2393,7 +2515,9 @@ export class SceneLoader {
       data,
       viewState,
       this.rootGroup,
-      this._updateVersion,
+      // Background refinement/retry is never the first projection, even when
+      // the initial view has not incremented `_passCount` yet.
+      Math.max(2, this._passCount),
       session,
       signal
     );
@@ -2568,11 +2692,28 @@ export class SceneLoader {
       commitPointsGeometry: (staged, session, loadedViewVersion) =>
         this.commitPointsGeometry(staged, session, loadedViewVersion),
       processLinesData: (path, data, viewState, session, signal) =>
-        this.processLinesData(path, data, viewState, session, signal),
+        // Initial node build is the one path allowed to log a first projection.
+        processLinesDataHelper(
+          path,
+          data,
+          viewState,
+          this.rootGroup,
+          this._passCount,
+          session,
+          signal
+        ),
       commitLinesGeometry: (staged, session, loadedViewVersion) =>
         this.commitLinesGeometry(staged, session, loadedViewVersion),
       processGSplatsData: (path, data, viewState, session, signal) =>
-        this.processGSplatsData(path, data, viewState, session, signal),
+        processGSplatsDataHelper(
+          path,
+          data,
+          viewState,
+          this.rootGroup,
+          this._passCount,
+          session,
+          signal
+        ),
       commitGSplatsGeometry: (staged, session, loadedViewVersion) =>
         this.commitGSplatsGeometry(staged, session, loadedViewVersion),
       processMeshData: (path, data, viewState, attrs) =>
@@ -2872,8 +3013,9 @@ export class SceneLoader {
     // zarr fetches and concurrent commits to the same THREE object
     // produce inconsistent state. Both halves are required: refusing
     // when an update is already active AND taking the lock so an
-    // updateView starting AFTER retry begins can't race.
-    if (this._updateInProgress) {
+    // updateView starting AFTER retry begins can't race. A refinement drain
+    // is pre-empted rather than waited out (A10).
+    if (!(await this.acquireLockForRetry())) {
       log.info(
         Modules.SCENE_LOADER,
         `Retry of ${path} deferred — main update in progress; try again after the update settles`
@@ -2881,7 +3023,6 @@ export class SceneLoader {
       return false;
     }
 
-    this._updateInProgress = true;
     try {
       if (lazyFailure) {
         this.clearArchiveFaultForRetry();
@@ -2970,8 +3111,8 @@ export class SceneLoader {
     // Same serialization as retryFailedLoader: take the lock once around
     // the parallel batch and call the unlocked retry helper for each
     // path, so siblings in the same batch don't trigger the lock-refusal
-    // branch.
-    if (this._updateInProgress) {
+    // branch. A refinement drain is pre-empted rather than waited out (A10).
+    if (!(await this.acquireLockForRetry())) {
       log.info(
         Modules.SCENE_LOADER,
         'Retry-all deferred — main update in progress; try again after the update settles'
@@ -2985,7 +3126,6 @@ export class SceneLoader {
 
     log.info(Modules.SCENE_LOADER, `Retrying ${failedPaths.length} failed loader(s)`);
 
-    this._updateInProgress = true;
     try {
       if (opts.onlyAutoRetryable) {
         // Charge the automatic-retry budget once per connectivity-triggered
@@ -3055,6 +3195,13 @@ export class SceneLoader {
     this._disposed = true;
     this.clearHoldExpiry();
     this.cancelAbandonedRungRetry();
+    if (this._refinementKickTimer !== null) clearTimeout(this._refinementKickTimer);
+    this._refinementKickTimer = null;
+    this._refinementKickPending = false;
+    // Refinement state of this dataset: a hold reason read after teardown
+    // (the monitor polls `refinementHoldReason`) must not describe it.
+    this.lastResidencyBudget = null;
+    this.refinementDensityGate = null;
     this.archiveFaultListeners.clear();
     this._leafMaterializedListener = null;
     setSceneLineLoad(0);
@@ -3074,6 +3221,7 @@ export class SceneLoader {
     // counts towards `isLoadPassInProgress()`.
     this._updateInProgress = false;
     this._refining = false;
+    this.handLockToRetryWaiters(true);
     this.viewStateQueue.takePending();
     this._pendingResyncPaths = null;
     this._queuedResyncPaths = null;
@@ -3135,6 +3283,7 @@ export class SceneLoader {
     this._gpuBufferPool = null;
     this.cachingStore = null;
     this.l0Cache = null;
+    this.sliceCache = null;
     this.cacheBudgets = null;
     this._zarrStore = null;
     this.rootGroup = null;

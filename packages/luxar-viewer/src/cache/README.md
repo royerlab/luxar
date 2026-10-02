@@ -248,8 +248,10 @@ under "L0 Decompressed Chunk Cache" below.
 - `corruptedEntries`: get() detected a size mismatch and removed the
   bad entry.
 - `metadataParseFailures`: `_cache_meta.json` could not be parsed.
-- `orphanedFilesRemoved`: files reclaimed by `cleanupOrphans()` (run
-  on metadata parse failure).
+- `orphanedFilesRemoved`: unindexed files deleted by the open-time orphan
+  reconcile (unrecoverable, or no recovery hash; see "L2 index persistence").
+- `orphansReindexed`: unindexed files recovered into the index, by the
+  reconcile or by a first read of the key.
 
 ## Cache Status Badges
 
@@ -385,9 +387,10 @@ unwrapCachedArray(cached);
 
 Cached zarr chunks are **read-only** to every loader downstream of `wrapWithCache`.
 
-The L0 cache stores the same `ArrayBufferView` it returns to subsequent
-hit-path callers — no defensive clone on hit. Mutating that view in
-place would corrupt the cached entry for the next caller. Loaders MUST
+The L0 cache stores the same `ArrayBufferView` it returns to the caller
+whose miss decoded it, to waiters that joined that decode, and to every
+later hit — no defensive clone on any path. Mutating that view in place
+would corrupt the cached entry for the next caller. Loaders MUST
 treat chunk data as immutable input and copy into accumulator buffers,
 output `BufferAttribute` allocations, or fresh `TypedArray`s before
 mutating.
@@ -400,11 +403,11 @@ loader that does mutate `chunk.data`, either copy first or — if the
 mutation is unavoidable — switch the wrapped array to skip caching for
 that path.
 
-The miss-path clone in `wrapWithCache` (via `cloneArrayBufferView`)
-gives the _first caller_ a private buffer they can technically mutate
-without poisoning the cache, but this should not be relied upon: the
-contract is "read-only on every path" so future cache changes (e.g.
-removing the miss-path clone for a perf win) don't break loaders.
+There is no miss-path clone either: the first caller gets the very
+buffer L0 stores (`cloneArrayBufferView` runs only for a view into a
+larger buffer, so L0 never retains bytes it does not account for). The
+contract is "read-only on every path", and `l0-immutability.test.ts`
+pins that a miss, a coalesced waiter and a hit share one buffer.
 
 ## Intelligent Prefetching
 
@@ -716,6 +719,7 @@ luxar/                       # Viewer namespace dir (OPFS_NAMESPACE_DIR)
     ├── 01/
     ├── ...
     ├── ff/
+    ├── _cache_identity.json # Content hash the chunk files were written under
     └── _cache_meta.json     # Index + LRU metadata
 ```
 
@@ -735,6 +739,41 @@ again.
 - **Only 256 bucket handles** to cache (trivial memory overhead)
 - **2 async calls** per file access (bucket + file) vs 1 - negligible overhead
 - **Efficient clear()**: Iterates 256 directories, not 65,000 files
+
+### L2 index persistence
+
+The contract: **a chunk file whose write completed is served from L2 by the
+next session of the same dataset, whenever the page was reloaded or killed**,
+and never under a different content hash.
+
+The index (`_cache_meta.json`) cannot carry that alone. It is saved on a
+debounce (150 ms leading edge, 1 s trailing, 2 s ceiling), and a save started
+during unload does not survive a navigation (measured on Chromium: the old page
+stops after `getFileHandle(create)`, leaving a zero-byte index). So a reload
+can always land after some chunk writes the index never recorded. What makes
+those files usable anyway:
+
+1. **The directory's identity is durable before its chunks.** The validated
+   content hash goes to `_cache_identity.json`, written only when the hash
+   changes, and every chunk write waits for that write. Any chunk file on disk
+   therefore has a known provenance, even when no index save ever landed. With
+   no index, the identity is the cached hash validation compares against, so a
+   changed dataset still clears every tier.
+2. **A key's file path is a function of the key** (`{bucket(key)}/{base64url(key)}`).
+   While unindexed files may remain, an L2 lookup of a key the index does not
+   list reads that path, and a hit is indexed (size and LRU accounted) and
+   served. This is what serves a reload's first-frame reads; it stops once the
+   open-time reconcile (below) has accounted for every file.
+3. **The open-time reconcile** (`opfs-store/orphan-reconcile.ts`, per-session
+   budgeted, in the background) re-indexes every unindexed file under the
+   recovery hash that fits under `maxSize` and deletes the rest.
+
+Recovery is gated on the same hash that makes indexed entries trustworthy: the
+identity file's hash, unless an index that did land names a different one. A
+directory with neither (written before the identity file existed, or for a
+dataset that never yielded a validation token) is index-only, and its
+unindexed files are deleted. A zero-byte chunk file (a write cut off between
+create and close) is never recovered.
 
 ## Cache Behavior
 

@@ -1372,6 +1372,68 @@ describe('MeshWholeNodeLoader — an ALREADY-aborted update', () => {
   });
 });
 
+describe('MeshWholeNodeLoader — a superseded caller does not abort the shared fetch', () => {
+  /** The rejection reason, or `'still pending'` if it has not settled after a few macrotasks. */
+  async function settlesWithin(p: Promise<unknown>): Promise<unknown> {
+    const pending = new Promise((resolve) => setTimeout(() => resolve('still pending'), 20));
+    return Promise.race([
+      p.then(
+        () => 'resolved',
+        (e: unknown) => e
+      ),
+      pending,
+    ]);
+  }
+
+  async function waitForFacesRead(store: RecordingStore): Promise<void> {
+    await new Promise<void>((resolve) => {
+      const poll = (): void => {
+        if (store.requested.some((k) => k.endsWith('/faces/0.0'))) resolve();
+        else setTimeout(poll, 0);
+      };
+      poll();
+    });
+  }
+
+  it('a joiner still receives the mesh when the FIRST caller is aborted', async () => {
+    // During a scrub over a cold mesh every pass is superseded by the next. If the
+    // shared fetch ran under the first caller's signal, aborting that pass would
+    // reject every joiner with an AbortError and the mesh would never land.
+    const store = buildStore(meshAttrs(), tetArrays());
+    store.parkFacesRead = 1;
+    const loader = makeLoader(store, meshAttrs());
+
+    const firstPass = new AbortController();
+    const first = loader.updateView(VIEW, undefined, firstPass.signal);
+    const joiner = loader.updateView(VIEW, undefined, new AbortController().signal);
+    await waitForFacesRead(store);
+
+    firstPass.abort();
+    // The shared read is not cancelled on everyone else's behalf…
+    expect(store.signals.get('/mesh/faces/0.0')!.aborted).toBe(false);
+    // …while the superseded caller is released promptly, on its own signal.
+    expect(await settlesWithin(first)).toMatchObject({ name: 'AbortError' });
+
+    store.releaseParkedFacesRead!();
+    const data = await joiner;
+    expect(data.faceCount).toBe(4);
+    // Later callers are served from the published payload, with no refetch.
+    expect(await loader.updateView(VIEW)).toBe(data);
+    expect(store.chunkRequests()).toEqual(['/mesh/vertices/0.0', '/mesh/faces/0.0']);
+  });
+
+  it('a lone caller aborted mid-fetch is released without waiting for the read', async () => {
+    const store = buildStore(meshAttrs(), tetArrays());
+    store.parkFacesRead = 1; // never released: the read stays on the wire
+    const loader = makeLoader(store, meshAttrs());
+    const pass = new AbortController();
+    const pending = loader.updateView(VIEW, undefined, pass.signal);
+    await waitForFacesRead(store);
+    pass.abort();
+    expect(await settlesWithin(pending)).toMatchObject({ name: 'AbortError' });
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The LoaderMonitor surface
 //

@@ -5,7 +5,8 @@
  *   1. A pending view-state was queued during the in-flight update —
  *      yield to the render loop via `scheduleFrame` (rAF while visible,
  *      timer in hidden tabs, sync in non-browser contexts), then
- *      release the lock and re-enter `updateView(pendingState)`.
+ *      release the lock, take the NEWEST pending state and re-enter
+ *      `updateView` with it.
  *   2. No pending state, but at least one progressive loader of any kind
  *      still has higher LODs to fetch — kick the refinement loop and
  *      keep the lock held (refinement releases it on completion or
@@ -73,17 +74,30 @@ function hasMore(loader: unknown): boolean {
  * No return value — everything happens via the ctx callbacks.
  */
 export function queueNext(ctx: QueueNextCtx): void {
-  const pendingState = ctx.viewStateQueue.takePending();
-  if (pendingState !== null) {
+  if (ctx.viewStateQueue.hasPending()) {
     // Yield to render loop: ensure at least one frame is painted before next
     // update (prevents the "updates faster than renders" black-screen
     // problem). scheduleFrame degrades to a timer in hidden tabs — plain rAF
     // is suspended there and would stall the queued view-state until the tab
     // is foregrounded — and runs synchronously in non-browser contexts.
+    //
+    // The state stays IN the pending slot across the yield and is taken only
+    // when the frame fires (A8): a view arriving during the yield lands in the
+    // same slot through updateView's ordinary supersede branch, so the newest
+    // state is the one that runs and its resync-stash rules apply unchanged.
+    // Taking it here re-entered the older state, which then ran a full pass
+    // that nothing aborted while the newer one waited behind it.
     scheduleFrame(() => {
       // Release the lock right before starting the next update
       // Any slider events during the yield were queued (because lock was held)
       ctx.setUpdateInProgress(false);
+      const pendingState = ctx.viewStateQueue.takePending();
+      if (pendingState === null) {
+        // Taken by a teardown during the yield (dispose flushes the slot):
+        // nothing re-enters, so settle the parked waiters here.
+        ctx.resolvePassWaiters();
+        return;
+      }
       ctx.updateView(pendingState).catch((error: unknown) => {
         log.error(
           Modules.SCENE_LOADER,
@@ -98,7 +112,7 @@ export function queueNext(ctx: QueueNextCtx): void {
   // No pending state left: the pass that just finished IS the latest-wins
   // winner, so any callers parked in the queued branch have had their
   // requested-or-newer state committed — settle them now (synchronous from
-  // takePending(), so no competing updateView can interleave). Resolving at
+  // the hasPending() check, so no competing updateView can interleave). Resolving at
   // refinement ENTRY (not completion) is deliberate: the pacing gate needs
   // first-commit latency, not full-ladder latency.
   ctx.resolvePassWaiters();

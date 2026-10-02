@@ -615,6 +615,20 @@ describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstan
     expect(getPrefixParent(next)).toBeUndefined();
   });
 
+  it('consumes the lineage entry on the NON-pool path too', () => {
+    // The consume-and-clear ran only in the pool branch, so a non-pool commit
+    // kept the parent concat's CPU arrays pinned for as long as the payload
+    // lived (prefix-lineage.ts retention contract).
+    const root = new THREE.Group();
+    root.add(makePoints('/p'));
+    commitPointsGeometry('/p', makeData(4), root, null, mockNodeFactory, undefined, 0);
+    const committed = (root.children[0].userData as { committedData: object }).committedData;
+    const next = makeData(6);
+    setPrefixParent(next, committed);
+    commitPointsGeometry('/p', next, root, null, mockNodeFactory, undefined, 1);
+    expect(getPrefixParent(next)).toBeUndefined();
+  });
+
   it('does NOT append (fromInstance 0) when there is no prefix lineage (unrelated reload)', () => {
     const root = new THREE.Group();
     root.add(makePoints('/p'));

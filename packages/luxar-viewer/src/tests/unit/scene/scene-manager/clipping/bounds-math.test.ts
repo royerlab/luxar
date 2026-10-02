@@ -32,6 +32,8 @@ import { GLSL_NEAR_FADE_FUNCTIONS } from '../../../../../rendering/materials/_sh
 
 import { fadeRejectHeadroom, NEAR_FADE_REJECT, smoothstep } from './_near-fade-model';
 
+const FORWARD = { x: 0, y: 0, z: -1 };
+
 describe('bounds-math', () => {
   describe('getBoundingBoxCenter', () => {
     it('should calculate center correctly', () => {
@@ -599,6 +601,17 @@ describe('bounds-math', () => {
   });
 
   describe('calculateClippingPlanesFromSphere', () => {
+    it('keeps the near side of an off-axis sphere in front of the near plane', () => {
+      const sphere = { center: { x: 0, y: 0, z: 0 }, radius: 1 };
+      const camera = { x: 0, y: 0, z: 3 };
+      const direction = { x: 0.5, y: 0, z: -Math.sqrt(3) / 2 };
+      const nearestDepth = (3 * Math.sqrt(3)) / 2 - SPHERE_SAFETY_EXPANSION;
+
+      const planes = calculateClippingPlanesFromSphere(sphere, camera, direction, true);
+      expect(planes.near).toBeCloseTo(nearestDepth, 10);
+      expect(planes.near).toBeLessThanOrEqual(nearestDepth);
+      expect(planes.far).toBeCloseTo(3 + SPHERE_SAFETY_EXPANSION, 10);
+    });
     it('should calculate clipping planes when outside sphere', () => {
       const box: BoundingBox = {
         min: { x: -10, y: -10, z: -10 },
@@ -609,7 +622,7 @@ describe('bounds-math', () => {
       const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
       // Camera at z=50, facing center
       const cameraPos = { x: 0, y: 0, z: 50 };
-      const planes = calculateClippingPlanesFromSphere(sphere, cameraPos);
+      const planes = calculateClippingPlanesFromSphere(sphere, cameraPos, FORWARD);
 
       // dist = 50 exactly; near/far are 50∓R. M3: tightened from 1 to 6 digits
       // so a mutant that drops SPHERE_SAFETY_EXPANSION from far (R → radius)
@@ -629,7 +642,7 @@ describe('bounds-math', () => {
       const sphere = boundingBoxToSphere(box);
       const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
       // Place the camera exactly R away from the center along +z.
-      const planes = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: R });
+      const planes = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: R }, FORWARD);
       expect(planes.near).toBe(nearPlaneFloor(R, 2 * R));
       expect(planes.far).toBeCloseTo(2 * R, 6);
       // Literal pin: the floor is far/MAX_NEAR_FAR_RATIO, NOT the
@@ -649,7 +662,7 @@ describe('bounds-math', () => {
       const sphere = boundingBoxToSphere(box);
       const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
       const dist = 100000;
-      const planes = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: dist });
+      const planes = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: dist }, FORWARD);
       expect(planes.near).toBeCloseTo(dist - R, 4);
       expect(planes.far).toBeCloseTo(dist + R, 4);
       expect(planes.near).toBeGreaterThan(MIN_NEAR_PLANE);
@@ -665,7 +678,7 @@ describe('bounds-math', () => {
       const R = sphere.radius * SPHERE_SAFETY_EXPANSION;
       // Camera inside the sphere at (0,0,8)
       const cameraPos = { x: 0, y: 0, z: 8 };
-      const planes = calculateClippingPlanesFromSphere(sphere, cameraPos);
+      const planes = calculateClippingPlanesFromSphere(sphere, cameraPos, FORWARD);
 
       expect(planes.near).toBe(nearPlaneFloor(R, 8 + R));
       expect(planes.far).toBeCloseTo(8 + R, 1);
@@ -683,7 +696,7 @@ describe('bounds-math', () => {
 
       const sphere = boundingBoxToSphere(box);
       const cameraPos = { x: 0.005, y: 0.005, z: 0.02 };
-      const planes = calculateClippingPlanesFromSphere(sphere, cameraPos);
+      const planes = calculateClippingPlanesFromSphere(sphere, cameraPos, FORWARD);
 
       expect(planes.near).toBeGreaterThanOrEqual(MIN_NEAR_PLANE);
       expect(planes.near).toBeGreaterThan(0);
@@ -713,7 +726,7 @@ describe('bounds-math', () => {
         y: sphere.center.y,
         z: sphere.center.z + deepestZoom,
       };
-      const planes = calculateClippingPlanesFromSphere(sphere, cameraPos);
+      const planes = calculateClippingPlanesFromSphere(sphere, cameraPos, FORWARD);
 
       // Inside the sphere → near is the depth-precision floor, which must sit
       // strictly below the camera-to-target distance (the old absolute
@@ -735,9 +748,9 @@ describe('bounds-math', () => {
 
       const sphere = boundingBoxToSphere(box);
       // Camera moving from z=50 toward center — near should decrease smoothly
-      const far = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: 50 });
-      const mid = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: 30 });
-      const close = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: 22 });
+      const far = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: 50 }, FORWARD);
+      const mid = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: 30 }, FORWARD);
+      const close = calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z: 22 }, FORWARD);
 
       expect(far.near).toBeGreaterThan(mid.near);
       expect(mid.near).toBeGreaterThan(close.near);
@@ -761,7 +774,7 @@ describe('bounds-math', () => {
       const zs: number[] = [];
       for (let z = 60; z > Math.ceil(R) + 1; z -= 1) zs.push(z);
       const nears = zs.map(
-        (z) => calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z }).near
+        (z) => calculateClippingPlanesFromSphere(sphere, { x: 0, y: 0, z }, FORWARD).near
       );
 
       for (let i = 1; i < nears.length; i++) {

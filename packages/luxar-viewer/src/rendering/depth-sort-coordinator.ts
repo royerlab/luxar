@@ -174,6 +174,16 @@ interface NodeSortState {
   mesh: THREE.Mesh;
   /** Lifetime-unique non-noop commit stamp (see nextGeneration). */
   generation: number;
+  /**
+   * Element count the CURRENT generation committed. A resolved ordering of
+   * any other length is rejected: the worker clamps a registration whose
+   * centers under-deliver and sorts the clamped count, and a short ordering
+   * is neither a permutation of the population nor the length a held append
+   * draw waits for.
+   */
+  count: number;
+  /** Generation already warned about a short worker ordering. */
+  warnedMismatchGeneration?: number;
   /** True while a sort RPC is outstanding for this node. */
   inFlight: boolean;
   /** A newer commit landed mid-sort — re-sort once the current one resolves. */
@@ -373,8 +383,10 @@ export function configureDepthSort(options: {
   setRenderOrderDisplayDimsAccessor(options.getDisplayDims ?? null);
   // A consumed slice's upload acknowledgement resumes an idle chunked
   // stream the instant the mesh is drawn again (issue #715 resume gap —
-  // the pump never requests a render on a stall).
-  setSortedIndexApplyRequestRender(options.requestRender);
+  // the pump never requests a render on a stall). Through the LIVE binding,
+  // not the configured closure: resortForCapture suppresses `requestRender`
+  // for its drain, and a slice acknowledged mid-drain must not wake the loop.
+  setSortedIndexApplyRequestRender(() => requestRender?.());
   syncSortElementsRemaining = syncSortElementLimit();
 }
 
@@ -1122,6 +1134,7 @@ export function noteDepthSortCommit(
     state = {
       mesh,
       generation: 0,
+      count: 0,
       inFlight: false,
       resortQueued: false,
       lastSortAxis: null,
@@ -1132,6 +1145,7 @@ export function noteDepthSortCommit(
   }
   ensureDrawAcknowledgementHook(mesh);
   state.generation = ++nextGeneration;
+  state.count = count;
   // A commit SUPERSEDES any indexed ordering that was written but not yet
   // drawn — `updateMeshGeometry` has already overwritten the index buffer by
   // the time this runs, so that ordering will never reach a frame. Without
@@ -1179,7 +1193,7 @@ export function noteDepthSortCommit(
   // Sort NOW when the node is small enough, so the first frame after this
   // commit is already ordered instead of showing the fallback the commit path
   // just wrote. Returns the resolved centers so the copy is paid once.
-  const syncedCenters = trySynchronousFirstSort(mesh, centers3, count);
+  const syncedCenters = trySynchronousFirstSort(mesh, centers3, count, triangleSource);
   const centersForWorker: Float32Array | (() => Float32Array) = syncedCenters ?? centers3;
 
   const generation = state.generation;
@@ -1247,6 +1261,30 @@ export function noteDepthSortCommit(
         );
       }
     });
+}
+
+/**
+ * Whether a resolved ordering covers exactly the population its generation
+ * committed. A mismatch means the worker sorted a clamped registration (its
+ * centers under-delivered): the ordering is not a permutation of the drawn
+ * population, so the resolve stages nothing and a held append draw is
+ * released instead of waiting for a length that will never land.
+ */
+function orderingCoversCommit(
+  ordering: Uint32Array,
+  state: NodeSortState,
+  nodeId: string
+): boolean {
+  if (ordering.length === state.count) return true;
+  if (state.warnedMismatchGeneration !== state.generation) {
+    state.warnedMismatchGeneration = state.generation;
+    log.warning(
+      Modules.WORKER_POOL,
+      `Depth-sort ordering for ${nodeId} has ${ordering.length} elements but the commit has ` +
+        `${state.count} — dropped`
+    );
+  }
+  return false;
 }
 
 /**
@@ -1389,7 +1427,11 @@ function computeModelView(mesh: THREE.Mesh, camera: THREE.Camera): THREE.Matrix4
  *
  * The result is written LIVE rather than staged, because a permutation
  * computed in one shot has no partial state to hide — see
- * {@link writeSortedIndexOrderingLive}.
+ * {@link writeSortedIndexOrderingLive}. A MESH (`triangleSource` present)
+ * sorts its face centroids the same way and writes the permuted triples into
+ * its index buffer (`writeSortedTriangleOrdering`, atomic by construction):
+ * its commit rewrites the index in canonical order on every slice move, so
+ * without this each timepoint drew one storage-order frame.
  *
  * The async pipeline behind this is deliberately left ALONE: the node is still
  * registered and still dispatches its usual first sort. Suppressing that would
@@ -1402,12 +1444,16 @@ function computeModelView(mesh: THREE.Mesh, camera: THREE.Camera): THREE.Matrix4
 function trySynchronousFirstSort(
   mesh: THREE.Mesh,
   centers3: Float32Array | (() => Float32Array),
-  count: number
+  count: number,
+  triangleSource: Uint32Array | undefined
 ): Float32Array | undefined {
   const limit = syncSortElementLimit();
   if (limit <= 0 || count > limit || count > syncSortElementsRemaining) return undefined;
   const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
-  if (!getActiveSortedIndexAttribute(geometry)) return undefined;
+  // A mesh applies through its index buffer instead of `aSortedIndex`.
+  if (triangleSource ? !geometry.index : !getActiveSortedIndexAttribute(geometry)) {
+    return undefined;
+  }
   const camera = getCamera?.();
   if (!camera) return undefined;
 
@@ -1421,13 +1467,18 @@ function trySynchronousFirstSort(
     return undefined;
   }
   // A provider that under-delivers (or a detached buffer) is not sortable —
-  // decline rather than sort garbage; the async path re-checks the same way.
+  // decline rather than sort garbage. The async path cannot decline up front
+  // (the worker clamps to the centers it got); its resolve rejects an ordering
+  // whose length is not the committed count instead (orderingCoversCommit).
   if (buffer.length < count * 3) return undefined;
 
   const modelView = computeModelView(mesh, camera);
   const ordering = new Uint32Array(count);
   sort_splats_by_depth(buffer, new Float32Array(modelView.elements), ordering, count);
-  if (writeSortedIndexOrderingLive(geometry, ordering, count) !== count) return undefined;
+  const written = triangleSource
+    ? writeSortedTriangleOrdering(geometry, triangleSource, ordering, count) === count * 3
+    : writeSortedIndexOrderingLive(geometry, ordering, count) === count;
+  if (!written) return undefined;
   syncSortElementsRemaining -= count;
   requestRender?.();
   return buffer;
@@ -1540,7 +1591,12 @@ function scheduleSort(mesh: THREE.Mesh, nodeId: string): void {
       // belong to another node) — the cleared stamp is exactly the signal
       // that the mesh's geometry no longer holds this commit's splats.
       const stillCommitted = hasCommittedData(mesh);
-      if (result && result.generation === current.generation && stillCommitted) {
+      if (
+        result &&
+        result.generation === current.generation &&
+        stillCommitted &&
+        orderingCoversCommit(result.ordering, current, nodeId)
+      ) {
         const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
         // Which apply path this node uses. A retained `triangleSource` is
         // the mesh signal and it is set by the SAME commit whose generation
@@ -2051,15 +2107,19 @@ function isCaptureQuiescent(): boolean {
  *
  * WHY this exists: the Phase-3 per-frame scheduler
  * ({@link evaluateDepthSortPerFrame}) is wired ONLY as an
- * AnimationController per-frame callback, so it runs exclusively inside
- * the rAF loop. Offline capture (the gallery orbit-video pass) deliberately
- * STOPS that loop, then per frame moves the camera and renders
- * synchronously. With the loop dead the scheduler never fires: across the
- * whole orbit there are zero re-sorts and zero cross-node renderOrder
- * updates, so any order-dependent node (`normal` / `volumetric`) is filmed
- * with the back-to-front permutation frozen at the pre-orbit pose. This
- * helper drives the scheduler + worker round-trip + chunked apply by hand
- * so each captured frame is ordered for its own pose.
+ * AnimationController per-frame callback, and re-sorts only past its
+ * motion thresholds. Two offline captures need an ordering exact for each
+ * frame's pose instead:
+ * - the gallery orbit-video pass (`__luxarDebug`) STOPS the rAF loop and
+ *   renders each frame synchronously, so the scheduler never fires at all;
+ * - the recording panel's frame-by-frame capture
+ *   (`ui/recording-panel/offline-capture-frame-loop.ts`) keeps the loop
+ *   running but suppresses its own render, and steps the turntable by less
+ *   than the angle threshold, so the scheduler fires too rarely.
+ * Either way an order-dependent node (`normal` / `volumetric`) would be
+ * filmed with a permutation from an earlier pose. This helper drives the
+ * scheduler + worker round-trip + chunked apply by hand so each captured
+ * frame is ordered for its own pose.
  *
  * It is a NO-OP (returns as soon as it observes quiescence) when depth sort
  * is disabled, no order-dependent node exists, or nothing is pending. It
@@ -2075,12 +2135,13 @@ function isCaptureQuiescent(): boolean {
  * ordering is current.
  */
 export async function resortForCapture(maxWaitMs = 3000): Promise<void> {
-  // The capture stopped the rAF loop on purpose; `requestRender` is wired
-  // to `animationController.startAnimation()`, and the sort resolve/pump
-  // paths call `requestRender?.()`. Suppress it for the duration so
-  // draining (which we drive ourselves) can't silently re-arm the frozen
-  // loop. Safe offline: there are no concurrent commits to lose a frame
-  // request from. The suppression is depth-counted / reentrancy-safe: this
+  // `requestRender` is wired to `animationController.requestRender('depthSort')`
+  // (core/app/init/pipeline.ts), and the sort resolve/pump paths call
+  // `requestRender?.()`. Suppress it for the duration so draining (which we
+  // drive ourselves) can't silently re-arm a loop the gallery capture
+  // stopped on purpose. Safe offline: nothing but the capture's own pass
+  // draws (the panel capture suppresses the loop's render), so there is no
+  // frame request to lose. The suppression is depth-counted / reentrancy-safe: this
   // helper is exposed on `__luxarDebug`, so an overlapping (nested) call
   // could otherwise snapshot `null` and restore `null` permanently, wedging
   // the render loop forever. Only the OUTERMOST call snapshots and restores.

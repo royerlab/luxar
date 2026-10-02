@@ -519,8 +519,10 @@ export class GPUBufferPool {
    * total incrementally (B9b) — it used to walk every active buffer.
    */
   private sumActiveBytes(): number {
-    // Active buffers keep a running total; mesh levels are few and re-measured
-    // here, since a committed mesh's geometry can be rewritten in place.
+    // Active buffers keep a running total. Committed mesh levels are summed
+    // here from their cached estimate: each commit re-registers (and so
+    // re-measures) the geometry it rewrote in place, and the estimate itself
+    // notices the WebGPU backend widening the index at upload.
     let total = this.activeBuffers.bytes;
     for (const geometry of this.meshGeometries.values()) {
       total += estimateGeometryBytes(geometry);

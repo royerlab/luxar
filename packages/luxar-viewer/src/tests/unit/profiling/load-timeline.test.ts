@@ -4,12 +4,55 @@ import {
   getLoadTimeline,
   markFirstCommit,
   markLoad,
+  noteLoadResourceReleased,
   noteRefinementComplete,
   noteRefinementDensityDeferral,
   noteRefinementPass,
   noteRefinementStarted,
   resetLoadTimeline,
 } from '../../../profiling/load-timeline';
+
+describe('load timeline: process-lifetime milestones', () => {
+  beforeEach(() => resetLoadTimeline());
+  afterEach(() => resetLoadTimeline());
+
+  it('reports an already-ready pool and WASM module on a later load', () => {
+    // The worker pool and the shared WASM module outlive a dataset switch, so
+    // a second load never marks them again; their measures must read "ready
+    // at load start" (0), not "never happened" (null).
+    markLoad('loadStart');
+    markLoad('wasmReady');
+    markLoad('poolReady');
+    markLoad('loadStart');
+    const { measures, milestones } = getLoadTimeline();
+    expect(measures.poolReadyMs).toBe(0);
+    expect(milestones.wasmReady).toBe(milestones.loadStart);
+  });
+
+  it('lets a real mark replace a carried one, and stops carrying a released resource', () => {
+    let t = 100;
+    vi.spyOn(performance, 'now').mockImplementation(() => t);
+    markLoad('loadStart');
+    markLoad('poolReady');
+    noteLoadResourceReleased('poolReady');
+    t = 200;
+    markLoad('loadStart');
+    expect(getLoadTimeline().measures.poolReadyMs).toBeNull();
+    t = 250;
+    markLoad('poolReady'); // the re-created pool
+    expect(getLoadTimeline().measures.poolReadyMs).toBe(50);
+
+    t = 300;
+    markLoad('loadStart'); // carried at 300...
+    t = 320;
+    markLoad('poolReady'); // ...replaced by a real observation
+    expect(getLoadTimeline().measures.poolReadyMs).toBe(20);
+    t = 330;
+    markLoad('poolReady'); // a second real mark is still ignored
+    expect(getLoadTimeline().measures.poolReadyMs).toBe(20);
+    vi.restoreAllMocks();
+  });
+});
 
 describe('load-timeline', () => {
   beforeEach(() => {

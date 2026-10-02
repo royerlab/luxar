@@ -38,6 +38,7 @@ import {
 } from '../../../scene/lod-group-registry';
 import type { NodeBuildCtx } from '../../../data/scene-loader/nodes/build-ctx';
 import { getLoadTimeline, resetLoadTimeline } from '../../../profiling/load-timeline';
+import { UpdateProfiler, type TimingEntry } from '../../../profiling/update-profiler';
 import * as gsplatsRefinement from '../../../data/gsplats/lod-refinement';
 import { signalPriority } from '../../../utils/fetch-concurrency';
 import { log, Modules } from '../../../utils/log';
@@ -217,6 +218,30 @@ describe('SceneLoader', () => {
       expect((zarr as any).withMaybeConsolidatedMetadata).toHaveBeenCalled();
       expect(scene).toBeDefined();
       expect(scene.name).toBe('LuxarScene');
+    });
+
+    it('starts each dataset with a fresh update profiler', async () => {
+      // The profiler is a manager-wide singleton; without a reset at loadStart
+      // every row the previous dataset ever produced stays in the tree, and
+      // each merge's stale sweep walks all of them.
+      const profiler = new UpdateProfiler();
+      profiler.beginUpdate();
+      profiler.time('previous-dataset-node', () => undefined);
+      profiler.endUpdate();
+      expect(profiler.getTimings().children.map((c) => c.name)).toContain('previous-dataset-node');
+      const loader = new SceneLoader({}, 'profiled', profiler);
+      try {
+        await loader.loadScene('http://localhost:8000/test.zarr');
+        const names: string[] = [];
+        const walk = (entry: TimingEntry): void => {
+          names.push(entry.name);
+          entry.children.forEach(walk);
+        };
+        walk(profiler.getTimings());
+        expect(names).not.toContain('previous-dataset-node');
+      } finally {
+        await loader.dispose();
+      }
     });
 
     it('should initialize scene dimensions from metadata', async () => {
@@ -462,6 +487,88 @@ describe('SceneLoader', () => {
       );
 
       expect(rollbackToPassStart).toHaveBeenCalledOnce();
+    });
+
+    it('a throwing rollback after a failed commit is logged, not folded into the commit error', async () => {
+      // Every other rollback site goes through tryRollbackToPassStart, which
+      // keeps the ORIGINAL failure as the one reported; the commit path called
+      // the raw method and buried it in a nested AggregateError.
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      const loaders = (sceneLoader as any).loaders as Map<string, unknown>;
+      loaders.clear();
+      loaders.set('/commit-fail', {
+        updateView: vi.fn().mockResolvedValue({
+          pointCount: 1,
+          positions: new Float32Array([1, 2, 3]),
+          metadata: { loadedPoints: 1 },
+        }),
+        rollbackToPassStart: vi.fn(() => {
+          throw new Error('rollback failed');
+        }),
+        dispose: vi.fn(),
+      });
+      const commitError = new Error('GPU commit failed');
+      vi.spyOn(sceneLoader as any, 'updatePointsGeometry').mockImplementation(() => {
+        throw commitError;
+      });
+
+      const failure = await sceneLoader
+        .updateView({ displayDims: [0, 1, 2] })
+        .catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(AggregateError);
+      expect((failure as AggregateError).errors).toEqual([commitError]);
+      expect(warning).toHaveBeenCalledWith(
+        Modules.SCENE_LOADER,
+        'Progressive loader rollback failed',
+        expect.any(Error)
+      );
+      warning.mockRestore();
+    });
+
+    it('a partially failing commit still records the frame it committed (A9)', async () => {
+      // runAtomicCommit commits every sibling and only THEN rethrows. The
+      // siblings' geometry is on screen, so the pass's post-commit bookkeeping
+      // must run too: skipping it left the committed slice (B4 partition
+      // gating), the B5 commit clock and the monitor describing the old frame.
+      const applyCommittedSlice = vi.fn();
+      (sceneLoader as unknown as { lodGroupRegistry: unknown }).lodGroupRegistry = {
+        isPathInPartitionSlice: () => true,
+        activatePartitionParts: vi.fn().mockResolvedValue([]),
+        invalidatePartitionFootprint: vi.fn(),
+        applyCommittedSlice,
+        clear: vi.fn(),
+      };
+      const loaders = (sceneLoader as any).loaders as Map<string, unknown>;
+      loaders.clear();
+      const staged = {
+        pointCount: 1,
+        positions: new Float32Array([1, 2, 3]),
+        metadata: { loadedPoints: 1 },
+      };
+      for (const path of ['/ok', '/bad']) {
+        loaders.set(path, { updateView: vi.fn().mockResolvedValue(staged), dispose: vi.fn() });
+      }
+      const committed: string[] = [];
+      vi.spyOn(sceneLoader as any, 'updatePointsGeometry').mockImplementation((path) => {
+        if (path === '/bad') throw new Error('GPU commit failed');
+        committed.push(path as string);
+        return true;
+      });
+      const now = vi.spyOn(performance, 'now').mockReturnValue(123_456);
+
+      try {
+        await expect(
+          sceneLoader.updateView({ displayDims: [0, 1, 2], slicePosition: [0, 0, 0, 7] })
+        ).rejects.toThrow(AggregateError);
+      } finally {
+        now.mockRestore();
+      }
+
+      expect(committed).toEqual(['/ok']);
+      expect(sceneLoader.committedViewState.slicePosition[3]).toBe(7);
+      expect(applyCommittedSlice).toHaveBeenCalledOnce();
+      expect((sceneLoader as unknown as { _lastCommitAt: number })._lastCommitAt).toBe(123_456);
     });
 
     it('surfaces an archive fault once and preserves the last committed frame', async () => {
@@ -1741,6 +1848,180 @@ describe('SceneLoader', () => {
     });
   });
 
+  describe('updateView — the inter-pass frame yield (A8)', () => {
+    // Between two serialized passes the lock stays held across one frame
+    // (`scheduleFrame`), with no pass in flight. A view arriving in that window
+    // must win over the state queued before it, and must not arm the B5 hold
+    // timer against the finished pass's dead controller.
+    let frames: Array<() => void>;
+
+    beforeEach(() => {
+      frames = [];
+      vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+        frames.push(() => callback(0));
+        return frames.length;
+      });
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+      vi.useRealTimers();
+    });
+
+    const view = (slice: number) => ({
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, slice],
+      tolerance: [0, 0, 0, 0],
+    });
+
+    /** Fire every queued frame, letting each one's continuation settle. */
+    async function pumpFrames(): Promise<void> {
+      for (let i = 0; i < 50 && frames.length > 0; i++) {
+        frames.shift()!();
+        await vi.advanceTimersByTimeAsync(0);
+      }
+    }
+
+    it('a view arriving during the yield runs instead of the older queued state', async () => {
+      let now = 0;
+      vi.spyOn(performance, 'now').mockImplementation(() => now);
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      now = 10_000;
+      const calls: Array<{ slice: number; signal?: AbortSignal }> = [];
+      (sceneLoader as unknown as Record<string, Map<string, unknown>>).gsplatLoaders.set('/node', {
+        loadGSplats: vi.fn(),
+        updateView: vi.fn(
+          (vs: { slicePosition: number[] }, _session: unknown, signal?: AbortSignal) => {
+            calls.push({ slice: vs.slicePosition[3], signal });
+            return new Promise<null>((_resolve, reject) => {
+              signal?.addEventListener('abort', () =>
+                reject(new DOMException('Superseded', 'AbortError'))
+              );
+            });
+          }
+        ),
+        dispose: vi.fn(),
+      });
+
+      void sceneLoader.updateView(view(1));
+      await vi.advanceTimersByTimeAsync(0);
+      // Inside the drag interval: the newer view aborts pass 1 outright.
+      now = 10_050;
+      void sceneLoader.updateView(view(2));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls[0].signal?.aborted).toBe(true);
+      // Pass 1 ended; view 2 waits for the frame the lock is held across.
+      expect(frames).toHaveLength(1);
+
+      // A view lands in that window, when the finished pass would read as owed
+      // a commit (its start is 200 ms old, nothing committed in the chain).
+      now = 10_200;
+      void sceneLoader.updateView(view(3));
+      await vi.advanceTimersByTimeAsync(0);
+      frames.shift()!();
+      await vi.advanceTimersByTimeAsync(0);
+      // The newest view runs; the superseded view 2 never starts a pass.
+      expect(calls.map((call) => call.slice)).toEqual([1, 3]);
+
+      // The pass now in flight is held for its commit by a newer view, and the
+      // hold cap still applies to it: the timer belongs to THIS pass.
+      now = 10_600;
+      void sceneLoader.updateView(view(4));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls[1].signal?.aborted).toBe(false);
+      now = 10_200 + DRAG_COMMIT_MAX_HOLD_MS + 10;
+      await vi.advanceTimersByTimeAsync(DRAG_COMMIT_MAX_HOLD_MS);
+      await pumpFrames();
+      expect(calls[1].signal?.aborted).toBe(true);
+      expect(calls.map((call) => call.slice)).toEqual([1, 3, 4]);
+    });
+
+    it('a view arriving during the refinement hand-off frame wins over the state that cancelled it', async () => {
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const slices: number[] = [];
+      const ladder = {
+        loadedLODCount: 1,
+        totalLODCount: 3,
+        get hasMoreLODs() {
+          return ladder.loadedLODCount < ladder.totalLODCount;
+        },
+        updateView: vi.fn(async (vs: { slicePosition: number[] }) => {
+          slices.push(vs.slicePosition[3]);
+          return null;
+        }),
+        dispose: vi.fn(),
+      };
+      const internals = sceneLoader as unknown as {
+        _updateInProgress: boolean;
+        gsplatLoaders: Map<string, unknown>;
+        scheduleGSplatsRefinement(): Promise<void>;
+      };
+      internals.gsplatLoaders.set('/g', ladder);
+
+      // A refinement run holds the lock, parked on its first frame yield.
+      internals._updateInProgress = true;
+      const run = internals.scheduleGSplatsRefinement();
+      expect(frames).toHaveLength(1);
+      // View 2 cancels it: the loop takes it and hands off across a frame.
+      void sceneLoader.updateView(view(2));
+      frames.shift()!();
+      await vi.advanceTimersByTimeAsync(0);
+      await run;
+      expect(frames).toHaveLength(1);
+
+      // A newer view lands in that hand-off frame.
+      void sceneLoader.updateView(view(3));
+      await pumpFrames();
+
+      // Pre-fix the cancelling view 2 ran a full pass first, unaborted.
+      expect(slices).not.toContain(2);
+      expect(slices[0]).toBe(3);
+      expect(sceneLoader.isUpdateInProgress()).toBe(false);
+    });
+
+    it('a real view landing in the yield supersedes the queued resync with one full sweep', async () => {
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const swept: string[] = [];
+      const makeLoader = (path: string, gated: boolean) => ({
+        loadPoints: vi.fn(),
+        updateView: vi.fn(async () => {
+          swept.push(path);
+          if (gated) await gate;
+          return null;
+        }),
+        dispose: vi.fn(),
+      });
+      const loaders = (sceneLoader as unknown as Record<string, Map<string, unknown>>).loaders;
+      loaders.set('/a', makeLoader('/a', true));
+      loaders.set('/b', makeLoader('/b', false));
+
+      const pass = sceneLoader.updateView(view(1));
+      await vi.advanceTimersByTimeAsync(0);
+      // A targeted resync lands mid-pass and is parked for the follow-up pass.
+      const resync = sceneLoader.updateView({}, { resyncPaths: new Set(['/b']) });
+      swept.length = 0;
+      release();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(frames).toHaveLength(1);
+      // A newer, real view lands in the yield: its full sweep is a superset.
+      const real = sceneLoader.updateView(view(2));
+      await pumpFrames();
+      await Promise.all([pass, resync, real]);
+
+      // One full sweep for view 2 (both loaders), no narrowed or stale pass.
+      expect(swept.sort()).toEqual(['/a', '/b']);
+    });
+  });
+
   describe('updateView — superseded loads abort (per-update AbortSignal)', () => {
     beforeEach(async () => {
       await sceneLoader.loadScene('http://localhost:8000/test.zarr');
@@ -2247,6 +2528,44 @@ describe('SceneLoader', () => {
       expect((sceneLoader as any).rootGroup).toBeNull();
     });
 
+    it('dispose drops its refinement state and cancels a pending kick re-check', async () => {
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      type Internals = {
+        _updateInProgress: boolean;
+        _refinementKickPending: boolean;
+        _refinementKickTimer: ReturnType<typeof setTimeout> | null;
+        gsplatLoaders: Map<string, unknown>;
+        sliceCache: unknown;
+        lastResidencyBudget: { isDeclined(path: string): boolean } | null;
+        refinementDensityGate: { deferred: Map<string, number> } | null;
+      };
+      const internals = sceneLoader as unknown as Internals;
+      expect(internals.sliceCache).not.toBeNull();
+      internals.lastResidencyBudget = { isDeclined: () => true };
+      sceneLoader.setRefinementDensityProvider(
+        () => ({ areaPx: 100, elements: 1_000_000, onScreen: true, blendable: true }),
+        { blendable: 4, nonBlendable: 1 }
+      );
+      internals.refinementDensityGate!.deferred.set('/g', 1e9);
+      internals.gsplatLoaders.set('/g', { hasMoreLODs: true, dispose: vi.fn() });
+      internals._updateInProgress = true;
+      sceneLoader.kickRefinementIfIdle(); // lock busy: one re-check timer
+      expect(internals._refinementKickPending).toBe(true);
+      const timer = internals._refinementKickTimer;
+      expect(timer).not.toBeNull();
+      const clear = vi.spyOn(globalThis, 'clearTimeout');
+
+      await sceneLoader.dispose();
+
+      expect(clear).toHaveBeenCalledWith(timer);
+      clear.mockRestore();
+      expect(internals._refinementKickPending).toBe(false);
+      expect(internals.sliceCache).toBeNull();
+      expect(internals.lastResidencyBudget).toBeNull();
+      expect(internals.refinementDensityGate).toBeNull();
+      expect(sceneLoader.refinementHoldReason('/g')).toBeNull();
+    });
+
     it('SceneLoader.dispose returns a Promise that resolves cleanly (async signature)', async () => {
       // Locks in commit 2.1's signature change. loadScene's call site
       // (commit 2.3) now uses `await this.dispose()` — we cannot directly
@@ -2535,6 +2854,110 @@ describe('SceneLoader', () => {
       // Empty batch (no failures): resolves immediately without the flag.
       const result = await sceneLoader.retryAllFailedLoaders();
       expect(result.deferred).toBeUndefined();
+    });
+  });
+
+  describe('retry during a refinement drain pre-empts it (A10)', () => {
+    // A refinement drain holds the serialization lock for as long as ladders
+    // stream — minutes on a deep ladder. A retry refused for that long made the
+    // online auto-retry give up (10 deferred attempts, 2 s apart) and refused
+    // the monitor's Retry button. A view change pre-empts refinement; so must
+    // a retry.
+    let frames: Array<() => void>;
+    type Internals = {
+      _updateInProgress: boolean;
+      gsplatLoaders: Map<string, unknown>;
+      loaders: Map<string, unknown>;
+      rootGroup: THREE.Group | null;
+      registry: { recordFailure(path: string, error: Error): void };
+      scheduleGSplatsRefinement(): Promise<void>;
+    };
+
+    beforeEach(async () => {
+      await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+      frames = [];
+      vi.spyOn(document, 'hidden', 'get').mockReturnValue(false);
+      vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+        frames.push(() => callback(0));
+        return frames.length;
+      });
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    });
+
+    /** Fire queued frames until `done` settles (bounded). */
+    async function pumpUntil(done: Promise<unknown>): Promise<void> {
+      let settled = false;
+      void done.finally(() => {
+        settled = true;
+      });
+      for (let i = 0; i < 50 && !settled; i++) {
+        frames.shift()?.();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+    }
+
+    /** A deep ladder drained by a running refinement, plus one failed points node. */
+    function startDrainWithFailure(): { retried: ReturnType<typeof vi.fn> } {
+      const internals = sceneLoader as unknown as Internals;
+      const ladder = {
+        loadedLODCount: 1,
+        totalLODCount: 1000,
+        get hasMoreLODs() {
+          return ladder.loadedLODCount < ladder.totalLODCount;
+        },
+        updateView: vi.fn(async () => {
+          ladder.loadedLODCount += 1;
+          return null;
+        }),
+        dispose: vi.fn(),
+      };
+      internals.gsplatLoaders.set('/g', ladder);
+      const retried = vi.fn().mockResolvedValue(null);
+      internals.loaders.set('/p', { updateView: retried, dispose: vi.fn() });
+      const placeholder = new THREE.Group();
+      placeholder.name = '/p';
+      internals.rootGroup!.add(placeholder);
+      internals.registry.recordFailure('/p', new Error('network down'));
+      internals._updateInProgress = true;
+      void internals.scheduleGSplatsRefinement();
+      expect(sceneLoader.isUpdateInProgress()).toBe(true);
+      return { retried };
+    }
+
+    it('retryFailedLoader runs instead of reporting deferred', async () => {
+      const { retried } = startDrainWithFailure();
+      const result = sceneLoader.retryFailedLoader('/p');
+      await pumpUntil(result);
+
+      await expect(result).resolves.toBe(true);
+      expect(retried).toHaveBeenCalledOnce();
+      expect(sceneLoader.hasFailures()).toBe(false);
+    });
+
+    it('retryAllFailedLoaders runs instead of reporting deferred', async () => {
+      const { retried } = startDrainWithFailure();
+      const result = sceneLoader.retryAllFailedLoaders();
+      await pumpUntil(result);
+
+      await expect(result).resolves.toEqual({ succeeded: ['/p'], failed: [] });
+      expect(retried).toHaveBeenCalledOnce();
+    });
+
+    it('a retry still defers to a VIEW pass holding the lock', async () => {
+      const internals = sceneLoader as unknown as Internals;
+      internals.registry.recordFailure('/p', new Error('network down'));
+      internals._updateInProgress = true; // a main update, not refinement
+      try {
+        await expect(sceneLoader.retryAllFailedLoaders()).resolves.toMatchObject({
+          deferred: true,
+        });
+      } finally {
+        internals._updateInProgress = false;
+      }
     });
   });
 
@@ -3443,6 +3866,31 @@ describe('SceneLoader', () => {
           String(message).startsWith('Refinement failed')
         )
       ).toHaveLength(1);
+      warningLog.mockRestore();
+    });
+
+    it('counts re-drain rounds per ladder: one that gave up does not use up another’s', async () => {
+      // The backoff round used to be one integer per SceneLoader, so a ladder
+      // retired AFTER another had exhausted its rounds inherited the spent
+      // counter and was left at once, never re-drained.
+      const internals = sceneLoader as unknown as RecoveryInternals;
+      const stuck = flakyLadder(Number.POSITIVE_INFINITY);
+      internals.gsplatLoaders.set('/a', stuck);
+      const warningLog = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      await drain();
+      await vi.advanceTimersByTimeAsync(30 * 60_000);
+      const stuckCalls = stuck.calls;
+
+      const late = flakyLadder(MAX_CONSECUTIVE_REFINEMENT_FAILURES);
+      internals.gsplatLoaders.set('/b', late);
+      await drain();
+      expect(late.loadedLODCount).toBe(1);
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      expect(late.loadedLODCount).toBe(3);
+      // The ladder that gave up for good is not re-opened by the other's round.
+      expect(stuck.calls).toBe(stuckCalls);
+      expect(getLoadTimeline().refinement.complete).toBe(true);
       warningLog.mockRestore();
     });
 
