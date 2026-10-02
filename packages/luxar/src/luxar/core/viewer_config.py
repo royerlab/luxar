@@ -554,6 +554,27 @@ class Waypoint:
                 f"easing must be one of {VALID_WAYPOINT_EASINGS}, got '{self.easing}'"
             )
 
+        self._validate_flight()
+
+        if self.reveal is not None and self.reveal not in VALID_WAYPOINT_REVEALS:
+            raise ValueError(
+                f"reveal must be one of {VALID_WAYPOINT_REVEALS}, got '{self.reveal}'"
+            )
+
+        if self.rendering is not None:
+            if not isinstance(self.rendering, dict):
+                raise ValueError("rendering must be a dict of viewer_config keys")
+            unknown = sorted(
+                k for k in self.rendering if k not in ViewerConfig._RENDERING_FIELDS
+            )
+            if unknown:
+                raise ValueError(
+                    f"rendering has unknown keys {unknown}; use ViewerConfig field "
+                    "names such as 'exposure' or 'bloom_strength'"
+                )
+
+    def _validate_flight(self) -> None:
+        """Validate the path and pacing of the flight into this waypoint."""
         if self.speed is not None and not (
             math.isfinite(self.speed) and self.speed > 0
         ):
@@ -573,23 +594,6 @@ class Waypoint:
 
         if self.trajectory is not None:
             validate_trajectory(self.trajectory)
-
-        if self.reveal is not None and self.reveal not in VALID_WAYPOINT_REVEALS:
-            raise ValueError(
-                f"reveal must be one of {VALID_WAYPOINT_REVEALS}, got '{self.reveal}'"
-            )
-
-        if self.rendering is not None:
-            if not isinstance(self.rendering, dict):
-                raise ValueError("rendering must be a dict of viewer_config keys")
-            unknown = sorted(
-                k for k in self.rendering if k not in ViewerConfig._RENDERING_FIELDS
-            )
-            if unknown:
-                raise ValueError(
-                    f"rendering has unknown keys {unknown}; use ViewerConfig field "
-                    "names such as 'exposure' or 'bloom_strength'"
-                )
 
     def _validate_when(self) -> None:
         if not isinstance(self.when, dict) or not self.when:
