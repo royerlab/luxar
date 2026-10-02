@@ -38,7 +38,7 @@ import {
   applyMeshTexture,
   applyMeshVertexAlpha,
 } from '../../../rendering/node-factory/create-mesh-node';
-import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
+import type { DepthSortCoordinator } from '../../../rendering/depth-sort-coordinator';
 import { computeFaceCentroids } from '../../../rendering/depth-sort-coordinator/triangle-ordering';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
 import { markFirstCommit } from '../../../profiling/load-timeline';
@@ -53,6 +53,8 @@ export interface MeshCommitCtx {
   rootGroup: THREE.Group | null;
   currentVersion: number;
   gpuBufferPool?: GPUBufferPool | null;
+  /** The host's depth-sort coordinator (see `GeometryCommitHost.depthSort`). */
+  depthSort?: DepthSortCoordinator | null;
 }
 
 function accountMeshGeometry(
@@ -61,6 +63,20 @@ function accountMeshGeometry(
   geometry: THREE.BufferGeometry
 ): void {
   ctx.gpuBufferPool?.registerMeshGeometry(path, geometry);
+}
+
+/** Hand a committed epoch to the host's depth-sort coordinator (see the call site). */
+function noteMeshDepthSortCommit(
+  ctx: MeshCommitCtx,
+  object: THREE.Mesh,
+  projected: StagedMeshCommit['projected']
+): void {
+  ctx.depthSort?.noteCommit(
+    object,
+    () => computeFaceCentroids(projected.position, projected.indices, projected.visibleFaceCount),
+    projected.visibleFaceCount,
+    projected.indices
+  );
 }
 
 /**
@@ -220,12 +236,7 @@ export function commitMeshGeometry(
   // fresh per-epoch copy (`projectMeshTo3D` copies out of its reused scratch), so
   // this retains a reference rather than paying for one, and the coordinator drops
   // it the moment the node stops sorting.
-  noteDepthSortCommit(
-    object,
-    () => computeFaceCentroids(projected.position, projected.indices, projected.visibleFaceCount),
-    projected.visibleFaceCount,
-    projected.indices
-  );
+  noteMeshDepthSortCommit(ctx, object, staged.projected);
 
   stampLoadedViewVersion(object.userData, loadedViewVersion ?? currentVersion);
 

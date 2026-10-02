@@ -525,10 +525,17 @@ so THREE's program cache recompiles; the TSL wrapper calls
 configuration (`../_shared/shared-graph-tsl.ts` — built once per
 configuration, since three keys its node-build cache on node ids). The key
 carries every define above plus the primitive, the resolved join, the
-projection mode and the baked line-texture width. Projection mode
-(`uIsOrtho`) is **not** a uniform branch in TSL — it's read from
-`nodes.uIsOrtho.value` at build time and emits a single-branch graph, so a
-mode flip in `updateCameraParams` triggers an explicit rebuild.
+projection mode and the baked line-texture width. Projection mode is read
+from the projection matrix in GLSL (`luxarLineIsOrtho`, assigned with
+`luxarLineScale` at the top of `main()` and handed to the fragment stage as a
+flat varying), so the GLSL wrapper binds no ortho uniform. In TSL it is **not**
+a runtime branch — `nodes.uIsOrtho.value` is read at build time and emits a
+single-branch graph (the unused width/fade branches cost nothing), so a mode
+flip in `updateCameraParams` repoints the material at the other
+configuration's shared graph (built once). A draw through a different
+projection kind than the broadcast camera's (the scene environment capture)
+must therefore push that kind first, which `scene-manager.ts`'s capture
+runtime does.
 
 ## Shared helpers from `_shared/`
 

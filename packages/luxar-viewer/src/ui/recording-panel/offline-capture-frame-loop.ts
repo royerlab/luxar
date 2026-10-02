@@ -15,7 +15,6 @@
 
 import { Modules, log } from '../../utils/log';
 import { showToast } from '../toast';
-import { resortForCapture } from '../../rendering/depth-sort-coordinator';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import type { LuxarOrbitControls } from '../../controls/luxar-orbit-controls';
 import type { CaptureProgress } from './offline-capture-overlay';
@@ -131,8 +130,9 @@ export async function runFrameLoop(deps: FrameLoopDeps): Promise<FrameLoopResult
     // order-dependent. The loop's own render is suppressed for the whole
     // capture and the per-frame scheduler re-sorts only past its angle
     // threshold, so without this a `normal` / `volumetric` node is filmed
-    // with an ordering from an earlier pose.
-    await resortForCapture();
+    // with an ordering from an earlier pose. The APP's coordinator: only its
+    // nodes are on this canvas.
+    await ctx.sceneManager.depthSort.resortForCapture();
 
     if (sessionAbort.signal.aborted) break;
 

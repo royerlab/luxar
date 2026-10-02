@@ -9,13 +9,14 @@
  * term (the perspective/ortho size scale, the ortho test, the focal length) is read
  * in shader from the projection matrix three binds per draw, so a zoom, an FOV
  * change or an off-axis frustum needs no push. What remains is state the
- * projection matrix does not hold: the viewport size, the projection KIND (lines
- * compile an ortho variant and read it in their fragment stages), the scene's
- * near-cull distance and the render target's pixel ratio.
+ * projection matrix does not hold: the viewport size, the projection KIND (only
+ * the TSL line graphs consume it, as a build-time ortho variant; every GLSL
+ * shader and every other TSL graph reads it from the projection matrix), the
+ * scene's near-cull distance and the render target's pixel ratio.
  *
  * Mesh implements only HALF of it, and that is intended rather than a gap: it has
  * no screen-space sprite extent to size, so `resolution` / `isOrtho` are accepted
- * and ignored (its ortho test reads three's `isOrthographic`), while `nearCull` is
+ * and ignored (its ortho test reads the projection matrix), while `nearCull` is
  * consumed for the shared near fade (#1431).
  */
 import * as THREE from 'three';

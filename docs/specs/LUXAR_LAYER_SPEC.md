@@ -127,11 +127,19 @@ canvas.addEventListener('webglcontextrestored', () => {
 The loss hook clears shader warm-up state and reduces the GPU budget. The restore hook marks only
 the layer subtree dirty and re-arms Luxar-owned resources; it does not restore host resources.
 
-## Single-instance rule
+## Several hosts on one page
 
-Only one `LuxarLayer` may exist per page, and it must not coexist with `LuxarApp`. The scene-loader,
-dimension, material, LOD, and worker managers are process singletons. Multiple owners would share
-and tear down each other's state.
+One `LuxarApp` and any number of `LuxarLayer`s may share a page. Each layer owns its scene-loader
+manager, dimension manager, material manager, depth-sort coordinator and blend warm-up; the
+LuxarApp's are the module singletons, which a layer never touches. The data-worker pool and the
+SortWorker are shared page-wide, each host holding a lease, and only the last host's teardown
+terminates them. Two LuxarApps on one page remain unsupported (the app owns page-global UI).
+
+Two layers may share one `THREE.Scene`, but each depth-sorts only its own nodes and stamps its
+`renderOrder` on its Groups, so their transparent geometry draws as whole layers in `renderOrder`
+order rather than interleaving by depth; the second layer to attach logs a warning. All hosts on a
+page must render through the same backend (the renderer-backend switches are page-wide). See
+`packages/luxar-viewer/src/core/layer/README.md`.
 
 ## Known limitations
 

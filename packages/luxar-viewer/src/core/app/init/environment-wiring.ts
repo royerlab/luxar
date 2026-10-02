@@ -127,7 +127,9 @@ async function runBake(
 ): Promise<void> {
   const slot = debugEnvironmentSlot();
   try {
-    const result = await bakeEnvironment(resolveBakeRequest(sceneManager, request));
+    const result = await sceneManager.postProcessing.suspendFrameRendersDuring(() =>
+      bakeEnvironment(resolveBakeRequest(sceneManager, request))
+    );
     slot.lastBake = {
       header: result.header,
       base64: containerToBase64(result.bytes),

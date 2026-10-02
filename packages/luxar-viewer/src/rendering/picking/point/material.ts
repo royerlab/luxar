@@ -12,6 +12,8 @@ import * as THREE from 'three';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { computeMaxPointSize } from '../../materials/_shared/camera-uniforms';
 import { POINT_PICK_SOURCE } from './shaders';
+import { copyPickVisibilityUniforms, pickVisibilityUniforms } from '../_shared/visibility-uniforms';
+import type { SurfacePickAwareMaterial } from '../_shared/surface-pick';
 import { requireWebGLSources } from '../../materials/_shared/shader-source';
 import {
   getElementTextureWidth,
@@ -28,7 +30,10 @@ export interface PointPickingMaterialConfig {
   radiusScale?: number;
 }
 
-export class PointPickingMaterial extends THREE.ShaderMaterial implements CameraAwareMaterial {
+export class PointPickingMaterial
+  extends THREE.ShaderMaterial
+  implements CameraAwareMaterial, SurfacePickAwareMaterial
+{
   constructor(config: PointPickingMaterialConfig) {
     const defaultResolutionY = 1080;
 
@@ -48,6 +53,13 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
         uNearCull: { value: 0.1 },
         uPixelRatio: { value: 1 },
         uNodeId: { value: config.nodeId },
+        // Visual-pass weight inputs (../_shared/visibility-glsl.ts), neutral
+        // until the first pick render syncs the node's own.
+        ...pickVisibilityUniforms(),
+        // 0 = brightness-as-depth (brightest wins; commutative modes), 1 =
+        // real projected depth (front-most wins; opaque/normal). Synced per
+        // pick render via setSurfacePickDepth().
+        uSurfaceDepth: { value: 0 },
         // Resolution needed for instanced-quad expansion (matches
         // PointMaterial). Defaults overwritten by updateCameraParams.
         uResolution: { value: new THREE.Vector2(1920, defaultResolutionY) },
@@ -97,7 +109,21 @@ export class PointPickingMaterial extends THREE.ShaderMaterial implements Camera
     // until the coordinator's next per-frame re-assert.
     cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
+    copyPickVisibilityUniforms(this.uniforms, cloned.uniforms);
+    cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
     return cloned as this;
+  }
+
+  /**
+   * Select the pick depth convention (`SurfacePickAwareMaterial`): `true`
+   * under the depth-ordered surface modes (`opaque` / `normal`) writes the
+   * real projected depth so the FRONT-MOST element wins, as the user sees
+   * it; `false` (default) keeps brightness-as-depth so the BRIGHTEST wins,
+   * right for the commutative modes. Synced per pick render by
+   * `PickingSystem.renderPickBuffer()`.
+   */
+  setSurfacePickDepth(on: boolean): void {
+    this.uniforms.uSurfaceDepth.value = on ? 1 : 0;
   }
 
   updateCameraParams(

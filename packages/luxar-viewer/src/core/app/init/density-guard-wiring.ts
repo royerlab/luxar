@@ -61,6 +61,12 @@ export interface DensityGuardWiringDeps {
   /** The adaptive-DPR controller, read per frame (constructed after this wiring). */
   getAdaptiveDpr(): { notifyContentChanged(): void } | null | undefined;
   requestRender(): void;
+  /**
+   * Invalidate the cached pick buffer (`PickingSystem.markDirty` of the
+   * current dataset's picking system, when there is one). A keep step changes
+   * which elements are pickable, and a still camera dirties nothing else.
+   */
+  invalidatePickBuffer?(): void;
   /** Injection points for tests; production uses the module singletons. */
   tracker?: ProjectedDensityTracker;
   guard?: DensityGuard;
@@ -228,6 +234,7 @@ export function wireDensityGuard(deps: DensityGuardWiringDeps): DensityGuardWiri
       const changed = guard.takeChanged();
       if (changed) {
         deps.getAdaptiveDpr()?.notifyContentChanged();
+        deps.invalidatePickBuffer?.();
         deps.requestRender();
       }
       // Deferred rungs resume once the camera has moved in.

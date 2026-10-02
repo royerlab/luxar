@@ -17,9 +17,9 @@
  * sharpness), fetched in the vertex stage via `textureLoad` and
  * indexed by `aSortedIndex` (visual-factory parity, shader-tsl.ts).
  *
- * Depth is set to `1.0 - brightness` (brightness-as-depth) so the
+ * Depth is set to `1.0 / (1.0 + brightness)` (brightness-as-depth) so the
  * picking system's tie-breaking prefers the brightest hit. Matches
- * the GLSL `gl_FragDepth = 1.0 - clamp(brightness, 0.0, 1.0)` path.
+ * the GLSL `gl_FragDepth = 1.0 / (1.0 + brightness)` path.
  *
  * The pick sprite is 80% of the radius of the visual sprite
  * (the 0.8 factor below) — slightly tighter than the visible disc so
@@ -49,6 +49,8 @@ import {
   dot,
   exp,
   Discard,
+  depth,
+  mix,
   modelViewMatrix,
   cameraProjectionMatrix,
 } from 'three/tsl';
@@ -63,6 +65,7 @@ import {
   isOrthoProjectionTSL,
   projectionSizeScaleTSL,
   sanitizeNonNegative,
+  sanitizeAlpha,
   type TSLNode,
   sortedIndexNode,
   densityDroppedNode,
@@ -72,6 +75,11 @@ import {
   resolveElementTextureWidth,
   POINT_TEXTURE_LAYOUT,
 } from '../../element-texture-layout';
+import {
+  pickVisibilityTSLNodesFromUniforms,
+  pickWeightTSL,
+  type PickVisibilityTSLNodes,
+} from '../_shared/visibility-tsl';
 
 // Type-erased constructor aliases — same rationale as the gsplat TSL
 // factories (see materials/gsplat/shader-tsl.ts).
@@ -86,7 +94,7 @@ const ivec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _ivec2 as TSLNode;
  * rationale: avoids `.onUpdate('render')` callback churn by using
  * the wrapper-owned `UniformNode` references directly.
  */
-export interface PointPickTSLNodes {
+export interface PointPickTSLNodes extends PickVisibilityTSLNodes {
   /**
    * Point data texture node (RGBA32F, 3 texels/point) — shared with
    * the visual material's storage; rebound per node by the commit's
@@ -102,6 +110,8 @@ export interface PointPickTSLNodes {
   readonly uPixelRatio: TSLNode;
   readonly uNodeId: TSLNode;
   readonly uResolution: TSLNode;
+  /** Pick depth convention: 0 = brightness-as-depth, 1 = real fragment depth. */
+  readonly uSurfaceDepth: TSLNode;
 }
 
 /**
@@ -127,6 +137,7 @@ export function pointPickWebGPUFactory(
   const uNearCull = nodes.uNearCull;
   const uPixelRatio = nodes.uPixelRatio;
   const uNodeId = nodes.uNodeId;
+  const uSurfaceDepth = nodes.uSurfaceDepth;
   const uResolution = nodes.uResolution;
 
   // ---- Vertex ----
@@ -148,6 +159,8 @@ export function pointPickWebGPUFactory(
   const vBeta: TSLNode = varying(float(0.0));
   const vNearFade: TSLNode = varying(float(1.0));
   const vPickSize: TSLNode = varying(float(0.0));
+  // Per-point opacity (texel2.y), sanitized as the visual graph does.
+  const vAlpha: TSLNode = varying(float(1.0));
   const vNodeId: TSLNode = varying(uNodeId);
   // Storage slot, NOT instanceIndex (the draw slot): identical under
   // Phase-1 identity ordering, and stays the id the rest of the
@@ -168,8 +181,8 @@ export function pointPickWebGPUFactory(
 
   const vertexBody = Fn(() => {
     // === Point-texture fetch prologue (visual-factory parity) ===
-    // Picking needs texels 0-1 only (center/radius/sharpness); color
-    // and scalar are not fetched. Every value is a `.toVar()` STATEMENT
+    // Picking needs texels 0-1 (center/radius/sharpness) and the alpha
+    // in texel 2; color and scalar are not fetched. Every value is a `.toVar()` STATEMENT
     // (Fn house rule). Width is a multiple of 3 -> one row per point.
     const pointBase: TSLNode = int(aSortedIndex).mul(int(3)).toVar();
     // The width is baked as a LITERAL, not read via textureSize(): a
@@ -188,6 +201,7 @@ export function pointPickWebGPUFactory(
     const texelY: TSLNode = pointBase.div(pointTexW).toVar();
     const pointT0: TSLNode = uPointTex.load(ivec2(texelX, texelY)).toVar();
     const pointT1: TSLNode = uPointTex.load(ivec2(texelX.add(int(1)), texelY)).toVar();
+    const pointT2: TSLNode = uPointTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
     const aCenter: TSLNode = vec3(pointT0).toVar();
     const aRadius: TSLNode = pointT0.w.toVar();
     const aSharpness: TSLNode = pointT1.w.toVar();
@@ -254,6 +268,7 @@ export function pointPickWebGPUFactory(
     vBeta.assign(beta);
     vNearFade.assign(depthFade);
     vPickSize.assign(rawPickSize);
+    vAlpha.assign(sanitizeAlpha(pointT2.y));
 
     return clipPos;
   });
@@ -283,6 +298,9 @@ export function pointPickWebGPUFactory(
     // Sub-pixel compensation (sizeScale², matching the VISUAL point and
     // the line pick's widthScale) — pick salience tracks visual salience.
     .mul(min(vPickSize.div(uPixelRatio.max(float(1.0)).mul(1.5)), float(1.0)).pow(2.0))
+    // ...and the visual weight: per-point alpha (optical depth under
+    // volumetric), node opacity, max(gain, 1) — GLSL twin: luxarPickWeight.
+    .mul(pickWeightTSL(vAlpha, nodes))
     .toVar();
 
   const colorNode = Fn(() => {
@@ -294,19 +312,23 @@ export function pointPickWebGPUFactory(
     return vec4(vNodeId, vElementId.x, brightness, vElementId.y);
   });
 
-  // Depth = 1.0 - brightness (the brightest hit takes precedence).
-  // Discard-gating happens via colorNode → depth is only written when
-  // colorNode also writes.
-  //
-  // BRANCHLESS by construction, and that is load-bearing: `brightness`
-  // is a factory-scope `.toVar()` shared with `colorNode`, so it is
-  // assigned wherever three first BUILDS it — which is unconditional
-  // top-level flow in either entry point only while this body contains
-  // no `if`. Adding a branch here (a `uSurfaceDepth`-style select) would
-  // bury that assignment in one arm and leave `colorNode`'s top-level
-  // readers with 0; it needs the same unconditional fragment prologue
-  // the gsplat/mesh pick factories use.
-  const depthNode = Fn(() => float(1.0).sub(clamp(brightness, 0.0, 1.0)));
+  // Pick depth convention (GLSL twin: shaders.ts). Discard-gating happens via
+  // colorNode → depth is only written when colorNode also writes.
+  const depthNode = Fn(() => {
+    // BRANCHLESS by construction, and that is load-bearing: `brightness` is a
+    // factory-scope `.toVar()` shared with `colorNode`, so it is assigned wherever
+    // three first BUILDS it — which is unconditional top-level flow in either entry
+    // point only while this body contains no `if`. So the depth convention is a
+    // `mix` on the 0/1 `uSurfaceDepth` flag, not a select: 0 = brightness-as-depth
+    // (brightest wins; commutative modes), using unclamped salience;
+    // 1 = the real fragment depth (front-most wins; opaque/normal — GLSL twin:
+    // `gl_FragCoord.z`).
+    return mix(
+      float(1.0).div(float(1.0).add(brightness)),
+      depth as unknown as TSLNode,
+      float(uSurfaceDepth)
+    );
+  });
 
   const material = outMaterial ?? new NodeMaterial();
   material.vertexNode = clipPos;
@@ -356,5 +378,7 @@ export function buildPointPickTSLNodesFromUniforms(
     uResolution: uniform(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),
+    uSurfaceDepth: uniform((uniforms.uSurfaceDepth?.value as number) ?? 0),
+    ...pickVisibilityTSLNodesFromUniforms(uniforms),
   };
 }

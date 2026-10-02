@@ -136,11 +136,10 @@ HIGH_DPR_DEMOS = frozenset(
         # high-DPI kiosk display with a GPU to spare, where the owner asked for
         # full device resolution (a laptop's DPR cap is the wrong default there).
         "demo_esm3_protein_stories.py",
-        # demo_esm_protein_universe.py used to be here (same kiosk display) but
-        # now ships the LAPTOP build by default — SSAA off, DPR capped at 1.0 —
-        # with the kiosk settings behind `--high-quality` (2026-09-10 review:
-        # the hosted scene crawled on ordinary machines). Its ViewerConfig sets
-        # `allow_high_dpr=high_quality`, a flag, not a literal.
+        # The universe map keeps full device resolution in both builds so fine
+        # structure does not soften during flights. Adaptive DPR is off; only
+        # supersampling and the larger dolly swing need `--high-quality`.
+        "demo_esm_protein_universe.py",
         "demo_flywire_connectome.py",
         "demo_global_rivers_earth.py",
         "demo_hilbert_curve_3d.py",

@@ -49,7 +49,7 @@ import type { PointsMetadata } from '../../../../types/points';
 import type { LinesMetadata, LinesDataLoader } from '../../../../types/lines';
 import type { MeshMetadata, MeshDataLoader } from '../../../../types/mesh';
 import type { DataLoader } from '../../../../data/data-loader-types';
-import { configureDepthSort, disposeDepthSort } from '../../../../rendering/depth-sort-coordinator';
+import { DepthSortCoordinator } from '../../../../rendering/depth-sort-coordinator';
 
 const AMPLITUDE_RANGE: [number, number] = [5.409804826328468e-10, 0.06948927677778476];
 
@@ -376,9 +376,11 @@ describe('LayersPanel — a partition part activated after the panel initialised
   it('a part activated after a switch INTO a sorted mode asks for no extra pass', async () => {
     // Its first commit registers it with the sorter under the LIVE mode; a
     // switch hook on the empty placeholder would only queue a full re-sweep
-    // for every part a playback step activates.
+    // for every part a playback step activates. (The routed switch hook also
+    // ignores a mesh no coordinator has seen, so the guard holds twice over.)
     const requestReprocess = vi.fn();
-    configureDepthSort({ getCamera: () => null, requestRender: vi.fn(), requestReprocess });
+    const depthSort = new DepthSortCoordinator();
+    depthSort.configure({ getCamera: () => null, requestRender: vi.fn(), requestReprocess });
     try {
       const graph = sceneGraph();
       graph.children![0].attrs.blending_mode = 'additive';
@@ -392,7 +394,7 @@ describe('LayersPanel — a partition part activated after the panel initialised
       expect((fresh.material as THREE.Material).userData.blendingMode).toBe('normal');
       expect(requestReprocess).not.toHaveBeenCalled();
     } finally {
-      disposeDepthSort();
+      depthSort.dispose();
     }
   });
 

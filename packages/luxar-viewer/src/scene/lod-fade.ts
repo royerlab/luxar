@@ -1,8 +1,8 @@
 /**
  * Material-level appliers for the two LOD anti-popping mechanisms.
  *
- * `lod-blend.ts` holds the pure, THREE-free opacity MATH (the coverage
- * cross-fade weight and the streaming `1/e(k)` energy compensation); this
+ * `lod-blend.ts` holds the pure, THREE-free opacity MATH (the level-dissolve
+ * curve and the streaming `1/e(k)` energy compensation); this
  * module is its material-touching counterpart, extracted from
  * `lod-group-registry.ts`: walk a LOD child's leaf materials
  * (clone-on-first-fade) and write the composed opacity multiplier, or restore
@@ -153,8 +153,10 @@ export function isBlendableSubtree(root: THREE.Object3D): boolean {
  * restore the authored opacity. The effective multiplier is the product of two
  * independent opacity terms:
  *
- * - `coverageWeight` = `weight ?? 1` — the cross-fade blend opacity of this
- *   level (`null` ⇒ 1, no cross-fade in flight). Per-CHILD (the whole level).
+ * - `dissolveWeight` = `weight ?? 1` — this level's share of an in-flight
+ *   level dissolve (`null` ⇒ 1, no dissolve in flight). Per-CHILD (the whole
+ *   level). (Named for what it is now: before the time-driven dissolve this was
+ *   a camera-distance "coverage" cross-fade weight.)
  * - `energyFactor` — the streaming brightness compensation `1/e(k)` read
  *   PER-LEAF from `committedEnergyFraction`, applied only when `energyComp` is on
  *   AND the leaf's blend mode sums energy ({@link BLENDABLE_MODES}). Complete /
@@ -189,7 +191,7 @@ export function applyLodFade(
   registerMaterial?: (material: THREE.Material) => void
 ): boolean {
   let changed = false;
-  const coverageWeight = weight ?? 1;
+  const dissolveWeight = weight ?? 1;
   // Normal mode's depthWrite is opacity-gated (>= 0.99, see
   // normalModeDepthWrite) — but that gate is now the LINE gate only: point
   // materials force depthWrite:false in normal regardless (#1002), so
@@ -227,7 +229,7 @@ export function applyLodFade(
     // of the elements; `1/keep` restores aggregate brightness for blendable
     // modes. Normal mode compensates per-element alpha in the shader instead.
     const densityFactor = blendable ? densityCompensation(ud.densityKeep) : 1;
-    const product = coverageWeight * energyFactor * densityFactor;
+    const product = dissolveWeight * energyFactor * densityFactor;
     if (Math.abs(product - 1) < FADE_EPSILON) {
       // Nothing to adjust: restore the authored opacity if we faded it, else
       // leave the shared material untouched (no clone).

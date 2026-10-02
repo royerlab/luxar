@@ -191,7 +191,8 @@ describe('LinePickingMaterial', () => {
 
     const cloned = material.clone();
     expect(cloned.uniforms.uNodeId.value).toBe(7);
-    expect(cloned.uniforms.uIsOrtho.value).toBe(1);
+    // GLSL reads the ortho branch from the projection matrix (no pushed flag).
+    expect(cloned.uniforms.uIsOrtho).toBeUndefined();
     expect(cloned.uniforms.uNearCull.value).toBe(0.25);
     expect(cloned.uniforms.uMaxLinePixelWidth.value).toBe(300); // 600 * 0.5
     // The pixel-width scale is read in shader from the projection matrix; the
@@ -221,12 +222,12 @@ describe('GSplatPickingMaterial', () => {
     material.dispose();
   });
 
-  it('uses max projection mode for picking (no uProjectionMode uniform; shader hard-codes max)', () => {
-    // The picking shader hard-codes max projection — it has no
-    // sum-projection ray-integral path — so neither the GLSL nor the
-    // TSL picking materials bind a `uProjectionMode` uniform.
+  it('defaults to the peak projection until the pick render syncs the node', () => {
+    // The pick shader evaluates the VISUAL node's projection (synced per
+    // pick render — picking-system/visibility-sync.ts); before the first
+    // sync it is peak, the pick pass's historical convention.
     const material = new GSplatPickingMaterial({ nodeId: 1 });
-    expect(material.uniforms.uProjectionMode).toBeUndefined();
+    expect(material.uniforms.uProjectionMode.value).toBe(1);
     material.dispose();
   });
 
@@ -305,7 +306,7 @@ describe('GSplatPickingMaterial', () => {
     const material = new GSplatPickingMaterial({ nodeId: 1 });
     expect(material.fragmentShader).toContain('uniform int uSurfaceDepth;');
     expect(material.fragmentShader).toContain(
-      'gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 - brightness;'
+      'gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 / (1.0 + salience);'
     );
     material.dispose();
   });
@@ -344,12 +345,10 @@ describe('GSplatPickingTSLMaterial', () => {
     material.dispose();
   });
 
-  it('uses max projection mode (no uProjectionMode uniform)', () => {
-    // Symmetric with GSplatPickingMaterial (GLSL): picking shader
-    // hard-codes max projection; uProjectionMode is intentionally
-    // NOT exposed (see material-tsl.ts module preamble).
+  it('defaults to the peak projection until the pick render syncs the node', () => {
+    // Symmetric with GSplatPickingMaterial (GLSL).
     const material = new GSplatPickingTSLMaterial({ nodeId: 1 });
-    expect(material.uniforms.uProjectionMode).toBeUndefined();
+    expect(material.uniforms.uProjectionMode.value).toBe(1);
     material.dispose();
   });
 

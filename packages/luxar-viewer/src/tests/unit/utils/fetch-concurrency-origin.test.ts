@@ -13,16 +13,21 @@ import { afterEach, describe, it, expect } from 'vitest';
 import {
   boundedConcurrencyStore,
   getFetchLaneLimit,
-  HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
-  HTTP1_MAX_CONCURRENT_METADATA_FETCHES,
-  MAX_CONCURRENT_CHUNK_FETCHES,
-  MAX_CONCURRENT_METADATA_FETCHES,
   noteFetchUrl,
   noteOriginProtocol,
   resetFetchTransport,
   resetOriginProtocols,
   withFetchGate,
 } from '../../../utils/fetch-concurrency';
+import { config } from '../../../config';
+
+/** The gate's widths, as configured (`config.dataLoading.network.fetchGate`). */
+const {
+  http1MaxChunkFetches: HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
+  http1MaxMetadataFetches: HTTP1_MAX_CONCURRENT_METADATA_FETCHES,
+  maxChunkFetches: MAX_CONCURRENT_CHUNK_FETCHES,
+  maxMetadataFetches: MAX_CONCURRENT_METADATA_FETCHES,
+} = config.dataLoading.network.fetchGate;
 
 const LAN = 'http://10.0.0.55:8001';
 const CDN = 'https://cdn.example.org';

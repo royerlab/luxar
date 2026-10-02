@@ -27,9 +27,9 @@
 import { ArchiveFaultError } from '../../cache/chunk-source';
 import {
   fetchWithRetry,
-  mergeAbortSignals,
   type FetchRetryOptions,
 } from '../../cache/multi-level-caching-store/fetch-retry';
+import { combineAbortSignals } from '../../utils/abort-signals';
 import type { FetchPriority, FetchPriorityCell } from '../../utils/fetch-concurrency';
 import { perfCounters } from '../../profiling/perf-counters';
 
@@ -105,7 +105,7 @@ function probeScope(
   if (timeoutMs === undefined) return { signal, dispose: () => {} };
   const timeout = new AbortController();
   const timer = setTimeout(() => timeout.abort(), timeoutMs);
-  const merged = mergeAbortSignals(timeout.signal, signal);
+  const merged = combineAbortSignals(timeout.signal, signal);
   return {
     signal: merged.signal,
     dispose: () => {
@@ -372,15 +372,12 @@ export class LuxarHttpRangeReader {
     const end = this.#length === undefined ? offset + size : Math.min(offset + size, this.#length);
     const windowSize = end - offset;
     if (windowSize <= 0 || this.#covered(offset, windowSize)) return body();
-    const scope =
-      signal && this.lifetime
-        ? mergeAbortSignals(this.lifetime, signal)
-        : { signal: signal ?? this.lifetime, dispose: () => {} };
+    const scope = combineAbortSignals(this.lifetime, signal);
     let bytes: Uint8Array<ArrayBuffer>;
     try {
-      bytes = await this.#fetchRange(offset, windowSize, scope.signal, priority);
+      bytes = await this.#fetchRange(offset, windowSize, scope?.signal, priority);
     } finally {
-      scope.dispose();
+      scope?.dispose();
     }
     const window = { offset, bytes };
     this.#windows.push(window);

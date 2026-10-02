@@ -9,19 +9,20 @@
  * sort still dispatches, still resolves, and is then silently dropped, so the
  * surface renders unsorted while nothing anywhere reports a problem.
  *
- * The coordinator is mocked at the module boundary — not because it is hard to
- * run, but because the real one spawns a SortWorker on the first order-dependent
- * commit, and what is under test here is the CALL, not the sort.
+ * The coordinator is a recording stand-in handed in through the commit context —
+ * not because the real one is hard to run, but because it spawns a SortWorker on
+ * the first order-dependent commit, and what is under test here is the CALL, not
+ * the sort.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as THREE from 'three';
 
 const noteDepthSortCommit = vi.fn();
-vi.mock('../../../../rendering/depth-sort-coordinator', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../../../rendering/depth-sort-coordinator')>()),
-  noteDepthSortCommit: (...args: unknown[]) => noteDepthSortCommit(...args),
-}));
+/** The host coordinator the commit context carries; it records `noteCommit`. */
+const depthSort = {
+  noteCommit: (...args: unknown[]) => noteDepthSortCommit(...args),
+} as unknown as DepthSortCoordinator;
 
 const { commitMeshGeometry } =
   await import('../../../../data/scene-loader/commit/commit-mesh-geometry');
@@ -30,6 +31,7 @@ const { processMeshData } =
 const { createEmptyMeshNode } = await import('../../../../rendering/node-factory/create-mesh-node');
 const { hasCommittedData, getCommittedData } = await import('../../../../types/committed-data');
 
+import type { DepthSortCoordinator } from '../../../../rendering/depth-sort-coordinator';
 import type {
   LoadedMeshData,
   MeshDataLoader,
@@ -90,7 +92,7 @@ async function commitOnce(attrs: MeshMetadata = ATTRS): Promise<THREE.Mesh> {
     normal_dims: undefined,
     double_sided: attrs.double_sided,
   });
-  commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
+  commitMeshGeometry({ rootGroup: root, currentVersion: 1, depthSort }, staged);
   return mesh;
 }
 
@@ -148,7 +150,7 @@ describe('commitMeshGeometry — depth-sort registration', () => {
         { ...VIEW, slicePosition: [0, 0, 0, w] } as MeshViewState,
         { normal_dims: undefined, double_sided: true }
       );
-      commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
+      commitMeshGeometry({ rootGroup: root, currentVersion: 1, depthSort }, staged);
     }
     expect(noteDepthSortCommit).toHaveBeenCalledTimes(2);
     // The second slice shows the OTHER triangle, so the registered source moved
@@ -168,7 +170,7 @@ describe('commitMeshGeometry — depth-sort registration', () => {
       { ...VIEW, slicePosition: [0, 0, 0, 100] } as MeshViewState,
       { normal_dims: undefined, double_sided: true }
     );
-    commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
+    commitMeshGeometry({ rootGroup: root, currentVersion: 1, depthSort }, staged);
     expect(noteDepthSortCommit.mock.calls[0][2]).toBe(0);
   });
 });

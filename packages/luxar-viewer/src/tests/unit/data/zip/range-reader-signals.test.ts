@@ -11,11 +11,12 @@
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { LuxarHttpRangeReader } from '../../../../data/zip/range-reader';
-import {
-  MAX_CONCURRENT_METADATA_FETCHES,
-  resetFetchTransport,
-  withFetchGate,
-} from '../../../../utils/fetch-concurrency';
+import { resetFetchTransport, withFetchGate } from '../../../../utils/fetch-concurrency';
+import { config } from '../../../../config';
+
+/** The gate's widths, as configured (`config.dataLoading.network.fetchGate`). */
+const { maxMetadataFetches: MAX_CONCURRENT_METADATA_FETCHES } =
+  config.dataLoading.network.fetchGate;
 
 const URL_ = 'https://example.com/signals.luxar.zarr.zip';
 

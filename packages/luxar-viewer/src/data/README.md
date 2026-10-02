@@ -52,7 +52,7 @@ data/
 │                                  #   which seeds its first poll's If-None-Match from the
 │                                  #   load-time root fetch's ETag (seedFromLoad);
 │                                  #   disposed by SceneLoader.dispose
-├── scene-loader-manager.ts        # Singleton manager for SceneLoader instances
+├── scene-loader-manager.ts        # Per-host manager for SceneLoader instances
 ├── scene-loader-monitor-port.ts   # Port interface bridging SceneLoader → DataLoadingMonitor
 ├── data-loader-types.ts           # TypeScript interfaces and types
 ├── view-state-manager.ts          # Centralized ViewState initialization and validation
@@ -179,7 +179,9 @@ and it is shared with the identity probe when that runs first. See
 
 ### State Management Architecture
 
-The data package uses a **clean singleton pattern** for instance management, completely avoiding global variables:
+Each host has a `SceneLoaderManager` for its loader instances. `getInstance()` returns
+the `LuxarApp` manager; each `LuxarLayer` constructs its own manager with its material
+manager. Loader IDs, profilers and teardown are scoped to the host.
 
 ```
 ┌─────────────────────────────────────┐
@@ -190,8 +192,8 @@ The data package uses a **clean singleton pattern** for instance management, com
                ▼
 ┌─────────────────────────────────────┐
 │       SceneLoaderManager             │
-│  (Singleton - manages instances)     │
-│  ✓ No global variables              │
+│  (one manager per host)              │
+│  ✓ Host-scoped loader IDs            │
 │  ✓ Multiple loader support          │
 │  ✓ Clean lifecycle management       │
 └──────────────┬──────────────────────┘
@@ -200,7 +202,7 @@ The data package uses a **clean singleton pattern** for instance management, com
 ┌─────────────────────────────────────┐
 │      SceneLoader Instances          │
 │  ✓ Independent instances            │
-│  ✓ Use DataMonitorManager           │
+│  ✓ Host monitor factory injected    │
 │  ✓ No direct monitor creation       │
 │  ✓ Proper resource cleanup          │
 └─────────────────────────────────────┘
@@ -208,11 +210,11 @@ The data package uses a **clean singleton pattern** for instance management, com
 
 **Key Benefits:**
 
-- **No Global State**: Window object remains unpolluted
+- **Host Isolation**: App and layers manage their own loaders
 - **Testability**: Easy reset functionality for testing
 - **Multiple Instances**: Support for independent loaders
 - **Memory Safety**: Proper cleanup and disposal
-- **Centralized Management**: Single source of truth
+- **Centralized Management**: One loader registry per host
 
 **Note**: Datasets with Morton/Hilbert ordering (chunk_bounds) will load much faster due to efficient spatial queries. Small 3D datasets without spatial ordering will fall back to loading all points (acceptable for <100K points).
 
@@ -287,9 +289,15 @@ The `zarr-loader.ts` provides the main public API for loading and managing Zarr 
 
 **Data Pipeline:**
 
+Every helper takes the HOST's loader manager first: the LuxarApp's is
+`SceneLoaderManager.getInstance()`, and each `LuxarLayer` constructs its own
+(`new SceneLoaderManager({ materials })`), so an app and its layers can all use
+loader id `'default'` without one host's load disposing another's loader. In the
+examples below, `loaders` is that manager.
+
 ```typescript
 // 1. Load scene from Zarr store (uses consolidated metadata)
-const scene = await loadScene(url, config);
+const scene = await loadScene(loaders, url, config);
 
 // 2. The loader automatically:
 //    - Extracts scene dimensions from metadata
@@ -299,14 +307,14 @@ const scene = await loadScene(url, config);
 //    - Handles transforms and attribute inheritance
 
 // 3. Update view for dimension navigation
-await updateView({
+await updateView(loaders, {
   displayDims: [0, 1, 2],
   slicePosition: currentPosition,
   tolerance: sliceTolerance,
 });
 
 // 4. Clean up when done
-dispose();
+dispose(loaders);
 ```
 
 **Key Functions:**
@@ -314,12 +322,17 @@ dispose();
 ```typescript
 // Main API functions from zarr-loader.ts
 export async function loadScene(
+  manager: SceneLoaderManager,
   src: string,
   config?: LoaderConfig,
   loaderId?: string
 ): Promise<THREE.Group>;
 
-export async function updateView(viewState: Partial<ViewState>, loaderId?: string): Promise<void>;
+export async function updateView(
+  manager: SceneLoaderManager,
+  viewState: Partial<ViewState>,
+  loaderId?: string
+): Promise<void>;
 
 // Update scene when navigating dimensions. `opts.frameBudgetMs` is the
 // per-pass LOD time budget during dimension-animation playback (loaders
@@ -327,6 +340,7 @@ export async function updateView(viewState: Partial<ViewState>, loaderId?: strin
 // playback. Queued calls resolve when the requested-or-newer state's pass
 // commits (the animation pacing gate awaits this).
 export async function updateSceneForDimensions(
+  manager: SceneLoaderManager,
   dims: SimpleDims,
   scene: THREE.Group,
   loaderId?: string,
@@ -766,7 +780,7 @@ The chunk-based approach provides excellent performance for large datasets:
 // You don't need to interact with the chunk index directly - it's handled internally
 
 // When you update the view:
-await updateView({
+await updateView(loaders, {
   displayDims: [0, 1, 2],
   slicePosition: [x, y, z, t],
   tolerance: [0, 0, 0, radius],
@@ -873,13 +887,13 @@ For very large datasets:
 import { loadScene, updateView } from '../data';
 
 // Load a Zarr dataset (point spatial index required)
-const scene = await loadScene('http://server.com/data/points.luxar.zarr');
+const scene = await loadScene(loaders, 'http://server.com/data/points.luxar.zarr');
 
 // Add to THREE.js scene
 threeScene.add(scene);
 
 // Update view when navigating dimensions
-await updateView({
+await updateView(loaders, {
   displayDims: [0, 1, 2],
   slicePosition: [0, 0, 0, timeStep, channel],
   tolerance: [0, 0, 0, 0.1, 0.1],
@@ -893,7 +907,7 @@ import { loadScene, updateSceneForDimensions } from '../data';
 import type { SimpleDims } from '../types/dims';
 
 // Load 5D dataset (x, y, z, time, channel)
-const scene = await loadScene('http://server.com/data/5d-points.luxar.zarr');
+const scene = await loadScene(loaders, 'http://server.com/data/5d-points.luxar.zarr');
 
 // Dimensions are stored ONLY at scene level (single source of truth)
 // Individual nodes (Points, Lines, Splats) access dims via ViewState
@@ -906,7 +920,7 @@ const dims: SimpleDims = {
 };
 
 // Update for dimension changes
-await updateSceneForDimensions(dims, scene);
+await updateSceneForDimensions(loaders, dims, scene);
 ```
 
 ### Directory Navigation
@@ -931,7 +945,7 @@ result.entries.forEach((entry) => {
 // Load selected Zarr dataset
 const selected = result.entries.find((e) => e.type === 'zarr');
 if (selected) {
-  const scene = await loadScene(selected.path);
+  const scene = await loadScene(loaders, selected.path);
   threeScene.add(scene);
 }
 ```
@@ -942,12 +956,12 @@ if (selected) {
 import { loadScene, updateView, dispose } from '../data';
 
 // Create multiple independent loaders for different datasets
-const scene1 = await loadScene('http://server.com/data1.luxar.zarr', config, 'loader1');
-const scene2 = await loadScene('http://server.com/data2.luxar.zarr', config, 'loader2');
+const scene1 = await loadScene(loaders, 'http://server.com/data1.luxar.zarr', config, 'loader1');
+const scene2 = await loadScene(loaders, 'http://server.com/data2.luxar.zarr', config, 'loader2');
 
 // Update each loader independently
-await updateView(viewState1, 'loader1');
-await updateView(viewState2, 'loader2');
+await updateView(loaders, viewState1, 'loader1');
+await updateView(loaders, viewState2, 'loader2');
 
 // Dispose specific loader
 dispose('loader1');
@@ -1046,7 +1060,7 @@ location /data/ {
 
 ```typescript
 // Pass ?noCache or { noCache: true } to disable caching entirely.
-const scene = await loadScene(url, { noCache: true });
+const scene = await loadScene(loaders, url, { noCache: true });
 
 // Or inspect the live cache stats via SceneLoaderManager and clear
 // the persistent L2 tier (or every tier) when needed.
@@ -1093,7 +1107,7 @@ interface LoaderConfig {
 }
 
 // Usage
-const scene = await loadScene(url, {
+const scene = await loadScene(loaders, url, {
   enableMonitor: true,
   debug: false,
 });
@@ -1148,15 +1162,15 @@ location /data/ {
 
 | Function                                                  | Description                                                                                                                                      |
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `loadScene(url, config?, loaderId?)`                      | Load complete Zarr dataset with chunk-based indexing                                                                                             |
-| `updateView(viewState, loaderId?)`                        | Update all points for new view state                                                                                                             |
-| `updateSceneForDimensions(dims, scene, loaderId?, opts?)` | Update scene when navigating dimensions (opts.frameBudgetMs = playback LOD budget)                                                               |
+| `loadScene(manager, url, config?, loaderId?)`             | Load complete Zarr dataset with chunk-based indexing                                                                                             |
+| `updateView(manager, viewState, loaderId?)`               | Update all points for new view state                                                                                                             |
+| `updateSceneForDimensions(manager, dims, scene, …)`       | Update scene when navigating dimensions (opts.frameBudgetMs = playback LOD budget)                                                               |
 | `prefetchSceneForDimensions(dims, scene, loaderId, opts)` | Fire-and-forget t+1 slice prefetch for a PREDICTED dimension state (playback) — routes to `SceneLoader.prefetchSlice`, never moves the real view |
 | `releasePrefetchResources(loaderId?)`                     | Release the loader's t+1 prefetch resources (shadow loaders) when playback ends                                                                  |
 | `dispose(loaderId?)`                                      | Clean up resources (specific or all)                                                                                                             |
 
 Cache inspection and clearing are not on the `zarr-loader.ts` surface;
-get the loader via `SceneLoaderManager.getDefaultLoader()` (or
+get the loader via the host's `SceneLoaderManager.getDefaultLoader()` (or
 `getLoader(id)`) and call `getCacheStats()`, `clearL2Cache()`, or
 `clearAllCaches()` directly on the `SceneLoader` instance.
 
@@ -1164,8 +1178,9 @@ get the loader via `SceneLoaderManager.getDefaultLoader()` (or
 
 | Class/Method                                    | Description                                                                                    |
 | ----------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `SceneLoaderManager`                            | Singleton manager for SceneLoader instances                                                    |
-| `getInstance()`                                 | Get the singleton manager instance                                                             |
+| `SceneLoaderManager`                            | Per-host manager for SceneLoader instances                                                     |
+| `new SceneLoaderManager({ materials })`         | Create a layer's manager with its material manager                                             |
+| `getInstance()`                                 | Get the `LuxarApp` manager instance                                                            |
 | `createLoader(id, config?, setAsDefault?)`      | Create a new loader instance                                                                   |
 | `createLoaderAsync(id, config?, setAsDefault?)` | Like `createLoader` but awaits the previous same-ID loader's full disposal (dataset switches). |
 | `getLoader(id)`                                 | Get a specific loader by ID                                                                    |
@@ -1179,8 +1194,10 @@ get the loader via `SceneLoaderManager.getDefaultLoader()` (or
 | `setMonitorFactory(factory)`                    | Inject a `SceneLoaderMonitorFactory` (called from `core/app.ts`).                              |
 | `setLODGroupRegistryFactory(factory)`           | Inject the LOD-group registry factory (app init pipeline owns SceneManager + camera).          |
 | `setRequestRender(callback)`                    | Inject the render-loop wake-up for every loader; `drawn=false` (hidden node) ticks, no redraw. |
-| `getProfiler()`                                 | Return the shared `UpdateProfiler` singleton.                                                  |
-| `disposeInstance()`                             | Dispose the singleton (call from app dispose; preserved for re-init)                           |
+| `setDepthSortCoordinator(coordinator)`          | Route existing and future loaders' commits to this host's coordinator.                         |
+| `getProfiler()`                                 | Return this manager's `UpdateProfiler`, shared by its loaders.                                 |
+| `dispose()`                                     | Tear down this host's loaders and decoder (non-awaiting).                                      |
+| `disposeInstance()`                             | Dispose the `LuxarApp` manager and reset its static slot.                                      |
 
 ### Scene Loading (scene-loader.ts)
 
@@ -1338,7 +1355,7 @@ Enable detailed logging:
 
 ```typescript
 // Enable debug output in loader config
-const scene = await loadScene(url, { debug: true });
+const scene = await loadScene(loaders, url, { debug: true });
 
 // Or enable global debug mode
 if (typeof window !== 'undefined') {

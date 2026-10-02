@@ -19,6 +19,12 @@ import {
   type RefinementResidencyReporter,
 } from '../../../data/scene-loader/progressive/residency-budget';
 import type { PoolStats } from '../../../rendering/gpu-buffer-pool/pool-stats';
+import { SceneLoader } from '../../../data/scene-loader';
+import type { MaterialManager } from '../../../rendering/material-manager';
+import type { DepthSortCoordinator } from '../../../rendering/depth-sort-coordinator';
+
+/** The LuxarApp's loader manager — what these helpers are handed for the app. */
+const appLoaders = () => SceneLoaderManager.getInstance();
 
 describe('SceneLoaderManager', () => {
   beforeEach(() => {
@@ -538,13 +544,13 @@ describe('SceneLoaderManager — zarr-loader API integration', () => {
     expect(manager.getLoaderCount()).toBe(2);
 
     // Dispose a specific loader
-    dispose('test1');
+    dispose(appLoaders(), 'test1');
     expect(manager.getLoaderCount()).toBe(1);
     expect(manager.hasLoader('test1')).toBe(false);
     expect(manager.hasLoader('test2')).toBe(true);
 
     // Dispose all
-    dispose();
+    dispose(appLoaders());
     expect(manager.getLoaderCount()).toBe(0);
   });
 });
@@ -576,5 +582,25 @@ describe('SceneLoaderManager — no global state pollution', () => {
     // upgrade trips this, allow-list the specific runtime-internal key
     // here (not a substring match).
     expect(newKeys).toEqual([]);
+  });
+
+  it("hands its host's material manager and depth-sort coordinator to every loader", () => {
+    // A LuxarLayer constructs its own manager; its loaders must build materials
+    // and report commits to the LAYER, and two managers never share loaders.
+    const materials = {} as unknown as MaterialManager;
+    const depthSort = {} as unknown as DepthSortCoordinator;
+    const own = new SceneLoaderManager({ materials });
+    own.setDepthSortCoordinator(depthSort);
+    const setMaterials = vi.spyOn(SceneLoader.prototype, 'setMaterialManager');
+    const setDepthSort = vi.spyOn(SceneLoader.prototype, 'setDepthSortCoordinator');
+
+    const loader = own.createLoader('default');
+
+    expect(setMaterials).toHaveBeenCalledWith(materials);
+    expect(setDepthSort).toHaveBeenCalledWith(depthSort);
+    expect(appLoaders().getLoader('default')).not.toBe(loader);
+    setMaterials.mockRestore();
+    setDepthSort.mockRestore();
+    own.dispose();
   });
 });

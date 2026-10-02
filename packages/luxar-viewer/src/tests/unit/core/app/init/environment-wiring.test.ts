@@ -62,6 +62,9 @@ function makeHarness(options: { bakeEnvironment?: { probe?: string; resolution?:
     scene,
     renderer: {},
     capabilities: { apiSurface: 'webgl2' },
+    postProcessing: {
+      suspendFrameRendersDuring: vi.fn(async (capture: () => Promise<unknown>) => capture()),
+    },
     environment,
     attachEnvironmentRuntime: vi.fn(),
     getSceneViewerConfig: () => undefined,
@@ -152,6 +155,7 @@ describe('wireSceneEnvironment', () => {
     expect(bakeEnvironment).not.toHaveBeenCalled();
     bake();
     expect(bakeEnvironment).toHaveBeenCalledTimes(1);
+    expect(h.sceneManager.postProcessing.suspendFrameRendersDuring).toHaveBeenCalledTimes(1);
     // Armed once: the callback removed itself, and a previously baked map is cleared
     // so the bake captures the SCENE.
     expect(h.callbacks.has('environment-bake')).toBe(false);

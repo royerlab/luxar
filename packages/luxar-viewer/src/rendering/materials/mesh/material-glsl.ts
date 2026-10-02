@@ -269,8 +269,8 @@ export class MeshMaterial
    *
    * `_resolution` and `_isOrtho` are accepted and IGNORED: the resolution exists so
    * a material can size a screen-space sprite, and a mesh's size is its own
-   * geometry; the near fade's ortho test reads three's `isOrthographic`, i.e. the
-   * camera this draw uses. Only `nearCull` is consumed. Named with a leading
+   * geometry; the near fade's ortho test reads the projection matrix of the draw
+   * (`luxarIsOrthoProjection()`). Only `nearCull` is consumed. Named with a leading
    * underscore so the asymmetry is visible at the signature rather than buried in
    * the body.
    */

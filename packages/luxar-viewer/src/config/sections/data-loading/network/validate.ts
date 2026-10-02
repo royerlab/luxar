@@ -1,4 +1,45 @@
 import type { AppConfig } from '../../../types';
+import type { FetchGateConfig } from './types';
+
+/** Browsers open six sockets per HTTP/1.1 origin. */
+const HTTP1_SOCKETS_PER_ORIGIN = 6;
+
+/**
+ * Validate the fetch-gate widths: positive integer lanes, a multiplexed lane
+ * no narrower than the default one, and a speculative share in (0, 1]. Warns
+ * when the HTTP/1.1 caps would not fill (or would overrun) an origin's sockets.
+ */
+function validateFetchGate(gate: FetchGateConfig, errors: string[], warnings: string[]): void {
+  const lanes = [
+    'maxChunkFetches',
+    'maxMultiplexedChunkFetches',
+    'maxMetadataFetches',
+    'http1MaxChunkFetches',
+    'http1MaxMetadataFetches',
+  ] as const;
+  for (const lane of lanes) {
+    if (!Number.isInteger(gate[lane]) || gate[lane] <= 0) {
+      errors.push(`Invalid fetchGate.${lane}: ${gate[lane]} (must be a positive integer)`);
+    }
+  }
+  if (gate.maxMultiplexedChunkFetches < gate.maxChunkFetches) {
+    errors.push(
+      `Invalid fetchGate.maxMultiplexedChunkFetches: ${gate.maxMultiplexedChunkFetches} ` +
+        `(must be at least maxChunkFetches, ${gate.maxChunkFetches})`
+    );
+  }
+  if (!(gate.speculativeShare > 0 && gate.speculativeShare <= 1)) {
+    errors.push(`Invalid fetchGate.speculativeShare: ${gate.speculativeShare} (must be in (0, 1])`);
+  }
+  const http1 = gate.http1MaxChunkFetches + gate.http1MaxMetadataFetches;
+  if (http1 !== HTTP1_SOCKETS_PER_ORIGIN) {
+    warnings.push(
+      `fetchGate HTTP/1.1 caps total ${http1} leases per origin; browsers open ` +
+        `${HTTP1_SOCKETS_PER_ORIGIN} sockets, so admitted requests may wait in the browser ` +
+        'queue with their header timers running (or leave sockets idle)'
+    );
+  }
+}
 
 /**
  * Validate data-loading network configuration
@@ -50,4 +91,5 @@ export function validateDataLoadingNetwork(
       `Invalid retry attempts: ${network.retryAttempts} (must be a non-negative integer)`
     );
   }
+  validateFetchGate(network.fetchGate, errors, warnings);
 }

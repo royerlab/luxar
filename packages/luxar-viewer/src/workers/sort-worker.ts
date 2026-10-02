@@ -28,7 +28,6 @@ import {
   registerNode as registerNodeImpl,
   sortNode as sortNodeImpl,
   releaseNode as releaseNodeImpl,
-  releaseAllNodes as releaseAllNodesImpl,
   type RegisterNodeParams,
   type SortParams,
   type SortResult,
@@ -47,7 +46,6 @@ export const workerAPI = {
   registerNode: (p: RegisterNodeParams): void => registerNodeImpl(state, p),
   sort: (p: SortParams): SortResult | null => sortNodeImpl(state, p),
   releaseNode: (nodeId: string): void => releaseNodeImpl(state, nodeId),
-  releaseAllNodes: (): void => releaseAllNodesImpl(state),
 };
 
 expose(workerAPI);

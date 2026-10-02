@@ -37,11 +37,7 @@ import {
 } from './post-processing-manager/resource-lifecycle';
 import { runPipeline, type PipelineCtx } from './post-processing-manager/pipeline';
 import type { DataRefractionSplit } from './post-processing-manager/refraction-split';
-import {
-  applyGlassPartition,
-  collectRefractingGlass,
-  collectUnpartitionedMeshes,
-} from '../depth-sort-coordinator';
+import type { GlassPartition } from '../materials/_shared/glass-partition';
 import {
   captureHDRPixels as captureHDRPixelsImpl,
   captureHDRAsEXR as captureHDRAsEXRImpl,
@@ -59,6 +55,34 @@ import {
   getLensDistortionParams as getLensDistortionParamsImpl,
   type LensDistortionParams,
 } from './post-processing-manager/settings';
+
+/**
+ * The data meshes the refraction split partitions its scene pass around — in
+ * the viewer, the host's `DepthSortCoordinator`, whose node map already IS the
+ * registry of committed data meshes. Injected so this module owns no scene
+ * knowledge.
+ */
+export interface GlassMeshSource {
+  /** The visible refracting (`refract_data`) glass, into a reusable array. */
+  collectRefractingGlass(out: THREE.Mesh[]): THREE.Mesh[];
+  /** The visible meshes three's own materials draw (pass A only). */
+  collectUnpartitionedMeshes(out: THREE.Mesh[]): THREE.Mesh[];
+  /** Broadcast a partition mode to every data material; returns how many changed. */
+  applyGlassPartition(mode: GlassPartition): number;
+}
+
+/** A source with no data meshes: the refraction split never engages. */
+const NO_GLASS_MESHES: GlassMeshSource = {
+  collectRefractingGlass: (out) => {
+    out.length = 0;
+    return out;
+  },
+  collectUnpartitionedMeshes: (out) => {
+    out.length = 0;
+    return out;
+  },
+  applyGlassPartition: () => 0,
+};
 
 /**
  * Manages HDR post-processing: scene → bloom → mega-shader → (FXAA) →
@@ -107,6 +131,8 @@ export class PostProcessingManager {
   private deferRebuildDepth = 0;
 
   private disposed = false;
+  private captureDepth = 0;
+  private onCaptureReleased: (() => void) | null = null;
 
   // Wall-clock timestamp of the previous render() call, used to derive
   // the inter-frame delta for detector-noise time advancement. 0 means
@@ -124,6 +150,9 @@ export class PostProcessingManager {
    *   cached `uResolution` / `maxPointSize` uniforms go
    *   stale on AA toggles and the scene looks subtly wrong until the
    *   next window resize.
+   * @param glassSource  The data meshes the refraction split works over (the
+   *   host's depth-sort coordinator). Omitted, nothing is ever split — the
+   *   right answer for a manager with no Luxar data in its scene.
    */
   constructor(
     private renderer: Renderer,
@@ -131,7 +160,11 @@ export class PostProcessingManager {
     private scene: THREE.Scene,
     private camera: LuxarCamera,
     size: { width: number; height: number },
-    private onResize?: (displaySize: { width: number; height: number }, camera: LuxarCamera) => void
+    private onResize?: (
+      displaySize: { width: number; height: number },
+      camera: LuxarCamera
+    ) => void,
+    private readonly glassSource: GlassMeshSource = NO_GLASS_MESHES
   ) {
     // Keep the renderer's output color space at the working space
     // (linear) so it doesn't auto-encode our output. Both the
@@ -245,9 +278,11 @@ export class PostProcessingManager {
       bloomThreshold: this.bloomThreshold,
       bloomIntensity: this.bloomIntensity,
       allocateBloomFromDefaults: opts.applyDefaults,
-      collectRefractingGlass,
-      collectUnpartitionedMeshes,
-      setGlassPartition: applyGlassPartition,
+      collectRefractingGlass: (out) => this.glassSource.collectRefractingGlass(out),
+      collectUnpartitionedMeshes: (out) => this.glassSource.collectUnpartitionedMeshes(out),
+      setGlassPartition: (mode) => {
+        this.glassSource.applyGlassPartition(mode);
+      },
     });
     this.hdrTarget = r.hdrTarget;
     this.ldrTarget = r.ldrTarget;
@@ -670,6 +705,11 @@ export class PostProcessingManager {
   // ================================================================
 
   render(): void {
+    // A capture has already submitted its own render and is waiting for GPU
+    // readback. Keep the animation loop from queueing more work behind its
+    // fence (a severe SwiftShader cost cliff on dense scenes).
+    if (this.captureDepth > 0) return;
+
     // Wall-clock delta since previous render() (in seconds). Detector
     // noise uses this to animate its temporal pattern. Must be
     // wall-clock delta, not render duration — render duration is
@@ -856,6 +896,26 @@ export class PostProcessingManager {
   // Capture
   // ================================================================
 
+  get isCaptureInProgress(): boolean {
+    return this.captureDepth > 0;
+  }
+
+  /** Request a loop frame after the last pending readback releases its target. */
+  setCaptureReleasedCallback(callback: (() => void) | null): void {
+    this.onCaptureReleased = callback;
+  }
+
+  /** Keep the frame loop from drawing over a capture target during readback. */
+  async suspendFrameRendersDuring<T>(capture: () => Promise<T>): Promise<T> {
+    this.captureDepth++;
+    try {
+      return await capture();
+    } finally {
+      this.captureDepth--;
+      if (this.captureDepth === 0 && !this.disposed) this.onCaptureReleased?.();
+    }
+  }
+
   /**
    * Read raw HDR float pixel data in one of three capture modes:
    *
@@ -880,14 +940,16 @@ export class PostProcessingManager {
     mode: CaptureMode = 'hdr-effects-pre-tone',
     opts: { flipY?: boolean } = {}
   ): Promise<{ pixels: Float32Array; width: number; height: number }> {
-    return captureHDRPixelsImpl(this.captureCtx(), mode, opts);
+    return this.suspendFrameRendersDuring(() =>
+      captureHDRPixelsImpl(this.captureCtx(), mode, opts)
+    );
   }
 
   async captureHDRAsEXR(options?: {
     type?: THREE.TextureDataType;
     mode?: CaptureMode;
   }): Promise<Uint8Array> {
-    return captureHDRAsEXRImpl(this.captureCtx(), options);
+    return this.suspendFrameRendersDuring(() => captureHDRAsEXRImpl(this.captureCtx(), options));
   }
 
   async renderToImageData(): Promise<ImageData> {
@@ -900,7 +962,9 @@ export class PostProcessingManager {
     if (this.megaShader.isDetectorNoiseEnabled()) {
       this.megaShader.advanceTime(dt);
     }
-    return renderToImageDataImpl(this.captureCtx(), this.getPhysicalSize(), this.fxaaPass !== null);
+    return this.suspendFrameRendersDuring(() =>
+      renderToImageDataImpl(this.captureCtx(), this.getPhysicalSize(), this.fxaaPass !== null)
+    );
   }
 
   // ================================================================
@@ -993,6 +1057,7 @@ export class PostProcessingManager {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.onCaptureReleased = null;
     this.disposeTransientResources();
     log.info(Modules.POST_PROCESSING, 'PostProcessingManager disposed');
   }

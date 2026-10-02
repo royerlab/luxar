@@ -9,11 +9,16 @@ import {
   originOfUrl,
   resetFetchTransport,
   withFetchGate,
-  HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
-  HTTP1_MAX_CONCURRENT_METADATA_FETCHES,
-  MAX_CONCURRENT_CHUNK_FETCHES,
-  MAX_CONCURRENT_METADATA_FETCHES,
 } from '../../../utils/fetch-concurrency';
+import { config } from '../../../config';
+
+/** The gate's widths, as configured (`config.dataLoading.network.fetchGate`). */
+const {
+  http1MaxChunkFetches: HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
+  http1MaxMetadataFetches: HTTP1_MAX_CONCURRENT_METADATA_FETCHES,
+  maxChunkFetches: MAX_CONCURRENT_CHUNK_FETCHES,
+  maxMetadataFetches: MAX_CONCURRENT_METADATA_FETCHES,
+} = config.dataLoading.network.fetchGate;
 
 /**
  * The bounded-concurrency gate is what prevents net::ERR_INSUFFICIENT_RESOURCES

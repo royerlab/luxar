@@ -215,12 +215,18 @@ export function cancelTriangleOrderingApply(geometry: THREE.BufferGeometry): voi
 }
 
 /**
- * Drop every pending acknowledgement (dataset switch, app dispose). The map is
- * snapshotted and cleared before any hook runs, so a hook cannot observe a
- * half-cleared map or re-enter the sweep.
+ * Drop every pending acknowledgement staged by `owner` (a coordinator's dataset
+ * switch or dispose), or every one when no owner is given — the indexed peer of
+ * `cancelAllSortedIndexOrderingApplies`. Matching entries are removed before
+ * any hook runs, so a hook cannot observe a half-cleared map or re-enter the
+ * sweep.
  */
-export function cancelAllTriangleOrderingApplies(): void {
-  const pending = [...awaitingDraw.values()];
-  awaitingDraw.clear();
+export function cancelAllTriangleOrderingApplies(owner?: object): void {
+  const pending: SortedIndexApplyCallbacks[] = [];
+  for (const [geometry, callbacks] of awaitingDraw) {
+    if (owner !== undefined && callbacks.owner !== owner) continue;
+    pending.push(callbacks);
+    awaitingDraw.delete(geometry);
+  }
   for (const callbacks of pending) callbacks.onAbandoned?.();
 }
