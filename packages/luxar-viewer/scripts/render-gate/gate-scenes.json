@@ -219,6 +219,25 @@
       ]
     },
     {
+      "id": "surface_pick",
+      "store": "gate/surface_pick.luxar.zarr",
+      "pick": true,
+      "poses": [
+        {
+          "position": [12, 8, 14],
+          "target": [0, 0, 0],
+          "up": [0, 1, 0]
+        },
+        {
+          "position": [2, 1.5, 6],
+          "target": [0.5, 0, 0],
+          "up": [0, 1, 0],
+          "fov": 40,
+          "zoom": 2
+        }
+      ]
+    },
+    {
       "id": "partition_normal",
       "store": "gate/partition_normal.luxar.zarr",
       "pick": true,

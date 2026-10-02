@@ -55,6 +55,7 @@ SCENE_NAMES = (
     "glass",
     "lod_ladder",
     "tiny_units_ortho",
+    "surface_pick",
     "tp50",
     "sp64",
     "sp64_closeup_authored",
@@ -271,6 +272,59 @@ def write_partition_normal(path: Path, *, small: bool = False) -> None:
             partition={"max_elements": 8_000},
             layer=True,
         )
+
+
+def write_surface_pick(path: Path, *, small: bool = False) -> None:
+    """Points and lines in the depth-ordered ``opaque`` / ``normal`` modes, all pickable.
+
+    The pick pass resolves overlaps by REAL projected depth under these modes
+    (front-most wins, as the user sees the occluding surface) and by
+    brightness elsewhere. ``mixed`` is all additive, so without this scene no
+    gate case picks points or lines under the surface convention. Four nodes —
+    points opaque, points normal, lines opaque, lines normal — share one
+    volume, so at most pixels several of them overlap at different depths.
+    Per-element alpha varies, and the opaque points carry a gain above 1, so
+    the pick weight (alpha x opacity x max(gain, 1)) is exercised too.
+    """
+    rng = np.random.default_rng(7)
+    with LuxarZarrCompiler(path, encoding_mode=EncodingMode.PRECISION) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions.default_3d(),
+            viewer_config=ViewerConfig(camera=_camera((12.0, 8.0, 14.0))),
+        )
+        for name, mode, intensity in (
+            ("points_opaque", "opaque", 2.0),
+            ("points_normal", "normal", 1.0),
+        ):
+            positions = _clustered(rng, 6_000, 5.0)
+            colors = np.concatenate(
+                [
+                    rng.uniform(0.2, 1.0, size=(len(positions), 3)),
+                    rng.uniform(0.3, 1.0, size=(len(positions), 1)),
+                ],
+                axis=1,
+            ).astype(np.float32)
+            scene.add_points(
+                name,
+                positions,
+                colors=colors,
+                radii=rng.uniform(0.05, 0.2, size=len(positions)).astype(np.float32),
+                labels=_labels(len(positions)),
+                blending_mode=mode,
+                intensity=intensity,
+                layer=True,
+            )
+        for name, mode in (("lines_opaque", "opaque"), ("lines_normal", "normal")):
+            line_vertices, widths, indices = _polylines(rng, 30, 60, 5.0)
+            scene.add_lines(
+                name,
+                line_vertices,
+                widths,
+                indices=indices,
+                labels=_labels(len(line_vertices)),
+                blending_mode=mode,
+                layer=True,
+            )
 
 
 def write_glass(path: Path, *, small: bool = False) -> None:
@@ -1058,6 +1112,7 @@ Writer = Callable[..., "PoseEntry | None"]
 
 WRITERS: dict[str, Writer] = {
     "mixed": write_mixed,
+    "surface_pick": write_surface_pick,
     "env_splats": write_env_splats,
     "partition_normal": write_partition_normal,
     "glass": write_glass,
