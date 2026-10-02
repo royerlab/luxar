@@ -150,7 +150,7 @@ from luxar.utils.paths import get_demos_output_dir
 #: a jump. ``zoom-pan`` is van Wijk & Nuij's path, which pulls back while it
 #: travels and dives in at the end, so a jump across the map crosses the screen at
 #: an even pace instead of racing past at close range. Its length measures pan in
-#: view widths and zoom in log scale, so ``TOUR_FLIGHT_SPEED`` times every flight
+#: view heights and zoom in log scale, so ``TOUR_FLIGHT_SPEED`` times every flight
 #: by its perceived distance: on these maps the steps run from almost nothing to
 #: about 5.4 units (median 3.2-3.5), so 0.35 units a second puts the typical flight
 #: near 10 s and the longest near 15 s: a journey through the map rather than a
@@ -160,9 +160,8 @@ TOUR_FLIGHT_TRAJECTORY = "zoom-pan"
 TOUR_FLIGHT_EASING = "cruise"
 TOUR_FLIGHT_SPEED = 0.35
 TOUR_FLIGHT_DURATION_RANGE_MS = (5000.0, 16000.0)
-#: The duration a flight falls back to when it cannot follow the zoom-pan path
-#: (an orthographic view): to an ordinary stop, and to the Overview or a stop that
-#: frames the whole map.
+#: Fixed durations for readers that do not support ``speed``: to an ordinary
+#: stop, and to the Overview or a stop that frames the whole map.
 TOUR_FLIGHT_MS = 10000
 TOUR_LONG_FLIGHT_MS = 12000
 

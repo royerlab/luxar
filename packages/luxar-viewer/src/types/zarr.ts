@@ -168,7 +168,7 @@ export interface ZarrWaypoint {
    * `core/app/camera/flight-trajectories.ts` for what each does.
    */
   trajectory?: ZarrTrajectoryKind | ZarrTrajectory;
-  /** Pace a zoom-pan flight: duration = path length / speed (units per second). */
+  /** Pace the flight: duration = path length / speed (units per second). */
   speed?: number;
   /** `[min, max]` duration of a paced flight, ms. */
   duration_range_ms?: [number, number];

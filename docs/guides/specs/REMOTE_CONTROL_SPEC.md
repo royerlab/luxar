@@ -35,7 +35,7 @@ throws a clear `... called before init()` error when used too early.
 ### 2.1 Camera flight
 
 ```ts
-flyTo(pose: CameraSnapshot, opts?: { durationMs?: number; easing?: 'linear' | 'ease-in-out' | 'smooth' | 'cruise'; trajectory?: FlightTrajectorySpec; speed?: number; durationRangeMs?: [number, number] })
+flyTo(pose: CameraSnapshot, opts?: { durationMs?: number; easing?: 'linear' | 'ease-in-out' | 'smooth' | 'cruise'; trajectory?: FlightTrajectorySpec; sceneCentre?: [number, number, number]; speed?: number; durationRangeMs?: [number, number] })
 // FlightTrajectorySpec: a name ('orbit' | 'zoom-pan' | 'arc' | 'straight' | 'swing' | 'fly-through')
 // or a parameterised object ({ kind: 'arc', lift }, { kind: 'via', via }, …); see
 // core/app/camera/flight-trajectories.ts and VIEWER_GUIDE.md "Waypoint trajectories".
@@ -45,6 +45,9 @@ flyTo(pose: CameraSnapshot, opts?: { durationMs?: number; easing?: 'linear' | 'e
 - `pose` is the shape `getCameraPose()` returns (position, target, up,
   near/far, `fov` or `zoom`). Flights therefore compose with the existing
   snapshot machinery: capture a pose interactively, store it, fly back to it.
+- A `swing` trajectory without its own pivot uses `sceneCentre` if supplied;
+  otherwise it pivots about the midpoint of the two targets. Waypoint flights
+  supply the scene centre from the dataset.
 - Interpolation happens in the **orbit parameterisation**: the focus target
   moves linearly, the camera's offset from it is slerped in direction and
   log-interpolated in distance, `up` is slerped. A raw position lerp between two
