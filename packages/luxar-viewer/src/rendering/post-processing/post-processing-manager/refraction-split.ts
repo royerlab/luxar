@@ -45,9 +45,10 @@
  * texture. From outside the near wall covers them; from inside there is no near wall,
  * so every pixel is the far wall refracting its own already-refracted image — the shift
  * applied twice, and an edge that clamps or stretches twice as far. While the camera is
- * inside a closed glass (`isPointInsideClosedMesh`: ray parity, exact for any closed
- * mesh), pass B draws it `BackSide` only, which three's pre-pass skips; the far wall then
- * refracts the data once, as it physically does. WebGPU is unaffected — its back faces
+ * inside a closed glass (`isPointInsideClosedMesh`: drawn-surface closure and ray parity),
+ * pass B draws it `BackSide` only, which three's pre-pass skips; the far wall then
+ * refracts the data once. In a non-convex closed shell, this can also hide farther
+ * front faces visible from inside a cavity. WebGPU is unaffected — its back faces
  * sample the live framebuffer, which holds the data and not the glass.
  *
  * **Under MSAA the copies are load-bearing, not an optimisation.** Three's WebGL

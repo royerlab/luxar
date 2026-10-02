@@ -122,7 +122,10 @@ double-sided refracting glass the WebGL split draws it back-faces-only for the f
 three pre-renders a double-sided glass's back faces into the very texture those faces then
 sample, which from outside is hidden behind the near wall but from inside refracts the far
 wall twice. Whether the camera is inside is a ray-parity test against the mesh's own
-triangles (`post-processing-manager/inside-closed-mesh.ts`), exact for any closed mesh.
+drawn triangles (`post-processing-manager/inside-closed-mesh.ts`); open surfaces and
+meshes above the 20,000-triangle topology limit stay double-sided. In a non-convex
+closed shell, the back-faces-only draw can hide farther front faces visible from
+inside a cavity.
 WebGPU needs nothing: its back faces sample the live framebuffer.
 `transmissionResolutionScale` (config `renderingControls.refraction`, 0.5) applies to the
 glass pass only; WebGPU has no equivalent knob.
