@@ -62,6 +62,7 @@ def test_serialises_to_the_json_the_viewer_reads_and_round_trips(
         (lambda: T.ZoomPan(rho=float("nan")), "rho"),
         (lambda: T.Arc(lift=-0.1), "lift"),
         (lambda: T.FlyThrough(look_ahead=0), "look_ahead"),
+        (lambda: T.FlyThrough(turn=0), "turn"),
         (lambda: T.FlyThrough(turn=0.6), "turn"),
         (lambda: T.Swing(pivot=(0, 0)), "pivot"),  # type: ignore[arg-type]
         (lambda: T.Swing(pivot=(0, float("inf"), 0)), "pivot"),
@@ -79,6 +80,11 @@ def test_a_waypoint_refuses_an_unknown_trajectory() -> None:
         _waypoint("spline")
     with pytest.raises(ValueError, match="trajectory"):
         _waypoint({"kind": "zoom-pan"})  # a dict is the wire form, not the API
+
+
+@pytest.mark.parametrize("turn", [1e-6, 0.5])
+def test_fly_through_accepts_positive_turns_up_to_half(turn: float) -> None:
+    assert T.FlyThrough(turn=turn).turn == turn
 
 
 def test_a_bare_via_name_is_not_a_trajectory() -> None:

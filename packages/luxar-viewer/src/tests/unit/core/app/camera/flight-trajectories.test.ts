@@ -51,8 +51,14 @@ const ALL: FlightTrajectorySpec[] = [
   { kind: 'via', via: pose([15, 0, 0], 40) },
 ];
 
+const ENDPOINT_CASES: FlightTrajectorySpec[] = [
+  ...ALL,
+  { kind: 'fly-through', turn: 0 },
+  { kind: 'fly-through', turn: 0.5 },
+];
+
 describe('every trajectory', () => {
-  it.each(ALL.map((t) => [typeof t === 'string' ? t : t.kind, t]))(
+  it.each(ENDPOINT_CASES.map((t) => [typeof t === 'string' ? t : t.kind, t]))(
     '%s lands exactly on both end poses and has a positive length',
     (_name, spec) => {
       const path = buildFlightPath(A, B, spec);
@@ -196,7 +202,14 @@ describe('names and ownership', () => {
     expect(normalizeTrajectory('arc')).toEqual({ kind: 'arc' });
     expect(normalizeTrajectory('via')).toEqual({ kind: 'orbit' });
     expect(normalizeTrajectory(undefined)).toEqual({ kind: 'orbit' });
+    expect(normalizeTrajectory(null as unknown as FlightTrajectorySpec)).toEqual({ kind: 'orbit' });
     expect(normalizeTrajectory({ kind: 'zoom-pan', rho: 2 })).toEqual({ kind: 'zoom-pan', rho: 2 });
+    const unknown = { kind: 'future-path' } as unknown as FlightTrajectorySpec;
+    expect(normalizeTrajectory(unknown)).toEqual({ kind: 'orbit' });
+    expect(buildFlightPath(A, B, unknown).at(0.5)).toEqual(buildFlightPath(A, B).at(0.5));
+    expect(normalizeTrajectory({ kind: 'toString' } as unknown as FlightTrajectorySpec)).toEqual({
+      kind: 'orbit',
+    });
   });
 
   it('straight, swing and fly-through set the view direction; the others leave it to the turntable', () => {
@@ -204,5 +217,9 @@ describe('names and ownership', () => {
       typeof t === 'string' ? t : t.kind
     );
     expect(owns).toEqual(['straight', 'swing', 'fly-through']);
+    for (const leg of ['straight', 'swing', 'fly-through'] as const) {
+      expect(trajectoryOwnsOrientation({ kind: 'via', via: B, leg })).toBe(true);
+    }
+    expect(trajectoryOwnsOrientation({ kind: 'via', via: B, leg: 'zoom-pan' })).toBe(false);
   });
 });

@@ -35,11 +35,11 @@ Trajectory        What the camera does                            Reach for it w
 ================  ==============================================  ==========================
 
 ``Straight``, ``Swing`` and ``FlyThrough`` decide where the camera LOOKS along the
-way, so under auto-rotate they take the view direction from the turntable for
-the flight (the spin resumes from where they land); the others keep the
-turntable's live direction and move only the target and distance. Every
-trajectory but ``Orbit`` needs a perspective camera; an orthographic flight
-follows ``Orbit``.
+way, so under auto-rotate they take over the view direction from the turntable
+for the flight (the spin resumes from where they land). ``Via`` does the same when
+its leg is one of these; the others keep the turntable's live direction and
+move only the target and distance. Every trajectory but ``Orbit`` needs a
+perspective camera; an orthographic flight follows ``Orbit``.
 """
 
 from __future__ import annotations
@@ -202,7 +202,7 @@ class FlyThrough:
         look_ahead: How far ahead the camera looks, as a fraction of the trip
             (``0.2`` default).
         turn: Fraction of the flight spent turning at each end (``0.3`` default,
-            at most ``0.5``).
+            greater than ``0`` and at most ``0.5``).
     """
 
     look_ahead: float = 0.2
@@ -212,7 +212,8 @@ class FlyThrough:
     def __post_init__(self) -> None:
         """Validate the parameters where the trajectory is written."""
         _positive("look_ahead", self.look_ahead)
-        _fraction("turn", self.turn, upper=0.5)
+        if not (math.isfinite(self.turn) and 0 < self.turn <= 0.5):
+            raise ValueError(f"turn must be finite and within (0, 0.5], got {self.turn}")
 
     def to_dict(self) -> Dict[str, Any]:
         """The JSON the viewer reads: ``{"kind": ..., <parameters>}``."""

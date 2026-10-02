@@ -41,10 +41,10 @@
  *   to the overview between stories, for instance.
  *
  * `straight`, `swing` and `fly-through` define the VIEW DIRECTION along the way,
- * so they take it over from the turntable for the flight (see
- * {@link trajectoryOwnsOrientation}); the others carry the turntable's live
- * direction when auto-rotate is on. All but `orbit` need perspective at both
- * ends; an orthographic flight follows `orbit`.
+ * as does `via` when its leg is one of them, so they take it over from the
+ * turntable for the flight (see {@link trajectoryOwnsOrientation}); the others
+ * carry the turntable's live direction when auto-rotate is on. All but `orbit`
+ * need perspective at both ends; an orthographic flight follows `orbit`.
  *
  * @module core/app/camera/flight-trajectories
  */
@@ -79,8 +79,9 @@ export type FlightTrajectorySpec = FlightTrajectoryKind | FlightTrajectory;
  * intermediate pose, so it (and anything unknown) means `orbit`.
  */
 export function normalizeTrajectory(spec: FlightTrajectorySpec | undefined): FlightTrajectory {
-  if (spec === undefined) return { kind: 'orbit' };
-  if (typeof spec === 'object') return spec;
+  if (spec == null) return { kind: 'orbit' };
+  if (typeof spec === 'object')
+    return Object.hasOwn(BUILDERS, spec.kind) ? spec : { kind: 'orbit' };
   if (spec === 'via') return { kind: 'orbit' };
   const known: readonly string[] = ['orbit', 'zoom-pan', 'arc', 'straight', 'swing', 'fly-through'];
   return known.includes(spec) ? ({ kind: spec } as FlightTrajectory) : { kind: 'orbit' };
@@ -114,7 +115,11 @@ export function trajectoryOwnsOrientation(trajectory: FlightTrajectory): boolean
   return (
     trajectory.kind === 'straight' ||
     trajectory.kind === 'swing' ||
-    trajectory.kind === 'fly-through'
+    trajectory.kind === 'fly-through' ||
+    (trajectory.kind === 'via' &&
+      (trajectory.leg === 'straight' ||
+        trajectory.leg === 'swing' ||
+        trajectory.leg === 'fly-through'))
   );
 }
 
@@ -449,7 +454,7 @@ function buildFlyThroughPath(
   const t1 = vec3(to.target);
   const up0 = vec3(from.up).normalize();
   const up1 = vec3(to.up).normalize();
-  const ramp = Math.min(Math.max(turn, 0), 0.5);
+  const ramp = Math.min(Math.max(turn, 1e-6), 0.5);
   return withLength((s: number): CameraSnapshot => {
     const position = p0.clone().addScaledVector(travel, s);
     const ahead = position.clone().addScaledVector(travel, Math.max(lookAhead, 1e-3));

@@ -851,11 +851,12 @@ Waypoint(
 Every trajectory but `Orbit` needs a perspective camera; in ortho mode a flight
 follows `Orbit`.
 
-**The turntable.** With auto-rotate on, `Orbit`, `ZoomPan`, `Arc` and `Via` keep
-the turntable's live viewing direction and move only the target and the distance,
+**The turntable.** With auto-rotate on, `Orbit`, `ZoomPan` and `Arc` keep the
+turntable's live viewing direction and move only the target and the distance,
 so the spin never pauses. `Straight`, `Swing` and `FlyThrough` *decide where the
 camera looks* along the way, so they take the view direction over for the flight
-and land on the authored pose; the spin resumes from there.
+and land on the authored pose; the spin resumes from there. `Via` follows its
+chosen leg's turntable behaviour.
 
 #### Timing: `speed` or `duration_ms`
 

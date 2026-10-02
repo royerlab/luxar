@@ -557,6 +557,35 @@ describe('CameraFlight', () => {
     expect(camera.position.toArray().map((v) => +v.toFixed(6))).toEqual([20, 0, 0]);
   });
 
+  it('a via fly-through keeps its camera path under auto-rotate', async () => {
+    const { flight, camera } = makeFlight();
+    const via: CameraSnapshot = { ...DEST, position: [10, 0, 10], target: [10, 0, 0] };
+    const trajectory = { kind: 'via' as const, via, leg: 'fly-through' as const };
+    const from: CameraSnapshot = {
+      position: [0, 0, 10],
+      target: [0, 0, 0],
+      up: [0, 1, 0],
+      isOrtho: false,
+      fov: 60,
+      near: 0.1,
+      far: 1000,
+    };
+    const expected = buildFlightPath(from, DEST, trajectory).atTime!(0.5, (s) => s);
+    const done = flight.flyTo(DEST, {
+      durationMs: 1000,
+      easing: 'linear',
+      keepOrientation: true,
+      trajectory,
+    });
+    now = 1500;
+    camera.position.set(0, 50, 0); // the turntable moves before the flight frame
+    driver.tick();
+    expect(camera.position.distanceTo(new THREE.Vector3(...expected.position))).toBeLessThan(1e-6);
+    now = 2001;
+    driver.tick();
+    await expect(done).resolves.toEqual({ completed: true });
+  });
+
   it('keepOrientation with a zero duration reseats the pose immediately', async () => {
     const { flight, camera, controls } = makeFlight();
     await expect(flight.flyTo(DEST, { durationMs: 0, keepOrientation: true })).resolves.toEqual({
