@@ -26,6 +26,10 @@ import {
   CONTROL_PANEL_CLASS,
   createControlPanel,
 } from '../../../ui/control-panel/render-panel';
+import {
+  CONTROL_LABEL_SCALE_PROPERTY,
+  CONTROL_SUBLABEL_LINES_PROPERTY,
+} from '../../../ui/control-panel/fit-tile-text';
 
 const STYLESHEET = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -60,6 +64,9 @@ const CONTRACT_PROPERTIES = [
   '--luxar-control-columns',
   '--luxar-control-gap',
   '--luxar-control-radius',
+  '--luxar-control-tile-padding',
+  '--luxar-control-sublabel-lines',
+  '--luxar-control-label-scale',
 ];
 
 /** State hooks the renderer maintains. */
@@ -70,6 +77,13 @@ const CONTRACT_ATTRIBUTES = [
   'data-chapter-value',
   'data-chapter-count',
   'data-grid-columns',
+  'data-variant',
+  'data-short-label',
+  'data-short-sublabel',
+  'data-label-text',
+  'data-sublabel-text',
+  'data-tile-index',
+  'data-label-wrap',
 ];
 
 function renderedPanel(): HTMLElement {
@@ -87,7 +101,13 @@ function renderedPanel(): HTMLElement {
       [0, 1],
     ],
   });
-  panel.render(source, { title: 'Title', subtitle: 'Subtitle', sublabels: { 0: 'Sub' } });
+  panel.render(source, {
+    title: 'Title',
+    subtitle: 'Subtitle',
+    sublabels: { 0: 'Sub' },
+    shortLabels: { 0: 'S' },
+    shortSublabels: { 0: 'S' },
+  });
   panel.setActive(0);
   return root;
 }
@@ -133,6 +153,8 @@ describe('control panel styling contract', () => {
 
   it('keeps the exported property name in step with the stylesheet', () => {
     expect(CONTRACT_PROPERTIES).toContain(CONTROL_COLUMNS_PROPERTY);
+    expect(CONTRACT_PROPERTIES).toContain(CONTROL_SUBLABEL_LINES_PROPERTY);
+    expect(CONTRACT_PROPERTIES).toContain(CONTROL_LABEL_SCALE_PROPERTY);
   });
 
   it('emits every contract class into the DOM', () => {

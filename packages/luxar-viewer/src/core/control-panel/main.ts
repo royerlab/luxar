@@ -338,21 +338,27 @@ function presentationOptions(
     // No hint when there are no tiles to touch.
     subtitle: source === null ? undefined : (config?.subtitle ?? CONTROL_PANEL_HINT),
     columns: config?.columns ?? null,
-    sublabels: chapterSublabels(config),
+    sublabels: chapterTexts(config, 'sublabel'),
+    shortLabels: chapterTexts(config, 'shortLabel'),
+    shortSublabels: chapterTexts(config, 'shortSublabel'),
   };
 }
 
 /**
- * Authored per-chapter sublabels, keyed the way the renderer wants them.
+ * One authored per-chapter text, keyed the way the renderer wants it.
  *
  * Returns `undefined` rather than an empty object so the renderer's
  * `sublabels?.[i]` lookup is skipped entirely for an unauthored scene.
  */
-function chapterSublabels(config: ControlPanelSettings | null): Record<number, string> | undefined {
+function chapterTexts(
+  config: ControlPanelSettings | null,
+  field: 'sublabel' | 'shortLabel' | 'shortSublabel'
+): Record<number, string> | undefined {
   if (config?.chapters === undefined) return undefined;
   const out: Record<number, string> = {};
   for (const [index, override] of Object.entries(config.chapters)) {
-    if (override.sublabel !== undefined) out[Number(index)] = override.sublabel;
+    const text = override[field];
+    if (text !== undefined) out[Number(index)] = text;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

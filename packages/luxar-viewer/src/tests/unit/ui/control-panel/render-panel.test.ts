@@ -201,6 +201,51 @@ describe('createControlPanel', () => {
     expect(tiles()[0].querySelector('.luxar-control-tile-sublabel')).toBeNull();
   });
 
+  it('renders an authored short text beside the full one', () => {
+    // Both versions are in the tile and the GRID says which shows, so the text
+    // fit can try a step with one attribute instead of rewriting every tile.
+    panel.render(tourSource(STORIES), {
+      sublabels: { 1: 'One fold in four places, from animals to bacteria', 2: 'A chaperone' },
+      shortSublabels: { 1: 'One fold, four places', 2: 'A chaperone' },
+      shortLabels: { 2: 'Hsp' },
+    });
+    const [first, second, third] = tiles();
+    const variants = (tile: HTMLElement, role: string): Array<[string, string]> =>
+      Array.from(tile.querySelectorAll<HTMLElement>(`.luxar-control-tile-${role}`)).map((node) => [
+        node.dataset.variant ?? '',
+        node.textContent ?? '',
+      ]);
+    expect(variants(second, 'sublabel')).toEqual([
+      ['full', 'One fold in four places, from animals to bacteria'],
+      ['short', 'One fold, four places'],
+    ]);
+    expect(second.dataset.shortSublabel).toBe('true');
+    expect(variants(third, 'label')).toEqual([
+      ['full', 'Hsp70'],
+      ['short', 'Hsp'],
+    ]);
+    expect(third.dataset.shortLabel).toBe('true');
+    // A short text identical to the full one is no alternative at all.
+    expect(variants(third, 'sublabel')).toEqual([['full', 'A chaperone']]);
+    expect(third.dataset.shortSublabel).toBeUndefined();
+    expect(first.dataset.shortLabel).toBeUndefined();
+  });
+
+  it('fits the tile text, pinned columns or not', () => {
+    // jsdom lays out nothing, so every tile "fits" and the top of the ladder
+    // is what lands; the walk itself is covered in fit-tile-text.test.ts.
+    for (const columns of [null, 2]) {
+      panel.render(tourSource(STORIES), { columns, sublabels: { 0: 'Sub' } });
+      const grid = root.querySelector<HTMLElement>('.luxar-control-grid');
+      expect(grid?.dataset).toMatchObject({
+        labelText: 'full',
+        sublabelText: 'full',
+        tileIndex: 'shown',
+        labelWrap: 'words',
+      });
+    }
+  });
+
   it('never interprets a label as markup', () => {
     // Chapter labels come from scene attributes, which are untrusted input.
     panel.render(tourSource(['<img src=x onerror=alert(1)>']));
