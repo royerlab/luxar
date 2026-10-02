@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   restoreSnapshot: vi.fn(),
   setRenderingSettings: vi.fn(),
   flyTo: vi.fn().mockResolvedValue({ completed: true }),
+  switchDataset: vi.fn().mockResolvedValue(undefined),
   disposeCleanups: [] as Array<() => void>,
   renderer: {
     info: {
@@ -48,6 +49,7 @@ vi.mock('../../../core/app', () => ({
     setRenderingSettings: mocks.setRenderingSettings,
     getLayers: () => [],
     flyTo: mocks.flyTo,
+    switchDataset: mocks.switchDataset,
     components: { sceneManager: { renderer: mocks.renderer } },
     onDispose: (cleanup: () => void) => {
       mocks.disposeCleanups.push(cleanup);
@@ -627,6 +629,47 @@ describe('bootstrapStandalone', () => {
   });
 
   describe('success and error paths', () => {
+    it('keeps a cross-dataset bookmark in the URL after switching sources', async () => {
+      const bookmark = {
+        version: 1,
+        src: '/other.zarr',
+        snapshot: {
+          version: 1,
+          camera: {
+            position: [1, 2, 3],
+            target: [0, 0, 0],
+            up: [0, 1, 0],
+            isOrtho: false,
+            fov: 45,
+            near: 0.1,
+            far: 100,
+          },
+        },
+        rendering: { exposure: 1.5 },
+        layers: [],
+      };
+      mocks.switchDataset.mockImplementationOnce(async () => {
+        window.history.replaceState(null, '', '/viewer?src=%2Fother.zarr');
+      });
+      window.history.replaceState(
+        null,
+        '',
+        `/viewer?src=%2Fsample.zarr#view=${encodeURIComponent(JSON.stringify(bookmark))}`
+      );
+      try {
+        await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+        window.dispatchEvent(new HashChangeEvent('hashchange'));
+        await vi.waitFor(() => expect(mocks.switchDataset).toHaveBeenCalledWith('/other.zarr'));
+        await vi.waitFor(() =>
+          expect(new URLSearchParams(window.location.hash.slice(1)).get('view')).toBe(
+            JSON.stringify(bookmark)
+          )
+        );
+      } finally {
+        window.history.replaceState(null, '', '/');
+      }
+    });
+
     it('restores a new #view on same-document navigation and removes the listener on dispose', async () => {
       const app = await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
       const bookmark = {
