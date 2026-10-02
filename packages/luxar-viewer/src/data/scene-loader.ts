@@ -619,7 +619,7 @@ export class SceneLoader {
    * update commits the correct frame). DISTINCT from
    * {@link _datasetAbortController}: it is per-update, NOT registered via
    * `WorkerPool.setAbortSignal` (which replaces, not chains); it composes
-   * with the dataset signal through the worker pool's `combineSignals`.
+   * with the dataset signal through `combineAbortSignals` in the worker pool.
    */
   private _updateAbortController: AbortController | null = null;
 

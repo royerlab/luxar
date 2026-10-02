@@ -46,6 +46,7 @@ export class MeshPickingTSLMaterial
     uAlphaCutout: TSLNode;
     uSurfaceDepth: TSLNode;
     uNearCull: TSLNode;
+    uNearFade: TSLNode;
     uBaseColorTex?: TSLNode;
   };
 
@@ -65,6 +66,8 @@ export class MeshPickingTSLMaterial
       // 0.1 matches the GLSL twin's default and is overridden per scene by
       // `updateCameraParams`.
       uNearCull: uniform(0.1),
+      // 1 = mirror the house shader's near fade; 0 for a physical visual.
+      uNearFade: uniform(1),
       // Bound only when the node has a texture, matching the GLSL twin's define:
       // `texture()` captures its Texture, so the real image is installed by
       // `updateBaseColorTexture` below rather than written through a proxy.
@@ -78,6 +81,7 @@ export class MeshPickingTSLMaterial
       uAlphaCutout: proxyIUniform(this.tslNodes.uAlphaCutout),
       uSurfaceDepth: proxyIUniform(this.tslNodes.uSurfaceDepth),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
+      uNearFade: proxyIUniform(this.tslNodes.uNearFade),
       // A plain value holder, NOT a proxy: the graph reads the captured `texture()`
       // node, so writing this would change nothing. `updateBaseColorTexture` rebuilds
       // the node instead, and this exists so callers can READ the bound texture
@@ -179,6 +183,7 @@ export class MeshPickingTSLMaterial
     // Camera state too — see the GLSL twin: the constructor defaults would fade
     // against the wrong near plane, and would fade at all under ortho.
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uNearFade.value = this.uniforms.uNearFade.value;
     // The epoch's culling must ride along: a clone taken on an undecidable frame
     // would otherwise revert to FrontSide and drop half the pickable surface until
     // the next commit re-applied it.

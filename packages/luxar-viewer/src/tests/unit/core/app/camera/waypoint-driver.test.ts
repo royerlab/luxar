@@ -168,6 +168,125 @@ describe('WaypointDriver', () => {
     expect(ports.flyTo).toHaveBeenLastCalledWith(expect.anything(), {});
   });
 
+  it('passes an authored easing, trajectory and pace through to the flight', () => {
+    const current = { step: [0, 0, 0, 0, 0] };
+    const ports = makePorts(current);
+    const smooth: ZarrWaypoint[] = [
+      { when: { story: 0 }, camera: { position: [0, 0, 5] } },
+      {
+        when: { story: 1 },
+        camera: { position: [5, 0, 0] },
+        duration_ms: 5000,
+        easing: 'smooth',
+        trajectory: 'zoom-pan',
+        speed: 0.7,
+        duration_range_ms: [2500, 8000],
+      },
+    ];
+    const driver = new WaypointDriver(smooth, ports);
+    driver.evaluate('snap');
+    current.step = [0, 0, 0, 1, 0];
+    driver.evaluate('fly');
+    expect(ports.flyTo).toHaveBeenCalledWith(expect.anything(), {
+      durationMs: 5000,
+      easing: 'smooth',
+      trajectory: 'zoom-pan',
+      speed: 0.7,
+      durationRangeMs: [2500, 8000],
+    });
+  });
+
+  it('reads every Python trajectory shape: snake_case renamed, a via camera resolved', () => {
+    // The shapes `luxar.core.trajectories` serialises (see test_trajectories.py).
+    const cases: Array<[ZarrWaypoint['trajectory'], unknown]> = [
+      ['swing', 'swing'],
+      [
+        { kind: 'zoom-pan', rho: 2 },
+        { kind: 'zoom-pan', rho: 2 },
+      ],
+      [
+        { kind: 'arc', lift: 0.8 },
+        { kind: 'arc', lift: 0.8 },
+      ],
+      [{ kind: 'straight' }, { kind: 'straight' }],
+      [
+        { kind: 'swing', pivot: [1, 2, 3] },
+        { kind: 'swing', pivot: [1, 2, 3] },
+      ],
+      [
+        { kind: 'fly-through', look_ahead: 0.3, turn: 0.25 },
+        { kind: 'fly-through', lookAhead: 0.3, turn: 0.25 },
+      ],
+    ];
+    for (const [authored, expected] of cases) {
+      const current = { step: [0, 0, 0, 0, 0] };
+      const ports = makePorts(current);
+      const driver = new WaypointDriver(
+        [
+          { when: { story: 0 }, camera: { position: [0, 0, 5] } },
+          { when: { story: 1 }, camera: { position: [5, 0, 0] }, trajectory: authored },
+        ],
+        ports
+      );
+      driver.evaluate('snap');
+      current.step = [0, 0, 0, 1, 0];
+      driver.evaluate('fly');
+      expect(ports.flyTo.mock.calls[0][1].trajectory).toEqual(expected);
+    }
+    // A via's camera is a waypoint camera block: resolved against the live pose.
+    const current = { step: [0, 0, 0, 0, 0] };
+    const ports = makePorts(current);
+    const driver = new WaypointDriver(
+      [
+        { when: { story: 0 }, camera: { position: [0, 0, 5] } },
+        {
+          when: { story: 1 },
+          camera: { position: [5, 0, 0] },
+          trajectory: { kind: 'via', camera: { position: [0, 0, 50] }, leg: 'arc' },
+        },
+      ],
+      ports
+    );
+    driver.evaluate('snap');
+    current.step = [0, 0, 0, 1, 0];
+    driver.evaluate('fly');
+    const via = ports.flyTo.mock.calls[0][1].trajectory as {
+      kind: string;
+      via: CameraSnapshot;
+      leg: string;
+    };
+    expect(via.kind).toBe('via');
+    expect(via.leg).toBe('arc');
+    expect(via.via.position).toEqual([0, 0, 50]);
+    expect(via.via.fov).toBe(LIVE.fov); // unset fields keep the live camera's
+  });
+
+  it('asks for the scene centre only for a swing that names no pivot', () => {
+    for (const [trajectory, expectCentre] of [
+      ['swing', true],
+      [{ kind: 'swing', pivot: [1, 2, 3] }, false],
+      ['zoom-pan', false],
+    ] as Array<[ZarrWaypoint['trajectory'], boolean]>) {
+      const current = { step: [0, 0, 0, 0, 0] };
+      const sceneCentre = vi.fn(() => [7, 8, 9] as const);
+      const ports = { ...makePorts(current), sceneCentre };
+      const driver = new WaypointDriver(
+        [
+          { when: { story: 0 }, camera: { position: [0, 0, 5] } },
+          { when: { story: 1 }, camera: { position: [5, 0, 0] }, trajectory },
+        ],
+        ports
+      );
+      driver.evaluate('snap');
+      current.step = [0, 0, 0, 1, 0];
+      driver.evaluate('fly');
+      expect(sceneCentre).toHaveBeenCalledTimes(expectCentre ? 1 : 0);
+      expect(ports.flyTo.mock.calls[0][1].sceneCentre).toEqual(
+        expectCentre ? [7, 8, 9] : undefined
+      );
+    }
+  });
+
   it('snaps at load and flies on a change of matched waypoint', () => {
     const current = { step: [0, 0, 0, 0, 0] };
     const ports = makePorts(current);

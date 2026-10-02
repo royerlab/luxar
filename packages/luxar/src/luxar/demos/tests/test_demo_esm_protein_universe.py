@@ -464,13 +464,32 @@ def test_shipped_stories_author_valid_waypoints() -> None:
 
 
 def test_default_viewer_config_is_the_laptop_build() -> None:
-    """The hosted default avoids kiosk-only render and dolly costs."""
+    """The hosted default avoids kiosk-only supersampling and dolly costs."""
     from luxar.demos import demo_esm_protein_universe as demo
 
     vc = demo._viewer_config([], (0.0, 0.0, 100.0), auto_rotate=True, audio=False)
     assert vc.ssaa_enabled is False
-    assert vc.allow_high_dpr is False
     assert vc.auto_dolly_amplitude_percent == 20.0
+
+
+def test_resolution_is_full_and_fixed_in_every_build() -> None:
+    """The map renders at the display's own pixel ratio, never adapted down.
+
+    A resolution that drops while the camera travels and recovers on arrival
+    reads as the map going soft in flight, so both builds pin it.
+    """
+    from luxar.demos import demo_esm_protein_universe as demo
+
+    for high_quality in (False, True):
+        vc = demo._viewer_config(
+            [],
+            (0.0, 0.0, 100.0),
+            auto_rotate=True,
+            audio=False,
+            high_quality=high_quality,
+        )
+        assert vc.allow_high_dpr is True
+        assert vc.adaptive_dpr_enabled is False
 
 
 def test_auto_dolly_rides_with_the_turntable() -> None:

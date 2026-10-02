@@ -10,7 +10,7 @@
  *    `kind=lod` group changes its displayed level, the registry dissolves the
  *    outgoing level into the incoming one over `config.lod.fadeMs` instead of
  *    a hard `object.visible` swap: the incoming at `smoothstep(elapsed/fadeMs)`,
- *    the outgoing at the complement (see `LODGroupRegistry.levelFade`).
+ *    the outgoing at the complement (the state machine is `lod-dissolve.ts`).
  *    Brightness across the switch is preserved by the levels' build-time mass
  *    conservation (both integrate to the same DC).
  *

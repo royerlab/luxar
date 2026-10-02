@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HttpChunkSource } from '../../../../cache/chunk-source/http-chunk-source';
-import { MAX_CONCURRENT_CHUNK_FETCHES } from '../../../../utils/fetch-concurrency';
+import { config } from '../../../../config';
+
+/** The gate's widths, as configured (`config.dataLoading.network.fetchGate`). */
+const { maxChunkFetches: MAX_CONCURRENT_CHUNK_FETCHES } = config.dataLoading.network.fetchGate;
 
 const REQUESTS = MAX_CONCURRENT_CHUNK_FETCHES + 32;
 const BODY_DURATION_MS = 1_000;

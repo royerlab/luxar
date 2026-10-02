@@ -30,7 +30,13 @@ scene/
 ├── scene-dims-manager.ts           # nD dimension coordination
 ├── dimension-loading.ts            # Current-slice loading + playback prefetch
 ├── view-context.ts                 # The camera snapshot (view, projection, frustum, sizes); rebuilt on a camera change or per-frame invalidate
-├── lod-group-registry.ts           # Per-frame LOD-group selector (policy/state machine)
+├── lod-group-registry.ts           # Per-frame LOD-group selector (the orchestrator)
+├── lod-dissolve.ts                 # Time-driven level dissolve state machine
+├── playback-aspiration.ts          # Reload timing (EWMA), playback level cap, probes
+├── partition-gate.ts               # kind=partition culling, re-entry resync, lazy part activation
+├── capture-quiescence.ts           # Offline-capture "frame is final" predicate
+├── tick-demand.ts                  # Liveness contract: until when a component needs ticks
+├── retry-wakes.ts                  # One-shot, backed-off wakes for failure cooldowns / unanswered part requests
 ├── lod-selector-math.ts            # Selector math: world-box fold, box→area/diagonal projections, hysteresis pick
 ├── lod-blend.ts                    # Pure opacity math: level-dissolve curve + energy compensation
 ├── lod-fade.ts                     # Material-level fade appliers (clone-on-first-fade)
@@ -424,7 +430,7 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    sample therefore cannot demote a level whose warm reloads fit, while a
    consistently slow level is still capped after its second load. The
    capped aspiration is reloaded on every timepoint without the settle
-   debounce (`FINE_RELOAD_SETTLE_MS` = 130 ms, which a playing timelapse
+   debounce (`config.lod.fineReloadSettleMs` = 130 ms, which a playing timelapse
    never satisfies). Once per second the next finer capped level gets one
    reload to re-measure it, and that reload REPLACES its average (the
    samples it held are a second or more old — typically the first loop's
@@ -610,7 +616,7 @@ one the selector nominally displays.
 
 **Partition frustum gating + targeted resync:** a `kind=partition`
 group registers through `registerPartition`, and every frame each part
-is tested against a frustum padded by `PARTITION_FRUSTUM_MARGIN` (10 %,
+is tested against a frustum padded by `config.lod.partitionFrustumMargin` (10 %,
 so a cold part preloads just before it enters). A part outside it is
 hidden and stamped `userData.partitionFrustumVisible = false` — on
 EVERY object the part emitted, since one part node may produce several,
@@ -1341,7 +1347,30 @@ _For implementation details, see the source files in this directory._
   - asymmetric hysteresis), lazy-load gating, and the display/fade/
     eviction orchestration. Re-exports `projectBoxAreaFraction`,
     `projectBoxDiagonalPx` and `pickChildWithHysteresis` from
-    `lod-selector-math.ts`.
+    `lod-selector-math.ts`, and the partition types from
+    `partition-gate.ts`. Its stateful collaborators each own one concern
+    and state their liveness through `tick-demand.ts`
+    (`tickUntilMs()`: until when the loop must keep ticking —
+    `NO_TICK`, a deadline, or `UNTIL_RESOLVED`); `evaluatePerFrame` folds
+    them into one `requestTick`:
+  - `lod-dissolve.ts` — `LodDissolves`: the in-flight level dissolves
+    (start, retarget, end, drop) as a state machine; ticks while one is
+    in flight.
+  - `playback-aspiration.ts` — `foldLoadTime` (the reload EWMA; only full
+    loads/reloads are timed) and `PlaybackAspiration` (admission with
+    keep-budget hysteresis, the periodic probe whose replace mark is set
+    only when its reload starts and cleared when playback stops).
+  - `partition-gate.ts` — `PartitionGate`: per-part frustum/slice culling,
+    the coalesced re-entry resync, deferred-part (B4) activation and its
+    request timeout; ticks while a visible resync is outstanding (only when
+    `requestReprocess` is wired).
+  - `retry-wakes.ts` — `RetryWakes`: waits that only have to END (a failed
+    level's retry cooldown, an unanswered part activation request) tick
+    nothing; each schedules one wake at its expiry, and each consecutive
+    retry of the same key doubles the wait (capped at 30 s). A success or an
+    explicit Retry resets it.
+  - `capture-quiescence.ts` — `isCaptureQuiescent`, the offline-capture
+    drain predicate over lod_groups and partitions.
 - `lod-selector-math.ts` — The selector's camera-geometry math:
   `computeEntryWorldBox` (nD raw or robust bounds → world box via
   displayDims), `projectBoxAreaFraction` (world box → fraction of the
@@ -1349,7 +1378,7 @@ _For implementation details, see the source files in this directory._
   diagonal) — both saturate when the eye is inside the box and near-clip a box beside it — and
   `pickChildWithHysteresis`.
 - `lod-fade.ts` — Material-level appliers for the two LOD anti-popping
-  mechanisms: `applyLodFade` (write coverage-weight × `1/e(k)` opacity
+  mechanisms: `applyLodFade` (write dissolve-weight × `1/e(k)` opacity
   per fadeable leaf, clone-on-first-fade) and `isBlendableSubtree`
   (uniformly additive/luminous/volumetric check — `BLENDABLE_MODES`).
   The material-touching counterpart of `lod-blend.ts`'s pure math.

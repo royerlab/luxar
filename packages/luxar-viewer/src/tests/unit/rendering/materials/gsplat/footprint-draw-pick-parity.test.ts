@@ -7,19 +7,23 @@
  * pixel-identity gate sees that, because the drawn image is unchanged. So the
  * rule is ONE function in each language (`gsplatFootprintPeakScale` +
  * `gsplatVisibleMahalSq` in GLSL, `gsplatQuadFootprintTSL` in TSL), and the
- * two stages differ ONLY in the draw-only peak-scale factors (the alpha
- * factor and max(gain, 1)), which the pick fragment test does not carry.
+ * two stages differ ONLY in the alpha factor they hand it: the pick pass
+ * weighs by the same per-splat alpha factor and gain as the draw, and
+ * additionally by the node opacity (a fully transparent node is invisible
+ * however bright its splats, so it must not be pickable either).
  *
  * Pinned three ways:
  *   1. GLSL sources: both vertex shaders call the shared helpers with the
- *      same amplitude and uniforms; pick passes the neutral `1.0, 1.0`.
+ *      same amplitude, uniforms and gain; pick's alpha factor is
+ *      `pickAlphaFactor` (the draw's alpha factor times uOpacity).
  *   2. Numerics, through the shared CPU mirror: over a grid of amplitudes and
  *      truncation radii, pick's radius and extents equal draw's EXACTLY at a
  *      neutral appearance (opaque, gain <= 1).
  *   3. TSL codegen snapshots (`src/tests/__codegen__`, themselves pinned to the
  *      live TSL output by the tsl-codegen-snapshot e2e spec): every draw
- *      variant and the pick shader emit the same reach-radius block, up to
- *      variable names, and the same extent + cull use of it.
+ *      variant and the pick shader emit the same reach-radius block and the
+ *      same peak-scale expression, up to variable names, and the same extent
+ *      + cull use of it.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -74,11 +78,11 @@ describe('GLSL: draw and pick vertex shaders share one reach-radius rule', () =>
     );
   });
 
-  it('same amplitude and uniforms; pick passes the neutral draw factors', () => {
+  it('same amplitude, uniforms and gain; pick folds the node opacity into the alpha factor', () => {
     const draw = glslPeakScaleArgs(shaders.draw);
     const pick = glslPeakScaleArgs(shaders.pick);
     expect(draw.slice(0, 2)).toEqual(['vAmplitude2D', 'uInvOneMinusC']);
-    expect(pick).toEqual(['vAmplitude2D', 'uInvOneMinusC', '1.0', '1.0']);
+    expect(pick).toEqual(['vAmplitude2D', 'uInvOneMinusC', 'pickAlphaFactor', 'uIntensity']);
     expect(draw.slice(2)).toEqual(['footprintAlpha', 'uIntensity']);
   });
 
@@ -200,16 +204,19 @@ describe('TSL codegen: every draw variant and the pick shader emit one reach blo
     }
   });
 
-  it('draw peak = pick peak times the draw-only alpha factor and max(gain, 1)', () => {
-    const pickPeak = reachBlock(pickFile).peak;
-    expect(pickPeak).toMatch(/^\( nodeVar\d+ \* nodeUniform\d+ \)$/);
+  it('draw and pick peaks share one shape: amplitude x 1/(1-C) x alpha factor x max(gain, 1)', () => {
+    // The pick fragment test carries the same factors as the draw (the pick's
+    // alpha factor also folds in the node opacity), so both emit the same
+    // peak-scale expression around the same amplitude term; only the alpha
+    // factor expression differs per variant (optical depth under volumetric).
+    const shape =
+      /^\( \( (\( nodeVar\d+ \* nodeUniform\d+ \)) \* .+ \) \* max\( nodeUniform\d+, 1\.0 \) \)$/;
+    const pick = shape.exec(reachBlock(pickFile).peak);
+    expect(pick).not.toBeNull();
     for (const file of drawFiles) {
-      const m =
-        /^\( \( (\( nodeVar\d+ \* nodeUniform\d+ \)) \* .+ \) \* max\( nodeUniform\d+, 1\.0 \) \)$/.exec(
-          reachBlock(file).peak
-        );
+      const m = shape.exec(reachBlock(file).peak);
       expect(m, file).not.toBeNull();
-      expect(normalize(m![1])).toBe(normalize(pickPeak));
+      expect(normalize(m![1]), file).toBe(normalize(pick![1]));
     }
   });
 

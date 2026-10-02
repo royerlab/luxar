@@ -34,7 +34,7 @@ For detailed documentation, see: https://github.com/royerlab/luxar
 from __future__ import annotations
 
 # Core classes and functions
-from .core import transforms
+from .core import trajectories, transforms
 from .core.dimensions import Dimension, Dimensions
 from .core.group import Group
 from .core.gsplats import GSplats
@@ -145,6 +145,7 @@ __all__: list[str] = [
     "DimensionsConfig",
     "AnimationConfig",
     "Waypoint",
+    "trajectories",
     "AudioConfig",
     # Enumerations
     "BlendingMode",

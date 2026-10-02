@@ -1,4 +1,5 @@
 import { config } from '../../config';
+import { AsyncGate } from '../../utils/async-gate';
 
 /**
  * Maximum OPFS chunk reads running concurrently across the page.
@@ -12,79 +13,19 @@ import { config } from '../../config';
  * does: a caller that races its read against a timeout gives up while the
  * browser keeps reading, and releasing the slot then would let more reads start
  * than the cap allows (and under-report occupancy). `run()` hands the real I/O
- * to `hold` for that. A queued read whose signal aborts leaves the queue at once.
+ * to `hold` for that. A queued read whose signal aborts leaves the queue at once
+ * (the shared {@link AsyncGate}'s contract).
  */
-let active = 0;
-let epoch = 0;
-
-interface Waiter {
-  readonly start: () => void;
-  readonly reject: (error: unknown) => void;
-  live: boolean;
-}
-
-const queue: Waiter[] = [];
-let queued = 0;
+const gate = new AsyncGate(() => config.cache.opfsReadConcurrency);
 
 /** Return the page-wide OPFS read gate occupancy. */
 export function getOpfsReadGateStats(): { active: number; queued: number } {
-  return { active, queued };
+  return gate.stats();
 }
 
 /** Reset gate state and reject queued readers. Intended for test isolation. */
 export function resetOpfsReadGate(): void {
-  epoch += 1;
-  active = 0;
-  queued = 0;
-  const error = new Error('OPFS read gate reset');
-  for (const waiter of queue.splice(0)) if (waiter.live) waiter.reject(error);
-}
-
-/** Start the oldest live waiter, if any. */
-function startNext(): void {
-  for (let waiter = queue.shift(); waiter; waiter = queue.shift()) {
-    if (!waiter.live) continue;
-    waiter.live = false;
-    queued -= 1;
-    waiter.start();
-    return;
-  }
-}
-
-/** Wait for a slot; an abort of `signal` while waiting rejects and frees the place. */
-function acquire(signal: AbortSignal | undefined): Promise<void> {
-  if (signal?.aborted) return Promise.reject(abortError(signal));
-  if (active < config.cache.opfsReadConcurrency) {
-    active += 1;
-    return Promise.resolve();
-  }
-  return new Promise<void>((resolve, reject) => {
-    const onAbort = (): void => {
-      if (!waiter.live) return;
-      waiter.live = false;
-      queued -= 1;
-      reject(abortError(signal!));
-    };
-    const waiter: Waiter = {
-      live: true,
-      start: () => {
-        signal?.removeEventListener('abort', onAbort);
-        active += 1;
-        resolve();
-      },
-      reject: (error) => {
-        signal?.removeEventListener('abort', onAbort);
-        reject(error);
-      },
-    };
-    queue.push(waiter);
-    queued += 1;
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
-function abortError(signal: AbortSignal): unknown {
-  return signal.reason ?? new DOMException('OPFS read aborted while queued', 'AbortError');
+  gate.reset(new Error('OPFS read gate reset'));
 }
 
 /**
@@ -101,17 +42,16 @@ export function withOpfsReadGate<T>(
   run: (hold: <R>(io: Promise<R>) => Promise<R>) => Promise<T>,
   signal?: AbortSignal
 ): Promise<T> {
-  const acquiredEpoch = epoch;
-  return acquire(signal).then(async () => {
+  return gate.acquire(signal).then(async (release) => {
     let pending = 1;
     let released = false;
     const settle = (): void => {
       pending -= 1;
+      // The lease ends once: a hold arriving after it ended passes its I/O
+      // straight through instead of re-opening the count.
       if (pending > 0 || released) return;
       released = true;
-      if (acquiredEpoch !== epoch) return;
-      active -= 1;
-      startNext();
+      release();
     };
     const hold = <R>(io: Promise<R>): Promise<R> => {
       if (released) return io;

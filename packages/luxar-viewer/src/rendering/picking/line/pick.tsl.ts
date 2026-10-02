@@ -17,7 +17,7 @@
  * in the vertex stage and indexed by `aSortedIndex` (visual-factory
  * parity, shader-tsl.ts).
  *
- * Depth = 1.0 - brightness (brightness-as-depth tie-breaking).
+ * Depth = 1 / (1 + unclamped salience) (brightness-as-depth tie-breaking).
  *
  * Lines use FULL width for picking (no half-radius like points) —
  * thin lines would be impossible to pick otherwise.
@@ -42,6 +42,7 @@ import {
   min,
   clamp,
   mix,
+  depth,
   length,
   exp,
   texture,
@@ -59,6 +60,7 @@ import {
   projectionSizeScaleTSL,
   perspectiveNearFadeStaticTSL,
   sanitizeNonNegative,
+  sanitizeAlpha,
   type TSLNode,
   sortedIndexNode,
   densityDroppedNode,
@@ -72,6 +74,11 @@ import {
   LINE_TEXTURE_LAYOUT,
 } from '../../element-texture-layout';
 import { resolveLineJoin, type LineJoinStyle } from '../../../types/line-join';
+import {
+  pickVisibilityTSLNodesFromUniforms,
+  pickWeightTSL,
+  type PickVisibilityTSLNodes,
+} from '../_shared/visibility-tsl';
 
 /**
  * Pre-created TSL leaf nodes supplied by the wrapper class. Same
@@ -79,7 +86,7 @@ import { resolveLineJoin, type LineJoinStyle } from '../../../types/line-join';
  * own the `UniformNode`s and the factory references them directly,
  * avoiding the `.onUpdate('render')` callback churn.
  */
-export interface LinePickTSLNodes {
+export interface LinePickTSLNodes extends PickVisibilityTSLNodes {
   /**
    * Line data texture node (RGBA32F, 6 texels/segment). Rebound per
    * node by the wrapper's `updateLineTexture` (fresh node + rebuild).
@@ -94,6 +101,8 @@ export interface LinePickTSLNodes {
   readonly uNodeId: TSLNode;
   readonly uNearCull: TSLNode;
   readonly uMaxLinePixelWidth: TSLNode;
+  /** Pick depth convention: 0 = brightness-as-depth, 1 = real fragment depth. */
+  readonly uSurfaceDepth: TSLNode;
 }
 
 /**
@@ -145,6 +154,7 @@ export function linePickWebGPUFactory(
   const uResolution = nodes.uResolution;
   const uPixelRatio = nodes.uPixelRatio;
   const uNodeId = nodes.uNodeId;
+  const uSurfaceDepth = nodes.uSurfaceDepth;
   const uNearCull = nodes.uNearCull;
   const uMaxLinePixelWidth = nodes.uMaxLinePixelWidth;
   // Pixels per view unit at unit depth: resY * |P11|, read from the
@@ -173,6 +183,8 @@ export function linePickWebGPUFactory(
   const vWidthAtT: TSLNode = varying(float(0.0));
   const vPixelWidth: TSLNode = varying(float(0.0));
   const vWidthFade: TSLNode = varying(float(0.0));
+  // Per-endpoint opacity along t (texel5.zw), sanitized as the visual graph does.
+  const vAlpha: TSLNode = varying(float(1.0));
   // View-space z to the fragment (fade computed per-fragment; see the
   // visual line TSL). Ortho graphs skip it.
   const vViewZ: TSLNode | null = config.isOrtho ? null : varying(float(0.0));
@@ -218,6 +230,7 @@ export function linePickWebGPUFactory(
     const lineT2: TSLNode = uLineTex.load(ivec2(texelX.add(int(2)), texelY)).toVar();
     const lineT3: TSLNode = uLineTex.load(ivec2(texelX.add(int(3)), texelY)).toVar();
     const lineT4: TSLNode = uLineTex.load(ivec2(texelX.add(int(4)), texelY)).toVar();
+    const lineT5: TSLNode = uLineTex.load(ivec2(texelX.add(int(5)), texelY)).toVar();
     const aStartPos: TSLNode = vec3(lineT0).toVar();
     const aStartWidth: TSLNode = lineT0.w.toVar();
     const aEndPos: TSLNode = vec3(lineT1).toVar();
@@ -457,6 +470,8 @@ export function linePickWebGPUFactory(
     vT.assign(tEff);
     vSegmentLength.assign(aSegmentLength);
     vWidthAtT.assign(width);
+    // Each endpoint sanitized BEFORE the mix (visual-graph parity).
+    vAlpha.assign(mix(sanitizeAlpha(lineT5.z), sanitizeAlpha(lineT5.w), tEff));
     vPixelWidth.assign(rawPixelWidth);
     vWidthFade.assign(vWidthFadeVal);
     if (vViewZ) vViewZ.assign(mvPos.z);
@@ -521,11 +536,16 @@ export function linePickWebGPUFactory(
     const endJoinCap: TSLNode = mix(float(0.5).add(endRamp.mul(0.5)), float(1.0), vCapSuppressEnd);
     const capFactor: TSLNode = min(startJoinCap, endJoinCap);
 
-    return capFactor
-      .mul(perpFalloff)
-      .mul(widthScale)
-      .mul(vWidthFade)
-      .mul(vViewZ ? perspectiveNearFadeStaticTSL(false, vViewZ, nearCull) : float(1.0));
+    return (
+      capFactor
+        .mul(perpFalloff)
+        .mul(widthScale)
+        .mul(vWidthFade)
+        .mul(vViewZ ? perspectiveNearFadeStaticTSL(false, vViewZ, nearCull) : float(1.0))
+        // ...weighted by the visual factors (per-endpoint alpha, node
+        // opacity, max(gain, 1)) — GLSL twin: luxarPickWeight.
+        .mul(pickWeightTSL(vAlpha, nodes))
+    );
   }).once();
   const brightness: TSLNode = brightnessShared().toVar('lineBrightness');
 
@@ -540,11 +560,16 @@ export function linePickWebGPUFactory(
     // BRANCHLESS by construction, and that is load-bearing: `brightness` is a
     // factory-scope `.toVar()` shared with `colorNode`, so it is assigned wherever
     // three first BUILDS it — which is unconditional top-level flow in either entry
-    // point only while this body contains no `if`. Adding a branch here (a
-    // `uSurfaceDepth`-style select) would bury that assignment in one arm and leave
-    // `colorNode`'s top-level readers with 0; it needs the same unconditional fragment
-    // prologue the gsplat/mesh pick factories use.
-    return float(1.0).sub(clamp(brightness, 0.0, 1.0));
+    // point only while this body contains no `if`. So the depth convention is a
+    // `mix` on the 0/1 `uSurfaceDepth` flag, not a select: 0 = brightness-as-depth
+    // (brightest wins; commutative modes), using unclamped salience;
+    // 1 = the real fragment depth (front-most wins; opaque/normal — GLSL twin:
+    // `gl_FragCoord.z`).
+    return mix(
+      float(1.0).div(float(1.0).add(brightness)),
+      depth as unknown as TSLNode,
+      float(uSurfaceDepth)
+    );
   });
 
   const material = outMaterial ?? new NodeMaterial();
@@ -599,5 +624,7 @@ export function buildLinePickTSLNodesFromUniforms(
     uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
     uMaxLinePixelWidth: uniform((uniforms.uMaxLinePixelWidth?.value as number) ?? 1.0),
+    uSurfaceDepth: uniform((uniforms.uSurfaceDepth?.value as number) ?? 0),
+    ...pickVisibilityTSLNodesFromUniforms(uniforms),
   };
 }

@@ -1974,7 +1974,7 @@ describe('MultiLevelCachingStore', () => {
 
     it('in-flight data fetch unwinds with Aborted when store is disposed mid-flight', async () => {
       // The store-level dataAbort is merged into fetchWithRetry's signal
-      // via mergeAbortSignals. Disposing the store mid-fetch must
+      // via combineAbortSignals. Disposing the store mid-fetch must
       // propagate to the underlying fetch and surface as a non-ok result.
       let observedSignal: AbortSignal | undefined;
       global.fetch = vi.fn((_url: string, init?: RequestInit) => {

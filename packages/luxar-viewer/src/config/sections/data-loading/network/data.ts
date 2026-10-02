@@ -14,4 +14,13 @@ export const dataLoadingNetworkConfig: DataLoadingNetworkConfig = {
   // the prefetcher always used in practice (this knob was unwired until 2026-07).
   maxConcurrent: 4,
   retryAttempts: 3,
+  // Fetch-gate lane widths (utils/fetch-concurrency.ts); see FetchGateConfig.
+  fetchGate: {
+    maxChunkFetches: 24,
+    maxMultiplexedChunkFetches: 96,
+    maxMetadataFetches: 4,
+    http1MaxChunkFetches: 4,
+    http1MaxMetadataFetches: 2,
+    speculativeShare: 0.25,
+  },
 };

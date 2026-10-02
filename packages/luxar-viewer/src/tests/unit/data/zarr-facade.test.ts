@@ -14,12 +14,14 @@ import { zipSync } from 'fflate';
 import * as zarr from '../../../data/zarr';
 import { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
 import { wrapWithCache } from '../../../cache/decompressed-chunk-cache/cached-zarr-array';
-import {
-  getFetchLaneLimit,
-  HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
-  MAX_CONCURRENT_CHUNK_FETCHES,
-  resetFetchTransport,
-} from '../../../utils/fetch-concurrency';
+import { getFetchLaneLimit, resetFetchTransport } from '../../../utils/fetch-concurrency';
+import { config } from '../../../config';
+
+/** The gate's widths, as configured (`config.dataLoading.network.fetchGate`). */
+const {
+  http1MaxChunkFetches: HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
+  maxChunkFetches: MAX_CONCURRENT_CHUNK_FETCHES,
+} = config.dataLoading.network.fetchGate;
 
 const encoder = new TextEncoder();
 

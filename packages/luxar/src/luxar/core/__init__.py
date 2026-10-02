@@ -1,5 +1,6 @@
 """Core data structures for Luxar scene graph and points."""
 
+from . import trajectories
 from .datanode import DataNode
 from .dimensions import Dimension, Dimensions
 from .group import Group
@@ -59,6 +60,7 @@ __all__ = [
     "DimensionsConfig",
     "AnimationConfig",
     "Waypoint",
+    "trajectories",
     # Transform functions
     "compose",
     "from_list",
