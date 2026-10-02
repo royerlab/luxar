@@ -138,7 +138,6 @@ import {
 import { disposeWorkerPool } from '../../workers/worker-pool';
 import type { DatasetFaultPayload } from '../app/embedder/events';
 import { applyModuleOverrides } from '../app/init/module-overrides';
-import { isOrthographicCamera, type LuxarCamera } from '../../utils/camera-utils';
 import { getInputProfile } from '../../utils/input-capabilities';
 import { config } from '../../config';
 import { isLuxarMaterial } from '../../ui/layers/luxar-material';
@@ -434,11 +433,11 @@ export class LuxarLayer {
   }
 
   /**
-   * Push the host's drawing-buffer size, pixel ratio and projection kind
-   * (orthographic or not) into the material manager. Call after a viewport
-   * resize, a DPR change, or a swap between a perspective and an orthographic
-   * camera. An FOV / ortho-zoom change needs no call: every shader reads its
-   * projection terms from the camera's projection matrix per draw, which also
+   * Push the host's drawing-buffer size and pixel ratio into the material
+   * manager. Call after a viewport resize or a DPR change. An FOV / ortho-zoom
+   * change or a perspective/orthographic swap needs no call: every shader reads
+   * its projection terms — the ortho test included — from the camera's
+   * projection matrix per draw, which also
    * makes a camera that is neither perspective nor orthographic (a plain
    * `THREE.Camera` with its own matrix) render at the right size.
    *
@@ -452,23 +451,15 @@ export class LuxarLayer {
    */
   resize(): void {
     if (this.disposed) return;
-    // The public option is the broad `THREE.Camera` so any host camera is
-    // accepted; the ortho test wants the narrower perspective/ortho union, and
-    // a camera that is neither is treated as perspective (its fragment-stage
-    // near fade; its sizes come from its own projection matrix).
-    const camera = this.options.getCamera() as LuxarCamera;
+    // Any host camera works: every projection term — the ortho test
+    // included — is read in shader from the camera's own projection matrix.
     this.options.renderer.getDrawingBufferSize(this.bufferSize);
     const viewportHeight = this.options.getViewportSize().height;
     const pixelRatio =
       viewportHeight > 0
         ? this.bufferSize.y / viewportHeight
         : this.options.renderer.getPixelRatio();
-    materialManager.updateCameraParams(
-      this.bufferSize,
-      isOrthographicCamera(camera),
-      undefined,
-      pixelRatio
-    );
+    materialManager.updateCameraParams(this.bufferSize, undefined, pixelRatio);
   }
 
   /** Dimension metadata for the loaded scene (cloned), or null if none. */

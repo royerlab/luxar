@@ -187,12 +187,7 @@ export class PointPickingTSLMaterial
     this.uniforms.uSurfaceDepth.value = on ? 1 : 0;
   }
 
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     if (nearCull !== undefined) this.uniforms.uNearCull.value = nearCull;
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
     this.uniforms.uPixelRatio.value = pixelRatio;

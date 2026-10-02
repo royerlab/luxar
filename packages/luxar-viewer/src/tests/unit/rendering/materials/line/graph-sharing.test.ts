@@ -28,7 +28,7 @@ describeGraphSharing('LineTSLMaterial', {
 describeGraphSharing('LineTSLMaterial (ortho camera)', {
   make: (config = {}) => {
     const m = new LineTSLMaterial(config);
-    m.updateCameraParams(new THREE.Vector2(800, 600), true);
+    m.updateCameraParams(new THREE.Vector2(800, 600));
     return m;
   },
   valueConfigs: [{ opacity: 0.3 }, { opacity: 0.7 }],

@@ -15,7 +15,7 @@ describe('LineTSLMaterial clone', () => {
     // cameraProjectionMatrix, so the former uIsOrtho flag and perspective /
     // ortho line-scale uniforms are gone.
     const material = new LineTSLMaterial();
-    material.updateCameraParams(new THREE.Vector2(800, 600), true, 0.25, 2);
+    material.updateCameraParams(new THREE.Vector2(800, 600), 0.25, 2);
     expect(material.uniforms.uIsOrtho).toBeUndefined();
     expect(material.uniforms.uNearCull.value).toBe(0.25);
     expect(material.uniforms.uPixelRatio.value).toBe(2);

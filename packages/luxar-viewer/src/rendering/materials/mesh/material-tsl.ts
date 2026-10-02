@@ -307,17 +307,12 @@ export class MeshTSLMaterial
   }
 
   /**
-   * @see MeshMaterial.updateCameraParams — `_resolution` / `_isOrtho` are accepted
-   * and ignored (a mesh has no screen-space size, and the near fade's ortho test
-   * reads `cameraProjectionMatrix`); only `nearCull` is consumed. It is a plain
+   * @see MeshMaterial.updateCameraParams — `_resolution` is accepted and ignored
+   * (a mesh has no screen-space size; the near fade's ortho test reads
+   * `cameraProjectionMatrix`); only `nearCull` is consumed. It is a plain
    * runtime uniform, so this never rebuilds the graph.
    */
-  updateCameraParams(
-    _resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    _pixelRatio?: number
-  ): void {
+  updateCameraParams(_resolution: THREE.Vector2, nearCull?: number, _pixelRatio?: number): void {
     if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;
     }

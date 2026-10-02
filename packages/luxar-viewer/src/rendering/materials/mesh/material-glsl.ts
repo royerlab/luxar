@@ -268,19 +268,14 @@ export class MeshMaterial
   /**
    * Update the camera-dependent uniforms.
    *
-   * `_resolution` and `_isOrtho` are accepted and IGNORED: the resolution exists so
-   * a material can size a screen-space sprite, and a mesh's size is its own
-   * geometry; the near fade's ortho test reads the projection matrix of the draw
+   * `_resolution` is accepted and IGNORED: it exists so a material can size a
+   * screen-space sprite, and a mesh's size is its own geometry; the near fade's
+   * ortho test reads the projection matrix of the draw
    * (`luxarIsOrthoProjection()`). Only `nearCull` is consumed. Named with a leading
    * underscore so the asymmetry is visible at the signature rather than buried in
    * the body.
    */
-  updateCameraParams(
-    _resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    _pixelRatio?: number
-  ): void {
+  updateCameraParams(_resolution: THREE.Vector2, nearCull?: number, _pixelRatio?: number): void {
     if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;
     }

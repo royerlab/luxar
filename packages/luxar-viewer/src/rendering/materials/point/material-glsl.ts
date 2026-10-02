@@ -235,14 +235,9 @@ export class PointMaterial
   /**
    * Update the viewport-dependent uniforms for world-space point sizing.
    * The projection terms (size scale, ortho test) are read in shader from
-   * the projection matrix, so `_isOrtho` is accepted and ignored.
+   * the projection matrix, so none is pushed.
    */
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     if (nearCull !== undefined) this.uniforms.uNearCull.value = nearCull;
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
     this.uniforms.uPixelRatio.value = pixelRatio;

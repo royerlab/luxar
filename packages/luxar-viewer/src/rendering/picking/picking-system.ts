@@ -52,8 +52,6 @@ import { applyLensDistortion } from './picking-system/lens-distortion';
 import { syncPickFromVisual } from './picking-system/visibility-sync';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import { readPixelsCompactAsync } from '../post-processing/hdr/pixel-utils';
-import { isOrthographicCamera } from '../../utils/camera-utils';
-import type { LuxarCamera } from '../../utils/camera-utils';
 import { log, Modules } from '../../utils/log';
 import { clamp } from '../../utils/clamp';
 
@@ -827,8 +825,6 @@ export class PickingSystem {
     pickRes.set(this.pickTarget.width, this.pickTarget.height);
     const cssHeight = renderer.domElement.clientHeight;
     const pixelRatio = cssHeight > 0 ? pickRes.y / cssHeight : (renderer.getPixelRatio?.() ?? 1);
-    const cam = this.camera as LuxarCamera;
-    const isOrtho = isOrthographicCamera(cam);
 
     this._lastVisibleSig = this.computeVisibleSig();
 
@@ -855,7 +851,7 @@ export class PickingSystem {
       // Update pick material camera params to match half-res pick buffer
       const mat = (entry.pick as THREE.Mesh).material;
       if (isCameraAwareMaterial(mat)) {
-        mat.updateCameraParams(pickRes, isOrtho, undefined, pixelRatio);
+        mat.updateCameraParams(pickRes, undefined, pixelRatio);
       }
       // Everything else the pick pass must know about the node — the
       // visibility inputs only the visual material is written with (density

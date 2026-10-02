@@ -308,16 +308,11 @@ export class GSplatMaterial
   /**
    * Update the viewport-dependent uniforms. The projection terms (screen
    * centre, covariance Jacobian, ortho test) are read in shader from the
-   * projection matrix, so `_isOrtho` is accepted and ignored.
+   * projection matrix, so none is pushed.
    *
    * @param resolution - Viewport resolution
    */
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     this.uniforms.uResolution.value.copy(resolution);
     this.uniforms.uPixelRatio.value = pixelRatio;
 

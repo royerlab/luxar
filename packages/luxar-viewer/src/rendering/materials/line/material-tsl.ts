@@ -394,16 +394,10 @@ export class LineTSLMaterial
    * Camera-dependent uniforms. The pixel-width scale AND the ortho branch are
    * read in the graph from the projection matrix of the draw
    * (`projectionSizeScaleTSL()` / `isOrthoProjectionTSL()`, the GLSL twin's
-   * `luxarLineScale` / `luxarLineIsOrtho`), so `_isOrtho` is accepted for the
-   * `CameraAwareMaterial` contract and ignored — a camera-kind flip selects
-   * no graph and rebuilds nothing.
+   * `luxarLineScale` / `luxarLineIsOrtho`), so neither is pushed — a camera-kind
+   * flip selects no graph and rebuilds nothing.
    */
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
     // Accept ANY defined value, including 0 — matching the point/gsplat
     // wrappers (the shader floors at 1e-20). The old `> 0` gate silently

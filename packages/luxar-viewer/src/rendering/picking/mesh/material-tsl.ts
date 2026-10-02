@@ -4,7 +4,7 @@
  * Mirrors the GLSL wrapper one-for-one — same constructor signature, same
  * `setPickMode` / `setPickSide` / `updateOpacityUniform` / `updateAlphaCutoff`
  * surface, same `MeshPickAwareMaterial` contract, and the same half-consumed
- * `CameraAwareMaterial` one (resolution/isOrtho ignored, the near-fade start
+ * `CameraAwareMaterial` one (resolution ignored, the near-fade start
  * taken).
  *
  * **Uniform plumbing.** This class owns one `UniformNode` per shader input. The
@@ -136,16 +136,11 @@ export class MeshPickingTSLMaterial
   }
 
   /**
-   * @see MeshPickingMaterial.updateCameraParams — `_resolution` / `_isOrtho`
-   * ignored, `nearCull` consumed. It is a runtime uniform, so there is nothing
+   * @see MeshPickingMaterial.updateCameraParams — `_resolution` ignored,
+   * `nearCull` consumed. It is a runtime uniform, so there is nothing
    * to rebuild (this wrapper has no rebuild path at all).
    */
-  updateCameraParams(
-    _resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    _pixelRatio?: number
-  ): void {
+  updateCameraParams(_resolution: THREE.Vector2, nearCull?: number, _pixelRatio?: number): void {
     if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;
     }

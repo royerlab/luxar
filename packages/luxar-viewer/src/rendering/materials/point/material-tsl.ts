@@ -356,14 +356,9 @@ export class PointTSLMaterial
    * `this.uniforms.X.value`; the writes land directly on the
    * wrapper-owned TSL uniform nodes via the `proxyIUniform` bridges.
    * The projection terms are read in the graph from
-   * `cameraProjectionMatrix`, so `_isOrtho` is accepted and ignored.
+   * `cameraProjectionMatrix`, so none is pushed.
    */
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     if (nearCull !== undefined && this.uniforms.uNearCull) {
       this.uniforms.uNearCull.value = nearCull;
     }

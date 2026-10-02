@@ -532,7 +532,7 @@ handed to the fragment stage as a flat varying), TSL as
 `isOrthoProjectionTSL()` (a bool var materialised in the vertex prologue ahead
 of every `If`; the quad fragment re-reads it for the near fade, as the mesh
 graphs do). Neither wrapper binds an ortho uniform, `updateCameraParams`
-ignores its `isOrtho` argument, and a camera-kind flip rebuilds no graph and
+takes no camera-kind argument at all, and a camera-kind flip rebuilds no graph and
 moves no material to another shared-graph key — so a draw through a different
 projection than the broadcast camera's (the scene environment capture's cube
 faces under an orthographic main camera) needs no push. The ortho/perspective
@@ -547,7 +547,7 @@ the pick pair differs only in three's own camera-class-dependent `depth` node).
 | Symbol                                        | Used for                                                                                                                                                                                        |
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `clampGamma(g)`                               | `Math.max(0.001, g ?? 1.0)` guard before `1 / gamma` (shared across all eight material constructors).                                                                                           |
-| `CameraAwareMaterial` interface               | Implemented so `MaterialManager.updateCameraParams(resolution, isOrtho, nearCull, pixelRatio)` reaches this material.                                                                           |
+| `CameraAwareMaterial` interface               | Implemented so `MaterialManager.updateCameraParams(resolution, nearCull, pixelRatio)` reaches this material.                                                                                    |
 | `ColormapAwareMaterial` interface             | Implemented so `material-colormap-helpers.ts` sets the LUT texture and scalar range through setters.                                                                                            |
 | `GLSL_SANITIZE_FUNCTIONS`                     | Prepended to the GLSL vertex shader; gives `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` to clean width/sharpness/alpha inputs against NaN/Inf/out-of-range.                     |
 | `sanitizeNonNegative` / `sanitizeAlpha` (TSL) | TSL counterparts of those two GLSL sanitisers — same contract, called inline in the factory. `sanitizePositive` has no TSL twin: no TSL shader calls it.                                        |

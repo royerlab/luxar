@@ -979,8 +979,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * so point and line footprints render at the right size in the six faces, and
    * restores the main camera's push afterwards through the ordinary path. The 90°
    * projection itself — its ortho test included — is read in shader from the cube
-   * camera's matrix by every material, so the camera KIND needs no push: the `false`
-   * below is the `CameraAwareMaterial` argument no material consumes, and an
+   * camera's matrix by every material, so the camera KIND needs no push and an
    * orthographic main camera swaps no graph or program across a capture.
    */
   attachEnvironmentRuntime(isSettled: () => boolean): void {
@@ -989,12 +988,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.environment?.attachRuntime({
       sceneRoot: root,
       pushCaptureCameraParams: (resolution) => {
-        materialManager.updateCameraParams(
-          new THREE.Vector2(resolution, resolution),
-          false,
-          undefined,
-          1
-        );
+        materialManager.updateCameraParams(new THREE.Vector2(resolution, resolution), undefined, 1);
       },
       restoreCameraParams: () => this.updateMaterialsForCurrentCamera(),
       isSettled,

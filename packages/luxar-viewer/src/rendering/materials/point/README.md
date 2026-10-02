@@ -126,7 +126,7 @@ only the viewport-derived ones.
   (mesh joined with #1431; it evaluates the same helper per FRAGMENT, since a
   triangle spans depth — see the stage table in `../_shared/README.md`).
 
-`MaterialManager.updateCameraParams(resolution, isOrtho, nearCull, pixelRatio)`
+`MaterialManager.updateCameraParams(resolution, nearCull, pixelRatio)`
 broadcasts to every registered material via the `CameraAwareMaterial`
 interface, so a single resize call updates every Point material in the scene.
 

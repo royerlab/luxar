@@ -279,12 +279,7 @@ describe('LuxarLayer', () => {
 
     it('seeds camera params from the host camera', () => {
       new LuxarLayer(makeOptions());
-      expect(updateCameraParams).toHaveBeenCalledWith(
-        expect.any(THREE.Vector2),
-        false,
-        undefined,
-        2
-      );
+      expect(updateCameraParams).toHaveBeenCalledWith(expect.any(THREE.Vector2), undefined, 2);
     });
 
     it('forwards wasm/worker path overrides', () => {
@@ -1140,11 +1135,11 @@ describe('LuxarLayer', () => {
 
       expect(updateCameraParams).toHaveBeenCalledWith(
         expect.objectContaining({ x: 1600, y: 1200 }),
-        true,
         undefined,
         2
       );
-      expect(updateCameraParams.mock.calls[0]).toHaveLength(4);
+      // No camera kind: the ortho test is read in shader from the matrix.
+      expect(updateCameraParams.mock.calls[0]).toHaveLength(3);
     });
 
     it('pushes only finite state for a camera that is neither perspective nor ortho', () => {
@@ -1163,15 +1158,13 @@ describe('LuxarLayer', () => {
       layer.resize();
 
       expect(updateCameraParams).toHaveBeenCalledTimes(1);
-      const [resolution, isOrtho, nearCull, pixelRatio] = updateCameraParams.mock.calls[0] as [
+      const [resolution, nearCull, pixelRatio] = updateCameraParams.mock.calls[0] as [
         THREE.Vector2,
-        boolean,
         number | undefined,
         number,
       ];
       expect(Number.isFinite(resolution.x) && Number.isFinite(resolution.y)).toBe(true);
       expect(resolution.y).toBeGreaterThan(0);
-      expect(isOrtho).toBe(false);
       expect(Number.isFinite(pixelRatio)).toBe(true);
 
       const materials = [
@@ -1182,7 +1175,7 @@ describe('LuxarLayer', () => {
         new MeshMaterial(),
       ];
       for (const material of materials) {
-        material.updateCameraParams(resolution, isOrtho, nearCull, pixelRatio);
+        material.updateCameraParams(resolution, nearCull, pixelRatio);
         for (const [name, u] of Object.entries(material.uniforms)) {
           const v: unknown = u.value;
           const values =
@@ -1216,12 +1209,7 @@ describe('LuxarLayer', () => {
 
       layer.resize();
 
-      expect(updateCameraParams).toHaveBeenCalledWith(
-        expect.any(THREE.Vector2),
-        false,
-        undefined,
-        3
-      );
+      expect(updateCameraParams).toHaveBeenCalledWith(expect.any(THREE.Vector2), undefined, 3);
     });
 
     it('is a no-op after dispose', async () => {

@@ -229,12 +229,7 @@ export class GSplatPickingTSLMaterial
     return cloned as this;
   }
 
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
     this.uniforms.uPixelRatio.value = pixelRatio;
 

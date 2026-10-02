@@ -214,15 +214,9 @@ export class LinePickingTSLMaterial
   /**
    * Camera-dependent uniforms. The ortho branch is read in the graph from the
    * projection matrix of the draw (`isOrthoProjectionTSL()`, the GLSL twin's
-   * `luxarLineIsOrtho`), so `_isOrtho` is accepted for the
-   * `CameraAwareMaterial` contract and ignored.
+   * `luxarLineIsOrtho`), so none is pushed.
    */
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
     // Accept ANY defined value, including 0 — matching the point/gsplat
     // wrappers (the shader floors at 1e-20). The old `> 0` gate silently

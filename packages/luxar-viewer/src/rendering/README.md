@@ -340,7 +340,7 @@ See `materials/mesh/README.md` and `docs/specs/MESH_NODE_SPEC.md` §6.2.
   texture, no `texelFetch` prologue, no `aSortedIndex` indirection and no buffer pool.
   Per-vertex data arrives in ordinary vertex attributes.
 - **Camera-aware for half the contract.** A mesh has no screen-space footprint to
-  size, so `resolution` / `isOrtho` are ignored (the fade's ortho test reads the
+  size, so `resolution` is ignored (the fade's ortho test reads the
   projection matrix, `luxarIsOrthoProjection()`) — but `uNearCull` is bound and broadcast, because the shared `perspectiveNearFade` applies to a surface as
   much as to a sprite. Mesh evaluates it PER FRAGMENT (a triangle spans depth) with a
   per-fragment reject below 0.01; see the stage table in
@@ -403,9 +403,10 @@ const lineMaterial = materialManager.getLineMaterial({
   offset: 0.0,
 });
 
-// Update global parameters (updates every camera-aware material). No FOV: every
-// shader reads its projection terms from the projection matrix per draw.
-materialManager.updateCameraParams(resolution, isOrtho, nearCull, pixelRatio);
+// Update global parameters (updates every camera-aware material). No FOV or
+// camera kind: every shader reads its projection terms (the ortho test
+// included) from the projection matrix per draw.
+materialManager.updateCameraParams(resolution, nearCull, pixelRatio);
 ```
 
 #### Material Lifecycle and Memory Management
@@ -422,11 +423,11 @@ points.geometry.dispose(); // Frees GPU buffers
 // Material manager keeps material alive if other objects use it
 ```
 
-**Global Updates**: When the viewport, projection kind, near cull or pixel ratio changes, MaterialManager automatically updates ALL registered materials - no manual scene traversal needed. Global exposure/offset/gamma are handled inside the mega-shader post-processing pass, not per-material.
+**Global Updates**: When the viewport, near cull or pixel ratio changes (the projection, its ortho/perspective kind included, is read in shader), MaterialManager automatically updates ALL registered materials - no manual scene traversal needed. Global exposure/offset/gamma are handled inside the mega-shader post-processing pass, not per-material.
 
 ```typescript
 // Updates all materials in the scene automatically
-materialManager.updateCameraParams(newResolution, isOrtho, nearCull, pixelRatio);
+materialManager.updateCameraParams(newResolution, nearCull, pixelRatio);
 ```
 
 **Memory Leak Prevention**: Always dispose geometries and points when done. The material system handles cleanup automatically.

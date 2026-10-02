@@ -308,7 +308,7 @@ describe('LineMaterial', () => {
       const material = new LineMaterial({ primitive: 'screen-space' });
       const resolution = new THREE.Vector2(1920, 1080);
 
-      material.updateCameraParams(resolution, true, undefined, 2);
+      material.updateCameraParams(resolution, undefined, 2);
 
       expect(material.uniforms.uResolution.value.x).toBe(1920);
       expect(material.uniforms.uResolution.value.y).toBe(1080);
@@ -371,12 +371,12 @@ describe('LineMaterial', () => {
       // only), so writing 0 is safe and symmetric with the point/gsplat
       // wrappers.
       const material = new LineMaterial({ primitive: 'screen-space' });
-      material.updateCameraParams(new THREE.Vector2(100, 100), false, 5.0);
+      material.updateCameraParams(new THREE.Vector2(100, 100), 5.0);
       expect(material.uniforms.uNearCull.value).toBe(5.0);
-      material.updateCameraParams(new THREE.Vector2(100, 100), false, 0);
+      material.updateCameraParams(new THREE.Vector2(100, 100), 0);
       expect(material.uniforms.uNearCull.value).toBe(0);
       // undefined = keep (the deliberate sentinel)
-      material.updateCameraParams(new THREE.Vector2(100, 100), false);
+      material.updateCameraParams(new THREE.Vector2(100, 100));
       expect(material.uniforms.uNearCull.value).toBe(0);
     });
   });

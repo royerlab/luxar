@@ -76,13 +76,13 @@ describe.each(BACKENDS)('MeshPickingMaterial [%s] — construction', (_name, mak
 
   it('writes the near-cull uniform from updateCameraParams', () => {
     const m = build();
-    m.updateCameraParams(new THREE.Vector2(800, 600), true, 0.42);
+    m.updateCameraParams(new THREE.Vector2(800, 600), 0.42);
     expect(m.uniforms.uIsOrtho).toBeUndefined();
     expect(m.uniforms.uNearCull.value).toBe(0.42);
     // An omitted nearCull must LEAVE the last one standing rather than resetting to
     // the default — the sibling materials all treat it as optional this way, and a
     // reset would fade a mid-session ortho toggle against the wrong plane.
-    m.updateCameraParams(new THREE.Vector2(800, 600), false);
+    m.updateCameraParams(new THREE.Vector2(800, 600));
     expect(m.uniforms.uNearCull.value).toBe(0.42);
   });
 
@@ -165,7 +165,7 @@ describe.each(BACKENDS)('MeshPickingMaterial [%s] — clone', (_name, make) => {
     const m = build({ opacity: 0.8, alphaCutoff: 0.25 });
     m.setPickMode('additive');
     m.setPickSide(THREE.DoubleSide);
-    m.updateCameraParams(new THREE.Vector2(800, 600), true, 0.42);
+    m.updateCameraParams(new THREE.Vector2(800, 600), 0.42);
 
     const c = m.clone();
     expect(c).not.toBe(m);

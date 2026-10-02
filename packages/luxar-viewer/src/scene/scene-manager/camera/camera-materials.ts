@@ -4,11 +4,10 @@
  * Two helpers:
  *
  *   - `updateMaterialsForCurrentCamera` — push the drawing-buffer
- *     size, projection kind (orthographic or not), near-cull margin
- *     and pixel ratio into the global materialManager. The
- *     projection terms themselves (FOV, ortho zoom) are read in
- *     shader from the projection matrix. Called on resize, camera
- *     swap, and FOV change.
+ *     size, near-cull margin and pixel ratio into the global
+ *     materialManager. The projection itself (FOV, ortho zoom,
+ *     ortho/perspective kind) is read in shader from the projection
+ *     matrix. Called on resize, camera swap, and FOV change.
  *
  *   - `adjustFOV` — mutate `camera.fov` with clamping, refresh the
  *     projection matrix, and push the new value into materials.
@@ -24,11 +23,7 @@ import * as THREE from 'three';
 import { config } from '../../../config';
 import { materialManager } from '../../../rendering/material-manager';
 import type { Renderer } from '../../../rendering/renderer-capabilities';
-import {
-  type LuxarCamera,
-  isOrthographicCamera,
-  isPerspectiveCamera,
-} from '../../../utils/camera-utils';
+import { type LuxarCamera, isPerspectiveCamera } from '../../../utils/camera-utils';
 import { validateFOV } from '../clipping/bounds-math';
 import type { SceneBoundsCache } from '../clipping/scene-bounds-cache';
 
@@ -58,9 +53,9 @@ export interface CameraMaterialsCtx {
 
 /**
  * Push the current camera state into the global material manager:
- * drawing-buffer size, orthographic flag, near-cull margin, pixel ratio.
- * No FOV / frustum height: every shader derives its projection terms
- * from the projection matrix three binds per draw.
+ * drawing-buffer size, near-cull margin, pixel ratio. No FOV, frustum
+ * height or camera kind: every shader derives its projection terms — the
+ * ortho test included — from the projection matrix three binds per draw.
  *
  * Always ensures the bounds cache is populated (so the materials
  * see a consistent near-cull margin) and uses the supplied
@@ -73,12 +68,7 @@ export function updateMaterialsForCurrentCamera(ctx: CameraMaterialsCtx): void {
   const cssHeight = ctx.renderer.domElement.clientHeight;
   const pixelRatio = cssHeight > 0 ? ctx.bufferSize.y / cssHeight : ctx.renderer.getPixelRatio();
 
-  materialManager.updateCameraParams(
-    ctx.bufferSize,
-    isOrthographicCamera(ctx.camera),
-    nearCull,
-    pixelRatio
-  );
+  materialManager.updateCameraParams(ctx.bufferSize, nearCull, pixelRatio);
 }
 
 /**

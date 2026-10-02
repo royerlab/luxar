@@ -97,16 +97,16 @@ describe.each(ALL_WRAPPERS)('mesh material [%s] — the camera contract', (_labe
     expect(m.uniforms.uIsOrtho).toBeUndefined();
   });
 
-  it('writes the near-cull uniform, and ignores resolution / isOrtho', () => {
+  it('writes the near-cull uniform, and ignores resolution', () => {
     const m = make() as unknown as {
       uniforms: Record<string, THREE.IUniform>;
-      updateCameraParams: (res: THREE.Vector2, isOrtho?: boolean, nearCull?: number) => void;
+      updateCameraParams: (res: THREE.Vector2, nearCull?: number) => void;
     };
-    m.updateCameraParams(new THREE.Vector2(1234, 777), true, 0.42);
+    m.updateCameraParams(new THREE.Vector2(1234, 777), 0.42);
     expect(m.uniforms.uNearCull.value).toBe(0.42);
     // A mesh has no screen-space size to recompute and reads its ortho test in
-    // shader, so the first two arguments are accepted and dropped — nothing may
-    // appear for them.
+    // shader, so the resolution is accepted and dropped and no ortho uniform
+    // exists — nothing may appear for either.
     expect(m.uniforms.uResolution).toBeUndefined();
     expect(m.uniforms.uIsOrtho).toBeUndefined();
   });
@@ -117,10 +117,10 @@ describe.each(ALL_WRAPPERS)('mesh material [%s] — the camera contract', (_labe
     // value back to the 0.1 default and fade against the wrong plane.
     const m = make() as unknown as {
       uniforms: Record<string, THREE.IUniform>;
-      updateCameraParams: (res: THREE.Vector2, isOrtho?: boolean, nearCull?: number) => void;
+      updateCameraParams: (res: THREE.Vector2, nearCull?: number) => void;
     };
-    m.updateCameraParams(new THREE.Vector2(800, 600), false, 7.5);
-    m.updateCameraParams(new THREE.Vector2(800, 600), true);
+    m.updateCameraParams(new THREE.Vector2(800, 600), 7.5);
+    m.updateCameraParams(new THREE.Vector2(800, 600));
     expect(m.uniforms.uNearCull.value).toBe(7.5);
   });
 });
@@ -131,7 +131,7 @@ describe.each(VISUAL_BACKENDS)('MeshMaterial [%s] — clone carries the camera s
     // alone would come back at 0.1 and fade against a near plane the scene never
     // had.
     const m = make();
-    m.updateCameraParams(new THREE.Vector2(800, 600), true, 0.42);
+    m.updateCameraParams(new THREE.Vector2(800, 600), 0.42);
     const c = m.clone();
     expect(c).not.toBe(m);
     expect(c.uniforms.uNearCull.value).toBeCloseTo(0.42);

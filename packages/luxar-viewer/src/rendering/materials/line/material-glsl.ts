@@ -282,12 +282,7 @@ export class LineMaterial
    *
    * @param resolution - Viewport resolution
    */
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     this.uniforms.uResolution.value.copy(resolution);
     // Apply the near-plane safety distance when provided.
     // Accept ANY defined value, including 0 — matching the point/gsplat
