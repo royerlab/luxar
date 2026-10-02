@@ -556,6 +556,24 @@ describe('the refraction split — one refraction from inside a double-sided gla
     for (const call of rig.calls) expect(call.glassSides).toEqual([THREE.DoubleSide]);
   });
 
+  it('WebGL keeps an open glass sheet double-sided when its ray crosses the sheet', () => {
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera();
+    camera.position.z = -0.5;
+    camera.updateMatrixWorld(true);
+    const glass = new THREE.Mesh(
+      new THREE.PlaneGeometry(4, 4),
+      new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
+    );
+    glass.rotation.y = Math.PI;
+    glass.updateMatrixWorld(true);
+    scene.add(glass);
+    const rig = makeRig(scene, { glass: [glass] });
+    const { ctx } = makeCtx(rig.renderer, scene, camera, rig.split());
+    renderSceneToHdr(ctx);
+    for (const call of rig.calls) expect(call.glassSides).toEqual([THREE.DoubleSide]);
+  });
+
   it('WebGPU, camera inside: untouched — its back faces sample the live framebuffer', () => {
     const { rig } = frame([0.3, -0.2, 0.5], true);
     for (const call of rig.calls) expect(call.glassSides).toEqual([THREE.DoubleSide]);
