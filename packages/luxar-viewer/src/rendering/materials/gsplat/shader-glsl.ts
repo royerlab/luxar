@@ -1,9 +1,10 @@
 /**
- * Shared vertex shader for Gaussian splat rendering.
+ * GLSL3 vertex + fragment shaders for Gaussian splat rendering (GSplatMaterial).
  *
- * Used by both GSplatMaterial (main rendering) and GSplatPickingMaterial (GPU picking).
  * Contains 3D-to-2D covariance projection, perspective Jacobian, amplitude calculation,
- * oriented quad expansion, near-plane fade, and screen-coverage safety.
+ * oriented quad expansion, near-plane fade, and screen-coverage safety. The GPU pick
+ * pass has its own shader pair (picking/gsplat/shaders.ts) that shares the
+ * visible-footprint helpers (GLSL_GSPLAT_VISIBLE_FOOTPRINT, ./math.ts) with this one.
  */
 import {
   GLSL_SANITIZE_FUNCTIONS,
@@ -497,7 +498,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
  *
  * Uses the 2D Cholesky factor passed from vertex shader to compute
  * Mahalanobis distance, then applies shifted Gaussian falloff.
- * The picking system uses a different fragment shader (see picking/gsplat-picking-material.ts).
+ * The picking system uses a different fragment shader (see picking/gsplat/shaders.ts).
  */
 export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;

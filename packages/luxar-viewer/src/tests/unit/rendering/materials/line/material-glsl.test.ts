@@ -312,8 +312,9 @@ describe('LineMaterial', () => {
 
       expect(material.uniforms.uResolution.value.x).toBe(1920);
       expect(material.uniforms.uResolution.value.y).toBe(1080);
-      // uIsOrtho stays a pushed uniform: the vertex AND fragment stages branch on it.
-      expect(material.uniforms.uIsOrtho.value).toBe(1);
+      // The ortho branch is read from the projection matrix in shader; no
+      // pushed flag exists to go stale.
+      expect(material.uniforms.uIsOrtho).toBeUndefined();
       expect(material.uniforms.uPixelRatio.value).toBe(2);
       expect(material.uniforms.uMaxLinePixelWidth.value).toBe(540);
     });

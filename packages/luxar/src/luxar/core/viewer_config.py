@@ -22,6 +22,13 @@ from urllib.parse import urlsplit
 
 from ..typing_utils._format_contract import TONE_MAPPINGS
 from ..validation.overlays import validate_visible_range
+from .trajectories import (
+    TRAJECTORY_NAMES,
+    Trajectory,
+    trajectory_from_json,
+    trajectory_to_json,
+    validate_trajectory,
+)
 
 # Tone-mapping operator names: single-sourced from
 # `format-contract/contract.yaml::tone_mappings` (the viewer's
@@ -443,7 +450,8 @@ class AnimationConfig:
         )
 
 
-VALID_WAYPOINT_EASINGS = ("linear", "ease-in-out")
+VALID_WAYPOINT_EASINGS = ("linear", "ease-in-out", "smooth", "cruise")
+VALID_WAYPOINT_TRAJECTORIES = TRAJECTORY_NAMES
 VALID_WAYPOINT_REVEALS = ("immediate", "on_arrival")
 
 # A `when` clause: dimension NAME -> exact value, or an inclusive (min, max)
@@ -479,7 +487,26 @@ class Waypoint:
             ``target_node``) to re-aim without moving.
         duration_ms: Flight duration in milliseconds; ``None`` uses the viewer
             default (1500). ``0`` snaps.
-        easing: ``"ease-in-out"`` (default) or ``"linear"``.
+        easing: ``"ease-in-out"`` (default, smoothstep), ``"smooth"``
+            (smootherstep: also starts and lands with zero ACCELERATION, so a
+            flight has no kick at departure or arrival), ``"cruise"`` (smooth
+            ramps over the first and last fifth, a constant speed between:
+            paced travel, the camera visibly moving for nearly all of the
+            flight) or ``"linear"``.
+        trajectory: The path between poses: a trajectory object from
+            :mod:`luxar.core.trajectories` (``Orbit``, ``ZoomPan(rho=...)``,
+            ``Arc(lift=...)``, ``Straight``, ``Swing(pivot=...)``,
+            ``FlyThrough(look_ahead=..., turn=...)``, ``Via(camera=...)``) or the
+            name of one for its defaults (``"zoom-pan"``). ``None`` is
+            ``"orbit"``. See that module for what each does and when to use it.
+        speed: Pace the flight instead of timing it: it lasts its path's
+            perceived length divided by ``speed`` (units per second). The length
+            counts panning in view heights, zooming in log scale and turning in
+            radians, so travel time follows the distance the viewer perceives,
+            zoom included, for every trajectory. Takes precedence over
+            ``duration_ms``.
+        duration_range_ms: ``(min, max)`` bounds on a paced flight's duration;
+            the viewer default (1500, 8000) when ``None``.
         rendering: Optional rendering overrides applied on arrival, using the
             same snake_case keys as ``ViewerConfig`` itself (``exposure``,
             ``bloom_strength``, ``tone_mapping``, ...). Validated against that
@@ -503,6 +530,9 @@ class Waypoint:
     easing: Optional[str] = None
     rendering: Optional[Dict[str, Any]] = None
     reveal: Optional[str] = None
+    trajectory: Optional[Union[str, Trajectory]] = None
+    speed: Optional[float] = None
+    duration_range_ms: Optional[Tuple[float, float]] = None
 
     def __post_init__(self) -> None:
         self._validate_when()
@@ -524,6 +554,8 @@ class Waypoint:
                 f"easing must be one of {VALID_WAYPOINT_EASINGS}, got '{self.easing}'"
             )
 
+        self._validate_flight()
+
         if self.reveal is not None and self.reveal not in VALID_WAYPOINT_REVEALS:
             raise ValueError(
                 f"reveal must be one of {VALID_WAYPOINT_REVEALS}, got '{self.reveal}'"
@@ -540,6 +572,28 @@ class Waypoint:
                     f"rendering has unknown keys {unknown}; use ViewerConfig field "
                     "names such as 'exposure' or 'bloom_strength'"
                 )
+
+    def _validate_flight(self) -> None:
+        """Validate the path and pacing of the flight into this waypoint."""
+        if self.speed is not None and not (
+            math.isfinite(self.speed) and self.speed > 0
+        ):
+            raise ValueError(f"speed must be finite and > 0, got {self.speed}")
+
+        if self.duration_range_ms is not None:
+            rng = tuple(self.duration_range_ms)
+            if not (
+                len(rng) == 2
+                and all(math.isfinite(v) and v >= 0 for v in rng)
+                and rng[0] <= rng[1]
+            ):
+                raise ValueError(
+                    "duration_range_ms must be (min, max) with 0 <= min <= max, "
+                    f"got {self.duration_range_ms}"
+                )
+
+        if self.trajectory is not None:
+            validate_trajectory(self.trajectory)
 
     def _validate_when(self) -> None:
         if not isinstance(self.when, dict) or not self.when:
@@ -588,6 +642,12 @@ class Waypoint:
             result["rendering"] = dict(self.rendering)
         if self.reveal is not None:
             result["reveal"] = self.reveal
+        if self.trajectory is not None:
+            result["trajectory"] = trajectory_to_json(self.trajectory)
+        if self.speed is not None:
+            result["speed"] = self.speed
+        if self.duration_range_ms is not None:
+            result["duration_range_ms"] = list(self.duration_range_ms)
         return result
 
     @classmethod
@@ -605,6 +665,13 @@ class Waypoint:
             easing=data.get("easing"),
             rendering=data.get("rendering"),
             reveal=data.get("reveal"),
+            trajectory=trajectory_from_json(data.get("trajectory")),
+            speed=data.get("speed"),
+            duration_range_ms=(
+                tuple(data["duration_range_ms"])
+                if data.get("duration_range_ms") is not None
+                else None
+            ),
         )
 
 

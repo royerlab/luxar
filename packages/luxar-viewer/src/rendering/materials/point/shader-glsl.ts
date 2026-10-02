@@ -221,7 +221,7 @@ export const POINT_VERTEX_SHADER = /* glsl */ `
  *
  * Computes the shifted-truncated super-Gaussian falloff, GOG color
  * adjustment, and alpha output.
- * The picking system uses a different fragment shader (see picking/point-picking-material.ts).
+ * The picking system uses a different fragment shader (see picking/point/shaders.ts).
  */
 export const POINT_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;

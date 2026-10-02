@@ -77,7 +77,8 @@ describe('MaterialManager camera params on newly created materials', () => {
     const line = mm.getLineMaterial(baseProps()) as LineMaterial;
     expect(line.uniforms.uResolution.value.x).toBe(1234);
     expect(line.uniforms.uResolution.value.y).toBe(777);
-    expect(line.uniforms.uIsOrtho.value).toBe(1);
+    // Lines read the projection kind in shader too (luxarLineIsOrtho).
+    expect(line.uniforms.uIsOrtho).toBeUndefined();
 
     const gsplat = mm.getGSplatMaterial(baseProps()) as GSplatMaterial;
     expect(gsplat.uniforms.uResolution.value.x).toBe(1234);

@@ -23,6 +23,7 @@ import {
 import { getPointTexture } from '../../../rendering/point-geometry';
 import { getLineTexture } from '../../../rendering/line-geometry';
 import { getSplatTexture } from '../../../rendering/gsplat-geometry';
+import { DepthSortCoordinator } from '../../../rendering/depth-sort-coordinator';
 
 type GeomType = 'points' | 'lines' | 'gsplats';
 
@@ -239,7 +240,7 @@ describe('GPUBufferPool self-invalidation on out-of-band dispose', () => {
     }
     expect(pool.getStats().activeBuffers).toBe(3);
 
-    const removed = clearLoadedSceneContent(scene);
+    const removed = clearLoadedSceneContent(scene, new DepthSortCoordinator());
     expect(removed).toBe(3);
 
     expect(pool.getStats().activeBuffers).toBe(0);

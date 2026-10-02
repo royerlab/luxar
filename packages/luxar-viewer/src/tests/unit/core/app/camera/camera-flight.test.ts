@@ -14,6 +14,9 @@ import {
   buildFlightPath,
   easeFlight,
   keepOrientationPose,
+  zoomPanProfile,
+  flightDurationMs,
+  CRUISE_RAMP,
   type FlightFrameDriver,
 } from '../../../../../core/app/camera/camera-flight';
 import type { CameraSnapshot } from '../../../../../core/app/snapshot/viewer-snapshot';
@@ -102,6 +105,150 @@ describe('easeFlight', () => {
     expect(easeFlight(0.75, 'ease-in-out')).toBeGreaterThan(0.75);
     expect(easeFlight(0.3, 'linear')).toBe(0.3);
   });
+
+  it('smooth (smootherstep) also starts and lands with zero acceleration', () => {
+    const h = 1e-4;
+    const accel = (t: number, e: 'ease-in-out' | 'smooth'): number =>
+      (easeFlight(t + h, e) - 2 * easeFlight(t, e) + easeFlight(t - h, e)) / (h * h);
+    // smoothstep jumps to an acceleration of 6 the instant it departs; smootherstep
+    // ramps from 0 — that jump is the "kick" a long flight shows at take-off.
+    expect(accel(h, 'ease-in-out')).toBeCloseTo(6, 1);
+    expect(Math.abs(accel(h, 'smooth'))).toBeLessThan(0.01);
+    expect(Math.abs(accel(1 - h, 'smooth'))).toBeLessThan(0.01);
+    expect(easeFlight(0.5, 'smooth')).toBeCloseTo(0.5);
+    for (let t = 0; t < 1; t += 0.05) {
+      expect(easeFlight(t + 0.05, 'smooth')).toBeGreaterThanOrEqual(easeFlight(t, 'smooth'));
+    }
+  });
+});
+
+describe("easeFlight('cruise') — ramp, cruise, ramp", () => {
+  const e = (t: number): number => easeFlight(t, 'cruise');
+  const v = (t: number): number => (e(t + 1e-5) - e(t - 1e-5)) / 2e-5;
+
+  it('covers 0 → 1, symmetrically and monotonically', () => {
+    expect(e(0)).toBe(0);
+    expect(e(1)).toBeCloseTo(1, 12);
+    expect(e(0.5)).toBeCloseTo(0.5, 12);
+    for (let t = 0.05; t < 1; t += 0.05) {
+      expect(e(t)).toBeCloseTo(1 - e(1 - t), 12);
+      expect(e(t)).toBeGreaterThan(e(t - 0.05));
+    }
+  });
+
+  it('holds one constant speed between the ramps — paced travel, not a jump', () => {
+    const peak = 1 / (1 - CRUISE_RAMP);
+    for (let t = CRUISE_RAMP + 0.01; t < 1 - CRUISE_RAMP - 0.01; t += 0.05) {
+      expect(v(t)).toBeCloseTo(peak, 4);
+    }
+    // smootherstep's peak speed is 1.875; the cruise peaks at only 1.25.
+    expect(peak).toBeLessThan(1.3);
+  });
+
+  it('starts and stops with zero speed and zero acceleration, continuous through the ramps', () => {
+    expect(v(1e-4)).toBeLessThan(1e-3);
+    expect(v(1 - 1e-4)).toBeLessThan(1e-3);
+    const a = (t: number): number => (v(t + 1e-4) - v(t - 1e-4)) / 2e-4;
+    expect(Math.abs(a(2e-4))).toBeLessThan(0.05);
+    // No velocity jump where a ramp meets the cruise.
+    expect(v(CRUISE_RAMP - 1e-4)).toBeCloseTo(v(CRUISE_RAMP + 1e-4), 2);
+  });
+});
+
+describe('flightDurationMs — paced by the perceived length of the path', () => {
+  const at = (target: [number, number, number], dist: number): CameraSnapshot => ({
+    position: [target[0], target[1], target[2] + dist],
+    target,
+    up: [0, 1, 0],
+    isOrtho: false,
+    fov: 63,
+    near: 0.01,
+    far: 1000,
+  });
+  const paced = { speed: 0.7, durationRangeMs: [0, 1e9] as const };
+
+  it('is proportional to the zoom-pan length: a longer jump takes longer', () => {
+    const short = buildFlightPath(at([0, 0, 0], 2), at([2, 0, 0], 2), 'zoom-pan');
+    const long = buildFlightPath(at([0, 0, 0], 2), at([40, 0, 0], 2), 'zoom-pan');
+    const tShort = flightDurationMs(short, paced);
+    const tLong = flightDurationMs(long, paced);
+    expect(tShort).toBeCloseTo(((short.length as number) / 0.7) * 1000, 6);
+    expect(tLong).toBeGreaterThan(tShort * 2);
+  });
+
+  it('is zoom-aware: the same pan costs more up close, and a pure zoom costs its log factor', () => {
+    // Pan 10 units: from 1 unit away that is many screen-widths; from 20 away, half of one.
+    const close = buildFlightPath(at([0, 0, 0], 1), at([10, 0, 0], 1), 'zoom-pan');
+    const far = buildFlightPath(at([0, 0, 0], 20), at([10, 0, 0], 20), 'zoom-pan');
+    expect(flightDurationMs(close, paced)).toBeGreaterThan(flightDurationMs(far, paced) * 3);
+    // Zooming in 10x and 100x without moving: the cost goes as log(factor).
+    const z10 = buildFlightPath(at([0, 0, 0], 10), at([0, 0, 0], 1), 'zoom-pan');
+    const z100 = buildFlightPath(at([0, 0, 0], 100), at([0, 0, 0], 1), 'zoom-pan');
+    expect(flightDurationMs(z100, paced) / flightDurationMs(z10, paced)).toBeCloseTo(2, 6);
+  });
+
+  it('clamps to the range; without a speed the fixed duration times the flight', () => {
+    const tiny = buildFlightPath(at([0, 0, 0], 2), at([0.001, 0, 0], 2), 'zoom-pan');
+    expect(flightDurationMs(tiny, { speed: 0.7, durationRangeMs: [2500, 8000] })).toBe(2500);
+    const huge = buildFlightPath(at([0, 0, 0], 0.01), at([1000, 0, 0], 0.01), 'zoom-pan');
+    expect(flightDurationMs(huge, { speed: 0.7, durationRangeMs: [2500, 8000] })).toBe(8000);
+    // Every trajectory is paced by the same measure: orbit has a length too.
+    const orbit = buildFlightPath(at([0, 0, 0], 2), at([40, 0, 0], 2), 'orbit');
+    expect(orbit.length).toBeGreaterThan(0);
+    expect(flightDurationMs(orbit, paced)).toBeCloseTo((orbit.length / 0.7) * 1000, 6);
+    // Without a speed, the fixed duration (or the default) times the flight.
+    expect(flightDurationMs(orbit, { durationMs: 4000 })).toBe(4000);
+    expect(flightDurationMs(orbit)).toBe(1500);
+  });
+});
+
+describe('zoomPanProfile (van Wijk & Nuij)', () => {
+  it('starts and ends on the two views', () => {
+    const p = zoomPanProfile(40, 2, 3);
+    expect(p.at(0).along).toBeCloseTo(0, 9);
+    expect(p.at(0).width).toBeCloseTo(2, 9);
+    expect(p.at(1).along).toBeCloseTo(1, 9);
+    expect(p.at(1).width).toBeCloseTo(3, 9);
+  });
+
+  it('pulls back on a long jump, by more the longer the jump', () => {
+    const peak = (travel: number): number => {
+      const p = zoomPanProfile(travel, 2, 2);
+      let w = 0;
+      for (let f = 0; f <= 1; f += 0.01) w = Math.max(w, p.at(f).width);
+      return w;
+    };
+    expect(peak(40)).toBeGreaterThan(10);
+    expect(peak(40)).toBeGreaterThan(peak(10));
+    // A short hop barely zooms out at all.
+    expect(peak(0.5)).toBeLessThan(2.2);
+  });
+
+  it('moves the view at an even pace: screen-space speed is constant along the path', () => {
+    // The property that makes it smooth. In view-width units the path moves at a
+    // constant rate per unit of path parameter, which is why content neither races
+    // nor crawls mid-flight. The metric is van Wijk & Nuij's, sqrt(ρ²du² + dw²/ρ²)/w.
+    const travel = 40;
+    const p = zoomPanProfile(travel, 2, 2);
+    const rho = Math.SQRT2;
+    const speeds: number[] = [];
+    for (let f = 0.02; f < 0.98; f += 0.04) {
+      const a = p.at(f);
+      const b = p.at(f + 1e-4);
+      const du = ((b.along - a.along) * travel) / a.width;
+      const dw = (b.width - a.width) / a.width;
+      speeds.push(Math.sqrt(rho * rho * du * du + (dw * dw) / (rho * rho)) / 1e-4);
+    }
+    const lo = Math.min(...speeds);
+    const hi = Math.max(...speeds);
+    expect(hi / lo).toBeLessThan(1.01);
+  });
+
+  it('degrades to a pure zoom when the target does not move', () => {
+    const p = zoomPanProfile(0, 1, 8);
+    expect(p.at(0.5).width).toBeCloseTo(Math.sqrt(8), 6);
+    expect(p.S).toBeCloseTo(Math.log(8) / Math.SQRT2, 6);
+  });
 });
 
 describe('buildFlightPath', () => {
@@ -150,6 +297,39 @@ describe('buildFlightPath', () => {
     expect(up.length()).toBeCloseTo(1, 6);
     expect(up.y).toBeCloseTo(Math.SQRT1_2, 5);
     expect(up.z).toBeCloseTo(Math.SQRT1_2, 5);
+  });
+
+  it('zoom-pan: same end poses, but pulls back mid-flight on a long jump', () => {
+    const near: CameraSnapshot = { ...from, position: [0, 0, 2], target: [0, 0, 0], fov: 60 };
+    const away: CameraSnapshot = {
+      ...from,
+      position: [40, 0, 2],
+      target: [40, 0, 0],
+      fov: 60,
+      near: 0.1,
+      far: 1000,
+    };
+    const orbit = buildFlightPath(near, away, 'orbit');
+    const zp = buildFlightPath(near, away, 'zoom-pan');
+    for (const s of [0, 1]) {
+      const a = zp.at(s);
+      const b = orbit.at(s);
+      a.position.forEach((v, i) => expect(v).toBeCloseTo(b.position[i], 6));
+      a.target.forEach((v, i) => expect(v).toBeCloseTo(b.target[i], 6));
+    }
+    const dist = (q: CameraSnapshot): number =>
+      new THREE.Vector3(...q.position).distanceTo(new THREE.Vector3(...q.target));
+    expect(dist(orbit.at(0.5))).toBeCloseTo(2, 6); // orbit stays close the whole way
+    expect(dist(zp.at(0.5))).toBeGreaterThan(8); // zoom-pan rises over the jump
+    // The planes follow the pull-back, so the data is not clipped at the top.
+    const mid = zp.at(0.5);
+    expect(mid.far / dist(mid)).toBeCloseTo(1000 / 2, 1);
+  });
+
+  it('zoom-pan falls back to orbit for an orthographic flight', () => {
+    const o0: CameraSnapshot = { ...from, isOrtho: true, fov: undefined, zoom: 1 };
+    const o1: CameraSnapshot = { ...DEST, isOrtho: true, fov: undefined, zoom: 4 };
+    expect(buildFlightPath(o0, o1, 'zoom-pan').at(0.5)).toEqual(buildFlightPath(o0, o1).at(0.5));
   });
 
   it('carries ortho zoom when both ends have one', () => {
@@ -357,6 +537,53 @@ describe('CameraFlight', () => {
     expect(camera.position.distanceTo(target)).toBeCloseTo(10, 5);
     expect(dir.z).toBeCloseTo(-1, 5); // landed where the spin had got to
     expect(camera.fov).toBe(40); // projection parameters still arrive
+  });
+
+  it('a trajectory that owns the view direction takes it over from the turntable', async () => {
+    const { flight, camera, controls } = makeFlight();
+    // swing: the direction along the way IS the trajectory, so keepOrientation
+    // must not overwrite it, and the landing is the authored pose.
+    const done = flight.flyTo(DEST, {
+      durationMs: 1000,
+      easing: 'linear',
+      keepOrientation: true,
+      trajectory: 'swing',
+    });
+    now = 2001;
+    camera.position.set(0, 50, 0); // a turntable step that a swing must ignore
+    driver.tick();
+    await expect(done).resolves.toEqual({ completed: true });
+    expect(controls.getFocusTarget().toArray()).toEqual([10, 0, 0]);
+    expect(camera.position.toArray().map((v) => +v.toFixed(6))).toEqual([20, 0, 0]);
+  });
+
+  it('a via fly-through keeps its camera path under auto-rotate', async () => {
+    const { flight, camera } = makeFlight();
+    const via: CameraSnapshot = { ...DEST, position: [10, 0, 10], target: [10, 0, 0] };
+    const trajectory = { kind: 'via' as const, via, leg: 'fly-through' as const };
+    const from: CameraSnapshot = {
+      position: [0, 0, 10],
+      target: [0, 0, 0],
+      up: [0, 1, 0],
+      isOrtho: false,
+      fov: 60,
+      near: 0.1,
+      far: 1000,
+    };
+    const expected = buildFlightPath(from, DEST, trajectory).atTime!(0.5, (s) => s);
+    const done = flight.flyTo(DEST, {
+      durationMs: 1000,
+      easing: 'linear',
+      keepOrientation: true,
+      trajectory,
+    });
+    now = 1500;
+    camera.position.set(0, 50, 0); // the turntable moves before the flight frame
+    driver.tick();
+    expect(camera.position.distanceTo(new THREE.Vector3(...expected.position))).toBeLessThan(1e-6);
+    now = 2001;
+    driver.tick();
+    await expect(done).resolves.toEqual({ completed: true });
   });
 
   it('keepOrientation with a zero duration reseats the pose immediately', async () => {

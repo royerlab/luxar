@@ -91,7 +91,8 @@ runInitPipeline(ports, partial)
 │                              (idle native-DPR restore gated on the panel
 │                              not currently recording),
 │                              setRenderSkipPredicate (loop render skipped
-│                              while panel.isLoopRenderSuppressed()) and
+│                              while panel.isLoopRenderSuppressed() or a
+│                              pixel readback is pending) and
 │                              setPacingSuspendPredicate (frame pacing off
 │                              while panel.isCurrentlyRecording())
 ├── 21. LayersPanel           factories.layersPanel(document.body, ctrl);

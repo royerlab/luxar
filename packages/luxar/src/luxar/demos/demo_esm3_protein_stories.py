@@ -146,6 +146,26 @@ from luxar.utils.paths import get_demos_output_dir
 # an audience is the wrong place to discover a hallucinated statistic.
 
 
+#: How a tour flies between stops, shared by both protein tours: paced travel, not
+#: a jump. ``zoom-pan`` is van Wijk & Nuij's path, which pulls back while it
+#: travels and dives in at the end, so a jump across the map crosses the screen at
+#: an even pace instead of racing past at close range. Its length measures pan in
+#: view heights and zoom in log scale, so ``TOUR_FLIGHT_SPEED`` times every flight
+#: by its perceived distance: on these maps the steps run from almost nothing to
+#: about 5.4 units (median 3.2-3.5), so 0.35 units a second puts the typical flight
+#: near 10 s and the longest near 15 s: a journey through the map rather than a
+#: cut between stops. ``cruise`` holds that speed for the middle
+#: three fifths of the flight, between smooth ramps.
+TOUR_FLIGHT_TRAJECTORY = "zoom-pan"
+TOUR_FLIGHT_EASING = "cruise"
+TOUR_FLIGHT_SPEED = 0.35
+TOUR_FLIGHT_DURATION_RANGE_MS = (5000.0, 16000.0)
+#: Fixed durations for readers that do not support ``speed``: to an ordinary
+#: stop, and to the Overview or a stop that frames the whole map.
+TOUR_FLIGHT_MS = 10000
+TOUR_LONG_FLIGHT_MS = 12000
+
+
 @dataclass(frozen=True)
 class Story:
     """One stop of the tour: which proteins, where to look, what to say."""
@@ -176,7 +196,7 @@ class Story:
     frame_fraction: float = 0.46
     #: A safety floor only: the smallest bubble (radius 0.35) frames at ~1.2.
     min_distance: float = 1.0
-    flight_ms: int = 2500
+    flight_ms: int = TOUR_FLIGHT_MS
     tags: tuple[str, ...] = field(default_factory=tuple)
     #: Representative PDB entry rendered as the left-hand turntable ("" = none).
     pdb_id: str = ""
@@ -360,7 +380,7 @@ STORIES: tuple[Story, ...] = (
         radius=1.2,
         kingdom="Viruses",
         frame_fraction=0.72,
-        flight_ms=3000,
+        flight_ms=TOUR_LONG_FLIGHT_MS,
         facts=(
             # Class I fusion proteins share the six-helix-bundle mechanism
             # (J. Virol. 77:8801 (2003); reviews PMC9166635, PMC8709411).
@@ -1382,7 +1402,11 @@ def build_stories_scene(
                 camera=CameraConfig(
                     position=overview_position, target=(0.0, 0.0, 0.0), up=(0, 1, 0)
                 ),
-                duration_ms=3000,
+                duration_ms=TOUR_LONG_FLIGHT_MS,
+                easing=TOUR_FLIGHT_EASING,
+                trajectory=TOUR_FLIGHT_TRAJECTORY,
+                speed=TOUR_FLIGHT_SPEED,
+                duration_range_ms=TOUR_FLIGHT_DURATION_RANGE_MS,
                 reveal="on_arrival",
             )
         ]
@@ -1392,6 +1416,10 @@ def build_stories_scene(
                     when={STORY_DIM: k},
                     camera=story_camera(c, s, global_centre),
                     duration_ms=s.flight_ms,
+                    easing=TOUR_FLIGHT_EASING,
+                    trajectory=TOUR_FLIGHT_TRAJECTORY,
+                    speed=TOUR_FLIGHT_SPEED,
+                    duration_range_ms=TOUR_FLIGHT_DURATION_RANGE_MS,
                     reveal="on_arrival",
                 )
             )

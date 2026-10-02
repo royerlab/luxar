@@ -60,11 +60,9 @@ vi.mock('../../../../ui/recording-panel/drivers/video-mode-driver', () => ({
 
 vi.mock('../../../../ui/toast', () => ({ showToast: vi.fn() }));
 // The depth-sort drain is the coordinator's own unit-tested contract; here
-// only its ORDER inside the frame loop is under test (A17).
+// only its ORDER inside the frame loop is under test (A17). The app's
+// coordinator rides the scene manager (`makeSceneManager`).
 const resortForCaptureMock = vi.hoisted(() => vi.fn(async (_maxWaitMs?: number) => {}));
-vi.mock('../../../../rendering/depth-sort-coordinator', () => ({
-  resortForCapture: resortForCaptureMock,
-}));
 vi.mock('../../../../utils/log', () => ({
   log: { info: vi.fn(), warning: vi.fn(), error: vi.fn() },
   Modules: { RECORDING: 'Recording' },
@@ -158,6 +156,7 @@ function makeSceneManager(
   });
   const sm = {
     controls: { getControls: vi.fn(() => orbitControls) },
+    depthSort: { resortForCapture: resortForCaptureMock },
     // The strategy reads the DISPLAY size to honour the panel's "Native"
     // resolution option. `renderer.getSize()` reports the SSAA-multiplied
     // size instead, so the two disagree whenever SSAA is on — the double

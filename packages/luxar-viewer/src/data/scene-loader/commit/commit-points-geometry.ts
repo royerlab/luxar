@@ -30,7 +30,7 @@
 import { findObjectByName } from '../../../utils/scene-graph-index';
 import * as THREE from 'three';
 import type { LoadedPointsData } from '../../data-loader-types';
-import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
+import type { GeometryCommitHost } from './commit-host';
 import { isPointsUserData } from '../../../types/points';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
 import { markFirstCommit } from '../../../profiling/load-timeline';
@@ -45,7 +45,6 @@ import { getPrefixParent, setPrefixParent } from '../../../types/prefix-lineage'
 import { clampPointCapacity } from '../../../rendering/element-texture-layout';
 import { log, LogEmoji, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
-import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import type { NodeFactory } from '../../../rendering/node-factory';
 import { syncPointMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
@@ -77,12 +76,11 @@ function logClearedPoints(path: string): void {
 export function commitPointsGeometry(
   path: string,
   data: LoadedPointsData,
-  rootGroup: THREE.Group | null,
-  gpuBufferPool: GPUBufferPool | null,
-  nodeFactory: NodeFactory,
+  host: GeometryCommitHost & { nodeFactory: NodeFactory },
   session: UpdateSession | undefined,
   loadedViewVersion: number
 ): void {
+  const { rootGroup, gpuBufferPool, nodeFactory, depthSort } = host;
   if (!rootGroup) return;
 
   const points = findObjectByName(rootGroup, path) as THREE.Mesh;
@@ -173,7 +171,7 @@ export function commitPointsGeometry(
       // Keep the previous depth-sort permutation on a same-node same-count
       // in-place recommit (timepoint scrub): a permutation of [0,count) is
       // a strictly-no-worse prior than storage order for the ≥1 frame
-      // until the re-sort dispatched by noteDepthSortCommit below lands.
+      // until the re-sort dispatched by `depthSort.noteCommit` below lands.
       // Guards mirror the gsplats twin (commit-gsplats-geometry.ts) — the
       // full rationale lives there.
       // The same-buffer prior splits in two on the count.
@@ -386,7 +384,7 @@ export function commitPointsGeometry(
     // gsplats twin, success-only, with the CLAMPED count so permutation
     // values stay inside [0, textureCapacity). The lazy provider defers
     // the O(N) positions copy to the sorted path.
-    noteDepthSortCommit(points, sortCenters3, pointCount);
+    depthSort?.noteCommit(points, sortCenters3, pointCount);
   } finally {
     bufferSession?.end();
   }

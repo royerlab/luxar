@@ -7,11 +7,10 @@
  * time, without fighting the viewer's own controls. This module owns that
  * tween and nothing else:
  *
- * - The interpolation is done in the ORBIT parameterisation, not on raw
- *   positions: the focus target moves linearly, the camera's offset from it
- *   is slerped in direction and log-interpolated in distance, and `up` is
- *   slerped. A straight-line position lerp between two orbit poses passes
- *   through the object (and through the target) — this one keeps the arc.
+ * - The PATH is a trajectory from `./flight-trajectories.ts` (`orbit` by
+ *   default; `zoom-pan`, `arc`, `straight`, `swing`, `fly-through`, `via`), and
+ *   the TIMING is either a fixed `durationMs` or a pace: `speed` divides the
+ *   path's perceived length, so travel time follows what the viewer sees.
  * - Every frame ends with the same hand-off `restoreCamera()` performs:
  *   `controls.setTarget()` + `controls.reinitialize()` + a controls `change`
  *   event, so the orbit state never snaps back, the render loop wakes, and
@@ -40,15 +39,68 @@ import {
   restoreCamera,
   type CameraSnapshot,
 } from '../snapshot/viewer-snapshot';
+import {
+  buildFlightPath,
+  normalizeTrajectory,
+  trajectoryOwnsOrientation,
+  type FlightPath,
+  type FlightTrajectorySpec,
+  type Vec3Tuple,
+} from './flight-trajectories';
 
-/** Easing curve applied to normalised flight time. */
-export type FlightEasing = 'linear' | 'ease-in-out';
+export {
+  buildFlightPath,
+  normalizeTrajectory,
+  zoomPanProfile,
+  ZOOM_PAN_RHO,
+  type FlightPath,
+  type FlightTrajectory,
+  type FlightTrajectoryKind,
+  type FlightTrajectorySpec,
+} from './flight-trajectories';
+
+/**
+ * Easing curve applied to normalised flight time. `ease-in-out` is smoothstep
+ * (zero velocity at both ends); `smooth` is smootherstep, which also starts and
+ * ends with zero ACCELERATION — no kick at departure, no jolt on landing.
+ * `cruise` ramps up over the first {@link CRUISE_RAMP} of the flight, holds a
+ * constant speed, and ramps down over the last: paced travel rather than a
+ * jump, since the camera visibly moves for nearly all of the flight. Its
+ * ramps are smoothstep in VELOCITY, so acceleration is continuous and zero at
+ * both ends.
+ */
+export type FlightEasing = 'linear' | 'ease-in-out' | 'smooth' | 'cruise';
+
+/** Fraction of a `cruise` flight spent ramping up (and, again, ramping down). */
+export const CRUISE_RAMP = 0.2;
+
+/** Duration bounds for a paced (`speed`) flight when the caller gives none. */
+export const DEFAULT_PACED_DURATION_RANGE_MS: readonly [number, number] = [1500, 8000];
 
 export interface FlyToOptions {
   /** Flight duration in milliseconds. `0` (or negative) applies the pose immediately. Default 1500. */
   durationMs?: number;
   /** Easing curve. Default `'ease-in-out'` (smoothstep). */
   easing?: FlightEasing;
+  /**
+   * Path between the poses: a name (`'orbit'`, the default, `'zoom-pan'`,
+   * `'arc'`, `'straight'`, `'swing'`, `'fly-through'`) or a parameterised
+   * trajectory (`{ kind: 'arc', lift: 0.8 }`, `{ kind: 'via', via: pose }`…).
+   * See `./flight-trajectories.ts`.
+   */
+  trajectory?: FlightTrajectorySpec;
+  /** Centre a `swing` turns about when it names no pivot (the scene centre). */
+  sceneCentre?: Vec3Tuple;
+  /**
+   * Pace the flight instead of timing it: it lasts its path's perceived length
+   * divided by this speed (units per second), clamped to {@link durationRangeMs}.
+   * The length counts panning in view heights, zooming in log scale and turning
+   * in radians, so travel time follows the distance the viewer perceives — zoom
+   * included — for every trajectory.
+   */
+  speed?: number;
+  /** `[min, max]` duration of a paced flight. Default {@link DEFAULT_PACED_DURATION_RANGE_MS}. */
+  durationRangeMs?: readonly [number, number];
   /**
    * Keep the CURRENT viewing direction and up vector; only the focus target,
    * the distance to it, and the projection parameters (fov / zoom / planes)
@@ -110,83 +162,44 @@ function isEditableKeyTarget(target: EventTarget | null): boolean {
 export function easeFlight(t: number, easing: FlightEasing): number {
   const x = t < 0 ? 0 : t > 1 ? 1 : t;
   if (easing === 'linear') return x;
+  if (easing === 'smooth') return x * x * x * (x * (6 * x - 15) + 10);
+  if (easing === 'cruise') return cruiseEase(x, CRUISE_RAMP);
   return x * x * (3 - 2 * x);
 }
 
-type Vec3Tuple = readonly [number, number, number];
+/**
+ * Ramp–cruise–ramp position profile. Velocity rises as smoothstep over `ramp`,
+ * holds its peak `1 / (1 − ramp)`, and falls symmetrically, so the position
+ * covers exactly 0 → 1. ∫₀ˣ smoothstep = x³ − x⁴/2 gives the ramp's position.
+ */
+function cruiseEase(x: number, ramp: number): number {
+  if (!(ramp > 0)) return x;
+  const peak = 1 / (1 - ramp);
+  const up = (t: number): number => {
+    const u = t / ramp;
+    return peak * ramp * (u * u * u - (u * u * u * u) / 2);
+  };
+  if (x <= ramp) return up(x);
+  if (x >= 1 - ramp) return 1 - up(1 - x);
+  return peak * (ramp / 2 + (x - ramp));
+}
 
 function vec3(a: Vec3Tuple): THREE.Vector3 {
   return new THREE.Vector3(a[0], a[1], a[2]);
 }
 
-/** Exponential interpolation; falls back to linear when either end is not positive. */
-function lerpLog(a: number, b: number, s: number): number {
-  if (a > 0 && b > 0) return Math.exp(THREE.MathUtils.lerp(Math.log(a), Math.log(b), s));
-  return THREE.MathUtils.lerp(a, b, s);
-}
-
 /**
- * Rotate unit vector `from` toward unit vector `to` by fraction `s` of the
- * angle between them (spherical interpolation of directions).
+ * How long a flight along `path` lasts: paced by `opts.speed` (its perceived
+ * length over the speed, clamped to the duration range), otherwise
+ * `opts.durationMs` or the default. Exported for tests.
  */
-function slerpDirection(from: THREE.Vector3, to: THREE.Vector3, s: number): THREE.Vector3 {
-  const q = new THREE.Quaternion().setFromUnitVectors(from, to);
-  const partial = new THREE.Quaternion().slerp(q, s);
-  return from.clone().applyQuaternion(partial).normalize();
-}
-
-/** A pre-computed interpolation between two poses; `at(s)` yields the pose at eased time `s`. */
-export interface FlightPath {
-  at(s: number): CameraSnapshot;
-}
-
-/**
- * Build the interpolant between two camera snapshots. Exported so the path
- * geometry can be tested without a render loop.
- */
-export function buildFlightPath(from: CameraSnapshot, to: CameraSnapshot): FlightPath {
-  const target0 = vec3(from.target);
-  const target1 = vec3(to.target);
-  const offset0 = vec3(from.position).sub(target0);
-  const offset1 = vec3(to.position).sub(target1);
-  const dist0 = offset0.length();
-  const dist1 = offset1.length();
-  // A degenerate (zero-length) offset has no direction: borrow the other end's.
-  const dir0 = dist0 > 0 ? offset0.clone().divideScalar(dist0) : null;
-  const dir1 = dist1 > 0 ? offset1.clone().divideScalar(dist1) : null;
-  const dirA = dir0 ?? dir1 ?? new THREE.Vector3(0, 0, 1);
-  const dirB = dir1 ?? dir0 ?? new THREE.Vector3(0, 0, 1);
-  const up0 = vec3(from.up).normalize();
-  const up1 = vec3(to.up).normalize();
-
-  return {
-    at(s: number): CameraSnapshot {
-      const target = target0.clone().lerp(target1, s);
-      const dir = slerpDirection(dirA, dirB, s);
-      const dist = lerpLog(dist0, dist1, s);
-      const position = target.clone().addScaledVector(dir, dist);
-      const up = slerpDirection(up0, up1, s);
-      const pose: CameraSnapshot = {
-        position: [position.x, position.y, position.z],
-        target: [target.x, target.y, target.z],
-        up: [up.x, up.y, up.z],
-        isOrtho: to.isOrtho,
-        near: THREE.MathUtils.lerp(from.near, to.near, s),
-        far: THREE.MathUtils.lerp(from.far, to.far, s),
-      };
-      if (from.fov !== undefined && to.fov !== undefined) {
-        pose.fov = THREE.MathUtils.lerp(from.fov, to.fov, s);
-      } else if (to.fov !== undefined) {
-        pose.fov = to.fov;
-      }
-      if (from.zoom !== undefined && to.zoom !== undefined) {
-        pose.zoom = lerpLog(from.zoom, to.zoom, s);
-      } else if (to.zoom !== undefined) {
-        pose.zoom = to.zoom;
-      }
-      return pose;
-    },
-  };
+export function flightDurationMs(path: FlightPath, opts?: FlyToOptions): number {
+  const speed = opts?.speed;
+  if (speed !== undefined && speed > 0) {
+    const [lo, hi] = opts?.durationRangeMs ?? DEFAULT_PACED_DURATION_RANGE_MS;
+    return THREE.MathUtils.clamp((path.length / speed) * 1000, lo, hi);
+  }
+  return opts?.durationMs ?? DEFAULT_FLIGHT_DURATION_MS;
 }
 
 /**
@@ -256,17 +269,23 @@ export class CameraFlight {
   flyTo(pose: CameraSnapshot, opts?: FlyToOptions): Promise<FlightResult> {
     this.cancel();
 
-    const durationMs = opts?.durationMs ?? DEFAULT_FLIGHT_DURATION_MS;
-    const keepOrientation = opts?.keepOrientation === true;
+    const trajectory = normalizeTrajectory(opts?.trajectory);
+    // A trajectory that defines the view direction along the way takes it over
+    // from the turntable for the flight; the spin resumes from where it lands.
+    const keepOrientation =
+      opts?.keepOrientation === true && !trajectoryOwnsOrientation(trajectory);
+    const from = captureSnapshot(this.deps.sceneManager).camera;
+    const centre = opts?.sceneCentre ? vec3(opts.sceneCentre) : null;
+    const path = buildFlightPath(from, pose, trajectory, centre);
+    const durationMs = flightDurationMs(path, opts);
     if (!(durationMs > 0)) {
       restoreCamera(this.deps.sceneManager, keepOrientation ? this.reseat(pose) : pose);
       return Promise.resolve({ completed: true });
     }
 
-    const from = captureSnapshot(this.deps.sceneManager).camera;
     return new Promise<FlightResult>((resolve) => {
       this.active = {
-        path: buildFlightPath(from, pose),
+        path,
         pose,
         startedAt: this.now(),
         durationMs,
@@ -319,7 +338,8 @@ export class CameraFlight {
       this.finish(true);
       return;
     }
-    const pathPose = flight.path.at(easeFlight(t, flight.easing));
+    const ease = (x: number): number => easeFlight(x, flight.easing);
+    const pathPose = flight.path.atTime ? flight.path.atTime(t, ease) : flight.path.at(ease(t));
     this.applyIntermediate(flight.keepOrientation ? this.reseat(pathPose) : pathPose);
   }
 

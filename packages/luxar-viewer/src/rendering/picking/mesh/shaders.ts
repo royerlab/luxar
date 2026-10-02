@@ -44,7 +44,7 @@
  * orthographic camera to `viewZToOrthographicDepth`, which is exactly the
  * orthographic `gl_FragCoord.z`. So the two backends write the SAME value per
  * fragment, and cross-node depth comparisons — including against the commutative
- * modes' `1 - brightness` fragments sharing this buffer — resolve identically.
+ * modes' `1 / (1 + brightness)` fragments sharing this buffer — resolve identically.
  *
  * Recording this because `mesh-pick.fragment.glsl.txt` is easy to misread as a
  * divergence: the snapshot expands `depth` to the LINEAR
@@ -66,6 +66,7 @@ import {
   GLSL_SANITIZE_FUNCTIONS,
   GLSL_ELEMENT_ID_SPLIT,
   GLSL_NEAR_FADE_FUNCTIONS,
+  GLSL_PROJECTION_FUNCTIONS,
 } from '../../materials/_shared/glsl-lib';
 import { requireTslMaterials } from '../../tsl/slot';
 
@@ -95,6 +96,7 @@ export const MESH_PICK_VERTEX_SHADER = /* glsl */ `
 
     ${GLSL_SANITIZE_FUNCTIONS}
     ${GLSL_ELEMENT_ID_SPLIT}
+    ${GLSL_PROJECTION_FUNCTIONS}
 
     // Per-vertex colour; only .a is read here (the pick pass has no colour output).
     // Always bound — see createMeshDefaultColorAttribute. RGB input gives w = 1.0.
@@ -113,9 +115,12 @@ export const MESH_PICK_VERTEX_SHADER = /* glsl */ `
     // against a scene-relative uNearCull that can be ~1e-3 of the scene diagonal,
     // which mediump cannot resolve on a large scene.
     out highp float vViewZ;
+    // Ortho branch of this draw's projection, for the fragment near fade.
+    flat out int vIsOrtho;
 
     void main() {
       vNodeId = uNodeId;
+      vIsOrtho = luxarIsOrthoProjection();
       // Vertex ordinal, NOT a triangle ordinal and NOT a storage slot: mesh has
       // no ordering attribute to indirect through, and gl_VertexID under an
       // indexed draw is already the stable per-vertex id (§6.5).
@@ -200,8 +205,14 @@ export const MESH_PICK_FRAGMENT_SHADER = /* glsl */ `
     uniform mediump float uOpacity;
     uniform mediump float uAlphaCutoff;
     // Near-fade start, world units (scene-relative), mirroring the visual
-    // material. The ortho test reads three's isOrthographic, not a uniform.
+    // material. The ortho test is the vertex stage's luxarIsOrthoProjection().
     uniform float uNearCull;
+    flat in int vIsOrtho;
+    // 1 = apply the near fade (the house mesh shader has it); 0 = none — a
+    // PHYSICAL visual (three's PBR material) has no near fade, so its surface is
+    // fully visible right in front of the camera and must stay pickable there.
+    // Synced per pick render from the visual material.
+    uniform int uNearFade;
     // 1 = 'opaque': apply the visual shader's hard cutout. Runtime uniform, not a
     // define — a layers-panel mode switch must not recompile the pick program.
     uniform int uAlphaCutout;
@@ -232,10 +243,12 @@ export const MESH_PICK_FRAGMENT_SHADER = /* glsl */ `
       // the visual shader — pick coverage must keep matching visible coverage as
       // the camera flies into the surface. Rejected before anything is written, so
       // a faded-out fragment contributes neither an id nor depth.
-      // Ortho test from three's per-draw 'isOrthographic' (the camera being
-      // drawn with), not a CPU-pushed flag; the fragment stage has no
-      // projectionMatrix to read it from.
-      float nearFade = perspectiveNearFade(isOrthographic ? 1 : 0, vViewZ, max(uNearCull, 1e-20));
+      // Ortho test from the projection matrix of the draw (the vertex stage's
+      // luxarIsOrthoProjection(), handed over flat — the fragment stage has no
+      // projectionMatrix), the visual twin's rule.
+      float nearFade = (uNearFade == 1)
+        ? perspectiveNearFade(vIsOrtho, vViewZ, max(uNearCull, 1e-20))
+        : 1.0;
       if (nearFade < 0.01) discard;
 
       if (uAlphaCutout == 1) {
@@ -261,7 +274,7 @@ export const MESH_PICK_FRAGMENT_SHADER = /* glsl */ `
       // PickingSystem.renderPickBuffer(). Writing gl_FragDepth at all forfeits
       // early-z; the pick pass is half-resolution and the sibling gsplat pick
       // makes the same trade.
-      gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 - brightness;
+      gl_FragDepth = (uSurfaceDepth == 1) ? gl_FragCoord.z : 1.0 / (1.0 + brightness);
     }
   `;
 

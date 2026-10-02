@@ -128,7 +128,7 @@
  * (drawn as instanced quads on a `THREE.Mesh`), GSPLATS — the geometry most
  * likely to be switched to `normal` / `volumetric` in the first place — and
  * LINES, which is depth-sortable too (`types/geometry-capabilities.ts`) and
- * whose commit calls `noteDepthSortCommit` (`commit-lines-geometry.ts`). There
+ * whose commit calls `depthSort.noteCommit` (`commit-lines-geometry.ts`). There
  * the object stays drawn and pickable: the stamp is cleared purely to defeat
  * the commit no-op gate, and the `requestReprocess?.()` that re-stamps it is
  * async, so a pick in that window would resolve through the raw slot — a

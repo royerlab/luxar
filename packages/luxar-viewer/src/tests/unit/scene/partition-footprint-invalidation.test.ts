@@ -46,7 +46,8 @@ function rng(seed: number): () => number {
 type Caches = Map<string, { children: Array<{ footprintDirty: boolean }> }>;
 
 function cachesOf(reg: LODGroupRegistry): Caches {
-  return (reg as unknown as { partitionCaches: Caches }).partitionCaches;
+  // The per-part caches live in the registry's partition gate (`partition-gate.ts`).
+  return (reg as unknown as { partitions: { partitionCaches: Caches } }).partitions.partitionCaches;
 }
 
 function part(path: string): PartitionGroupChild {

@@ -469,16 +469,18 @@ describe('bounds-math', () => {
       expect(GSPLAT_VERTEX_SHADER).toMatch(new RegExp(`depthFade\\s*${reject}`));
       // ...lines instead multiply the fade in per-fragment, so their
       // contribution is already ~0 across the same band.
+      // (Its ortho flag is the vertex stage's luxarIsOrthoProjection(), flat.)
       expect(LINE_FRAGMENT_SHADER).toMatch(
-        /perspectiveNearFade\s*\(\s*uIsOrtho\s*,\s*vViewZ\s*,\s*max\(uNearCull, 1e-20\)\s*\)/
+        /perspectiveNearFade\s*\(\s*vLineIsOrtho\s*,\s*vViewZ\s*,\s*max\(uNearCull, 1e-20\)\s*\)/
       );
       // ...and mesh, also per-fragment (a triangle spans depth), but WITH the
       // 0.01 reject: it writes depth in `opaque` / `normal`, so a faded-out
       // fragment left rasterizing would occlude whatever is behind it. This
       // pair is what makes the derivation cover the fourth type. Its ortho test
-      // is three's per-draw `isOrthographic` (the camera being drawn with).
+      // is the projection matrix of the draw (the vertex stage's
+      // luxarIsOrthoProjection(), handed over flat as vIsOrtho).
       expect(MESH_FRAGMENT_SHADER).toMatch(
-        /perspectiveNearFade\s*\(\s*isOrthographic \? 1 : 0\s*,\s*vViewPos\.z\s*,\s*max\(uNearCull, 1e-20\)\s*\)/
+        /perspectiveNearFade\s*\(\s*vIsOrtho\s*,\s*vViewPos\.z\s*,\s*max\(uNearCull, 1e-20\)\s*\)/
       );
       expect(MESH_FRAGMENT_SHADER).toMatch(new RegExp(`nearFade\\s*${reject}`));
     });

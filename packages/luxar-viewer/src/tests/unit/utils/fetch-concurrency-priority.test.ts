@@ -12,10 +12,6 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { perfCounters } from '../../../profiling/perf-counters';
 import {
   FetchPriorityCell,
-  HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
-  MAX_CONCURRENT_CHUNK_FETCHES,
-  MAX_CONCURRENT_MULTIPLEXED_CHUNK_FETCHES,
-  MAX_SPECULATIVE_FETCH_SHARE,
   noteFetchUrl,
   noteOriginProtocol,
   resetFetchTransport,
@@ -23,6 +19,15 @@ import {
   withFetchGate,
   type FetchPriority,
 } from '../../../utils/fetch-concurrency';
+import { config } from '../../../config';
+
+/** The gate's widths, as configured (`config.dataLoading.network.fetchGate`). */
+const {
+  http1MaxChunkFetches: HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
+  maxChunkFetches: MAX_CONCURRENT_CHUNK_FETCHES,
+  maxMultiplexedChunkFetches: MAX_CONCURRENT_MULTIPLEXED_CHUNK_FETCHES,
+  speculativeShare: MAX_SPECULATIVE_FETCH_SHARE,
+} = config.dataLoading.network.fetchGate;
 
 /** A gated call whose body stays open until released. */
 function holder(
@@ -351,7 +356,7 @@ describe('fetch gate adaptive lane size', () => {
 
     const origin = 'https://cdn.example';
     // First call installs the observer; the lane is still the default.
-    const first = Array.from({ length: gate.MAX_CONCURRENT_CHUNK_FETCHES + 1 }, () =>
+    const first = Array.from({ length: MAX_CONCURRENT_CHUNK_FETCHES + 1 }, () =>
       gate.withFetchGate(() => Promise.resolve(), 'data', 'demand', origin)
     );
     await Promise.all(first);
@@ -366,7 +371,7 @@ describe('fetch gate adaptive lane size', () => {
 
     const releases: Array<() => void> = [];
     let active = 0;
-    const calls = Array.from({ length: gate.MAX_CONCURRENT_MULTIPLEXED_CHUNK_FETCHES }, () =>
+    const calls = Array.from({ length: MAX_CONCURRENT_MULTIPLEXED_CHUNK_FETCHES }, () =>
       gate.withFetchGate(
         () =>
           new Promise<void>((resolve) => {
@@ -379,7 +384,7 @@ describe('fetch gate adaptive lane size', () => {
       )
     );
     await flush();
-    expect(active).toBe(gate.MAX_CONCURRENT_MULTIPLEXED_CHUNK_FETCHES);
+    expect(active).toBe(MAX_CONCURRENT_MULTIPLEXED_CHUNK_FETCHES);
     releases.forEach((r) => r());
     await Promise.all(calls);
   });

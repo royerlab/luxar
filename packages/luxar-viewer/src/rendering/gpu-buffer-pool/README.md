@@ -18,24 +18,26 @@ gpu-buffer-pool/
 │                              keeping incremental active/pooled byte totals
 ├── capacity.ts              # Buffer-capacity sizing primitive
 │                              (chooseCapacity, __setMinInstanceCapacityForTesting)
-├── points-adapter.ts        # PointsBufferAdapter — acquire/release/update for points
-├── lines-adapter.ts         # LinesBufferAdapter   — acquire/release/update for lines
-└── gsplats-adapter.ts       # GSplatsBufferAdapter — acquire/release/update for gsplats
+├── texture-backed-adapter.ts # TextureBackedAdapter — the shared acquire/grow/adopt/
+│                              allocate/release/dispose lifecycle + PoolAdapterHost
+├── points-adapter.ts        # PointsBufferAdapter  — Points layout hook + update
+├── lines-adapter.ts         # LinesBufferAdapter   — Lines layout hook + update
+└── gsplats-adapter.ts       # GSplatsBufferAdapter — GSplats layout hook + held-draw update
 ```
 
 ## Components
 
 ### Per-type adapters
 
-Each adapter (`PointsBufferAdapter`, `LinesBufferAdapter`, `GSplatsBufferAdapter`) owns:
+The three adapters (`PointsBufferAdapter`, `LinesBufferAdapter`, `GSplatsBufferAdapter`) extend one `TextureBackedAdapter` (`texture-backed-adapter.ts`), which owns the whole pool lifecycle — in-place reuse, grow (with the OOM re-claim and the post-grow reclaim sweep), best-fit adoption, fresh allocation, release and dispose — once. A subclass contributes only a `TextureBackedLayout` (its `type`, its texture-capacity clamp, its `attachStorage`) and its own `updateGeometry`. Points and Lines share `writeInstancedCommitOrdering` (append identity suffix / preserve / repair / identity); GSplats keeps its held-draw `writeCommitOrdering`. The free buckets live in the base's `buffers`, also exposed as `pointBuffers` / `lineBuffers` / `gsplatBuffers` for the pool's stats and the byte evictor. Each adapter owns:
 
 - A bucketed `Map<number, PooledBuffer[]>` of released-but-reusable geometries, keyed by capacity bucket.
 - All three types attach an RGBA32F **element texture** (3 texels/point via `point-geometry.ts::attachPointStorage`; 6 texels/segment via `line-geometry.ts::attachLineStorage`; 4 texels/splat via `gsplat-geometry.ts::attachSplatStorage`) + an `aSortedIndex` (Uint32) ordering attribute (depth-sorting Phase 1 / §8); the texture is disposed by the geometry's own `dispose` event at every dispose site.
 - `acquireGeometry(nodeId, …)` — first checks `host.activeBuffers` for in-place reuse (matching capacity — the fixed texel layouts make capacity the only criterion for every type), then scans bucketed pools best-fit, then falls back to allocation. **Growth is release + reacquire, never an in-place rebuild**: an undersized active buffer is released to the pool intact and the acquire falls through to best-fit/fresh allocation. Replacing a rendered geometry's attributes would strand the old GPU buffer in the renderer caches (freed only at GC mercy on classic WebGL; pinned permanently by the WebGPU renderer's strong `Info.memoryMap`). Content carry-forward is unnecessary — every commit rewrites all attributes for the full count right after acquire.
-- `releaseGeometry(nodeId)` — moves the buffer into a per-capacity bucket and calls `host.evictUnused()`.
+- `releaseGeometry(nodeId)` — cancels any in-flight chunked ordering apply, moves the buffer into a per-capacity bucket and calls `host.evictUnused()`. A held gsplat append draw is left held (no O(n) repair for a geometry nobody draws); the next commit that writes the geometry resolves it.
 - `updateGeometry(geometry, data, count, …)` — one fused texel pass (`writePointTexels` / `writeLineTexels` / `writeSplatTexels`, each with a fail-loud pre-store guard) plus an identity `aSortedIndex` fill. Same-count recommits may preserve the prior permutation; Points/Lines appends extend it with an identity suffix, while GSplat appends HOLD the draw (`instanceCount` stays at the previous population, in its previous order) until the grown population's own ordering flips in — `holdSortedIndexDrawForAppend` in `element-storage.ts`; the depth-sort coordinator releases the hold on every path where that ordering will not arrive. A pool GROW that still extends the drawn population is held the same way, seeded with the previous geometry's drawn permutation (`seedOrdering`). All recompute `boundingBox` / `boundingSphere`; the lines adapter expands the box by max line width, the gsplats adapter by max Cholesky row-norm × truncation radius.
 
-Adapters interact with the parent pool only through the narrow `*AdapterHost` interfaces — they read `activeBuffers`, `commitCount`, `stats`, `typeStats`, call `host.getBucket(count)` and `host.evictUnused()`, and set `host._lastAcquireRebuilt` so the parent knows whether the returned geometry still has its previous attribute bindings.
+Adapters interact with the parent pool only through the narrow `PoolAdapterHost` interface — they read `activeBuffers`, `commitCount`, `stats`, `typeStats`, call `host.getBucket(count)` and `host.evictUnused()`, and set `host._lastAcquireRebuilt` so the parent knows whether the returned geometry still has its previous attribute bindings.
 
 ### Dtype-blind pooling
 

@@ -473,9 +473,6 @@
     },
     "max-depth": {
       "count": 1
-    },
-    "max-params": {
-      "count": 1
     }
   },
   "src/data/scene-loader/geometry-descriptors.ts": {
@@ -671,7 +668,17 @@
   },
   "src/rendering/depth-sort-coordinator.ts": {
     "complexity": {
-      "count": 7
+      "count": 1
+    }
+  },
+  "src/rendering/depth-sort-coordinator/capture.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "src/rendering/depth-sort-coordinator/ordering-apply.ts": {
+    "complexity": {
+      "count": 1
     }
   },
   "src/rendering/depth-sort-coordinator/render-order.ts": {
@@ -680,6 +687,11 @@
     },
     "max-depth": {
       "count": 1
+    }
+  },
+  "src/rendering/depth-sort-coordinator/scheduler.ts": {
+    "complexity": {
+      "count": 4
     }
   },
   "src/rendering/depth-sort-coordinator/triangle-ordering.ts": {
@@ -1008,20 +1020,6 @@
   },
   "src/scene/lod-freshness.ts": {
     "complexity": {
-      "count": 1
-    }
-  },
-  "src/scene/lod-group-registry.ts": {
-    "complexity": {
-      "count": 5
-    },
-    "max-depth": {
-      "count": 1
-    },
-    "max-lines-per-function": {
-      "count": 1
-    },
-    "max-params": {
       "count": 1
     }
   },

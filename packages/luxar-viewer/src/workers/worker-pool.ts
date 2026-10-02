@@ -24,7 +24,7 @@ import {
 } from './worker-pool/errors';
 
 import { withTimeout } from './worker-pool/timeout/with-timeout';
-import { combineSignals, type CombinedSignalScope } from './worker-pool/timeout/combine-signals';
+import { combineAbortSignals } from '../utils/abort-signals';
 import { pickTimeoutMs } from './worker-pool/timeout/pick-timeout-ms';
 import { getConfiguredWorkerCount } from './worker-pool/lifecycle/worker-count';
 import { getSharedWasmModule } from '../wasm/shared-module';
@@ -628,7 +628,7 @@ export class WorkerPool {
     // are present, race them together so either can settle the call.
     // The scope is disposed when this call settles so the fallback
     // relay does not retain a listener on the session-lived pool signal.
-    const abortScope = this.combineSignals(this.poolAbortSignal, signal);
+    const abortScope = combineAbortSignals(this.poolAbortSignal, signal);
     const effectiveSignal = abortScope?.signal;
     try {
       // Pre-check: signal already aborted? Bail before dispatching any work.
@@ -798,21 +798,6 @@ export class WorkerPool {
   }
 
   /**
-   * Combine the pool-wide signal with a caller-supplied signal into
-   * a single scoped abort source. Returns `undefined` when both are
-   * absent. Uses native `AbortSignal.any` when available (modern
-   * browsers / Node 20+) and falls back to the simpler "trip either
-   * one" wiring for older runtimes; the returned scope's `dispose()`
-   * releases the fallback's source listeners once the call settles.
-   */
-  private combineSignals(
-    a: AbortSignal | undefined,
-    b: AbortSignal | undefined
-  ): CombinedSignalScope | undefined {
-    return combineSignals(a, b);
-  }
-
-  /**
    * Get a worker with query tracking for load balancing.
    *
    * Returns the worker `api`, the underlying `worker` (for
@@ -969,7 +954,7 @@ export function warmWorkerCodecs(): void {
  *
  * The config guard preserves the existing "Web Workers disabled" contract;
  * warming must not fetch WASM or spawn workers no data path will use. The
- * `Worker` guard mirrors `warmUpDepthSortWorker`: the unit suite runs in
+ * `Worker` guard mirrors `warmUpSortWorker`: the unit suite runs in
  * node/jsdom with no constructor, where spawning would latch the pool's
  * deliberately-sticky rejected `initPromise` for the rest of the file.
  */
@@ -986,7 +971,34 @@ export function warmUpDataWorkerPool(): void {
 }
 
 /**
- * Dispose the global worker pool (for testing/cleanup)
+ * The Luxar hosts (the LuxarApp, each LuxarLayer) currently using the shared
+ * data-worker pool. The pool is page-wide on purpose — one set of workers per
+ * page is the right resource model — so a host's teardown must not terminate it
+ * while another host still decodes through it.
+ */
+const workerPoolHosts = new Set<object>();
+
+/** Declare that `host` uses the shared pool (idempotent). */
+export function retainWorkerPool(host: object): void {
+  workerPoolHosts.add(host);
+}
+
+/**
+ * `host` is done with the shared pool. The pool is disposed once no host holds
+ * it any more — including when `host` never retained it (a teardown after a
+ * failed init), so a pool nobody else holds is still cleaned up. Returns whether
+ * this call disposed the pool.
+ */
+export function releaseWorkerPool(host: object | undefined): boolean {
+  if (host) workerPoolHosts.delete(host);
+  if (workerPoolHosts.size > 0) return false;
+  disposeWorkerPool();
+  return true;
+}
+
+/**
+ * Dispose the global worker pool unconditionally (tests; the last host's
+ * {@link releaseWorkerPool}).
  */
 export function disposeWorkerPool(): void {
   if (workerPoolInstance) {
