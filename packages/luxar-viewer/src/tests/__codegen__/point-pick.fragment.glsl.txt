@@ -117,7 +117,7 @@ void main() {
 	nodeVar3 = ( ( ( ( max( ( exp( ( pow( sqrt( ( nodeVar1 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeVarying3 ) * pow( min( ( nodeVarying4 / ( max( nodeUniform0, 1.0 ) * 1.5 ) ), 1.0 ), 2.0 ) ) * ( ( nodeVar2 * nodeUniform3 ) * max( nodeUniform4, 1.0 ) ) );
 	nodeVar47 = ( cameraProjectionMatrixInverse * v_clipSpace );
 	positionView = ( nodeVar47.xyz / vec3( nodeVar47.w ) );
-	gl_FragDepth = mix( ( 1.0 - clamp( nodeVar3, 0.0, 1.0 ) ), ( ( positionView.z + cameraNear ) / ( cameraNear - cameraFar ) ), nodeUniform25 );
+	gl_FragDepth = mix( ( 1.0 / ( 1.0 + nodeVar3 ) ), ( ( positionView.z + cameraNear ) / ( cameraNear - cameraFar ) ), nodeUniform25 );
 
 	if ( ( nodeVarying1 <= 0.0 ) ) {
 

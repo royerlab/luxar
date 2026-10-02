@@ -359,7 +359,7 @@ void main() {
 	lineCapsulePickBrightness = ( ( nodeVar19 * nodeVarying3 ) * ( ( nodeVar54 * nodeUniform4 ) * max( nodeUniform5, 1.0 ) ) );
 	nodeVar225 = ( cameraProjectionMatrixInverse * v_clipSpace );
 	positionView = ( nodeVar225.xyz / vec3( nodeVar225.w ) );
-	gl_FragDepth = mix( ( 1.0 - clamp( lineCapsulePickBrightness, 0.0, 1.0 ) ), ( ( positionView.z + cameraNear ) / ( cameraNear - cameraFar ) ), nodeUniform36 );
+	gl_FragDepth = mix( ( 1.0 / ( 1.0 + lineCapsulePickBrightness ) ), ( ( positionView.z + cameraNear ) / ( cameraNear - cameraFar ) ), nodeUniform36 );
 
 	if ( ( lineCapsulePickBrightness < 0.0001 ) ) {
 

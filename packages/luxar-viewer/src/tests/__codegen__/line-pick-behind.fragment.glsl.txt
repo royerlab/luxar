@@ -176,7 +176,7 @@ void main() {
 	lineBrightness = ( ( ( ( ( min( mix( ( 0.5 + ( nodeVar2 * 0.5 ) ), 1.0, nodeVarying9 ), mix( ( 0.5 + ( nodeVar3 * 0.5 ) ), 1.0, nodeVarying10 ) ) * ( max( ( exp( ( pow( abs( nodeVarying1 ), pow( 2.0, ( ( nodeVarying0 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * min( ( nodeVarying6 / ( max( nodeUniform2, 1.0 ) * 1.5 ) ), 1.0 ) ) * nodeVarying7 ) * nodeVar4 ) * ( ( nodeVar6 * nodeUniform6 ) * max( nodeUniform7, 1.0 ) ) );
 	nodeVar167 = ( cameraProjectionMatrixInverse * v_clipSpace );
 	positionView = ( nodeVar167.xyz / vec3( nodeVar167.w ) );
-	gl_FragDepth = mix( ( 1.0 - clamp( lineBrightness, 0.0, 1.0 ) ), ( ( ( cameraNear + positionView.z ) * cameraFar ) / ( ( cameraFar - cameraNear ) * positionView.z ) ), nodeUniform39 );
+	gl_FragDepth = mix( ( 1.0 / ( 1.0 + lineBrightness ) ), ( ( ( cameraNear + positionView.z ) * cameraFar ) / ( ( cameraFar - cameraNear ) * positionView.z ) ), nodeUniform39 );
 
 	if ( ( abs( nodeVarying1 ) >= 1.0 ) ) {
 

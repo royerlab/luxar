@@ -17,9 +17,9 @@
  * sharpness), fetched in the vertex stage via `textureLoad` and
  * indexed by `aSortedIndex` (visual-factory parity, shader-tsl.ts).
  *
- * Depth is set to `1.0 - brightness` (brightness-as-depth) so the
+ * Depth is set to `1.0 / (1.0 + brightness)` (brightness-as-depth) so the
  * picking system's tie-breaking prefers the brightest hit. Matches
- * the GLSL `gl_FragDepth = 1.0 - clamp(brightness, 0.0, 1.0)` path.
+ * the GLSL `gl_FragDepth = 1.0 / (1.0 + brightness)` path.
  *
  * The pick sprite is 80% of the radius of the visual sprite
  * (the 0.8 factor below) — slightly tighter than the visible disc so
@@ -320,11 +320,11 @@ export function pointPickWebGPUFactory(
     // three first BUILDS it — which is unconditional top-level flow in either entry
     // point only while this body contains no `if`. So the depth convention is a
     // `mix` on the 0/1 `uSurfaceDepth` flag, not a select: 0 = brightness-as-depth
-    // (brightest wins; commutative modes), exactly the old expression (x·1 + y·0);
+    // (brightest wins; commutative modes), using unclamped salience;
     // 1 = the real fragment depth (front-most wins; opaque/normal — GLSL twin:
     // `gl_FragCoord.z`).
     return mix(
-      float(1.0).sub(clamp(brightness, 0.0, 1.0)),
+      float(1.0).div(float(1.0).add(brightness)),
       depth as unknown as TSLNode,
       float(uSurfaceDepth)
     );
