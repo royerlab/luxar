@@ -58,6 +58,15 @@ export interface InflightDecode {
   readonly controller: AbortController;
   /** Callers still waiting on {@link promise} (not yet aborted). */
   waiters: number;
+  /**
+   * Every waiter left and {@link controller} was aborted. The entry STAYS
+   * registered until it settles: an abort that lands after the chunk's bytes
+   * arrived cannot stop the decode, which then completes and commits, and a
+   * caller arriving meanwhile waits for that outcome instead of starting a
+   * second fetch + decode of the same chunk (it retries only if the abandoned
+   * decode really was cancelled).
+   */
+  abandoned?: boolean;
 }
 
 /**

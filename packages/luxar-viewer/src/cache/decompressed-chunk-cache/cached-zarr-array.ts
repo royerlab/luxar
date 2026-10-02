@@ -376,19 +376,43 @@ function acquireChunk(ctx: AcquireContext, req: AcquireRequest): Promise<Decoded
   // is already decoding it. No fresh Blosc work is triggered for this caller,
   // so the coalesced wait counts as a hit for residency.
   const pending = cache.getInflight(req.key);
+  if (pending?.abandoned) return awaitAbandoned(ctx, req, pending);
   if (pending) {
     perfCounters.add(S_L0_COALESCED);
     req.probe?.record(true);
     pending.waiters++;
     raiseSharedDecodePriority(pending, req.signal);
-    return raceWaiter(cache, req.key, pending, req.signal);
+    return raceWaiter(pending, req.signal);
   }
 
   // Genuine miss: a fetch + Blosc decode is about to run.
   perfCounters.add(S_L0_MISSES);
   req.probe?.record(false);
   const entry = startDecode(ctx, req);
-  return raceWaiter(cache, req.key, entry, req.signal);
+  return raceWaiter(entry, req.signal);
+}
+
+/**
+ * A caller arriving while an ABANDONED decode of its chunk is still settling
+ * (every earlier waiter aborted, see `InflightDecode.abandoned`). If the abort
+ * landed after the bytes arrived the decode completes and commits, and this
+ * caller takes that result — one decode, not two. If it really was cancelled,
+ * the entry is deregistered by the time this caller sees the rejection, so it
+ * retries as a fresh acquisition. Its own abort still releases it at once.
+ */
+async function awaitAbandoned(
+  ctx: AcquireContext,
+  req: AcquireRequest,
+  pending: InflightDecode
+): Promise<DecodedChunkResult> {
+  try {
+    return await raceWaiter(pending, req.signal);
+  } catch (error) {
+    if (req.signal?.aborted || (error as { name?: unknown } | null)?.name !== 'AbortError') {
+      throw error;
+    }
+    return acquireChunk(ctx, req);
+  }
 }
 
 /**
@@ -471,13 +495,12 @@ function toCacheEntry(chunk: DecodedChunkResult): DecompressedChunk {
  * One waiter's view of a shared decode: settles with the decode, or rejects
  * with THIS waiter's abort reason as soon as its own signal fires. A waiter
  * that aborts leaves the decode running for the others; the last one to leave
- * aborts the shared controller (and deregisters it so a later caller starts a
- * fresh decode instead of joining a cancelled one). A waiter without a signal
- * never leaves, so its decode is never cancelled.
+ * aborts the shared controller and marks the entry abandoned (it deregisters
+ * on settle; a later caller waits for that outcome and starts a fresh decode
+ * only if it was really cancelled). A waiter without a signal never leaves,
+ * so its decode is never cancelled.
  */
 function raceWaiter(
-  cache: DecompressedChunkCache,
-  key: string,
   entry: InflightDecode,
   signal: AbortSignal | undefined
 ): Promise<DecodedChunkResult> {
@@ -485,8 +508,10 @@ function raceWaiter(
   return new Promise<DecodedChunkResult>((resolve, reject) => {
     const onAbort = (): void => {
       entry.waiters--;
-      if (entry.waiters <= 0) {
-        cache.deleteInflight(key, entry);
+      if (entry.waiters <= 0 && !entry.abandoned) {
+        // The last waiter left: cancel the shared decode, but keep it
+        // registered until it settles (see `InflightDecode.abandoned`).
+        entry.abandoned = true;
         entry.controller.abort(signal.reason);
       }
       reject(signal.reason as Error);

@@ -246,34 +246,27 @@ describe('L0 coalesced waiters are abort-isolated', () => {
     expect(cache.has(key)).toBe(false);
   });
 
-  it('a fully-abandoned decode that finishes late does not overwrite its replacement', async () => {
+  it('a caller arriving while a cancelled decode settles retries once it is really cancelled', async () => {
+    // A fully-abandoned decode stays registered until it settles (it may be
+    // past its fetch and complete anyway — see the read-ahead suite below). One
+    // that the abort DID stop rejects with AbortError; the caller that waited
+    // on it then starts a fresh decode rather than inheriting the cancellation.
     const cache = new DecompressedChunkCache({ maxSize: 1 << 20 });
     const counter: Counter = { decodes: 0, starts: 0, aborted: 0 };
-    const { array, releaseFirst } = signalDeafArray(counter);
-    const a = wrapWithCache(array as never, cache, '/n/centers');
+    const a = wrapWithCache(fakeArray(counter) as never, cache, '/n/centers');
     const key = DecompressedChunkCache.makeKey('/n/centers', [0, 0]);
     const c1 = new AbortController();
     const p1 = a.getChunk([0, 0], { signal: c1.signal } as never);
     c1.abort();
+    // Before the cancelled decode has settled: the entry is still registered.
+    expect(cache.getInflight(key)?.abandoned).toBe(true);
+    const p2 = a.getChunk([0, 0]);
     expect(await outcome(p1)).toBe('AbortError');
-    expect(cache.getInflight(key)).toBeUndefined();
-
-    // The abandoned decode is still pending (only releaseFirst() can finish
-    // it), so the fresh decode lands and is cached strictly first.
-    const fresh = await a.getChunk([0, 0]);
+    expect(await outcome(p2)).toBe('ok');
     expect(counter.starts).toBe(2);
+    expect(counter.aborted).toBe(1);
     expect(counter.decodes).toBe(1);
-    const firstValue = (data: unknown) => (data as Float32Array)[0];
-    expect(firstValue(fresh.data)).toBe(2);
-    expect(firstValue(cache.get(key)?.data)).toBe(2);
-
-    // Now let the stale decode finish, and drain its settle handlers.
-    releaseFirst();
-    await new Promise((r) => setTimeout(r, 0));
-    expect(counter.decodes).toBe(2);
-    expect(firstValue(cache.get(key)?.data)).toBe(2);
-    expect(firstValue((await a.getChunk([0, 0])).data)).toBe(2);
-    expect(counter.starts).toBe(2);
+    expect(cache.has(key)).toBe(true);
   });
 });
 
@@ -303,7 +296,7 @@ describe('L0 — a cancelled read-ahead whose decode is already past its fetch',
   // DEREGISTERED at the abort and its result DISCARDED, so the foreground read
   // of the same chunk a moment later fetched and decoded it again — counted as
   // `decode.duplicates` (WebGPU scrub_pl_drag: 1 -> 6, decodes +28%).
-  it.fails('the foreground read joins the cancelled warm instead of decoding again', async () => {
+  it('the foreground read joins the cancelled warm instead of decoding again', async () => {
     const cache = new DecompressedChunkCache({ maxSize: 1 << 20 });
     const counter: Counter = { decodes: 0, starts: 0, aborted: 0 };
     const { array, releaseFirst } = signalDeafArray(counter);
@@ -323,7 +316,7 @@ describe('L0 — a cancelled read-ahead whose decode is already past its fetch',
     expect(perfCounters.get('decode.duplicates')).toBe(0);
   });
 
-  it.fails('a cancelled warm that completes with no joiner still lands in L0', async () => {
+  it('a cancelled warm that completes with no joiner still lands in L0', async () => {
     const cache = new DecompressedChunkCache({ maxSize: 1 << 20 });
     const counter: Counter = { decodes: 0, starts: 0, aborted: 0 };
     const { array, releaseFirst } = signalDeafArray(counter);
