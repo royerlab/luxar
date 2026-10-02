@@ -635,12 +635,12 @@ export class WebGLBlendWarmupManager {
     state.variants.clear();
   }
 
-  /** Snapshot of the warm-up counters (copied; safe to hand to probes). */
   /** Whether this manager warms `root` (the scene it was configured against). */
   targets(root: THREE.Object3D): boolean {
     return this.targetScene !== null && this.targetScene === root;
   }
 
+  /** Snapshot of the warm-up counters (copied; safe to hand to probes). */
   getStats(): BlendWarmupStats {
     return { ...this.stats };
   }
