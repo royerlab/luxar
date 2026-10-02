@@ -2785,15 +2785,17 @@ def _viewer_config(
         if auto_rotate
         else None,
         auto_dolly_period=58.5 if auto_rotate else None,
-        # Render quality (2026-09-10 review): supersampling and rendering above
-        # CSS resolution are what make the kiosk build crisp, and also what made
-        # it crawl on an ordinary laptop — SSAA is a 4x fragment cost on top of
-        # the 4x a 2x display already asks for. The shipped default is the
-        # laptop build: SSAA off and the DPR capped at 1.0 (`allow_high_dpr`
-        # False is that cap). `--high-quality` (the kiosk / big-GPU switch)
-        # turns both back on.
+        # Render quality: supersampling is a 4x fragment cost on top of the 4x a
+        # 2x display already asks for, so it stays on the `--high-quality`
+        # (kiosk / big-GPU) switch. The display's full device pixel ratio is
+        # always allowed and held fixed rather than adapted: the map's fine
+        # structure is what the tour is about, and a resolution that drops while
+        # the camera travels and recovers on arrival reads as the map going soft
+        # in flight. The Density Guard (a viewer default) still sheds load where
+        # points pile up.
         ssaa_enabled=high_quality,
-        allow_high_dpr=high_quality,
+        allow_high_dpr=True,
+        adaptive_dpr_enabled=False,
         environment=EnvironmentConfig(source="scene", probe="auto"),
         waypoints=waypoints,
         audio=AudioConfig(
