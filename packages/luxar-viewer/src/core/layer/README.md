@@ -192,7 +192,7 @@ blending when exposure should produce smooth surface transparency.
 | `onDatasetFault(fn)`               | Subscribe to faults; replays current state; returns unsubscribe   |
 | `handleContextLost()`              | Back off the Luxar GPU budget after WebGL context loss            |
 | `handleContextRestored()`          | Rebuild Luxar resources after host WebGL context recovery         |
-| `dispose()`                        | Async full teardown of Luxar in the page                          |
+| `dispose()`                        | Async teardown of this layer and its shared-worker leases         |
 
 ## Host responsibilities
 
@@ -286,10 +286,10 @@ blending when exposure should produce smooth surface transparency.
   scene's authored `opacity` plus `setExposure()` — and `max` is the one blending
   mode that cannot saturate at all.
 
-- **`dispose()` is async** and tears down process singletons — the loader and its
-  caches, the data-worker pool, the depth-sort worker, the material cache. It is
-  a full teardown of Luxar in the page, not a partial one, which is consistent
-  with the single-instance rule.
+- **`dispose()` is async** and tears down this layer's loaders, caches, materials,
+  depth-sort coordinator and blend warm-up. It releases the layer's leases on the
+  shared data-worker pool and SortWorker; those workers remain alive while another
+  host uses them.
 
 ## Files
 
