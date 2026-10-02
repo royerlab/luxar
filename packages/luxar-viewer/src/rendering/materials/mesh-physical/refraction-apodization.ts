@@ -27,8 +27,8 @@
  *   the border column smeared across it — the very streaks being removed, only on
  *   screen instead of clamped. Capped at a fraction `c` of the room, the sample point
  *   still advances at least `(1 − c)` as fast as the pixel, so the edge band is at most
- *   stretched by `1 / (1 − c)` (4× at most here; about 2× where the roll-off begins,
- *   `1 / (1 − knee)`), never collapsed.
+ *   stretched by `1 / (1 − c)` (4× at most here). Stretch rises smoothly from 1×
+ *   at the knee toward that bound near the border, never collapsing the band.
  *
  * The shaped shift is applied by shortening the ray, not by rewriting the sample
  * coordinate, so it goes through three's own code path on both backends (three's TSL

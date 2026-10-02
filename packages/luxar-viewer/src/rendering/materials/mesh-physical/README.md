@@ -150,8 +150,8 @@ wherever a shift stays clear of the edges. The ceiling is not decoration: a limi
 let a large shift approach the WHOLE room would park the sample on the border for a band
 of pixels and smear the border column across it — the streaks again, only on screen. At
 three quarters of the room the sample still advances at least a quarter as fast as the
-pixel, so the edge band is stretched at most 4× (about 2× where the roll-off begins),
-never collapsed (pinned by a unit test with that bound hard-coded, which fails for a
+pixel, so the edge-band stretch rises smoothly from 1× at the knee toward at most 4×
+near the border, never collapsing (pinned by a unit test with that bound, which fails for a
 near-1 ceiling). The knee is half because a lower one reaches into the frame: on the
 render gate's thick lens three's own shifts reach a fifth of the room at the median and
 most of it at the rim, and a quarter-room knee changed the plain outside view. It is applied by shortening the ray three traces (`thickness·λ`, with
