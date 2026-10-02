@@ -449,6 +449,16 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       if (bookmark) {
         try {
           await restoreBookmark(app, bookmark);
+          // A cross-dataset switch rewrites ?src and drops the old view.
+          // Keep the just-restored bookmark in the URL for a reload.
+          if (!window.location.hash.startsWith('#view=')) {
+            const hash = new URLSearchParams({ view: raw }).toString();
+            window.history.replaceState(
+              window.history.state,
+              '',
+              `${window.location.pathname}${window.location.search}#${hash}`
+            );
+          }
         } catch (error) {
           log.warning(Modules.LUXAR, 'Could not restore view bookmark:', error);
         }

@@ -861,10 +861,21 @@ class Chapter:
     label: Optional[str] = None
     #: A second, quieter line under the label.
     sublabel: Optional[str] = None
+    #: A shorter label, shown instead of the full one on a tile too small for
+    #: it (a phone, or a tour with many stops). The panel uses it only once it
+    #: has dropped the sublabel and the tour numeral; until then it keeps the
+    #: full label.
+    short_label: Optional[str] = None
+    #: A shorter sublabel, the panel's first fallback when a tile cannot hold
+    #: the full one. Past that it shortens the sublabel to fewer lines, then
+    #: drops it.
+    short_sublabel: Optional[str] = None
+
+    _TEXT_FIELDS = ("label", "sublabel", "short_label", "short_sublabel")
 
     def __post_init__(self) -> None:
         """Validate every field that is set."""
-        for name in ("label", "sublabel"):
+        for name in self._TEXT_FIELDS:
             value = getattr(self, name)
             if value is None:
                 continue
@@ -876,17 +887,16 @@ class Chapter:
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary, omitting None fields."""
-        result: Dict[str, Any] = {}
-        if self.label is not None:
-            result["label"] = self.label
-        if self.sublabel is not None:
-            result["sublabel"] = self.sublabel
-        return result
+        return {
+            name: getattr(self, name)
+            for name in self._TEXT_FIELDS
+            if getattr(self, name) is not None
+        }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Chapter:
         """Create from dictionary. Unknown keys are ignored."""
-        return cls(label=data.get("label"), sublabel=data.get("sublabel"))
+        return cls(**{name: data.get(name) for name in cls._TEXT_FIELDS})
 
 
 @dataclass

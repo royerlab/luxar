@@ -1,6 +1,6 @@
 /**
  * Per-worker init guard. Races `api.initialize()` against
- * (1) a hard timeout and (2) the worker's own `onerror` /
+ * (1) a deadline with one-turn reply grace and (2) the worker's own `onerror` /
  * `onmessageerror` events.
  *
  * Lifted from `WorkerPool.initializeWithGuard`. The pool's permanent
@@ -63,10 +63,12 @@ export function initializeWithGuard<TResult>(
 ): Promise<TResult> {
   return new Promise<TResult>((resolve, reject) => {
     let settled = false;
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
     const settle = (kind: 'ok' | 'err', payload?: TResult | Error): void => {
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
+      if (graceTimer !== undefined) clearTimeout(graceTimer);
       // Restore the permanent runtime handlers; the early ones below
       // are scoped to the init race only.
       attachPermanentHandlers();
@@ -82,7 +84,11 @@ export function initializeWithGuard<TResult>(
     const timer: ReturnType<typeof setTimeout> | undefined =
       timeoutMs > 0 && Number.isFinite(timeoutMs)
         ? setTimeout(() => {
-            settle('err', new WorkerInitTimeoutError(label, timeoutMs));
+            // A busy main thread can queue the worker reply and this expired
+            // timer together. Give the reply one turn to settle before failing.
+            graceTimer = setTimeout(() => {
+              settle('err', new WorkerInitTimeoutError(label, timeoutMs));
+            }, 0);
           }, timeoutMs)
         : undefined;
     // Override the permanent handlers for the duration of init so an

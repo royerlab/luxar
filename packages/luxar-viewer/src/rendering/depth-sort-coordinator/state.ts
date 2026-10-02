@@ -52,6 +52,8 @@ export interface NodeSortState {
    * draw waits for.
    */
   count: number;
+  /** Generation already warned about a short worker ordering. */
+  warnedMismatchGeneration?: number;
   /** True while a sort RPC is outstanding for this node. */
   inFlight: boolean;
   /** A newer commit landed mid-sort — re-sort once the current one resolves. */

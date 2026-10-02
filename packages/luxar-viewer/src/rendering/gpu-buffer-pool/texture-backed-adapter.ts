@@ -18,6 +18,7 @@
 import * as THREE from 'three';
 import {
   cancelSortedIndexOrderingApply,
+  releaseSortedIndexDrawHold,
   repairSortedIndexForCount,
   writeSortedIndexIdentity,
   writeSortedIndexIdentityRange,
@@ -327,6 +328,9 @@ export abstract class TextureBackedAdapter {
     }
 
     if (this.buffers.removeFirst((buffer) => buffer === released, false)) {
+      // The failed replacement has no commit to end the old draw hold (a
+      // gsplats append hold; a no-op for a geometry holding nothing).
+      releaseSortedIndexDrawHold(released.geometry as THREE.InstancedBufferGeometry);
       released.inUse = true;
       released.lastUsedCommit = host.commitCount;
       host.activeBuffers.set(nodeId, released);

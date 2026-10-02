@@ -98,7 +98,6 @@
     "JSDoc coverage::packages/luxar-viewer/src/data/scene-loader/update-view/queue-next.ts",
     "JSDoc coverage::packages/luxar-viewer/src/data/scene-loader/view-state/derive-node-view-state.ts",
     "JSDoc coverage::packages/luxar-viewer/src/data/scene-loader/view-state/predicted-view-state.ts",
-    "JSDoc coverage::packages/luxar-viewer/src/data/scene-loader/view-state/view-state-queue.ts",
     "JSDoc coverage::packages/luxar-viewer/src/data/stats/scene-stats.ts",
     "JSDoc coverage::packages/luxar-viewer/src/input/input-handler.ts",
     "JSDoc coverage::packages/luxar-viewer/src/input/input-handler/commands/data-monitor-cycle.ts",

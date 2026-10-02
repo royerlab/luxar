@@ -422,7 +422,7 @@ export interface SortedIndexApplyCallbacks {
    */
   requestFrame?: () => void;
   /**
-   * When it returns true, {@link applyNextSortedIndexChunk} advances past the
+   * When it returns true, `applyNextSortedIndexChunk` advances past the
    * #715 upload-acknowledgement back-pressure. The depth-sort coordinator's
    * offline-capture drain (`resortForCapture`) turns it on for its own
    * streams: that drain never draws, so the ack that releases the stall can

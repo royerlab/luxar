@@ -190,7 +190,14 @@ describe('control-panel bootstrap', () => {
             subtitle: 'Authored subtitle',
             columns: 2,
             stylesheet: '.tile { color: blue; }',
-            chapters: { 1: { label: 'Blood', sublabel: 'Protein family' } },
+            chapters: {
+              1: {
+                label: 'Blood',
+                sublabel: 'Protein family',
+                shortLabel: 'Hb',
+                shortSublabel: 'Family',
+              },
+            },
           },
         };
       }
@@ -207,6 +214,8 @@ describe('control-panel bootstrap', () => {
       subtitle: 'Authored subtitle',
       columns: 2,
       sublabels: { 1: 'Protein family' },
+      shortLabels: { 1: 'Hb' },
+      shortSublabels: { 1: 'Family' },
     });
     const styles = document.querySelectorAll('#luxar-control-author-style');
     expect(styles).toHaveLength(1);

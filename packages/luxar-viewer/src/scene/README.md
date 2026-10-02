@@ -1346,7 +1346,7 @@ _For implementation details, see the source files in this directory._
   `computeEntryWorldBox` (nD raw or robust bounds → world box via
   displayDims), `projectBoxAreaFraction` (world box → fraction of the
   viewport area) and `projectBoxDiagonalPx` (→ screen-space pixel
-  diagonal) — both with near-plane saturation — and
+  diagonal) — both saturate when the eye is inside the box and near-clip a box beside it — and
   `pickChildWithHysteresis`.
 - `lod-fade.ts` — Material-level appliers for the two LOD anti-popping
   mechanisms: `applyLodFade` (write coverage-weight × `1/e(k)` opacity

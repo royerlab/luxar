@@ -253,6 +253,14 @@ export interface GSplatTSLConfig {
    * to `'additive'` to match the GLSL wrapper class.
    */
   readonly blendingMode?: BlendingMode;
+  /**
+   * The splat texture's width, baked into the vertex addressing as a literal
+   * (see the prologue). Defaults to the width resolved from
+   * `nodes.uSplatTex.value`; a wrapper building a SHARED graph passes it
+   * explicitly so it is part of the graph's configuration key rather than
+   * read off whichever texture a forwarding leaf holds at build time.
+   */
+  readonly elementTextureWidth?: number;
 }
 
 /**
@@ -409,10 +417,11 @@ export function gsplatWebGPUFactory(
     // Safe because the width is a per-layout session constant, capped
     // at 4096 on every device (element-texture-layout.ts).
     const splatTexW: TSLNode = int(
-      resolveElementTextureWidth(
-        SPLAT_TEXTURE_LAYOUT,
-        (nodes.uSplatTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
-      )
+      config.elementTextureWidth ??
+        resolveElementTextureWidth(
+          SPLAT_TEXTURE_LAYOUT,
+          (nodes.uSplatTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
+        )
     ).toVar();
     const texelX: TSLNode = splatBase.mod(splatTexW).toVar();
     const texelY: TSLNode = splatBase.div(splatTexW).toVar();
@@ -962,10 +971,26 @@ export function gsplatWebGPUFactory(
   const material = outMaterial ?? new NodeMaterial();
   material.vertexNode = clipPos;
   material.colorNode = fragmentNode();
-  material.toneMapped = false;
+  applyGSplatMaterialState(
+    material,
+    config.blendingMode ?? 'additive',
+    (nodes.uOpacity.value as number | undefined) ?? 1.0
+  );
+  return material;
+}
 
-  const blendingMode: BlendingMode = config.blendingMode ?? 'additive';
-  const opacityValue = (nodes.uOpacity.value as number | undefined) ?? 1.0;
+/**
+ * The non-graph material state the factory derives from the mode —
+ * `toneMapped` and the blending state. Exported so a wrapper that takes its
+ * graph from a shared build (`shared-graph-tsl.ts`) applies the same state
+ * to its own material.
+ */
+export function applyGSplatMaterialState(
+  material: NodeMaterial,
+  blendingMode: BlendingMode,
+  opacityValue: number
+): void {
+  material.toneMapped = false;
   // 'normal' takes the gsplat-specific premultiplied state (symmetric
   // alpha channel — separate alpha-equation state trips gl.getError()
   // under the WebGPU→WebGL2 bridge); 'volumetric' gets the identical
@@ -976,7 +1001,6 @@ export function gsplatWebGPUFactory(
     ? getGSplatNormalBlendingState()
     : getCompleteBlendingState(blendingMode, opacityValue);
   applyBlendingStateToMaterial(material, blendingState);
-  return material;
 }
 
 /**

@@ -192,7 +192,8 @@ export function projectBoxAreaFraction(
     boxToClip ??
     PROJ_VIEW_SCRATCH.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
   const ellipse = projectNearDepthEllipse(box, m.elements);
-  if (ellipse === ELLIPSE_STRADDLES) return straddlingAreaFraction(box, m.elements);
+  if (ellipse === ELLIPSE_STRADDLES)
+    return straddlingAreaFraction(box, m.elements, (camera as THREE.PerspectiveCamera).near ?? 0);
   if (ellipse === ELLIPSE_BEHIND) return 0;
   const { cx, cy, sxx, sxy, syy } = ellipse;
   const ex = Math.sqrt(sxx);
@@ -226,9 +227,9 @@ export function projectBoxAreaFraction(
  * the screen rect of the box's part in front of the near plane — a rect, like
  * the face-on ellipse it stands in for, in the same units.
  */
-function straddlingAreaFraction(box: BoundingBox, e: ArrayLike<number>): number {
+function straddlingAreaFraction(box: BoundingBox, e: ArrayLike<number>, near: number): number {
   if (eyeInsideBox(box, e)) return Number.POSITIVE_INFINITY;
-  const rect = clippedNdcRect(box, e);
+  const rect = clippedNdcRect(box, e, near);
   if (rect === null) return 0;
   const overlapW = Math.min(rect.maxX, 1) - Math.max(rect.minX, -1);
   const overlapH = Math.min(rect.maxY, 1) - Math.max(rect.minY, -1);
@@ -279,18 +280,22 @@ const BOX_EDGES: readonly (readonly [number, number])[] = [
   [3, 7],
 ];
 
-/** Clip-space ``x, y, w`` and near-plane distance ``z + w`` per corner (reused). */
+/** Clip-space ``x, y, w`` and near-plane distance ``w - camera.near`` per corner (reused). */
 const CORNER_CLIP_SCRATCH = new Float64Array(32);
 
 /**
  * The NDC AABB of the part of ``box`` in front of the NEAR plane (clip
- * ``z + w >= 0``, the WebGL convention of the projection matrices here): the
+ * ``w >= camera.near``, independent of WebGL/WebGPU clip z): the
  * corners in front, plus every edge's crossing of the plane, divided by their
  * ``w`` — the box as the renderer clips it. Unclamped. ``null`` when nothing is
  * in front. Writes the shared rect scratch.
  */
-function clippedNdcRect(box: BoundingBox, e: ArrayLike<number>): typeof NDC_RECT_SCRATCH | null {
-  const k = clipCorners(box, e);
+function clippedNdcRect(
+  box: BoundingBox,
+  e: ArrayLike<number>,
+  near: number
+): typeof NDC_RECT_SCRATCH | null {
+  const k = clipCorners(box, e, near);
   const r = NDC_RECT_SCRATCH;
   r.minX = Infinity;
   r.maxX = -Infinity;
@@ -306,8 +311,8 @@ function clippedNdcRect(box: BoundingBox, e: ArrayLike<number>): typeof NDC_RECT
   return r;
 }
 
-/** Clip ``x, y, w`` and near-plane distance ``z + w`` of the 8 corners (the reused scratch). */
-function clipCorners(box: BoundingBox, e: ArrayLike<number>): Float64Array {
+/** Clip ``x, y, w`` and near-plane distance ``w - near`` of the 8 corners (the reused scratch). */
+function clipCorners(box: BoundingBox, e: ArrayLike<number>, near: number): Float64Array {
   const k = CORNER_CLIP_SCRATCH;
   for (let n = 0; n < 8; n++) {
     const x = n & 1 ? box.max.x : box.min.x;
@@ -317,7 +322,7 @@ function clipCorners(box: BoundingBox, e: ArrayLike<number>): Float64Array {
     k[4 * n] = e[0] * x + e[4] * y + e[8] * z + e[12];
     k[4 * n + 1] = e[1] * x + e[5] * y + e[9] * z + e[13];
     k[4 * n + 2] = w;
-    k[4 * n + 3] = e[2] * x + e[6] * y + e[10] * z + e[14] + w;
+    k[4 * n + 3] = w - near;
   }
   return k;
 }
@@ -564,7 +569,9 @@ function projectBoxNdcRect(
     // The eye plane cuts the box. Camera inside → the group fills the screen
     // → saturate so the finest child is selected; otherwise measure the part
     // in front of the near plane (#2944 review B).
-    return eyeInsideBox(box, e) ? null : (clippedNdcRect(box, e) ?? emptyNdcRect());
+    return eyeInsideBox(box, e)
+      ? null
+      : (clippedNdcRect(box, e, (camera as THREE.PerspectiveCamera).near ?? 0) ?? emptyNdcRect());
   }
   let minX = Infinity;
   let maxX = -Infinity;

@@ -129,11 +129,14 @@ export function orderingCoversCommit(
   nodeId: string
 ): boolean {
   if (ordering.length === state.count) return true;
-  log.warning(
-    Modules.WORKER_POOL,
-    `Depth-sort ordering for ${nodeId} has ${ordering.length} elements but the commit has ` +
-      `${state.count} — dropped`
-  );
+  if (state.warnedMismatchGeneration !== state.generation) {
+    state.warnedMismatchGeneration = state.generation;
+    log.warning(
+      Modules.WORKER_POOL,
+      `Depth-sort ordering for ${nodeId} has ${ordering.length} elements but the commit has ` +
+        `${state.count} — dropped`
+    );
+  }
   return false;
 }
 

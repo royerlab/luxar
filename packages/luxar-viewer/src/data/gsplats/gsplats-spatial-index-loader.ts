@@ -620,9 +620,10 @@ export class GSplatsSpatialIndexLoader implements GSplatsDataLoader {
           if (priority === undefined) return this.initialize();
           // A prioritised (warm-up) initialisation has no caller signal of its
           // own; it rides the loader lifetime so dispose() cancels its reads.
-          const { signal } = createChildController(this._lifetime.signal).controller;
+          const { controller, detach } = createChildController(this._lifetime.signal);
+          const { signal } = controller;
           this._initPriority = tagSignalPriority(signal, priority);
-          return this.initialize(signal);
+          return this.initialize(signal).finally(detach);
         },
         () => this.dispose()
       )

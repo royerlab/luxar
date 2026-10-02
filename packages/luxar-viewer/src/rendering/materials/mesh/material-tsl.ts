@@ -30,7 +30,13 @@
 import * as THREE from 'three';
 import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { meshWebGPUFactory, type MeshTSLNodes } from './shader-tsl';
+import {
+  applyMeshMaterialState,
+  meshWebGPUFactory,
+  type MeshTSLConfig,
+  type MeshTSLNodes,
+} from './shader-tsl';
+import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
 import {
   MESH_DEFAULTS,
   clampAppearanceFraction,
@@ -263,25 +269,31 @@ export class MeshTSLMaterial
     const useBaseColorTexture = has('LUXAR_MESH_BASE_COLOR_TEX');
     this.rebuildColormapNodes(useColormap);
     this.rebuildBaseColorTextureNode(useBaseColorTexture);
-    meshWebGPUFactory(
-      this.tslNodes as MeshTSLNodes,
-      {
-        useColormap,
-        useBaseColorTexture,
-        baseColorTextureLuminance: has('LUXAR_MESH_TEX_LUMINANCE'),
-        gammaOne: has('LUXAR_GAMMA_ONE'),
-        noGOG: has('LUXAR_NO_GOG'),
-        // Read back OUT of the defines rather than from `userData.shading`, so the
-        // define record stays the single source of truth for which variant is built
-        // — the same record the GLSL twin hands to the preprocessor.
-        shading: has('LUXAR_MESH_NO_SHADING')
-          ? 'none'
-          : has('LUXAR_MESH_FLAT_NORMAL')
-            ? 'flat'
-            : 'smooth',
-        blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'opaque',
-      },
-      this
+    const config: MeshTSLConfig = {
+      useColormap,
+      useBaseColorTexture,
+      baseColorTextureLuminance: has('LUXAR_MESH_TEX_LUMINANCE'),
+      gammaOne: has('LUXAR_GAMMA_ONE'),
+      noGOG: has('LUXAR_NO_GOG'),
+      // Read back OUT of the defines rather than from `userData.shading`, so the
+      // define record stays the single source of truth for which variant is built
+      // — the same record the GLSL twin hands to the preprocessor.
+      shading: has('LUXAR_MESH_NO_SHADING')
+        ? 'none'
+        : has('LUXAR_MESH_FLAT_NORMAL')
+          ? 'flat'
+          : 'smooth',
+      blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'opaque',
+    };
+    // ONE graph per configuration, shared by every mesh material of it
+    // (see shared-graph-tsl.ts): the build cache keys on node ids.
+    applySharedTSLGraph(this, 'mesh', config, this.tslNodes, (inputs, scratch) => {
+      meshWebGPUFactory(inputs as MeshTSLNodes, config, scratch);
+    });
+    applyMeshMaterialState(
+      this,
+      config.blendingMode ?? 'opaque',
+      (this.tslNodes.uOpacity.value as number | undefined) ?? 1.0
     );
     // Re-apply the explicit constructor overrides over the factory tail's
     // mode-derived state on EVERY rebuild — see the `_explicitDepthTest` field doc.

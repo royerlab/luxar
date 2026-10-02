@@ -515,20 +515,30 @@ export function meshWebGPUFactory(
   // modelViewProjection chain — owns the view-space position the fragment reads.
   material.vertexNode = clipPos;
   material.colorNode = colorNode();
-  material.toneMapped = false;
+  applyMeshMaterialState(material, blendingMode, (uOpacity.value as number | undefined) ?? 1.0);
+  return material;
+}
 
-  // This factory tail is the ONLY blending-state writer at TSL construction (the
-  // wrapper's ctor never calls applyBlendingMode, unlike the GLSL twin) AND it
-  // re-runs on every rebuildGraph, so it must derive the state from the same mode
-  // the emission branch above used.
+/**
+ * The non-graph material state the factory derives from the mode
+ * (`toneMapped` + blending). Exported so a wrapper taking its graph from a
+ * shared build (`shared-graph-tsl.ts`) applies the same state to itself.
+ *
+ * This tail is the ONLY blending-state writer at TSL construction (the
+ * wrapper's ctor never calls applyBlendingMode, unlike the GLSL twin) AND it
+ * re-runs on every rebuildGraph, so it must derive the state from the same mode
+ * the graph's emission branch used.
+ */
+export function applyMeshMaterialState(
+  material: NodeMaterial,
+  blendingMode: BlendingMode,
+  opacityValue: number
+): void {
+  material.toneMapped = false;
   applyBlendingStateToMaterial(
     material,
-    getCompleteBlendingState(
-      resolveMeshBlendingMode(blendingMode),
-      (uOpacity.value as number | undefined) ?? 1.0
-    )
+    getCompleteBlendingState(resolveMeshBlendingMode(blendingMode), opacityValue)
   );
-  return material;
 }
 
 /**

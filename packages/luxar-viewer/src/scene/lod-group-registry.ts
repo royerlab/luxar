@@ -471,9 +471,9 @@ export const SCREEN_FILL_DIAGONAL_RATIO = 2;
  * retries its deferred load — long enough to avoid per-frame retry storms
  * after a hard failure, short enough that a transient (network blip) failure
  * self-heals. Wall-clock, not a frame count: a 30 Hz display or a throttled
- * tab would otherwise stretch it, and the registry keeps the loop ticking
- * while a level cools (see ``LODGroupRegistry.isCoolingDown``), so a parked
- * camera still reaches the retry (#2944 A6). See ``maybeKickLoad``.
+ * tab would otherwise stretch it. A one-shot wake at cooldown expiry lets a
+ * parked camera retry without per-frame ticking; repeated failures back off.
+ * See ``maybeKickLoad``.
  */
 const FAILED_RETRY_MS = 2000;
 
@@ -590,7 +590,7 @@ export interface LODGroupChild {
   failureReason?: string;
   /**
    * Registry clock (``frame.nowMs``) when ``failed`` was first observed. Drives
-   * the transient-failure retry cooldown (``FAILED_RETRY_MS``): once it
+   * the transient-failure retry cooldown (starting at ``FAILED_RETRY_MS``): once it
    * elapses the registry clears ``failed`` and retries the load, so a
    * level that fails on *reload* (after a successful load + byte-eviction)
    * is not stuck on its placeholder forever. Cleared alongside ``failed``.
@@ -1424,8 +1424,9 @@ export class LODGroupRegistry {
    * Reset per entry in ``evaluateEntry``.
    */
   private probeCandidate: LODGroupChild | null = null;
-  /** Set this frame when a deferred part's activation request is outstanding. */
-  private lazyRequestOutstanding = false;
+  /** One-shot wakes for failure cooldowns and unanswered lazy requests. */
+  private readonly retryWakes = new Map<object, ReturnType<typeof setTimeout>>();
+  private readonly retryCounts = new WeakMap<object, number>();
   /**
    * Partition rising edges waiting for their wrapper to be visible and the
    * loader to be idle: wrapper path → the re-entering PART paths. A set that
@@ -1457,6 +1458,7 @@ export class LODGroupRegistry {
 
   /** Register a newly-loaded lod_group (called by the scene loader). */
   register(entry: LODGroupEntry): void {
+    this.clearEntryRetryWakes(entry.path);
     const footprintDims = entry.children[0]?.footprintDims;
     bumpForFailedEntryReplacement(this.entries.get(entry.path), entry);
     this.entries.set(entry.path, entry);
@@ -1525,6 +1527,7 @@ export class LODGroupRegistry {
 
   /** Register a partition whose children are independently frustum-gated. */
   registerPartition(entry: PartitionGroupEntry): void {
+    this.clearPartitionRetryWakes(entry.path);
     this.forgetPartitionParts(entry.path);
     this.partitionEntries.set(entry.path, entry);
     this.indexPartitionParts(entry);
@@ -1729,7 +1732,11 @@ export class LODGroupRegistry {
     if (!lazy || !child.activate || lazy.failed) return null;
     const partKey = child.path || entry.path;
     if (targets && !isPartTargeted(partKey, entry.path, targets)) return null;
-    if (!lazy.running) lazy.requested = false;
+    if (!lazy.running) {
+      lazy.requested = false;
+      this.clearRetryWake(lazy);
+      this.retryCounts.delete(lazy);
+    }
     if (!this.partActivationWanted(entry, child, childCache, view)) return null;
     // Already loading (activated ahead of this view): the caller still waits for it.
     lazy.running ??= this.runActivation(entry, partKey, child, childCache, lazy);
@@ -1772,6 +1779,7 @@ export class LODGroupRegistry {
         // clears `failed` (see `retryLazyChildByNodePath`).
         lazy.running = null;
         lazy.requested = false;
+        this.clearRetryWake(lazy);
         lazy.claims = [];
         lazy.failed = true;
       }
@@ -1795,6 +1803,7 @@ export class LODGroupRegistry {
     lazy: LazyPartState
   ): void {
     child.activate = undefined;
+    this.clearRetryWake(lazy);
     if (childCache.lazy === lazy) childCache.lazy = null;
     childCache.footprintDirty = true;
     if (this.partitionEntries.get(entry.path) !== entry) return;
@@ -1863,6 +1872,8 @@ export class LODGroupRegistry {
   /** Drop an lod_group from the registry (called on scene teardown). */
   unregister(path: string): void {
     const partition = this.partitionEntries.get(path);
+    this.clearEntryRetryWakes(path);
+    this.clearPartitionRetryWakes(path);
     if (partition) this.restorePartitionChildren(partition);
     this.partitionResyncPending.delete(path);
     if (this.entries.get(path)?.children.some((child) => child.permanentlyFailed)) {
@@ -1882,6 +1893,8 @@ export class LODGroupRegistry {
 
   /** Clear all entries (called on full scene tear-down). */
   clear(): void {
+    for (const timer of this.retryWakes.values()) clearTimeout(timer);
+    this.retryWakes.clear();
     for (const partition of this.partitionEntries.values()) {
       this.restorePartitionChildren(partition);
     }
@@ -2408,7 +2421,6 @@ export class LODGroupRegistry {
     // reveal it this frame (the overview recipe's fine level), and it must be
     // culled before that frame draws, not one frame late.
     HIDDEN_PARTITIONS_SCRATCH.length = 0;
-    this.lazyRequestOutstanding = false;
     for (const entry of this.partitionEntries.values()) {
       if (!isEffectivelyVisible(entry.groupObject)) {
         HIDDEN_PARTITIONS_SCRATCH.push(entry);
@@ -2443,8 +2455,7 @@ export class LODGroupRegistry {
     if (hasVisiblePendingResync && this.partitionResyncPending.size > 0) {
       this.keepTicking();
     }
-    // Nobody can run a resync without ``requestReprocess``: nothing to wait for.
-    if (this.lazyRequestOutstanding && this.deps.requestReprocess) this.keepTicking();
+    // Pending lazy requests wake the selector once at expiry.
     if (anyLoading) this.keepTicking();
     // A dissolve is a function of TIME, so the loop must keep drawing until it
     // lands even when nothing else moves (each step writes a new opacity,
@@ -2523,8 +2534,7 @@ export class LODGroupRegistry {
   }
 
   /**
-   * Whether any child of ``entry`` is loading or cooling down after a failure
-   * (both keep the loop ticking), and — for each child whose
+   * Whether any child of ``entry`` is loading, and — for each child whose
    * ``ensureLoaded`` has finished since it was fired — fold the measured
    * load+commit time into its ``loadEwmaMs`` (a failure is not a timing).
    */
@@ -2533,22 +2543,47 @@ export class LODGroupRegistry {
     for (const c of entry.children) {
       if (c.loading) anyLoading = true;
       else this.foldLoadTime(c);
-      if (this.isCoolingDown(c)) anyLoading = true;
+      if (c.failed && c.failedAtMs !== undefined) {
+        const remaining = c.failedAtMs + this.retryDelay(c) - this.frame.nowMs;
+        if (remaining > 0) this.scheduleRetryWake(c, remaining);
+      } else if (!c.failed && !c.loading) {
+        this.clearRetryWake(c);
+        this.retryCounts.delete(c);
+      }
     }
     return anyLoading;
   }
 
-  /**
-   * Whether ``c`` is inside its failure cooldown. The loop must keep ticking
-   * until it ends — nothing else may wake a parked camera — so the frame after
-   * it can retry the load (#2944 A6). Bounded: false once the cooldown passes.
-   */
-  private isCoolingDown(c: LODGroupChild): boolean {
-    return (
-      c.failed === true &&
-      c.failedAtMs !== undefined &&
-      this.frame.nowMs - c.failedAtMs < FAILED_RETRY_MS
+  private retryDelay(key: object, baseMs = FAILED_RETRY_MS): number {
+    return Math.min(30_000, baseMs * 2 ** (this.retryCounts.get(key) ?? 0));
+  }
+
+  private clearRetryWake(key: object): void {
+    const timer = this.retryWakes.get(key);
+    if (timer !== undefined) clearTimeout(timer);
+    this.retryWakes.delete(key);
+  }
+
+  private clearEntryRetryWakes(path: string): void {
+    for (const child of this.entries.get(path)?.children ?? []) this.clearRetryWake(child);
+  }
+
+  private clearPartitionRetryWakes(path: string): void {
+    for (const child of this.partitionCaches.get(path)?.children ?? []) {
+      if (child.lazy) this.clearRetryWake(child.lazy);
+    }
+  }
+
+  private scheduleRetryWake(key: object, delayMs: number): void {
+    if (this.retryWakes.has(key) || !(this.deps.requestTick || this.deps.requestRender)) return;
+    const timer = setTimeout(
+      () => {
+        this.retryWakes.delete(key);
+        this.keepTicking();
+      },
+      Math.max(0, delayMs)
     );
+    this.retryWakes.set(key, timer);
   }
 
   /**
@@ -2822,15 +2857,15 @@ export class LODGroupRegistry {
   ): void {
     if (!wanted || lazy.running || lazy.failed) return;
     if (lazy.requested) {
-      // Outstanding: keep ticking until it is reached or expires.
-      if (this.frame.nowMs - lazy.requestedAtMs < LAZY_REQUEST_TIMEOUT_MS) {
-        this.lazyRequestOutstanding = true;
+      // Outstanding: one timer wakes the selector when it expires.
+      if (this.frame.nowMs - lazy.requestedAtMs < this.retryDelay(lazy, LAZY_REQUEST_TIMEOUT_MS))
         return;
-      }
+      this.clearRetryWake(lazy);
+      this.retryCounts.set(lazy, (this.retryCounts.get(lazy) ?? 0) + 1);
     }
     lazy.requested = true;
     lazy.requestedAtMs = this.frame.nowMs;
-    this.lazyRequestOutstanding = true;
+    this.scheduleRetryWake(lazy, this.retryDelay(lazy, LAZY_REQUEST_TIMEOUT_MS));
     noteRisingPart(risingParts, child.path, entryPath);
   }
 
@@ -3898,16 +3933,21 @@ export class LODGroupRegistry {
     }
     if (child.failed) {
       if (explicitRetry) {
+        this.clearRetryWake(child);
+        this.retryCounts.delete(child);
         child.failed = false;
         child.failedAtMs = undefined;
       } else {
         if (child.failedAtMs == null) {
           // First frame we observe the failure — start the cooldown clock.
           child.failedAtMs = this.frame.nowMs;
+          this.scheduleRetryWake(child, this.retryDelay(child));
           return false;
         }
-        if (this.frame.nowMs - child.failedAtMs < FAILED_RETRY_MS) return false;
+        if (this.frame.nowMs - child.failedAtMs < this.retryDelay(child)) return false;
         // Cooldown elapsed — clear the failure and fall through to retry.
+        this.clearRetryWake(child);
+        this.retryCounts.set(child, (this.retryCounts.get(child) ?? 0) + 1);
         child.failed = false;
         child.failedAtMs = undefined;
       }
