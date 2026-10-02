@@ -9,9 +9,8 @@
  * adds the `uNodeId` uniform and `vNodeId` / `vElementId` varyings,
  * emitting `(nodeId, elementId-low16, brightness, elementId-high16)` with
  * brightness-as-depth (`gl_FragDepth = 1 / (1 + brightness)`), identical to the
- * screen-space pick variant. Like it, the pick pass
- * ignores per-element alpha and node opacity — faint-but-hoverable stays
- * consistent across primitives.
+ * screen-space pick variant. Like it, pick salience includes per-element
+ * alpha, node opacity and gain.
  *
  * Model + constants: `_shared/line-capsule.ts` (the visual twin's header
  * documents the exactness relaxations; they apply here identically).
