@@ -48,7 +48,7 @@ export const MAX_EROSION_POINTS = 1;
 
 export const COVERAGE_THRESHOLDS = {
   // Global — every file in the report, the subtrees below included.
-  lines: 88,
+  lines: 90,
   statements: 87,
   // functions 84 -> 86 after the chunk-boundary prefetch planner/loader tests
   // (#2686): measured 86.61 -> 87.01 and check-coverage-slack flagged the old
@@ -86,7 +86,7 @@ export const COVERAGE_THRESHOLDS = {
   // characterization tests (2026-09) lifted the subtree 89.2 -> 91.2. Raised
   // because check-coverage-slack.mjs flagged the old floor as stale, which is
   // the ratchet working: tests move the measurement, the guard moves the floor.
-  'src/data/**': { lines: 92, functions: 90, branches: 86 },
+  'src/data/**': { lines: 92, functions: 92, branches: 86 },
   // functions 88 -> 90 after the worker-pool startup tests (first-worker-ready,
   // warm-up, shared-module) reached the gate/publish/warm-up paths nothing had
   // called: the subtree went 90.60 -> 91.41 and check-coverage-slack.mjs flagged
@@ -109,7 +109,7 @@ export const COVERAGE_THRESHOLDS = {
   // bumps above.
   // Remote-control orchestration and wire-value tests lifted this subtree;
   // keep the floor within the three-point slack budget.
-  'src/core/**': { lines: 90, functions: 76, branches: 85 },
+  'src/core/**': { lines: 90, functions: 78, branches: 85 },
   // input jumped when ui-actions-surface.test.ts began invoking the command
   // table InputHandler builds in registerAllKeyBindings (27 thunks no test
   // had ever called): functions 76.0 -> 90.39.
@@ -129,7 +129,7 @@ export const COVERAGE_THRESHOLDS = {
 
 /** Last accepted coverage measurements for each floor. */
 export const COVERAGE_RECORDED = {
-  lines: 90.55,
+  lines: 91.02,
   statements: 89.62,
   functions: 88.02,
   branches: 84.11,
@@ -140,10 +140,10 @@ export const COVERAGE_RECORDED = {
   'src/scene/**': { lines: 96.28, functions: 91.08, branches: 91.15 },
   'src/cache/**': { lines: 95.03, functions: 95.12, branches: 87.23 },
   'src/controls/**': { lines: 96.32, functions: 91.21, branches: 89.44 },
-  'src/data/**': { lines: 93.6, functions: 92.03, branches: 87.31 },
+  'src/data/**': { lines: 93.6, functions: 93.08, branches: 87.31 },
   'src/workers/**': { lines: 93.8, functions: 94.05, branches: 88.52 },
   'src/ui/**': { lines: 92.0, functions: 86.95, branches: 79.58 },
-  'src/core/**': { lines: 91.11, functions: 78.49, branches: 86.94 },
+  'src/core/**': { lines: 91.11, functions: 79.17, branches: 86.94 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
   'src/rendering/**': { lines: 79, functions: 80.73, branches: 75.88 },
 };
