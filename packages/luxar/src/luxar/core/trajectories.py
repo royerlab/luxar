@@ -213,7 +213,9 @@ class FlyThrough:
         """Validate the parameters where the trajectory is written."""
         _positive("look_ahead", self.look_ahead)
         if not (math.isfinite(self.turn) and 0 < self.turn <= 0.5):
-            raise ValueError(f"turn must be finite and within (0, 0.5], got {self.turn}")
+            raise ValueError(
+                f"turn must be finite and within (0, 0.5], got {self.turn}"
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         """The JSON the viewer reads: ``{"kind": ..., <parameters>}``."""
