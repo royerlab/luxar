@@ -62,6 +62,28 @@ describe('loadGSplatsChunkIndex', () => {
     expect(infoSpy).toHaveBeenCalled();
   });
 
+  it.fails('skips the chunk_bounds request when the node holds a single chunk', async () => {
+    // A one-chunk node's index can only answer "load chunk 0 or not", and the
+    // load-all fallback is the superset of that answer. tp50's rungs are 64
+    // splats in one 64-splat chunk: the 48-byte probe was one request per rung.
+    const result = await loadGSplatsChunkIndex(
+      makeLocation(),
+      makeAttrs({ n_splats: 64, chunk_size: 64 })
+    );
+    expect(result).toBeNull();
+    expect(mockFetchChunkBounds).not.toHaveBeenCalled();
+  });
+
+  it('still probes chunk_bounds when the node spans more than one chunk', async () => {
+    mockFetchChunkBounds.mockResolvedValueOnce({ data: new Float32Array(12), shape: [2, 3, 2] });
+    const result = await loadGSplatsChunkIndex(
+      makeLocation(),
+      makeAttrs({ n_splats: 65, chunk_size: 64 })
+    );
+    expect(mockFetchChunkBounds).toHaveBeenCalledTimes(1);
+    expect(result!.chunkCount).toBe(2);
+  });
+
   it('returns null when fetchChunkBoundsArray returns null (array missing)', async () => {
     mockFetchChunkBounds.mockResolvedValueOnce(null);
     const result = await loadGSplatsChunkIndex(makeLocation(), makeAttrs());
@@ -101,15 +123,16 @@ describe('loadGSplatsChunkIndex', () => {
   });
 
   it('reconciles to actualChunks when metadata is smaller than array reports', async () => {
-    // Metadata: 1 splat / 10 = 1 chunk. Array: 5 chunks.
+    // Metadata: 11 splats / 10 = 2 chunks. Array: 5 chunks. (A one-chunk
+    // node is never probed at all — see the single-chunk test above.)
     const data = new Float32Array(30);
     mockFetchChunkBounds.mockResolvedValueOnce({ data, shape: [5, 3, 2] });
 
-    const attrs = makeAttrs({ n_splats: 1, chunk_size: 10, ndim: 3 });
+    const attrs = makeAttrs({ n_splats: 11, chunk_size: 10, ndim: 3 });
     const result = await loadGSplatsChunkIndex(makeLocation(), attrs);
 
     expect(result).not.toBeNull();
-    expect(result!.chunkCount).toBe(1); // min(1, 5) = 1
+    expect(result!.chunkCount).toBe(2); // min(2, 5) = 2
     expect(warnSpy).toHaveBeenCalled();
   });
 });
