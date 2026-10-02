@@ -83,7 +83,7 @@ Usage:
     python -m luxar.demos.demo_esm_protein_universe
     python -m luxar.demos.demo_esm_protein_universe --no-serve
     python -m luxar.demos.demo_esm_protein_universe --no-audio --no-turntables
-    python -m luxar.demos.demo_esm_protein_universe --high-quality   # kiosk: SSAA + full DPR + 95% dolly
+    python -m luxar.demos.demo_esm_protein_universe --high-quality   # kiosk: SSAA + 95% dolly
     python -m luxar.demos.demo_esm_protein_universe --coords X.parquet --annotations Y.parquet
 
 Touch panel (off by default):
@@ -3133,9 +3133,8 @@ def build_universe_scene(
 ) -> int:
     """Write the universe scene. Returns the number of clusters in the backdrop.
 
-    ``high_quality`` re-enables the kiosk settings (SSAA, rendering at the
-    display's full device pixel ratio, and the 95% dolly swing); the default is
-    the laptop build.
+    ``high_quality`` re-enables kiosk supersampling and the 95% dolly swing;
+    both builds use the display's full device pixel ratio.
     """
     n = len(universe)
     assets: dict[str, TurntableAssets] = {}
@@ -3322,8 +3321,8 @@ def main() -> None:
     auto_rotate = "--no-auto-rotate" not in sys.argv
     turntables = "--no-turntables" not in sys.argv
     audio = "--no-audio" not in sys.argv
-    # Kiosk / big-GPU build: SSAA, full device resolution, and the 95% dolly
-    # swing. Off by default so the hosted demo runs on an ordinary laptop.
+    # Kiosk / big-GPU build: SSAA and the 95% dolly swing. Off by default so
+    # the hosted demo runs on an ordinary laptop; full DPR applies to both.
     high_quality = "--high-quality" in sys.argv
     try:
         annotations = find_input(ANNOTATIONS_PARQUET, parse_path_arg("annotations"))
