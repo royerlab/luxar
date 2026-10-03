@@ -30,13 +30,13 @@ import {
   configureSortedIndexChunkedApply,
   elementTexelCapacity,
   hasPendingSortedIndexOrderingApply,
+  holdSortedIndexDrawForAppend,
   pumpSortedIndexOrderingApply,
   registerElementTexelDirtyRange,
   releaseSortedIndexDrawHold,
   sortedIndexDrawHoldTarget,
   setSortedIndexChunkElementsForTests,
   writeSortedIndexIdentity,
-  writeSortedIndexIdentityRange,
   writeSortedIndexOrdering,
   writeSortedIndexOrderingLive,
   markElementTextureFullDirty,
@@ -465,27 +465,6 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     expect(Array.from(t2.image.data as Float32Array)).toEqual(
       Array.from(t1.image.data as Float32Array)
     );
-  });
-
-  it('writeSortedIndexIdentityRange appends identity for the suffix, preserving the prefix permutation', () => {
-    const geometry = new THREE.InstancedBufferGeometry();
-    attachSplatStorage(geometry, 16);
-    // Prefix carries a real depth-sort permutation over [0,4). An
-    // ordering stages into the back buffer, so drain the pump to make it
-    // the live one before appending onto it.
-    writeSortedIndexOrdering(geometry, new Uint32Array([3, 2, 1, 0]), 4);
-    while (pumpSortedIndexOrderingApply(geometry).more) {
-      /* drain */
-    }
-    const attr = getActiveSortedIndexAttribute(geometry) as THREE.InstancedBufferAttribute;
-    const arr = attr.array as Uint32Array;
-    // Append identity for [4, 8): prefix permutation stays, suffix = identity.
-    writeSortedIndexIdentityRange(geometry, 4, 8);
-    expect(Array.from(arr.subarray(0, 8))).toEqual([3, 2, 1, 0, 4, 5, 6, 7]);
-    // Collapsed to a single [0, count) range (index buffer is tiny).
-    expect(attr.updateRanges.length).toBe(1);
-    expect(attr.updateRanges[0].start).toBe(0);
-    expect(attr.updateRanges[0].count).toBe(8);
   });
 
   it('throws on source arrays shorter than the requested count (fail-loud contract)', () => {
@@ -1871,18 +1850,6 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     ]);
   });
 
-  it('writeSortedIndexIdentityRange (append commit) cancels an in-flight apply', () => {
-    const { geometry } = makeGeometry(16);
-    writeSortedIndexOrdering(geometry, reversed(12), 12);
-    writeSortedIndexIdentityRange(geometry, 12, 16);
-    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
-      more: false,
-      flipped: false,
-      stalled: false,
-    });
-  });
-
   it('identity writers target whichever buffer is live after a flip', () => {
     const { geometry } = makeGeometry(16);
     writeSortedIndexOrdering(geometry, reversed(12), 12);
@@ -2097,10 +2064,12 @@ describe('ordering invariant — randomized interleavings', () => {
           n = 1 + Math.floor(r() * 24);
           writeSortedIndexIdentity(geometry, n);
         } else {
+          // An append whose hold is released at once (an order-independent
+          // commit): the drawn permutation repaired over the grown count.
           op = 'append';
-          const from = n;
           const grown = Math.min(capacityRequest, n + 1 + Math.floor(r() * 8));
-          writeSortedIndexIdentityRange(geometry, from, grown);
+          geometry.instanceCount = holdSortedIndexDrawForAppend(geometry, n, grown);
+          releaseSortedIndexDrawHold(geometry);
           n = grown;
         }
         opTally[op] = (opTally[op] ?? 0) + 1;

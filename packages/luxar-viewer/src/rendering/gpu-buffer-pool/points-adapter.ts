@@ -154,14 +154,14 @@ export class PointsBufferAdapter extends TextureBackedAdapter {
       scalars: scalarsF32,
     };
     // One fused pass over the staged arrays into the texel layout
-    // (replaces the five per-attribute strided writes), then identity
+    // (replaces the five per-attribute strided writes), then the commit
     // ordering. The writer clamps to the texture capacity; mirror that
     // clamp in instanceCount so a bound-clamped node never draws
     // instances whose texels were not written.
     count = writePointTexels(texture, texelSrc, count, { fromPoint: fromInstance });
-    writeInstancedCommitOrdering(instanced, count, options);
+    const drawCount = writeInstancedCommitOrdering(instanced, count, options);
 
-    prepareInstancedQuadForDraw(instanced, count);
+    prepareInstancedQuadForDraw(instanced, drawCount);
 
     // Presence stamps — shared chokepoint with the node factory; see
     // `stampPointPresenceFlags` for what each flag carries and why they

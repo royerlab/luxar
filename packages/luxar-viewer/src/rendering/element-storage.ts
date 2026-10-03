@@ -982,7 +982,7 @@ function clearIdentityPrefix(attr: THREE.BufferAttribute): void {
 }
 
 /**
- * Held draws (gsplat append commits): geometry -> the element count the draw
+ * Held draws (append and grow commits of every instanced type): geometry -> the element count the draw
  * is waiting to reach. While an entry exists, `instanceCount` is deliberately
  * LOWER than the committed population — see
  * {@link holdSortedIndexDrawForAppend}.
@@ -1055,7 +1055,7 @@ export function holdSortedIndexDrawForAppend(
  * commit that extends the previous population but lands in a DIFFERENT
  * geometry (the pool grew the node's buffers — every rung that doubles a
  * ladder does). The new geometry's texels are fully written, so its first
- * `seed.length` elements are the same splats the previous geometry drew
+ * `seed.length` elements are the same elements the previous geometry drew
  * (the commit layer proves this with the prefix lineage), and `seed` — the
  * previous geometry's drawn permutation of `[0, seed.length)` — is an exact
  * ordering of them. Writes identity over `count` (normalising slot 0, so the
@@ -1127,10 +1127,8 @@ export function releaseSortedIndexDrawHold(geometry: THREE.InstancedBufferGeomet
  * precisely the fresh-start signal, so normalising here means a default
  * uniform is always correct and untracked nodes need no sync at all.
  *
- * The Points and Lines append writers deliberately differ: their adapters
- * call {@link writeSortedIndexIdentityRange} to preserve the live prefix
- * permutation. GSplat appends call neither: they HOLD the draw at the previous
- * population until the grown one is sorted ({@link holdSortedIndexDrawForAppend}).
+ * Appends do not call it: they HOLD the draw at the previous population until
+ * the grown one is sorted ({@link holdSortedIndexDrawForAppend}).
  */
 export function writeSortedIndexIdentity(
   geometry: THREE.InstancedBufferGeometry,
@@ -1158,41 +1156,6 @@ export function writeSortedIndexIdentity(
 }
 
 /**
- * Extend `aSortedIndex` with identity ordering for the appended suffix
- * `[from, count)`, preserving the existing `[0, from)` permutation
- * (depth-sorting Phase 4 Stage 2, the append fast path). Its two owners are
- * `points-adapter.ts` and `lines-adapter.ts`; GSplat appends instead hold
- * the draw at the previous population ({@link holdSortedIndexDrawForAppend}).
- * The collapse still uploads `[0, count)` —
- * `aSortedIndex` is a tiny 4-byte/instance buffer, so the GPU upload is the
- * same size either way; the expensive element-texture upload is the one
- * Stage 2 restricts to the suffix.
- */
-export function writeSortedIndexIdentityRange(
-  geometry: THREE.InstancedBufferGeometry,
-  from: number,
-  count: number
-): void {
-  // Same supersede rule as writeSortedIndexIdentity: the append commit
-  // invalidates the ordering an in-flight chunked apply was streaming
-  // (the coordinator re-sorts the grown population on a later frame).
-  cancelSortedIndexOrderingApply(geometry);
-  heldDrawTargets.delete(geometry);
-  // Identity targets the ACTIVE buffer: it is a complete permutation by
-  // construction, so writing it live is safe and needs no flip.
-  const attr = getActiveSortedIndexAttribute(geometry);
-  if (!attr) return;
-  const arr = attr.array as Uint32Array;
-  const n = Math.min(count, arr.length);
-  const start = Math.max(0, from);
-  for (let i = start; i < n; i++) arr[i] = i;
-  // The kept [0, from) prefix is a permutation; the buffer is identity over
-  // [0, n) only if that prefix already was.
-  if ((identityPrefix.get(attr) ?? 0) >= start) identityPrefix.set(attr, n);
-  collapseSortedIndexRanges(attr, n);
-}
-
-/**
  * Write a COMPLETE depth-sort permutation straight into the ACTIVE ordering
  * buffer, live, with no staging and no slot flip. Returns `count` on success
  * and 0 when the ordering is rejected.
@@ -1205,8 +1168,8 @@ export function writeSortedIndexIdentityRange(
  *
  * It is dead weight when the ordering was computed synchronously inside the
  * commit, because there is no partial state to hide — the permutation is
- * complete before the first write. Writing it live is then safe for exactly
- * the reason {@link writeSortedIndexIdentityRange} gives for the same choice,
+ * complete before the first write. Writing a complete permutation into the
+ * active buffer is safe by construction (the identity writers do the same),
  * and it is what removes the unsorted frame rather than merely improving it.
  *
  * The two rejections mirror `writeSortedIndexOrdering`: a TRUNCATED ordering
@@ -1308,16 +1271,37 @@ export function repairSortedIndexForCount(
   const arr = attr.array as Uint32Array;
   const n = Math.min(count, arr.length);
   if (n <= 0) return;
-
-  if (repairSeenScratch.length < n) repairSeenScratch = new Uint8Array(n);
-  const seen = repairSeenScratch;
-  seen.fill(0, 0, n);
-
-  // Pass 1 — keep the surviving prefix in its existing relative order.
   // Read past `n` is deliberate on a shrink: the dropped values are exactly
   // the ones at or above the new count.
   const readEnd = Math.min(Math.max(prevCount, 0), arr.length);
   const identityKnown = identityPrefix.get(attr) ?? 0;
+  if (identityKnown >= Math.min(readEnd, n)) {
+    // Repairing an identity prefix yields identity (kept in order, missing
+    // values appended ascending), so only the entries past the known prefix
+    // are written and uploaded — the cost of an identity append. Every
+    // order-independent append takes this path: its held draw is released
+    // inside the same commit (`releaseSortedIndexDrawHold`).
+    const from = Math.min(identityKnown, n);
+    for (let i = from; i < n; i++) arr[i] = i;
+    identityPrefix.set(attr, Math.max(identityKnown, n));
+    if (from < n) collapseSortedIndexRanges(attr, n, from);
+    return;
+  }
+  repairPermutationInPlace(arr, readEnd, n);
+  clearIdentityPrefix(attr);
+  collapseSortedIndexRanges(attr, n);
+}
+
+/**
+ * The walk behind {@link repairSortedIndexForCount}: keep `arr[0, readEnd)`'s
+ * values below `n` in their existing relative order, then append whatever is
+ * still missing in ascending order, leaving a permutation of `[0, n)`.
+ */
+function repairPermutationInPlace(arr: Uint32Array, readEnd: number, n: number): void {
+  if (repairSeenScratch.length < n) repairSeenScratch = new Uint8Array(n);
+  const seen = repairSeenScratch;
+  seen.fill(0, 0, n);
+  // Pass 1 — keep the surviving prefix in its existing relative order.
   let write = 0;
   for (let i = 0; i < readEnd && write < n; i++) {
     const v = arr[i];
@@ -1333,12 +1317,6 @@ export function repairSortedIndexForCount(
   for (let v = 0; v < n && write < n; v++) {
     if (seen[v] === 0) arr[write++] = v;
   }
-
-  // Repairing an identity prefix yields identity (kept in order, missing
-  // values appended ascending); anything else is a real permutation.
-  if (identityKnown >= readEnd) identityPrefix.set(attr, n);
-  else clearIdentityPrefix(attr);
-  collapseSortedIndexRanges(attr, n);
 }
 
 /**

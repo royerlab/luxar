@@ -70,6 +70,19 @@ describe('GPUBufferPool', () => {
     return arr[i * POINT_FLOATS_PER_POINT + offset];
   };
 
+  // Stream a staged ordering to completion (it swaps in on the last slice).
+  const drainApply = (geom: THREE.InstancedBufferGeometry): void => {
+    while (pumpSortedIndexOrderingApply(geom).more) {
+      /* one slice per pump */
+    }
+  };
+  // The permutation the draw actually samples: the active ordering's first
+  // `instanceCount` entries.
+  const drawnOrder = (geom: THREE.InstancedBufferGeometry): number[] =>
+    Array.from(
+      (getActiveSortedIndexAttribute(geom)!.array as Uint32Array).subarray(0, geom.instanceCount)
+    );
+
   beforeEach(() => {
     pool = new GPUBufferPool(20, 300); // maxPoolSize=20, evictionCommits=300
   });
@@ -171,23 +184,46 @@ describe('GPUBufferPool', () => {
       expect(Array.from(reset.subarray(0, 4))).toEqual([0, 1, 2, 3]);
     });
 
-    it('append (fromInstance) keeps the PREFIX permutation and gives only the suffix identity', () => {
-      // Suffix-only ordering on append — the points twin of the lines
-      // case below; resetting the whole attribute would flash the node
-      // unsorted on every progressive refinement. GSplats deliberately
-      // take that trade instead; see the Phase 4 Stage 2 spec rationale.
+    it('append (fromInstance) holds the draw on the sorted prefix until the grown ordering lands', () => {
+      // The gsplats contract (splat-texture-storage.test.ts), for points: the
+      // old sorted prefix plus a storage-order suffix is two independently
+      // ordered populations, so the draw stays on the previous population.
       const geom = pool.acquirePointsGeometry('append-points', 6);
       pool.updatePointsGeometry(geom, createMockLoadedPointsData(4), 4);
       writeSortedIndexOrdering(geom, new Uint32Array([3, 2, 1, 0]), 4);
-      while (pumpSortedIndexOrderingApply(geom).more) {
-        /* an ordering streams into the back buffer and swaps in on completion */
-      }
+      drainApply(geom);
 
       pool.updatePointsGeometry(geom, createMockLoadedPointsData(6), 6, { fromInstance: 4 });
-      const ordering = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
-      expect(Array.from(ordering.subarray(0, 4))).toEqual([3, 2, 1, 0]); // prefix preserved
-      expect(Array.from(ordering.subarray(4, 6))).toEqual([4, 5]); // suffix identity
+      expect(geom.instanceCount).toBe(4);
+      expect(drawnOrder(geom)).toEqual([3, 2, 1, 0]);
+      expect(sortedIndexDrawHoldTarget(geom)).toBe(6);
+
+      writeSortedIndexOrdering(geom, new Uint32Array([5, 3, 4, 2, 1, 0]), 6);
+      drainApply(geom);
       expect(geom.instanceCount).toBe(6);
+      expect(drawnOrder(geom)).toEqual([5, 3, 4, 2, 1, 0]);
+    });
+
+    it('a GROWN geometry seeded with the previous drawn order holds on it (seedOrdering)', () => {
+      const geom = pool.acquirePointsGeometry('grown-points', 6);
+      pool.updatePointsGeometry(geom, createMockLoadedPointsData(6), 6, {
+        seedOrdering: new Uint32Array([2, 0, 1]),
+      });
+      expect(geom.instanceCount).toBe(3);
+      expect(drawnOrder(geom)).toEqual([2, 0, 1]);
+      expect(sortedIndexDrawHoldTarget(geom)).toBe(6);
+    });
+
+    it('a vouched recommit while held repairs from the DRAWN prefix', () => {
+      const geom = pool.acquirePointsGeometry('held-points', 6);
+      pool.updatePointsGeometry(geom, createMockLoadedPointsData(3), 3);
+      writeSortedIndexOrdering(geom, new Uint32Array([2, 0, 1]), 3);
+      drainApply(geom);
+      pool.updatePointsGeometry(geom, createMockLoadedPointsData(6), 6, { fromInstance: 3 });
+      pool.updatePointsGeometry(geom, createMockLoadedPointsData(6), 6, { preserveOrdering: true });
+      expect(geom.instanceCount).toBe(6);
+      expect(drawnOrder(geom)).toEqual([2, 0, 1, 3, 4, 5]);
+      expect(sortedIndexDrawHoldTarget(geom)).toBeUndefined();
     });
 
     it('should reuse geometry when requesting same node again', () => {
@@ -455,12 +491,9 @@ describe('GPUBufferPool', () => {
       expect(geom.instanceCount).toBe(2);
     });
 
-    it('append (fromInstance) keeps the PREFIX permutation and gives only the suffix identity', () => {
-      // The suffix-only ordering write is load-bearing: resetting the
-      // whole aSortedIndex on an append would destroy the live depth-sort
-      // permutation and flash the node unsorted on every progressive
-      // refinement until the re-sort lands. GSplats deliberately take that
-      // trade instead; see the Phase 4 Stage 2 spec rationale.
+    it('append (fromInstance) holds the draw on the sorted prefix until the grown ordering lands', () => {
+      // The gsplats/points contract, for lines: never draw the old sorted
+      // prefix with a storage-order suffix after it.
       const makeLinesData = (count: number): ProcessedLinesData => ({
         startPositions: new Float32Array(count * 3),
         endPositions: new Float32Array(count * 3),
@@ -484,10 +517,23 @@ describe('GPUBufferPool', () => {
       }
 
       pool.updateLinesGeometry(geom, makeLinesData(6), 6, { fromInstance: 4 });
-      const ordering = getActiveSortedIndexAttribute(geom)!.array as Uint32Array;
-      expect(Array.from(ordering.subarray(0, 4))).toEqual([3, 2, 1, 0]); // prefix preserved
-      expect(Array.from(ordering.subarray(4, 6))).toEqual([4, 5]); // suffix identity
+      expect(geom.instanceCount).toBe(4);
+      expect(drawnOrder(geom)).toEqual([3, 2, 1, 0]);
+      expect(sortedIndexDrawHoldTarget(geom)).toBe(6);
+
+      writeSortedIndexOrdering(geom, new Uint32Array([5, 3, 4, 2, 1, 0]), 6);
+      drainApply(geom);
       expect(geom.instanceCount).toBe(6);
+      expect(drawnOrder(geom)).toEqual([5, 3, 4, 2, 1, 0]);
+
+      // A pool GROW that extends the drawn population holds on the seed.
+      const grown = pool.acquireLinesGeometry('grown-lines', 6);
+      pool.updateLinesGeometry(grown, makeLinesData(6), 6, {
+        seedOrdering: new Uint32Array([2, 0, 1]),
+      });
+      expect(grown.instanceCount).toBe(3);
+      expect(drawnOrder(grown)).toEqual([2, 0, 1]);
+      expect(sortedIndexDrawHoldTarget(grown)).toBe(6);
     });
   });
 
