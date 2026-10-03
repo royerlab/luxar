@@ -54,7 +54,7 @@ describe('missingExportsIn', () => {
     expect(missingExportsIn(mentionsOnly)).toContain(name);
   });
 
-  it.fails('names a kernel whose wrapper predates its current signature', () => {
+  it('names a kernel whose wrapper predates its current signature', () => {
     // A stale build still exports project_gsplats_nd_to_3d, without the
     // trailing out_source_indices parameter.
     const stale = wrapperDeclaring([...REQUIRED_WASM_EXPORTS, 'project_gsplats_nd_to_3d'], {

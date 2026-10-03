@@ -22,7 +22,7 @@
  * The same interface is provided regardless of where it's used.
  */
 
-import { REQUIRED_WASM_EXPORTS } from './required-exports';
+import { REQUIRED_WASM_EXPORTS, requiredWasmArity } from './required-exports';
 import { TypeScriptFallback } from './typescript';
 import type { WasmModule } from './types';
 import { log, Modules } from '../utils/log';
@@ -240,6 +240,14 @@ export function assertRequiredWasmExports(
       throw new Error(
         `Loaded WASM module is stale: missing required export "${name}" — ` +
           'rebuild it with pnpm build:wasm (or make build-wasm)'
+      );
+    }
+    const arity = requiredWasmArity(name);
+    const declared = (module[name] as (...args: never[]) => unknown).length;
+    if (arity !== undefined && declared !== arity) {
+      throw new Error(
+        `Loaded WASM module is stale: export "${name}" takes ${declared} arguments, ` +
+          `expected ${arity} — rebuild it with pnpm build:wasm (or make build-wasm)`
       );
     }
   }

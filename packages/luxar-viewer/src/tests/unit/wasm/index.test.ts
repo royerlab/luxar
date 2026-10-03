@@ -338,13 +338,13 @@ describe('assertRequiredWasmExports', () => {
     ).toThrow(/missing required export "compact_visible_faces"/);
   });
 
-  it.fails('names project_gsplats_nd_to_3d when only that kernel is missing', () => {
+  it('names project_gsplats_nd_to_3d when only that kernel is missing', () => {
     expect(() =>
       assertRequiredWasmExports(stubModule({ project_gsplats_nd_to_3d: undefined }))
     ).toThrow(/missing required export "project_gsplats_nd_to_3d"/);
   });
 
-  it.fails('rejects a project_gsplats_nd_to_3d that predates out_source_indices', () => {
+  it('rejects a project_gsplats_nd_to_3d that predates out_source_indices', () => {
     // A stale wrapper still exports the name, but drops the 18th argument, so
     // the kernel never writes the source indices picking reads.
     expect(() =>

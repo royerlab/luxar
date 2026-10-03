@@ -70,11 +70,12 @@ the freshly copied `dist/lib/wasm/`. Back to back that is benign — both script
 begin with `pnpm build:wasm` and copy the same `public/wasm/`, so the two
 artifacts are byte-identical. It only bites when `public/wasm/` changed between
 the two builds, and then the likely outcome is the silent one:
-`assertRequiredWasmExports` compares export NAMES only, so an older binary with
-the same export set loads and runs, and you profile or debug the wrong build
-with nothing on the console. It turns loud — a "Loaded WASM module is stale"
-throw plus the TypeScript fallback, from an artifact that looks correctly placed
-— only when the shadowing build predates a kernel since added to
+`assertRequiredWasmExports` compares export NAMES (plus the parameter count of
+the few kernels whose signature changed), so an older binary with the same
+exports loads and runs, and you profile or debug the wrong build with nothing
+on the console. It turns loud — a "Loaded WASM module is stale" throw plus the
+TypeScript fallback, from an artifact that looks correctly placed — only when
+the shadowing build predates a kernel, or a signature, since recorded in
 `required-exports.ts`.
 
 ## WasmModule API
@@ -230,8 +231,9 @@ wasm/
 ├── shared-module.ts      — Compiles one cloneable WebAssembly.Module for all
 │                           data workers, with bounded per-worker fallback
 ├── types.ts              — WasmModule interface (unified API)
-├── required-exports.ts   — Kernels a stale build may lack; shared by the
-│                           loader's staleness check and the vitest global setup
+├── required-exports.ts   — Kernels (and signatures) a stale build may lack;
+│                           shared by the loader's staleness check and the
+│                           vitest global setup
 ├── typescript/           — Pure TypeScript fallback
 │   ├── index.ts          — TypeScriptFallback class
 │   ├── decode.ts         — Array decoding
