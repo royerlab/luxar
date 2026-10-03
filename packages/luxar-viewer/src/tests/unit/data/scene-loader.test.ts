@@ -44,6 +44,7 @@ import { signalPriority } from '../../../utils/fetch-concurrency';
 import { log, Modules } from '../../../utils/log';
 import { failedLoadsVersion } from '../../../utils/failed-loads-version';
 import { SlicePrefetcher } from '../../../data/scene-loader/prefetch/slice-prefetcher';
+import { disposeWorkerPool, getWorkerPool } from '../../../workers/worker-pool';
 import {
   MAX_ABANDONED_RUNG_RETRY_ROUNDS,
   MAX_CONSECUTIVE_REFINEMENT_FAILURES,
@@ -209,6 +210,42 @@ describe('SceneLoader', () => {
 
   afterEach(() => {
     sceneLoader.dispose();
+  });
+
+  describe('several loaders sharing the data-worker pool (multi-host)', () => {
+    it.fails("one loader's dispose leaves another loader's in-flight worker call alone", async () => {
+      // The pool is a page singleton; a dataset's abort must stay its OWN. A
+      // pool-wide signal let whichever host loaded last own every host's
+      // calls, so disposing it aborted the other host's decodes (staged as
+      // nothing: stale geometry on a parked camera).
+      const url = 'http://localhost:8000/test.zarr';
+      const other = new SceneLoader({}, 'host-b');
+      const disposing = new SceneLoader({}, 'host-a');
+      let answer!: (value: string) => void;
+      const api = { handle: vi.fn(() => new Promise<string>((resolve) => (answer = resolve))) };
+      try {
+        await other.loadScene(url);
+        await disposing.loadScene(url);
+        const pool = getWorkerPool() as unknown as {
+          workers: unknown[];
+          initPromise: Promise<void>;
+        };
+        pool.workers = [{ worker: { terminate: vi.fn() }, api, activeQueries: 0 }];
+        pool.initPromise = Promise.resolve();
+
+        const call = getWorkerPool().runWithTimeout('host-b-decode', 'projection', (worker) =>
+          (worker as unknown as typeof api).handle()
+        );
+        await vi.waitFor(() => expect(api.handle).toHaveBeenCalled());
+        await disposing.dispose();
+        answer('decoded');
+
+        await expect(call).resolves.toBe('decoded');
+      } finally {
+        await other.dispose();
+        disposeWorkerPool();
+      }
+    });
   });
 
   describe('loadScene', () => {
