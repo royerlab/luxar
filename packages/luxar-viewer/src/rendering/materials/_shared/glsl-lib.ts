@@ -75,8 +75,9 @@ float perspectiveNearFade(int isOrtho, float viewZ, float nearCull) {
 
 /**
  * View scales read from the projection matrix three sets for the camera
- * being drawn with (vertex shaders only: `projectionMatrix` is a vertex
- * built-in). Deriving them here, instead of pushing CPU copies computed
+ * being drawn with. `projectionMatrix` is a vertex built-in; a fragment stage
+ * that includes these declares `uniform mat4 projectionMatrix;` itself (the
+ * line visual fragment does). Deriving them here, instead of pushing CPU copies computed
  * from `camera.fov`, keeps them right for every camera the scene is drawn
  * with — a cube-capture face (fov −90, a flipped P), a zoomed or asymmetric
  * frustum, an embedder's camera — and makes a stale copy impossible.
@@ -113,7 +114,8 @@ float luxarProjectionSizeScale() {
  * (`luxarLineIsOrtho = luxarIsOrthoProjection();`), it is the ortho branch of
  * the projection THIS draw uses — not a CPU-pushed camera-type flag, which a
  * draw through another projection (a cube-capture face, an embedder camera)
- * would contradict. A fragment stage that needs it gets it as a flat varying.
+ * would contradict. A fragment stage that needs it re-derives it from the
+ * same uniform (line visual) or receives it as a flat varying (line pick).
  */
 export const GLSL_LINE_SCALE = `
 float luxarLineScale;

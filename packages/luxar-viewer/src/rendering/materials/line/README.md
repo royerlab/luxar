@@ -527,8 +527,10 @@ configuration, since three keys its node-build cache on node ids). The key
 carries every define above plus the primitive, the resolved join, the
 projection mode and the baked line-texture width. Projection mode is read
 from the projection matrix in GLSL (`luxarLineIsOrtho`, assigned with
-`luxarLineScale` at the top of `main()` and handed to the fragment stage as a
-flat varying), so the GLSL wrapper binds no ortho uniform. In TSL it is **not**
+`luxarLineScale` at the top of `main()`; the visual quad fragment stage
+re-derives it from the same `projectionMatrix` uniform, which it declares,
+because carrying it as one more flat varying cost the 10M-segment draw ~1.4%
+GPU time), so the GLSL wrapper binds no ortho uniform. In TSL it is **not**
 a runtime branch — `nodes.uIsOrtho.value` is read at build time and emits a
 single-branch graph (the unused width/fade branches cost nothing), so a mode
 flip in `updateCameraParams` repoints the material at the other

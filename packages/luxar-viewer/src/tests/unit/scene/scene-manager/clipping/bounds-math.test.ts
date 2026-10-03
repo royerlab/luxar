@@ -469,9 +469,9 @@ describe('bounds-math', () => {
       expect(GSPLAT_VERTEX_SHADER).toMatch(new RegExp(`depthFade\\s*${reject}`));
       // ...lines instead multiply the fade in per-fragment, so their
       // contribution is already ~0 across the same band.
-      // (Its ortho flag is the vertex stage's luxarIsOrthoProjection(), flat.)
+      // (Its ortho flag is luxarIsOrthoProjection(), re-read from P per fragment.)
       expect(LINE_FRAGMENT_SHADER).toMatch(
-        /perspectiveNearFade\s*\(\s*vLineIsOrtho\s*,\s*vViewZ\s*,\s*max\(uNearCull, 1e-20\)\s*\)/
+        /perspectiveNearFade\s*\(\s*luxarIsOrthoProjection\(\)\s*,\s*vViewZ\s*,\s*max\(uNearCull, 1e-20\)\s*\)/
       );
       // ...and mesh, also per-fragment (a triangle spans depth), but WITH the
       // 0.01 reject: it writes depth in `opaque` / `normal`, so a faded-out
