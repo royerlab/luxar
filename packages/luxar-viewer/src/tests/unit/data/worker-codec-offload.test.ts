@@ -174,18 +174,6 @@ describe('blosc decode offload to the data-worker pool', () => {
     expect(data.length).toBe(5120 * 3);
   });
 
-  it('a pool-wide abort does not abandon an in-flight decode', async () => {
-    const fake = makeFakeWorker();
-    await injectWarmWorkers([fake.instance]);
-    const controller = new AbortController();
-    getWorkerPool().setAbortSignal(controller.signal);
-    const pending = readGolden('v3_u16_zstd_shuffle');
-    controller.abort();
-    await pending;
-    expect(mainThreadDecodes).toBe(0);
-    expect(fake.api.decodeBloscBatch).toHaveBeenCalledTimes(1);
-  });
-
   it('the first big read decodes on the main thread while ONE worker warms', async () => {
     const fake = makeFakeWorker();
     const other = makeFakeWorker();

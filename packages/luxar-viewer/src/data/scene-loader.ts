@@ -189,6 +189,7 @@ import { LoaderRegistry } from './scene-loader/loaders/loader-registry';
 import { warnFailedLoaders } from './scene-loader/loaders/failure-report';
 import { notifier } from '../utils/cross-layer/notifier';
 import type { ArchiveFaultError } from '../cache/chunk-source';
+import { combineAbortSignals } from '../utils/abort-signals';
 
 // ============================================================================
 // Staged commit types for atomic geometry updates
@@ -527,9 +528,11 @@ export class SceneLoader {
    * aborted at the START of the next `loadScene` (and on `dispose`)
    * so worker tasks queued by the previous dataset settle
    * immediately instead of running to completion against a
-   * superseded scene. The signal is registered with the WorkerPool
-   * via `setAbortSignal`. WASM execution itself cannot be cancelled,
-   * but the orphan results are discarded — see {@link WorkerAbortError}.
+   * superseded scene. The loader threads it into its own worker
+   * projections ({@link withDatasetSignal}); the pool itself is shared by
+   * every host on the page and carries no dataset signal. WASM execution
+   * itself cannot be cancelled, but the orphan results are discarded — see
+   * {@link WorkerAbortError}.
    */
   private _datasetAbortController: AbortController | null = null;
 
@@ -2004,17 +2007,39 @@ export class SceneLoader {
     session?: UpdateSession,
     signal?: AbortSignal
   ): Promise<StagedLinesCommit | null> {
-    return processLinesDataHelper(
-      path,
-      data,
-      viewState,
-      this.rootGroup,
-      // Background refinement/retry is never the first projection, even when
-      // the initial view has not incremented `_passCount` yet.
-      Math.max(2, this._passCount),
-      session,
-      signal
+    return this.withDatasetSignal(signal, (raced) =>
+      processLinesDataHelper(
+        path,
+        data,
+        viewState,
+        this.rootGroup,
+        // Background refinement/retry is never the first projection, even when
+        // the initial view has not incremented `_passCount` yet.
+        Math.max(2, this._passCount),
+        session,
+        raced
+      )
     );
+  }
+
+  /**
+   * Run a worker-backed step under `signal` AND this loader's dataset signal
+   * (`dataset`, the current one by default), so disposing the dataset settles
+   * it even when no per-update signal was given (initial build, retry). The
+   * worker pool is a page singleton shared by every host, so the dataset
+   * signal travels with the call rather than living on the pool.
+   */
+  private async withDatasetSignal<T>(
+    signal: AbortSignal | undefined,
+    run: (signal: AbortSignal | undefined) => Promise<T>,
+    dataset: AbortController | null = this._datasetAbortController
+  ): Promise<T> {
+    const scope = combineAbortSignals(dataset?.signal, signal);
+    try {
+      return await run(scope?.signal);
+    } finally {
+      scope?.dispose();
+    }
   }
 
   /**
@@ -2050,16 +2075,18 @@ export class SceneLoader {
     session?: UpdateSession,
     signal?: AbortSignal
   ): Promise<StagedGSplatsCommit | null> {
-    return processGSplatsDataHelper(
-      path,
-      data,
-      viewState,
-      this.rootGroup,
-      // Background refinement/retry is never the first projection, even when
-      // the initial view has not incremented `_passCount` yet.
-      Math.max(2, this._passCount),
-      session,
-      signal
+    return this.withDatasetSignal(signal, (raced) =>
+      processGSplatsDataHelper(
+        path,
+        data,
+        viewState,
+        this.rootGroup,
+        // Background refinement/retry is never the first projection, even when
+        // the initial view has not incremented `_passCount` yet.
+        Math.max(2, this._passCount),
+        session,
+        raced
+      )
     );
   }
 
@@ -2222,28 +2249,39 @@ export class SceneLoader {
       processPointsData: (path, data) => this.processPointsData(path, data),
       commitPointsGeometry: (staged, session, loadedViewVersion) =>
         this.commitPointsGeometry(staged, session, loadedViewVersion),
+      // Under the dataset captured at ctx-build time, like `isDatasetLive`.
       processLinesData: (path, data, viewState, session, signal) =>
-        // Initial node build is the one path allowed to log a first projection.
-        processLinesDataHelper(
-          path,
-          data,
-          viewState,
-          this.rootGroup,
-          this._passCount,
-          session,
-          signal
+        this.withDatasetSignal(
+          signal,
+          (raced) =>
+            // Initial node build is the one path allowed to log a first projection.
+            processLinesDataHelper(
+              path,
+              data,
+              viewState,
+              this.rootGroup,
+              this._passCount,
+              session,
+              raced
+            ),
+          ctrl
         ),
       commitLinesGeometry: (staged, session, loadedViewVersion) =>
         this.commitLinesGeometry(staged, session, loadedViewVersion),
       processGSplatsData: (path, data, viewState, session, signal) =>
-        processGSplatsDataHelper(
-          path,
-          data,
-          viewState,
-          this.rootGroup,
-          this._passCount,
-          session,
-          signal
+        this.withDatasetSignal(
+          signal,
+          (raced) =>
+            processGSplatsDataHelper(
+              path,
+              data,
+              viewState,
+              this.rootGroup,
+              this._passCount,
+              session,
+              raced
+            ),
+          ctrl
         ),
       commitGSplatsGeometry: (staged, session, loadedViewVersion) =>
         this.commitGSplatsGeometry(staged, session, loadedViewVersion),

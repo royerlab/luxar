@@ -150,5 +150,5 @@ The subfolders:
   (used by `view-state/derive-node-view-state.ts`).
 - `../view-state-manager.ts` — dimension validation invoked by
   `nodes/initialize-scene-dimensions.ts`.
-- `../../workers/worker-pool.ts` — `setAbortSignal` consumed by
-  `lifecycle/load-scene.ts` and `lifecycle/dispose.ts`.
+- `../../workers/worker-pool.ts` — `runWithTimeout`, which the projection
+  helpers call under the loader's dataset signal (`withDatasetSignal`).

@@ -229,7 +229,7 @@ From `worker-pool.ts`:
 
 - `getWorkerPool()` / `disposeWorkerPool()` — singleton accessor and teardown
 - `warmUpDataWorkerPool()` — fire-and-forget early initialization when Web Workers are enabled and available
-- `class WorkerPool` — pool manager (see `runWithTimeout`, `getWorkerWithTracking`, `setAbortSignal`, `reinitialize`, `getStats`, `getQueueDepth`)
+- `class WorkerPool` — pool manager (see `runWithTimeout`, `getWorkerWithTracking`, `reinitialize`, `getStats`, `getQueueDepth`). It holds no dataset abort signal: each `SceneLoader` threads its own into the calls it makes, so one host's dispose never aborts another host's work
 - `setDataWorkerUrl(url)` — override the worker module URL (for embedders whose bundlers can't resolve Vite's `?worker` import)
 - `class WorkerTimeoutError` / `class WorkerAbortError` — distinguish hung-worker eviction from caller-initiated cancellation
 - `type TimeoutKind = 'projection' | 'decode'` — selects the per-call timeout from `config.dataLoading.performance`

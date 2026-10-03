@@ -20,7 +20,6 @@
 
 import { log, Modules } from '../../../utils/log';
 import { disposeCustomColormapTextures } from '../../../rendering/colormap-textures';
-import { getWorkerPool } from '../../../workers/worker-pool';
 import type { LoaderRegistry } from '../loaders/loader-registry';
 import type { ViewStateQueue } from '../view-state/view-state-queue';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
@@ -53,12 +52,11 @@ export interface DisposeCtx {
  * constructed.
  */
 export async function disposeSceneLoader(ctx: DisposeCtx): Promise<void> {
-  // Abort the dataset-scoped signal first so any in-flight worker
+  // Abort the dataset-scoped signal first so this loader's in-flight worker
   // `runWithTimeout` callers settle immediately instead of waiting
   // for their tasks to complete (WASM tasks themselves keep running
-  // but their results are discarded). Clear the pool's reference
-  // afterwards so future workers don't get an already-aborted
-  // signal from this disposed loader.
+  // but their results are discarded). Only THIS loader's calls carry it:
+  // another host's loader on the same page is untouched.
   if (ctx.datasetAbortController) {
     ctx.datasetAbortController.abort();
   }
@@ -67,8 +65,6 @@ export async function disposeSceneLoader(ctx: DisposeCtx): Promise<void> {
   if (ctx.updateAbortController) {
     ctx.updateAbortController.abort();
   }
-  getWorkerPool().setAbortSignal(undefined);
-
   // Dispose all geometry loaders via registry
   ctx.registry.disposeAll();
 

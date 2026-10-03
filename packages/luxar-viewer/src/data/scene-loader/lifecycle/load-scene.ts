@@ -38,7 +38,7 @@ import * as zarr from '../../zarr';
 import { log, Modules, LogEmoji } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { attachSceneGraphIndex } from '../../../utils/scene-graph-index';
-import { getWorkerPool, warmUpDataWorkerPool } from '../../../workers/worker-pool';
+import { warmUpDataWorkerPool } from '../../../workers/worker-pool';
 import { markLoad, noteRefinementComplete } from '../../../profiling/load-timeline';
 import type { RefinementHoldReason } from '../../../types/data-monitor-types';
 import { ZarrSceneAttrs, SceneDimensionAttrs } from '../../../types/zarr';
@@ -273,10 +273,6 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // Clear any existing loaders from monitor before loading new scene
   ctx.monitor()?.disconnectAllLoaders();
 
-  // The worker pool is a module singleton: drop any signal a previous
-  // dataset's loader left on it before this dataset installs its own.
-  getWorkerPool().setAbortSignal(undefined);
-
   // Spawn the data workers NOW, in parallel with the metadata fetch, rather
   // than letting the first chunk decode pay for it.
   // Measured on a hosted demo: lazy creation started the pool 1.93 s after
@@ -284,11 +280,11 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // simply waiting. Fire-and-forget and idempotent across dataset switches.
   warmUpDataWorkerPool();
 
-  // Fresh abort source for THIS dataset; wire into the worker pool so
-  // every subsequent `runWithTimeout` races against it.
+  // Fresh abort source for THIS dataset. The loader threads it into its own
+  // worker calls; the pool is shared by every host on the page, so it holds
+  // no dataset signal of its own.
   const datasetAbortController = new AbortController();
   ctx.setDatasetAbortController(datasetAbortController);
-  getWorkerPool().setAbortSignal(datasetAbortController.signal);
 
   // S6: reset per-loader prefetch predictor state. Without this,
   // the first updateView on a new dataset would extrapolate from

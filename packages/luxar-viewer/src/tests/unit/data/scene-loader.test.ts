@@ -213,7 +213,7 @@ describe('SceneLoader', () => {
   });
 
   describe('several loaders sharing the data-worker pool (multi-host)', () => {
-    it.fails("one loader's dispose leaves another loader's in-flight worker call alone", async () => {
+    it("one loader's dispose leaves another loader's in-flight worker call alone", async () => {
       // The pool is a page singleton; a dataset's abort must stay its OWN. A
       // pool-wide signal let whichever host loaded last own every host's
       // calls, so disposing it aborted the other host's decodes (staged as

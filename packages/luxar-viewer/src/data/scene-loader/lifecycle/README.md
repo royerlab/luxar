@@ -20,9 +20,10 @@ builds the ctx and calls into here.
 - **One dataset per loader.** `SceneLoader.loadScene` refuses a second
   load (and any load after `dispose()`, which is terminal);
   `SceneLoaderManager.createLoaderAsync` awaits the previous loader's
-  `dispose.ts` teardown — which aborts its dataset signal, so in-flight
-  `runWithTimeout` callers settle immediately, and clears the worker
-  pool's signal — before building the next loader.
+  `dispose.ts` teardown — which aborts its dataset signal, so its
+  in-flight `runWithTimeout` callers settle immediately (only its own: the
+  shared worker pool carries no dataset signal) — before building the next
+  loader.
 - **Retry is lock-free.** `retry.ts` never touches the serialization
   lock — the orchestrator takes it once around the whole retry call
   (`PassScheduler.acquireForRetry`, which pre-empts a refinement drain

@@ -56,12 +56,10 @@ worker-pool/
 - **[timeout/](./timeout/README.md)** — bound every Comlink round-trip.
   `with-timeout.ts` wraps the shared `raceTimeout` (`utils/race-timeout.ts`)
   with the pool's logging and eviction; `pick-timeout-ms.ts` maps a
-  `TimeoutKind` to the right knob in `config.dataLoading.performance`. The
-  caller's `AbortSignal` is merged with the pool-wide one set via
-  `setAbortSignal()` by the shared `combineAbortSignals`
-  (`utils/abort-signals.ts`: `AbortSignal.any` when available, else a relay
-  whose scope is disposed when the call settles so listeners never accumulate
-  on the pool signal).
+  `TimeoutKind` to the right knob in `config.dataLoading.performance`. Only
+  the caller's `AbortSignal` races the call: the pool is shared by every host
+  on the page, so it holds no dataset signal of its own (each `SceneLoader`
+  merges its dataset signal into the calls it makes).
 
 ## Relationship to `worker-pool.ts`
 

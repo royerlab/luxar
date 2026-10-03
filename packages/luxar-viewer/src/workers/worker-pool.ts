@@ -24,7 +24,6 @@ import {
 } from './worker-pool/errors';
 
 import { withTimeout } from './worker-pool/timeout/with-timeout';
-import { combineAbortSignals } from '../utils/abort-signals';
 import { pickTimeoutMs } from './worker-pool/timeout/pick-timeout-ms';
 import { getConfiguredWorkerCount } from './worker-pool/lifecycle/worker-count';
 import { getSharedWasmModule } from '../wasm/shared-module';
@@ -130,20 +129,6 @@ export class WorkerPool {
     onError: (error) =>
       log.warning(Modules.WORKER_POOL, 'Worker codec warm-up failed (decodes will retry)', error),
   });
-  /**
-   * Pool-wide abort signal. When set (by `setAbortSignal`), every
-   * `runWithTimeout` call additionally races against this signal so
-   * a dataset-switch in `SceneLoader` can immediately settle all
-   * in-flight worker promises. The signal does not cancel WASM
-   * execution — see {@link WorkerAbortError} for the trade-off.
-   *
-   * Setting a new signal replaces (not chains) any previously-set
-   * signal. The new signal applies to subsequent `runWithTimeout`
-   * calls; already-racing promises continue with their original
-   * signal until they settle.
-   */
-  private poolAbortSignal: AbortSignal | undefined;
-
   // Dispose-mid-init defense. `initialize()` spawns workers via
   // `Array.from(...).map(async ...)` and pushes them to `this.workers`
   // only on the fulfilled branch of `Promise.allSettled`. A `dispose()`
@@ -624,57 +609,50 @@ export class WorkerPool {
     fn: (api: Remote<DataWorkerAPI>) => Promise<T>,
     signal?: AbortSignal
   ): Promise<T> {
-    // Resolve the effective signal: pool-wide one OR caller's. If both
-    // are present, race them together so either can settle the call.
-    // The scope is disposed when this call settles so the fallback
-    // relay does not retain a listener on the session-lived pool signal.
-    const abortScope = combineAbortSignals(this.poolAbortSignal, signal);
-    const effectiveSignal = abortScope?.signal;
+    // Only the CALLER's signal: the pool is a page singleton shared by every
+    // host, so a dataset's abort is threaded by its own loader into the calls
+    // it makes (a pool-wide signal let one host's dispose abort another's).
+    // Pre-check: signal already aborted? Bail before dispatching any work.
+    if (signal?.aborted) {
+      throw new WorkerAbortError(op);
+    }
+
+    // Route through acquireTrackedWorker so a stalled worker (one
+    // whose activeQueries has grown past the others) stops being
+    // selected. The previous round-robin via nextWorkerInstance had
+    // no load awareness, so a slow worker received every Nth call
+    // until each call timed out individually — head-of-line blocking.
+    // The slot is taken AT SELECTION (same synchronous step), so concurrent
+    // dispatches see each other's load instead of all reading index 0 idle.
+    const tracked = await this.acquireTrackedWorker();
+
+    // Second-chance abort check: the await above may have yielded long
+    // enough for the caller's dataset-switch to fire. Don't even start.
+    if (signal?.aborted) {
+      tracked.markQueryEnd();
+      throw new WorkerAbortError(op);
+    }
+
+    // Race the worker call against the timeout AND the abort signal.
+    // The abort cannot kill the WASM task, but it can settle the
+    // promise immediately so the caller proceeds with whatever the
+    // dataset-switch wants to do next.
+    const workerPromise = this.dispatchTracked(op, kind, tracked, fn);
+
+    if (!signal) {
+      return await workerPromise;
+    }
+
+    let onAbort: (() => void) | undefined;
+    const abortPromise = new Promise<never>((_, reject) => {
+      onAbort = (): void => reject(new WorkerAbortError(op));
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+
     try {
-      // Pre-check: signal already aborted? Bail before dispatching any work.
-      if (effectiveSignal?.aborted) {
-        throw new WorkerAbortError(op);
-      }
-
-      // Route through acquireTrackedWorker so a stalled worker (one
-      // whose activeQueries has grown past the others) stops being
-      // selected. The previous round-robin via nextWorkerInstance had
-      // no load awareness, so a slow worker received every Nth call
-      // until each call timed out individually — head-of-line blocking.
-      // The slot is taken AT SELECTION (same synchronous step), so concurrent
-      // dispatches see each other's load instead of all reading index 0 idle.
-      const tracked = await this.acquireTrackedWorker();
-
-      // Second-chance abort check: the await above may have yielded long
-      // enough for the caller's dataset-switch to fire. Don't even start.
-      if (effectiveSignal?.aborted) {
-        tracked.markQueryEnd();
-        throw new WorkerAbortError(op);
-      }
-
-      // Race the worker call against the timeout AND the abort signal.
-      // The abort cannot kill the WASM task, but it can settle the
-      // promise immediately so the caller proceeds with whatever the
-      // dataset-switch wants to do next.
-      const workerPromise = this.dispatchTracked(op, kind, tracked, fn);
-
-      if (!effectiveSignal) {
-        return await workerPromise;
-      }
-
-      let onAbort: (() => void) | undefined;
-      const abortPromise = new Promise<never>((_, reject) => {
-        onAbort = (): void => reject(new WorkerAbortError(op));
-        effectiveSignal.addEventListener('abort', onAbort, { once: true });
-      });
-
-      try {
-        return await Promise.race([workerPromise, abortPromise]);
-      } finally {
-        if (onAbort) effectiveSignal.removeEventListener('abort', onAbort);
-      }
+      return await Promise.race([workerPromise, abortPromise]);
     } finally {
-      abortScope?.dispose();
+      if (onAbort) signal.removeEventListener('abort', onAbort);
     }
   }
 
@@ -735,7 +713,7 @@ export class WorkerPool {
    * Run a chunk-decode task on the least-busy WARM worker (see
    * `CodecWarmup.isWarm`; none warm rejects, and the codec decodes on the main
    * thread instead), timeout-guarded but NOT
-   * raced against the pool-wide abort signal: a decode is a few milliseconds
+   * raced against any dataset abort signal: a decode is a few milliseconds
    * of work whose result the L0 cache keeps, and abandoning it on a dataset
    * switch would only make the codec fall back to decoding it on the main
    * thread. Used by the blosc codec dispatcher (`worker-pool/codec-dispatch.ts`).
@@ -777,24 +755,6 @@ export class WorkerPool {
    */
   warmCodecs(): void {
     this.codecWarmup.ensureWarm();
-  }
-
-  /**
-   * Set or clear the pool-wide abort signal. Every subsequent
-   * {@link runWithTimeout} call additionally races against this
-   * signal. Used by `SceneLoader.loadScene` to immediately settle
-   * worker tasks queued by the previous dataset when the user
-   * switches datasets.
-   *
-   * Pass `undefined` to clear (no pool-wide signal — only caller-
-   * supplied signals apply).
-   *
-   * Setting a new signal replaces (not chains) any previously-set
-   * signal. Already-racing promises continue with their original
-   * effective signal until they settle.
-   */
-  setAbortSignal(signal: AbortSignal | undefined): void {
-    this.poolAbortSignal = signal;
   }
 
   /**
@@ -900,7 +860,6 @@ export class WorkerPool {
     this.settleReady = null;
     this.readyPromise = null;
     this.nextWorkerIndex = 0;
-    this.poolAbortSignal = undefined;
   }
 }
 
