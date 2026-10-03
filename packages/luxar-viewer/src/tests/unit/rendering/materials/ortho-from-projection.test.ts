@@ -63,6 +63,16 @@ describe('GLSL line shaders derive ortho from the projection matrix', () => {
     expect(vs).toContain('luxarLineIsOrtho = luxarIsOrthoProjection();');
   });
 
+  it.fails('visual quad fragment re-derives it from P instead of a flat varying', () => {
+    // Carrying the vertex stage's flag in one more flat varying cost the
+    // 10M-segment draw ~1.4% GPU time; the fragment stage can read the same
+    // projection uniform instead, which gives the same branch by construction.
+    expect(LINE_VERTEX_SHADER).not.toMatch(/\bvLineIsOrtho\b/);
+    expect(LINE_FRAGMENT_SHADER).not.toMatch(/\bvLineIsOrtho\b/);
+    expect(LINE_FRAGMENT_SHADER).toContain('uniform mat4 projectionMatrix;');
+    expect(LINE_FRAGMENT_SHADER).toContain('perspectiveNearFade(luxarIsOrthoProjection(), vViewZ');
+  });
+
   it.each([
     ['LineMaterial', () => new LineMaterial({})],
     ['LinePickingMaterial', () => new LinePickingMaterial({ nodeId: 1 })],
