@@ -202,6 +202,34 @@ describe('two depth-sort coordinators on one page', () => {
     expect(terminated).toBe(1);
   });
 
+  it.fails('a disabled host never keeps the shared worker alive', async () => {
+    // A `depthSort: false` layer still commits; it must not count as a user of
+    // the worker, or the sorting host's dispose leaves the worker running.
+    const mod = await loadModule();
+    const sorting = new mod.DepthSortCoordinator();
+    const disabled = new mod.DepthSortCoordinator();
+    disabled.setEnabled(false);
+    sorting.configure({ getCamera: () => cameraLookingFrom(0, 20), requestRender: vi.fn() });
+    sorting.noteCommit(makeMesh(3), centers(), 3);
+    disabled.noteCommit(makeMesh(3), centers(), 3);
+    await flush();
+
+    sorting.dispose();
+    expect(terminated).toBe(1);
+    disabled.dispose();
+  });
+
+  it.fails("a disposed host's late commit does not re-attach it to the worker", async () => {
+    const { a, b } = await twoHosts();
+    b.dispose();
+    // A commit already in flight when the host was torn down lands afterwards.
+    b.noteCommit(makeMesh(3), centers(), 3);
+    await flush();
+
+    a.dispose();
+    expect(terminated).toBe(1);
+  });
+
   it('routes a mesh release to the coordinator the mesh was committed through', async () => {
     const { mod, meshA, meshB } = await twoHosts();
     mockApi.releaseNode.mockClear();
