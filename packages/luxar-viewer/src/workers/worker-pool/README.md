@@ -36,7 +36,7 @@ worker-pool/
 ├── codec-warmup.ts             — lazy one-worker-first blosc codec warm-up
 ├── lifecycle/                  — spawn, init guard, error handlers, count
 ├── selection/                  — least-busy picker
-└── timeout/                    — Promise.race timer + kind→ms + AbortSignal
+└── timeout/                    — Promise.race timer + kind→ms
 ```
 
 ## Subpackages
@@ -71,11 +71,11 @@ WorkerPool.initialize()
   └─ initializeWithGuard()       ── lifecycle/init-with-guard
         └─ attachWorkerErrorHandlers / evictFailedWorker  (lifecycle/error-handlers)
 
-WorkerPool.runWithTimeout()
+WorkerPool.runWithTimeout() / runDecode()
   ├─ selectLeastBusy()           ── selection/least-busy
   ├─ pickTimeoutMs(kind)         ── timeout/pick-timeout-ms
-  ├─ combineAbortSignals()       ── ../../utils/abort-signals
   └─ withTimeout()               ── timeout/with-timeout
+     (runWithTimeout also races the caller's own AbortSignal, inline)
 
 WorkerPool.getStats() / getQueueDepth()
   └─ computeStats / computeQueueDepth   (this folder, stats.ts)

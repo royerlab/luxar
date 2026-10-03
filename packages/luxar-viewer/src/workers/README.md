@@ -87,16 +87,19 @@ The pool tracks `activeQueries` per worker and selects the worker with the fewes
 
 Each worker loads a WASM module on `initialize()` and exposes these operations:
 
-| Category       | Methods                                                                                                                      |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| **Decoding**   | `decodeQuantized()`, `decodeLogScalar()`, `decodeGeologScalar()`, `decodePerChannel()`, `decodeLUT()`, `decodeBroadcasted()` |
-| **Projection** | `projectLinesTo3D()`, `projectGSplatsTo3D()` (Points project on the main thread)                                             |
+| Category         | Methods                                                                                                                      |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **Decoding**     | `decodeQuantized()`, `decodeLogScalar()`, `decodeGeologScalar()`, `decodePerChannel()`, `decodeLUT()`, `decodeBroadcasted()` |
+| **Chunk codecs** | `decodeBloscBatch()` (zarr blosc + fused `luxar_delta_v1`, batched), `warmCodecs()` (load the numcodecs blosc WASM)          |
+| **Projection**   | `projectLinesTo3D()`, `projectGSplatsTo3D()` (Points project on the main thread)                                             |
 
 ### What workers handle
 
 - nD→3D projection with built-in per-element visibility/culling
   (Lines clip mask, GSplats attenuation)
 - Array decoding (LUT, quantization, log-space)
+- Zarr chunk decompression (blosc), for chunks above the codec dispatcher's
+  offload floor (`worker-pool/codec-dispatch.ts`)
 
 ### What stays on main thread
 
@@ -212,8 +215,8 @@ more widely a file is imported, the shallower it lives.
 
 Task functions under `data-worker/` take a shared `state: WasmCtx`
 (defined in `data-worker/state.ts`) so they can read the WASM module
-and grow the pooled visibility-mask scratch buffer without referencing
-module-level globals.
+(and the uncapped TypeScript backend for `ndim > 16`) without
+referencing module-level globals.
 
 ## Public API
 
@@ -233,7 +236,7 @@ From `data-worker.ts`:
 
 From `color-utils.ts`:
 
-- `coerceColorsToFloat32` (also imported by `data/lines/projection.ts`)
+- `coerceColorsToFloat32` (imported by the Lines and GSplats projection tasks)
 - `coerceScalarsToFloat32`, `fillColorsWhite`
 
 ## Dependencies

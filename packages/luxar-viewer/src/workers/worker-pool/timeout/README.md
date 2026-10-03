@@ -3,8 +3,8 @@
 Pure helpers that back `WorkerPool.runWithTimeout`. Split out of the
 pool class so each piece — the timeout race and the per-call kind → ms
 lookup — is independently testable and free of `WorkerPool` state. The
-abort-signal merge the pool uses is the viewer-wide `combineAbortSignals`
-(`../../../utils/abort-signals.ts`). Nothing here is exported from
+caller's abort signal is raced inline in `runWithTimeout`: the pool holds
+no dataset signal of its own, so there is nothing to merge. Nothing here is exported from
 `worker-pool.ts`; consumers only see the behaviour these files
 implement.
 
@@ -49,10 +49,9 @@ timeout/
   caller from awaiting; the worker keeps running and its result is
   discarded. See `WorkerAbortError` in `../errors.ts` for the same
   caveat on the abort path.
-- **`combineAbortSignals` returns `undefined` when both inputs are
-  `undefined`.** `worker-pool.ts::runWithTimeout` relies on this to skip
-  the abort-tracking branch entirely when no caller has registered a
-  signal.
+- **Only the caller's signal races the call.** With no signal,
+  `worker-pool.ts::runWithTimeout` awaits the timeout-guarded call
+  directly and installs no abort listener.
 - **`pickTimeoutMs` is a pure function over `perf`.** It must not
   read `config` directly — the pool reads `config.dataLoading.
 performance` once per call and passes it in, so tests can inject

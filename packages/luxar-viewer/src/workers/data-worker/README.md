@@ -10,8 +10,8 @@ Each Comlink method on `DataWorkerAPI` is a one-line shim in
 `../data-worker.ts` that passes the shared `state` (a `WasmCtx`) plus
 the call arguments to one of the per-task implementations re-exported
 from this folder. Keeping the task bodies here lets each one own its
-own validation, WASM-vs-fallback narrowing, and (where applicable)
-scratch-buffer growth, while the entry stays a thin Comlink surface.
+own validation and WASM-vs-fallback narrowing, while the entry stays a
+thin Comlink surface.
 
 ## Layout
 
@@ -41,11 +41,14 @@ data-worker/
 │                      (nD → 3D). Points project on the main thread
 │                      (WASM-accelerated, data/points/projection.ts), so
 │                      they are not a worker task; this dir also hosts the
-│                      shared in-process dispatcher + getPointsBackend.
-└── decode/          — Six tasks: decodeQuantized, decodeLogScalar,
-                       decodeGeologScalar, decodePerChannel, decodeLUT,
-                       decodeBroadcasted. Per-attribute dequantization
-                       paths called from the loaders' chunk-decode stage.
+│                      shared in-process dispatcher + getPointsBackend /
+│                      getMeshBackend.
+└── decode/          — Six dequantization tasks (decodeQuantized,
+                       decodeLogScalar, decodeGeologScalar,
+                       decodePerChannel, decodeLUT, decodeBroadcasted)
+                       called from the loaders' chunk-decode stage, plus
+                       the blosc chunk-decompression pair decodeBloscBatch
+                       / warmCodecs (blosc.ts).
 ```
 
 ## Dispatch shape
@@ -97,7 +100,8 @@ worker.
   `data/points/projection.ts`.
 - [decode](./decode/) — quantized / log-scalar / geolog-scalar /
   per-channel / LUT / broadcasted dequantization tasks called from the
-  loader chunk-decode stage.
+  loader chunk-decode stage, and blosc chunk decompression
+  (`decodeBloscBatch`, `warmCodecs`).
 
 ## See also
 
