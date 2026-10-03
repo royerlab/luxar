@@ -13,7 +13,7 @@
  * because the reset was inside `if (workers.length > 0)`.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkerInitTimeoutError } from '../../../../../workers/worker-pool/errors';
 import { initializeWithGuard } from '../../../../../workers/worker-pool/lifecycle/init-with-guard';
 
@@ -27,7 +27,13 @@ interface MockWorker {
 async function loadWorkerPool(
   workerCount: number,
   perf: Record<string, number> = {},
-  initBehavior: 'immediate' | 'delayed' | 'never-settles' | 'rejects' = 'immediate',
+  initBehavior:
+    | 'immediate'
+    | 'delayed'
+    | 'never-settles'
+    | 'rejects'
+    // Per worker, by construction order (a respawned worker gets the next index).
+    | ((workerIndex: number) => Promise<void>) = 'immediate',
   delayMs = 0
 ) {
   vi.resetModules();
@@ -61,8 +67,9 @@ async function loadWorkerPool(
   // `initialize()` shape varies per test: immediate-resolve, delayed-resolve,
   // never-settle (for timeout tests), or reject (for onerror parity).
   vi.doMock('comlink', () => ({
-    wrap: vi.fn(() => ({
+    wrap: vi.fn((worker: MockWorker) => ({
       initialize: vi.fn(() => {
+        if (typeof initBehavior === 'function') return initBehavior(worker.index);
         if (initBehavior === 'immediate') return Promise.resolve();
         if (initBehavior === 'delayed') {
           return new Promise<void>((resolve) => setTimeout(resolve, delayMs));
@@ -180,6 +187,94 @@ describe('initializeWithGuard — delayed main-thread reply', () => {
 
     expect(await outcome).toBeInstanceOf(WorkerInitTimeoutError);
     expect(restoreHandlers).toHaveBeenCalledOnce();
+  });
+});
+
+describe('WorkerPool — a slot whose init missed its deadline is respawned', () => {
+  // A deadline miss does not prove the worker broken (see
+  // `WorkerInitTimeoutError`), so the slot gets the sort worker's bounded
+  // retry instead of being written off for the tab's lifetime.
+  const never = (): Promise<void> => new Promise<void>(() => {});
+  const ready = (): Promise<void> => Promise.resolve();
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal('navigator', { hardwareConcurrency: 16 });
+    vi.useFakeTimers();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it.fails('respawns the starved slot after a backoff and publishes it', async () => {
+    const { WorkerPool, workers } = await loadWorkerPool(2, { workerInitTimeoutMs: 100 }, (i) =>
+      i === 1 ? never() : ready()
+    );
+    const pool = new WorkerPool();
+    const inited = pool.initialize();
+    await vi.advanceTimersByTimeAsync(150);
+    await inited;
+    expect(pool.getWorkerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(workers).toHaveLength(3);
+    expect(pool.getWorkerCount()).toBe(2);
+  });
+
+  it.fails('recovers a pool whose every slot missed its deadline', async () => {
+    const { WorkerPool } = await loadWorkerPool(1, { workerInitTimeoutMs: 100 }, (i) =>
+      i === 0 ? never() : ready()
+    );
+    const pool = new WorkerPool();
+    const inited = pool.initialize().catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(await inited).toBeInstanceOf(Error);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(pool.getWorkerCount()).toBe(1);
+  });
+
+  it.fails('gives a slot that keeps missing its deadline three attempts in all', async () => {
+    const { WorkerPool, workers } = await loadWorkerPool(2, { workerInitTimeoutMs: 100 }, (i) =>
+      i === 0 ? ready() : never()
+    );
+    const pool = new WorkerPool();
+    void pool.initialize();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    // Slot 0 once, slot 1 three times.
+    expect(workers).toHaveLength(4);
+    expect(pool.getWorkerCount()).toBe(1);
+  });
+
+  it('does not respawn a slot whose init failed outright', async () => {
+    const { WorkerPool, workers } = await loadWorkerPool(2, { workerInitTimeoutMs: 100 }, (i) =>
+      i === 1 ? Promise.reject(new Error('init throws')) : ready()
+    );
+    const pool = new WorkerPool();
+    await pool.initialize();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(workers).toHaveLength(2);
+    expect(pool.getWorkerCount()).toBe(1);
+  });
+
+  it('does not respawn into a disposed pool', async () => {
+    const { WorkerPool, workers } = await loadWorkerPool(2, { workerInitTimeoutMs: 100 }, (i) =>
+      i === 1 ? never() : ready()
+    );
+    const pool = new WorkerPool();
+    const inited = pool.initialize();
+    await vi.advanceTimersByTimeAsync(150);
+    await inited;
+    pool.dispose();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(workers).toHaveLength(2);
+    expect(pool.getWorkerCount()).toBe(0);
   });
 });
 
