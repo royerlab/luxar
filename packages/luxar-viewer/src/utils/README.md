@@ -203,7 +203,7 @@ Dependency-inverted UI notification surface so lower layers can surface user-vis
 
 - `NotifierBackend` — Interface a concrete backend implements (`showError`, `showToast`, `showHelpOverlay`, `hideHelpOverlay`, `showLoadingIndicator`, `hideLoadingIndicator`, `clearError`)
 - `notifier` — Stable call surface: `error`, `toast`, `showHelp`, `hideHelp`, `showLoading`, `hideLoading`, `clearError`. Drops calls silently (with a single warn) when no backend is registered, so unit tests and early-startup paths don't crash.
-- `setNotifierBackend(b)` — Called once by the UI bootstrap to plug in the concrete `ui/` helpers; subsequent calls replace the backend (useful for tests)
+- `setNotifierBackend(b)` — Called by `LuxarApp.init()` (via `core/app/lifecycle/notifier-backend.ts`) to plug in the concrete `ui/` helpers; subsequent calls replace the backend (useful for tests)
 - `clearNotifierBackend()` — Tear down the backend; also resets the once-only missing-backend warning flag
 
 ### input-capabilities.ts - Input / Device Capability Profile
@@ -385,7 +385,7 @@ export function configureHDRRenderer(_renderer: unknown, capabilities: HDRCapabi
 
 Three utilities exist specifically to let lower layers reach the UI without violating layer order (see `CONVENTIONS.md` §10):
 
-- **`notifier`** — Single backend, fixed method dictionary. The UI bootstrap calls `setNotifierBackend(...)` once with concrete implementations from `ui/` helper modules; lower layers call `notifier.toast(...)`, `notifier.error(...)`, etc. Pre-registration calls drop silently with a single warn.
+- **`notifier`** — Single backend, fixed method dictionary. `LuxarApp.init()` calls `setNotifierBackend(...)` with concrete implementations from `ui/` helper modules (the dispose pipeline clears it); lower layers call `notifier.toast(...)`, `notifier.error(...)`, etc. Pre-registration calls drop silently with a single warn.
 - **`eventBus`** — Open subscriber sets typed against `LuxarEventMap`. Panels can subscribe late without bootstrap-order coupling. Events with no listener drop silently — that's the design.
 - **`EventGroup`** — Per-component listener-collection so a panel's entire DOM-listener set tears down in one `dispose()` call.
 

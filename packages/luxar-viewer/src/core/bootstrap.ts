@@ -33,13 +33,7 @@ import { setInputProfileOverride } from '../utils/input-capabilities';
 import { setLineJoinOverride } from '../types/line-join';
 import { setLinePrimitiveOverride, setLinePrimitivePolicy } from '../types/line-primitive';
 import { StorageKeys } from '../utils/storage-keys';
-import { clearError } from '../ui/error-overlay';
 import { showViewerError } from './app/error-dialog';
-import { showToast } from '../ui/toast';
-import { showHelpOverlay, hideHelpOverlay } from '../ui/help-overlay';
-import { showLoadingIndicator, hideLoadingIndicator } from '../ui/loading-indicator';
-import { showSceneIdentityBanner, hideSceneIdentityBanner } from '../ui/scene-identity-banner';
-import { setNotifierBackend } from '../utils/cross-layer/notifier';
 import { ThemeManager } from '../themes/theme-manager';
 import { consoleInterceptor } from '../utils/console-interceptor';
 import { log, Modules, LogEmoji, setVerboseLogging } from '../utils/log';
@@ -216,27 +210,6 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     consoleInterceptor.patch();
   }
   log.custom(LogEmoji.START, Modules.LUXAR, `Luxar viewer ${buildInfoLine()}`);
-
-  // Wire the cross-layer notifier surface to the concrete UI helpers.
-  // Lower layers (data, scene, input) call notifier.toast / .error /
-  // .showHelp etc. without importing the ui/ helper modules directly —
-  // that's what keeps the dependency-cruiser layer order clean.
-  setNotifierBackend({
-    showError: (message, options) =>
-      showViewerError(
-        message,
-        shortcutForAction,
-        options?.persistent ? { autoDismiss: false } : undefined
-      ),
-    showToast,
-    showHelpOverlay,
-    hideHelpOverlay,
-    showLoadingIndicator,
-    hideLoadingIndicator,
-    clearError,
-    showSceneIdentityBanner,
-    hideSceneIdentityBanner,
-  });
 
   if (validateConfig) {
     const ok = validateAndLog(config);

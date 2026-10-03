@@ -9,8 +9,8 @@
  * without violating the layer order documented in CONVENTIONS.md §10.
  *
  * This module defines the abstract `Notifier` surface and a singleton
- * `notifier` that lower layers call. The UI bootstrap registers a
- * concrete backend at startup via `setNotifierBackend(...)`. Until
+ * `notifier` that lower layers call. `LuxarApp.init()` registers a
+ * concrete backend via `setNotifierBackend(...)`. Until
  * registered, calls are no-ops with a single warning log so missing
  * registration doesn't crash code paths that legitimately run before
  * UI init (and so unit tests don't need a backend).
@@ -140,7 +140,7 @@ export const notifier = {
 };
 
 /**
- * Register a notifier backend. Called once by the UI bootstrap with
+ * Register a notifier backend. Called by `LuxarApp.init()` with
  * the concrete implementations from the `ui/` helper modules. Subsequent calls
  * replace the backend (useful for tests).
  */

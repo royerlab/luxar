@@ -895,7 +895,7 @@ describe('LuxarApp', () => {
   });
 
   describe('notifier backend', () => {
-    it.fails('routes the notifier to the viewer UI for a library embed, across dispose → init', async () => {
+    it('routes the notifier to the viewer UI for a library embed, across dispose → init', async () => {
       // A library embedder never runs bootstrapStandalone: the app's own init
       // must give lower layers (toasts, error dialog, spinner) a backend.
       clearNotifierBackend();

@@ -91,6 +91,7 @@ import { initColormapLegend as initColormapLegendImpl } from './app/overlays/ini
 import { initOverlays as initOverlaysImpl } from './app/overlays/init-overlays';
 import { installFocusHandling } from './app/lifecycle/focus-handling';
 import { installOnlineRetry } from './app/lifecycle/online-retry';
+import { installNotifierBackend } from './app/lifecycle/notifier-backend';
 import { getSceneLoader, SceneLoaderManager } from '../data/scene-loader-manager';
 import { notifier } from '../utils/cross-layer/notifier';
 import { initScaleBar as initScaleBarImpl } from './app/overlays/init-scale-bar';
@@ -266,6 +267,10 @@ export class LuxarApp {
     // container is also promoted to a containing block so fixed overlays
     // scope to it; resetViewerContainer() in the dispose pipeline restores it.
     setViewerContainer(options.container ?? document.body);
+    // Toasts, the error dialog, the spinner: lower layers reach the UI through
+    // the notifier, for a library embed as much as the standalone page. The
+    // dispose pipeline clears it, so every lifetime installs its own.
+    installNotifierBackend((actionId) => this.shortcutForAction(actionId));
 
     // Claim the input surface before any async initialization or dataset
     // loading leaves an embedder-supplied canvas browser-owned.
