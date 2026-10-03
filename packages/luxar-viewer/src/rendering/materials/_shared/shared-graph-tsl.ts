@@ -103,8 +103,8 @@ function leafEntries(leaves: TSLLeafSet): [string, TSLNode][] {
  * The type signature of one leaf: what the build derives code or a binding
  * layout from. A texture's sample type follows its data type/format (and
  * depth-ness), so two leaves with different textures of one signature
- * generate the same shader. Every texture field `standInTexture` copies is
- * here, since the build sees the first material's values through it.
+ * generate the same shader. The signature includes copied texture fields
+ * that affect the build, which sees the first material's values.
  */
 function leafSignature(name: string, node: TSLNode): string {
   if (isTextureLeaf(node)) {
