@@ -202,9 +202,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     this.zarrLocation = zarrLocation;
     this.node = node;
     this.rangeLoader = new RangeLoader(refRegistry || new ArrayRefRegistry());
-    // Forward the per-update abort signal into worker decodes (LUT/quantized/
-    // broadcasted) so a superseded update's decode bails before dispatch.
-    this.rangeLoader.setSignalSource(() => this._lifetime.calls.signal);
+    // Initial builds have no update signal; their decodes still belong to this loader.
+    this.rangeLoader.setSignalSource(() => this._lifetime.calls.signal ?? this._lifetime.signal);
     this.zarrStore = zarrStore || null;
     this.l0Cache = l0Cache || null;
     // array_ref targets: opened once per (store, target) and read through L0
