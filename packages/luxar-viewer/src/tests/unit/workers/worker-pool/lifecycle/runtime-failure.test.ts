@@ -15,7 +15,7 @@ interface MockWorker {
   onmessageerror: (() => void) | null;
 }
 
-async function loadWorkerPool(workerCount: number) {
+async function loadWorkerPool(workerCount: number, perf: Record<string, number> = {}) {
   vi.resetModules();
 
   const log = {
@@ -26,10 +26,12 @@ async function loadWorkerPool(workerCount: number) {
     update: vi.fn(),
   };
   const workers: MockWorker[] = [];
+  /** `<worker index>:<label>` for every `task` call, in dispatch order. */
+  const taskCalls: string[] = [];
   let nextWorkerIndex = 0;
 
   vi.doMock('../../../../../config', () => ({
-    config: { dataLoading: { performance: { workerCount } } },
+    config: { dataLoading: { performance: { workerCount, ...perf } } },
   }));
 
   vi.doMock('../../../../../utils/log', () => ({
@@ -40,9 +42,16 @@ async function loadWorkerPool(workerCount: number) {
   vi.doMock('comlink', () => ({
     // `hang` stands for any task the worker never answers: Comlink settles a
     // call only from the worker's reply, which a terminated worker never sends.
-    wrap: vi.fn(() => ({
+    wrap: vi.fn(({ index }: MockWorker) => ({
       initialize: vi.fn(async () => {}),
       hang: vi.fn(() => new Promise<never>(() => {})),
+      // Worker 0 is wedged and never answers; every other worker answers
+      // after a short delay, with its own index so a test can see who ran it.
+      task: vi.fn((label: string) => {
+        taskCalls.push(`${index}:${label}`);
+        if (index === 0) return new Promise<never>(() => {});
+        return new Promise<string>((resolve) => setTimeout(() => resolve(`w${index}`), 20));
+      }),
     })),
   }));
 
@@ -59,7 +68,7 @@ async function loadWorkerPool(workerCount: number) {
   }));
 
   const module = await import('../../../../../workers/worker-pool');
-  return { ...module, log, workers };
+  return { ...module, log, workers, taskCalls };
 }
 
 describe('WorkerPool runtime-error handling', () => {
@@ -167,6 +176,14 @@ async function settledWithin(call: Promise<unknown>, ms = 20): Promise<unknown> 
 }
 
 type HangApi = { hang: () => Promise<never> };
+type TaskApi = { task: (label: string) => Promise<string> };
+
+/** `{ value }` on success, the error on rejection — observed immediately. */
+const outcome = (call: Promise<unknown>): Promise<unknown> =>
+  call.then(
+    (value: unknown) => ({ value }),
+    (error: unknown) => error
+  );
 
 /** Let `runWithTimeout`'s worker selection run, so the calls reach a worker. */
 const dispatched = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -196,7 +213,7 @@ describe('WorkerPool in-flight calls on an evicted worker', () => {
     expect(await settledWithin(second)).toBeInstanceOf(WorkerUnavailableError);
   });
 
-  it('leaves calls on the surviving workers in flight', async () => {
+  it.fails('leaves calls on the surviving workers in flight, and moves the evicted ones there', async () => {
     const { WorkerPool, workers } = await loadWorkerPool(2);
     const pool = new WorkerPool();
     await pool.initialize();
@@ -208,8 +225,11 @@ describe('WorkerPool in-flight calls on an evicted worker', () => {
     await dispatched();
     workers[0].onerror?.({ message: 'OOM', preventDefault: vi.fn() });
 
+    // The survivor's call is untouched; w0's was re-dispatched onto the
+    // survivor rather than rejected, so neither has settled.
     const outcomes = await Promise.all(calls.map((c) => settledWithin(c)));
-    expect(outcomes.filter((o) => o === 'pending')).toHaveLength(1);
+    expect(outcomes).toEqual(['pending', 'pending']);
+    expect(pool.getWorkerCount()).toBe(1);
   });
 
   it('rejects calls in flight when the pool is disposed', async () => {
@@ -224,5 +244,89 @@ describe('WorkerPool in-flight calls on an evicted worker', () => {
     pool.dispose();
 
     expect(await settledWithin(call)).toBeInstanceOf(WorkerUnavailableError);
+  });
+});
+
+describe('WorkerPool re-dispatch of calls abandoned by an eviction', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal('navigator', { hardwareConcurrency: 16 });
+  });
+
+  const runTask = (
+    pool: { runWithTimeout: (...args: never[]) => Promise<unknown> },
+    label: string,
+    signal?: AbortSignal
+  ): Promise<unknown> =>
+    (pool.runWithTimeout as (...args: unknown[]) => Promise<unknown>)(
+      'task',
+      'projection',
+      (api: TaskApi) => api.task(label),
+      signal
+    );
+
+  it.fails('re-runs a call queued behind a timed-out task on a surviving worker', async () => {
+    // A hangs on w0; B runs on w1; C ties and queues on w0. A's timeout evicts
+    // w0, which abandons C. C never reached a kernel, so it must run on w1
+    // rather than reject into the in-process (main-thread) fallback, and A —
+    // the timed-out task itself — must NOT be re-run anywhere.
+    const { WorkerPool, WorkerTimeoutError, taskCalls } = await loadWorkerPool(2, {
+      workerProjectionTimeoutMs: 100,
+    });
+    const pool = new WorkerPool();
+    await pool.initialize();
+
+    // Outcomes are captured at once so no rejection sits unobserved.
+    const [a, b, c] = ['A', 'B', 'C'].map((label) => outcome(runTask(pool, label)));
+    await dispatched();
+    expect(taskCalls).toEqual(['0:A', '1:B', '0:C']);
+
+    expect(await a).toBeInstanceOf(WorkerTimeoutError);
+    expect(await b).toEqual({ value: 'w1' });
+    expect(await c).toEqual({ value: 'w1' });
+    expect(taskCalls).toEqual(['0:A', '1:B', '0:C', '1:C']);
+    expect(pool.getWorkerCount()).toBe(1);
+  });
+
+  it.fails('re-dispatches an abandoned call at most once', async () => {
+    const { WorkerPool, WorkerUnavailableError, workers, taskCalls } = await loadWorkerPool(3);
+    const pool = new WorkerPool();
+    await pool.initialize();
+
+    // The call lands on w0 (all idle; first wins). Crash w0, then the worker
+    // the call was re-dispatched to.
+    const hanging = (pool.runWithTimeout as (...args: unknown[]) => Promise<unknown>)(
+      'hang',
+      'projection',
+      (api: HangApi) => api.hang()
+    );
+    hanging.catch(() => {}); // observed below, via settledWithin
+    await dispatched();
+    workers[0].onerror?.({ message: 'OOM', preventDefault: vi.fn() });
+    await dispatched();
+    const stillPending = await settledWithin(hanging);
+    expect(stillPending).toBe('pending');
+    // It moved to w1 (least busy, first in order). Crashing that one too must
+    // reject it — not move it again — even though w2 is still alive.
+    workers[1].onerror?.({ message: 'OOM', preventDefault: vi.fn() });
+    expect(await settledWithin(hanging)).toBeInstanceOf(WorkerUnavailableError);
+    expect(pool.getWorkerCount()).toBe(1);
+    expect(taskCalls).toEqual([]);
+  });
+
+  it('does not re-dispatch a call whose caller already aborted', async () => {
+    const { WorkerPool, WorkerAbortError, workers, taskCalls } = await loadWorkerPool(2);
+    const pool = new WorkerPool();
+    await pool.initialize();
+
+    const controller = new AbortController();
+    const aborted = runTask(pool, 'A', controller.signal);
+    await dispatched();
+    controller.abort();
+    await expect(aborted).rejects.toBeInstanceOf(WorkerAbortError);
+
+    workers[0].onerror?.({ message: 'OOM', preventDefault: vi.fn() });
+    await dispatched();
+    expect(taskCalls).toEqual(['0:A']);
   });
 });
