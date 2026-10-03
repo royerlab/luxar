@@ -84,7 +84,13 @@ export type {
   AudioPatch,
   AudioBusName,
   PanningModel,
+  RenderingSettings,
+  LayerType,
 } from './core/app/embedder/events';
+/** `ViewerState.controlPanel` — the scene's authored touch control-panel block. */
+export type { ControlPanelSettings } from './config/zarr-bridge/control-panel';
+/** `LuxarAppOptions.factories` — construction overrides for the heavy components. */
+export type { AppFactories } from './core/app/factories';
 /**
  * JSON-serializable snapshot of viewer state (camera placement + per-dimension
  * slice position) so an external caller can reproduce a specific view across
