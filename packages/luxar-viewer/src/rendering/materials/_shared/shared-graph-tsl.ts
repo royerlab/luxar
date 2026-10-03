@@ -39,6 +39,12 @@
  *   - Material state the factory tail writes (blending, `toneMapped`) is
  *     per-material and must be re-applied by the caller — the factory runs
  *     against a scratch material, once per key.
+ *   - Two texture leaves of one material must never hold the same texture.
+ *     three merges texture nodes of one texture into one binding at build
+ *     time, and a build three repeats for another render context sees the
+ *     values the forwarding leaves last held: the two leaves would then share
+ *     one binding for every material of the key. No wrapper does this today
+ *     (each has at most an element/base-colour texture and a colormap).
  *
  * Kept out of `tsl-helpers.ts` (it needs `three/webgpu`; see
  * `live-texture-tsl.ts` for the import-cone reason).
@@ -97,13 +103,14 @@ function leafEntries(leaves: TSLLeafSet): [string, TSLNode][] {
  * The type signature of one leaf: what the build derives code or a binding
  * layout from. A texture's sample type follows its data type/format (and
  * depth-ness), so two leaves with different textures of one signature
- * generate the same shader.
+ * generate the same shader. Every texture field `standInTexture` copies is
+ * here, since the build sees the first material's values through it.
  */
 function leafSignature(name: string, node: TSLNode): string {
   if (isTextureLeaf(node)) {
-    const tex = (node.value ?? {}) as Partial<THREE.Texture> & { isDepthTexture?: boolean };
-    const depth = tex.isDepthTexture === true;
-    return `${name}:tex:${tex.type}:${tex.format}:${depth ? 'd' : 'c'}:${tex.minFilter}:${tex.magFilter}:${tex.wrapS}:${tex.wrapT}`;
+    const tex = (node.value ?? {}) as Partial<THREE.DepthTexture> & { isDepthTexture?: boolean };
+    const depth = tex.isDepthTexture === true ? `d${tex.compareFunction}` : 'c';
+    return `${name}:tex:${tex.type}:${tex.format}:${depth}:${tex.colorSpace}:${tex.minFilter}:${tex.magFilter}:${tex.wrapS}:${tex.wrapT}`;
   }
   return `${name}:${(node as { nodeType?: string | null }).nodeType ?? '?'}`;
 }

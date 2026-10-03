@@ -282,4 +282,23 @@ describe('shared TSL graph forwarding (gsplat)', () => {
     const depthSeed = forwardTSLLeaves({ uTex: texture(depth) }).uTex.value as THREE.DepthTexture;
     expect(depthSeed.compareFunction).toBe(depth.compareFunction);
   });
+
+  it('the key separates texture colour space and depth compare function', () => {
+    // Both are copied onto the build's stand-in, so they reach the shader the
+    // first material builds: a material differing in either must not share it.
+    const srgb = colormap();
+    srgb.colorSpace = THREE.SRGBColorSpace;
+    const linear = colormap();
+    linear.colorSpace = THREE.NoColorSpace;
+    expect(sharedTSLGraphKey('cs', {}, { uTex: texture(srgb) })).not.toBe(
+      sharedTSLGraphKey('cs', {}, { uTex: texture(linear) })
+    );
+
+    const less = new THREE.DepthTexture(1, 1);
+    less.compareFunction = THREE.LessEqualCompare;
+    const none = new THREE.DepthTexture(1, 1);
+    expect(sharedTSLGraphKey('depth', {}, { uTex: texture(less) })).not.toBe(
+      sharedTSLGraphKey('depth', {}, { uTex: texture(none) })
+    );
+  });
 });
