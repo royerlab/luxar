@@ -54,6 +54,11 @@ function parsePack(bytes: Uint8Array): Members {
   return members;
 }
 
+/**
+ * A {@link ChunkSource} that serves every chunk key of a packed node from one
+ * fetch of its pack (`chunk_packs/<n>.pack`), and every other key, or any key
+ * whose pack is missing, stale or fails its digest, from the wrapped source.
+ */
 export class PackedChunkSource implements ChunkSource {
   /** Packed node prefix (with its trailing `/`) → pack. */
   private readonly packs = new Map<string, Pack>();
@@ -66,6 +71,7 @@ export class PackedChunkSource implements ChunkSource {
     return this.inner.identity;
   }
 
+  /** The inner source's description verbatim (a pack changes how bytes arrive, not what the store is). */
   get describe(): string {
     return this.inner.describe;
   }
@@ -83,6 +89,7 @@ export class PackedChunkSource implements ChunkSource {
     return attrs.packs.length;
   }
 
+  /** Serve `key` from its node's pack when one is adopted and valid; otherwise read it plainly. */
   async get(
     key: string,
     signal?: AbortSignal,
