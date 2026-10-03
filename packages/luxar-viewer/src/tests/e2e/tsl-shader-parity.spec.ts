@@ -2578,6 +2578,11 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     'mesh-texture',
     'mesh-none-shading',
     'mesh-pick-texture',
+    // The gamma == 1 and no-GOG fast paths, the mesh peers of the point / line /
+    // gsplat `-gamma-one` / `-no-gog` parity tests. A default mesh (gain 1, offset
+    // 0) renders with the no-GOG build, so it is the common case, not an edge.
+    'mesh-gamma-one',
+    'mesh-no-gog',
   ] as const) {
     test(`${variant}: shaded surface parity across backends`, async ({ page }) => {
       await bootHarness(page);
