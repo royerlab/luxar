@@ -6,11 +6,11 @@
  *
  * Implementation note (R5 — load-bearing):
  * Naive pruning via Array.shift() is O(n) per pop and degrades to O(n²)
- * under sustained high fetch rates. Instead we advance a `start` index
- * past expired entries (O(1) amortized in `rate()`), and only when the
- * dead prefix exceeds half the buffer do we slice it off in one
- * allocation (`record()` path). This keeps push amortized O(1) without
- * letting the buffer grow unbounded.
+ * under sustained high fetch rates. Instead both `record()` and `rate()`
+ * advance a `start` index past expired entries (O(1) amortized), and only
+ * when the dead prefix exceeds half the buffer does `record()` slice it off
+ * in one allocation. Expiring on `record()` too is what bounds the buffer:
+ * `rate()` is read only while the monitor is visible.
  */
 export class BandwidthWindow {
   private readonly windowMs: number;
@@ -22,12 +22,14 @@ export class BandwidthWindow {
   }
 
   /**
-   * Record a network transfer of `bytes` at the current time. Runs the
-   * R5 amortized compaction: if the dead prefix is larger than the
-   * live tail, slice it off in one O(n) hit.
+   * Record a network transfer of `bytes` at the current time. Expires aged-out
+   * entries, then runs the R5 amortized compaction: if the dead prefix is
+   * larger than the live tail, slice it off in one O(n) hit.
    */
   record(bytes: number): void {
-    this.window.push({ timestamp: Date.now(), bytes });
+    const now = Date.now();
+    this.expire(now);
+    this.window.push({ timestamp: now, bytes });
     if (this.start > 0 && this.start > this.window.length / 2) {
       this.window = this.window.slice(this.start);
       this.start = 0;
@@ -40,11 +42,7 @@ export class BandwidthWindow {
    */
   rate(): number {
     const now = Date.now();
-    const cutoff = now - this.windowMs;
-
-    while (this.start < this.window.length && this.window[this.start].timestamp < cutoff) {
-      this.start++;
-    }
+    this.expire(now);
 
     const liveCount = this.window.length - this.start;
     if (liveCount === 0) return 0;
@@ -55,5 +53,13 @@ export class BandwidthWindow {
     }
     const windowSpan = Math.max(1, (now - this.window[this.start].timestamp) / 1000);
     return windowBytes / windowSpan;
+  }
+
+  /** Advance `start` past every entry older than the window at `now`. */
+  private expire(now: number): void {
+    const cutoff = now - this.windowMs;
+    while (this.start < this.window.length && this.window[this.start].timestamp < cutoff) {
+      this.start++;
+    }
   }
 }

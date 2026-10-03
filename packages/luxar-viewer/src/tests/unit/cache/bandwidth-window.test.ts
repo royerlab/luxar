@@ -58,32 +58,35 @@ describe('BandwidthWindow', () => {
 
       const rate = bw.rate();
       expect(rate).toBeGreaterThan(0);
-      // After the walk, start should have advanced past the 5 stale ones.
-      expect(internals(bw).start).toBe(5);
+      // The live tail is exactly the 3 fresh entries.
+      expect(internals(bw).window.length - internals(bw).start).toBe(3);
     });
   });
 
   describe('R5 amortized compaction (load-bearing)', () => {
     it('compacts the array when the dead prefix exceeds half', () => {
-      // Seed 21 stale entries.
+      // Seed 21 stale entries and age them out.
       for (let i = 0; i < 21; i++) bw.record(100);
-      // Age them out so the next rate() call walks start past all 21.
       vi.advanceTimersByTime(WINDOW_MS + 1);
-      // One fresh entry.
+
+      // The next record() expires all 21, sees start (21) > length/2 (11)
+      // and compacts: array sliced down to the live tail, start reset to 0.
       bw.record(1000);
-
-      // Walk start past the 21 stale entries.
-      bw.rate();
-      expect(internals(bw).start).toBe(21);
-      expect(internals(bw).window.length).toBe(22);
-
-      // The next record() should observe start (21) > length/2 (≈11) and
-      // compact: array sliced down to the live tail, start reset to 0.
-      bw.record(500);
       expect(internals(bw).start).toBe(0);
-      expect(internals(bw).window.length).toBeLessThan(22);
-      // At least the two fresh entries remain.
-      expect(internals(bw).window.length).toBeGreaterThanOrEqual(2);
+      expect(internals(bw).window.length).toBe(1);
+    });
+
+    it('leaves a dead prefix no larger than the live tail in place', () => {
+      bw.record(100);
+      bw.record(100);
+      vi.advanceTimersByTime(6000);
+      for (let i = 0; i < 10; i++) bw.record(100);
+      vi.advanceTimersByTime(5000); // the first two age out, the ten do not
+
+      // start (2) <= length/2 (6.5): no copy, start just moves past them.
+      bw.record(100);
+      expect(internals(bw).start).toBe(2);
+      expect(internals(bw).window.length).toBe(13);
     });
 
     it('keeps the buffer bounded under sustained record-and-prune cycles', () => {
@@ -101,7 +104,7 @@ describe('BandwidthWindow', () => {
       // unbounded.
       expect(internals(bw).window.length).toBeLessThan(50);
     });
-    it.fails('stays bounded when rate() is never called', () => {
+    it('stays bounded when rate() is never called', () => {
       // rate() is read only by getStats() (the visible monitor). With the
       // monitor hidden, record() alone must keep the buffer to the live tail.
       for (let i = 0; i < 1000; i++) {
