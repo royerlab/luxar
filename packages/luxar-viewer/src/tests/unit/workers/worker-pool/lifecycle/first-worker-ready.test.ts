@@ -10,12 +10,13 @@
  * all 15 cost 2.23 s of an 8.0 s first paint, because each worker compiles its
  * own copy of the WASM module and they come ready ~160 ms apart.
  *
- * So `getWorkerWithTracking()` / `getWorker()` await a second gate that settles
- * on the FIRST published worker. These tests pin both halves of that split, and
+ * So `runWithTimeout()` awaits a second gate that settles on the FIRST
+ * published worker. These tests pin both halves of that split, and
  * the failure modes incremental publishing introduces.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { WorkerPool } from '../../../../../workers/worker-pool';
 
 type MockWorker = {
   index: number;
@@ -94,6 +95,8 @@ async function loadWorkerPool(
           initCalls.push(args);
           return initByIndex(index);
         },
+        /** Answers with the worker it ran on. */
+        ping: async () => index,
       };
     }),
   }));
@@ -114,6 +117,13 @@ async function loadWorkerPool(
   return { ...module, log, workers, initCalls };
 }
 
+/** A hot-path call; resolves with the index of the worker that ran it. */
+function dispatch(pool: WorkerPool): Promise<number> {
+  return pool.runWithTimeout('ping', 'projection', (api) =>
+    (api as unknown as { ping(): Promise<number> }).ping()
+  );
+}
+
 /** Let queued microtasks drain without advancing time. */
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -132,10 +142,10 @@ describe('WorkerPool — first-usable-worker gate', () => {
     });
     const pool = new WorkerPool();
 
-    const handle = await pool.getWorkerWithTracking();
+    const ranOn = await dispatch(pool);
 
     // The whole point: usable while 3 of 4 spawns are still parked.
-    expect(handle).toBeTruthy();
+    expect(ranOn).toBe(0);
     expect(pool.getWorkerCount()).toBe(1);
 
     stragglers.resolve();
@@ -196,7 +206,7 @@ describe('WorkerPool — first-usable-worker gate', () => {
     });
     const pool = new WorkerPool();
 
-    const pending = pool.getWorkerWithTracking();
+    const pending = dispatch(pool);
     await flush();
     pool.dispose();
 
@@ -212,11 +222,11 @@ describe('WorkerPool — first-usable-worker gate', () => {
     });
     const pool = new WorkerPool();
 
-    await expect(pool.getWorkerWithTracking()).rejects.toThrow(/Failed to initialize any data/);
+    await expect(dispatch(pool)).rejects.toThrow(/Failed to initialize any data/);
     const spawnedAfterFirst = workers.length;
 
     // The sticky-rejection contract: a second call must not re-spawn.
-    await expect(pool.getWorkerWithTracking()).rejects.toThrow();
+    await expect(dispatch(pool)).rejects.toThrow();
     expect(workers.length).toBe(spawnedAfterFirst);
     pool.dispose();
   });
@@ -323,10 +333,10 @@ describe('WorkerPool — incremental publishing', () => {
     // Gate already settled (worker 0 published), but the pool is empty right
     // now. Falling straight through to the empty-pool throw would abandon two
     // workers that are microtasks away from ready.
-    const pending = pool.getWorkerWithTracking();
+    const pending = dispatch(pool);
     stragglers.resolve();
 
-    await expect(pending).resolves.toBeTruthy();
+    await expect(pending).resolves.toBeGreaterThan(0); // a straggler, not dead worker 0
     expect(pool.getWorkerCount()).toBe(2);
     pool.dispose();
   });

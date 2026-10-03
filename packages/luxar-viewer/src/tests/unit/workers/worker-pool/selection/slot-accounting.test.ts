@@ -21,7 +21,6 @@ function makePool(workers: FakeWorkerInstance[]): WorkerPool {
   const pool = new WorkerPool() as any;
   pool.workers = workers;
   pool.initPromise = Promise.resolve();
-  pool.nextWorkerIndex = 0;
   return pool;
 }
 

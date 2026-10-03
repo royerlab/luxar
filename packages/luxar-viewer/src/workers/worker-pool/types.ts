@@ -9,9 +9,8 @@ import type { DataWorkerAPI } from '../data-worker';
 
 /**
  * One live data worker plus its Comlink-wrapped API surface and the
- * pool's load-balancing counter. The counter is mutated by
- * `markQueryStart` / `markQueryEnd` returned from
- * `WorkerPool.getWorkerWithTracking`.
+ * pool's load-balancing counter. The counter is mutated by the
+ * `markQueryStart` / `markQueryEnd` callbacks `selectLeastBusy` returns.
  */
 export interface WorkerInstance {
   worker: Worker;

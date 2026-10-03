@@ -29,9 +29,7 @@ data-worker/
 │                      (or the TypeScript fallback), throws if
 │                      WebAssembly itself is unavailable.
 ├── types.ts         — ProjectionViewState (narrow ViewState subset the
-│                      worker actually consumes). Re-exports
-│                      EffectiveRadiusConfig from `../../types/points` so
-│                      producers and worker can't drift.
+│                      worker actually consumes).
 ├── validation.ts    — Pure JS→WASM boundary guards: validateNDArrays,
 │                      validateProjectionInputs, validateDecodeArgs,
 │                      validateLineSegmentReferences, plus MAX_WASM_DIMS
@@ -110,5 +108,3 @@ worker.
   load-balanced worker selection, error-handler eviction).
 - `../../wasm/` — `initWasm()` and the TypeScript fallback consumed by
   `initialize.ts`.
-- `../../types/points.ts` — canonical `EffectiveRadiusConfig` re-exported
-  from `types.ts`.

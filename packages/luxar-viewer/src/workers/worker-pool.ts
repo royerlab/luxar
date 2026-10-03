@@ -1,7 +1,7 @@
 /**
  * Worker pool manager for data processing workers
  *
- * Supports multiple workers with round-robin load balancing for parallel
+ * Supports multiple workers with least-busy load balancing for parallel
  * spatial queries across multiple nodes.
  */
 
@@ -35,7 +35,6 @@ import {
   evictFailedWorker,
 } from './worker-pool/lifecycle/error-handlers';
 import { selectLeastBusy, type TrackedWorkerHandle } from './worker-pool/selection/least-busy';
-import { nextRoundRobin } from './worker-pool/selection/round-robin';
 import { DispatchTracker } from './worker-pool/selection/dispatch-tracker';
 import { computeStats, computeQueueDepth, type PoolStats } from './worker-pool/stats';
 import { markLoad, noteLoadResourceReleased } from '../profiling/load-timeline';
@@ -120,13 +119,12 @@ export class WorkerPool {
    *
    * Mirrors `initPromise`'s deliberate "stays rejected" contract — it is NOT
    * nulled on failure, so a poisoned pool keeps failing fast instead of
-   * re-running the init guard per call. `dispose()`, `reinitialize()` and the
-   * `'pool-empty'` branch of {@link handleWorkerFailure} are the only resets.
+   * re-running the init guard per call. `dispose()` and the `'pool-empty'`
+   * branch of {@link handleWorkerFailure} are the only resets.
    */
   private readyPromise: Promise<void> | null = null;
   /** Settles {@link readyPromise}: no argument resolves, an error rejects. */
   private settleReady: ((error?: unknown) => void) | null = null;
-  private nextWorkerIndex = 0;
   /**
    * Rejectors of the calls in flight on each worker. A terminated worker never
    * replies, and Comlink settles a call only from the reply, so eviction and
@@ -324,7 +322,6 @@ export class WorkerPool {
           );
         }
 
-        this.nextWorkerIndex = 0;
         log.info(Modules.WORKER_POOL, `Worker pool ready with ${this.workers.length} worker(s)`);
         markLoad('poolReady', { workers: this.workers.length });
 
@@ -349,12 +346,11 @@ export class WorkerPool {
         }
         this.pendingWorkers.clear();
         // Note: we deliberately keep `initPromise` (the rejected one) so
-        // subsequent `getWorker()` / `runWithTimeout` calls fail FAST rather
-        // than re-running the 30s init guard for every nD load. A blocked
-        // worker chunk would otherwise stack 30s × N delays and blow past
-        // the page's `waitForLuxarReady` timeout. To opt back in to a fresh
-        // init attempt (e.g. after a transient network blip), call
-        // `reinitialize()`.
+        // subsequent `runWithTimeout` calls fail FAST rather than re-running
+        // the 30s init guard for every nD load. A blocked worker chunk would
+        // otherwise stack 30s × N delays and blow past the page's
+        // `waitForLuxarReady` timeout. A slot that only missed its deadline
+        // is respawned in the background (see `scheduleRespawn`).
         //
         // A no-op when a worker already published and the pool died after —
         // that caller holds a live handle, and `whenUsable()`'s re-check
@@ -558,26 +554,6 @@ export class WorkerPool {
   }
 
   /**
-   * Explicitly reset the pool's cached init promise so the next
-   * {@link getWorker} / {@link runWithTimeout} call re-runs init. Used
-   * to recover from a transient init failure (e.g. the worker chunk
-   * was briefly unreachable) without restarting the entire app.
-   *
-   * Routine "init failed once, fall back" cases should NOT call this —
-   * letting the rejected promise stick keeps subsequent calls fast
-   * (instant reject) instead of stacking 30s init guards.
-   */
-  reinitialize(): void {
-    // Same "is the attempt actually over?" test as `handleWorkerFailure`:
-    // an empty pool with spawns still in flight is filling, not failed.
-    if (this.workers.length === 0 && this.pendingWorkers.size === 0) {
-      this.initPromise = null;
-      this.readyPromise = null;
-      this.settleReady = null;
-    }
-  }
-
-  /**
    * Race a worker-routed Promise against a timeout. On timeout, log
    * the failure, evict the responsible worker (if known) via
    * {@link handleWorkerFailure}, and reject with
@@ -586,8 +562,8 @@ export class WorkerPool {
    * a thin pass-through to keep the call-site uniform.
    *
    * `worker` may be omitted when the caller cannot identify which
-   * worker handled the call (e.g. round-robin selection); the timeout
-   * still fires, but the pool isn't pruned.
+   * worker handled the call; the timeout still fires, but the pool isn't
+   * pruned.
    */
   withTimeout<T>(
     operation: string,
@@ -602,43 +578,6 @@ export class WorkerPool {
       (w, reason) => this.handleWorkerFailure(w, reason),
       worker
     );
-  }
-
-  /**
-   * Pick the next round-robin {@link WorkerInstance}. Internal — exposes the
-   * underlying `Worker` so {@link runWithTimeout} can evict it on timeout.
-   */
-  private async nextWorkerInstance(): Promise<WorkerInstance> {
-    await this.whenUsable();
-
-    if (this.workers.length === 0) {
-      throw new WorkerUnavailableError('[WorkerPool] No workers available after initialization');
-    }
-
-    const { instance, nextIndex } = nextRoundRobin(this.workers, this.nextWorkerIndex);
-    this.nextWorkerIndex = nextIndex;
-    return instance;
-  }
-
-  /**
-   * Get a worker API using round-robin selection.
-   *
-   * Untracked callers receive workers in rotating order. For load-aware
-   * selection (picking the worker with the fewest active queries), use
-   * {@link getWorkerWithTracking} instead.
-   *
-   * **Important — no timeout guard.** Direct `await` on the returned
-   * `Remote<DataWorkerAPI>` lets a dead/stuck worker hang the caller
-   * indefinitely (Comlink's onerror handler can't settle an in-flight
-   * promise). Production code MUST go through {@link runWithTimeout}
-   * instead — it routes the call through {@link withTimeout} on a
-   * least-busy worker. This direct `getWorker()` accessor is
-   * intentionally retained for tests and low-level worker-pool
-   * unit tests that need raw access; lint-grep for new production
-   * uses periodically.
-   */
-  async getWorker(): Promise<Remote<DataWorkerAPI>> {
-    return (await this.nextWorkerInstance()).api;
   }
 
   /**
@@ -681,9 +620,9 @@ export class WorkerPool {
 
     // Route through acquireTrackedWorker so a stalled worker (one
     // whose activeQueries has grown past the others) stops being
-    // selected. The previous round-robin via nextWorkerInstance had
-    // no load awareness, so a slow worker received every Nth call
-    // until each call timed out individually — head-of-line blocking.
+    // selected. Round-robin had no load awareness, so a slow worker
+    // received every Nth call until each call timed out individually —
+    // head-of-line blocking.
     // The slot is taken AT SELECTION (same synchronous step), so concurrent
     // dispatches see each other's load instead of all reading index 0 idle.
     const tracked = await this.acquireTrackedWorker();
@@ -818,11 +757,6 @@ export class WorkerPool {
     return this.dispatchTracked(op, 'decode', tracked, fn);
   }
 
-  /** Workers with no task in flight. */
-  getIdleWorkerCount(): number {
-    return this.workers.reduce((n, w) => n + (w.activeQueries === 0 ? 1 : 0), 0);
-  }
-
   /** Idle workers whose codec is warm (the codec dispatcher spreads batches over these). */
   getIdleWarmWorkerCount(): number {
     return this.workers.reduce(
@@ -842,34 +776,6 @@ export class WorkerPool {
    */
   ensureCodecsWarm(): boolean {
     return this.codecWarmup.ensureWarm();
-  }
-
-  /**
-   * Start warming the workers' blosc codec now, one worker first (see
-   * {@link ensureCodecsWarm}). Fire-and-forget and idempotent.
-   */
-  warmCodecs(): void {
-    this.codecWarmup.ensureWarm();
-  }
-
-  /**
-   * Get a worker with query tracking for load balancing.
-   *
-   * Returns the worker `api`, the underlying `worker` (for
-   * eviction-on-timeout), and callbacks to mark query start/end so
-   * the active-queries counter reflects in-flight load.
-   *
-   * For callers that manage their own slot accounting. Hot-path calls use
-   * {@link runWithTimeout}, which selects and marks in one synchronous step.
-   */
-  async getWorkerWithTracking(): Promise<TrackedWorkerHandle> {
-    await this.whenUsable();
-
-    if (this.workers.length === 0) {
-      throw new WorkerUnavailableError('[WorkerPool] No workers available after initialization');
-    }
-
-    return selectLeastBusy(this.workers);
   }
 
   /**
@@ -955,7 +861,6 @@ export class WorkerPool {
     );
     this.settleReady = null;
     this.readyPromise = null;
-    this.nextWorkerIndex = 0;
   }
 }
 
@@ -983,15 +888,6 @@ export function getWorkerPool(): WorkerPool {
 function installCodecBackend(pool: WorkerPool): void {
   setWorkerCodecsEnabled(!hasUrlFlag(URL_PARAM_KEYS.mainThreadCodecs));
   setBloscDecodeBackend(new BloscDecodeDispatcher(pool));
-}
-
-/**
- * Start warming the data workers' blosc codec (fire-and-forget; one worker
- * first, the rest once it finished). Nothing warms it eagerly: the first chunk
- * decode above the offload floor does, so this only front-loads that.
- */
-export function warmWorkerCodecs(): void {
-  workerPoolInstance?.warmCodecs();
 }
 
 /**

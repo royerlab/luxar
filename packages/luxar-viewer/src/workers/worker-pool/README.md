@@ -35,7 +35,7 @@ worker-pool/
 ├── codec-dispatch.ts           — batched blosc chunk-decode dispatch (codec backend)
 ├── codec-warmup.ts             — lazy one-worker-first blosc codec warm-up
 ├── lifecycle/                  — spawn, init guard, error handlers, count
-├── selection/                  — least-busy and round-robin pickers
+├── selection/                  — least-busy picker
 └── timeout/                    — Promise.race timer + kind→ms + AbortSignal
 ```
 
@@ -48,10 +48,8 @@ worker-pool/
   call rejects mid-flight.
 
 - **[selection/](./selection/README.md)** — pick which worker handles
-  the next call. `least-busy.ts` scans `activeQueries` and is the
-  default path used by `runWithTimeout` / `getWorkerWithTracking`.
-  `round-robin.ts` backs the simpler `getWorker()` accessor for callers
-  that don't want tracking overhead.
+  the next call. `least-busy.ts` scans `activeQueries`; every dispatch
+  (`runWithTimeout`, `runDecode`) selects through it.
 
 - **[timeout/](./timeout/README.md)** — bound every Comlink round-trip.
   `with-timeout.ts` wraps the shared `raceTimeout` (`utils/race-timeout.ts`)

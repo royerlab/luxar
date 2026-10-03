@@ -19,7 +19,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import * as zarr from '../../../data/zarr';
 import { setWorkerCodecsEnabled } from '../../../data/codecs/worker-blosc';
 import { hasUrlFlag, URL_PARAM_KEYS } from '../../../config/url-params';
-import { disposeWorkerPool, getWorkerPool, warmWorkerCodecs } from '../../../workers/worker-pool';
+import { disposeWorkerPool, getWorkerPool } from '../../../workers/worker-pool';
 import {
   BloscDecodeDispatcher,
   MAX_BATCH_BYTES,
@@ -83,7 +83,7 @@ function injectWorkers(instances: unknown[]): void {
 /** Inject workers and let their codec warm-up finish (offload needs a warm worker). */
 async function injectWarmWorkers(instances: { api: { warmCodecs: () => Promise<unknown> } }[]) {
   injectWorkers(instances);
-  warmWorkerCodecs();
+  getWorkerPool().ensureCodecsWarm();
   await vi.waitFor(() => {
     for (const w of instances) expect(w.api.warmCodecs).toHaveBeenCalled();
   });
@@ -191,7 +191,7 @@ describe('blosc decode offload to the data-worker pool', () => {
     expect(other.api.warmCodecs).not.toHaveBeenCalled();
     // A warm-up is not a query: the warming worker still reads as idle.
     expect(fake.instance.activeQueries).toBe(0);
-    expect(getWorkerPool().getIdleWorkerCount()).toBe(2);
+    expect(getWorkerPool().getQueueDepth()).toBe(0);
 
     finishWarm();
     await vi.waitFor(() => expect(other.api.warmCodecs).toHaveBeenCalledTimes(1));
