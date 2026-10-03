@@ -60,10 +60,6 @@ export async function loadGSplatsChunkIndex(
     // were padded by. The probe is a whole extra (serial) request for one
     // tiny array, and coarse rungs are routinely single-chunk: playback of a
     // 4-rung partitioned timelapse paid one per rung per timepoint.
-    // Asymmetry: Points and Lines still probe. Their no-index paths are not
-    // this cheap — Points re-derives its count from the positions shape and
-    // logs per node; Lines needs BOTH of its dual indexes to be one chunk —
-    // so they get the same rule once a playback store shows their probes.
     log.verbose(
       LogEmoji.QUERY,
       Modules.GSPLATS_SPATIAL_INDEX_LOADER,
