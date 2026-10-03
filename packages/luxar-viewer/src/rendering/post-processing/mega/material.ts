@@ -282,7 +282,10 @@ export class MegaShaderMaterial extends THREE.ShaderMaterial {
     return 'USE_BLOOM' in this.defines;
   }
 
-  /** Set the bloom intensity. Disables the bloom branch if texture is null. */
+  /**
+   * Set the bloom intensity and the bloom chain's output texture. Uniforms only:
+   * the bloom branch itself is the `USE_BLOOM` define ({@link toggleBloom}).
+   */
   setBloom(intensity: number, texture: THREE.Texture | null): void {
     this.uniforms.uBloomIntensity.value = intensity;
     this.uniforms.uBloomTexture.value = texture;

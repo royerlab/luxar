@@ -72,6 +72,8 @@ post-processing/
 ├── post-processing-manager/        # Focused helpers behind the orchestrator
 │   ├── capture.ts                  #   three capture paths + EXR encoding
 │   ├── pipeline.ts                 #   per-frame composition (scene → bloom → mega → fxaa)
+│   ├── refraction-split.ts         #   multi-pass scene split for `refract_data` glass
+│   ├── inside-closed-mesh.ts       #   is the camera inside a closed glass mesh (split input)
 │   ├── resource-lifecycle.ts       #   sizing + GPU resource allocate/dispose
 │   └── settings.ts                 #   user-toggle setter logic + validation
 ├── mega/                           # Fused tonemap / distortion / noise / vignette fragment
@@ -93,7 +95,8 @@ post-processing/
 ├── hdr/                            # HDR readback + EXR-log
 │   ├── pixel-utils.ts              #   unified WebGL2/WebGPU readPixelsCompactAsync
 │   └── capture.ts                  #   formatHDRExrLogLine
-└── render-target-sizing.ts         # SSAA/DPR allocation and framebuffer-limit clamping
+├── render-target-sizing.ts         # SSAA/DPR allocation and framebuffer-limit clamping
+└── tone-mapping.ts                 # Tone-mapping name ↔ THREE enum ↔ mega-shader mode (single source)
 ```
 
 The orchestrator lives at `post-processing/post-processing-manager.ts`
@@ -146,7 +149,7 @@ const exr2 = await pp.captureHDRAsEXR({ mode: 'visible-ldr' });
 const raw = await pp.captureHDRAsEXR({ mode: 'raw-scene-hdr' });
 
 // Display-ready ImageData (full pipeline, sRGB-encoded, FXAA if on):
-const img = pp.renderToImageData();
+const img = await pp.renderToImageData();
 ```
 
 ## Context-restore protocol
@@ -180,8 +183,10 @@ current renderer model:
 - **SMAA** — 3-pass edge-detect → weight → blend; FXAA remains as the
   inline AA option.
 - **Depth of Field** — needs depth-aware multi-pass blur.
-- **Ambient Occlusion** — needs surface normals, which point / gsplat /
-  line geometry do not provide.
+- **Ambient Occlusion** — a screen-space pass needs a normal and a depth
+  for every fragment. Points, gsplats and lines are emissive and carry
+  neither, so it could only ever darken meshes. Bake it into the data
+  instead (`luxar.shading.bake_ambient_occlusion`).
 
 There are no `RenderingSettings`, viewer-config, or UI fields for these
 effects.
