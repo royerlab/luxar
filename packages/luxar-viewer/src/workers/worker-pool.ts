@@ -525,7 +525,8 @@ export class WorkerPool {
   /**
    * Remove a failed worker from the pool and terminate it, rejecting every
    * call still in flight on it with {@link WorkerUnavailableError} (the
-   * terminated worker will never answer them). If this drops the pool to zero
+   * terminated worker will never answer them; `runWithTimeout` re-dispatches
+   * such a call once onto a surviving worker). If this drops the pool to zero
    * workers, log a clear error so the surrounding application can decide
    * whether to fall back to the main-thread implementation or surface a
    * failure dialog.
@@ -602,7 +603,11 @@ export class WorkerPool {
    * {@link WorkerTimeoutError}. The geometry loaders deliberately do NOT
    * run the projection in-process on a timeout (see
    * `isWorkerInfrastructureError`) — the failure is recorded and the node
-   * retried against a fresh worker instead of blocking the UI thread.
+   * retried against a fresh worker instead of blocking the UI thread. The
+   * OTHER calls that eviction abandons were never answered, so they are
+   * re-dispatched once onto a surviving worker (see
+   * {@link dispatchWithRedispatch}); only with no worker left do they reject
+   * with {@link WorkerUnavailableError}, the in-process fallback's trigger.
    */
   async runWithTimeout<T>(
     op: string,
@@ -638,7 +643,7 @@ export class WorkerPool {
     // The abort cannot kill the WASM task, but it can settle the
     // promise immediately so the caller proceeds with whatever the
     // dataset-switch wants to do next.
-    const workerPromise = this.dispatchTracked(op, kind, tracked, fn);
+    const workerPromise = this.dispatchWithRedispatch(op, kind, tracked, fn, signal);
 
     if (!signal) {
       return await workerPromise;
@@ -708,6 +713,43 @@ export class WorkerPool {
       () => tracked.markQueryEnd()
     );
     return workerPromise;
+  }
+
+  /**
+   * {@link dispatchTracked}, plus ONE re-dispatch of a call that its worker's
+   * eviction abandoned (a crash, or ANOTHER call's timeout on that worker)
+   * while live workers remain. No kernel answered such a call — it was queued
+   * behind the failure, or running on a worker that died — so it runs again on
+   * a surviving worker, under a fresh timeout, instead of rejecting with
+   * {@link WorkerUnavailableError} into the callers' in-process fallback, which
+   * would move the same heavy work onto the UI thread.
+   *
+   * Never re-dispatched: a call that timed out itself (it rejects with
+   * {@link WorkerTimeoutError}), a call whose caller aborted, a call already
+   * re-dispatched once (a second eviction rejects, so a payload that kills
+   * workers cannot walk the pool), and a call abandoned by `dispose()` or by
+   * the last worker's eviction (nothing is left to run it; that rejection is
+   * the infrastructure failure the fallback exists for).
+   *
+   * Sound because `runWithTimeout` callers structured-clone their inputs; a
+   * transferred payload is detached by the first post, which is why
+   * `runDecode` does not re-dispatch.
+   */
+  private async dispatchWithRedispatch<T>(
+    op: string,
+    kind: TimeoutKind,
+    tracked: TrackedWorkerHandle,
+    fn: (api: Remote<DataWorkerAPI>) => Promise<T>,
+    signal?: AbortSignal
+  ): Promise<T> {
+    try {
+      return await this.dispatchTracked(op, kind, tracked, fn);
+    } catch (error) {
+      const abandoned = error instanceof WorkerUnavailableError && this.workers.length > 0;
+      if (!abandoned || signal?.aborted) throw error;
+      log.warning(Modules.WORKER_POOL, `Re-dispatching '${op}' after its worker was evicted`);
+      return this.dispatchTracked(op, kind, await this.acquireTrackedWorker(), fn);
+    }
   }
 
   /**

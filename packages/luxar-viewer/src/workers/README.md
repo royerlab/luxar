@@ -75,6 +75,10 @@ disposeWorkerPool();
 
 The pool tracks `activeQueries` per worker and selects the worker with the fewest active tasks. `runWithTimeout` (and `runDecode`) mark the selected worker busy in the same synchronous step, and free it when the worker's own call settles.
 
+### Failed workers
+
+A worker that crashes or times out is evicted and terminated. The call that timed out rejects with `WorkerTimeoutError` and is never re-run, not on another worker and not in-process: a hung or slow kernel would only hang or block again. The other calls in flight on that worker were never answered, so `runWithTimeout` re-dispatches each of them once onto a surviving worker, under a fresh timeout. A call rejects with `WorkerUnavailableError` (which lets the Lines/GSplats processors fall back to in-process projection) only when no worker is left, or when its second worker is evicted too. `runDecode` does not re-dispatch: its payload was transferred to the dead worker, and the blosc codec decodes the chunk on the main thread instead.
+
 ### Initialization
 
 - Warmed: scene loading calls `warmUpDataWorkerPool()` so startup overlaps metadata fetch; otherwise workers remain lazy until `initialize()` or `runWithTimeout`

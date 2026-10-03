@@ -213,7 +213,7 @@ describe('WorkerPool in-flight calls on an evicted worker', () => {
     expect(await settledWithin(second)).toBeInstanceOf(WorkerUnavailableError);
   });
 
-  it.fails('leaves calls on the surviving workers in flight, and moves the evicted ones there', async () => {
+  it('leaves calls on the surviving workers in flight, and moves the evicted ones there', async () => {
     const { WorkerPool, workers } = await loadWorkerPool(2);
     const pool = new WorkerPool();
     await pool.initialize();
@@ -265,7 +265,7 @@ describe('WorkerPool re-dispatch of calls abandoned by an eviction', () => {
       signal
     );
 
-  it.fails('re-runs a call queued behind a timed-out task on a surviving worker', async () => {
+  it('re-runs a call queued behind a timed-out task on a surviving worker', async () => {
     // A hangs on w0; B runs on w1; C ties and queues on w0. A's timeout evicts
     // w0, which abandons C. C never reached a kernel, so it must run on w1
     // rather than reject into the in-process (main-thread) fallback, and A —
@@ -288,7 +288,7 @@ describe('WorkerPool re-dispatch of calls abandoned by an eviction', () => {
     expect(pool.getWorkerCount()).toBe(1);
   });
 
-  it.fails('re-dispatches an abandoned call at most once', async () => {
+  it('re-dispatches an abandoned call at most once', async () => {
     const { WorkerPool, WorkerUnavailableError, workers, taskCalls } = await loadWorkerPool(3);
     const pool = new WorkerPool();
     await pool.initialize();
