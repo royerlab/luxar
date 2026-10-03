@@ -153,7 +153,10 @@ import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { DatasetBrowser } from '../../../ui/dataset-browser';
 import { ControlRail } from '../../../ui/control-rail';
 import { cleanupUI as mockCleanupUI } from '../../../ui/ui-cleanup';
-import { clearError as mockClearError } from '../../../ui/error-overlay';
+import {
+  clearError as mockClearError,
+  showError as mockShowError,
+} from '../../../ui/error-overlay';
 import { showToast as mockShowToast } from '../../../ui/toast';
 import { showHelpOverlay } from '../../../ui/help-overlay';
 
@@ -162,7 +165,7 @@ import { LuxarApp } from '../../../core/app';
 import { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import { setDocumentTitle } from '../../../core/document-title';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
-import { notifier } from '../../../utils/cross-layer/notifier';
+import { clearNotifierBackend, notifier } from '../../../utils/cross-layer/notifier';
 import type { ZarrWaypoint } from '../../../types/zarr';
 import { OverlayManager } from '../../../ui/overlay-manager';
 
@@ -888,6 +891,38 @@ describe('LuxarApp', () => {
       await expect(
         app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' })
       ).rejects.toThrow('Input handler failed');
+    });
+  });
+
+  describe('notifier backend', () => {
+    it.fails('routes the notifier to the viewer UI for a library embed, across dispose → init', async () => {
+      // A library embedder never runs bootstrapStandalone: the app's own init
+      // must give lower layers (toasts, error dialog, spinner) a backend.
+      clearNotifierBackend();
+      await app.init({ canvas: mockCanvas, src: '' });
+
+      notifier.toast('first');
+      notifier.error('archive unavailable', { persistent: true });
+      notifier.error('ordinary failure');
+      expect(mockShowToast).toHaveBeenCalledWith('first', 2000);
+      expect(mockShowError).toHaveBeenNthCalledWith(
+        1,
+        'archive unavailable',
+        expect.any(Function),
+        { datasetBrowser: 'dataset-browser.toggle', help: 'help.toggle' },
+        { autoDismiss: false }
+      );
+      // No options at all: the dialog's own auto-dismiss default applies.
+      expect(mockShowError).toHaveBeenNthCalledWith(2, 'ordinary failure', expect.any(Function), {
+        datasetBrowser: 'dataset-browser.toggle',
+        help: 'help.toggle',
+      });
+
+      // dispose() clears the backend; the next lifetime installs it again.
+      app.dispose();
+      await app.init({ canvas: mockCanvas, src: '' });
+      notifier.toast('second');
+      expect(mockShowToast).toHaveBeenLastCalledWith('second', 2000);
     });
   });
 
