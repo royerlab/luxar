@@ -249,7 +249,7 @@ Every ordering uses the same staged-apply path; orderings larger than one 1M-ind
 - A newer ordering arriving mid-stream is HELD and started after the flip (restart-on-arrival never converges under a continuous orbit)
 - On **completion**, drain a queued re-sort (a commit that landed mid-sort parked it)
 - **Abort** when `committedData` is cleared, the node/scene is released, or the geometry is disposed; accepted-but-unrendered profiler sessions close as abandoned rather than uploaded
-- The WebGPU backends ignore attribute update ranges (full re-upload per flush), so chunk slicing/back-pressure is gated off there (`configureSortedIndexChunkedApply`, wired in renderer-setup); double buffering and post-render acknowledgement remain unconditional
+- Chunk slicing/back-pressure is gated to the classic WebGL backend (`configureSortedIndexChunkedApply`, wired in renderer-setup): the back-pressure waits on the attribute's `onUploadCallback`, which neither WebGPU backend fires, so there an ordering is written in one slice and flips on the next pump. The WebGPU backends do honour attribute update ranges, but three re-uploads a `DynamicDrawUsage` attribute on every render, so the pair is `StaticDrawUsage` there (`sortedIndexUsage`). Double buffering and post-render acknowledgement remain unconditional
 
 **Bounded per node, not globally**: several large nodes resolving simultaneously each add one slice's cost to a frame (simultaneous 10M-scale resolves are already serialized by the per-node single-in-flight sort rule).
 

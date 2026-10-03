@@ -88,9 +88,9 @@
  *
  * Ordering only matters for order-dependent blending; all other modes
  * are commutative. Order-dependence is judged on `needsDepthSort(mode)`
- * uniformly for all three geometry types (gsplats phase 1, points
- * phase 3, lines phase 4 — each upgrade landed with zero coordinator
- * change, the designed chokepoint). Commits of order-independent nodes
+ * uniformly for all four geometry types (gsplats phase 1, points
+ * phase 3, lines phase 4, then mesh, whose ordering permutes its index
+ * buffer — the designed chokepoint). Commits of order-independent nodes
  * still bump the generation (killing any in-flight sort) and release
  * the node's worker-side registration.
  */
@@ -439,7 +439,7 @@ export class DepthSortCoordinator {
     // worker-side state to release on a switch away.
     if (!c.depthSortEnabled) return;
     if (!newMode || newMode === prevMode) return;
-    // Sorted modes = normal ∪ volumetric (needsDepthSort), for all three
+    // Sorted modes = normal ∪ volumetric (needsDepthSort), for all four
     // geometry types. A switch BETWEEN two sorted modes (e.g.
     // normal→volumetric) is deliberately a no-op here: the ordering stays
     // valid; the projection/output change is the material's problem (TSL
