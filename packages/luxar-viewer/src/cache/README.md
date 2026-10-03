@@ -767,15 +767,17 @@ those files usable anyway:
    no index, the identity is the cached hash validation compares against, so a
    changed dataset still clears every tier.
 2. **A key's file path is a function of the key and the hash**
-   (`{bucket(key)}/{tag(hash)}.{base64url(key)}`). While unindexed files may
-   remain, an L2 lookup of a key the index does not list reads that path, and a
-   hit is indexed (size and LRU accounted) and served. This is what serves a
-   reload's first-frame reads; it stops once the open-time reconcile (below)
-   has accounted for every file.
+   (`{bucket(key)}/{tag(hash)}.{base64url(key)}`). While the open-time
+   reconcile (below) runs, an L2 lookup of a key the index does not list reads
+   that path, and a hit is indexed (size and LRU accounted) and served. This is
+   what serves a reload's first-frame reads; it stops when the reconcile ends
+   (a budget-capped crawl leaves the rest for the next session rather than
+   paying a lookup per L2 miss all session).
 3. **The open-time reconcile** (`opfs-store/orphan-reconcile.ts`, per-session
    budgeted, in the background) re-indexes every unindexed file of the
-   recovery hash's tag that fits under `maxSize` and deletes the rest (other
-   tags included).
+   recovery hash's tag that still fits under `maxSize` when it merges, and
+   deletes the rest (other tags included). A key written meanwhile keeps its
+   live entry; one written and then evicted during the crawl is not resurrected.
 
 Recovery is gated on the same hash that makes indexed entries trustworthy: the
 identity file's hash, unless an index that did land names a different one. A

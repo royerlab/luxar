@@ -407,7 +407,7 @@ describe('OPFSStore orphan reconcile racing live traffic', () => {
     await s.dispose();
   }
 
-  it.fails('does not index a recorded orphan that a write then evicted and deleted', async () => {
+  it('does not index a recorded orphan that a write then evicted and deleted', async () => {
     const disk = installBucketed();
     await sessionWithIndex();
     const { store, release } = await crawlHeldAfter(disk, ['k/x']);
@@ -423,7 +423,7 @@ describe('OPFSStore orphan reconcile racing live traffic', () => {
     await store.dispose();
   });
 
-  it.fails('never merges past maxSize when writes filled the room during the crawl', async () => {
+  it('never merges past maxSize when writes filled the room during the crawl', async () => {
     const disk = installBucketed();
     await sessionWithIndex(); // 10 B indexed; maxSize 100 below
     const { store, release } = await crawlHeldAfter(
@@ -438,7 +438,7 @@ describe('OPFSStore orphan reconcile racing live traffic', () => {
     await store.dispose();
   });
 
-  it.fails('stops probing unindexed paths once the crawl ends, even incomplete', async () => {
+  it('stops probing unindexed paths once the crawl ends, even incomplete', async () => {
     const disk = installBucketed();
     await sessionWithIndex();
     const total = OPFSStore.ORPHAN_RECONCILE_MAX_ACTIONS + 50;

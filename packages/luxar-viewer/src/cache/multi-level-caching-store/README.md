@@ -118,7 +118,7 @@ Key behaviours:
   lost to that: the validated content hash is persisted in
   `_cache_identity.json` before any chunk is written under it, an L2 lookup of
   a key the index does not list reads the key's (deterministic) file path while
-  unindexed files may remain, and an open-time, per-session-budgeted orphan
+  the reconcile below runs, and an open-time, per-session-budgeted orphan
   reconcile re-indexes or deletes the files the index never recorded (see
   `../README.md`, "L2 index persistence").
 - **Quota estimate cache** — `navigator.storage.estimate()` is re-run at most

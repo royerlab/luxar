@@ -8,3 +8,9 @@ as unindexed files and served old bytes as the new dataset. Chunk file names
 now carry a tag of the content hash they were written under, so a file of one
 version is never read or recovered as another's; the reconcile deletes it. The
 on-disk encoding version moves to 3, so existing disk caches start fresh once.
+
+The open-time reconcile also no longer resurrects a recovered file that live
+traffic wrote and then evicted while it ran, re-checks the size budget when it
+merges, and stops the unindexed-file lookup when it ends even if its budget cut
+it short (that lookup used to cost one failed disk read per cache miss for the
+rest of the session).

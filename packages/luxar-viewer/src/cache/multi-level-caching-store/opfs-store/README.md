@@ -121,10 +121,11 @@ shouldStop, onOrphan })`** — walk the hex buckets, listing each bucket's
   snapshot to `onOrphan` (with the decoded key and hash tag, or `null`), until
   a budget is spent or `shouldStop()`. `OPFSStore.reconcileOrphans` decides per
   file: re-index (a recovery hash is set, the file carries its tag, key hashes
-  to that bucket, non-empty, fits under `maxSize`) or delete, re-checking its
-  live index / pending writes before each action and registering deletes in
-  the same-key delete barrier (#1073). The crawl runs in the background, so
-  until it has COMPLETED `OPFSStore.get()` also reads an unindexed key's file
+  to that bucket, non-empty, fits under `maxSize` — re-checked at the merge) or
+  delete, re-checking its live index / pending writes before each action and
+  registering deletes in the same-key delete barrier (#1073); a recorded key
+  that is written meanwhile drops its record. The crawl runs in the background,
+  so until it ENDS `OPFSStore.get()` also reads an unindexed key's file
   directly (the path is a function of the key and tag) and indexes a hit: a
   reload's first reads do not wait for the crawl.
 

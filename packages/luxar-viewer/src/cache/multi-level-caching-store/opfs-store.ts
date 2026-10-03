@@ -70,8 +70,9 @@ export interface CachedDatasetSummary {
  * file whose write completed is served by the next session of the same dataset
  * even if no index save recorded it. `_cache_identity.json` holds the content
  * hash and is written before any chunk under that hash; a lookup of a key the
- * index does not list reads the key's deterministic path while unindexed files
- * may remain; the open-time reconcile re-indexes or deletes them.
+ * index does not list reads the key's deterministic path while the open-time
+ * reconcile, which re-indexes or deletes the files the index never recorded,
+ * runs.
  *
  * Benefits:
  * - Max ~250-500 files per directory instead of 65,000+
@@ -185,6 +186,8 @@ export class OPFSStore {
   // has accounted for every file, so a long session pays no probe per miss.
   private probeUnindexed = false;
   private orphansReindexed = 0;
+  // The running crawl's recorded recoveries (key → size), merged when it ends.
+  private reconcileRecovered: Map<string, number> | null = null;
 
   // The dataset identity file (`_cache_identity.json`, see metadata.ts): the
   // hash last requested on disk, and the chained write putting it there. Every
@@ -542,8 +545,8 @@ export class OPFSStore {
    * set (`recoveryHash`), the file is non-empty, and it fits under `maxSize`;
    * otherwise it is DELETED. Recovered entries join the LRU head (oldest), so
    * they are the first evicted. Bounded per session by
-   * ORPHAN_RECONCILE_MAX_ACTIONS. A COMPLETE crawl disarms the unindexed-read
-   * probe (`probeUnindexed`): every file is then indexed or gone.
+   * ORPHAN_RECONCILE_MAX_ACTIONS. The end of the crawl disarms the
+   * unindexed-read probe (`probeUnindexed`).
    *
    * Runs concurrently with normal traffic, so every action re-checks against
    * the live state: a key this store is writing or has indexed is never
@@ -583,23 +586,28 @@ export class OPFSStore {
       await this.removeOrphanFile(orphan, key);
     };
 
-    let complete = false;
+    // A write or adoption of a recorded key supersedes its record (doSet,
+    // adoptUnindexed): merging it later would resurrect an entry that a
+    // subsequent eviction had already deleted from disk.
+    this.reconcileRecovered = recovered;
     try {
-      const result = await crawlOrphans(root, {
+      await crawlOrphans(root, {
         expectedFileNames: expected,
         maxOrphans: OPFSStore.ORPHAN_RECONCILE_MAX_ACTIONS,
         maxExamined: OPFSStore.ORPHAN_RECONCILE_MAX_EXAMINED,
         shouldStop: stale,
         onOrphan,
       });
-      complete = result.complete;
     } catch {
       // Best-effort: a failed crawl leaves the orphans for the next session.
     }
+    if (this.reconcileRecovered === recovered) this.reconcileRecovered = null;
     if (stale()) return;
     this.mergeRecovered(recovered);
-    // Every file on disk is now indexed or gone: unindexed reads cannot hit.
-    if (complete) this.probeUnindexed = false;
+    // The probe served the first reads while the crawl ran. Past it, a probe
+    // hit needs a file a budget-capped (or failed) crawl did not reach, while
+    // every L2 miss would pay a lookup; such files wait for the next session.
+    this.probeUnindexed = false;
   }
 
   /** Byte size of an orphan file, or null when it cannot be read in time. */
@@ -649,13 +657,15 @@ export class OPFSStore {
   /**
    * Fold recovered orphans into the index as its LRU head. Synchronous, so it
    * is atomic against every other index mutation; a key indexed meanwhile
-   * (a concurrent write) keeps its live entry.
+   * (a concurrent write) keeps its live entry. Writes during the crawl may
+   * have used the room it budgeted, so a recovery that no longer fits under
+   * `maxSize` is skipped (its file waits, unindexed, for the next reconcile).
    */
   private mergeRecovered(recovered: Map<string, number>): void {
     const merged = new Map<string, { size: number; order: number }>();
     let added = 0;
     for (const [key, size] of recovered) {
-      if (this.isKeyLive(key)) continue;
+      if (this.isKeyLive(key) || this.totalSize + added + size > this.maxSize) continue;
       merged.set(key, { size, order: 0 });
       added += size;
     }
@@ -833,6 +843,7 @@ export class OPFSStore {
   private adoptUnindexed(key: string, size: number): void {
     if (this.totalSize + size > this.maxSize) return;
     this.index.set(key, { size, order: this.orderCounter++ });
+    this.reconcileRecovered?.delete(key);
     this.totalSize += size;
     this.orphansReindexed++;
     if (this.orderCounter > 1e12) this.compactOrderCounter();
@@ -1093,6 +1104,7 @@ export class OPFSStore {
           this.index.delete(key);
         }
         this.index.set(key, { size, order: this.orderCounter++ });
+        this.reconcileRecovered?.delete(key);
         this.totalSize += size;
         this.debitQuota(size - (existingEntry?.size ?? 0), size);
         this.writeCount++;
