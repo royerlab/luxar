@@ -1,21 +1,18 @@
 /**
  * Loader-factory concern extracted from `scene-loader.ts`.
  *
- * Four constructor helpers, one per geometry kind:
- *   - `createPointsLoader` → `PointsSpatialIndexLoader`
- *   - `createLinesLoader` → `LinesSpatialIndexLoader`
- *   - `createGSplatsLoader` → `GSplatsSpatialIndexLoader`
- *   - `createProgressiveGSplatsLoader` → `GSplatsProgressiveLoader`
- *     wrapping N `GSplatsSpatialIndexLoader`s (one per LOD)
+ * Eight constructor helpers, two per geometry kind:
+ *   - single-LOD: `createPointsLoader` / `createLinesLoader` /
+ *     `createGSplatsLoader` → the matching `*SpatialIndexLoader`, and
+ *     `createMeshLoader` → `MeshWholeNodeLoader`;
+ *   - progressive (additive ladder): `createProgressivePointsLoader` /
+ *     `createProgressiveLinesLoader` / `createProgressiveGSplatsLoader` wrap one
+ *     per-level loader per `additive_<i>` subgroup in the matching
+ *     `*ProgressiveLoader`, and `createProgressiveMeshLoader` builds the mesh
+ *     reveal ladder (`MeshProgressiveLoader`).
  *
- * All four follow the same path-resolution pattern: a leaf at `/` uses
- * the supplied `loc`; otherwise we resolve from the store root so
- * absolute paths in the scene graph map to zarr group locations
- * correctly.
- *
- * Behavior matches the inline original — same constructor argument
- * order, same logging, same null-coalescing of optional cache /
- * prefetcher dependencies.
+ * A leaf at `/` uses the supplied `loc`; any other path is resolved from the
+ * store root, so absolute scene-graph paths map to zarr group locations.
  *
  * @module data/scene-loader/loaders/loader-factory
  */

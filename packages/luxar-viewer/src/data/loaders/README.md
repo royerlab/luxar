@@ -274,11 +274,13 @@ try {
 
 ## Range Loading
 
-All three spatial index loaders use `RangeLoader`:
+All four geometry loaders use `RangeLoader`:
 
-- `point-spatial-index-loader.ts` uses RangeLoader for all encoding types.
+- `points-spatial-index-loader.ts` uses RangeLoader for all encoding types.
 - `lines-spatial-index-loader.ts` uses RangeLoader for vertex attribute loading.
 - `gsplats-spatial-index-loader.ts` uses RangeLoader for gsplat array loading.
+- `mesh-whole-node-loader.ts` uses RangeLoader for its colours (through
+  `loadColorRanges`, one whole-node `[0, V)` range).
 
 ```typescript
 import { RangeLoader } from './loaders';
