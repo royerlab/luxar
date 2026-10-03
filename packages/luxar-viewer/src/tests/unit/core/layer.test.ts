@@ -305,6 +305,7 @@ vi.mock('../../../core/app/init/module-overrides', () => ({
 
 import { LuxarLayer, type LuxarLayerOptions } from '../../../core/layer/luxar-layer';
 import { DensityGuard, getDensityGuard } from '../../../scene/density-guard';
+import { attachSceneGraphIndex, sceneGraphIndexOf } from '../../../utils/scene-graph-index';
 import {
   getProjectedDensityTracker,
   ProjectedDensityTracker,
@@ -826,6 +827,24 @@ describe('LuxarLayer', () => {
       expect(releaseDepthSortNode).not.toHaveBeenCalledWith(liveMesh);
       expect(disposeGeometry).toHaveBeenCalledTimes(1);
       expect(disposeMaterial).not.toHaveBeenCalled();
+    });
+
+    it.fails("stops maintaining a detached root's path index, on a switch and on dispose", async () => {
+      // The real loader attaches a path index to its root; every member node
+      // then holds the index's add/remove listeners until it is detached.
+      const first = new THREE.Group();
+      const second = new THREE.Group();
+      loadSceneMock.mockImplementationOnce(async () => (attachSceneGraphIndex(first), first));
+      loadSceneMock.mockImplementationOnce(async () => (attachSceneGraphIndex(second), second));
+
+      const layer = new LuxarLayer(makeOptions());
+      await layer.load('http://example.test/a.zarr');
+      await layer.load('http://example.test/b.zarr');
+      expect(sceneGraphIndexOf(first)).toBeUndefined();
+      expect(sceneGraphIndexOf(second)).toBeDefined();
+
+      await layer.dispose();
+      expect(sceneGraphIndexOf(second)).toBeUndefined();
     });
 
     it('detaches the previous root when a dataset switch fails', async () => {
