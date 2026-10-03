@@ -15,7 +15,7 @@
  * Pure buffer + Box3 math — no GL context needed (jsdom-safe).
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as THREE from 'three';
 import {
   createInstancedGSplatsMesh,
@@ -238,5 +238,39 @@ describe('non-pool writers — precomputed projection bounds fast path', () => {
     });
     expect(updated.geometry.boundingBox!.min.toArray()).toEqual(scanBox.min.toArray());
     expect(updated.geometry.boundingBox!.max.toArray()).toEqual(scanBox.max.toArray());
+  });
+});
+
+describe('non-pool writers — a throwing texel write frees the fresh storage', () => {
+  // `writeSplatTexels` throws on a source shorter than the count. The fresh
+  // geometry + texture pair has no owner yet, so the builder must free it —
+  // as the points and lines builders do — instead of leaking it.
+  const shortConfig = (count: number): InstancedGSplatsMeshConfig => ({
+    ...makeConfig(count),
+    centers: new Float32Array(3), // one splat's worth
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it.fails('createInstancedGSplatsMesh disposes the geometry and its texture, then rethrows', () => {
+    const geometryDispose = vi.spyOn(THREE.BufferGeometry.prototype, 'dispose');
+    const textureDispose = vi.spyOn(THREE.Texture.prototype, 'dispose');
+    expect(() => createInstancedGSplatsMesh(shortConfig(4), new THREE.MeshBasicMaterial())).toThrow(
+      /source arrays shorter/
+    );
+    expect(geometryDispose).toHaveBeenCalledTimes(1);
+    expect(textureDispose).toHaveBeenCalledTimes(1);
+  });
+
+  it.fails('the rebuild branch disposes only the fresh pair and keeps the mesh on its old geometry', () => {
+    const mesh = createInstancedGSplatsMesh(makeConfig(2), new THREE.MeshBasicMaterial());
+    const old = mesh.geometry;
+    const geometryDispose = vi.spyOn(THREE.BufferGeometry.prototype, 'dispose');
+    const textureDispose = vi.spyOn(THREE.Texture.prototype, 'dispose');
+    expect(() => updateInstancedGSplatsMesh(mesh, shortConfig(4))).toThrow(/source arrays shorter/);
+    expect(mesh.geometry).toBe(old);
+    expect(geometryDispose).toHaveBeenCalledTimes(1);
+    expect(geometryDispose.mock.contexts[0]).not.toBe(old);
+    expect(textureDispose).toHaveBeenCalledTimes(1);
   });
 });
