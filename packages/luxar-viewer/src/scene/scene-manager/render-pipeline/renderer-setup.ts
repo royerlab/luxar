@@ -59,15 +59,38 @@ import { notifier } from '../../../utils/cross-layer/notifier';
  *
  * Call after the renderer is initialised (WebGPU's backend exists only after
  * `init()`).
+ *
+ * The switches are page-wide and the last call wins, so every Luxar host on a
+ * page (a LuxarApp, LuxarLayers) must render through ONE backend. Not enforced
+ * — a page may re-init on another backend once the first host is gone — but a
+ * call that switches the backend warns once.
  */
 export function configureRendererBackend(
   renderer: Renderer,
   capabilities: RendererCapabilities
 ): void {
+  warnOnBackendMix(capabilities.apiSurface);
   configureElementTextureLayout(capabilities.maxTextureSize);
   installElementTextureRowUploads(renderer);
   configureSortedIndexChunkedApply(capabilities.apiSurface === 'webgl2');
   configureRenderObjectEviction(capabilities.apiSurface === 'webgpu');
+}
+
+/** The backend the page-wide switches were last configured for. */
+let configuredApiSurface: RendererCapabilities['apiSurface'] | null = null;
+let warnedBackendMix = false;
+
+function warnOnBackendMix(apiSurface: RendererCapabilities['apiSurface']): void {
+  const previous = configuredApiSurface;
+  configuredApiSurface = apiSurface;
+  if (previous === null || previous === apiSurface || warnedBackendMix) return;
+  warnedBackendMix = true;
+  log.warning(
+    Modules.RENDERER,
+    `Renderer backend switched from ${previous} to ${apiSurface}: the backend switches are ` +
+      'page-wide, so if another Luxar host on this page still renders through ' +
+      `${previous} it now runs on ${apiSurface}'s settings. Use one backend per page.`
+  );
 }
 
 /**

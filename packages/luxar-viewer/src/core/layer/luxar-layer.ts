@@ -193,7 +193,10 @@ export interface LuxarLayerOptions {
    * Session-wide GPU geometry budget in bytes. `null` auto-sizes from device
    * memory, measured heap, and device class; `0` disables byte-budget eviction,
    * and a positive value pins the budget. Defaults to
-   * `config.dataLoading.performance.gpuPoolMaxBytes`.
+   * `config.dataLoading.performance.gpuPoolMaxBytes`. Page-wide: the first
+   * Luxar host to configure it wins (a later value is ignored with a warning),
+   * and each host evicts against it separately (see the README's multi-host
+   * notes).
    */
   gpuPoolMaxBytes?: number | null;
   /** Override for bundlers that can't resolve `import.meta.url` asset URLs. */

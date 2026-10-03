@@ -39,7 +39,7 @@ const mixWarnings = (spy: { mock: { calls: unknown[][] } }): number =>
   spy.mock.calls.filter((call) => String(call[1]).includes('backend')).length;
 
 describe('configureRendererBackend on a multi-host page', () => {
-  it.fails('warns once when a host configures a different backend than an earlier one', () => {
+  it('warns once when a host configures a different backend than an earlier one', () => {
     const warning = vi.spyOn(log, 'warning');
 
     configureRendererBackend(renderer, caps('webgl2'));

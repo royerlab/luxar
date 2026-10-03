@@ -57,15 +57,19 @@ Shared on purpose, page-wide:
 
 - the **data-worker pool** and the **SortWorker** — one set of workers per page;
   each host holds a lease and only the last host's dispose terminates them;
-- the **GPU byte budget** (`initializeGpuByteBudget`) — one GPU; the last host to
-  configure it sets the ceiling;
+- the **GPU byte budget** (`initializeGpuByteBudget`) — the FIRST host to
+  configure it sets the value; a later host's explicit `gpuPoolMaxBytes` is
+  ignored with a warning. It is a per-host ceiling, not a page total: each host's
+  GPU buffer pool evicts against it on its own, so N hosts can keep up to N× of it
+  resident. Size it (or lower it) for the whole page;
 - the **renderer-backend switches** (`configureRendererBackend`: element-texture
-  layout, chunked ordering apply, RenderObject eviction) — so every Luxar host on
-  a page must render through the **same backend** (all WebGL2 or all WebGPU);
+  layout, chunked ordering apply, RenderObject eviction) — last caller wins, so
+  every Luxar host on a page must render through the **same backend** (all WebGL2
+  or all WebGPU). Not enforced; a host that switches the backend logs a one-time
+  warning;
 - asset-URL overrides (`wasmPath`, `workerPath`), the `config` object, the
-  `eventBus` (a layer's commits also wake an app's loop — an extra frame, never a
-  wrong one) and the cross-layer `notifier` backend (an app's toasts show a
-  layer's errors).
+  `eventBus` (the app's: a layer's geometry commits stay off it) and the
+  cross-layer `notifier` backend (an app's toasts show a layer's errors).
 
 ### Two layers in one THREE.Scene
 
