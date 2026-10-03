@@ -163,7 +163,7 @@ describe('concatColorsWhiteFilled', () => {
   const get = (p: Part) => ({ colors: p.colors, components: p.k });
   const count = (p: Part) => p.n;
 
-  it.fails('asserts each coloured part against its OWN declared layout, naming the level', () => {
+  it('asserts each coloured part against its OWN declared layout, naming the level', () => {
     // A 2-element RGBA buffer declared RGB: 8 values for 2 x 3.
     expect(() =>
       concatColorsWhiteFilled<Part>(

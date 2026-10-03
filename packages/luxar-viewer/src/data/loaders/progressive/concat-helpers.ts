@@ -17,6 +17,8 @@
  * @module data/loaders/progressive/concat-helpers
  */
 
+import { assertColorLayout } from '../color-loader';
+
 /** Structural shape common to every typed array we concatenate. */
 export interface ConcatTypedArray {
   readonly length: number;
@@ -194,6 +196,19 @@ function assertSameColorLayout(
   }
 }
 
+/** Check every rung's colours against its own declared layout (see below). */
+function assertEachColorLayout<P>(
+  parts: readonly P[],
+  get: (p: P) => { colors: ConcatColorArray | null | undefined; components: number | undefined },
+  countOf: (p: P) => number,
+  label: string
+): void {
+  for (const [level, part] of parts.entries()) {
+    const { colors, components } = get(part);
+    assertColorLayout(colors, countOf(part), components ?? 3, `${label} (LOD level ${level})`);
+  }
+}
+
 /**
  * Concatenate the per-element colours of a ladder, the policy all three
  * emissive geometries share: when ANY rung carries colours the result carries
@@ -202,6 +217,11 @@ function assertSameColorLayout(
  * identity). `null` when no rung has colours. Dtype and layout (3 = RGB,
  * 4 = RGBA) come from the first coloured rung; a rung that disagrees is
  * malformed data and throws, naming the level. Zero-row rungs abstain.
+ *
+ * Every coloured rung is first checked against its OWN declared layout
+ * (`assertColorLayout`): an RGBA buffer that omits `colorComponents` (default
+ * 3) agrees with an RGB ladder and fits the allocation, so the cross-rung
+ * compare alone would copy it at stride 3 and mis-stride every element after it.
  *
  * @param label - Caller name for the error messages.
  */
@@ -213,6 +233,7 @@ export function concatColorsWhiteFilled<P>(
 ): { colors: ConcatColorArray; colorComponents: 3 | 4 } | null {
   // Zero-row rungs abstain (as in concatOptionalField): they copy nothing, so
   // their (possibly absent, possibly differently typed) colours get no vote.
+  assertEachColorLayout(parts, get, countOf, label);
   const coloured = parts.filter((p) => get(p).colors);
   const voter = coloured.find((p) => countOf(p) > 0) ?? coloured[0];
   const first = voter === undefined ? undefined : get(voter);

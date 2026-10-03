@@ -1924,7 +1924,7 @@ describe('PointsProgressiveLoader — RGBA color layout (per-point opacity)', ()
     );
   });
 
-  it.fails('rejects an RGBA level that omits colorComponents, naming the level', async () => {
+  it('rejects an RGBA level that omits colorComponents, naming the level', async () => {
     // Defaulted to 3, the RGBA buffer passes the cross-level layout compare
     // (3 vs 3) and fits the allocation, so without the per-level length check
     // it is copied at stride 3 and silently mis-strides every point after it.
