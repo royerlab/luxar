@@ -66,6 +66,21 @@ describe('SceneNodeIndex', () => {
     expect(new SceneNodeIndex(sceneRooted).ancestors('/')).toEqual([]);
   });
 
+  it('ancestorChain falls back to the descent for an unknown or empty path', () => {
+    for (const graph of [makeGraph(), { ...makeGraph(), type: 'scene' } as SceneNode]) {
+      const index = new SceneNodeIndex(graph);
+      // An unindexed path under indexed groups: the walk's partial chain.
+      for (const path of ['/a/b/ghost', '/missing', '']) {
+        expect(index.ancestors(path)).toBeUndefined();
+        expect(index.ancestorChain(path)).toEqual(collectAncestorNodes(graph, path));
+      }
+      expect(index.ancestorChain('/a/b/ghost').map((n) => n.path)).toEqual(
+        graph.type === 'scene' ? ['/a', '/a/b'] : ['/', '/a', '/a/b']
+      );
+      expect(index.ancestorChain('')).toEqual([]);
+    }
+  });
+
   it('looks paths up without walking the graph', () => {
     let childReads = 0;
     const counted = (n: SceneNode): SceneNode => {

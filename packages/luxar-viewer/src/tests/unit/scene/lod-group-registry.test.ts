@@ -3614,6 +3614,39 @@ describe('LODGroupRegistry — lazy children', () => {
     }
   });
 
+  it.each(['clear', 'unregister'] as const)('%s() cancels a pending retry wake', (teardown) => {
+    vi.useFakeTimers();
+    try {
+      const children = [makeChild(0), makeLazyChild(0.5, vi.fn())];
+      children[1].failed = true;
+      const requestTick = vi.fn();
+      const reg = new LODGroupRegistry({
+        getCamera: () => {
+          const camera = new THREE.Camera();
+          camera.matrixWorldInverse.identity();
+          camera.projectionMatrix.identity();
+          return camera;
+        },
+        getViewportSize: () => ({ width: 800, height: 600 }),
+        getDisplayDims: () => [0, 1, 2],
+        now: () => Date.now(),
+        requestTick,
+      });
+      reg.register(makeEntry(children, 0, '/g'));
+      reg.setSelectorMode('/g', { lockLevel: 1 });
+      reg.evaluatePerFrame(); // the failure's cooldown schedules ONE wake
+      expect(vi.getTimerCount()).toBe(1);
+
+      if (teardown === 'clear') reg.clear();
+      else reg.unregister('/g');
+      expect(vi.getTimerCount()).toBe(0);
+      vi.advanceTimersByTime(60_000);
+      expect(requestTick).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('pauses automatic lazy loads during an archive fault and resumes on the next frame', () => {
     const ensureLoaded = vi.fn();
     const children = [makeChild(0), makeLazyChild(0.5, ensureLoaded)];

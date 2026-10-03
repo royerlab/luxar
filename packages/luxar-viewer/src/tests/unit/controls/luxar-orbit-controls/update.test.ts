@@ -711,6 +711,18 @@ describe('runUpdateStep — the damped tail ends below float32 resolution', () =
     expect(ctx.target.x).toBe(0);
   });
 
+  it('gates an undamped pan the same way: drops a negligible one, applies a real one whole', () => {
+    const { ctx, state } = makeCtx({ enableDamping: false });
+    ctx.panDelta.set(1e-9 * state.distance, 0, 0);
+    expect(runUpdateStep(ctx)).toBe(false);
+    expect(ctx.target.x).toBe(0);
+
+    ctx.panDelta.set(0.5, 0, 0);
+    expect(runUpdateStep(ctx)).toBe(true);
+    expect(ctx.target.x).toBe(0.5); // undamped: the whole delta at once
+    expect(ctx.panDelta.length()).toBe(0);
+  });
+
   it('ends the damped tail of a drag-sized rotation within 50 frames', () => {
     // 0.01 rad at damping 0.25: the 1e-12 gate ran the tail 78 frames.
     const { ctx } = makeCtx({ enableDamping: true, rotationDelta: rotation(0.01) });
