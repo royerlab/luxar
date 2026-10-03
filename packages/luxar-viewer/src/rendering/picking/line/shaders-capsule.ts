@@ -7,10 +7,13 @@
  * with the SAME quartic profile, so the hover hotspot matches the pixels
  * exactly. Per the shared pick contract it drops the colour machinery and
  * adds the `uNodeId` uniform and `vNodeId` / `vElementId` varyings,
- * emitting `(nodeId, elementId-low16, brightness, elementId-high16)` with
- * brightness-as-depth (`gl_FragDepth = 1 / (1 + brightness)`), identical to the
- * screen-space pick variant. Like it, pick salience includes per-element
- * alpha, node opacity and gain.
+ * emitting `(nodeId, elementId-low16, brightness, elementId-high16)`,
+ * identical to the screen-space pick variant. Like it, pick salience includes
+ * per-element alpha, node opacity and gain, and the depth it writes follows
+ * `uSurfaceDepth` (`../_shared/surface-pick.ts`): brightness-as-depth
+ * (`1 / (1 + brightness)`, the brightest segment wins) in the commutative
+ * modes, the real projected depth (the front-most segment wins, as the user
+ * sees it) in the depth-ordered `opaque` / `normal` modes.
  *
  * Model + constants: `_shared/line-capsule.ts` (the visual twin's header
  * documents the exactness relaxations; they apply here identically).
