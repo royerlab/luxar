@@ -914,7 +914,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
    */
   async prefetchChunks(viewState: LinesViewState, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) return;
-    await this.ensureInitialized();
+    await this.ensureInitialized('speculative');
 
     if (!this.arrays.segments) return;
 
@@ -942,7 +942,7 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     signal?: AbortSignal
   ): Promise<void> {
     if (signal?.aborted) return;
-    await this.ensureInitialized();
+    await this.ensureInitialized('speculative');
     if (!this.chunkIndex || !this.arrays.segments) {
       await this.prefetchChunks(predicted, signal);
       return;

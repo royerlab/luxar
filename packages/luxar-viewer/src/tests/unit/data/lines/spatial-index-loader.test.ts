@@ -25,6 +25,7 @@ import type { MonitorEvent, MonitorEventListener } from '../../../../types/data-
 import { makeMockZarrLocation } from '../../../builders/spatial-loader-fixtures';
 import { SliceCache } from '../../../../cache/slice-cache';
 import { measureLodBytes } from '../../../../data/loaders/progressive/slice-cache-helper';
+import { LoaderLifetime } from '../../../../data/loaders/loader-lifetime';
 
 vi.mock('zarrita', () => ({
   registry: {},
@@ -305,6 +306,7 @@ describe('LinesSpatialIndexLoader', () => {
 
     afterEach(() => {
       bodyLoader?.dispose();
+      vi.restoreAllMocks();
     });
 
     // ────────────────────────────────────────────────────────────────
@@ -1135,6 +1137,21 @@ describe('LinesSpatialIndexLoader', () => {
     });
 
     describe('prefetchChunks (commit 8.2)', () => {
+      it('uses speculative priority for both prefetch entry points', async () => {
+        const init = vi.spyOn(LoaderLifetime.prototype, 'ensureInitialized');
+        const current: ViewState = {
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0],
+          tolerance: [0, 0, 0],
+        };
+        await bodyLoader.prefetchChunks(current);
+        expect(init.mock.calls.at(-1)?.[3]).toBe('speculative');
+        await bodyLoader.prefetchChunkBoundary(current, current);
+        expect(init.mock.calls.length).toBeGreaterThan(1);
+        expect(init.mock.calls.every((call) => call[3] === 'speculative')).toBe(true);
+        init.mockRestore();
+      });
+
       /** Chunk coords each array was warmed with (prefetch never calls get). */
       const warmedCoords = (arr: any): string[] =>
         (arr.getChunk.mock.calls as unknown[][]).map((call) => (call[0] as number[]).join(','));

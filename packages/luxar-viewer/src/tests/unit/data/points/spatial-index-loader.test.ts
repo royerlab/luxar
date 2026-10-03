@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PointsSpatialIndexLoader, type ViewState, type SceneNode } from '../../../../data';
 import * as zarr from 'zarrita';
 import { SliceCache } from '../../../../cache/slice-cache';
+import { LoaderLifetime } from '../../../../data/loaders/loader-lifetime';
 import type { MonitorEvent, MonitorEventListener } from '../../../../types/data-monitor-types';
 
 // Mock THREE.js using partial mock with importOriginal
@@ -926,6 +927,21 @@ describe('PointsSpatialIndexLoader', () => {
   });
 
   describe('prefetchChunks (commit 8.1)', () => {
+    it('uses speculative priority for both prefetch entry points', async () => {
+      const init = vi.spyOn(LoaderLifetime.prototype, 'ensureInitialized');
+      const current: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 1],
+        tolerance: [0, 0, 0, 0.1],
+      };
+      await loader.prefetchChunks(current);
+      expect(init.mock.calls.at(-1)?.[3]).toBe('speculative');
+      await loader.prefetchChunkBoundary(current, { ...current, slicePosition: [0, 0, 0, 2] });
+      expect(init.mock.calls.length).toBeGreaterThan(1);
+      expect(init.mock.calls.every((call) => call[3] === 'speculative')).toBe(true);
+      init.mockRestore();
+    });
+
     /** Chunk warm-ups issued so far (prefetch warms via getChunk, not get). */
     const warmCalls = (): number =>
       Object.values(mockArrays).reduce(

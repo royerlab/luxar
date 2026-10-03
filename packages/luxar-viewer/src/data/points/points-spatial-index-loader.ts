@@ -890,7 +890,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
    */
   async prefetchChunks(viewState: ViewState, signal?: AbortSignal): Promise<void> {
     if (signal?.aborted) return;
-    await this.ensureInitialized();
+    await this.ensureInitialized('speculative');
 
     if (!this.arrays.positions) return;
 
@@ -914,7 +914,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
     signal?: AbortSignal
   ): Promise<void> {
     if (signal?.aborted) return;
-    await this.ensureInitialized();
+    await this.ensureInitialized('speculative');
     if (!this.chunkIndex || !this.arrays.positions) {
       await this.prefetchChunks(predicted, signal);
       return;
