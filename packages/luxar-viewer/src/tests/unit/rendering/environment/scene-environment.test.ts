@@ -13,6 +13,28 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
+
+// The HDRI fetch is the one network edge here: each test hands out deferred loads.
+const hdriLoads = vi.hoisted(() => {
+  type Load = {
+    url: string;
+    resolve: (texture: unknown) => void;
+    reject: (error: unknown) => void;
+  };
+  return [] as Load[];
+});
+vi.mock('../../../../rendering/environment/hdri', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../rendering/environment/hdri')>();
+  return {
+    ...actual,
+    loadEquirectangularTexture: vi.fn(
+      (url: string) =>
+        new Promise((resolve, reject) => {
+          hdriLoads.push({ url, resolve, reject });
+        })
+    ),
+  };
+});
 import {
   CAPTURE_DEBOUNCE_MS,
   ROOM_ENVIRONMENT_SIGMA,
@@ -475,5 +497,88 @@ describe('SceneEnvironment — sources and precedence (Phase 4)', () => {
     expect(env.isReady()).toBe(false);
     expect(env.captureCount).toBe(1);
     expect(gen.disposeTarget).not.toHaveBeenCalled(); // the room was never built here
+  });
+});
+
+describe('SceneEnvironment — HDRI load ownership', () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const hdri = (url: string) => ({ ...DEFAULT_ENVIRONMENT_CONFIG, source: 'hdri' as const, url });
+
+  it('a stale rejection does not make the newer load discard its own texture', async () => {
+    hdriLoads.length = 0;
+    const { env, scene } = makeEnv();
+    env.configure(hdri('a.hdr'));
+    env.ensure();
+    env.configure(hdri('b.hdr'));
+    expect(hdriLoads.map((l) => l.url)).toEqual(['a.hdr', 'b.hdr']);
+
+    hdriLoads[0].reject(new Error('404'));
+    await settle();
+    const texture = new THREE.Texture();
+    const dispose = vi.spyOn(texture, 'dispose');
+    hdriLoads[1].resolve(texture);
+    await settle();
+
+    expect(dispose).not.toHaveBeenCalled();
+    expect(env.activeKind()).toBe('hdri');
+    expect(scene.environment).toBe(texture);
+  });
+
+  it("resetForDataset forgets the previous dataset's config, so its HDRI never lights the next", async () => {
+    hdriLoads.length = 0;
+    const { env, scene } = makeEnv();
+    env.configure({ ...hdri('a.hdr'), intensity: 3 });
+    env.ensure();
+    hdriLoads[0].resolve(new THREE.Texture());
+    await settle();
+    expect(env.activeKind()).toBe('hdri');
+
+    env.resetForDataset();
+    expect(env.getConfig()).toBe(DEFAULT_ENVIRONMENT_CONFIG);
+    expect(scene.environmentIntensity).toBe(DEFAULT_ENVIRONMENT_CONFIG.intensity);
+    // A physical material of the NEW scene asks for light before its config lands.
+    env.ensure();
+    expect(env.activeKind()).toBe('room');
+    expect(hdriLoads).toHaveLength(1);
+
+    env.configure(hdri('b.hdr'));
+    expect(hdriLoads.map((l) => l.url)).toEqual(['a.hdr', 'b.hdr']);
+    const next = new THREE.Texture();
+    hdriLoads[1].resolve(next);
+    await settle();
+    expect(scene.environment).toBe(next);
+  });
+
+  it('a loaded HDRI is keyed by its URL: configuring another one replaces it', async () => {
+    hdriLoads.length = 0;
+    const { env, scene } = makeEnv();
+    env.configure(hdri('a.hdr'));
+    env.ensure();
+    const first = new THREE.Texture();
+    const disposeFirst = vi.spyOn(first, 'dispose');
+    hdriLoads[0].resolve(first);
+    await settle();
+
+    env.configure(hdri('b.hdr'));
+    expect(hdriLoads.map((l) => l.url)).toEqual(['a.hdr', 'b.hdr']);
+    expect(disposeFirst).toHaveBeenCalled();
+    expect(env.activeKind()).toBe('room');
+    const second = new THREE.Texture();
+    hdriLoads[1].resolve(second);
+    await settle();
+    expect(scene.environment).toBe(second);
+    expect(env.activeKind()).toBe('hdri');
+  });
+
+  it('a URL that cannot be resolved keeps the room instead of throwing out of ensure()', () => {
+    hdriLoads.length = 0;
+    const { env } = makeEnv();
+    env.attachRuntime({ ...makeRuntime(null).runtime, baseUrl: () => 'not-an-absolute-base' });
+    env.configure(hdri('studio.hdr'));
+    expect(() => env.ensure()).not.toThrow();
+    expect(env.activeKind()).toBe('room');
+    expect(hdriLoads).toHaveLength(0);
+    // Failed once for this URL: later light requests neither retry nor throw.
+    expect(() => env.ensure()).not.toThrow();
   });
 });
