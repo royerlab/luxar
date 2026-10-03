@@ -31,7 +31,7 @@
 import type * as THREE from 'three';
 import type * as zarr from '../../zarr';
 import { log, LogEmoji, Modules } from '../../../utils/log';
-import { LoaderError, classifyLoaderError } from './load-leaf-error-dispatch';
+import { LoaderError, classifyLoaderError, recordFailedPass } from './load-leaf-error-dispatch';
 import { createMeshLoader, createProgressiveMeshLoader } from '../loaders/loader-factory';
 import type { SceneNode } from '../../data-loader-types';
 import type { MeshDataLoader, MeshMetadata } from '../../../types/mesh';
@@ -173,7 +173,7 @@ export async function loadMeshNodeExpensive(
     // record and an error-level LoaderError would be pure noise (and a spurious
     // toast). Symmetric with the liveness gate above.
     if (!ctx.isDatasetLive()) return;
-    ctx.registry.recordFailure(node.path, error as Error);
+    recordFailedPass(ctx.registry, node.path, loader, error);
     throw new LoaderError(classifyLoaderError(error), node.path, error);
   }
 }

@@ -24,6 +24,8 @@
 import type * as THREE from 'three';
 import { archiveFaultFrom } from '../../../cache/chunk-source';
 import { log, Modules } from '../../../utils/log';
+import { tryRollbackToPassStart } from '../../loaders/progressive/pass-rollback';
+import type { LoaderRegistry } from '../loaders/loader-registry';
 
 export type LoaderErrorKind = 'Network' | 'Decode' | 'Validation' | 'Unexpected';
 
@@ -46,6 +48,26 @@ export class LoaderError extends Error {
     this.name = 'LoaderError';
     this.cause = cause;
   }
+}
+
+/**
+ * Record a failed initial load or retry of `path`: first unwind the ladder pass
+ * the load started (a no-op for a loader without one), then record the failure.
+ *
+ * A progressive loader advances its cursor as each rung arrives, before the
+ * concat and commit that can still throw; left advanced, the retry would resume
+ * past the failed prefix and attempt a larger allocation (#2426, see
+ * `loaders/progressive/pass-rollback`). The update sweep and the refinement
+ * wrapper unwind for the same reason.
+ */
+export function recordFailedPass(
+  registry: Pick<LoaderRegistry, 'recordFailure'>,
+  path: string,
+  loader: object | undefined,
+  error: unknown
+): void {
+  if (loader) tryRollbackToPassStart(loader as { rollbackToPassStart?: () => number });
+  registry.recordFailure(path, error as Error);
 }
 
 /** Heuristic classifier for raw thrown errors. */

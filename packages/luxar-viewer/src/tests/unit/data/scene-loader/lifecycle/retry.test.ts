@@ -525,6 +525,27 @@ describe('retryFailedLoaderUnlocked — per-attempt retryCount accounting', () =
   });
 });
 
+describe('retryFailedLoaderUnlocked — a failed retry unwinds its ladder pass', () => {
+  // The retry streams rungs from the loader's cursor before the commit that can
+  // throw; without the unwind the NEXT retry resumes past the failed prefix and
+  // attempts a larger allocation (#2426, `pass-rollback.ts`).
+  it.each(['points', 'lines', 'gsplats', 'mesh'] as const)('%s', async (kind) => {
+    const rollbackToPassStart = vi.fn(() => 1);
+    const loader = {
+      updateView: vi.fn().mockRejectedValue(new RangeError('Array buffer allocation failed')),
+      rollbackToPassStart,
+    } as never;
+    const ctx = makeRetryCtx({ rootGroup: makeRootGroupWith(PATH) });
+    ctx.registry.register(kind, PATH, loader);
+    ctx.registry.recordFailure(PATH, new Error('initial failure'));
+
+    await expect(retryFailedLoaderUnlocked(PATH, ctx)).resolves.toBe(false);
+
+    expect(rollbackToPassStart).toHaveBeenCalledTimes(1);
+    expect(ctx.registry.failedLoaders.get(PATH)?.retryCount).toBe(1);
+  });
+});
+
 describe('retryAllFailedLoadersUnlocked — partition', () => {
   it('returns empty buckets when given no paths', async () => {
     const ctx = makeRetryCtx();

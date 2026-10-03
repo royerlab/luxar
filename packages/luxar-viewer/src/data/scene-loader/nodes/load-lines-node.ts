@@ -17,7 +17,7 @@
 import type * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { log, LogEmoji, Modules } from '../../../utils/log';
-import { LoaderError, classifyLoaderError } from './load-leaf-error-dispatch';
+import { LoaderError, classifyLoaderError, recordFailedPass } from './load-leaf-error-dispatch';
 import {
   createLinesLoader as createLinesLoaderHelper,
   createProgressiveLinesLoader as createProgressiveLinesLoaderHelper,
@@ -175,7 +175,7 @@ export async function loadLinesNodeExpensive(
   } catch (error) {
     // Expected dispose-crossing — see the load-points-node.ts twin.
     if (!ctx.isDatasetLive()) return;
-    ctx.registry.recordFailure(node.path, error as Error);
+    recordFailedPass(ctx.registry, node.path, loader, error);
     throw new LoaderError(classifyLoaderError(error), node.path, error);
   }
 }

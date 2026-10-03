@@ -14,7 +14,7 @@
 import type * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { log, LogEmoji, Modules } from '../../../utils/log';
-import { LoaderError, classifyLoaderError } from './load-leaf-error-dispatch';
+import { LoaderError, classifyLoaderError, recordFailedPass } from './load-leaf-error-dispatch';
 import {
   createPointsLoader as createPointsLoaderHelper,
   createProgressivePointsLoader as createProgressivePointsLoaderHelper,
@@ -200,7 +200,7 @@ export async function loadPointsNodeExpensive(
     // success path's liveness gate above.
     if (!ctx.isDatasetLive()) return;
     // Record the failure so `retryFailedLoader(path)` can target this node.
-    ctx.registry.recordFailure(node.path, error as Error);
+    recordFailedPass(ctx.registry, node.path, loader, error);
     throw new LoaderError(classifyLoaderError(error), node.path, error);
   }
 }
