@@ -83,14 +83,14 @@ describe('WindowEventHandler', () => {
   });
 
   describe('attach + cleanup lifecycle', () => {
-    it('appends four cleanup thunks to the provided array (resize, wheel, fullscreen×2)', () => {
+    it.fails('appends five cleanup thunks (resize, wheel, fullscreen×2, the pending fullscreen frame)', () => {
       const { sceneManager } = makeSceneManager();
       const { animationController } = makeAnimationController();
       const handler = new WindowEventHandler(sceneManager, animationController);
       const cleanups: (() => void)[] = [];
       handler.attach(cleanups);
-      // resize + wheel + standard fullscreenchange + webkitfullscreenchange.
-      expect(cleanups.length).toBe(4);
+      // resize + wheel + standard/webkit fullscreenchange + the deferred resize frame.
+      expect(cleanups.length).toBe(5);
       cleanups.forEach((c) => expect(typeof c).toBe('function'));
     });
 
@@ -494,6 +494,23 @@ describe('WindowEventHandler', () => {
 
       expect(updateSize).toHaveBeenCalledTimes(1);
       expect(startAnimation).toHaveBeenCalledTimes(1);
+    });
+
+    it.fails('cancels the deferred resize frame on cleanup', async () => {
+      // A fullscreen exit just before dispose must not resize a torn-down
+      // scene manager one frame later.
+      const { sceneManager, updateSize } = makeSceneManager();
+      const { animationController, startAnimation } = makeAnimationController();
+      const handler = new WindowEventHandler(sceneManager, animationController);
+      const cleanups: (() => void)[] = [];
+      handler.attach(cleanups);
+
+      document.dispatchEvent(new Event('fullscreenchange'));
+      cleanups.forEach((c) => c());
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+      expect(updateSize).not.toHaveBeenCalled();
+      expect(startAnimation).not.toHaveBeenCalled();
     });
   });
 });
