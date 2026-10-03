@@ -1918,6 +1918,26 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(findControlGroup(container, 'Alpha cutoff')!.style.display).not.toBe('none');
   });
 
+  it.fails('a physical mesh row menu offers no Blending, like its controls; a house mesh keeps it', () => {
+    // Three's PBR material implements none of the house modes (applyBlendingMode is
+    // a no-op on it), so the controls hide the Blend dropdown. The row menu must
+    // agree rather than offer a submenu that changes nothing.
+    const physical = new LayersPanel(container, animationController);
+    physical.initFromScene(
+      new THREE.Group(),
+      makeLayeredSceneGraph('mesh', { material: 'physical' })
+    );
+    const labels = rowMenu(physical, '/cloud').map((item) => item.label);
+    expect(labels).not.toContain('Blending');
+    expect(labels).toContain('Apply appearance to all layers');
+    physical.dispose();
+
+    const house = new LayersPanel(container, animationController);
+    house.initFromScene(new THREE.Group(), makeLayeredSceneGraph('mesh'));
+    expect(rowMenu(house, '/cloud').map((item) => item.label)).toContain('Blending');
+    house.dispose();
+  });
+
   it("a material='physical' mesh swaps the house sliders for the live physical knob sliders", () => {
     // The physical family runs none of the house shader: the four lighting sliders
     // have no uniform to write, the cutoff and blend mode are the material's own
