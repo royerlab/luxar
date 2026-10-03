@@ -282,7 +282,7 @@ def write_surface_pick(path: Path, *, small: bool = False) -> None:
     brightness elsewhere. ``mixed`` is all additive, so without this scene no
     gate case picks points or lines under the surface convention. Four nodes —
     points opaque, points normal, lines opaque, lines normal — share one
-    volume, so at most pixels several of them overlap at different depths.
+    volume, so at many pixels several of them overlap at different depths.
     Per-element alpha varies, and the opaque points carry a gain above 1, so
     the pick weight (alpha x opacity x max(gain, 1)) is exercised too.
     """

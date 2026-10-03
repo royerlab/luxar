@@ -181,8 +181,8 @@ export class LinePickingTSLMaterial
     );
     // ONE graph per configuration (`../_shared/shared-pick-graph-tsl.ts`):
     // the primitive, the build-time join and projection variants and the baked
-    // line-texture width are what select code. The width is the BOUND
-    // textures, handed to the factory explicitly: the shared graphs own leaf
+    // line-texture width are what select code. The BOUND texture's width is
+    // handed to the factory explicitly: the shared graph's own leaf
     // is a forwarding twin over a stand-in texture.
     const config = {
       ...this._currentConfig(),

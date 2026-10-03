@@ -225,7 +225,7 @@ export const GSPLAT_PICK_VERTEX_SHADER = /* glsl */ `
         vL2D = cholesky2x2(Sigma2D);
 
         // Eigen-axes of Σ_2D and the max-extent-clamped quad half extents
-        // (projection-glsl.ts — shared with the pick stage).
+        // (projection-glsl.ts — shared with the visual stage).
         vec2 lambdas = gsplatEigenvalues(Sigma2D);
         float lambda1 = lambdas.x;
         float lambda2 = lambdas.y;
