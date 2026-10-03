@@ -4,7 +4,7 @@
  * reject, gamma fast path, normal premult, opaque peak, thin-covariance
  * dilation, colormap LUT, behind-camera guard) plus the gsplat-pick
  * counterparts including the surface-pick depth pair and the multi-row
- * texture-orientation variant. 18 registry entries.
+ * texture-orientation variant. 19 registry entries.
  *
  * @module tests/e2e/harnesses/tsl-harness/gsplats
  */
@@ -949,6 +949,22 @@ export const GSPLAT_SHADERS: Record<string, RegistryEntry> = {
         buildGSplatPickTSLNodesFromUniforms(uniforms)
       ) as unknown as THREE.Material,
     buildMesh: buildSurfacePickMesh,
+  },
+  'gsplat-pick-surface-persp': {
+    source: GSPLAT_PICK_SOURCE,
+    depthCompete: true,
+    buildUniforms: () => buildSurfacePickUniforms(1),
+    buildTSLMaterial: (uniforms) =>
+      gsplatPickWebGPUFactory(
+        buildGSplatPickTSLNodesFromUniforms(uniforms)
+      ) as unknown as THREE.Material,
+    buildMesh: buildSurfacePickMesh,
+    buildCamera: () => {
+      const camera = new THREE.PerspectiveCamera(20, 1, 0.1, 12);
+      camera.position.set(0, 0, 1);
+      camera.lookAt(0, 0, 0);
+      return camera;
+    },
   },
   // Control twin: SAME two-splat scene with uSurfaceDepth=0
   // (brightness-as-depth, the commutative-mode convention) — the centre

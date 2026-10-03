@@ -1852,6 +1852,7 @@ test.describe('TSL ↔ GLSL shader parity', () => {
   // Asserted on BOTH backends, plus the usual cross-backend parity.
   for (const { variant, wantNear } of [
     { variant: 'gsplat-pick-surface', wantNear: true },
+    { variant: 'gsplat-pick-surface-persp', wantNear: true },
     { variant: 'gsplat-pick-surface-off', wantNear: false },
   ] as const) {
     test(`${variant}: ${
