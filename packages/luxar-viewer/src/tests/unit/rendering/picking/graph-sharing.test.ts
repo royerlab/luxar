@@ -13,6 +13,8 @@ import { GSplatPickingTSLMaterial } from '../../../../rendering/picking/gsplat/m
 import { LinePickingTSLMaterial } from '../../../../rendering/picking/line/material-tsl';
 import { MeshPickingTSLMaterial } from '../../../../rendering/picking/mesh/material-tsl';
 import { PointPickingTSLMaterial } from '../../../../rendering/picking/point/material-tsl';
+import { LineTSLMaterial } from '../../../../rendering/materials/line/material-tsl';
+import { setLineJoinOverride } from '../../../../types/line-join';
 import { describeGraphSharing } from '../materials/graph-sharing-cases';
 
 const nodeId = (config: Record<string, unknown>): number => (config.nodeId as number) ?? 1;
@@ -65,5 +67,28 @@ describe('pick materials keep the pick-pass state under a shared graph', () => {
     expect(m.toneMapped).toBe(false);
     // The depth convention is part of the shared graph.
     expect(m.depthNode).toBeTruthy();
+  });
+});
+
+/**
+ * The line factories resolve the session `?lineJoin=` override at BUILD time
+ * (`resolveLineJoin`), so the resolved join selects code: an unauthored line
+ * built under the override must not reuse the graph an unauthored line built
+ * without it — the visual twin's key already carries `resolvedJoin`.
+ */
+describe('line TSL graphs key on the RESOLVED join (?lineJoin= override)', () => {
+  it.each([
+    ['visual quad', () => new LineTSLMaterial({ primitive: 'screen-space' })],
+    ['pick quad', () => new LinePickingTSLMaterial({ nodeId: 1, primitive: 'screen-space' })],
+  ])('%s: an override changes the shared graph of an unauthored join', (_n, make) => {
+    const miter = make();
+    try {
+      setLineJoinOverride('none');
+      const overridden = make();
+      expect(overridden.customProgramCacheKey()).not.toBe(miter.customProgramCacheKey());
+      expect(overridden.vertexNode).not.toBe(miter.vertexNode);
+    } finally {
+      setLineJoinOverride(null);
+    }
   });
 });

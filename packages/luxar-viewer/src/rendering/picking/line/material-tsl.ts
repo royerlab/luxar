@@ -20,7 +20,7 @@ import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { linePickWebGPUFactory, type LinePickTSLConfig } from './pick.tsl';
 import { capsuleLinePickWebGPUFactory } from './pick-capsule.tsl';
-import type { LineJoinStyle } from '../../../types/line-join';
+import { resolveLineJoin, type LineJoinStyle } from '../../../types/line-join';
 import { resolveLinePrimitive, type LinePrimitive } from '../../../types/line-primitive';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
@@ -191,7 +191,9 @@ export class LinePickingTSLMaterial
         this.tslNodes.uLineTex.value as { image?: { width?: number } } | null
       ),
     };
-    const key = { primitive, ...config };
+    // The RESOLVED join too, as the visual twin's key: the factory resolves the
+    // session `?lineJoin=` override at build time, so it selects code.
+    const key = { primitive, ...config, resolvedJoin: resolveLineJoin(config.join) };
     applySharedPickGraph(this, 'line-pick', key, this.tslNodes, (inputs, scratch) => {
       if (primitive === 'capsule') {
         capsuleLinePickWebGPUFactory(inputs, config, scratch);
