@@ -33,53 +33,14 @@
 import * as THREE from 'three';
 import { NodeMaterial } from 'three/webgpu';
 import { config } from '../../../config';
-import { resolveToneMappingDefault } from '../tone-mapping';
-import { megaWebGPUFactory, type LuxarToneMappingMode } from './shader.tsl';
+import {
+  luxarToneMappingMode,
+  resolveToneMappingDefault,
+  toneMappingFromLuxarMode,
+  type LuxarToneMappingMode,
+} from '../tone-mapping';
+import { megaWebGPUFactory } from './shader.tsl';
 import type { MegaShaderConfig } from './material';
-
-/**
- * Map THREE.ToneMapping → the compact Luxar mode index used by the
- * TSL factory (1=Linear, 2=Reinhard, 3=Cineon, 4=ACES, 5=AgX,
- * 6=Neutral). `NoToneMapping` aliases to Linear so the shader still
- * clamps to [0, 1] (matches the GLSL wrapper's behaviour).
- */
-function toneMappingToMode(mode: THREE.ToneMapping): LuxarToneMappingMode {
-  switch (mode) {
-    case THREE.NoToneMapping:
-    case THREE.LinearToneMapping:
-      return 1;
-    case THREE.ReinhardToneMapping:
-      return 2;
-    case THREE.CineonToneMapping:
-      return 3;
-    case THREE.ACESFilmicToneMapping:
-      return 4;
-    case THREE.AgXToneMapping:
-      return 5;
-    case THREE.NeutralToneMapping:
-      return 6;
-    default:
-      return 6;
-  }
-}
-
-function modeToToneMapping(mode: LuxarToneMappingMode): THREE.ToneMapping {
-  switch (mode) {
-    case 1:
-      return THREE.LinearToneMapping;
-    case 2:
-      return THREE.ReinhardToneMapping;
-    case 3:
-      return THREE.CineonToneMapping;
-    case 4:
-      return THREE.ACESFilmicToneMapping;
-    case 5:
-      return THREE.AgXToneMapping;
-    case 6:
-    default:
-      return THREE.NeutralToneMapping;
-  }
-}
 
 /**
  * Mega-shader material rendered via TSL / NodeMaterial. The host
@@ -153,7 +114,7 @@ export class MegaShaderTSLMaterial extends NodeMaterial {
       uBloomIntensity: { value: cfg.bloom?.intensity ?? d.bloomStrength },
     };
 
-    this.toneMappingMode = toneMappingToMode(cfg.toneMapping ?? resolveToneMappingDefault());
+    this.toneMappingMode = luxarToneMappingMode(cfg.toneMapping ?? resolveToneMappingDefault());
 
     // Initial toggle state from the config — same behaviour as the
     // GLSL wrapper's constructor.
@@ -231,14 +192,14 @@ export class MegaShaderTSLMaterial extends NodeMaterial {
   // ----------------------------------------------------------------
 
   setToneMapping(mode: THREE.ToneMapping): void {
-    const next = toneMappingToMode(mode);
+    const next = luxarToneMappingMode(mode);
     if (next === this.toneMappingMode) return;
     this.toneMappingMode = next;
     this.rebuildGraph();
   }
 
   getToneMapping(): THREE.ToneMapping {
-    return modeToToneMapping(this.toneMappingMode);
+    return toneMappingFromLuxarMode(this.toneMappingMode);
   }
 
   // ----------------------------------------------------------------

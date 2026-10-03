@@ -78,7 +78,7 @@ post-processing/
 │   ├── material.ts                 #   ShaderMaterial wrapper (#define toggles)
 │   ├── material-tsl.ts             #   WebGPU NodeMaterial counterpart
 │   ├── shader.glsl.ts              #   GLSL3 vertex + fragment + MEGA_SOURCE
-│   └── shader.tsl.ts               #   TSL/WebGPU factory + LuxarToneMappingMode
+│   └── shader.tsl.ts               #   TSL/WebGPU factory
 ├── bloom/                          # Threshold + downsample/upsample pyramid
 │   ├── chain.ts                    #   BloomChain class
 │   ├── shaders.ts                  #   GLSL3 sources + three ShaderSource records
