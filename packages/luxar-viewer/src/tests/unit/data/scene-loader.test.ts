@@ -663,6 +663,24 @@ describe('SceneLoader', () => {
       expect(sceneLoader.archiveFault).toBe(secondFault);
     });
 
+    it.fails('a refinement kick on an archive-faulted loader releases the lock (no wedge)', async () => {
+      // A lazy LOD level can latch the fault DURING the load; load-scene then
+      // kicks the post-load refinement unconditionally. The run returns at once
+      // on the fault, so the lock it was handed must not stay held: a held lock
+      // parks every view in the yield and refuses every retry.
+      (sceneLoader as any)._archiveFault = new ArchiveFaultError(
+        'archive unavailable',
+        'scene.zip'
+      );
+      const passes = (sceneLoader as unknown as { passes: PassScheduler }).passes;
+      passes.startRefinement('Post-load progressive refinement failed');
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+      expect(passes.locked).toBe(false);
+      expect(passes.phase).toBe('idle');
+      await expect(passes.acquireForRetry()).resolves.toBe(true);
+      passes.releaseRetry();
+    });
+
     it('can replay the latched archive fault to a late subscriber', () => {
       const fault = new ArchiveFaultError('archive unavailable', 'scene.zip');
       (sceneLoader as any)._archiveFault = fault;

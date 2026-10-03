@@ -281,6 +281,18 @@ describe('PassScheduler — refinement start, release and failure', () => {
     expect(host.runPass).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['an archive-faulted', { isFaulted: vi.fn(() => true) }],
+    ['a disposed', { isDisposed: vi.fn(() => true) }],
+  ])('a start on %s loader runs nothing and releases the lock', (_label, overrides) => {
+    const host = makeHost(overrides);
+    const passes = new PassScheduler(host);
+    passes.locked = true;
+    passes.startRefinement('Post-load progressive refinement failed');
+    expect(host.runRefinement).not.toHaveBeenCalled();
+    expect(passes.locked).toBe(false);
+  });
+
   it('the cancellation hand-off re-enters the newest state after one frame', () => {
     const host = makeHost();
     const passes = new PassScheduler(host);
