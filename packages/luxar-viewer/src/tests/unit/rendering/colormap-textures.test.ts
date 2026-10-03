@@ -205,7 +205,7 @@ describe('colormap-textures', () => {
       return lut;
     }
 
-    it.fails('LRU eviction does not dispose; dataset release does', () => {
+    it('LRU eviction does not dispose; dataset release does', () => {
       disposeColormapTextures();
       const first = createCustomColormapTexture(makeLut(0));
       const dispose = vi.spyOn(first, 'dispose');
@@ -217,7 +217,7 @@ describe('colormap-textures', () => {
       expect(dispose).toHaveBeenCalledTimes(1);
     });
 
-    it.fails('a hash collision replaces the entry without disposing it; release does', () => {
+    it('a hash collision replaces the entry without disposing it; release does', () => {
       disposeColormapTextures();
       const a = makeLut(40); // a[1] = 41 >= 31, so the -31 below cannot wrap
       // The key hash is h * 31 + c: +1 on one byte and -31 on the next keep it.

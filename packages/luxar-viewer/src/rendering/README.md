@@ -499,7 +499,7 @@ The `AdaptiveDPRManager` dynamically adjusts device pixel ratio based on real-ti
 
 ### 10. Colormap Textures
 
-`colormap-textures.ts` manages creation and caching of `THREE.DataTexture` instances from built-in and custom colormap LUTs. Built-in textures live for the app lifetime; custom LUT textures are bounded and can be disposed on dataset unload.
+`colormap-textures.ts` manages creation and caching of `THREE.DataTexture` instances from built-in and custom colormap LUTs. Built-in textures live for the app lifetime. Custom LUT textures sit in a bounded LRU lookup cache, but an entry leaving it (eviction, hash collision) is only retired, never disposed on the spot: it may still be bound to a live material, and three would re-upload a disposed texture into a GPU texture nothing tracks. Every custom texture, retired or cached, is disposed at dataset release.
 
 ### 11. Global EOG (Exposure-Offset-Gamma)
 
