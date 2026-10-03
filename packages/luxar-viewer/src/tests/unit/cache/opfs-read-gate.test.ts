@@ -15,15 +15,10 @@ import {
   resetOpfsReadGate,
   withOpfsReadGate,
 } from '../../../cache/multi-level-caching-store/opfs-read-gate';
+import { deferred } from '../../helpers/deferred';
 
 async function flush(): Promise<void> {
   for (let i = 0; i < 10; i++) await Promise.resolve();
-}
-
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((r) => (resolve = r));
-  return { promise, resolve };
 }
 
 afterEach(() => resetOpfsReadGate());

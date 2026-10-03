@@ -17,6 +17,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorkerPool } from '../../../../../workers/worker-pool';
+import { deferred } from '../../../../helpers/deferred';
 
 type MockWorker = {
   index: number;
@@ -24,17 +25,6 @@ type MockWorker = {
   onerror: ((e: { message?: string; preventDefault?: () => void }) => void) | null;
   onmessageerror: (() => void) | null;
 };
-
-/** A promise plus the handles to settle it from the test body. */
-function deferred<T = void>() {
-  let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
 
 /**
  * Load a fresh pool whose per-worker `initialize()` is controlled by the test.

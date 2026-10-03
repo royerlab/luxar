@@ -29,15 +29,7 @@ import { LinePickingTSLMaterial } from '../../../../rendering/picking/line/mater
 import { buildPickResultHandler } from '../../../../core/app/picking/pick-result-handler';
 import { setElementIdMap } from '../../../../types/committed-data';
 import { log } from '../../../../utils/log';
-
-/** A promise plus its external `resolve` — lets a test gate when the readback completes. */
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
+import { deferred } from '../../../helpers/deferred';
 
 function makeStubRenderer(): THREE.WebGLRenderer {
   // PickingSystem ctor + the lifecycle methods we test only need

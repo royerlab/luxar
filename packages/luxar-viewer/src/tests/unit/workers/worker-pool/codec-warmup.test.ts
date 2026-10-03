@@ -17,12 +17,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-function deferred<T = void>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => (resolve = res));
-  return { promise, resolve };
-}
+import { deferred } from '../../../helpers/deferred';
 
 /** A blosc-framed stand-in: only the header's decoded size (bytes 4..7) matters. */
 function frame(decodedBytes: number): Uint8Array {

@@ -14,6 +14,7 @@ import {
 } from '../../../utils/fetch-concurrency';
 import { config } from '../../../config';
 import { log } from '../../../utils/log';
+import { forceAbortSignalAnyFallback } from '../../helpers/abort-signal-any';
 
 /** The gate's widths, as configured (`config.dataLoading.network.fetchGate`). */
 const {
@@ -64,15 +65,6 @@ async function fetchWithRetry(
   options?: { timeoutMsOverride?: number; signal?: AbortSignal }
 ): Promise<Response | undefined> {
   return fetchWithRetryScoped(url, options, async ({ response }) => response);
-}
-
-function forceAbortSignalAnyFallback(): () => void {
-  const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
-  Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
-  return () => {
-    if (descriptor) Object.defineProperty(AbortSignal, 'any', descriptor);
-    else delete (AbortSignal as unknown as { any?: unknown }).any;
-  };
 }
 
 describe('buildUrl', () => {

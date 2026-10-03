@@ -4,15 +4,7 @@ import { computeCacheBudgets, computeOpfsWriteQueueBudgetBytes } from '../../../
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
 import { createFakeOpfsRoot } from '../../mocks/opfs.mock';
-
-function forceAbortSignalAnyFallback(): () => void {
-  const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
-  Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
-  return () => {
-    if (descriptor) Object.defineProperty(AbortSignal, 'any', descriptor);
-    else delete (AbortSignal as unknown as { any?: unknown }).any;
-  };
-}
+import { forceAbortSignalAnyFallback } from '../../helpers/abort-signal-any';
 
 // Create comprehensive mocks
 const createMocks = () => {
