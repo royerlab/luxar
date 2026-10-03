@@ -7,38 +7,13 @@
  */
 
 import type { ZarrViewerConfig } from '../../types/zarr';
-import { REVERSE_SETTINGS_MAP, environmentConfigToZarr } from './viewer-config-utils';
+import { environmentConfigToZarr, renderingSettingsToZarr } from './viewer-config-utils';
 import type { SceneManager } from '../../scene/scene-manager';
 import type { RenderingSettings } from '../sections/rendering-controls/types';
 import type { SceneDimsManager } from '../../scene/scene-dims-manager';
 import type { DimensionAnimationManager } from '../../scene/animation/dimension-animation-manager';
 import { ThemeManager } from '../../themes/theme-manager';
-import { log, Modules } from '../../utils/log';
 import { isOrthographicCamera } from '../../utils/camera-utils';
-
-/**
- * Module-local set of camelCase keys we have already warned about, so that
- * each unknown field surfaces exactly once per page load instead of spamming
- * the console on every state capture.
- */
-const _warnedUnknownStateKeys = new Set<string>();
-
-/**
- * RenderingSettings keys that are deliberately NOT exported as top-level
- * viewer_config fields, so dropping them is not worth a warning: the lens and
- * clipping planes are captured into the `camera` block below, and the orbit
- * zoom / damping and fly-look speeds are viewer-local preferences with no
- * viewer_config counterpart.
- */
-const NOT_TOP_LEVEL_KEYS: ReadonlySet<string> = new Set([
-  'fov',
-  'fovPreset',
-  'near',
-  'far',
-  'orbitZoomSpeed',
-  'orbitDampingFactor',
-  'flyLookSpeed',
-]);
 
 /**
  * Capture the complete viewer state as a ZarrViewerConfig object.
@@ -112,24 +87,8 @@ export function captureViewerState(
     result.environment = environmentConfigToZarr(sceneManager.environment.getConfig());
   }
 
-  // --- RenderingSettings → snake_case ---
-  // We iterate the INPUT keys (not REVERSE_SETTINGS_MAP) so that future-added
-  // RenderingSettings fields missing from the bridge map become visible. They
-  // are still dropped (round-trip safety with older zarr files), but a single
-  // warning per unknown key surfaces the silent loss for engineers to fix.
-  for (const [camelKey, value] of Object.entries(settings)) {
-    if (value === undefined) continue;
-    const snakeKey = REVERSE_SETTINGS_MAP[camelKey];
-    if (snakeKey) {
-      (result as Record<string, unknown>)[snakeKey] = value;
-    } else if (!NOT_TOP_LEVEL_KEYS.has(camelKey) && !_warnedUnknownStateKeys.has(camelKey)) {
-      _warnedUnknownStateKeys.add(camelKey);
-      log.warning(
-        Modules.RENDERING_CONTROLS,
-        `captureViewerState: dropping unknown RenderingSettings key "${camelKey}" — add it to RENDERING_SETTINGS_MAP to persist.`
-      );
-    }
-  }
+  // --- RenderingSettings → snake_case (the camera block above owns the lens) ---
+  Object.assign(result, renderingSettingsToZarr(settings));
 
   // --- Theme ---
   try {
