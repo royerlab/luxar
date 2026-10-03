@@ -8,13 +8,15 @@
  * - `gpu.uploadBytes.buffer` — `bufferData` / `bufferSubData` /
  *   `queue.writeBuffer`.
  * - `gpu.uploadBytes.texture` — `texImage2D/3D` / `texSubImage2D/3D` /
- *   `queue.writeTexture` / `queue.copyExternalImageToTexture`.
+ *   `compressedTex(Sub)Image2D/3D` / `queue.writeTexture` /
+ *   `queue.copyExternalImageToTexture`.
  *
  * Byte rules: a typed-array source counts the bytes the call actually reads
  * (honouring the WebGL2 / WebGPU element-unit `srcOffset` / `length` args); a
  * WebGL texture upload from a typed array with a known format / type counts
  * the REGION it writes (`width * height * depth * bytesPerPixel`, capped by
- * the view) — three's classic ranged path hands every per-row
+ * the view) — a compressed upload counts the block bytes its view hands over,
+ * which are exactly the bytes uploaded — three's classic ranged path hands every per-row
  * `texSubImage2D` the WHOLE `image.data` and selects the row with
  * `UNPACK_SKIP_ROWS`, so the view length says nothing about the upload
  * (#2944); a `writeTexture` counts its region (`bytesPerRow * rows`, capped
@@ -189,6 +191,12 @@ const texSubImage2DBytes: ByteCounter = (a) =>
     : texelBytes(a[8], a[9], num(a[4]) * num(a[5]), glPixelBytes(a[6], a[7]));
 const texSubImage3DBytes: ByteCounter = (a) =>
   texelBytes(a[10], a[11], num(a[5]) * num(a[6]) * num(a[7]), glPixelBytes(a[8], a[9]));
+// Compressed uploads carry their encoded blocks verbatim: (…, srcData, srcOffset?,
+// srcLengthOverride?) at the index below, or a PBO `imageSize, offset` (0 bytes).
+const compressedBytes =
+  (dataIndex: number): ByteCounter =>
+  (a) =>
+    sourceBytes(a[dataIndex], a[dataIndex + 1], a[dataIndex + 2]);
 
 // --- WebGPU byte counters ----------------------------------------------------
 
@@ -263,6 +271,10 @@ export function wrapWebGLUploads(gl: object): boolean {
   wrap(t, 'texImage3D', 'texture', texImage3DBytes);
   wrap(t, 'texSubImage2D', 'texture', texSubImage2DBytes);
   wrap(t, 'texSubImage3D', 'texture', texSubImage3DBytes);
+  wrap(t, 'compressedTexImage2D', 'texture', compressedBytes(6));
+  wrap(t, 'compressedTexImage3D', 'texture', compressedBytes(7));
+  wrap(t, 'compressedTexSubImage2D', 'texture', compressedBytes(7));
+  wrap(t, 'compressedTexSubImage3D', 'texture', compressedBytes(9));
   return true;
 }
 

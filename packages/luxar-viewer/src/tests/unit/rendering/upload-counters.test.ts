@@ -125,7 +125,7 @@ describe('upload-counters', () => {
       expect(bytes()).toBe(0);
     });
 
-    it.fails('counts compressed texture uploads (KTX2 on WebGL) by the block bytes they read', () => {
+    it('counts compressed texture uploads (KTX2 on WebGL) by the block bytes they read', () => {
       const gl = fakeGL();
       wrapWebGLUploads(gl);
       // compressedTexImage2D(target, level, fmt, w, h, border, data[, srcOffset, length])
