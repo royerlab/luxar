@@ -18,6 +18,7 @@ import { LineTSLMaterial } from '../../../../../rendering/materials/line/materia
 import { installProjectionVariantHook } from '../../../../../rendering/materials/_shared/projection-variant';
 import { sharedTSLGraphCount } from '../../../../../rendering/materials/_shared/shared-graph-tsl';
 import { LinePickingTSLMaterial } from '../../../../../rendering/picking/line/material-tsl';
+import { createInstancedLinesMesh } from '../../../../../rendering/line-geometry';
 
 const persp = (): THREE.Camera => new THREE.PerspectiveCamera(50, 1, 0.1, 100);
 const ortho = (): THREE.Camera => new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100);
@@ -93,6 +94,17 @@ describe.each([
     expect(m.version).toBe(version);
   });
 
+  it('a clone carries the last-drawn variant: its first same-kind draw switches nothing', () => {
+    const m = make();
+    draw(meshWith(m), ortho());
+    const c = m.clone() as unknown as Drawable;
+    expect(c.vertexNode).toBe(m.vertexNode);
+    expect(c.customProgramCacheKey()).toBe(m.customProgramCacheKey());
+    const version = c.version;
+    draw(meshWith(c), ortho());
+    expect(c.version).toBe(version);
+  });
+
   it('a CPU camera push selects no variant: only the drawn camera does', () => {
     const m = make();
     const mesh = meshWith(m);
@@ -119,5 +131,36 @@ describe('capsule keeps its runtime ortho switch', () => {
     const v = m.vertexNode;
     draw(mesh, ortho());
     expect(m.vertexNode).toBe(v);
+  });
+});
+
+/** One segment, enough for the production line-mesh builder. */
+function oneSegment(): Parameters<typeof createInstancedLinesMesh>[0] {
+  const v3 = (x: number): Float32Array => new Float32Array([x, 0, 0]);
+  const one = (x: number): Float32Array => new Float32Array([x]);
+  return {
+    startPositions: v3(0),
+    endPositions: v3(1),
+    startColors: new Float32Array([1, 1, 1]),
+    endColors: new Float32Array([1, 1, 1]),
+    startWidths: one(0.1),
+    endWidths: one(0.1),
+    startSharpness: one(2),
+    endSharpness: one(2),
+    segmentLengths: one(1),
+    startJointCode: one(0),
+    endJointCode: one(0),
+    segmentCount: 1,
+  };
+}
+
+describe('the production line-mesh builder installs the per-draw hook', () => {
+  it('createInstancedLinesMesh: an ortho draw selects the ortho variant', () => {
+    const m = new LineTSLMaterial({ primitive: 'screen-space' }) as unknown as Drawable;
+    const mesh = createInstancedLinesMesh(oneSegment(), m);
+    draw(mesh, persp());
+    const p = m.vertexNode;
+    draw(mesh, ortho());
+    expect(m.vertexNode).not.toBe(p);
   });
 });
