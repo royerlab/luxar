@@ -108,6 +108,7 @@ from ..core.group.lod.group import (
     partitioned_coverage_fractions,
 )
 from ..typing_utils.constants import (
+    CHUNK_PACKS_GROUP,
     DERIVED_LOD_SELECTOR,
     ENVIRONMENT_GROUP,
     LOD_SELECTORS,
@@ -1001,6 +1002,18 @@ def _apply(
             _write_attr(
                 environment,
                 ENVIRONMENT_GROUP,
+                "scene_content_hash",
+                report.content_hash,
+                undo,
+            )
+        if (
+            report.content_hash is not None
+            and CHUNK_PACKS_GROUP in root
+            and "packs" in root[CHUNK_PACKS_GROUP].attrs
+        ):
+            _write_attr(
+                _handle(root, CHUNK_PACKS_GROUP, cache),
+                CHUNK_PACKS_GROUP,
                 "scene_content_hash",
                 report.content_hash,
                 undo,

@@ -1515,9 +1515,10 @@ neither `type` nor `kind`, so the viewer's node discovery skips it, and it is in
 `RESERVED_ROOT_GROUPS`. It is **excluded from the scene `content_hash`**
 (`HASH_EXCLUDED_ROOT_GROUPS`): packing changes no chunk, so the hash and every
 warm cache keyed on it stay valid. A reader therefore uses the packs only when
-`scene_content_hash` equals the root `content_hash`; any later edit that
-restamps the hash makes them stale, and they are ignored. The viewer also checks
-each pack's length and SHA-256 and reads the plain chunks when either fails.
+`scene_content_hash` equals the root `content_hash`; an edit that changes the
+chunks and restamps the hash makes them stale, and they are ignored. An attrs-only
+`luxar restamp-lod` updates this binding. The viewer also checks each pack's
+SHA-256 and reads the plain chunks when that fails.
 Every plain chunk stays where it was, so zarr-python, napari and viewers that
 predate packs read the store as if the sidecar were absent (the pack files are
 plain keys in a group: a consolidated open never lists them, and an

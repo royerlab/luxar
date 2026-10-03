@@ -1,7 +1,7 @@
 """``luxar optimize --pack`` — one request per small node, the store unchanged.
 
-A pack is a COPY of a small node's chunk objects, concatenated into one zarr
-array under the root ``chunk_packs/`` sidecar, so a viewer can fetch the node in
+A pack is a COPY of a small node's chunk objects in one plain ``.pack`` file
+under the root ``chunk_packs/`` sidecar, so a viewer can fetch the node in
 one request instead of one per chunk. Every assertion here guards a property
 that would otherwise fail silently: a member slice that is not byte-identical to
 its chunk renders wrong data, a pack that is folded into ``content_hash`` can

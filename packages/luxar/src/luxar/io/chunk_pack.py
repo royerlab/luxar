@@ -20,8 +20,10 @@ metadata, which every load fetches first:
 ``scene_content_hash``
     The root ``content_hash`` the packs were built for. The sidecar is excluded
     from that hash (like the baked ``environment`` group), so packing leaves the
-    hash alone and a reader can tell a stale pack — any later edit that restamps
-    the hash — from a current one without reading a single chunk.
+    hash alone and a reader can tell a stale pack from a current one without
+    reading a single chunk. An attrs-only ``restamp-lod`` updates this binding.
+``max_bytes``
+    The stored chunk-byte limit used when selecting nodes for packing.
 ``packs``
     One entry per pack: ``key`` (its store key), ``sha256`` (of the whole file)
     and ``prefix`` (the packed node's path plus ``/``). Every chunk object the
