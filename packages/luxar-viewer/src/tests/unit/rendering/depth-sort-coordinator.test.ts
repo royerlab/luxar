@@ -956,7 +956,7 @@ describe('depth-sort coordinator', () => {
     setSortedIndexChunkElementsForTests(null);
   });
 
-  it.fails('resortForCapture does not wait on a chunked apply parked by a HIDDEN node', async () => {
+  it('resortForCapture does not wait on a chunked apply parked by a HIDDEN node', async () => {
     // The pump skips a hidden node (#715: write nothing while not drawn), so
     // its half-streamed apply can never finish during a capture. Counting it
     // against quiescence made every captured frame burn the full maxWaitMs.
