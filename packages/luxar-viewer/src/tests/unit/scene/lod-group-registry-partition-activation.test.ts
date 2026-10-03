@@ -207,7 +207,7 @@ describe('LODGroupRegistry — partition part activation (B4)', () => {
     expect(requestReprocess).not.toHaveBeenCalled();
   });
 
-  it.fails('a pass before the first frame activates no deferred part (frustum unknown yet)', async () => {
+  it('a pass before the first frame activates no deferred part (frustum unknown yet)', async () => {
     // Deferred at load = outside the padded frustum (or the slice). A view pass
     // reaching `activatePartitionParts` before any `evaluatePerFrame` (the
     // post-commit sweep, playback's next-slice warm) must not read a part's

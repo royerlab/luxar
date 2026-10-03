@@ -477,7 +477,10 @@ export class PartitionGate implements TickDemand {
         footprintBox: new THREE.Box3(),
         footprintMatrixWorld: new Array<number>(child.objects.length * 16).fill(0),
         footprintDirty: true,
-        inFrustum: true,
+        // Until the first frame evaluates it. A deferred part was deferred as
+        // outside the padded frustum (or the slice), so a pass reaching
+        // `activatePartitionParts` first must not activate it on a guess.
+        inFrustum: !child.activate,
         lazy: child.activate
           ? { requested: false, requestedAtMs: 0, running: null, claims: [], failed: false }
           : null,
