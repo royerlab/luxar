@@ -609,7 +609,7 @@ describe('ControlsManager', () => {
       expect(controlsManager.getControls()!.enabled).toBe(true);
     });
 
-    it.fails('keeps controls disabled across mode switches (kiosk allow_pointer: false)', () => {
+    it('keeps controls disabled across mode switches (kiosk allow_pointer: false)', () => {
       controlsManager.setEnabled(false);
       for (const type of ['fly', 'ortho', 'orbit'] as const) {
         controlsManager.setControlType(type);
