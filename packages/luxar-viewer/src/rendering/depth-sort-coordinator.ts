@@ -251,6 +251,12 @@ function drawsAnyFace(mesh: THREE.Mesh): boolean {
 export class DepthSortCoordinator {
   /** This instance's state; the submodules take it as their first argument. */
   private readonly state: CoordinatorState = createCoordinatorState();
+  /**
+   * Set by {@link dispose}, cleared by {@link configure} / {@link warmUp}: a
+   * torn-down host's late commit must not re-attach it to the shared worker
+   * (the last detach is what terminates the worker).
+   */
+  private released = false;
 
   /**
    * Wire the camera accessor + frame-request + reprocess callbacks. Called
@@ -260,6 +266,7 @@ export class DepthSortCoordinator {
    */
   configure(options: DepthSortCoordinatorOptions): void {
     const c = this.state;
+    this.released = false;
     attachCoordinator(c);
     c.getCamera = options.getCamera;
     c.requestRender = options.requestRender;
@@ -289,6 +296,7 @@ export class DepthSortCoordinator {
    */
   warmUp(): void {
     if (!this.state.depthSortEnabled) return;
+    this.released = false;
     attachCoordinator(this.state);
     warmUpSortWorker(this.state);
   }
@@ -634,6 +642,7 @@ export class DepthSortCoordinator {
     c.depthSortEnabled = true;
     c.syncSortElementsRemaining = syncSortElementLimit();
     c.drawnStateChanged = false;
+    this.released = true;
     detachCoordinator(c);
   }
 
@@ -643,7 +652,9 @@ export class DepthSortCoordinator {
    * one first, so its state never lives in two coordinators.
    */
   private adopt(mesh: THREE.Mesh): void {
-    attachCoordinator(this.state);
+    // Only a live, sorting host holds the shared worker: a disabled one never
+    // reaches it, and a disposed one is detached until it is configured again.
+    if (this.state.depthSortEnabled && !this.released) attachCoordinator(this.state);
     const previous = meshOwners.get(mesh);
     if (previous === this) return;
     previous?.releaseNode(mesh);

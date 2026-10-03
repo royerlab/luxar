@@ -202,7 +202,7 @@ describe('two depth-sort coordinators on one page', () => {
     expect(terminated).toBe(1);
   });
 
-  it.fails('a disabled host never keeps the shared worker alive', async () => {
+  it('a disabled host never keeps the shared worker alive', async () => {
     // A `depthSort: false` layer still commits; it must not count as a user of
     // the worker, or the sorting host's dispose leaves the worker running.
     const mod = await loadModule();
@@ -219,7 +219,7 @@ describe('two depth-sort coordinators on one page', () => {
     disabled.dispose();
   });
 
-  it.fails("a disposed host's late commit does not re-attach it to the worker", async () => {
+  it("a disposed host's late commit does not re-attach it to the worker", async () => {
     const { a, b } = await twoHosts();
     b.dispose();
     // A commit already in flight when the host was torn down lands afterwards.
