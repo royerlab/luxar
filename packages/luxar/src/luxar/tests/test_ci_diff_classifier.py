@@ -188,6 +188,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "the classifier scans it for repo-rooted readFileSync inputs",
     ),
     (
+        "packages/luxar-viewer/src/tests/unit/scene/fixtures/lod-metric-parity.json",
+        "py",
+        "test_lod_metric_parity.py checks it against the Python metric generator",
+    ),
+    (
         "scripts/generate_builtin_colormaps.py",
         "ts",
         "the viewer's third-party notices test scrapes its colormap tables",
@@ -626,6 +631,9 @@ _NON_SCANNED_PYTHON_VIEWER_INPUTS = {
     ),
     "packages/luxar-viewer/src/tests/unit/config/generated-fixture-freshness.test.ts": (
         "scanned for repo-rooted readFileSync inputs by this module"
+    ),
+    "packages/luxar-viewer/src/tests/unit/scene/fixtures/lod-metric-parity.json": (
+        "read by test_lod_metric_parity.py through a repo-rooted fixture path"
     ),
     "packages/luxar-viewer/src/tests/README.md": (
         "matched by test_fixture_environment.py through git grep"
