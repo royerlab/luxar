@@ -39,7 +39,8 @@
  */
 
 import * as THREE from 'three';
-import type { SceneNode, ViewState } from '../data/data-loader-types';
+import type { ViewState } from '../data/data-loader-types';
+import type { SceneNodeIndex } from '../data/scene-loader/view-state/scene-node-index';
 import type { PanningModel, SoundNodeAttrs, SoundSourceDescriptor } from '../types/audio';
 import { computeRowAudibility, displayedXYZ } from './audibility';
 import { rampGain } from './fades';
@@ -105,7 +106,7 @@ export class SoundNode {
   private foaDecoder: FoaDecoder | null = null;
   /** Last derived per-row audibility, kept so a deferred start can replay it. */
   private lastBase: ViewState | null = null;
-  private lastSceneGraph: SceneNode | null = null;
+  private lastSceneIndex: SceneNodeIndex | null = null;
 
   constructor(
     readonly desc: SoundSourceDescriptor,
@@ -295,10 +296,10 @@ export class SoundNode {
    * Re-evaluate audibility for the current slice and apply the edges.
    * Called by the engine on every dimension change (and once at attach).
    */
-  setViewState(base: ViewState, sceneGraph: SceneNode | null): void {
+  setViewState(base: ViewState, sceneIndex: SceneNodeIndex | null): void {
     if (this.disposed) return;
     this.lastBase = base;
-    this.lastSceneGraph = sceneGraph;
+    this.lastSceneIndex = sceneIndex;
     this.repositionVoices();
     this.applyEdges(false);
   }
@@ -314,7 +315,7 @@ export class SoundNode {
       this.desc,
       this.attrs.extend_to_all,
       this.lastBase,
-      this.lastSceneGraph,
+      this.lastSceneIndex,
       this.mask
     );
     return this.mask;

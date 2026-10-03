@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { normalizeURL } from '../../../../data/scene-loader/lifecycle/url-normalization';
 import { applyEffectiveAttrs } from '../../../../data/scene-loader/view-state/effective-attrs';
+import { SceneNodeIndex } from '../../../../data/scene-loader/view-state/scene-node-index';
 import type { SceneNode } from '../../../../data/data-loader-types';
 
 describe('normalizeURL', () => {
@@ -95,7 +96,7 @@ describe('applyEffectiveAttrs', () => {
       ],
       hasSpatialIndex: false,
     };
-    const result = applyEffectiveAttrs(root, leaf);
+    const result = applyEffectiveAttrs(new SceneNodeIndex(root), leaf);
     // Untouched fields preserved
     expect(result.n_points).toBe(42);
     // Composed opacity: 0.5 (root) * 0.5 (intermediate) * 0.5 (leaf) = 0.125
@@ -128,7 +129,7 @@ describe('applyEffectiveAttrs', () => {
       ],
       hasSpatialIndex: false,
     };
-    expect(applyEffectiveAttrs(root, leaf).join).toBe('none');
+    expect(applyEffectiveAttrs(new SceneNodeIndex(root), leaf).join).toBe('none');
   });
 
   it("keeps a leaf's own join when no ancestor sets one", () => {
@@ -149,7 +150,7 @@ describe('applyEffectiveAttrs', () => {
       children: [leaf],
       hasSpatialIndex: false,
     };
-    expect(applyEffectiveAttrs(root, leaf).join).toBe('none');
+    expect(applyEffectiveAttrs(new SceneNodeIndex(root), leaf).join).toBe('none');
   });
 
   it('lets the leaf win when a wrapper and the leaf both set join', () => {
@@ -178,6 +179,6 @@ describe('applyEffectiveAttrs', () => {
       ],
       hasSpatialIndex: false,
     };
-    expect(applyEffectiveAttrs(root, leaf).join).toBe('miter');
+    expect(applyEffectiveAttrs(new SceneNodeIndex(root), leaf).join).toBe('miter');
   });
 });

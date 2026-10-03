@@ -105,7 +105,11 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
   if (sceneLoader?.sceneGraph && layersPanel) {
     const root = ports.sceneManager.scene.children.find((c) => c.name === 'LuxarScene');
     if (root) {
-      layersPanel.initFromScene(root as THREE.Group, sceneLoader.sceneGraph);
+      layersPanel.initFromScene(
+        root as THREE.Group,
+        sceneLoader.sceneGraph,
+        sceneLoader.sceneNodeIndex
+      );
       // Leaves built from now on (partition parts the LOD registry activates,
       // lazily built levels) must start from the panel's LIVE layer state, not
       // their authored attrs — before they are first drawn. After initFromScene,

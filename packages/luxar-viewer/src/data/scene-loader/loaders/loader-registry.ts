@@ -178,20 +178,6 @@ export class LoaderRegistry {
   }
 
   /**
-   * Drop a single loader so it no longer participates in scene-wide
-   * ``updateView`` sweeps. Defensive: lazy substitutive LOD levels are never
-   * registered in the first place (they stay out of the sweep by design — see
-   * ``load-lod-group-node.ts``; the registry drives their reloads), so on the
-   * lazy-release path this is a no-op. It exists so a future path that DOES
-   * register such a loader cannot leak it into the sweep after its geometry was
-   * released. The loader object itself stays alive in the lod_group's
-   * ``ensureLoaded`` closure for reload.
-   */
-  unregister<K extends GeometryKind>(kind: K, path: string): void {
-    this.loadersOf(kind).delete(path);
-  }
-
-  /**
    * Register a points loader for a given path.
    */
   registerPointsLoader(path: string, loader: DataLoader): void {
@@ -219,26 +205,6 @@ export class LoaderRegistry {
     this.register('mesh', path, loader);
   }
 
-  /** Peer of {@link unregister}, kept for call-site readability. */
-  unregisterMeshLoader(path: string): void {
-    this.unregister('mesh', path);
-  }
-
-  /** Peer of {@link unregister}, kept for call-site readability. */
-  unregisterGSplatsLoader(path: string): void {
-    this.unregister('gsplats', path);
-  }
-
-  /** Peer of {@link unregister}, kept for call-site readability. */
-  unregisterPointsLoader(path: string): void {
-    this.unregister('points', path);
-  }
-
-  /** Peer of {@link unregister}, kept for call-site readability. */
-  unregisterLinesLoader(path: string): void {
-    this.unregister('lines', path);
-  }
-
   // ---------------------------------------------------------------------------
   // Lookup
   // ---------------------------------------------------------------------------
@@ -248,6 +214,30 @@ export class LoaderRegistry {
     let total = 0;
     for (const bucket of this.byKind.values()) total += bucket.size;
     return total;
+  }
+
+  /**
+   * Geometry kinds with at least one registered loader that still has
+   * additive rungs to stream (`hasMoreLODs === true`; non-progressive loaders
+   * have no such property). The one probe the refinement scheduling sites
+   * share.
+   */
+  kindsWithMoreLODs(): GeometryKind[] {
+    const kinds: GeometryKind[] = [];
+    for (const [kind, bucket] of this.byKind) {
+      for (const loader of bucket.values()) {
+        if ((loader as { hasMoreLODs?: boolean }).hasMoreLODs === true) {
+          kinds.push(kind);
+          break;
+        }
+      }
+    }
+    return kinds;
+  }
+
+  /** Whether any registered loader still has additive rungs to stream. */
+  anyHasMoreLODs(): boolean {
+    return this.kindsWithMoreLODs().length > 0;
   }
 
   /** Whether there are any registered loaders. */

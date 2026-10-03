@@ -212,10 +212,12 @@ declare global {
       /**
        * Performance snapshot for probes: load-timeline marks and derived
        * durations, last-frame `renderer.info`, adaptive-DPR diagnostics,
-       * worker stats and the wide `isSettled` predicate. Seeded by
-       * bootstrap BEFORE `init()` (timeline only, `runtimeReady: false`)
-       * and enriched by `installDebugInterface`. Concrete shape:
-       * `PerfSnapshot` in `core/app/debug/perf-snapshot.ts`.
+       * worker stats and the wide `isSettled` predicate. Seeded by the
+       * standalone bootstrap under `?debug` BEFORE `init()` (the load
+       * timeline and perf counters, `runtimeReady: false`; the debug perf
+       * instruments are already counting) and replaced by
+       * `installDebugInterface` with the runtime-aware snapshot. Concrete shape: `PerfSnapshot` in
+       * `core/app/debug/perf-snapshot.ts`.
        */
       getPerf?: () => unknown;
       /** True as soon as `getPerf` exists (bootstrap), before `runtimeReady`. */

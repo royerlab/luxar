@@ -121,47 +121,44 @@ The architecture follows a hierarchical initialization pattern where each compon
 ```typescript
 class LuxarApp {
   async init(options: LuxarAppOptions): Promise<void> {
-    // 1. Scene Management Foundation
-    this.sceneManager = new SceneManager();
-    await this.sceneManager.init({ canvas: options.canvas, debug: options.debug });
+    // 0. Guards + module overrides: browser / THREE.REVISION checks,
+    //    wasmPath / workerPath, viewer container, canvas + context-menu ownership.
+    assertBrowserEnvironment();
+    assertThreeRevision();
+    this.options = { ...options }; // a private copy — switches replace `src`
+    applyModuleOverrides(options);
 
-    // 2. Animation System Setup
-    this.animationController = new AnimationController(/*...*/);
+    try {
+      // 1. The whole subsystem graph, in order (app/init/pipeline.ts):
+      //    SceneManager → AnimationController (+ render-on-change) →
+      //    PerformanceMonitor → per-frame callbacks (clipping, LOD registry
+      //    factory, depth sort, density guard, LOD selector) → AdaptiveDPR →
+      //    InputHandler / RenderingControls / panels → animation loop start.
+      //    Each subsystem lands on `partial` so a throw stays disposable.
+      await runInitPipeline(ports, partial);
 
-    // 3. Input System Integration
-    this.inputHandler = new InputHandler(
-      this.sceneManager,
-      this.animationController,
-      this.performanceMonitor,
-      this.debugConsole,
-      /* optional */ (parent) => new DimensionSliders(parent)
-    );
-    this.inputHandler.init();
+      // 2. Shortcuts and wiring that must exist before the first load.
+      this.setupDatasetBrowserShortcut(); // O opens the browser mid-load
+      this.setupOnlineRetry();
+      this.installControlClient();
 
-    // 4. UI Controls Configuration
-    this.renderingControls = new RenderingControls(/*...*/);
+      // 3. Dataset routing. A failed DATASET load does not reject init():
+      //    loadInitialDataset() emits `dataset-error` and shows a persistent
+      //    dialog whose dataset-browser hint works, because the app stays up.
+      if (await this.shouldShowBrowser(src)) this.showDatasetBrowser();
+      else await this.loadInitialDataset(src);
 
-    // 5. Component Cross-Linking
-    this.renderingControls.setAnimationController(this.animationController);
-    this.inputHandler.setRenderingControls(this.renderingControls);
-
-    // 6. Animation Loop Start
-    this.animationController.startAnimation();
-
-    // 7. Dataset Browser Shortcut
-    this.setupDatasetBrowserShortcut();
-
-    // 8. Dataset Loading or Browser Display
-    const src = options.src ?? config.defaultZarrPath;
-    if (await this.shouldShowBrowser(src)) {
-      this.showDatasetBrowser();
-    } else {
-      await this.loadDataset(src);
+      // 4. Lifecycle + embedder wiring.
+      this.setupDisposeOnUnload();
+      this.setupFocusHandling();
+      this.setupDebugInterface();
+      this.setupEmbedderHooks(options.canvas);
+      this.isInitialized = true;
+    } catch (error) {
+      // A SUBSYSTEM failure: tear down the partial graph and reject.
+      this.dispose();
+      throw error;
     }
-
-    // 9. System Event Handling
-    this.setupDisposeOnUnload();
-    this.setupFocusHandling();
   }
 }
 ```
@@ -170,7 +167,7 @@ class LuxarApp {
 
 - **Animation First**: Start rendering loop before loading data for immediate visual feedback
 - **Serialized Dataset Switches**: Programmatic switches and built-in browser selections share one in-flight guard; the browser cannot reopen until the active teardown+reload finishes
-- **Error Isolation**: Component failures don't prevent other systems from initializing
+- **Partial-State Teardown**: a subsystem that throws mid-pipeline leaves every already-built component on the `partial` accumulator, so `dispose()` can release it before `init()` rejects
 - **A Bad Dataset Is Not a Dead Viewer**: a failed first dataset load leaves the app initialized — it emits `dataset-error` and shows a persistent dialog whose dataset-browser hint (`O`) works. Only a subsystem failure (scene manager, input, panels) makes `init()` dispose the partial app and reject
 
 ### Disposal and Resource Management

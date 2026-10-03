@@ -47,14 +47,21 @@ utils/
 ├── clamp.ts                 # Generic numeric clamp (optional bounds)
 ├── console-interceptor.ts   # Ring-buffer console capture (Proxy singleton, opt-in patch)
 ├── escape-html.ts           # HTML entity escaping for safe rendering
+├── failed-loads-version.ts  # Shared failure version + FailedLoadsMap (bumps it on every change)
+├── fetch-concurrency.ts     # Global per-lane chunk-fetch gate (HTTP/1.1 vs multiplexed widths, priorities)
 ├── format-error.ts          # Unknown thrown value → message / name: message / stack
+├── fullscreen.ts            # isDocumentFullscreen() incl. the webkit-prefixed API
+├── hover-template.ts        # Hover placeholder vocabulary + substituteHoverTemplate (text / html / url)
+├── image-mime.ts            # detectMimeType() from magic bytes
 ├── input-capabilities.ts    # getInputProfile(), isTouchLikePointer(), deriveInputProfile() (import-free)
+├── json-rpc.ts              # JSON-RPC 2.0 framing for the remote-control channel (pure)
 ├── log.ts                   # log object, Modules registry, LogEmoji, createModuleLogger
 ├── long-press.ts            # attachLongPress(el, …) — touch long-press → secondary action, single opener across platforms
 ├── lod-child-failure.ts     # Lazy-child failure latch and clear with status invalidation
 ├── object-visibility.ts     # isEffectivelyVisible (ancestor-aware scene-graph visibility)
 ├── platform.ts              # isMacPlatform()
 ├── result.ts                # Result<T, E> + ok/err/isOk/isErr/match/mapOk/mapErr/unwrap/tryAsync
+├── schedule-frame.ts        # scheduleFrame(): rAF with a timer fallback that keeps hidden tabs moving
 ├── scene-graph-index.ts     # findObjectByName / attachSceneGraphIndex / detachSceneGraphIndex — self-maintaining path→Object3D map (exact getObjectByName semantics, O(1) for unique names, epoch-invalidated miss memo)
 ├── storage-keys.ts          # luxar.* localStorage key registry
 ├── viewer-container.ts      # mount-root registry (get/set/resetViewerContainer) + containing-block promotion
@@ -73,7 +80,7 @@ utils/
 
 Geometry-byte accounting (`estimateGeometryBytes` / `invalidateCachedByteSize`) used to live here as `geometry-utils.ts`; it has moved to its only consumer at `rendering/gpu-buffer-pool/geometry-bytes.ts` (re-exported by `rendering/gpu-buffer-pool.ts` for the existing test import path).
 
-Each module is focused on a specific domain with minimal dependencies. The only intra-`utils/` imports are `cross-layer/event-group.ts`, `cross-layer/notifier.ts`, and `hdr/hdr-detection.ts` → `log.ts`; `hdr/hdr-color-conversion.ts` and `wheel-delta.ts` → `clamp.ts`; and `lod-child-failure.ts` → `failed-loads-version.ts`.
+Each module is focused on a specific domain with minimal dependencies. The intra-`utils/` imports are `cross-layer/event-group.ts`, `cross-layer/notifier.ts`, and `hdr/hdr-detection.ts` → `log.ts`; `hdr/hdr-color-conversion.ts` and `wheel-delta.ts` → `clamp.ts`; `lod-child-failure.ts` → `failed-loads-version.ts`; `console-interceptor.ts` → `format-error.ts`; `hover-template.ts` → `escape-html.ts`; and `long-press.ts` → `input-capabilities.ts`. Outside `utils/`, `console-interceptor.ts` and `fetch-concurrency.ts` tally into `profiling/perf-counters.ts`, `json-rpc.ts` reads `config/control-contract.ts`, and `cross-layer/notifier.ts` takes a type from `types/`.
 
 ## Modules
 

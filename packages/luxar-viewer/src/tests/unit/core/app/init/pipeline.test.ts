@@ -521,7 +521,7 @@ describe('runInitPipeline', () => {
       };
 
       expect(audio.deps.getCamera()).toBeUndefined();
-      expect(audio.deps.getSceneGraph()).toBeNull();
+      expect(audio.deps.getSceneNodeIndex()).toBeNull();
       expect(audio.deps.getSceneScale()).toBe(1);
       expect(audio.deps.resolveNodeCenter('missing')).toBeNull();
       expect(audio.deps.container()).toBeInstanceOf(HTMLElement);

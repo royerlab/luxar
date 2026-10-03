@@ -45,6 +45,7 @@ vi.mock('../../../data/zarr-loader', () => ({
 const setLODGroupRegistryFactory = vi.fn();
 const setRequestRender = vi.fn();
 const setKTX2TextureDecoder = vi.fn();
+const setRefinementDensityProvider = vi.fn();
 const disposeInstance = vi.fn();
 const getProfiler = vi.fn();
 function makeSceneLoaderStub() {
@@ -57,6 +58,7 @@ function makeSceneLoaderStub() {
     },
     nodeFactory: { rebuildAfterContextRestore: vi.fn() },
     isUpdateInProgress: vi.fn(() => false),
+    resumeDensityDeferredRefinement: vi.fn(() => 0),
     updateView: vi.fn(),
     get archiveFault() {
       return archiveFault;
@@ -99,6 +101,7 @@ vi.mock('../../../data/scene-loader-manager', () => ({
     setLODGroupRegistryFactory = setLODGroupRegistryFactory;
     setRequestRender = setRequestRender;
     setKTX2TextureDecoder = setKTX2TextureDecoder;
+    setRefinementDensityProvider = setRefinementDensityProvider;
     setDepthSortCoordinator = setManagerDepthSort;
     getProfiler = getProfiler;
     getLoader = () => currentSceneLoaderStub;
@@ -149,12 +152,13 @@ const updateCameraParams = vi.fn();
 const disposeMaterials = vi.fn();
 const rebuildMaterials = vi.fn();
 const onPhysicalMaterialCreated = vi.fn();
+const registerLayerMaterial = vi.fn();
 // The layer's OWN material manager.
 vi.mock('../../../rendering/material-manager', () => ({
   MaterialManager: class {
     setCaps = (...a: unknown[]) => setCaps(...a);
     updateCameraParams = (...a: unknown[]) => updateCameraParams(...a);
-    register = vi.fn();
+    register = (material: THREE.Material) => registerLayerMaterial(material);
     onPhysicalMaterialCreated = (...a: unknown[]) => onPhysicalMaterialCreated(...a);
     dispose = () => disposeMaterials();
     rebuildAfterContextRestore = () => rebuildMaterials();
@@ -300,7 +304,11 @@ vi.mock('../../../core/app/init/module-overrides', () => ({
 }));
 
 import { LuxarLayer, type LuxarLayerOptions } from '../../../core/layer/luxar-layer';
-import { DensityGuard } from '../../../scene/density-guard';
+import { DensityGuard, getDensityGuard } from '../../../scene/density-guard';
+import {
+  getProjectedDensityTracker,
+  ProjectedDensityTracker,
+} from '../../../scene/projected-density';
 
 function makeOptions(overrides: Partial<LuxarLayerOptions> = {}): LuxarLayerOptions {
   const renderer = {
@@ -510,6 +518,7 @@ describe('LuxarLayer', () => {
           'isUpdateInProgress',
           'getResidentByteBudget',
           'getResidentBytes',
+          'getViewContext',
           'getViewVersion',
           'getViewportSize',
           'registerMaterial',
@@ -546,6 +555,51 @@ describe('LuxarLayer', () => {
       };
       const { deps } = factory({ currentViewVersion: 1 });
       expect(deps.getDisplayDims()).toEqual([]);
+    });
+
+    it('reads its own display dims and registers LOD fade materials with its own manager', () => {
+      const displayed = [1, 2, 3];
+      new LuxarLayer(makeOptions());
+      const factory = setLODGroupRegistryFactory.mock.calls[0][0] as (o: unknown) => {
+        deps: { getDisplayDims: () => number[]; registerMaterial: (m: THREE.Material) => void };
+      };
+      const { deps } = factory({ currentViewVersion: 1 });
+      const material = new THREE.MeshBasicMaterial();
+
+      getDimsMock.mockReturnValue({ ...dimsState, displayed });
+      expect(deps.getDisplayDims()).toEqual(displayed);
+      deps.registerMaterial(material);
+      expect(registerLayerMaterial).toHaveBeenCalledExactlyOnceWith(material);
+    });
+
+    it('leaves the app density tracker configured when a layer is made and disposed', async () => {
+      const tracker = getProjectedDensityTracker();
+      const configure = vi.spyOn(tracker, 'configure');
+      const reset = vi.spyOn(tracker, 'reset');
+      const guardConfigure = vi.spyOn(getDensityGuard(), 'configure');
+      const layer = new LuxarLayer(makeOptions());
+      expect(configure).not.toHaveBeenCalled();
+      expect(guardConfigure).not.toHaveBeenCalled();
+
+      await layer.dispose();
+      expect(reset).not.toHaveBeenCalled();
+      configure.mockRestore();
+      reset.mockRestore();
+      guardConfigure.mockRestore();
+    });
+
+    it('wires the density guard like the app does, honouring the option', () => {
+      new LuxarLayer(makeOptions());
+      // On: the refinement rung gate reads the tracker's records.
+      expect(setRefinementDensityProvider).toHaveBeenLastCalledWith(
+        expect.any(Function),
+        expect.objectContaining({ blendable: expect.any(Number) })
+      );
+
+      setRefinementDensityProvider.mockClear();
+      new LuxarLayer(makeOptions({ densityGuard: false }));
+      // Off: bytes-only admission.
+      expect(setRefinementDensityProvider).toHaveBeenLastCalledWith(null, expect.any(Object));
     });
 
     it('threads the LOD flags through to the registry', () => {
@@ -983,11 +1037,34 @@ describe('LuxarLayer', () => {
       );
     });
 
+    it('measures projected density after the LOD selector, on the layer root', async () => {
+      const evaluate = vi.spyOn(ProjectedDensityTracker.prototype, 'evaluate');
+      const root = new THREE.Group();
+      loadSceneMock.mockResolvedValueOnce(root);
+      const layer = new LuxarLayer(makeOptions());
+      await layer.load('http://example.test/scene.zarr');
+      evaluate.mockClear();
+
+      layer.update();
+
+      expect(evaluate).toHaveBeenCalledTimes(1);
+      // The guard measures the levels this frame shows, so it runs after the
+      // selector has swapped them.
+      expect(evaluate.mock.invocationCallOrder[0]).toBeGreaterThan(
+        (
+          sceneLoaderStub.lodGroupRegistry.evaluatePerFrame as ReturnType<typeof vi.fn>
+        ).mock.invocationCallOrder.at(-1)!
+      );
+      evaluate.mockRestore();
+    });
+
     it('only re-stamps render order after a geometry commit', async () => {
       const root = new THREE.Group();
       const traverse = vi.spyOn(root, 'traverse');
       loadSceneMock.mockResolvedValueOnce(root);
-      const layer = new LuxarLayer(makeOptions());
+      // The density tracker walks the root every frame by design; this test is
+      // about the render-order stamp, so the guard stays out of it.
+      const layer = new LuxarLayer(makeOptions({ densityGuard: false }));
       await layer.load('http://example.test/scene.zarr');
       traverse.mockClear();
 

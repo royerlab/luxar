@@ -28,6 +28,7 @@ import {
   type InstancedGSplatsMeshConfig,
 } from '../../../rendering/gsplat-geometry';
 import { applyEffectiveAttrs } from '../../../data/scene-loader/view-state/effective-attrs';
+import { SceneNodeIndex } from '../../../data/scene-loader/view-state/scene-node-index';
 import type { SceneNode } from '../../../data/data-loader-types';
 
 function makeRgbLut(seed = 0): Uint8Array {
@@ -323,7 +324,7 @@ describe('custom LUT byte-loading', () => {
         ],
       };
       const leaf = graph.children![0].children![0];
-      const effective = applyEffectiveAttrs(graph, leaf);
+      const effective = applyEffectiveAttrs(new SceneNodeIndex(graph), leaf);
 
       const mat = new GSplatMaterial({
         colormapTexture: getColormapTexture(

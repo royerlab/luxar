@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
- * Stress / lifecycle tests for SceneLoader: repeated loadScene → dispose
- * cycles must not accumulate leaked state or in-flight requests.
+ * Stress / lifecycle tests for SceneLoader: repeated load → dispose (one loader
+ * per dataset) cycles must not accumulate leaked state or in-flight requests.
  *
  * The unit tests here are scoped to what the SceneLoader directly owns:
  *
@@ -103,7 +103,7 @@ describe('SceneLoader lifecycle stress', () => {
   });
 
   it(
-    '50× load → dispose cycle leaves loaders/_zarrStore/rootGroup empty each time',
+    '50× load → dispose cycles leave loaders/_zarrStore/rootGroup empty each time',
     // Generous budget: 50 async cycles are fast in isolation (<2s) but this
     // is a stress test running under FULL-SUITE parallelism, where every
     // core is saturated by sibling workers — a 20s budget flaked under
@@ -111,16 +111,20 @@ describe('SceneLoader lifecycle stress', () => {
     { timeout: 60_000 },
     async () => {
       for (let i = 0; i < 50; i++) {
+        // One loader per dataset, as SceneLoaderManager.createLoaderAsync builds them.
+        const loader = new SceneLoader();
         const url = `http://localhost:8000/test-${i}.zarr`;
-        await sceneLoader.loadScene(url);
+        await loader.loadScene(url);
         // After loadScene, the internal _zarrStore is wired up.
-        expect((sceneLoader as any)._zarrStore).not.toBeNull();
-        await sceneLoader.dispose();
+        expect((loader as any)._zarrStore).not.toBeNull();
+        await loader.dispose();
         // After dispose, all transient state is null and loaders is empty.
-        expect((sceneLoader as any).loaders.size).toBe(0);
-        expect((sceneLoader as any)._zarrStore).toBeNull();
-        expect((sceneLoader as any).rootGroup).toBeNull();
-        expect((sceneLoader as any).cachingStore).toBeNull();
+        expect((loader as any).loaders.size).toBe(0);
+        expect((loader as any)._zarrStore).toBeNull();
+        expect((loader as any).rootGroup).toBeNull();
+        expect((loader as any).cachingStore).toBeNull();
+        // Dispose is terminal: the loader refuses a second dataset.
+        await expect(loader.loadScene(url)).rejects.toThrow(/one-shot/);
       }
     }
   );
@@ -172,14 +176,10 @@ describe('SceneLoader lifecycle stress', () => {
     expect((sceneLoader as any).failedLoaders.has(path)).toBe(true);
   });
 
-  // Note on coverage: a "rapid loadScene → loadScene without an explicit
-  // dispose in between must implicitly dispose the first" test was
-  // attempted here but the heavy mocking in this file leaves
-  // `this.loaders.size === 0` after `loadScene`, so the internal
-  // `if (this.loaders.size > 0) { await this.dispose(); }` branch in
-  // scene-loader.ts:439 never fires. The same contract is exercised by
-  // the 50× load → dispose cycle test above (every iteration's
-  // `loadScene` would observe state from the previous cycle if implicit
-  // disposal were broken). End-to-end coverage lives in
-  // `tests/e2e/dataset-switching.spec.ts`.
+  it('a second loadScene on one loader throws instead of reusing it', async () => {
+    await sceneLoader.loadScene('http://localhost:8000/test.zarr');
+    await expect(sceneLoader.loadScene('http://localhost:8000/other.zarr')).rejects.toThrow(
+      /one-shot/
+    );
+  });
 });

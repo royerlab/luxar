@@ -56,6 +56,7 @@ import { LayerApplyEngine } from '../../../../ui/layers/layer-apply';
 import { LayerStateManager } from '../../../../ui/layers/layer-state';
 import { remapWindowToLeafRange, resolveColormapWindow } from '../../../../rendering/display-range';
 import type { SceneNode } from '../../../../data/data-loader-types';
+import { SceneNodeIndex } from '../../../../data/scene-loader/view-state/scene-node-index';
 
 /** A vi-free material stub recording exactly the writes this file asserts on. */
 interface MaterialStub extends Record<string, unknown> {
@@ -216,7 +217,7 @@ function harness(
   state.initFromSceneGraph(graph);
   const engine = new LayerApplyEngine({
     getRootGroup: () => rootGroup,
-    getSceneGraph: () => graph,
+    getSceneNodeIndex: () => new SceneNodeIndex(graph),
     state,
     requestRender: () => {},
     requestReprocess: () => {},

@@ -85,7 +85,7 @@ export function stampLoadedViewVersion(
  *
  * A non-progressive loader has no `hasMoreLODs` getter and stamps
  * complete/energy-1 (a single-set leaf IS its full content), matching the
- * structural-probe idiom used by the refinement scheduling (`queue-next.ts`).
+ * structural-probe idiom used by the refinement scheduling (`LoaderRegistry.kindsWithMoreLODs`).
  * A progressive loader whose dataset carries no `energy_fraction_cum` build
  * stamps reports `committedEnergyFraction: null` — the mesh stamp is then
  * REMOVED (absence = unstamped), so the display gate falls back to committed-
