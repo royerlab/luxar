@@ -663,7 +663,7 @@ describe('SceneLoader', () => {
       expect(sceneLoader.archiveFault).toBe(secondFault);
     });
 
-    it.fails('a refinement kick on an archive-faulted loader releases the lock (no wedge)', async () => {
+    it('a refinement kick on an archive-faulted loader releases the lock (no wedge)', async () => {
       // A lazy LOD level can latch the fault DURING the load; load-scene then
       // kicks the post-load refinement unconditionally. The run returns at once
       // on the fault, so the lock it was handed must not stay held: a held lock

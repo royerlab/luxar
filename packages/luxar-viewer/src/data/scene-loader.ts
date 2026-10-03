@@ -1720,10 +1720,9 @@ export class SceneLoader {
    */
   private async scheduleProgressiveRefinement(): Promise<void> {
     if (this._disposed || this._archiveFault) {
-      // Do not release the serialization lock here. Production lock-owning callers
-      // enter this method synchronously before a fault can interleave; the faulting
-      // update ends its pass without scheduling refinement, so this guard cannot
-      // follow a lock handoff.
+      // Unreachable through `PassScheduler.startRefinement`, which releases the
+      // lock instead of starting a run on a disposed or faulted loader (the
+      // post-load kick can follow a fault a lazy level latched during the load).
       return;
     }
 

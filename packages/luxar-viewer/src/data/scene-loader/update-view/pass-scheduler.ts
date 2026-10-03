@@ -483,8 +483,18 @@ export class PassScheduler {
    * held). An error escaping the orchestrator glue — each loop releases the
    * lock in its own `finally`, so this is a double fault — releases the lock
    * and drains whatever queued meanwhile, or the viewer would freeze.
+   *
+   * A disposed or archive-faulted loader runs no drain: the lock is released
+   * (and what queued drained) instead. The post-load kick calls in
+   * unconditionally, and a lazy LOD level can latch the fault during the load —
+   * a lock taken for a run that never starts would be held forever, parking
+   * every view and refusing every retry.
    */
   startRefinement(failureLabel: string): void {
+    if (this.host.isDisposed() || this.host.isFaulted()) {
+      this.releaseAndDrain();
+      return;
+    }
     this.locked = true;
     this.host.runRefinement().catch((error: unknown) => {
       log.error(Modules.SCENE_LOADER, `${failureLabel}: ${getErrorMessage(error)}`);
