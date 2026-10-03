@@ -225,7 +225,8 @@ function readTruncate(mesh: THREE.Mesh): number {
 
 /**
  * Project GSplats to 3D on a worker thread. Only when the pool has no worker
- * at all (`WorkerUnavailableError`) does it degrade to the in-process
+ * for the call (`WorkerUnavailableError`: none at all, or its worker was
+ * evicted before replying) does it degrade to the in-process
  * dispatcher — the *same* projection kernel run on the main thread — rather
  * than a separate hand-written copy.
  *

@@ -97,9 +97,9 @@ export class WorkerUnavailableError extends Error {
 
 /**
  * True only for an ESTABLISHED failure of the worker infrastructure — the pool
- * could not spawn a worker, or had none left. The work never reached a kernel,
- * so re-running it on the main thread is the only executor left and cannot
- * reproduce a kernel fault.
+ * could not spawn a worker, had none left, or evicted the worker a call was
+ * waiting on (a crash, or another call's timeout) before it replied. No kernel
+ * answered, so re-running the work on the main thread is the executor left.
  *
  * Everything else fails closed and propagates:
  *

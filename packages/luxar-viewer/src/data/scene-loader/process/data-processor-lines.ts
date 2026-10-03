@@ -372,8 +372,9 @@ function toProcessedLines(
 
 /**
  * Project nD lines to a 3D instance-buffer set on a worker thread. Only when
- * the pool has no worker at all (`WorkerUnavailableError`) does it fall back
- * to the in-process dispatcher (the same kernel run on the main thread) with
+ * the pool has no worker for the call (`WorkerUnavailableError`: none at all,
+ * or its worker was evicted before replying) does it fall back to the
+ * in-process dispatcher (the same kernel run on the main thread) with
  * a warning log.
  *
  * Every other failure propagates. A rejection that came back FROM the worker

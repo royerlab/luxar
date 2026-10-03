@@ -118,6 +118,12 @@ export class WorkerPool {
   /** Settles {@link readyPromise}: no argument resolves, an error rejects. */
   private settleReady: ((error?: unknown) => void) | null = null;
   private nextWorkerIndex = 0;
+  /**
+   * Rejectors of the calls in flight on each worker. A terminated worker never
+   * replies, and Comlink settles a call only from the reply, so eviction and
+   * `dispose()` reject these instead of leaving the callers parked forever.
+   */
+  private readonly inFlightCalls = new Map<Worker, Set<(error: Error) => void>>();
   /** Worker-side in-flight accounting for the `worker.*` perf counters only. */
   private readonly dispatchTracker = new DispatchTracker();
   /** Lazy, one-worker-first blosc codec warm-up (see `worker-pool/codec-warmup.ts`). */
@@ -454,13 +460,8 @@ export class WorkerPool {
    * worker so a crash inside the worker (uncaught throw, OOM during WASM
    * init, unserializable Comlink message) surfaces as a logged failure
    * and is removed from the active pool, rather than escaping to the
-   * browser's `window.onerror` and freezing requests that are awaiting
-   * Comlink replies from this worker.
-   *
-   * Note: this is a best-effort safety net. Comlink-wrapped calls that
-   * are mid-flight when the worker dies will still hang their callers —
-   * route hot paths through {@link runWithTimeout} for the per-call
-   * timeout that complements this handler.
+   * browser's `window.onerror`. The eviction rejects the calls still in
+   * flight on it (see {@link handleWorkerFailure}).
    */
   private attachWorkerErrorHandlers(worker: Worker, workerNumber: number): void {
     attachWorkerErrorHandlers(worker, workerNumber, (w, reason) =>
@@ -469,13 +470,17 @@ export class WorkerPool {
   }
 
   /**
-   * Remove a failed worker from the pool and terminate it. If this drops
-   * the pool to zero workers, log a clear error so the surrounding
-   * application can decide whether to fall back to the main-thread
-   * implementation or surface a failure dialog.
+   * Remove a failed worker from the pool and terminate it, rejecting every
+   * call still in flight on it with {@link WorkerUnavailableError} (the
+   * terminated worker will never answer them). If this drops the pool to zero
+   * workers, log a clear error so the surrounding application can decide
+   * whether to fall back to the main-thread implementation or surface a
+   * failure dialog.
    */
   private handleWorkerFailure(worker: Worker, reason: string): void {
     const outcome = evictFailedWorker(this.workers, worker, reason);
+    if (outcome === 'idempotent') return;
+    this.rejectInFlight(worker, `worker evicted (${reason})`);
     if (outcome !== 'pool-empty') return;
     // Since workers are published incrementally, an empty pool no longer means
     // "this attempt finished and produced nothing" — worker 1 can die while
@@ -593,8 +598,8 @@ export class WorkerPool {
    * Run a worker call through {@link withTimeout} on a least-busy
    * worker. The single production entry point for any Comlink-routed call
    * that needs a hang-detection guard — direct `await` against a worker
-   * `Remote` lets a dead worker hang the caller forever (the `onerror`
-   * handler can't settle a Comlink promise that's already in flight).
+   * `Remote` has none, and a worker that is stuck rather than dead is never
+   * evicted, so nothing would settle the call.
    *
    * On timeout the responsible worker is evicted via
    * {@link handleWorkerFailure} and the caller receives a
@@ -695,7 +700,7 @@ export class WorkerPool {
   ): Promise<T> {
     let workerPromise: Promise<T>;
     try {
-      const task = fn(tracked.api);
+      const task = this.settleOnEviction(tracked.worker, fn(tracked.api));
       this.dispatchTracker.dispatch(tracked.worker, this.workers, task);
       workerPromise = this.withTimeout(op, task, this.pickTimeoutMs(kind), tracked.worker);
     } catch (error) {
@@ -707,6 +712,39 @@ export class WorkerPool {
       () => tracked.markQueryEnd()
     );
     return workerPromise;
+  }
+
+  /**
+   * `call` raced against the eviction of `worker`: settles with `call`, or
+   * rejects with {@link WorkerUnavailableError} once the worker is evicted or
+   * the pool disposed while the call is still in flight.
+   */
+  private settleOnEviction<T>(worker: Worker, call: Promise<T>): Promise<T> {
+    let calls = this.inFlightCalls.get(worker);
+    if (!calls) {
+      calls = new Set();
+      this.inFlightCalls.set(worker, calls);
+    }
+    const pending = calls;
+    let reject!: (error: Error) => void;
+    const evicted = new Promise<never>((_, rejectEvicted) => {
+      reject = rejectEvicted;
+    });
+    pending.add(reject);
+    const settled = (): void => {
+      pending.delete(reject);
+    };
+    call.then(settled, settled);
+    return Promise.race([call, evicted]);
+  }
+
+  /** Reject every call in flight on `worker` and forget the worker. */
+  private rejectInFlight(worker: Worker, reason: string): void {
+    const calls = this.inFlightCalls.get(worker);
+    this.inFlightCalls.delete(worker);
+    if (!calls) return;
+    const error = new WorkerUnavailableError(`[WorkerPool] Call abandoned: ${reason}`);
+    for (const reject of calls) reject(error);
   }
 
   /**
@@ -842,6 +880,7 @@ export class WorkerPool {
       log.info(Modules.WORKER_POOL, `Terminating ${this.workers.length} data worker(s)`);
       for (const { worker } of this.workers) {
         worker.terminate();
+        this.rejectInFlight(worker, 'pool disposed');
       }
       this.workers = [];
     }

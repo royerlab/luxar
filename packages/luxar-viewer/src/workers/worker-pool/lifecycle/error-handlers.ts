@@ -17,13 +17,9 @@ import type { WorkerInstance } from '../types';
  * worker so a crash inside the worker (uncaught throw, OOM during WASM
  * init, unserializable Comlink message) surfaces as a logged failure
  * and is removed from the active pool, rather than escaping to the
- * browser's `window.onerror` and freezing requests that are awaiting
- * Comlink replies from this worker.
- *
- * Note: this is a best-effort safety net. Comlink-wrapped calls that
- * are mid-flight when the worker dies will still hang their callers —
- * route hot paths through `runWithTimeout` for the per-call timeout
- * that complements this handler.
+ * browser's `window.onerror`. The pool's `onFailure` also rejects the
+ * calls still awaiting a Comlink reply from this worker, which a
+ * terminated worker never sends.
  *
  * @param onFailure Called with `(worker, reason)` so the pool can run
  *   its eviction + post-eviction state mutation.

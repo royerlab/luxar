@@ -38,7 +38,12 @@ async function loadWorkerPool(workerCount: number) {
   }));
 
   vi.doMock('comlink', () => ({
-    wrap: vi.fn(() => ({ initialize: vi.fn(async () => {}) })),
+    // `hang` stands for any task the worker never answers: Comlink settles a
+    // call only from the worker's reply, which a terminated worker never sends.
+    wrap: vi.fn(() => ({
+      initialize: vi.fn(async () => {}),
+      hang: vi.fn(() => new Promise<never>(() => {})),
+    })),
   }));
 
   vi.doMock('../../../../../workers/data-worker?worker', () => ({
@@ -147,5 +152,77 @@ describe('WorkerPool runtime-error handling', () => {
     await pool.initialize();
     expect(pool.getWorkerCount()).toBe(1);
     expect(workers).toHaveLength(2); // first crashed, second freshly created
+  });
+});
+
+/** What `call` settled with, or `'pending'` if it had not settled by the deadline. */
+async function settledWithin(call: Promise<unknown>, ms = 20): Promise<unknown> {
+  return Promise.race([
+    call.then(
+      (value: unknown) => ({ value }),
+      (error: unknown) => error
+    ),
+    new Promise((resolve) => setTimeout(() => resolve('pending'), ms)),
+  ]);
+}
+
+type HangApi = { hang: () => Promise<never> };
+
+/** Let `runWithTimeout`'s worker selection run, so the calls reach a worker. */
+const dispatched = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+describe('WorkerPool in-flight calls on an evicted worker', () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    vi.stubGlobal('navigator', { hardwareConcurrency: 16 });
+  });
+
+  it('rejects every call in flight on a worker evicted by a runtime error', async () => {
+    // No per-call timeout is configured, so nothing but the eviction can
+    // settle these calls: a terminated worker never replies.
+    const { WorkerPool, WorkerUnavailableError, workers } = await loadWorkerPool(1);
+    const pool = new WorkerPool();
+    await pool.initialize();
+
+    const run = (): Promise<unknown> =>
+      pool.runWithTimeout('hang', 'projection', (api) => (api as unknown as HangApi).hang());
+    const first = run();
+    const second = run();
+    await dispatched();
+
+    workers[0].onerror?.({ message: 'OOM', preventDefault: vi.fn() });
+
+    expect(await settledWithin(first)).toBeInstanceOf(WorkerUnavailableError);
+    expect(await settledWithin(second)).toBeInstanceOf(WorkerUnavailableError);
+  });
+
+  it('leaves calls on the surviving workers in flight', async () => {
+    const { WorkerPool, workers } = await loadWorkerPool(2);
+    const pool = new WorkerPool();
+    await pool.initialize();
+
+    // Least-busy routing puts one call on each worker.
+    const calls = [0, 1].map(() =>
+      pool.runWithTimeout('hang', 'projection', (api) => (api as unknown as HangApi).hang())
+    );
+    await dispatched();
+    workers[0].onerror?.({ message: 'OOM', preventDefault: vi.fn() });
+
+    const outcomes = await Promise.all(calls.map((c) => settledWithin(c)));
+    expect(outcomes.filter((o) => o === 'pending')).toHaveLength(1);
+  });
+
+  it('rejects calls in flight when the pool is disposed', async () => {
+    const { WorkerPool, WorkerUnavailableError } = await loadWorkerPool(1);
+    const pool = new WorkerPool();
+    await pool.initialize();
+
+    const call = pool.runWithTimeout('hang', 'projection', (api) =>
+      (api as unknown as HangApi).hang()
+    );
+    await dispatched();
+    pool.dispose();
+
+    expect(await settledWithin(call)).toBeInstanceOf(WorkerUnavailableError);
   });
 });
