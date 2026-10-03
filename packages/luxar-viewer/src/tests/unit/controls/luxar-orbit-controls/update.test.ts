@@ -654,7 +654,7 @@ describe('runUpdateStep — the damped tail ends below float32 resolution', () =
   const rotation = (angle: number): THREE.Quaternion =>
     new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);
 
-  it.fails('drops a remaining rotation of 1e-8 rad instead of applying it', () => {
+  it('drops a remaining rotation of 1e-8 rad instead of applying it', () => {
     const { ctx } = makeCtx({ enableDamping: true, rotationDelta: rotation(1e-8) });
     expect(runUpdateStep(ctx)).toBe(false);
     expect(ctx.rotationDelta.equals(new THREE.Quaternion())).toBe(true);
@@ -665,7 +665,7 @@ describe('runUpdateStep — the damped tail ends below float32 resolution', () =
     expect(runUpdateStep(ctx)).toBe(true);
   });
 
-  it.fails('drops a remaining pan of 1e-9 of the camera distance instead of applying it', () => {
+  it('drops a remaining pan of 1e-9 of the camera distance instead of applying it', () => {
     const { ctx, state } = makeCtx({ enableDamping: true });
     ctx.panDelta.set(1e-9 * state.distance, 0, 0);
     expect(runUpdateStep(ctx)).toBe(false);
@@ -679,7 +679,7 @@ describe('runUpdateStep — the damped tail ends below float32 resolution', () =
     expect(runUpdateStep(ctx)).toBe(true);
   });
 
-  it.fails('ends the damped tail of a drag-sized rotation within 50 frames', () => {
+  it('ends the damped tail of a drag-sized rotation within 50 frames', () => {
     // 0.01 rad at damping 0.25: the 1e-12 gate ran the tail 78 frames.
     const { ctx } = makeCtx({ enableDamping: true, rotationDelta: rotation(0.01) });
     let moved = 0;
