@@ -121,8 +121,15 @@ export interface DecompressedChunkCacheStats {
  * ```
  */
 export class DecompressedChunkCache {
-  /** Default cache size derived from config.cache.l0MaxSizeMB */
-  private static readonly DEFAULT_MAX_SIZE = config.cache.l0MaxSizeMB * 1024 * 1024;
+  /**
+   * Default cache size derived from config.cache.l0MaxSizeMB. A method, not a
+   * static initializer, like `SliceCache.defaultMaxSize`: reading config at
+   * module-load time couples every transitive importer to a fully-populated
+   * config mock in tests.
+   */
+  private static defaultMaxSize(): number {
+    return config.cache.l0MaxSizeMB * 1024 * 1024;
+  }
 
   /** Metadata overhead estimate per chunk (shape array, stride array, object wrapper) */
   private static readonly METADATA_OVERHEAD = 64;
@@ -142,7 +149,7 @@ export class DecompressedChunkCache {
   private readonly maxSize: number;
 
   constructor(options?: DecompressedChunkCacheOptions) {
-    const maxSize = options?.maxSize ?? DecompressedChunkCache.DEFAULT_MAX_SIZE;
+    const maxSize = options?.maxSize ?? DecompressedChunkCache.defaultMaxSize();
     this.maxSize = maxSize;
     this.debug = options?.debug ?? false;
 
@@ -307,24 +314,5 @@ export class DecompressedChunkCache {
    */
   static makeKey(arrayPath: string, chunkCoords: number[]): string {
     return `${arrayPath}:${chunkCoords.join(',')}`;
-  }
-
-  /**
-   * Parse a cache key back into array path and chunk coordinates.
-   *
-   * @param key - Cache key to parse
-   * @returns Parsed components or null if invalid key format
-   */
-  static parseKey(key: string): { arrayPath: string; chunkCoords: number[] } | null {
-    const colonIndex = key.lastIndexOf(':');
-    if (colonIndex === -1) return null;
-
-    const arrayPath = key.substring(0, colonIndex);
-    const coordsStr = key.substring(colonIndex + 1);
-    const chunkCoords = coordsStr.split(',').map(Number);
-
-    if (chunkCoords.some(isNaN)) return null;
-
-    return { arrayPath, chunkCoords };
   }
 }

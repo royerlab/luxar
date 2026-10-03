@@ -20,7 +20,7 @@ export interface ResolvedRefTarget {
  * (`wrapWithCache(array, l0, targetPath, hooks)`), so target reads hit the
  * decompressed-chunk cache exactly like the loader's own attribute arrays.
  * Injected (rather than imported) so this module stays free of the cache
- * module's config-reading static initializer.
+ * module and its config import.
  */
 export interface RefTargetWrapper {
   /** Wrap the freshly opened target; `targetPath` is the store-absolute path. */

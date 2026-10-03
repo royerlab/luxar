@@ -9,9 +9,9 @@
  * does neither: it joins/starts the cache-wide decode with the caller's own
  * signal, no probe, and (by default) origin `'prefetch'`.
  *
- * Kept dependency-free (no `DecompressedChunkCache` import, whose static
- * initializer reads config) so data-layer helpers can call it without pulling
- * the cache module into their import graph; the proxy implements the method.
+ * Kept dependency-free (no `DecompressedChunkCache` import) so data-layer
+ * helpers can call it without pulling the cache module into their import
+ * graph; the proxy implements the method.
  *
  * @module cache/decompressed-chunk-cache/warm-chunk
  */
