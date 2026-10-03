@@ -17,6 +17,10 @@ function fakeGL() {
     texImage3D: upload(),
     texSubImage2D: upload(),
     texSubImage3D: upload(),
+    compressedTexImage2D: upload(),
+    compressedTexImage3D: upload(),
+    compressedTexSubImage2D: upload(),
+    compressedTexSubImage3D: upload(),
   };
 }
 
@@ -119,6 +123,24 @@ describe('upload-counters', () => {
       gl.texImage2D(1, 0, 2, 3, 4, {});
       expect(calls()).toBe(1);
       expect(bytes()).toBe(0);
+    });
+
+    it.fails('counts compressed texture uploads (KTX2 on WebGL) by the block bytes they read', () => {
+      const gl = fakeGL();
+      wrapWebGLUploads(gl);
+      // compressedTexImage2D(target, level, fmt, w, h, border, data[, srcOffset, length])
+      gl.compressedTexImage2D(1, 0, 2, 8, 8, 0, new Uint8Array(32)); // 32 B
+      gl.compressedTexImage2D(1, 0, 2, 8, 8, 0, new Uint8Array(32), 8, 16); // 16 B
+      gl.compressedTexImage2D(1, 0, 2, 8, 8, 0, 32, 0); // PBO form: 0 B
+      // compressedTexImage3D(target, level, fmt, w, h, d, border, data, …)
+      gl.compressedTexImage3D(1, 0, 2, 4, 4, 2, 0, new Uint8Array(64)); // 64 B
+      // compressedTexSubImage2D(target, level, x, y, w, h, fmt, data, …)
+      gl.compressedTexSubImage2D(1, 0, 0, 0, 4, 4, 2, new Uint8Array(16)); // 16 B
+      // compressedTexSubImage3D(target, level, x, y, z, w, h, d, fmt, data, …)
+      gl.compressedTexSubImage3D(1, 0, 0, 0, 0, 4, 4, 1, 2, new Uint8Array(16), 0, 8); // 8 B
+      expect(textureBytes()).toBe(32 + 16 + 64 + 16 + 8);
+      expect(bufferBytes()).toBe(0);
+      expect(calls()).toBe(6);
     });
 
     it('wraps only once', () => {
