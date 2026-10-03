@@ -83,7 +83,7 @@ describe('WindowEventHandler', () => {
   });
 
   describe('attach + cleanup lifecycle', () => {
-    it.fails('appends five cleanup thunks (resize, wheel, fullscreen×2, the pending fullscreen frame)', () => {
+    it('appends five cleanup thunks (resize, wheel, fullscreen×2, the pending fullscreen frame)', () => {
       const { sceneManager } = makeSceneManager();
       const { animationController } = makeAnimationController();
       const handler = new WindowEventHandler(sceneManager, animationController);
@@ -496,7 +496,7 @@ describe('WindowEventHandler', () => {
       expect(startAnimation).toHaveBeenCalledTimes(1);
     });
 
-    it.fails('cancels the deferred resize frame on cleanup', async () => {
+    it('cancels the deferred resize frame on cleanup', async () => {
       // A fullscreen exit just before dispose must not resize a torn-down
       // scene manager one frame later.
       const { sceneManager, updateSize } = makeSceneManager();
