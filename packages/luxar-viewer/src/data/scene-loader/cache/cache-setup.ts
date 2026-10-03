@@ -23,8 +23,10 @@ import {
   deviceClassPoolBytes,
   type CacheBudgets,
 } from '../../../cache/heap-budget';
+import type { ChunkSource } from '../../../cache/chunk-source';
 import { ZipChunkSource } from '../../../cache/chunk-source/zip-chunk-source';
 import { HttpChunkSource } from '../../../cache/chunk-source/http-chunk-source';
+import { PackedChunkSource } from '../../../cache/chunk-source/packed-chunk-source';
 import {
   claimRootDocument,
   releaseRootDocument as releaseRootDocumentEntry,
@@ -64,6 +66,13 @@ export interface CacheSetupResult {
   /** Shared SliceCache ("S-cache") for per-slice decoded-geometry reuse. */
   sliceCache: SliceCache | null;
   cachingStore: MultiLevelCachingStore | null;
+  /**
+   * The source under the caching store that serves a packed store's small nodes
+   * from one request each (`luxar optimize --pack`); hand it the store's index
+   * with `adoptChunkPacks`. `null` without the caching store (`?noCache`), where
+   * every read is plain.
+   */
+  chunkPacks: PackedChunkSource | null;
   rawStore: zarr.AsyncReadable;
   /**
    * Resolved cache telemetry state for the UI monitor. Reflects the
@@ -202,28 +211,27 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
 
   let rawStore: zarr.AsyncReadable;
   let cachingStore: MultiLevelCachingStore | null = null;
+  let chunkPacks: PackedChunkSource | null = null;
   const releasers: Array<() => void> = [];
 
   if (l1Enabled) {
-    cachingStore = new MultiLevelCachingStore(
-      chunkSourceFor(url, zipped, rootDocument, releasers),
-      {
-        l1MaxSize: budgets.l1Bytes,
-        l2MaxSize: appConfig.cache.l2MaxSizeMB * 1024 * 1024,
-        // The L2 write queue's retained-byte ceiling comes from the same
-        // memory model, so the `?cacheBudgetMB=` / native-launcher override and
-        // the device-class fallback feed it exactly like the tiers above.
-        opfsWriteQueueMaxBytes: computeOpfsWriteQueueBudgetBytes(
-          undefined,
-          poolOverrideBytes,
-          fallbackPoolBytes
-        ),
-        debug: cacheDebug || appConfig.cache.debug,
-        noCache,
-        noOpfs,
-        clearCache,
-      }
-    );
+    chunkPacks = new PackedChunkSource(chunkSourceFor(url, zipped, rootDocument, releasers));
+    cachingStore = new MultiLevelCachingStore(chunkPacks, {
+      l1MaxSize: budgets.l1Bytes,
+      l2MaxSize: appConfig.cache.l2MaxSizeMB * 1024 * 1024,
+      // The L2 write queue's retained-byte ceiling comes from the same
+      // memory model, so the `?cacheBudgetMB=` / native-launcher override and
+      // the device-class fallback feed it exactly like the tiers above.
+      opfsWriteQueueMaxBytes: computeOpfsWriteQueueBudgetBytes(
+        undefined,
+        poolOverrideBytes,
+        fallbackPoolBytes
+      ),
+      debug: cacheDebug || appConfig.cache.debug,
+      noCache,
+      noOpfs,
+      clearCache,
+    });
     await cachingStore.init();
     if (noOpfs) {
       log.info(Modules.SCENE_LOADER, 'L2 OPFS tier disabled via ?noOpfs URL parameter');
@@ -285,6 +293,7 @@ export async function setupCaches(url: string, flags: CacheSetupFlags): Promise<
     l0Cache,
     sliceCache,
     cachingStore,
+    chunkPacks,
     rawStore,
     telemetryState,
     budgets,
@@ -331,9 +340,9 @@ function chunkSourceFor(
   zipped: boolean,
   rootDocument: Promise<RootDocumentFetch> | null,
   releasers: Array<() => void>
-): string | ZipChunkSource | SharedRootDocumentSource {
+): ChunkSource {
   if (zipped) return new ZipChunkSource(url, new LuxarZipStore(url));
-  if (!rootDocument) return url;
+  if (!rootDocument) return new HttpChunkSource(url);
   const source = new SharedRootDocumentSource(new HttpChunkSource(url), rootDocument);
   releasers.push(() => source.release());
   return source;

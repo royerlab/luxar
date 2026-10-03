@@ -11,6 +11,7 @@ telemetry) — no zarr, no THREE.js, no monitor.
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `cache-setup.ts` | `setupCaches(url, flags)` — builds the L0 (`DecompressedChunkCache`) + L1/L2 (`MultiLevelCachingStore`) layers, attaches the `ChunkPrefetcher`, registers L0 invalidation on L1/L2 clear, and resolves the `CacheTelemetryState` for the monitor UI. Returns the raw store the Luxar Zarr facade opens.                        |
 | `cache-api.ts`   | Pure get/clear/list surface for the three cache levels — `getCacheStats`, `listCachedDatasets`, `clearL0Cache`, `clearL1Cache`, `clearL2Cache`, `clearAllCaches`. Each no-ops when its layer is `null` (URL `?noCache` or app-config disable). Defines the `CacheStatsSnapshot` shape `__luxarDebug.cache.getStats()` returns. |
+| `chunk-packs.ts` | `adoptChunkPacks(packs, rootLoc, contentHash)` — hands a packed store's `chunk_packs` index (`luxar optimize --pack`) to the `PackedChunkSource` `setupCaches` puts under the caching store. Opens the sidecar only when the consolidated index lists it, so an unpacked store costs nothing; never fails a load.              |
 
 ## Consumers
 

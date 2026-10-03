@@ -61,6 +61,7 @@ import type {
 } from '../../scene-loader-monitor-port';
 import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
 import { setupCaches } from '../cache/cache-setup';
+import { adoptChunkPacks } from '../cache/chunk-packs';
 import { wireMonitorAfterLoad } from '../monitor/monitor-wiring';
 import { createCommittedLODCountReader } from '../monitor/committed-lod-reader';
 import { createDrawOrderProvider } from '../monitor/draw-order-provider';
@@ -330,6 +331,11 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const rootZarrGroup = await zarr.openGroupPreferV3(rootLoc);
   markLoad('metadataReady');
   const sceneAttrs = rootZarrGroup.attrs as ZarrSceneAttrs;
+  await adoptChunkPacks(
+    cacheResult.chunkPacks,
+    rootLoc,
+    (sceneAttrs as Record<string, unknown>).content_hash
+  );
 
   // Watch the dataset's identity from here on: a demo/dev server dying and a
   // different one later binding the same port would otherwise leave this tab

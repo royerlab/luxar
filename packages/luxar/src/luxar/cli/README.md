@@ -180,6 +180,7 @@ luxar optimize scene.luxar.zarr out.luxar.zarr --profile archive  # 1 MB
 luxar optimize scene.luxar.zarr out.luxar.zarr --verify      # re-read + compare every array
 luxar optimize fit.gsplats.zarr fit_opt.gsplats.zarr         # standalone gsplat trees
 luxar optimize arbitrary.zarr out.zarr --generic             # plain zarr
+luxar optimize scene.luxar.zarr out.luxar.zarr --pack        # + chunk packs (scenes only)
 ```
 
 dtype, codecs, filters, `fill_value`, memory order, the chunk key layout, the

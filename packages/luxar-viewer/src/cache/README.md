@@ -991,6 +991,13 @@ await window.__luxarDebug.cache.clearAll();
   has to import a concrete store to read through it.
 - `chunk-source/http-chunk-source.ts` — the directory-store source: one
   retrying HTTP request per chunk, owning the response lifetime.
+- `chunk-source/packed-chunk-source.ts` — wraps the store's source and serves a
+  packed store's small nodes (`luxar optimize --pack`) from ONE request each:
+  every member key gets its own bytes sliced from the pack, so L0/L1/L2 cache
+  exactly what plain reads would have. Adopts the `chunk_packs` index only for
+  the root `content_hash` it was built for (`adoptChunkPacks`, data layer), and
+  reads plainly when a pack is missing, fails its SHA-256, or lacks the key. Unadopted,
+  it is the inner source.
 - `chunk-source/zip-chunk-source.ts` — the zipped-store source: members read out
   of one archive, identity from a probe on the archive, and archive-level faults
   reported as `fatal` so the store rethrows instead of rendering an empty scene.

@@ -127,6 +127,15 @@ def register_optimize_command(app: typer.Typer) -> None:
         generic: bool = typer.Option(
             False, "--generic", help="Allow a plain (non-Luxar) zarr store"
         ),
+        pack: bool = typer.Option(
+            False,
+            "--pack",
+            help=(
+                "Also write chunk packs: one extra object per small node (<= 64 KB "
+                "of chunks) so the viewer fetches it in one request. Opt-in: the "
+                "plain chunks stay, so every zarr reader still opens the store"
+            ),
+        ),
     ) -> None:
         """Re-chunk a zarr store for streaming — values stay bit-identical.
 
@@ -172,6 +181,7 @@ def register_optimize_command(app: typer.Typer) -> None:
                 overwrite=overwrite,
                 verify=verify,
                 generic=generic,
+                pack=pack,
             )
         except typer.Exit:
             raise

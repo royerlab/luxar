@@ -346,6 +346,14 @@ luxar optimize scene.luxar.zarr --dry-run                  # report the plan, wr
 luxar optimize scene.luxar.zarr out.luxar.zarr --profile hosting  # hosting 256 KB / local 64 KB / archive 1 MB
 luxar optimize scene.luxar.zarr out.luxar.zarr --verify    # re-read the output, compare every array
 luxar optimize arbitrary.zarr out.zarr --generic           # a plain (non-Luxar) zarr store
+# `--pack` (opt-in, compiled scenes only) also writes a `chunk_packs/` sidecar:
+# per geometry node of <= 64 KB of chunks, ONE extra object holding copies of
+# them, so the viewer reads the node in one request instead of one per chunk —
+# the win for many-tiny-node stores (laddered timelapse partitions), nothing
+# for nodes already at the chunk target. Plain chunks stay (still a plain zarr
+# store), content_hash is unchanged, and the sidecar records the hash it was
+# built for, so an edit that restamps the hash makes the viewer ignore it.
+luxar optimize scene.luxar.zarr out.luxar.zarr --pack
 # Re-derive a store's LOD switch thresholds IN PLACE — attrs only, no chunk data
 # moves. Every `kind=lod` group still on the legacy `coverage` diagonal metric
 # (or carrying no `selector`) gets screen-occupancy-halved thresholds and a

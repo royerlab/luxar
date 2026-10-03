@@ -1467,6 +1467,66 @@ bits. `luxar optimize` copies the array verbatim and restamps its
 likewise updates the stamp after changing the scene digest (`luxar info` does
 not list the group).
 
+## Chunk Packs (`chunk_packs/` sidecar)
+
+**`chunk_packs/` group** (optional; written only by `luxar optimize --pack`):
+COPIES of small geometry nodes' chunk objects, so a viewer can fetch such a node
+in one request instead of one per chunk. A laddered timelapse part is typically
+a dozen ~1 KB chunks, and its cost is round trips, not bytes.
+
+```
+chunk_packs/                        # a SIDECAR: no `type`, no `kind` attr
+├── zarr.json                       # attrs, below
+├── 0.pack                          # plain files, one per packed node
+└── 1.pack …
+```
+
+```json
+{
+  "scene_content_hash": "…",        // the root content_hash the packs were built for
+  "max_bytes": 65536,               // the size limit used, in stored chunk bytes
+  "packs": [
+    {
+      "key": "chunk_packs/0.pack",  // the pack file, as a store key
+      "sha256": "…",                // of the whole file
+      "prefix": "splats/part_0/"    // the packed node
+    }
+  ]
+}
+```
+
+A pack file is a 4-byte little-endian header length, a UTF-8 JSON header
+`{"members": {"additive_0/centers/c/0": [offset, length], …}}` (chunk keys
+relative to `prefix`, offsets into the data after the header), then the chunk
+bytes back to back. Every chunk object the node stores is a member, so the
+index needs no member list; it stays ~150 B per pack because it rides in the
+root's consolidated metadata, which every load fetches first. (A first design
+listed the members in the attrs: +637 KB, +7.6%, on tp50's 8.4 MB root.)
+
+A node is packed whole, rungs included, when its stored chunk bytes are at most
+`max_bytes` (64 KB, the chunk policy's target, so a pack is never a bigger
+object than an ordinary chunk) and it has at least two chunk objects. A larger
+node is not packed, but its typed children (an additive ladder's rungs) may be.
+Containers (`type: "group"`: partitions, lod groups) are never packed whole, so
+lod levels never shown together are never fetched together.
+
+The rules that keep it safe are the `environment/` sidecar's. The group carries
+neither `type` nor `kind`, so the viewer's node discovery skips it, and it is in
+`RESERVED_ROOT_GROUPS`. It is **excluded from the scene `content_hash`**
+(`HASH_EXCLUDED_ROOT_GROUPS`): packing changes no chunk, so the hash and every
+warm cache keyed on it stay valid. A reader therefore uses the packs only when
+`scene_content_hash` equals the root `content_hash`; any later edit that
+restamps the hash makes them stale, and they are ignored. The viewer also checks
+each pack's length and SHA-256 and reads the plain chunks when either fails.
+Every plain chunk stays where it was, so zarr-python, napari and viewers that
+predate packs read the store as if the sidecar were absent (the pack files are
+plain keys in a group: a consolidated open never lists them, and an
+unconsolidated member walk skips them with zarr's usual unrecognised-object
+warning, as it does an overlay image). `luxar optimize` never copies the
+sidecar: `--pack` rebuilds it for the output, and without `--pack` the output
+has none. Only compiled scenes (root `type: "scene"`) can be packed: their hash
+is the one that excludes the sidecar.
+
 ## Layers (Viewer Panel)
 
 Any scene-graph node — `points`, `lines`, `gsplats`, `mesh`, or a container

@@ -17,6 +17,9 @@ DEFAULT_ZARR_VERSION: Final[str] = SCENE_FORMAT_VERSION  # Alias for default ver
 
 # Root-level groups that are NOT scene nodes.
 #
+# ``chunk_packs`` holds ``luxar optimize --pack`` copies of small nodes' chunks
+# (``luxar.io.chunk_pack``); untyped and hash-excluded for the same reasons.
+#
 # ``environment`` holds a baked environment map (``luxar env bake`` /
 # ``luxar env attach``; ``MESH_PHYSICAL_MATERIALS_SPEC.md`` §3.3). It carries no
 # ``type`` and no ``kind`` attr — the viewer's node discovery skips exactly such
@@ -29,8 +32,14 @@ DEFAULT_ZARR_VERSION: Final[str] = SCENE_FORMAT_VERSION  # Alias for default ver
 # ``cli/info_command.py``); the compiler refuses a USER node under any of these
 # names.
 ENVIRONMENT_GROUP: Final[str] = "environment"
+CHUNK_PACKS_GROUP: Final[str] = "chunk_packs"
 RESERVED_ROOT_GROUPS: Final[frozenset[str]] = frozenset(
-    {ENVIRONMENT_GROUP, "fitting", "provenance", "pipeline"}
+    {ENVIRONMENT_GROUP, CHUNK_PACKS_GROUP, "fitting", "provenance", "pipeline"}
+)
+#: Root-level sidecars DERIVED from the scene, which record the scene digest
+#: they were built for and so must not fold into it.
+HASH_EXCLUDED_ROOT_GROUPS: Final[frozenset[str]] = frozenset(
+    {ENVIRONMENT_GROUP, CHUNK_PACKS_GROUP}
 )
 
 # Rendering constants

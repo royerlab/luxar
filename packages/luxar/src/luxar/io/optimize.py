@@ -115,7 +115,9 @@ from .._zarr_compat import (
 )
 from ..typing_utils._format_contract import FORMAT_TYPE_GSPLATS, NODE_TYPES
 from ..typing_utils.constants import (
+    CHUNK_PACKS_GROUP,
     ENVIRONMENT_GROUP,
+    HASH_EXCLUDED_ROOT_GROUPS,
     MAX_CHUNK_BYTES,
     MIN_CHUNK_BYTES,
     TARGET_CHUNK_BYTES,
@@ -130,6 +132,7 @@ from ._compiler.finalize.hashing import (
     _payload_terms,
     _storage_identity,
 )
+from .chunk_pack import write_chunk_packs
 
 __all__ = [
     "CHUNK_PROFILES",
@@ -1009,6 +1012,10 @@ def _copy_group(
         _copy_array(source[name], dest, name, plan.target_chunks, target_format)
     for name in sorted(group_keys(source)):
         child_path = f"{path}/{name}" if path else name
+        if child_path == CHUNK_PACKS_GROUP:
+            # Derived, and keyed to the source's chunk grid and hash: `--pack`
+            # rebuilds it for the output, and without it there is none.
+            continue
         _copy_group(
             source[name], dest.create_group(name), plans, target_format, child_path
         )
@@ -1235,9 +1242,9 @@ def _compute_content_hashes_streaming(root: zarr.Group) -> str:
             hasher.update(term)
         for name in sorted(group_keys(group)):
             child_hash = hash_group(group[name], is_root=False)
-            # The root's baked-environment group is stamped but not folded in —
-            # the same exception the reference walk makes, for the same reason.
-            if is_root and name == ENVIRONMENT_GROUP:
+            # The root's derived sidecars are stamped but not folded in — the
+            # same exception the reference walk makes, for the same reason.
+            if is_root and name in HASH_EXCLUDED_ROOT_GROUPS:
                 continue
             hasher.update(f"{name}:{child_hash}".encode())
         content_hash = hasher.hexdigest()
@@ -1395,6 +1402,8 @@ def _verify(source: zarr.Group, dest: zarr.Group) -> tuple[int, int]:
     dest_groups = dict(_walk_groups(dest))
     payloads = 0
     for group_path, src_group in _walk_groups(source):
+        if group_path == CHUNK_PACKS_GROUP:
+            continue  # derived; never copied (see `_copy_group`)
         dst_group = dest_groups.get(group_path)
         if dst_group is None:
             raise ValueError(
@@ -1520,6 +1529,7 @@ def optimize_store(
     overwrite: bool = False,
     verify: bool = False,
     generic: bool = False,
+    pack: bool = False,
 ) -> OptimizePlan:
     """Copy ``source_path`` to ``dest_path``, re-chunked, values untouched.
 
@@ -1537,6 +1547,12 @@ def optimize_store(
     user's path nor a damaged previous one. A previous store is moved ASIDE
     rather than deleted first (:func:`_replace`), so a failed swap restores it
     instead of costing both copies.
+
+    ``pack`` additionally writes chunk packs (:mod:`luxar.io.chunk_pack`): one
+    object per small geometry node, for a viewer to fetch in one request. Only a
+    compiled scene can carry them — its hash is the one that excludes the
+    sidecar, which is what lets the packs certify it — so another store is
+    refused before anything is written.
     """
     source_path = Path(source_path)
     dest_path = Path(dest_path)
@@ -1553,6 +1569,11 @@ def optimize_store(
     source = open_group(source_path, mode="r")
     try:
         ensure_luxar_store(source_path, source, generic=generic)
+        if pack and source.attrs.get("type") != "scene":
+            raise ValueError(
+                "--pack needs a compiled scene (root type 'scene'): only its "
+                "content_hash excludes the chunk_packs sidecar the packs certify"
+            )
 
         source_format = int(source.metadata.zarr_format)
         plan = plan_optimization(source, target_bytes=target_bytes, profile=profile)
@@ -1579,7 +1600,14 @@ def optimize_store(
             consumed = False
             try:
                 _write_store(
-                    source, staging, by_path, plan, source_format, target_bytes, profile
+                    source,
+                    staging,
+                    by_path,
+                    plan,
+                    source_format,
+                    target_bytes,
+                    profile,
+                    pack,
                 )
                 aprint(
                     f"✓ {plan.n_rechunked}/{len(plan.arrays)} arrays re-chunked; "
@@ -1738,6 +1766,7 @@ def _write_store(
     source_format: int,
     target_bytes: int,
     profile: str | None,
+    pack: bool,
 ) -> None:
     """Build the whole re-chunked store at ``staging``."""
     # `zarr_format` is passed explicitly so the output keeps the SOURCE's
@@ -1761,6 +1790,8 @@ def _write_store(
         environment = _baked_environment_group(dest)
         if scene_hash is not None and environment is not None:
             environment.attrs["scene_content_hash"] = scene_hash
+        if pack and scene_hash is not None:
+            aprint(f"✓ {write_chunk_packs(dest, scene_hash)} chunk packs written")
         consolidate(dest)
     finally:
         close(dest)

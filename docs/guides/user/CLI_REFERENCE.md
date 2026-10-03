@@ -97,6 +97,7 @@ luxar optimize --profile hosting  # Preset budget: hosting / local / archive
 luxar optimize --verify           # Re-read the output; compare arrays and payload files
 luxar optimize --overwrite        # Replace an existing OUTPUT store
 luxar optimize --generic          # Allow a plain (non-Luxar) zarr store
+luxar optimize --pack             # Also write chunk packs (one request per small node)
 ```
 
 It takes a source store and, unless `--dry-run` is given, a destination store —
@@ -118,6 +119,15 @@ the written store and compares every array — and every plain payload file the
 pass copied, such as an overlay image — byte for byte, reporting how many of
 each it checked. `--generic` allows a
 plain zarr store that is not a Luxar scene or a `.gsplats.zarr` tree.
+
+`--pack` (opt-in, compiled scenes only) additionally writes a `chunk_packs/`
+sidecar: for every geometry node whose chunks total at most 64 KB, one extra
+object holding copies of them, which the viewer fetches in one request instead
+of one per chunk. It pays off where a store is many tiny nodes, such as a
+laddered timelapse partition; it does nothing for nodes already at the chunk
+target. The plain chunks stay, so the store remains an ordinary zarr store that
+every reader opens unchanged, and `content_hash` is unchanged too. See
+[Chunk Packs](LUXAR_ZARR_FORMAT.md#chunk-packs-chunk_packs-sidecar).
 
 One boundary is worth stating for `--generic`, because it is a silent no-op
 rather than an error: this pass merges **rows**, i.e. it only ever grows the

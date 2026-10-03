@@ -20,7 +20,7 @@ from luxar._zarr_compat import (
     read_raw_bytes,
 )
 from luxar.typing_utils._format_contract import SOFTWARE_VERSION_ATTR
-from luxar.typing_utils.constants import ENVIRONMENT_GROUP
+from luxar.typing_utils.constants import HASH_EXCLUDED_ROOT_GROUPS
 
 # Shared hash contract for the compile-time walk, `luxar optimize`'s streaming
 # twin, and the standalone GSplat stamper: group attrs use the float grid below;
@@ -357,17 +357,18 @@ def compute_content_hashes(store: zarr.Group) -> str:
         #    a group name is a path segment, so it decides which keys the
         #    viewer's cache is holding.
         #
-        #    The root's `environment/` group is the one deliberate exception
-        #    (`ENVIRONMENT_GROUP`): a baked environment map is DERIVED from the
-        #    scene and records the scene digest it was baked against, which is
-        #    only meaningful if attaching the map leaves that digest alone. The
+        #    The root's derived sidecars are the deliberate exception
+        #    (`HASH_EXCLUDED_ROOT_GROUPS`): a baked environment map and the
+        #    `optimize --pack` chunk packs are DERIVED from the scene and record
+        #    the scene digest they were built for, which is only meaningful if
+        #    attaching them leaves that digest alone. The
         #    group still gets its OWN `content_hash` stamped (it is visited), so
         #    tooling can tell two bakes apart; it just does not fold into the
         #    parent. `luxar optimize`'s streaming twin mirrors this rule.
         for child_name in sorted(group_keys(group)):
             child_path = f"{group_path}/{child_name}" if group_path else child_name
             child_hash = compute_hash_recursive(child_path)
-            if not group_path and child_name == ENVIRONMENT_GROUP:
+            if not group_path and child_name in HASH_EXCLUDED_ROOT_GROUPS:
                 continue
             hasher.update(f"{child_name}:{child_hash}".encode())
 

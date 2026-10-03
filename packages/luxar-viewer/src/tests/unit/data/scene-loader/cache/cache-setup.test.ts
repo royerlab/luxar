@@ -37,6 +37,8 @@ vi.mock('../../../../../data/zarr', () => ({
 }));
 
 import { setupCaches } from '../../../../../data/scene-loader/cache/cache-setup';
+import { PackedChunkSource } from '../../../../../cache/chunk-source/packed-chunk-source';
+import { HttpChunkSource } from '../../../../../cache/chunk-source/http-chunk-source';
 import {
   resetRootDocumentPrefetchForTests,
   SharedRootDocumentSource,
@@ -149,15 +151,22 @@ describe('setupCaches — cache telemetry state resolution', () => {
     appConfig.cache.l0Enabled = true;
 
     await setupCaches('http://example.com/scene.luxar.zarr.zip', {});
-    const zippedArg = vi.mocked(MultiLevelCachingStore).mock.calls.at(-1)?.[0];
+    // Each source sits under the chunk-pack reader, which passes every key it
+    // holds no pack for straight to it.
+    const inner = (): unknown => {
+      const arg = vi.mocked(MultiLevelCachingStore).mock.calls.at(-1)?.[0];
+      expect(arg).toBeInstanceOf(PackedChunkSource);
+      return (arg as PackedChunkSource).inner;
+    };
+    const zippedArg = inner();
 
     await setupCaches('http://example.com/scene.zarr/', {});
-    const directoryArg = vi.mocked(MultiLevelCachingStore).mock.calls.at(-1)?.[0];
+    const directoryArg = inner();
 
-    // A presigned source keeps the plain URL: sharing needs the query-preserving
-    // URL building the store does itself.
+    // A presigned source keeps a plain HTTP source: sharing needs the
+    // query-preserving URL building the store does itself.
     await setupCaches('http://example.com/scene.zarr/?token=abc', {});
-    const presignedArg = vi.mocked(MultiLevelCachingStore).mock.calls.at(-1)?.[0];
+    const presignedArg = inner();
 
     expect(typeof zippedArg).toBe('object');
     expect(zippedArg).toHaveProperty('identity', 'http://example.com/scene.luxar.zarr.zip');
@@ -166,7 +175,8 @@ describe('setupCaches — cache telemetry state resolution', () => {
     // identity (the OPFS bucket key) is still the URL verbatim.
     expect(directoryArg).toBeInstanceOf(SharedRootDocumentSource);
     expect(directoryArg).toHaveProperty('identity', 'http://example.com/scene.zarr/');
-    expect(presignedArg).toBe('http://example.com/scene.zarr/?token=abc');
+    expect(presignedArg).toBeInstanceOf(HttpChunkSource);
+    expect(presignedArg).toHaveProperty('identity', 'http://example.com/scene.zarr/?token=abc');
   });
 
   it('feeds the ?cacheBudgetMB pool through to the L2 write-queue byte cap', async () => {

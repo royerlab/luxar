@@ -332,6 +332,17 @@ root document bytes. The scene restamp is a slab-wise reimplementation of the
 finalize-time walk — the same digest, without the whole-array materialisation
 that would peak at twice a 629 MB array's size.
 
+**Chunk packs (`chunk_pack.py`, `optimize_store(..., pack=True)` / `--pack`).**
+After the restamp, `write_chunk_packs` copies the chunk objects of every
+geometry node with at most `PACK_MAX_BYTES` (64 KB) of stored chunks into one
+plain `<n>.pack` file per node (header-indexed) under the root `chunk_packs/`
+sidecar, and lists them (key, SHA-256, node prefix) in the sidecar's attrs with
+the `scene_content_hash` they were built for. `optimize` never copies an
+existing sidecar. The sidecar is hash-excluded like
+`environment/`, so packing leaves `content_hash` alone; the viewer adopts the
+packs only for a matching root hash. Compiled scenes only. Format:
+`docs/guides/user/LUXAR_ZARR_FORMAT.md` (Chunk Packs).
+
 ### Re-deriving LOD thresholds in an existing store (`lod_restamp.py`)
 
 `luxar.io.lod_restamp` rewrites the LOD switch thresholds of a store that is
