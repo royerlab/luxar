@@ -14,6 +14,7 @@ import * as zarr from '../zarr';
 import { readArray, abortOptions } from '../zarr';
 import { log, Modules } from '../../utils/log';
 import { decode_log_scalar_u8, decode_log_scalar_u16 } from '../../wasm/typescript/decode';
+import { readBroadcastRow } from './broadcast-row';
 import { ArrayRefRegistry } from './ref-registry';
 import type { ArrayMetadata, EncodingMetadata } from './types';
 import {
@@ -76,15 +77,7 @@ export class ArrayDecoder {
         return new Float32Array(0);
       }
 
-      // Load the single value
-      const rawData = await readArray(zarrArray, undefined, abortOptions(signal));
-      const rawArray = rawData.data;
-      // Changing this cast requires re-deriving the writer's
-      // positive_scalar_round_trip_slack chunk-bound allowance.
-      const data =
-        rawArray instanceof Float32Array
-          ? rawArray
-          : new Float32Array(rawArray as ArrayBuffer | number[]);
+      const data = await readBroadcastRow(zarrArray, enc, signal);
 
       const shape = zarrArray.shape;
       const k = shape.length > 1 ? shape[1] : 1;

@@ -463,6 +463,57 @@ describe('RangeLoader.loadBroadcasted (via loadRanges)', () => {
     // valueAsFloat32[j] ?? valueAsFloat32[0] => all 7.0
     expect(Array.from(output)).toEqual([7, 7, 7, 7, 7, 7]);
   });
+
+  // The writer records the stored row as `encoding.value`, which arrives with the
+  // consolidated metadata. Reading the row again is a whole request per array per
+  // rung, and an all-zero row (axis-aligned splats' off-diagonal) has no chunk at
+  // all, so that read was a 404.
+  it('takes the row from encoding.value without reading the array', async () => {
+    mockZarrGet.mockRejectedValue(new Error('the row must not be read'));
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'broadcasted', n_elements: 2, value: [0, 0, 0, 0, 0, 0] },
+    };
+    const output = new Float32Array(12).fill(9);
+    const array = mockZarrArray('float32', [1, 6]);
+
+    const written = await loader.loadRanges(array, attrs, [{ start: 0, end: 2 }], output, 2, 6);
+
+    expect(written).toBe(12);
+    expect(Array.from(output)).toEqual(new Array(12).fill(0));
+    expect(mockZarrGet).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['uint8', new Uint8Array([255, 128, 0])],
+    ['float32', new Float32Array([0.1, 1e-30, 3.4e38])],
+  ] as const)('decodes a %s encoding.value exactly as the row it repeats', async (dtype, row) => {
+    const array = mockZarrArray(dtype, [1, 3]);
+    const ranges: LoadRange[] = [{ start: 0, end: 2 }];
+    setMockData(row);
+    const read = new Float32Array(6);
+    await loader.loadRanges(
+      array,
+      { encoding: { name: 'broadcasted', n_elements: 2 } },
+      ranges,
+      read,
+      2,
+      3
+    );
+    mockZarrGet.mockReset();
+    const fromAttrs = new Float32Array(6);
+    // What the Python writer emits: the stored row's `tolist()`, through JSON.
+    const value = JSON.parse(JSON.stringify(Array.from(row, Number))) as number[];
+    await loader.loadRanges(
+      array,
+      { encoding: { name: 'broadcasted', n_elements: 2, value } },
+      ranges,
+      fromAttrs,
+      2,
+      3
+    );
+    expect(mockZarrGet).not.toHaveBeenCalled();
+    expect(fromAttrs).toEqual(read);
+  });
 });
 
 // ---------------------------------------------------------------------------

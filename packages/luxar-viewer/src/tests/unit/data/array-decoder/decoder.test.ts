@@ -1658,6 +1658,26 @@ describe('ArrayDecoder - Python Compatibility Tests', () => {
       // Zarr read MUST have been skipped on the short-circuit path.
       expect(getSpy).not.toHaveBeenCalled();
     });
+
+    it('decodes a broadcast row recorded in encoding.value without reading it', async () => {
+      // The writer repeats the stored row in the attrs (consolidated metadata),
+      // so the read — a whole request, or a 404 for an all-fill row whose chunk
+      // zarr never writes — is skipped.
+      const fakeAttrs: ArrayMetadata = {
+        encoding: { name: 'broadcasted', n_elements: 2, value: [0.5, 0, 2] },
+      };
+      // Not a real zarrita array: any read of it throws inside zarrita.
+      const unreadable = {
+        path: '/x',
+        shape: [1, 3],
+        chunks: [1, 3],
+        dtype: '<f4',
+        attrs: {},
+      } as unknown as Parameters<ArrayDecoder['decode']>[0];
+
+      const result = await new ArrayDecoder(new ArrayRefRegistry()).decode(unreadable, fakeAttrs);
+      expect(Array.from(result)).toEqual([0.5, 0, 2, 0.5, 0, 2]);
+    });
   });
 
   describe('decodeLUTIndices — scalar mode (G6 boundary)', () => {

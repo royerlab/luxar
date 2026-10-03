@@ -2348,7 +2348,11 @@ per-array above (`linear_perchannel_u16`, `rgb_uint8`,
   string of the stored value (e.g. `uint8`, `uint16`) so readers restore the
   native integer color dtype and normalize it — rather than reading raw 0-255
   floats. Non-color arrays (radii/sharpness/amplitudes) omit it and decode as
-  float32. Readers expand on load.
+  float32. `encoding.value` (optional, additive) repeats the stored row,
+  flattened, so a reader holding the consolidated metadata can skip reading it
+  — one request per broadcast array per node or rung. Readers that ignore it
+  read the row as before; a row equal to the fill value has no chunk written
+  (zarr skips it) and reads as the fill value. Readers expand on load.
 - **`array_ref`** — content-deduplication: a byte-identical duplicate of
   another array in the same store is stored as an **empty** array (physical
   shape `(0,)` / `(0, D)`) whose `encoding` carries `target` (path of the

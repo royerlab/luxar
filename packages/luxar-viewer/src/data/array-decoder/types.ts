@@ -19,6 +19,12 @@ export interface EncodingMetadata {
   /** Number of elements (for broadcasting) */
   n_elements?: number;
 
+  /**
+   * A `broadcasted` array's stored row, flattened (writers since this field
+   * existed). Lets a reader skip the row's request; absent → read the row.
+   */
+  value?: number[];
+
   /** Lookup table values (can be flat array or array of arrays) */
   lut?: number[] | number[][];
 

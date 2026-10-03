@@ -39,6 +39,36 @@ LUT_UINT16_MAX_DISTINCT = 65_536
 LUT_SCALAR_MAX_DISTINCT = LUT_UINT8_MAX_DISTINCT
 
 
+def _broadcast_encoding(
+    row: np.ndarray, n_elements: int, semantic_type: SemanticType
+) -> dict[str, Any]:
+    """The ``encoding`` attrs of a broadcast array storing ``row``.
+
+    ``value`` repeats the stored row (flattened, at its stored dtype) so a
+    reader holding consolidated metadata needs no request for it. That matters
+    because the row is a few bytes but its read is a whole request, and an
+    all-fill row (e.g. the zero off-diagonal of axis-aligned splats) has no
+    chunk at all: zarr skips a chunk equal to the fill value, so the read is a
+    404. The chunk is still written (when not fill), so a reader that ignores
+    ``value`` decodes exactly as before. Finite by construction: input
+    validation rejects NaN/inf before any encoding is chosen.
+
+    Only COLOR stamps ``original_dtype``: it lets the viewer restore native
+    integer color dtypes (uint8/uint16) so they normalize instead of rendering
+    as raw 0-255 floats. Non-color arrays (radii/sharpness/amplitudes) must
+    decode as Float32, so stamping their integer dtype would wrongly widen
+    (e.g. uint16 radii ÷65535 → points vanish).
+    """
+    encoding: dict[str, Any] = {
+        "name": "broadcasted",
+        "n_elements": n_elements,
+        "value": row.ravel().tolist(),
+    }
+    if semantic_type == SemanticType.COLOR:
+        encoding["original_dtype"] = str(row.dtype)
+    return encoding
+
+
 @dataclass(frozen=True)
 class _LutPlan:
     """A fully-resolved LUT encoding decision (eligibility + payload).
@@ -245,19 +275,9 @@ class StructuralEncoderMixin(BaseEncoderMixin):
             overwrite=True,
         )
 
-        # Set encoding metadata
-        encoding: dict[str, Any] = {
-            "name": "broadcasted",
-            "n_elements": n_elements,
-        }
-        # Only COLOR stamps original_dtype: it lets the viewer restore native
-        # integer color dtypes (uint8/uint16) so they normalize instead of
-        # rendering as raw 0-255 floats. Non-color arrays (radii/sharpness/
-        # amplitudes) must decode as Float32, so stamping their integer dtype
-        # would wrongly widen (e.g. uint16 radii ÷65535 → points vanish).
-        if semantic_type == SemanticType.COLOR:
-            encoding["original_dtype"] = str(broadcast_data.dtype)
-        zarr_group[name].attrs["encoding"] = encoding
+        zarr_group[name].attrs["encoding"] = _broadcast_encoding(
+            broadcast_data, n_elements, semantic_type
+        )
 
     def _scalar_to_array(
         self,
@@ -333,16 +353,9 @@ class StructuralEncoderMixin(BaseEncoderMixin):
             overwrite=True,
         )
 
-        # Set encoding metadata. Only COLOR stamps original_dtype (see
-        # _encode_broadcasted); the scalar path is always float32 so this is a
-        # no-op either way, but the guard keeps the behaviour color-scoped.
-        encoding: dict[str, Any] = {
-            "name": "broadcasted",
-            "n_elements": n_elements,
-        }
-        if semantic_type == SemanticType.COLOR:
-            encoding["original_dtype"] = str(data.dtype)
-        zarr_group[name].attrs["encoding"] = encoding
+        zarr_group[name].attrs["encoding"] = _broadcast_encoding(
+            data, n_elements, semantic_type
+        )
 
     def _encode_array_ref(
         self,
