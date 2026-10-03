@@ -80,6 +80,7 @@ function makePorts(trace: Trace, overrides: Partial<LoadDatasetPorts> = {}): Loa
       trace.recordedViewerConfig = config;
     }),
     openCacheStatsView: vi.fn(() => trace.order.push('openCacheStatsView')),
+    isStale: vi.fn(() => false),
     ...overrides,
   };
 }
@@ -444,6 +445,24 @@ describe('loadDataset', () => {
     finishWarm();
     await loading;
     expect(resolved).toBe(true);
+  });
+
+  it.each([
+    ['loadSceneData', 'initDimensionSliders'],
+    ['initOverlays', 'initPicking'],
+    ['initPicking', 'applyViewerConfigState'],
+  ])('a load gone stale during %s stops before %s', async (staleAfter, firstSkipped) => {
+    const trace: Trace = { order: [], recordedViewerConfig: undefined };
+    const ports = makePorts(trace, {
+      isStale: () => trace.order.includes(staleAfter),
+    });
+
+    await loadDataset('scene.zarr', ports);
+
+    expect(trace.order).toContain(staleAfter);
+    expect(trace.order).not.toContain(firstSkipped);
+    expect(trace.order).not.toContain('startAnimation');
+    expect(trace.order).not.toContain('warmBlendModePrograms');
   });
 
   it('loaderConfig is forwarded to sceneManager.loadSceneData', async () => {

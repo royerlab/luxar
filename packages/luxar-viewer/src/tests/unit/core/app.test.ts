@@ -164,6 +164,7 @@ import { setDocumentTitle } from '../../../core/document-title';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 import { notifier } from '../../../utils/cross-layer/notifier';
 import type { ZarrWaypoint } from '../../../types/zarr';
+import { OverlayManager } from '../../../ui/overlay-manager';
 
 describe('LuxarApp', () => {
   let app: LuxarApp;
@@ -1988,7 +1989,7 @@ describe('LuxarApp', () => {
       );
     });
 
-    it('stops a kiosk watchdog installed by a load that finishes after dispose', async () => {
+    it('leaves no kiosk watchdog behind a load that finishes after dispose', async () => {
       const canvas = { addEventListener: vi.fn(), removeEventListener: vi.fn() };
       mockSceneManager.renderer = { domElement: canvas };
       await app.init({ canvas: mockCanvas, src: '' });
@@ -2012,8 +2013,9 @@ describe('LuxarApp', () => {
       const removals = canvas.removeEventListener.mock.calls.filter(
         (call) => call[0] === 'webglcontextlost'
       );
-      expect(additions).toHaveLength(1);
-      expect(removals).toEqual([['webglcontextlost', additions[0][1]]]);
+      // The stale load stops before applying its viewer config, so it never
+      // installs one; anything that was installed must have been removed.
+      expect(removals).toEqual(additions);
     });
 
     it('a superseded load never writes its viewer config into a newer session', async () => {
@@ -2036,6 +2038,67 @@ describe('LuxarApp', () => {
       await oldSwitch;
 
       expect(app.getViewerState().controlPanel).toBeNull();
+    });
+
+    it('a load disposed mid-flight runs none of its tail into the next lifetime', async () => {
+      // dispose() + init() while a switch is still in loadSceneData: the old
+      // load must not restart the animation, warm programs, build overlays on
+      // the app, or announce its src to the new lifetime's listeners.
+      await app.init({ canvas: mockCanvas, src: '' });
+      let releaseOld!: () => void;
+      mockSceneManager.loadSceneData.mockImplementationOnce(
+        () => new Promise<void>((resolve) => (releaseOld = resolve))
+      );
+      const oldSwitch = app.switchDataset('http://example.com/old.zarr');
+      await vi.waitFor(() => expect(mockSceneManager.loadSceneData).toHaveBeenCalledTimes(1));
+      app.dispose();
+      await app.init({ canvas: mockCanvas, src: '' });
+      const onLoaded = vi.fn();
+      app.on('dataset-loaded', onLoaded);
+      mockAnimationController.startAnimation.mockClear();
+      mockSceneManager.warmBlendModePrograms.mockClear();
+      mockInputHandler.initDimensionSliders.mockClear();
+
+      releaseOld();
+      await oldSwitch;
+
+      expect(mockInputHandler.initDimensionSliders).not.toHaveBeenCalled();
+      expect(mockAnimationController.startAnimation).not.toHaveBeenCalled();
+      expect(mockSceneManager.warmBlendModePrograms).not.toHaveBeenCalled();
+      expect(onLoaded).not.toHaveBeenCalled();
+    });
+
+    it("an overlay load that outlives its app never replaces the next lifetime's overlays", async () => {
+      // The window inside initOverlays: the stale manager must be disposed,
+      // not assigned over the new lifetime's.
+      const root = {
+        name: 'LuxarScene',
+        children: [],
+        traverse: vi.fn(),
+        userData: { overlayConfigs: [{ type: 'text' }], zarrBaseUrl: 'http://example.com/a.zarr' },
+      };
+      mockSceneManager.scene = { children: [root] };
+      await app.init({ canvas: mockCanvas, src: '' });
+      let releaseOverlays!: () => void;
+      const loadOverlays = vi
+        .spyOn(OverlayManager.prototype, 'loadOverlays')
+        .mockImplementationOnce(() => new Promise<void>((resolve) => (releaseOverlays = resolve)));
+      const oldSwitch = app.switchDataset('http://example.com/old.zarr');
+      await vi.waitFor(() => expect(loadOverlays).toHaveBeenCalledTimes(1));
+      app.dispose();
+      loadOverlays.mockResolvedValue(undefined);
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/new.zarr' });
+      const internals = app as unknown as { overlayManager: OverlayManager | undefined };
+      const current = internals.overlayManager;
+      expect(current).toBeDefined();
+      const staleDispose = vi.spyOn(OverlayManager.prototype, 'dispose');
+
+      releaseOverlays();
+      await oldSwitch;
+
+      expect(internals.overlayManager).toBe(current);
+      expect(staleDispose).toHaveBeenCalledTimes(1);
+      expect(staleDispose.mock.contexts[0]).not.toBe(current);
     });
 
     it('keeps authored scene overlays visible in kiosk mode', async () => {

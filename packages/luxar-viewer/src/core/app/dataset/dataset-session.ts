@@ -45,6 +45,14 @@ export class DatasetSession {
   /** @param src The dataset this session loads; undefined for "no dataset yet". */
   constructor(readonly src: string | undefined) {}
 
+  /**
+   * True once the app was disposed or a newer load started: an in-flight
+   * load reading this must stop at its next await.
+   */
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
+
   /** The dataset's src once its load has succeeded, else undefined. */
   get loadedSrc(): string | undefined {
     return this.loaded ? this.src : undefined;

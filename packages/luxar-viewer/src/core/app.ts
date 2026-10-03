@@ -489,19 +489,24 @@ export class LuxarApp {
         disposePicking: () => this.disposePicking(),
         initScaleBar: () => this.initScaleBar(),
         initColormapLegend: () => this.initColormapLegend(),
-        initOverlays: () => this.initOverlays(),
+        initOverlays: () => this.initOverlays(session),
         initPicking: () => this.initPicking(),
         // THIS load's session: a load superseded mid-flight must never write
         // its scene's waypoints / kiosk / control panel into a newer session.
         applyViewerConfigState: (config) => this.applyViewerConfigState(config, session),
         openCacheStatsView: () => this.openCacheStatsView(),
+        isStale: () => session.isDisposed,
       });
+      // Superseded mid-flight (dispose, or dispose + init): the dataset was
+      // never this lifetime's, so it announces nothing.
+      if (session.isDisposed) return;
       session.markLoaded(getSceneLoader());
       // A replayed latched fault is post-load state, so preserve the public
       // ordering: the dataset becomes available before its fault is reported.
       this.embedderEvents.emit('dataset-loaded', { src });
       session.reportFaults((error) => this.embedderEvents.emit('dataset-fault', { src, error }));
     } catch (error) {
+      if (session.isDisposed) throw error;
       this.embedderEvents.emit('dataset-error', {
         src,
         error: error instanceof Error ? error : new Error(String(error)),
@@ -804,13 +809,20 @@ export class LuxarApp {
    * collaborator. The manager just stays empty until `loadOverlays` (or a
    * runtime caller, e.g. a test) populates it.
    */
-  private async initOverlays(): Promise<void> {
-    this.overlayManager = await initOverlaysImpl({
+  private async initOverlays(session: DatasetSession): Promise<void> {
+    const manager = await initOverlaysImpl({
       disposePrevious: () => this.disposeOverlays(),
       sceneManager: this.sceneManager,
       inputHandler: this.inputHandler,
       recordingPanel: this.recordingPanel,
     });
+    // The overlay files load asynchronously: a manager whose load outlived
+    // its session must not replace the current lifetime's.
+    if (session.isDisposed) {
+      manager.dispose();
+      return;
+    }
+    this.overlayManager = manager;
     // Story captions wait for the camera when a waypoint asks for it: the gate
     // reads the LIVE driver, so it holds whichever scene's waypoints are
     // installed, before or after the overlays themselves were created.
