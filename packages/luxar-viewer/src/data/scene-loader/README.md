@@ -143,8 +143,10 @@ The subfolders:
 - `../scene-loader-monitor-port.ts` — the `SceneLoaderMonitorPort`
   interface consumed by `monitor/monitor-wiring.ts` and
   `lifecycle/dispose.ts`.
-- `../attrs-composer.ts` — `getEffectiveAttrs` used by
-  `view-state/effective-attrs.ts`.
+- `../attrs-composer.ts` — `getEffectiveAttrsOfChain` /
+  `windowOwnerGainOfChain` used by `view-state/effective-attrs.ts`, and
+  `collectAncestorNodes` (the fallback descent) by
+  `view-state/scene-node-index.ts`.
 - `../transforms/nd-transform.ts` — `composeNdTransforms` (used by
   `view-state/scene-node-index.ts`), `invertNdTransformForQuery`
   (used by `view-state/derive-node-view-state.ts`).

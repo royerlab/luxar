@@ -1,15 +1,16 @@
 import { describe, it, expect, test } from 'vitest';
 import * as fc from 'fast-check';
-import {
-  composeAttrs,
-  collectAncestorAttrs,
-  getEffectiveAttrs,
-} from '../../../data/attrs-composer';
+import { composeAttrs, getEffectiveAttrsOfChain } from '../../../data/attrs-composer';
 import { applyEffectiveAttrs } from '../../../data/scene-loader/view-state/effective-attrs';
 import { SceneNodeIndex } from '../../../data/scene-loader/view-state/scene-node-index';
 import type { SceneNode } from '../../../data/data-loader-types';
 import { defaultBlendingMode } from '../../../types/geometry-capabilities';
 import { GEOMETRY_TYPES } from '../../../types/format-contract';
+
+/** The root→target chain the loader resolves through its `SceneNodeIndex`. */
+const chainOf = (root: SceneNode, path: string) => new SceneNodeIndex(root).ancestorChain(path);
+const effectiveAt = (root: SceneNode, path: string) =>
+  getEffectiveAttrsOfChain(chainOf(root, path));
 
 describe('composeAttrs', () => {
   it('returns identity for empty chain', () => {
@@ -125,7 +126,7 @@ describe('composeAttrs', () => {
   });
 });
 
-describe('collectAncestorAttrs / getEffectiveAttrs', () => {
+describe('ancestor chain / getEffectiveAttrsOfChain', () => {
   const root: SceneNode = {
     path: '',
     type: 'scene',
@@ -150,21 +151,21 @@ describe('collectAncestorAttrs / getEffectiveAttrs', () => {
   };
 
   it('walks from root to the target and collects each node attrs', () => {
-    const chain = collectAncestorAttrs(root, 'grp/pts');
+    const chain = chainOf(root, 'grp/pts');
     expect(chain.length).toBe(2);
-    expect(chain[0].opacity).toBe(0.5);
-    expect(chain[1].offset).toBe(0.1);
+    expect(chain[0].attrs.opacity).toBe(0.5);
+    expect(chain[1].attrs.offset).toBe(0.1);
   });
 
   it('composes an effective opacity of 0.25 for a 0.5×0.5 chain', () => {
-    const e = getEffectiveAttrs(root, 'grp/pts');
+    const e = effectiveAt(root, 'grp/pts');
     expect(e.opacity).toBeCloseTo(0.25, 5);
     expect(e.intensity).toBeCloseTo(2.0, 5);
     expect(e.offset).toBeCloseTo(0.1, 5);
   });
 
   it('returns identity for a path that does not exist', () => {
-    const e = getEffectiveAttrs(root, 'missing/node');
+    const e = effectiveAt(root, 'missing/node');
     expect(e.opacity).toBe(1);
   });
 
@@ -202,26 +203,26 @@ describe('collectAncestorAttrs / getEffectiveAttrs', () => {
     };
 
     it('walks to a direct child of the slash-root', () => {
-      const chain = collectAncestorAttrs(slashRoot, '/RedCloud');
+      const chain = chainOf(slashRoot, '/RedCloud');
       expect(chain.length).toBe(1);
-      expect(chain[0].opacity).toBe(0.8);
-      expect(chain[0].gamma).toBe(2.0);
+      expect(chain[0].attrs.opacity).toBe(0.8);
+      expect(chain[0].attrs.gamma).toBe(2.0);
     });
 
     it('walks to a nested child (group → data leaf)', () => {
-      const chain = collectAncestorAttrs(slashRoot, '/CompositeLayer/GreenPart');
+      const chain = chainOf(slashRoot, '/CompositeLayer/GreenPart');
       expect(chain.length).toBe(2);
-      expect(chain[0].opacity).toBe(0.5);
-      expect(chain[1].opacity).toBe(0.5);
+      expect(chain[0].attrs.opacity).toBe(0.5);
+      expect(chain[1].attrs.opacity).toBe(0.5);
     });
 
     it('composes effective opacity of 0.25 for slash-formatted paths', () => {
-      const e = getEffectiveAttrs(slashRoot, '/CompositeLayer/GreenPart');
+      const e = effectiveAt(slashRoot, '/CompositeLayer/GreenPart');
       expect(e.opacity).toBeCloseTo(0.25, 5);
     });
 
     it('returns identity for an unknown slash path', () => {
-      const e = getEffectiveAttrs(slashRoot, '/does/not/exist');
+      const e = effectiveAt(slashRoot, '/does/not/exist');
       expect(e.opacity).toBe(1);
     });
   });
@@ -646,8 +647,8 @@ describe('composeAttrs — layer_order', () => {
 
 // The raw-attrs → ComposableAttrs hop is an explicit ALLOWLIST
 // (`toComposable`), so a field missing from it writes cleanly, reads cleanly and
-// does nothing. These go through `getEffectiveAttrs`, which is the only path
-// that exercises it.
+// does nothing. These go through `getEffectiveAttrsOfChain`, the production
+// composition path.
 describe('layer_order survives the raw-attrs allowlist', () => {
   const graph = (rootAttrs: Record<string, unknown>, leafAttrs: Record<string, unknown>) => ({
     path: '',
@@ -658,12 +659,12 @@ describe('layer_order survives the raw-attrs allowlist', () => {
 
   it('reaches EffectiveAttrs from a leaf', () => {
     const g = graph({}, { layer_order: 30 });
-    expect(getEffectiveAttrs(g as never, '/gs').layer_order).toBe(30);
+    expect(effectiveAt(g as never, '/gs').layer_order).toBe(30);
   });
 
   it('reaches EffectiveAttrs from an ancestor group', () => {
     const g = graph({ layer_order: 10 }, {});
-    expect(getEffectiveAttrs(g as never, '/gs').layer_order).toBe(10);
+    expect(effectiveAt(g as never, '/gs').layer_order).toBe(10);
   });
 
   // Tolerant read against a strict write: the Python writer refuses anything
@@ -678,7 +679,7 @@ describe('layer_order survives the raw-attrs allowlist', () => {
     ['-Infinity', Number.NEGATIVE_INFINITY],
   ])('treats %s as unset', (_label, value) => {
     const g = graph({}, { layer_order: value });
-    expect(getEffectiveAttrs(g as never, '/gs').layer_order).toBeUndefined();
+    expect(effectiveAt(g as never, '/gs').layer_order).toBeUndefined();
   });
 
   it('applyEffectiveAttrs puts the composed level on the consumer record', () => {
