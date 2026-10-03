@@ -2,8 +2,8 @@
  * Frame-boundary scheduling that keeps working in hidden tabs.
  *
  * The update pipeline yields to the render loop between serialized view
- * updates (`queue-next.ts`) and on refinement cancellation hand-off
- * (`SceneLoader.scheduleGSplatsRefinement`'s `onCancel`) so at least one
+ * updates and on the refinement cancellation hand-off (both in
+ * `data/scene-loader/update-view/pass-scheduler.ts`) so at least one
  * frame paints before the next update. Plain `requestAnimationFrame` is the
  * right primitive while the tab is visible — but browsers suspend rAF when
  * `document.hidden`, so with bare rAF a pending view-state queued in a

@@ -30,6 +30,7 @@ import type { GSplatsMetadata } from '../../../../types/gsplats';
 import type { DataLoader } from '../../../../data/data-loader-types';
 import type { LinesDataLoader } from '../../../../types/lines';
 import type { GSplatsDataLoader } from '../../../../types/gsplats';
+import type { PassScheduler } from '../../../../data/scene-loader/update-view/pass-scheduler';
 
 // `materialManager.getX` calls hit shader compilation, which requires a
 // live WebGL context. Mock it the same way scene-loader tests do.
@@ -344,7 +345,7 @@ describe('SceneLoader.retryFailedLoader — fully-extended node', () => {
   });
 
   it('refuses when an updateView is in progress', async () => {
-    const internals = loader as unknown as LoaderInternals & { _updateInProgress: boolean };
+    const internals = loader as unknown as LoaderInternals & { passes: PassScheduler };
     const factory = new NodeFactory();
     const placeholder = factory.createEmptyPointsNode(
       '/p',
@@ -362,7 +363,7 @@ describe('SceneLoader.retryFailedLoader — fully-extended node', () => {
     internals.registry.recordFailure('/p', new Error('initial'));
 
     // Simulate "another update is in progress" by flipping the lock.
-    internals._updateInProgress = true;
+    internals.passes.locked = true;
 
     const ok = await loader.retryFailedLoader('/p');
 
@@ -382,7 +383,7 @@ describe('SceneLoader.retryFailedLoader — fully-extended node', () => {
     //      queued updateView async (so retry's promise resolves first).
     // Pending state lives on viewStateQueue; inspect via hasPending().
     type Internals = LoaderInternals & {
-      _updateInProgress: boolean;
+      passes: PassScheduler;
       viewStateQueue: { hasPending(): boolean };
     };
     const internals = loader as unknown as Internals;
@@ -414,7 +415,7 @@ describe('SceneLoader.retryFailedLoader — fully-extended node', () => {
     await Promise.resolve();
     await Promise.resolve();
     // Lock taken.
-    expect(internals._updateInProgress).toBe(true);
+    expect(internals.passes.locked).toBe(true);
     expect(retryUpdateView).toHaveBeenCalledTimes(1);
 
     // Step 2: user dim/slider change → updateView() called during

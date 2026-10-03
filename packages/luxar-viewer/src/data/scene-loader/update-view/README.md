@@ -1,28 +1,30 @@
 # `updateView` orchestration helpers
 
 Helpers extracted from `data/scene-loader.ts::updateView`. The orchestrator
-itself stays in `data/scene-loader.ts`; this folder owns the three
-non-trivial sub-steps that would otherwise bloat the method: per-type
-ctx construction (entry), atomic GPU commit (Stage 2), and the
-`finally`-phase dispatch of whatever runs next.
+itself stays in `data/scene-loader.ts`; this folder owns per-type ctx
+construction (entry), the atomic GPU commit (Stage 2), and the serialization
+of passes, refinement runs and retries (`PassScheduler`).
 
 ## Files
 
-| File                   | Role                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `build-update-ctxs.ts` | Constructs the three per-type handler ctx objects (`PointsHandlerCtx`, `LinesHandlerCtx`, `GSplatsHandlerCtx`) that feed `data/{points,lines,gsplats}/handler.ts::loadAndStage`. Centralises the shared fields (rootGroup, viewStateQueue, clearFailure, currentVersion, deriveNodeViewState) plus the type-specific bits (`updateVersion` for Lines/GSplats, `extendedToleranceCache` shared between Points + GSplats). |
-| `atomic-commit.ts`     | Runs the synchronous Stage 2 commit. Takes the three per-type staged-commit arrays from Stage 1 and routes them through `updatePointsGeometry` / `commitLinesGeometry` / `commitGSplatsGeometry`, bumps the GPU buffer pool commit counter, and invalidates the picking cache. The body is a single synchronous block so every participating mesh updates in the SAME rendered frame.                                    |
-| `queue-next.ts`        | `finally`-phase dispatcher. Inspects the `ViewStateQueue` and progressive-GSplats loaders to decide between three outcomes: rAF-yield then re-enter `updateView(pending)`, kick GSplats LOD refinement, or release the `_updateInProgress` lock. The lock-keep semantics in the first two branches are load-bearing for slider/animation correctness.                                                                    |
+| File                   | Role                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build-update-ctxs.ts` | Constructs the per-type handler ctx objects that feed `data/{points,lines,gsplats,mesh}/handler.ts::loadAndStage`. Centralises the shared fields (rootGroup, viewStateQueue, clearFailure, currentVersion, deriveNodeViewState) plus the type-specific bits (`updateVersion` for Lines/GSplats, `extendedToleranceCache` shared between Points + GSplats).                                                           |
+| `atomic-commit.ts`     | Runs the synchronous Stage 2 commit. Takes the per-type staged-commit arrays from Stage 1 and routes them through the per-type commit callbacks, bumps the GPU buffer pool commit counter, and invalidates the picking cache. The body is a single synchronous block so every participating mesh updates in the SAME rendered frame. A failing node commit is rolled back and rethrown after its siblings committed. |
+| `pass-scheduler.ts`    | `PassScheduler` — owns the serialization lock and everything that decides what runs next: the pending slot's lifecycle, request generations and their waiters (#2943), the targeted-resync stash, the B5 drag commit guarantee, refinement start / cancellation hand-off / release, and retry pre-emption of a refinement drain (A10). Explicit phases: `idle`, `pass`, `yielding`, `refining`, `retrying`.          |
 
 ## Public surface
 
-Each file exports exactly one function (plus its ctx interface). None
-of these are re-exported from `data/` — only `data/scene-loader.ts`
-consumes them.
+None of these are re-exported from `data/` — only `data/scene-loader.ts`
+consumes them (`DRAG_COMMIT_*` are re-exported from it).
 
-- `buildUpdateCtxs(input: UpdateCtxsInput): { pointsCtx, linesCtx, gsplatsCtx }`
-- `runAtomicCommit(pointsStaged, linesStaged, gsplatsStaged, ctx): void`
-- `queueNext(ctx: QueueNextCtx): void`
+- `buildUpdateCtxs(input: UpdateCtxsInput): { pointsCtx, linesCtx, gsplatsCtx, meshCtx }`
+- `runAtomicCommit(pointsStaged, linesStaged, gsplatsStaged, meshStaged, ctx): void`
+- `new PassScheduler(host: PassSchedulerHost)` — `request` / `beginPass` /
+  `endPass` around a view pass; `startRefinement`, `beginRefinement`,
+  `handOff`, `releaseRefinementLock`, `endRefinement` around a refinement run;
+  `acquireForRetry` / `releaseRetry` around a retry; `kickRefinementIfIdle`,
+  `releaseAndDrain`, `drainPending`, `resolveWaiters`, `dispose`.
 
 ## Invariants
 
@@ -43,17 +45,21 @@ consumes them.
   fires only if at least one staged-commit array was non-empty —
   otherwise an update cycle that staged nothing (all loaders skipped
   or failed) would needlessly bust the pick buffer.
-- **`queueNext` branch order matters.** Pending view-state takes
-  priority over GSplats LOD refinement: a slider event mid-refinement
-  must cancel the refinement and start the new update. `queueNext`
-  encodes this by checking `takePending()` first; the refinement
-  branch only runs when no pending state exists.
-- **Lock-keep during rAF yield and refinement.** Branches 1 (pending)
-  and 2 (refinement) keep `_updateInProgress = true` so slider events
-  fired during the yield/refinement window queue as `_pendingViewState`
-  rather than racing into a concurrent `updateView` call. Branch 3
-  (idle) is the only one that releases the lock.
-- **Frame scheduling is hidden-tab-proof.** Branch 1 yields through
+- **After a pass, pending wins over refinement.** A view queued during a
+  pass runs next (after one frame); refinement starts only when nothing is
+  queued, and a view queued during refinement cancels it.
+- **The lock is held across the frame yield and the refinement drain**, so a
+  view arriving then is queued rather than racing a concurrent pass. The
+  state stays in the pending slot until the frame fires and is taken then, so
+  the NEWEST state runs (A8). With no pass running, a request neither aborts
+  nor holds anything: only a running view pass can be owed a B5 commit.
+- **One release path.** Every place that gives the lock up with possibly a
+  state queued behind it — the refinement run's final release and every
+  orchestrator-failure recovery — goes through `releaseAndDrain`: drain the
+  pending state into a fresh pass, else settle the waiters. A drained state's
+  pass settles them at its own commit; settling here too would release the
+  pacing gate before the view it asked for landed.
+- **Frame scheduling is hidden-tab-proof.** The yield goes through
   `utils/schedule-frame.ts` (not bare `requestAnimationFrame`): rAF while
   the tab is visible (with a shadow-timer fallback covering a tab hidden
   after scheduling), `setTimeout(0)` when already hidden (rAF is suspended
@@ -62,17 +68,14 @@ consumes them.
 
 ## See also
 
-- `../../scene-loader.ts` — the orchestrator that composes these three
-  helpers; their ctx interfaces are shaped to match its private state.
-- `../view-state/view-state-queue.ts` — `takePending()` source consumed by
-  `queueNext`.
+- `../../scene-loader.ts` — the orchestrator that composes these helpers.
+- `../view-state/view-state-queue.ts` — the pending slot the scheduler drives.
+- `../progressive/refinement.ts` — the per-frame refinement loop whose
+  cancellation check hands the lock to `PassScheduler.handOff`.
 - `../process/` — Stage 1 producers of `StagedLinesCommit` /
   `StagedGSplatsCommit` (Points use `LoadedPointsData` directly).
-- `../commit/commit-{points,lines,gsplats}-geometry.ts` —
+- `../commit/commit-{points,lines,gsplats,mesh}-geometry.ts` —
   Stage 2 per-geometry commit bodies invoked through the ctx
   callbacks.
-- `../../points/handler.ts`, `../../lines/handler.ts`,
-  `../../gsplats/handler.ts` — `loadAndStage` consumers of the
-  per-type ctx objects built here.
 - `../../../profiling/update-profiler.ts` — `UpdateSession` /
   `SessionImpl.end()` idempotency contract.

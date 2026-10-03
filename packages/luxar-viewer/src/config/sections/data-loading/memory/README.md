@@ -6,9 +6,9 @@ Conforms to the section-trio pattern documented in [../../../README.md](../../..
 
 ## Contents
 
-- `data.ts` — `dataLoadingMemoryConfig: DataLoadingMemoryConfig`. Defines `targetHeapUsage` (0.8 of available heap), `minCacheMB` (128 MB floor), `checkIntervalMs` (10000 ms poll cadence), and `adjustmentThresholds` (`critical: 0.85`, `high: 0.7`) used to classify heap pressure.
-- `types.ts` — `DataLoadingMemoryConfig` interface, including the nested `adjustmentThresholds` shape (`critical`, `high`).
-- `validate.ts` — `validateDataLoadingMemory(config, errors, warnings)`. Rejects non-finite `targetHeapUsage` and values outside `(0, 1]`; rejects non-finite or non-positive `minCacheMB`. NaN is explicitly screened because `NaN <= 0` is always false.
+- `data.ts` — `dataLoadingMemoryConfig: DataLoadingMemoryConfig`. Defines `targetHeapUsage` (0.8 of the usable JS heap), the one memory knob: `cache/heap-budget.ts` splits it between the cache pool and the non-cache remainder, with its own floors and shares as constants there.
+- `types.ts` — `DataLoadingMemoryConfig` interface.
+- `validate.ts` — `validateDataLoadingMemory(config, errors, warnings)`. Rejects non-finite `targetHeapUsage` and values outside `(0, 1]`. NaN is explicitly screened because `NaN <= 0` is always false.
 
 ## Public API
 

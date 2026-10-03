@@ -148,7 +148,7 @@ outside that scope:
 - the **progressive-LOD refinement drain**, which inherits the same lock after
   the current view has already committed. Excluded deliberately, so the flag
   reports first-commit latency rather than full-ladder latency — the same
-  distinction `update-view/queue-next.ts` draws when it resolves its pass
+  distinction `update-view/pass-scheduler.ts` draws when it resolves its pass
   waiters at refinement entry. `SceneLoader.isUpdateInProgress()` keeps the
   broader "lock is held at all" meaning for the adaptive-DPR manager and
   `core/app/init/pipeline.ts`.

@@ -2,9 +2,11 @@
  * Initial scene-load orchestrator.
  *
  * Sequence:
- *   1. Reset monitor + abort any in-flight worker tasks from a prior dataset.
- *   2. Dispose the previous loader (caching store, GPU pool, L0 cache,
- *      colormap LUTs, monitor closures) — awaited so stale writes drain.
+ *   1. Reset the monitor's loader bindings and the worker pool's signal (a
+ *      previous dataset's loader — disposed by `SceneLoaderManager` before
+ *      this one was built — may still own both).
+ *   2. (The loader is one-shot: `SceneLoader.loadScene` refuses a second
+ *      load, so there is never an earlier dataset of THIS loader to dispose.)
  *   3. Fresh AbortController wired into the worker pool's signal.
  *   4. Reset the predictive-prefetch baseline (otherwise the first
  *      updateView extrapolates from the prior dataset's slicePosition).
@@ -21,9 +23,9 @@
  *      leaf via `loadSceneNodes`.
  *  11. Load overlay configs (screen-space annotations).
  *  12. Wire post-load monitor providers (cache stats, loader maps, etc.).
- *  13. Schedule progressive GSplats LOD refinement when any multi-LOD
- *      loader still has higher LODs to fetch (the initial-load path
- *      only fetches LOD 0; without this kick, higher LODs would not
+ *  13. Schedule progressive LOD refinement (all four geometry types) when
+ *      any multi-LOD loader still has higher LODs to fetch (the initial-load
+ *      path only fetches LOD 0; without this kick, higher LODs would not
  *      load until the user's first updateView).
  *
  * The orchestrator (`SceneLoader.loadScene`) is a thin wrapper that
@@ -41,7 +43,7 @@ import { markLoad, noteRefinementComplete } from '../../../profiling/load-timeli
 import type { RefinementHoldReason } from '../../../types/data-monitor-types';
 import { ZarrSceneAttrs, SceneDimensionAttrs } from '../../../types/zarr';
 import { enforceFormatVersion } from '../../format-version';
-import type { LoaderConfig, SceneNode, ViewState } from '../../data-loader-types';
+import type { GeometryKind, LoaderConfig, SceneNode, ViewState } from '../../data-loader-types';
 import type { DataLoader } from '../../data-loader-types';
 import type { LinesDataLoader } from '../../../types/lines';
 import type { MeshDataLoader } from '../../../types/mesh';
@@ -111,8 +113,6 @@ export interface LoadSceneCtx {
 
   // Lifecycle callbacks the orchestrator owns:
   normalizeURL(url: string): string;
-  /** Await any previous loader's teardown before constructing the new one. */
-  dispose(): Promise<void>;
   /** Reset the predictive-prefetch baseline. */
   clearViewStatePrev(): void;
   /**
@@ -149,23 +149,14 @@ export interface LoadSceneCtx {
    * contexts need not supply it.
    */
   refinementHoldReason?(path: string): RefinementHoldReason | null;
-  /** Kick the GSplats LOD refinement loop after initial load. */
-  scheduleGSplatsRefinement(): Promise<void>;
+  /** Geometry kinds with a sweep-registered loader that has rungs left to stream. */
+  kindsWithMoreLODs(): GeometryKind[];
   /**
-   * Drain any view-state queued while the serialization lock was held,
-   * re-entering `updateView` with it. Only used by the post-load refinement
-   * kick's rejection handler — see the comment at that call site.
-   *
-   * @returns True when a state was drained (the re-entered pass then settles
-   *   the parked waiters itself); false when nothing was queued.
+   * Take the serialization lock and run the progressive refinement drain
+   * (`PassScheduler.startRefinement`), which releases it — and, should the
+   * orchestrator glue die, releases it and drains what queued meanwhile.
    */
-  drainPendingViewState(): boolean;
-  /**
-   * Settle callers parked in `updateView`'s supersede branch. Only used by the
-   * post-load refinement kick's rejection handler, for the case where nothing
-   * was queued and so no re-entered pass will resolve them.
-   */
-  resolvePassWaiters(): void;
+  startRefinement(): void;
 
   // Resource-write setters — orchestrator nulls/sets its own fields.
   /**
@@ -182,9 +173,6 @@ export interface LoadSceneCtx {
   setZarrStore(store: zarr.Readable): void;
   setRootGroup(group: THREE.Group): void;
   setSceneGraph(graph: SceneNode): void;
-  setUpdateInProgress(value: boolean): void;
-  /** Current abort controller — `loadScene` aborts it before disposing. */
-  getDatasetAbortController(): AbortController | null;
 }
 
 /**
@@ -285,34 +273,16 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // Clear any existing loaders from monitor before loading new scene
   ctx.monitor()?.disconnectAllLoaders();
 
-  // Abort any in-flight worker tasks queued by the previous dataset.
-  // Doing this BEFORE `dispose()` settles already-racing
-  // `runWithTimeout` callers immediately so they unwind without
-  // waiting for the worker tasks to complete — the worker keeps
-  // executing the WASM kernels to completion (no WASM cancellation),
-  // but the results are dropped.
-  const prevAbort = ctx.getDatasetAbortController();
-  if (prevAbort) {
-    prevAbort.abort();
-    ctx.setDatasetAbortController(null);
-  }
+  // The worker pool is a module singleton: drop any signal a previous
+  // dataset's loader left on it before this dataset installs its own.
   getWorkerPool().setAbortSignal(undefined);
 
-  // Spawn the data workers NOW, in parallel with the metadata fetch and the
-  // teardown below, rather than letting the first chunk decode pay for it.
+  // Spawn the data workers NOW, in parallel with the metadata fetch, rather
+  // than letting the first chunk decode pay for it.
   // Measured on a hosted demo: lazy creation started the pool 1.93 s after
   // this point, by which time LOD 0's bytes had already arrived and were
   // simply waiting. Fire-and-forget and idempotent across dataset switches.
   warmUpDataWorkerPool();
-
-  // Dispose of any existing loaders. Awaited so the previous caching
-  // store fully drains (prefetcher tear-down, OPFS metadata flush,
-  // validation cancellation) before we construct the next one — without
-  // this, rapid dataset switches let an old store's writes land after
-  // the new store starts initialising.
-  if (ctx.loaders.size > 0) {
-    await ctx.dispose();
-  }
 
   // Fresh abort source for THIS dataset; wire into the worker pool so
   // every subsequent `runWithTimeout` races against it.
@@ -557,66 +527,22 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     ctx.getFailedLoaderReasons()
   );
 
-  // Schedule progressive LOD refinement after initial load.
-  // Each per-type loader maps may include progressive loaders that
-  // only emit LOD 0 on the initial load — the refinement loop drains
-  // their remaining LODs frame-by-frame. Symmetric across Points /
-  // Lines / GSplats / Mesh.
-  const hasMore = (loader: unknown) => (loader as { hasMoreLODs?: boolean }).hasMoreLODs === true;
-  const gsplatsNeed = [...ctx.gsplatLoaders.values()].some(hasMore);
-  const pointsNeed = [...ctx.loaders.values()].some(hasMore);
-  const linesNeed = [...ctx.linesLoaders.values()].some(hasMore);
-  const meshNeed = [...ctx.meshLoaders.values()].some(hasMore);
-
-  const needsRefinement = gsplatsNeed || pointsNeed || linesNeed || meshNeed;
-  // Nothing to stream: the load timeline's "refinement complete" milestone is
-  // reached trivially (perf probes gate `isSettled` on it).
-  if (!needsRefinement) noteRefinementComplete();
-
-  if (needsRefinement) {
+  // Schedule progressive LOD refinement after initial load: progressive
+  // loaders of every type emit only their first rung on the initial load, and
+  // the refinement drain streams the rest frame by frame. It holds the
+  // serialization lock, so the init pipeline's first `updateView`, landing
+  // while it runs, is queued — which cancels the drain into that pass.
+  const kinds = ctx.kindsWithMoreLODs();
+  if (kinds.length === 0) {
+    // Nothing to stream: the load timeline's "refinement complete" milestone
+    // is reached trivially (perf probes gate `isSettled` on it).
+    noteRefinementComplete();
+  } else {
     log.info(
       Modules.SCENE_LOADER,
-      'Scheduling post-load progressive LOD refinement ' +
-        `(points=${pointsNeed} lines=${linesNeed} gsplats=${gsplatsNeed} mesh=${meshNeed})`
+      `Scheduling post-load progressive LOD refinement (${kinds.join(', ')})`
     );
-    // Hold the serialization lock during refinement so any updateView()
-    // calls queue as _pendingViewState (which naturally cancels the
-    // refinement loops). Each scheduler is responsible for releasing
-    // the lock when its loop completes; the SceneLoader's
-    // `scheduleProgressiveRefinement` orchestrates the three.
-    ctx.setUpdateInProgress(true);
-    // Fire-and-forget: catch so an error escaping the refinement loop is
-    // logged rather than surfacing as an unhandled promise rejection.
-    ctx.scheduleGSplatsRefinement().catch((error) => {
-      log.error(
-        Modules.SCENE_LOADER,
-        `Post-load progressive refinement failed: ${(error as Error).message}`
-      );
-      // Belt-and-braces lock recovery (mirrors queue-next.ts and
-      // SceneLoader.kickRefinementIfIdle): each loop releases the lock in its
-      // own finally, so a rejection here means the orchestrator glue died
-      // outside them — a double fault, not an expected path. Without this
-      // release the lock taken above is held forever and every future
-      // updateView freezes.
-      //
-      // Draining matters as much as releasing, because the pending slot is
-      // routinely occupied in exactly this window: this kick fires from inside
-      // `loadScene` before it returns, so the init pipeline's first
-      // `updateAllNDNodes` → `updateView` lands while the kick holds the lock,
-      // takes updateView's supersede branch and parks its state via
-      // `setPending`. A filled slot that nothing drains strands the user's
-      // initial slice AND latches `isLoadPassInProgress()` true forever (every
-      // polling E2E helper then burns its full timeout). drain() is a no-op
-      // when nothing was queued.
-      ctx.setUpdateInProgress(false);
-      // When nothing was queued during the failed run, no re-entry will resolve
-      // parked waiters — settle them here. When a state WAS drained, the
-      // re-entered pass carries them to its own commit (queueNext settles them
-      // when no pending state is left), which is what a waiter means: resolving
-      // here as well would release the pacing gate before the view the caller
-      // asked for has landed. Same shape as `finalReleaseLock`.
-      if (!ctx.drainPendingViewState()) ctx.resolvePassWaiters();
-    });
+    ctx.startRefinement();
   }
 
   return rootGroup;

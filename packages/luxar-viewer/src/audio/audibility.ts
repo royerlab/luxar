@@ -16,7 +16,8 @@
  */
 
 import type { SimpleDims } from '../types/dims';
-import type { SceneNode, ViewState } from '../data/data-loader-types';
+import type { ViewState } from '../data/data-loader-types';
+import type { SceneNodeIndex } from '../data/scene-loader/view-state/scene-node-index';
 import type { SoundSourceDescriptor, SoundWaypointCondition } from '../types/audio';
 import {
   computeTolerance,
@@ -57,7 +58,7 @@ export function computeRowAudibility(
   desc: Pick<SoundSourceDescriptor, 'path' | 'positions' | 'nPositions' | 'ndim'>,
   extendToAll: string[] | undefined,
   base: ViewState,
-  sceneGraph: SceneNode | null,
+  sceneIndex: SceneNodeIndex | null,
   out: Uint8Array
 ): number {
   if (!desc.positions || desc.nPositions === 0) {
@@ -66,7 +67,7 @@ export function computeRowAudibility(
   }
   // A sound borrows the MESH rule throughout (tolerance above, widening here):
   // like a mesh vertex, a row carries no non-displayed extent of its own.
-  const derived = deriveNodeViewState(desc.path, { extend_to_all: extendToAll }, base, sceneGraph, {
+  const derived = deriveNodeViewState(desc.path, { extend_to_all: extendToAll }, base, sceneIndex, {
     applyPartialExtendTolerance: PARTIAL_EXTEND_TOLERANCE.mesh,
   });
   const vs = derived.viewState;

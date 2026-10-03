@@ -290,7 +290,17 @@ export function windowOwnerGain(
   root: SceneNode,
   targetPath: string
 ): { intensity: number; offset: number } | undefined {
-  const chain = collectAncestorNodes(root, targetPath);
+  return windowOwnerGainOfChain(collectAncestorNodes(root, targetPath));
+}
+
+/**
+ * {@link windowOwnerGain} over an already-resolved root→target chain (the shape
+ * {@link collectAncestorNodes} returns), for a caller holding the loader's
+ * `SceneNodeIndex` instead of walking the graph.
+ */
+export function windowOwnerGainOfChain(
+  chain: readonly SceneNode[]
+): { intensity: number; offset: number } | undefined {
   for (let i = chain.length - 1; i >= 0; i--) {
     const attrs = chain[i].attrs;
     if (!isLayerEnabled(attrs.layer)) continue;
@@ -307,6 +317,14 @@ export function windowOwnerGain(
  */
 export function getEffectiveAttrs(root: SceneNode, targetPath: string): EffectiveAttrs {
   return composeAttrs(collectAncestorAttrs(root, targetPath));
+}
+
+/**
+ * {@link getEffectiveAttrs} over an already-resolved root→target chain (the
+ * shape {@link collectAncestorNodes} returns).
+ */
+export function getEffectiveAttrsOfChain(chain: readonly SceneNode[]): EffectiveAttrs {
+  return composeAttrs(chain.map((n) => toComposable(n.attrs)));
 }
 
 /**

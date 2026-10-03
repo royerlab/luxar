@@ -1,9 +1,10 @@
 import { DatasetBrowser } from '../../../ui/dataset-browser';
-import { clearError, showError } from '../../../ui/error-overlay';
+import { clearError } from '../../../ui/error-overlay';
+import { showViewerError } from '../error-dialog';
 import { showToast } from '../../../ui/toast';
 import { log, Modules } from '../../../utils/log';
 import { getViewerContainer } from '../../../utils/viewer-container';
-import { KeyAction, type InputHandler } from '../../../input';
+import type { InputHandler } from '../../../input';
 
 /**
  * Open the dataset browser modal. Returns the new instance so the
@@ -74,10 +75,7 @@ export function showDatasetBrowser(ports: ShowDatasetBrowserPorts): DatasetBrows
       return ports.loadDataset(cleanUrl).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         log.error(Modules.LUXAR, `loadDataset failed for ${cleanUrl}: ${message}`, error);
-        showError(`Failed to load dataset: ${message}`, ports.shortcutForAction, {
-          datasetBrowser: KeyAction.toggleDatasetBrowser,
-          help: KeyAction.toggleHelp,
-        });
+        showViewerError(`Failed to load dataset: ${message}`, ports.shortcutForAction);
         throw error;
       });
     },

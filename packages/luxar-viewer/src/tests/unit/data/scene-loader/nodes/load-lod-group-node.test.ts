@@ -249,8 +249,6 @@ function makeCtx(registry?: LODGroupRegistry, overrides: Partial<NodeBuildCtx> =
       registerPointsLoader: vi.fn(),
       registerLinesLoader: vi.fn(),
       registerMeshLoader: vi.fn(),
-      unregisterPointsLoader: vi.fn(),
-      unregisterLinesLoader: vi.fn(),
     } as never,
     lodGroupRegistry: registry,
     nodeFactory,

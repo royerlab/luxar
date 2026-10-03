@@ -441,16 +441,11 @@ describe('bootstrapStandalone', () => {
         },
         { autoDismiss: false }
       );
-      expect(mocks.showError).toHaveBeenNthCalledWith(
-        2,
-        'ordinary failure',
-        expect.any(Function),
-        {
-          datasetBrowser: 'dataset-browser.toggle',
-          help: 'help.toggle',
-        },
-        undefined
-      );
+      // No options at all: the dialog's own auto-dismiss default applies.
+      expect(mocks.showError).toHaveBeenNthCalledWith(2, 'ordinary failure', expect.any(Function), {
+        datasetBrowser: 'dataset-browser.toggle',
+        help: 'help.toggle',
+      });
     });
   });
 

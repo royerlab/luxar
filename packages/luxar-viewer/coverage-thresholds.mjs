@@ -113,7 +113,7 @@ export const COVERAGE_THRESHOLDS = {
   // bumps above.
   // Remote-control orchestration and wire-value tests lifted this subtree;
   // keep the floor within the three-point slack budget.
-  'src/core/**': { lines: 90, functions: 78, branches: 85 },
+  'src/core/**': { lines: 90, functions: 80, branches: 85 },
   // input jumped when ui-actions-surface.test.ts began invoking the command
   // table InputHandler builds in registerAllKeyBindings (27 thunks no test
   // had ever called): functions 76.0 -> 90.39.
@@ -147,7 +147,7 @@ export const COVERAGE_RECORDED = {
   'src/data/**': { lines: 93.6, functions: 93.08, branches: 87.31 },
   'src/workers/**': { lines: 93.8, functions: 94.05, branches: 88.52 },
   'src/ui/**': { lines: 92.0, functions: 86.95, branches: 79.58 },
-  'src/core/**': { lines: 92.15, functions: 79.62, branches: 86.94 },
+  'src/core/**': { lines: 92.15, functions: 81.03, branches: 86.94 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
   'src/rendering/**': { lines: 79, functions: 80.73, branches: 78.59 },
 };

@@ -59,6 +59,20 @@ panel doesn't import `scene/` directly (respecting the data → ui layer
 direction). Locking a level wakes the animation loop (`requestRender`) so the
 new active level paints even when the camera and slice are idle.
 
+### Ancestry lookups go through the scene-node index
+
+Every composition needs a leaf's root→leaf chain. `initFromScene(rootGroup,
+sceneGraph, sceneIndex)` takes the scene loader's `SceneNodeIndex`
+(`SceneLoader.sceneNodeIndex`, passed by `core/app/dataset/load-dataset.ts`),
+and both `LayerApplyEngine` (its `getSceneNodeIndex` port) and
+`LayerStateManager.initFromSceneGraph` read chains from it with
+`SceneNodeIndex.ancestorChain(path)` — the exact answer `collectAncestorNodes`
+gives, in O(1). Without an index (tests, an embedder calling `initFromScene`
+directly) the panel builds one over the graph, a single O(N) pass. The
+descent this replaced resolved each level with a linear `children.find`, so a
+slider tick over a P-part layer cost ~P²/2 comparisons; on a 2000-part layer
+a tick measured 99 ms before and 13 ms after (jsdom, 1 ms timer resolution).
+
 ### Leaves built after the panel initialised
 
 The panel pushes layer state into the scene at `initFromScene` and on every
@@ -369,10 +383,8 @@ window has to be re-expressed across.
 ##### …and only from a window in the reference basis
 
 `LayerApplyEngine.composedWindowIsInReferenceBasis` decides this over the same
-ancestry chain `composeEffective` walks (walked once per leaf and shared between
-them — `collectAncestorNodes` resolves each step with a linear `children.find`,
-so a fan-out over a P-part wrapper is O(P²) and `applyComposed` runs on every
-slider tick). `intensity` multiplies and `offset` sums over that whole chain with
+ancestry chain `composeEffective` reads (looked up once per leaf and shared
+between them). `intensity` multiplies and `offset` sums over that whole chain with
 live panel state substituted for `layer=true` nodes, so a window contributed at
 or below the edited layer puts the composed one in a different basis, and
 remapping it would corrupt a window that was already correct. Four arms decline:

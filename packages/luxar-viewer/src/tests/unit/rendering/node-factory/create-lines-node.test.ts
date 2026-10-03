@@ -31,6 +31,7 @@ import {
   __resetMaterialManagerForTests,
 } from '../../../../rendering/material-manager';
 import { applyEffectiveAttrs } from '../../../../data/scene-loader/view-state/effective-attrs';
+import { SceneNodeIndex } from '../../../../data/scene-loader/view-state/scene-node-index';
 import type { SceneNode } from '../../../../data/data-loader-types';
 import type { LineMaterial } from '../../../../rendering/materials/line/material-glsl';
 import type { LinePickingMaterial } from '../../../../rendering/picking/line/material';
@@ -113,7 +114,7 @@ describe('createLinesNode material wiring', () => {
       // Root contributes identity here; the /group ancestor carries 0.5.
       root.attrs = {};
 
-      const composed = applyEffectiveAttrs(root, leaf);
+      const composed = applyEffectiveAttrs(new SceneNodeIndex(root), leaf);
       expect(composed.opacity).toBeCloseTo(0.25, 6);
 
       const factory = new NodeFactory();

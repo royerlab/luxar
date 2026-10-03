@@ -4,7 +4,7 @@
  * Exposes lock-free helpers (`retryFailedLoaderUnlocked`,
  * `retryAllFailedLoadersUnlocked`) that re-trigger the data fetch +
  * commit for paths that recorded a failure. The orchestrator (SceneLoader)
- * wraps each call in its `_updateInProgress` lock dance — these helpers
+ * wraps each call in the serialization lock (`PassScheduler.acquireForRetry`) — these helpers
  * never touch that lock so retry-from-inside-retry doesn't deadlock.
  *
  * Each retry repeats the same query-shape logic the main update path

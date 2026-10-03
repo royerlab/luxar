@@ -18,6 +18,7 @@ import * as THREE from 'three';
 import { LayerApplyEngine } from '../../../../ui/layers/layer-apply';
 import { LayerStateManager } from '../../../../ui/layers/layer-state';
 import type { SceneNode } from '../../../../data/data-loader-types';
+import { SceneNodeIndex } from '../../../../data/scene-loader/view-state/scene-node-index';
 
 /** A gsplats mesh the engine can find by scene-graph path. */
 function leafMesh(name: string): THREE.Mesh {
@@ -67,7 +68,7 @@ function nestedLayerHarness(groupOrder?: number, leafOrder?: number) {
   state.initFromSceneGraph(graph);
   const engine = new LayerApplyEngine({
     getRootGroup: () => rootGroup,
-    getSceneGraph: () => graph,
+    getSceneNodeIndex: () => new SceneNodeIndex(graph),
     state,
     requestRender: () => {},
     requestReprocess: () => {},

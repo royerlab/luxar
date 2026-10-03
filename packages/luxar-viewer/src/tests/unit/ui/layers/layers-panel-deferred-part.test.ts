@@ -37,6 +37,7 @@ import { __resetMaterialManagerForTests } from '../../../../rendering/material-m
 import { computeScalarRangeUniforms } from '../../../../rendering/materials/_shared/scalar-range';
 import { loadSceneNodes } from '../../../../data/scene-loader/nodes/load-scene-nodes';
 import { applyEffectiveAttrs } from '../../../../data/scene-loader/view-state/effective-attrs';
+import { SceneNodeIndex } from '../../../../data/scene-loader/view-state/scene-node-index';
 import { findObjectByName } from '../../../../utils/scene-graph-index';
 import { log } from '../../../../utils/log';
 import { makeTestNodeBuildCtx } from '../../../helpers/make-test-node-build-ctx';
@@ -146,7 +147,7 @@ async function loadAndInitPanel(graph: SceneNode = sceneGraph()): Promise<Harnes
   const registerPartition = vi.fn();
   const ctx: NodeBuildCtx = makeTestNodeBuildCtx({
     nodeFactory: new NodeFactory(),
-    applyEffectiveAttrs: (node: SceneNode) => applyEffectiveAttrs(graph, node),
+    applyEffectiveAttrs: (node: SceneNode) => applyEffectiveAttrs(new SceneNodeIndex(graph), node),
     lodGroupRegistry: { registerPartition } as unknown as NodeBuildCtx['lodGroupRegistry'],
     viewState: {
       displayDims: [0, 1, 2],
@@ -318,7 +319,7 @@ describe('LayersPanel — a partition part activated after the panel initialised
       const factory = new NodeFactory();
       const loader = { dispose: vi.fn() };
       const create = (leaf: SceneNode): THREE.Mesh => {
-        const attrs = applyEffectiveAttrs(graph, leaf);
+        const attrs = applyEffectiveAttrs(new SceneNodeIndex(graph), leaf);
         if (type === 'points') {
           return factory.createEmptyPointsNode(
             leaf.path,

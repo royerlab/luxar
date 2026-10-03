@@ -42,26 +42,6 @@ describe('validateDataLoadingMemory', () => {
     expect(result.errors).toContainEqual(expect.stringContaining('Invalid target heap usage'));
   });
 
-  it('should error when minCacheMB is zero', () => {
-    const cfg = cloneConfig();
-    cfg.dataLoading.memory.minCacheMB = 0;
-
-    const result = invokeValidator(validateDataLoadingMemory, cfg);
-
-    expect(result.valid).toBe(false);
-    expect(result.errors).toContainEqual(expect.stringContaining('Invalid min cache size'));
-  });
-
-  it('should error when minCacheMB is negative', () => {
-    const cfg = cloneConfig();
-    cfg.dataLoading.memory.minCacheMB = -100;
-
-    const result = invokeValidator(validateDataLoadingMemory, cfg);
-
-    expect(result.valid).toBe(false);
-    expect(result.errors).toContainEqual(expect.stringContaining('Invalid min cache size'));
-  });
-
   it('rejects NaN memory.targetHeapUsage', () => {
     const cfg = cloneConfig();
     cfg.dataLoading.memory.targetHeapUsage = NaN;
@@ -76,13 +56,5 @@ describe('validateDataLoadingMemory', () => {
     const result = invokeValidator(validateDataLoadingMemory, cfg);
     expect(result.valid).toBe(false);
     expect(result.errors).toContainEqual(expect.stringContaining('target heap usage'));
-  });
-
-  it('rejects NaN memory.minCacheMB', () => {
-    const cfg = cloneConfig();
-    cfg.dataLoading.memory.minCacheMB = NaN;
-    const result = invokeValidator(validateDataLoadingMemory, cfg);
-    expect(result.valid).toBe(false);
-    expect(result.errors).toContainEqual(expect.stringContaining('min cache size'));
   });
 });

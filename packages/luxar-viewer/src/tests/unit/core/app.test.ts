@@ -1626,7 +1626,8 @@ describe('LuxarApp', () => {
         audioEngine,
         layersPanel,
         sceneManager: mockSceneManager,
-        waypointDriver,
+        // The dataset session owns the installed waypoint driver.
+        session: { waypointDriver, dispose: vi.fn() },
       });
 
       (app as unknown as { installAudio(audio: unknown): void }).installAudio(undefined);
@@ -1908,6 +1909,34 @@ describe('LuxarApp', () => {
         'webglcontextlost',
         canvas.addEventListener.mock.calls.find((call) => call[0] === 'webglcontextlost')?.[1]
       );
+    });
+
+    it('stops a kiosk watchdog installed by a load that finishes after dispose', async () => {
+      const canvas = { addEventListener: vi.fn(), removeEventListener: vi.fn() };
+      mockSceneManager.renderer = { domElement: canvas };
+      await app.init({ canvas: mockCanvas, src: '' });
+      mockSceneManager.getSceneViewerConfig.mockReturnValue({
+        ui: { kiosk: { enabled: true, watchdog_reload: true } },
+      });
+      let releaseLoad!: () => void;
+      mockSceneManager.loadSceneData.mockImplementationOnce(
+        () => new Promise<void>((resolve) => (releaseLoad = resolve))
+      );
+
+      const switching = app.switchDataset('http://example.com/next.zarr');
+      await vi.waitFor(() => expect(mockSceneManager.loadSceneData).toHaveBeenCalledTimes(1));
+      app.dispose();
+      releaseLoad();
+      await switching;
+
+      const additions = canvas.addEventListener.mock.calls.filter(
+        (call) => call[0] === 'webglcontextlost'
+      );
+      const removals = canvas.removeEventListener.mock.calls.filter(
+        (call) => call[0] === 'webglcontextlost'
+      );
+      expect(additions).toHaveLength(1);
+      expect(removals).toEqual([['webglcontextlost', additions[0][1]]]);
     });
 
     it('keeps authored scene overlays visible in kiosk mode', async () => {

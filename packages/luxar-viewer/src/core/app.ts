@@ -19,22 +19,17 @@ import type {
   ViewerState,
 } from './app/embedder/events';
 import { CameraFlight, type FlyToOptions, type FlightResult } from './app/camera/camera-flight';
-import { WaypointDriver, resolveWaypointPose } from './app/camera/waypoint-driver';
+import { installStoryWaypoints } from './app/camera/install-waypoints';
 import { ControlClient } from './app/control/control-client';
 import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';
-import { extractAudioConfig } from '../config/zarr-bridge/audio-config';
-import { resolveKioskMode } from '../config/kiosk';
 import { replaceBrowserDataSourceUrl } from '../config/url-params';
-import { applyKioskMode } from './app/kiosk/apply-kiosk';
-import {
-  extractControlPanelConfig,
-  type ControlPanelSettings,
-} from '../config/zarr-bridge/control-panel';
+import { applySceneKiosk } from './app/kiosk/apply-kiosk';
+import { installSceneAudio } from './app/viewer-config/install-audio';
+import { DatasetSession } from './app/dataset/dataset-session';
+import { extractControlPanelConfig } from '../config/zarr-bridge/control-panel';
 import type { AudioEngine } from '../audio/audio-engine';
 import type { AudioPatch, AudioState } from '../types/audio';
-import { resolveTargetNodeCenter } from '../scene/scene-manager/camera/camera-setup';
-import { config, type RenderingSettings } from '../config';
-import type * as THREE from 'three';
+import type { RenderingSettings } from '../config';
 import type { ZarrWaypoint } from '../types/zarr';
 import { captureScreenshot } from './app/embedder/screenshot';
 import type { AnimationController } from '../scene/animation/animation-controller';
@@ -97,10 +92,8 @@ import { initOverlays as initOverlaysImpl } from './app/overlays/init-overlays';
 import { installFocusHandling } from './app/lifecycle/focus-handling';
 import { installOnlineRetry } from './app/lifecycle/online-retry';
 import { getSceneLoader, SceneLoaderManager } from '../data/scene-loader-manager';
-import type { SceneLoader } from '../data/scene-loader';
 import { notifier } from '../utils/cross-layer/notifier';
 import { initScaleBar as initScaleBarImpl } from './app/overlays/init-scale-bar';
-import { computeBoundsFromMetadata } from '../scene/scene-manager/clipping/scene-bounds-cache';
 
 import type { LuxarAppOptions } from './app/options';
 export type { LuxarAppOptions } from './app/options';
@@ -173,35 +166,17 @@ export class LuxarApp {
    * multi-instance-ready.
    */
   private embedderEvents = createEventBus<LuxarEmbedderEventMap>();
-  private datasetFaultUnsubscribe?: Unsubscribe;
-  private datasetFaultLoader?: SceneLoader;
-  private currentDatasetSrc?: string;
+  /**
+   * Everything the current dataset installed (fault subscription, story
+   * waypoints, kiosk watchdog, control-panel authoring), replaced at every
+   * load start and disposed with the app. Starts as the empty "no dataset yet"
+   * session so readers never branch on its absence.
+   */
+  private session = new DatasetSession(undefined);
   /** Smooth camera transitions for {@link flyTo}; created in {@link setupEmbedderHooks}. */
   private cameraFlight?: CameraFlight;
-  /**
-   * Dims-manager listener driving the loaded scene's authored story waypoints
-   * (`viewer_config.waypoints`); the driver itself lives in its closure.
-   */
-  private waypointListener?: () => void;
-  private waypointDriver?: WaypointDriver;
   /** Remote-control channel, present only when `options.control` is set. */
   private controlClient?: ControlClient;
-  /**
-   * The scene's authored control-panel block, as last loaded.
-   *
-   * Held for `getViewerState()` alone: the touch panel is a separate page and
-   * cannot read the store's attributes itself. Reset on every dataset load, so
-   * switching scenes cannot leave the previous scene's panel authoring behind.
-   */
-  private controlPanelConfig: ControlPanelSettings | null = null;
-  /**
-   * Teardown for the kiosk watchdog, if one is running.
-   *
-   * Held so neither `switchDataset` nor `dispose` can leave a watchdog
-   * listening on a canvas whose context state it no longer describes.
-   */
-  private kioskTeardown: (() => void) | null = null;
-
   /**
    * Observes the canvas box so the viewer re-fits when the host container
    * resizes (not just the window). Disconnected on dispose via {@link events}.
@@ -452,12 +427,12 @@ export class LuxarApp {
    * Load a dataset and initialize UI
    */
   private async loadDataset(src: string): Promise<void> {
-    this.datasetFaultUnsubscribe?.();
-    this.datasetFaultUnsubscribe = undefined;
-    this.datasetFaultLoader = undefined;
-    this.currentDatasetSrc = undefined;
-    // The outgoing scene's waypoints must not fire on the incoming scene's dims.
-    this.disposeWaypoints();
+    // The outgoing scene's session goes first: its waypoints must not fire on
+    // the incoming scene's dims, its watchdog must not outlive it, and its
+    // fault latch is not the new scene's.
+    this.session.dispose();
+    const session = new DatasetSession(src);
+    this.session = session;
     // ...and its sounds must stop before the new store loads.
     this.audioEngine?.detachScene();
     try {
@@ -478,18 +453,11 @@ export class LuxarApp {
         applyViewerConfigState: (config) => this.applyViewerConfigState(config),
         openCacheStatsView: () => this.openCacheStatsView(),
       });
-      this.currentDatasetSrc = src;
-      const sceneLoader = getSceneLoader();
-      this.datasetFaultLoader = sceneLoader ?? undefined;
+      session.markLoaded(getSceneLoader());
       // A replayed latched fault is post-load state, so preserve the public
       // ordering: the dataset becomes available before its fault is reported.
       this.embedderEvents.emit('dataset-loaded', { src });
-      if (sceneLoader) {
-        this.datasetFaultUnsubscribe = sceneLoader.onArchiveFault(
-          (error) => this.embedderEvents.emit('dataset-fault', { src, error }),
-          { replayCurrent: true }
-        );
-      }
+      session.reportFaults((error) => this.embedderEvents.emit('dataset-fault', { src, error }));
     } catch (error) {
       this.embedderEvents.emit('dataset-error', {
         src,
@@ -589,153 +557,81 @@ export class LuxarApp {
     // Kept rather than applied: nothing in THIS page reads it. The control
     // panel is a separate page and asks for it over the wire, so the display's
     // only job is to remember what the store said.
-    this.controlPanelConfig = extractControlPanelConfig(viewerConfig?.control_panel);
+    this.session.controlPanelConfig = extractControlPanelConfig(viewerConfig?.control_panel);
     this.applyKiosk(viewerConfig);
   }
 
   /**
-   * Lock the display down when the scene or the URL asks for it.
-   *
-   * Resolved from BOTH the authored `ui.kiosk` block and `?kiosk`, with the URL
-   * winning — see `config/kiosk.ts`. Re-applied on every dataset load, and the
-   * previous watchdog torn down first, so switching scenes cannot accumulate
-   * listeners on a long-running exhibit.
+   * Lock the display down when the scene or the URL asks for it
+   * (`core/app/kiosk/apply-kiosk.ts`). Re-applied on every dataset load; the
+   * session owns the watchdog, so switching scenes cannot accumulate listeners
+   * on a long-running exhibit.
    */
   private applyKiosk(viewerConfig: ZarrViewerConfig | undefined): void {
-    this.kioskTeardown?.();
-    this.kioskTeardown = null;
-    // `this.options?` because this now runs inside the viewer-config pass,
-    // which a partially-constructed app can reach before its options are set —
-    // and a missing option means "no ?kiosk", not a crash that aborts the rest
-    // of the load (theme, dimension state, the render loop after it).
-    const mode = resolveKioskMode(viewerConfig?.ui?.kiosk, this.options?.kiosk === true);
-    if (!mode.enabled) return;
-    this.kioskTeardown = applyKioskMode(mode, {
-      setKeyboardEnabled: (enabled) => this.inputHandler.setEnabled(enabled),
-      setControlsEnabled: (enabled) => this.sceneManager.controls?.setEnabled(enabled),
-      hidePanels: () => {
-        this.renderingControls.hide();
-        this.scaleBar?.hide();
-        this.layersPanel?.hide();
-      },
-      canvas: this.sceneManager.renderer?.domElement,
-    });
+    // `this.options?` because this runs inside the viewer-config pass, which a
+    // partially-constructed app can reach before its options are set — and a
+    // missing option means "no ?kiosk", not a crash that aborts the rest of the
+    // load (theme, dimension state, the render loop after it).
+    this.session.setKioskTeardown(
+      applySceneKiosk(viewerConfig?.ui?.kiosk, this.options?.kiosk === true, () => ({
+        setKeyboardEnabled: (enabled) => this.inputHandler.setEnabled(enabled),
+        setControlsEnabled: (enabled) => this.sceneManager.controls?.setEnabled(enabled),
+        hidePanels: () => {
+          this.renderingControls.hide();
+          this.scaleBar?.hide();
+          this.layersPanel?.hide();
+        },
+        canvas: this.sceneManager.renderer?.domElement,
+      }))
+    );
   }
 
-  /**
-   * Bind the sound layer to the loaded scene: apply the authored
-   * `viewer_config.audio` defaults (the listener's persisted mute / master gain
-   * win), then hand the engine the scene root so it finds the sound-node
-   * placeholders `loadSoundNode` attached and starts decoding their clips.
-   */
+  /** Bind the sound layer to the loaded scene (`viewer-config/install-audio.ts`). */
   private installAudio(audio: unknown): void {
     if (!this.audioEngine) return;
-    this.audioEngine.detachScene();
-    this.audioEngine.applySceneConfig(extractAudioConfig(audio));
-    const root = this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene');
-    if (root) {
-      this.audioEngine.attachScene(root);
-      this.layersPanel?.pushAudioMutes();
-    }
-    // The waypoints install first and snap to the opening waypoint before any
-    // sound node exists, so the load-time arrival is replayed here — otherwise
-    // the opening story's `on_arrive` narration would never fire.
-    const driver = this.waypointDriver;
-    const opening = driver ? driver.getWaypoint(driver.currentIndex) : undefined;
-    if (opening?.when) this.audioEngine.notifyWaypoint('arrive', opening.when);
+    const driver = this.session.waypointDriver;
+    installSceneAudio(audio, {
+      audioEngine: this.audioEngine,
+      sceneRoot: this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene'),
+      pushAudioMutes: () => this.layersPanel?.pushAudioMutes(),
+      openingWaypointWhen: driver ? driver.getWaypoint(driver.currentIndex)?.when : undefined,
+    });
   }
 
   /**
-   * Bind the scene's authored story waypoints to the dims manager: match once
-   * now (snap — the opening framing, ahead of the plain `camera` block), then
-   * fly whenever a dimension change makes a different waypoint match. Each
-   * port is a piece the app already owns; the driver only sequences them.
+   * Bind the scene's authored story waypoints (`camera/install-waypoints.ts`);
+   * the session owns the binding.
    */
   private installWaypoints(waypoints: ZarrWaypoint[] | undefined): void {
-    this.disposeWaypoints();
-    if (!Array.isArray(waypoints) || waypoints.length === 0) {
-      this.overlayManager?.updateVisibility();
-      return;
-    }
-
-    const driver = new WaypointDriver(waypoints, {
-      getDims: () => sceneDimsManager.getDims(),
-      getLivePose: () => captureViewerSnapshot(this.sceneManager).camera,
-      resolvePose: (camera, live) =>
-        resolveWaypointPose(camera, live, {
-          resolveNodeCenter: (name) => {
-            const root = this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene') as
-              THREE.Group | undefined;
-            return root ? resolveTargetNodeCenter(root, name) : null;
-          },
-          fovPresets: config.camera.fovPresets,
-        }),
-      snapTo: (pose) => restoreCamera(this.sceneManager, pose),
-      autoRotateActive: () => this.sceneManager.controls.isAutoRotateActive(),
-      // The default pivot of a `swing` flight: the centre of the scene's data.
-      sceneCentre: () => {
-        const scene = this.sceneManager.scene;
-        const b = typeof scene?.traverse === 'function' ? computeBoundsFromMetadata(scene) : null;
-        if (!b) return null;
-        return [(b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, (b.min.z + b.max.z) / 2];
-      },
-      flyTo: (pose, opts) => {
-        // The first load's config pass runs before setupEmbedderHooks(), so the
-        // flight driver may not exist yet; a snap is the faithful fallback.
-        if (this.cameraFlight) return this.cameraFlight.flyTo(pose, opts);
-        restoreCamera(this.sceneManager, pose);
-        return Promise.resolve({ completed: true });
-      },
-      // Snake_case keys → the same validated override path authored defaults take.
-      applyRendering: (rendering) =>
-        this.renderingControls.applyOverrides(
-          extractRenderingOverrides(rendering as ZarrViewerConfig),
-          'Applied waypoint rendering overrides'
-        ),
-      // The two story events: onto the embedder bus for controllers, and to the
-      // sound layer for its `on_depart` / `on_arrive` nodes.
-      emit: (event, payload) => {
-        if (event === 'waypoint-departed') {
-          this.embedderEvents.emit(event, { index: payload.index });
-        } else {
-          this.embedderEvents.emit(event, {
-            index: payload.index,
-            completed: 'completed' in payload ? payload.completed : true,
-          });
-          // The flight resolved and the driver's gate is open: reveal the
-          // overlays a `reveal: "on_arrival"` waypoint held back.
-          this.overlayManager?.updateVisibility();
-        }
-        const when = waypoints[payload.index]?.when;
-        if (when && this.audioEngine) {
-          this.audioEngine.notifyWaypoint(
-            event === 'waypoint-departed' ? 'depart' : 'arrive',
-            when
-          );
-        }
-      },
-    });
-    const listener = (): void => {
-      driver.evaluate('fly');
-      // The overlay manager listens to the same dims manager and may have run
-      // first with the previous gate state. Re-run its pass now whether the
-      // new match closes OR opens the gate — same task, so nothing paints in
-      // between.
-      this.overlayManager?.updateVisibility();
-    };
-    sceneDimsManager.addListener(listener);
-    this.waypointListener = listener;
-    this.waypointDriver = driver;
-    driver.evaluate('snap');
-    this.overlayManager?.updateVisibility();
+    this.session.setWaypoints(null);
+    this.session.setWaypoints(
+      installStoryWaypoints(waypoints, {
+        sceneManager: this.sceneManager,
+        getCameraFlight: () => this.cameraFlight,
+        // Snake_case keys → the same validated override path authored defaults take.
+        applyRendering: (rendering) =>
+          this.renderingControls.applyOverrides(
+            extractRenderingOverrides(rendering as ZarrViewerConfig),
+            'Applied waypoint rendering overrides'
+          ),
+        emit: (story) => {
+          if (story.event === 'waypoint-departed') {
+            this.embedderEvents.emit(story.event, { index: story.index });
+          } else {
+            this.embedderEvents.emit(story.event, {
+              index: story.index,
+              completed: story.completed,
+            });
+          }
+        },
+        notifySound: (kind, when) => this.audioEngine?.notifyWaypoint(kind, when),
+        updateOverlayVisibility: () => this.overlayManager?.updateVisibility(),
+      })
+    );
   }
 
   private disposeWaypoints(): void {
-    if (this.waypointListener) {
-      sceneDimsManager.removeListener(this.waypointListener);
-      this.waypointListener = undefined;
-    }
-    this.waypointDriver = undefined;
+    this.session.setWaypoints(null);
   }
 
   /**
@@ -866,7 +762,7 @@ export class LuxarApp {
     // Story captions wait for the camera when a waypoint asks for it: the gate
     // reads the LIVE driver, so it holds whichever scene's waypoints are
     // installed, before or after the overlays themselves were created.
-    this.overlayManager.setTransitGate(() => this.waypointDriver?.inTransit === true);
+    this.overlayManager.setTransitGate(() => this.session.waypointDriver?.inTransit === true);
   }
 
   /**
@@ -1246,9 +1142,7 @@ export class LuxarApp {
 
   /** Current latched fault episode, or null when no dataset is loaded or the latch is clear. */
   getDatasetFault(): DatasetFaultPayload | null {
-    const error = this.datasetFaultLoader?.archiveFault;
-    if (!error || !this.currentDatasetSrc) return null;
-    return { src: this.currentDatasetSrc, error };
+    return this.session.fault;
   }
 
   /**
@@ -1399,7 +1293,7 @@ export class LuxarApp {
       throw new Error('LuxarApp.getViewerState called before init()');
     }
     return {
-      src: this.currentDatasetSrc ?? this.options.src ?? null,
+      src: this.session.loadedSrc ?? this.options.src ?? null,
       // Read from the document rather than kept as a field: the authored
       // title, the `?title=` parameter and the built-in default all land
       // there already, so this reports what is actually on the tab.
@@ -1409,7 +1303,7 @@ export class LuxarApp {
       rendering: this.getRenderingSettings(),
       layers: this.getLayers(),
       audio: this.getAudioState(),
-      controlPanel: this.controlPanelConfig,
+      controlPanel: this.session.controlPanelConfig,
     };
   }
 
@@ -1532,14 +1426,10 @@ export class LuxarApp {
     // step that throws partway can't strand it.
     setDocumentTitle(null);
 
-    this.datasetFaultUnsubscribe?.();
-    this.datasetFaultUnsubscribe = undefined;
-    this.datasetFaultLoader = undefined;
-    this.currentDatasetSrc = undefined;
-    // The kiosk watchdog listens on the canvas and owns a reload timer; left
-    // running it would reload the page after the app is gone.
-    this.kioskTeardown?.();
-    this.kioskTeardown = null;
+    // Everything the dataset installed — among it the kiosk watchdog, which
+    // listens on the canvas and owns a reload timer that would otherwise
+    // reload the page after the app is gone.
+    this.session.dispose();
 
     runDisposePipeline({
       events: this.events,

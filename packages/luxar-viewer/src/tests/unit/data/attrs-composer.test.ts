@@ -6,6 +6,7 @@ import {
   getEffectiveAttrs,
 } from '../../../data/attrs-composer';
 import { applyEffectiveAttrs } from '../../../data/scene-loader/view-state/effective-attrs';
+import { SceneNodeIndex } from '../../../data/scene-loader/view-state/scene-node-index';
 import type { SceneNode } from '../../../data/data-loader-types';
 import { defaultBlendingMode } from '../../../types/geometry-capabilities';
 import { GEOMETRY_TYPES } from '../../../types/format-contract';
@@ -565,7 +566,7 @@ describe('applyEffectiveAttrs — colormap reaches the consumer record (#1600)',
 
   it('hands a gsplats leaf the ancestor palette AND its LUT bytes', () => {
     const leaf = graph.children![0].children![0];
-    const eff = applyEffectiveAttrs(graph, leaf);
+    const eff = applyEffectiveAttrs(new SceneNodeIndex(graph), leaf);
     expect(eff.colormap).toBe('custom');
     expect(eff.customLutBytes).toBe(lut);
   });
@@ -579,12 +580,12 @@ describe('applyEffectiveAttrs — colormap reaches the consumer record (#1600)',
     // without a scalar channel (asserted below).
     const leaf = graph.children![0].children![0];
     expect(leaf.attrs.has_colors).toBe(true);
-    expect(applyEffectiveAttrs(graph, leaf).colormap).toBe('custom');
+    expect(applyEffectiveAttrs(new SceneNodeIndex(graph), leaf).colormap).toBe('custom');
   });
 
   it('still hands a scalar-less points leaf the palette, for its own gate to refuse', () => {
     const pts = graph.children![0].children![1];
-    const eff = applyEffectiveAttrs(graph, pts);
+    const eff = applyEffectiveAttrs(new SceneNodeIndex(graph), pts);
     expect(eff.colormap).toBe('custom');
     // `createPointsMaterial` requires `has_scalars` before it builds a LUT, so
     // composition stays type-agnostic and the consumer owns the decision.
@@ -599,7 +600,9 @@ describe('applyEffectiveAttrs — colormap reaches the consumer record (#1600)',
       attrs: {},
       children: [{ path: '/gs', type: 'gsplats', hasSpatialIndex: true, attrs: {} }],
     };
-    expect(applyEffectiveAttrs(bare, bare.children![0]).colormap).toBeUndefined();
+    expect(
+      applyEffectiveAttrs(new SceneNodeIndex(bare), bare.children![0]).colormap
+    ).toBeUndefined();
   });
 });
 
@@ -680,6 +683,8 @@ describe('layer_order survives the raw-attrs allowlist', () => {
 
   it('applyEffectiveAttrs puts the composed level on the consumer record', () => {
     const g = graph({ layer_order: 10 }, {});
-    expect(applyEffectiveAttrs(g as never, g.children[0] as never).layer_order).toBe(10);
+    expect(
+      applyEffectiveAttrs(new SceneNodeIndex(g as never), g.children[0] as never).layer_order
+    ).toBe(10);
   });
 });
