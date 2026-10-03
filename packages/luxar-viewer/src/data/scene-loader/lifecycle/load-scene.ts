@@ -6,22 +6,20 @@
  *   2. (The loader is one-shot: `SceneLoader.loadScene` refuses a second
  *      load, so there is never an earlier dataset of THIS loader to dispose.)
  *   3. Create a fresh dataset AbortController for this loader's worker calls.
- *   4. Reset the predictive-prefetch baseline (otherwise the first
- *      updateView extrapolates from the prior dataset's slicePosition).
- *   5. Set up L0 + L1/L2 caches; open the zarr root.
- *   6. Build the empty root THREE.Group + initialize scene dimensions
+ *   4. Set up L0 + L1/L2 caches; open the zarr root.
+ *   5. Build the empty root THREE.Group + initialize scene dimensions
  *      from `scene_dimensions` metadata.
- *   7. Surface a toast when ndim > 16 (WASM ceiling — TS fallback works
+ *   6. Surface a toast when ndim > 16 (WASM ceiling — TS fallback works
  *      but is slower).
- *   8. Persist `viewer_config` + `position_bounds` onto the root group's
+ *   7. Persist `viewer_config` + `position_bounds` onto the root group's
  *      userData for the UI to read.
- *   9. Build the scene graph (zarr group enumeration → SceneNode tree).
- *  10. Hand the root to `config.onSceneMetadata` (the scene manager frames
+ *   8. Build the scene graph (zarr group enumeration → SceneNode tree).
+ *   9. Hand the root to `config.onSceneMetadata` (the scene manager frames
  *      the opening camera from the metadata), then recursively load every
  *      leaf via `loadSceneNodes`.
- *  11. Load overlay configs (screen-space annotations).
- *  12. Wire post-load monitor providers (cache stats, loader maps, etc.).
- *  13. Schedule progressive LOD refinement (all four geometry types) when
+ *  10. Load overlay configs (screen-space annotations).
+ *  11. Wire post-load monitor providers (cache stats, loader maps, etc.).
+ *  12. Schedule progressive LOD refinement (all four geometry types) when
  *      any multi-LOD loader still has higher LODs to fetch (the initial-load
  *      path only fetches LOD 0; without this kick, higher LODs would not
  *      load until the user's first updateView).
@@ -113,8 +111,6 @@ export interface LoadSceneCtx {
 
   // Lifecycle callbacks the orchestrator owns:
   normalizeURL(url: string): string;
-  /** Reset the predictive-prefetch baseline. */
-  clearViewStatePrev(): void;
   /**
    * Validate `scene_dimensions` blob and update the loader's viewState.
    * Implementation in `initialize-scene-dimensions.ts`; the orchestrator
@@ -288,12 +284,6 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // ...which also names this dataset's hold on the page-wide custom-LUT cache
   // (released by `dispose.ts`).
   retainCustomColormapTextures(datasetAbortController);
-
-  // S6: reset per-loader prefetch predictor state. Without this,
-  // the first updateView on a new dataset would extrapolate from
-  // the prior dataset's slicePosition, producing wild prefetch
-  // targets.
-  ctx.clearViewStatePrev();
 
   const cacheResult = await setupCaches(ctx.normalizeURL(url), {
     noCache: ctx.config.noCache,

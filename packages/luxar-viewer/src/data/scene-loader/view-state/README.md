@@ -22,11 +22,10 @@ reaches a loader: deriving the per-node query (with `extend_to_all`
 
 ## Consumers
 
-- `../lifecycle/load-scene.ts` resets the predictive-prefetch
-  baseline (the queue's `clearPrev`) on dataset switch, so the
-  first `updateView` doesn't extrapolate from the prior dataset's
-  slice position. The initial per-leaf loads themselves run through
-  `../nodes/*` below.
+- `../lifecycle/dispose.ts` clears the predictive-prefetch baseline
+  (the queue's `clearPrev`), aborting every live prediction. (The
+  loader is one-shot, so there is no dataset switch to reset it for.)
+  The initial per-leaf loads run through `../nodes/*` below.
 - `../lifecycle/retry.ts` re-runs `derive-node-view-state.ts` so
   retry uses the same query region the failed update used.
 - `../nodes/*` consume `derive-node-view-state.ts` to issue

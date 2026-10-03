@@ -518,17 +518,17 @@ export class SceneLoader {
    * The pending-state slot is overwritten on every queued update, so a
    * burst of view changes during an in-flight retry collapses to a
    * single drained call (latest-wins). The per-node prev-state map is
-   * reset on dataset switch (loadScene) and dispose; skipped paths
-   * forget their snapshot so the next non-skip update re-baselines.
+   * cleared on dispose (the loader is one-shot, so there is no dataset
+   * switch to reset it for); skipped paths forget their snapshot so the
+   * next non-skip update re-baselines.
    */
   private viewStateQueue = new ViewStateQueue();
 
   /**
-   * Per-dataset AbortController. Created on every `loadScene` and
-   * aborted at the START of the next `loadScene` (and on `dispose`)
-   * so worker tasks queued by the previous dataset settle
-   * immediately instead of running to completion against a
-   * superseded scene. The loader threads it into its own worker
+   * The dataset's AbortController. Created by the (one-shot) `loadScene` and
+   * aborted on `dispose` — which a dataset switch runs on this loader before
+   * creating a fresh one — so worker tasks it queued settle immediately
+   * instead of running to completion against a superseded scene. The loader threads it into its own worker
    * projections ({@link withDatasetSignal}); the pool itself is shared by
    * every host on the page and carries no dataset signal. WASM execution
    * itself cannot be cancelled, but the orphan results are discarded — see
@@ -1119,7 +1119,6 @@ export class SceneLoader {
       profiler: this.profiler,
       lodGroupRegistry: this.lodGroupRegistry,
       normalizeURL: (u) => this.normalizeURL(u),
-      clearViewStatePrev: () => this.viewStateQueue.clearPrev(),
       initializeSceneDimensions: (sd) => this.initializeSceneDimensions(sd),
       makeNodeBuildCtx: () => this.makeNodeBuildCtx(),
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
@@ -2161,9 +2160,8 @@ export class SceneLoader {
    */
   private makeNodeBuildCtx(): NodeBuildCtx {
     // Capture the dataset's AbortController by reference at ctx-build
-    // time. `loadScene` aborts + replaces this controller on the next
-    // load and `dispose()` nulls it, so a deferred load created under
-    // this dataset can detect (via identity + aborted flag) that its
+    // time. `dispose()` aborts and nulls it, so a deferred load created
+    // under this dataset can detect (via identity + aborted flag) that its
     // dataset is no longer live and skip committing into a stale scene.
     const ctrl = this._datasetAbortController;
     // The eager load commits for the view it is built under (B4).
