@@ -679,6 +679,37 @@ describe('runUpdateStep — the damped tail ends below float32 resolution', () =
     expect(runUpdateStep(ctx)).toBe(true);
   });
 
+  it.fails('keeps a one-pixel pan live in an orthographic view at extreme zoom', () => {
+    // The ortho pan gate is a fraction of the VISIBLE field ((right-left)/zoom),
+    // not of the (zoom-independent) camera distance: at zoom 1e6 the field is
+    // 2e-5 wide, so a 1 px pan of a 1000 px view is 2e-11 — far below 1e-8 of the
+    // distance 5, yet a whole pixel on screen.
+    const camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
+    camera.zoom = 1e6;
+    camera.position.set(0, 0, 5);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    const { ctx } = makeCtx({ enableDamping: true, camera, minZoom: 1e-3, maxZoom: 1e7 });
+    const field = (camera.right - camera.left) / camera.zoom;
+    ctx.panDelta.set(field / 1000, 0, 0);
+    expect(runUpdateStep(ctx)).toBe(true);
+    expect(ctx.target.x).toBeGreaterThan(0);
+  });
+
+  it.fails('drops an orthographic pan below 1e-8 of the visible field when zoomed out', () => {
+    // Zoom 0.01: the field is 2000 wide, so 1e-9 of it (2e-6) is sub-pixel —
+    // yet 4e-7 of the distance 5, which the distance-scaled gate kept applying.
+    const camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
+    camera.zoom = 0.01;
+    camera.position.set(0, 0, 5);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    const { ctx } = makeCtx({ enableDamping: true, camera });
+    ctx.panDelta.set((1e-9 * (camera.right - camera.left)) / camera.zoom, 0, 0);
+    expect(runUpdateStep(ctx)).toBe(false);
+    expect(ctx.target.x).toBe(0);
+  });
+
   it('ends the damped tail of a drag-sized rotation within 50 frames', () => {
     // 0.01 rad at damping 0.25: the 1e-12 gate ran the tail 78 frames.
     const { ctx } = makeCtx({ enableDamping: true, rotationDelta: rotation(0.01) });
