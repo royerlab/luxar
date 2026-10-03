@@ -13,6 +13,7 @@ import { PackedChunkSource } from '../../../../cache/chunk-source/packed-chunk-s
 import { MultiLevelCachingStore } from '../../../../cache/multi-level-caching-store';
 import { sha256HexPureJs } from '../../../../cache/multi-level-caching-store/sha256';
 import type { ChunkFetchOutcome, ChunkSource } from '../../../../cache/chunk-source';
+import { FetchPriorityCell } from '../../../../utils/fetch-concurrency';
 
 const HASH = 'scene-hash-1';
 
@@ -79,6 +80,38 @@ async function bytes(source: ChunkSource, key: string): Promise<number[]> {
 }
 
 describe('PackedChunkSource', () => {
+  it('raises a shared pack fetch when another member becomes urgent', async () => {
+    let release!: (outcome: ChunkFetchOutcome) => void;
+    let packPriority: FetchPriorityCell | undefined;
+    const { source } = inner();
+    const get = source.get.bind(source);
+    source.get = (key, signal, options) => {
+      if (key !== 'chunk_packs/0.pack') return get(key, signal, options);
+      packPriority = options?.priority;
+      return new Promise<ChunkFetchOutcome>((resolve) => {
+        release = resolve;
+      });
+    };
+    const packed = new PackedChunkSource(source);
+    packed.usePacks(index(), HASH);
+    const speculative = new FetchPriorityCell('speculative');
+    const joining = new FetchPriorityCell('refinement');
+    const first = packed.get('splats/part_0/additive_0/amplitudes/c/0', undefined, {
+      priority: speculative,
+    });
+    const initial = packPriority?.value;
+    const second = packed.get('splats/part_0/additive_1/amplitudes/c/0', undefined, {
+      priority: joining,
+    });
+    const afterJoin = packPriority?.value;
+    joining.raise('demand');
+    const afterRaise = packPriority?.value;
+    release({ kind: 'ok', data: PACK_BYTES, bytesOverWire: PACK_BYTES.length });
+    expect((await first).kind).toBe('ok');
+    expect((await second).kind).toBe('ok');
+    expect([initial, afterJoin, afterRaise]).toEqual(['speculative', 'refinement', 'demand']);
+  });
+
   it('serves every member of a pack from one request, byte-identical to the plain chunks', async () => {
     const { source, requests } = inner();
     const packed = new PackedChunkSource(source);

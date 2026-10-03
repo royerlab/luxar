@@ -23,20 +23,25 @@
 import type { ChunkFetchOutcome, ChunkSource, ChunkSourceGetOptions } from '../chunk-source';
 import type { RemoteValidationToken } from '../multi-level-caching-store/validation-queue';
 import { sha256Hex } from '../multi-level-caching-store/sha256';
+import { FetchPriorityCell } from '../../utils/fetch-concurrency';
 import { log, Modules } from '../../utils/log';
 
-interface PackEntry {
+/** Metadata stored in the scene's chunk-pack index. */
+export interface PackEntry {
   key: string;
   sha256: string;
   prefix: string;
 }
 
 /** A fetched pack: its members' bytes, dropped once every one has been served. */
-type Members = Map<string, Uint8Array>;
+export type Members = Map<string, Uint8Array>;
 
-interface Pack extends PackEntry {
+/** A pack's index entry and its shared in-flight fetch. */
+export interface Pack extends PackEntry {
   /** In flight or held while some member is unserved; `null` = unusable. */
   members?: Promise<Members | null>;
+  /** Urgency of the shared pack fetch, raised by any joining member. */
+  priority?: FetchPriorityCell;
 }
 
 const normalized = (key: string): string => key.replace(/^\/+/, '');
@@ -99,8 +104,7 @@ export class PackedChunkSource implements ChunkSource {
     const pack = this.packFor(name);
     if (!pack) return this.inner.get(key, signal, options);
     // Shared by every member's read, so it is not tied to any one caller's signal.
-    pack.members ??= this.fetchPack(pack, options);
-    const members = await pack.members;
+    const members = await this.getPackMembers(pack, options);
     if (signal?.aborted) return { kind: 'aborted' };
     const rel = name.slice(pack.prefix.length);
     const data = members?.get(rel);
@@ -108,7 +112,10 @@ export class PackedChunkSource implements ChunkSource {
     if (!members || !data) return this.inner.get(key, signal, options);
     members.delete(rel);
     // Every member is in the caches now; a later re-read refetches the pack.
-    if (members.size === 0) pack.members = undefined;
+    if (members.size === 0) {
+      pack.members = undefined;
+      pack.priority = undefined;
+    }
     return { kind: 'ok', data, bytesOverWire: data.byteLength };
   }
 
@@ -122,8 +129,29 @@ export class PackedChunkSource implements ChunkSource {
     return undefined;
   }
 
-  private async fetchPack(pack: Pack, options?: ChunkSourceGetOptions): Promise<Members | null> {
-    const outcome = await this.inner.get(pack.key, undefined, options);
+  /** Join a pack fetch and follow later raises of this member's priority. */
+  private async getPackMembers(
+    pack: Pack,
+    options?: ChunkSourceGetOptions
+  ): Promise<Members | null> {
+    const callerPriority = options?.priority;
+    const initial = callerPriority?.value ?? 'demand';
+    if (!pack.members) {
+      pack.priority = new FetchPriorityCell(initial);
+      pack.members = this.fetchPack(pack, pack.priority);
+    }
+    const priority = pack.priority;
+    priority?.raise(initial);
+    const unlink = callerPriority?.onRaise(() => priority?.raise(callerPriority.value));
+    try {
+      return await pack.members;
+    } finally {
+      unlink?.();
+    }
+  }
+
+  private async fetchPack(pack: Pack, priority: FetchPriorityCell): Promise<Members | null> {
+    const outcome = await this.inner.get(pack.key, undefined, { priority });
     if (outcome.kind !== 'ok') return null;
     if ((await sha256Hex(outcome.data)) !== pack.sha256) {
       log.warning(Modules.CACHE, `chunk pack ${pack.key} fails its digest; reading plainly`);
