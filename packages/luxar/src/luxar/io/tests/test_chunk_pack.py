@@ -38,6 +38,7 @@ def _build(path: Path) -> Path:
             "small",
             rng.random((2000, 3)).astype(np.float32),
             colors=rng.random((2000, 3)).astype(np.float32),
+            radii=np.full(2000, 0.02, np.float32),  # broadcast: its row rides in attrs
             partition={"max_elements": 250},
             additive_lod={"n_lods": 3},
         )
@@ -88,6 +89,25 @@ def _walk_arrays(group: zarr.Group, path: str = ""):
         yield from _walk_arrays(group[name], f"{path}/{name}" if path else name)
 
 
+def _served_from_attrs(array: zarr.Array) -> bool:
+    """A broadcast array whose row the viewer takes from ``encoding.value``."""
+    value = (array.attrs.get("encoding") or {}).get("value")
+    return isinstance(value, list) and len(value) == array.size
+
+
+def _stored_chunks(node: zarr.Group, *, read_by_viewer: bool) -> set[str]:
+    """Chunk keys stored below ``node`` (only those a viewer reads, if asked)."""
+    stored = set()
+    for rel, array in _walk_arrays(node):
+        if read_by_viewer and _served_from_attrs(array):
+            continue
+        for coords in np.ndindex(*array.cdata_shape):
+            key = f"{rel}/{array.metadata.encode_chunk_key(coords)}"
+            if read_raw_bytes(node, key) is not None:
+                stored.add(key)
+    return stored
+
+
 def test_every_member_is_its_chunk_byte_for_byte(stores: tuple[Path, Path]) -> None:
     _, packed = stores
     root = open_group(packed, mode="r")
@@ -109,17 +129,28 @@ def test_packs_cover_small_nodes_only(stores: tuple[Path, Path]) -> None:
     assert all(p.startswith("small/") for p in prefixes)
     assert len(prefixes) == len(packs) > 1
     assert all(len(_members(root, p)[1]) <= TARGET_CHUNK_BYTES for p in packs)
-    # Every chunk a packed node stores is a member: a viewer that holds the pack
-    # never needs a second request for that node.
+    # Every chunk of a packed node that a viewer reads is a member: a viewer
+    # that holds the pack never needs a second request for that node.
     for pack in packs:
         node = root[pack["prefix"].rstrip("/")]
-        stored = set()
-        for rel, array in _walk_arrays(node):
-            for coords in np.ndindex(*array.cdata_shape):
-                key = f"{rel}/{array.metadata.encode_chunk_key(coords)}"
-                if read_raw_bytes(node, key) is not None:
-                    stored.add(key)
+        stored = _stored_chunks(node, read_by_viewer=True)
         assert stored == set(_members(root, pack)[0]), pack["prefix"]
+
+
+def test_a_broadcast_array_is_never_a_member(stores: tuple[Path, Path]) -> None:
+    """A broadcast row rides in ``encoding.value``, so no viewer requests its
+    chunk: as a member it could never be served, so its pack never drains."""
+    _, packed = stores
+    root = open_group(packed, mode="r")
+    skipped = 0
+    for pack in _index(root)["packs"]:
+        node = root[pack["prefix"].rstrip("/")]
+        unread = _stored_chunks(node, read_by_viewer=False) - _stored_chunks(
+            node, read_by_viewer=True
+        )
+        skipped += len(unread)
+        assert not unread & set(_members(root, pack)[0]), pack["prefix"]
+    assert skipped > 0, "the fixture has no broadcast array to skip"
 
 
 def test_the_index_stays_small(stores: tuple[Path, Path]) -> None:

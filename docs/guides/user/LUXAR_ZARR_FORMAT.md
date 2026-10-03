@@ -1498,9 +1498,11 @@ chunk_packs/                        # a SIDECAR: no `type`, no `kind` attr
 A pack file is a 4-byte little-endian header length, a UTF-8 JSON header
 `{"members": {"additive_0/centers/c/0": [offset, length], …}}` (chunk keys
 relative to `prefix`, offsets into the data after the header), then the chunk
-bytes back to back. Every chunk object the node stores is a member, so the
-index needs no member list; it stays ~150 B per pack because it rides in the
-root's consolidated metadata, which every load fetches first. (A first design
+bytes back to back. Every chunk object the node stores is a member, except a
+broadcast array's row, which the viewer takes from the array's `encoding.value`
+and never requests. The index needs no member list; it stays ~150 B per pack
+because it rides in the root's consolidated metadata, which every load fetches
+first. (A first design
 listed the members in the attrs: +637 KB, +7.6%, on tp50's 8.4 MB root.)
 
 A node is packed whole, rungs included, when its stored chunk bytes are at most

@@ -28,8 +28,8 @@ metadata, which every load fetches first:
 ``packs``
     One entry per pack: ``key`` (its store key), ``sha256`` (of the whole file)
     and ``prefix`` (the packed node's path plus ``/``). Every chunk object the
-    node stores is a member, so a reader knows which keys a pack can answer
-    without the member list.
+    node stores is a member except a broadcast array's row, which the viewer
+    takes from the array's ``encoding.value`` attr and never requests.
 
 A node is packed whole, rungs and all, when its stored chunk bytes are at most
 :data:`PACK_MAX_BYTES` — the 64 KB transfer unit the chunk policy targets, so a
@@ -57,10 +57,24 @@ from ..typing_utils.constants import CHUNK_PACKS_GROUP, TARGET_CHUNK_BYTES
 PACK_MAX_BYTES = TARGET_CHUNK_BYTES
 
 
+def _served_from_attrs(array: zarr.Array) -> bool:
+    """A broadcast array whose row the viewer takes from ``encoding.value``.
+
+    Mirrors the viewer's ``readBroadcastRow``: such an array's chunk is never
+    requested, so as a pack member it would only be bytes no read ever takes.
+    """
+    encoding = array.attrs.get("encoding")
+    value = encoding.get("value") if isinstance(encoding, dict) else None
+    return isinstance(value, list) and len(value) == array.size
+
+
 def _chunk_objects(group: zarr.Group, path: str = "") -> Iterator[tuple[str, bytes]]:
-    """``(key relative to group, bytes)`` for every chunk object stored below it."""
+    """``(key relative to group, bytes)`` for every chunk object stored below it
+    that a viewer reads (a broadcast row riding in its attrs is not read)."""
     for name in sorted(array_keys(group)):
         array = group[name]
+        if _served_from_attrs(array):
+            continue
         for coords in np.ndindex(*array.cdata_shape):
             chunk = f"{name}/{array.metadata.encode_chunk_key(coords)}"
             data = read_raw_bytes(group, chunk)
