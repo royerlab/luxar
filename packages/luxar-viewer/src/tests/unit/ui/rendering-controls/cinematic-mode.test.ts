@@ -32,9 +32,6 @@ function makeStubContext(overrides: Partial<RenderingSettings> = {}): {
     setDetectorNoiseEnabled: ReturnType<typeof vi.fn>;
     setVignetteEnabled: ReturnType<typeof vi.fn>;
     setChromaticLensDistortionEnabled: ReturnType<typeof vi.fn>;
-    startDeferRebuild: ReturnType<typeof vi.fn>;
-    endDeferRebuild: ReturnType<typeof vi.fn>;
-    withDeferredRebuild: ReturnType<typeof vi.fn>;
   };
   sceneManager: { currentFov: number; updateFOV: ReturnType<typeof vi.fn> };
   saveSettings: ReturnType<typeof vi.fn>;
@@ -53,19 +50,6 @@ function makeStubContext(overrides: Partial<RenderingSettings> = {}): {
     setDetectorNoiseEnabled: vi.fn(),
     setVignetteEnabled: vi.fn(),
     setChromaticLensDistortionEnabled: vi.fn(),
-    startDeferRebuild: vi.fn(),
-    endDeferRebuild: vi.fn(),
-    // The production code calls `withDeferredRebuild(fn)`; mirror its
-    // try/finally semantics so the closure runs and rebuild bookkeeping
-    // happens on both success and throw paths.
-    withDeferredRebuild: vi.fn((fn: () => void) => {
-      postProcessing.startDeferRebuild();
-      try {
-        return fn();
-      } finally {
-        postProcessing.endDeferRebuild();
-      }
-    }),
   };
   const sceneManager = {
     currentFov: 50,
@@ -200,12 +184,6 @@ describe('CinematicModeController.toggle — enable path', () => {
     // setBloomEnabled(enabled, strength, radius, threshold)
     expect(stub.postProcessing.setBloomEnabled).toHaveBeenCalledWith(true, 0.05, 1.0, 0.01);
     expect(stub.postProcessing.setBloomLevels).toHaveBeenCalledWith(8);
-  });
-
-  it('wraps post-processing changes in startDeferRebuild / endDeferRebuild', () => {
-    cm.toggle();
-    expect(stub.postProcessing.startDeferRebuild).toHaveBeenCalled();
-    expect(stub.postProcessing.endDeferRebuild).toHaveBeenCalled();
   });
 
   it('saves settings + triggers animation', () => {

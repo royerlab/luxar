@@ -852,7 +852,6 @@ function animate() {
 | `renderToImageData()`                                        | Render once and read back as ImageData (sRGB)                                                                                                                                                                                     |
 | `rebuildAfterContextRestore()`                               | Rebuild GPU resources after a WebGL2 `webglcontextrestored` event. WebGPU device loss uses a different model (`device.lost` promise) and is currently treated as unrecoverable — see `scene-manager.ts::setupContextLossHandling` |
 | `setDPRScale(value)`                                         | Apply an adaptive DPR scale                                                                                                                                                                                                       |
-| `startDeferRebuild()` / `endDeferRebuild()`                  | Defer rebuilds during bulk changes (no-op in mega-shader pipeline)                                                                                                                                                                |
 | `dispose()`                                                  | Clean up resources                                                                                                                                                                                                                |
 
 ---

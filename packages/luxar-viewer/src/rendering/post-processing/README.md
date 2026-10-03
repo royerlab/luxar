@@ -149,22 +149,6 @@ const raw = await pp.captureHDRAsEXR({ mode: 'raw-scene-hdr' });
 const img = pp.renderToImageData();
 ```
 
-### Deferred rebuild
-
-```typescript
-pp.withDeferredRebuild(() => {
-  pp.updateBloomSettings(1.5, 0.5);
-  pp.setVignetteEnabled(true);
-  pp.setChromaticLensDistortionEnabled(true, -0.05, -0.05);
-});
-```
-
-This API remains available for callers that batch setting changes. In
-the mega-shader pipeline individual setters are cheap, so the
-deferred-rebuild path is effectively a no-op pass-through. The
-`try/finally` in `withDeferredRebuild` still protects the depth counter
-against sub-setter throws.
-
 ## Context-restore protocol
 
 WebGL contexts can be lost on tab switch, GPU driver crash, or
