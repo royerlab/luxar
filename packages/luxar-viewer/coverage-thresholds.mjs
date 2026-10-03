@@ -135,7 +135,7 @@ export const COVERAGE_THRESHOLDS = {
   // the five TSL pick graphs with a real WGSLNodeBuilder (no GPU), which runs
   // their factory bodies: measured lines 85.93, functions 86.27. The visual
   // shader bodies are still reached only by the browser parity spec.
-  'src/rendering/**': { lines: 84, functions: 85, branches: 76 },
+  'src/rendering/**': { lines: 84, functions: 85, branches: 78 },
 };
 
 /** Last accepted coverage measurements for each floor. */
@@ -156,5 +156,5 @@ export const COVERAGE_RECORDED = {
   'src/ui/**': { lines: 92.0, functions: 86.95, branches: 79.58 },
   'src/core/**': { lines: 92.15, functions: 81.03, branches: 86.94 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
-  'src/rendering/**': { lines: 85.93, functions: 86.27, branches: 78.59 },
+  'src/rendering/**': { lines: 85.93, functions: 86.27, branches: 79.46 },
 };
