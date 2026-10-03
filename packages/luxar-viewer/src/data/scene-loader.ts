@@ -2492,9 +2492,16 @@ export class SceneLoader {
     notifier.clearError();
   }
 
-  private resumeViewAfterRetry(hadArchiveFault: boolean): void {
+  /**
+   * Release the retry's lock and resume the view: run what queued meanwhile
+   * (including a resync parked during the retry), else reload the whole view
+   * after a cleared archive fault, else resume any ladder the retry left short.
+   */
+  private finishRetry(hadArchiveFault: boolean): void {
+    const reloadsWholeView = hadArchiveFault && !this._archiveFault;
+    this.passes.releaseRetry(reloadsWholeView);
     if (this.passes.drainPending()) return;
-    if (!hadArchiveFault || this._archiveFault) {
+    if (!reloadsWholeView) {
       // A retried progressive loader committed only one pass's worth of its
       // ladder; nothing else resumes the rest (#2975).
       this.kickRefinementIfIdle();
@@ -2601,8 +2608,7 @@ export class SceneLoader {
       }
       return await retryFailedLoaderUnlocked(path, this.makeRetryCtx());
     } finally {
-      this.passes.releaseRetry();
-      this.resumeViewAfterRetry(hadArchiveFault);
+      this.finishRetry(hadArchiveFault);
     }
   }
 
@@ -2729,8 +2735,7 @@ export class SceneLoader {
       );
       return { succeeded, failed };
     } finally {
-      this.passes.releaseRetry();
-      this.resumeViewAfterRetry(hasArchiveFault);
+      this.finishRetry(hasArchiveFault);
     }
   }
 

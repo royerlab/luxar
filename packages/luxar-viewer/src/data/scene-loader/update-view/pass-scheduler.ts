@@ -245,8 +245,8 @@ export class PassScheduler {
   /**
    * A targeted resync carries no new view state, so it never supersedes. During
    * a refinement hold it queues an empty state (merged with an earlier resync's,
-   * dropped under a real pending view, which sweeps a superset); mid-pass it is
-   * parked and folded in once the pass ends.
+   * dropped under a real pending view, which sweeps a superset); mid-pass or
+   * mid-retry it is parked and folded in once the pass or retry ends.
    */
   private parkResync(paths: ReadonlySet<string>): void {
     if (!this.refining) {
@@ -383,14 +383,7 @@ export class PassScheduler {
    * an empty pending state unless a real one (a superset sweep) is queued.
    */
   private next(): void {
-    if (this.pendingResyncPaths) {
-      if (!this.host.queue.hasPending()) {
-        this.queuedResyncPaths = this.pendingResyncPaths;
-        this.host.queue.setPending({});
-        this.pendingIsResyncOnly = true;
-      }
-      this.pendingResyncPaths = null;
-    }
+    this.foldParkedResyncs();
     if (this.host.queue.hasPending()) {
       this.yieldThenRunPending('Queued updateView re-entry failed');
       return;
@@ -410,6 +403,20 @@ export class PassScheduler {
       noteRefinementComplete();
       this.locked = false;
     }
+  }
+
+  /**
+   * Fold resyncs parked while the lock was held into an empty pending state —
+   * dropped instead under a real pending view, which sweeps a superset.
+   */
+  private foldParkedResyncs(): void {
+    if (!this.pendingResyncPaths) return;
+    if (!this.host.queue.hasPending()) {
+      this.queuedResyncPaths = this.pendingResyncPaths;
+      this.host.queue.setPending({});
+      this.pendingIsResyncOnly = true;
+    }
+    this.pendingResyncPaths = null;
   }
 
   /**
@@ -594,10 +601,16 @@ export class PassScheduler {
     return owned;
   }
 
-  /** Release a lock taken by {@link acquireForRetry}. */
-  releaseRetry(): void {
+  /**
+   * Release a lock taken by {@link acquireForRetry}. A resync parked during the
+   * retry is folded into the pending slot for the caller's {@link drainPending},
+   * or dropped when the caller is about to reload the whole view (a superset).
+   */
+  releaseRetry(reloadsWholeView = false): void {
     this.retrying = false;
     this.locked = false;
+    if (reloadsWholeView) this.pendingResyncPaths = null;
+    else this.foldParkedResyncs();
   }
 
   private settleRetryWaiters(lockHandedOff: boolean): void {

@@ -3740,11 +3740,11 @@ describe('SceneLoader', () => {
       const failure = { code: 'ERELOAD', retryable: true };
       const updateView = vi.spyOn(sceneLoader, 'updateView').mockRejectedValue(failure);
       const internals = sceneLoader as unknown as {
-        resumeViewAfterRetry(hadArchiveFault: boolean): void;
+        finishRetry(hadArchiveFault: boolean): void;
       };
 
       try {
-        internals.resumeViewAfterRetry(true);
+        internals.finishRetry(true);
         await Promise.resolve();
 
         expect(warningLog).toHaveBeenCalledWith(
