@@ -8,8 +8,7 @@ splices it onto a real zarr array without touching zarrita's source.
 ## Overview
 
 `wrapWithCache(array, cache, arrayPath, hooks?)` (hooks = `{ getProbe?,
-getSignal?, getOrigin? }`; a deprecated `aliasOnMiss` is accepted and
-ignored) returns a
+getSignal?, getOrigin? }`) returns a
 `Proxy<zarr.Array>` that intercepts `getChunk()` (and adds `warmChunk()`):
 
 0. **Per-update abort chokepoint** — when an optional `getSignal` accessor is
@@ -68,9 +67,7 @@ ignored) returns a
    buffer L0 holds; there is no defensive clone on any path (a miss-only
    clone protected one caller while every other shared the buffer anyway).
    zarrita `get()` keeps the contract by copying every chunk into its own
-   output; a direct `getChunk()` caller must copy before writing. The
-   `aliasOnMiss` hook that used to opt into this is now a no-op (the
-   spatial-index loaders still pass it as `L0_ALIAS_ON_MISS`).
+   output; a direct `getChunk()` caller must copy before writing.
 
 All other property access passes through unchanged. See
 [`../README.md`](../README.md) (the "L0 Decompressed Chunk Cache" section)

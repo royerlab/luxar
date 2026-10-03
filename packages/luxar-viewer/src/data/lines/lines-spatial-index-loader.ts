@@ -68,21 +68,6 @@ import {
 import { createEmptyLinesData } from './projection';
 
 /**
- * L0 `aliasOnMiss` for every array this loader wraps: store miss decodes
- * without the defensive clone. PROOF of safety: `this.arrays` is private and
- * each of its arrays is read ONLY through (a) `loadRanges` / `loadColorRanges` / the segments read -> `RangeLoader`
- * (`loadRangesResolvingRef`, `loadDirectTyped`), whose every
- * encoding path (direct / quantized / lut / perchannel / broadcasted, and
- * array_ref targets) calls `readArray` = zarrita `get()`, which copies each
- * chunk into its own freshly allocated output and never hands the chunk view
- * out; and (b) `prefetchRangesIntoCache` -> `warmChunk`, which returns no
- * data. Nothing calls `getChunk()` on these arrays directly, so no consumer
- * can mutate an L0 buffer. Re-check this before adding a direct `getChunk`
- * consumer.
- */
-const L0_ALIAS_ON_MISS = true;
-
-/**
  * Flatten `[{start, end}, …]` into the `[start0, end0, start1, end1, …]`
  * `Uint32Array` shape `LoadedLinesData.vertexRangeBounds` publishes.
  *
@@ -187,15 +172,13 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
     this.zarrStore = zarrStore || null;
     this.l0Cache = l0Cache || null;
     // array_ref targets: opened once per (store, target) and read through L0
-    // with this loader's hooks, exactly like its own attribute arrays (the
-    // L0_ALIAS_ON_MISS proof covers them: RangeLoader reads them via readArray).
+    // with this loader's hooks, exactly like its own attribute arrays.
     if (l0Cache) {
       this.rangeLoader.setRefTargetWrapper({
         wrap: (array, targetPath) =>
           wrapWithCache(array, l0Cache, targetPath, {
             getProbe: () => this._lifetime.calls.probe,
             getSignal: () => this._lifetime.calls.signal,
-            aliasOnMiss: L0_ALIAS_ON_MISS,
           }),
         epoch: () => l0Cache.generation,
       });
@@ -296,12 +279,10 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
         verticesArray = wrapWithCache(verticesArray, this.l0Cache, `${this.node.path}/vertices`, {
           getProbe: () => this._lifetime.calls.probe,
           getSignal: () => this._lifetime.calls.signal,
-          aliasOnMiss: L0_ALIAS_ON_MISS,
         });
         segmentsArray = wrapWithCache(segmentsArray, this.l0Cache, `${this.node.path}/segments`, {
           getProbe: () => this._lifetime.calls.probe,
           getSignal: () => this._lifetime.calls.signal,
-          aliasOnMiss: L0_ALIAS_ON_MISS,
         });
       }
       this.arrays.vertices = verticesArray;
@@ -323,7 +304,6 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
           widthsArray = wrapWithCache(widthsArray, this.l0Cache, `${this.node.path}/widths`, {
             getProbe: () => this._lifetime.calls.probe,
             getSignal: () => this._lifetime.calls.signal,
-            aliasOnMiss: L0_ALIAS_ON_MISS,
           });
         }
         this.arrays.widths = widthsArray;
@@ -346,7 +326,6 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
           colorsArray = wrapWithCache(colorsArray, this.l0Cache, `${this.node.path}/colors`, {
             getProbe: () => this._lifetime.calls.probe,
             getSignal: () => this._lifetime.calls.signal,
-            aliasOnMiss: L0_ALIAS_ON_MISS,
           });
         }
         this.arrays.colors = colorsArray;
@@ -374,7 +353,6 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
             {
               getProbe: () => this._lifetime.calls.probe,
               getSignal: () => this._lifetime.calls.signal,
-              aliasOnMiss: L0_ALIAS_ON_MISS,
             }
           );
         }
@@ -397,7 +375,6 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
           scalarsArray = wrapWithCache(scalarsArray, this.l0Cache, `${this.node.path}/scalars`, {
             getProbe: () => this._lifetime.calls.probe,
             getSignal: () => this._lifetime.calls.signal,
-            aliasOnMiss: L0_ALIAS_ON_MISS,
           });
         }
         this.arrays.scalars = scalarsArray;

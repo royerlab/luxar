@@ -167,12 +167,6 @@ export interface CachedArrayHooks {
    * decoded.
    */
   getOrigin?: () => string;
-  /**
-   * @deprecated No effect: L0 ALWAYS stores a miss's decoded buffer without a
-   * defensive clone (see {@link wrapWithCache}'s read-only contract). Still
-   * accepted because the spatial-index loaders pass it; remove it there.
-   */
-  aliasOnMiss?: boolean;
 }
 
 /**
