@@ -16,6 +16,7 @@
 
 import type { BlendingMode } from '../../rendering';
 import {
+  layerHasBlending,
   resolveLayerBlendingMode,
   type LayerInfo,
   type LayerStateManager,
@@ -941,6 +942,13 @@ export class LayerControls {
       house && resolveLayerBlendingMode(primary.type, primary.blendingMode) === 'opaque';
     this.setHouseShadingVisible(house && primary.shading !== 'none', cutout);
     this.setPhysicalFamilyVisible(physical);
+    this.setBlendVisible(!!primary && layerHasBlending(primary));
+  }
+
+  /** The Blend dropdown, on the same rule as the row menu's Blending submenu. */
+  private setBlendVisible(visible: boolean): void {
+    const blendGroup = this.blendSelect?.parentElement;
+    if (blendGroup) blendGroup.style.display = visible ? '' : 'none';
   }
 
   /** The four lighting sliders, and the cutoff on its own narrower gate. */
@@ -953,13 +961,11 @@ export class LayerControls {
   }
 
   /**
-   * Swap the house-only generic controls (Gamma, Blend) for the physical controls,
-   * and back.
+   * Swap the house-only Gamma slider for the physical controls, and back (the
+   * Blend dropdown follows `layerHasBlending`, which hides it here too).
    */
   private setPhysicalFamilyVisible(physical: boolean): void {
     this.gammaSlider?.setVisible(!physical);
-    const blendGroup = this.blendSelect?.parentElement;
-    if (blendGroup) blendGroup.style.display = physical ? 'none' : '';
     if (this.physicalGroupEl) this.physicalGroupEl.style.display = physical ? '' : 'none';
   }
 

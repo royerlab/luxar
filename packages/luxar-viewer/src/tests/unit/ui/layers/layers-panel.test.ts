@@ -1918,7 +1918,7 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(findControlGroup(container, 'Alpha cutoff')!.style.display).not.toBe('none');
   });
 
-  it.fails('a physical mesh row menu offers no Blending, like its controls; a house mesh keeps it', () => {
+  it('a physical mesh row menu offers no Blending, like its controls; a house mesh keeps it', () => {
     // Three's PBR material implements none of the house modes (applyBlendingMode is
     // a no-op on it), so the controls hide the Blend dropdown. The row menu must
     // agree rather than offer a submenu that changes nothing.

@@ -34,7 +34,7 @@ import { openContextMenu, type ContextMenuItem } from '../overlay-widgets/contex
 import { BLENDING_MODES } from '../../rendering/blending-state';
 import type { BlendingMode } from '../../rendering';
 import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
-import { resolveLayerBlendingMode } from './layer-state';
+import { layerHasBlending, resolveLayerBlendingMode } from './layer-state';
 import { showToast } from '../toast';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import { LayerApplyEngine } from './layer-apply';
@@ -618,15 +618,17 @@ export class LayersPanel {
       }
       items.push({ label: 'Colormap', submenu: sub });
     }
-    items.push({
-      label: 'Blending',
-      submenu: BLENDING_MODES.map((mode) => ({
-        label: mode,
-        kind: 'radio' as const,
-        checked: this.state.getLayer(layer.path)?.blendingMode === mode,
-        action: () => this.setLayerBlending(layer.path, mode),
-      })),
-    });
+    if (layerHasBlending(layer)) {
+      items.push({
+        label: 'Blending',
+        submenu: BLENDING_MODES.map((mode) => ({
+          label: mode,
+          kind: 'radio' as const,
+          checked: this.state.getLayer(layer.path)?.blendingMode === mode,
+          action: () => this.setLayerBlending(layer.path, mode),
+        })),
+      });
+    }
     items.push({
       label: 'Apply appearance to all layers',
       action: () => this.applyAppearanceToAll(layer.path),
