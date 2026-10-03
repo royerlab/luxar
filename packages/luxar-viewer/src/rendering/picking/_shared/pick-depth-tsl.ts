@@ -30,7 +30,7 @@ import { isOrthoProjectionTSL, type TSLNode } from '../../materials/_shared/tsl-
 
 /** The drawn fragment's depth in [0, 1], for either projection kind (see the module doc). */
 export function pickFragmentDepthTSL(): TSLNode {
-  const viewZ: TSLNode = positionView.z;
+  const viewZ: TSLNode = positionView.z.toVar();
   return isOrthoProjectionTSL()
     .equal(int(1))
     .select(

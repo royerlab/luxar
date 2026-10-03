@@ -74,7 +74,7 @@ function fragmentFor(material: THREE.Material, camera: THREE.Camera): string {
 
 /** viewZToOrthographicDepth as three emits it. */
 const ORTHO_DEPTH =
-  /\(\s*positionView\.z \+ render\.cameraNear\s*\)\s*\/\s*\(\s*render\.cameraNear - render\.cameraFar\s*\)/;
+  /\(\s*(?:positionView\.z|nodeVar\d+) \+ render\.cameraNear\s*\)\s*\/\s*\(\s*render\.cameraNear - render\.cameraFar\s*\)/;
 
 describe('TSL pick depth is chosen per draw, not per build', () => {
   it.each([
@@ -88,6 +88,19 @@ describe('TSL pick depth is chosen per draw, not per build', () => {
     const ortho = fragmentFor(make(), new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100));
     expect(persp).toContain('frag_depth');
     expect(persp).toMatch(ORTHO_DEPTH);
+    // The inverse projection feeding both select arms must run before the
+    // projection-kind branch; otherwise the perspective arm reads an unset var.
+    const inverseProjection = persp.indexOf('render.cameraProjectionMatrixInverse * v_clipSpace');
+    const projectionKindBranch = persp.indexOf(
+      'render.cameraProjectionMatrix[ 3 ].w > 0.5',
+      inverseProjection
+    );
+    expect(inverseProjection).toBeGreaterThan(-1);
+    expect(projectionKindBranch).toBeGreaterThan(inverseProjection);
+    const flowBeforeInverse = persp.slice(persp.indexOf('@fragment\nfn main'), inverseProjection);
+    expect(
+      (flowBeforeInverse.match(/\{/g) ?? []).length - (flowBeforeInverse.match(/\}/g) ?? []).length
+    ).toBe(1);
     expect(persp).toBe(ortho);
   });
 });
