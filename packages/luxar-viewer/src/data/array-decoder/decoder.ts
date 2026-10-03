@@ -26,7 +26,6 @@ import {
 
 export { ArrayRefRegistry } from './ref-registry';
 export type { ArrayMetadata, EncodingMetadata } from './types';
-export { loadAndDecodeOptionalArray } from './load-and-decode';
 
 /**
  * Main array decoder class

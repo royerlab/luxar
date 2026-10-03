@@ -21,13 +21,11 @@ array-decoder/
 ├── decoder.ts            # ArrayDecoder class — priority-dispatch body
 ├── broadcast-row.ts      # readBroadcastRow — a broadcast array's row (encoding.value, else one read)
 ├── ref-registry.ts       # ArrayRefRegistry — hash → Float32Array cache for array_ref
-├── load-and-decode.ts    # loadAndDecodeOptionalArray helper for sibling attribute arrays
 └── types.ts              # ArrayMetadata + EncodingMetadata schema (.zattrs shape)
 ```
 
-`decoder.ts` re-exports `ArrayRefRegistry`, the metadata types, and the
-`loadAndDecodeOptionalArray` helper so consumers can import everything
-from one entry point.
+`decoder.ts` re-exports `ArrayRefRegistry` and the metadata types so
+consumers can import everything from one entry point.
 
 ## Priority-Dispatch Order
 
@@ -131,15 +129,6 @@ Classification helpers (`isEncoded`, `isLUTEncoded`, `isBroadcasted`,
 `isPerChannelQuantEncodingName`, `isKnownEncodingName`, `getEncodingMode`)
 let callers choose the right loading strategy without parsing `enc.name`
 themselves.
-
-## Optional-Array Helper
-
-`loadAndDecodeOptionalArray(location, arrayName, decoder, expected?)`
-opens a sibling zarr array (e.g. `colors`, `radii`, `sharpness`), reads
-its attrs, runs `decoder.decode()`, and returns the float buffer.
-Missing arrays surface as `null` — the open error is swallowed so
-optional attributes are truly optional. Used by loader internals; not
-part of the public `data/` API.
 
 ## See Also
 

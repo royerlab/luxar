@@ -112,7 +112,6 @@ data/
 ├── array-decoder/                 # Decodes Python luxar.encoding arrays
 │   ├── decoder.ts                 # ArrayDecoder priority-dispatch body
 │   ├── ref-registry.ts            # ArrayRefRegistry (array_ref dedup)
-│   ├── load-and-decode.ts         # loadAndDecodeOptionalArray helper
 │   └── types.ts                   # ArrayMetadata + EncodingMetadata
 │
 ├── nav/                           # Multi-strategy server directory browsing

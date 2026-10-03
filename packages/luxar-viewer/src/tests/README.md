@@ -271,7 +271,7 @@ Tests for Python-TypeScript data compatibility and the complete loading pipeline
 
 **Key Files**:
 
-- `array-decoder/` (directory of split tests: `decoder.test.ts`, `array-roundtrip.test.ts`, `load-and-decode.test.ts`, `ref-registry.test.ts`, ...) - **Python ↔ TypeScript encoding compatibility**
+- `array-decoder/` (directory of split tests: `decoder.test.ts`, `array-roundtrip.test.ts`, `ref-registry.test.ts`, ...) - **Python ↔ TypeScript encoding compatibility**
   - Broadcasting: `(1, 3) → (1000, 3)` color expansion
   - LUT encoding: Indexed color/radius lookup
   - Quantization: Float32 → Uint16 compression
