@@ -38,22 +38,19 @@
  * ## The surface-depth VALUE matches across backends — despite how the snapshot reads
  *
  * Under `uSurfaceDepth == 1` this shader writes `gl_FragCoord.z`. Its TSL twin
- * writes three's `depth` node, whose `DEPTH` scope is camera-aware at build time:
- * a perspective camera expands to `viewZToPerspectiveDepth(positionView.z, near,
- * far)` — exactly the hyperbolic window-space depth `gl_FragCoord.z` is — and an
- * orthographic camera to `viewZToOrthographicDepth`, which is exactly the
- * orthographic `gl_FragCoord.z`. So the two backends write the SAME value per
- * fragment, and cross-node depth comparisons — including against the commutative
- * modes' `1 / (1 + brightness)` fragments sharing this buffer — resolve identically.
+ * writes `pickFragmentDepthTSL()` (`../_shared/pick-depth-tsl.ts`), which selects per
+ * draw, from the projection matrix, `viewZToPerspectiveDepth(positionView.z, near,
+ * far)` — exactly the hyperbolic window-space depth `gl_FragCoord.z` is — or
+ * `viewZToOrthographicDepth`, exactly the orthographic `gl_FragCoord.z`. So the two
+ * backends write the SAME value per fragment, and cross-node depth comparisons —
+ * including against the commutative modes' `1 / (1 + brightness)` fragments sharing
+ * this buffer — resolve identically. (three's own `depth` node made that choice from
+ * the camera a graph was BUILT under, and three reuses a build across cameras, so
+ * graphs built under different camera kinds disagreed after a perspective/ortho
+ * switch; every pick family now shares the helper.)
  *
- * Recording this because `mesh-pick.fragment.glsl.txt` is easy to misread as a
- * divergence: the snapshot expands `depth` to the LINEAR
- * `(positionView.z + cameraNear) / (cameraNear - cameraFar)` form only because the
- * codegen harness renders with an ORTHOGRAPHIC camera (see
- * `tsl-harness/mesh.ts`), for which that linear form IS `gl_FragCoord.z` — it is
- * not the general perspective expansion. The same GLSL-`gl_FragCoord.z`-vs-TSL-
- * `depth` pairing already ships in the gsplat pick shaders, where it is
- * undocumented.
+ * The codegen snapshot `mesh-pick.fragment.glsl.txt` therefore carries both
+ * expansions behind a select on the projection matrix's `[3][3]` element.
  *
  * Source-of-truth for GLSL3; the WebGPU counterpart lives in `./pick.tsl` and is
  * referenced through the `ShaderSource.webgpu` factory below.

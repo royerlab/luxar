@@ -41,7 +41,6 @@ import {
   exp,
   clamp,
   Discard,
-  depth,
   modelViewMatrix,
   cameraProjectionMatrix,
   screenCoordinate,
@@ -49,6 +48,7 @@ import {
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { applyPickMaterialState } from '../_shared/shared-pick-graph-tsl';
+import { pickFragmentDepthTSL } from '../_shared/pick-depth-tsl';
 import { resolveElementTextureWidth, SPLAT_TEXTURE_LAYOUT } from '../../element-texture-layout';
 import {
   isOrthoProjectionTSL,
@@ -530,7 +530,7 @@ export function gsplatPickWebGPUFactory(
     fragmentPrologue();
     return int(uSurfaceDepth)
       .equal(int(1))
-      .select(depth as unknown as TSLNode, float(1.0).div(float(1.0).add(intensity)));
+      .select(pickFragmentDepthTSL(), float(1.0).div(float(1.0).add(intensity)));
   });
 
   const material = outMaterial ?? new NodeMaterial();

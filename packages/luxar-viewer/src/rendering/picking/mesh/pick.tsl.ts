@@ -51,7 +51,6 @@ import {
   bool,
   clamp as _clamp,
   max as _max,
-  depth,
   vertexIndex,
   modelViewMatrix,
   cameraProjectionMatrix,
@@ -60,6 +59,7 @@ import {
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { applyPickMaterialState } from '../_shared/shared-pick-graph-tsl';
+import { pickFragmentDepthTSL } from '../_shared/pick-depth-tsl';
 import {
   isOrthoProjectionTSL,
   sanitizeAlpha,
@@ -290,7 +290,7 @@ export function meshPickWebGPUFactory(
     fragmentPrologue();
     return int(uSurfaceDepth)
       .equal(int(1))
-      .select(depth as unknown as TSLNode, float(1.0).div(float(1.0).add(brightness)));
+      .select(pickFragmentDepthTSL(), float(1.0).div(float(1.0).add(brightness)));
   });
 
   const material = outMaterial ?? new NodeMaterial();

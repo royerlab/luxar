@@ -56,7 +56,9 @@ recompile — and it is why `mesh-pick` is ONE codegen snapshot variant covering
   `WEBGL_provoking_vertex` exists; where it does not, the contract stands as "_a_ corner vertex of
   the front-most triangle under the cursor" — the cursor is over the face, so every corner is an
   equally valid answer and no consumer may assume one.
-- **The surface-depth VALUE.** GLSL writes `gl_FragCoord.z`; the TSL twin's `depth` node expands
-  to a linear view-space depth. Both are monotone in distance over `[near, far] → [0, 1]`, and the
+- **The surface-depth VALUE.** GLSL writes `gl_FragCoord.z`; the TSL twin writes
+  `pickFragmentDepthTSL()` (three's perspective or orthographic depth of the reconstructed
+  view-space z, chosen per draw from the projection matrix — the same choice for every pick
+  graph, so depths from graphs built under different cameras stay comparable). Both are monotone in distance over `[near, far] → [0, 1]`, and the
   pick buffer's depth is only ever used to ORDER fragments within one render, so "front-most wins"
   resolves identically. See the module doc in `shaders.ts` for when this would stop being benign.

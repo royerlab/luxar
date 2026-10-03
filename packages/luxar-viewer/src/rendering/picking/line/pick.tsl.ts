@@ -43,7 +43,6 @@ import {
   min,
   clamp,
   mix,
-  depth,
   length,
   exp,
   texture,
@@ -53,6 +52,7 @@ import {
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { applyPickMaterialState } from '../_shared/shared-pick-graph-tsl';
+import { pickFragmentDepthTSL } from '../_shared/pick-depth-tsl';
 import {
   FALLOFF_FLOOR,
   FALLOFF_K,
@@ -582,7 +582,7 @@ export function linePickWebGPUFactory(
     // `gl_FragCoord.z`).
     return mix(
       float(1.0).div(float(1.0).add(brightness)),
-      depth as unknown as TSLNode,
+      pickFragmentDepthTSL(),
       float(uSurfaceDepth)
     );
   });

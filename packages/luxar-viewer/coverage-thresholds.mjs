@@ -57,7 +57,9 @@ export const COVERAGE_THRESHOLDS = {
   // functions 84 -> 86 after the chunk-boundary prefetch planner/loader tests
   // (#2686): measured 86.61 -> 87.01 and check-coverage-slack flagged the old
   // floor as stale.
-  functions: 86,
+  // functions 86 -> 88 after the pick-depth camera-kind test started building
+  // the five TSL pick graphs with a real WGSLNodeBuilder (measured 89.74).
+  functions: 88,
   // branches 80 -> 82 (2026-09): the GPU-budget tests here and the SSAA
   // framebuffer-clamp tests in #2661 each moved measured branch coverage past
   // the slack budget. The picking tests in #3004 raised it again to 85.10.
@@ -128,14 +130,19 @@ export const COVERAGE_THRESHOLDS = {
   // is how a metric starts lying. Revisit once the job is required.
   // lines 74 -> 76 after the bloom live-texture binding tests moved measured
   // line coverage to 77.18 and check-coverage-slack flagged the old floor.
-  'src/rendering/**': { lines: 78, functions: 79, branches: 76 },
+  // lines 78 -> 84 and functions 79 -> 85 after
+  // `tests/unit/rendering/picking/pick-depth-camera-kind.test.ts` began building
+  // the five TSL pick graphs with a real WGSLNodeBuilder (no GPU), which runs
+  // their factory bodies: measured lines 85.93, functions 86.27. The visual
+  // shader bodies are still reached only by the browser parity spec.
+  'src/rendering/**': { lines: 84, functions: 85, branches: 76 },
 };
 
 /** Last accepted coverage measurements for each floor. */
 export const COVERAGE_RECORDED = {
   lines: 91.0,
   statements: 90.0,
-  functions: 88.02,
+  functions: 89.74,
   branches: 85.1,
   'src/types/**': { lines: 99, functions: 96.77, branches: 98.05 },
   'src/wasm/**': { lines: 98.58, functions: 100, branches: 96.46 },
@@ -149,5 +156,5 @@ export const COVERAGE_RECORDED = {
   'src/ui/**': { lines: 92.0, functions: 86.95, branches: 79.58 },
   'src/core/**': { lines: 92.15, functions: 81.03, branches: 86.94 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
-  'src/rendering/**': { lines: 79, functions: 80.73, branches: 78.59 },
+  'src/rendering/**': { lines: 85.93, functions: 86.27, branches: 78.59 },
 };

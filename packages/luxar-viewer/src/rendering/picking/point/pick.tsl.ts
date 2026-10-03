@@ -49,7 +49,6 @@ import {
   dot,
   exp,
   Discard,
-  depth,
   mix,
   modelViewMatrix,
   cameraProjectionMatrix,
@@ -57,6 +56,7 @@ import {
 import { NodeMaterial } from 'three/webgpu';
 import type { PickTextureWidthConfig } from '../gsplat/pick.tsl';
 import { applyPickMaterialState } from '../_shared/shared-pick-graph-tsl';
+import { pickFragmentDepthTSL } from '../_shared/pick-depth-tsl';
 import {
   FALLOFF_FLOOR,
   FALLOFF_K,
@@ -333,7 +333,7 @@ export function pointPickWebGPUFactory(
     // `gl_FragCoord.z`).
     return mix(
       float(1.0).div(float(1.0).add(brightness)),
-      depth as unknown as TSLNode,
+      pickFragmentDepthTSL(),
       float(uSurfaceDepth)
     );
   });

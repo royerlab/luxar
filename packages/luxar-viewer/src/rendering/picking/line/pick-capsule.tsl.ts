@@ -27,7 +27,6 @@ import {
   max,
   min,
   mix,
-  depth,
   mod,
   modelViewMatrix,
   packHalf2x16,
@@ -41,6 +40,7 @@ import {
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { applyPickMaterialState } from '../_shared/shared-pick-graph-tsl';
+import { pickFragmentDepthTSL } from '../_shared/pick-depth-tsl';
 import { resolveElementTextureWidth, LINE_TEXTURE_LAYOUT } from '../../element-texture-layout';
 import {
   CAPSULE_JOINT_DEFICIT_GATE,
@@ -562,7 +562,7 @@ export function capsuleLinePickWebGPUFactory(
     // `gl_FragCoord.z`).
     return mix(
       float(1.0).div(float(1.0).add(brightness)),
-      depth as unknown as TSLNode,
+      pickFragmentDepthTSL(),
       float(uSurfaceDepth)
     );
   });
