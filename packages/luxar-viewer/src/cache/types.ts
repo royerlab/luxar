@@ -152,8 +152,10 @@ export interface MultiLevelCacheStats {
   };
   /**
    * Per-tier demand-hit counters (user demand only — prefetch traffic
-   * is excluded). Each user-demand `getResult` call increments exactly
-   * one of `l1Hits`, `l2Hits`, or `networkRequests`. Combined with the
+   * is excluded). Each user-demand `getResult` call a tier answered
+   * increments exactly one of `l1Hits`, `l2Hits`, or `networkRequests`
+   * (a network error counts as a network request); an aborted call or a
+   * missing key increments none. Combined with the
    * L0 provider's stats, this lets the monitor surface an effective
    * demand hit-rate rather than the L1-only ratio.
    */

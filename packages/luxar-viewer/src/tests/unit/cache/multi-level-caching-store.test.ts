@@ -363,7 +363,7 @@ describe('MultiLevelCachingStore', () => {
 
     // An abort is neutral wherever it lands, as it already is at L2 (see
     // 'stops at L2 when a queued OPFS read is canceled').
-    it.fails('a caller aborted while waiting on the network counts in no tier', async () => {
+    it('a caller aborted while waiting on the network counts in no tier', async () => {
       const source = (store as any).source as {
         get(key: string, signal: AbortSignal): Promise<unknown>;
       };
@@ -382,7 +382,7 @@ describe('MultiLevelCachingStore', () => {
       expect(store.getStats().demand).toEqual({ l1Hits: 0, l2Hits: 0, networkRequests: 0 });
     });
 
-    it.fails('a network read the source reports aborted counts in no tier', async () => {
+    it('a network read the source reports aborted counts in no tier', async () => {
       vi.spyOn((store as any).source, 'get').mockResolvedValue({ kind: 'aborted' });
 
       expect(await store.getResult('aborted.chunk')).toEqual({
