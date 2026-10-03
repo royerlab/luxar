@@ -209,7 +209,7 @@ describe('PickingSystem — registration', () => {
     expect(pickNode.matrixWorldAutoUpdate).toBe(false);
   });
 
-  it.fails('registerNode installs the per-draw projection-variant hook on a mesh pick node', () => {
+  it('registerNode installs the per-draw projection-variant hook on a mesh pick node', () => {
     // Every pick-node builder (createLinesNode, the retro-registration pass)
     // goes through here, so the TSL pick quad cannot miss its variant hook.
     const material = new LinePickingTSLMaterial({ nodeId: 1, primitive: 'screen-space' });

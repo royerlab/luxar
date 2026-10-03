@@ -37,6 +37,7 @@
 import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing/post-processing-manager';
 import { isCameraAwareMaterial } from '../materials/_shared/camera-aware-material';
+import { installProjectionVariantHook } from '../materials/_shared/projection-variant';
 import { alignProvokingVertexWithWebGPU } from './mesh/provoking-vertex';
 import {
   disposePickMaterial,
@@ -289,6 +290,10 @@ export class PickingSystem {
     // (pickScene = identity), overwriting the correct synced transform.
     pickNode.matrixAutoUpdate = false;
     pickNode.matrixWorldAutoUpdate = false;
+    // Per-draw projection variant of the TSL pick quad (`projection-variant.ts`;
+    // a no-op for every other pick material). Installed here so no pick-node
+    // builder can forget it.
+    if (pickNode instanceof THREE.Mesh) installProjectionVariantHook(pickNode);
 
     // forward link main → pick so commit helpers (e.g.
     // `syncPointMaterialWithGeometry`) can reach the picking material

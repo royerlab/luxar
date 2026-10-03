@@ -543,8 +543,9 @@ ortho variant has no view-z varying), because its single runtime-ortho graph
 measured +4.6% of the GPU pass on the 10M-segment ortho quad under WebGPU and
 only a constant ortho test recovered it. The variant is chosen PER DRAW from
 the drawn camera: the line mesh's `onBeforeRender`
-(`installProjectionVariantHook`, `../_shared/projection-variant.ts`) calls
-`selectProjectionVariant(camera)`, which re-points the material at the other
+(`installProjectionVariantHook`, `../_shared/projection-variant.ts`, installed
+by `createInstancedLinesMesh` and, on every pick node, by
+`PickingSystem.registerNode`) calls `selectProjectionVariant(camera)`, which re-points the material at the other
 kind's shared graph only when the kind changes. Both graphs are built once and
 cached, so a switch is a lookup; and because three keys render objects per
 render context (render target), the environment capture's cube faces keep a
