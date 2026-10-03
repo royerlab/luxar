@@ -271,6 +271,40 @@ describe('L0 coalesced waiters are abort-isolated', () => {
     expect(perfCounters.get('l0.coalesced')).toBe(0);
     expect(perfCounters.get('l0.misses')).toBe(2);
   });
+
+  it.fails('the retry keys on the decode being cancelled, not on the abort reason being an AbortError', async () => {
+    // fetch() rejects with the signal's REASON, and a caller may abort with any
+    // reason (here a plain Error): the shared decode then rejects with that
+    // error, whose name is not 'AbortError'. The waiting caller must still retry.
+    const cache = new DecompressedChunkCache({ maxSize: 1 << 20 });
+    let starts = 0;
+    const array = {
+      shape: [1000, 3],
+      chunks: [100, 3],
+      async getChunk(_coords: number[], options?: { signal?: AbortSignal }) {
+        starts++;
+        await new Promise<void>((resolve, reject) => {
+          const t = setTimeout(resolve, 20);
+          options?.signal?.addEventListener('abort', () => {
+            clearTimeout(t);
+            reject(options.signal!.reason as Error);
+          });
+        });
+        return { data: new Float32Array(300), shape: [100, 3], stride: [3, 1] };
+      },
+    };
+    const a = wrapWithCache(array as never, cache, '/n/centers');
+    const key = DecompressedChunkCache.makeKey('/n/centers', [0, 0]);
+    const c1 = new AbortController();
+    const p1 = a.getChunk([0, 0], { signal: c1.signal } as never);
+    c1.abort(new Error('superseded'));
+    expect(cache.getInflight(key)?.abandoned).toBe(true);
+    const p2 = a.getChunk([0, 0]);
+    expect(await outcome(p1)).toBe('Error');
+    expect(await outcome(p2)).toBe('ok');
+    expect(starts).toBe(2);
+    expect(cache.has(key)).toBe(true);
+  });
 });
 
 describe('L0 in-flight map and cache.clear()', () => {
