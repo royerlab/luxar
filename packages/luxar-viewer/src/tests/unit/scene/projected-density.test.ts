@@ -88,7 +88,7 @@ describe('projectSphereAreaPx', () => {
     });
   });
 
-  it.fails('culls a sphere beside the camera that crosses the eye plane outside the frustum', () => {
+  it('culls a sphere beside the camera that crosses the eye plane outside the frustum', () => {
     const camera = perspective(1600, 1000, 100);
     // Depth span [-1, 1] crosses the eye plane, but the eye is 99 units outside
     // the sphere and the sphere sits far to the side of the 60° frustum.
@@ -103,7 +103,7 @@ describe('projectSphereAreaPx', () => {
     });
   });
 
-  it.fails('measures the near-clipped footprint of a sphere grazing the edge of the view', () => {
+  it('measures the near-clipped footprint of a sphere grazing the edge of the view', () => {
     const camera = perspective(1600, 1000, 100);
     // Centre beside the eye (|c| = 3 > r = 2), its front part reaching into the
     // right edge of the view: partly on screen, but nowhere near full-buffer.
