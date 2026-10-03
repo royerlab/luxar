@@ -160,6 +160,30 @@ describe('AudioEngine — graph and lifecycle', () => {
     expect(h.engine.hasSoundNodes()).toBe(false);
     expect(h.engine.getState().playing).toEqual([]);
   });
+
+  it.fails('reports sound-ended for a playing or fading sound when the scene detaches', async () => {
+    // Every sound-started an embedder saw gets its sound-ended, even when a
+    // dataset switch (not the clip or a fade) is what stops it.
+    const h = makeHarness();
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.root.add(soundPlaceholder('/pad', { trigger: 'continuous', fade_out_ms: 500 }));
+    h.engine.attachScene(h.root);
+    await flush();
+    vi.advanceTimersByTime(1);
+    h.engine.stop('pad'); // mid-fade at detach: its end is still pending
+    h.events.length = 0;
+
+    h.engine.detachScene();
+    vi.runAllTimers();
+
+    expect(h.events).toEqual(
+      expect.arrayContaining([
+        { event: 'sound-ended', name: 'bed' },
+        { event: 'sound-ended', name: 'pad' },
+      ])
+    );
+    expect(h.events).toHaveLength(2);
+  });
 });
 
 describe('AudioEngine — decode order', () => {
