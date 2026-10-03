@@ -85,6 +85,7 @@ function bucketedDatasetDir() {
     async getFileHandle(name: string, opts?: { create?: boolean }) {
       const files = buckets.get(bucket)!;
       if (!files.has(name) && !opts?.create) {
+        stats.notFoundLookups++;
         throw notFound();
       }
       return bucketFileHandle(files, name);
@@ -95,9 +96,30 @@ function bucketedDatasetDir() {
       files.delete(name);
     },
     async *keys() {
+      const gate = listingGates.get(bucket);
+      if (gate) {
+        gate.reached();
+        await gate.released;
+      }
       for (const k of [...(buckets.get(bucket)?.keys() ?? [])]) yield k;
     },
   });
+
+  /** Lookups of a file that is not there (each is one wasted OPFS round trip). */
+  const stats = { notFoundLookups: 0 };
+  const listingGates = new Map<string, { reached: () => void; released: Promise<void> }>();
+  /**
+   * Hold the orphan crawl when it starts listing `bucket`. Resolves `reached`
+   * once it got there; call the returned release to let it continue.
+   */
+  function holdListing(bucket: string): { reached: Promise<void>; release: () => void } {
+    let release!: () => void;
+    let reached!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    const reachedPromise = new Promise<void>((resolve) => (reached = resolve));
+    listingGates.set(bucket, { reached, released });
+    return { reached: reachedPromise, release };
+  }
 
   const dir = {
     kind: 'directory' as const,
@@ -173,7 +195,7 @@ function bucketedDatasetDir() {
     rootFiles.clear();
     buckets.clear();
   }
-  return { dir, rootFiles, buckets, plant, plantRaw, fileCount, wipe };
+  return { dir, rootFiles, buckets, plant, plantRaw, fileCount, wipe, stats, holdListing };
 }
 
 function installBucketed() {
@@ -349,6 +371,86 @@ describe('OPFSStore orphan reconciliation on open', () => {
 
     expect(store.getStats().count).toBe(0);
     expect(disk.fileCount()).toBe(0);
+    await store.dispose();
+  });
+});
+
+/**
+ * The orphan crawl records what it will recover and merges it into the index
+ * only when it ends, while normal traffic keeps changing the index. The merge
+ * must hold against what happened in between.
+ */
+describe('OPFSStore orphan reconcile racing live traffic', () => {
+  const URL = 'https://example.com/d.zarr';
+
+  /** Plant `key` as an orphan and hold the crawl at a LATER bucket's listing. */
+  async function crawlHeldAfter(disk: ReturnType<typeof installBucketed>, keys: string[]) {
+    for (const key of keys) disk.plant(key, new Uint8Array(10).fill(3));
+    const used = new Set([getBucket('a/0'), ...keys.map(getBucket)]);
+    let later = 0;
+    while (used.has(getBucket(`later/${later}`))) later++;
+    disk.plant(`later/${later}`, new Uint8Array(10).fill(4));
+    const hold = disk.holdListing(getBucket(`later/${later}`));
+    const store = new OPFSStore('orph', URL, 100);
+    await store.init();
+    store.setContentHash('hash-1');
+    await hold.reached; // every planted key is recorded for recovery by now
+    return { store, release: hold.release };
+  }
+
+  async function sessionWithIndex() {
+    const s = new OPFSStore('orph', URL, 1e9);
+    await s.init();
+    await settleReconcile(s);
+    s.setContentHash('hash-1');
+    await s.set('a/0', new Uint8Array(10).fill(7));
+    await s.dispose();
+  }
+
+  it.fails('does not index a recorded orphan that a write then evicted and deleted', async () => {
+    const disk = installBucketed();
+    await sessionWithIndex();
+    const { store, release } = await crawlHeldAfter(disk, ['k/x']);
+    await store.set('k/x', new Uint8Array(10).fill(5)); // live traffic overwrites it
+    await store.delete('k/x'); // ... and evicts it
+    release();
+    await settleReconcile(store);
+
+    expect(await store.get('k/x'), 'phantom entry for a deleted file').toBeUndefined();
+    const stats = store.getStats();
+    expect(stats.count, 'a/0 + the later orphan').toBe(2);
+    expect(stats.size).toBe(20);
+    await store.dispose();
+  });
+
+  it.fails('never merges past maxSize when writes filled the room during the crawl', async () => {
+    const disk = installBucketed();
+    await sessionWithIndex(); // 10 B indexed; maxSize 100 below
+    const { store, release } = await crawlHeldAfter(
+      disk,
+      Array.from({ length: 5 }, (_, i) => `o/${i}`)
+    );
+    for (let i = 0; i < 6; i++) await store.set(`w/${i}`, new Uint8Array(10)); // 70 B indexed
+    release();
+    await settleReconcile(store);
+
+    expect(store.getStats().size).toBeLessThanOrEqual(100);
+    await store.dispose();
+  });
+
+  it.fails('stops probing unindexed paths once the crawl ends, even incomplete', async () => {
+    const disk = installBucketed();
+    await sessionWithIndex();
+    const total = OPFSStore.ORPHAN_RECONCILE_MAX_ACTIONS + 50;
+    for (let i = 0; i < total; i++) disk.plant(`b/${i}`, new Uint8Array(1));
+    const store = new OPFSStore('orph', URL, 1e9);
+    await store.init();
+    store.setContentHash('hash-1');
+    await settleReconcile(store);
+
+    const before = disk.stats.notFoundLookups;
+    for (let i = 0; i < 20; i++) expect(await store.get(`absent/${i}`)).toBeUndefined();
+    expect(disk.stats.notFoundLookups - before, 'disk lookups for L2 misses').toBe(0);
     await store.dispose();
   });
 });
