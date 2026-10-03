@@ -106,15 +106,18 @@ describe('TSL line materials derive ortho from the projection matrix', () => {
     m.updateCameraParams(res);
     const key = m.customProgramCacheKey();
     const vertex = m.vertexNode;
-    const fragment = m.fragmentNode;
+    // These wrappers write `colorNode` (their `fragmentNode` is always null).
+    const color = m.colorNode;
+    expect(color).toBeTruthy();
     m.updateCameraParams(new THREE.Vector2(512, 512), 0.25, 2);
     expect(m.customProgramCacheKey()).toBe(key);
     expect(m.vertexNode).toBe(vertex);
-    expect(m.fragmentNode).toBe(fragment);
+    expect(m.colorNode).toBe(color);
     // @ts-expect-error — the camera kind is not an input (read per draw from P).
     m.updateCameraParams(res, true);
     expect(m.customProgramCacheKey()).toBe(key);
     expect(m.vertexNode).toBe(vertex);
+    expect(m.colorNode).toBe(color);
   });
 
   it.each([
