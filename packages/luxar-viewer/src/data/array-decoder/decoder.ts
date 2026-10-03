@@ -685,25 +685,29 @@ export class ArrayDecoder {
     );
   }
 
+  /** Modes classified by encoding name alone, checked in order. */
+  private static readonly NAMED_MODES: ReadonlyArray<readonly [(name: string) => boolean, string]> =
+    [
+      [ArrayDecoder.isLUTEncodingName, 'lut'],
+      [ArrayDecoder.isPerChannelQuantEncodingName, 'perchannel'],
+      [ArrayDecoder.isLogScalarEncodingName, 'log_scalar'],
+      [ArrayDecoder.isGeologScalarEncodingName, 'geolog_scalar'],
+    ];
+
   /**
    * Helper: Get encoding mode from metadata
    *
    * Returns a string describing the encoding mode
    */
   static getEncodingMode(attrs: ArrayMetadata): string {
-    if (!attrs) return 'direct';
-    const enc = attrs.encoding;
-    if (!enc || !enc.name) return 'direct';
+    const name = attrs?.encoding?.name;
+    if (!name) return 'direct';
 
     // Map encoding name to mode
-    if (enc.name === 'array_ref') return 'array_ref';
-    if (enc.name === 'broadcasted') return 'broadcasted';
-    if (ArrayDecoder.isLUTEncodingName(enc.name)) return 'lut';
-    if (ArrayDecoder.isLogScalarEncodingName(enc.name)) return 'log_scalar';
-    if (ArrayDecoder.isGeologScalarEncodingName(enc.name)) return 'geolog_scalar';
-    if (ArrayDecoder.isQuantizedEncoding(attrs)) return 'quantized';
-
-    return 'direct';
+    if (name === 'array_ref' || name === 'broadcasted') return name;
+    const named = ArrayDecoder.NAMED_MODES.find(([matches]) => matches(name));
+    if (named) return named[1];
+    return ArrayDecoder.isQuantizedEncoding(attrs) ? 'quantized' : 'direct';
   }
 
   /**
