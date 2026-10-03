@@ -319,7 +319,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
           // Check if this is an nD dataset (ndim > 3) without spatial indexing
           // This is inefficient because ALL points must be loaded for each view
           const ndim = positionsArray.shape[1] || 3;
-          if (ndim > 3) {
+          if (ndim > 3 && (!this.node.attrs.ordering || this.node.attrs.ordering === 'none')) {
             log.warning(
               Modules.SPATIAL_INDEX_LOADER,
               `⚠️ nD dataset (${ndim}D) without spatial index for ${this.node.path}. ` +

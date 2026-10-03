@@ -178,9 +178,42 @@ describe('PointsSpatialIndexLoader', () => {
     if (loader) {
       loader.dispose();
     }
+    vi.restoreAllMocks();
   });
 
   describe('initialization', () => {
+    it('does not warn that an ordered 4D node lacks an index when it fits one chunk', async () => {
+      loader.dispose();
+      loader = new PointsSpatialIndexLoader(mockZarrLocation, {
+        ...mockNode,
+        attrs: { ...mockNode.attrs, n_points: 64, chunk_size: 64 },
+      });
+      mockArrays.positions.shape = [64, 4];
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await loader.ensureInitialized();
+
+      expect(warning).not.toHaveBeenCalled();
+      expect(
+        (zarr.open as any).mock.calls.some((c: any[]) => String(c[0]).includes('chunk_bounds'))
+      ).toBe(false);
+      warning.mockRestore();
+    });
+
+    it('warns when a 4D node actually has no spatial ordering', async () => {
+      loader.dispose();
+      loader = new PointsSpatialIndexLoader(mockZarrLocation, {
+        ...mockNode,
+        attrs: { ...mockNode.attrs, ordering: 'none' },
+      });
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await loader.ensureInitialized();
+
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining('without spatial index'));
+      warning.mockRestore();
+    });
+
     it('should load chunk-based spatial index on first load', async () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
