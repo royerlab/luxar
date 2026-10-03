@@ -118,7 +118,9 @@ export const CAPSULE_LINE_PICK_VERTEX_SHADER = /* glsl */ `
       float nearCull = max(uNearCull, 1e-20);
       float startDepth = -mvStart.z;
       float endDepth = -mvEnd.z;
-      if ((luxarLineIsOrtho == 0) && startDepth < nearCull && endDepth < nearCull) {
+      // Projected-density thinning rides the both-behind cull (visual capsule
+      // parity): a dropped segment must not be pickable either.
+      if (luxarDensityDropped() || ((luxarLineIsOrtho == 0) && startDepth < nearCull && endDepth < nearCull)) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
         vLocal = vec2(0.0);
         vCutN = vec4(-1.0, 0.0, 1.0, 0.0);
