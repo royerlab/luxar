@@ -210,6 +210,7 @@ describe('OPFSStore index persistence under a continuous write stream', () => {
     expect(meta.entries.length).toBeGreaterThan(100);
     await store.dispose();
   });
+
 });
 
 describe('OPFSStore orphan reconciliation on open', () => {
@@ -345,6 +346,48 @@ describe('OPFSStore orphan reconciliation on open', () => {
     expect(store.getStats().count).toBe(0);
     expect(disk.fileCount()).toBe(0);
     await store.dispose();
+  });
+});
+
+/**
+ * Two tabs share one dataset directory (same URL ⇒ same datasetId). Tab B opened
+ * the REPUBLISHED dataset: its validation cleared the directory and wrote the new
+ * identity. Tab A, still at the old hash, keeps streaming chunks into that same
+ * directory. A never rewrites the identity (it already "wrote" its own), so none
+ * of A's later files are listed by B's index — and the next session, trusting the
+ * new identity, must not serve them as the new dataset.
+ */
+describe('OPFSStore two tabs on one directory across a republish', () => {
+  const URL = 'https://example.com/d.zarr';
+
+  it.fails('never serves a chunk an old-hash tab wrote after the directory moved to the new hash', async () => {
+    installBucketed();
+    const a = new OPFSStore('tabs', URL, 1e9);
+    await a.init();
+    await settleReconcile(a);
+    a.setContentHash('hash-old');
+    await a.set('k/0', new Uint8Array(8).fill(1));
+
+    const b = new OPFSStore('tabs', URL, 1e9);
+    await b.init();
+    await settleReconcile(b);
+    await b.clear(); // B's validation saw the new hash
+    b.setContentHash('hash-new');
+    await b.set('k/1', new Uint8Array(8).fill(2));
+
+    // A keeps streaming the OLD dataset's chunks into the shared directory.
+    await a.set('k/2', new Uint8Array(8).fill(9));
+    await a.dispose();
+    await b.dispose(); // B's index (hash-new, k/1 only) is the last one saved
+
+    const next = new OPFSStore('tabs', URL, 1e9);
+    await next.init();
+    next.setContentHash('hash-new'); // a matching validation
+    expect(await next.get('k/2'), 'old-hash bytes served as the new dataset').toBeUndefined();
+    expect(await next.get('k/1')).toEqual(new Uint8Array(8).fill(2));
+    await settleReconcile(next);
+    expect(next.getStats().count).toBe(1);
+    await next.dispose();
   });
 });
 
