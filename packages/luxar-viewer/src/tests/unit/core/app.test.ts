@@ -1967,6 +1967,28 @@ describe('LuxarApp', () => {
       expect(removals).toEqual([['webglcontextlost', additions[0][1]]]);
     });
 
+    it.fails('a superseded load never writes its viewer config into a newer session', async () => {
+      // dispose() + init() while a switch is still loading: the old load's
+      // config pass must land in ITS (disposed) session, not the new one.
+      await app.init({ canvas: mockCanvas, src: '' });
+      let releaseOld!: () => void;
+      mockSceneManager.loadSceneData.mockImplementationOnce(
+        () => new Promise<void>((resolve) => (releaseOld = resolve))
+      );
+      const oldSwitch = app.switchDataset('http://example.com/old.zarr');
+      await vi.waitFor(() => expect(mockSceneManager.loadSceneData).toHaveBeenCalledTimes(1));
+      app.dispose();
+
+      await app.init({ canvas: mockCanvas, src: SRC });
+      mockSceneManager.getSceneViewerConfig.mockReturnValue({
+        control_panel: { title: 'Old scene', columns: 2 },
+      });
+      releaseOld();
+      await oldSwitch;
+
+      expect(app.getViewerState().controlPanel).toBeNull();
+    });
+
     it('keeps authored scene overlays visible in kiosk mode', async () => {
       await app.init({ canvas: mockCanvas, src: SRC });
       const hideOverlay = vi.fn();
