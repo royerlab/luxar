@@ -218,7 +218,12 @@ export interface LuxarLayerOptions {
    * it. Default true (and only while `config.densityGuard.enabled`).
    */
   densityGuard?: boolean;
-  /** Worker-based back-to-front sorting for order-dependent geometry. Default true. */
+  /**
+   * Worker-based back-to-front sorting for order-dependent geometry. Default
+   * true. `false` also skips the per-frame cross-node order pass (authored
+   * cross-layer bands, physical glass drawn first), which needs the
+   * coordinator's camera: the layer's nodes draw in plain three.js order.
+   */
   depthSort?: boolean;
   /**
    * `renderOrder` stamped onto every Group in the layer subtree. Three.js uses

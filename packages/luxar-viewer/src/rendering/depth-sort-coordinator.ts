@@ -280,8 +280,12 @@ export class DepthSortCoordinator {
   /**
    * Master switch, applied at host init from `config.depthSort.enabled`
    * combined with the `?depthSort=0` URL escape hatch. Disabling pins each mesh's
-   * identity (storage) ordering for deterministic E2E/visual runs; authored
-   * cross-layer bands and the physical-glass draw-first rule still apply.
+   * identity (storage) ordering for deterministic E2E/visual runs. The authored
+   * cross-layer bands and the physical-glass draw-first rule come from the
+   * per-frame cross-node pass, which still runs only for a host that keeps the
+   * coordinator {@link configure}d (it needs the camera): the LuxarApp does; a
+   * LuxarLayer with `depthSort: false` never configures it, so its nodes are
+   * left in plain three.js order under the layer's `renderOrder`.
    */
   setEnabled(enabled: boolean): void {
     this.state.depthSortEnabled = enabled;

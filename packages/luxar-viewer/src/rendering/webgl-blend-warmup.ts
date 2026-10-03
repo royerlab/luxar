@@ -837,6 +837,10 @@ export function configureBlendModeProgramWarmup(config: WarmupConfig): void {
  * {@link warmSceneBlendModePrograms} has armed the session.
  */
 export function scheduleBlendModeProgramWarmupForObject(object: THREE.Object3D): void {
+  // A node whose subtree is not in any host's scene yet (a dataset's initial
+  // build commits before its root is attached) routes nowhere, and needs not:
+  // every host ends its load with `warmScene` over the attached root (the app's
+  // `warmBlendModePrograms`, the layer's `load`), which schedules it then.
   const root = sceneRootOf(object);
   for (const manager of managers) {
     if (manager.targets(root)) {
