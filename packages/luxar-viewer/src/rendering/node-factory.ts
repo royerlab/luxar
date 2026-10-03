@@ -326,7 +326,7 @@ export class NodeFactory {
    * the controls 'change' event, not this method.)
    *
    * @param drawn - Whether any committed node was on screen (default true);
-   *   forwarded on `geometry-committed`.
+   *   forwarded on `geometry-committed` (emitted for the LuxarApp's factories only).
    */
   markPickingDirty(drawn = true): void {
     this.pickingSystem?.markDirty();
@@ -335,8 +335,11 @@ export class NodeFactory {
     // the committed scene — today the scene-derived environment capture
     // (`rendering/environment/`), which marks itself stale here and rebuilds
     // once the loader settles. `drawn` is false when no committed node was on
-    // screen, so the render loop need not redraw for it.
-    eventBus.emit('geometry-committed', { drawn });
+    // screen, so the render loop need not redraw for it. The bus is the PAGE's,
+    // read by the LuxarApp alone: a factory with a host material manager (a
+    // LuxarLayer's) stays off it — its host redraws through its own loader's
+    // requestRender.
+    if (this.materials === null) eventBus.emit('geometry-committed', { drawn });
   }
 
   /**

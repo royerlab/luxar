@@ -65,7 +65,7 @@ describe('materials are per host', () => {
 });
 
 describe('geometry commits are per host', () => {
-  it.fails("a layer factory's commits stay off the app's page event bus", () => {
+  it("a layer factory's commits stay off the app's page event bus", () => {
     // The app's redraw and its environment re-capture listen on the page bus;
     // a layer's commit (its own requestRender already redraws it) must not
     // wake them.
