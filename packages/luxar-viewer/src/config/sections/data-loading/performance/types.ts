@@ -25,6 +25,8 @@ export interface DataLoadingPerformanceConfig {
    * pool init runs *before* the worker is in the pool, so the
    * standard handleWorkerFailure path can't evict it. The guard
    * rejects the init promise so the caller can fall back gracefully.
+   * A slot that only missed this deadline is respawned after a backoff
+   * (3 attempts in all): a busy main thread can delay the reply.
    */
   workerInitTimeoutMs: number;
 

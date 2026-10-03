@@ -204,7 +204,7 @@ describe('WorkerPool — a slot whose init missed its deadline is respawned', ()
   });
   afterEach(() => vi.useRealTimers());
 
-  it.fails('respawns the starved slot after a backoff and publishes it', async () => {
+  it('respawns the starved slot after a backoff and publishes it', async () => {
     const { WorkerPool, workers } = await loadWorkerPool(2, { workerInitTimeoutMs: 100 }, (i) =>
       i === 1 ? never() : ready()
     );
@@ -220,7 +220,7 @@ describe('WorkerPool — a slot whose init missed its deadline is respawned', ()
     expect(pool.getWorkerCount()).toBe(2);
   });
 
-  it.fails('recovers a pool whose every slot missed its deadline', async () => {
+  it('recovers a pool whose every slot missed its deadline', async () => {
     const { WorkerPool } = await loadWorkerPool(1, { workerInitTimeoutMs: 100 }, (i) =>
       i === 0 ? never() : ready()
     );
@@ -234,7 +234,7 @@ describe('WorkerPool — a slot whose init missed its deadline is respawned', ()
     expect(pool.getWorkerCount()).toBe(1);
   });
 
-  it.fails('gives a slot that keeps missing its deadline three attempts in all', async () => {
+  it('gives a slot that keeps missing its deadline three attempts in all', async () => {
     const { WorkerPool, workers } = await loadWorkerPool(2, { workerInitTimeoutMs: 100 }, (i) =>
       i === 0 ? ready() : never()
     );

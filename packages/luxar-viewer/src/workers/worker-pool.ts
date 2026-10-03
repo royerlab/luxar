@@ -19,6 +19,7 @@ import {
   WorkerTimeoutError,
   WorkerAbortError,
   WorkerUnavailableError,
+  WorkerInitTimeoutError,
   isWorkerInfrastructureError,
   type TimeoutKind,
 } from './worker-pool/errors';
@@ -95,6 +96,14 @@ let dataWorkerWasmPathOverride: string | undefined;
 export function setDataWorkerWasmPath(url: string): void {
   dataWorkerWasmPathOverride = url;
 }
+
+/**
+ * Attempts a slot gets when its worker's init misses the deadline: the first
+ * plus two respawns, each after `WORKER_INIT_RETRY_BASE_MS × attempt`. The
+ * same bound and backoff as the sort worker's `SORT_WORKER_INIT_MAX_ATTEMPTS`.
+ */
+const WORKER_INIT_MAX_ATTEMPTS = 3;
+const WORKER_INIT_RETRY_BASE_MS = 2_000;
 
 export class WorkerPool {
   private workers: WorkerInstance[] = [];
@@ -230,7 +239,7 @@ export class WorkerPool {
           settleMyReady();
         };
 
-        const workerPromises = Array.from({ length: workerCount }, (_, index) =>
+        const spawnSlot = (index: number, attempt: number): Promise<WorkerInstance> =>
           spawnWorker({
             index,
             total: workerCount,
@@ -240,10 +249,20 @@ export class WorkerPool {
             attachPermanentHandlers: (w, n) => this.attachWorkerErrorHandlers(w, n),
             runInitGuard: (w, a, n) => this.initializeWithGuard(w, a, n, wasmPathOverride),
             isCurrentGeneration: () => this.initGeneration === myGeneration,
-          }).then((entry) => {
-            publish(entry);
-            return entry;
-          })
+          }).then(
+            (entry) => {
+              publish(entry);
+              return entry;
+            },
+            (error: unknown) => {
+              this.scheduleRespawn(error, attempt, myGeneration, () =>
+                spawnSlot(index, attempt + 1)
+              );
+              throw error;
+            }
+          );
+        const workerPromises = Array.from({ length: workerCount }, (_, index) =>
+          spawnSlot(index, 1)
         );
 
         // Still wait for every spawn to settle: `initialize()`'s contract is
@@ -309,29 +328,7 @@ export class WorkerPool {
         log.info(Modules.WORKER_POOL, `Worker pool ready with ${this.workers.length} worker(s)`);
         markLoad('poolReady', { workers: this.workers.length });
 
-        // One-time backend summary (replaces the per-worker WASM/TS lines).
-        // Workers each load WASM independently but share one build, so the
-        // pool is either all-WASM or all-fallback in practice; report a mixed
-        // result honestly if that invariant ever breaks.
-        const fallbackCount = this.workers.filter((w) => w.wasmFallback).length;
-        if (fallbackCount === 0) {
-          log.success(
-            Modules.WORKER_POOL,
-            `Acceleration: compiled WASM active on all ${this.workers.length} data worker(s)`
-          );
-        } else if (fallbackCount === this.workers.length) {
-          log.warning(
-            Modules.WORKER_POOL,
-            `Acceleration: TypeScript fallback on all ${this.workers.length} data worker(s) — ` +
-              'compiled WASM not loaded (run "make build-wasm"; functional but slower)'
-          );
-        } else {
-          log.warning(
-            Modules.WORKER_POOL,
-            `Acceleration: mixed backend — ${this.workers.length - fallbackCount} on WASM, ` +
-              `${fallbackCount} on TypeScript fallback`
-          );
-        }
+        this.logBackendSummary();
       } catch (e) {
         // Same stale-generation guard for the error path. If a newer
         // generation has taken over, only clean up this attempt's workers.
@@ -374,6 +371,66 @@ export class WorkerPool {
     this.initPromise.catch(() => {});
 
     return this.initPromise;
+  }
+
+  /**
+   * One-time backend summary (replaces the per-worker WASM/TS lines).
+   * Workers each load WASM independently but share one build, so the
+   * pool is either all-WASM or all-fallback in practice; report a mixed
+   * result honestly if that invariant ever breaks.
+   */
+  private logBackendSummary(): void {
+    const fallbackCount = this.workers.filter((w) => w.wasmFallback).length;
+    if (fallbackCount === 0) {
+      log.success(
+        Modules.WORKER_POOL,
+        `Acceleration: compiled WASM active on all ${this.workers.length} data worker(s)`
+      );
+    } else if (fallbackCount === this.workers.length) {
+      log.warning(
+        Modules.WORKER_POOL,
+        `Acceleration: TypeScript fallback on all ${this.workers.length} data worker(s) — ` +
+          'compiled WASM not loaded (run "make build-wasm"; functional but slower)'
+      );
+    } else {
+      log.warning(
+        Modules.WORKER_POOL,
+        `Acceleration: mixed backend — ${this.workers.length - fallbackCount} on WASM, ` +
+          `${fallbackCount} on TypeScript fallback`
+      );
+    }
+  }
+
+  /**
+   * Respawn a slot whose worker missed its init deadline, after a backoff and
+   * at most `WORKER_INIT_MAX_ATTEMPTS` attempts in all. A deadline miss
+   * does not prove the worker broken (see `WorkerInitTimeoutError`); every
+   * other init failure is permanent and is not retried.
+   *
+   * The respawn runs outside the attempt it came from, so `initialize()` and
+   * the usable-worker gate settle exactly as before. A respawned worker is
+   * published like any other (generation-checked), which also revives a pool
+   * whose every slot missed: `whenUsable()` takes a live worker over the
+   * attempt's sticky rejection.
+   */
+  private scheduleRespawn(
+    error: unknown,
+    attempt: number,
+    generation: number,
+    respawn: () => Promise<WorkerInstance>
+  ): void {
+    if (!(error instanceof WorkerInitTimeoutError) || attempt >= WORKER_INIT_MAX_ATTEMPTS) return;
+    const delayMs = WORKER_INIT_RETRY_BASE_MS * attempt;
+    log.warning(
+      Modules.WORKER_POOL,
+      `${error.label} init missed its deadline (attempt ${attempt}/${WORKER_INIT_MAX_ATTEMPTS}); ` +
+        `respawning in ${delayMs}ms`
+    );
+    setTimeout(() => {
+      if (this.initGeneration !== generation) return;
+      // `spawnWorker` logs the failure, and another miss re-schedules.
+      respawn().catch(() => {});
+    }, delayMs);
   }
 
   /**
