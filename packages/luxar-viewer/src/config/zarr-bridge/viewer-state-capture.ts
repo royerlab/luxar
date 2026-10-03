@@ -50,6 +50,7 @@ const NOT_TOP_LEVEL_KEYS: ReadonlySet<string> = new Set([
  * @param renderingControls - Rendering controls with all settings
  * @param sceneDimsManager - Scene dimensions manager with current navigation state
  * @param animationManager - Optional animation manager for playback state
+ * @param selectedDimension - The navigable dimension the [ / ] keys target
  * @returns Complete ZarrViewerConfig snapshot
  */
 export function captureViewerState(
@@ -57,7 +58,7 @@ export function captureViewerState(
   renderingControls: { readonly settings: RenderingSettings },
   sceneDimsManager: SceneDimsManager,
   animationManager?: DimensionAnimationManager,
-  themeManager?: ThemeManager
+  selectedDimension?: number
 ): ZarrViewerConfig {
   const result: ZarrViewerConfig = {};
   const settings = renderingControls.settings;
@@ -132,8 +133,7 @@ export function captureViewerState(
 
   // --- Theme ---
   try {
-    const tm = themeManager ?? ThemeManager.getInstance();
-    result.theme = tm.getCurrentTheme().id;
+    result.theme = ThemeManager.getInstance().getCurrentTheme().id;
   } catch {
     // ThemeManager may not be initialized in tests
   }
@@ -143,6 +143,7 @@ export function captureViewerState(
   if (dims) {
     result.dimensions = {
       current_step: [...dims.currentStep],
+      ...(selectedDimension !== undefined ? { selected_dimension: selectedDimension } : {}),
     };
   }
 
