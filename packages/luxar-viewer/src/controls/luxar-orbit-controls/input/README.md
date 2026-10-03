@@ -16,8 +16,7 @@ pre-extraction class.
 ```
 input/
 ├── pointer.ts   # Mouse + pen handlers, the `OrbitInputCtx` shape, action mapping
-├── touch.ts     # 1-finger rotate/pan, 2-finger pinch-dolly + drag-pan
-└── keyboard.ts  # Arrow-key pan attachment (self-contained, no shared ctx)
+└── touch.ts     # 1-finger rotate/pan, 2-finger pinch-dolly + drag-pan
 ```
 
 ## Per-file purpose
@@ -57,12 +56,6 @@ input/
   center-of-mass pan. Coordinates come from
   `ctx.pointerPositions` (the live position map maintained by
   `handlePointerMove`).
-- `keyboard.ts` — Self-contained `attachKeyboardPan(element, ctx)`.
-  Wires a `keydown` listener for the four arrow keys, calls
-  `ctx.pan(±speed, 0)` / `ctx.pan(0, ±speed)`, and returns a disposer.
-  Uses a narrower `OrbitKeyboardCtx` (just `enabled`, `enablePan`,
-  `keyPanSpeed`, `pan`) so the orchestrator can attach it
-  independently of the pointer/touch context.
 
 ## How the orchestrator wires it
 
@@ -71,9 +64,8 @@ during construction and binds it to `pointerdown` / `pointermove` /
 `pointerup` / `wheel` on the canvas. Pointer entry points dispatch on
 `pointerType` and call the touch bodies via the `onTouchStart` /
 `onTouchMove` callbacks on the context — so all input modalities share
-the same accumulator state. `attachKeyboardPan` is wired separately
-(via `listenToKeyEvents`) onto the window or a focusable element and
-returns its own disposer.
+the same accumulator state. Orbit has no keyboard handler of its own:
+the viewer's keys route through the input context manager (`input/`).
 
 ## See also
 

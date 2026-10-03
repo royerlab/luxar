@@ -35,8 +35,7 @@ controls/
 │   │   └── zoom.ts
 │   └── input/                         #   DOM-event handler cluster
 │       ├── pointer.ts
-│       ├── touch.ts
-│       └── keyboard.ts
+│       └── touch.ts
 │
 ├── luxar-fly-controls.ts               # Free-flight 6DOF controller
 ├── luxar-fly-controls/                 # Per-class helpers (parallel to orbit)
@@ -72,8 +71,8 @@ package.
   helpers extracted from `LuxarOrbitControls`: the per-frame update
   sequencer (`runUpdateStep`) and the camera-write step
   (`applyToCamera` / `initializeFromCamera`), delegating to thematic
-  `math/` (trackball / pan / zoom) and `input/` (pointer / touch /
-  keyboard) subgroups.
+  `math/` (trackball / pan / zoom) and `input/` (pointer / touch)
+  subgroups.
 - [`luxar-fly-controls/`](./luxar-fly-controls/README.md) — per-class
   helpers for `LuxarFlyControls`: camera ↔ orientation sync, physics
   integration (`integrateTranslation` / `integrateRotation`), DOM
@@ -274,7 +273,6 @@ class LuxarOrbitControls extends EventDispatcher {
   applyOrbitDolly(phase: number): void;
   reinitialize(): void;
   enableViewAxisRotation(speed?: number): void;
-  listenToKeyEvents(element: HTMLElement | Window): void;
   saveState(): void;
   reset(): void;
   dispose(): void;
