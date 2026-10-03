@@ -248,7 +248,7 @@ describe('SceneLoader', () => {
       }
     });
 
-    it.fails('keeps the custom colormap LUTs another live loader may be drawing with', async () => {
+    it('keeps the custom colormap LUTs another live loader may be drawing with', async () => {
       const url = 'http://localhost:8000/test.zarr';
       const other = new SceneLoader({}, 'host-b');
       const disposing = new SceneLoader({}, 'host-a');

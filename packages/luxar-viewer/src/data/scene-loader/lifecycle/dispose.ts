@@ -19,7 +19,7 @@
  */
 
 import { log, Modules } from '../../../utils/log';
-import { disposeCustomColormapTextures } from '../../../rendering/colormap-textures';
+import { releaseCustomColormapTextures } from '../../../rendering/colormap-textures';
 import type { LoaderRegistry } from '../loaders/loader-registry';
 import type { ViewStateQueue } from '../view-state/view-state-queue';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
@@ -127,9 +127,11 @@ export async function disposeSceneLoader(ctx: DisposeCtx): Promise<void> {
   // is keyed by content hash and shared across all scenes, but entries
   // from an unloaded dataset have no value and would accumulate in a
   // long-lived app that swaps many unique LUTs. Built-ins survive
-  // because they're shared with all scenes and cheap to keep.
+  // because they're shared with all scenes and cheap to keep. Another
+  // host's live dataset may be drawing with them, so only the last
+  // holder's release disposes the cache.
   try {
-    disposeCustomColormapTextures();
+    releaseCustomColormapTextures(ctx.datasetAbortController);
   } catch (error) {
     log.warning(Modules.SCENE_LOADER, 'Custom colormap disposal failed', error);
   }

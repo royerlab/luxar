@@ -39,6 +39,7 @@ import { log, Modules, LogEmoji } from '../../../utils/log';
 import { notifier } from '../../../utils/cross-layer/notifier';
 import { attachSceneGraphIndex } from '../../../utils/scene-graph-index';
 import { warmUpDataWorkerPool } from '../../../workers/worker-pool';
+import { retainCustomColormapTextures } from '../../../rendering/colormap-textures';
 import { markLoad, noteRefinementComplete } from '../../../profiling/load-timeline';
 import type { RefinementHoldReason } from '../../../types/data-monitor-types';
 import { ZarrSceneAttrs, SceneDimensionAttrs } from '../../../types/zarr';
@@ -285,6 +286,9 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // no dataset signal of its own.
   const datasetAbortController = new AbortController();
   ctx.setDatasetAbortController(datasetAbortController);
+  // ...which also names this dataset's hold on the page-wide custom-LUT cache
+  // (released by `dispose.ts`).
+  retainCustomColormapTextures(datasetAbortController);
 
   // S6: reset per-loader prefetch predictor state. Without this,
   // the first updateView on a new dataset would extrapolate from

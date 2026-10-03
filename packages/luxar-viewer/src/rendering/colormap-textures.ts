@@ -293,9 +293,10 @@ export function disposeBuiltinColormapTextures(): void {
 /**
  * Dispose ONLY the custom-LUT colormap texture cache.
  *
- * Custom LUTs are scene/dataset-scoped. SceneLoader.dispose()
- * calls this on dataset unload so unused custom textures don't
- * accumulate across many dataset switches in a long-lived app.
+ * Custom LUTs are scene/dataset-scoped. SceneLoader.dispose() reaches
+ * this on dataset unload (through {@link releaseCustomColormapTextures},
+ * once no other live dataset holds the cache) so unused custom textures
+ * don't accumulate across many dataset switches in a long-lived app.
  * Built-ins are not touched.
  */
 export function disposeCustomColormapTextures(): void {
@@ -303,6 +304,27 @@ export function disposeCustomColormapTextures(): void {
     tex.dispose();
   }
   customCache.clear();
+}
+
+/** Datasets currently holding the custom-LUT cache (see {@link retainCustomColormapTextures}). */
+const customLutHolders = new Set<object>();
+
+/**
+ * A dataset (one scene loader's) may now draw with custom LUTs. The cache is
+ * page-wide while several hosts (a LuxarApp, LuxarLayers) can be live at once,
+ * so it is disposed only when the LAST holder lets go.
+ */
+export function retainCustomColormapTextures(holder: object): void {
+  customLutHolders.add(holder);
+}
+
+/**
+ * The dataset `holder` was unloaded: dispose the custom-LUT cache once no
+ * other dataset still holds it (a null holder only checks).
+ */
+export function releaseCustomColormapTextures(holder: object | null): void {
+  if (holder) customLutHolders.delete(holder);
+  if (customLutHolders.size === 0) disposeCustomColormapTextures();
 }
 
 /**
