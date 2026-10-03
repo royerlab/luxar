@@ -647,9 +647,10 @@ describe('runUpdateStep — damped rotation residue converges (no ULP limit cycl
 // 1e-12 (and pan had no gate at all). A 4 px drag in the viewer then rendered
 // ~58 frames AFTER its last pixel change, half of all its renders (gate stores
 // mixed and partition_normal, full-resolution readback, obsidian). A tail whose
-// whole remaining rotation, or pan as a fraction of the camera distance, is
-// below 1e-8 moves every drawn position by less than its own float32
-// resolution (~6e-8 relative), the same bound as zoom's 1e-8 gate.
+// whole remaining rotation, or pan as a fraction of the camera distance (of the
+// visible field width in orthographic), is below 1e-8 moves every drawn
+// position by less than its own float32 resolution (~6e-8 relative), the same
+// bound as zoom's 1e-8 gate.
 describe('runUpdateStep — the damped tail ends below float32 resolution', () => {
   const rotation = (angle: number): THREE.Quaternion =>
     new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);
@@ -679,7 +680,7 @@ describe('runUpdateStep — the damped tail ends below float32 resolution', () =
     expect(runUpdateStep(ctx)).toBe(true);
   });
 
-  it.fails('keeps a one-pixel pan live in an orthographic view at extreme zoom', () => {
+  it('keeps a one-pixel pan live in an orthographic view at extreme zoom', () => {
     // The ortho pan gate is a fraction of the VISIBLE field ((right-left)/zoom),
     // not of the (zoom-independent) camera distance: at zoom 1e6 the field is
     // 2e-5 wide, so a 1 px pan of a 1000 px view is 2e-11 — far below 1e-8 of the
@@ -696,7 +697,7 @@ describe('runUpdateStep — the damped tail ends below float32 resolution', () =
     expect(ctx.target.x).toBeGreaterThan(0);
   });
 
-  it.fails('drops an orthographic pan below 1e-8 of the visible field when zoomed out', () => {
+  it('drops an orthographic pan below 1e-8 of the visible field when zoomed out', () => {
     // Zoom 0.01: the field is 2000 wide, so 1e-9 of it (2e-6) is sub-pixel —
     // yet 4e-7 of the distance 5, which the distance-scaled gate kept applying.
     const camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
