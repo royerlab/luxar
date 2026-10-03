@@ -829,7 +829,7 @@ describe('LuxarLayer', () => {
       expect(disposeMaterial).not.toHaveBeenCalled();
     });
 
-    it.fails("stops maintaining a detached root's path index, on a switch and on dispose", async () => {
+    it("stops maintaining a detached root's path index, on a switch and on dispose", async () => {
       // The real loader attaches a path index to its root; every member node
       // then holds the index's add/remove listeners until it is detached.
       const first = new THREE.Group();

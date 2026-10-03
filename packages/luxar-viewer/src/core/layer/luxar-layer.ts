@@ -149,6 +149,7 @@ import { log, Modules } from '../../utils/log';
 import { markSceneResourcesDirtyForContextRestore } from '../../scene/scene-manager/render-pipeline/webgl-context-recovery';
 import { configureRendererBackend } from '../../scene/scene-manager/render-pipeline/renderer-setup';
 import type { Renderer } from '../../rendering/renderer-capabilities';
+import { detachSceneGraphIndex } from '../../utils/scene-graph-index';
 import type { LoaderConfig } from '../../data/data-loader-types';
 import type { EmbedderDimensions } from '../app/embedder/events';
 
@@ -887,6 +888,9 @@ export class LuxarLayer {
   }
 
   private detachRoot(root: THREE.Group): void {
+    // The loader's path index (every member node holds its add/remove
+    // listeners) — the same release `SceneManager.clearSceneContent` does.
+    detachSceneGraphIndex(root);
     root.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return;
       releaseDepthSortNode(object);

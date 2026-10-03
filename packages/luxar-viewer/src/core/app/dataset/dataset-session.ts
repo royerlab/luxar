@@ -10,8 +10,9 @@
  *
  * Process-wide per-dataset state that layer mode needs too stays at the
  * loader / scene seam both owners share: the update profiler is reset at
- * `loadStart` (`data/scene-loader/lifecycle/load-scene.ts`) and the outgoing
- * root's path index is detached by `SceneManager.clearSceneContent`.
+ * `loadStart` (`data/scene-loader/lifecycle/load-scene.ts`), and the outgoing
+ * root's path index is detached by whichever owner drops the root
+ * (`SceneManager.clearSceneContent`, `LuxarLayer`'s root detach).
  *
  * @module core/app/dataset/dataset-session
  */
