@@ -50,7 +50,7 @@ function selectedLevel(bounds: { min: number[]; max: number[] }): number {
 }
 
 describe('LODGroupRegistry — footprint pick with the camera inside the box', () => {
-  it.fails('shows the finest level when the eye is inside a stamped node', () => {
+  it('shows the finest level when the eye is inside a stamped node', () => {
     expect(selectedLevel({ min: [-10, -10, -15], max: [10, 10, 1] })).toBe(2);
   });
 

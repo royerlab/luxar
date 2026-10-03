@@ -1787,7 +1787,10 @@ export class LODGroupRegistry {
    * The on-screen pick: the threshold pick on the (biased) coverage metric, or
    * — for a ``screen-area`` group whose levels carry complete footprint stamps —
    * the projected-footprint pick, which then decides alone (and leaves the band
-   * preload and the dissolve out, see ``dissolveStep``).
+   * preload and the dissolve out, see ``dissolveStep``). Not when the metric
+   * saturated (the camera is inside the box, or ``forceFinest``): the footprint
+   * is sized at the box-centre depth and says nothing about the splats at the
+   * eye, so the finest level stands.
    */
   private pickOnScreen(
     entry: LODGroupEntry,
@@ -1800,7 +1803,7 @@ export class LODGroupRegistry {
     const lodBias = resolveLodBias(this.deps.getLodBias?.());
     coverageMetric *= entry.selector === 'screen-area' ? lodBias : Math.sqrt(lodBias);
     const footprintDesired =
-      forceFinest || entry.selector !== 'screen-area'
+      entry.selector !== 'screen-area' || !Number.isFinite(coverageMetric)
         ? null
         : pickStampedFootprintChild(entry, cache, worldBox, frame.view, {
             viewportHeight: frame.viewport.height,
