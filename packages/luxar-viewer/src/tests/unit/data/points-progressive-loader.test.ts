@@ -1924,6 +1924,24 @@ describe('PointsProgressiveLoader — RGBA color layout (per-point opacity)', ()
     );
   });
 
+  it.fails('rejects an RGBA level that omits colorComponents, naming the level', async () => {
+    // Defaulted to 3, the RGBA buffer passes the cross-level layout compare
+    // (3 vs 3) and fits the allocation, so without the per-level length check
+    // it is copied at stride 3 and silently mis-strides every point after it.
+    const undeclared = makeRgbaLodData(3, 0.9);
+    delete undeclared.colorComponents;
+    const lodA = makeSubLoader(undeclared);
+    const lodB = makeSubLoader(makeLodData(3, 3, { color: 'float32' })); // RGB
+    const loader = new PointsProgressiveLoader(
+      [lodA, lodB] as unknown as PointsSpatialIndexLoader[],
+      2,
+      '/points'
+    );
+    await expect(loader.loadPoints(baseViewState)).rejects.toThrow(
+      /concatenatePointsData \(LOD level 0\): colors length 12 does not match/
+    );
+  });
+
   it('single-part passthrough keeps colorComponents=4', async () => {
     const lodA = makeSubLoader(makeRgbaLodData(4, 0.7));
     const loader = new PointsProgressiveLoader(
