@@ -344,7 +344,7 @@ describe('LayersPanel — sound rows', () => {
     expect(panel.getLayerSummaries().find((l) => l.path === '/story')!.gain).toBeUndefined();
   });
 
-  it.fails('offers a sound row neither Blending nor "Apply appearance to all layers"', () => {
+  it('offers a sound row neither Blending nor "Apply appearance to all layers"', () => {
     // A sound row has no material: the appearance section already steps aside for
     // it, so its context menu must not offer the same controls by another door.
     const labels = rowMenu(panel, '/story/hum').map((item) => item.label);
@@ -356,7 +356,7 @@ describe('LayersPanel — sound rows', () => {
     );
   });
 
-  it.fails('"Apply appearance to all layers" leaves a sound row untouched', () => {
+  it('"Apply appearance to all layers" leaves a sound row untouched', () => {
     // Its appearance fields are inert placeholders; stamping them would also mark
     // the row's blend mode as user-owned.
     const before = { ...panel.layerState.getLayer('/story/hum')! };

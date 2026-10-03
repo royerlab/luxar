@@ -585,6 +585,17 @@ export class LayersPanel {
         },
       },
     ];
+    return [...items, ...this.buildAppearanceMenuItems(layer)];
+  }
+
+  /**
+   * Row menu: the appearance submenus and the copy verb, behind one separator.
+   * None for a sound row — it has no material, and the appearance section of the
+   * panel steps aside for it on the same grounds.
+   */
+  private buildAppearanceMenuItems(layer: LayerInfo): ContextMenuItem[] {
+    if (layer.type === 'sound') return [];
+    const items: ContextMenuItem[] = [];
     if (layer.supportsColormap) {
       const current = this.state.getLayer(layer.path)?.colormap;
       const sub: ContextMenuItem[] = [
@@ -605,11 +616,10 @@ export class LayersPanel {
           });
         }
       }
-      items.push({ label: 'Colormap', separatorBefore: true, submenu: sub });
+      items.push({ label: 'Colormap', submenu: sub });
     }
     items.push({
       label: 'Blending',
-      separatorBefore: !layer.supportsColormap,
       submenu: BLENDING_MODES.map((mode) => ({
         label: mode,
         kind: 'radio' as const,
@@ -621,6 +631,7 @@ export class LayersPanel {
       label: 'Apply appearance to all layers',
       action: () => this.applyAppearanceToAll(layer.path),
     });
+    items[0].separatorBefore = true;
     return items;
   }
 
@@ -861,13 +872,14 @@ export class LayersPanel {
    * layer order, and opacity/visibility — those are per-layer compositing
    * choices, not "appearance" (copying opacity would flatten a scene the user
    * balanced layer-by-layer, while copying order would collapse every layer
-   * into one band).
+   * into one band). Sound rows neither give nor receive: they have no material,
+   * only placeholder appearance fields.
    */
   private applyAppearanceToAll(sourcePath: string): void {
     const src = this.state.getLayer(sourcePath);
-    if (!src) return;
+    if (!src || src.type === 'sound') return;
     for (const l of this.state.getLayers()) {
-      if (l.path === sourcePath) continue;
+      if (l.path === sourcePath || l.type === 'sound') continue;
       const min = Math.max(src.displayMin, l.dataMin);
       const max = Math.min(src.displayMax, l.dataMax);
       if (min < max) {
