@@ -172,7 +172,7 @@ describe('InputContextManager - keyupHandler Feature', () => {
   });
 
   describe('macOS Option composes a character (Option+W → "∑")', () => {
-    it.fails('matches the Alt binding by the physical key, on keydown and keyup', () => {
+    it('matches the Alt binding by the physical key, on keydown and keyup', () => {
       const handler = vi.fn();
       const keyupHandler = vi.fn();
       manager.setContext(InputContext.FLY_CONTROLS);

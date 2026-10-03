@@ -55,6 +55,7 @@ utils/
 ├── image-mime.ts            # detectMimeType() from magic bytes
 ├── input-capabilities.ts    # getInputProfile(), isTouchLikePointer(), deriveInputProfile() (import-free)
 ├── json-rpc.ts              # JSON-RPC 2.0 framing for the remote-control channel (pure)
+├── keyboard-key.ts          # pressedKey(): the binding key of a KeyboardEvent (undoes macOS Option composition)
 ├── log.ts                   # log object, Modules registry, LogEmoji, createModuleLogger
 ├── long-press.ts            # attachLongPress(el, …) — touch long-press → secondary action, single opener across platforms
 ├── lod-child-failure.ts     # Lazy-child failure latch and clear with status invalidation
@@ -215,6 +216,10 @@ The single answer to "is this a touch-first device, is it an iPhone or an iPad, 
 - `isTouchLikePointer(event)` — a finger, or a pen used as a finger on a coarse-pointer device (iPad + Pencil, with no secondary button held). Consistent across a gesture: `pointermove` reports `button === -1`, so held buttons are read from `buttons`. A pen on a fine-pointer desktop keeps the mouse mapping.
 - `deriveInputProfile(signals)`, `inferDeviceClass(signals)`, `readInputSignals()` — the pure derivation and its raw browser signals (`InputSignals`), injectable for tests. No-signal default (node, jsdom) is a hover-capable fine-pointer laptop, i.e. the historical desktop behaviour.
 - `resetInputProfileForTests()`.
+
+### keyboard-key.ts - The Key a Binding Names
+
+`pressedKey(event)` — the lowercased key a keyboard binding matches. macOS Option composes characters (Option+W reports `'∑'`, Option+E a dead key), so with Alt held and a reported key that is not a plain letter or digit it reads the physical `event.code` instead; otherwise the layout key wins, so non-QWERTY layouts keep their own letters. The input context manager and the fly keyboard both match through it, so `⌥ W / S` (fly up/down) works on a Mac.
 
 ### long-press.ts - Long-press → secondary action (touch)
 

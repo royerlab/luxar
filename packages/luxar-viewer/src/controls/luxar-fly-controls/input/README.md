@@ -27,7 +27,9 @@ input/
 `FlyLookState`, `FlyMouseAction` types and `FlyKeyboardCtx`.
 
 - **WASD** drives `moveState.{forward,back,left,right}`; **Alt/Meta+W**
-  and **Alt/Meta+S** redirect to `moveState.{up,down}` instead.
+  and **Alt/Meta+S** redirect to `moveState.{up,down}` instead. Keys are read
+  through `utils/keyboard-key.ts::pressedKey`, so macOS Option+W (reported as
+  `'∑'`) is still W.
 - **Q / E** sets `lookState.roll` to ±1.
 - **Arrow keys** set `lookState.{horizontal,vertical}` for continuous
   look (via the private `startLookChange` helper).

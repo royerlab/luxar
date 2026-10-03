@@ -18,6 +18,7 @@ import {
   sortContextsByPriority,
 } from './context-manager/routing-rules';
 import { isTypingInInput } from '../../utils/dom/focus';
+import { pressedKey } from '../../utils/keyboard-key';
 import type {
   RegisteredShortcutBinding,
   RegisteredShortcutBindings,
@@ -510,7 +511,7 @@ export class InputContextManager {
       // Ctrl, release W) is still that key's release: when no modifier-specific
       // keyup binding took it, deliver it to the base key's binding, or held
       // movement would stay latched. Keydown matching is never widened.
-      const baseKey = canonicalizeBindingKey(event.key.toLowerCase());
+      const baseKey = canonicalizeBindingKey(pressedKey(event));
       return (
         type === 'up' && baseKey !== bindingKey && this.handleKeyEventInternal(event, type, baseKey)
       );
@@ -546,7 +547,7 @@ export class InputContextManager {
     if (!config) return false;
 
     // Check if this binding is allowed in the current context
-    if (!this.isKeyAllowedInContext(event.key, bindingKey, config)) {
+    if (!this.isKeyAllowedInContext(pressedKey(event), bindingKey, config)) {
       // Key not allowed in this context - try passthrough if enabled
       if (config.passthrough) {
         return this.tryLowerContexts(event, type, bindingKey);
@@ -683,7 +684,7 @@ export class InputContextManager {
     );
 
     for (const [context, config] of sortedContexts) {
-      if (this.isKeyAllowedInContext(event.key, bindingKey, config)) {
+      if (this.isKeyAllowedInContext(pressedKey(event), bindingKey, config)) {
         const contextBindings = this.bindings.get(context);
         if (contextBindings) {
           const binding = contextBindings.get(bindingKey);
@@ -814,7 +815,8 @@ export class InputContextManager {
    * ```
    */
   private getBindingKeyFromEvent(event: KeyboardEvent): string {
-    const key = event.key.toLowerCase();
+    // Option+W reports '∑' on macOS; pressedKey() reads the physical key then.
+    const key = pressedKey(event);
     const parts = [key];
 
     // When the pressed key IS a modifier (Shift/Control/Alt/Meta), the
