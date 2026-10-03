@@ -423,12 +423,12 @@ export const LINE_PICK_SOURCE: ShaderSource = {
   webgl: { vertex: LINE_PICK_VERTEX_SHADER, fragment: LINE_PICK_FRAGMENT_SHADER },
   webgpu: (uniforms: Record<string, unknown>) => {
     const u = uniforms as Record<string, import('three').IUniform>;
-    const isOrtho = ((u.uIsOrtho?.value as number) ?? 0) === 1;
-    // The join style likewise (see LINE_SOURCE): GLSL carries it as a runtime
+    // The projection is read per draw; the join style is a build-time
+    // variant (see LINE_SOURCE): GLSL carries it as a runtime
     // uniform, TSL as a graph variant, so the record must select the variant.
     const join = lineJoinStyleFromUniform(u.uLineJoin?.value as number | undefined);
     const { linePickWebGPUFactory, buildLinePickTSLNodesFromUniforms } =
       requireTslMaterials().factories.pickLine;
-    return linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(u), { isOrtho, join });
+    return linePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(u), { join });
   },
 };

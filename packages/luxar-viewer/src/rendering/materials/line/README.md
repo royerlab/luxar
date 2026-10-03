@@ -17,14 +17,14 @@ semantics — `MaterialManager.getLineMaterial` dispatches on
 
 ## Module map
 
-| File                     | Role                                                                                                                                                                                                                                   |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `material-glsl.ts`       | `LineMaterial extends THREE.ShaderMaterial` — wraps the GLSL3 vertex/fragment pair, owns `uniforms`, manages variant `defines`, applies the canonical blending state. WebGL2 path.                                                     |
-| `material-tsl.ts`        | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or projection mode flip. WebGPU path.            |
-| `shader-glsl.ts`         | `LINE_VERTEX_SHADER` + `LINE_FRAGMENT_SHADER` GLSL3 source strings and the `LINE_SOURCE: ShaderSource` registry entry. The `webgpu` field re-enters `lineWebGPUFactory` so the parity harness can drive both backends from one symbol. |
-| `shader-tsl.ts`          | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                 |
-| `shader-glsl-capsule.ts` | `CAPSULE_LINE_VERTEX_SHADER` + `CAPSULE_LINE_FRAGMENT_SHADER` + `CAPSULE_LINE_SOURCE` — the capsule primitive's GLSL pair (see the section below).                                                                                     |
-| `shader-tsl-capsule.ts`  | `capsuleLineWebGPUFactory(nodes, config, outMaterial?)` — TSL twin of the capsule pair; same `LineTSLNodes`/`LineTSLConfig` contract as the screen-space factory.                                                                      |
+| File                     | Role                                                                                                                                                                                                                                                                                                         |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `material-glsl.ts`       | `LineMaterial extends THREE.ShaderMaterial` — wraps the GLSL3 vertex/fragment pair, owns `uniforms`, manages variant `defines`, applies the canonical blending state. WebGL2 path.                                                                                                                           |
+| `material-tsl.ts`        | `LineTSLMaterial extends NodeMaterial` — same constructor + update API, but owns persistent `UniformNode`s and rebuilds its TSL graph (`rebuildGraph`) when graph-specialized defines or the line texture change, and picks the quad's projection variant per draw (`selectProjectionVariant`). WebGPU path. |
+| `shader-glsl.ts`         | `LINE_VERTEX_SHADER` + `LINE_FRAGMENT_SHADER` GLSL3 source strings and the `LINE_SOURCE: ShaderSource` registry entry. The `webgpu` field re-enters `lineWebGPUFactory` so the parity harness can drive both backends from one symbol.                                                                       |
+| `shader-tsl.ts`          | `lineWebGPUFactory(nodes, config, outMaterial?)` — TSL counterpart to the GLSL strings. Reads pre-created `UniformNode`s from a `LineTSLNodes` table and emits the NodeMaterial graph.                                                                                                                       |
+| `shader-glsl-capsule.ts` | `CAPSULE_LINE_VERTEX_SHADER` + `CAPSULE_LINE_FRAGMENT_SHADER` + `CAPSULE_LINE_SOURCE` — the capsule primitive's GLSL pair (see the section below).                                                                                                                                                           |
+| `shader-tsl-capsule.ts`  | `capsuleLineWebGPUFactory(nodes, config, outMaterial?)` — TSL twin of the capsule pair; same `LineTSLNodes`/`LineTSLConfig` contract as the screen-space factory.                                                                                                                                            |
 
 ## Rendering model in one paragraph
 
@@ -524,27 +524,42 @@ so THREE's program cache recompiles; the TSL wrapper calls
 `rebuildGraph()`, which points the material at the SHARED graph of its new
 configuration (`../_shared/shared-graph-tsl.ts` — built once per
 configuration, since three keys its node-build cache on node ids). The key
-carries every define above plus the primitive, the resolved join, the
-projection mode and the baked line-texture width. Projection mode is read
-from the projection matrix in GLSL (`luxarLineIsOrtho`, assigned with
-`luxarLineScale` at the top of `main()`; the visual quad fragment stage
-re-derives it from the same `projectionMatrix` uniform, which it declares,
-because carrying it as one more flat varying cost the 10M-segment draw ~1.4%
-GPU time), so the GLSL wrapper binds no ortho uniform. In TSL it is **not**
-a runtime branch — `nodes.uIsOrtho.value` is read at build time and emits a
-single-branch graph (the unused width/fade branches cost nothing), so a mode
-flip in `updateCameraParams` repoints the material at the other
-configuration's shared graph (built once). A draw through a different
-projection kind than the broadcast camera's (the scene environment capture)
-must therefore push that kind first, which `scene-manager.ts`'s capture
-runtime does.
+carries every define above plus the primitive, the resolved join, the baked
+line-texture width and — for the TSL screen-space quad only — the projection
+kind.
+
+No wrapper is ever TOLD the projection: neither binds an ortho uniform and
+`updateCameraParams` takes no camera-kind argument. GLSL and the TSL capsule
+read the ortho branch from the projection matrix of the draw — GLSL as
+`luxarLineIsOrtho` (assigned with `luxarLineScale` at the top of `main()` and
+re-derived by the visual quad fragment from its declared `projectionMatrix`
+uniform; one more flat varying cost the 10M-segment draw ~1.4% GPU time), the
+capsule as `isOrthoProjectionTSL()` (a bool var materialised in its vertex
+prologue). The GLSL pick shader still passes `vLineIsOrtho` as a flat varying.
+The TSL screen-space quad (visual and pick) instead carries a COMPILE-TIME
+projection variant (`config.projection`: the ortho test is a constant and the
+ortho variant has no view-z varying), because its single runtime-ortho graph
+measured +4.6% of the GPU pass on the 10M-segment ortho quad under WebGPU and
+only a constant ortho test recovered it. The variant is chosen PER DRAW from
+the drawn camera: the line mesh's `onBeforeRender`
+(`installProjectionVariantHook`, `../_shared/projection-variant.ts`) calls
+`selectProjectionVariant(camera)`, which re-points the material at the other
+kind's shared graph only when the kind changes. Both graphs are built once and
+cached, so a switch is a lookup; and because three keys render objects per
+render context (render target), the environment capture's cube faces keep a
+perspective render object of their own while the orthographic main view keeps
+its own — alternating between them builds nothing. A main-camera
+ortho/perspective toggle re-keys the main view's render object once.
+`tsl-codegen-snapshot.spec.ts` pins the production variants as
+`line-variant-*` / `line-pick-variant-*`; the runtime entries (`line`,
+`line-behind`, …) keep pinning the runtime form the parity harness compares.
 
 ## Shared helpers from `_shared/`
 
 | Symbol                                        | Used for                                                                                                                                                                                        |
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `clampGamma(g)`                               | `Math.max(0.001, g ?? 1.0)` guard before `1 / gamma` (shared across all eight material constructors).                                                                                           |
-| `CameraAwareMaterial` interface               | Implemented so `MaterialManager.updateCameraParams(resolution, isOrtho, nearCull, pixelRatio)` reaches this material.                                                                           |
+| `CameraAwareMaterial` interface               | Implemented so `MaterialManager.updateCameraParams(resolution, nearCull, pixelRatio)` reaches this material.                                                                                    |
 | `ColormapAwareMaterial` interface             | Implemented so `material-colormap-helpers.ts` sets the LUT texture and scalar range through setters.                                                                                            |
 | `GLSL_SANITIZE_FUNCTIONS`                     | Prepended to the GLSL vertex shader; gives `sanitizePositive` / `sanitizeNonNegative` / `sanitizeAlpha` to clean width/sharpness/alpha inputs against NaN/Inf/out-of-range.                     |
 | `sanitizeNonNegative` / `sanitizeAlpha` (TSL) | TSL counterparts of those two GLSL sanitisers — same contract, called inline in the factory. `sanitizePositive` has no TSL twin: no TSL shader calls it.                                        |

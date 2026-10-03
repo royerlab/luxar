@@ -981,11 +981,10 @@ describe('PickingSystem — surface-pick depth sync', () => {
 
     renderPickBuffer();
 
-    // (resolution, isOrtho, nearCull, pixelRatio) — no FOV: every pick shader
-    // reads its projection terms from the projection matrix.
+    // (resolution, nearCull, pixelRatio) — no FOV or camera kind: every pick
+    // shader reads its projection terms from the projection matrix.
     expect(updateCameraParams).toHaveBeenCalledWith(
       expect.objectContaining({ x: 800, y: 300 }),
-      false,
       undefined,
       0.5
     );

@@ -11,7 +11,7 @@
  *      cannot quietly decay back into decoration.
  *
  * `COVERAGE_RECORDED` stores the last accepted measurement for each floor
- * (2026-09). Re-derive with `pnpm test:coverage`, then use
+ * (last updated 2026-10). Re-derive with `pnpm test:coverage`, then use
  * `pnpm check:coverage-slack -- --print` to emit a paste-ready replacement.
  * Lowering a recorded value resets the erosion baseline, so call that decision
  * out in the PR rather than treating it as routine housekeeping.
@@ -51,15 +51,17 @@ export const COVERAGE_THRESHOLDS = {
   // The trajectory tests raised the merged dev measurement to 91.00, leaving
   // the previous floor more than three points below measured coverage.
   lines: 90,
-  statements: 87,
+  // The picking tests in #3004 raised measured coverage to 90.00, leaving
+  // the old floor outside the slack budget.
+  statements: 89,
   // functions 84 -> 86 after the chunk-boundary prefetch planner/loader tests
   // (#2686): measured 86.61 -> 87.01 and check-coverage-slack flagged the old
   // floor as stale.
   functions: 86,
   // branches 80 -> 82 (2026-09): the GPU-budget tests here and the SSAA
   // framebuffer-clamp tests in #2661 each moved measured branch coverage past
-  // the slack budget, and check-coverage-slack flagged the old floor as stale.
-  branches: 82,
+  // the slack budget. The picking tests in #3004 raised it again to 85.10.
+  branches: 84,
 
   // Crown jewels: high floors so a refactor cannot quietly erode them.
   'src/types/**': { lines: 97, functions: 94, branches: 96 },
@@ -132,9 +134,9 @@ export const COVERAGE_THRESHOLDS = {
 /** Last accepted coverage measurements for each floor. */
 export const COVERAGE_RECORDED = {
   lines: 91.0,
-  statements: 89.62,
+  statements: 90.0,
   functions: 88.02,
-  branches: 84.11,
+  branches: 85.1,
   'src/types/**': { lines: 99, functions: 96.77, branches: 98.05 },
   'src/wasm/**': { lines: 98.58, functions: 100, branches: 96.46 },
   'src/config/**': { lines: 96.36, functions: 100, branches: 94.05 },
@@ -147,5 +149,5 @@ export const COVERAGE_RECORDED = {
   'src/ui/**': { lines: 92.0, functions: 86.95, branches: 79.58 },
   'src/core/**': { lines: 92.15, functions: 81.03, branches: 86.94 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
-  'src/rendering/**': { lines: 79, functions: 80.73, branches: 77.44 },
+  'src/rendering/**': { lines: 79, functions: 80.73, branches: 78.59 },
 };

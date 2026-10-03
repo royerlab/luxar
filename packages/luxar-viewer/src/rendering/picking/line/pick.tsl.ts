@@ -29,6 +29,7 @@ import * as THREE from 'three';
 import {
   Fn,
   If,
+  bool,
   uniform,
   attribute,
   varying,
@@ -51,14 +52,16 @@ import {
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
+import { applyPickMaterialState } from '../_shared/shared-pick-graph-tsl';
 import {
   FALLOFF_FLOOR,
   FALLOFF_K,
   INV_ONE_MINUS_FALLOFF_FLOOR,
 } from '../../materials/_shared/falloff';
 import {
+  isOrthoProjectionTSL,
+  perspectiveNearFadeTSL,
   projectionSizeScaleTSL,
-  perspectiveNearFadeStaticTSL,
   sanitizeNonNegative,
   sanitizeAlpha,
   type TSLNode,
@@ -74,6 +77,7 @@ import {
   LINE_TEXTURE_LAYOUT,
 } from '../../element-texture-layout';
 import { resolveLineJoin, type LineJoinStyle } from '../../../types/line-join';
+import type { LineProjectionVariant } from '../../materials/_shared/projection-variant';
 import {
   pickVisibilityTSLNodesFromUniforms,
   pickWeightTSL,
@@ -94,7 +98,6 @@ export interface LinePickTSLNodes extends PickVisibilityTSLNodes {
   readonly uLineTex: TSLNode;
   readonly uResolution: TSLNode;
   readonly uPixelRatio: TSLNode;
-  readonly uIsOrtho: TSLNode;
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
   readonly uDensityDrop: TSLNode;
@@ -120,18 +123,23 @@ export interface LinePickTSLNodes extends PickVisibilityTSLNodes {
  */
 export interface LinePickTSLConfig {
   /**
-   * Camera projection mode at build time — mirrors `LineTSLConfig`.
-   * When true, only the ortho pixel-width branch is emitted; when
-   * false or undefined, only the perspective branch.
-   */
-  readonly isOrtho?: boolean;
-  /**
    * Join style at degree-2 polyline joints (#790) — build-time, mirroring
    * `LineTSLConfig.join`. MUST be resolved from the same authored attribute
    * the visual factory gets: the pick pass builds the same screen-space quad,
    * so a divergence makes a mitred corner unpickable.
+   *
+   * The projection is not a config field: as in the visual graph it is read
+   * per draw from `cameraProjectionMatrix` (`isOrthoProjectionTSL()`).
    */
   readonly join?: LineJoinStyle;
+  /**
+   * The bound line texture's width, baked as the addressing constant. Must be
+   * the texture the material BINDS: under a shared graph (#2992) the factory's
+   * own leaf is a forwarding twin over a stand-in texture.
+   */
+  readonly elementTextureWidth?: number;
+  /** Compile-time projection variant — see `LineTSLConfig.projection`. */
+  readonly projection?: LineProjectionVariant;
 }
 
 export function linePickWebGPUFactory(
@@ -148,8 +156,8 @@ export function linePickWebGPUFactory(
 
   // Pixel-width math reads the projection matrix (`lineScale` below;
   // no FOV uniform exists).
-  // uIsOrtho is unbound — projection mode is a JS-level config
-  // branch (`config.isOrtho`), not a runtime uniform.
+  // No uIsOrtho either: the ortho test is read from the same matrix
+  // (`isOrthoProjectionTSL()`, the vertex prologue's `isOrtho`).
   const uLineTex = nodes.uLineTex;
   const uResolution = nodes.uResolution;
   const uPixelRatio = nodes.uPixelRatio;
@@ -186,8 +194,10 @@ export function linePickWebGPUFactory(
   // Per-endpoint opacity along t (texel5.zw), sanitized as the visual graph does.
   const vAlpha: TSLNode = varying(float(1.0));
   // View-space z to the fragment (fade computed per-fragment; see the
-  // visual line TSL). Ortho graphs skip it.
-  const vViewZ: TSLNode | null = config.isOrtho ? null : varying(float(0.0));
+  // visual line TSL; identically 1 under ortho).
+  const fixedOrtho: boolean | undefined =
+    config.projection === undefined ? undefined : config.projection === 'ortho';
+  const vViewZ: TSLNode | null = fixedOrtho === true ? null : varying(float(0.0));
   const vCapSuppressStart: TSLNode = varying(float(0.0)).setInterpolation('flat');
   const vCapSuppressEnd: TSLNode = varying(float(0.0)).setInterpolation('flat');
   const vNodeId: TSLNode = varying(uNodeId).setInterpolation('flat');
@@ -218,10 +228,15 @@ export function linePickWebGPUFactory(
     // Width baked as a literal — see the visual factory
     // (shader-tsl.ts) for the strength-reduction rationale.
     const lineTexW: TSLNode = int(
-      resolveElementTextureWidth(
-        LINE_TEXTURE_LAYOUT,
-        (nodes.uLineTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
-      )
+      // From the config FIRST: under a shared graph (#2992) the leaf is a
+      // forwarding twin over a 1x1 stand-in texture, so its own width is not
+      // the bound texture's (the wrappers pass the real one; see
+      // ../_shared/shared-pick-graph-tsl.ts).
+      config.elementTextureWidth ??
+        resolveElementTextureWidth(
+          LINE_TEXTURE_LAYOUT,
+          (nodes.uLineTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
+        )
     ).toVar();
     const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
     const texelY: TSLNode = lineBase.div(lineTexW).toVar();
@@ -243,6 +258,12 @@ export function linePickWebGPUFactory(
 
     // Branchless: aQuadCorner.x ∈ {-1, +1} by construction.
     const t: TSLNode = aQuadCorner.x.mul(0.5).add(0.5).toVar();
+    // The draw's ortho test (visual-factory parity; GLSL twin:
+    // `luxarLineIsOrtho`), materialised ahead of every `If` block.
+    const isOrtho: TSLNode = (
+      fixedOrtho === undefined ? isOrthoProjectionTSL().equal(int(1)) : bool(fixedOrtho)
+    ).toVar();
+    const isPersp: TSLNode = isOrtho.not().toVar();
     const startW: TSLNode = sanitizeNonNegative(aStartWidth, float(0.0));
     const endW: TSLNode = sanitizeNonNegative(aEndWidth, float(0.0));
     // Sharpness is a [0, 1] knob -> super-Gaussian exponent beta = 2^(6s - 2)
@@ -267,9 +288,9 @@ export function linePickWebGPUFactory(
     // parameterization. select() evaluates both branches, so each
     // denominator gets a benign 1.0 only in its UNTAKEN lane. The taken lane
     // keeps the exact positive depth delta, matching the GLSL division.
-    let tA: TSLNode = float(0.0);
-    let tB: TSLNode = float(1.0);
-    if (!config.isOrtho) {
+    const tA: TSLNode = float(0.0).toVar();
+    const tB: TSLNode = float(1.0).toVar();
+    If(isPersp, () => {
       const startNear: TSLNode = startDepth
         .lessThan(nearCull)
         .and(endDepth.greaterThanEqual(nearCull));
@@ -280,41 +301,40 @@ export function linePickWebGPUFactory(
         .select(endDepth.sub(startDepth), float(1.0))
         .toVar();
       const endDenominator: TSLNode = endNear.select(startDepth.sub(endDepth), float(1.0)).toVar();
-      tA = startNear
-        .select(nearCull.sub(startDepth).div(startDenominator).toVar(), float(0.0))
-        .toVar();
-      tB = endNear.select(startDepth.sub(nearCull).div(endDenominator).toVar(), float(1.0)).toVar();
+      tA.assign(
+        startNear.select(nearCull.sub(startDepth).div(startDenominator).toVar(), float(0.0))
+      );
+      tB.assign(endNear.select(startDepth.sub(nearCull).div(endDenominator).toVar(), float(1.0)));
       const mvStartClipped: TSLNode = mix(mvStart, mvEnd, tA).toVar();
       const mvEndClipped: TSLNode = mix(mvStart, mvEnd, tB).toVar();
       mvStart.assign(mvStartClipped);
       mvEnd.assign(mvEndClipped);
-    }
+    });
     const tEff: TSLNode = mix(tA, tB, t).toVar();
 
     const width: TSLNode = mix(startW, endW, tEff).toVar();
     const vSharpnessVal: TSLNode = mix(startS, endS, tEff);
     const mvPos: TSLNode = mix(mvStart, mvEnd, t).toVar();
 
-    // PERSPECTIVE ONLY (compile-time graph variant; see the visual line
-    // TSL): ortho graphs carry no cull/fade code — NDC clipping is the
-    // sole cull authority there. Reads the ORIGINAL depths (computed
+    // PERSPECTIVE ONLY (gated on the draw's ortho test; see the visual line
+    // TSL): NDC clipping is the sole cull authority under ortho. Reads the
+    // ORIGINAL depths (computed
     // before segment clipping above).
     // 1e-20 floor = uNearCull == 0 guard only; uNearCull is
     // scene-bounds-scaled (see the visual line shader — an absolute 1e-4
     // floor culled every segment of a tiny-unit scene).
-    const bothBehind: TSLNode | null = config.isOrtho
-      ? null
-      : startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull));
+    const bothBehind: TSLNode = isPersp.and(
+      startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull))
+    );
 
     const clipStart: TSLNode = cameraProjectionMatrix.mul(mvStart).toVar();
     const clipEnd: TSLNode = cameraProjectionMatrix.mul(mvEnd).toVar();
     // projection is linear, so proj * mix(a,b,t) == mix(proj*a, proj*b, t).
     const clipPosBase: TSLNode = mix(clipStart, clipEnd, t).toVar();
 
-    // Scene-relative w guard (w == -viewZ under perspective; ortho
-    // graphs use the inert 1.0 — compile-time variant). See the visual
-    // line shader for the scale-free rationale.
-    const wGuard: TSLNode = config.isOrtho ? float(1.0) : nearCull;
+    // Scene-relative w guard (w == -viewZ under perspective; ortho uses
+    // the inert 1.0). See the visual line shader for the scale-free rationale.
+    const wGuard: TSLNode = isOrtho.select(float(1.0), nearCull);
     const wStart: TSLNode = max(clipStart.w, wGuard);
     const wEnd: TSLNode = max(clipEnd.w, wGuard);
     const ndcStart: TSLNode = vec2(clipStart.xy.div(wStart)).toVar();
@@ -330,16 +350,12 @@ export function linePickWebGPUFactory(
       .toVar();
     const perpendicular: TSLNode = vec2(lineDir.y.negate(), lineDir.x).toVar();
 
-    // Each camera projection mode is a separate graph variant so the
-    // unused branch never materialises. Wrapper rebuilds when isOrtho
-    // flips. View-space depth (-mvPos.z) matches the visual shader.
-    let rawPixelWidth: TSLNode;
-    if (config.isOrtho) {
-      rawPixelWidth = width.mul(lineScale).toVar();
-    } else {
-      const distView: TSLNode = max(mvPos.z.negate(), nearCull);
-      rawPixelWidth = width.mul(lineScale).div(distView).toVar();
-    }
+    // Selected by the draw's ortho test (visual-shader parity). View-space
+    // depth (-mvPos.z) matches the visual shader.
+    const distView: TSLNode = max(mvPos.z.negate(), nearCull);
+    const rawPixelWidth: TSLNode = isOrtho
+      .select(width.mul(lineScale), width.mul(lineScale).div(distView))
+      .toVar();
 
     const minPixelWidth = uPixelRatio.max(float(1.0)).mul(1.5);
     const maxPW: TSLNode = max(uMaxLinePixelWidth, minPixelWidth.add(1.0)).toVar();
@@ -356,22 +372,19 @@ export function linePickWebGPUFactory(
     // sentinel only half the quad and leave a visible wedge (issue #849).
     // Gate on the MAX of the pixel width at both clipped endpoints so all
     // four vertices take the same branch.
-    let pathological: TSLNode | null = null;
-    if (!config.isOrtho) {
-      const startPixelWidth: TSLNode = mix(startW, endW, tA)
-        .mul(lineScale)
-        .div(max(mvStart.z.negate(), nearCull))
-        .toVar();
-      const endPixelWidth: TSLNode = mix(startW, endW, tB)
-        .mul(lineScale)
-        .div(max(mvEnd.z.negate(), nearCull))
-        .toVar();
-      const segMaxPixelWidth: TSLNode = max(startPixelWidth, endPixelWidth).toVar();
-      pathological = startDepth
-        .lessThan(nearCull.mul(2.0))
-        .and(endDepth.lessThan(nearCull.mul(2.0)))
-        .and(segMaxPixelWidth.greaterThan(maxPW.mul(2.0)));
-    }
+    const startPixelWidth: TSLNode = mix(startW, endW, tA)
+      .mul(lineScale)
+      .div(max(mvStart.z.negate(), nearCull))
+      .toVar();
+    const endPixelWidth: TSLNode = mix(startW, endW, tB)
+      .mul(lineScale)
+      .div(max(mvEnd.z.negate(), nearCull))
+      .toVar();
+    const segMaxPixelWidth: TSLNode = max(startPixelWidth, endPixelWidth).toVar();
+    const pathological: TSLNode = isPersp
+      .and(startDepth.lessThan(nearCull.mul(2.0)))
+      .and(endDepth.lessThan(nearCull.mul(2.0)))
+      .and(segMaxPixelWidth.greaterThan(maxPW.mul(2.0)));
 
     // The quad's per-END clamped half-widths, via the shared
     // `tslLineEndPixelWidth` (GLSL twin: `luxarLineEndPixelWidth`) —
@@ -381,7 +394,7 @@ export function linePickWebGPUFactory(
     // consumed at.
     const endPixelWidthAt = (tEnd: TSLNode, mvZ: TSLNode): TSLNode =>
       clamp(
-        tslLineEndPixelWidth(!!config.isOrtho, mix(startW, endW, tEnd), mvZ, nearCull, lineScale),
+        tslLineEndPixelWidth(isOrtho, mix(startW, endW, tEnd), mvZ, nearCull, lineScale),
         minPixelWidth,
         maxPW
       );
@@ -400,7 +413,7 @@ export function linePickWebGPUFactory(
       // The width is deliberately NOT shared between the two calls: each end
       // supplies its OWN segment-constant half-width (computed above).
       const shared = {
-        isOrtho: !!config.isOrtho,
+        isOrtho,
         uLineTex,
         lineTexW,
         uResolution,
@@ -451,18 +464,12 @@ export function linePickWebGPUFactory(
 
     // Real TSL control flow — see the visual factory for the rationale
     // (one branch per draw instead of evaluating both via select()).
-    const culledBase: TSLNode | null =
-      bothBehind && pathological ? bothBehind.or(pathological) : (bothBehind ?? pathological);
     // Projected-density thinning: a dropped segment must not be pickable either.
-    const culled: TSLNode | null = culledBase ? culledBase.or(densityDropped) : densityDropped;
+    const culled: TSLNode = bothBehind.or(pathological).or(densityDropped);
     const clipPosOut: TSLNode = vec4(0.0, 0.0, -2.0, 1.0).toVar('clipPos');
-    if (culled) {
-      If(culled.not(), () => {
-        clipPosOut.assign(expandedClip);
-      });
-    } else {
+    If(culled.not(), () => {
       clipPosOut.assign(expandedClip);
-    }
+    });
 
     // Assign varyings (declared outside the Fn; see above).
     vSharpness.assign(vSharpnessVal);
@@ -541,7 +548,15 @@ export function linePickWebGPUFactory(
         .mul(perpFalloff)
         .mul(widthScale)
         .mul(vWidthFade)
-        .mul(vViewZ ? perspectiveNearFadeStaticTSL(false, vViewZ, nearCull) : float(1.0))
+        .mul(
+          vViewZ
+            ? perspectiveNearFadeTSL(
+                fixedOrtho === undefined ? isOrthoProjectionTSL() : int(0),
+                vViewZ,
+                nearCull
+              )
+            : float(1.0)
+        )
         // ...weighted by the visual factors (per-endpoint alpha, node
         // opacity, max(gain, 1)) — GLSL twin: luxarPickWeight.
         .mul(pickWeightTSL(vAlpha, nodes))
@@ -576,23 +591,10 @@ export function linePickWebGPUFactory(
   material.vertexNode = clipPos;
   material.colorNode = colorNode();
   material.depthNode = depthNode();
-  material.toneMapped = false;
-  material.depthTest = true;
-  material.depthWrite = true;
-  material.transparent = false;
-  // The element index's HIGH half rides in alpha, and THREE's NodeMaterial
-  // appends `DiffuseColor.w *= material.opacity` to every generated fragment
-  // (see the codegen snapshots, and `tsl-opacity-tail.test.ts` for the same
-  // tail on the visual materials). NoBlending does not suppress that
-  // shader-side multiply, so any opacity other than exactly 1 would scale the
-  // high half and decode a WRONG element id — on the TSL path only, since the
-  // GLSL twins have no such tail. Pin it so the multiply is provably identity,
-  // including when a caller injects `outMaterial`.
-  material.opacity = 1;
-  // Picking output is an opaque ID buffer; any blending would smear
-  // nodeId / elementId across overlapping picks. Matches the GLSL
-  // picking material.
-  material.blending = THREE.NoBlending;
+  // The pick pass's fixed state: an opaque, depth-tested ID buffer with
+  // opacity pinned to exactly 1 (the element id's high half rides in alpha;
+  // see applyPickMaterialState).
+  applyPickMaterialState(material);
   return material;
 }
 
@@ -618,7 +620,6 @@ export function buildLinePickTSLNodesFromUniforms(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),
     uPixelRatio: uniform((uniforms.uPixelRatio?.value as number) ?? 1),
-    uIsOrtho: uniform((uniforms.uIsOrtho?.value as number) ?? 0),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
     uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),

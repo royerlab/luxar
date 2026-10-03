@@ -25,6 +25,9 @@
  * over a whole leaf set so it also covers `.load()` texture fetches, which a
  * `ReferenceNode` cannot express.
  *
+ * The graph slots shared are `vertexNode`, `colorNode` and `depthNode` (the
+ * last written only by the pick factories).
+ *
  * Contract for a caller:
  *
  *   - Everything the factory reads at graph-construction OR build time that
@@ -56,6 +59,11 @@ export type TSLLeafSet = object;
 export interface SharedTSLGraph {
   readonly vertexNode: TSLNode;
   readonly colorNode: TSLNode;
+  /**
+   * The fragment depth output, for graphs that write one (the pick factories'
+   * brightness-as-depth / real-depth convention); null for the visual ones.
+   */
+  readonly depthNode: TSLNode | null;
   /** The forwarding leaves the graph was built over (introspection/tests). */
   readonly inputs: Readonly<Record<string, TSLNode>>;
   /** The full configuration key. */
@@ -219,6 +227,7 @@ export function applySharedTSLGraph<T extends TSLLeafSet>(
     graph = {
       vertexNode: scratch.vertexNode,
       colorNode: scratch.colorNode,
+      depthNode: (scratch.depthNode as TSLNode | null | undefined) ?? null,
       inputs: inputs as Record<string, TSLNode>,
       key: fullKey,
     };
@@ -241,6 +250,7 @@ export function applySharedTSLGraph<T extends TSLLeafSet>(
   }
   material.vertexNode = graph.vertexNode;
   material.colorNode = graph.colorNode;
+  material.depthNode = graph.depthNode;
   return graph;
 }
 

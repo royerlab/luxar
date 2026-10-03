@@ -781,7 +781,7 @@
   },
   "src/rendering/materials/line/material-tsl.ts": {
     "complexity": {
-      "count": 3
+      "count": 2
     }
   },
   "src/rendering/materials/line/shader-tsl-capsule.ts": {
@@ -794,7 +794,7 @@
   },
   "src/rendering/materials/line/shader-tsl.ts": {
     "complexity": {
-      "count": 4
+      "count": 3
     },
     "max-lines-per-function": {
       "count": 2
@@ -906,7 +906,7 @@
   },
   "src/rendering/picking/line/pick.tsl.ts": {
     "complexity": {
-      "count": 2
+      "count": 1
     },
     "max-lines-per-function": {
       "count": 2
@@ -919,7 +919,7 @@
   },
   "src/rendering/picking/picking-system.ts": {
     "complexity": {
-      "count": 2
+      "count": 1
     }
   },
   "src/rendering/picking/point/pick.tsl.ts": {

@@ -67,6 +67,7 @@ import {
   writeSortedIndexIdentity,
 } from './element-storage';
 import type { LinesProjectionBounds } from '../types/lines';
+import { installProjectionVariantHook } from './materials/_shared/projection-variant';
 
 /**
  * Create the base quad geometry for line instances.
@@ -548,6 +549,9 @@ export function createInstancedLinesMesh(
   const geometry = buildLinesGeometry(meshConfig);
   const mesh = new THREE.Mesh(geometry, material);
   mesh.frustumCulled = true;
+  // The TSL screen-space quad picks its compile-time projection variant per
+  // draw from the drawn camera (`_shared/projection-variant.ts`).
+  installProjectionVariantHook(mesh);
   return mesh;
 }
 

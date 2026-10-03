@@ -509,9 +509,8 @@ export const CAPSULE_LINE_PICK_SOURCE: ShaderSource = {
   },
   webgpu: (uniforms: Record<string, unknown>) => {
     const u = uniforms as Record<string, import('three').IUniform>;
-    const isOrtho = ((u.uIsOrtho?.value as number) ?? 0) === 1;
     const { capsuleLinePickWebGPUFactory, buildLinePickTSLNodesFromUniforms } =
       requireTslMaterials().factories.pickCapsuleLine;
-    return capsuleLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(u), { isOrtho });
+    return capsuleLinePickWebGPUFactory(buildLinePickTSLNodesFromUniforms(u));
   },
 };

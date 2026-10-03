@@ -4,7 +4,7 @@
  * Mirrors the GLSL wrapper one-for-one — same constructor signature, same
  * `setPickMode` / `setPickSide` / `updateOpacityUniform` / `updateAlphaCutoff`
  * surface, same `MeshPickAwareMaterial` contract, and the same half-consumed
- * `CameraAwareMaterial` one (resolution/isOrtho ignored, the near-fade start
+ * `CameraAwareMaterial` one (resolution ignored, the near-fade start
  * taken).
  *
  * **Uniform plumbing.** This class owns one `UniformNode` per shader input. The
@@ -26,6 +26,7 @@ import * as THREE from 'three';
 import { texture, uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { meshPickWebGPUFactory } from './pick.tsl';
+import { applySharedPickGraph } from '../_shared/shared-pick-graph-tsl';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
 import { MESH_DEFAULTS, clampAppearanceFraction } from '../../materials/mesh/appearance';
 import { resolveMeshPickModeState, type MeshPickAwareMaterial } from './pick-mode';
@@ -96,7 +97,19 @@ export class MeshPickingTSLMaterial
     this.side = THREE.FrontSide;
     this.forceSinglePass = true;
 
-    meshPickWebGPUFactory(this.tslNodes, this);
+    this.rebuildGraph();
+  }
+
+  /**
+   * Point this material at the SHARED graph of its configuration
+   * (`../_shared/shared-pick-graph-tsl.ts`): one node build per configuration
+   * instead of one per material. The only code-selecting input is whether the
+   * node has a texture, which the leaf set itself carries.
+   */
+  private rebuildGraph(): void {
+    applySharedPickGraph(this, 'mesh-pick', {}, this.tslNodes, (inputs, scratch) => {
+      meshPickWebGPUFactory(inputs, scratch);
+    });
   }
 
   /**
@@ -118,21 +131,16 @@ export class MeshPickingTSLMaterial
     if ((this.uniforms.uBaseColorTex?.value as THREE.Texture | null) === tex) return;
     this.tslNodes.uBaseColorTex = texture(tex);
     this.uniforms.uBaseColorTex = { value: tex };
-    meshPickWebGPUFactory(this.tslNodes, this);
+    this.rebuildGraph();
     this.needsUpdate = true;
   }
 
   /**
-   * @see MeshPickingMaterial.updateCameraParams — `_resolution` / `_isOrtho`
-   * ignored, `nearCull` consumed. It is a runtime uniform, so there is nothing
+   * @see MeshPickingMaterial.updateCameraParams — `_resolution` ignored,
+   * `nearCull` consumed. It is a runtime uniform, so there is nothing
    * to rebuild (this wrapper has no rebuild path at all).
    */
-  updateCameraParams(
-    _resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    _pixelRatio?: number
-  ): void {
+  updateCameraParams(_resolution: THREE.Vector2, nearCull?: number, _pixelRatio?: number): void {
     if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;
     }

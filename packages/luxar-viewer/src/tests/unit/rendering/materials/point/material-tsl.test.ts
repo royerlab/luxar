@@ -88,7 +88,7 @@ describe('PointTSLMaterial updateCameraParams', () => {
     const mat = new PointTSLMaterial();
     const res = new THREE.Vector2(1600, 900);
 
-    mat.updateCameraParams(res, false, 0.25);
+    mat.updateCameraParams(res, 0.25);
 
     expect(mat.uniforms.uNearCull.value).toBe(0.25);
     // The size scale is read from cameraProjectionMatrix in the graph.
@@ -99,16 +99,14 @@ describe('PointTSLMaterial updateCameraParams', () => {
     expect(bound.y).toBe(900);
   });
 
-  it('ortho: writes no projection uniform and does not rebuild the graph', () => {
+  it('a camera push writes no projection uniform and does not rebuild the graph', () => {
     const mat = new PointTSLMaterial();
     const graphBefore = mat.vertexNode;
 
-    mat.updateCameraParams(new THREE.Vector2(64, 64), true);
+    mat.updateCameraParams(new THREE.Vector2(64, 64));
 
-    // The ortho test is read per draw from cameraProjectionMatrix (unlike
-    // the line factory's compile-time config.isOrtho), so flipping the
-    // camera mode writes nothing projection-shaped and must NOT rebuild
-    // the TSL graph.
+    // The ortho test is read per draw from cameraProjectionMatrix, so a camera
+    // push writes nothing projection-shaped and must NOT rebuild the TSL graph.
     expect(mat.uniforms.uIsOrtho).toBeUndefined();
     expect(mat.uniforms.pointSizeFactor).toBeUndefined();
     expect(mat.vertexNode).toBe(graphBefore);
@@ -116,7 +114,7 @@ describe('PointTSLMaterial updateCameraParams', () => {
 
   it('accepts nearCull = 0 (no stale-value gate)', () => {
     const mat = new PointTSLMaterial();
-    mat.updateCameraParams(new THREE.Vector2(64, 64), false, 0);
+    mat.updateCameraParams(new THREE.Vector2(64, 64), 0);
     expect(mat.uniforms.uNearCull.value).toBe(0);
   });
 });
@@ -191,7 +189,7 @@ describe('PointTSLMaterial clone', () => {
     // 1920×1080) until the next global updateCameraParams broadcast.
     // Lines clones are the reference.
     const original = new PointTSLMaterial();
-    original.updateCameraParams(new THREE.Vector2(640, 480), /*isOrtho=*/ true, 0.42);
+    original.updateCameraParams(new THREE.Vector2(640, 480), 0.42);
 
     const cloned = original.clone();
 
@@ -202,7 +200,7 @@ describe('PointTSLMaterial clone', () => {
 
   it('resyncs camera-derived uniforms (maxPointSize) from source onto clone', () => {
     const original = new PointTSLMaterial();
-    original.updateCameraParams(new THREE.Vector2(1600, 900), false);
+    original.updateCameraParams(new THREE.Vector2(1600, 900));
 
     const cloned = original.clone();
 

@@ -23,7 +23,12 @@ import { NodeMaterial } from 'three/webgpu';
 import { gsplatPickWebGPUFactory } from './pick.tsl';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
-import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import {
+  getPlaceholderElementTexture,
+  resolveElementTextureWidth,
+  SPLAT_TEXTURE_LAYOUT,
+} from '../../element-texture-layout';
+import { applySharedPickGraph } from '../_shared/shared-pick-graph-tsl';
 import type { GSplatPickingMaterialConfig } from './material';
 import type { SurfacePickAwareMaterial } from '../_shared/surface-pick';
 import {
@@ -139,7 +144,25 @@ export class GSplatPickingTSLMaterial
     this.toneMapped = false;
     this.side = THREE.DoubleSide;
 
-    gsplatPickWebGPUFactory(this.tslNodes, this);
+    this.rebuildGraph();
+  }
+
+  /**
+   * Point this material at the SHARED graph of its configuration
+   * (`../_shared/shared-pick-graph-tsl.ts`): one node build per configuration,
+   * keyed on the baked element-texture width, instead of one per material.
+   */
+  private rebuildGraph(): void {
+    const key = {
+      elementTextureWidth: resolveElementTextureWidth(
+        SPLAT_TEXTURE_LAYOUT,
+        this.tslNodes.uSplatTex.value as { image?: { width?: number } } | null
+      ),
+    };
+    applySharedPickGraph(this, 'gsplat-pick', key, this.tslNodes, (inputs, scratch) => {
+      // The width from the key, not from the forwarding leaf (a stand-in).
+      gsplatPickWebGPUFactory(inputs, scratch, key);
+    });
   }
 
   /**
@@ -153,7 +176,7 @@ export class GSplatPickingTSLMaterial
     if (current === next) return;
     this.tslNodes.uSplatTex = texture(next);
     this.uniforms.uSplatTex = proxyIUniform(this.tslNodes.uSplatTex);
-    gsplatPickWebGPUFactory(this.tslNodes, this);
+    this.rebuildGraph();
     this.needsUpdate = true;
   }
 
@@ -207,12 +230,7 @@ export class GSplatPickingTSLMaterial
     return cloned as this;
   }
 
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
     this.uniforms.uPixelRatio.value = pixelRatio;
 

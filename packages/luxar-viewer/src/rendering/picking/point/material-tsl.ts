@@ -23,7 +23,12 @@ import * as THREE from 'three';
 import { texture, uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { pointPickWebGPUFactory } from './pick.tsl';
-import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import {
+  getPlaceholderElementTexture,
+  POINT_TEXTURE_LAYOUT,
+  resolveElementTextureWidth,
+} from '../../element-texture-layout';
+import { applySharedPickGraph } from '../_shared/shared-pick-graph-tsl';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { computeMaxPointSize } from '../../materials/_shared/camera-uniforms';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
@@ -105,7 +110,25 @@ export class PointPickingTSLMaterial
 
     this.toneMapped = false;
 
-    pointPickWebGPUFactory(this.tslNodes, this);
+    this.rebuildGraph();
+  }
+
+  /**
+   * Point this material at the SHARED graph of its configuration
+   * (`../_shared/shared-pick-graph-tsl.ts`): one node build per configuration,
+   * keyed on the baked element-texture width, instead of one per material.
+   */
+  private rebuildGraph(): void {
+    const key = {
+      elementTextureWidth: resolveElementTextureWidth(
+        POINT_TEXTURE_LAYOUT,
+        this.tslNodes.uPointTex.value as { image?: { width?: number } } | null
+      ),
+    };
+    applySharedPickGraph(this, 'point-pick', key, this.tslNodes, (inputs, scratch) => {
+      // The width from the key, not from the forwarding leaf (a stand-in).
+      pointPickWebGPUFactory(inputs, scratch, key);
+    });
   }
 
   /**
@@ -120,7 +143,7 @@ export class PointPickingTSLMaterial
     if (current === next) return;
     this.tslNodes.uPointTex = texture(next);
     this.uniforms.uPointTex = proxyIUniform(this.tslNodes.uPointTex);
-    pointPickWebGPUFactory(this.tslNodes, this);
+    this.rebuildGraph();
     this.needsUpdate = true;
   }
 
@@ -165,12 +188,7 @@ export class PointPickingTSLMaterial
     this.uniforms.uSurfaceDepth.value = on ? 1 : 0;
   }
 
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     if (nearCull !== undefined) this.uniforms.uNearCull.value = nearCull;
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
     this.uniforms.uPixelRatio.value = pixelRatio;

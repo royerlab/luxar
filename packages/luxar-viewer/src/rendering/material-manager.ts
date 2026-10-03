@@ -210,7 +210,6 @@ export class MaterialManager {
    */
   private staticMaterials = new Set<THREE.Material>();
   private currentResolution = new THREE.Vector2(1920, 1080); // Use reasonable default
-  private currentIsOrtho = false;
   private currentNearCull: number | undefined = undefined;
   private currentPixelRatio = 1;
 
@@ -297,7 +296,6 @@ export class MaterialManager {
     subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(
       this.currentResolution,
-      this.currentIsOrtho,
       this.currentNearCull,
       this.currentPixelRatio
     );
@@ -345,7 +343,6 @@ export class MaterialManager {
     subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(
       this.currentResolution,
-      this.currentIsOrtho,
       this.currentNearCull,
       this.currentPixelRatio
     );
@@ -390,7 +387,6 @@ export class MaterialManager {
     subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(
       this.currentResolution,
-      this.currentIsOrtho,
       this.currentNearCull,
       this.currentPixelRatio
     );
@@ -449,7 +445,6 @@ export class MaterialManager {
     subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(
       this.currentResolution,
-      this.currentIsOrtho,
       this.currentNearCull,
       this.currentPixelRatio
     );
@@ -539,23 +534,21 @@ export class MaterialManager {
 
   /**
    * Update camera parameters for all registered materials: viewport size,
-   * projection kind, near cull and pixel ratio. The projection terms
-   * themselves (FOV, ortho zoom, off-axis frustum) are read in shader from
-   * the projection matrix, so they need no push.
+   * near cull and pixel ratio. The projection itself (FOV, ortho zoom,
+   * off-axis frustum and the ortho/perspective kind) is read in shader from
+   * the projection matrix of the draw, so it needs no push.
    */
   updateCameraParams(
     resolution: THREE.Vector2,
-    isOrtho: boolean,
     nearCull: number | undefined,
     pixelRatio: number
   ): void {
     this.currentResolution.copy(resolution);
-    this.currentIsOrtho = isOrtho;
     this.currentNearCull = nearCull;
     this.currentPixelRatio = pixelRatio;
 
     for (const material of this.registeredMaterials) {
-      material.updateCameraParams(resolution, isOrtho, nearCull, pixelRatio);
+      material.updateCameraParams(resolution, nearCull, pixelRatio);
     }
   }
 
@@ -591,7 +584,6 @@ export class MaterialManager {
     this.ownedMaterials.add(material);
     material.updateCameraParams(
       this.currentResolution,
-      this.currentIsOrtho,
       this.currentNearCull,
       this.currentPixelRatio
     );

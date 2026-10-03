@@ -42,6 +42,7 @@ import {
   type GSplatTSLConfig,
   type GSplatTSLNodes,
 } from './shader-tsl';
+import { copyRuntimeUniforms, GSPLAT_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
 import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
 import type { GSplatMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
@@ -363,12 +364,7 @@ export class GSplatTSLMaterial
     this.needsUpdate = true;
   }
 
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
     this.uniforms.uPixelRatio.value = pixelRatio;
 
@@ -630,29 +626,12 @@ export class GSplatTSLMaterial
 
     const splatTex = this.uniforms.uSplatTex?.value as THREE.DataTexture | null | undefined;
     if (splatTex) cloned.updateSplatTexture(splatTex);
-    (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
-      this.uniforms.uResolution.value as THREE.Vector2
-    );
-    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
-    // Camera-state uniforms ride along (mirrors LineTSLMaterial.clone /
-    // the points clone fix). The gsplat TSL graph reads the projection
-    // kind from cameraProjectionMatrix, so a plain value copy suffices —
-    // no rebuild needed.
-    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
-    cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
-    cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
+    // Runtime state a fresh clone would reset (GSPLAT_RUNTIME_UNIFORMS, ../_shared/runtime-uniforms.ts).
+    copyRuntimeUniforms(this, cloned, GSPLAT_RUNTIME_UNIFORMS);
     cloned.updateLabelStyle(
       this.uniforms.uLabelColorMode.value === 1,
       this.uniforms.uLabelFilterIndex.value
     );
-    // The active ordering slot must ride along: a clone taken while the
-    // geometry draws from slot 1 would otherwise read the stale buffer
-    // until the coordinator's next per-frame re-assert.
-    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
-    // The density guard's thinning state rides along too (it is re-asserted
-    // only on the guard's next visit, which an off-screen node never gets).
-    cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
-    cloned.uniforms.uDensityAlphaExp.value = this.uniforms.uDensityAlphaExp.value;
 
     return cloned as this;
   }

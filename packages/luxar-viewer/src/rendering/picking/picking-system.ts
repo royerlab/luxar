@@ -37,12 +37,7 @@
 import * as THREE from 'three';
 import type { PostProcessingManager } from '../post-processing/post-processing-manager';
 import { isCameraAwareMaterial } from '../materials/_shared/camera-aware-material';
-import { getDensityDrop, setDensityDrop } from '../materials/_shared/density-drop';
-import { isSurfacePickAwareMaterial } from './_shared/surface-pick';
-import { isMeshPickAwareMaterial } from './mesh/pick-mode';
 import { alignProvokingVertexWithWebGPU } from './mesh/provoking-vertex';
-import { isNormalMode, isOpaqueMode } from '../blending-state';
-import type { BlendingMode } from '../../types/blending';
 import {
   disposePickMaterial,
   isEffectivelyVisible,
@@ -54,14 +49,11 @@ import { MAX_PICK_NODE_ID, voteWinner, type VoteEntry } from './picking-system/p
 import { SettleScheduler } from './picking-system/settle-scheduler';
 import { resolveOnDiskElementId } from './picking-system/element-id-map';
 import { applyLensDistortion } from './picking-system/lens-distortion';
-import { syncPickVisibilityInputs } from './picking-system/visibility-sync';
+import { syncPickFromVisual } from './picking-system/visibility-sync';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import { readPixelsCompactAsync } from '../post-processing/hdr/pixel-utils';
-import { isOrthographicCamera } from '../../utils/camera-utils';
-import type { LuxarCamera } from '../../utils/camera-utils';
 import { log, Modules } from '../../utils/log';
 import { clamp } from '../../utils/clamp';
-import { isPhysicalMeshMaterial } from '../materials/mesh-physical/config';
 
 /** Maximum time a touch pick may defer tooltip fades while its handler settles. */
 const EXPLICIT_PICK_FADE_GUARD_MS = 5_000;
@@ -134,18 +126,6 @@ export function computePickBufferSize(drawW: number, drawH: number): { w: number
     w: Math.max(1, Math.floor(halfW * scale)),
     h: Math.max(1, Math.floor(halfH * scale)),
   };
-}
-
-/**
- * The blending mode a node's visual material composites with: a physical mesh
- * follows its own translucency (three's PBR material carries no Luxar mode),
- * every other material its `userData.blendingMode` (additive when unset).
- */
-function effectiveBlendingMode(material: THREE.Material | undefined): BlendingMode {
-  if (material && isPhysicalMeshMaterial(material)) {
-    return material.transparent ? 'normal' : 'opaque';
-  }
-  return (material?.userData.blendingMode ?? 'additive') as BlendingMode;
 }
 
 export class PickingSystem {
@@ -845,8 +825,6 @@ export class PickingSystem {
     pickRes.set(this.pickTarget.width, this.pickTarget.height);
     const cssHeight = renderer.domElement.clientHeight;
     const pixelRatio = cssHeight > 0 ? pickRes.y / cssHeight : (renderer.getPixelRatio?.() ?? 1);
-    const cam = this.camera as LuxarCamera;
-    const isOrtho = isOrthographicCamera(cam);
 
     this._lastVisibleSig = this.computeVisibleSig();
 
@@ -873,53 +851,18 @@ export class PickingSystem {
       // Update pick material camera params to match half-res pick buffer
       const mat = (entry.pick as THREE.Mesh).material;
       if (isCameraAwareMaterial(mat)) {
-        mat.updateCameraParams(pickRes, isOrtho, undefined, pixelRatio);
+        mat.updateCameraParams(pickRes, undefined, pixelRatio);
       }
-      // Density-guard thinning sync: the pick pass must drop exactly the
-      // elements the visual pass drops (same hash of the same storage
-      // index), or hovering a thinned-away element would resolve a pick the
-      // user cannot see. Cheap no-op when unchanged.
-      setDensityDrop(mat, getDensityDrop((entry.main as THREE.Mesh).material));
-      // entry.main is typed Object3D — non-mesh mains have no material.
-      const mainMat = (entry.main as THREE.Mesh).material as
-        THREE.Material | THREE.Material[] | undefined;
-      const single = Array.isArray(mainMat) ? mainMat[0] : mainMat;
-      const mode = effectiveBlendingMode(single);
-      // Visibility inputs the visual pass alone is written with (truncation,
-      // coverage limit, opacity, gain, alpha, projection): the pick pass must
-      // see exactly what the draw shows.
-      syncPickVisibilityInputs(mat, mainMat, mode);
-
-      // Pick-depth convention sync: under the depth-ordered surface
-      // modes — 'normal' (sorted alpha-over) and 'opaque' (depth-
-      // written) — the user sees an occluding surface, so the pick
-      // depth must be the real projected depth (front-most wins)
-      // instead of brightness-as-depth (brightest wins — right for the
-      // commutative additive/luminous/max modes, but it could pick a
-      // brighter splat BEHIND the visible surface). 'volumetric' is
-      // DELIBERATELY excluded (this is isNormalMode||isOpaqueMode, NOT
-      // needsDepthSort): it is emissive, so phase 1 keeps additive-style
-      // brightness picking — a heavily-absorbed back splat can still win
-      // the pick if brightest; front-most-beyond-a-τ-threshold is a
-      // spec'd follow-up (VOLUMETRIC_BLENDING_SPEC.md §5.2). Points, lines
-      // and gsplats share this capability (`_shared/surface-pick.ts`): an
-      // opaque atom behind another must not win just for being brighter.
-      //
-      // MESH implements the richer MeshPickAwareMaterial instead, because
-      // its blending mode has a SECOND pick-pass consequence the boolean
-      // cannot carry — the `opaque` alpha cutout (see picking/mesh/
-      // pick-mode.ts). It also needs the epoch's face culling copied over,
-      // which no other pick material does: the siblings' quads are
-      // view-facing, but a mesh whose back faces are culled on screen must
-      // not rasterize them into the pick buffer at true surface depth.
-      if (isMeshPickAwareMaterial(mat) || isSurfacePickAwareMaterial(mat)) {
-        if (isMeshPickAwareMaterial(mat)) {
-          mat.setPickMode(mode);
-          if (single) mat.setPickSide(single.side);
-        } else if (isSurfacePickAwareMaterial(mat)) {
-          mat.setSurfacePickDepth(isNormalMode(mode) || isOpaqueMode(mode));
-        }
-      }
+      // Everything else the pick pass must know about the node — the
+      // visibility inputs only the visual material is written with (density
+      // thinning, truncation, coverage limit, opacity, gain, alpha,
+      // projection) and the depth convention — in ONE sync
+      // (picking-system/visibility-sync.ts). entry.main is typed Object3D;
+      // non-mesh mains have no material.
+      syncPickFromVisual(
+        mat,
+        (entry.main as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined
+      );
 
       this.pickScene.add(entry.pick);
     }

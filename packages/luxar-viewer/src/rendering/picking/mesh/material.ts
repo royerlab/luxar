@@ -11,7 +11,7 @@
  * visual mesh material rather than the pick convention:
  *
  * 1. **A `CameraAwareMaterial` for only half the usual reason.** A mesh has no
- *    screen-space footprint to size, so `resolution` and `isOrtho` are ignored (the
+ *    screen-space footprint to size, so `resolution` is ignored (the
  *    near fade's ortho test reads the projection matrix); what it does consume
  *    is `uNearCull`, because the pick pass has to
  *    reproduce the visual near fade or a fading surface would stay fully pickable
@@ -105,17 +105,12 @@ export class MeshPickingMaterial
   /**
    * Update the camera-dependent uniforms.
    *
-   * `_resolution` / `_isOrtho` are accepted and IGNORED — a mesh has no
+   * `_resolution` is accepted and IGNORED — a mesh has no
    * screen-space footprint to size, and the near fade's ortho test reads the
    * projection matrix. Only `nearCull` is consumed, and it must be kept identical to the visual material's or pick coverage would stop matching
    * visible coverage near the camera. Mirrors `MeshMaterial.updateCameraParams`.
    */
-  updateCameraParams(
-    _resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    _pixelRatio?: number
-  ): void {
+  updateCameraParams(_resolution: THREE.Vector2, nearCull?: number, _pixelRatio?: number): void {
     if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;
     }

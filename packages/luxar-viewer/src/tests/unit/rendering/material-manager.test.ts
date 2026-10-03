@@ -229,7 +229,7 @@ describe('MaterialManager', () => {
     });
 
     it('per-node materials receive the current camera params immediately at creation', () => {
-      manager.updateCameraParams(new THREE.Vector2(2560, 1440), false, undefined, 2);
+      manager.updateCameraParams(new THREE.Vector2(2560, 1440), undefined, 2);
       const material = manager.getPointMaterial({
         blendingMode: 'additive',
         opacity: 1.0,
@@ -345,7 +345,7 @@ describe('MaterialManager', () => {
       // a mesh created after the camera settled must not be left fading against the
       // constructor's 0.1 default. Asserted through the uniforms rather than a call
       // spy, so it stays true of however the call is made.
-      manager.updateCameraParams(new THREE.Vector2(800, 600), true, 0.42, 1);
+      manager.updateCameraParams(new THREE.Vector2(800, 600), 0.42, 1);
       const mesh = manager.getMeshMaterial(meshProps);
       expect(manager.getCacheStats().totalRegistered).toBe(1);
       expect(mesh.uniforms.uIsOrtho).toBeUndefined();
@@ -354,7 +354,7 @@ describe('MaterialManager', () => {
 
     it('keeps tracking the broadcast after creation', () => {
       const mesh = manager.getMeshMaterial(meshProps);
-      manager.updateCameraParams(new THREE.Vector2(800, 600), false, 0.25, 1);
+      manager.updateCameraParams(new THREE.Vector2(800, 600), 0.25, 1);
       expect(mesh.uniforms.uNearCull.value).toBe(0.25);
     });
 
@@ -384,7 +384,7 @@ describe('MaterialManager', () => {
       expect(stats.totalRegistered).toBe(1);
       // And it survives the broadcast, which must skip it.
       expect(() =>
-        manager.updateCameraParams(new THREE.Vector2(800, 600), false, undefined, 1)
+        manager.updateCameraParams(new THREE.Vector2(800, 600), undefined, 1)
       ).not.toThrow();
     });
 
@@ -393,7 +393,7 @@ describe('MaterialManager', () => {
       // camera-aware, `register` must route it into the broadcast rather than the
       // disposal-only set, or a clone taken mid-session would fade against the
       // constructor default until the next camera move.
-      manager.updateCameraParams(new THREE.Vector2(800, 600), false, 0.37, 1);
+      manager.updateCameraParams(new THREE.Vector2(800, 600), 0.37, 1);
       const meshClone = new MeshMaterial({ opacity: 0.5 });
       expect(meshClone.uniforms.uNearCull.value).toBe(0.1);
       manager.register(meshClone);
@@ -404,7 +404,7 @@ describe('MaterialManager', () => {
       // Asserted through the OBSERVABLE effect rather than a call spy: a clone
       // registered mid-session must not wait for the next broadcast to learn the
       // current viewport, so the uniform itself has to carry the manager's state.
-      manager.updateCameraParams(new THREE.Vector2(1234, 567), false, undefined, 1);
+      manager.updateCameraParams(new THREE.Vector2(1234, 567), undefined, 1);
       const clone = new PointMaterial({ opacity: 0.5 });
       expect((clone.uniforms.uResolution.value as THREE.Vector2).x).not.toBe(1234);
       manager.register(clone);
@@ -463,7 +463,7 @@ describe('MaterialManager', () => {
       // Update camera params globally
       const newResolution = new THREE.Vector2(1280, 720);
 
-      manager.updateCameraParams(newResolution, false, undefined, 1);
+      manager.updateCameraParams(newResolution, undefined, 1);
 
       // Both materials should be updated with the new viewport and maxPointSize
       expect(material1.uniforms.uResolution.value.y).toBe(720);
@@ -477,7 +477,7 @@ describe('MaterialManager', () => {
       // Update params before creating material
       const resolution = new THREE.Vector2(2560, 1440);
 
-      manager.updateCameraParams(resolution, false, undefined, 1);
+      manager.updateCameraParams(resolution, undefined, 1);
 
       // Create new material
       const material = manager.getPointMaterial({
@@ -938,7 +938,7 @@ describe('MaterialManager', () => {
     it('should update newly created materials with current params', () => {
       // Set camera params first
       const resolution = new THREE.Vector2(3840, 2160);
-      manager.updateCameraParams(resolution, false, undefined, 1);
+      manager.updateCameraParams(resolution, undefined, 1);
 
       // Create material after update
       const material = manager.getPointMaterial({
@@ -966,7 +966,7 @@ describe('MaterialManager', () => {
       const initialMaxPointSize = material.uniforms.maxPointSize.value;
 
       // Update params
-      manager.updateCameraParams(new THREE.Vector2(1280, 720), false, undefined, 1);
+      manager.updateCameraParams(new THREE.Vector2(1280, 720), undefined, 1);
 
       // Material should be updated with the new viewport-derived maxPointSize
       expect(material.uniforms.maxPointSize.value).toBe(720 * 0.5);

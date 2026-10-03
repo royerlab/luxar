@@ -45,13 +45,13 @@ describe('materials are per host', () => {
     const appSpy = vi.spyOn(appMaterial, 'updateCameraParams');
 
     // The app resizes: only the app's node hears it.
-    getPageMaterialManager().updateCameraParams(new THREE.Vector2(1920, 1080), false, undefined, 2);
+    getPageMaterialManager().updateCameraParams(new THREE.Vector2(1920, 1080), undefined, 2);
     expect(appSpy).toHaveBeenCalled();
     expect(layerSpy).not.toHaveBeenCalled();
 
     // The layer resizes: only the layer's node hears it.
     appSpy.mockClear();
-    layerMaterials.updateCameraParams(new THREE.Vector2(400, 300), false, undefined, 1);
+    layerMaterials.updateCameraParams(new THREE.Vector2(400, 300), undefined, 1);
     expect(layerSpy).toHaveBeenCalled();
     expect(appSpy).not.toHaveBeenCalled();
 

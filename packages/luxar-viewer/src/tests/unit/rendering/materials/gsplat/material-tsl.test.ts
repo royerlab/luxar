@@ -178,7 +178,7 @@ describe('GSplatTSLMaterial clone', () => {
 
   it('resyncs camera uniforms (uResolution, uPixelRatio) from source onto clone', () => {
     const original = new GSplatTSLMaterial();
-    original.updateCameraParams(new THREE.Vector2(1600, 900), false, undefined, 2);
+    original.updateCameraParams(new THREE.Vector2(1600, 900), undefined, 2);
     const srcRes = original.uniforms.uResolution.value as THREE.Vector2;
 
     const cloned = original.clone();

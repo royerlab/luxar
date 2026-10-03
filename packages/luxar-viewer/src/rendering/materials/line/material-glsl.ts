@@ -23,6 +23,7 @@ import {
   applyElementTextureWidthDefine,
   LINE_TEXTURE_LAYOUT,
 } from '../../element-texture-layout';
+import { copyRuntimeUniforms, LINE_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import { getGlassDepthTexture } from '../_shared/glass-partition';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
@@ -281,12 +282,7 @@ export class LineMaterial
    *
    * @param resolution - Viewport resolution
    */
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     this.uniforms.uResolution.value.copy(resolution);
     // Apply the near-plane safety distance when provided.
     // Accept ANY defined value, including 0 — matching the point/gsplat
@@ -473,27 +469,13 @@ export class LineMaterial
       cloned.blendDst = this.blendDst;
     }
 
-    cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
+    // Runtime state a fresh clone would reset (LINE_RUNTIME_UNIFORMS, ../_shared/runtime-uniforms.ts).
+    copyRuntimeUniforms(this, cloned, LINE_RUNTIME_UNIFORMS);
     // Preserve the line data texture binding (per-node — the clone
     // serves the same node). Routed through the rebind chokepoint so
     // the clone's width define is re-stamped from that texture rather
     // than left on the constructor's session-width pre-stamp.
     cloned.updateLineTexture(this.uniforms.uLineTex.value as THREE.DataTexture | null);
-    // Preserve orthographic state and the near-plane / max-pixel-width
-    // clamp.
-    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
-    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
-    cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
-    cloned.uniforms.uLineJoin.value = this.uniforms.uLineJoin.value;
-    cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
-    // The active ordering slot must ride along: a clone taken while the
-    // geometry draws from slot 1 would otherwise read the stale buffer
-    // until the coordinator's next per-frame re-assert.
-    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
-    // The density guard's thinning state rides along too (it is re-asserted
-    // only on the guard's next visit, which an off-screen node never gets).
-    cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
-    cloned.uniforms.uDensityAlphaExp.value = this.uniforms.uDensityAlphaExp.value;
     return cloned as this;
   }
 

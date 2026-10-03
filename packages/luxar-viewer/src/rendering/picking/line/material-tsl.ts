@@ -30,20 +30,34 @@ import {
 } from '../_shared/visibility-tsl';
 import { copyPickVisibilityUniforms } from '../_shared/visibility-uniforms';
 import type { SurfacePickAwareMaterial } from '../_shared/surface-pick';
-import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import {
+  getPlaceholderElementTexture,
+  LINE_TEXTURE_LAYOUT,
+  resolveElementTextureWidth,
+} from '../../element-texture-layout';
+import { applySharedPickGraph } from '../_shared/shared-pick-graph-tsl';
+import {
+  isOrthographicProjection,
+  type ProjectionVariantMaterial,
+} from '../../materials/_shared/projection-variant';
 import type { LinePickingMaterialConfig } from './material';
+
+/** A camera whose projection reads orthographic (for `clone()`'s variant carry-over). */
+const ORTHO_PROBE = new THREE.OrthographicCamera();
 
 export class LinePickingTSLMaterial
   extends NodeMaterial
-  implements CameraAwareMaterial, SurfacePickAwareMaterial
+  implements CameraAwareMaterial, SurfacePickAwareMaterial, ProjectionVariantMaterial
 {
   uniforms: Record<string, THREE.IUniform>;
+
+  /** The projection kind of the camera last drawn with (quad variant only). */
+  private _orthoVariant = false;
 
   private tslNodes: {
     uLineTex: TSLNode;
     uResolution: TSLNode;
     uPixelRatio: TSLNode;
-    uIsOrtho: TSLNode;
     uNearCull: TSLNode;
     uMaxLinePixelWidth: TSLNode;
     uNodeId: TSLNode;
@@ -67,7 +81,6 @@ export class LinePickingTSLMaterial
       uLineTex: texture(getPlaceholderElementTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
       uPixelRatio: uniform(1),
-      uIsOrtho: uniform(0),
       // 0.1 matches the visual line material ctor default (pre-first-broadcast only).
       uNearCull: uniform(0.1),
       uMaxLinePixelWidth: uniform(540),
@@ -107,7 +120,6 @@ export class LinePickingTSLMaterial
       uLineTex: proxyIUniform(this.tslNodes.uLineTex),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
       uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
-      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uMaxLinePixelWidth: proxyIUniform(this.tslNodes.uMaxLinePixelWidth),
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
@@ -131,26 +143,62 @@ export class LinePickingTSLMaterial
    * Build the per-rebuild factory config from current uniforms.
    */
   private _currentConfig(): LinePickTSLConfig {
+    const quad =
+      resolveLinePrimitive(this.userData.linePrimitive as LinePrimitive | undefined) !== 'capsule';
     return {
-      isOrtho: (this.tslNodes.uIsOrtho.value as number) === 1,
       join: this.userData.lineJoin as LineJoinStyle | undefined,
+      // The quad's compile-time projection variant (see selectProjectionVariant).
+      ...(quad ? { projection: this._orthoVariant ? 'ortho' : 'perspective' } : {}),
     };
   }
 
   /**
+   * Select the screen-space quad's projection variant for the camera this pick
+   * draw uses — the visual twin's rule (`LineTSLMaterial.selectProjectionVariant`):
+   * a re-point at the other kind's cached shared graph, only on a kind change,
+   * never driven by a CPU push. The capsule ignores it.
+   */
+  selectProjectionVariant(camera: THREE.Camera): void {
+    const ortho = isOrthographicProjection(camera);
+    if (ortho === this._orthoVariant) return;
+    this._orthoVariant = ortho;
+    if (
+      resolveLinePrimitive(this.userData.linePrimitive as LinePrimitive | undefined) === 'capsule'
+    ) {
+      return;
+    }
+    this._rebuild();
+    this.needsUpdate = true;
+  }
+
+  /**
    * (Re)build the pick graph, dispatching on the line primitive (#1352).
-   * Every build site — constructor, clone, projection-mode flip, texture
-   * rebind — funnels through here so the two factories can never drift.
+   * Every build site — constructor, texture rebind — funnels through here so the two factories can never drift.
    */
   private _rebuild(): void {
     const primitive = resolveLinePrimitive(
       this.userData.linePrimitive as LinePrimitive | undefined
     );
-    if (primitive === 'capsule') {
-      capsuleLinePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
-    } else {
-      linePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
-    }
+    // ONE graph per configuration (`../_shared/shared-pick-graph-tsl.ts`):
+    // the primitive, the build-time join and projection variants and the baked
+    // line-texture width are what select code. The BOUND texture's width is
+    // handed to the factory explicitly: the shared graph's own leaf
+    // is a forwarding twin over a stand-in texture.
+    const config = {
+      ...this._currentConfig(),
+      elementTextureWidth: resolveElementTextureWidth(
+        LINE_TEXTURE_LAYOUT,
+        this.tslNodes.uLineTex.value as { image?: { width?: number } } | null
+      ),
+    };
+    const key = { primitive, ...config };
+    applySharedPickGraph(this, 'line-pick', key, this.tslNodes, (inputs, scratch) => {
+      if (primitive === 'capsule') {
+        capsuleLinePickWebGPUFactory(inputs, config, scratch);
+      } else {
+        linePickWebGPUFactory(inputs, config, scratch);
+      }
+    });
   }
 
   /**
@@ -158,10 +206,6 @@ export class LinePickingTSLMaterial
    * clone (the inherited `Material.clone()` calls the constructor with
    * no config and would throw; `NodeMaterial.copy` would alias the
    * source's node graph instead of this instance's own uniform nodes).
-   * The pick graph is JS-specialized on the projection mode (see
-   * `updateCameraParams`), so after copying `uIsOrtho` the clone's
-   * graph is rebuilt when the mode differs from the constructor
-   * default (perspective) — same rebuild-on-flip rule as the source.
    */
   clone(): this {
     const cloned = new LinePickingTSLMaterial({
@@ -176,7 +220,6 @@ export class LinePickingTSLMaterial
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );
-    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
@@ -187,10 +230,8 @@ export class LinePickingTSLMaterial
     cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
     copyPickVisibilityUniforms(this.uniforms, cloned.uniforms);
     cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
-    if (cloned._currentConfig().isOrtho) {
-      cloned._rebuild();
-      cloned.needsUpdate = true;
-    }
+    // Carry the last-drawn projection variant (no switch on the clone's first draw).
+    if (this._orthoVariant) cloned.selectProjectionVariant(ORTHO_PROBE);
     return cloned as this;
   }
 
@@ -206,15 +247,13 @@ export class LinePickingTSLMaterial
     this.uniforms.uSurfaceDepth.value = on ? 1 : 0;
   }
 
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
-    const prevIsOrtho = (this.tslNodes.uIsOrtho.value as number) === 1;
+  /**
+   * Camera-dependent uniforms. The ortho branch is read in the graph from the
+   * projection matrix of the draw (`isOrthoProjectionTSL()`, the GLSL twin's
+   * `luxarLineIsOrtho`), so none is pushed.
+   */
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
-    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     // Accept ANY defined value, including 0 — matching the point/gsplat
     // wrappers (the shader floors at 1e-20). The old `> 0` gate silently
     // KEPT a stale value on zero-diagonal scenes (or, with LRU-cached
@@ -225,11 +264,6 @@ export class LinePickingTSLMaterial
     }
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
     this.uniforms.uPixelRatio.value = pixelRatio;
-    // Rebuild on projection-mode flip so the unused branch drops.
-    if (isOrtho !== prevIsOrtho) {
-      this._rebuild();
-      this.needsUpdate = true;
-    }
   }
 
   /**

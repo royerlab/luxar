@@ -39,8 +39,8 @@ import {
   vec3,
   vec4,
 } from 'three/tsl';
-import * as THREE from 'three';
 import { NodeMaterial } from 'three/webgpu';
+import { applyPickMaterialState } from '../_shared/shared-pick-graph-tsl';
 import { resolveElementTextureWidth, LINE_TEXTURE_LAYOUT } from '../../element-texture-layout';
 import {
   CAPSULE_JOINT_DEFICIT_GATE,
@@ -51,24 +51,26 @@ import {
 } from '../../materials/_shared/line-capsule';
 import {
   projectionSizeScaleTSL,
-  perspectiveNearFadeStaticTSL,
+  isOrthoProjectionTSL,
+  perspectiveNearFadeTSL,
   sanitizeNonNegative,
   sanitizeAlpha,
   tslLineJointCapSuppression,
   type TSLNode,
   sortedIndexNode,
 } from '../../materials/_shared/tsl-helpers';
-import type { LinePickTSLNodes } from './pick.tsl';
+import type { LinePickTSLConfig, LinePickTSLNodes } from './pick.tsl';
 import { pickWeightTSL } from '../_shared/visibility-tsl';
 
-/** Build-time configuration (projection mode picks the graph variant). */
-export interface CapsuleLinePickTSLConfig {
-  isOrtho?: boolean;
-}
-
+/**
+ * Capsule-line pick factory. Same `nodes`/`config` contract as
+ * `linePickWebGPUFactory`; `config.join` is ignored (the capsule has no miter
+ * geometry), and the projection is read per draw (`isOrthoProjectionTSL()`), so
+ * the capsule pick graph has no build-time variant at all.
+ */
 export function capsuleLinePickWebGPUFactory(
   nodes: LinePickTSLNodes,
-  config: CapsuleLinePickTSLConfig = {},
+  config: LinePickTSLConfig = {},
   outMaterial?: NodeMaterial
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
@@ -85,8 +87,6 @@ export function capsuleLinePickWebGPUFactory(
   // projection this draw uses (GLSL twin: luxarProjectionSizeScale). It
   // replaces the former CPU-pushed perspective / ortho line-scale uniforms.
   const lineScale: TSLNode = uResolution.y.mul(projectionSizeScaleTSL());
-
-  const isOrtho = config.isOrtho === true;
 
   // ---- Varyings ----
   const vLocal: TSLNode = varying(vec2(0.0, 0.0));
@@ -119,10 +119,15 @@ export function capsuleLinePickWebGPUFactory(
   const vertexBody = Fn(() => {
     const lineBase: TSLNode = int(aSortedIndex).mul(int(6)).toVar();
     const lineTexW: TSLNode = int(
-      resolveElementTextureWidth(
-        LINE_TEXTURE_LAYOUT,
-        (nodes.uLineTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
-      )
+      // From the config FIRST: under a shared graph (#2992) the leaf is a
+      // forwarding twin over a 1x1 stand-in texture, so its own width is not
+      // the bound texture's (the wrappers pass the real one; see
+      // ../_shared/shared-pick-graph-tsl.ts).
+      config.elementTextureWidth ??
+        resolveElementTextureWidth(
+          LINE_TEXTURE_LAYOUT,
+          (nodes.uLineTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
+        )
     ).toVar();
     const texelX: TSLNode = lineBase.mod(lineTexW).toVar();
     const texelY: TSLNode = lineBase.div(lineTexW).toVar();
@@ -138,9 +143,14 @@ export function capsuleLinePickWebGPUFactory(
 
     const startDepth: TSLNode = mvStart.z.negate().toVar();
     const endDepth: TSLNode = mvEnd.z.negate().toVar();
-    const culled: TSLNode = isOrtho
-      ? float(0.0).greaterThan(1.0).toVar()
-      : startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull)).toVar();
+    // The ortho branch of the projection THIS draw uses (GLSL twin:
+    // `luxarLineIsOrtho = luxarIsOrthoProjection()`) — no CPU-pushed flag, no
+    // graph rebuild on a camera-kind flip. Materialised ahead of every `If`.
+    const isOrtho: TSLNode = isOrthoProjectionTSL().equal(int(1)).toVar();
+    const isPersp: TSLNode = isOrtho.not().toVar();
+    const culled: TSLNode = isPersp
+      .and(startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull)))
+      .toVar();
 
     const mvA: TSLNode = mvStart.toVar();
     const mvB: TSLNode = mvEnd.toVar();
@@ -149,7 +159,7 @@ export function capsuleLinePickWebGPUFactory(
     const clippedB: TSLNode = float(0.0).toVar();
     const tA: TSLNode = float(0.0).toVar();
     const tB: TSLNode = float(1.0).toVar();
-    if (!isOrtho) {
+    If(isPersp, () => {
       If(startDepth.lessThan(nearCull).and(endDepth.greaterThanEqual(nearCull)), () => {
         tA.assign(nearCull.sub(startDepth).div(endDepth.sub(startDepth)));
         mvA.assign(mix(mvStart, mvEnd, tA));
@@ -159,7 +169,7 @@ export function capsuleLinePickWebGPUFactory(
         mvB.assign(mix(mvStart, mvEnd, tB));
         clippedB.assign(1.0);
       });
-    }
+    });
 
     const w0: TSLNode = sanitizeNonNegative(lineT0.w, 0.0);
     const w1: TSLNode = sanitizeNonNegative(lineT1.w, 0.0);
@@ -176,22 +186,24 @@ export function capsuleLinePickWebGPUFactory(
     const pA: TSLNode = clipA.xy.div(wA).mul(0.5).add(0.5).mul(uResolution).toVar();
     const pB: TSLNode = clipB.xy.div(wB).mul(0.5).add(0.5).mul(uResolution).toVar();
 
-    const rawA: TSLNode = (
-      isOrtho
-        ? wEffA.mul(lineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
-        : wEffA
-            .mul(lineScale)
-            .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
-            .div(max(mvA.z.negate(), nearCull))
-    ).toVar();
-    const rawB: TSLNode = (
-      isOrtho
-        ? wEffB.mul(lineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
-        : wEffB
-            .mul(lineScale)
-            .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
-            .div(max(mvB.z.negate(), nearCull))
-    ).toVar();
+    const rawA: TSLNode = isOrtho
+      .select(
+        wEffA.mul(lineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH),
+        wEffA
+          .mul(lineScale)
+          .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+          .div(max(mvA.z.negate(), nearCull))
+      )
+      .toVar();
+    const rawB: TSLNode = isOrtho
+      .select(
+        wEffB.mul(lineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH),
+        wEffB
+          .mul(lineScale)
+          .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
+          .div(max(mvB.z.negate(), nearCull))
+      )
+      .toVar();
     const appearancePixelRatio: TSLNode = uPixelRatio.max(float(1.0));
     const minRadius: TSLNode = appearancePixelRatio.mul(CAPSULE_MIN_RADIUS_PX).toVar();
     const packetMinRadius: TSLNode = appearancePixelRatio
@@ -241,17 +253,15 @@ export function capsuleLinePickWebGPUFactory(
       const farObj: TSLNode = farTexel.xyz.toVar();
       pFarWidth.assign(sanitizeNonNegative(farTexel.w, 0.0));
       const mvFar: TSLNode = modelViewMatrix.mul(vec4(farObj, 1.0)).toVar();
-      if (!isOrtho) {
-        const farDepth: TSLNode = mvFar.z.negate().toVar();
-        If(farDepth.lessThan(nearCull), () => {
-          const tF: TSLNode = clamp(
-            jointDepth.sub(nearCull).div(max(jointDepth.sub(farDepth), float(1e-20))),
-            0.0,
-            1.0
-          ).toVar();
-          mvFar.assign(mix(mvJoint, mvFar, tF));
-        });
-      }
+      const farDepth: TSLNode = mvFar.z.negate().toVar();
+      If(isPersp.and(farDepth.lessThan(nearCull)), () => {
+        const tF: TSLNode = clamp(
+          jointDepth.sub(nearCull).div(max(jointDepth.sub(farDepth), float(1e-20))),
+          0.0,
+          1.0
+        ).toVar();
+        mvFar.assign(mix(mvJoint, mvFar, tF));
+      });
       pFarDepth.assign(max(mvFar.z.negate(), nearCull));
       const cl: TSLNode = cameraProjectionMatrix.mul(mvFar).toVar();
       const px: TSLNode = cl.xy
@@ -290,12 +300,10 @@ export function capsuleLinePickWebGPUFactory(
                   ),
                 () => {
                   const rpFarA: TSLNode = clamp(
-                    isOrtho
-                      ? pFarWidth.mul(lineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
-                      : pFarWidth
-                          .mul(lineScale)
-                          .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
-                          .div(pFarDepth),
+                    isOrtho.select(
+                      pFarWidth.mul(lineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH),
+                      pFarWidth.mul(lineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH).div(pFarDepth)
+                    ),
                     minRadius,
                     uMaxLinePixelWidth
                   ).toVar();
@@ -349,12 +357,10 @@ export function capsuleLinePickWebGPUFactory(
                   .or(dot(qhat, u).lessThan(-0.5).and(min(rawA, rawB).greaterThanEqual(minRadius))),
                 () => {
                   const rpFarB: TSLNode = clamp(
-                    isOrtho
-                      ? pFarWidth.mul(lineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
-                      : pFarWidth
-                          .mul(lineScale)
-                          .mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH)
-                          .div(pFarDepth),
+                    isOrtho.select(
+                      pFarWidth.mul(lineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH),
+                      pFarWidth.mul(lineScale).mul(CAPSULE_RADIUS_PER_QUAD_HALFWIDTH).div(pFarDepth)
+                    ),
                     minRadius,
                     uMaxLinePixelWidth
                   ).toVar();
@@ -401,9 +407,11 @@ export function capsuleLinePickWebGPUFactory(
     const tOrig: TSLNode = mix(tA, tB, tc).toVar();
     const rawC: TSLNode = mix(rawA, rawB, tc).toVar();
     const widthScale: TSLNode = min(rawC.div(minRadius), 1.0).toVar();
-    const fade: TSLNode = isOrtho
-      ? float(1.0).toVar()
-      : perspectiveNearFadeStaticTSL(false, mix(mvA.z, mvB.z, tc), nearCull).toVar();
+    const fade: TSLNode = perspectiveNearFadeTSL(
+      isOrthoProjectionTSL(),
+      mix(mvA.z, mvB.z, tc),
+      nearCull
+    ).toVar();
 
     vCutN.assign(vec4(cutA.xy, cutB.xy));
     vPack.assign(
@@ -563,14 +571,9 @@ export function capsuleLinePickWebGPUFactory(
   material.vertexNode = clipPos;
   material.colorNode = colorNode();
   material.depthNode = depthNode();
-  material.toneMapped = false;
-  material.depthTest = true;
-  material.depthWrite = true;
-  material.transparent = false;
-  // Pin opacity to exactly 1 — the NodeMaterial fragment tail multiplies
-  // alpha by material.opacity, and alpha carries the element id's HIGH
-  // half (see the screen-space pick factory's note).
-  material.opacity = 1;
-  material.blending = THREE.NoBlending;
+  // The pick pass's fixed state: an opaque, depth-tested ID buffer with
+  // opacity pinned to exactly 1 (the element id's high half rides in alpha;
+  // see applyPickMaterialState).
+  applyPickMaterialState(material);
   return material;
 }

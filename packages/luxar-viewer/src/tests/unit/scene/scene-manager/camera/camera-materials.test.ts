@@ -54,33 +54,22 @@ describe('updateMaterialsForCurrentCamera', () => {
     vi.mocked(materialManager.updateCameraParams).mockClear();
   });
 
-  it('sends the buffer + orthographic=false (and no FOV) for a perspective camera', () => {
-    const camera = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 1000);
+  it.each([
+    ['perspective', new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 1000)],
+    ['orthographic', new THREE.OrthographicCamera(-10, 10, 5, -5, 0.1, 1000)],
+  ])('sends the same (buffer, nearCull, pixelRatio) push for a %s camera', (_n, camera) => {
     const ctx = makeCtx({ camera });
 
     updateMaterialsForCurrentCamera(ctx);
 
     expect(materialManager.updateCameraParams).toHaveBeenCalledTimes(1);
     const args = vi.mocked(materialManager.updateCameraParams).mock.calls[0];
-    // (resolution, isOrtho, nearCull, pixelRatio): the FOV is read in shader.
-    expect(args).toHaveLength(4);
-    const [buf, isOrtho] = args;
-    expect(buf).toBeInstanceOf(THREE.Vector2);
-    expect(isOrtho).toBe(false);
-  });
-
-  it('sends orthographic=true (and no frustum height) for an orthographic camera', () => {
-    const camera = new THREE.OrthographicCamera(-10, 10, 5, -5, 0.1, 1000);
-    const ctx = makeCtx({ camera });
-
-    updateMaterialsForCurrentCamera(ctx);
-
-    expect(materialManager.updateCameraParams).toHaveBeenCalledTimes(1);
-    const args = vi.mocked(materialManager.updateCameraParams).mock.calls[0];
-    expect(args).toHaveLength(4);
-    const [buf, isOrtho] = args;
-    expect(buf).toBeInstanceOf(THREE.Vector2);
-    expect(isOrtho).toBe(true);
+    // No FOV, frustum height or camera kind: every projection term — the
+    // ortho test included — is read in shader from the projection matrix.
+    expect(args).toHaveLength(3);
+    expect(args[0]).toBeInstanceOf(THREE.Vector2);
+    expect(args[1]).toBe(0.1);
+    expect(args[2]).toBe(2);
   });
 
   it('uses the supplied pre-allocated Vector2 (no allocation)', () => {
@@ -105,7 +94,6 @@ describe('updateMaterialsForCurrentCamera', () => {
 
     expect(materialManager.updateCameraParams).toHaveBeenCalledWith(
       expect.any(THREE.Vector2),
-      false,
       expect.any(Number),
       2
     );
@@ -146,7 +134,7 @@ describe('updateMaterialsForCurrentCamera', () => {
 
     updateMaterialsForCurrentCamera(ctx);
 
-    const [, , nearCull] = vi.mocked(materialManager.updateCameraParams).mock.calls[0];
+    const [, nearCull] = vi.mocked(materialManager.updateCameraParams).mock.calls[0];
     expect(nearCull).toBe(0.1);
   });
 
@@ -157,7 +145,7 @@ describe('updateMaterialsForCurrentCamera', () => {
 
     updateMaterialsForCurrentCamera(ctx);
 
-    const [, , , pixelRatio] = vi.mocked(materialManager.updateCameraParams).mock.calls[0];
+    const [, , pixelRatio] = vi.mocked(materialManager.updateCameraParams).mock.calls[0];
     expect(pixelRatio).toBe(2);
   });
 });

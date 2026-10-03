@@ -13,10 +13,12 @@
  * the vertex stage's flag as a flat varying), so the twins agree with each other and with their TSL
  * counterparts' `isOrthoProjectionTSL()`.
  */
+import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 
 import { GLSL_LINE_JOIN } from '../../../../rendering/materials/_shared/glsl-lib';
 import { LineMaterial } from '../../../../rendering/materials/line/material-glsl';
+import { LineTSLMaterial } from '../../../../rendering/materials/line/material-tsl';
 import {
   CAPSULE_LINE_FRAGMENT_SHADER,
   CAPSULE_LINE_VERTEX_SHADER,
@@ -27,6 +29,7 @@ import {
 } from '../../../../rendering/materials/line/shader-glsl';
 import { MESH_FRAGMENT_SHADER } from '../../../../rendering/materials/mesh/shader-glsl';
 import { LinePickingMaterial } from '../../../../rendering/picking/line/material';
+import { LinePickingTSLMaterial } from '../../../../rendering/picking/line/material-tsl';
 import {
   CAPSULE_LINE_PICK_FRAGMENT_SHADER,
   CAPSULE_LINE_PICK_VERTEX_SHADER,
@@ -88,5 +91,46 @@ describe('GLSL mesh shaders derive ortho from the projection matrix', () => {
   ])('%s fragment reads no isOrthographic camera flag', (_n, fs) => {
     expect(fs).not.toMatch(/\bisOrthographic\b/);
     expect(fs).toContain('flat in int vIsOrtho;');
+  });
+});
+
+/**
+ * The TSL line twins read the same per-draw ortho test (`isOrthoProjectionTSL()`),
+ * so the camera kind is not an input at all: `updateCameraParams` takes no
+ * projection flag (a boolean second argument is a type error), and a material
+ * keeps its graph (and the program cache key it shares with every material of
+ * its configuration) across camera pushes. Before, `isOrtho` was a build-time
+ * graph variant: each flip rebuilt the graph and moved the material to another
+ * shared-graph key — twice per scene-environment capture under an ortho camera
+ * (the capture pushed a perspective cube camera, then restored).
+ */
+describe('TSL line materials derive ortho from the projection matrix', () => {
+  const res = new THREE.Vector2(800, 600);
+  it.each([
+    ['visual quad', () => new LineTSLMaterial({ primitive: 'screen-space' })],
+    ['visual capsule', () => new LineTSLMaterial({ primitive: 'capsule' })],
+    ['pick quad', () => new LinePickingTSLMaterial({ nodeId: 1, primitive: 'screen-space' })],
+    ['pick capsule', () => new LinePickingTSLMaterial({ nodeId: 1, primitive: 'capsule' })],
+  ])('%s keeps its graph and cache key across camera pushes', (_n, make) => {
+    const m = make();
+    m.updateCameraParams(res);
+    const key = m.customProgramCacheKey();
+    const vertex = m.vertexNode;
+    const fragment = m.fragmentNode;
+    m.updateCameraParams(new THREE.Vector2(512, 512), 0.25, 2);
+    expect(m.customProgramCacheKey()).toBe(key);
+    expect(m.vertexNode).toBe(vertex);
+    expect(m.fragmentNode).toBe(fragment);
+    // @ts-expect-error — the camera kind is not an input (read per draw from P).
+    m.updateCameraParams(res, true);
+    expect(m.customProgramCacheKey()).toBe(key);
+    expect(m.vertexNode).toBe(vertex);
+  });
+
+  it.each([
+    ['LineTSLMaterial', () => new LineTSLMaterial({})],
+    ['LinePickingTSLMaterial', () => new LinePickingTSLMaterial({ nodeId: 1 })],
+  ])('%s binds no uIsOrtho uniform', (_n, make) => {
+    expect(make().uniforms.uIsOrtho).toBeUndefined();
   });
 });

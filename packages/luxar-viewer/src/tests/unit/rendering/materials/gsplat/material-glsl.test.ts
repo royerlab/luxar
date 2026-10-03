@@ -456,7 +456,7 @@ describe('GSplatMaterial', () => {
       const material = new GSplatMaterial();
       const resolution = new THREE.Vector2(1920, 1080);
 
-      material.updateCameraParams(resolution, false, 0.3, 2);
+      material.updateCameraParams(resolution, 0.3, 2);
 
       expect(material.uniforms.uResolution.value.x).toBe(1920);
       expect(material.uniforms.uResolution.value.y).toBe(1080);

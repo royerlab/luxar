@@ -999,10 +999,12 @@ export class SceneManager extends THREE.EventDispatcher<{
   /**
    * Give the scene environment what a live `scene` capture needs (the init pipeline
    * calls this once the load-activity predicate exists). The capture pushes the cube
-   * camera's params (a square drawing buffer, perspective, pixel ratio 1) to the
-   * material manager so point and line footprints render at the right size in the six
-   * faces — the 90° projection itself is read in shader from the cube camera's matrix
-   * — and restores the main camera's push afterwards through the ordinary path.
+   * camera's params (a square drawing buffer, pixel ratio 1) to the material manager
+   * so point and line footprints render at the right size in the six faces, and
+   * restores the main camera's push afterwards through the ordinary path. The 90°
+   * projection itself — its ortho test included — is read in shader from the cube
+   * camera's matrix by every material, so the camera KIND needs no push and an
+   * orthographic main camera swaps no graph or program across a capture.
    */
   attachEnvironmentRuntime(isSettled: () => boolean): void {
     const root = (): THREE.Object3D | null =>
@@ -1010,12 +1012,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.environment?.attachRuntime({
       sceneRoot: root,
       pushCaptureCameraParams: (resolution) => {
-        materialManager.updateCameraParams(
-          new THREE.Vector2(resolution, resolution),
-          false,
-          undefined,
-          1
-        );
+        materialManager.updateCameraParams(new THREE.Vector2(resolution, resolution), undefined, 1);
       },
       restoreCameraParams: () => this.updateMaterialsForCurrentCamera(),
       isSettled,

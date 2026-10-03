@@ -699,13 +699,11 @@ export const CAPSULE_LINE_SOURCE: ShaderSource = {
   webgl: { vertex: CAPSULE_LINE_VERTEX_SHADER, fragment: CAPSULE_LINE_FRAGMENT_SHADER },
   webgpu: (uniforms: Record<string, unknown>) => {
     const u = uniforms as Record<string, import('three').IUniform>;
-    // Projection mode at build time (see LINE_SOURCE's note). No join
-    // handling: the capsule has no miter geometry. Default config
-    // otherwise — harness consumers needing USE_COLORMAP or mode variants
+    // The projection is read per draw (see LINE_SOURCE's note). No join
+    // handling: the capsule has no miter geometry. Default config — harness consumers needing USE_COLORMAP or mode variants
     // call `capsuleLineWebGPUFactory` directly with explicit flags.
-    const isOrtho = ((u.uIsOrtho?.value as number) ?? 0) === 1;
     const { capsuleLineWebGPUFactory, buildLineTSLNodesFromUniforms } =
       requireTslMaterials().factories.capsuleLine;
-    return capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(u, {}), { isOrtho });
+    return capsuleLineWebGPUFactory(buildLineTSLNodesFromUniforms(u, {}));
   },
 };

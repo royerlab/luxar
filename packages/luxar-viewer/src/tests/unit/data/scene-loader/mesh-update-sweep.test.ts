@@ -54,7 +54,7 @@ vi.mock('../../../../rendering/material-manager', () => ({
       updateCameraParams: vi.fn(),
     }),
     // Mesh materials are per node like the rest, and camera-aware like the rest
-    // since #1431 — of the contract they consume only `isOrtho` / `nearCull`, for
+    // since #1431 — of the contract they consume only `nearCull`, for
     // the near fade; there is still no screen-space size to recompute.
     getMeshMaterial: vi.fn(() => ({
       uniforms: {},
