@@ -102,6 +102,7 @@ import { loadScene } from '../../../data/zarr-loader';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { log } from '../../../utils/log';
+import { releaseWorkerPool, retainWorkerPool } from '../../../workers/worker-pool';
 
 function layerOptions(scene = new THREE.Scene()): LuxarLayerOptions {
   return {
@@ -175,6 +176,31 @@ describe('several Luxar hosts on one page', () => {
     expect(appLoader.dispose).not.toHaveBeenCalled();
     expect(SceneLoaderManager.getInstance().getDefaultLoader()).toBe(appLoader);
     expect(sceneDimsManager.getDimensionNames()).toEqual(['x', 'y', 'z', 't']);
+  });
+
+  it.fails('a layer whose constructor throws keeps none of the page-wide holds', async () => {
+    const warning = vi.spyOn(log, 'warning');
+    const scene = new THREE.Scene();
+    const broken = layerOptions(scene);
+    broken.renderer = {
+      ...broken.renderer,
+      getDrawingBufferSize: () => {
+        throw new Error('context lost');
+      },
+    } as unknown as LuxarLayerOptions['renderer'];
+    expect(() => new LuxarLayer(broken)).toThrow('context lost');
+
+    // No worker-pool lease: a probe holder is the last one out.
+    const probe = {};
+    retainWorkerPool(probe);
+    expect(releaseWorkerPool(probe)).toBe(true);
+    // Not counted as a layer of its scene: the next one there is not "shared".
+    const next = new LuxarLayer(layerOptions(scene));
+    expect(warning.mock.calls.some(([, m]) => String(m).includes('share one THREE.Scene'))).toBe(
+      false
+    );
+    await next.dispose();
+    warning.mockRestore();
   });
 
   it('warns when a second layer shares a THREE.Scene, naming the renderOrder contract', () => {
