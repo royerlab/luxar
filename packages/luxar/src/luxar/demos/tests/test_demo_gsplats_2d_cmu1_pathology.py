@@ -97,6 +97,27 @@ def test_the_packaged_manifest_lists_the_channels_the_demo_expects() -> None:
     )
 
 
+def test_local_tiled_refit_preserves_overlap_contributions(
+    tmp_path, monkeypatch
+) -> None:
+    """A post-fit amplitude cull removes the weak halves of both Hann windows."""
+    monkeypatch.setattr(demo, "TILE_SIZE", 32)
+    monkeypatch.setattr(demo, "OVERLAP", 8)
+    monkeypatch.setattr(demo, "SEEDS_PER_TILE", 128)
+    monkeypatch.setattr(demo, "N_ITERS", 20)
+    monkeypatch.setattr(demo, "DEVICE", "cpu")
+
+    y, x = np.mgrid[:24, :48]
+    image = np.exp(-((y - 12) ** 2 / 50 + (x - 24) ** 2 / 450)).astype(np.float32)
+    result = demo.fit_channel_tiled(image, "red", tmp_path / "red.gsplats.zarr.zip")
+
+    assert result.n_splats == 256  # Both tiles keep their full seed budget.
+    assert result.stats.get("culled") is not True
+    reconstruction = result.render_to_volume(shape=image.shape, device="cpu")
+    seam_mse = np.mean((reconstruction[:, 24:32] - image[:, 24:32]) ** 2)
+    assert seam_mse < 0.016  # The culled fit measures about 0.019 here.
+
+
 def test_local_fit_paths_rejects_a_truncated_channel(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(demo, "local_fit_path", lambda _dataset, name: tmp_path / name)
     for name in demo.GSPLATS_FILES:
