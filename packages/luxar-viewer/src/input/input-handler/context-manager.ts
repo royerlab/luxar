@@ -66,7 +66,8 @@ export interface KeyBinding {
   /** Return false synchronously to leave the event available to lower-priority contexts. */
   handler: (event: KeyboardEvent) => boolean | void | Promise<void>;
   /**
-   * Modifier-aware bindings match keyup only while those modifiers remain held.
+   * Modifier-aware bindings match keyup only while those modifiers remain held;
+   * a keyup carrying a modifier no binding names falls back to the base key's.
    * Async handlers are always handled; only a synchronous false can decline.
    */
   keyupHandler?: (event: KeyboardEvent) => boolean | void | Promise<void>;
@@ -503,13 +504,26 @@ export class InputContextManager {
     }
     this.keyEventDepth++;
     try {
-      return this.handleKeyEventInternal(event, type);
+      const bindingKey = this.getBindingKeyFromEvent(event);
+      if (this.handleKeyEventInternal(event, type, bindingKey)) return true;
+      // A key released under a modifier it was not pressed with (hold W, press
+      // Ctrl, release W) is still that key's release: when no modifier-specific
+      // keyup binding took it, deliver it to the base key's binding, or held
+      // movement would stay latched. Keydown matching is never widened.
+      const baseKey = canonicalizeBindingKey(event.key.toLowerCase());
+      return (
+        type === 'up' && baseKey !== bindingKey && this.handleKeyEventInternal(event, type, baseKey)
+      );
     } finally {
       this.keyEventDepth--;
     }
   }
 
-  private handleKeyEventInternal(event: KeyboardEvent, type: 'down' | 'up'): boolean {
+  private handleKeyEventInternal(
+    event: KeyboardEvent,
+    type: 'down' | 'up',
+    bindingKey: string
+  ): boolean {
     // Check if we're in a typing context
     if (this.isTypingContext()) {
       // Escape from a typing context (e.g. focus inside the
@@ -531,13 +545,11 @@ export class InputContextManager {
     const config = this.contextConfigs.get(this.currentContext);
     if (!config) return false;
 
-    const bindingKey = this.getBindingKeyFromEvent(event);
-
     // Check if this binding is allowed in the current context
     if (!this.isKeyAllowedInContext(event.key, bindingKey, config)) {
       // Key not allowed in this context - try passthrough if enabled
       if (config.passthrough) {
-        return this.tryLowerContexts(event, type);
+        return this.tryLowerContexts(event, type, bindingKey);
       }
       return false;
     }
@@ -572,7 +584,7 @@ export class InputContextManager {
 
     // Key is allowed but no binding found - try passthrough if enabled
     if (config.passthrough) {
-      return this.tryLowerContexts(event, type);
+      return this.tryLowerContexts(event, type, bindingKey);
     }
 
     return false;
@@ -659,16 +671,16 @@ export class InputContextManager {
    *
    * @param event - Keyboard event to handle
    * @param type - Event type ('down' or 'up')
+   * @param bindingKey - Canonical binding key to look up
    * @returns true if a declared fallback handled the event, false otherwise
    * @private
    */
-  private tryLowerContexts(event: KeyboardEvent, type: 'down' | 'up'): boolean {
+  private tryLowerContexts(event: KeyboardEvent, type: 'down' | 'up', bindingKey: string): boolean {
     const currentConfig = this.contextConfigs.get(this.currentContext);
     const fallbackContexts = new Set(currentConfig?.fallbackContexts ?? []);
     const sortedContexts = sortContextsByPriority(this.contextConfigs, this.currentContext).filter(
       ([context]) => fallbackContexts.has(context)
     );
-    const bindingKey = this.getBindingKeyFromEvent(event);
 
     for (const [context, config] of sortedContexts) {
       if (this.isKeyAllowedInContext(event.key, bindingKey, config)) {

@@ -171,6 +171,52 @@ describe('InputContextManager - keyupHandler Feature', () => {
     });
   });
 
+  describe('a key released under a modifier it was not pressed with', () => {
+    it.each([
+      ['ctrlKey', 'w'],
+      ['metaKey', 'w'],
+      ['ctrlKey', 'Shift'],
+    ] as const)('delivers a %s release of %s to the base binding', (modifier, key) => {
+      // Hold W, press Ctrl, release W: the release is still W's. Without this
+      // the keyup looks up the unbound "ctrl+w" and fly movement stays latched.
+      const keyupHandler = vi.fn();
+      manager.setContext(InputContext.FLY_CONTROLS);
+      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
+        key,
+        handler: vi.fn(),
+        keyupHandler,
+      });
+
+      const release = new KeyboardEvent('keyup', { key, [modifier]: true });
+      expect(manager.handleKeyEvent(release, 'up')).toBe(true);
+      expect(keyupHandler).toHaveBeenCalledExactlyOnceWith(release);
+    });
+
+    it('prefers the exact modifier binding, and never widens keydown matching', () => {
+      const baseKeyup = vi.fn();
+      const ctrlKeyup = vi.fn();
+      const baseDown = vi.fn();
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'w',
+        handler: baseDown,
+        keyupHandler: baseKeyup,
+      });
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'w',
+        modifiers: { ctrl: true },
+        handler: vi.fn(),
+        keyupHandler: ctrlKeyup,
+      });
+
+      manager.handleKeyEvent(new KeyboardEvent('keyup', { key: 'w', ctrlKey: true }), 'up');
+      expect(ctrlKeyup).toHaveBeenCalledTimes(1);
+      expect(baseKeyup).not.toHaveBeenCalled();
+
+      manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'w', metaKey: true }), 'down');
+      expect(baseDown).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Toggle actions should NOT double-trigger', () => {
     it('should only call handler on keydown for toggle actions without keyupHandler', () => {
       let cinematicMode = false;

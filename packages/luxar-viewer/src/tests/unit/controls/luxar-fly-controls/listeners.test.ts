@@ -29,6 +29,7 @@ function makeCtx(overrides: Partial<FlyListenersCtx> = {}): FlyListenersCtx {
     onPointerDown: vi.fn(),
     onPointerMove: vi.fn(),
     onPointerUp: vi.fn(),
+    onFocusLost: vi.fn(),
     ...overrides,
   };
 }
@@ -195,5 +196,27 @@ describe('attachListeners — touch (pointer events, always attached)', () => {
     expect(ctx.onPointerMove).toHaveBeenCalledTimes(1);
     expect(ctx.onPointerUp).toHaveBeenCalledTimes(2);
     document.body.removeChild(domElement);
+  });
+});
+
+describe('attachListeners — focus loss', () => {
+  it('reports window blur and a hidden page, and stops after dispose', () => {
+    const ctx = makeCtx({ domElement: document.createElement('div') });
+    const visibility = vi.spyOn(document, 'visibilityState', 'get');
+    const disposer = attachListeners(ctx);
+
+    window.dispatchEvent(new Event('blur'));
+    visibility.mockReturnValue('visible');
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(ctx.onFocusLost).toHaveBeenCalledTimes(1);
+    visibility.mockReturnValue('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(ctx.onFocusLost).toHaveBeenCalledTimes(2);
+
+    disposer();
+    window.dispatchEvent(new Event('blur'));
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(ctx.onFocusLost).toHaveBeenCalledTimes(2);
+    visibility.mockRestore();
   });
 });
