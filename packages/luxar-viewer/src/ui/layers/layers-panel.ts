@@ -295,8 +295,9 @@ export class LayersPanel {
 
   /**
    * Reset every layer's parameters — visibility, display range, gamma,
-   * opacity, blending mode, colormap, and the mesh shading values (Ambient,
-   * Shade falloff, Specular, Shininess, Alpha cutoff) — back to their authored defaults.
+   * opacity, blending mode, colormap, the mesh shading values (Ambient,
+   * Shade falloff, Specular, Shininess, Alpha cutoff), a physical mesh's knobs and
+   * a sound row's gain — back to their authored defaults.
    *
    * Re-derives the default state from the scene graph (the same walk
    * `initFromScene` uses) and pushes every parameter through the regular
@@ -308,29 +309,7 @@ export class LayersPanel {
 
     this.state.initFromSceneGraph(this.sceneGraph, this.sceneNodeIndex);
     const layers = this.state.getLayers();
-    for (const layer of layers) {
-      // Visibility applies unconditionally: a currently-hidden layer whose
-      // authored default is visible must come back.
-      this.applyVisibility(layer.path, layer.visible);
-      // applyColormap restores the authored colormap (or none) and then
-      // recomposes opacity/gamma/intensity/offset/blending via applyComposed.
-      this.applyEngine.applyColormap(layer);
-      // Layer order lives in a dedicated render-state slot rather than a
-      // material, so applyComposed cannot restore it.
-      this.applyEngine.applyLayerOrder(layer);
-      // applyLabelStyle restores authored colours / all classes on both the
-      // visual and pick materials.
-      this.applyEngine.applyLabelStyle(layer);
-      // applyMeshAppearance restores the mesh-only shading uniforms (Ambient,
-      // Shade falloff, Specular, Shininess, Alpha cutoff) on both the visual and pick materials.
-      // These are not composed, so applyComposed never touches them — without
-      // this call the surface keeps the dragged uniforms while the readouts
-      // show the reset defaults. Safe no-op on a non-mesh leaf.
-      this.applyEngine.applyMeshAppearance(layer);
-      // Same story for a physical layer's knobs: live sliders write the material
-      // directly, so the authored values come back only if pushed again.
-      this.applyEngine.applyPhysicalKnobs(layer);
-    }
+    for (const layer of layers) this.reapplyLayer(layer);
 
     // Rebuild the row list + controls so the panel reflects the fresh state
     // (initFromSceneGraph replaced every LayerInfo the rows were bound to).
@@ -341,6 +320,39 @@ export class LayersPanel {
     if (layers.length > 0) this.state.select(layers[0].path, 'single');
 
     log.info(Modules.UI, `Layers reset to defaults (${layers.length} layer(s))`);
+  }
+
+  /**
+   * Push a freshly re-derived layer back through every apply path — the one
+   * apply set both resets share, so the scene and the audio graph agree with the
+   * readouts afterwards.
+   */
+  private reapplyLayer(layer: LayerInfo): void {
+    // Visibility applies unconditionally: a currently-hidden layer whose
+    // authored default is visible must come back.
+    this.applyVisibility(layer.path, layer.visible);
+    // applyColormap restores the authored colormap (or none) and then
+    // recomposes opacity/gamma/intensity/offset/blending/absorption via its
+    // trailing applyComposed (the material-state reset test pins this).
+    this.applyEngine.applyColormap(layer);
+    // Layer order lives in a dedicated render-state slot rather than a
+    // material, so applyComposed cannot restore it.
+    this.applyEngine.applyLayerOrder(layer);
+    // applyLabelStyle restores authored colours / all classes on both the
+    // visual and pick materials.
+    this.applyEngine.applyLabelStyle(layer);
+    // applyMeshAppearance restores the mesh-only shading uniforms (Ambient,
+    // Shade falloff, Specular, Shininess, Alpha cutoff) on both the visual and pick
+    // materials. These are not composed, so applyComposed never touches them —
+    // without this call the surface keeps the dragged uniforms while the readouts
+    // show the reset defaults. Safe no-op on a non-mesh leaf.
+    this.applyEngine.applyMeshAppearance(layer);
+    // Same story for a physical layer's knobs and its refract_data switch: the
+    // live controls write the material directly.
+    this.applyEngine.applyPhysicalKnobs(layer);
+    // And for a sound row's gain, which the slider writes straight to the audio
+    // graph: the re-derived state alone would only move the slider.
+    if (layer.sound) this.audioPort?.setNodeGain(layer.path, layer.sound.gain);
   }
 
   show(): void {
@@ -692,25 +704,8 @@ export class LayersPanel {
     scratch.dispose();
     if (!fresh) return;
     this.state.resetLayerState(path, fresh);
-    // Same apply set as resetAllLayers(), for the same reasons:
-    // applyVisibility unconditionally (a hidden layer whose authored default
-    // is visible must come back); applyColormap restores the authored
-    // palette (or none) AND then recomposes display range / gamma / opacity /
-    // absorption / blending onto the materials via its trailing
-    // applyComposed (layer-apply.ts — the material-state reset test pins
-    // this dependency); applyLabelStyle restores authored colours / all
-    // classes on the visual and pick materials; applyMeshAppearance covers
-    // the mesh-only shading uniforms, which are not composed.
-    this.applyVisibility(path, live.visible);
-    this.applyEngine.applyColormap(live);
-    this.applyEngine.applyLayerOrder(live);
-    this.applyEngine.applyLabelStyle(live);
-    this.applyEngine.applyMeshAppearance(live);
-    // And a physical layer's live knobs + its refract_data switch, which the
-    // sliders wrote straight onto the material (resetAllLayers has always done this;
-    // the per-row reset missed it, leaving a dragged knob on the surface while the
-    // readouts showed the authored values).
-    this.applyEngine.applyPhysicalKnobs(live);
+    // The same apply set as resetAllLayers(): the two resets cannot drift apart.
+    this.reapplyLayer(live);
     this.refreshRowVisual(path);
     this.controls.render();
   }

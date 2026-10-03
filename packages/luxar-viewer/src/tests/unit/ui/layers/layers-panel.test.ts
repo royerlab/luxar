@@ -368,7 +368,7 @@ describe('LayersPanel — sound rows', () => {
     expect(hum.blendingModeExplicit).toBe(false);
   });
 
-  it.fails('a reset restores the authored gain on the audio graph, not just on the slider', () => {
+  it('a reset restores the authored gain on the audio graph, not just on the slider', () => {
     panel.layerState.setSoundGain('/story/hum', 1.5);
     port.setNodeGain.mockClear();
     runRowMenuItem(panel, '/story/hum', 'Reset this layer');
