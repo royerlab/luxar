@@ -42,6 +42,7 @@
  */
 
 import type { ViewState } from '../../data-loader-types';
+import type { LoaderMetrics } from '../../../types/data-monitor-types';
 import type { UpdateSession } from '../../../profiling/update-profiler';
 import type { SliceCache } from '../../../cache/slice-cache';
 import { setSliceCacheOrigin, type SliceCacheOrigin } from '../../../cache/slice-cache-origin';
@@ -346,9 +347,23 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
     };
   }
 
-  /** Bytes held by the memoized cumulative payload (monitor memory). */
-  concatMemoryBytes(): number {
-    return this.concatCache ? measureLodBytes([this.concatCache.result]) : 0;
+  /**
+   * The node's monitor metrics, from its levels' summed counters.
+   *
+   * Two fields are the ladder's, not the levels': `memoryUsed` adds the
+   * memoized cumulative payload, and `visibleElements` is the current ladder's
+   * element count. A level's own counter refreshes only when that level
+   * queries, so after a SliceCache restore or a pass pinned short of the
+   * loaded depth the deeper levels still hold an earlier slice's count — a sum
+   * would report elements that are not on screen.
+   */
+  nodeMetrics(levels: LoaderMetrics): LoaderMetrics {
+    const concatBytes = this.concatCache ? measureLodBytes([this.concatCache.result]) : 0;
+    return {
+      ...levels,
+      visibleElements: this.ladderResidency().elementCount,
+      memoryUsed: levels.memoryUsed + concatBytes,
+    };
   }
 
   /**

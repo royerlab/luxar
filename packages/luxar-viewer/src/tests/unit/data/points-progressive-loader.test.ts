@@ -1723,7 +1723,7 @@ describe('PointsProgressiveLoader', () => {
       expect(loader.getMetrics().memoryUsed).toBe(measureLodBytes([result]));
     });
 
-    it.fails('getMetrics reports visibleElements from the current ladder, not stale level counters', async () => {
+    it('getMetrics reports visibleElements from the current ladder, not stale level counters', async () => {
       // Each level's own counter refreshes only when THAT level queries. A pass
       // pinned to rung 0 (or a SliceCache restore) leaves the deeper levels'
       // counters from an earlier slice, which a plain sum would add in.
