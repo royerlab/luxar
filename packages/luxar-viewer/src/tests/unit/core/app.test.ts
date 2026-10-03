@@ -1381,6 +1381,55 @@ describe('LuxarApp', () => {
       expect(app.initialized).toBe(false);
     });
 
+    it('releases a scene manager created by an init pipeline overtaken by dispose', async () => {
+      let releaseSceneInit!: () => void;
+      mockSceneManager.init.mockImplementationOnce(
+        () => new Promise<void>((resolve) => (releaseSceneInit = resolve))
+      );
+
+      const initPromise = app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
+      expect(mockSceneManager.init).toHaveBeenCalledTimes(1);
+      app.dispose();
+      mockAddEventListener.mockClear();
+
+      releaseSceneInit();
+      await initPromise;
+
+      expect(mockSceneManager.dispose).toHaveBeenCalledTimes(1);
+      expect(mockAnimationController.dispose).toHaveBeenCalledTimes(1);
+      expect(mockAddEventListener.mock.calls.map((call) => call[0])).toEqual([
+        'luxar-layers-changed',
+        'luxar-layers-changed',
+      ]);
+      for (const [event, listener] of mockAddEventListener.mock.calls) {
+        expect(mockRemoveEventListener).toHaveBeenCalledWith(event, listener);
+      }
+      expect(mockSceneManager.loadSceneData).not.toHaveBeenCalled();
+      expect(app.initialized).toBe(false);
+    });
+
+    it('does not route a prior init after dispose and re-init', async () => {
+      const probes = new Map<string, (value: { ok: boolean }) => void>();
+      mockFetch.mockImplementation(
+        (url: string) => new Promise((resolve) => probes.set(url, resolve))
+      );
+
+      const first = app.init({ canvas: mockCanvas, src: 'http://example.com/AAA' });
+      await vi.waitFor(() => expect(probes.has('http://example.com/AAA/.zgroup')).toBe(true));
+      app.dispose();
+      const second = app.init({ canvas: mockCanvas, src: 'http://example.com/BBB' });
+      probes.get('http://example.com/AAA/.zgroup')?.({ ok: true });
+      await vi.waitFor(() => expect(probes.has('http://example.com/BBB/.zgroup')).toBe(true));
+      for (const [url, resolve] of probes) {
+        if (url.includes('BBB')) resolve({ ok: true });
+      }
+      await Promise.all([first, second]);
+
+      expect(mockSceneManager.loadSceneData).toHaveBeenCalledTimes(1);
+      expect(mockSceneManager.loadSceneData.mock.calls[0]?.[0]).toBe('http://example.com/BBB');
+      expect(app.initialized).toBe(true);
+    });
+
     it('does not call history.replaceState when updateBrowserUrl is false', async () => {
       const replaceStateSpy = vi.spyOn(window.history, 'replaceState').mockImplementation(() => {});
 

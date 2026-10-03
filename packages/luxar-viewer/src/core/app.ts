@@ -142,6 +142,10 @@ export class LuxarApp {
    * components (potentially double-freeing GPU resources). Reset by `init()`.
    */
   private isDisposed = false;
+  /** Invalidates work from an earlier init after dispose or re-init. */
+  private initGeneration = 0;
+  /** A new init waits until an overtaken init has released its partial pipeline. */
+  private pendingInit: Promise<void> | null = null;
   /**
    * App-level event listeners (beforeunload, focus, visibilitychange,
    * luxar-open-dataset-browser, plus the picking system's mousemove + control
@@ -235,6 +239,7 @@ export class LuxarApp {
    * @see README.md - initialization sequence section for detailed init flow
    */
   async init(options: LuxarAppOptions): Promise<void> {
+    if (this.pendingInit) await this.pendingInit;
     if (this.isInitialized) {
       throw new Error('LuxarApp is already initialized. Call dispose() before initializing again.');
     }
@@ -291,6 +296,10 @@ export class LuxarApp {
     };
 
     this.isInitializing = true;
+    const generation = ++this.initGeneration;
+    let finishInit!: () => void;
+    const completion = new Promise<void>((resolve) => (finishInit = resolve));
+    this.pendingInit = completion;
     try {
       const result = await runInitPipeline(
         {
@@ -307,6 +316,13 @@ export class LuxarApp {
       );
 
       assignFromPartial();
+      if (this.isTornDown(generation)) {
+        // dispose() ran while the pipeline was awaiting scene-manager setup.
+        // Its first pass could not see the components accumulated in partial.
+        this.isDisposed = false;
+        this.dispose();
+        return;
+      }
 
       // The layers panel edits a mesh's pick coverage (opacity/cutoff/blending)
       // with a stationary camera, which nothing else invalidates — give it a
@@ -326,11 +342,11 @@ export class LuxarApp {
       // The control client eagerly attaches the selection / element event
       // consumers that picking checks once, during dataset provisioning.
       this.installControlClient();
-      await this.routeInitialDataset(result.sceneSrc);
+      await this.routeInitialDataset(result.sceneSrc, generation);
       // A dispose() that landed while routing awaited has already torn the app
       // down: wiring the app-level hooks below would leak them onto a disposed
       // instance and mark it initialized.
-      if (this.isTornDown()) return;
+      if (this.isTornDown(generation)) return;
 
       this.setupDisposeOnUnload();
       this.setupFocusHandling();
@@ -354,10 +370,13 @@ export class LuxarApp {
       // top-level error UI; any in-progress error UI from sub-loaders
       // is wiped along with everything else.
       assignFromPartial();
+      if (this.isDisposed) this.isDisposed = false;
       this.dispose();
       throw error;
     } finally {
       this.isInitializing = false;
+      this.pendingInit = null;
+      finishInit();
     }
   }
 
@@ -365,9 +384,9 @@ export class LuxarApp {
    * Open the dataset browser, or load the initial dataset. A dispose() that
    * lands during the zarr probe wins: nothing is loaded into a disposed app.
    */
-  private async routeInitialDataset(src: string): Promise<void> {
+  private async routeInitialDataset(src: string, generation: number): Promise<void> {
     const showBrowser = await this.shouldShowBrowser(src);
-    if (this.isTornDown()) return;
+    if (this.isTornDown(generation)) return;
     if (!showBrowser) {
       await this.loadInitialDataset(src);
       return;
@@ -1437,6 +1456,7 @@ export class LuxarApp {
     // we are already tearing down, do nothing.
     if (this.isDisposing) return;
     this.isDisposing = true;
+    this.initGeneration++;
 
     // Flip initialized at entry so any concurrent observer of `app.initialized`
     // sees the correct state from the first instant of teardown, even if
@@ -1518,8 +1538,8 @@ export class LuxarApp {
   }
 
   /** True once {@link dispose} has started — an awaiting init() must bail. */
-  private isTornDown(): boolean {
-    return this.isDisposing || this.isDisposed;
+  private isTornDown(generation: number): boolean {
+    return this.isDisposing || this.isDisposed || generation !== this.initGeneration;
   }
 
   /** Register cleanup owned by this app's current lifetime. */
