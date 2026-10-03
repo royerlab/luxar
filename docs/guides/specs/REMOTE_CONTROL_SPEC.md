@@ -449,7 +449,7 @@ scene.viewer_config.ui.kiosk = KioskConfig(
     allow_pointer=False,      # ignore pointer/wheel/touch on the canvas
     allow_keyboard=False,     # ignore the keyboard entirely
     show_panels=False,        # no rail, no panels, no dataset browser
-    watchdog_reload=True,     # reload on WebGL context loss
+    watchdog_reload=True,     # reload on GPU context / device loss
     watchdog_grace_s=10.0,    # ... but only after recovery has had its chance
 )
 ```
@@ -459,7 +459,9 @@ Every field is optional and unset keeps the viewer's ordinary behaviour, so
 exception to that shape: it stays **off** unless asked for, because a reload is
 destructive to a recovery already in progress — the viewer restores a lost
 WebGL context on its own where it can, and the watchdog fires only after
-`watchdog_grace_s` has passed without that working.
+`watchdog_grace_s` has passed without that working. A lost WebGPU device has no
+recovery in this release, so it always ends in the reload, after the same grace
+period; embedders see it as the `webgpu-device-lost` event.
 
 `?kiosk` on the URL is a hard override for a display whose store predates the
 block. It can **lock** such a display and deliberately cannot unlock one: a URL

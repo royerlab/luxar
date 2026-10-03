@@ -81,6 +81,7 @@ export const CONTROL_FORWARDED_EVENTS: readonly string[] = [
   'sound-started',
   'waypoint-arrived',
   'waypoint-departed',
+  'webgpu-device-lost',
 ];
 
 /**

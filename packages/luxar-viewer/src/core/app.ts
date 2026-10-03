@@ -547,6 +547,12 @@ export class LuxarApp {
     controls.addEventListener('change', cameraListener);
     this.events.add(() => controls.removeEventListener('change', cameraListener));
 
+    // Unrecoverable in this release (the init pipeline shows the reload
+    // dialog): tell the embedder too, so a host can reload or report it.
+    this.events.add(
+      this.onWebGPUDeviceLost((info) => this.embedderEvents.emit('webgpu-device-lost', info))
+    );
+
     // flyTo() driver. The canvas is the input surface whose pointer / wheel /
     // touch events hand control back to the user mid-flight.
     this.cameraFlight = new CameraFlight({
@@ -641,8 +647,20 @@ export class LuxarApp {
           this.layersPanel?.hide();
         },
         canvas: this.sceneManager.renderer?.domElement,
+        onDeviceLost: (listener) => this.onWebGPUDeviceLost(listener),
       }))
     );
+  }
+
+  /** Subscribe to the scene manager's WebGPU device loss; returns the unsubscribe. */
+  private onWebGPUDeviceLost(
+    listener: (info: { reason?: string; message?: string }) => void
+  ): () => void {
+    const sceneManager = this.sceneManager;
+    const handler = (event: { reason?: string; message?: string }): void =>
+      listener({ reason: event.reason, message: event.message });
+    sceneManager.addEventListener('webgpu-device-lost', handler);
+    return () => sceneManager.removeEventListener('webgpu-device-lost', handler);
   }
 
   /** Bind the sound layer to the loaded scene (`viewer-config/install-audio.ts`). */

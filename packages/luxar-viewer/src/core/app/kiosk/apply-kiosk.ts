@@ -39,6 +39,8 @@ export interface KioskPorts {
   canvas?: EventTarget;
   /** Reload the page. Injected so a test never navigates. */
   reload?: () => void;
+  /** Subscribe to an unrecoverable GPU loss (WebGPU `device.lost`); returns the unsubscribe. */
+  onDeviceLost?: (listener: () => void) => () => void;
 }
 
 /**
@@ -66,6 +68,7 @@ export function applyKioskMode(mode: KioskMode, ports: KioskPorts): () => void {
     canvas: ports.canvas,
     graceS: mode.watchdogGraceS,
     reload: ports.reload ?? (() => window.location.reload()),
+    onUnrecoverableLoss: ports.onDeviceLost,
   });
   return () => watchdog.dispose();
 }

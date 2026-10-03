@@ -205,6 +205,10 @@ describe('LuxarApp', () => {
         dispose: vi.fn(),
       },
       dispose: vi.fn(),
+      // SceneManager is a THREE.EventDispatcher (the app subscribes to its
+      // 'webgpu-device-lost').
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
       renderer: { domElement: {} },
       scene: {},
       // Enough of a camera for captureSnapshot() (the camera-changed
@@ -2153,6 +2157,24 @@ describe('LuxarApp', () => {
 
   describe('programmatic embedder API', () => {
     const SRC = 'http://example.com/data.zarr';
+
+    it('re-emits WebGPU device loss as the public webgpu-device-lost event', async () => {
+      // Unrecoverable in this release: an embedder must be able to react
+      // (reload, show its own error) without reaching into the renderer.
+      const listeners: Array<[string, (event: unknown) => void]> = [];
+      mockSceneManager.addEventListener = vi.fn((type: string, fn: (event: unknown) => void) =>
+        listeners.push([type, fn])
+      );
+      mockSceneManager.removeEventListener = vi.fn();
+      await app.init({ canvas: mockCanvas, src: SRC });
+      const onLost = vi.fn();
+      app.on('webgpu-device-lost', onLost);
+
+      const event = { type: 'webgpu-device-lost', reason: 'destroyed', message: 'gone' };
+      for (const [type, fn] of listeners) if (type === 'webgpu-device-lost') fn(event);
+
+      expect(onLost).toHaveBeenCalledExactlyOnceWith({ reason: 'destroyed', message: 'gone' });
+    });
 
     it('emits dataset-loaded when switchDataset succeeds', async () => {
       await app.init({ canvas: mockCanvas, src: SRC });

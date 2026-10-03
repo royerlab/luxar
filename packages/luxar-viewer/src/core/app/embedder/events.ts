@@ -291,4 +291,11 @@ export interface LuxarEmbedderEventMap {
    * an arrival from wherever the camera stopped.
    */
   'waypoint-arrived': { index: number; completed: boolean };
+  /**
+   * The WebGPU device was lost. Unrecoverable in this release: the canvas
+   * stays blank until the page reloads (the viewer shows a reload dialog, and
+   * a kiosk watchdog reloads on its own). WebGL context loss is recovered
+   * internally and emits nothing.
+   */
+  'webgpu-device-lost': { reason?: string; message?: string };
 }
