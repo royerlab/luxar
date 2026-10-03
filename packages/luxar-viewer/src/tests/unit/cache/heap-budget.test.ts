@@ -221,6 +221,18 @@ describe('computeCacheBudgets', () => {
     // An explicit override still wins over both.
     expect(computeCacheBudgets(undefined, 512 * MB, 1024 * MB).source).toBe('explicit');
   });
+
+  it.each([Number.NaN, 0, -1, Number.POSITIVE_INFINITY])(
+    'an unusable explicit heap (%s) is not a measurement: finite budgets, no heap source',
+    (heap) => {
+      // A NaN pool would make every maxSize NaN, and an LRU never evicts
+      // against a NaN budget. Same rule as computeNonCacheRemainderBytes.
+      const fixed = computeCacheBudgets(heap);
+      expect(fixed.source).toBe('fixed');
+      expect(Number.isFinite(fixed.l0Bytes + fixed.l1Bytes + fixed.sliceBytes)).toBe(true);
+      expect(computeCacheBudgets(heap, undefined, 1024 * MB).source).toBe('device-class');
+    }
+  );
 });
 
 describe('inferDeviceClass (core-count proxy — best-effort)', () => {
