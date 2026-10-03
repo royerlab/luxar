@@ -272,7 +272,7 @@ describe('L0 coalesced waiters are abort-isolated', () => {
     expect(perfCounters.get('l0.misses')).toBe(2);
   });
 
-  it.fails('the retry keys on the decode being cancelled, not on the abort reason being an AbortError', async () => {
+  it('the retry keys on the decode being cancelled, not on the abort reason being an AbortError', async () => {
     // fetch() rejects with the signal's REASON, and a caller may abort with any
     // reason (here a plain Error): the shared decode then rejects with that
     // error, whose name is not 'AbortError'. The waiting caller must still retry.
