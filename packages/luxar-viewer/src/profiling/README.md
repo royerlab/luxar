@@ -91,7 +91,7 @@ try {
     return this.processData(data);
   });
 } finally {
-  profiler.endUpdate(); // Triggers listeners, updates UI
+  profiler.endUpdate(); // Merges into the persistent tree the monitor polls
 }
 ```
 
@@ -100,7 +100,7 @@ try {
 | Method                   | Purpose                                                      |
 | ------------------------ | ------------------------------------------------------------ |
 | `beginUpdate()`          | Start timing cycle (root session)                            |
-| `endUpdate()`            | End cycle, notify listeners                                  |
+| `endUpdate()`            | End cycle, merge into the persistent tree                    |
 | `time(name, fn)`         | Time a function with automatic nesting                       |
 | `timeWithMeta(name, fn)` | Time with metadata callback                                  |
 | `timeTopLevel(name, fn)` | Time a top-level parallel operation (safe for `Promise.all`) |
@@ -110,8 +110,6 @@ try {
 | `isActive()`             | Check if profiling is active                                 |
 | `current()`              | Get current innermost session                                |
 | `getTimings()`           | Get timing hierarchy for UI                                  |
-| `addListener(fn)`        | Add update listener                                          |
-| `removeListener(fn)`     | Remove update listener                                       |
 | `reset()`                | Clear all timing data                                        |
 
 ### Utility Functions
@@ -299,7 +297,7 @@ this.monitor.setProfiler(this.profiler);
 
 ## Dependencies
 
-- Internal: `../utils/log` (for `log.warning` / `log.error` on session
-  misuse and listener errors); `update-profiler.ts` also tallies its merge
+- Internal: `../utils/log` (for `log.warning` on session misuse);
+  `update-profiler.ts` also tallies its merge
   cost into `perf-counters.ts`. `load-timeline.ts` and `perf-counters.ts`
   import nothing.

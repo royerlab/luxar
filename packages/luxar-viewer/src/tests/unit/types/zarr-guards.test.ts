@@ -14,7 +14,6 @@ import {
   hasSceneDimensions,
   hasTransform,
   isPermutation,
-  isPointsNode,
   type NdTransformEntry,
   type ZarrNodeAttrs,
   type ZarrSceneAttrs,
@@ -164,27 +163,6 @@ describe('hasNdTransform', () => {
     } else {
       expect(hasNdTransform(makeAttrs(null))).toBe(false);
     }
-  });
-});
-
-describe('isPointsNode', () => {
-  it('returns true for type === "points"', () => {
-    expect(isPointsNode({ type: 'points' } as ZarrNodeAttrs)).toBe(true);
-  });
-
-  it('returns false for other node types', () => {
-    expect(isPointsNode({ type: 'lines' } as ZarrNodeAttrs)).toBe(false);
-    expect(isPointsNode({ type: 'gsplats' } as ZarrNodeAttrs)).toBe(false);
-    expect(isPointsNode({ type: 'group' } as ZarrNodeAttrs)).toBe(false);
-  });
-
-  it('returns false when type is undefined or attrs is empty', () => {
-    // types.md W7 fix: previous version didn't exercise `attrs.type === undefined`.
-    // The field is optional in the type (see zarr.ts:245); a missing type
-    // must logically return false. A regression that defaulted to "points"
-    // would have slipped through.
-    expect(isPointsNode({} as ZarrNodeAttrs)).toBe(false);
-    expect(isPointsNode({ type: undefined } as unknown as ZarrNodeAttrs)).toBe(false);
   });
 });
 

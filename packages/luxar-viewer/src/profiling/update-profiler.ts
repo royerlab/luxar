@@ -45,7 +45,7 @@ import { perfCounters } from './perf-counters';
 
 /**
  * Perf counter: ms spent merging finished sessions into the persistent tree
- * (value merge + stale sweep; listener notification excluded).
+ * (value merge + stale sweep).
  */
 const S_MERGE_MS = perfCounters.slot('profiler.mergeMs');
 
@@ -581,9 +581,6 @@ export class UpdateProfiler {
     return rootName === REFINEMENT_ROOT ? ++this.passSeq : ++this.sortSeq;
   }
 
-  // Listeners for UI updates
-  private listeners = new Set<() => void>();
-
   /**
    * Begin a new update cycle (root session)
    * Call this at the start of each update pipeline
@@ -891,9 +888,8 @@ export class UpdateProfiler {
    * into the freshly rebuilt rootEntry under a name they no longer own.
    */
   reset(): void {
-    // Bump generation FIRST so any session whose end() runs *during*
-    // notifyListeners() (synchronous listener callbacks could trigger
-    // it) sees the new generation and bails out.
+    // Bump generation FIRST: a session still open ends against the new
+    // generation and bails out instead of merging into the fresh roots.
     this.generation++;
     this.activeSession = null;
     this.currentSessionContext = null;
@@ -905,21 +901,6 @@ export class UpdateProfiler {
     this.depthSortCompletions = [];
     this.roots = UpdateProfiler.makeRoots();
     this.index = new Map<string, TimingEntry>(this.roots);
-    this.notifyListeners();
-  }
-
-  /**
-   * Add a listener for timing updates
-   */
-  addListener(listener: () => void): void {
-    this.listeners.add(listener);
-  }
-
-  /**
-   * Remove a listener
-   */
-  removeListener(listener: () => void): void {
-    this.listeners.delete(listener);
   }
 
   /**
@@ -951,7 +932,6 @@ export class UpdateProfiler {
         this.activeSession = null;
       }
       perfCounters.add(S_MERGE_MS, performance.now() - mergeStart);
-      this.notifyListeners();
     } else {
       this.mergeChild(entry, parentPath, seq);
       perfCounters.add(S_MERGE_MS, performance.now() - mergeStart);
@@ -1055,19 +1035,6 @@ export class UpdateProfiler {
     if (!this.index.has(path)) this.index.set(path, clone);
     for (const child of entry.children) {
       this.insertSubtree(clone, path, child);
-    }
-  }
-
-  /**
-   * Notify all listeners of timing update
-   */
-  private notifyListeners(): void {
-    for (const listener of this.listeners) {
-      try {
-        listener();
-      } catch (e) {
-        log.error(Modules.PERFORMANCE, 'Listener error', e);
-      }
     }
   }
 }

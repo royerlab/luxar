@@ -318,10 +318,11 @@ interface PointsMetadata {
 ### Type Guards
 
 ```typescript
-import { isPointsMetadata, isPointsUserData } from '../types/points';
+import { isPointsUserData } from '../types/points';
 
-if (isPointsMetadata(attrs)) {
-  console.log(`Found ${attrs.n_points} points`);
+// Check if a THREE.Object3D is a Points node
+if (isPointsUserData(object.userData)) {
+  console.log(`Visible: ${object.userData.visiblePointCount}`);
 }
 ```
 
@@ -352,10 +353,11 @@ interface LinesMetadata {
 ### Type Guards
 
 ```typescript
-import { isLinesMetadata, isLinesUserData, isValidLineType } from '../types/lines';
+import { isLinesUserData } from '../types/lines';
 
-if (isLinesMetadata(attrs)) {
-  console.log(`Found ${attrs.n_segments} segments`);
+// Check if a THREE.Object3D is a Lines node
+if (isLinesUserData(object.userData)) {
+  console.log(`Lines node: ${object.name}`);
 }
 ```
 
@@ -434,17 +436,7 @@ interface LoadedGSplatsData {
 ### Type Guards
 
 ```typescript
-import {
-  isGSplatsMetadata,
-  isGSplatsUserData,
-  choleskyPackedSize,
-  CHOLESKY_SIZES,
-} from '../types/gsplats';
-
-// Check if zarr attrs is for gsplats
-if (isGSplatsMetadata(attrs)) {
-  console.log(`Found ${attrs.n_splats} splats`);
-}
+import { isGSplatsUserData, choleskyPackedSize, CHOLESKY_SIZES } from '../types/gsplats';
 
 // Check if THREE.Object3D is gsplats
 if (isGSplatsUserData(mesh.userData)) {
@@ -870,12 +862,12 @@ The types package provides the type-safe foundation for all nD visualization ope
 ## File Index
 
 - `dims.ts` -- `DimensionMetadata`, `SimpleDims`, `initializeDims()`, `getDimensionRanges()`.
-- `points.ts` -- `EffectiveRadiusConfig`, `PointsMetadata`, `LoadedPointsData`, `PointRange`, `PointsViewState`, `PointsDataLoader`, `PointsUserData`, `PositionArray` / `ColorArray` / `ScalarArray` aliases, and `isPointsMetadata` / `isPointsUserData` guards.
-- `lines.ts` -- `LineType`, `LinesMetadata`, `OrderingMetadata`, `SegmentRange`, `LoadedLinesData`, `ProcessedLinesData`, `ClippedSegment`, `LinesDataLoader`, `LinesViewState`, `LinesUserData`, and `isLinesMetadata` / `isLinesUserData` / `isValidLineType` guards.
+- `points.ts` -- `EffectiveRadiusConfig`, `PointsMetadata`, `LoadedPointsData`, `PointRange`, `PointsViewState`, `PointsDataLoader`, `PointsUserData`, `PositionArray` / `ColorArray` / `ScalarArray` aliases, and the `isPointsUserData` guard.
+- `lines.ts` -- `LineType`, `LinesMetadata`, `OrderingMetadata`, `SegmentRange`, `LoadedLinesData`, `ProcessedLinesData`, `ClippedSegment`, `LinesDataLoader`, `LinesViewState`, `LinesUserData`, and the `isLinesUserData` guard.
 - `line-join.ts` -- `LineJoinStyle`, `DEFAULT_LINE_JOIN`, `LINE_JOIN_UNIFORM`, `LINE_JOIN_STYLES`, and the `parseLineJoinStyle()` / `setLineJoinOverride()` / `resolveLineJoin()` / `lineJoinStyleFromUniform()` helpers.
 - `line-primitive.ts` -- `LinePrimitive`, `DEFAULT_LINE_PRIMITIVE`, `LINE_PRIMITIVES`, the `parseLinePrimitive()` / `setLinePrimitiveOverride()` / `resolveLinePrimitive()` helpers, and the auto-policy half: `LinePrimitivePolicy`, `LINE_PRIMITIVE_POLICIES`, `AUTO_QUAD_EFFECTIVE_SEGMENTS`, `NOMINAL_VIEWPORT_PX`, `MIN_RENDERED_WIDTH_PX`, `LineNodeLoad`, `SceneLineLoadNode`, `setLinePrimitivePolicy()`, `setSceneLineLoad()`, `lineNodeLoadFromAttrs()`, `effectiveSegmentLoad()`, `sceneEffectiveLineLoad()`, `resolveLinePrimitiveForNode()` (#1352, #1800).
-- `gsplats.ts` -- `GSplatsMetadata`, `ValueRange`, `CoordinateBounds`, `SplatRange`, `LoadedGSplatsData`, `ProcessedGSplatsData`, `GSplatsDataLoader`, `GSplatsViewState`, `GSplatsUserData`, `isGSplatsMetadata` / `isGSplatsUserData` guards, plus `choleskyPackedSize()` and the `CHOLESKY_SIZES` constant.
-- `zarr.ts` -- `ZarrSceneAttrs`, `ZarrNodeAttrs`, `ZarrViewerConfig`, `SceneDimensionAttrs`, `PositionBounds`, `Matrix4x4`, nD-transform types (`NdTransformAffine`, `NdTransformPermutation`, `NdTransformEntry`, `NdTransformMap`), `ZarrStoreWithContents`, and the `hasContentsMethod` / `hasTransform` / `hasNdTransform` / `hasSceneDimensions` / `isPermutation` / `isPointsNode` guards.
+- `gsplats.ts` -- `GSplatsMetadata`, `ValueRange`, `CoordinateBounds`, `SplatRange`, `LoadedGSplatsData`, `ProcessedGSplatsData`, `GSplatsDataLoader`, `GSplatsViewState`, `GSplatsUserData`, the `isGSplatsUserData` guard, plus `choleskyPackedSize()` and the `CHOLESKY_SIZES` constant.
+- `zarr.ts` -- `ZarrSceneAttrs`, `ZarrNodeAttrs`, `ZarrViewerConfig`, `SceneDimensionAttrs`, `PositionBounds`, `Matrix4x4`, nD-transform types (`NdTransformAffine`, `NdTransformPermutation`, `NdTransformEntry`, `NdTransformMap`), `ZarrStoreWithContents`, and the `hasContentsMethod` / `hasTransform` / `hasNdTransform` / `hasSceneDimensions` / `isPermutation` guards.
 - `format-contract.ts` -- Generated cross-language format-contract constants (the TypeScript consumer half of the Python <-> TypeScript contract; single source of truth is `format-contract/contract.yaml`, regenerate via `make gen-contract`): `SCENE_FORMAT_VERSION` / `SUPPORTED_SCENE_VERSIONS`, `GSPLATS_FORMAT_VERSION` / `SUPPORTED_GSPLATS_FORMAT_VERSIONS`, the header scalars `FORMAT_TYPE_GSPLATS` / `FORMAT_TYPE_SCENE` / `LEGACY_SCENE_VERSION_ATTR` / `SOFTWARE_VERSION_ATTR` / `ND_TRANSFORM_PERMUTATION_KEY`, and every on-disk vocabulary as a const array + union pair: `NODE_TYPES`, `GEOMETRY_TYPES`, `LOADER_TYPES`, `NODE_KINDS`, `ENCODING_NAMES`, `ATTR_KEYS` (structural), `RENDER_ATTR_KEYS`, `ARRAY_NAMES`, `LOD_SELECTORS`, `BLENDING_MODES`, `TONE_MAPPINGS`, `BUILTIN_COLORMAP_NAMES`, `PHYSICAL_UNITS`, `ORDERING_METHODS`, `LINE_JOIN_STYLES`, `LINE_TYPES`, `ND_TRANSFORM_AFFINE_KEYS`, `DIMENSION_ATTR_KEYS`. `types/blending.ts`, `types/line-join.ts`, `types/lines.ts` (`LineType`), `types/lod-group.ts` (`selector`), the `ordering` attr types and `rendering-controls/types.ts` (`toneMapping`) are all re-exports / aliases of these, so a vocabulary edit is a one-file change to the YAML.
 - `lod-group.ts` -- `LODGroupMetadata` and `LODGroupSelectorMode` (the `kind === 'lod'` specialized group; loader matches the shape inline).
 - `partition-group.ts` -- `PartitionGroupMetadata` (the `kind === 'partition'` specialized group; loader matches the shape inline).
