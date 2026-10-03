@@ -17,6 +17,7 @@
 import type { BlendingMode } from '../../rendering';
 import {
   CUSTOM_COLORMAP_LABEL,
+  canTakeColormap,
   layerHasBlending,
   resolveLayerBlendingMode,
   type LayerInfo,
@@ -608,10 +609,12 @@ export class LayerControls {
       const wasColormapped = new Map(
         this.deps.state.getSelected().map((l) => [l.path, l.scalarWindow])
       );
+      // A layer without the authored LUT keeps its palette (see canTakeColormap).
       this.deps.state.applyToSelected((l) => {
-        l.colormap = cmName;
+        if (canTakeColormap(l, cmName)) l.colormap = cmName;
       });
       for (const sel of this.deps.state.getSelected()) {
+        if (!canTakeColormap(sel, cmName)) continue;
         // The display window means a different thing on each side of the
         // off↔on toggle (scalar data range vs authored-RGB identity), so
         // re-default it BEFORE applying — `applyColormap` derives the

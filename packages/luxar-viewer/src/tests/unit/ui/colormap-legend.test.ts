@@ -360,46 +360,43 @@ describe('ColormapLegend', () => {
       }
     });
 
-    it.fails(
-      'draws the gray swatch for a LUT the renderer would reject (not 768 or 1024 bytes)',
-      () => {
-        // The renderer falls back to viridis for such bytes; the legend must not
-        // paint invalid colours from a fractional stride.
-        const painted: string[] = [];
-        const fakeCtx = {
-          set fillStyle(v: string) {
-            painted.push(v);
-          },
-          fillRect: vi.fn(),
-        };
-        const getContext = vi
-          .spyOn(HTMLCanvasElement.prototype, 'getContext')
-          .mockReturnValue(fakeCtx as unknown as CanvasRenderingContext2D);
-        try {
-          const odd = new LayerStateManager();
-          odd.initFromSceneGraph({
-            path: '',
-            type: 'scene',
-            attrs: {},
-            hasSpatialIndex: false,
-            children: [
-              {
-                path: 'layer/odd',
-                type: 'gsplats',
-                attrs: { layer: true, colormap: 'custom', customLutBytes: new Uint8Array(500) },
-                hasSpatialIndex: true,
-              },
-            ],
-          });
-          const oddLegend = new ColormapLegend({ layerState: odd });
-          oddLegend.show();
+    it('draws the gray swatch for a LUT the renderer would reject (not 768 or 1024 bytes)', () => {
+      // The renderer falls back to viridis for such bytes; the legend must not
+      // paint invalid colours from a fractional stride.
+      const painted: string[] = [];
+      const fakeCtx = {
+        set fillStyle(v: string) {
+          painted.push(v);
+        },
+        fillRect: vi.fn(),
+      };
+      const getContext = vi
+        .spyOn(HTMLCanvasElement.prototype, 'getContext')
+        .mockReturnValue(fakeCtx as unknown as CanvasRenderingContext2D);
+      try {
+        const odd = new LayerStateManager();
+        odd.initFromSceneGraph({
+          path: '',
+          type: 'scene',
+          attrs: {},
+          hasSpatialIndex: false,
+          children: [
+            {
+              path: 'layer/odd',
+              type: 'gsplats',
+              attrs: { layer: true, colormap: 'custom', customLutBytes: new Uint8Array(500) },
+              hasSpatialIndex: true,
+            },
+          ],
+        });
+        const oddLegend = new ColormapLegend({ layerState: odd });
+        oddLegend.show();
 
-          expect(painted).toEqual(['#888']);
-          oddLegend.dispose();
-        } finally {
-          getContext.mockRestore();
-        }
+        expect(painted).toEqual(['#888']);
+        oddLegend.dispose();
+      } finally {
+        getContext.mockRestore();
       }
-    );
+    });
   });
 });

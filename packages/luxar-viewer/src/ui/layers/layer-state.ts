@@ -676,6 +676,25 @@ export function resolveLayerBlendingMode(
 export const CUSTOM_COLORMAP_LABEL = 'custom (authored)';
 
 /**
+ * Whether `layer` may take the palette `name`. `'custom'` names a layer's OWN
+ * authored LUT ({@link LayerInfo.customLut}): only a layer that has one can take
+ * it — and, when copying another layer's palette (`sourceLut`), only one whose LUT
+ * holds the same bytes. Stamped anywhere else it would render viridis under the
+ * name `custom` and leave the dropdown blank. Every other name (or none) applies
+ * to any layer.
+ */
+export function canTakeColormap(
+  layer: Pick<LayerInfo, 'customLut'>,
+  name: string | undefined,
+  sourceLut?: Uint8Array
+): boolean {
+  if (name !== 'custom') return true;
+  const own = layer.customLut;
+  if (!own) return false;
+  return !sourceLut || (own.length === sourceLut.length && own.every((b, i) => b === sourceLut[i]));
+}
+
+/**
  * Whether a blending-mode control reaches this layer's material. A `sound` row has
  * no material, and a `material="physical"` mesh runs three's PBR material, which
  * implements none of the house modes (`applyBlendingMode` is a no-op on it). The

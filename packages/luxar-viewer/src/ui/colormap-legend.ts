@@ -10,6 +10,7 @@
 import { UIComponent } from './overlay-widgets/ui-component';
 import type { LayerStateManager, LayerInfo } from './layers/layer-state';
 import { BUILTIN_COLORMAPS } from '../rendering/colormap-data';
+import { isValidCustomLut } from '../rendering/colormap-textures';
 
 /**
  * Construction options for {@link ColormapLegend}.
@@ -28,8 +29,8 @@ function drawColormapGradient(canvas: HTMLCanvasElement, layer: LayerInfo): void
   if (!ctx) return;
 
   const lut = layer.colormap === 'custom' ? layer.customLut : BUILTIN_COLORMAPS[layer.colormap!];
-  if (!lut) {
-    // Unknown colormap — draw gray
+  if (!lut || (layer.colormap === 'custom' && !isValidCustomLut(lut))) {
+    // Unknown colormap, or LUT bytes the renderer rejects — draw gray
     ctx.fillStyle = '#888';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     return;

@@ -20,6 +20,15 @@ import { log, Modules } from '../utils/log';
  */
 const VALID_LUT_LENGTHS = new Set<number>([768, 1024]);
 
+/**
+ * Whether `lut` is a custom colormap this module can build (256 RGB or RGBA
+ * entries). Anything else renders as viridis, so a UI drawing the palette
+ * (the colormap legend) must refuse it too.
+ */
+export function isValidCustomLut(lut: Uint8Array): boolean {
+  return VALID_LUT_LENGTHS.has(lut.length);
+}
+
 /** Cache of built-in colormap textures (name → texture) */
 const builtinCache = new Map<string, THREE.DataTexture>();
 
@@ -164,7 +173,7 @@ export function getColormapTexture(
       );
       return getBuiltinColormapTexture('viridis');
     }
-    if (!VALID_LUT_LENGTHS.has(customLut.length)) {
+    if (!isValidCustomLut(customLut)) {
       log.warning(
         Modules.RENDERER,
         `Custom colormap LUT has invalid length ${customLut.length} (expected 768 RGB or 1024 RGBA); falling back to 'viridis'.`

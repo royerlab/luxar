@@ -34,7 +34,12 @@ import { openContextMenu, type ContextMenuItem } from '../overlay-widgets/contex
 import { BLENDING_MODES } from '../../rendering/blending-state';
 import type { BlendingMode } from '../../rendering';
 import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
-import { CUSTOM_COLORMAP_LABEL, layerHasBlending, resolveLayerBlendingMode } from './layer-state';
+import {
+  CUSTOM_COLORMAP_LABEL,
+  canTakeColormap,
+  layerHasBlending,
+  resolveLayerBlendingMode,
+} from './layer-state';
 import { showToast } from '../toast';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import { LayerApplyEngine } from './layer-apply';
@@ -890,7 +895,9 @@ export class LayersPanel {
       l.blendingMode = resolveLayerBlendingMode(l.type, src.blendingMode);
       l.blendingModeExplicit = true;
       this.applyEngine.applyBlendingMode(l);
-      if (l.supportsColormap) this.setLayerColormap(l.path, src.colormap);
+      if (l.supportsColormap && canTakeColormap(l, src.colormap, src.customLut)) {
+        this.setLayerColormap(l.path, src.colormap);
+      }
     }
     this.controls.render();
   }

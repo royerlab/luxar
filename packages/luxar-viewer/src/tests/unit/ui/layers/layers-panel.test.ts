@@ -2648,7 +2648,7 @@ describe('LayersPanel — blend select drives the leaf material', () => {
         ],
       }) as unknown as SceneNode;
 
-    it.fails('"Apply appearance to all layers" from a custom-palette row leaves the others', () => {
+    it('"Apply appearance to all layers" from a custom-palette row leaves the others', () => {
       // `'custom'` names a layer's OWN authored LUT; stamped on a layer without one it
       // renders viridis under that name and blanks the dropdown again.
       const panel = new LayersPanel(container, animationController);
@@ -2660,30 +2660,27 @@ describe('LayersPanel — blend select drives the leaf material', () => {
       panel.dispose();
     });
 
-    it.fails(
-      'picking "custom (authored)" on a multi-selection leaves a layer without a LUT',
-      () => {
-        const panel = new LayersPanel(container, animationController);
-        panel.initFromScene(new THREE.Group(), twoLayers());
-        panel.show();
-        panel.layerState.select('/b', 'single');
-        panel.layerState.select('/a', 'add');
-        const colormapSelect = Array.from(
-          container.querySelectorAll<HTMLElement>('.luxar-layers-panel__control-group')
-        )
-          .find(
-            (g) => g.querySelector('.luxar-layers-panel__control-label')?.textContent === 'Colormap'
-          )!
-          .querySelector('select')!;
+    it('picking "custom (authored)" on a multi-selection leaves a layer without a LUT', () => {
+      const panel = new LayersPanel(container, animationController);
+      panel.initFromScene(new THREE.Group(), twoLayers());
+      panel.show();
+      panel.layerState.select('/b', 'single');
+      panel.layerState.select('/a', 'add');
+      const colormapSelect = Array.from(
+        container.querySelectorAll<HTMLElement>('.luxar-layers-panel__control-group')
+      )
+        .find(
+          (g) => g.querySelector('.luxar-layers-panel__control-label')?.textContent === 'Colormap'
+        )!
+        .querySelector('select')!;
 
-        colormapSelect.value = 'custom';
-        colormapSelect.dispatchEvent(new Event('change'));
+      colormapSelect.value = 'custom';
+      colormapSelect.dispatchEvent(new Event('change'));
 
-        expect(panel.layerState.getLayer('/a')!.colormap).toBe('custom');
-        expect(panel.layerState.getLayer('/b')!.colormap).toBe('viridis');
-        panel.dispose();
-      }
-    );
+      expect(panel.layerState.getLayer('/a')!.colormap).toBe('custom');
+      expect(panel.layerState.getLayer('/b')!.colormap).toBe('viridis');
+      panel.dispose();
+    });
   });
 
   it('resetAllLayers clears label colouring and filtering on the material', () => {
