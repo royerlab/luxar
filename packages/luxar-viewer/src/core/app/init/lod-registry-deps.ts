@@ -2,8 +2,11 @@
  * The LOD-group registry's dependencies, built in ONE place for both owners of
  * a render loop: the app pipeline (`pipeline.ts`) and the host-embedded layer
  * (`core/layer/luxar-layer.ts`). The two used to hand-copy this object, and the
- * layer's copy had drifted (no `getViewContext`, `getPlaybackPeriodMs` or
- * `requestTick`).
+ * layer's copy had drifted (no `getViewContext`). The layer still omits the two
+ * optional deps only a playback-driving loop has — `getPlaybackPeriodMs` (it
+ * has no dimension player: a host scrubbing `setDimensionValue` is never
+ * "playing", so lazy levels keep the settle debounce) and `requestTick` (its
+ * keep-alive calls fall back to `requestRender`, i.e. a host redraw).
  *
  * Everything that reads the LOADER is routed to the owning loader the factory
  * receives, never to `getSceneLoader('default')`, so a non-default loader's
