@@ -1723,6 +1723,25 @@ describe('PointsProgressiveLoader', () => {
       expect(loader.getMetrics().memoryUsed).toBe(measureLodBytes([result]));
     });
 
+    it.fails('getMetrics reports visibleElements from the current ladder, not stale level counters', async () => {
+      // Each level's own counter refreshes only when THAT level queries. A pass
+      // pinned to rung 0 (or a SliceCache restore) leaves the deeper levels'
+      // counters from an earlier slice, which a plain sum would add in.
+      lodA = makeSubLoader(makeLodData(100), { visibleElements: 100 });
+      lodB = makeSubLoader(makeLodData(50), { visibleElements: 50 });
+      lodC = makeSubLoader(makeLodData(25), { visibleElements: 25 });
+      loader = new PointsProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as PointsSpatialIndexLoader[],
+        3,
+        '/points'
+      );
+
+      await loader.updateView({ ...baseViewState, ladderDepth: 1 });
+
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.getMetrics().visibleElements).toBe(100); // rung 0's points only
+    });
+
     it('addEventListener / removeEventListener fan out to every inner loader', () => {
       const listener = vi.fn();
       loader.addEventListener(listener);

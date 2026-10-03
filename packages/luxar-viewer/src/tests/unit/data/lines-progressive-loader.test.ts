@@ -1731,6 +1731,25 @@ describe('LinesProgressiveLoader', () => {
       expect(loader.getMetrics().memoryUsed).toBe(measureLodBytes([result]));
     });
 
+    it.fails('getMetrics reports visibleElements from the current ladder, not stale level counters', async () => {
+      // Each level's own counter refreshes only when THAT level queries. A pass
+      // pinned to rung 0 (or a SliceCache restore) leaves the deeper levels'
+      // counters from an earlier slice, which a plain sum would add in.
+      lodA = makeSubLoader(makeLodData(20, 10), { visibleElements: 10 });
+      lodB = makeSubLoader(makeLodData(10, 5), { visibleElements: 5 });
+      lodC = makeSubLoader(makeLodData(4, 2), { visibleElements: 2 });
+      loader = new LinesProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
+        3,
+        '/lines'
+      );
+
+      await loader.updateView({ ...baseViewState, ladderDepth: 1 });
+
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.getMetrics().visibleElements).toBe(10); // rung 0's segments only
+    });
+
     it('addEventListener / removeEventListener fan out to every inner loader', () => {
       const listener = vi.fn();
       loader.addEventListener(listener);
