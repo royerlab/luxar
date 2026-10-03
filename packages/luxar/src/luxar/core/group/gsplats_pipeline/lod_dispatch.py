@@ -261,8 +261,22 @@ def add_gsplats_multi_lod_impl(
             # (NaN/±Inf) in ``level_stats`` would land in .zattrs as a bare
             # NaN/Infinity token the viewer's strict JSON.parse rejects. Skip
             # any key whose value is not strictly JSON-safe (do not fabricate).
-            src_stats = result.substitutive_levels[0].stats
-            for key in ("reference_energy", "quality", "energy_kind"):
+            # ``footprint_dims`` is stored in input-data column order; remap it
+            # to scene-axis order (as the per-child path above does) before
+            # copying, or the viewer checks the footprint against the wrong
+            # axes. The scalar ``median_footprint`` passes through unchanged.
+            src_stats = _remap_footprint_stats(
+                result.substitutive_levels[0].stats,
+                dim_order,
+                scene._dimensions.names,
+            )
+            for key in (
+                "reference_energy",
+                "quality",
+                "energy_kind",
+                "median_footprint",
+                "footprint_dims",
+            ):
                 if key in src_stats:
                     ok, safe = json_safe_value(src_stats[key])
                     if ok:
