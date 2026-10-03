@@ -274,7 +274,7 @@ describe.each(GEOMETRIES)('$name progressive loader — shared ladder engine', (
     expect(signalPriority(signal)?.value).toBe('speculative');
   });
 
-  it.fails('a rung landing after dispose() is dropped, not appended to the dead ladder', async () => {
+  it('a rung landing after dispose() is dropped, not appended to the dead ladder', async () => {
     const rungs = Array.from({ length: 2 }, (_, i) => rung(make, i + 1));
     let land!: () => void;
     rungs[0].updateViewWithResidency.mockImplementationOnce(async () => {

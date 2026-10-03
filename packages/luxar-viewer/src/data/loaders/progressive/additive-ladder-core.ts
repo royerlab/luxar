@@ -402,10 +402,11 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
     const budgetDeadline =
       this.frameBudgetMs !== null ? performance.now() + this.frameBudgetMs : null;
     // A shadow (prefetch) pass only warms the SliceCache, and its caller drops
-    // the return value: hand back a cheap empty result, not the O(N) concat.
+    // the return value: hand back a cheap empty result, not the O(N) concat —
+    // as does a pass that outlived dispose() (no memo on a dead ladder).
     const isPrefetch = viewState.prefetch === true;
     const finish = (): TData =>
-      isPrefetch ? this.geometry.empty() : this.concatenateMemoized(session);
+      isPrefetch || this.disposed ? this.geometry.empty() : this.concatenateMemoized(session);
 
     if (await this.syncView(viewState, signal, isPrefetch)) return finish();
     if (this.initialLoadDone && this.frameBudgetMs === null) this.warmRemainingMetadata();
@@ -608,6 +609,8 @@ export class AdditiveLadderCore<TData extends object, TRung extends LadderRung<T
     const t0 = performance.now();
     const { data, allResident } = await (pinned?.[level - pass.startLevel]?.load ??
       this.loadRung(level, pass.viewState, pass.session, pass.signal));
+    // A dispose() during the load emptied the ladder: the rung is dropped.
+    if (this.disposed) return true;
     const elapsed = performance.now() - t0;
     this.loadedLODs.push(data);
     this.payloadLevelStarts.push(level);
