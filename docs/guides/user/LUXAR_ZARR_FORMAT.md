@@ -520,7 +520,7 @@ default (the finest level the `.centers` accessor returns).
   consistent robust extent. Decimation, culling, and filtering must recompute or
   remove the derived bound. Producer-side authoring policy is tracked in #1655.
 - Children themselves are standard nodes — they retain their own
-  `type` (`gsplats` / `points` / `lines` / `group`, possibly with their
+  `type` (`gsplats` / `points` / `lines` / `mesh` / `group`, possibly with their
   own `kind` attr) and full attr set.
 
 **Builder API (Python):**
