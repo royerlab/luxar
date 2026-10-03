@@ -590,6 +590,11 @@ export class PassScheduler {
    * it hands the lock over as it unwinds. A view pass holding it (or one queued
    * behind the drain) keeps it: the retry is reported deferred.
    *
+   * The pending check is made HERE, once: a view arriving after the
+   * pre-emption queues behind the retry (one loader's retry pass) instead of
+   * taking the lock from it. Yielding would turn a retry already accepted into
+   * a deferred one the user has to repeat, for a wait the size of one pass.
+   *
    * @returns Whether the caller now holds the lock (release with {@link releaseRetry}).
    */
   acquireForRetry(): Promise<boolean> {

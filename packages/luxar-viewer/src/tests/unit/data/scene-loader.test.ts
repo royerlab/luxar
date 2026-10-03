@@ -955,7 +955,7 @@ describe('SceneLoader', () => {
 
       releaseGate();
       await p1;
-      // queueNext re-enters with the parked resync at the next frame (rAF in
+      // The scheduler re-enters with the parked resync at the next frame (rAF in
       // jsdom), so poll rather than assume a timer granularity.
       await vi.waitFor(() => {
         expect(target.updateView).toHaveBeenCalledTimes(2); // full pass + targeted resync
@@ -1417,7 +1417,7 @@ describe('SceneLoader', () => {
       // disposal path detaches the loader before disposing it, so the aggregate
       // cannot observe a disposed loader anyway. This pins that a disposed
       // loader is self-consistently idle regardless — a phase that bails before
-      // `finalReleaseLock` runs leaves the lock set, and nothing later clears
+      // `releaseRefinementLock` runs leaves the lock set, and nothing later clears
       // it.
       flags.passes.locked = true;
       flags.passes.refining = true;
@@ -1480,7 +1480,7 @@ describe('SceneLoader', () => {
   // inside `loadScene`, holding the serialization lock. Its `.catch` is the
   // belt-and-braces double-fault path (each refinement loop releases the lock
   // in its own `finally`), and it must be symmetric with its two siblings —
-  // `update-view/queue-next.ts` and `kickRefinementIfIdle` — because the
+  // `PassScheduler`'s after-pass `next()` and `kickRefinementIfIdle` — because the
   // pending slot is routinely occupied in exactly this window: the init
   // pipeline's first `updateAllNDNodes` → `updateView` lands while the kick
   // holds the lock and parks its state. A slot nothing drains stranded the
@@ -1530,7 +1530,7 @@ describe('SceneLoader', () => {
       expect(updateViewSpy).toHaveBeenCalledTimes(2);
       expect(updateViewSpy.mock.calls[1][0]).toEqual(navState);
       // The parked waiter settles — here through the re-entered pass's own
-      // queueNext (the handler only resolves waiters itself when nothing was
+      // end-of-pass (the handler only resolves waiters itself when nothing was
       // queued, so it can't release the pacing gate ahead of the commit the
       // caller asked for).
       await parked!;
@@ -2116,7 +2116,7 @@ describe('SceneLoader', () => {
         // baseline (forgetPath) must be left intact.
         releaseFirst();
         await p1;
-        // Let queueNext re-enter with the winning state and settle; the
+        // Let the scheduler re-enter with the winning state and settle; the
         // queued promise resolves once that winning pass commits.
         await new Promise((resolve) => setTimeout(resolve, 0));
         await p2;
@@ -2235,7 +2235,7 @@ describe('SceneLoader', () => {
       expect(queuedResolved).toBe(false);
 
       releaseFirst();
-      // queueNext re-enters with the winning state (rAF or its timeout
+      // The scheduler re-enters with the winning state (rAF or its timeout
       // backstop), which completes and settles the waiter — awaiting the
       // queued promise itself is the deterministic wait.
       await Promise.all([p1, p2]);
@@ -2438,12 +2438,13 @@ describe('SceneLoader', () => {
 
     it('a view-state queued during the FINAL refinement pass is drained and its waiter resolves', async () => {
       // Regression (deep-check round 3, HIGH — found by 8 independent
-      // angles): finalReleaseLock was a bare `_updateInProgress = false`, so
+      // angles): the final lock release was a bare `_updateInProgress = false`, so
       // a state queued DURING the last refinement pass (after the loop's
       // final loop-top pending check) was stranded, its parked pacing-gate
       // waiter never resolved, and playback froze permanently. The fix
-      // makes finalReleaseLock mirror queueNext's contract (drain pending
-      // into a fresh pass, else settle waiters).
+      // makes it (now `PassScheduler.releaseRefinementLock`) mirror the
+      // after-pass contract (drain pending into a fresh pass, else settle
+      // waiters).
       let queuedResolved = false;
       let raceFired = false;
       const linesLoader = {
@@ -2475,14 +2476,14 @@ describe('SceneLoader', () => {
         linesLoader
       );
 
-      // Hold the lock exactly as queueNext's refinement branch does, then
+      // Hold the lock exactly as the after-pass refinement branch does, then
       // run the real refinement orchestrator to completion.
       (sceneLoader as unknown as { passes: PassScheduler }).passes.locked = true;
       await (
         sceneLoader as unknown as { scheduleProgressiveRefinement(): Promise<void> }
       ).scheduleProgressiveRefinement();
 
-      // Post-fix: finalReleaseLock drains the stranded state; the re-entered
+      // Post-fix: releaseRefinementLock drains the stranded state; the re-entered
       // pass completes and settles the waiter. Pre-fix: this never resolves.
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(queuedResolved).toBe(true);
@@ -3580,7 +3581,7 @@ describe('SceneLoader', () => {
     });
 
     it('treats a live refinement as busy even after the lock has opened', async () => {
-      // `finalReleaseLock` clears `_updateInProgress` while `_refining` is still
+      // `releaseRefinementLock` clears `passes.locked` while `passes.refining` is still
       // set (the orchestrator's `finally` clears that one level up, when the
       // phase's await unwinds). A microtask queued at exactly that instant — a
       // deferred lod_group `ensureLoaded` continuation is one — must not read
@@ -3663,7 +3664,7 @@ describe('SceneLoader', () => {
       // A concurrent updateView() parks its state via setPending while the kick
       // holds the lock. If the orchestrator glue rejects OUTSIDE the loops'
       // finally, the catch must release the lock AND drain — otherwise the
-      // user's latest slice is stranded (queue-next.ts drains; this must too).
+      // user's latest slice is stranded (the after-pass path drains; this must too).
       const internals = sceneLoader as unknown as KickInternals;
       internals.gsplatLoaders.set('/g/part_0', { hasMoreLODs: true });
       const rejecting = vi.fn(async () => {

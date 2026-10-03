@@ -3542,7 +3542,7 @@ describe('LODGroupRegistry — lazy children', () => {
     reg.evaluatePerFrame();
     expect(ensureLoaded).not.toHaveBeenCalled();
 
-    // Advance past FAILED_RETRY_MS (2 s ≈ 120 frames at 60 Hz); the cooldown
+    // Advance past config.lod.failedRetryMs (2 s ≈ 120 frames at 60 Hz); the cooldown
     // clears and the next selection retries the load exactly once.
     for (let i = 0; i < 121; i++) reg.evaluatePerFrame();
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
@@ -4661,7 +4661,7 @@ describe('LODGroupRegistry — group-typed LOD child freshness', () => {
 // ────────────────────────────────────────────────────────────────────────
 // Settle-gated reload of a stale fine level (B2 decoupling). A lazy fine level
 // that has left the per-slice sweep is reloaded by the REGISTRY — but only once
-// the scrub has settled (the view version held steady for FINE_RELOAD_SETTLE_MS
+// the scrub has settled (the view version held steady for config.lod.fineReloadSettleMs
 // frames), so active scrubbing shows only the cheap coarse level.
 // ────────────────────────────────────────────────────────────────────────
 
@@ -4703,7 +4703,7 @@ describe('LODGroupRegistry — settle-gated fine reload', () => {
     // A few frames: not yet settled → no reload.
     for (let i = 0; i < 4; i++) reg.evaluatePerFrame();
     expect(ensureLoaded).not.toHaveBeenCalled();
-    // Hold steady long enough to settle (FINE_RELOAD_SETTLE_MS = 130).
+    // Hold steady long enough to settle (config.lod.fineReloadSettleMs = 130).
     for (let i = 0; i < 10; i++) reg.evaluatePerFrame();
     // Fired once; the loading guard prevents re-firing every subsequent frame.
     expect(ensureLoaded).toHaveBeenCalledTimes(1);
@@ -5027,7 +5027,7 @@ describe('LODGroupRegistry — playback aspiration', () => {
 
   it('pausing while the held level reloads does not flash the coarse level', () => {
     // The reload was measured fast (so playback aspires to it) but this one
-    // takes 400 ms: the stale hold outlives STALE_HOLD_MS under the playback
+    // takes 400 ms: the stale hold outlives config.lod.staleHoldMs under the playback
     // exemption. Pausing ends the exemption; the hold's budget must count from
     // there, not from when the hold started, or the first paused frame drops
     // to the 10-splat coarse level.
@@ -7108,7 +7108,7 @@ describe('LODGroupRegistry — stale-hold over a far coarser fallback', () => {
     reg.evaluatePerFrame();
     expect(fine.object.visible).toBe(true); // holding
 
-    state.clock += 260; // past STALE_HOLD_MS
+    state.clock += 260; // past config.lod.staleHoldMs
     reg.evaluatePerFrame();
     expect(coarse.object.visible).toBe(true);
     expect(fine.object.visible).toBe(false);
