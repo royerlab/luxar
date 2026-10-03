@@ -558,6 +558,9 @@ export class SoundNode {
     for (const v of this.voices) {
       if (v.startTimer) clearTimeout(v.startTimer);
       if (v.stopTimer) clearTimeout(v.stopTimer);
+      // Neither `onended` (Audio.stop() detaches it) nor the fade's stop timer
+      // will run now: close the started → ended pair the embedder saw.
+      this.reportEnded(v);
       try {
         if (v.audio.isPlaying) v.audio.stop();
       } catch {

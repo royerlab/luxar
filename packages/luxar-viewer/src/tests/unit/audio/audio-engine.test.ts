@@ -161,7 +161,7 @@ describe('AudioEngine — graph and lifecycle', () => {
     expect(h.engine.getState().playing).toEqual([]);
   });
 
-  it.fails('reports sound-ended for a playing or fading sound when the scene detaches', async () => {
+  it('reports sound-ended for a playing or fading sound when the scene detaches', async () => {
     // Every sound-started an embedder saw gets its sound-ended, even when a
     // dataset switch (not the clip or a fade) is what stops it.
     const h = makeHarness();
