@@ -2622,6 +2622,70 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     panel.dispose();
   });
 
+  describe('an authored palette never spreads to a layer without the same LUT', () => {
+    const lut = new Uint8Array(768).fill(40);
+    const twoLayers = (): SceneNode =>
+      ({
+        name: 'root',
+        path: '/',
+        type: 'group',
+        attrs: {},
+        children: [
+          {
+            name: 'a',
+            path: '/a',
+            type: 'gsplats',
+            attrs: { layer: true, colormap: 'custom', customLutBytes: lut },
+            children: [],
+          },
+          {
+            name: 'b',
+            path: '/b',
+            type: 'gsplats',
+            attrs: { layer: true, colormap: 'viridis' },
+            children: [],
+          },
+        ],
+      }) as unknown as SceneNode;
+
+    it.fails('"Apply appearance to all layers" from a custom-palette row leaves the others', () => {
+      // `'custom'` names a layer's OWN authored LUT; stamped on a layer without one it
+      // renders viridis under that name and blanks the dropdown again.
+      const panel = new LayersPanel(container, animationController);
+      panel.initFromScene(new THREE.Group(), twoLayers());
+
+      runRowMenuItem(panel, '/a', 'Apply appearance to all layers');
+
+      expect(panel.layerState.getLayer('/b')!.colormap).toBe('viridis');
+      panel.dispose();
+    });
+
+    it.fails(
+      'picking "custom (authored)" on a multi-selection leaves a layer without a LUT',
+      () => {
+        const panel = new LayersPanel(container, animationController);
+        panel.initFromScene(new THREE.Group(), twoLayers());
+        panel.show();
+        panel.layerState.select('/b', 'single');
+        panel.layerState.select('/a', 'add');
+        const colormapSelect = Array.from(
+          container.querySelectorAll<HTMLElement>('.luxar-layers-panel__control-group')
+        )
+          .find(
+            (g) => g.querySelector('.luxar-layers-panel__control-label')?.textContent === 'Colormap'
+          )!
+          .querySelector('select')!;
+
+        colormapSelect.value = 'custom';
+        colormapSelect.dispatchEvent(new Event('change'));
+
+        expect(panel.layerState.getLayer('/a')!.colormap).toBe('custom');
+        expect(panel.layerState.getLayer('/b')!.colormap).toBe('viridis');
+        panel.dispose();
+      }
+    );
+  });
+
   it('resetAllLayers clears label colouring and filtering on the material', () => {
     const material = makeColormapRoutingStub();
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material as unknown as THREE.Material);
