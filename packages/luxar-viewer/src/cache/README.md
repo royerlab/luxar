@@ -997,7 +997,13 @@ await window.__luxarDebug.cache.clearAll();
   exactly what plain reads would have. Adopts the `chunk_packs` index only for
   the root `content_hash` it was built for (`adoptChunkPacks`, data layer), and
   reads plainly when a pack is missing, fails its SHA-256, or lacks the key. Unadopted,
-  it is the inner source.
+  it is the inner source. Each member is handed out once; unserved members (a
+  rung the view never loads) are held least-recently-used within
+  `maxHeldBytes` (4 MB), and a member read again after the caches evicted it,
+  or one of a pack let go, refetches the pack (one request, as a plain read).
+  Each caller races its own abort signal against the shared pack fetch, a
+  joining caller raises that fetch's class, and the pack's bytes over the wire
+  are reported once.
 - `chunk-source/zip-chunk-source.ts` — the zipped-store source: members read out
   of one archive, identity from a probe on the archive, and archive-level faults
   reported as `fatal` so the store rethrows instead of rendering an empty scene.

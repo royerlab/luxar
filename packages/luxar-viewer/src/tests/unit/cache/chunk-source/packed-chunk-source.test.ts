@@ -192,7 +192,7 @@ describe('PackedChunkSource', () => {
     expect(requests.length).toBeLessThanOrEqual(2);
   });
 
-  it.fails('serves an evicted member from the pack even when other members were never read', async () => {
+  it('serves an evicted member from the pack even when other members were never read', async () => {
     // An unloaded rung keeps a pack from ever draining: its re-read after a
     // cache eviction must still come from the pack, not a plain request.
     const { source, requests } = inner();
@@ -205,7 +205,7 @@ describe('PackedChunkSource', () => {
     expect(requests.length).toBeLessThanOrEqual(2);
   });
 
-  it.fails('holds unserved members within a byte cap, refetching a pack it let go', async () => {
+  it('holds unserved members within a byte cap, refetching a pack it let go', async () => {
     const pack1 = packFile(
       { 'additive_0/amplitudes/c/0': [0, 3], 'additive_1/a/c/0': [3, 1] },
       [6, 6, 6, 8]
@@ -239,7 +239,7 @@ describe('PackedChunkSource', () => {
     expect(requests).toEqual(['chunk_packs/0.pack', 'chunk_packs/1.pack', 'chunk_packs/0.pack']);
   });
 
-  it.fails('counts the pack’s bytes over the wire once, not per member', async () => {
+  it('counts the pack’s bytes over the wire once, not per member', async () => {
     const { source } = inner();
     const packed = new PackedChunkSource(source);
     packed.usePacks(index(), HASH);
@@ -254,7 +254,7 @@ describe('PackedChunkSource', () => {
     expect(wire).toBe(PACK_BYTES.length);
   });
 
-  it.fails('a caller that aborts leaves at once; the shared pack fetch serves the others', async () => {
+  it('a caller that aborts leaves at once; the shared pack fetch serves the others', async () => {
     let land!: () => void;
     const landed = new Promise<void>((resolve) => (land = resolve));
     const { source } = inner();
