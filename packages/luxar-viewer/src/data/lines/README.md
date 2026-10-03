@@ -58,14 +58,13 @@ worker dispatcher kernel in-process. `projection.ts` here exports only
   `data/scene-loader/process/data-processor-lines.ts` and
   `rendering/picking/picking-system/element-id-map.ts`). Gated because nothing
   else reads them and they otherwise ride along in every SliceCache snapshot.
-  A ladder never publishes them: `createProgressiveLinesLoader` clears both
-  label flags on each synthesized `additive_<i>` node, and
-  `concatenateLinesData` strips the field defensively — a sub-LOD's ranges
-  describe that level's own on-disk space, not the parent's per-vertex union CSR
-  spanning all the levels (#1422); offsetting each level's ranges by the preceding
-  levels' on-disk vertex counts, which is that union's index space, is what #1439
-  did for the Points ladder — lines has no counterpart yet, so a laddered lines
-  node still hovers at the raw segment slot.
+  On a ladder a sub-LOD's ranges describe that level's own on-disk space, not
+  the parent's per-vertex union CSR spanning all the levels (#1422), so
+  `concatenateLinesData` shifts each level's ranges by the preceding levels'
+  on-disk vertex counts (`levelOffsets`, from `createProgressiveLinesLoader`) —
+  the Points composition of #1439 at vertex granularity — bounding each to its
+  own level's rows. Without a parent CSR (or on any inconsistency) the levels'
+  label flags stay off and no ranges are published.
 - **Progressive concatenation remaps segment indices.** When
   `LinesProgressiveLoader` concatenates per-LOD `LoadedLinesData`, each
   subgroup's `segments` array indexes its _own local_ vertex buffer, so

@@ -621,6 +621,40 @@ describe('createProgressiveLinesLoader', () => {
     expect(lodNode.attrs.has_image_labels).toBe(false);
   });
 });
+describe('createProgressiveLinesLoader — ladder picking layout', () => {
+  afterEach(() => {
+    zarrOpenMock.mockImplementation(async () => ({ attrs: { foo: 'bar' } }));
+  });
+
+  it('turns the level label flags on and passes per-VERTEX levelOffsets when the parent has a CSR', async () => {
+    zarrOpenMock
+      .mockImplementationOnce((async () => ({ attrs: { n_vertices: 20 } })) as never)
+      .mockImplementationOnce((async () => ({ attrs: { n_vertices: 10 } })) as never);
+    const node = makeNode('/l', 'lines');
+    node.attrs = { ...node.attrs, has_labels: true, n_vertices: 30 };
+
+    await createProgressiveLinesLoader(node, 2, {} as SceneNode['attrs'], makeDeps());
+
+    for (const args of linesCtorArgs) {
+      expect((args[1] as SceneNode).attrs.has_labels).toBe(true);
+    }
+    expect(linesProgressiveCtorArgs[0][5]).toEqual([0, 20, 30]);
+  });
+
+  it('publishes no offsets (flags off) when the levels disagree with the parent total', async () => {
+    zarrOpenMock.mockImplementation((async () => ({ attrs: { n_vertices: 20 } })) as never);
+    const node = makeNode('/l', 'lines');
+    node.attrs = { ...node.attrs, has_labels: true, n_vertices: 99 };
+
+    await createProgressiveLinesLoader(node, 2, {} as SceneNode['attrs'], makeDeps());
+
+    for (const args of linesCtorArgs) {
+      expect((args[1] as SceneNode).attrs.has_labels).toBe(false);
+    }
+    expect(linesProgressiveCtorArgs[0][5]).toBeNull();
+  });
+});
+
 // The energy-table (quality stamps) plumbing: each additive_<i> subgroup's
 // `lod_stats.energy_fraction_cum` is collected into a table and passed as the
 // progressive loaders' 4th constructor arg (→ committedEnergyFraction, the
