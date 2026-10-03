@@ -231,10 +231,10 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   }
 
   /**
-   * Public method to handle key up events (for external input management)
+   * Public method to handle key up events (for external input management).
+   * Not gated on `enabled`: a release must always land.
    */
   public handleKeyUp(event: KeyboardEvent): void {
-    if (!this.enabled) return;
     this.onKeyUp(event);
   }
 

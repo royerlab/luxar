@@ -180,7 +180,7 @@ describe('LuxarFlyControls', () => {
       expect(internals.activeMouseAction).toBe('none');
     });
 
-    it.fails('releases a key and a drag held when the controls are disabled', () => {
+    it('releases a key and a drag held when the controls are disabled', () => {
       controls.handleKeyDown(new KeyboardEvent('keydown', { key: 'w' }));
       domElement.dispatchEvent(new MouseEvent('mousedown', { button: 0 }));
       controls.enabled = false;

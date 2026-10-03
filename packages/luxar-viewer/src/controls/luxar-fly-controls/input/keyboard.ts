@@ -153,11 +153,10 @@ export function handleKeyDown(ctx: FlyKeyboardCtx, event: KeyboardEvent): void {
  * Clear the movement/look state a key was driving on keyup. W/S clear both
  * their forward/back and up/down components (covering an Alt release mid-hold),
  * A/D and Q/E clear their axes, Shift releases speed boost, and arrow keys
- * zero the matching look axis. Dispatches `change`; no-op while disabled.
+ * zero the matching look axis. Dispatches `change`. Runs even while disabled,
+ * so a key held when the controls were disabled is not left latched.
  */
 export function handleKeyUp(ctx: FlyKeyboardCtx, event: KeyboardEvent): void {
-  if (!ctx.enabled) return;
-
   // WASD movement release
   switch (event.key.toLowerCase()) {
     case 'w':
