@@ -109,7 +109,7 @@ rendering/
 ├── shaders/                            # Barrel only — re-exports GLSL constants from materials/<kind>/shader-glsl.ts
 │   └── index.ts                        # Stable re-export spelling; no importer today (knip-ignored)
 │
-├── index.ts                            # Public-API barrel
+├── index.ts                            # Internal barrel (materialManager, BlendingMode, PostProcessingManager); the embedder API is src/index.ts
 └── README.md                           # This documentation
 ```
 
