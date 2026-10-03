@@ -188,7 +188,7 @@ describe('AudioEngine — decode order', () => {
 });
 
 describe('AudioEngine — a re-attach during a pending decode', () => {
-  it.fails('stops the superseded decode loop even though the new scene reuses its paths', async () => {
+  it('stops the superseded decode loop even though the new scene reuses its paths', async () => {
     // detachScene + attachScene of the same store builds NEW nodes under the
     // SAME paths: a path check alone let the old loop run on, decoding every
     // remaining clip a second time alongside the new loop.
