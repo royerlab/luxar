@@ -45,6 +45,7 @@ import { log, Modules } from '../../../utils/log';
 import { failedLoadsVersion } from '../../../utils/failed-loads-version';
 import { SlicePrefetcher } from '../../../data/scene-loader/prefetch/slice-prefetcher';
 import { disposeWorkerPool, getWorkerPool } from '../../../workers/worker-pool';
+import { createCustomColormapTexture } from '../../../rendering/colormap-textures';
 import {
   MAX_ABANDONED_RUNG_RETRY_ROUNDS,
   MAX_CONSECUTIVE_REFINEMENT_FAILURES,
@@ -245,6 +246,25 @@ describe('SceneLoader', () => {
         await other.dispose();
         disposeWorkerPool();
       }
+    });
+
+    it.fails('keeps the custom colormap LUTs another live loader may be drawing with', async () => {
+      const url = 'http://localhost:8000/test.zarr';
+      const other = new SceneLoader({}, 'host-b');
+      const disposing = new SceneLoader({}, 'host-a');
+      await other.loadScene(url);
+      await disposing.loadScene(url);
+      const lut = new Uint8Array(1024).map((_, i) => (i * 7) % 256);
+      const texture = createCustomColormapTexture(lut);
+      const disposeTexture = vi.spyOn(texture, 'dispose');
+
+      await disposing.dispose();
+      expect(disposeTexture).not.toHaveBeenCalled();
+      expect(createCustomColormapTexture(lut)).toBe(texture);
+
+      // The last loader out releases the dataset-scoped cache.
+      await other.dispose();
+      expect(disposeTexture).toHaveBeenCalled();
     });
   });
 
