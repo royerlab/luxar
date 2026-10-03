@@ -53,8 +53,8 @@ layout( std140 ) uniform object {
 	float nodeUniform4;
 	float nodeUniform6;
 	float nodeUniform7;
-	float nodeUniform8;
-	mat4 nodeUniform11;
+	mat4 nodeUniform10;
+	float nodeUniform12;
 	float nodeUniform15;
 	float nodeUniform16;
 	float nodeUniform17;
@@ -78,12 +78,12 @@ layout( location = 2 ) in vec3 position;
 
 // vars
 vec2 nodeVar0;
-float nodeVar13;
+float nodeVar12;
 mat4 modelViewMatrix;
+vec4 nodeVar13;
 vec4 nodeVar14;
-vec4 nodeVar15;
-int nodeVar17;
-vec2 nodeVar18;
+int nodeVar20;
+vec2 nodeVar21;
 
 // codes
 
@@ -103,28 +103,28 @@ void main() {
 
 	if ( ( ( color.w < 1e30 ) && ( color.w > -1e30 ) ) ) {
 
-		nodeVar13 = min( max( color.w, 0.0 ), 1.0 );
+		nodeVar12 = min( max( color.w, 0.0 ), 1.0 );
 
 	} else {
 
-		nodeVar13 = 1.0;
+		nodeVar12 = 1.0;
 
 	}
 
-	nodeVarying0 = nodeVar13;
+	nodeVarying0 = nodeVar12;
 	nodeVarying1 = uv;
-	modelViewMatrix = ( cameraViewMatrix * nodeUniform11 );
-	nodeVar14 = ( modelViewMatrix * vec4( position, 1.0 ) );
-	nodeVarying2 = nodeVar14.z;
-	nodeVar15 = ( cameraProjectionMatrix * nodeVar14 );
-	v_clipSpace = nodeVar15;
+	modelViewMatrix = ( cameraViewMatrix * nodeUniform10 );
+	nodeVar13 = ( modelViewMatrix * vec4( position, 1.0 ) );
+	nodeVarying2 = nodeVar13.z;
+	nodeVar14 = ( cameraProjectionMatrix * nodeVar13 );
+	v_clipSpace = nodeVar14;
 	nodeVarying4 = nodeUniform16;
-	nodeVar17 = ( int( uint( gl_VertexID ) ) / 65536 );
-	nodeVar18 = vec2( float( ( int( uint( gl_VertexID ) ) - ( nodeVar17 * 65536 ) ) ), float( nodeVar17 ) );
-	nodeVarying5 = nodeVar18;
+	nodeVar20 = ( int( uint( gl_VertexID ) ) / 65536 );
+	nodeVar21 = vec2( float( ( int( uint( gl_VertexID ) ) - ( nodeVar20 * 65536 ) ) ), float( nodeVar20 ) );
+	nodeVarying5 = nodeVar21;
 
 	// result
-	gl_Position = nodeVar15;
+	gl_Position = nodeVar14;
 
 	gl_PointSize = 1.0;
 

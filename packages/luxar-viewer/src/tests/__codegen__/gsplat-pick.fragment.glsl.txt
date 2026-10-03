@@ -42,19 +42,19 @@ layout( std140 ) uniform object {
 	vec2 nodeUniform0;
 	float nodeUniform1;
 	float nodeUniform2;
-	float nodeUniform3;
-	float nodeUniform5;
-	mat3 nodeUniform7;
-	uint nodeUniform8;
-	mat3 nodeUniform9;
-	uint nodeUniform10;
-	mat3 nodeUniform11;
-	uint nodeUniform12;
-	mat3 nodeUniform13;
-	uint nodeUniform14;
-	mat4 nodeUniform16;
-	float nodeUniform18;
-	vec2 nodeUniform19;
+	float nodeUniform4;
+	mat3 nodeUniform6;
+	uint nodeUniform7;
+	mat3 nodeUniform8;
+	uint nodeUniform9;
+	mat3 nodeUniform10;
+	uint nodeUniform11;
+	mat3 nodeUniform12;
+	uint nodeUniform13;
+	mat4 nodeUniform15;
+	float nodeUniform17;
+	vec2 nodeUniform18;
+	float nodeUniform19;
 	float nodeUniform20;
 	float nodeUniform21;
 	float nodeUniform22;
@@ -71,9 +71,9 @@ layout( std140 ) uniform object {
 	float nodeUniform33;
 	float nodeUniform34;
 	float nodeUniform35;
-	float nodeUniform38;
 	float nodeUniform39;
 	float nodeUniform40;
+	float nodeUniform41;
 };
 
 layout( std140 ) uniform render {
@@ -103,12 +103,15 @@ float nodeVar5;
 float gsplatPickMahalSq;
 float gsplatPickIntensity;
 float gsplatPickBrightness;
-float nodeVar6;
-vec4 nodeVar123;
+vec4 nodeVar122;
 vec3 positionView;
+float nodeVar123;
+float nodeVar124;
+float nodeVar125;
+int nodeVar126;
 vec4 DiffuseColor;
 vec4 Output;
-vec4 nodeVar126;
+vec4 nodeVar129;
 
 // codes
 
@@ -128,22 +131,45 @@ void main() {
 	gsplatPickIntensity = ( ( ( nodeVarying0 * nodeUniform1 ) * max( ( exp( ( gsplatPickMahalSq * -0.5 ) ) - nodeUniform2 ), 0.0 ) ) * nodeVarying1 );
 	gsplatPickBrightness = 0.0;
 	gsplatPickBrightness = clamp( gsplatPickIntensity, 0.0, 1.0 );
+	nodeVar122 = ( cameraProjectionMatrixInverse * v_clipSpace );
+	positionView = ( nodeVar122.xyz / vec3( nodeVar122.w ) );
+	nodeVar123 = positionView.z;
 
-	if ( ( int( nodeUniform3 ) == 1 ) ) {
+	if ( ( int( nodeUniform35 ) == 1 ) ) {
 
-		nodeVar123 = ( cameraProjectionMatrixInverse * v_clipSpace );
-		positionView = ( nodeVar123.xyz / vec3( nodeVar123.w ) );
-		nodeVar6 = ( ( positionView.z + cameraNear ) / ( cameraNear - cameraFar ) );
+
+		if ( ( cameraProjectionMatrix[ 3 ].w > 0.5 ) ) {
+
+			nodeVar126 = 1;
+
+		} else {
+
+			nodeVar126 = 0;
+
+		}
+
+
+		if ( ( nodeVar126 == 1 ) ) {
+
+			nodeVar125 = ( ( nodeVar123 + cameraNear ) / ( cameraNear - cameraFar ) );
+
+		} else {
+
+			nodeVar125 = ( ( ( cameraNear + nodeVar123 ) * cameraFar ) / ( ( cameraFar - cameraNear ) * nodeVar123 ) );
+
+		}
+
+		nodeVar124 = nodeVar125;
 
 	} else {
 
-		nodeVar6 = ( 1.0 / ( 1.0 + gsplatPickIntensity ) );
+		nodeVar124 = ( 1.0 / ( 1.0 + gsplatPickIntensity ) );
 
 	}
 
-	gl_FragDepth = nodeVar6;
+	gl_FragDepth = nodeVar124;
 
-	if ( ( gsplatPickMahalSq > nodeUniform38 ) ) {
+	if ( ( gsplatPickMahalSq > nodeUniform39 ) ) {
 
 		discard;
 
@@ -159,11 +185,11 @@ void main() {
 	}
 
 	DiffuseColor = vec4( nodeVarying5, nodeVarying6.x, gsplatPickBrightness, nodeVarying6.y );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform40 );
-	nodeVar126 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar126;
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform41 );
+	nodeVar129 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar129;
 
 	// result
-	fragColor = nodeVar126;
+	fragColor = nodeVar129;
 
 }
