@@ -230,7 +230,7 @@ describe('two depth-sort coordinators on one page', () => {
     expect(terminated).toBe(1);
   });
 
-  it.fails("the LAST host's late commit after dispose spawns no orphan worker", async () => {
+  it("the LAST host's late commit after dispose spawns no orphan worker", async () => {
     const mod = await loadModule();
     const host = new mod.DepthSortCoordinator();
     host.configure({ getCamera: () => cameraLookingFrom(0, 20), requestRender: vi.fn() });

@@ -253,8 +253,9 @@ export class DepthSortCoordinator {
   private readonly state: CoordinatorState = createCoordinatorState();
   /**
    * Set by {@link dispose}, cleared by {@link configure} / {@link warmUp}: a
-   * torn-down host's late commit must not re-attach it to the shared worker
-   * (the last detach is what terminates the worker).
+   * torn-down host's late commit is ignored ({@link noteCommit}), so it can
+   * neither re-attach the host to the shared worker nor spawn a new one (the
+   * last detach is what terminates the worker).
    */
   private released = false;
 
@@ -338,6 +339,13 @@ export class DepthSortCoordinator {
     triangleSource?: Uint32Array
   ): void {
     const c = this.state;
+    if (this.released) {
+      // A torn-down host's late commit: nothing will sort it, and tracking it
+      // would pin the mesh and spawn a worker no coordinator is left to
+      // terminate. Draw its whole population.
+      releaseHeldDraw(c, mesh);
+      return;
+    }
     this.adopt(mesh);
     const nodeId = mesh.uuid;
     let state = c.nodeStates.get(nodeId);
@@ -656,9 +664,9 @@ export class DepthSortCoordinator {
    * one first, so its state never lives in two coordinators.
    */
   private adopt(mesh: THREE.Mesh): void {
-    // Only a live, sorting host holds the shared worker: a disabled one never
-    // reaches it, and a disposed one is detached until it is configured again.
-    if (this.state.depthSortEnabled && !this.released) attachCoordinator(this.state);
+    // Only a sorting host holds the shared worker: a disabled one never reaches
+    // it (a disposed one never gets here — noteCommit ignores its commits).
+    if (this.state.depthSortEnabled) attachCoordinator(this.state);
     const previous = meshOwners.get(mesh);
     if (previous === this) return;
     previous?.releaseNode(mesh);
