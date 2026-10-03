@@ -54,7 +54,9 @@ export type {
  * the host keeps its pipeline, the layer contributes a `THREE.Group` plus the
  * per-frame LOD / depth-sort bookkeeping.
  *
- * Same single-instance rule as `LuxarApp`, and mutually exclusive with it.
+ * One `LuxarApp` and any number of `LuxarLayer`s may share a page; two
+ * `LuxarApp`s may not (docs/specs/LUXAR_LAYER_SPEC.md, "Several hosts on one
+ * page").
  */
 export { LuxarLayer, type LuxarLayerOptions, type ViewportSize } from './core/layer/luxar-layer';
 

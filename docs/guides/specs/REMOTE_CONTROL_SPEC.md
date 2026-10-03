@@ -120,7 +120,7 @@ stored state cannot drift apart.
 ### 2.4 State mirror and events
 
 ```ts
-getViewerState(): { src, camera, dimensions, rendering, layers }   // all copies
+getViewerState(): { src, title, camera, dimensions, rendering, layers, audio, controlPanel }   // all copies
 on('camera-changed', (pose: CameraSnapshot) => void)
 ```
 

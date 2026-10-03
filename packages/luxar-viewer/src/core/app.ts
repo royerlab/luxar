@@ -1118,8 +1118,8 @@ export class LuxarApp {
   /**
    * Subscribe to a public embedder event. Returns an unsubscribe function.
    *
-   * Events: `dataset-loaded`, `dataset-error`, `dataset-fault`, `dimensions-changed`,
-   * `selection` (see {@link LuxarEmbedderEventMap}). Safe to call before
+   * Every event of {@link LuxarEmbedderEventMap} — dataset, dimension,
+   * camera, picking, sound, waypoint and GPU-loss events. Safe to call before
    * `init()`; the per-app emitter outlives individual init/dispose cycles.
    *
    * @example
