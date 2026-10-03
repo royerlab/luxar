@@ -187,6 +187,40 @@ describe('AudioEngine — decode order', () => {
   });
 });
 
+describe('AudioEngine — a re-attach during a pending decode', () => {
+  it.fails('stops the superseded decode loop even though the new scene reuses its paths', async () => {
+    // detachScene + attachScene of the same store builds NEW nodes under the
+    // SAME paths: a path check alone let the old loop run on, decoding every
+    // remaining clip a second time alongside the new loop.
+    const h = makeHarness();
+    const reads: string[] = [];
+    let releaseFirst!: () => void;
+    const gate = new Promise<void>((resolve) => (releaseFirst = resolve));
+    for (const name of ['a', 'b']) {
+      const g = soundPlaceholder(`/${name}`, { trigger: 'continuous' });
+      const desc = g.userData.sound as SoundSourceDescriptor;
+      desc.readClip = async () => {
+        reads.push(name);
+        if (reads.length === 1) await gate;
+        return new Uint8Array([1]);
+      };
+      h.root.add(g);
+    }
+    h.engine.attachScene(h.root);
+    await flush();
+    expect(reads).toEqual(['a']);
+
+    h.engine.detachScene();
+    h.engine.attachScene(h.root);
+    await flush();
+    releaseFirst();
+    await flush();
+    await flush();
+
+    expect(reads.filter((name) => name === 'b')).toHaveLength(1);
+  });
+});
+
 describe('AudioEngine — slab, ducking and buses', () => {
   it('a voice-bus once clip starts on its story and ducks the ambient bus, releasing when it ends', async () => {
     const h = makeHarness();
