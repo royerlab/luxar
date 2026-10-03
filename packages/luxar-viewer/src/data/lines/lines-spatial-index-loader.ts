@@ -260,7 +260,8 @@ export class LinesSpatialIndexLoader implements LinesDataLoader {
       this.chunkIndex = await this.loadDualChunkBounds(attrs, signal);
 
       if (!this.chunkIndex) {
-        log.info(
+        log.verbose(
+          LogEmoji.QUERY,
           Modules.LINES_LOADER,
           `No spatial index for Lines ${this.node.path} - will load all data`
         );

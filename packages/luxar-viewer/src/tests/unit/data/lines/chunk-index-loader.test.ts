@@ -58,7 +58,7 @@ describe('loadLinesDualChunkIndex', () => {
     );
   });
 
-  it.fails('skips both chunk_bounds requests when vertices and segments each fit one chunk', async () => {
+  it('skips both chunk_bounds requests when vertices and segments each fit one chunk', async () => {
     const result = await loadLinesDualChunkIndex(location, linesAttrs(16, 8, 16));
     expect(result).toBeNull();
     expect(mockFetchChunkBounds).not.toHaveBeenCalled();

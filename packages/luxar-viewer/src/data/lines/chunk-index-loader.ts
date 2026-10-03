@@ -30,7 +30,7 @@
  */
 
 import * as zarr from '../zarr';
-import { log, Modules } from '../../utils/log';
+import { log, LogEmoji, Modules } from '../../utils/log';
 import { fetchChunkBoundsArray, type ChunkSpatialIndex } from '../loaders';
 import type { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 import type { LinesMetadata, SegmentRange } from '../../types/lines';
@@ -70,6 +70,18 @@ export async function loadLinesDualChunkIndex(
     log.info(
       Modules.LINES_LOADER,
       `Lines node has no spatial ordering (ordering=${attrs.ordering})`
+    );
+    return null;
+  }
+
+  if (
+    attrs.n_vertices <= attrs.vertex_ordering.chunk_size &&
+    attrs.n_segments <= attrs.segment_ordering.chunk_size
+  ) {
+    log.verbose(
+      LogEmoji.QUERY,
+      Modules.LINES_LOADER,
+      'Lines node fits one vertex and one segment chunk — no chunk_bounds probe'
     );
     return null;
   }

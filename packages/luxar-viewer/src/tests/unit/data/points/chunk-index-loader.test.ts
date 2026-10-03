@@ -57,7 +57,7 @@ describe('loadPointsChunkIndex', () => {
     expect(mockFetchChunkBounds).not.toHaveBeenCalled();
   });
 
-  it.fails('skips the chunk_bounds request when the node holds a single chunk', async () => {
+  it('skips the chunk_bounds request when the node holds a single chunk', async () => {
     const result = await loadPointsChunkIndex(makeLocation(), {
       ordering: 'hilbert',
       n_points: 64,

@@ -21,7 +21,7 @@
 
 import type { OrderingMethodName } from '../../types/format-contract';
 import * as zarr from '../zarr';
-import { log, Modules } from '../../utils/log';
+import { log, LogEmoji, Modules } from '../../utils/log';
 import { fetchChunkBoundsArray } from '../loaders';
 import type { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 
@@ -79,6 +79,19 @@ export async function loadPointsChunkIndex(
 ): Promise<PointsChunkIndex | null> {
   if (!nodeAttrs.ordering || nodeAttrs.ordering === 'none') {
     log.info(Modules.SPATIAL_INDEX, 'No spatial ordering — skipping chunk_bounds probe');
+    return null;
+  }
+
+  if (
+    nodeAttrs.n_points !== undefined &&
+    nodeAttrs.chunk_size !== undefined &&
+    nodeAttrs.n_points <= nodeAttrs.chunk_size
+  ) {
+    log.verbose(
+      LogEmoji.QUERY,
+      Modules.SPATIAL_INDEX,
+      `Points node fits one chunk (${nodeAttrs.n_points} <= ${nodeAttrs.chunk_size}) — no chunk_bounds probe`
+    );
     return null;
   }
 

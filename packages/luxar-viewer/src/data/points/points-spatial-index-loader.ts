@@ -281,7 +281,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
 
       if (!this.chunkIndex) {
         // For 3D datasets without Morton ordering, fall back to loading all points
-        log.info(
+        log.verbose(
+          LogEmoji.QUERY,
           Modules.SPATIAL_INDEX_LOADER,
           `No chunk-based index for ${this.node.path} - will load all points`
         );
@@ -308,7 +309,8 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
           }
 
           if (this.totalPointsNoIndex > 0) {
-            log.query(
+            log.verbose(
+              LogEmoji.QUERY,
               Modules.SPATIAL_INDEX_LOADER,
               `Detected ${this.totalPointsNoIndex} points in 3D dataset`
             );
@@ -977,7 +979,11 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       const totalPoints: number = (this.node.attrs.n_points ||
         this.totalPointsNoIndex ||
         0) as number;
-      log.query(Modules.SPATIAL_INDEX_LOADER, `No index: loading all ${totalPoints} points`);
+      log.verbose(
+        LogEmoji.QUERY,
+        Modules.SPATIAL_INDEX_LOADER,
+        `No index: loading all ${totalPoints} points`
+      );
       return [{ start: 0, end: totalPoints }];
     }
 
