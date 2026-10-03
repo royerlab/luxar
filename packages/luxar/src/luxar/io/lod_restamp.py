@@ -995,6 +995,7 @@ def _apply(
             )
         # One attr read per group, before the stamp overwrites them, so a
         # failure restores the store's OWN digests instead of recomputing them.
+        old_content_hash = root.attrs.get("content_hash")
         _snapshot_content_hashes(root, undo, deep=is_scene)
         report.content_hash = _restamp_content_hash(root)
         environment = _baked_environment_group(root, cache)
@@ -1010,6 +1011,9 @@ def _apply(
             report.content_hash is not None
             and CHUNK_PACKS_GROUP in root
             and "packs" in root[CHUNK_PACKS_GROUP].attrs
+            and old_content_hash is not None
+            and root[CHUNK_PACKS_GROUP].attrs.get("scene_content_hash")
+            == old_content_hash
         ):
             _write_attr(
                 _handle(root, CHUNK_PACKS_GROUP, cache),
