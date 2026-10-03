@@ -8,8 +8,7 @@ splices it onto a real zarr array without touching zarrita's source.
 ## Overview
 
 `wrapWithCache(array, cache, arrayPath, hooks?)` (hooks = `{ getProbe?,
-getSignal?, getOrigin? }`; a deprecated `aliasOnMiss` is accepted and
-ignored) returns a
+getSignal?, getOrigin? }`) returns a
 `Proxy<zarr.Array>` that intercepts `getChunk()` (and adds `warmChunk()`):
 
 0. **Per-update abort chokepoint** — when an optional `getSignal` accessor is
@@ -60,16 +59,18 @@ ignored) returns a
    cache-warming entry point `prefetchRangesIntoCache` uses: L0 lookup + the
    same shared decode, but with the caller's own signal only (never
    `getSignal`), no residency-probe record, no output assembly, and origin
-   `'prefetch'` by default. The standalone `warmChunk(array, …)` helper falls
-   back to a bare `getChunk` for an unwrapped array.
+   `'prefetch'` by default. It is prefetch traffic: its lookup moves no L0
+   hit/miss statistic (`getStats()`; the `l0.*` perf counters still count it),
+   and a miss reads the store with `suppressPrefetch`, so the multi-level
+   store neither counts it as demand nor prefetches from it. The standalone
+   `warmChunk(array, …)` helper falls back to a bare `getChunk` for an
+   unwrapped array.
 8. **One read-only buffer per chunk** — the miss that decoded a chunk, the
    waiters that joined its decode and every later hit all receive the SAME
    buffer L0 holds; there is no defensive clone on any path (a miss-only
    clone protected one caller while every other shared the buffer anyway).
    zarrita `get()` keeps the contract by copying every chunk into its own
-   output; a direct `getChunk()` caller must copy before writing. The
-   `aliasOnMiss` hook that used to opt into this is now a no-op (the
-   spatial-index loaders still pass it as `L0_ALIAS_ON_MISS`).
+   output; a direct `getChunk()` caller must copy before writing.
 
 All other property access passes through unchanged. See
 [`../README.md`](../README.md) (the "L0 Decompressed Chunk Cache" section)

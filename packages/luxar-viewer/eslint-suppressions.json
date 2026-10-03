@@ -1545,11 +1545,6 @@
       "count": 3
     }
   },
-  "src/workers/worker-pool.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
   "src/workers/worker-pool/lifecycle/init-with-guard.ts": {
     "max-params": {
       "count": 1

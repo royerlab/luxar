@@ -1030,7 +1030,9 @@ await window.__luxarDebug.cache.clearAll();
   `AsyncReadable` with validation, prefetcher hookup, and disposal.
 - `decompressed-chunk-cache.ts` — L0 LRU of decoded TypedArrays.
 - `chunk-prefetcher.ts` — Background prefetcher for adjacent chunks
-  with per-array bounds registration and a single FIFO queue.
+  with per-array bounds registration and one bounded (`MAX_QUEUED`, 64),
+  newest-first queue: the latest access's neighbours are served first and
+  the oldest entries dropped first.
 - `slice-cache.ts` — `SliceCache` (S-cache): per-(node, view) byte-budget
   LRU of decoded per-slice geometry, keyed by node path +
   slice/tolerance/displayDims signature; sits above the chunk caches so

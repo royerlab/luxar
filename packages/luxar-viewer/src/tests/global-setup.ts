@@ -22,7 +22,7 @@ import {
   isGeneratedFixtureComplete,
   parseGeneratedFixtureNames,
 } from '../../tools/fixture-manifest';
-import { REQUIRED_WASM_EXPORTS } from '../wasm/required-exports';
+import { REQUIRED_WASM_EXPORTS, requiredWasmArity } from '../wasm/required-exports';
 
 // Use import.meta.url for reliable path resolution in vitest global setup
 const THIS_DIR = resolve(fileURLToPath(import.meta.url), '..');
@@ -67,20 +67,25 @@ function runPythonGenerator(command: string, label: string): void {
 
 /**
  * Required exports that `wrapperSource` — the text of a built `luxar_wasm.js` —
- * does not declare. Empty when the build is current.
+ * does not declare, or declares with a stale parameter list (see
+ * `REQUIRED_WASM_ARITIES`). Empty when the build is current.
  *
- * wasm-pack emits one `export function <name>(` per kernel, which is what the
- * pattern anchors on. Matching the bare name would not do: the wrapper also
- * contains an internal `wasm.<name>(...)` call for every kernel it forwards, so
- * a substring scan reports a stale build as current.
+ * wasm-pack emits one `export function <name>(<params>)` per kernel, which is
+ * what the pattern anchors on. Matching the bare name would not do: the wrapper
+ * also contains an internal `wasm.<name>(...)` call for every kernel it
+ * forwards, so a substring scan reports a stale build as current.
  *
  * Exported so `wasm-export-scan.test.ts` can pin both directions — a detector
  * that never detects is worse than none.
  */
 export function missingExportsIn(wrapperSource: string): readonly string[] {
-  return REQUIRED_WASM_EXPORTS.filter(
-    (name) => !new RegExp(`export function ${name}\\b`).test(wrapperSource)
-  );
+  return REQUIRED_WASM_EXPORTS.filter((name) => {
+    const declaration = new RegExp(`export function ${name}\\(([^)]*)\\)`).exec(wrapperSource);
+    if (!declaration) return true;
+    const arity = requiredWasmArity(name);
+    const declared = declaration[1].split(',').filter((param) => param.trim() !== '').length;
+    return arity !== undefined && declared !== arity;
+  });
 }
 
 /**

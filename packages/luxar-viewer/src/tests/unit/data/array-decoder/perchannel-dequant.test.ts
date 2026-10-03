@@ -320,6 +320,8 @@ describe('makePerChannelDequant', () => {
       // isEncoded=true → the RangeLoader fully decodes them to float32 (consumers
       // never dequant themselves), and points allocates a Float32 output buffer.
       expect(ArrayDecoder.isEncoded({ encoding: { name: n } })).toBe(true);
+      // ...and the mode label agrees with isEncoded (not 'direct').
+      expect(ArrayDecoder.getEncodingMode({ encoding: { name: n } })).toBe('perchannel');
     }
   });
 });

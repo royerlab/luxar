@@ -182,7 +182,9 @@ average bytes/sec over the trailing `windowMs`. The implementation
 avoids `Array.shift()` (O(n) per pop, O(n²) under sustained high fetch
 rates) by advancing a `start` index past expired entries and only
 slicing off the dead prefix when it exceeds half the buffer — keeping
-both `record()` and `rate()` amortized O(1). Feeds the
+both `record()` and `rate()` amortized O(1). Both expire aged-out
+entries, so the buffer stays bounded by the live tail even when `rate()`
+is never read (it is read only while the monitor is visible). Feeds the
 `network.bandwidth` field of `MultiLevelCacheStats`.
 
 ### `validation-queue.ts` — cross-instance validation serializer

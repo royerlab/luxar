@@ -53,16 +53,20 @@ export class LRUCache<V> {
    * }
    * ```
    *
+   * @param options.countStats - `false` promotes as usual but leaves the
+   *   hit/miss counters alone (a prefetch read that must not move the
+   *   hit-rate statistic). Defaults to `true`.
    * @remarks Performance: O(1) - two Map operations (delete + set for reordering)
    */
-  get(key: string): V | undefined {
+  get(key: string, options?: { countStats?: boolean }): V | undefined {
+    const count = options?.countStats !== false;
     const value = this.cache.get(key);
     if (value !== undefined) {
-      this.hits++;
+      if (count) this.hits++;
       // Move to end (most recently used) - O(1) with Map
       this.cache.delete(key);
       this.cache.set(key, value);
-    } else {
+    } else if (count) {
       this.misses++;
     }
     return value;

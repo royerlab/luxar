@@ -99,7 +99,9 @@ export const COVERAGE_THRESHOLDS = {
   // the old floor as stale. The ratchet working, same as the src/data bump above.
   // The folded-in worker decode tests lifted the three measurements to
   // 93.80/94.05/88.52, so the old floors fell beyond the slack budget.
-  'src/workers/**': { lines: 92, functions: 93, branches: 87 },
+  // 92/93/87 -> 94/94/89 after the eviction, init-respawn and API-surface
+  // cleanup (review 3: C1, C4, C12) measured 95.00/95.58/90.04.
+  'src/workers/**': { lines: 94, functions: 94, branches: 89 },
   // functions 84 -> 86 after the promise-failure and formatter regressions
   // (2026-09, #2600) made check-coverage-slack flag the old floor as stale.
   // lines 89 -> 91 after the control-panel renderer tests (2026-09, #2714):
@@ -136,6 +138,11 @@ export const COVERAGE_THRESHOLDS = {
   // their factory bodies: measured lines 85.93, functions 86.27. The visual
   // shader bodies are still reached only by the browser parity spec.
   'src/rendering/**': { lines: 84, functions: 85, branches: 76 },
+
+  // The last two measured top-level source directories without a sub-gate;
+  // until 2026-10 their coverage could erode freely inside the global pool.
+  'src/audio/**': { lines: 95, functions: 94, branches: 81 },
+  'src/profiling/**': { lines: 95, functions: 95, branches: 88 },
 };
 
 /** Last accepted coverage measurements for each floor. */
@@ -152,9 +159,11 @@ export const COVERAGE_RECORDED = {
   'src/cache/**': { lines: 95.03, functions: 95.12, branches: 87.23 },
   'src/controls/**': { lines: 96.32, functions: 91.21, branches: 89.44 },
   'src/data/**': { lines: 93.6, functions: 93.08, branches: 87.31 },
-  'src/workers/**': { lines: 93.8, functions: 94.05, branches: 88.52 },
+  'src/workers/**': { lines: 95.0, functions: 95.58, branches: 90.04 },
   'src/ui/**': { lines: 92.0, functions: 86.95, branches: 79.58 },
   'src/core/**': { lines: 92.15, functions: 81.03, branches: 86.94 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
   'src/rendering/**': { lines: 85.93, functions: 86.27, branches: 78.59 },
+  'src/audio/**': { lines: 96.38, functions: 95.48, branches: 82.9 },
+  'src/profiling/**': { lines: 96.94, functions: 96.34, branches: 89.61 },
 };

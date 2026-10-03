@@ -11,9 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import fc from 'fast-check';
 import { selectLeastBusy } from '../../../../../workers/worker-pool/selection/least-busy';
-import { nextRoundRobin } from '../../../../../workers/worker-pool/selection/round-robin';
 import { computeStats, computeQueueDepth } from '../../../../../workers/worker-pool/stats';
 import type { WorkerInstance } from '../../../../../workers/worker-pool/types';
 
@@ -96,77 +94,6 @@ describe('selectLeastBusy (G12, H4)', () => {
     // from `workers[0].activeQueries`. The guard turns it into an explicit,
     // greppable diagnostic so direct callers (not just WorkerPool) see why.
     expect(() => selectLeastBusy([])).toThrow(/selectLeastBusy: workers array is empty/);
-  });
-});
-
-describe('nextRoundRobin (G11, H3)', () => {
-  it('advances cursor modulo workers.length', () => {
-    const w0 = makeInstance(0, 'A');
-    const w1 = makeInstance(0, 'B');
-    const w2 = makeInstance(0, 'C');
-    const workers = [w0, w1, w2];
-
-    expect(nextRoundRobin(workers, 0).instance).toBe(w0);
-    expect(nextRoundRobin(workers, 0).nextIndex).toBe(1);
-    expect(nextRoundRobin(workers, 1).instance).toBe(w1);
-    expect(nextRoundRobin(workers, 1).nextIndex).toBe(2);
-    expect(nextRoundRobin(workers, 2).instance).toBe(w2);
-    // Wrap-around — modular arithmetic invariant.
-    expect(nextRoundRobin(workers, 2).nextIndex).toBe(0);
-  });
-
-  it('single-worker pool always returns same instance + nextIndex=0 (H3)', () => {
-    const w0 = makeInstance(0, 'only');
-    const r1 = nextRoundRobin([w0], 0);
-    expect(r1.instance).toBe(w0);
-    expect(r1.nextIndex).toBe(0);
-    // Repeated calls at cursor=0 are stable.
-    expect(nextRoundRobin([w0], 0).nextIndex).toBe(0);
-  });
-
-  it('two-worker pool alternates indices', () => {
-    const w0 = makeInstance(0, 'A');
-    const w1 = makeInstance(0, 'B');
-    const workers = [w0, w1];
-    let cursor = 0;
-    const cursors: number[] = [cursor];
-    for (let i = 0; i < 5; i++) {
-      cursor = nextRoundRobin(workers, cursor).nextIndex;
-      cursors.push(cursor);
-    }
-    expect(cursors).toEqual([0, 1, 0, 1, 0, 1]);
-  });
-
-  it('does not mutate input workers array', () => {
-    const w0 = makeInstance(3, 'A');
-    const w1 = makeInstance(4, 'B');
-    nextRoundRobin([w0, w1], 0);
-    expect(w0.activeQueries).toBe(3);
-    expect(w1.activeQueries).toBe(4);
-  });
-
-  // workers.md [H3][P12] fast-check property test: nextRoundRobin's
-  // contract for valid in-range cursors. nextIndex must equal
-  // (cursor + 1) mod length and instance must be workers[cursor].
-  // (The function assumes cursor is in [0, length); the wrap is in
-  // nextIndex, which is the caller-stored value for the NEXT call.)
-  it('[property] nextIndex = (cursor + 1) mod length for valid in-range cursor', () => {
-    fc.assert(
-      fc.property(
-        fc
-          .integer({ min: 1, max: 32 })
-          .chain((poolSize) =>
-            fc.tuple(fc.constant(poolSize), fc.integer({ min: 0, max: poolSize - 1 }))
-          ),
-        ([poolSize, cursor]) => {
-          const workers = Array.from({ length: poolSize }, (_, i) => makeInstance(0, `w${i}`));
-          const result = nextRoundRobin(workers, cursor);
-          const expectedNext = (cursor + 1) % poolSize;
-          return result.nextIndex === expectedNext && result.instance === workers[cursor];
-        }
-      ),
-      { numRuns: 200 }
-    );
   });
 });
 

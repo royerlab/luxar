@@ -234,9 +234,9 @@ Displayed dimensions always get `1e10` (effectively infinite).
 
 ## Worker Integration
 
-All components automatically use workers when enabled. Always go through
-`runWithTimeout()` — calling `getWorker()` directly bypasses the timeout
-guard and the hung-worker eviction logic. See
+All components automatically use workers when enabled, through
+`runWithTimeout()` — the pool's dispatch entry point, which carries the
+timeout guard and the hung-worker eviction logic. See
 `src/workers/README.md#runwithtimeout` for the full contract.
 
 ```typescript

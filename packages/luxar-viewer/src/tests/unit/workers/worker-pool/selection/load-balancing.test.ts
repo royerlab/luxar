@@ -1,10 +1,9 @@
 /**
  * Unit tests for the worker-pool load balancing path.
  *
- * Verifies that runWithTimeout routes to the least-loaded worker via
- * getWorkerWithTracking. The previous round-robin via nextWorkerInstance
- * had no load awareness, so a slow worker received every Nth call until
- * each call timed out — head-of-line blocking.
+ * Verifies that runWithTimeout routes to the least-loaded worker. A
+ * round-robin pick had no load awareness, so a slow worker received every
+ * Nth call until each call timed out — head-of-line blocking.
  *
  * The tests bypass real Worker construction by injecting fakes into
  * the pool's `workers` array and forcing `initPromise` to resolved,
@@ -13,9 +12,8 @@
  * AUDIT NOTE (workers.md C3): the `makePool` helper mutates private fields
  * of a real WorkerPool via `as any`. The tests exercise the public
  * `runWithTimeout`/`getStats`/`getQueueDepth` paths but couple to the
- * class internals (`pool.workers`, `pool.initPromise`,
- * `pool.nextWorkerIndex`). The pure helpers `selectLeastBusy`,
- * `nextRoundRobin`, `computeStats`, `computeQueueDepth` would be cleaner
+ * class internals (`pool.workers`, `pool.initPromise`). The pure helpers
+ * `selectLeastBusy`, `computeStats`, `computeQueueDepth` would be cleaner
  * to call directly (they live in workers/worker-pool/selection/ +
  * workers/worker-pool/stats.ts). Follow-up: extract direct unit tests
  * for those pure helpers, then keep this file as the integration smoke
@@ -33,7 +31,6 @@ function makePool(workers: FakeWorkerInstance[]): WorkerPool {
   pool.workers = workers;
   // Skip real initialization; pretend we're already done.
   pool.initPromise = Promise.resolve();
-  pool.nextWorkerIndex = 0;
   return pool;
 }
 function makeFakeWorker(label: string, activeQueries = 0): FakeWorkerInstance {

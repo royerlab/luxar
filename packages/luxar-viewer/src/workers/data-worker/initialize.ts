@@ -1,7 +1,7 @@
 /**
  * Worker bootstrap. Loads the compiled WASM module via initWasm()
- * (with TypeScript fallback when compiled WASM is missing) and
- * pre-allocates the pooled visibility scratch buffer.
+ * (with TypeScript fallback when compiled WASM is missing) and keeps the
+ * uncapped TypeScript backend alongside it for `ndim > 16`.
  *
  * Throws if WASM initialization fails catastrophically — the viewer
  * requires a functioning worker.

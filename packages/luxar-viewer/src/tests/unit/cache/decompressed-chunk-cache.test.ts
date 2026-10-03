@@ -237,19 +237,6 @@ describe('DecompressedChunkCache', () => {
       const key = DecompressedChunkCache.makeKey('/data', [1, 2, 3, 4, 5]);
       expect(key).toBe('/data:1,2,3,4,5');
     });
-
-    it('should parse keys back correctly with parseKey()', () => {
-      const original = { arrayPath: '/scene/points/positions', chunkCoords: [0, 1, 2] };
-      const key = DecompressedChunkCache.makeKey(original.arrayPath, original.chunkCoords);
-      const parsed = DecompressedChunkCache.parseKey(key);
-
-      expect(parsed).toEqual(original);
-    });
-
-    it('should return null for invalid keys', () => {
-      expect(DecompressedChunkCache.parseKey('invalid-no-colon')).toBeNull();
-      expect(DecompressedChunkCache.parseKey('/path:not,numbers,here')).toBeNull();
-    });
   });
 
   describe('Data Type Support', () => {

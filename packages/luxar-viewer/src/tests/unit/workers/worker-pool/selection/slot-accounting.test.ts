@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { WorkerPool } from '../../../../../workers/worker-pool';
+import { deferred } from '../../../../helpers/deferred';
 
 interface FakeWorkerInstance {
   worker: { terminate: () => void };
@@ -21,7 +22,6 @@ function makePool(workers: FakeWorkerInstance[]): WorkerPool {
   const pool = new WorkerPool() as any;
   pool.workers = workers;
   pool.initPromise = Promise.resolve();
-  pool.nextWorkerIndex = 0;
   return pool;
 }
 
@@ -31,20 +31,6 @@ function makeFakeWorker(label: string): FakeWorkerInstance {
     api: { handle: vi.fn().mockResolvedValue(label) },
     activeQueries: 0,
   };
-}
-
-function deferred<T>(): {
-  promise: Promise<T>;
-  resolve: (v: T) => void;
-  reject: (e: unknown) => void;
-} {
-  let resolve!: (v: T) => void;
-  let reject!: (e: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
 }
 
 async function flush(): Promise<void> {

@@ -243,8 +243,8 @@ fn decode_perchannel_impl(
 
 /// `sign(y) * expm1(|y|)` — the signed-log inverse compand. Branch instead of
 /// `signum` so `y == 0` maps to exactly 0 (Rust's `signum(0.0)` is 1.0, which
-/// would still give 0 here, but the branch mirrors `Math.sign(y) *
-/// Math.expm1(Math.abs(y))` in the TS reference for every input).
+/// would still give 0 here, but the branch mirrors `y < 0 ? -Math.expm1(-y) :
+/// Math.expm1(y)` in the TS reference for every input).
 #[inline]
 fn signed_expm1(y: f64) -> f64 {
     if y < 0.0 {

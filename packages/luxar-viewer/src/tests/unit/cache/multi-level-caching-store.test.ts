@@ -4,15 +4,7 @@ import { computeCacheBudgets, computeOpfsWriteQueueBudgetBytes } from '../../../
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
 import { createFakeOpfsRoot } from '../../mocks/opfs.mock';
-
-function forceAbortSignalAnyFallback(): () => void {
-  const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
-  Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
-  return () => {
-    if (descriptor) Object.defineProperty(AbortSignal, 'any', descriptor);
-    else delete (AbortSignal as unknown as { any?: unknown }).any;
-  };
-}
+import { forceAbortSignalAnyFallback } from '../../helpers/abort-signal-any';
 
 // Create comprehensive mocks
 const createMocks = () => {
@@ -359,6 +351,37 @@ describe('MultiLevelCachingStore', () => {
       // Demand hit count unchanged; the prefetch-originated read
       // hit L1 but didn't count toward user-facing hit-rate.
       expect(store.getStats().demand.l1Hits).toBe(beforeL1);
+    });
+
+    // An abort is neutral wherever it lands, as it already is at L2 (see
+    // 'stops at L2 when a queued OPFS read is canceled').
+    it('a caller aborted while waiting on the network counts in no tier', async () => {
+      const source = (store as any).source as {
+        get(key: string, signal: AbortSignal): Promise<unknown>;
+      };
+      vi.spyOn(source, 'get').mockImplementation(
+        (_key, signal) =>
+          new Promise((resolve) => {
+            signal.addEventListener('abort', () => resolve({ kind: 'aborted' }), { once: true });
+          })
+      );
+      const controller = new AbortController();
+      const read = store.getResult('slow.chunk', { signal: controller.signal });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      controller.abort();
+
+      expect(await read).toEqual({ ok: false, error: { kind: 'Aborted' } });
+      expect(store.getStats().demand).toEqual({ l1Hits: 0, l2Hits: 0, networkRequests: 0 });
+    });
+
+    it('a network read the source reports aborted counts in no tier', async () => {
+      vi.spyOn((store as any).source, 'get').mockResolvedValue({ kind: 'aborted' });
+
+      expect(await store.getResult('aborted.chunk')).toEqual({
+        ok: false,
+        error: { kind: 'Aborted' },
+      });
+      expect(store.getStats().demand).toEqual({ l1Hits: 0, l2Hits: 0, networkRequests: 0 });
     });
   });
 

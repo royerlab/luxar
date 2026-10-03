@@ -77,6 +77,11 @@ export interface CachingStoreGetOptions {
    * `refinement`.
    */
   priority?: FetchPriority;
+  /**
+   * A prefetch read (the chunk prefetcher's, or an L0 warm-up's miss): not
+   * counted in the demand statistics and fans out no further prefetch.
+   */
+  suppressPrefetch?: boolean;
 }
 
 /** Configuration for the memory, OPFS, and source-backed cache tiers. */
@@ -210,8 +215,9 @@ export class MultiLevelCachingStore implements AsyncReadable {
   private totalRequestsServed = 0;
 
   // Per-tier demand-hit counters. Each user-demand call to
-  // getResult() increments exactly one of l1HitCount / l2HitCount /
-  // demandNetworkRequestCount. Prefetch-originated calls
+  // getResult() that a tier answered increments exactly one of
+  // l1HitCount / l2HitCount / demandNetworkRequestCount (an aborted call
+  // or a missing key increments none). Prefetch-originated calls
   // (suppressPrefetch: true) are excluded so the hit-rate reflects
   // user demand only — a prefetch that hits L2 must not inflate
   // the apparent hit-rate. The aggregate `networkRequestCount` and
@@ -495,7 +501,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    */
   async getResult(
     key: string,
-    options?: CachingStoreGetOptions & { suppressPrefetch?: boolean }
+    options?: CachingStoreGetOptions
   ): Promise<Result<Uint8Array, CacheError>> {
     // Disposed-store fast path: bail before touching any tier. Avoids
     // late writes against a torn-down L2 and lets a dataset switch
@@ -590,8 +596,10 @@ export class MultiLevelCachingStore implements AsyncReadable {
     // Per-caller demand counters: which tier "served" this caller.
     // All callers waiting on a shared network fetch count as demand
     // network requests; the underlying network counter (incremented
-    // inside fetchKeyChain) only bumped once per actual fetch.
-    if (isDemand) {
+    // inside fetchKeyChain) only bumped once per actual fetch. An abort is
+    // neutral wherever it lands: the caller was served by no tier.
+    const aborted = !outcome.result.ok && outcome.result.error.kind === 'Aborted';
+    if (isDemand && !aborted) {
       if (outcome.source === 'l2' && outcome.result.ok) {
         this.l2HitCount++;
         perfCounters.add(S_L2_HITS);

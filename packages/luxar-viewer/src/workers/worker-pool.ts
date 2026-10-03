@@ -1,7 +1,7 @@
 /**
  * Worker pool manager for data processing workers
  *
- * Supports multiple workers with round-robin load balancing for parallel
+ * Supports multiple workers with least-busy load balancing for parallel
  * spatial queries across multiple nodes.
  */
 
@@ -19,6 +19,7 @@ import {
   WorkerTimeoutError,
   WorkerAbortError,
   WorkerUnavailableError,
+  WorkerInitTimeoutError,
   isWorkerInfrastructureError,
   type TimeoutKind,
 } from './worker-pool/errors';
@@ -34,7 +35,6 @@ import {
   evictFailedWorker,
 } from './worker-pool/lifecycle/error-handlers';
 import { selectLeastBusy, type TrackedWorkerHandle } from './worker-pool/selection/least-busy';
-import { nextRoundRobin } from './worker-pool/selection/round-robin';
 import { DispatchTracker } from './worker-pool/selection/dispatch-tracker';
 import { computeStats, computeQueueDepth, type PoolStats } from './worker-pool/stats';
 import { markLoad, noteLoadResourceReleased } from '../profiling/load-timeline';
@@ -96,6 +96,14 @@ export function setDataWorkerWasmPath(url: string): void {
   dataWorkerWasmPathOverride = url;
 }
 
+/**
+ * Attempts a slot gets when its worker's init misses the deadline: the first
+ * plus two respawns, each after `WORKER_INIT_RETRY_BASE_MS × attempt`. The
+ * same bound and backoff as the sort worker's `SORT_WORKER_INIT_MAX_ATTEMPTS`.
+ */
+const WORKER_INIT_MAX_ATTEMPTS = 3;
+const WORKER_INIT_RETRY_BASE_MS = 2_000;
+
 export class WorkerPool {
   private workers: WorkerInstance[] = [];
   private initPromise: Promise<void> | null = null;
@@ -111,13 +119,18 @@ export class WorkerPool {
    *
    * Mirrors `initPromise`'s deliberate "stays rejected" contract — it is NOT
    * nulled on failure, so a poisoned pool keeps failing fast instead of
-   * re-running the init guard per call. `dispose()`, `reinitialize()` and the
-   * `'pool-empty'` branch of {@link handleWorkerFailure} are the only resets.
+   * re-running the init guard per call. `dispose()` and the `'pool-empty'`
+   * branch of {@link handleWorkerFailure} are the only resets.
    */
   private readyPromise: Promise<void> | null = null;
   /** Settles {@link readyPromise}: no argument resolves, an error rejects. */
   private settleReady: ((error?: unknown) => void) | null = null;
-  private nextWorkerIndex = 0;
+  /**
+   * Rejectors of the calls in flight on each worker. A terminated worker never
+   * replies, and Comlink settles a call only from the reply, so eviction and
+   * `dispose()` reject these instead of leaving the callers parked forever.
+   */
+  private readonly inFlightCalls = new Map<Worker, Set<(error: Error) => void>>();
   /** Worker-side in-flight accounting for the `worker.*` perf counters only. */
   private readonly dispatchTracker = new DispatchTracker();
   /** Lazy, one-worker-first blosc codec warm-up (see `worker-pool/codec-warmup.ts`). */
@@ -224,7 +237,7 @@ export class WorkerPool {
           settleMyReady();
         };
 
-        const workerPromises = Array.from({ length: workerCount }, (_, index) =>
+        const spawnSlot = (index: number, attempt: number): Promise<WorkerInstance> =>
           spawnWorker({
             index,
             total: workerCount,
@@ -234,10 +247,20 @@ export class WorkerPool {
             attachPermanentHandlers: (w, n) => this.attachWorkerErrorHandlers(w, n),
             runInitGuard: (w, a, n) => this.initializeWithGuard(w, a, n, wasmPathOverride),
             isCurrentGeneration: () => this.initGeneration === myGeneration,
-          }).then((entry) => {
-            publish(entry);
-            return entry;
-          })
+          }).then(
+            (entry) => {
+              publish(entry);
+              return entry;
+            },
+            (error: unknown) => {
+              this.scheduleRespawn(error, attempt, myGeneration, () =>
+                spawnSlot(index, attempt + 1)
+              );
+              throw error;
+            }
+          );
+        const workerPromises = Array.from({ length: workerCount }, (_, index) =>
+          spawnSlot(index, 1)
         );
 
         // Still wait for every spawn to settle: `initialize()`'s contract is
@@ -299,33 +322,10 @@ export class WorkerPool {
           );
         }
 
-        this.nextWorkerIndex = 0;
         log.info(Modules.WORKER_POOL, `Worker pool ready with ${this.workers.length} worker(s)`);
         markLoad('poolReady', { workers: this.workers.length });
 
-        // One-time backend summary (replaces the per-worker WASM/TS lines).
-        // Workers each load WASM independently but share one build, so the
-        // pool is either all-WASM or all-fallback in practice; report a mixed
-        // result honestly if that invariant ever breaks.
-        const fallbackCount = this.workers.filter((w) => w.wasmFallback).length;
-        if (fallbackCount === 0) {
-          log.success(
-            Modules.WORKER_POOL,
-            `Acceleration: compiled WASM active on all ${this.workers.length} data worker(s)`
-          );
-        } else if (fallbackCount === this.workers.length) {
-          log.warning(
-            Modules.WORKER_POOL,
-            `Acceleration: TypeScript fallback on all ${this.workers.length} data worker(s) — ` +
-              'compiled WASM not loaded (run "make build-wasm"; functional but slower)'
-          );
-        } else {
-          log.warning(
-            Modules.WORKER_POOL,
-            `Acceleration: mixed backend — ${this.workers.length - fallbackCount} on WASM, ` +
-              `${fallbackCount} on TypeScript fallback`
-          );
-        }
+        this.logBackendSummary();
       } catch (e) {
         // Same stale-generation guard for the error path. If a newer
         // generation has taken over, only clean up this attempt's workers.
@@ -346,12 +346,11 @@ export class WorkerPool {
         }
         this.pendingWorkers.clear();
         // Note: we deliberately keep `initPromise` (the rejected one) so
-        // subsequent `getWorker()` / `runWithTimeout` calls fail FAST rather
-        // than re-running the 30s init guard for every nD load. A blocked
-        // worker chunk would otherwise stack 30s × N delays and blow past
-        // the page's `waitForLuxarReady` timeout. To opt back in to a fresh
-        // init attempt (e.g. after a transient network blip), call
-        // `reinitialize()`.
+        // subsequent `runWithTimeout` calls fail FAST rather than re-running
+        // the 30s init guard for every nD load. A blocked worker chunk would
+        // otherwise stack 30s × N delays and blow past the page's
+        // `waitForLuxarReady` timeout. A slot that only missed its deadline
+        // is respawned in the background (see `scheduleRespawn`).
         //
         // A no-op when a worker already published and the pool died after —
         // that caller holds a live handle, and `whenUsable()`'s re-check
@@ -368,6 +367,66 @@ export class WorkerPool {
     this.initPromise.catch(() => {});
 
     return this.initPromise;
+  }
+
+  /**
+   * One-time backend summary (replaces the per-worker WASM/TS lines).
+   * Workers each load WASM independently but share one build, so the
+   * pool is either all-WASM or all-fallback in practice; report a mixed
+   * result honestly if that invariant ever breaks.
+   */
+  private logBackendSummary(): void {
+    const fallbackCount = this.workers.filter((w) => w.wasmFallback).length;
+    if (fallbackCount === 0) {
+      log.success(
+        Modules.WORKER_POOL,
+        `Acceleration: compiled WASM active on all ${this.workers.length} data worker(s)`
+      );
+    } else if (fallbackCount === this.workers.length) {
+      log.warning(
+        Modules.WORKER_POOL,
+        `Acceleration: TypeScript fallback on all ${this.workers.length} data worker(s) — ` +
+          'compiled WASM not loaded (run "make build-wasm"; functional but slower)'
+      );
+    } else {
+      log.warning(
+        Modules.WORKER_POOL,
+        `Acceleration: mixed backend — ${this.workers.length - fallbackCount} on WASM, ` +
+          `${fallbackCount} on TypeScript fallback`
+      );
+    }
+  }
+
+  /**
+   * Respawn a slot whose worker missed its init deadline, after a backoff and
+   * at most `WORKER_INIT_MAX_ATTEMPTS` attempts in all. A deadline miss
+   * does not prove the worker broken (see `WorkerInitTimeoutError`); every
+   * other init failure is permanent and is not retried.
+   *
+   * The respawn runs outside the attempt it came from, so `initialize()` and
+   * the usable-worker gate settle exactly as before. A respawned worker is
+   * published like any other (generation-checked), which also revives a pool
+   * whose every slot missed: `whenUsable()` takes a live worker over the
+   * attempt's sticky rejection.
+   */
+  private scheduleRespawn(
+    error: unknown,
+    attempt: number,
+    generation: number,
+    respawn: () => Promise<WorkerInstance>
+  ): void {
+    if (!(error instanceof WorkerInitTimeoutError) || attempt >= WORKER_INIT_MAX_ATTEMPTS) return;
+    const delayMs = WORKER_INIT_RETRY_BASE_MS * attempt;
+    log.warning(
+      Modules.WORKER_POOL,
+      `${error.label} init missed its deadline (attempt ${attempt}/${WORKER_INIT_MAX_ATTEMPTS}); ` +
+        `respawning in ${delayMs}ms`
+    );
+    setTimeout(() => {
+      if (this.initGeneration !== generation) return;
+      // `spawnWorker` logs the failure, and another miss re-schedules.
+      respawn().catch(() => {});
+    }, delayMs);
   }
 
   /**
@@ -454,13 +513,8 @@ export class WorkerPool {
    * worker so a crash inside the worker (uncaught throw, OOM during WASM
    * init, unserializable Comlink message) surfaces as a logged failure
    * and is removed from the active pool, rather than escaping to the
-   * browser's `window.onerror` and freezing requests that are awaiting
-   * Comlink replies from this worker.
-   *
-   * Note: this is a best-effort safety net. Comlink-wrapped calls that
-   * are mid-flight when the worker dies will still hang their callers —
-   * route hot paths through {@link runWithTimeout} for the per-call
-   * timeout that complements this handler.
+   * browser's `window.onerror`. The eviction rejects the calls still in
+   * flight on it (see {@link handleWorkerFailure}).
    */
   private attachWorkerErrorHandlers(worker: Worker, workerNumber: number): void {
     attachWorkerErrorHandlers(worker, workerNumber, (w, reason) =>
@@ -469,13 +523,18 @@ export class WorkerPool {
   }
 
   /**
-   * Remove a failed worker from the pool and terminate it. If this drops
-   * the pool to zero workers, log a clear error so the surrounding
-   * application can decide whether to fall back to the main-thread
-   * implementation or surface a failure dialog.
+   * Remove a failed worker from the pool and terminate it, rejecting every
+   * call still in flight on it with {@link WorkerUnavailableError} (the
+   * terminated worker will never answer them; `runWithTimeout` re-dispatches
+   * such a call once onto a surviving worker). If this drops the pool to zero
+   * workers, log a clear error so the surrounding application can decide
+   * whether to fall back to the main-thread implementation or surface a
+   * failure dialog.
    */
   private handleWorkerFailure(worker: Worker, reason: string): void {
     const outcome = evictFailedWorker(this.workers, worker, reason);
+    if (outcome === 'idempotent') return;
+    this.rejectInFlight(worker, `worker evicted (${reason})`);
     if (outcome !== 'pool-empty') return;
     // Since workers are published incrementally, an empty pool no longer means
     // "this attempt finished and produced nothing" — worker 1 can die while
@@ -496,26 +555,6 @@ export class WorkerPool {
   }
 
   /**
-   * Explicitly reset the pool's cached init promise so the next
-   * {@link getWorker} / {@link runWithTimeout} call re-runs init. Used
-   * to recover from a transient init failure (e.g. the worker chunk
-   * was briefly unreachable) without restarting the entire app.
-   *
-   * Routine "init failed once, fall back" cases should NOT call this —
-   * letting the rejected promise stick keeps subsequent calls fast
-   * (instant reject) instead of stacking 30s init guards.
-   */
-  reinitialize(): void {
-    // Same "is the attempt actually over?" test as `handleWorkerFailure`:
-    // an empty pool with spawns still in flight is filling, not failed.
-    if (this.workers.length === 0 && this.pendingWorkers.size === 0) {
-      this.initPromise = null;
-      this.readyPromise = null;
-      this.settleReady = null;
-    }
-  }
-
-  /**
    * Race a worker-routed Promise against a timeout. On timeout, log
    * the failure, evict the responsible worker (if known) via
    * {@link handleWorkerFailure}, and reject with
@@ -524,8 +563,8 @@ export class WorkerPool {
    * a thin pass-through to keep the call-site uniform.
    *
    * `worker` may be omitted when the caller cannot identify which
-   * worker handled the call (e.g. round-robin selection); the timeout
-   * still fires, but the pool isn't pruned.
+   * worker handled the call; the timeout still fires, but the pool isn't
+   * pruned.
    */
   withTimeout<T>(
     operation: string,
@@ -543,43 +582,6 @@ export class WorkerPool {
   }
 
   /**
-   * Pick the next round-robin {@link WorkerInstance}. Internal — exposes the
-   * underlying `Worker` so {@link runWithTimeout} can evict it on timeout.
-   */
-  private async nextWorkerInstance(): Promise<WorkerInstance> {
-    await this.whenUsable();
-
-    if (this.workers.length === 0) {
-      throw new WorkerUnavailableError('[WorkerPool] No workers available after initialization');
-    }
-
-    const { instance, nextIndex } = nextRoundRobin(this.workers, this.nextWorkerIndex);
-    this.nextWorkerIndex = nextIndex;
-    return instance;
-  }
-
-  /**
-   * Get a worker API using round-robin selection.
-   *
-   * Untracked callers receive workers in rotating order. For load-aware
-   * selection (picking the worker with the fewest active queries), use
-   * {@link getWorkerWithTracking} instead.
-   *
-   * **Important — no timeout guard.** Direct `await` on the returned
-   * `Remote<DataWorkerAPI>` lets a dead/stuck worker hang the caller
-   * indefinitely (Comlink's onerror handler can't settle an in-flight
-   * promise). Production code MUST go through {@link runWithTimeout}
-   * instead — it routes the call through {@link withTimeout} on a
-   * least-busy worker. This direct `getWorker()` accessor is
-   * intentionally retained for tests and low-level worker-pool
-   * unit tests that need raw access; lint-grep for new production
-   * uses periodically.
-   */
-  async getWorker(): Promise<Remote<DataWorkerAPI>> {
-    return (await this.nextWorkerInstance()).api;
-  }
-
-  /**
    * Pick the kind-appropriate timeout from config. Projection AND
    * decode share `workerProjectionTimeoutMs` (both are long-running
    * CPU-bound calls — a dedicated decode knob can be added later if
@@ -593,15 +595,19 @@ export class WorkerPool {
    * Run a worker call through {@link withTimeout} on a least-busy
    * worker. The single production entry point for any Comlink-routed call
    * that needs a hang-detection guard — direct `await` against a worker
-   * `Remote` lets a dead worker hang the caller forever (the `onerror`
-   * handler can't settle a Comlink promise that's already in flight).
+   * `Remote` has none, and a worker that is stuck rather than dead is never
+   * evicted, so nothing would settle the call.
    *
    * On timeout the responsible worker is evicted via
    * {@link handleWorkerFailure} and the caller receives a
    * {@link WorkerTimeoutError}. The geometry loaders deliberately do NOT
    * run the projection in-process on a timeout (see
    * `isWorkerInfrastructureError`) — the failure is recorded and the node
-   * retried against a fresh worker instead of blocking the UI thread.
+   * retried against a fresh worker instead of blocking the UI thread. The
+   * OTHER calls that eviction abandons were never answered, so they are
+   * re-dispatched once onto a surviving worker (see
+   * {@link dispatchWithRedispatch}); only with no worker left do they reject
+   * with {@link WorkerUnavailableError}, the in-process fallback's trigger.
    */
   async runWithTimeout<T>(
     op: string,
@@ -619,9 +625,9 @@ export class WorkerPool {
 
     // Route through acquireTrackedWorker so a stalled worker (one
     // whose activeQueries has grown past the others) stops being
-    // selected. The previous round-robin via nextWorkerInstance had
-    // no load awareness, so a slow worker received every Nth call
-    // until each call timed out individually — head-of-line blocking.
+    // selected. Round-robin had no load awareness, so a slow worker
+    // received every Nth call until each call timed out individually —
+    // head-of-line blocking.
     // The slot is taken AT SELECTION (same synchronous step), so concurrent
     // dispatches see each other's load instead of all reading index 0 idle.
     const tracked = await this.acquireTrackedWorker();
@@ -637,7 +643,7 @@ export class WorkerPool {
     // The abort cannot kill the WASM task, but it can settle the
     // promise immediately so the caller proceeds with whatever the
     // dataset-switch wants to do next.
-    const workerPromise = this.dispatchTracked(op, kind, tracked, fn);
+    const workerPromise = this.dispatchWithRedispatch(op, kind, tracked, fn, signal);
 
     if (!signal) {
       return await workerPromise;
@@ -695,7 +701,7 @@ export class WorkerPool {
   ): Promise<T> {
     let workerPromise: Promise<T>;
     try {
-      const task = fn(tracked.api);
+      const task = this.settleOnEviction(tracked.worker, fn(tracked.api));
       this.dispatchTracker.dispatch(tracked.worker, this.workers, task);
       workerPromise = this.withTimeout(op, task, this.pickTimeoutMs(kind), tracked.worker);
     } catch (error) {
@@ -710,6 +716,76 @@ export class WorkerPool {
   }
 
   /**
+   * {@link dispatchTracked}, plus ONE re-dispatch of a call that its worker's
+   * eviction abandoned (a crash, or ANOTHER call's timeout on that worker)
+   * while live workers remain. No kernel answered such a call — it was queued
+   * behind the failure, or running on a worker that died — so it runs again on
+   * a surviving worker, under a fresh timeout, instead of rejecting with
+   * {@link WorkerUnavailableError} into the callers' in-process fallback, which
+   * would move the same heavy work onto the UI thread.
+   *
+   * Never re-dispatched: a call that timed out itself (it rejects with
+   * {@link WorkerTimeoutError}), a call whose caller aborted, a call already
+   * re-dispatched once (a second eviction rejects, so a payload that kills
+   * workers cannot walk the pool), and a call abandoned by `dispose()` or by
+   * the last worker's eviction (nothing is left to run it; that rejection is
+   * the infrastructure failure the fallback exists for).
+   *
+   * Sound because `runWithTimeout` callers structured-clone their inputs; a
+   * transferred payload is detached by the first post, which is why
+   * `runDecode` does not re-dispatch.
+   */
+  private async dispatchWithRedispatch<T>(
+    op: string,
+    kind: TimeoutKind,
+    tracked: TrackedWorkerHandle,
+    fn: (api: Remote<DataWorkerAPI>) => Promise<T>,
+    signal?: AbortSignal
+  ): Promise<T> {
+    try {
+      return await this.dispatchTracked(op, kind, tracked, fn);
+    } catch (error) {
+      const abandoned = error instanceof WorkerUnavailableError && this.workers.length > 0;
+      if (!abandoned || signal?.aborted) throw error;
+      log.warning(Modules.WORKER_POOL, `Re-dispatching '${op}' after its worker was evicted`);
+      return this.dispatchTracked(op, kind, await this.acquireTrackedWorker(), fn);
+    }
+  }
+
+  /**
+   * `call` raced against the eviction of `worker`: settles with `call`, or
+   * rejects with {@link WorkerUnavailableError} once the worker is evicted or
+   * the pool disposed while the call is still in flight.
+   */
+  private settleOnEviction<T>(worker: Worker, call: Promise<T>): Promise<T> {
+    let calls = this.inFlightCalls.get(worker);
+    if (!calls) {
+      calls = new Set();
+      this.inFlightCalls.set(worker, calls);
+    }
+    const pending = calls;
+    let reject!: (error: Error) => void;
+    const evicted = new Promise<never>((_, rejectEvicted) => {
+      reject = rejectEvicted;
+    });
+    pending.add(reject);
+    const settled = (): void => {
+      pending.delete(reject);
+    };
+    call.then(settled, settled);
+    return Promise.race([call, evicted]);
+  }
+
+  /** Reject every call in flight on `worker` and forget the worker. */
+  private rejectInFlight(worker: Worker, reason: string): void {
+    const calls = this.inFlightCalls.get(worker);
+    this.inFlightCalls.delete(worker);
+    if (!calls) return;
+    const error = new WorkerUnavailableError(`[WorkerPool] Call abandoned: ${reason}`);
+    for (const reject of calls) reject(error);
+  }
+
+  /**
    * Run a chunk-decode task on the least-busy WARM worker (see
    * `CodecWarmup.isWarm`; none warm rejects, and the codec decodes on the main
    * thread instead), timeout-guarded but NOT
@@ -721,11 +797,6 @@ export class WorkerPool {
   async runDecode<T>(op: string, fn: (api: Remote<DataWorkerAPI>) => Promise<T>): Promise<T> {
     const tracked = await this.acquireTrackedWorker((w) => this.codecWarmup.isWarm(w));
     return this.dispatchTracked(op, 'decode', tracked, fn);
-  }
-
-  /** Workers with no task in flight. */
-  getIdleWorkerCount(): number {
-    return this.workers.reduce((n, w) => n + (w.activeQueries === 0 ? 1 : 0), 0);
   }
 
   /** Idle workers whose codec is warm (the codec dispatcher spreads batches over these). */
@@ -747,34 +818,6 @@ export class WorkerPool {
    */
   ensureCodecsWarm(): boolean {
     return this.codecWarmup.ensureWarm();
-  }
-
-  /**
-   * Start warming the workers' blosc codec now, one worker first (see
-   * {@link ensureCodecsWarm}). Fire-and-forget and idempotent.
-   */
-  warmCodecs(): void {
-    this.codecWarmup.ensureWarm();
-  }
-
-  /**
-   * Get a worker with query tracking for load balancing.
-   *
-   * Returns the worker `api`, the underlying `worker` (for
-   * eviction-on-timeout), and callbacks to mark query start/end so
-   * the active-queries counter reflects in-flight load.
-   *
-   * For callers that manage their own slot accounting. Hot-path calls use
-   * {@link runWithTimeout}, which selects and marks in one synchronous step.
-   */
-  async getWorkerWithTracking(): Promise<TrackedWorkerHandle> {
-    await this.whenUsable();
-
-    if (this.workers.length === 0) {
-      throw new WorkerUnavailableError('[WorkerPool] No workers available after initialization');
-    }
-
-    return selectLeastBusy(this.workers);
   }
 
   /**
@@ -842,6 +885,7 @@ export class WorkerPool {
       log.info(Modules.WORKER_POOL, `Terminating ${this.workers.length} data worker(s)`);
       for (const { worker } of this.workers) {
         worker.terminate();
+        this.rejectInFlight(worker, 'pool disposed');
       }
       this.workers = [];
     }
@@ -859,7 +903,6 @@ export class WorkerPool {
     );
     this.settleReady = null;
     this.readyPromise = null;
-    this.nextWorkerIndex = 0;
   }
 }
 
@@ -887,15 +930,6 @@ export function getWorkerPool(): WorkerPool {
 function installCodecBackend(pool: WorkerPool): void {
   setWorkerCodecsEnabled(!hasUrlFlag(URL_PARAM_KEYS.mainThreadCodecs));
   setBloscDecodeBackend(new BloscDecodeDispatcher(pool));
-}
-
-/**
- * Start warming the data workers' blosc codec (fire-and-forget; one worker
- * first, the rest once it finished). Nothing warms it eagerly: the first chunk
- * decode above the offload floor does, so this only front-loads that.
- */
-export function warmWorkerCodecs(): void {
-  workerPoolInstance?.warmCodecs();
 }
 
 /**

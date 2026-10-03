@@ -10,6 +10,7 @@ import { DispatchTracker } from '../../../../../workers/worker-pool/selection/di
 import type { WorkerInstance } from '../../../../../workers/worker-pool/types';
 import { WorkerPool, WorkerAbortError } from '../../../../../workers/worker-pool';
 import { perfCounters } from '../../../../../profiling/perf-counters';
+import { deferred } from '../../../../helpers/deferred';
 
 function makeInstance(label: string): WorkerInstance {
   return {
@@ -18,17 +19,6 @@ function makeInstance(label: string): WorkerInstance {
     activeQueries: 0,
     wasmFallback: false,
   };
-}
-
-/** A promise plus its settle handles. */
-function deferred<T = void>() {
-  let resolve!: (v: T) => void;
-  let reject!: (e: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
 }
 
 const flush = async (): Promise<void> => {
