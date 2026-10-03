@@ -39,8 +39,8 @@ interface PackEntry {
   prefix: string;
 }
 
-/** A fetched pack's members not yet served. */
-interface Held {
+/** @internal A fetched pack's members not yet served. */
+export interface Held {
   members: Map<string, Uint8Array>;
   /** Bytes of `members`. */
   bytes: number;
@@ -48,7 +48,8 @@ interface Held {
   wireBytes: number;
 }
 
-interface Pack extends PackEntry {
+/** @internal A pack entry plus its fetch state. */
+export interface Pack extends PackEntry {
   /** The fetch, in flight or holding unserved members; `null` = unusable. */
   held?: Promise<Held | null>;
   /** The in-flight fetch's class, raised by every caller that joins it. */
@@ -57,7 +58,8 @@ interface Pack extends PackEntry {
   memberKeys?: ReadonlySet<string>;
 }
 
-const ABORTED = Symbol('aborted');
+/** @internal The outcome of a caller whose own signal aborted. */
+export const ABORTED = Symbol('aborted');
 
 /** Unserved members held across all packs by default. */
 const DEFAULT_MAX_HELD_BYTES = 4 * 1024 * 1024;

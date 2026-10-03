@@ -188,8 +188,19 @@ describe('PackedChunkSource', () => {
     await bytes(packed, 'splats/part_0/additive_0/amplitudes/c/0');
     await bytes(packed, 'splats/part_0/additive_1/amplitudes/c/0');
     expect(await bytes(packed, 'splats/part_0/additive_0/amplitudes/c/0')).toEqual([1, 2, 3]);
-    // The fully served pack was released; the re-read costs at most one request.
-    expect(requests.length).toBeLessThanOrEqual(2);
+    // The fully served pack was released; the re-read refetches the pack, not the chunk.
+    expect(requests).toEqual(['chunk_packs/0.pack', 'chunk_packs/0.pack']);
+  });
+
+  it('reads a known non-member plainly without waiting on its drained pack', async () => {
+    const { source, requests } = inner();
+    const packed = new PackedChunkSource(source);
+    packed.usePacks(index(), HASH);
+
+    await bytes(packed, 'splats/part_0/additive_0/amplitudes/c/0');
+    await bytes(packed, 'splats/part_0/additive_1/amplitudes/c/0');
+    expect(await bytes(packed, 'splats/part_0/additive_1/offdiag/c/0')).toEqual([7]);
+    expect(requests).toEqual(['chunk_packs/0.pack', 'splats/part_0/additive_1/offdiag/c/0']);
   });
 
   it('serves an evicted member from the pack even when other members were never read', async () => {
