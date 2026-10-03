@@ -142,9 +142,6 @@ export class RenderingControls {
   /** RAF-driven mirror of the camera near/far values into the slider displays. */
   private readonly clippingDisplay: ClippingDisplay;
 
-  /** Cleanup callbacks collected during setup, called on dispose */
-  private cleanupCallbacks: (() => void)[] = [];
-
   /** Cinematic mode preset controller (created in `setupControls` during construction). */
   private cinematic?: CinematicModeController;
 
@@ -1035,12 +1032,6 @@ export class RenderingControls {
   dispose(): void {
     // Clean up clipping display RAF loop
     this.clippingDisplay.dispose();
-
-    // Run all registered cleanup callbacks (e.g., adaptive DPR update interval)
-    for (const cb of this.cleanupCallbacks) {
-      cb();
-    }
-    this.cleanupCallbacks = [];
 
     this.focusManager.dispose();
 
