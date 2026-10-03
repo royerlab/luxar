@@ -228,7 +228,7 @@ The single answer to "is this a touch-first device, is it an iPhone or an iPad, 
 
 ### abort-signals.ts - Abort-Signal Combinator
 
-- `combineAbortSignals(a, b?)` — The viewer's one "abort when either aborts" merge (fetch retry, caching store, zip reader, scene-loader dataset signal, mesh loader). Returns a scope `{ signal, dispose }`: native `AbortSignal.any` when present, else a relay that carries the first abort's reason and whose idempotent `dispose()` removes its source listeners — call it when the work using `signal` settles. One input is returned as is; none gives `undefined`.
+- `combineAbortSignals(a, b?)` — The viewer's one "abort when either aborts" merge (fetch retry, caching store, zip reader, scene-loader dataset signal). Returns a scope `{ signal, dispose }`: native `AbortSignal.any` when present, else a relay that carries the first abort's reason and whose idempotent `dispose()` removes its source listeners — call it when the work using `signal` settles. One input is returned as is; none gives `undefined`.
 
 ### race-timeout.ts - Promise-vs-Timer Race
 

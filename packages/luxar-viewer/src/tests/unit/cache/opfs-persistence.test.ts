@@ -237,6 +237,23 @@ describe('OPFSStore index persistence under a continuous write stream', () => {
     await store.dispose();
   });
 
+  it('indexes the first write after a quiet period within 150 ms (the leading edge)', async () => {
+    vi.useFakeTimers();
+    const fake = createFakeOpfsRoot().install();
+    const store = new OPFSStore('leading', 'https://example.com/d.zarr', 1e9);
+    await store.init();
+    await vi.advanceTimersByTimeAsync(2000); // quiet: init's own saves are done
+    perfCounters.reset();
+
+    await store.set('first', new Uint8Array(64));
+    await vi.advanceTimersByTimeAsync(140);
+    expect(perfCounters.get('opfs.indexSaves')).toBe(0);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(perfCounters.get('opfs.indexSaves')).toBe(1);
+    const meta = JSON.parse(fake.metaFiles.get(META) ?? '{"entries":[]}');
+    expect(meta.entries.map(([key]: [string]) => key)).toEqual(['first']);
+    await store.dispose();
+  });
 });
 
 describe('OPFSStore orphan reconciliation on open', () => {
