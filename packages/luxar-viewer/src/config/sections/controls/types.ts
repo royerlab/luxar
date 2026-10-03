@@ -17,7 +17,6 @@ export interface FlyControlsConfig {
   };
   movement: {
     speed: ConfigRange;
-    acceleration: ConfigRange;
     damping: ConfigRange;
   };
   rotation: {

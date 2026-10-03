@@ -58,10 +58,10 @@ config/
 │   ├── density-guard/      {data,types,validate}.ts   # projected-density guard caps + keep ladder
 │   ├── lod/                {data,types,validate}.ts   # LOD display policy + registry timing/budget tunables
 │   ├── scene/              {data,types,validate}.ts   # includes ShaderConfig
-│   ├── ui/                 {data,types}.ts            # includes DebugConsoleConfig, UIComponentsConfig
+│   ├── ui/                 {data,types}.ts            # includes DebugConsoleConfig
 │   ├── rendering-controls/ {data,types,validate}.ts   # includes RenderingSettings, validateBloomConsistency
 │   ├── controls/           {data,types,validate}.ts   # includes Fly/Orbit/ScaleMultipliers/ConfigRange
-│   ├── input/              {data,types,validate}.ts
+│   ├── input/              {data,types}.ts
 │   ├── data-loading/       {data,types,validate}.ts   # composes the 5 sub-sections below
 │   │   ├── spatial/        {data,types}.ts
 │   │   ├── network/        {data,types,validate}.ts
@@ -115,22 +115,19 @@ Point rendering uses `falloff * opacity` for alpha, matching line material behav
 
 ### User Interface Configuration
 
-UI element behavior, timing, and styling:
+UI element layering and timing (styling lives in CSS):
 
 ```typescript
 ui: {
   zIndex: {
-    loading: 1000,
-    error: 1000,
-    help: 1001
+    renderingControls: 1600,      // Left-docked panels, below the control rail
+    recordingPanel: 1500,
+    layersPanel: 1500,
+    statsMonitor: 2000            // Three.js stats monitor
   },
   timings: {
     errorAutoDismissMs: 10000,    // Auto-hide errors
     helpClickDelayMs: 100         // Help interaction delay
-  },
-  spinner: {
-    size: 24,                     // Loading spinner size
-    borderWidth: 3
   }
 }
 ```
@@ -361,16 +358,11 @@ Development and debugging features. The debug console settings live under
 `config.ui.debugConsole` (see the `ui/` section), not at the top level:
 
 ```typescript
-// Access via config.ui.debugConsole
+// Access via config.ui.debugConsole: the drag-resize limits. The default
+// size, position and look live in debug-console.css.
 config.ui.debugConsole = {
-  panel: {
-    defaultWidth: 600,
-    defaultHeight: 400,
-    minWidth: 400,
-    maxWidth: 1200,
-    // minHeight, maxHeight, bottomOffset, leftOffset also defined
-  },
-  // resize + style sub-objects also defined
+  panel: { minWidth: 400, maxWidth: 1200, minHeight: 200, maxHeight: 800 },
+  resize: { borderWidth: 4 },
 };
 ```
 
@@ -514,7 +506,7 @@ import type { CameraConfig } from '../config';
 import { config } from '../config';
 
 // Access debug settings
-const panelWidth = config.ui.debugConsole.panel.defaultWidth;
+const maxWidth = config.ui.debugConsole.panel.maxWidth;
 ```
 
 ### Versioning

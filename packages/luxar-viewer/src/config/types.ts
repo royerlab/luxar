@@ -69,9 +69,9 @@ import type {
 /** Rendering-controls configuration and per-scene rendering-settings types. */
 export type { RenderingControlsConfig, RenderingSettings };
 
-import type { DebugConsoleConfig, UIComponentsConfig, UIConfig } from './sections/ui/types';
+import type { DebugConsoleConfig, UIConfig } from './sections/ui/types';
 /** UI, UI-components, and debug-console configuration types. */
-export type { DebugConsoleConfig, UIComponentsConfig, UIConfig };
+export type { DebugConsoleConfig, UIConfig };
 
 import type {
   DataLoadingConfig,

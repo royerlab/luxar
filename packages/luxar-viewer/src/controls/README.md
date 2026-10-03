@@ -342,7 +342,7 @@ All control parameters are centralized in `config/index.ts`:
 controls: {
   fly: {
     inertialMode: { default: true },
-    movement: { speed, damping, acceleration },
+    movement: { speed, damping },
     rotation: { speed, damping },
   },
   orbit: {

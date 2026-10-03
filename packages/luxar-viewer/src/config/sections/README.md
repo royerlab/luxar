@@ -2,7 +2,7 @@
 
 Per-slice configuration storage for the unified config package. Each immediate subfolder is one section of the `AppConfig` object — the parent [../README.md](../README.md) composes their literals in `../index.ts`, re-exports their public types through `../types.ts`, and dispatches per-section validation from `../validation.ts`. This folder owns no top-level source files of its own; it exists purely to group the section trios.
 
-Every section conforms to the section-trio pattern: `data.ts` exports the literal (e.g. `cameraConfig: CameraConfig`), `types.ts` defines the interface, and — when the section has cross-field invariants — `validate.ts` exports a section validator (`validateCamera`, `validateBloomConsistency`, `validateAdaptiveDPR`, …) that the central dispatcher invokes. Sections without invariants (`animation/`, `dimension-animation/`, `ui/`) deliberately omit `validate.ts`.
+Every section conforms to the section-trio pattern: `data.ts` exports the literal (e.g. `cameraConfig: CameraConfig`), `types.ts` defines the interface, and — when the section has cross-field invariants — `validate.ts` exports a section validator (`validateCamera`, `validateBloomConsistency`, `validateAdaptiveDPR`, …) that the central dispatcher invokes. Sections without invariants (`animation/`, `dimension-animation/`, `input/`, `ui/`) deliberately omit `validate.ts`.
 
 ## Layout
 
@@ -21,11 +21,11 @@ sections/
 │   └── performance/       # Accumulators, workers, WASM, GPU buffer pool
 ├── depth-sort/            # GSplat camera-motion re-sort scheduling thresholds
 ├── dimension-animation/   # FPS-based playback through dimension ranges
-├── input/                 # Sensitivity + keyboard shortcuts + fly/dim keys
+├── input/                 # Keyboard shortcuts
 ├── lod/                   # LOD display policy: level-change dissolve (fadeMs), preload band
 ├── rendering-controls/    # User-adjustable rendering settings (single source of truth)
 ├── scene/                 # Background color, fit ratio, ShaderConfig placeholder
-├── ui/                    # z-index, timings, spinner, debug console, components
+├── ui/                    # panel z-index, timings, debug-console resize, scale bar
 └── webgl/                 # Context attrs, renderer options, render-target config
 ```
 
