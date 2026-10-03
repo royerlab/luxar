@@ -2,12 +2,10 @@
  * Initial scene-load orchestrator.
  *
  * Sequence:
- *   1. Reset the monitor's loader bindings and the worker pool's signal (a
- *      previous dataset's loader — disposed by `SceneLoaderManager` before
- *      this one was built — may still own both).
+ *   1. Reset the monitor's loader bindings.
  *   2. (The loader is one-shot: `SceneLoader.loadScene` refuses a second
  *      load, so there is never an earlier dataset of THIS loader to dispose.)
- *   3. Fresh AbortController wired into the worker pool's signal.
+ *   3. Create a fresh dataset AbortController for this loader's worker calls.
  *   4. Reset the predictive-prefetch baseline (otherwise the first
  *      updateView extrapolates from the prior dataset's slicePosition).
  *   5. Set up L0 + L1/L2 caches; open the zarr root.

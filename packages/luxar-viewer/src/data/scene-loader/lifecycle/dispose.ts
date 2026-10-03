@@ -1,8 +1,8 @@
 /**
  * SceneLoader dispose body — releases dataset-scoped resources:
  *
- *   - the dataset abort controller (so in-flight worker tasks settle
- *     immediately and the worker pool's signal reference is cleared),
+ *   - the dataset abort controller (so this loader's in-flight worker
+ *     calls settle immediately),
  *   - every geometry loader registered with the LoaderRegistry,
  *   - the GPU buffer pool (without this, instanced buffer geometries
  *     leak hundreds of MB of GPU memory across dataset switches),
