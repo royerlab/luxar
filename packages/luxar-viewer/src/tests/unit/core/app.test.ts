@@ -1967,7 +1967,7 @@ describe('LuxarApp', () => {
       expect(removals).toEqual([['webglcontextlost', additions[0][1]]]);
     });
 
-    it.fails('a superseded load never writes its viewer config into a newer session', async () => {
+    it('a superseded load never writes its viewer config into a newer session', async () => {
       // dispose() + init() while a switch is still loading: the old load's
       // config pass must land in ITS (disposed) session, not the new one.
       await app.init({ canvas: mockCanvas, src: '' });

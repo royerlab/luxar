@@ -464,7 +464,9 @@ export class LuxarApp {
         initColormapLegend: () => this.initColormapLegend(),
         initOverlays: () => this.initOverlays(),
         initPicking: () => this.initPicking(),
-        applyViewerConfigState: (config) => this.applyViewerConfigState(config),
+        // THIS load's session: a load superseded mid-flight must never write
+        // its scene's waypoints / kiosk / control panel into a newer session.
+        applyViewerConfigState: (config) => this.applyViewerConfigState(config, session),
         openCacheStatsView: () => this.openCacheStatsView(),
       });
       session.markLoaded(getSceneLoader());
@@ -560,19 +562,22 @@ export class LuxarApp {
    * Only explicitly set fields (not undefined) are applied — unset fields
    * preserve the viewer's built-in defaults.
    */
-  private applyViewerConfigState(viewerConfig: ZarrViewerConfig | undefined): void {
+  private applyViewerConfigState(
+    viewerConfig: ZarrViewerConfig | undefined,
+    session: DatasetSession = this.session
+  ): void {
     this.applyViewerConfigStateCore(viewerConfig);
     // AFTER the core pass: `dimensions.current_step` has been applied, so the
     // load-time match sees the authored opening position and snaps to it.
-    this.installWaypoints(viewerConfig?.waypoints);
+    this.installWaypoints(viewerConfig?.waypoints, session);
     // AFTER the waypoints: the opening slice is final, so the first slab
     // evaluation starts exactly the sounds the opening story owns.
-    this.installAudio(viewerConfig?.audio);
+    this.installAudio(viewerConfig?.audio, session);
     // Kept rather than applied: nothing in THIS page reads it. The control
     // panel is a separate page and asks for it over the wire, so the display's
     // only job is to remember what the store said.
-    this.session.controlPanelConfig = extractControlPanelConfig(viewerConfig?.control_panel);
-    this.applyKiosk(viewerConfig);
+    session.controlPanelConfig = extractControlPanelConfig(viewerConfig?.control_panel);
+    this.applyKiosk(viewerConfig, session);
   }
 
   /**
@@ -581,12 +586,15 @@ export class LuxarApp {
    * session owns the watchdog, so switching scenes cannot accumulate listeners
    * on a long-running exhibit.
    */
-  private applyKiosk(viewerConfig: ZarrViewerConfig | undefined): void {
+  private applyKiosk(
+    viewerConfig: ZarrViewerConfig | undefined,
+    session: DatasetSession = this.session
+  ): void {
     // `this.options?` because this runs inside the viewer-config pass, which a
     // partially-constructed app can reach before its options are set — and a
     // missing option means "no ?kiosk", not a crash that aborts the rest of the
     // load (theme, dimension state, the render loop after it).
-    this.session.setKioskTeardown(
+    session.setKioskTeardown(
       applySceneKiosk(viewerConfig?.ui?.kiosk, this.options?.kiosk === true, () => ({
         setKeyboardEnabled: (enabled) => this.inputHandler.setEnabled(enabled),
         setControlsEnabled: (enabled) => this.sceneManager.controls?.setEnabled(enabled),
@@ -601,9 +609,9 @@ export class LuxarApp {
   }
 
   /** Bind the sound layer to the loaded scene (`viewer-config/install-audio.ts`). */
-  private installAudio(audio: unknown): void {
+  private installAudio(audio: unknown, session: DatasetSession = this.session): void {
     if (!this.audioEngine) return;
-    const driver = this.session.waypointDriver;
+    const driver = session.waypointDriver;
     installSceneAudio(audio, {
       audioEngine: this.audioEngine,
       sceneRoot: this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene'),
@@ -616,9 +624,12 @@ export class LuxarApp {
    * Bind the scene's authored story waypoints (`camera/install-waypoints.ts`);
    * the session owns the binding.
    */
-  private installWaypoints(waypoints: ZarrWaypoint[] | undefined): void {
-    this.session.setWaypoints(null);
-    this.session.setWaypoints(
+  private installWaypoints(
+    waypoints: ZarrWaypoint[] | undefined,
+    session: DatasetSession = this.session
+  ): void {
+    session.setWaypoints(null);
+    session.setWaypoints(
       installStoryWaypoints(waypoints, {
         sceneManager: this.sceneManager,
         getCameraFlight: () => this.cameraFlight,
