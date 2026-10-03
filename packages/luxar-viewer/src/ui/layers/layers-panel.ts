@@ -34,7 +34,7 @@ import { openContextMenu, type ContextMenuItem } from '../overlay-widgets/contex
 import { BLENDING_MODES } from '../../rendering/blending-state';
 import type { BlendingMode } from '../../rendering';
 import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
-import { layerHasBlending, resolveLayerBlendingMode } from './layer-state';
+import { CUSTOM_COLORMAP_LABEL, layerHasBlending, resolveLayerBlendingMode } from './layer-state';
 import { showToast } from '../toast';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import { LayerApplyEngine } from './layer-apply';
@@ -609,26 +609,7 @@ export class LayersPanel {
     if (layer.type === 'sound') return [];
     const items: ContextMenuItem[] = [];
     if (layer.supportsColormap) {
-      const current = this.state.getLayer(layer.path)?.colormap;
-      const sub: ContextMenuItem[] = [
-        {
-          label: '(direct colors)',
-          kind: 'radio',
-          checked: !current,
-          action: () => this.setLayerColormap(layer.path, undefined),
-        },
-      ];
-      for (const names of Object.values(COLORMAP_CATEGORIES)) {
-        for (const name of names) {
-          sub.push({
-            label: name,
-            kind: 'radio',
-            checked: current === name,
-            action: () => this.setLayerColormap(layer.path, name),
-          });
-        }
-      }
-      items.push({ label: 'Colormap', submenu: sub });
+      items.push({ label: 'Colormap', submenu: this.buildColormapSubmenu(layer) });
     }
     if (layerHasBlending(layer)) {
       items.push({
@@ -647,6 +628,27 @@ export class LayersPanel {
     });
     items[0].separatorBefore = true;
     return items;
+  }
+
+  /**
+   * The Colormap submenu: direct colours, the authored custom LUT when the layer
+   * has one (the only way back to it after trying another palette), every builtin.
+   */
+  private buildColormapSubmenu(layer: LayerInfo): ContextMenuItem[] {
+    const current = this.state.getLayer(layer.path)?.colormap;
+    const radio = (label: string, name: string | undefined): ContextMenuItem => ({
+      label,
+      kind: 'radio',
+      checked: current === name,
+      action: () => this.setLayerColormap(layer.path, name),
+    });
+    return [
+      radio('(direct colors)', undefined),
+      ...(layer.customLut ? [radio(CUSTOM_COLORMAP_LABEL, 'custom')] : []),
+      ...Object.values(COLORMAP_CATEGORIES)
+        .flat()
+        .map((name) => radio(name, name)),
+    ];
   }
 
   private buildHeaderMenuItems(): ContextMenuItem[] {

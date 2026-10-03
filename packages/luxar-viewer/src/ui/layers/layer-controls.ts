@@ -16,6 +16,7 @@
 
 import type { BlendingMode } from '../../rendering';
 import {
+  CUSTOM_COLORMAP_LABEL,
   layerHasBlending,
   resolveLayerBlendingMode,
   type LayerInfo,
@@ -129,6 +130,8 @@ export class LayerControls {
   private blendSelect: HTMLSelectElement | null = null;
   private layerOrderInput: HTMLInputElement | null = null;
   private colormapSelect: HTMLSelectElement | null = null;
+  /** The `'custom'` entry, attached only while the primary layer has an authored LUT. */
+  private customColormapOption: HTMLOptionElement | null = null;
   private labelColorSelect: HTMLSelectElement | null = null;
   private labelFilterSelect: HTMLSelectElement | null = null;
   /**
@@ -573,6 +576,9 @@ export class LayerControls {
     noneOpt.value = '';
     noneOpt.textContent = '(direct colors)';
     this.colormapSelect.appendChild(noneOpt);
+    // The authored non-builtin palette (stored as 'custom' + its LUT); placed by
+    // syncColormapSelect for the layers that have one.
+    this.customColormapOption = new Option(CUSTOM_COLORMAP_LABEL, 'custom');
 
     // Add categorized options
     for (const [category, names] of Object.entries(COLORMAP_CATEGORIES)) {
@@ -832,15 +838,7 @@ export class LayerControls {
     this.syncAbsorptionVisibility();
     this.syncMeshAppearanceVisibility();
 
-    if (this.colormapSelect) {
-      if (primary.supportsColormap) {
-        this.colormapSelect.parentElement!.style.display = '';
-        this.colormapSelect.value = primary.colormap ?? '';
-      } else {
-        // Hide colormap control for layers that don't support it
-        this.colormapSelect.parentElement!.style.display = 'none';
-      }
-    }
+    this.syncColormapSelect(primary);
 
     if (this.labelColorSelect && this.labelFilterSelect) {
       const container = this.labelColorSelect.parentElement!;
@@ -890,6 +888,20 @@ export class LayerControls {
       // readout applies (non-LOD layer, or registry not yet populated).
       this.setLodStatusText(this.computeLodStatusText(primary) ?? '');
     }
+  }
+
+  /**
+   * Show the colormap dropdown for layers that support one, offering the
+   * `'custom'` entry only to a layer with an authored LUT (any other layer would
+   * fall back to viridis under that name), and seat it on the layer's palette.
+   */
+  private syncColormapSelect(primary: LayerInfo): void {
+    if (!this.colormapSelect || !this.customColormapOption) return;
+    this.colormapSelect.parentElement!.style.display = primary.supportsColormap ? '' : 'none';
+    if (!primary.supportsColormap) return;
+    if (primary.customLut) this.colormapSelect.options[0].after(this.customColormapOption);
+    else this.customColormapOption.remove();
+    this.colormapSelect.value = primary.colormap ?? '';
   }
 
   /**

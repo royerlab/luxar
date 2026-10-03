@@ -320,5 +320,48 @@ describe('ColormapLegend', () => {
       );
       expect(canvasAfterIdempotentUpdate).toBe(canvas);
     });
+
+    it("draws an authored custom palette from the layer's own LUT, not the gray fallback", () => {
+      // jsdom has no 2d context, so record what the gradient paints instead.
+      const painted: string[] = [];
+      const fakeCtx = {
+        set fillStyle(v: string) {
+          painted.push(v);
+        },
+        fillRect: vi.fn(),
+      };
+      const getContext = vi
+        .spyOn(HTMLCanvasElement.prototype, 'getContext')
+        .mockReturnValue(fakeCtx as unknown as CanvasRenderingContext2D);
+      try {
+        const lut = new Uint8Array(768);
+        for (let i = 0; i < 256; i++) lut.set([i, 10, 20], i * 3);
+        const custom = new LayerStateManager();
+        custom.initFromSceneGraph({
+          path: '',
+          type: 'scene',
+          attrs: {},
+          hasSpatialIndex: false,
+          children: [
+            {
+              path: 'layer/fire',
+              type: 'gsplats',
+              attrs: { layer: true, colormap: 'custom', customLutBytes: lut },
+              hasSpatialIndex: true,
+            },
+          ],
+        });
+        const customLegend = new ColormapLegend({ layerState: custom });
+        customLegend.show();
+
+        expect(painted).not.toContain('#888');
+        expect(painted).toHaveLength(120);
+        expect(painted[0]).toBe('rgb(0,10,20)');
+        expect(painted.every((style) => /^rgb\(\d+,10,20\)$/.test(style))).toBe(true);
+        customLegend.dispose();
+      } finally {
+        getContext.mockRestore();
+      }
+    });
   });
 });

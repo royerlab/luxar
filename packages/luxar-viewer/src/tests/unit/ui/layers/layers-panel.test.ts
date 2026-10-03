@@ -2573,6 +2573,55 @@ describe('LayersPanel — blend select drives the leaf material', () => {
     expect(getColormapTexture).toHaveBeenCalledWith('custom', lut);
   });
 
+  it('names an authored custom palette in the dropdown and the row menu, and can return to it', () => {
+    // Any non-builtin palette is stored as `colormap: 'custom'` + its LUT. The
+    // dropdown used to show a blank value for it, and the row menu checked nothing
+    // and offered no way back once the user tried another palette.
+    const lut = new Uint8Array(768).fill(40);
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(
+      new THREE.Group(),
+      makeLayeredSceneGraph('gsplats', { colormap: 'custom', customLutBytes: lut })
+    );
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    const colormapSelect = Array.from(
+      container.querySelectorAll<HTMLElement>('.luxar-layers-panel__control-group')
+    )
+      .find(
+        (g) => g.querySelector('.luxar-layers-panel__control-label')?.textContent === 'Colormap'
+      )!
+      .querySelector('select')!;
+    expect(colormapSelect.value).toBe('custom');
+    expect(colormapSelect.selectedOptions[0].textContent).toBe('custom (authored)');
+
+    const submenu = () =>
+      rowMenu(panel, '/cloud').find((item) => item.label === 'Colormap')!.submenu!;
+    expect(submenu().find((item) => item.checked)?.label).toBe('custom (authored)');
+
+    submenu().find((item) => item.label === 'viridis')!.action!();
+    expect(panel.layerState.getLayer('/cloud')!.colormap).toBe('viridis');
+    submenu().find((item) => item.label === 'custom (authored)')!.action!();
+    expect(panel.layerState.getLayer('/cloud')!.colormap).toBe('custom');
+    panel.dispose();
+  });
+
+  it('offers no custom entry to a layer without an authored LUT', () => {
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(
+      new THREE.Group(),
+      makeLayeredSceneGraph('gsplats', { colormap: 'viridis' })
+    );
+    panel.show();
+    panel.layerState.select('/cloud', 'single');
+
+    expect(container.querySelector('option[value="custom"]')).toBeNull();
+    const submenu = rowMenu(panel, '/cloud').find((item) => item.label === 'Colormap')!.submenu!;
+    expect(submenu.map((item) => item.label)).not.toContain('custom (authored)');
+    panel.dispose();
+  });
+
   it('resetAllLayers clears label colouring and filtering on the material', () => {
     const material = makeColormapRoutingStub();
     const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material as unknown as THREE.Material);

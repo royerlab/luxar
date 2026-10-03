@@ -69,6 +69,64 @@ describe('LayerStateManager colormap support', () => {
     expect(mgr.getLayers()[0].supportsColormap).toBe(true);
   });
 
+  it('carries the authored LUT of a custom palette, own or inherited', () => {
+    // The compiler stores every non-builtin palette as `colormap: 'custom'` plus a
+    // sibling `colormap_lut`, which the loader hands over as `customLutBytes`. The
+    // panel needs the bytes to offer and draw that palette (dropdown, menu, legend).
+    const own = new Uint8Array(768).fill(7);
+    const inherited = new Uint8Array(768).fill(9);
+    mgr.initFromSceneGraph({
+      path: '',
+      type: 'scene',
+      hasSpatialIndex: false,
+      attrs: {},
+      children: [
+        {
+          path: 'own',
+          type: 'gsplats',
+          hasSpatialIndex: false,
+          attrs: { layer: true, colormap: 'custom', customLutBytes: own },
+        },
+        {
+          path: 'palette',
+          type: 'group',
+          hasSpatialIndex: false,
+          attrs: { colormap: 'custom', customLutBytes: inherited },
+          children: [
+            { path: 'palette/gs', type: 'gsplats', hasSpatialIndex: false, attrs: { layer: true } },
+          ],
+        },
+        {
+          // A kind=partition wrapper: the palette lives on its parts.
+          path: 'tiles',
+          type: 'group',
+          hasSpatialIndex: false,
+          attrs: { layer: true, kind: 'partition', display_type: 'gsplats' },
+          children: [
+            {
+              path: 'tiles/part_0',
+              type: 'gsplats',
+              hasSpatialIndex: false,
+              attrs: { colormap: 'custom', customLutBytes: own },
+            },
+          ],
+        },
+        {
+          path: 'builtin',
+          type: 'gsplats',
+          hasSpatialIndex: false,
+          attrs: { layer: true, colormap: 'viridis' },
+        },
+      ],
+    });
+    expect(mgr.getLayer('own')!.customLut).toBe(own);
+    expect(mgr.getLayer('tiles')!.colormap).toBe('custom');
+    expect(mgr.getLayer('tiles')!.customLut).toBe(own);
+    expect(mgr.getLayer('palette/gs')!.colormap).toBe('custom');
+    expect(mgr.getLayer('palette/gs')!.customLut).toBe(inherited);
+    expect(mgr.getLayer('builtin')!.customLut).toBeUndefined();
+  });
+
   it('supportsColormap is true for gsplats with has_scalars', () => {
     mgr.initFromSceneGraph(makeSceneGraph([{ has_scalars: true }]));
     const layer = mgr.getLayers()[0];

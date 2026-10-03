@@ -221,6 +221,26 @@ function deriveColormapFromDescendants(node: SceneNode): string | undefined {
 }
 
 /**
+ * The LUT bytes behind a layer whose palette resolved to `'custom'`, found where
+ * the palette itself came from: the node's own `colormap_lut`, else the first
+ * descendant's (a wrapper whose parts carry it — same walk and stop rule as
+ * {@link deriveColormapFromDescendants}), else the composed ancestry's, which
+ * carries the bytes of whichever ancestor supplied the inherited `'custom'`.
+ */
+function deriveCustomLut(node: SceneNode, index: SceneNodeIndex): Uint8Array | undefined {
+  const inSubtree = (n: SceneNode): Uint8Array | undefined => {
+    const bytes = n.attrs.customLutBytes;
+    if (n.attrs.colormap === 'custom' && bytes instanceof Uint8Array) return bytes;
+    for (const child of n.children ?? []) {
+      const found = isLayerEnabled(child.attrs.layer) ? undefined : inSubtree(child);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  return inSubtree(node) ?? getEffectiveAttrsOfChain(index.ancestorChain(node.path)).customLutBytes;
+}
+
+/**
  * A numeric mesh appearance attr (`ambient` / `shade_exponent` / `alpha_cutoff` /
  * `specular` / `shininess`) read from `node`, else from the first descendant that
  * carries one.
@@ -529,6 +549,13 @@ export interface LayerInfo {
   /** Active colormap name (undefined = direct RGB colors) */
   colormap?: string;
   /**
+   * The authored LUT (`colormap_lut` bytes, 256 × RGB or RGBA) when the layer's
+   * AUTHORED palette is `'custom'` — how the compiler stores every non-builtin
+   * palette. Lets the dropdown, the row menu and the legend name and draw it;
+   * `undefined` for a builtin or no authored palette.
+   */
+  customLut?: Uint8Array;
+  /**
    * Whether a colormap can render on this layer: always for gsplats (the
    * amplitude is the scalar), for points / lines / mesh only with scalars, for a
    * group when a data descendant can — or whenever a palette is authored.
@@ -631,6 +658,12 @@ export function resolveLayerBlendingMode(
 ): BlendingMode {
   return type === 'mesh' ? resolveMeshBlendingMode(mode) : mode;
 }
+
+/**
+ * How the dropdown and the row menu name the `'custom'` palette: the authored
+ * non-builtin LUT ({@link LayerInfo.customLut}).
+ */
+export const CUSTOM_COLORMAP_LABEL = 'custom (authored)';
 
 /**
  * Whether a blending-mode control reaches this layer's material. A `sound` row has
@@ -917,6 +950,7 @@ export class LayerStateManager {
           layerOrderExplicit: ownLayerOrder !== undefined,
           selected: false,
           colormap,
+          customLut: colormap === 'custom' ? deriveCustomLut(node, index) : undefined,
           supportsColormap,
           labelVocabulary,
           colorByLabel: false,
