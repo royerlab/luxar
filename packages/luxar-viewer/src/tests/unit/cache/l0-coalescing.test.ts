@@ -22,6 +22,7 @@ import {
 } from '../../../cache/decompressed-chunk-cache/cached-zarr-array';
 import { warmChunk } from '../../../cache/decompressed-chunk-cache/warm-chunk';
 import { perfCounters } from '../../../profiling/perf-counters';
+import { ResidencyAccumulator } from '../../../cache/residency-probe';
 
 interface Counter {
   decodes: number;
@@ -267,6 +268,8 @@ describe('L0 coalesced waiters are abort-isolated', () => {
     expect(counter.aborted).toBe(1);
     expect(counter.decodes).toBe(1);
     expect(cache.has(key)).toBe(true);
+    expect(perfCounters.get('l0.coalesced')).toBe(0);
+    expect(perfCounters.get('l0.misses')).toBe(2);
   });
 });
 
@@ -301,12 +304,16 @@ describe('L0 — a cancelled read-ahead whose decode is already past its fetch',
     const counter: Counter = { decodes: 0, starts: 0, aborted: 0 };
     const { array, releaseFirst } = signalDeafArray(counter);
     const a = wrapWithCache(array as never, cache, '/n/centers');
+    const probe = new ResidencyAccumulator();
+    const demand = wrapWithCache(array as never, cache, '/n/centers', {
+      getProbe: () => probe,
+    });
     const warm = new AbortController();
     const warming = warmChunk(a as never, [0, 0], { signal: warm.signal });
     warm.abort(); // the next drag step supersedes the read-ahead
     expect(await outcome(warming)).toBe('AbortError');
 
-    const foreground = a.getChunk([0, 0]);
+    const foreground = demand.getChunk([0, 0]);
     releaseFirst(); // the cancelled warm's decode completes regardless
     const chunk = await foreground;
 
@@ -314,6 +321,9 @@ describe('L0 — a cancelled read-ahead whose decode is already past its fetch',
     expect(counter.starts).toBe(1);
     expect(counter.decodes).toBe(1);
     expect(perfCounters.get('decode.duplicates')).toBe(0);
+    expect(perfCounters.get('l0.coalesced')).toBe(1);
+    expect(probe.hits).toBe(1);
+    expect(probe.misses).toBe(0);
   });
 
   it('a cancelled warm that completes with no joiner still lands in L0', async () => {

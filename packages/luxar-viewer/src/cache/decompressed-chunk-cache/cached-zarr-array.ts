@@ -406,7 +406,10 @@ async function awaitAbandoned(
   pending: InflightDecode
 ): Promise<DecodedChunkResult> {
   try {
-    return await raceWaiter(pending, req.signal);
+    const result = await raceWaiter(pending, req.signal);
+    perfCounters.add(S_L0_COALESCED);
+    req.probe?.record(true);
+    return result;
   } catch (error) {
     if (req.signal?.aborted || (error as { name?: unknown } | null)?.name !== 'AbortError') {
       throw error;
