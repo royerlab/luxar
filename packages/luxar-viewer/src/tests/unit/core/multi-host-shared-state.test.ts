@@ -6,6 +6,7 @@
  *   `MaterialManager`, so another host's camera broadcast never reaches them.
  * - Data-worker pool: shared page-wide, released only by the last host.
  * - Blend warm-up: a commit is routed to the warm-up of the scene its node is in.
+ * - Geometry commits: only the app's reach the page event bus.
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -15,6 +16,7 @@ import { MaterialManager, getPageMaterialManager } from '../../../rendering/mate
 import type { DataLoader } from '../../../data/data-loader-types';
 import type { PointsMetadata } from '../../../types/points';
 import { releaseWorkerPool, retainWorkerPool } from '../../../workers/worker-pool';
+import { eventBus } from '../../../utils/cross-layer/event-bus';
 import {
   WebGLBlendWarmupManager,
   registerBlendWarmupManager,
@@ -59,6 +61,25 @@ describe('materials are per host', () => {
     const appDispose = vi.spyOn(appMaterial, 'dispose');
     layerMaterials.dispose();
     expect(appDispose).not.toHaveBeenCalled();
+  });
+});
+
+describe('geometry commits are per host', () => {
+  it.fails("a layer factory's commits stay off the app's page event bus", () => {
+    // The app's redraw and its environment re-capture listen on the page bus;
+    // a layer's commit (its own requestRender already redraws it) must not
+    // wake them.
+    const heard = vi.fn();
+    const off = eventBus.on('geometry-committed', heard);
+    const layerFactory = new NodeFactory();
+    layerFactory.setMaterialManager(new MaterialManager());
+
+    layerFactory.markPickingDirty();
+    expect(heard).not.toHaveBeenCalled();
+
+    new NodeFactory().markPickingDirty(false);
+    expect(heard).toHaveBeenCalledExactlyOnceWith({ drawn: false });
+    off();
   });
 });
 
