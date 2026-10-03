@@ -156,6 +156,14 @@ import { cleanupUI as mockCleanupUI } from '../../../ui/ui-cleanup';
 import { clearError as mockClearError } from '../../../ui/error-overlay';
 import { showToast as mockShowToast } from '../../../ui/toast';
 import { showHelpOverlay } from '../../../ui/help-overlay';
+import { LayersPanel } from '../../../ui/layers';
+
+// The automock does not stub the `layerState` getter, and the init pipeline
+// subscribes the scene environment to the panel's state.
+Object.defineProperty(LayersPanel.prototype, 'layerState', {
+  configurable: true,
+  get: () => ({ onChange: () => () => undefined }),
+});
 
 // Import LuxarApp after all mocks are set up
 import { LuxarApp } from '../../../core/app';
@@ -1398,7 +1406,6 @@ describe('LuxarApp', () => {
       expect(mockSceneManager.dispose).toHaveBeenCalledTimes(1);
       expect(mockAnimationController.dispose).toHaveBeenCalledTimes(1);
       expect(mockAddEventListener.mock.calls.map((call) => call[0])).toEqual([
-        'luxar-layers-changed',
         'luxar-layers-changed',
       ]);
       for (const [event, listener] of mockAddEventListener.mock.calls) {

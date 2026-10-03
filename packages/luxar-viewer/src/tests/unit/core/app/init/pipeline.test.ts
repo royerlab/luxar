@@ -104,8 +104,9 @@ function makeRecordingPanelStub() {
   };
 }
 function makeLayersPanelStub() {
-  // `setAudioPort` is the sound layer's late-bound port for the sound rows.
-  return { kind: 'layers', setAudioPort: vi.fn() };
+  // `setAudioPort` is the sound layer's late-bound port for the sound rows;
+  // `layerState.onChange` is where the scene environment hears appearance edits.
+  return { kind: 'layers', setAudioPort: vi.fn(), layerState: { onChange: vi.fn(() => vi.fn()) } };
 }
 function makeInputHandlerStub() {
   return {

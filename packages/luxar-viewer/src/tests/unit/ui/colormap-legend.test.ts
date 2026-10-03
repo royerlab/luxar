@@ -104,11 +104,8 @@ function toSceneGraph(layers: LayerInfo[]): SceneNode {
 
 /**
  * Wrap a real `LayerStateManager` with the test-only `setLayers` /
- * `callbackCount` accessors the existing tests use. `initFromSceneGraph`
- * is a one-time setup call in production and does NOT notify listeners;
- * the wrapper invokes the private `notify` after a re-init so the
- * legend's `onChange` callback fires (production never needs this
- * because it subscribes AFTER init).
+ * `callbackCount` accessors the existing tests use. A re-init notifies its
+ * listeners, so the legend's `onChange` callback fires on `setLayers`.
  */
 function makeLayerState(initialLayers: LayerInfo[] = []) {
   const mgr = new LayerStateManager();
@@ -117,7 +114,6 @@ function makeLayerState(initialLayers: LayerInfo[] = []) {
   return Object.assign(mgr, {
     setLayers(next: LayerInfo[]) {
       mgr.initFromSceneGraph(toSceneGraph(next));
-      (mgr as unknown as { notify: () => void }).notify();
     },
     callbackCount: (): number => (mgr as unknown as { listeners: Set<unknown> }).listeners.size,
   });

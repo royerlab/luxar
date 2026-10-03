@@ -626,8 +626,18 @@ export type { DisplayUniforms } from '../../rendering/display-range';
 /** Selection mode for layer clicks */
 export type SelectionMode = 'single' | 'add' | 'range';
 
+/** What a change notification carries. */
+export interface LayerChange {
+  /**
+   * False when nothing a layer renders changed — the selection moved, or a sound
+   * row's gain did — so a listener reacting to appearance (the scene
+   * environment's re-capture) skips it.
+   */
+  appearance: boolean;
+}
+
 /** Listener callback type */
-export type LayerChangeListener = () => void;
+export type LayerChangeListener = (change: LayerChange) => void;
 
 /**
  * Manages the state of all layers in the Layers panel.
@@ -693,6 +703,9 @@ export class LayerStateManager {
    * layer's composed attrs read its root→node chain from it in O(1) instead of
    * descending the graph per layer. Without one (or with an index over a
    * different graph) one is built here — a single O(N) pass.
+   *
+   * Notifies (as an appearance change): a re-init — "Reset all layers" — replaces
+   * every layer's state.
    */
   initFromSceneGraph(root: SceneNode, sceneIndex?: SceneNodeIndex | null): void {
     this.soloState = null;
@@ -702,6 +715,7 @@ export class LayerStateManager {
 
     const index = sceneIndex?.root === root ? sceneIndex : new SceneNodeIndex(root);
     this.walkSceneGraph(root, index, undefined);
+    this.notify();
   }
 
   private walkSceneGraph(
@@ -1029,7 +1043,7 @@ export class LayerStateManager {
     const layer = this.layers.get(path);
     if (!layer?.sound || !Number.isFinite(gain)) return;
     layer.sound.gain = Math.min(2, Math.max(0, gain));
-    this.notify();
+    this.notify(false);
   }
 
   /** Get all layers in display order */
@@ -1095,7 +1109,7 @@ export class LayerStateManager {
       }
     }
 
-    this.notify();
+    this.notify(false);
   }
 
   /** Get all currently selected layers */
@@ -1324,15 +1338,18 @@ export class LayerStateManager {
 
   // ─── Events ──────────────────────────────────────────────
 
-  /** Subscribe to state changes. Returns an unsubscribe function. */
+  /**
+   * Subscribe to state changes (each tells whether a layer's appearance changed).
+   * Returns an unsubscribe function.
+   */
   onChange(listener: LayerChangeListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  private notify(): void {
+  private notify(appearance = true): void {
     for (const listener of this.listeners) {
-      listener();
+      listener({ appearance });
     }
   }
 

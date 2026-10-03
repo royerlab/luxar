@@ -8,7 +8,9 @@
  * - a geometry commit (`eventBus 'geometry-committed'`, the same moment the pick buffer
  *   is invalidated),
  * - a slice change (`sceneDimsManager` listener),
- * - an appearance change (`window 'luxar-layers-changed'`),
+ * - a Layers-panel appearance edit (`wireEnvironmentToLayers`: the panel's
+ *   `LayerStateManager.onChange`, appearance changes only — wired by the
+ *   init pipeline once the panel exists),
  *
  * and re-captured on the next frame after a short debounce, once the loader has settled
  * (same predicate the adaptive-DPR manager reads). Camera motion is deliberately NOT a
@@ -24,6 +26,7 @@
 
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
+import type { LayerStateManager } from '../../../ui/layers/layer-state';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import { eventBus } from '../../../utils/cross-layer/event-bus';
@@ -73,10 +76,29 @@ export function wireSceneEnvironment(deps: EnvironmentWiringDeps): void {
   };
   sceneDimsManager.addListener(markStaleOnSliceChange);
   events.add(() => sceneDimsManager.removeListener(markStaleOnSliceChange));
-  window.addEventListener('luxar-layers-changed', markStale);
-  events.add(() => window.removeEventListener('luxar-layers-changed', markStale));
 
   if (options.bakeEnvironment) scheduleBake(deps, options.bakeEnvironment);
+}
+
+/**
+ * Mark the scene environment stale on every Layers-panel edit that changes how a
+ * layer looks (colour, window, opacity, visibility, mesh knobs, a reset), skipping
+ * changes that render nothing (the selection, a sound row's gain). The panel's own
+ * state is the one place every edit passes through; the window `luxar-layers-changed` event fires once per load and
+ * also re-learns the adaptive DPR, so it is the wrong signal for a slider drag.
+ * `markStale` debounces, so a drag costs one capture once it settles.
+ */
+export function wireEnvironmentToLayers(
+  sceneManager: Pick<SceneManager, 'environment'>,
+  layerState: Pick<LayerStateManager, 'onChange'>,
+  events: EventGroup
+): void {
+  const unsubscribe = layerState.onChange(({ appearance }) => {
+    if (appearance) sceneManager.environment?.markStale();
+  });
+  events.add(() => {
+    unsubscribe();
+  });
 }
 
 function scheduleBake(
