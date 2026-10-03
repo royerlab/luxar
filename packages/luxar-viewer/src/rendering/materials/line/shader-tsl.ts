@@ -792,7 +792,7 @@ export function lineWebGPUFactory(
       .mul(widthScale)
       .mul(vWidthFade)
       // The fragment stage reads the same per-draw ortho test (the GLSL twin
-      // hands it over as the flat `vLineIsOrtho`); the fade is 1.0 under ortho.
+      // derives it from P, `luxarIsOrthoProjection()`); the fade is 1.0 under ortho.
       .mul(
         vViewZ
           ? perspectiveNearFadeTSL(

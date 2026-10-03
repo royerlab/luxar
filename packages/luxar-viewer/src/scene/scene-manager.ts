@@ -1002,9 +1002,11 @@ export class SceneManager extends THREE.EventDispatcher<{
    * camera's params (a square drawing buffer, pixel ratio 1) to the material manager
    * so point and line footprints render at the right size in the six faces, and
    * restores the main camera's push afterwards through the ordinary path. The 90°
-   * projection itself — its ortho test included — is read in shader from the cube
-   * camera's matrix by every material, so the camera KIND needs no push and an
-   * orthographic main camera swaps no graph or program across a capture.
+   * projection itself — its ortho test included — is read from the cube camera at
+   * draw time, so the camera KIND needs no push: every GLSL program and TSL graph
+   * reads it in shader from the matrix, except the TSL screen-space line quad,
+   * whose per-draw hook re-points it at its cached perspective graph for the faces
+   * (a lookup, no build; see `selectProjectionVariant`).
    */
   attachEnvironmentRuntime(isSettled: () => boolean): void {
     const root = (): THREE.Object3D | null =>

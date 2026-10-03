@@ -531,8 +531,11 @@ kind.
 No wrapper is ever TOLD the projection: neither binds an ortho uniform and
 `updateCameraParams` takes no camera-kind argument. GLSL and the TSL capsule
 read the ortho branch from the projection matrix of the draw — GLSL as
-`luxarLineIsOrtho` (assigned with `luxarLineScale` at the top of `main()` and
-handed to the fragment stage as a flat varying), the capsule as
+`luxarLineIsOrtho` (assigned with `luxarLineScale` at the top of `main()`; the
+visual quad fragment stage re-derives it from the same `projectionMatrix`
+uniform, which it declares, because carrying it as one more flat varying cost
+the 10M-segment draw ~1.4% GPU time, while the pick quad still hands it over as
+the flat `vLineIsOrtho`), the capsule as
 `isOrthoProjectionTSL()` (a bool var materialised in its vertex prologue). The
 TSL screen-space quad (visual and pick) instead carries a COMPILE-TIME
 projection variant (`config.projection`: the ortho test is a constant and the
