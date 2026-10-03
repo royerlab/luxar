@@ -13,6 +13,13 @@
  * `__luxarDebug.injectSyntheticScene(...)` debug API and the
  * perf-bench Playwright specs that call it.
  *
+ * Mesh is deliberately absent. These generators probe the instanced,
+ * bandwidth-bound paths of the three emissive geometries at millions of
+ * elements; a mesh is a whole-node-resident indexed surface (no instancing,
+ * no per-element size) whose cost is its triangle
+ * count through the ordinary loader, which a real store exercises better —
+ * `luxar mesh import` / `make run-examples` build one.
+ *
  * Generators are PURE (typed arrays in/out, seeded PRNG, no THREE
  * runtime import) so they unit-test headlessly. The lines generator's
  * positions/colors/lengths are kept byte-for-byte as originally shipped

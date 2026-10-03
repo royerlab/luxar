@@ -176,6 +176,10 @@ declare global {
        * are lines-only walk knobs (default 1.0 / 0.01 / unset = the
        * historical fully-random walk).
        *
+       * No mesh: the injector covers the three instanced emissive
+       * geometries (see `scene/synthetic-scene.ts`); bench a mesh from a
+       * real store.
+       *
        * Not present in production bundles when `?debug` is unset.
        */
       injectSyntheticScene?: (spec: {
