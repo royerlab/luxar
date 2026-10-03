@@ -10,6 +10,7 @@ import { kind, label, loadAndStage } from '../../../../data/lines/handler';
 import { ViewStateQueue } from '../../../../data/scene-loader/view-state/view-state-queue';
 import type { LinesDataLoader, LinesMetadata, LoadedLinesData } from '../../../../types/lines';
 import type { UpdateSession } from '../../../../profiling/update-profiler';
+import { log } from '../../../../utils/log';
 
 function makeSession(): UpdateSession {
   return {
@@ -244,5 +245,32 @@ describe('lines handler', () => {
     expect(staged.processed.endPositions).toBeInstanceOf(Float32Array);
     expect(staged.processed.startPositions.length).toBe(3); // 1 segment × xyz
     expect(staged.processed.endPositions.length).toBe(3);
+  });
+  // The first-update [GEOM] log is gated on the PASS counter (`updateVersion`),
+  // not the view version: on a static 3-D scene the view version never moves,
+  // so a version gate logged on every same-view pass.
+  it.each([
+    [1, true],
+    [7, false],
+  ])('logs [GEOM] on pass %i: %s (static view version 1)', async (updateVersion, logged) => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const data = { segmentCount: 1, segments: new Uint32Array([0, 1]) } as LoadedLinesData;
+    const loader = {
+      loadLines: vi.fn(),
+      updateView: vi.fn().mockResolvedValue(data),
+      dispose: vi.fn(),
+    } as unknown as LinesDataLoader;
+    // Projection of this stub payload is not under test: the log precedes it.
+    await loadAndStage('/l', loader, makeSession(), {
+      rootGroup: new THREE.Group(),
+      viewStateQueue: new ViewStateQueue(),
+      clearFailure: vi.fn(),
+      currentVersion: 1,
+      updateVersion,
+      deriveNodeViewState: () => ({ skip: false, viewState: extendedViewState }),
+    }).catch(() => undefined);
+    const geom = info.mock.calls.filter(([, m]) => String(m).startsWith('[GEOM] v'));
+    expect(geom.length > 0).toBe(logged);
+    info.mockRestore();
   });
 });

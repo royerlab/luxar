@@ -13,6 +13,7 @@ import * as THREE from 'three';
 import { kind, label, loadAndStage } from '../../../../data/points/handler';
 import { ViewStateQueue } from '../../../../data/scene-loader/view-state/view-state-queue';
 import type { DataLoader, ViewState } from '../../../../data/data-loader-types';
+import { log } from '../../../../utils/log';
 import type { UpdateSession } from '../../../../profiling/update-profiler';
 
 function makeSession(): UpdateSession {
@@ -84,6 +85,7 @@ describe('points handler', () => {
       viewStateQueue: new ViewStateQueue(),
       clearFailure: vi.fn(),
       currentVersion: 1,
+      updateVersion: 1,
       extendedToleranceCache: new Map(),
       deriveNodeViewState: () => ({ skip: false, viewState: extendedViewState }),
     });
@@ -110,6 +112,7 @@ describe('points handler', () => {
       viewStateQueue: new ViewStateQueue(),
       clearFailure: vi.fn(),
       currentVersion: 2,
+      updateVersion: 2,
       extendedToleranceCache: new Map(),
       deriveNodeViewState: () => ({ skip: false, viewState: extendedViewState }),
     });
@@ -142,6 +145,7 @@ describe('points handler', () => {
       viewStateQueue: new ViewStateQueue(),
       clearFailure: vi.fn(),
       currentVersion: 5,
+      updateVersion: 5,
       extendedToleranceCache: new Map(),
       deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
     });
@@ -175,6 +179,7 @@ describe('points handler', () => {
       viewStateQueue: queue,
       clearFailure: vi.fn(),
       currentVersion: 5,
+      updateVersion: 5,
       extendedToleranceCache: new Map(),
       signal: controller.signal,
       deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
@@ -208,10 +213,37 @@ describe('points handler', () => {
       viewStateQueue: new ViewStateQueue(),
       clearFailure: vi.fn(),
       currentVersion: 5,
+      updateVersion: 5,
       extendedToleranceCache: new Map(),
       signal: ac.signal,
       deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
     });
     expect(updateView).toHaveBeenCalledWith(baseViewState, expect.anything(), ac.signal);
+  });
+  // The first-update [GEOM] log is gated on the PASS counter (`updateVersion`),
+  // not the view version: on a static 3-D scene the view version never moves,
+  // so a version gate logged on every same-view pass.
+  it.each([
+    [1, true],
+    [7, false],
+  ])('logs [GEOM] on pass %i: %s (static view version 1)', async (updateVersion, logged) => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const loader: DataLoader = {
+      loadPoints: vi.fn(),
+      updateView: vi.fn().mockResolvedValue(fakePointsData),
+      dispose: vi.fn(),
+    };
+    await loadAndStage('/p', loader, makeSession(), {
+      rootGroup: new THREE.Group(),
+      viewStateQueue: new ViewStateQueue(),
+      clearFailure: vi.fn(),
+      currentVersion: 1,
+      updateVersion,
+      extendedToleranceCache: new Map(),
+      deriveNodeViewState: () => ({ skip: false, viewState: baseViewState }),
+    });
+    const geom = info.mock.calls.filter(([, m]) => String(m).startsWith('[GEOM]'));
+    expect(geom.length > 0).toBe(logged);
+    info.mockRestore();
   });
 });

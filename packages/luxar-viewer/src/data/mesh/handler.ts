@@ -27,6 +27,8 @@ export interface MeshHandlerCtx extends PassDirectives {
   rootGroup: THREE.Group | null;
   clearFailure(path: string): void;
   currentVersion: number;
+  /** Passes run so far — gates the first-update `[GEOM]` log (the view version does not move on a same-view pass). */
+  updateVersion: number;
   deriveNodeViewState(
     path: string,
     attrs: { extend_to_all?: string[] } | undefined,
@@ -95,7 +97,7 @@ export async function loadAndStage(
     markPathHealthy();
     return null;
   }
-  if (ctx.currentVersion <= 1) {
+  if (ctx.updateVersion <= 1) {
     log.info(
       Modules.SCENE_LOADER,
       `[GEOM] v${ctx.currentVersion} mesh ${path}: ${data.faceCount} faces`

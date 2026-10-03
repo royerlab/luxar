@@ -34,6 +34,8 @@ export interface PointsHandlerCtx extends PassDirectives {
   /** Called on a successful load to clear the path's failure record. */
   clearFailure(path: string): void;
   currentVersion: number;
+  /** Passes run so far — gates the first-update `[GEOM]` log (the view version does not move on a same-view pass). */
+  updateVersion: number;
   /** Derives the per-node view-state (skip / partial-extend tolerance / nd_transform inverse). */
   deriveNodeViewState(
     path: string,
@@ -86,7 +88,7 @@ export async function loadAndStage(
     markPathHealthy();
     return null;
   }
-  if (ctx.currentVersion <= 1) {
+  if (ctx.updateVersion <= 1) {
     log.info(
       Modules.SCENE_LOADER,
       `[GEOM] v${ctx.currentVersion} points ${path}: ${data.pointCount} visible`
