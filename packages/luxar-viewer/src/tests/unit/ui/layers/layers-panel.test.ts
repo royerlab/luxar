@@ -99,6 +99,8 @@ import {
   absorptionSliderRange,
 } from '../../../../ui/layers/absorption-range';
 import { getColormapTexture } from '../../../../rendering/colormap-textures';
+import type { ContextMenuItem } from '../../../../ui/overlay-widgets/context-menu';
+import type { LayerInfo } from '../../../../ui/layers/layer-state';
 
 /**
  * Normalised thumb position for a κ value on a log track — the inverse of
@@ -223,6 +225,17 @@ function makeSoundSceneGraph(soundLayer = true, storyVisible = true): SceneNode 
   } as unknown as SceneNode;
 }
 
+/** The items a right-click on `path`'s row would open (the panel's own builder). */
+function rowMenu(panel: LayersPanel, path: string): ContextMenuItem[] {
+  const builder = panel as unknown as { buildRowMenuItems(layer: LayerInfo): ContextMenuItem[] };
+  return builder.buildRowMenuItems(panel.layerState.getLayer(path)!);
+}
+
+/** Run the row-menu item labelled `label` on `path`'s row. */
+function runRowMenuItem(panel: LayersPanel, path: string, label: string): void {
+  rowMenu(panel, path).find((item) => item.label === label)!.action!();
+}
+
 describe('LayersPanel — sound rows', () => {
   let container: HTMLElement;
   let panel: LayersPanel;
@@ -329,6 +342,30 @@ describe('LayersPanel — sound rows', () => {
     expect(summary.type).toBe('sound');
     expect(summary.gain).toBe(2);
     expect(panel.getLayerSummaries().find((l) => l.path === '/story')!.gain).toBeUndefined();
+  });
+
+  it.fails('offers a sound row neither Blending nor "Apply appearance to all layers"', () => {
+    // A sound row has no material: the appearance section already steps aside for
+    // it, so its context menu must not offer the same controls by another door.
+    const labels = rowMenu(panel, '/story/hum').map((item) => item.label);
+    expect(labels).not.toContain('Blending');
+    expect(labels).not.toContain('Apply appearance to all layers');
+    // The geometry-backed group row above it keeps both.
+    expect(rowMenu(panel, '/story').map((item) => item.label)).toEqual(
+      expect.arrayContaining(['Blending', 'Apply appearance to all layers'])
+    );
+  });
+
+  it.fails('"Apply appearance to all layers" leaves a sound row untouched', () => {
+    // Its appearance fields are inert placeholders; stamping them would also mark
+    // the row's blend mode as user-owned.
+    const before = { ...panel.layerState.getLayer('/story/hum')! };
+    panel.layerState.setGamma('/story', 2.5);
+    runRowMenuItem(panel, '/story', 'Apply appearance to all layers');
+    const hum = panel.layerState.getLayer('/story/hum')!;
+    expect(hum.gamma).toBe(before.gamma);
+    expect(hum.blendingMode).toBe(before.blendingMode);
+    expect(hum.blendingModeExplicit).toBe(false);
   });
 
   it('a slider click does not select the row', () => {
