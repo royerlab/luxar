@@ -164,10 +164,12 @@ export class DecompressedChunkCache {
    * Get a cached decompressed chunk.
    *
    * @param key - Cache key (use `makeKey()` to generate)
+   * @param options.countStats - `false` for a warm-up: the lookup promotes
+   *   the chunk but moves no hit/miss statistic (see {@link getStats}).
    * @returns Cached chunk or undefined if not found
    */
-  get(key: string): DecompressedChunk | undefined {
-    const chunk = this.cache.get(key);
+  get(key: string, options?: { countStats?: boolean }): DecompressedChunk | undefined {
+    const chunk = this.cache.get(key, options);
 
     if (this.debug) {
       if (chunk) {

@@ -77,6 +77,11 @@ export interface CachingStoreGetOptions {
    * `refinement`.
    */
   priority?: FetchPriority;
+  /**
+   * A prefetch read (the chunk prefetcher's, or an L0 warm-up's miss): not
+   * counted in the demand statistics and fans out no further prefetch.
+   */
+  suppressPrefetch?: boolean;
 }
 
 /** Configuration for the memory, OPFS, and source-backed cache tiers. */
@@ -496,7 +501,7 @@ export class MultiLevelCachingStore implements AsyncReadable {
    */
   async getResult(
     key: string,
-    options?: CachingStoreGetOptions & { suppressPrefetch?: boolean }
+    options?: CachingStoreGetOptions
   ): Promise<Result<Uint8Array, CacheError>> {
     // Disposed-store fast path: bail before touching any tier. Avoids
     // late writes against a torn-down L2 and lets a dataset switch

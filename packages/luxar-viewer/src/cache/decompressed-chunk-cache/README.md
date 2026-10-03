@@ -57,8 +57,12 @@ ignored) returns a
    cache-warming entry point `prefetchRangesIntoCache` uses: L0 lookup + the
    same shared decode, but with the caller's own signal only (never
    `getSignal`), no residency-probe record, no output assembly, and origin
-   `'prefetch'` by default. The standalone `warmChunk(array, …)` helper falls
-   back to a bare `getChunk` for an unwrapped array.
+   `'prefetch'` by default. It is prefetch traffic: its lookup moves no L0
+   hit/miss statistic (`getStats()`; the `l0.*` perf counters still count it),
+   and a miss reads the store with `suppressPrefetch`, so the multi-level
+   store neither counts it as demand nor prefetches from it. The standalone
+   `warmChunk(array, …)` helper falls back to a bare `getChunk` for an
+   unwrapped array.
 8. **One read-only buffer per chunk** — the miss that decoded a chunk, the
    waiters that joined its decode and every later hit all receive the SAME
    buffer L0 holds; there is no defensive clone on any path (a miss-only

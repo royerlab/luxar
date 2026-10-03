@@ -23,7 +23,7 @@ function recordingArray(reads: Array<Record<string, unknown> | undefined>) {
 }
 
 describe('L0 warm-ups are not demand', () => {
-  it.fails('a warm-up of a resident chunk counts no L0 hit', async () => {
+  it('a warm-up of a resident chunk counts no L0 hit', async () => {
     const cache = new DecompressedChunkCache({ maxSize: 1 << 20 });
     const a = wrapWithCache(recordingArray([]) as never, cache, '/n/centers');
     await a.getChunk([0, 0]); // demand: one miss
@@ -35,7 +35,7 @@ describe('L0 warm-ups are not demand', () => {
     expect(cache.getStats().misses).toBe(before.misses);
   });
 
-  it.fails('a warm-up miss counts no L0 miss and reads the store as a prefetch', async () => {
+  it('a warm-up miss counts no L0 miss and reads the store as a prefetch', async () => {
     const cache = new DecompressedChunkCache({ maxSize: 1 << 20 });
     const reads: Array<Record<string, unknown> | undefined> = [];
     const a = wrapWithCache(recordingArray(reads) as never, cache, '/n/centers');
@@ -49,7 +49,7 @@ describe('L0 warm-ups are not demand', () => {
     expect(cache.getStats().hits).toBe(1);
   });
 
-  it.fails('an unwrapped array is warmed with a prefetch read too', async () => {
+  it('an unwrapped array is warmed with a prefetch read too', async () => {
     const reads: Array<Record<string, unknown> | undefined> = [];
 
     await warmChunk(recordingArray(reads), [0, 0]);

@@ -18,6 +18,7 @@ import {
   type InflightDecode,
 } from '../decompressed-chunk-cache';
 import type { ResidencyProbe } from '../residency-probe';
+import type { CachingStoreGetOptions } from '../multi-level-caching-store';
 import { perfCounters, type PerfCounterSlot } from '../../profiling/perf-counters';
 import { signalPriority, tagSignalPriority } from '../../utils/fetch-concurrency';
 import { signalOrigin } from './decode-origin';
@@ -278,6 +279,7 @@ export function wrapWithCache<D extends zarr.DataType>(
             // This caller's own abort: the call's signal, else the loader's
             // per-update one. Only THIS waiter bails on it (see raceWaiter).
             signal: callOptions?.signal ?? activeSignal,
+            demand: true,
             probe: getProbe?.() ?? null,
             origin: () => resolveOrigin(callOptions, getOrigin),
             run: (signal) => target.getChunk(chunkCoords, { ...callOptions, signal }, opts),
@@ -288,16 +290,22 @@ export function wrapWithCache<D extends zarr.DataType>(
 
       // Cache warm-up (see warm-chunk.ts): decode + cache through the shared
       // in-flight map, but with the CALLER'S signal only — never `getSignal`
-      // (the demand load's) — no residency-probe record, no output assembly.
+      // (the demand load's) — no residency-probe record, no output assembly,
+      // and as prefetch traffic: no L0 hit/miss statistic, and a store read
+      // the multi-level store neither counts as demand nor prefetches from.
       if (prop === WARM_CHUNK_METHOD) {
         const warm: WarmableArray['warmChunk'] = async (chunkCoords, options = {}) => {
           const { signal } = options;
           await acquireChunk(ctx, {
             key: DecompressedChunkCache.makeKey(arrayPath, chunkCoords),
             signal,
+            demand: false,
             probe: null,
             origin: () => options.origin ?? signalOrigin(signal) ?? WARM_CHUNK_DEFAULT_ORIGIN,
-            run: (decodeSignal) => target.getChunk(chunkCoords, { signal: decodeSignal }),
+            run: (decodeSignal) => {
+              const read: CachingStoreGetOptions = { signal: decodeSignal, suppressPrefetch: true };
+              return target.getChunk(chunkCoords, read);
+            },
           });
         };
         return warm;
@@ -347,6 +355,8 @@ interface AcquireRequest {
   key: string;
   /** This waiter's own abort signal (never the shared decode's). */
   signal: AbortSignal | undefined;
+  /** `false` for a warm-up: the lookup moves no L0 hit/miss statistic. */
+  demand: boolean;
   /** Residency probe to record hit/miss into, or `null` for none. */
   probe: ResidencyProbe | null;
   /** Origin of a miss decode — resolved only on a genuine miss. */
@@ -364,7 +374,7 @@ function acquireChunk(ctx: AcquireContext, req: AcquireRequest): Promise<Decoded
   const { cache } = ctx;
   // An already-aborted waiter must not join (its abort listener would never fire).
   if (req.signal?.aborted) return Promise.reject(req.signal.reason as Error);
-  const cached = cache.get(req.key);
+  const cached = cache.get(req.key, { countStats: req.demand });
   if (cached) {
     // Resident: served from L0 with no fresh fetch/decode.
     perfCounters.add(S_L0_HITS);

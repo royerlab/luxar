@@ -40,13 +40,17 @@ export interface WarmableArray {
 
 /** Minimal array surface the fallback needs (a raw zarrita array has it). */
 interface ChunkReadable {
-  getChunk(chunkCoords: number[], options?: { signal?: AbortSignal }): Promise<unknown>;
+  getChunk(
+    chunkCoords: number[],
+    options?: { signal?: AbortSignal; suppressPrefetch?: boolean }
+  ): Promise<unknown>;
 }
 
 /**
  * Warm one chunk: through the L0 proxy's `warmChunk` when `array` is wrapped
  * (decode + cache, no probe record, no output assembly), else a bare
  * `getChunk` that fetches (warming L1/L2) and decodes with no output assembly.
+ * Either way the store read is a prefetch (`suppressPrefetch`).
  */
 export async function warmChunk(
   array: unknown,
@@ -59,5 +63,8 @@ export async function warmChunk(
     return;
   }
   options.signal?.throwIfAborted();
-  await (array as ChunkReadable).getChunk(chunkCoords, { signal: options.signal });
+  await (array as ChunkReadable).getChunk(chunkCoords, {
+    signal: options.signal,
+    suppressPrefetch: true,
+  });
 }
