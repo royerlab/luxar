@@ -9,8 +9,8 @@
  * re-push and restore it (the scene capture flips it twice per capture under
  * an ortho camera). Mesh read three's `isOrthographic` camera flag in its
  * fragment stage, which is the camera's class, not its matrix. Both now derive
- * the flag from P in the vertex stage (and hand it to the fragment stage as a
- * flat varying), so the twins agree with each other and with their TSL
+ * the flag from P (the line visual fragment re-reads P itself; the others get
+ * the vertex stage's flag as a flat varying), so the twins agree with each other and with their TSL
  * counterparts' `isOrthoProjectionTSL()`.
  */
 import * as THREE from 'three';
@@ -64,6 +64,16 @@ describe('GLSL line shaders derive ortho from the projection matrix', () => {
     ['pick capsule', CAPSULE_LINE_PICK_VERTEX_SHADER],
   ])('%s vertex stage takes it from luxarIsOrthoProjection()', (_n, vs) => {
     expect(vs).toContain('luxarLineIsOrtho = luxarIsOrthoProjection();');
+  });
+
+  it('visual quad fragment re-derives it from P instead of a flat varying', () => {
+    // Carrying the vertex stage's flag in one more flat varying cost the
+    // 10M-segment draw ~1.4% GPU time; the fragment stage can read the same
+    // projection uniform instead, which gives the same branch by construction.
+    expect(LINE_VERTEX_SHADER).not.toMatch(/\bvLineIsOrtho\b/);
+    expect(LINE_FRAGMENT_SHADER).not.toMatch(/\bvLineIsOrtho\b/);
+    expect(LINE_FRAGMENT_SHADER).toContain('uniform mat4 projectionMatrix;');
+    expect(LINE_FRAGMENT_SHADER).toContain('perspectiveNearFade(luxarIsOrthoProjection(), vViewZ');
   });
 
   it.each([

@@ -102,8 +102,6 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     // Uniforms
     uniform vec2 uResolution;
     uniform float uPixelRatio;
-    // Ortho flag of the projection this draw uses, for the fragment's near fade.
-    flat out int vLineIsOrtho;
     uniform float uNearCull;          // near-plane safety distance (view-space, +z toward camera)
     uniform float uMaxLinePixelWidth; // clamp for screen-space width
 
@@ -139,7 +137,6 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       luxarLineScale = uResolution.y * luxarProjectionSizeScale();
       // Ortho branch from the projection this draw uses (glsl-lib GLSL_LINE_SCALE).
       luxarLineIsOrtho = luxarIsOrthoProjection();
-      vLineIsOrtho = luxarLineIsOrtho;
       // === Line-texture fetch prologue ===
       // texelFetch reads reconstruct the per-segment values into the exact
       // local names the math below has always used — zero changes
@@ -547,7 +544,12 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
     ${GLSL_DENSITY_ALPHA}
     ${GLSL_NEAR_FADE_FUNCTIONS}
 
-    flat in int vLineIsOrtho; // the vertex stage's luxarIsOrthoProjection()
+    // The fragment stage re-derives the draw's ortho branch from the same
+    // projection uniform the vertex stage reads (three declares it only for
+    // the vertex stage), instead of carrying it in a flat varying: one more
+    // per-vertex output cost the 10M-segment line draw ~1.4% GPU time.
+    uniform mat4 projectionMatrix;
+    ${GLSL_PROJECTION_FUNCTIONS}
     uniform float uNearCull;
     uniform float uPixelRatio;
     uniform float uOpacity;
@@ -661,7 +663,7 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // varying).
       // 1e-20 floor = degenerate-smoothstep guard only; uNearCull is
       // scene-relative (see the vertex-stage nearCull note).
-      float nearFade = perspectiveNearFade(vLineIsOrtho, vViewZ, max(uNearCull, 1e-20));
+      float nearFade = perspectiveNearFade(luxarIsOrthoProjection(), vViewZ, max(uNearCull, 1e-20));
       float intensity = capFactor * perpFalloff * edgeAA * widthScale * vWidthFade * nearFade;
 
       // Per-node GOG (Gain-Offset-Gamma) color adjustment. uIntensity (gain)
