@@ -252,7 +252,7 @@ describe('non-pool writers — a throwing texel write frees the fresh storage', 
 
   afterEach(() => vi.restoreAllMocks());
 
-  it.fails('createInstancedGSplatsMesh disposes the geometry and its texture, then rethrows', () => {
+  it('createInstancedGSplatsMesh disposes the geometry and its texture, then rethrows', () => {
     const geometryDispose = vi.spyOn(THREE.BufferGeometry.prototype, 'dispose');
     const textureDispose = vi.spyOn(THREE.Texture.prototype, 'dispose');
     expect(() => createInstancedGSplatsMesh(shortConfig(4), new THREE.MeshBasicMaterial())).toThrow(
@@ -262,7 +262,7 @@ describe('non-pool writers — a throwing texel write frees the fresh storage', 
     expect(textureDispose).toHaveBeenCalledTimes(1);
   });
 
-  it.fails('the rebuild branch disposes only the fresh pair and keeps the mesh on its old geometry', () => {
+  it('the rebuild branch disposes only the fresh pair and keeps the mesh on its old geometry', () => {
     const mesh = createInstancedGSplatsMesh(makeConfig(2), new THREE.MeshBasicMaterial());
     const old = mesh.geometry;
     const geometryDispose = vi.spyOn(THREE.BufferGeometry.prototype, 'dispose');
