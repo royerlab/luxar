@@ -191,6 +191,94 @@ describe('PackedChunkSource', () => {
     // The fully served pack was released; the re-read costs at most one request.
     expect(requests.length).toBeLessThanOrEqual(2);
   });
+
+  it.fails('serves an evicted member from the pack even when other members were never read', async () => {
+    // An unloaded rung keeps a pack from ever draining: its re-read after a
+    // cache eviction must still come from the pack, not a plain request.
+    const { source, requests } = inner();
+    const packed = new PackedChunkSource(source);
+    packed.usePacks(index(), HASH);
+
+    await bytes(packed, 'splats/part_0/additive_0/amplitudes/c/0');
+    expect(await bytes(packed, 'splats/part_0/additive_0/amplitudes/c/0')).toEqual([1, 2, 3]);
+    expect(requests).not.toContain('splats/part_0/additive_0/amplitudes/c/0');
+    expect(requests.length).toBeLessThanOrEqual(2);
+  });
+
+  it.fails('holds unserved members within a byte cap, refetching a pack it let go', async () => {
+    const pack1 = packFile(
+      { 'additive_0/amplitudes/c/0': [0, 3], 'additive_1/a/c/0': [3, 1] },
+      [6, 6, 6, 8]
+    );
+    const requests: string[] = [];
+    const source: ChunkSource = {
+      identity: 'fake://store',
+      describe: 'fake://store',
+      async get(key: string): Promise<ChunkFetchOutcome> {
+        requests.push(key);
+        const data = key === 'chunk_packs/0.pack' ? PACK_BYTES : pack1;
+        return { kind: 'ok', data, bytesOverWire: data.length };
+      },
+      probeIdentityToken: async () => null,
+      dispose: () => {},
+    };
+    // Room for one pack's leftover members (2 bytes), not two (2 + 1).
+    const packed = new PackedChunkSource(source, { maxHeldBytes: 2 });
+    const twoPacks = index();
+    twoPacks.packs.push({
+      key: 'chunk_packs/1.pack',
+      sha256: sha256HexPureJs(pack1),
+      prefix: 'splats/part_1/',
+    });
+    packed.usePacks(twoPacks, HASH);
+
+    await bytes(packed, 'splats/part_0/additive_0/amplitudes/c/0'); // holds part_0's b (2 B)
+    await bytes(packed, 'splats/part_1/additive_0/amplitudes/c/0'); // holds part_1's 1 B
+    expect(packed.heldBytes).toBeLessThanOrEqual(2);
+    expect(await bytes(packed, 'splats/part_0/additive_1/amplitudes/c/0')).toEqual([4, 5]);
+    expect(requests).toEqual(['chunk_packs/0.pack', 'chunk_packs/1.pack', 'chunk_packs/0.pack']);
+  });
+
+  it.fails('counts the pack’s bytes over the wire once, not per member', async () => {
+    const { source } = inner();
+    const packed = new PackedChunkSource(source);
+    packed.usePacks(index(), HASH);
+    let wire = 0;
+    for (const key of [
+      'splats/part_0/additive_0/amplitudes/c/0',
+      'splats/part_0/additive_1/amplitudes/c/0',
+    ]) {
+      const outcome = await packed.get(key);
+      if (outcome.kind === 'ok') wire += outcome.bytesOverWire;
+    }
+    expect(wire).toBe(PACK_BYTES.length);
+  });
+
+  it.fails('a caller that aborts leaves at once; the shared pack fetch serves the others', async () => {
+    let land!: () => void;
+    const landed = new Promise<void>((resolve) => (land = resolve));
+    const { source } = inner();
+    const slow: ChunkSource = {
+      ...source,
+      async get(key, signal, options) {
+        if (key === 'chunk_packs/0.pack') await landed;
+        return source.get(key, signal, options);
+      },
+    };
+    const packed = new PackedChunkSource(slow);
+    packed.usePacks(index(), HASH);
+
+    const leaving = new AbortController();
+    const first = packed.get('splats/part_0/additive_0/amplitudes/c/0', leaving.signal);
+    const second = packed.get('splats/part_0/additive_1/amplitudes/c/0');
+    leaving.abort();
+    const stillWaiting = new Promise((resolve) => setTimeout(() => resolve('still waiting'), 50));
+    // Settles before the pack lands.
+    expect(await Promise.race([first, stillWaiting])).toEqual({ kind: 'aborted' });
+    land();
+    const served = await second;
+    expect(served.kind === 'ok' ? Array.from(served.data) : served.kind).toEqual([4, 5]);
+  });
 });
 
 describe('PackedChunkSource under MultiLevelCachingStore', () => {
