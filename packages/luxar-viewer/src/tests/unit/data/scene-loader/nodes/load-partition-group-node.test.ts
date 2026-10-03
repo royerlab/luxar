@@ -923,7 +923,10 @@ describe('loadPartitionGroupNode — gated loading (B4)', () => {
   function timeCtx(registerPartition: ReturnType<typeof vi.fn>, dimensions: Dim[]): NodeBuildCtx {
     return makeTestNodeBuildCtx({
       nodeFactory: { applyTransform: vi.fn() } as unknown as NodeBuildCtx['nodeFactory'],
-      lodGroupRegistry: { registerPartition } as unknown as NodeBuildCtx['lodGroupRegistry'],
+      lodGroupRegistry: {
+        registerPartition,
+        unregisterSubtree: vi.fn(),
+      } as unknown as NodeBuildCtx['lodGroupRegistry'],
       viewState: {
         displayDims: [0, 1, 2],
         slicePosition: [0, 0, 0, 1],
@@ -1003,6 +1006,34 @@ describe('loadPartitionGroupNode — gated loading (B4)', () => {
     await deferred.activate();
     expect(loadSceneNodesMock).toHaveBeenCalledTimes(3);
     expect(ctx.registry.failedLoaders.has('/partition/part_0')).toBe(false);
+  });
+
+  it('a failed activation unregisters the lod/partition entries its subtree registered', async () => {
+    // `slot.clear()` detaches the part's subtree, but a nested kind=lod or
+    // kind=partition it registered would stay in the registry and keep being
+    // evaluated (and lazily loaded) against the detached objects.
+    attachStubChildren();
+    const registerPartition = vi.fn();
+    const unregisterSubtree = vi.fn();
+    const ctx = makeTestNodeBuildCtx({
+      ...timeCtx(registerPartition, TIME_DIMS),
+      lodGroupRegistry: {
+        registerPartition,
+        unregisterSubtree,
+      } as unknown as NodeBuildCtx['lodGroupRegistry'],
+    });
+    await loadPartitionGroupNode(
+      makePartitionGroupNode([timePart(0, 0), timePart(1, 1)], { display_type: 'gsplats' }),
+      new THREE.Group(),
+      makeStubLoc(),
+      ctx,
+      loadSceneNodesMock
+    );
+    loadSceneNodesMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    await expect(registerPartition.mock.calls[0][0].children[0].activate()).rejects.toThrow();
+
+    expect(unregisterSubtree).toHaveBeenCalledWith('/partition/part_0');
   });
 
   it('an activation for a dataset that is no longer live loads nothing', async () => {

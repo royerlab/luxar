@@ -225,6 +225,36 @@ describe('LODGroupRegistry — partition part activation (B4)', () => {
     expect(activate).toHaveBeenCalledOnce();
   });
 
+  it('unregisterSubtree drops every lod group and partition at or under a path', () => {
+    const reg = makeRegistry(vi.fn<RequestReprocess>());
+    registerLazyPart(reg, () => Promise.resolve());
+    const lodEntry = (path: string) => ({
+      path,
+      groupObject: new THREE.Group(),
+      children: [
+        {
+          object: new THREE.Group(),
+          coverageFraction: 0,
+          positionBounds: { min: [0, 0, 0, 0], max: [1, 1, 1, 0] },
+        },
+      ],
+      selectorMode: 'auto' as const,
+      defaultLevel: 0,
+      activeChildIndex: 0,
+    });
+    reg.register(lodEntry('/p/part_0/lod'));
+    reg.register(lodEntry('/p/part_00'));
+    reg.register(lodEntry('/q'));
+
+    reg.unregisterSubtree('/p/part_0');
+    expect(reg.list().map((entry) => entry.path)).toEqual(['/p/part_00', '/q']);
+
+    reg.unregisterSubtree('/p');
+    expect(reg.list().map((entry) => entry.path)).toEqual(['/q']);
+    // The partition at '/p' went too: nothing is left to activate.
+    return expect(reg.activatePartitionParts(viewAt(0))).resolves.toEqual([]);
+  });
+
   it('does not keep the loop ticking for a resync nobody can run (no requestReprocess)', () => {
     const requestTick = vi.fn();
     const camera = new THREE.Camera();

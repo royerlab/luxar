@@ -1150,9 +1150,14 @@ export class LODGroupRegistry {
     return own.get();
   }
 
-  /** Register a newly-loaded lod_group (called by the scene loader). */
+  /**
+   * Register a newly-loaded lod_group (called by the scene loader). A
+   * re-registration of a path (a re-activated partition part) starts the new
+   * entry's per-path state — dissolve, band preload, one-shot warnings — fresh.
+   */
   register(entry: LODGroupEntry): void {
     this.cancelEntryRetryWakes(entry.path);
+    this.forgetEntryState(entry.path);
     const footprintDims = entry.children[0]?.footprintDims;
     bumpForFailedEntryReplacement(this.entries.get(entry.path), entry);
     this.entries.set(entry.path, entry);
@@ -1270,6 +1275,22 @@ export class LODGroupRegistry {
     }
     this.entries.delete(path);
     this.caches.delete(path);
+    this.forgetEntryState(path);
+  }
+
+  /**
+   * Drop every lod_group and partition at or under ``path`` — a subtree that
+   * was discarded (a failed partition part activation), whose entries would
+   * otherwise keep being evaluated against detached objects.
+   */
+  unregisterSubtree(path: string): void {
+    const under = (p: string): boolean => p === path || p.startsWith(`${path}/`);
+    const paths = [...this.entries.keys(), ...this.partitions.paths()].filter(under);
+    for (const p of new Set(paths)) this.unregister(p);
+  }
+
+  /** Per-path state an entry accumulates beyond its registration. */
+  private forgetEntryState(path: string): void {
     this.warnedNoReadyChild.delete(path);
     this.warnedEmptyLevel.delete(path);
     this.dissolves.forget(path);

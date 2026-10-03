@@ -366,6 +366,11 @@ export class PartitionGate implements TickDemand {
     return this.partitionEntries.has(path);
   }
 
+  /** The paths of every registered partition. */
+  paths(): IterableIterator<string> {
+    return this.partitionEntries.keys();
+  }
+
   /** Drop the partition at ``path`` (restoring its parts' visibility), if any. */
   unregister(path: string): void {
     this.cancelRetryWakes(path);
