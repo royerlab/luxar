@@ -57,6 +57,18 @@ from ..typing_utils.constants import CHUNK_PACKS_GROUP, TARGET_CHUNK_BYTES
 PACK_MAX_BYTES = TARGET_CHUNK_BYTES
 
 
+def is_chunk_packs_sidecar(group: zarr.Group) -> bool:
+    """Whether ``group`` is a pack sidecar :func:`write_chunk_packs` wrote, not
+    ordinary data that only shares its name (``chunk_packs`` was a legal node
+    name before packs existed)."""
+    attrs = dict(group.attrs)
+    return (
+        "type" not in attrs
+        and isinstance(attrs.get("scene_content_hash"), str)
+        and isinstance(attrs.get("packs"), list)
+    )
+
+
 def _served_from_attrs(array: zarr.Array) -> bool:
     """A broadcast array whose row the viewer takes from ``encoding.value``.
 

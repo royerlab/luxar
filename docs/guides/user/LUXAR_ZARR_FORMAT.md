@@ -1520,8 +1520,10 @@ warm cache keyed on it stay valid. A reader therefore uses the packs only when
 `scene_content_hash` equals the root `content_hash`; an edit that changes the
 chunks and restamps the hash makes them stale, and they are ignored. An attrs-only
 `luxar restamp-lod` keeps packs current only if they were current before the
-restamp; already-stale packs remain stale. The viewer also checks each pack's
-SHA-256 and reads the plain chunks when that fails.
+restamp; already-stale packs remain stale. Tools recognise the sidecar by its
+attrs (`scene_content_hash` and `packs`, no `type`), never by the name alone.
+The viewer also checks each pack's SHA-256 and reads the plain chunks when that
+fails.
 Every plain chunk stays where it was, so zarr-python, napari and viewers that
 predate packs read the store as if the sidecar were absent (the pack files are
 plain keys in a group: a consolidated open never lists them, and an
