@@ -359,9 +359,6 @@ export class LuxarLayer {
     this.options = options;
 
     applyModuleOverrides({ wasmPath: options.wasmPath, workerPath: options.workerPath });
-    retainWorkerPool(this);
-    registerBlendWarmupManager(this.blendWarmup);
-    warnIfSceneShared(options.scene, this, options.renderOrder ?? DEFAULT_RENDER_ORDER);
     initializeGpuByteBudget(options.gpuPoolMaxBytes);
 
     // Materials must know the renderer's capabilities BEFORE any node is
@@ -388,6 +385,13 @@ export class LuxarLayer {
     // The layer's loaders' commits report to the layer's coordinator.
     this.sceneLoaders.setDepthSortCoordinator(this.depthSort);
     this.installDepthSort();
+    // The page-wide holds come LAST, once nothing above can throw: a
+    // constructor that throws returns no layer to dispose(), so a hold taken
+    // earlier (the worker-pool lease, the blend warm-up registration, the
+    // shared-scene count) would leak for the life of the page.
+    retainWorkerPool(this);
+    registerBlendWarmupManager(this.blendWarmup);
+    warnIfSceneShared(options.scene, this, options.renderOrder ?? DEFAULT_RENDER_ORDER);
   }
 
   /** The loaded scene root, or null before {@link load} resolves. */

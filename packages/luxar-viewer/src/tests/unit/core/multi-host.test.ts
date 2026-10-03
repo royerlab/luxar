@@ -178,7 +178,7 @@ describe('several Luxar hosts on one page', () => {
     expect(sceneDimsManager.getDimensionNames()).toEqual(['x', 'y', 'z', 't']);
   });
 
-  it.fails('a layer whose constructor throws keeps none of the page-wide holds', async () => {
+  it('a layer whose constructor throws keeps none of the page-wide holds', async () => {
     const warning = vi.spyOn(log, 'warning');
     const scene = new THREE.Scene();
     const broken = layerOptions(scene);
