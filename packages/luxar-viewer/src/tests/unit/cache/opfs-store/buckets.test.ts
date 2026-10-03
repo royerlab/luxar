@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   OPFSBucketCache,
+  fileNameToKey,
   getBucket,
+  hashTag,
   keyToFileName,
 } from '../../../../cache/multi-level-caching-store/opfs-store/buckets';
 
@@ -35,7 +37,7 @@ describe('getBucket', () => {
 describe('keyToFileName', () => {
   it('produces filesystem-safe base64url (no +, /, =)', () => {
     for (const key of ['', 'a', 'a/b/c', 'foo.bar.baz', 'metadata/.zattrs']) {
-      const fn = keyToFileName(key);
+      const fn = keyToFileName(key, '');
       expect(fn).not.toContain('+');
       expect(fn).not.toContain('/');
       expect(fn).not.toContain('=');
@@ -53,13 +55,13 @@ describe('keyToFileName', () => {
       return new TextDecoder().decode(bytes);
     }
     for (const key of ['', 'points/positions/0.0.0', 'metadata/.zattrs', 'a-b_c=d+e/f']) {
-      expect(decode(keyToFileName(key))).toBe(key);
+      expect(decode(keyToFileName(key, ''))).toBe(key);
     }
   });
 
   it('handles non-ASCII keys (CJK + emoji)', () => {
-    const cjk = keyToFileName('日本語/データ');
-    const emoji = keyToFileName('🎉/✨');
+    const cjk = keyToFileName('日本語/データ', '');
+    const emoji = keyToFileName('🎉/✨', '');
     expect(cjk).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(emoji).toMatch(/^[A-Za-z0-9_-]+$/);
   });
@@ -67,7 +69,23 @@ describe('keyToFileName', () => {
   it('is deterministic and known-stable (regression anchor)', () => {
     // Stable encoding — if this ever changes, OPFS_ENCODING_VERSION must
     // bump.
-    expect(keyToFileName('points/positions/0.0.0')).toBe('cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA');
+    expect(keyToFileName('points/positions/0.0.0', '')).toBe('cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA');
+  });
+
+  it('prefixes the content-hash tag, and fileNameToKey recovers key and tag', () => {
+    const tag = hashTag('sha256:abc');
+    expect(tag).toMatch(/^[0-9a-f]{16}$/);
+    expect(hashTag(null)).toBe('');
+    expect(hashTag('sha256:abd')).not.toBe(tag);
+    const name = keyToFileName('points/positions/0.0.0', tag);
+    expect(name).toBe(`${tag}.cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA`);
+    expect(fileNameToKey(name)).toEqual({ key: 'points/positions/0.0.0', tag });
+    expect(fileNameToKey('cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA')).toEqual({
+      key: 'points/positions/0.0.0',
+      tag: '',
+    });
+    expect(fileNameToKey('nothex.cG9pbnRz')).toBeNull();
+    expect(fileNameToKey(`${tag}.`)).toBeNull();
   });
 });
 
@@ -150,7 +168,7 @@ describe('OPFSBucketCache', () => {
   it('navigateToFile resolves to the right bucket + filename', async () => {
     const key = 'points/positions/0.0.0';
     const bucket = getBucket(key);
-    const expectedFileName = keyToFileName(key);
+    const expectedFileName = keyToFileName(key, '');
 
     let observedBucket = '';
     let observedFileName = '';
@@ -166,7 +184,7 @@ describe('OPFSBucketCache', () => {
       },
     } as unknown as FileSystemDirectoryHandle;
 
-    await cache.navigateToFile(spyRoot, key, true);
+    await cache.navigateToFile(spyRoot, key, '', true);
     expect(observedBucket).toBe(bucket);
     expect(observedFileName).toBe(expectedFileName);
   });
@@ -177,7 +195,7 @@ describe('OPFSBucketCache', () => {
         throw new Error('opfs failure');
       },
     } as unknown as FileSystemDirectoryHandle;
-    await expect(cache.navigateToFile(failingRoot, 'foo', false)).rejects.toThrow(
+    await expect(cache.navigateToFile(failingRoot, 'foo', '', false)).rejects.toThrow(
       /Cannot access bucket/
     );
   });

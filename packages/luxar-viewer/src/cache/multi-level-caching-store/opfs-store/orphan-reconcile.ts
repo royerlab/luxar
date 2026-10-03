@@ -28,8 +28,11 @@ export interface OrphanFile {
   bucket: FileSystemDirectoryHandle;
   bucketName: string;
   fileName: string;
-  /** The key the name encodes, or null for a name this store cannot produce. */
-  key: string | null;
+  /**
+   * The key the name encodes and the hash tag it was written under (see
+   * `hashTag`), or null for a name this store cannot produce.
+   */
+  parsed: { key: string; tag: string } | null;
 }
 
 export interface OrphanCrawlOptions {
@@ -96,7 +99,7 @@ async function crawlBucket(
     if (result.orphans >= options.maxOrphans) return false;
     result.orphans++;
     try {
-      await options.onOrphan({ bucket, bucketName, fileName, key: fileNameToKey(fileName) });
+      await options.onOrphan({ bucket, bucketName, fileName, parsed: fileNameToKey(fileName) });
     } catch {
       // The handler owns its errors; one bad file must not end the crawl.
     }

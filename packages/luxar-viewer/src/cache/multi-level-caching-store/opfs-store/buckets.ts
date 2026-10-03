@@ -24,7 +24,32 @@ export function getBucket(key: string): string {
 }
 
 /**
- * Convert a cache key to a filesystem-safe filename via UTF-8 -> base64url.
+ * The tag of the content hash a chunk file is written under: 16 hex chars (two
+ * 32-bit FNV-1a passes), or '' for none. Part of every chunk file's name (see
+ * {@link keyToFileName}), so a file written under one hash is never read, nor
+ * recovered as an unindexed file, as another hash's chunk — even when a tab
+ * still at the old hash keeps writing into a directory that the republished
+ * dataset's tab has already cleared.
+ */
+export function hashTag(hash: string | null): string {
+  if (hash === null) return '';
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let i = 0; i < hash.length; i++) {
+    const c = hash.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193);
+    h2 = Math.imul(h2 ^ c, 0x811c9dc5) ^ (h2 >>> 13);
+  }
+  const hex = (n: number): string => (n >>> 0).toString(16).padStart(8, '0');
+  return hex(h1) + hex(h2);
+}
+
+const HASH_TAG = /^[0-9a-f]{16}$/;
+
+/**
+ * Convert a cache key, written under the hash whose {@link hashTag} is `tag`,
+ * to a filesystem-safe filename: `{tag}.{base64url(UTF-8 key)}`, or the bare
+ * base64url when `tag` is '' (`.` never occurs in base64url).
  *
  * Zarr keys can include non-ASCII group/array names, so the key is
  * encoded to UTF-8 bytes before base64url conversion. The output
@@ -36,32 +61,37 @@ export function getBucket(key: string): string {
  * see `opfs-root.ts` — needed no bump: pre-namespace directories at the
  * OPFS root are simply never read again.)
  */
-export function keyToFileName(key: string): string {
+export function keyToFileName(key: string, tag: string): string {
   const bytes = new TextEncoder().encode(key);
   let binary = '';
   for (let i = 0; i < bytes.length; i++) {
     binary += String.fromCharCode(bytes[i]);
   }
   const base64 = btoa(binary);
-  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  const name = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  return tag === '' ? name : `${tag}.${name}`;
 }
 
 /**
- * Inverse of {@link keyToFileName}: recover the cache key a file name encodes,
- * or `null` when the name is not one this encoding can produce (a foreign or
- * truncated file). Round-trips through `keyToFileName` so only a canonical
- * encoding is accepted. Used by the orphan reconcile to re-index chunk files
- * the persisted index never recorded.
+ * Inverse of {@link keyToFileName}: recover the cache key and hash tag a file
+ * name encodes, or `null` when the name is not one this encoding can produce (a
+ * foreign or truncated file). Round-trips through `keyToFileName` so only a
+ * canonical encoding is accepted. Used by the orphan reconcile to re-index chunk
+ * files the persisted index never recorded.
  */
-export function fileNameToKey(fileName: string): string | null {
-  if (fileName.length === 0 || !/^[A-Za-z0-9_-]+$/.test(fileName)) return null;
+export function fileNameToKey(fileName: string): { key: string; tag: string } | null {
+  const dot = fileName.indexOf('.');
+  const tag = dot < 0 ? '' : fileName.slice(0, dot);
+  const encoded = fileName.slice(dot + 1);
+  if (tag !== '' && !HASH_TAG.test(tag)) return null;
+  if (encoded.length === 0 || !/^[A-Za-z0-9_-]+$/.test(encoded)) return null;
   try {
-    const base64 = fileName.replace(/-/g, '+').replace(/_/g, '/');
+    const base64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
     const binary = atob(base64 + '='.repeat((4 - (base64.length % 4)) % 4));
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     const key = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-    return keyToFileName(key) === fileName ? key : null;
+    return keyToFileName(key, tag) === fileName ? { key, tag } : null;
   } catch {
     return null;
   }
@@ -114,12 +144,13 @@ export class OPFSBucketCache {
   }
 
   /**
-   * Resolve a cache key to its bucket file handle:
-   *   `<root>/<bucket(key)>/<keyToFileName(key)>`.
+   * Resolve a cache key written under hash tag `tag` to its bucket file handle:
+   *   `<root>/<bucket(key)>/<keyToFileName(key, tag)>`.
    */
   async navigateToFile(
     root: FileSystemDirectoryHandle,
     key: string,
+    tag: string,
     create: boolean
   ): Promise<FileSystemFileHandle> {
     const bucket = getBucket(key);
@@ -127,7 +158,7 @@ export class OPFSBucketCache {
     if (!handle) {
       throw new Error(`Cannot access bucket ${bucket}`);
     }
-    const fileName = keyToFileName(key);
+    const fileName = keyToFileName(key, tag);
     return handle.getFileHandle(fileName, { create });
   }
 }

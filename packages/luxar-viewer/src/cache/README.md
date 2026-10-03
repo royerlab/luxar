@@ -714,7 +714,7 @@ the namespace dir with `create: false` and treats a cold origin's
 luxar/                       # Viewer namespace dir (OPFS_NAMESPACE_DIR)
 └── zarr-cache-{url-hash}/   # One dataset dir per base URL (SHA-256)
     ├── 00/                  # Bucket directories (256 total)
-    │   ├── cG9pbnRz...      # Base64-encoded zarr keys
+    │   ├── 3f1c….cG9pbnRz…  # {hash tag}.{base64url zarr key}
     │   └── ...
     ├── 01/
     ├── ...
@@ -731,7 +731,14 @@ again.
 
 1. **Hash the key**: `"points/positions/0.0.0"` → bucket `23`
 2. **Base64 encode**: `"points/positions/0.0.0"` → `cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA`
-3. **Store**: `23/cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA`
+3. **Tag the content hash** it is written under (`hashTag`, 16 hex chars;
+   none when the dataset has no hash): `{tag}.cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA`
+4. **Store**: `23/{tag}.cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA`
+
+The tag is what keeps two tabs on one directory apart. A tab still at the old
+hash of a republished dataset keeps writing after the new hash's tab cleared
+the directory; its files carry the old tag, so the new-hash store never reads
+them, and its reconcile deletes them rather than recovering them.
 
 ### Benefits
 
@@ -759,14 +766,16 @@ those files usable anyway:
    therefore has a known provenance, even when no index save ever landed. With
    no index, the identity is the cached hash validation compares against, so a
    changed dataset still clears every tier.
-2. **A key's file path is a function of the key** (`{bucket(key)}/{base64url(key)}`).
-   While unindexed files may remain, an L2 lookup of a key the index does not
-   list reads that path, and a hit is indexed (size and LRU accounted) and
-   served. This is what serves a reload's first-frame reads; it stops once the
-   open-time reconcile (below) has accounted for every file.
+2. **A key's file path is a function of the key and the hash**
+   (`{bucket(key)}/{tag(hash)}.{base64url(key)}`). While unindexed files may
+   remain, an L2 lookup of a key the index does not list reads that path, and a
+   hit is indexed (size and LRU accounted) and served. This is what serves a
+   reload's first-frame reads; it stops once the open-time reconcile (below)
+   has accounted for every file.
 3. **The open-time reconcile** (`opfs-store/orphan-reconcile.ts`, per-session
-   budgeted, in the background) re-indexes every unindexed file under the
-   recovery hash that fits under `maxSize` and deletes the rest.
+   budgeted, in the background) re-indexes every unindexed file of the
+   recovery hash's tag that fits under `maxSize` and deletes the rest (other
+   tags included).
 
 Recovery is gated on the same hash that makes indexed entries trustworthy: the
 identity file's hash, unless an index that did land names a different one. A

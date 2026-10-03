@@ -21,6 +21,7 @@ import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store
 import { OpfsWriteQueue } from '../../../cache/multi-level-caching-store/opfs-write-queue';
 import {
   getBucket,
+  hashTag,
   keyToFileName,
 } from '../../../cache/multi-level-caching-store/opfs-store/buckets';
 import { OPFS_ENCODING_VERSION } from '../../../cache/types';
@@ -149,11 +150,14 @@ function bucketedDatasetDir() {
     async *entries() {},
   };
 
-  /** Put a chunk file on disk WITHOUT indexing it (a write the index never saw). */
-  function plant(key: string, bytes: Uint8Array): void {
+  /**
+   * Put a chunk file written under content hash `hash` on disk WITHOUT indexing
+   * it (a write the index never saw).
+   */
+  function plant(key: string, bytes: Uint8Array, hash: string | null = 'hash-1'): void {
     const bucket = getBucket(key);
     if (!buckets.has(bucket)) buckets.set(bucket, new Map());
-    buckets.get(bucket)!.set(keyToFileName(key), bytes);
+    buckets.get(bucket)!.set(keyToFileName(key, hashTag(hash)), bytes);
   }
   /** Put an arbitrary (non-luxar) file name into a bucket. */
   function plantRaw(bucket: string, name: string, bytes: Uint8Array): void {
@@ -253,7 +257,7 @@ describe('OPFSStore orphan reconciliation on open', () => {
     // A valid base64url name placed in a bucket its key does not hash to.
     const key = 'misplaced/key';
     const wrongBucket = getBucket(key) === '00' ? '01' : '00';
-    disk.plantRaw(wrongBucket, keyToFileName(key), new Uint8Array(5));
+    disk.plantRaw(wrongBucket, keyToFileName(key, hashTag('hash-1')), new Uint8Array(5));
 
     const store = new OPFSStore('orph', 'https://example.com/d.zarr', 1e9);
     await store.init();
@@ -360,7 +364,7 @@ describe('OPFSStore orphan reconciliation on open', () => {
 describe('OPFSStore two tabs on one directory across a republish', () => {
   const URL = 'https://example.com/d.zarr';
 
-  it.fails('never serves a chunk an old-hash tab wrote after the directory moved to the new hash', async () => {
+  it('never serves a chunk an old-hash tab wrote after the directory moved to the new hash', async () => {
     installBucketed();
     const a = new OPFSStore('tabs', URL, 1e9);
     await a.init();
@@ -536,7 +540,7 @@ describe('OPFSStore reload at any moment: chunk files outlive a lost index save'
     const disk = installBucketed();
     await interruptedSession(disk, HASH);
     const torn = 'points/c/torn';
-    disk.plant(torn, new Uint8Array(0));
+    disk.plant(torn, new Uint8Array(0), HASH);
     const store = new OPFSStore('reload', URL, 1e9);
     await store.init();
     store.setContentHash(HASH);
