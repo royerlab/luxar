@@ -18,7 +18,12 @@ export async function readBroadcastRow(
   encoding: EncodingMetadata | undefined,
   signal?: AbortSignal | null
 ): Promise<Float32Array> {
-  if (encoding?.value) return Float32Array.from(encoding.value);
+  if (
+    Array.isArray(encoding?.value) &&
+    encoding.value.length === array.shape.reduce((size, dim) => size * dim, 1)
+  ) {
+    return Float32Array.from(encoding.value);
+  }
   const raw = (await readArray(array, undefined, abortOptions(signal))).data;
   // Changing this cast requires re-deriving the writer's
   // positive_scalar_round_trip_slack chunk-bound allowance.

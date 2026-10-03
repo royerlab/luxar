@@ -484,6 +484,31 @@ describe('RangeLoader.loadBroadcasted (via loadRanges)', () => {
   });
 
   it.each([
+    ['scalar', 0.5],
+    ['short row', [0.5]],
+    ['long row', [0.5, 1, 2, 3]],
+  ] as const)('reads the stored row when encoding.value is a %s', async (_case, value) => {
+    setMockData(new Float32Array([0.25, 0.5, 0.75]));
+    const attrs: ArrayMetadata = {
+      encoding: { name: 'broadcasted', n_elements: 2, value: value as unknown as number[] },
+    };
+    const output = new Float32Array(6);
+
+    const written = await loader.loadRanges(
+      mockZarrArray('float32', [1, 3]),
+      attrs,
+      [{ start: 0, end: 2 }],
+      output,
+      2,
+      3
+    );
+
+    expect(written).toBe(6);
+    expect(mockZarrGet).toHaveBeenCalledOnce();
+    expect(Array.from(output)).toEqual([0.25, 0.5, 0.75, 0.25, 0.5, 0.75]);
+  });
+
+  it.each([
     ['uint8', new Uint8Array([255, 128, 0])],
     ['float32', new Float32Array([0.1, 1e-30, 3.4e38])],
   ] as const)('decodes a %s encoding.value exactly as the row it repeats', async (dtype, row) => {
