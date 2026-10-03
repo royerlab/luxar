@@ -368,6 +368,18 @@ describe('LayersPanel — sound rows', () => {
     expect(hum.blendingModeExplicit).toBe(false);
   });
 
+  it.fails('a reset restores the authored gain on the audio graph, not just on the slider', () => {
+    panel.layerState.setSoundGain('/story/hum', 1.5);
+    port.setNodeGain.mockClear();
+    runRowMenuItem(panel, '/story/hum', 'Reset this layer');
+    expect(port.setNodeGain).toHaveBeenCalledWith('/story/hum', 0.5);
+
+    panel.layerState.setSoundGain('/story/hum', 1.5);
+    port.setNodeGain.mockClear();
+    panel.resetAllLayers();
+    expect(port.setNodeGain).toHaveBeenCalledWith('/story/hum', 0.5);
+  });
+
   it('a slider click does not select the row', () => {
     const row = container.querySelector('[data-layer-path="/story/hum"]') as HTMLElement;
     const gain = row.querySelector('.luxar-layer-row__gain') as HTMLInputElement;
