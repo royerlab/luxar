@@ -1347,10 +1347,38 @@ describe('LuxarApp', () => {
 
       app.dispose();
       expect(() => app.switchDataset('http://example.com/retry.zarr')).toThrow(/before init/);
+      mockAddEventListener.mockClear();
 
       releaseInitialLoad();
       await initPromise;
+
+      // The init that the dispose overtook must not finish wiring a disposed
+      // app: no listeners installed after teardown, still uninitialized, and
+      // the instance can be initialized again.
+      expect(app.initialized).toBe(false);
+      expect(mockAddEventListener.mock.calls.map((call) => call[0])).toEqual([]);
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/data.zarr' });
+      expect(app.initialized).toBe(true);
       app.dispose();
+    });
+
+    it('does not load the dataset when disposed during the routing probe', async () => {
+      // A URL without a `.zarr` suffix is probed for zarr metadata before
+      // routing; a dispose that lands during that probe must win.
+      let releaseProbe!: () => void;
+      mockFetch.mockImplementation(
+        () => new Promise((resolve) => (releaseProbe = () => resolve({ ok: true })))
+      );
+
+      const initPromise = app.init({ canvas: mockCanvas, src: 'http://example.com/data' });
+      await vi.waitFor(() => expect(mockFetch).toHaveBeenCalled());
+
+      app.dispose();
+      releaseProbe();
+      await initPromise;
+
+      expect(mockSceneManager.loadSceneData).not.toHaveBeenCalled();
+      expect(app.initialized).toBe(false);
     });
 
     it('does not call history.replaceState when updateBrowserUrl is false', async () => {

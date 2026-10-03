@@ -326,19 +326,11 @@ export class LuxarApp {
       // The control client eagerly attaches the selection / element event
       // consumers that picking checks once, during dataset provisioning.
       this.installControlClient();
-      if (await this.shouldShowBrowser(result.sceneSrc)) {
-        try {
-          this.showDatasetBrowser();
-        } catch (error) {
-          log.warning(
-            Modules.APP,
-            'Dataset browser initialization had issues, but browser is shown:',
-            error
-          );
-        }
-      } else {
-        await this.loadInitialDataset(result.sceneSrc);
-      }
+      await this.routeInitialDataset(result.sceneSrc);
+      // A dispose() that landed while routing awaited has already torn the app
+      // down: wiring the app-level hooks below would leak them onto a disposed
+      // instance and mark it initialized.
+      if (this.isTornDown()) return;
 
       this.setupDisposeOnUnload();
       this.setupFocusHandling();
@@ -366,6 +358,28 @@ export class LuxarApp {
       throw error;
     } finally {
       this.isInitializing = false;
+    }
+  }
+
+  /**
+   * Open the dataset browser, or load the initial dataset. A dispose() that
+   * lands during the zarr probe wins: nothing is loaded into a disposed app.
+   */
+  private async routeInitialDataset(src: string): Promise<void> {
+    const showBrowser = await this.shouldShowBrowser(src);
+    if (this.isTornDown()) return;
+    if (!showBrowser) {
+      await this.loadInitialDataset(src);
+      return;
+    }
+    try {
+      this.showDatasetBrowser();
+    } catch (error) {
+      log.warning(
+        Modules.APP,
+        'Dataset browser initialization had issues, but browser is shown:',
+        error
+      );
     }
   }
 
@@ -1490,6 +1504,11 @@ export class LuxarApp {
 
     this.isDisposing = false;
     this.isDisposed = true;
+  }
+
+  /** True once {@link dispose} has started — an awaiting init() must bail. */
+  private isTornDown(): boolean {
+    return this.isDisposing || this.isDisposed;
   }
 
   /** Register cleanup owned by this app's current lifetime. */
