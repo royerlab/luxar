@@ -101,6 +101,15 @@ describe('BandwidthWindow', () => {
       // unbounded.
       expect(internals(bw).window.length).toBeLessThan(50);
     });
+    it.fails('stays bounded when rate() is never called', () => {
+      // rate() is read only by getStats() (the visible monitor). With the
+      // monitor hidden, record() alone must keep the buffer to the live tail.
+      for (let i = 0; i < 1000; i++) {
+        bw.record(100);
+        vi.advanceTimersByTime(WINDOW_MS + 1);
+      }
+      expect(internals(bw).window.length).toBeLessThan(50);
+    });
   });
 
   describe('record()', () => {
