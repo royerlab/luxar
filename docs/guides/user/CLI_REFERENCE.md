@@ -126,7 +126,8 @@ object holding copies of them, which the viewer fetches in one request instead
 of one per chunk. It pays off where a store is many tiny nodes, such as a
 laddered timelapse partition; it does nothing for nodes already at the chunk
 target. The plain chunks stay, so the store remains an ordinary zarr store that
-every reader opens unchanged, and `content_hash` is unchanged too. See
+every reader opens unchanged, and packing does not change `content_hash` (the
+output's hash is the one `optimize` stamps with or without `--pack`). See
 [Chunk Packs](LUXAR_ZARR_FORMAT.md#chunk-packs-chunk_packs-sidecar).
 
 One boundary is worth stating for `--generic`, because it is a silent no-op
