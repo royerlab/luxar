@@ -171,6 +171,39 @@ describe('InputContextManager - keyupHandler Feature', () => {
     });
   });
 
+  describe('macOS Option composes a character (Option+W → "∑")', () => {
+    it.fails('matches the Alt binding by the physical key, on keydown and keyup', () => {
+      const handler = vi.fn();
+      const keyupHandler = vi.fn();
+      manager.setContext(InputContext.FLY_CONTROLS);
+      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
+        key: 'w',
+        modifiers: { alt: true },
+        handler,
+        keyupHandler,
+      });
+
+      const init = { key: '∑', code: 'KeyW', altKey: true };
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', init), 'down')).toBe(true);
+      expect(manager.handleKeyEvent(new KeyboardEvent('keyup', init), 'up')).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(keyupHandler).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the layout key when Alt yields a plain letter (Windows / Linux)', () => {
+      const handler = vi.fn();
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'z',
+        modifiers: { alt: true },
+        handler,
+      });
+      // AZERTY: the key labelled Z sits at the QWERTY W position.
+      const event = new KeyboardEvent('keydown', { key: 'z', code: 'KeyW', altKey: true });
+      expect(manager.handleKeyEvent(event, 'down')).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('a key released under a modifier it was not pressed with', () => {
     it.each([
       ['ctrlKey', 'w'],

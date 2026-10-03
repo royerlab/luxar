@@ -289,6 +289,19 @@ describe('handleKeyDown — preventDefault contract (controls.md G13, G14)', () 
   });
 });
 
+describe('macOS Option composes a character (Option+W → "∑")', () => {
+  it.each([
+    ['KeyW', '∑', 'up'],
+    ['KeyS', 'ß', 'down'],
+  ] as const)('Option+%s (key %s) drives %s, and its keyup releases it', (code, key, axis) => {
+    const { ctx, moveState } = makeCtx();
+    handleKeyDown(ctx, new KeyboardEvent('keydown', { key, code, altKey: true }));
+    expect(moveState[axis]).toBe(1);
+    handleKeyUp(ctx, new KeyboardEvent('keyup', { key, code, altKey: true }));
+    expect(moveState[axis]).toBe(0);
+  });
+});
+
 describe('handleKeyUp — releases state', () => {
   it('keyup w clears BOTH forward and up (Alt may have been held during down)', () => {
     const { ctx, moveState } = makeCtx();
