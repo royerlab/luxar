@@ -160,6 +160,13 @@ describe('handleKeyDown — gating', () => {
     expect(moveState.forward).toBe(0);
   });
 
+  it.fails('still releases a held key when disabled (keyup is never gated)', () => {
+    const { ctx, moveState } = makeCtx({ enabled: false });
+    moveState.forward = 1;
+    handleKeyUp(ctx, new KeyboardEvent('keyup', { key: 'w' }));
+    expect(moveState.forward).toBe(0);
+  });
+
   it('dispatches "change" on every recognized keydown', () => {
     const { ctx } = makeCtx();
     handleKeyDown(ctx, new KeyboardEvent('keydown', { key: 'w' }));

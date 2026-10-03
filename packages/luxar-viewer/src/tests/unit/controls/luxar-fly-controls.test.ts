@@ -180,6 +180,18 @@ describe('LuxarFlyControls', () => {
       expect(internals.activeMouseAction).toBe('none');
     });
 
+    it.fails('releases a key and a drag held when the controls are disabled', () => {
+      controls.handleKeyDown(new KeyboardEvent('keydown', { key: 'w' }));
+      domElement.dispatchEvent(new MouseEvent('mousedown', { button: 0 }));
+      controls.enabled = false;
+
+      controls.handleKeyUp(new KeyboardEvent('keyup', { key: 'w' }));
+      window.dispatchEvent(new MouseEvent('mouseup', { button: 0 }));
+
+      expect((controls as any).moveState.forward).toBe(0);
+      expect((controls as any).activeMouseAction).toBe('none');
+    });
+
     it('should dispatch change event on key press', () => {
       const changeHandler = vi.fn();
       controls.addEventListener('change', changeHandler);
