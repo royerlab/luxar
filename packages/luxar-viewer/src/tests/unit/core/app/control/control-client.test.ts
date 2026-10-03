@@ -353,6 +353,57 @@ describe('ControlClient event forwarding', () => {
     expect(context.socket.sent).toHaveLength(baseline + 2);
   });
 
+  it.fails('delivers the final pose of a burst once the interval has passed', async () => {
+    // A leading-edge-only throttle drops the LAST pose of a gesture, leaving a
+    // remote controller showing a camera the viewer has already left.
+    const context = harness();
+    context.socket.receive(requestFrame(1, 'subscribe', ['camera-changed']));
+    await settle();
+    const baseline = context.socket.sent.length;
+    vi.useFakeTimers();
+    try {
+      context.setNow(1000);
+      context.emit('camera-changed', { position: [0, 0, 1] });
+      context.setNow(1010);
+      context.emit('camera-changed', { position: [0, 0, 2] });
+      context.emit('camera-changed', { position: [0, 0, 3] });
+      expect(context.socket.sent).toHaveLength(baseline + 1);
+
+      context.setNow(1000 + CONTROL_CAMERA_EVENT_MIN_INTERVAL_MS);
+      vi.advanceTimersByTime(CONTROL_CAMERA_EVENT_MIN_INTERVAL_MS);
+
+      expect(context.socket.sent).toHaveLength(baseline + 2);
+      expect(context.socket.lastFrame().params).toEqual([
+        'camera-changed',
+        { position: [0, 0, 3] },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops a pending trailing pose on dispose', async () => {
+    const context = harness();
+    context.socket.receive(requestFrame(1, 'subscribe', ['camera-changed']));
+    await settle();
+    vi.useFakeTimers();
+    try {
+      context.setNow(1000);
+      context.emit('camera-changed', { position: [0, 0, 1] });
+      context.setNow(1010);
+      context.emit('camera-changed', { position: [0, 0, 2] });
+      const sent = context.socket.sent.length;
+
+      context.client.dispose();
+      vi.advanceTimersByTime(CONTROL_CAMERA_EVENT_MIN_INTERVAL_MS);
+
+      expect(context.socket.sent).toHaveLength(sent);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not throttle any other event', async () => {
     const context = harness();
     context.socket.receive(requestFrame(1, 'subscribe', ['waypoint-arrived']));
