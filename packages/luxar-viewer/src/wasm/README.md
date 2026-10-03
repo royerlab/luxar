@@ -110,6 +110,12 @@ the shadowing build predates a kernel, or a signature, since recorded in
 - `project_gsplats_nd_to_3d()` — Fused single-pass nD→3D projection (attenuation, visibility, compaction)
 - `mahalanobis_distance()` — nD Mahalanobis distance
 
+### Depth Sorting
+
+- `sort_splats_by_depth()` — Back-to-front permutation of projected 3D centers
+  under a model-view matrix (the `aSortedIndex` ordering the SortWorker
+  computes for order-dependent blending); input is already 3D, so no ndim cap
+
 ### Line Clipping
 
 - `clip_segment_single()` — Clip a single segment and return interpolation parameters
@@ -237,7 +243,9 @@ wasm/
 ├── typescript/           — Pure TypeScript fallback
 │   ├── index.ts          — TypeScriptFallback class
 │   ├── decode.ts         — Array decoding
+│   ├── depth-sort.ts     — Back-to-front splat ordering
 │   ├── effective-radii.ts — Radius calculations
+│   ├── float32-math.ts   — libm-order f32 exp/log/expm1 (bit parity with Rust)
 │   ├── gsplats-processing.ts — GSplat processing
 │   ├── lines-clipping.ts — Line clipping
 │   ├── mesh-culling.ts   — Whole-triangle nD culling

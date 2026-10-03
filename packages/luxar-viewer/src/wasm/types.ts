@@ -262,7 +262,7 @@ export interface WasmModule {
    * @param discreteVisibility - Precomputed discrete-dim gate [splatCount]
    * @param slicePosition - Current slice [ndim]
    * @param continuousHiddenDims - Sorted continuous hidden dims [numContinuous]
-   * @param displayDims - Display dims in requested order [2 or 3]
+   * @param displayDims - Display dims in requested order [1 to 3]
    * @param ndim - Total dimensionality
    * @param splatCount - Number of splats
    * @param colorComponents - Color channel count (3 = RGB, 4 = RGBA); strides every color read/write
