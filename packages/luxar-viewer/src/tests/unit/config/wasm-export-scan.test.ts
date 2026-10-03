@@ -19,10 +19,16 @@ import { REQUIRED_WASM_EXPORTS } from '../../../wasm/required-exports';
 const VIEWER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
 const WASM_JS_PATH = path.resolve(VIEWER_ROOT, 'public/wasm/luxar_wasm.js');
 
+/** Current parameter count of a kernel whose signature changed (else 2). */
+const ARITY: Record<string, number> = { project_gsplats_nd_to_3d: 18 };
+
 /** A wrapper declaring `names` the way wasm-pack emits free functions. */
-function wrapperDeclaring(names: readonly string[]): string {
+function wrapperDeclaring(names: readonly string[], arity = ARITY): string {
   return names
-    .map((name) => `export function ${name}(a, b) {\n  return wasm.${name}(a, b);\n}`)
+    .map((name) => {
+      const params = Array.from({ length: arity[name] ?? 2 }, (_, i) => `p${i}`).join(', ');
+      return `export function ${name}(${params}) {\n  return wasm.${name}(${params});\n}`;
+    })
     .join('\n\n');
 }
 
@@ -46,6 +52,15 @@ describe('missingExportsIn', () => {
     const [name] = REQUIRED_WASM_EXPORTS;
     const mentionsOnly = `/** See [\`${name}\`] below. */\nconst f = () => wasm.${name}(0);\n`;
     expect(missingExportsIn(mentionsOnly)).toContain(name);
+  });
+
+  it.fails('names a kernel whose wrapper predates its current signature', () => {
+    // A stale build still exports project_gsplats_nd_to_3d, without the
+    // trailing out_source_indices parameter.
+    const stale = wrapperDeclaring([...REQUIRED_WASM_EXPORTS, 'project_gsplats_nd_to_3d'], {
+      project_gsplats_nd_to_3d: 17,
+    });
+    expect(missingExportsIn(stale)).toEqual(['project_gsplats_nd_to_3d']);
   });
 
   it('does not confuse a longer name that starts with a required one', () => {

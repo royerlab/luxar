@@ -46,7 +46,16 @@ import { TypeScriptFallback } from '../../../wasm/typescript';
  * list stays single-sourced in `wasm/required-exports.ts` instead of being
  * copied here.
  */
+/** A stand-in wrapper declaring `arity` parameters (`Function.length`). */
+function fnOfArity(arity: number): () => undefined {
+  const fn = (): undefined => undefined;
+  Object.defineProperty(fn, 'length', { value: arity });
+  return fn;
+}
+
 function stubModule(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  // A kernel whose signature changed is answered with its CURRENT arity.
+  overrides = { project_gsplats_nd_to_3d: fnOfArity(18), ...overrides };
   return new Proxy(overrides, {
     get: (target, prop) =>
       Object.prototype.hasOwnProperty.call(target, prop)
@@ -327,6 +336,20 @@ describe('assertRequiredWasmExports', () => {
     expect(() =>
       assertRequiredWasmExports(stubModule({ compact_visible_faces: undefined }))
     ).toThrow(/missing required export "compact_visible_faces"/);
+  });
+
+  it.fails('names project_gsplats_nd_to_3d when only that kernel is missing', () => {
+    expect(() =>
+      assertRequiredWasmExports(stubModule({ project_gsplats_nd_to_3d: undefined }))
+    ).toThrow(/missing required export "project_gsplats_nd_to_3d"/);
+  });
+
+  it.fails('rejects a project_gsplats_nd_to_3d that predates out_source_indices', () => {
+    // A stale wrapper still exports the name, but drops the 18th argument, so
+    // the kernel never writes the source indices picking reads.
+    expect(() =>
+      assertRequiredWasmExports(stubModule({ project_gsplats_nd_to_3d: fnOfArity(17) }))
+    ).toThrow(/"project_gsplats_nd_to_3d" takes 17 arguments, expected 18/);
   });
 
   it('rejects a required export that is present but not callable', () => {
