@@ -3,9 +3,10 @@
  *
  * Provides low-overhead profiling of the scene update pipeline with:
  * - Hierarchical timing breakdown (parent/child relationships)
- * - TWO persistent timing trees: 'Total Update' (per-frame demand updates)
- *   and 'LOD Refinement' (background passes that load LODs 1..N after
- *   first paint, see data/scene-loader/progressive/refinement.ts)
+ * - THREE persistent timing trees: 'Total Update' (per-frame demand
+ *   updates), 'LOD Refinement' (background passes that load LODs 1..N after
+ *   first paint, see data/scene-loader/progressive/refinement.ts) and
+ *   'Depth Sort' (one pass per SortWorker round-trip)
  * - Per-update sequence accounting: multiple sessions with the same name
  *   within ONE update SUM into a single row (a progressive loader opens one
  *   'Load Arrays' per LOD level); rows not touched by the latest update are

@@ -69,7 +69,11 @@ Shared on purpose, page-wide:
   warning;
 - asset-URL overrides (`wasmPath`, `workerPath`), the `config` object, the
   `eventBus` (the app's: a layer's geometry commits stay off it) and the
-  cross-layer `notifier` backend (an app's toasts show a layer's errors).
+  cross-layer `notifier` backend (an app's toasts show a layer's errors);
+- three's module-level **`AudioContext`** (`THREE.AudioContext.getContext()`):
+  an app's sound layer plays through it, and `LuxarApp.dispose()` closes it and
+  clears three's cache, so a host page using three's audio shares — and loses —
+  that context. A layer plays no sound.
 
 ### Two layers in one THREE.Scene
 

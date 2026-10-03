@@ -12,7 +12,7 @@ The Profiling package provides performance profiling for data loading and render
 - **Exponential Moving Average**: Stable timing averages with EMA (alpha=0.1)
 - **Ambient root context**: `time()`/`begin()` attach to the root session — handy for flat top-level entries
 - **Concurrent-safe top-level entries**: `timeTopLevel()` is safe under `Promise.all` for parallel loader updates
-- **Metadata Tracking**: Points, segments, splats, geometry-neutral elements, skip flags, plus optional chunk / cache / info fields on `TimingMetadata`
+- **Metadata Tracking**: Points, segments, splats, triangles, geometry-neutral elements, skip flags, plus optional chunk / cache / info fields on `TimingMetadata`
 - **UI Integration**: `DataLoadingMonitor` displays the timing panel
 
 ## Load timeline (`load-timeline.ts`)
@@ -106,10 +106,14 @@ try {
 | `timeTopLevel(name, fn)` | Time a top-level parallel operation (safe for `Promise.all`) |
 | `begin(name)`            | Start manual timing entry (child of current)                 |
 | `beginTopLevel(name)`    | Start timing entry directly under root                       |
+| `beginPass()`            | Start a background refinement pass ('LOD Refinement' tree)   |
+| `beginDepthSortPass()`   | Start a SortWorker round-trip ('Depth Sort' tree)            |
 | `skip(name, reason)`     | Mark operation as skipped                                    |
 | `isActive()`             | Check if profiling is active                                 |
 | `current()`              | Get current innermost session                                |
 | `getTimings()`           | Get timing hierarchy for UI                                  |
+| `getRefinementTimings()` | Get the 'LOD Refinement' tree                                |
+| `getDepthSortTimings()`  | Get the 'Depth Sort' tree                                    |
 | `reset()`                | Clear all timing data                                        |
 
 ### Utility Functions
@@ -192,8 +196,8 @@ update with N loaders costs O(N) to merge rather than O(N²).
 ## Metadata Per Entry
 
 `TimingMetadata` fields (all optional): `chunks`, `cacheHits`,
-`cacheMisses`, `points`, `segments`, `splats`, `elements`, `skipped`,
-`skipReason`, `info`.
+`cacheMisses`, `points`, `segments`, `splats`, `triangles`, `elements`,
+`skipped`, `skipReason`, `info`.
 
 | Entry Type      | Metadata Fields typically set |
 | --------------- | ----------------------------- |
@@ -201,6 +205,7 @@ update with N loaders costs O(N) to merge rather than O(N²).
 | Points          | `points` (visible count)      |
 | Lines           | `segments` (visible count)    |
 | GSplats         | `splats` (visible count)      |
+| Mesh            | `triangles` (loaded faces)    |
 | Depth Sort      | `elements` (sorted count)     |
 | Skipped entries | `skipped: true`, `skipReason` |
 | Sub-operations  | (none, time is the metric)    |

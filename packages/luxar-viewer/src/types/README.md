@@ -10,6 +10,10 @@ TypeScript type definitions for high-dimensional data visualization in Luxar. Th
 - [Dimension Metadata](#dimension-metadata)
 - [SimpleDims Interface](#simpledims-interface)
 - [Utility Functions](#utility-functions)
+- [Points Types](#points-types)
+- [Lines Types](#lines-types)
+- [GSplats Types](#gsplats-types)
+- [Mesh Types](#mesh-types)
 - [Geometry Vocabulary and Capabilities](#geometry-vocabulary-and-capabilities)
 - [Specialized Group Types](#specialized-group-types)
 - [Zarr Types](#zarr-types)
@@ -32,6 +36,7 @@ The types package defines the foundational type system for Luxar's nD visualizat
 - **nD Data Structures**: Complete type definitions for high-dimensional points and lines
 - **Lines Types**: Type definitions for line segments with nD clipping support
 - **GSplats Types**: Type definitions for Gaussian splats with anisotropic covariance
+- **Mesh Types**: Type definitions for shaded triangle surfaces (whole-node resident, slice-projected)
 - **Dimension Metadata**: Rich semantic information for dataset dimensions
 - **Navigation State**: Type-safe dimension slicing and display configuration
 - **Initialization Utilities**: Functions for creating properly structured dimension objects
@@ -452,6 +457,50 @@ console.log(CHOLESKY_SIZES); // { '2D': 3, '3D': 6, '4D': 10 }
 
 See `gsplats.ts` for complete interface definitions including `ProcessedGSplatsData`, `GSplatsViewState`, and `GSplatsUserData`. The chunk-bounds index type is the canonical `ChunkSpatialIndex` from `data/loaders/spatial-query/spatial-query-builder.ts`.
 
+## Mesh Types
+
+Triangle surfaces live in `mesh.ts` (mirrors Python `luxar.core.Mesh`; see
+`docs/specs/MESH_NODE_SPEC.md`). Two things differ structurally from the other
+three geometries: a mesh has **no per-element size** (a triangle's extent is its
+own vertices, so it pads scene bounds by nothing), and it is **whole-node
+resident** — `LoadedMeshData` is always the entire mesh, and a slice changes only
+which faces are indexed (`data/mesh/projection.ts`), never which data is loaded.
+
+### MeshMetadata
+
+```typescript
+interface MeshMetadata {
+  type: 'mesh';
+  n_vertices: number; // capped at MAX_MESH_VERTICES
+  n_faces: number; // triangles
+  ndim: number; // vertex position dimensionality
+  has_normals: boolean;
+  normal_dims?: number[]; // which 3 dims the stored normals describe (iff has_normals)
+  has_colors: boolean;
+  has_scalars: boolean;
+  shading: 'smooth' | 'flat' | 'none'; // resolved by the writer, never guessed
+  double_sided: boolean;
+  ordering: 'none'; // no spatial index: a mesh loads whole
+  material?: 'luxar' | 'physical'; // 'physical' = three's PBR material
+  // ... texture, colormap, appearance and physical-material properties
+}
+```
+
+### Type Guards
+
+```typescript
+import { isMeshUserData } from '../types/mesh';
+
+// Check if a THREE.Object3D is a Mesh node
+if (isMeshUserData(object.userData)) {
+  console.log(`Mesh node: ${object.name}`);
+}
+```
+
+See `mesh.ts` for `LoadedMeshData`, the texture types (`MeshTextureData`,
+`MeshTextureEncoding`, …), `MeshProjectionBounds`, `MeshDataLoader`,
+`MeshViewState` and `MeshUserData`.
+
 ## Geometry Vocabulary and Capabilities
 
 `geometry-capabilities.ts` answers two different questions that look alike in code:
@@ -497,7 +546,7 @@ Two `Group` node variants carry a `kind` discriminant and dedicated metadata/gua
 
 A `Group` whose `kind === 'lod'` selects **one** of N alternative children at runtime by comparing the group's on-screen size against each child's `coverage_fraction` threshold, in the units the group's `selector` attr names. Under `'screen-area'` — what every DERIVED ladder stamps — a threshold is a literal screen-area fraction: the group's projected bbox area over the viewport area (measured through the bbox's inscribed ellipsoid sized using its view-axis half-chord, which equals the near face's rect area face-on and changes far less than the rect as the camera orbits), so the ladder is derived by occupancy halving (`[0, …, 1/8, 1/4, 1/2]`, full detail while the node occupies at least half the screen, one level coarser per halving of occupied area), and a partition-bound ladder anchors its finest one step higher, at `1.0` (the tile alone fills the screen).
 
-Under the LEGACY `'coverage'` — pre-v3.4 stores and explicitly authored `coverage_fractions=[...]` lists — the metric is the projected bbox diagonal instead, normalised by half (`FILL_FACTOR`) of the fitted screen axis (`min(viewport.width, viewport.height)`, the extent the camera framing actually fits — aspect-exact for a landscape viewport, approximate for a portrait one), and the anchors are different NUMBERS in those units: a whole-object ladder's finest is `1.0` (a diagonal `1.0`, not the area `1.0` above) and a partition-bound one's is `4.0`. Children are arbitrary geometry subtrees (points / lines / gsplats / nested specialized groups).
+Under the LEGACY `'coverage'` — pre-v3.4 stores and explicitly authored `coverage_fractions=[...]` lists — the metric is the projected bbox diagonal instead, normalised by half (`FILL_FACTOR`) of the fitted screen axis (`min(viewport.width, viewport.height)`, the extent the camera framing actually fits — aspect-exact for a landscape viewport, approximate for a portrait one), and the anchors are different NUMBERS in those units: a whole-object ladder's finest is `1.0` (a diagonal `1.0`, not the area `1.0` above) and a partition-bound one's is `4.0`. Children are arbitrary geometry subtrees (points / lines / gsplats / mesh / nested specialized groups).
 
 ```typescript
 import { type LODGroupMetadata, type LODGroupSelectorMode } from '../types/lod-group';
@@ -866,6 +915,7 @@ The types package provides the type-safe foundation for all nD visualization ope
 - `lines.ts` -- `LineType`, `LinesMetadata`, `OrderingMetadata`, `SegmentRange`, `LoadedLinesData`, `ProcessedLinesData`, `ClippedSegment`, `LinesDataLoader`, `LinesViewState`, `LinesUserData`, and the `isLinesUserData` guard.
 - `line-join.ts` -- `LineJoinStyle`, `DEFAULT_LINE_JOIN`, `LINE_JOIN_UNIFORM`, `LINE_JOIN_STYLES`, and the `parseLineJoinStyle()` / `setLineJoinOverride()` / `resolveLineJoin()` / `lineJoinStyleFromUniform()` helpers.
 - `line-primitive.ts` -- `LinePrimitive`, `DEFAULT_LINE_PRIMITIVE`, `LINE_PRIMITIVES`, the `parseLinePrimitive()` / `setLinePrimitiveOverride()` / `resolveLinePrimitive()` helpers, and the auto-policy half: `LinePrimitivePolicy`, `LINE_PRIMITIVE_POLICIES`, `AUTO_QUAD_EFFECTIVE_SEGMENTS`, `NOMINAL_VIEWPORT_PX`, `MIN_RENDERED_WIDTH_PX`, `LineNodeLoad`, `SceneLineLoadNode`, `setLinePrimitivePolicy()`, `setSceneLineLoad()`, `lineNodeLoadFromAttrs()`, `effectiveSegmentLoad()`, `sceneEffectiveLineLoad()`, `resolveLinePrimitiveForNode()` (#1352, #1800).
+- `mesh.ts` -- `MeshMetadata`, `MeshShading`, the texture types (`MeshTextureEncoding`, `MeshTextureColorSpace`, `MeshTextureFilter`, `MeshTextureWrap`, `MeshTextureData`, `KTX2TextureDecoder`), `MeshMaterialKind`, `MeshColorArray`, `LoadedMeshData`, `MeshProjectionBounds`, `MeshProjectionTargetBuffers`, `MeshDataLoader`, `MeshViewState`, `MeshUserData`, and the `isMeshUserData` guard.
 - `gsplats.ts` -- `GSplatsMetadata`, `ValueRange`, `CoordinateBounds`, `SplatRange`, `LoadedGSplatsData`, `ProcessedGSplatsData`, `GSplatsDataLoader`, `GSplatsViewState`, `GSplatsUserData`, the `isGSplatsUserData` guard, plus `choleskyPackedSize()` and the `CHOLESKY_SIZES` constant.
 - `zarr.ts` -- `ZarrSceneAttrs`, `ZarrNodeAttrs`, `ZarrViewerConfig`, `SceneDimensionAttrs`, `PositionBounds`, `Matrix4x4`, nD-transform types (`NdTransformAffine`, `NdTransformPermutation`, `NdTransformEntry`, `NdTransformMap`), `ZarrStoreWithContents`, and the `hasContentsMethod` / `hasTransform` / `hasNdTransform` / `hasSceneDimensions` / `isPermutation` guards.
 - `format-contract.ts` -- Generated cross-language format-contract constants (the TypeScript consumer half of the Python <-> TypeScript contract; single source of truth is `format-contract/contract.yaml`, regenerate via `make gen-contract`): `SCENE_FORMAT_VERSION` / `SUPPORTED_SCENE_VERSIONS`, `GSPLATS_FORMAT_VERSION` / `SUPPORTED_GSPLATS_FORMAT_VERSIONS`, the header scalars `FORMAT_TYPE_GSPLATS` / `FORMAT_TYPE_SCENE` / `LEGACY_SCENE_VERSION_ATTR` / `SOFTWARE_VERSION_ATTR` / `ND_TRANSFORM_PERMUTATION_KEY`, and every on-disk vocabulary as a const array + union pair: `NODE_TYPES`, `GEOMETRY_TYPES`, `LOADER_TYPES`, `NODE_KINDS`, `ENCODING_NAMES`, `ATTR_KEYS` (structural), `RENDER_ATTR_KEYS`, `ARRAY_NAMES`, `LOD_SELECTORS`, `BLENDING_MODES`, `TONE_MAPPINGS`, `BUILTIN_COLORMAP_NAMES`, `PHYSICAL_UNITS`, `ORDERING_METHODS`, `LINE_JOIN_STYLES`, `LINE_TYPES`, `ND_TRANSFORM_AFFINE_KEYS`, `DIMENSION_ATTR_KEYS`. `types/blending.ts`, `types/line-join.ts`, `types/lines.ts` (`LineType`), `types/lod-group.ts` (`selector`), the `ordering` attr types and `rendering-controls/types.ts` (`toneMapping`) are all re-exports / aliases of these, so a vocabulary edit is a one-file change to the YAML.
