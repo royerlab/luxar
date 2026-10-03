@@ -707,16 +707,7 @@ describe('createProgressiveMeshLoader', () => {
   }
 
   it('builds one whole-node loader per additive subgroup', async () => {
-    const decodeKTX2 = Object.assign(vi.fn(), { dispose: vi.fn() });
-    await createProgressiveMeshLoader(
-      meshLadderNode({}),
-      3,
-      {},
-      {
-        ...makeDeps(),
-        decodeKTX2,
-      }
-    );
+    await createProgressiveMeshLoader(meshLadderNode({}), 3, {}, makeDeps());
 
     expect(meshCtorArgs).toHaveLength(3);
     expect(meshCtorArgs.map((args) => args[0])).toEqual([
@@ -727,9 +718,6 @@ describe('createProgressiveMeshLoader', () => {
     expect(meshProgressiveCtorArgs).toHaveLength(1);
     expect(meshProgressiveCtorArgs[0][1]).toBe(3);
     expect(meshProgressiveCtorArgs[0][2]).toBe('/surf');
-    for (const args of meshCtorArgs) {
-      expect(args[3]).toMatchObject({ decodeKTX2 });
-    }
   });
 
   it('clears the label flags on every sub-LOD', async () => {
@@ -839,5 +827,20 @@ describe('createProgressiveMeshLoader', () => {
       makeDeps()
     );
     expect(meshProgressiveCtorArgs).toHaveLength(1);
+  });
+
+  it.each([
+    ['has_texture', { has_texture: true, has_uvs: true }],
+    ['has_uvs', { has_uvs: true }],
+  ])('refuses a two-level textured ladder (%s)', async (_label, levelAttrs) => {
+    // The writer refuses `texture=` with `additive_lod=`, and the level concat
+    // carries no uvs or texture (and level 0's release would close the bitmap
+    // its material samples), so a hand-written textured ladder must fail loudly
+    // with a node-scoped error rather than render untextured.
+    zarrOpenMock.mockResolvedValue({ attrs: { ...levelAttrs } });
+    await expect(
+      createProgressiveMeshLoader(meshLadderNode({}), 2, {}, makeDeps())
+    ).rejects.toThrow(/texture.*reveal ladder|reveal ladder.*texture/);
+    expect(meshProgressiveCtorArgs).toHaveLength(0);
   });
 });

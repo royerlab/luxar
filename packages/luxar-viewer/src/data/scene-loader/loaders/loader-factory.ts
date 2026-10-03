@@ -396,6 +396,7 @@ export async function createProgressiveMeshLoader(
   );
 
   const levels = await openAdditiveLevels(node, nAdditive, deps);
+  assertLevelsUntextured(node, levels);
   // Per-level DECLARED counts, for the parent-total cross-check below.
   const levelVertices = levels.map((level) =>
     typeof level.attrs.n_vertices === 'number' ? level.attrs.n_vertices : undefined
@@ -423,14 +424,7 @@ export async function createProgressiveMeshLoader(
         {
           zarrStore: deps.zarrStore,
           arrayRefRegistry: deps.arrayRefRegistry,
-          // Forwarded for the same reason the leaf path forwards it. A
-          // Luxar-written ladder cannot carry a texture at all (the writer
-          // refuses `texture=` alongside every structural route), but a
-          // hand-written store can declare one, and without this the level
-          // fails with "no renderer-owned decoder configured" — blaming the
-          // viewer's init order for a decoder that exists and was simply not
-          // handed over.
-          decodeKTX2: deps.decodeKTX2 ?? undefined,
+          // No `decodeKTX2`: a level is refused above if it declares a texture.
         }
       )
   );
@@ -441,6 +435,30 @@ export async function createProgressiveMeshLoader(
   });
 
   return new MeshProgressiveLoader(lodLoaders, nAdditive, node.path);
+}
+
+/**
+ * Refuse a mesh reveal ladder whose levels declare a texture or UVs.
+ *
+ * The writer never authors one (`add_mesh` refuses `texture=` with
+ * `additive_lod=`: the image would be stored once per shell), and the level
+ * concat carries neither — so a hand-written textured ladder would render
+ * untextured, and level 0's release would close the bitmap its material
+ * samples. Refused before any level is fetched, like the totals check below.
+ */
+function assertLevelsUntextured(node: SceneNode, levels: AdditiveLevel[]): void {
+  for (const [i, level] of levels.entries()) {
+    if (level.attrs.has_texture !== true && level.attrs.has_uvs !== true) continue;
+    throw new LoaderError(
+      'Validation',
+      node.path,
+      new Error(
+        `Mesh reveal ladder level additive_${i} declares a texture or UVs. A reveal ` +
+          'ladder carries no texture (the writer refuses texture= with additive_lod=); ' +
+          'write the textured surface as a plain mesh leaf.'
+      )
+    );
+  }
 }
 
 /**
