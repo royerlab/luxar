@@ -207,6 +207,24 @@ describe('LODGroupRegistry — partition part activation (B4)', () => {
     expect(requestReprocess).not.toHaveBeenCalled();
   });
 
+  it.fails('a pass before the first frame activates no deferred part (frustum unknown yet)', async () => {
+    // Deferred at load = outside the padded frustum (or the slice). A view pass
+    // reaching `activatePartitionParts` before any `evaluatePerFrame` (the
+    // post-commit sweep, playback's next-slice warm) must not read a part's
+    // never-evaluated frustum state as "in view" and activate every one of them.
+    const activate = vi.fn(() => Promise.resolve());
+    const reg = makeRegistry(vi.fn<RequestReprocess>());
+    registerLazyPart(reg, activate);
+
+    await expect(reg.activatePartitionParts(viewAt(0))).resolves.toEqual([]);
+    expect(activate).not.toHaveBeenCalled();
+
+    // Once a frame has evaluated it in view, the same pass activates it.
+    reg.evaluatePerFrame();
+    await expect(reg.activatePartitionParts(viewAt(0))).resolves.toEqual(['/p/part_0']);
+    expect(activate).toHaveBeenCalledOnce();
+  });
+
   it('does not keep the loop ticking for a resync nobody can run (no requestReprocess)', () => {
     const requestTick = vi.fn();
     const camera = new THREE.Camera();
