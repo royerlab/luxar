@@ -375,7 +375,7 @@ export class LayersPanel {
         showToast('No layers in this scene (use layer=True in Python API)');
         log.info(
           Modules.UI,
-          'Layers panel toggle: no layers found. Use layer=True on add_points/add_lines/add_gsplats.'
+          'Layers panel toggle: no layers found. Use layer=True on add_points/add_lines/add_gsplats/add_mesh.'
         );
         return;
       }

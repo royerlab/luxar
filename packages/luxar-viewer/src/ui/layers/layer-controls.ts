@@ -293,7 +293,7 @@ export class LayerControls {
 
     // Absorption κ — only meaningful in volumetric mode; hidden for every
     // other mode (see syncAbsorptionVisibility). τ = κ · rayMass with the
-    // same normalised ray mass in all three geometry families, so κ ≈ 1 is
+    // same normalised ray mass in all three emissive families, so κ ≈ 1 is
     // the useful anchor everywhere and one fixed LOG track serves every
     // scene (absorption-range.ts widens it only for an out-of-range authored
     // κ). Position 0 on a log track is an exact κ=0 — the additive limit.
@@ -893,9 +893,10 @@ export class LayerControls {
 
   /**
    * Show the Absorption (κ) slider only when it can do something: the
-   * primary selection's mode is `volumetric`. All three geometry types
-   * implement the volumetric math (gsplats phase 1, points phase 3,
-   * lines phase 4), so the mode alone decides. Called from render() and
+   * primary selection's mode is `volumetric`. All three emissive geometry
+   * types implement the volumetric math (gsplats phase 1, points phase 3,
+   * lines phase 4) and a mesh resolves `volumetric` to `opaque`, so the
+   * mesh-resolved mode alone decides. Called from render() and
    * the blend-dropdown change handler (mode switches must reveal/hide
    * it immediately).
    */

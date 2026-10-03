@@ -265,7 +265,7 @@ export class LayerApplyEngine {
   /**
    * Resolve every data-leaf affected by changes to a layer at `path`.
    * Data-node layers map to themselves; group layers fan out to all
-   * descendant points/lines/gsplats.
+   * descendant points/lines/gsplats/mesh leaves.
    */
   private getAffectedDataLeaves(path: string): SceneNode[] {
     const sceneIndex = this.deps.getSceneNodeIndex();
@@ -718,9 +718,9 @@ export class LayerApplyEngine {
     // invalidation: a stationary-camera panel edit otherwise keeps the cached
     // pre-edit coverage. Run outside the LOD-fade branch above.
     const meshPickDirty = syncMeshPickAppearance(obj as THREE.Mesh, { opacity: eff.opacity });
-    // All three geometry-material families implement it (gsplats
-    // phase 1, points phase 3, lines phase 4); optional-chained for
-    // non-Luxar materials.
+    // The three emissive geometry-material families implement it (gsplats
+    // phase 1, points phase 3, lines phase 4); optional-chained for a mesh
+    // material, which has none (a surface resolves `volumetric` to `opaque`).
     mat.updateAbsorption?.(eff.absorption);
     // A colormap-active leaf windows a SCALAR, and (when the composed window
     // really is stated on the layer's reference range — see
@@ -1059,7 +1059,7 @@ export class LayerApplyEngine {
       if (!nodeType || !supportsScalarColormap(nodeType, geometry)) {
         log.warning(
           Modules.UI,
-          `[LayersPanel][${leaf.path}] Scalar colormap suppressed: required attribute(s) not bound on geometry (pending C4 implementation).`
+          `[LayersPanel][${leaf.path}] Scalar colormap suppressed: the leaf carries no per-element scalars (its geometry has no hasScalars stamp), so it keeps its direct colours.`
         );
         return 'direct';
       }
