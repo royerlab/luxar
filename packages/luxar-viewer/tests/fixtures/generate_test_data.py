@@ -77,6 +77,7 @@ FIXTURE_NAMES: list[str] = [
     "test_array_refs.luxar.zarr",
     "test_blending_inherited.luxar.zarr",
     "test_broadcasting.luxar.zarr",
+    "test_chunk_packs.luxar.zarr",
     "test_delta_filter.luxar.zarr",
     "test_encoding_contract_matrix.luxar.zarr",
     "test_encoding_edge_cases.luxar.zarr",
@@ -4071,6 +4072,39 @@ def generate_overview_test() -> None:
         aprint("  overview: coarse cap + kind=partition of 4 laddered parts")
 
 
+def generate_chunk_packs_test() -> None:
+    """A small laddered partition run through ``luxar optimize --pack``.
+
+    Pins the Python -> TS pack format (``luxar.io.chunk_pack`` writes it,
+    ``PackedChunkSource`` reads it): ``chunk-packs-fixture.test.ts`` adopts the
+    sidecar and checks every member key against the plain chunk read. 200
+    points, 2 parts x 2 rungs, no blosc (like every fixture).
+    """
+    with asection("Generating Chunk-Packs Test (luxar optimize --pack)"):
+        from luxar.io.optimize import optimize_store
+
+        output = FIXTURES_DIR / "test_chunk_packs.luxar.zarr"
+        rng = np.random.default_rng(23)
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "src.luxar.zarr"
+            with LuxarZarrCompiler(
+                source,
+                encoding_mode=EncodingMode.PRECISION,
+                compressor=COMPRESSOR_DISABLED,
+                float16_allowed=FLOAT16_ALLOWED,
+            ) as compiler:
+                scene = compiler.create_scene(dimensions=Dimensions.default_3d())
+                scene.add_points(
+                    "pts",
+                    rng.random((200, 3)).astype(np.float32),
+                    colors=rng.random((200, 3)).astype(np.float32),
+                    partition={"max_elements": 100},
+                    additive_lod={"n_lods": 2},
+                )
+            optimize_store(source, output, overwrite=True, pack=True)
+        aprint(f"✓ Created: {output}")
+
+
 def generate_partition_layer_test() -> None:
     """A SCENE whose single layer is a grafted kind=partition gsplats node.
 
@@ -5054,6 +5088,9 @@ def main() -> None:
         aprint("")
 
         generate_overview_test()
+        aprint("")
+
+        generate_chunk_packs_test()
         aprint("")
 
         generate_partition_layer_test()
