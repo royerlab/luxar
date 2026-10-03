@@ -528,7 +528,11 @@ export interface LayerInfo {
   sound?: SoundLayerInfo;
   /** Active colormap name (undefined = direct RGB colors) */
   colormap?: string;
-  /** Whether this node supports colormap (has scalars or amplitudes) */
+  /**
+   * Whether a colormap can render on this layer: always for gsplats (the
+   * amplitude is the scalar), for points / lines / mesh only with scalars, for a
+   * group when a data descendant can — or whenever a palette is authored.
+   */
   supportsColormap: boolean;
   /** Exact categorical vocabulary exposed by gsplat label_ids. */
   labelVocabulary?: Array<{ id: string; name: string }>;
@@ -689,13 +693,11 @@ export class LayerStateManager {
         const ampRange = node.attrs.amplitude_data_range as [number, number] | undefined;
         const scalarRange = node.attrs.scalar_data_range as [number, number] | undefined;
 
-        // Colormap support — gsplats inherit palettes directly; points / lines /
-        // mesh inherit one only when they have scalars. A group inherits only
-        // when at least one descendant can consume the palette.
-        // Gsplats only support a colormap when they actually have scalar
-        // data (`has_scalars`) or an authored `colormap`; a bare gsplats
-        // node with no scalars must NOT advertise colormap support, or
-        // the UI offers a no-op colormap dropdown.
+        // Colormap support — gsplats always can (their amplitude IS the scalar,
+        // see `supportsScalarColormap`); points / lines / mesh only when they
+        // have scalars. A group can when at least one data descendant can, so a
+        // kind=lod / kind=partition wrapper answers exactly like its leaves. The
+        // same rule decides whether an ancestor's palette is inherited.
         const groupCanUseInheritedColormap =
           node.type === 'group' &&
           collectDataDescendants(node).some(
@@ -711,8 +713,7 @@ export class LayerStateManager {
           deriveColormapFromDescendants(node) ||
           inheritedColormap;
         const scalarWindow = !!colormap || usesColormap(node);
-        const supportsColormap =
-          groupCanUseInheritedColormap || !!node.attrs.has_scalars || !!colormap;
+        const supportsColormap = canUseInheritedColormap || !!colormap;
         const colormapScalarRange =
           scalarRange || ampRange || deriveScalarRangeFromDescendants(node);
         const labelVocabulary =
