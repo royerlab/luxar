@@ -238,8 +238,12 @@ export class LuxarApp {
    * @see {@link SceneManager} for rendering pipeline setup
    * @see README.md - initialization sequence section for detailed init flow
    */
-  async init(options: LuxarAppOptions): Promise<void> {
-    if (this.pendingInit) await this.pendingInit;
+  init(options: LuxarAppOptions): Promise<void> {
+    const pending = this.pendingInit;
+    return pending ? pending.then(() => this.init(options)) : this.startInit(options);
+  }
+
+  private async startInit(options: LuxarAppOptions): Promise<void> {
     if (this.isInitialized) {
       throw new Error('LuxarApp is already initialized. Call dispose() before initializing again.');
     }
@@ -319,8 +323,7 @@ export class LuxarApp {
       if (this.isTornDown(generation)) {
         // dispose() ran while the pipeline was awaiting scene-manager setup.
         // Its first pass could not see the components accumulated in partial.
-        this.isDisposed = false;
-        this.dispose();
+        this.disposePartialInit();
         return;
       }
 
@@ -370,14 +373,19 @@ export class LuxarApp {
       // top-level error UI; any in-progress error UI from sub-loaders
       // is wiped along with everything else.
       assignFromPartial();
-      if (this.isDisposed) this.isDisposed = false;
-      this.dispose();
+      this.disposePartialInit();
       throw error;
     } finally {
       this.isInitializing = false;
       this.pendingInit = null;
       finishInit();
     }
+  }
+
+  private disposePartialInit(): void {
+    // A prior dispose may have run before the pipeline published its components.
+    this.isDisposed = false;
+    this.dispose();
   }
 
   /**
