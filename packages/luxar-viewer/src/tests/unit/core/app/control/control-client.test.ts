@@ -353,7 +353,7 @@ describe('ControlClient event forwarding', () => {
     expect(context.socket.sent).toHaveLength(baseline + 2);
   });
 
-  it.fails('delivers the final pose of a burst once the interval has passed', async () => {
+  it('delivers the final pose of a burst once the interval has passed', async () => {
     // A leading-edge-only throttle drops the LAST pose of a gesture, leaving a
     // remote controller showing a camera the viewer has already left.
     const context = harness();

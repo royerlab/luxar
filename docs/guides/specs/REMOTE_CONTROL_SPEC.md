@@ -236,7 +236,8 @@ time*, so the client attaches to every event eagerly at construction and
 `subscribe` gates only *forwarding* — a lazily-attached client would leave
 those three events permanently dead with no error. And `camera-changed` is
 throttled to 20 Hz, because it fires at frame rate and an auto-rotating kiosk
-never stops moving.
+never stops moving; a pose dropped inside the interval is held and the newest
+one sent when it ends, so a controller always ends on the final pose.
 
 ### 3.4 Python side
 
