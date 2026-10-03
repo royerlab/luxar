@@ -64,9 +64,9 @@ const DESCRIPTORS: Record<
     read: (s) => ({ visible: s.visiblePoints, total: s.datasetSize }),
   },
   lines: {
-    label: 'VISIBLE LINES',
-    field: 'visible-lines',
-    unit: 'lines',
+    label: 'VISIBLE SEGMENTS',
+    field: 'visible-segments',
+    unit: 'segs',
     noun: 'line segments',
     read: (s) => ({ visible: s.visibleSegments, total: s.datasetSegments }),
   },

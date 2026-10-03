@@ -80,7 +80,7 @@ describe('headlineCounts', () => {
     expect(new Set(counts.map((c) => c.unit)).size).toBe(counts.length);
   });
 
-  it.fails('calls line elements segments, matching the loader row and timing tag', () => {
+  it('calls line elements segments, matching the loader row and timing tag', () => {
     // The count IS `visibleSegments` / `datasetSegments`, and the monitor's rule
     // is the drawn-primitive noun: "lines" would claim polylines.
     const lines = headlineCounts(statsWith()).find((c) => c.type === 'lines')!;
