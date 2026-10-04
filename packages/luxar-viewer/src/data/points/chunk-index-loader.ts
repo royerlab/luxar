@@ -34,7 +34,6 @@ export interface PointsNodeAttrsForIndex {
   chunk_size?: number;
   n_points?: number;
   ndim?: number;
-  has_radii?: boolean;
 }
 
 /**
@@ -68,10 +67,9 @@ export interface PointsChunkIndex {
  *     loader should fall back to "load all points";
  *   - the `chunk_bounds` array is missing or the shape's last dim
  *     isn't 2 — same fallback path.
- *   - a one-chunk node with radii: projection checks each point's slice
- *     membership, so loading that chunk is safe without its bounds.
- * Nodes without radii need the bounds even for one chunk, because projection
- * has no per-point slice gate for them.
+ *   - a one-chunk node with a per-point slice gate: projection checks each
+ *     point's slice membership, so loading that chunk is safe without bounds.
+ * Without that gate, even one chunk needs bounds for slice visibility.
  *
  * Logs warnings (does not raise) on length mismatches and on
  * dimension-coverage mismatches between `ordering_dims ∪ slice_dims`
@@ -80,6 +78,7 @@ export interface PointsChunkIndex {
 export async function loadPointsChunkIndex(
   zarrLocation: zarr.Location<zarr.Readable>,
   nodeAttrs: PointsNodeAttrsForIndex,
+  perPointSliceGate = false,
   signal?: AbortSignal
 ): Promise<PointsChunkIndex | null> {
   if (!nodeAttrs.ordering || nodeAttrs.ordering === 'none') {
@@ -91,7 +90,7 @@ export async function loadPointsChunkIndex(
     nodeAttrs.n_points !== undefined &&
     nodeAttrs.chunk_size !== undefined &&
     nodeAttrs.n_points <= nodeAttrs.chunk_size &&
-    nodeAttrs.has_radii === true
+    perPointSliceGate
   ) {
     log.verbose(
       LogEmoji.QUERY,

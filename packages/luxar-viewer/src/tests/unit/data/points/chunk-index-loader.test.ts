@@ -58,14 +58,32 @@ describe('loadPointsChunkIndex', () => {
   });
 
   it('skips the chunk_bounds request for a single chunk with per-point radii', async () => {
-    const result = await loadPointsChunkIndex(makeLocation(), {
-      ordering: 'hilbert',
-      n_points: 64,
-      chunk_size: 64,
-      has_radii: true,
-    });
+    const result = await loadPointsChunkIndex(
+      makeLocation(),
+      {
+        ordering: 'hilbert',
+        n_points: 64,
+        chunk_size: 64,
+      },
+      true
+    );
     expect(result).toBeNull();
     expect(mockFetchChunkBounds).not.toHaveBeenCalled();
+  });
+
+  it('probes chunk_bounds for a legacy one-chunk node without a has_radii stamp', async () => {
+    mockFetchChunkBounds.mockResolvedValueOnce({
+      data: new Float32Array([0, 1, 0, 1, 0, 1, 5, 5]),
+      shape: [1, 4, 2],
+    });
+    const index = await loadPointsChunkIndex(makeLocation(), {
+      ordering: 'hilbert',
+      n_points: 2,
+      chunk_size: 2,
+      ndim: 4,
+    });
+    expect(mockFetchChunkBounds).toHaveBeenCalledTimes(1);
+    expect(index?.chunkCount).toBe(1);
   });
 
   it('still probes chunk_bounds when the node spans more than one chunk', async () => {
@@ -87,7 +105,6 @@ describe('loadPointsChunkIndex', () => {
       n_points: 2,
       chunk_size: 2,
       ndim: 3,
-      has_radii: false,
     });
     expect(index).not.toBeNull();
     const view = {
@@ -113,7 +130,6 @@ describe('loadPointsChunkIndex', () => {
       n_points: 2,
       chunk_size: 2,
       ndim: 4,
-      has_radii: false,
     });
 
     expect(mockFetchChunkBounds).toHaveBeenCalledTimes(1);
