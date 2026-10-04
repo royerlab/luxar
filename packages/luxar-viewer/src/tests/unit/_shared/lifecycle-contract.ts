@@ -116,6 +116,11 @@ function track(op: Promise<unknown> | void): TrackedOperation | undefined {
   return tracked;
 }
 
+function expectSucceeded(op: TrackedOperation | undefined): void {
+  if (op)
+    expect(op, 'the follow-up operation must succeed').toEqual({ settled: true, rejected: false });
+}
+
 async function microtasks(): Promise<void> {
   for (let i = 0; i < 25; i++) await Promise.resolve();
 }
@@ -174,8 +179,9 @@ export function defineLifecycleContract(name: string, adapter: LifecycleAdapter)
   /** What a fresh owner commits after running only operation `n` to success. */
   const reference = async (n: number): Promise<unknown> => {
     const d = await driver();
-    await d.start(n);
+    const op = await d.start(n);
     await d.drain('ok');
+    expectSucceeded(op);
     const committed = d.subject.observe();
     await d.dispose();
     return committed;
@@ -254,9 +260,10 @@ export function defineLifecycleContract(name: string, adapter: LifecycleAdapter)
       else expect(op?.rejected, 'the failure must surface').toBe(true);
       expect(d.inFlight()).toBe(0);
       const requested = d.subject.pending();
-      await d.start(1);
+      const followUp = await d.start(1);
       expect(d.subject.pending(), 'the next call must start fresh work').toBeGreaterThan(requested);
       await d.drain('ok');
+      expectSucceeded(followUp);
       expect(d.subject.observe()).toEqual(await reference(1));
       await d.dispose();
     });
@@ -272,8 +279,9 @@ export function defineLifecycleContract(name: string, adapter: LifecycleAdapter)
         expect(d.inFlight(), `in flight after failed attempt ${attempt}`).toBe(0);
       }
       expect(new Set(costs).size, `inner work per attempt: ${costs.join(', ')}`).toBe(1);
-      await d.start(0);
+      const finalAttempt = await d.start(0);
       await d.drain('ok');
+      expectSucceeded(finalAttempt);
       expect(d.subject.observe()).toEqual(await reference(0));
       await d.dispose();
     });
@@ -282,8 +290,9 @@ export function defineLifecycleContract(name: string, adapter: LifecycleAdapter)
       const d = await driver();
       await d.start(0);
       const olderWork = d.subject.pending();
-      await d.start(1);
+      const newest = await d.start(1);
       await d.drain('ok', olderWork); // the newer operation finishes first
+      expectSucceeded(newest);
       await d.drain('ok'); // then the older one settles, late
       expect(d.subject.observe()).toEqual(await reference(1));
       expect(d.inFlight()).toBe(0);
@@ -315,8 +324,9 @@ export function defineLifecycleContract(name: string, adapter: LifecycleAdapter)
         const afterReset = d.subject.observe();
         await d.drain('ok');
         expect(d.subject.observe()).toEqual(afterReset);
-        await d.start(1);
+        const followUp = await d.start(1);
         await d.drain('ok');
+        expectSucceeded(followUp);
         expect(d.subject.observe()).toEqual(await reference(1));
         await d.dispose();
       });
