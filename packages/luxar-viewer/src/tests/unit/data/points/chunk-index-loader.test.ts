@@ -14,7 +14,7 @@ vi.mock('../../../../data/loaders/chunk-bounds-loader', () => ({
   fetchChunkBoundsArray: vi.fn(),
 }));
 
-import { fetchChunkBoundsArray } from '../../../../data/loaders';
+import { fetchChunkBoundsArray, SpatialQueryBuilder } from '../../../../data/loaders';
 import {
   loadPointsChunkIndex,
   registerPointsArrayBounds,
@@ -57,11 +57,12 @@ describe('loadPointsChunkIndex', () => {
     expect(mockFetchChunkBounds).not.toHaveBeenCalled();
   });
 
-  it('skips the chunk_bounds request when the node holds a single chunk', async () => {
+  it('skips the chunk_bounds request for a single chunk with per-point radii', async () => {
     const result = await loadPointsChunkIndex(makeLocation(), {
       ordering: 'hilbert',
       n_points: 64,
       chunk_size: 64,
+      has_radii: true,
     });
     expect(result).toBeNull();
     expect(mockFetchChunkBounds).not.toHaveBeenCalled();
@@ -76,6 +77,58 @@ describe('loadPointsChunkIndex', () => {
     });
     expect(mockFetchChunkBounds).toHaveBeenCalledTimes(1);
     expect(result!.chunkCount).toBe(2);
+  });
+
+  it('retains bounds for a one-chunk node without radii even in a 2D view of 3D data', async () => {
+    const bounds = new Float32Array([0, 1, 0, 1, 5, 5]);
+    mockFetchChunkBounds.mockResolvedValueOnce({ data: bounds, shape: [1, 3, 2] });
+    const index = await loadPointsChunkIndex(makeLocation(), {
+      ordering: 'hilbert',
+      n_points: 2,
+      chunk_size: 2,
+      ndim: 3,
+      has_radii: false,
+    });
+    expect(index).not.toBeNull();
+    const view = {
+      displayDims: [0, 1],
+      slicePosition: [0, 0, 0],
+      tolerance: [Infinity, Infinity, 0.25],
+    };
+    expect(
+      await new SpatialQueryBuilder(index!, view, {
+        tolerance: view.tolerance,
+        totalElements: 2,
+      }).execute()
+    ).toEqual([]);
+  });
+
+  it('uses the one-chunk bounds to exclude off-slice points without radii', async () => {
+    const bounds = new Float32Array([0, 1, 0, 1, 0, 1, 5, 5]);
+    mockFetchChunkBounds.mockResolvedValueOnce({ data: bounds, shape: [1, 4, 2] });
+    const index = await loadPointsChunkIndex(makeLocation(), {
+      ordering: 'hilbert',
+      ordering_dims: [0, 1, 2],
+      slice_dims: [3],
+      n_points: 2,
+      chunk_size: 2,
+      ndim: 4,
+      has_radii: false,
+    });
+
+    expect(mockFetchChunkBounds).toHaveBeenCalledTimes(1);
+    expect(index).not.toBeNull();
+    const view = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [Infinity, Infinity, Infinity, 0.25],
+    };
+    const options = { tolerance: view.tolerance, totalElements: 2 };
+    expect(await new SpatialQueryBuilder(index!, view, options).execute()).toEqual([]);
+    view.slicePosition[3] = 5;
+    expect(await new SpatialQueryBuilder(index!, view, options).execute()).toEqual([
+      { start: 0, end: 2 },
+    ]);
   });
 
   it('returns null when fetchChunkBoundsArray returns null (array missing)', async () => {
