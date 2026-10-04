@@ -79,9 +79,10 @@ describe('PerfCounters', () => {
   });
 
   it('is exposed through getPerf().counters, even before the runtime is wired', () => {
-    perfCounters.inc('test.exposed', 3);
+    perfCounters.reset();
+    perfCounters.inc('render.byReason.test-exposed', 3);
     const snap = computePerfSnapshot();
     expect(snap.runtimeReady).toBe(false);
-    expect(snap.counters['test.exposed']).toBeGreaterThanOrEqual(3);
+    expect(snap.counters['render.byReason.test-exposed']).toBe(3);
   });
 });
