@@ -3385,6 +3385,8 @@ function coverageMask(pixels: number[]): Uint8Array {
 
 /** Pick pixels outside the (1-px grown) draw, and the share of the draw the pick covers. */
 function pickWithinDraw(draw: number[], pick: number[], size: number) {
+  expect(draw.length, 'draw frame is not size² RGBA').toBe(size * size * 4);
+  expect(pick.length, 'pick frame is not size² RGBA').toBe(size * size * 4);
   const drawn = coverageMask(draw);
   const picked = coverageMask(pick);
   let outside = 0;
@@ -3422,6 +3424,12 @@ const DRAW_PICK_CELLS = (
 );
 
 test.describe('draw/pick coverage: the pick stays inside the draw', () => {
+  test('rejects frames that do not match the declared size', () => {
+    const frame = [0, 0, 0, 255];
+    expect(() => pickWithinDraw([], frame, 1)).toThrow('draw frame is not size² RGBA');
+    expect(() => pickWithinDraw(frame, [], 1)).toThrow('pick frame is not size² RGBA');
+  });
+
   test('every (type, variant) of the rule table has a draw/pick pair', () => {
     for (const [type, variants] of Object.entries(PICK_VISIBILITY_RULES)) {
       for (const variant of Object.keys(variants)) {
