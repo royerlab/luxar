@@ -316,12 +316,6 @@ export const MODULE_FAMILY_ASYMMETRIES: Readonly<
   Record<string, Readonly<Record<string, ExportAsymmetry>>>
 > = {
   'commit-<t>-geometry.ts': {
-    'sync<T>MaterialWithGeometry': {
-      presentIn: ['points', 'lines'],
-      reason:
-        'A re-export of the rendering-layer helper that only one test imports from here; ' +
-        'removed in the next change, which this entry then fails to describe.',
-    },
     '<T>CommitCtx': {
       presentIn: ['mesh'],
       reason:
