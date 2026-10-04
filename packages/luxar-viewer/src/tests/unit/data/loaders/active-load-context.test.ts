@@ -108,6 +108,35 @@ describe('ActiveLoadContext — one call at a time', () => {
 });
 
 describe('ActiveLoadContext — overlapping calls (reentrancy)', () => {
+  it('keeps the first origin and raised priority after a demand caller leaves', async () => {
+    const calls = new ActiveLoadContext();
+    const shadow = new AbortController();
+    tagSignalPriority(shadow.signal, 'speculative');
+    tagSignalOrigin(shadow.signal, 'shadow');
+    const shadowWait = parked();
+    const shadowLoad = calls.runWithSignal(shadow.signal, () => shadowWait.promise);
+    const readSignal = calls.signal;
+
+    const demand = new AbortController();
+    tagSignalPriority(demand.signal, 'demand');
+    tagSignalOrigin(demand.signal, 'demand');
+    const demandWait = parked();
+    const demandLoad = calls.runWithSignal(demand.signal, () => demandWait.promise);
+    expect(calls.signal).toBe(readSignal);
+    expect(signalOrigin(readSignal)).toBe('shadow');
+    expect(signalPriority(readSignal)?.value).toBe('demand');
+
+    demandWait.release();
+    await demandLoad;
+    expect(signalOrigin(calls.signal)).toBe('shadow');
+    expect(signalPriority(calls.signal)?.value).toBe('demand');
+    expect(readSignal?.aborted).toBe(false);
+    shadowWait.release();
+    await shadowLoad;
+    expect(readSignal?.aborted).toBe(true);
+    expect((readSignal?.reason as Error).name).toBe('AbortError');
+  });
+
   it('the call that finishes first does not withdraw the other call’s signal', async () => {
     const calls = new ActiveLoadContext();
     const a = new AbortController();

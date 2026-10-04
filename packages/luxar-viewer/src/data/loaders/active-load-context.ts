@@ -38,7 +38,9 @@ export interface SignalEntry {
 /**
  * The set of demand loads currently running on one leaf loader, published to
  * its L0 proxies as one merged abort signal and one fanned-out residency probe
- * (see the module notes for the merge rules).
+ * (see the module notes for the merge rules). The first caller with a decode
+ * origin sets the composite's origin for the overlap episode. Its fetch
+ * priority can only rise, including after a higher-priority caller leaves.
  */
 export class ActiveLoadContext {
   private readonly signals: SignalEntry[] = [];
@@ -50,7 +52,10 @@ export class ActiveLoadContext {
     },
   };
 
-  /** The abort signal governing a chunk read now (see the module notes). */
+  /**
+   * The abort signal governing a chunk read now (see the module notes). When
+   * the last call returns normally, the composite aborts with an `AbortError`.
+   */
   get signal(): AbortSignal | null {
     // An unsignalled call needs the loader lifetime's fallback signal.
     if (this.signals.length === 0 || this.signals.some((entry) => entry.signal === null))
