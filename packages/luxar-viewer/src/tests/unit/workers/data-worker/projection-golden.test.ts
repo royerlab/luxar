@@ -463,7 +463,7 @@ describe('points dispatcher: hidden-dimension membership without effective radii
     ).toBe(2);
   });
 
-  it('includes the half-cell discrete boundary and rejects the next category', () => {
+  it('uses an absolute 0.5 discrete boundary regardless of step', () => {
     const out = runPointsBothBackends(
       new Float32Array([1, 2, 3, 1.5, 4, 5, 6, 1.7]),
       null,
@@ -473,6 +473,19 @@ describe('points dispatcher: hidden-dimension membership without effective radii
     );
     expect(out.pointCount).toBe(1);
     expect(Array.from(out.positions)).toEqual([1, 2, 3]);
+    const stepTen = runPointsBothBackends(
+      new Float32Array([1, 2, 3, 10.5, 4, 5, 6, 10.7]),
+      null,
+      {
+        ...viewState,
+        slicePosition: [0, 0, 0, 10],
+        dimensions: [...dimensions.slice(0, 3), discDim('time', 10)],
+      },
+      [{ start: 0, end: 2 }],
+      pointsCtx()
+    );
+    expect(stepTen.pointCount).toBe(1);
+    expect(Array.from(stepTen.positions)).toEqual([1, 2, 3]);
   });
 
   it('uses configured discrete axes when radii are absent', () => {
@@ -509,17 +522,40 @@ describe('points dispatcher: hidden-dimension membership without effective radii
     expect(Array.from(out.positions)).toEqual([1, 2, 0]);
   });
 
-  it('uses continuous slice tolerance when radius configuration is missing', () => {
-    const positions = new Float32Array([1, 2, 3, 1.2, 4, 5, 6, 1.4]);
-    const out = runPointsBothBackends(
+  it('uses the node radius reach when radius configuration is missing', () => {
+    const positions = new Float32Array([1, 2, 3, 1, 4, 5, 6, 3]);
+    const radii = new Float32Array([2, 2]);
+    const ctx = pointsCtx({
+      nodeAttrs: { type: 'points', n_points: 2, max_radius: 2 } as PointsMetadata,
+    });
+    const continuousView = {
+      ...viewState,
+      slicePosition: [0, 0, 0, 0],
+      dimensions: [...dimensions.slice(0, 3), contDim('depth')],
+    };
+    for (const rideAlong of [0.1, 0.01]) {
+      const out = runPointsBothBackends(
+        positions,
+        radii,
+        { ...continuousView, tolerance: [1e10, 1e10, 1e10, rideAlong] },
+        [{ start: 0, end: 2 }],
+        ctx
+      );
+      expect(out.pointCount).toBe(1);
+      expect(Array.from(out.positions)).toEqual([1, 2, 3]);
+    }
+    const configured = runPointsBothBackends(
       positions,
-      new Float32Array([1, 1]),
-      { ...viewState, dimensions: [...dimensions.slice(0, 3), contDim('depth')] },
+      radii,
+      { ...continuousView, tolerance: [1e10, 1e10, 1e10, 0.1] },
       [{ start: 0, end: 2 }],
-      pointsCtx()
+      pointsCtx({
+        effectiveRadiusConfig: { spatialExtendDims: [true, true, true, true], maxRadius: 2 },
+        nodeAttrs: ctx.nodeAttrs,
+      })
     );
-    expect(out.pointCount).toBe(1);
-    expect(Array.from(out.positions)).toEqual([1, 2, 3]);
+    expect(configured.pointCount).toBe(1);
+    expect(Array.from(configured.positions)).toEqual([1, 2, 3]);
   });
 
   it('compacts color, scalar, and element IDs with the surviving point', () => {

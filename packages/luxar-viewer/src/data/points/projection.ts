@@ -43,6 +43,7 @@ import type { PointsMetadata } from '../../types/points';
 import type { PointsChunkIndex } from './chunk-index-loader';
 import type { WasmModule } from '../../wasm/types';
 import { validateProjectionInputs } from '../../workers/data-worker/validation';
+import { config as appConfig } from '../../config';
 
 /** Buffers an accumulator owns; writing directly into them avoids allocations. */
 export interface ProjectionTargetBuffers {
@@ -446,6 +447,10 @@ export function projectPointsTo3D(
   if (!usedEffectiveRadius && totalPoints > 0 && new Set(displayDims).size < ndim) {
     const discreteDims = new Uint8Array(ndim);
     const tolerance = new Float32Array(ndim);
+    const maxRadius =
+      ctx.effectiveRadiusConfig?.maxRadius ??
+      ctx.nodeAttrs.max_radius ??
+      appConfig.dataLoading.spatial.defaultMaxRadius;
     for (let d = 0; d < ndim; d++) {
       const dimension = viewState.dimensions?.[d];
       const spatial = ctx.effectiveRadiusConfig?.spatialExtendDims[d];
@@ -453,11 +458,15 @@ export function projectPointsTo3D(
         spatial === undefined
           ? Number(Boolean(dimension?.discrete && !dimension.spatial))
           : Number(!spatial);
+      // Match the loader's spatial query reach; the continuous ride-along
+      // tolerance is only an extend-to-all sentinel (issue #1183).
       // A view without a coordinate for this axis cannot select a slice on it.
       tolerance[d] =
         d >= viewState.slicePosition.length || d >= viewState.tolerance.length
           ? 1e10
-          : viewState.tolerance[d];
+          : viewState.tolerance[d] >= 1e9
+            ? 1e10
+            : maxRadius;
     }
     membership = new Uint8Array(numPoints);
     wasm.points_slice_membership(
