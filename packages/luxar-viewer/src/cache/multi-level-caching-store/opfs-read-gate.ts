@@ -11,8 +11,9 @@ import { withTimeout } from './opfs-store/opfs-timeout';
  * unattributed; this gate provides a bounded, observable point for diagnosis.
  *
  * A lease lasts until the read's file I/O settles, not merely until `run()`
- * does. Held I/O also has an operation deadline, so a browser read that never
- * settles cannot permanently occupy the gate. A queued read whose signal
+ * does. Held I/O has a deadline three times the caller's operation timeout:
+ * slow reads stay counted after their caller gives up, but a browser read that
+ * never settles cannot permanently occupy the gate. A queued read whose signal
  * aborts leaves the queue at once (the shared {@link AsyncGate}'s contract).
  */
 const gate = new AsyncGate(() => config.cache.opfsReadConcurrency);
@@ -32,7 +33,7 @@ export function resetOpfsReadGate(): void {
  *
  * @param run - The read. Pass the real file I/O through `hold` (it returns the
  *   same promise): the slot is held until `run()` and every held promise has
- *   settled or reached the configured operation deadline.
+ *   settled or reached the longer held-I/O deadline.
  * @param signal - Aborting it while the read still waits for a slot rejects
  *   with the signal's reason (or an `AbortError`) and frees its queue place.
  *   Once started, `run` owns the signal.
@@ -55,7 +56,7 @@ export function withOpfsReadGate<T>(
     const hold = <R>(io: Promise<R>): Promise<R> => {
       if (released) return io;
       pending += 1;
-      void withTimeout(io, config.cache.opfsOperationTimeoutMs, 'read gate I/O').then(
+      void withTimeout(io, 3 * config.cache.opfsOperationTimeoutMs, 'read gate I/O').then(
         settle,
         settle
       );

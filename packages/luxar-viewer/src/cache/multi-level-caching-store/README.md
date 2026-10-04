@@ -53,11 +53,11 @@ multi-level-caching-store/
   cap. The reported multi-second L2 stall remains unattributed. Queue wait is
   outside each operation's timeout, so healthy backpressure is never
   misclassified as hung I/O. `run` receives `hold(io)`: a lease lasts until
-  every held file-I/O promise settles or reaches the configured operation
-  deadline. A read whose caller timed out still occupies its slot until the
-  browser finishes it or the deadline expires. The optional
-  `signal` lets a queued read leave the queue on abort (rejecting with the
-  signal's reason).
+  every held file-I/O promise settles or reaches a deadline three times the
+  configured operation timeout. A read whose caller timed out still occupies
+  its slot until the browser finishes it or that longer deadline expires. The
+  optional `signal` lets a queued read leave the queue on abort (rejecting with
+  the signal's reason).
 - **`getOpfsReadGateStats()`** — exposes active and queued reads to the cache
   monitor so a live stall distinguishes backend work from gate backpressure.
 - **`resetOpfsReadGate()`** — clears module-global gate state for test isolation;

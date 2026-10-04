@@ -10,6 +10,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../../config';
+import { withTimeout } from '../../../cache/multi-level-caching-store/opfs-store/opfs-timeout';
 import {
   getOpfsReadGateStats,
   resetOpfsReadGate,
@@ -78,6 +79,47 @@ describe('OPFS read gate', () => {
     expect(getOpfsReadGateStats()).toEqual({ active: 0, queued: 0 });
   });
 
+  it('keeps slow reads fenced after caller timeouts until the file I/O settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const cap = config.cache.opfsReadConcurrency;
+      const timeout = config.cache.opfsOperationTimeoutMs;
+      const io = Array.from({ length: cap }, deferred);
+      const reads = io.map((pending) =>
+        withOpfsReadGate((hold) => withTimeout(hold(pending.promise), timeout, 'caller')).catch(
+          () => undefined
+        )
+      );
+      await flush();
+
+      let started = false;
+      const next = withOpfsReadGate(async () => {
+        started = true;
+      });
+      await flush();
+      await vi.advanceTimersByTimeAsync(timeout);
+      await Promise.all(reads);
+      expect({ ...getOpfsReadGateStats(), started }).toEqual({
+        active: cap,
+        queued: 1,
+        started: false,
+      });
+
+      await vi.advanceTimersByTimeAsync(timeout / 2);
+      expect({ ...getOpfsReadGateStats(), started }).toEqual({
+        active: cap,
+        queued: 1,
+        started: false,
+      });
+
+      for (const pending of io) pending.resolve();
+      await next;
+      expect(getOpfsReadGateStats()).toEqual({ active: 0, queued: 0 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('releases a slot after the operation deadline when held I/O never settles', async () => {
     vi.useFakeTimers();
     try {
@@ -98,7 +140,7 @@ describe('OPFS read gate', () => {
       await flush();
       expect(getOpfsReadGateStats()).toEqual({ active: cap, queued: 1 });
 
-      await vi.advanceTimersByTimeAsync(config.cache.opfsOperationTimeoutMs);
+      await vi.advanceTimersByTimeAsync(3 * config.cache.opfsOperationTimeoutMs);
       await next;
       expect(started).toBe(true);
       expect(getOpfsReadGateStats()).toEqual({ active: 0, queued: 0 });

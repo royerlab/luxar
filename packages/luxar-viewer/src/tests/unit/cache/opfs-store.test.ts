@@ -368,6 +368,7 @@ describe('OPFSStore', () => {
         expect(getOpfsReadGateStats()).toEqual({ active: 1, queued: 0 });
 
         expect(await timedOut).toBeUndefined();
+        expect(getOpfsReadGateStats()).toEqual({ active: 1, queued: 0 });
         await vi.waitFor(() => expect(getOpfsReadGateStats().active).toBe(0));
         releaseFile();
         await vi.waitFor(() => expect(getOpfsReadGateStats().active).toBe(0));
