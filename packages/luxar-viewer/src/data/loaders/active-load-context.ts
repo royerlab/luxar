@@ -64,6 +64,35 @@ export class ActiveLoadContext {
     }
   }
 
+  private inheritSignalTags(signal: AbortSignal | undefined): () => void {
+    if (!signal || !this.controller) return () => undefined;
+    const priority = signalPriority(signal);
+    const compositePriority = tagSignalPriority(
+      this.controller.signal,
+      priority?.value ?? 'demand'
+    );
+    const detachPriority = priority?.onRaise(() => compositePriority.raise(priority.value));
+    const origin = signalOrigin(signal);
+    if (origin !== undefined) tagSignalOrigin(this.controller.signal, origin);
+    return () => detachPriority?.();
+  }
+
+  private registerSignal(signal: AbortSignal | undefined): () => void {
+    const entry: SignalEntry = { signal: signal ?? null };
+    if (!this.controller || this.controller.signal.aborted) this.controller = new AbortController();
+    const detachTags = this.inheritSignalTags(signal);
+    const onAbort = (): void => this.refreshSignal();
+    this.signals.push(entry);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    this.refreshSignal();
+    return () => {
+      detachTags();
+      signal?.removeEventListener('abort', onAbort);
+      this.signals.splice(this.signals.indexOf(entry), 1);
+      this.refreshSignal();
+    };
+  }
+
   /** The residency probe a chunk read records into now (see the module notes). */
   get probe(): ResidencyProbe | null {
     if (this.probes.length === 0) return null;
@@ -79,26 +108,11 @@ export class ActiveLoadContext {
     signal: AbortSignal | undefined,
     load: () => Promise<TData>
   ): Promise<TData> {
-    const entry: SignalEntry = { signal: signal ?? null };
-    if (!this.controller || this.controller.signal.aborted) this.controller = new AbortController();
-    const priority = signalPriority(signal);
-    const compositePriority = signal
-      ? tagSignalPriority(this.controller.signal, priority?.value ?? 'demand')
-      : null;
-    const detachPriority = priority?.onRaise(() => compositePriority?.raise(priority.value));
-    const origin = signalOrigin(signal);
-    if (origin !== undefined) tagSignalOrigin(this.controller.signal, origin);
-    const onAbort = (): void => this.refreshSignal();
-    this.signals.push(entry);
-    signal?.addEventListener('abort', onAbort, { once: true });
-    this.refreshSignal();
+    const unregister = this.registerSignal(signal);
     try {
       return await load();
     } finally {
-      detachPriority?.();
-      signal?.removeEventListener('abort', onAbort);
-      this.signals.splice(this.signals.indexOf(entry), 1);
-      this.refreshSignal();
+      unregister();
     }
   }
 
