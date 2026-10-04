@@ -24,6 +24,7 @@ import { FxaaPass } from './fxaa/pass';
 import { FullscreenPass } from './fullscreen/pass';
 import type { Renderer, RendererCapabilities } from '../renderer-capabilities';
 import { clamp } from '../../utils/clamp';
+import { raceTimeout } from '../../utils/race-timeout';
 import type { LuxarCamera } from '../../utils/camera-utils';
 import {
   computeEffectiveSize,
@@ -879,18 +880,14 @@ export class PostProcessingManager {
   /** Keep the frame loop from drawing over a capture target during readback. */
   async suspendFrameRendersDuring<T>(capture: () => Promise<T>): Promise<T> {
     this.captureDepth++;
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
-      const result = capture();
-      const timeout = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(
-          () => reject(new Error('Capture timed out after 60 seconds')),
-          PostProcessingManager.CAPTURE_TIMEOUT_MS
-        );
-      });
-      return await Promise.race([result, timeout]);
+      return await raceTimeout(
+        capture(),
+        PostProcessingManager.CAPTURE_TIMEOUT_MS,
+        () =>
+          new Error(`Capture timed out after ${PostProcessingManager.CAPTURE_TIMEOUT_MS / 1000} s`)
+      );
     } finally {
-      if (timeoutId !== undefined) clearTimeout(timeoutId);
       this.captureDepth--;
       if (this.captureDepth === 0 && !this.disposed) this.onCaptureReleased?.();
     }

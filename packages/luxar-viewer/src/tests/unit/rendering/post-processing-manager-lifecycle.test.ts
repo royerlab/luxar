@@ -140,7 +140,7 @@ describe('PostProcessingManager → capture guard', () => {
         () => settled('resolved'),
         () => settled('rejected')
       );
-      const rejection = expect(capture).rejects.toThrow('timed out');
+      const rejection = expect(capture).rejects.toThrow('Capture timed out after 60 s');
       await vi.advanceTimersByTimeAsync(60_000);
       expect(settled).toHaveBeenCalledWith('rejected');
       await rejection;
