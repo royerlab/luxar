@@ -1126,6 +1126,7 @@ def test_a_real_run_does_not_revive_stale_chunk_packs(legacy_scene: Path) -> Non
 
 def test_restamp_does_not_rebind_packs_after_unstamped_chunk_edit(
     legacy_scene: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A stale stored root hash cannot prove that the pack still copies its chunks."""
     root = open_group(legacy_scene, mode="r+")
@@ -1141,6 +1142,7 @@ def test_restamp_does_not_rebind_packs_after_unstamped_chunk_edit(
     close(root)
 
     report = restamp_lod_store(legacy_scene, finest_anchor=0.25)
+    assert "chunk packs left unbound" in capsys.readouterr().out
 
     attrs = _attrs(legacy_scene)
     assert report.content_hash != original_hash
