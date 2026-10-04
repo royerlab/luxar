@@ -32,6 +32,7 @@ export function abortableWait<T>(shared: Promise<T>, signal?: AbortSignal | null
   });
 }
 
+// lifecycle-exempt: maps an aborted signal to the error to throw; starts and owns no work
 /** The signal's reason when it is an Error, else a standard `AbortError`. */
 export function abortReason(signal: AbortSignal): Error {
   const reason: unknown = signal.reason;

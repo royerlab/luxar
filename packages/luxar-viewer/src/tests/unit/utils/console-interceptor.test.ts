@@ -10,6 +10,7 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { runInNewContext } from 'node:vm';
 import { consoleInterceptor, disposeConsoleInterceptor } from '../../../utils/console-interceptor';
+import { perfCounters } from '../../../profiling/perf-counters';
 
 type ConsoleMethod = 'log' | 'warn' | 'error' | 'info' | 'debug';
 const CONSOLE_METHODS: readonly ConsoleMethod[] = ['log', 'warn', 'error', 'info', 'debug'];
@@ -510,5 +511,43 @@ describe('ConsoleInterceptor singleton proxy traps', () => {
     (consoleInterceptor as unknown as { probe: number }).probe = 1;
 
     expect((consoleInterceptor as unknown as { probe: number }).probe).toBe(1);
+  });
+});
+
+describe('ConsoleInterceptor perf counters', () => {
+  beforeEach(() => {
+    consoleInterceptor.patch();
+    // Keep the pass-through out of the test output.
+    for (const method of CONSOLE_METHODS) {
+      vi.spyOn(consoleInterceptor.getOriginalConsole(), method).mockImplementation(() => {});
+    }
+    perfCounters.reset();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    consoleInterceptor.dispose();
+  });
+
+  it('counts every intercepted call in total and per level, and nothing once unpatched', () => {
+    console.log('a');
+    console.log('b');
+    console.warn('w');
+    console.error('e');
+    console.error('e2');
+    console.error('e3');
+    console.info('i');
+    console.debug('d');
+    console.debug('d2');
+    consoleInterceptor.dispose();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    console.log('after dispose: the host console, not the interceptor');
+
+    expect(perfCounters.get('console.calls')).toBe(9);
+    expect(perfCounters.get('console.calls.log')).toBe(2);
+    expect(perfCounters.get('console.calls.warn')).toBe(1);
+    expect(perfCounters.get('console.calls.error')).toBe(3);
+    expect(perfCounters.get('console.calls.info')).toBe(1);
+    expect(perfCounters.get('console.calls.debug')).toBe(2);
   });
 });

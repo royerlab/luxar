@@ -48,6 +48,8 @@ import { MeshMaterial } from '../../../../rendering/materials/mesh/material-glsl
 import { PointMaterial } from '../../../../rendering/materials/point/material-glsl';
 import { PhysicalMeshMaterial } from '../../../../rendering/materials/mesh-physical/material-glsl';
 import { DEFAULT_ENVIRONMENT_CONFIG, type BakedEnvironment } from '../../../../types/environment';
+import { log } from '../../../../utils/log';
+import { defineLifecycleContract } from '../../_shared/lifecycle-contract';
 
 function makeGenerator(): {
   factory: () => PmremGeneratorLike;
@@ -580,5 +582,76 @@ describe('SceneEnvironment — HDRI load ownership', () => {
     expect(hdriLoads).toHaveLength(0);
     // Failed once for this URL: later light requests neither retry nor throw.
     expect(() => env.ensure()).not.toThrow();
+  });
+});
+
+describe('SceneEnvironment — HDRI load lifecycle', () => {
+  let subjects = 0;
+  defineLifecycleContract('SceneEnvironment HDRI load', {
+    create: () => {
+      // Every subject names its URLs uniquely: the mocked loader's queue is
+      // shared by the whole file, and a contract case builds a reference
+      // subject next to the one under test.
+      const prefix = `subject${subjects++}`;
+      const { env, scene } = makeEnv();
+      env.ensure(); // a physical material asked for light
+      const loads: typeof hdriLoads = [];
+      const textures: THREE.Texture[] = [];
+      const disposed = new Set<THREE.Texture>();
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      const nameOf = (url: string): string => url.slice(prefix.length + 1);
+      return {
+        start: (n) => {
+          const before = hdriLoads.length;
+          env.configure({
+            ...DEFAULT_ENVIRONMENT_CONFIG,
+            source: 'hdri',
+            url: `${prefix}-${n}.hdr`,
+          });
+          loads.push(...hdriLoads.slice(before));
+        },
+        pending: () => loads.length,
+        settle: (index, outcome) => {
+          const load = loads[index];
+          if (outcome === 'fail') {
+            load.reject(new Error('404'));
+            return;
+          }
+          const texture = new THREE.Texture();
+          texture.name = nameOf(load.url);
+          texture.dispose = () => disposed.add(texture);
+          textures.push(texture);
+          load.resolve(texture);
+        },
+        observe: () => ({
+          lit: env.activeKind(),
+          hdri: scene.environment?.name || null,
+          leakedTextures: textures.filter((t) => !disposed.has(t) && scene.environment !== t)
+            .length,
+        }),
+        failures: () =>
+          warning.mock.calls.filter((call) => call.some((arg) => String(arg).includes(prefix)))
+            .length,
+        dispose: () => env.dispose(),
+        // A dataset switch: the next scene's physical material asks for light again.
+        reset: () => {
+          env.resetForDataset();
+          env.ensure();
+        },
+      };
+    },
+    cases: {
+      abort: {
+        na: 'the HDRI fetch takes no signal: a superseded or reset request is dropped (and its texture disposed) on arrival, see startHdri',
+      },
+      dispose: true,
+      failure: true,
+      retry: {
+        na: 'a failed URL is not re-requested until the configured URL changes, by design (startHdri)',
+      },
+      supersede: true,
+      doubleDispose: true,
+    },
+    resets: true,
   });
 });

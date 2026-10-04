@@ -53,6 +53,7 @@ import type { LoadedLinesData } from '../../../../types/lines';
 import { log } from '../../../../utils/log';
 import { WorkerTimeoutError, WorkerUnavailableError } from '../../../../workers/worker-pool/errors';
 import { SliceCache } from '../../../../cache/slice-cache';
+import { perfCounters } from '../../../../profiling/perf-counters';
 import {
   restoreLadder,
   storeLadder,
@@ -679,6 +680,24 @@ describe('projectLinesTo3DUsingWorker', () => {
       [1, 1, 1],
       1
     );
+
+  it('projection.lines.worker counts every projection handed to the pool, a fallback included', async () => {
+    perfCounters.reset();
+    const projectLinesTo3D = vi.fn(async () => makeDispatcherLinesResult(1));
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async (_op, _kind, fn) => fn({ projectLinesTo3D })),
+    });
+    await callProjectLines();
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async () => {
+        throw new WorkerUnavailableError('[WorkerPool] No workers available after initialization');
+      }),
+    });
+    mockBuildInstanceBuffers.mockReturnValue(makeDispatcherLinesResult(3));
+    await callProjectLines();
+
+    expect(perfCounters.get('projection.lines.worker')).toBe(2);
+  });
 
   // Worker UNAVAILABILITY — the pool never got the work to a worker at all, so
   // the in-process dispatcher is the only executor left.

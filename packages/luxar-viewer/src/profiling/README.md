@@ -54,6 +54,19 @@ store per event (`perfCounters.add(S, n)`); `max` keeps a high-water mark and
 `gauge` overwrites. `record(kind, rec)` appends to a bounded per-kind ring
 (4096) for per-tick traces.
 
+Every counter is declared in the `PERF_COUNTERS` table (unit, kind —
+`sum` / `max` / `gauge` — and a one-line meaning); the two run-time-suffixed
+families (`render.byReason.<reason>`, `decode.count.<origin>`) are declared in
+`PERF_COUNTER_FAMILIES`. The `perfCounters` singleton accepts only declared
+names (`PerfCounterName`), so a misspelt counter is a compile error instead of
+a fresh zero the render gate would read as `n/a`. The names are types only — a
+slot still resolves once and an event is still one store. Adding a counter
+means adding its row here and naming its exact-value test in
+`src/tests/_conformance/perf-counter-tests.ts`; `counter-truth.test.ts`
+checks that the registry, the code writing the counters and those tests agree,
+and `scripts/render-gate/gate-scenes.test.mjs` that every counter a gate
+scene judges is declared.
+
 Read them through `__luxarDebug.getPerf().counters` (a flat `name -> number`
 map, available from bootstrap on), `__luxarDebug.getPerfRecords(kind)`, and
 reset with `__luxarDebug.resetPerfCounters()`. A reset starts a new measurement
@@ -297,8 +310,10 @@ this.monitor.setProfiler(this.profiler);
   `noteRefinementDensityDeferral`, `noteRefinementStarted`,
   `noteRefinementAborted`, `noteRefinementComplete`,
   `noteLoadResourceReleased`, `getLoadTimeline`, `resetLoadTimeline` (tests)
-- `perf-counters.ts`: `class PerfCounters`, `perfCounters`,
-  `PERF_RECORD_RING_SIZE`, `type PerfCounterSlot`
+- `perf-counters.ts`: `class PerfCounters`, `perfCounters`, `PERF_COUNTERS`,
+  `PERF_COUNTER_FAMILIES`, `perfCounterSpec`, `PERF_RECORD_RING_SIZE`,
+  `type PerfCounterSlot`, `type PerfCounterSpec`, `type PerfCounterName`,
+  `type FixedPerfCounterName`, `type PerfCounterFamily`
 
 ## Dependencies
 

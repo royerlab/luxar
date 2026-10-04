@@ -142,7 +142,7 @@ export const COVERAGE_THRESHOLDS = {
 
   // The last two measured top-level source directories without a sub-gate;
   // until 2026-10 their coverage could erode freely inside the global pool.
-  'src/audio/**': { lines: 95, functions: 94, branches: 81 },
+  'src/audio/**': { lines: 95, functions: 94, branches: 83 },
   'src/profiling/**': { lines: 95, functions: 95, branches: 88 },
 };
 
@@ -165,6 +165,6 @@ export const COVERAGE_RECORDED = {
   'src/core/**': { lines: 92.15, functions: 81.03, branches: 86.94 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
   'src/rendering/**': { lines: 85.93, functions: 86.27, branches: 79.46 },
-  'src/audio/**': { lines: 96.38, functions: 95.48, branches: 82.9 },
+  'src/audio/**': { lines: 96.38, functions: 95.48, branches: 84.11 },
   'src/profiling/**': { lines: 96.94, functions: 96.34, branches: 89.61 },
 };

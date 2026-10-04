@@ -17,8 +17,8 @@
  * merge, because a chunk read cannot say which call issued it:
  *
  * - signal: a read is cancelled only once EVERY active call is aborted, so one
- *   call's supersession never cancels a read another live call shares (the
- *   reads of a live call never see an aborted signal);
+ *   call's supersession never cancels a read another live call shares. The
+ *   composite remains live as calls join or leave;
  * - probe: a read is recorded into EVERY active call's probe, so no call can
  *   report "all resident" for a miss it may have needed. A spurious miss only
  *   ends a refinement step early; a missed one stalls nothing but lies.
@@ -27,6 +27,8 @@
  */
 
 import { ResidencyAccumulator, type ResidencyProbe } from '../../cache/residency-probe';
+import { signalOrigin, tagSignalOrigin } from '../../cache/decompressed-chunk-cache/decode-origin';
+import { signalPriority, tagSignalPriority } from '../../utils/fetch-concurrency';
 
 /** Active call signal entry. Do not un-export: TypeDoc needs this name. */
 export interface SignalEntry {
@@ -36,10 +38,13 @@ export interface SignalEntry {
 /**
  * The set of demand loads currently running on one leaf loader, published to
  * its L0 proxies as one merged abort signal and one fanned-out residency probe
- * (see the module notes for the merge rules).
+ * (see the module notes for the merge rules). The first caller with a decode
+ * origin sets the composite's origin for the overlap episode. Its fetch
+ * priority can only rise, including after a higher-priority caller leaves.
  */
 export class ActiveLoadContext {
   private readonly signals: SignalEntry[] = [];
+  private controller: AbortController | null = null;
   private readonly probes: ResidencyAccumulator[] = [];
   private readonly fanOut: ResidencyProbe = {
     record: (hit: boolean): void => {
@@ -47,13 +52,50 @@ export class ActiveLoadContext {
     },
   };
 
-  /** The abort signal governing a chunk read now (see the module notes). */
+  /**
+   * The abort signal governing a chunk read now (see the module notes). When
+   * the last call returns normally, the composite aborts with an `AbortError`.
+   */
   get signal(): AbortSignal | null {
-    const { signals } = this;
-    if (signals.length === 0) return null;
-    if (signals.length === 1) return signals[0].signal;
-    const allAborted = signals.every((entry) => entry.signal?.aborted === true);
-    return allAborted ? signals[0].signal : null;
+    // An unsignalled call needs the loader lifetime's fallback signal.
+    if (this.signals.length === 0 || this.signals.some((entry) => entry.signal === null))
+      return null;
+    return this.controller?.signal ?? null;
+  }
+
+  private refreshSignal(): void {
+    if (this.signals.length === 0 || this.signals.every((entry) => entry.signal?.aborted)) {
+      this.controller?.abort(this.signals[0]?.signal?.reason);
+    }
+  }
+
+  private inheritSignalTags(signal: AbortSignal | undefined): () => void {
+    if (!signal || !this.controller) return () => undefined;
+    const priority = signalPriority(signal);
+    const compositePriority = tagSignalPriority(
+      this.controller.signal,
+      priority?.value ?? 'demand'
+    );
+    const detachPriority = priority?.onRaise(() => compositePriority.raise(priority.value));
+    const origin = signalOrigin(signal);
+    if (origin !== undefined) tagSignalOrigin(this.controller.signal, origin);
+    return () => detachPriority?.();
+  }
+
+  private registerSignal(signal: AbortSignal | undefined): () => void {
+    const entry: SignalEntry = { signal: signal ?? null };
+    if (!this.controller || this.controller.signal.aborted) this.controller = new AbortController();
+    const detachTags = this.inheritSignalTags(signal);
+    const onAbort = (): void => this.refreshSignal();
+    this.signals.push(entry);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    this.refreshSignal();
+    return () => {
+      detachTags();
+      signal?.removeEventListener('abort', onAbort);
+      this.signals.splice(this.signals.indexOf(entry), 1);
+      this.refreshSignal();
+    };
   }
 
   /** The residency probe a chunk read records into now (see the module notes). */
@@ -71,12 +113,11 @@ export class ActiveLoadContext {
     signal: AbortSignal | undefined,
     load: () => Promise<TData>
   ): Promise<TData> {
-    const entry: SignalEntry = { signal: signal ?? null };
-    this.signals.push(entry);
+    const unregister = this.registerSignal(signal);
     try {
       return await load();
     } finally {
-      this.signals.splice(this.signals.indexOf(entry), 1);
+      unregister();
     }
   }
 

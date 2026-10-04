@@ -56,9 +56,14 @@ import { log, Modules, LogEmoji } from '../utils/log';
 import { config } from '../config';
 import { perfCounters } from '../profiling/perf-counters';
 
-/** Gauge: entries currently protected by a prefetch pin (all SliceCaches). */
+// The gauges below describe the ACTIVE S-cache: the one per loaded scene, which
+// publishes its own (empty) state when it is built, so a dataset switch never
+// keeps reporting the dropped cache's pins. With several hosts on one page they
+// read the cache that changed last.
+
+/** Gauge: entries currently protected by a prefetch pin. */
 const S_PINNED_ENTRIES = perfCounters.slot('scache.pinnedEntries');
-/** Gauge: retained bytes of the currently pinned entries (all SliceCaches). */
+/** Gauge: retained bytes of the currently pinned entries. */
 const S_PINNED_BYTES = perfCounters.slot('scache.pinnedBytes');
 /** Counter: stage-output lookups answered from an entry (projection skipped). */
 const S_STAGE_HITS = perfCounters.slot('scache.stage.hits');
@@ -68,7 +73,7 @@ const S_STAGE_MISSES = perfCounters.slot('scache.stage.misses');
 const S_STAGE_REJECTED = perfCounters.slot('scache.stage.rejected');
 /** Counter: stage outputs dropped to make room for slice data. */
 const S_STAGE_SHED = perfCounters.slot('scache.stage.shed');
-/** Gauge: bytes of stage outputs currently retained (all SliceCaches). */
+/** Gauge: bytes of stage outputs currently retained. */
 const S_STAGE_BYTES = perfCounters.slot('scache.stage.bytes');
 
 /**
@@ -238,6 +243,10 @@ export class SliceCache {
       (entry) => entry.bytes,
       (key, entry) => this.recordEviction(key, entry)
     );
+    // The previous scene's cache is dropped without a clear(): replace its
+    // gauge readings with this (empty) cache's.
+    this.publishPinGauges();
+    perfCounters.gauge(S_STAGE_BYTES, 0);
 
     if (this.debug) {
       log.custom(

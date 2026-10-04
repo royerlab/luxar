@@ -25,6 +25,7 @@ import { ArchiveFaultError } from '../../../../../cache/chunk-source';
 import type { ChunkSource } from '../../../../../cache/chunk-source';
 import { MultiLevelCachingStore } from '../../../../../cache/multi-level-caching-store';
 import { log } from '../../../../../utils/log';
+import { perfCounters } from '../../../../../profiling/perf-counters';
 
 function makeCtx() {
   const viewStateQueue = new ViewStateQueue();
@@ -380,5 +381,28 @@ describe('runLoaderUpdates — abort taxonomy (G2)', () => {
     expect([...resolved.loaders]).toEqual([[visible.name, visibleLoader]]);
     expect([...resolved.objects]).toEqual([[visible.name, visible]]);
     expect(getObjectByName).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('runLoaderUpdates — loaders.swept perf counter', () => {
+  it('adds every loader a sweep considers, culled ones included, once per sweep', async () => {
+    perfCounters.reset();
+    const ctx = makeCtx();
+    const loaders = new Map<string, object>([
+      ['/scene/a', {}],
+      ['/scene/b', {}],
+      ['/scene/hidden', {}],
+    ]);
+    const sweep = () =>
+      runLoaderUpdates(loaders, 'Points', async () => null, {
+        ...ctx,
+        shouldUpdatePath: (path) => path !== '/scene/hidden',
+      });
+
+    await sweep();
+    await sweep();
+    expect(perfCounters.get('loaders.swept')).toBe(6);
+    await runLoaderUpdates(new Map(), 'Points', async () => null, ctx);
+    expect(perfCounters.get('loaders.swept')).toBe(6);
   });
 });

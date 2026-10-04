@@ -183,11 +183,11 @@ describe('PointsSpatialIndexLoader', () => {
   });
 
   describe('initialization', () => {
-    it('does not warn that an ordered 4D node lacks an index when it fits one chunk', async () => {
+    it('probes bounds for an ordered one-chunk 4D node without radii', async () => {
       loader.dispose();
       loader = new PointsSpatialIndexLoader(mockZarrLocation, {
         ...mockNode,
-        attrs: { ...mockNode.attrs, n_points: 64, chunk_size: 64 },
+        attrs: { ...mockNode.attrs, n_points: 64, chunk_size: 64, has_radii: false },
       });
       mockArrays.positions.shape = [64, 4];
       const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -197,8 +197,125 @@ describe('PointsSpatialIndexLoader', () => {
       expect(warning).not.toHaveBeenCalled();
       expect(
         (zarr.open as any).mock.calls.some((c: any[]) => String(c[0]).includes('chunk_bounds'))
-      ).toBe(false);
+      ).toBe(true);
       warning.mockRestore();
+    });
+
+    it('probes bounds with radii when scene dimensions are unavailable', async () => {
+      loader.dispose();
+      const rootStore = {};
+      loader = new PointsSpatialIndexLoader(
+        mockZarrLocation,
+        {
+          ...mockNode,
+          attrs: { ...mockNode.attrs, n_points: 2, chunk_size: 2, has_radii: true },
+        },
+        undefined,
+        rootStore as any
+      );
+      const originalOpen = vi.mocked(zarr.open).getMockImplementation()!;
+      vi.mocked(zarr.open).mockImplementation(((location: any, options: any) =>
+        location === rootStore && options?.kind === 'group'
+          ? Promise.resolve({ attrs: {} })
+          : originalOpen(location, options)) as any);
+
+      await loader.ensureInitialized();
+
+      expect(
+        vi.mocked(zarr.open).mock.calls.filter((c: any[]) => String(c[0]).includes('chunk_bounds'))
+      ).toHaveLength(1);
+    });
+
+    it('probes bounds when a radii-stamped node has no radii array', async () => {
+      loader.dispose();
+      const rootStore = {};
+      loader = new PointsSpatialIndexLoader(
+        mockZarrLocation,
+        {
+          ...mockNode,
+          attrs: { ...mockNode.attrs, n_points: 2, chunk_size: 2, has_radii: true },
+          arrays: new Set(['positions']),
+        },
+        undefined,
+        rootStore as any
+      );
+      const originalOpen = vi.mocked(zarr.open).getMockImplementation()!;
+      vi.mocked(zarr.open).mockImplementation(((location: any, options: any) =>
+        location === rootStore && options?.kind === 'group'
+          ? Promise.resolve({
+              attrs: {
+                scene_dimensions: {
+                  dimensions: [
+                    { name: 'x', display: true },
+                    { name: 'y', display: true },
+                    { name: 'z', display: true },
+                    { name: 'time', display: false, spatial: false },
+                  ],
+                },
+              },
+            })
+          : originalOpen(location, options)) as any);
+
+      await loader.ensureInitialized();
+
+      expect(
+        vi.mocked(zarr.open).mock.calls.filter((c: any[]) => String(c[0]).includes('chunk_bounds'))
+      ).toHaveLength(1);
+    });
+
+    it('hides radii-bearing points off-slice without probing one-chunk bounds', async () => {
+      loader.dispose();
+      const rootStore = {};
+      loader = new PointsSpatialIndexLoader(
+        mockZarrLocation,
+        {
+          ...mockNode,
+          attrs: { ...mockNode.attrs, n_points: 2, chunk_size: 2, has_radii: true },
+        },
+        undefined,
+        rootStore as any
+      );
+      mockArrays.positions.shape = [2, 4];
+      mockArrays.radii.shape = [2];
+      const originalOpen = vi.mocked(zarr.open).getMockImplementation()!;
+      vi.mocked(zarr.open).mockImplementation(((location: any, options: any) =>
+        location === rootStore && options?.kind === 'group'
+          ? Promise.resolve({
+              attrs: {
+                scene_dimensions: {
+                  dimensions: [
+                    { name: 'x', display: true },
+                    { name: 'y', display: true },
+                    { name: 'z', display: true },
+                    { name: 'time', display: false, spatial: false },
+                  ],
+                },
+              },
+            })
+          : originalOpen(location, options)) as any);
+      vi.mocked(zarr.get).mockImplementation(((array: any) => {
+        if (array === mockArrays.positions) {
+          return Promise.resolve({ data: new Float32Array([1, 2, 3, 5, 4, 5, 6, 5]) });
+        }
+        if (array === mockArrays.radii) {
+          return Promise.resolve({ data: new Float32Array([0.5, 0.5]) });
+        }
+        return Promise.resolve({ data: new Float32Array(array === mockArrays.colors ? 6 : 2) });
+      }) as any);
+      const view: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0.25],
+      };
+
+      const offSlice = await loader.loadPoints(view);
+      const onSlice = await loader.loadPoints({ ...view, slicePosition: [0, 0, 0, 5] });
+
+      expect(offSlice.pointCount).toBe(0);
+      expect(onSlice.pointCount).toBe(2);
+      expect(
+        vi.mocked(zarr.open).mock.calls.filter((c: any[]) => String(c[0]).includes('chunk_bounds'))
+      ).toHaveLength(0);
     });
 
     it('warns when a 4D node actually has no spatial ordering', async () => {

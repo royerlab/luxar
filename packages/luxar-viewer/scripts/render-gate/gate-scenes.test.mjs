@@ -1,10 +1,36 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
+import { perfCounterSpec } from '../../src/profiling/perf-counters';
 import { judgeMetric, METRIC_DIRECTIONS, validateMetricDirections } from './suites.mjs';
 
 const manifest = JSON.parse(readFileSync(new URL('./gate-scenes.json', import.meta.url), 'utf8'));
 const generator = readFileSync(new URL('./generate_gate_scenes.py', import.meta.url), 'utf8');
+const source = (file) => readFileSync(new URL(file, import.meta.url), 'utf8');
+
+/**
+ * Metrics the harness itself produces (workload results in `page-ops.mjs`,
+ * server-side figures from `serverMetrics` in `suites.mjs`), as opposed to the
+ * viewer's own perf counters. Every other gate metric must be a counter the
+ * viewer declares.
+ */
+const HARNESS_METRICS = [
+  'achievedFps',
+  'bytesToFirstFrame',
+  'commitsDuringDrag',
+  'dragFrames',
+  'firstFrameMs',
+  'lastTimepointShown',
+  'levelFlips',
+  'maxInflight',
+  'renders',
+  'requestsToFirstFrame',
+  'serialDepth',
+  'serverRequests',
+  'settledMs',
+  'stepMs',
+  'ticks',
+];
 
 describe('render-gate scene manifest', () => {
   it('runs every default exact case on all three renderer paths', () => {
@@ -103,5 +129,46 @@ describe('render-gate scene manifest', () => {
     );
     for (const name of ['partition.partsInitialised', 'requestsToFirstFrame'])
       expect(c.metrics.find((m) => m.name === name)).toMatchObject({ better: 'lower' });
+  });
+});
+
+describe('render-gate metrics name things that exist', () => {
+  /** Every metric name a suite judges or divides by (`/tick` metrics resolve to `of` and `per`). */
+  const judged = Object.entries(manifest.suites).flatMap(([suite, { cases }]) =>
+    cases.flatMap((c) =>
+      c.metrics.flatMap((m) =>
+        [m.of ?? m.name, m.per].filter(Boolean).map((name) => ({ at: `${suite}/${c.id}`, name }))
+      )
+    )
+  );
+
+  it('every judged viewer counter is declared in PERF_COUNTERS', () => {
+    // A renamed or misspelt counter reads as missing on both arms, and a
+    // missing metric judges `n/a` — silently passing the gate.
+    const undeclared = judged
+      .filter(({ name }) => !name.startsWith('ext.') && !HARNESS_METRICS.includes(name))
+      .filter(({ name }) => perfCounterSpec(name) === undefined)
+      .map(({ at, name }) => `${at}: ${name}`);
+    expect(undeclared, 'not a declared perf counter (src/profiling/perf-counters.ts)').toEqual([]);
+  });
+
+  it('every judged ext.* metric is one ext-counters.mjs installs', () => {
+    const ext = source('./ext-counters.mjs');
+    const unknown = judged
+      .filter(({ name }) => name.startsWith('ext.'))
+      .filter(({ name }) => !new RegExp(`\\b${name.slice(4)}: 0,`).test(ext))
+      .map(({ at, name }) => `${at}: ${name}`);
+    expect(unknown).toEqual([]);
+  });
+
+  it('every harness metric is produced by the harness', () => {
+    // The direction table names every metric, so search the producers only.
+    const producers =
+      source('./page-ops.mjs') +
+      source('./suites.mjs').replace(/export const METRIC_DIRECTIONS = [\s\S]*?\n\}\);/, '');
+    const orphaned = HARNESS_METRICS.filter((name) => !new RegExp(`\\b${name}\\b`).test(producers));
+    expect(orphaned).toEqual([]);
+    // ...and none of them shadows a viewer counter.
+    expect(HARNESS_METRICS.filter((name) => perfCounterSpec(name) !== undefined)).toEqual([]);
   });
 });

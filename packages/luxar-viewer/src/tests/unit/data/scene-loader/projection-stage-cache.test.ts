@@ -43,6 +43,7 @@ vi.mock('../../../../config', () => ({
 import { processGSplatsData } from '../../../../data/scene-loader/process/data-processor-gsplats';
 import { processLinesData } from '../../../../data/scene-loader/process/data-processor-lines';
 import { SliceCache } from '../../../../cache/slice-cache';
+import { perfCounters } from '../../../../profiling/perf-counters';
 import {
   cloneLodSnapshot,
   restoreLadder,
@@ -186,6 +187,7 @@ describe('gsplats projection stage cache — exactness', () => {
     const source = makeGSplats(4000);
     storeLadder(cache, '/g', GS_VIEW, [source]);
     const restore = () => restoreLadder<LoadedGSplatsData>(cache, '/g', GS_VIEW, 1)![0];
+    perfCounters.reset();
 
     const first = await projectGS(restore(), root); // miss: projects + attaches
     const second = await projectGS(restore(), root); // hit: no projection
@@ -207,6 +209,9 @@ describe('gsplats projection stage cache — exactness', () => {
     expectIdentical(fresh1, fresh2);
     expectIdentical(second, fresh1);
     expect(cache.getStats().stageHits).toBe(1);
+    // The S-cache stage hit and the projection-level hit are the same event.
+    expect(perfCounters.get('projection.gsplats.stageHits')).toBe(1);
+    expect(perfCounters.get('projection.lines.stageHits')).toBe(0);
   });
 
   it('misses on a truncation change (outside the slice key) and replaces the output', async () => {
@@ -344,6 +349,7 @@ describe('lines projection stage cache — exactness', () => {
     const source = makeLines(3000);
     storeLadder(cache, '/l', LINES_VIEW, [source]);
     const restore = () => restoreLadder<LoadedLinesData>(cache, '/l', LINES_VIEW, 1)![0];
+    perfCounters.reset();
 
     await projectLines(restore(), root);
     const hit = await projectLines(restore(), root);
@@ -357,6 +363,8 @@ describe('lines projection stage cache — exactness', () => {
     expect(calls.lines).toBe(3);
     expectIdentical(fresh1, fresh2);
     expectIdentical(hit, fresh1);
+    expect(perfCounters.get('projection.lines.stageHits')).toBe(1);
+    expect(perfCounters.get('projection.gsplats.stageHits')).toBe(0);
   });
 
   it('misses when extend_to_all (mesh attrs, outside the slice key) changes', async () => {

@@ -16,6 +16,7 @@ import * as THREE from 'three';
 
 import { LODGroupRegistry, type LODGroupRegistryDeps } from '../../../scene/lod-group-registry';
 import type { ViewState } from '../../../data/data-loader-types';
+import { perfCounters } from '../../../profiling/perf-counters';
 
 const DIMENSIONS = [
   { name: 'X', unit: 'um', scale: 1 },
@@ -162,9 +163,12 @@ describe('LODGroupRegistry — partition part activation (B4)', () => {
     registerLazyPart(reg, activate);
     reg.evaluatePerFrame();
     requestReprocess.mockClear();
+    perfCounters.reset();
 
     await reg.activatePartitionParts(viewAt(0), new Set(['/p/part_0']));
     expect(activate).toHaveBeenCalledOnce();
+    // A failed activation activated nothing.
+    expect(perfCounters.get('partition.partsActivated')).toBe(0);
     // No per-frame retry loop against a failing store.
     for (let i = 0; i < 3; i++) reg.evaluatePerFrame();
     expect(requestReprocess).not.toHaveBeenCalled();
@@ -175,6 +179,7 @@ describe('LODGroupRegistry — partition part activation (B4)', () => {
     expect(requestReprocess).toHaveBeenCalledWith(['/p/part_0']);
     await reg.activatePartitionParts(viewAt(0), new Set(['/p/part_0']));
     expect(activate).toHaveBeenCalledTimes(2);
+    expect(perfCounters.get('partition.partsActivated')).toBe(1);
   });
 
   it('an activation settling after the registry was cleared asks for nothing', async () => {
