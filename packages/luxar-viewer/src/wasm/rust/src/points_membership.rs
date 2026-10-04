@@ -1,4 +1,6 @@
 //! Per-point slice membership when effective radii are unavailable.
+//! The absolute 0.5 discrete gate matches effective-radius-calculator.ts and
+//! partition-slice-gate.ts.
 
 use wasm_bindgen::prelude::*;
 

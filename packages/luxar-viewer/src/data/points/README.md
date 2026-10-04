@@ -36,8 +36,9 @@ implementation; the loader calls it directly with a WASM backend from
 — there is no worker round-trip for Points.
 
 The projection checks each point against hidden dimensions even when it has
-no radii or effective-radius configuration. Discrete dimensions use half-cell
-membership; continuous dimensions use the view's slice tolerance. This keeps
+no radii or effective-radius configuration. Discrete dimensions use absolute
+±0.5 membership, the same as the effective-radius gate; continuous dimensions
+use the node's maximum radius as their reach. This keeps
 unordered and one-chunk nodes slice-correct without a chunk-bounds index.
 
 It also emits `elementIds` (via the shared `buildElementIdMap` in

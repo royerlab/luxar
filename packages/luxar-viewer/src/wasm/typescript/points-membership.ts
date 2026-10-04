@@ -1,4 +1,6 @@
-/** Per-point hidden-dimension membership when effective radii are unavailable. */
+/** Per-point hidden-dimension membership when effective radii are unavailable.
+ * Keep the absolute 0.5 discrete gate aligned with effective-radius-calculator.ts
+ * and partition-slice-gate.ts. */
 export function points_slice_membership(
   positions: Float32Array,
   displayDims: Uint32Array,
