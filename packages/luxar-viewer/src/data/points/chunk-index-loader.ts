@@ -82,6 +82,8 @@ export async function loadPointsChunkIndex(
     return null;
   }
 
+  // Projection checks hidden-dimension membership per point even without
+  // radii or an effective-radius config, so this is safe for every Points node.
   if (
     nodeAttrs.n_points !== undefined &&
     nodeAttrs.chunk_size !== undefined &&

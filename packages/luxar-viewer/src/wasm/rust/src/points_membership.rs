@@ -35,7 +35,7 @@ pub fn points_slice_membership(
             } else {
                 tolerance[d]
             };
-            if !(delta <= reach) {
+            if delta > reach || delta.is_nan() || reach.is_nan() {
                 matches = false;
                 break;
             }

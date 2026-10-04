@@ -35,13 +35,18 @@ implementation; the loader calls it directly with a WASM backend from
 `getPointsBackend(ndim)`. It is always on the main thread (WASM-accelerated)
 — there is no worker round-trip for Points.
 
+The projection checks each point against hidden dimensions even when it has
+no radii or effective-radius configuration. Discrete dimensions use half-cell
+membership; continuous dimensions use the view's slice tolerance. This keeps
+unordered and one-chunk nodes slice-correct without a chunk-bounds index.
+
 It also emits `elementIds` (via the shared `buildElementIdMap` in
 `data/loaders/element-ids.ts`, which GSplats and Lines compose with too): the
 visible-buffer slot → on-disk element index map that picking uses for
 per-element string/image lookups. It is built only for a node declaring
 `has_labels` / `has_image_labels` / `has_keys` — the readers it exists for, and
 it costs 4 B/point on the zero-allocation path — and omitted on the identity
-path (one range starting at 0, no effective-radius compaction). A node without
+path (one range starting at 0, no per-point compaction). A node without
 one of those channels can still be picked when an interaction template or an
 embedder `selection` / element-action listener provisions picking, and its
 `elementIndex` keeps reporting the storage slot. Across an additive ladder,

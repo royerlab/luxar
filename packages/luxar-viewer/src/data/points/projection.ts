@@ -443,12 +443,16 @@ export function projectPointsTo3D(
   // one-chunk shortcut) can hand us points from every slice. When the
   // hypersphere gate did not run, test membership point by point instead.
   let membership: Uint8Array | undefined;
-  if (!usedEffectiveRadius && totalPoints > 0 && displayDims.length < ndim) {
+  if (!usedEffectiveRadius && totalPoints > 0 && new Set(displayDims).size < ndim) {
     const discreteDims = new Uint8Array(ndim);
     const tolerance = new Float32Array(ndim);
     for (let d = 0; d < ndim; d++) {
       const dimension = viewState.dimensions?.[d];
-      discreteDims[d] = dimension?.discrete && !dimension.spatial ? 1 : 0;
+      const spatial = ctx.effectiveRadiusConfig?.spatialExtendDims[d];
+      discreteDims[d] =
+        spatial === undefined
+          ? Number(Boolean(dimension?.discrete && !dimension.spatial))
+          : Number(!spatial);
       // A view without a coordinate for this axis cannot select a slice on it.
       tolerance[d] =
         d >= viewState.slicePosition.length || d >= viewState.tolerance.length
@@ -468,9 +472,7 @@ export function projectPointsTo3D(
     );
   }
 
-  // Filter out zero-radius points to avoid sending them to GPU
-  // This significantly improves performance for nD slicing
-  // IMPORTANT: Only filter when we actually calculated effective radii
+  // Compact points rejected by either the effective-radius or membership gate.
   if ((usedEffectiveRadius && finalRadii) || membership) {
     // SCALE-FREE boundary-dust threshold: relative to the dataset's own
     // max radius, never an absolute world-unit constant — an absolute
@@ -495,7 +497,7 @@ export function projectPointsTo3D(
     // value to be nonzero too.
     const encodedU8 = finalRadii instanceof Uint8Array ? finalRadii : null;
 
-    // Find indices of points with non-zero radius
+    // Find indices of visible points.
     for (let i = 0; i < numPoints; i++) {
       if (
         (membership ? membership[i] !== 0 : true) &&
@@ -511,7 +513,7 @@ export function projectPointsTo3D(
     if (filteredCount < numPoints && filteredCount > 0) {
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
-        `Filtering out ${numPoints - filteredCount} off-slice points (keeping ${filteredCount})`
+        `Filtering out ${numPoints - filteredCount} invisible points (keeping ${filteredCount})`
       );
 
       // Compaction is really happening: record the survivors so the
@@ -595,7 +597,7 @@ export function projectPointsTo3D(
       } else {
         // Fallback: Create filtered arrays (allocations when accumulator disabled)
         const filteredPositions3D = new Float32Array(filteredCount * 3);
-        const filteredRadii = finalRadii ? new Float32Array(filteredCount) : undefined;
+        const filteredRadii = new Float32Array(filteredCount);
 
         // Filter colors if present (strided by the RGB(A) layout)
         let filteredColors: Float32Array | Uint8Array | Uint16Array | undefined;
@@ -654,7 +656,7 @@ export function projectPointsTo3D(
           filteredPositions3D[i * 3 + 2] = positions3D[srcIdx * 3 + 2];
 
           // Copy radius
-          if (finalRadii && filteredRadii) filteredRadii[i] = finalRadii[srcIdx];
+          filteredRadii[i] = finalRadii?.[srcIdx] ?? 0;
 
           // Copy colors if present (RGB(A) — colorComponents per point)
           if (colors && filteredColors) {
@@ -676,7 +678,7 @@ export function projectPointsTo3D(
 
         // Replace arrays with filtered versions
         positions3D = filteredPositions3D;
-        finalRadii = filteredRadii;
+        finalRadii = finalRadii ? filteredRadii : undefined;
         colors = filteredColors || colors;
         sharpness = filteredSharpness || sharpness;
         scalars = filteredScalars || scalars;
@@ -695,7 +697,7 @@ export function projectPointsTo3D(
       // All points were filtered out - this is correct behavior for points outside the hyperplane!
       log.info(
         Modules.SPATIAL_INDEX_LOADER,
-        `All ${numPoints} points are off-slice - no points visible at this slice`
+        `No points visible at this slice (${numPoints} filtered)`
       );
       // Return empty points - this is the correct behavior
       return createEmptyPointsData(ctx, viewState);

@@ -463,6 +463,52 @@ describe('points dispatcher: hidden-dimension membership without effective radii
     ).toBe(2);
   });
 
+  it('includes the half-cell discrete boundary and rejects the next category', () => {
+    const out = runPointsBothBackends(
+      new Float32Array([1, 2, 3, 1.5, 4, 5, 6, 1.7]),
+      null,
+      viewState,
+      [{ start: 0, end: 2 }],
+      pointsCtx()
+    );
+    expect(out.pointCount).toBe(1);
+    expect(Array.from(out.positions)).toEqual([1, 2, 3]);
+  });
+
+  it('uses configured discrete axes when radii are absent', () => {
+    const out = runPointsBothBackends(
+      new Float32Array([1, 2, 3, 0, 4, 5, 6, 1]),
+      null,
+      { ...viewState, dimensions: undefined },
+      [{ start: 0, end: 2 }],
+      pointsCtx({
+        effectiveRadiusConfig: {
+          spatialExtendDims: [true, true, true, false],
+          maxRadius: 1,
+        },
+      })
+    );
+    expect(out.pointCount).toBe(1);
+    expect(Array.from(out.positions)).toEqual([4, 5, 6]);
+  });
+
+  it('filters a 3D node viewed in 2D', () => {
+    const out = runPointsBothBackends(
+      new Float32Array([1, 2, 0, 4, 5, 3]),
+      null,
+      {
+        displayDims: [0, 1],
+        slicePosition: [0, 0, 0],
+        tolerance: [1e10, 1e10, 0.25],
+        dimensions: dimensions.slice(0, 3),
+      },
+      [{ start: 0, end: 2 }],
+      pointsCtx()
+    );
+    expect(out.pointCount).toBe(1);
+    expect(Array.from(out.positions)).toEqual([1, 2, 0]);
+  });
+
   it('uses continuous slice tolerance when radius configuration is missing', () => {
     const positions = new Float32Array([1, 2, 3, 1.2, 4, 5, 6, 1.4]);
     const out = runPointsBothBackends(
