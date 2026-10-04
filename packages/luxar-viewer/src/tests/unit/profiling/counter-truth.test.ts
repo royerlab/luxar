@@ -118,6 +118,28 @@ function exactMatcherOf(expectCall: ts.CallExpression): ts.CallExpression | unde
   return call;
 }
 
+function readsRelativeValue(node: ts.Node): boolean {
+  let relative = false;
+  const scan = (child: ts.Node): void => {
+    if (ts.isIdentifier(child) && DELTA_IDENTIFIER.test(child.text)) relative = true;
+    if (
+      ts.isBinaryExpression(child) &&
+      [
+        ts.SyntaxKind.GreaterThanToken,
+        ts.SyntaxKind.GreaterThanEqualsToken,
+        ts.SyntaxKind.LessThanToken,
+        ts.SyntaxKind.LessThanEqualsToken,
+        ts.SyntaxKind.MinusToken,
+      ].includes(child.operatorToken.kind)
+    ) {
+      relative = true;
+    }
+    ts.forEachChild(child, scan);
+  };
+  scan(node);
+  return relative;
+}
+
 function readsDelta(matcher: ts.CallExpression): boolean {
   let delta = false;
   const actual = ts.isPropertyAccessExpression(matcher.expression)
@@ -125,23 +147,7 @@ function readsDelta(matcher: ts.CallExpression): boolean {
     : undefined;
   if (actual && isExpectCall(actual)) {
     for (const arg of actual.arguments) {
-      const scan = (node: ts.Node): void => {
-        if (ts.isIdentifier(node) && DELTA_IDENTIFIER.test(node.text)) delta = true;
-        if (
-          ts.isBinaryExpression(node) &&
-          [
-            ts.SyntaxKind.GreaterThanToken,
-            ts.SyntaxKind.GreaterThanEqualsToken,
-            ts.SyntaxKind.LessThanToken,
-            ts.SyntaxKind.LessThanEqualsToken,
-            ts.SyntaxKind.MinusToken,
-          ].includes(node.operatorToken.kind)
-        ) {
-          delta = true;
-        }
-        ts.forEachChild(node, scan);
-      };
-      scan(arg);
+      if (readsRelativeValue(arg)) delta = true;
     }
   }
   for (const arg of matcher.arguments) {
@@ -208,7 +214,8 @@ function isExactlyAsserted(sf: ts.SourceFile, node: ts.Node): boolean {
       }
     }
     const getter = boundFunctionName(parent);
-    if (getter !== undefined) return getterIsExactlyAsserted(sf, getter);
+    if (getter !== undefined)
+      return !readsRelativeValue(parent) && getterIsExactlyAsserted(sf, getter);
   }
   return false;
 }
@@ -269,19 +276,18 @@ describe('perf counter registry ↔ the code that writes it', () => {
 });
 
 describe('every perf counter has an exact-value test', () => {
-  it('rejects comparisons and deltas in the observed value', () => {
-    for (const assertion of [
-      "expect(perfCounters.get('l2.hits') > 0).toBe(true)",
-      "const before = perfCounters.get('l2.hits'); expect(perfCounters.get('l2.hits') - before).toBe(1)",
-    ]) {
-      const sf = ts.createSourceFile('probe.ts', assertion, ts.ScriptTarget.Latest, true);
-      let counter: ts.StringLiteral | undefined;
-      forEachNode(sf, (node) => {
-        if (ts.isStringLiteral(node) && node.text === 'l2.hits') counter = node;
-      });
-      expect(counter, assertion).toBeDefined();
-      expect(isExactlyAsserted(sf, counter!), assertion).toBe(false);
-    }
+  it.each([
+    "expect(perfCounters.get('l2.hits') > 0).toBe(true)",
+    "const before = perfCounters.get('l2.hits'); expect(perfCounters.get('l2.hits') - before).toBe(1)",
+    "const before = 0; const read = () => perfCounters.get('l2.hits') - before; expect(read()).toBe(1)",
+  ])('rejects non-exact assertion: %s', (assertion) => {
+    const sf = ts.createSourceFile('probe.ts', assertion, ts.ScriptTarget.Latest, true);
+    let counter: ts.StringLiteral | undefined;
+    forEachNode(sf, (node) => {
+      if (ts.isStringLiteral(node) && node.text === 'l2.hits') counter = node;
+    });
+    expect(counter, assertion).toBeDefined();
+    expect(isExactlyAsserted(sf, counter!), assertion).toBe(false);
   });
 
   it('accepts an absolute counter value', () => {
