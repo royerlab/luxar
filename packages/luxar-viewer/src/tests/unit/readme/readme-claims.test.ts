@@ -89,11 +89,16 @@ function buildCorpus(): Set<string> {
   return names;
 }
 
+let corpus: Set<string> | undefined;
+function getCorpus(): Set<string> {
+  return (corpus ??= buildCorpus());
+}
+
 const READMES = walkFiles(SRC).filter((file) => file.endsWith('README.md'));
 
 describe('README symbol references', () => {
   it('every code-shaped name a README mentions is still in the code', () => {
-    const corpus = buildCorpus();
+    const corpus = getCorpus();
     const stale: string[] = [];
     for (const readme of READMES) {
       for (const span of codeSpans(readFileSync(readme, 'utf8'))) {
@@ -108,7 +113,7 @@ describe('README symbol references', () => {
   });
 
   it('every NOT_IN_CODE entry is still mentioned and still absent from the corpus', () => {
-    const corpus = buildCorpus();
+    const corpus = getCorpus();
     const mentioned = new Set(
       READMES.flatMap((readme) => codeSpans(readFileSync(readme, 'utf8')).flatMap(symbolMentions))
     );
