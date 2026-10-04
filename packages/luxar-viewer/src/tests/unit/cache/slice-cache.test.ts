@@ -293,6 +293,23 @@ describe('SliceCache pinned perf gauges', () => {
     expect(pinned()).toEqual([1, 60]);
   });
 
+  it.fails('a new S-cache (the next scene) starts the gauges from its own empty state', () => {
+    // A dataset switch builds a fresh SliceCache and drops the old one without
+    // clearing it. The gauges describe what is pinned NOW, so the outgoing
+    // scene's pins must not survive into the incoming scene's readings.
+    const outgoing = new SliceCache({ maxSize: 1024 });
+    const a = SliceCache.makeKey('/n', 'a');
+    const ea = entry(100);
+    outgoing.set(a, ea, { pin: true });
+    outgoing.setStage(a, ea.payload, { sig: 's', value: {}, bytes: 20 });
+    expect(pinned()).toEqual([1, 120]);
+    expect(perfCounters.get('scache.stage.bytes')).toBe(20);
+
+    new SliceCache({ maxSize: 1024 });
+    expect(pinned()).toEqual([0, 0]);
+    expect(perfCounters.get('scache.stage.bytes')).toBe(0);
+  });
+
   it('does not count a pin request for an oversized (rejected) entry', () => {
     const c = new SliceCache({ maxSize: 100 });
     // Gauges survive perfCounters.reset() (they describe current state), so
