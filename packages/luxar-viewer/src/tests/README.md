@@ -44,7 +44,7 @@ unused-file/unused-dependency gate, and the `check:knip:ratchet` unused-export
 ratchet (`scripts/check-knip-ratchet.mjs` against `knip-baseline.json`: a new
 unused export, type or enum member fails; so does a paid-down or moved entry
 until `pnpm run check:knip:ratchet --update-baseline` refreshes it, and a
-`knip.json` or knip-version change fails closed). Delete dead code rather than
+`knip.json` or issue-type change fails closed). Delete dead code rather than
 baselining it; tag a deliberate unimported export `@internal`. Coverage thresholds and their last accepted
 measurements live together in `coverage-thresholds.mjs`; after coverage moves,
 run `pnpm check:coverage-slack -- --print`, update floors when required, and

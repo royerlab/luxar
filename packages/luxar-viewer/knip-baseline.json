@@ -1,6 +1,6 @@
 {
-  "_comment": "Unused-export backlog for scripts/check-knip-ratchet.mjs (`pnpm run check:knip:ratchet`). Each entry is '<issue type>:<package-relative path>::<symbol>' (a namespaced member is '<parent>.<member>', a duplicate-export group joins its names with '|'). A finding not listed here fails; a listed entry knip no longer reports (paid down, or moved to another file) also fails until the baseline is refreshed with `pnpm run check:knip:ratchet --update-baseline`. 'fingerprint' hashes knip.json, the knip version and the issue types: a change to any fails closed until the baseline is regenerated. Prefer deleting dead code (or tagging a deliberate export @internal) to adding entries.",
-  "fingerprint": "377b4a899464420106b252b6d2a6473a1e1d1700778d7381eff6f7751914544e",
+  "_comment": "Unused-export backlog for scripts/check-knip-ratchet.mjs (`pnpm run check:knip:ratchet`). Each entry is '<issue type>:<package-relative path>::<symbol>' (a namespaced member is '<parent>.<member>', a duplicate-export group joins its names with '|'). A finding not listed here fails; a listed entry knip no longer reports (paid down, or moved to another file) also fails until the baseline is refreshed with `pnpm run check:knip:ratchet --update-baseline`. 'fingerprint' hashes knip.json and the issue types: a change to either fails closed until the baseline is regenerated. Prefer deleting dead code (or tagging a deliberate export @internal) to adding entries.",
+  "fingerprint": "d00dbb00ad901f299513ce2b31c123abce62c2bf51683dbc3f691a2fcddce63b",
   "entries": [
     "exports:src/cache/decompressed-chunk-cache/cached-zarr-array.ts::warmChunk",
     "exports:src/config/control-contract.ts::CONTROL_PARAMS",

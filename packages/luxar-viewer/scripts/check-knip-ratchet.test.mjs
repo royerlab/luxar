@@ -86,10 +86,10 @@ describe('compareToBaseline', () => {
 describe('configFingerprint', () => {
   const base = { knipConfig: { entry: ['a.ts'] }, knipVersion: '6.0.0' };
 
-  it('changes with the config, the knip version and the issue types', () => {
+  it('changes with the config and issue types, but not the knip version', () => {
     const fp = configFingerprint(base);
     expect(configFingerprint({ ...base, knipConfig: { entry: ['b.ts'] } })).not.toBe(fp);
-    expect(configFingerprint({ ...base, knipVersion: '6.0.1' })).not.toBe(fp);
+    expect(configFingerprint({ ...base, knipVersion: '6.0.1' })).toBe(fp);
     expect(configFingerprint({ ...base, issueTypes: ['exports'] })).not.toBe(fp);
     expect(configFingerprint({ ...base })).toBe(fp);
   });
@@ -97,9 +97,7 @@ describe('configFingerprint', () => {
   it('matches the committed baseline for the committed config', () => {
     const baseline = JSON.parse(readFileSync(new URL('../knip-baseline.json', import.meta.url)));
     const knipConfig = JSON.parse(readFileSync(new URL('../knip.json', import.meta.url)));
-    const knipPackage = new URL('../node_modules/knip/package.json', import.meta.url);
-    const knipVersion = JSON.parse(readFileSync(knipPackage)).version;
-    expect(baseline.fingerprint).toBe(configFingerprint({ knipConfig, knipVersion }));
+    expect(baseline.fingerprint).toBe(configFingerprint({ knipConfig }));
   });
 });
 

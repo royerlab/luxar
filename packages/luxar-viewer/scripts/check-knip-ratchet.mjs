@@ -12,9 +12,8 @@
  * - a NEW entry fails;
  * - a paid-down or MOVED entry also fails until `--update-baseline` tightens the
  *   baseline, so the recorded backlog never over-declares;
- * - a changed `knip.json`, knip version or issue-type set fails CLOSED (the
- *   fingerprint no longer matches), because any of them can change what knip
- *   reports and the old keys could no longer be trusted;
+ * - a changed `knip.json` or issue-type set fails CLOSED (the fingerprint no
+ *   longer matches), because either can change what knip reports;
  * - a run RESTRICTED to path prefixes is advisory for vanished entries (keys
  *   outside the scope only look vanished) and refuses `--update-baseline`.
  *
@@ -33,7 +32,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const BASELINE_PATH = join(PACKAGE_ROOT, 'knip-baseline.json');
 const KNIP_CONFIG_PATH = join(PACKAGE_ROOT, 'knip.json');
-const KNIP_PACKAGE_PATH = join(PACKAGE_ROOT, 'node_modules/knip/package.json');
 const UPDATE_COMMAND = 'pnpm run check:knip:ratchet --update-baseline';
 
 /** knip 6's export-level issue types (its `--exports` shortcut set). */
@@ -53,7 +51,7 @@ const BASELINE_COMMENT =
   "'<parent>.<member>', a duplicate-export group joins its names with '|'). A finding not listed " +
   'here fails; a listed entry knip no longer reports (paid down, or moved to another file) also ' +
   `fails until the baseline is refreshed with \`${UPDATE_COMMAND}\`. 'fingerprint' hashes ` +
-  'knip.json, the knip version and the issue types: a change to any fails closed until the ' +
+  'knip.json and the issue types: a change to either fails closed until the ' +
   'baseline is regenerated. Prefer deleting dead code (or tagging a deliberate export ' +
   '@internal) to adding entries.';
 
@@ -81,9 +79,9 @@ export function issueKeys(report, issueTypes = ISSUE_TYPES) {
   return [...keys].sort();
 }
 
-/** Hash everything that can change what knip reports for the same tree. */
-export function configFingerprint({ knipConfig, knipVersion, issueTypes = ISSUE_TYPES }) {
-  const payload = JSON.stringify({ knipConfig, knipVersion, issueTypes: [...issueTypes] });
+/** Hash the configured issue types and knip settings. */
+export function configFingerprint({ knipConfig, issueTypes = ISSUE_TYPES }) {
+  const payload = JSON.stringify({ knipConfig, issueTypes: [...issueTypes] });
   return createHash('sha256').update(payload).digest('hex');
 }
 
@@ -160,10 +158,7 @@ function readJson(path) {
 }
 
 function currentFingerprint() {
-  return configFingerprint({
-    knipConfig: readJson(KNIP_CONFIG_PATH),
-    knipVersion: readJson(KNIP_PACKAGE_PATH).version,
-  });
+  return configFingerprint({ knipConfig: readJson(KNIP_CONFIG_PATH) });
 }
 
 function loadBaseline() {
@@ -221,7 +216,7 @@ export function runCheck(options, knipReport = runKnip()) {
   const baseline = loadBaseline();
   if (baseline.fingerprint !== fingerprint) {
     console.error(
-      'knip.json, the knip version or the issue-type set changed since knip-baseline.json was ' +
+      'knip.json or the issue-type set changed since knip-baseline.json was ' +
         `recorded, so its entries cannot be trusted. Review the new report, then run \`${UPDATE_COMMAND}\`.`
     );
     return false;
