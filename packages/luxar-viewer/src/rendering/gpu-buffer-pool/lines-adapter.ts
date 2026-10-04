@@ -84,14 +84,14 @@ export class LinesBufferAdapter extends TextureBackedAdapter {
     // One fused pass over the staged arrays into the texel layout
     // (replaces the 11–13 per-attribute strided writes; the writer's
     // fail-loud guard runs before ANY store, retiring the interleaved
-    // era's separate pre-flight torn-write sweep), then identity
+    // era's separate pre-flight torn-write sweep), then the commit
     // ordering. The writer clamps to the texture capacity; mirror that
     // clamp in instanceCount so a bound-clamped node never draws
     // instances whose texels were not written.
     count = writeLineTexels(texture, data, count, { fromSegment: fromInstance });
-    writeInstancedCommitOrdering(instanced, count, options);
+    const drawCount = writeInstancedCommitOrdering(instanced, count, options);
 
-    prepareInstancedQuadForDraw(instanced, count);
+    prepareInstancedQuadForDraw(instanced, drawCount);
 
     // Scalar presence stamp (drives `supportsScalarColormap`) — refreshed
     // on EVERY update; pool geometries are reused across tenants.

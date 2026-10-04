@@ -701,7 +701,7 @@
   },
   "src/rendering/element-storage.ts": {
     "complexity": {
-      "count": 4
+      "count": 3
     }
   },
   "src/rendering/gpu-buffer-pool.ts": {
@@ -715,11 +715,6 @@
     }
   },
   "src/rendering/gpu-buffer-pool/geometry-bytes.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "src/rendering/gpu-buffer-pool/gsplats-adapter.ts": {
     "complexity": {
       "count": 1
     }

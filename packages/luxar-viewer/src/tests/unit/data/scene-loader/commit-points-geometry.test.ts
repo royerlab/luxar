@@ -809,6 +809,64 @@ describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstan
     commitPointsGeometry('/p', next, testHost(root, pool as never, mockNodeFactory), undefined, 1);
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
+  // A pool GROW (every ladder rung that doubles crosses the 1.5x capacity
+  // headroom) cannot append, and the fresh geometry would otherwise draw the
+  // whole node in storage order until the worker's sort lands. When the commit
+  // provably extends the drawn population, the previous geometry's drawn
+  // permutation is an exact ordering of the new prefix (gsplats parity).
+  const sortedGeometry = (ordering: number[], capacity = 8): THREE.InstancedBufferGeometry => {
+    const g = new THREE.InstancedBufferGeometry();
+    const a = new Uint32Array(capacity);
+    a.set(ordering);
+    g.setAttribute('aSortedIndex', new THREE.InstancedBufferAttribute(a, 1));
+    g.setAttribute(
+      'aSortedIndexB',
+      new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1)
+    );
+    g.instanceCount = ordering.length;
+    return g;
+  };
+  const seedOf = (pool: ReturnType<typeof makePool>): number[] | undefined => {
+    const opts = (pool.updatePointsGeometry.mock.calls.at(-1) as unknown[])[3] as {
+      seedOrdering?: Uint32Array;
+    };
+    return opts.seedOrdering ? Array.from(opts.seedOrdering) : undefined;
+  };
+
+  it('a grow that extends the drawn population seeds the new geometry with its drawn order', () => {
+    const root = new THREE.Group();
+    root.add(makePoints('/p'));
+    const pool = makePool(sortedGeometry([3, 2, 1, 0]));
+    const next = primeAndExtend(root, pool, 4, 6);
+    pool.acquirePointsGeometry.mockReturnValue(new THREE.InstancedBufferGeometry());
+    pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
+    commitPointsGeometry('/p', next, testHost(root, pool as never, mockNodeFactory), undefined, 1);
+    expect(lastOpts(pool).fromInstance).toBe(0);
+    expect(seedOf(pool)).toEqual([3, 2, 1, 0]);
+  });
+
+  it('a grow WITHOUT prefix lineage gets no seed (the prefix is not the same points)', () => {
+    const root = new THREE.Group();
+    root.add(makePoints('/p'));
+    const pool = makePool(sortedGeometry([3, 2, 1, 0]));
+    commitPointsGeometry(
+      '/p',
+      makeData(4),
+      testHost(root, pool as never, mockNodeFactory),
+      undefined,
+      0
+    );
+    pool.acquirePointsGeometry.mockReturnValue(new THREE.InstancedBufferGeometry());
+    pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
+    commitPointsGeometry(
+      '/p',
+      makeData(6),
+      testHost(root, pool as never, mockNodeFactory),
+      undefined,
+      1
+    );
+    expect(seedOf(pool)).toBeUndefined();
+  });
 });
 
 describe('commitPointsGeometry — committedLadderComplete stamp', () => {

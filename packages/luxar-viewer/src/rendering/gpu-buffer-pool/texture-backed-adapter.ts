@@ -18,10 +18,12 @@
 import * as THREE from 'three';
 import {
   cancelSortedIndexOrderingApply,
+  holdSortedIndexDrawForAppend,
+  holdSortedIndexDrawFromSeed,
   releaseSortedIndexDrawHold,
   repairSortedIndexForCount,
+  sortedIndexDrawHoldTarget,
   writeSortedIndexIdentity,
-  writeSortedIndexIdentityRange,
 } from '../element-storage';
 import type { PooledBuffer } from './pool-stats';
 import { FreeBucketMap } from './byte-tracked-maps';
@@ -328,8 +330,8 @@ export abstract class TextureBackedAdapter {
     }
 
     if (this.buffers.removeFirst((buffer) => buffer === released, false)) {
-      // The failed replacement has no commit to end the old draw hold (a
-      // gsplats append hold; a no-op for a geometry holding nothing).
+      // The failed replacement has no commit to end the old draw hold (an
+      // append hold; a no-op for a geometry holding nothing).
       releaseSortedIndexDrawHold(released.geometry as THREE.InstancedBufferGeometry);
       released.inUse = true;
       released.lastUsedCommit = host.commitCount;
@@ -355,13 +357,13 @@ export abstract class TextureBackedAdapter {
     // geometry's own listener; release is the other exit from "in use" and
     // needs the same treatment.
     //
-    // A held gsplat append draw is deliberately LEFT held: ending it here
+    // A held append draw is deliberately LEFT held: ending it here
     // would repair the ordering over the whole held population (O(n) plus a
     // full-range upload) for a geometry nobody draws, on every pool grow.
     // Whichever commit writes this geometry next resolves it — a new
     // tenant's full write discards the hold, and this node's own vouched
     // recommit (a failed grow re-claims the buffer) repairs from the drawn
-    // prefix (`gsplats-adapter.ts::writeCommitOrdering`).
+    // prefix (`writeInstancedCommitOrdering`).
     cancelSortedIndexOrderingApply(buffer.geometry as THREE.InstancedBufferGeometry);
 
     // Stamp the release commit so acquire-triggered byte sweeps later in
@@ -412,39 +414,73 @@ export interface InstancedOrderingOptions {
   repairFromCount?: number;
   /** Append fast path: the prefix count already on the GPU (0 = full write). */
   fromInstance?: number;
+  /**
+   * A full write that EXTENDS the previous population into a grown geometry:
+   * the previous geometry's drawn permutation of `[0, seedOrdering.length)`,
+   * which the draw is held on until the grown population's ordering lands.
+   */
+  seedOrdering?: Uint32Array;
 }
 
 /**
- * The Points/Lines commit ordering write (GSplats holds an append's draw
- * instead — `gsplats-adapter.ts::writeCommitOrdering`).
+ * Write the ordering a commit draws with, and return the instance count to
+ * draw NOW (below `count` only while a growth's draw is held). One rule for
+ * Points, Lines and GSplats.
  *
- * - APPEND (`fromInstance > 0`): keep the prefix's existing ordering and give
- *   the appended elements identity until a re-sort lands (`fromInstance` and
- *   `preserveOrdering` are mutually exclusive — append needs count > prev,
- *   preserveOrdering needs count === prev).
- * - `preserveOrdering` (the commit path decides) keeps a same-count
- *   recommit's existing depth-sort permutation as a no-worse prior until the
- *   re-sort lands.
- * - When the count CHANGED, `repairFromCount` carries the previous count and
- *   the existing permutation is rebuilt over the new population instead of
- *   being thrown away — an nD re-slice changes the resident count at almost
- *   every step, so this is the case a timelapse actually takes.
- * - Only a commit with none of these falls back to storage order.
+ * - APPEND (`fromInstance > 0`): the texel upload stays suffix-only and the
+ *   draw is HELD at the previous population in its previous order until the
+ *   grown population's own ordering lands ({@link holdSortedIndexDrawForAppend}).
+ *   The old sorted prefix plus a storage-order suffix would render two
+ *   independently ordered populations, and a full storage-order reset draws
+ *   the whole node unsorted for the 75-225 ms a large sort takes.
+ * - `seedOrdering` (a full write into a GROWN geometry that extends the
+ *   previous population): the same hold, seeded with the previous geometry's
+ *   drawn permutation ({@link holdSortedIndexDrawFromSeed}).
+ * - `preserveOrdering` (the commit path decides) keeps a same-count prior
+ *   while its re-sort lands; skipping that write also registers no new update
+ *   range.
+ * - `repairFromCount` on a count CHANGE rebuilds the existing permutation over
+ *   the new population rather than discarding it — an nD re-slice changes the
+ *   resident count at almost every step, so this is what a timelapse takes.
+ * - A vouched prior on a geometry whose draw is still HELD is only valid over
+ *   the DRAWN prefix, so it is repaired from there instead.
+ * - Anything else resets to identity, which re-homes the geometry on slot 0.
+ *   The commit path must therefore call `depthSort.noteCommit` after this
+ *   update: its immediate syncSortedIndexSlot pushes the new slot to visual
+ *   and pick materials before either can draw, and it releases a hold no
+ *   ordering will come for (an order-independent mode, depth sort off).
  */
 export function writeInstancedCommitOrdering(
   geometry: THREE.InstancedBufferGeometry,
   count: number,
   options: InstancedOrderingOptions | undefined
-): void {
-  const fromInstance = options?.fromInstance ?? 0;
+): number {
+  const { fromInstance = 0, seedOrdering } = options ?? {};
   if (fromInstance > 0) {
-    writeSortedIndexIdentityRange(geometry, fromInstance, count);
+    return holdSortedIndexDrawForAppend(geometry, geometry.instanceCount, count);
+  }
+  if (seedOrdering) return holdSortedIndexDrawFromSeed(geometry, seedOrdering, count);
+  writeFullCommitOrdering(geometry, count, options ?? {});
+  return count;
+}
+
+/** The non-growth half of {@link writeInstancedCommitOrdering}: every element is drawn. */
+function writeFullCommitOrdering(
+  geometry: THREE.InstancedBufferGeometry,
+  count: number,
+  { preserveOrdering = false, repairFromCount }: InstancedOrderingOptions
+): void {
+  const vouched = preserveOrdering || repairFromCount !== undefined;
+  if (vouched && sortedIndexDrawHoldTarget(geometry) !== undefined) {
+    repairSortedIndexForCount(geometry, geometry.instanceCount, count);
     return;
   }
-  if (options?.preserveOrdering) return;
-  const repairFrom = options?.repairFromCount;
-  if (repairFrom !== undefined && repairFrom > 0) {
-    repairSortedIndexForCount(geometry, repairFrom, count);
+  if (preserveOrdering) return;
+  if (repairFromCount !== undefined && repairFromCount > 0) {
+    // A repair deliberately leaves the slot where it is: its callers only fire
+    // when the tenant, geometry and buffers are all unchanged, so the
+    // slot/uniform pairing is already established.
+    repairSortedIndexForCount(geometry, repairFromCount, count);
   } else {
     writeSortedIndexIdentity(geometry, count);
   }

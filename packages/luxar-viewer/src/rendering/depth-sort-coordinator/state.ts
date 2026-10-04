@@ -355,8 +355,7 @@ export function isLiveOrderDependent(mode: BlendingMode | undefined): boolean {
  * End a held append draw (`holdSortedIndexDrawForAppend`) WITHOUT a sorted
  * ordering for the grown population: every path on which no such ordering
  * will arrive calls this, so a held draw can never outlive the sort it waits
- * for. A no-op when nothing is held (the common case, and every non-gsplat
- * geometry).
+ * for. A no-op when nothing is held (the common case, and every mesh).
  *
  * A release changes what the next frame draws, and most of its callers run in
  * a promise callback long after the commit's own render request was consumed,
