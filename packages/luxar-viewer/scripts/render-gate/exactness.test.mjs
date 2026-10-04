@@ -309,4 +309,59 @@ describe('pickWithinDraw', () => {
     expect(r.coverage).toBe(1);
     expect(r.pass).toBe(true);
   });
+  /**
+   * A 16x16 frame (8x8 pick cells) whose every pixel is drawn saturated white
+   * except a black background block of `bgCells` cells in the bottom-left
+   * corner, with a pick id on every cell for which `picked(x, y)` holds.
+   */
+  function saturatedView(bgCells, picked) {
+    const width = 16;
+    const height = 16;
+    const hdr = new Float32Array(width * height * 4);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const isBg = x < 2 * bgCells && y < 2;
+        hdr.set(isBg ? [0, 0, 0, 1] : [1, 1, 1, 1], (y * width + x) * 4);
+      }
+    }
+    const pick = new Float32Array(8 * 8 * 4);
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) if (picked(x, y)) pick.set([2, 9, 0.5, 0], (y * 8 + x) * 4);
+    }
+    return { hdr, width, height, pick, pickWidth: 8, pickHeight: 8 };
+  }
+
+  it.fails('takes the background from where the pick is empty, not from the frame’s commonest value', () => {
+    // The surface_pick close-up (ortho#1): opaque points at a gain above 1 fill
+    // almost the whole frame with saturated white, so white is the frame's
+    // MODE. Read as the background, every white pixel looked undrawn and the
+    // picks on them as outside the draw (658 of 129,347 pick px on obsidian),
+    // while the true black background held no pick id at all.
+    const r = pickWithinDraw(saturatedView(1, (x, y) => x > 0 || y > 0));
+    expect(r.failures).toEqual([]);
+    expect(r.outside).toBe(0);
+    expect(r.drawn).toBe(63);
+    expect(r.coverage).toBe(1);
+  });
+
+  it.fails('still fails a pick that lands on the background next to an empty cell', () => {
+    // Two background cells; the pick covers one of them (a dropped or culled
+    // element still picked). The empty one still says what background is.
+    const r = pickWithinDraw(
+      saturatedView(4, (x, y) => !(x === 0 && y === 0)),
+      { slack: 0 }
+    );
+    expect(r.pass).toBe(false);
+    expect(r.outside).toBe(3);
+  });
+
+  it('falls back to the frame’s commonest value when the pick leaves no cell empty', () => {
+    // A pick that covers EVERY cell has no empty cell to sample; the frame
+    // mode (here the large background) then decides, so a fullscreen pick over
+    // a small draw still fails.
+    const all = [0, 1, 2, 3].flatMap((y) => [0, 1, 2, 3].map((x) => [x, y]));
+    const r = pickWithinDraw(view({ ids: all }), { slack: 0 });
+    expect(r.pass).toBe(false);
+    expect(r.outside).toBe(12);
+  });
 });
