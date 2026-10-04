@@ -8,30 +8,9 @@
  * others idled. Real WorkerPool with fake workers (same private-field
  * injection as the sibling load-balancing / abort tests).
  */
-import { describe, it, expect, vi } from 'vitest';
-import { WorkerPool } from '../../../../../workers/worker-pool';
+import { describe, it, expect } from 'vitest';
+import { makeFakeWorker, poolWithWorkers } from '../../../../helpers/fake-worker';
 import { deferred } from '../../../../helpers/deferred';
-
-interface FakeWorkerInstance {
-  worker: { terminate: () => void };
-  api: { handle: ReturnType<typeof vi.fn> };
-  activeQueries: number;
-}
-
-function makePool(workers: FakeWorkerInstance[]): WorkerPool {
-  const pool = new WorkerPool() as any;
-  pool.workers = workers;
-  pool.initPromise = Promise.resolve();
-  return pool;
-}
-
-function makeFakeWorker(label: string): FakeWorkerInstance {
-  return {
-    worker: { terminate: vi.fn() },
-    api: { handle: vi.fn().mockResolvedValue(label) },
-    activeQueries: 0,
-  };
-}
 
 async function flush(): Promise<void> {
   for (let i = 0; i < 10; i++) await Promise.resolve();
@@ -42,7 +21,7 @@ describe('WorkerPool — slot accounting follows the worker, not the caller', ()
     const w0 = makeFakeWorker('A');
     const task = deferred<string>();
     w0.api.handle.mockReturnValue(task.promise);
-    const pool = makePool([w0]);
+    const pool = poolWithWorkers([w0]);
     const controller = new AbortController();
 
     const call = pool.runWithTimeout(
@@ -67,7 +46,7 @@ describe('WorkerPool — slot accounting follows the worker, not the caller', ()
     const w0 = makeFakeWorker('A');
     const task = deferred<string>();
     w0.api.handle.mockReturnValue(task.promise);
-    const pool = makePool([w0]);
+    const pool = poolWithWorkers([w0]);
     const controller = new AbortController();
 
     const call = pool.runWithTimeout(
@@ -89,7 +68,7 @@ describe('WorkerPool — slot accounting follows the worker, not the caller', ()
     const w0 = makeFakeWorker('A');
     const w1 = makeFakeWorker('B');
     w0.api.handle.mockReturnValue(new Promise(() => {})); // abandoned task keeps running
-    const pool = makePool([w0, w1]);
+    const pool = poolWithWorkers([w0, w1]);
     const controller = new AbortController();
 
     const first = pool.runWithTimeout(
@@ -110,7 +89,7 @@ describe('WorkerPool — slot accounting follows the worker, not the caller', ()
   it('concurrent dispatches spread across idle workers (the slot is taken at selection)', async () => {
     const w0 = makeFakeWorker('A');
     const w1 = makeFakeWorker('B');
-    const pool = makePool([w0, w1]);
+    const pool = poolWithWorkers([w0, w1]);
 
     const results = await Promise.all([
       pool.runWithTimeout('op', 'projection', (api: any) => api.handle()),
@@ -121,7 +100,7 @@ describe('WorkerPool — slot accounting follows the worker, not the caller', ()
 
   it('a call aborted between selection and dispatch releases the slot it took', async () => {
     const w0 = makeFakeWorker('A');
-    const pool = makePool([w0]);
+    const pool = poolWithWorkers([w0]);
     const controller = new AbortController();
     const call = pool.runWithTimeout(
       'op',

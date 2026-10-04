@@ -10,19 +10,10 @@
 import { getEventListeners } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import { combineAbortSignals } from '../../../utils/abort-signals';
-
-/** Hide `AbortSignal.any` so the manual relay runs; returns the restore. */
-function forceFallback(): () => void {
-  const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
-  Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
-  return () => {
-    if (descriptor) Object.defineProperty(AbortSignal, 'any', descriptor);
-    else delete (AbortSignal as unknown as { any?: unknown }).any;
-  };
-}
+import { forceAbortSignalAnyFallback } from '../../helpers/abort-signal-any';
 
 function withFallback(body: () => void): void {
-  const restore = forceFallback();
+  const restore = forceAbortSignalAnyFallback();
   try {
     body();
   } finally {

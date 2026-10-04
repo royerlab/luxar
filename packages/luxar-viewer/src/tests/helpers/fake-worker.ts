@@ -32,11 +32,11 @@ export function makeFakeWorker(
  * initialised them: the routing and dispatch paths then run for real.
  */
 export function poolWithWorkers(
-  workers: FakeWorkerInstance[],
+  workers: ReadonlyArray<{ activeQueries: number }>,
   pool: WorkerPool = new WorkerPool()
 ): WorkerPool {
   const internals = pool as unknown as { workers: unknown[]; initPromise: Promise<void> };
-  internals.workers = workers;
+  internals.workers = workers as unknown as unknown[];
   internals.initPromise = Promise.resolve();
   return pool;
 }

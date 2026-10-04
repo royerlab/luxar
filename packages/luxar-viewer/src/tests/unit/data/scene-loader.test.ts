@@ -45,6 +45,7 @@ import { log, Modules } from '../../../utils/log';
 import { failedLoadsVersion } from '../../../utils/failed-loads-version';
 import { SlicePrefetcher } from '../../../data/scene-loader/prefetch/slice-prefetcher';
 import { disposeWorkerPool, getWorkerPool } from '../../../workers/worker-pool';
+import { fakeWorkerInstance, poolWithWorkers } from '../../helpers/fake-worker';
 import { createCustomColormapTexture } from '../../../rendering/colormap-textures';
 import {
   MAX_ABANDONED_RUNG_RETRY_ROUNDS,
@@ -227,12 +228,7 @@ describe('SceneLoader', () => {
       try {
         await other.loadScene(url);
         await disposing.loadScene(url);
-        const pool = getWorkerPool() as unknown as {
-          workers: unknown[];
-          initPromise: Promise<void>;
-        };
-        pool.workers = [{ worker: { terminate: vi.fn() }, api, activeQueries: 0 }];
-        pool.initPromise = Promise.resolve();
+        poolWithWorkers([fakeWorkerInstance(api)], getWorkerPool());
 
         const call = getWorkerPool().runWithTimeout('host-b-decode', 'projection', (worker) =>
           (worker as unknown as typeof api).handle()

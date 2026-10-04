@@ -12,6 +12,7 @@ import { DirectoryNavigator, type DirectoryEntry } from '../../../data';
 import { DatasetBrowser } from '../../../ui/dataset-browser';
 import { isTypingInInput } from '../../../utils/dom/focus';
 import { log } from '../../../utils/log';
+import { deferred } from '../../helpers/deferred';
 
 const navigateMock = vi.fn();
 const getFullUrlMock = vi.fn();
@@ -1099,20 +1100,7 @@ describe('DatasetBrowser', () => {
   });
 
   describe('navigation cancellation', () => {
-    type DeferredNavigate = {
-      promise: Promise<unknown>;
-      resolve: (v: unknown) => void;
-      reject: (e: unknown) => void;
-    };
-    const makeDeferred = (): DeferredNavigate => {
-      let resolve: DeferredNavigate['resolve'] = () => {};
-      let reject: DeferredNavigate['reject'] = () => {};
-      const promise = new Promise<unknown>((res, rej) => {
-        resolve = res;
-        reject = rej;
-      });
-      return { promise, resolve, reject };
-    };
+    const makeDeferred = () => deferred<unknown>();
 
     // Helper: call the private `navigate` method via cast. Lets these
     // tests exercise the cancellation path without depending on any

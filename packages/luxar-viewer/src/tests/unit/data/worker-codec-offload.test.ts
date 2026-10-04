@@ -20,6 +20,7 @@ import * as zarr from '../../../data/zarr';
 import { setWorkerCodecsEnabled } from '../../../data/codecs/worker-blosc';
 import { hasUrlFlag, URL_PARAM_KEYS } from '../../../config/url-params';
 import { disposeWorkerPool, getWorkerPool } from '../../../workers/worker-pool';
+import { fakeWorkerInstance, poolWithWorkers } from '../../helpers/fake-worker';
 import { perfCounters } from '../../../profiling/perf-counters';
 import {
   BloscDecodeDispatcher,
@@ -69,20 +70,17 @@ function makeFakeWorker() {
       return out;
     }),
   };
-  return { instance: { worker: { terminate: vi.fn() }, api, activeQueries: 0 }, calls, api };
+  return { instance: fakeWorkerInstance(api), calls, api };
 }
 
-function injectWorkers(instances: unknown[]): void {
-  const pool = getWorkerPool() as unknown as {
-    workers: unknown[];
-    initPromise: Promise<void>;
-  };
-  pool.workers = instances;
-  pool.initPromise = Promise.resolve();
+function injectWorkers(instances: Array<{ activeQueries: number }>): void {
+  poolWithWorkers(instances, getWorkerPool());
 }
 
 /** Inject workers and let their codec warm-up finish (offload needs a warm worker). */
-async function injectWarmWorkers(instances: { api: { warmCodecs: () => Promise<unknown> } }[]) {
+async function injectWarmWorkers(
+  instances: Array<{ api: { warmCodecs: () => Promise<unknown> }; activeQueries: number }>
+) {
   injectWorkers(instances);
   getWorkerPool().ensureCodecsWarm();
   await vi.waitFor(() => {
