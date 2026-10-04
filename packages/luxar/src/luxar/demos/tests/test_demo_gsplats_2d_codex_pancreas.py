@@ -6,6 +6,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 _DEMO_PATH = Path(__file__).resolve().parents[1] / "demo_gsplats_2d_codex_pancreas.py"
@@ -23,6 +24,34 @@ def _load_demo_module():
 
 
 _demo = _load_demo_module()
+
+
+def test_local_tiled_refit_preserves_overlap_contributions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(_demo, "TILE_SIZE", 32)
+    monkeypatch.setattr(_demo, "OVERLAP", 8)
+    monkeypatch.setattr(_demo, "SEEDS_PER_TILE", 128)
+    monkeypatch.setattr(_demo, "N_ITERS", 20)
+    monkeypatch.setattr(_demo, "DEVICE", "cpu")
+
+    y, x = np.mgrid[:24, :48]
+    fitted_image = np.exp(-((y - 12) ** 2 / 50 + (x - 24) ** 2 / 450)).astype(
+        np.float32
+    )
+    result = _demo.fit_channel_tiled(
+        fitted_image.T, "Hoechst", tmp_path / "codex.gsplats.zarr.zip"
+    )
+
+    assert result.n_splats == 256
+    assert result.stats.get("culled") is not True
+    pixel_result = result.transform(np.eye(2) / _demo.PIXEL_SIZE)
+    reconstruction = pixel_result.render_to_volume(
+        shape=fitted_image.shape, device="cpu"
+    )
+    seam_mse = np.mean((reconstruction[:, 24:32] - fitted_image[:, 24:32]) ** 2)
+    neighbour_mse = np.mean((reconstruction[:, 16:24] - fitted_image[:, 16:24]) ** 2)
+    assert seam_mse <= neighbour_mse
 
 
 def test_cache_version_excludes_pre_transpose_flat_artifacts(
