@@ -1,5 +1,6 @@
 import { config } from '../../config';
 import { AsyncGate } from '../../utils/async-gate';
+import { withTimeout } from './opfs-store/opfs-timeout';
 
 /**
  * Maximum OPFS chunk reads running concurrently across the page.
@@ -9,12 +10,10 @@ import { AsyncGate } from '../../utils/async-gate';
  * gained their own concurrency cap. The reported multi-second L2 stall remains
  * unattributed; this gate provides a bounded, observable point for diagnosis.
  *
- * A lease lasts until the read's FILE I/O settles, not merely until `run()`
- * does: a caller that races its read against a timeout gives up while the
- * browser keeps reading, and releasing the slot then would let more reads start
- * than the cap allows (and under-report occupancy). `run()` hands the real I/O
- * to `hold` for that. A queued read whose signal aborts leaves the queue at once
- * (the shared {@link AsyncGate}'s contract).
+ * A lease lasts until the read's file I/O settles, not merely until `run()`
+ * does. Held I/O also has an operation deadline, so a browser read that never
+ * settles cannot permanently occupy the gate. A queued read whose signal
+ * aborts leaves the queue at once (the shared {@link AsyncGate}'s contract).
  */
 const gate = new AsyncGate(() => config.cache.opfsReadConcurrency);
 
@@ -32,8 +31,8 @@ export function resetOpfsReadGate(): void {
  * Run one OPFS read under the page-wide FIFO concurrency cap.
  *
  * @param run - The read. Pass the real file I/O through `hold` (it returns the
- *   same promise): the slot is held until `run()` AND every held promise have
- *   settled, so a read abandoned by a timeout still counts while it runs.
+ *   same promise): the slot is held until `run()` and every held promise has
+ *   settled or reached the configured operation deadline.
  * @param signal - Aborting it while the read still waits for a slot rejects
  *   with the signal's reason (or an `AbortError`) and frees its queue place.
  *   Once started, `run` owns the signal.
@@ -56,7 +55,10 @@ export function withOpfsReadGate<T>(
     const hold = <R>(io: Promise<R>): Promise<R> => {
       if (released) return io;
       pending += 1;
-      void io.then(settle, settle);
+      void withTimeout(io, config.cache.opfsOperationTimeoutMs, 'read gate I/O').then(
+        settle,
+        settle
+      );
       return io;
     };
     try {

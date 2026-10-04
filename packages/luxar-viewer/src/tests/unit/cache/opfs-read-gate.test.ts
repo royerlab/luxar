@@ -8,7 +8,7 @@
  * it enforced) then under-counted the reads actually in progress.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../../config';
 import {
   getOpfsReadGateStats,
@@ -76,6 +76,39 @@ describe('OPFS read gate', () => {
 
     expect(whileReading).toEqual({ active: cap, queued: 1, started: false });
     expect(getOpfsReadGateStats()).toEqual({ active: 0, queued: 0 });
+  });
+
+  it('releases a slot after the operation deadline when held I/O never settles', async () => {
+    vi.useFakeTimers();
+    try {
+      const cap = config.cache.opfsReadConcurrency;
+      const io = Array.from({ length: cap }, deferred);
+      const timedOut = io.map((pending) =>
+        withOpfsReadGate(async (hold) => {
+          void hold(pending.promise);
+          throw new Error('caller timed out');
+        }).catch(() => undefined)
+      );
+      await Promise.all(timedOut);
+
+      let started = false;
+      const next = withOpfsReadGate(async () => {
+        started = true;
+      });
+      await flush();
+      expect(getOpfsReadGateStats()).toEqual({ active: cap, queued: 1 });
+
+      await vi.advanceTimersByTimeAsync(config.cache.opfsOperationTimeoutMs);
+      await next;
+      expect(started).toBe(true);
+      expect(getOpfsReadGateStats()).toEqual({ active: 0, queued: 0 });
+
+      for (const pending of io) pending.resolve();
+      await flush();
+      expect(getOpfsReadGateStats()).toEqual({ active: 0, queued: 0 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a late hold cannot release the same slot twice', async () => {
