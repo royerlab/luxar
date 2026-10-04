@@ -15,6 +15,7 @@
  */
 
 export { calculate_effective_radii } from './effective-radii';
+export { points_slice_membership } from './points-membership';
 export { sort_splats_by_depth } from './depth-sort';
 export {
   decode_quantized_u8,
@@ -64,6 +65,7 @@ export { mesh_vertex_visibility_mask, compact_visible_faces } from './mesh-culli
 // Re-export as a module class for compatibility with WasmModule interface
 import type { WasmModule } from '../types';
 import { calculate_effective_radii } from './effective-radii';
+import { points_slice_membership } from './points-membership';
 import { sort_splats_by_depth } from './depth-sort';
 import {
   decode_quantized_u8,
@@ -105,6 +107,7 @@ import { mesh_vertex_visibility_mask, compact_visible_faces } from './mesh-culli
  */
 export class TypeScriptFallback implements WasmModule {
   calculate_effective_radii = calculate_effective_radii;
+  points_slice_membership = points_slice_membership;
   sort_splats_by_depth = sort_splats_by_depth;
   decode_quantized_u8 = decode_quantized_u8;
   decode_quantized_u16 = decode_quantized_u16;

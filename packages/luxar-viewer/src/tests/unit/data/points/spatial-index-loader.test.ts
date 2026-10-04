@@ -1222,7 +1222,7 @@ describe('PointsSpatialIndexLoader', () => {
   describe('plain-leaf S-cache', () => {
     const hiddenDimView: ViewState = {
       displayDims: [0, 1, 2],
-      slicePosition: [0, 0, 0, 5],
+      slicePosition: [0, 0, 0, 0],
       tolerance: [0, 0, 0, 0.25],
     };
     let sliceCache: SliceCache;
@@ -1333,7 +1333,7 @@ describe('PointsSpatialIndexLoader', () => {
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 5],
+        slicePosition: [0, 0, 0, 0],
         tolerance: [0, 0, 0, 0.1],
       };
 
@@ -1374,7 +1374,7 @@ describe('PointsSpatialIndexLoader', () => {
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 5],
+        slicePosition: [0, 0, 0, 0],
         tolerance: [0, 0, 0, 0.1],
       };
 
@@ -1404,7 +1404,7 @@ describe('PointsSpatialIndexLoader', () => {
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 5],
+        slicePosition: [0, 0, 0, 0],
         tolerance: [0, 0, 0, 0.1],
       };
 
@@ -1576,7 +1576,7 @@ describe('PointsSpatialIndexLoader', () => {
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 5],
+        slicePosition: [0, 0, 0, 0],
         tolerance: [0, 0, 0, 0.1],
       };
 
