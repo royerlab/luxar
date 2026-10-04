@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { ESLint } from 'eslint';
 
 const eslint = new ESLint({
-  overrideConfig: { rules: { 'max-lines-per-function': 'off' } },
+  overrideConfig: { languageOptions: { parserOptions: { project: null } } },
+  ruleFilter: ({ ruleId }) => ruleId === 'no-restricted-syntax',
 });
 const filePath = 'src/types/geometry-capabilities.ts';
 
 async function restrictedCount(source) {
   const [result] = await eslint.lintText(source, { filePath });
+  expect(result.messages.filter((message) => message.fatal)).toEqual([]);
   return result.messages.filter((message) => message.ruleId === 'no-restricted-syntax').length;
 }
 
@@ -27,5 +29,9 @@ describe('geometry subset lint rule', () => {
 
   it('leaves a single-type check alone', async () => {
     expect(await restrictedCount("const allowed = type === 'points';")).toBe(0);
+  });
+
+  it('reports parser failures instead of treating them as a missed rule', async () => {
+    await expect(restrictedCount('const =')).rejects.toThrow();
   });
 });
