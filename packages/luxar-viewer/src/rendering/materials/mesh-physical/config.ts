@@ -509,11 +509,6 @@ export function physicalUpdateRefractData(host: PhysicalMeshHost, refractData: b
   applyPhysicalCompositing(host, { ...readInputs(host), refractData: refractData === true });
 }
 
-/** The material's current `refract_data` decision input. */
-export function physicalGetRefractData(host: PhysicalMeshHost): boolean {
-  return readInputs(host).refractData;
-}
-
 /**
  * Sanitize a knob value against its spec: a non-number or NaN resolves to the
  * documented DEFAULT (the sibling sanitizer policy — a corrupt value should not
