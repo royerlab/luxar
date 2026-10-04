@@ -331,7 +331,7 @@ describe('pickWithinDraw', () => {
     return { hdr, width, height, pick, pickWidth: 8, pickHeight: 8 };
   }
 
-  it.fails('takes the background from where the pick is empty, not from the frame’s commonest value', () => {
+  it('takes the background from where the pick is empty, not from the frame’s commonest value', () => {
     // The surface_pick close-up (ortho#1): opaque points at a gain above 1 fill
     // almost the whole frame with saturated white, so white is the frame's
     // MODE. Read as the background, every white pixel looked undrawn and the
@@ -344,7 +344,7 @@ describe('pickWithinDraw', () => {
     expect(r.coverage).toBe(1);
   });
 
-  it.fails('still fails a pick that lands on the background next to an empty cell', () => {
+  it('still fails a pick that lands on the background next to an empty cell', () => {
     // Two background cells; the pick covers one of them (a dropped or culled
     // element still picked). The empty one still says what background is.
     const r = pickWithinDraw(

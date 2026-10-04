@@ -118,7 +118,12 @@ see it. The capsule line pick that ignored the density guard's drop was one.
 Each pick pixel is compared with the HDR block it samples. A pick id where the
 frame draws nothing, beyond one pick pixel of edge slack, fails the view. So
 does a pick that covers less than 5% of the drawn pixels, which catches a pick
-shader that went blank. The pick readback keeps the renderer's native row order
+shader that went blank. "Draws nothing" means the pixel equals the frame's
+background. The background is the commonest value among the pixels the pick
+leaves empty, not among all pixels: a close-up the draw fills with saturated
+white would otherwise elect white as the background. A pick that leaves no
+cell empty falls back to the whole frame, which can over-count but never
+hides a stray pick. The pick readback keeps the renderer's native row order
 (bottom-up through WebGL, top-down from native WebGPU), and the HDR capture is
 normalised bottom-up, so the judgement aligns the two by overlap and reports
 the order it used. The report's pick column shows the outside count and the
