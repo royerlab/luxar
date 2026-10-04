@@ -135,9 +135,14 @@ describe('PostProcessingManager → capture guard', () => {
       );
 
       expect(mgr.isCaptureInProgress).toBe(true);
-      expect(vi.getTimerCount()).toBe(1);
+      const settled = vi.fn();
+      void capture.then(
+        () => settled('resolved'),
+        () => settled('rejected')
+      );
       const rejection = expect(capture).rejects.toThrow('timed out');
       await vi.advanceTimersByTimeAsync(60_000);
+      expect(settled).toHaveBeenCalledWith('rejected');
       await rejection;
       expect(mgr.isCaptureInProgress).toBe(false);
       expect(released).toHaveBeenCalledTimes(1);
@@ -161,7 +166,11 @@ describe('PostProcessingManager → capture guard', () => {
       mgr.setCaptureReleasedCallback(released);
       let finish!: () => void;
       const stalled = mgr.suspendFrameRendersDuring(() => new Promise<void>(() => {}));
-      expect(vi.getTimerCount()).toBe(1);
+      const stalledSettled = vi.fn();
+      void stalled.then(
+        () => stalledSettled('resolved'),
+        () => stalledSettled('rejected')
+      );
       const stalledRejection = expect(stalled).rejects.toThrow('timed out');
       await vi.advanceTimersByTimeAsync(1_000);
       const healthy = mgr.suspendFrameRendersDuring(
@@ -172,6 +181,7 @@ describe('PostProcessingManager → capture guard', () => {
       );
 
       await vi.advanceTimersByTimeAsync(59_000);
+      expect(stalledSettled).toHaveBeenCalledWith('rejected');
       await stalledRejection;
       expect(mgr.isCaptureInProgress).toBe(true);
       expect(released).not.toHaveBeenCalled();
