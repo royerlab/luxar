@@ -525,6 +525,25 @@ pnpm test:e2e:report  # Opens HTML report with all screenshots/videos
 
 ---
 
+## Structural Guards
+
+Tests that fail on the PR introducing a whole KIND of bug, rather than one
+instance. Each is a declared table, a runner over it, and a check that keeps the
+table honest.
+
+- **Every shown Layers-panel control has an effect** —
+  `unit/ui/layers/control-effect.test.ts` over `LAYER_CONTROL_RULES`
+  (`src/ui/layers/layer-control-rules.ts`). One fixture per layer kind (points,
+  lines, gsplats, house mesh, physical mesh, sound, LOD, partition, labelled,
+  custom LUT) with real materials: the shown controls must equal both the table's
+  answer and the fixture's declared `shows` list; each shown control is driven
+  through its DOM and must move observable state (uniforms, defines, material
+  flags, render-order slot, audio gain, LOD selector); "Reset this layer" must
+  restore it; every `data-control` element needs a rule. A new control needs a
+  rule row, a `data-control` id and a `PROBES` entry (keyed by the id type).
+
+---
+
 ## Test Fixtures
 
 Test fixtures are Python-generated zarr datasets for Python-TypeScript compatibility testing.
