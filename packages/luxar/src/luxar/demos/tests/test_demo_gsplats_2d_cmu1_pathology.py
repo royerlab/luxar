@@ -116,6 +116,8 @@ def test_local_tiled_refit_preserves_overlap_contributions(
     reconstruction = result.render_to_volume(shape=image.shape, device="cpu")
     seam_mse = np.mean((reconstruction[:, 24:32] - image[:, 24:32]) ** 2)
     assert seam_mse < 0.016  # The culled fit measures about 0.019 here.
+    neighbour_mse = np.mean((reconstruction[:, 16:24] - image[:, 16:24]) ** 2)
+    assert seam_mse <= neighbour_mse
 
 
 def test_local_fit_paths_rejects_a_truncated_channel(tmp_path, monkeypatch) -> None:
