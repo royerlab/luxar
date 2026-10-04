@@ -45,9 +45,10 @@ export interface LuxarMaterial extends THREE.Material {
   updateOpacity(v: number): void;
   /**
    * Update the absorption coefficient κ (volumetric blending mode).
-   * All three geometry-material families implement it (gsplats phase 1,
-   * points phase 3, lines phase 4); optional only for exotic/legacy
-   * materials (VOLUMETRIC_BLENDING_SPEC.md).
+   * The three emissive geometry-material families implement it (gsplats
+   * phase 1, points phase 3, lines phase 4); optional because a mesh material
+   * has none — a surface resolves `volumetric` to `opaque`
+   * (VOLUMETRIC_BLENDING_SPEC.md).
    */
   updateAbsorption?(v: number): void;
   /**

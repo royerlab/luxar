@@ -21,10 +21,14 @@ import { evaluateDepthSortPerFrame, scheduleSort } from './scheduler';
  * inactive buffer (`hasPendingSortedIndexOrderingApply`). This is the
  * termination condition {@link resortForCapture} drains toward — while
  * ANY of those hold, the drawn permutation is not yet the pose-fresh one.
+ * A hidden node does not count, as in the force loop: it is not filmed, and
+ * the scheduler's pump deliberately leaves its stream parked while hidden
+ * (#715), so waiting on it would only burn `maxWaitMs` every frame.
  * Module-private: the drain loop is the only caller.
  */
 function isCaptureQuiescent(c: CoordinatorState): boolean {
   for (const state of c.nodeStates.values()) {
+    if (!isEffectivelyVisible(state.mesh)) continue;
     if (state.inFlight || state.resortQueued) return false;
     const geometry = state.mesh.geometry as THREE.InstancedBufferGeometry | undefined;
     if (geometry && hasPendingSortedIndexOrderingApply(geometry)) return false;

@@ -58,6 +58,7 @@ import {
   tslLineJointCapSuppression,
   type TSLNode,
   sortedIndexNode,
+  densityDroppedNode,
 } from '../../materials/_shared/tsl-helpers';
 import type { LinePickTSLConfig, LinePickTSLNodes } from './pick.tsl';
 import { pickWeightTSL } from '../_shared/visibility-tsl';
@@ -75,6 +76,7 @@ export function capsuleLinePickWebGPUFactory(
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
   const aSortedIndex: TSLNode = sortedIndexNode(nodes.uSortedIndexSlot);
+  const densityDropped: TSLNode = densityDroppedNode(nodes.uDensityDrop, aSortedIndex);
 
   const uLineTex = nodes.uLineTex;
   const uResolution = nodes.uResolution;
@@ -148,9 +150,12 @@ export function capsuleLinePickWebGPUFactory(
     // graph rebuild on a camera-kind flip. Materialised ahead of every `If`.
     const isOrtho: TSLNode = isOrthoProjectionTSL().equal(int(1)).toVar();
     const isPersp: TSLNode = isOrtho.not().toVar();
-    const culled: TSLNode = isPersp
-      .and(startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull)))
-      .toVar();
+    // Projected-density thinning rides the both-behind cull (GLSL twin does the
+    // same): a dropped segment must not be pickable either.
+    const bothBehind: TSLNode = isPersp.and(
+      startDepth.lessThan(nearCull).and(endDepth.lessThan(nearCull))
+    );
+    const culled: TSLNode = bothBehind.or(densityDropped).toVar();
 
     const mvA: TSLNode = mvStart.toVar();
     const mvB: TSLNode = mvEnd.toVar();

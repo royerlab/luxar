@@ -404,7 +404,10 @@ async function activateDeferredPart(
 
 const LOADER_KINDS: readonly GeometryKind[] = ['points', 'lines', 'gsplats', 'mesh'];
 
-/** Drop the placeholders and loaders a failed part activation left behind. */
+/**
+ * Drop the placeholders, loaders and lod/partition registrations a failed part
+ * activation left behind.
+ */
 function discardPartialPart(slot: THREE.Group, ctx: NodeBuildCtx, partPath: string): void {
   const under = new Set([partPath]);
   for (const kind of LOADER_KINDS) {
@@ -415,6 +418,7 @@ function discardPartialPart(slot: THREE.Group, ctx: NodeBuildCtx, partPath: stri
       loader.dispose();
     }
   }
+  ctx.lodGroupRegistry?.unregisterSubtree(partPath);
   slot.clear();
 }
 

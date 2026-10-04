@@ -81,11 +81,36 @@ describe('projectSphereAreaPx', () => {
       areaPx: 0,
       onScreen: false,
     });
-    // Straddling the eye plane (camera inside the sphere's depth span) stays full.
+    // The eye INSIDE the sphere (|centre| <= radius) fills the buffer.
     expect(projectSphereAreaPx({ x: 0, y: 0, z: 3 }, 5, camera, 1600, 1000)).toEqual({
       areaPx: 1_600_000,
       onScreen: true,
     });
+  });
+
+  it('culls a sphere beside the camera that crosses the eye plane outside the frustum', () => {
+    const camera = perspective(1600, 1000, 100);
+    // Depth span [-1, 1] crosses the eye plane, but the eye is 99 units outside
+    // the sphere and the sphere sits far to the side of the 60° frustum.
+    expect(projectSphereAreaPx({ x: 100, y: 0, z: 0 }, 1, camera, 1600, 1000)).toEqual({
+      areaPx: 0,
+      onScreen: false,
+    });
+    // Same, wholly behind the near plane (depth in [0, 0.05] < near 0.1).
+    expect(projectSphereAreaPx({ x: 0, y: 0, z: 0.5 }, 0.45, camera, 1600, 1000)).toEqual({
+      areaPx: 0,
+      onScreen: false,
+    });
+  });
+
+  it('measures the near-clipped footprint of a sphere grazing the edge of the view', () => {
+    const camera = perspective(1600, 1000, 100);
+    // Centre beside the eye (|c| = 3 > r = 2), its front part reaching into the
+    // right edge of the view: partly on screen, but nowhere near full-buffer.
+    const { areaPx, onScreen } = projectSphereAreaPx({ x: 3, y: 0, z: 0 }, 2, camera, 1600, 1000);
+    expect(onScreen).toBe(true);
+    expect(areaPx).toBeGreaterThan(0);
+    expect(areaPx).toBeLessThan(0.5 * 1_600_000);
   });
 
   it('handles an orthographic camera without the depth division', () => {

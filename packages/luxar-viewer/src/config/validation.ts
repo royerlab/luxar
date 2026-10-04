@@ -10,7 +10,6 @@ import { log, Modules } from '../utils/log';
 import { validateCamera } from './sections/camera/validate';
 import { validateScene } from './sections/scene/validate';
 import { validateWebGL } from './sections/webgl/validate';
-import { validateInput } from './sections/input/validate';
 import { validateControls } from './sections/controls/validate';
 import {
   validateRendering,
@@ -59,9 +58,6 @@ export function validateConfig(config: AppConfig): ValidationResult {
 
   // Validate scene configuration
   validateScene(config, errors, warnings);
-
-  // Validate input configuration
-  validateInput(config, errors, warnings);
 
   // Validate WebGL configuration
   validateWebGL(config, errors, warnings);

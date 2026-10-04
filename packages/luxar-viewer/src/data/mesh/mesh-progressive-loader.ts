@@ -865,9 +865,6 @@ export class MeshProgressiveLoader implements MeshDataLoader {
 
   dispose(): void {
     this._disposed = true;
-    if (this._concatCache?.result.texture?.kind === 'bitmap') {
-      this._concatCache.result.texture.bitmap.close();
-    }
     for (const loader of this.lodLoaders) loader.dispose();
     this.lodLoaders = [];
     this.loadedLODs = [];

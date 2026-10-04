@@ -1300,15 +1300,13 @@ backend swaps or zarrita API moves stay isolated to this one file.
 
 ### Attribute Composition (attrs-composer.ts)
 
-| Symbol                             | Description                                                                |
-| ---------------------------------- | -------------------------------------------------------------------------- |
-| `composeAttrs(chain)`              | Compose a root-to-leaf chain of `ComposableAttrs` into `EffectiveAttrs`.   |
-| `collectAncestorNodes(root, path)` | Walk the scene graph and return the chain of ancestor `SceneNode`s.        |
-| `collectAncestorAttrs(root, path)` | Convenience — collect the chain as `ComposableAttrs[]`.                    |
-| `getEffectiveAttrs(root, path)`    | Compose the effective attrs for a target path in one call.                 |
-| `getEffectiveAttrsOfChain(chain)`  | The same over an already-resolved chain (e.g. `SceneNodeIndex.ancestors`). |
-| `windowOwnerGainOfChain(chain)`    | `windowOwnerGain` over an already-resolved chain.                          |
-| `collectDataDescendants(start)`    | Collect every data-leaf (points/lines/gsplats/mesh) under `start`.         |
+| Symbol                             | Description                                                                            |
+| ---------------------------------- | -------------------------------------------------------------------------------------- |
+| `composeAttrs(chain)`              | Compose a root-to-leaf chain of `ComposableAttrs` into `EffectiveAttrs`.               |
+| `collectAncestorNodes(root, path)` | Walk the scene graph and return the chain of ancestor `SceneNode`s.                    |
+| `getEffectiveAttrsOfChain(chain)`  | Compose the effective attrs of a resolved chain (e.g. `SceneNodeIndex.ancestorChain`). |
+| `windowOwnerGainOfChain(chain)`    | The raw gain of the chain's nearest `layer=true` node (its display-window owner).      |
+| `collectDataDescendants(start)`    | Collect every data-leaf (points/lines/gsplats/mesh) under `start`.                     |
 
 ### Dims → ViewState (dims-to-view-state.ts)
 

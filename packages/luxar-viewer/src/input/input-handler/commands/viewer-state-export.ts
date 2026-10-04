@@ -19,6 +19,7 @@ export interface ViewerStateExportCtx {
   sceneManager: SceneManager;
   renderingControls: RenderingControlsHandle | undefined;
   animationManager: DimensionAnimationManager | undefined;
+  selectedDimension: number;
 }
 
 export function exportViewerState(ctx: ViewerStateExportCtx): void {
@@ -31,7 +32,8 @@ export function exportViewerState(ctx: ViewerStateExportCtx): void {
     ctx.sceneManager,
     ctx.renderingControls,
     sceneDimsManager,
-    ctx.animationManager
+    ctx.animationManager,
+    ctx.selectedDimension
   );
 
   const json = JSON.stringify(state, null, 2);

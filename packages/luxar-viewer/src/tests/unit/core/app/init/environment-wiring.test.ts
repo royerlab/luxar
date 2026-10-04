@@ -26,8 +26,11 @@ vi.mock('../../../../../ui/recording-panel/screenshot-exporter', () => ({
 
 import {
   BAKE_SETTLED_FRAMES,
+  wireEnvironmentToLayers,
   wireSceneEnvironment,
 } from '../../../../../core/app/init/environment-wiring';
+import { LayerStateManager } from '../../../../../ui/layers/layer-state';
+import type { SceneNode } from '../../../../../data/data-loader-types';
 import { bakeEnvironment } from '../../../../../rendering/environment/bake';
 import { downloadBlob } from '../../../../../ui/recording-panel/screenshot-exporter';
 import { eventBus } from '../../../../../utils/cross-layer/event-bus';
@@ -87,7 +90,7 @@ describe('wireSceneEnvironment', () => {
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
   });
 
-  it('attaches the runtime, ticks per frame, and marks stale on commit / slice / appearance', () => {
+  it('attaches the runtime, ticks per frame, and marks stale on commit / slice', () => {
     const h = makeHarness();
     expect(h.sceneManager.attachEnvironmentRuntime).toHaveBeenCalledTimes(1);
     expect(h.callbacks.has('environment-capture')).toBe(true);
@@ -101,23 +104,63 @@ describe('wireSceneEnvironment', () => {
 
     eventBus.emit('geometry-committed', {});
     expect(h.environment.markStale).toHaveBeenCalledTimes(1);
-    window.dispatchEvent(new CustomEvent('luxar-layers-changed'));
-    expect(h.environment.markStale).toHaveBeenCalledTimes(2);
     // The dims manager notifies its listeners on a value change.
     (
       sceneDimsManager as unknown as { notifyListeners: (changed: boolean) => void }
     ).notifyListeners(true);
-    expect(h.environment.markStale).toHaveBeenCalledTimes(3);
+    expect(h.environment.markStale).toHaveBeenCalledTimes(2);
 
     // Disposing the event group unhooks everything.
     h.events.dispose();
     eventBus.emit('geometry-committed', {});
-    window.dispatchEvent(new CustomEvent('luxar-layers-changed'));
     (
       sceneDimsManager as unknown as { notifyListeners: (changed: boolean) => void }
     ).notifyListeners(true);
-    expect(h.environment.markStale).toHaveBeenCalledTimes(3);
+    expect(h.environment.markStale).toHaveBeenCalledTimes(2);
     expect(h.callbacks.size).toBe(0);
+  });
+
+  it('marks stale on every Layers-panel appearance edit, but not on a selection or gain change', () => {
+    // `luxar-layers-changed` fires once per dataset load, so it never carried an
+    // edit: a slider drag on a layer the cube map reflects left the map stale.
+    const markStale = vi.fn();
+    const sceneManager = { environment: { markStale } } as unknown as SceneManager;
+    const layerState = new LayerStateManager();
+    const leaf = (path: string): SceneNode =>
+      ({ path, type: 'points', hasSpatialIndex: false, attrs: { layer: true } }) as SceneNode;
+    const graph = {
+      path: '',
+      type: 'scene',
+      hasSpatialIndex: false,
+      attrs: {},
+      children: [
+        leaf('/a'),
+        leaf('/b'),
+        { path: '/hum', type: 'sound', hasSpatialIndex: false, attrs: { layer: true, gain: 1 } },
+      ],
+    } as SceneNode;
+    layerState.initFromSceneGraph(graph);
+    const events = new EventGroup();
+    wireEnvironmentToLayers(sceneManager, layerState, events);
+
+    layerState.select('/a', 'single');
+    layerState.select('/b', 'add');
+    // A sound row's gain reaches the audio graph, not anything the cube map sees.
+    layerState.setSoundGain('/hum', 0.5);
+    expect(layerState.getLayer('/hum')?.sound?.gain).toBe(0.5);
+    expect(markStale).not.toHaveBeenCalled();
+
+    layerState.setGamma('/a', 2);
+    layerState.applyToSelected((l) => (l.opacity = 0.5));
+    layerState.setVisible('/b', false);
+    expect(markStale).toHaveBeenCalledTimes(3);
+    // "Reset all layers" re-derives the whole state.
+    layerState.initFromSceneGraph(graph);
+    expect(markStale).toHaveBeenCalledTimes(4);
+
+    events.dispose();
+    layerState.setGamma('/a', 3);
+    expect(markStale).toHaveBeenCalledTimes(4);
   });
 
   it('marks stale for a changed slice but not a forced same-slice refresh', () => {

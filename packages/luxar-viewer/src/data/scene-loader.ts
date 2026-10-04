@@ -518,17 +518,17 @@ export class SceneLoader {
    * The pending-state slot is overwritten on every queued update, so a
    * burst of view changes during an in-flight retry collapses to a
    * single drained call (latest-wins). The per-node prev-state map is
-   * reset on dataset switch (loadScene) and dispose; skipped paths
-   * forget their snapshot so the next non-skip update re-baselines.
+   * cleared on dispose (the loader is one-shot, so there is no dataset
+   * switch to reset it for); skipped paths forget their snapshot so the
+   * next non-skip update re-baselines.
    */
   private viewStateQueue = new ViewStateQueue();
 
   /**
-   * Per-dataset AbortController. Created on every `loadScene` and
-   * aborted at the START of the next `loadScene` (and on `dispose`)
-   * so worker tasks queued by the previous dataset settle
-   * immediately instead of running to completion against a
-   * superseded scene. The loader threads it into its own worker
+   * The dataset's AbortController. Created by the (one-shot) `loadScene` and
+   * aborted on `dispose` — which a dataset switch runs on this loader before
+   * creating a fresh one — so worker tasks it queued settle immediately
+   * instead of running to completion against a superseded scene. The loader threads it into its own worker
    * projections ({@link withDatasetSignal}); the pool itself is shared by
    * every host on the page and carries no dataset signal. WASM execution
    * itself cannot be cancelled, but the orphan results are discarded — see
@@ -1119,7 +1119,6 @@ export class SceneLoader {
       profiler: this.profiler,
       lodGroupRegistry: this.lodGroupRegistry,
       normalizeURL: (u) => this.normalizeURL(u),
-      clearViewStatePrev: () => this.viewStateQueue.clearPrev(),
       initializeSceneDimensions: (sd) => this.initializeSceneDimensions(sd),
       makeNodeBuildCtx: () => this.makeNodeBuildCtx(),
       updateVisibleCountsInMonitor: () => this.updateVisibleCountsInMonitor(),
@@ -1723,10 +1722,9 @@ export class SceneLoader {
    */
   private async scheduleProgressiveRefinement(): Promise<void> {
     if (this._disposed || this._archiveFault) {
-      // Do not release the serialization lock here. Production lock-owning callers
-      // enter this method synchronously before a fault can interleave; the faulting
-      // update ends its pass without scheduling refinement, so this guard cannot
-      // follow a lock handoff.
+      // Unreachable through `PassScheduler.startRefinement`, which releases the
+      // lock instead of starting a run on a disposed or faulted loader (the
+      // post-load kick can follow a fault a lazy level latched during the load).
       return;
     }
 
@@ -2161,9 +2159,8 @@ export class SceneLoader {
    */
   private makeNodeBuildCtx(): NodeBuildCtx {
     // Capture the dataset's AbortController by reference at ctx-build
-    // time. `loadScene` aborts + replaces this controller on the next
-    // load and `dispose()` nulls it, so a deferred load created under
-    // this dataset can detect (via identity + aborted flag) that its
+    // time. `dispose()` aborts and nulls it, so a deferred load created
+    // under this dataset can detect (via identity + aborted flag) that its
     // dataset is no longer live and skip committing into a stale scene.
     const ctrl = this._datasetAbortController;
     // The eager load commits for the view it is built under (B4).
@@ -2492,9 +2489,16 @@ export class SceneLoader {
     notifier.clearError();
   }
 
-  private resumeViewAfterRetry(hadArchiveFault: boolean): void {
+  /**
+   * Release the retry's lock and resume the view: run what queued meanwhile
+   * (including a resync parked during the retry), else reload the whole view
+   * after a cleared archive fault, else resume any ladder the retry left short.
+   */
+  private finishRetry(hadArchiveFault: boolean): void {
+    const reloadsWholeView = hadArchiveFault && !this._archiveFault;
+    this.passes.releaseRetry(reloadsWholeView);
     if (this.passes.drainPending()) return;
-    if (!hadArchiveFault || this._archiveFault) {
+    if (!reloadsWholeView) {
       // A retried progressive loader committed only one pass's worth of its
       // ladder; nothing else resumes the rest (#2975).
       this.kickRefinementIfIdle();
@@ -2601,8 +2605,7 @@ export class SceneLoader {
       }
       return await retryFailedLoaderUnlocked(path, this.makeRetryCtx());
     } finally {
-      this.passes.releaseRetry();
-      this.resumeViewAfterRetry(hadArchiveFault);
+      this.finishRetry(hadArchiveFault);
     }
   }
 
@@ -2729,8 +2732,7 @@ export class SceneLoader {
       );
       return { succeeded, failed };
     } finally {
-      this.passes.releaseRetry();
-      this.resumeViewAfterRetry(hasArchiveFault);
+      this.finishRetry(hasArchiveFault);
     }
   }
 

@@ -153,17 +153,29 @@ import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import { DatasetBrowser } from '../../../ui/dataset-browser';
 import { ControlRail } from '../../../ui/control-rail';
 import { cleanupUI as mockCleanupUI } from '../../../ui/ui-cleanup';
-import { clearError as mockClearError } from '../../../ui/error-overlay';
+import {
+  clearError as mockClearError,
+  showError as mockShowError,
+} from '../../../ui/error-overlay';
 import { showToast as mockShowToast } from '../../../ui/toast';
 import { showHelpOverlay } from '../../../ui/help-overlay';
+import { LayersPanel } from '../../../ui/layers';
+
+// The automock does not stub the `layerState` getter, and the init pipeline
+// subscribes the scene environment to the panel's state.
+Object.defineProperty(LayersPanel.prototype, 'layerState', {
+  configurable: true,
+  get: () => ({ onChange: () => () => undefined }),
+});
 
 // Import LuxarApp after all mocks are set up
 import { LuxarApp } from '../../../core/app';
 import { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import { setDocumentTitle } from '../../../core/document-title';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
-import { notifier } from '../../../utils/cross-layer/notifier';
+import { clearNotifierBackend, notifier } from '../../../utils/cross-layer/notifier';
 import type { ZarrWaypoint } from '../../../types/zarr';
+import { OverlayManager } from '../../../ui/overlay-manager';
 
 describe('LuxarApp', () => {
   let app: LuxarApp;
@@ -201,6 +213,10 @@ describe('LuxarApp', () => {
         dispose: vi.fn(),
       },
       dispose: vi.fn(),
+      // SceneManager is a THREE.EventDispatcher (the app subscribes to its
+      // 'webgpu-device-lost').
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
       renderer: { domElement: {} },
       scene: {},
       // Enough of a camera for captureSnapshot() (the camera-changed
@@ -890,6 +906,38 @@ describe('LuxarApp', () => {
     });
   });
 
+  describe('notifier backend', () => {
+    it('routes the notifier to the viewer UI for a library embed, across dispose → init', async () => {
+      // A library embedder never runs bootstrapStandalone: the app's own init
+      // must give lower layers (toasts, error dialog, spinner) a backend.
+      clearNotifierBackend();
+      await app.init({ canvas: mockCanvas, src: '' });
+
+      notifier.toast('first');
+      notifier.error('archive unavailable', { persistent: true });
+      notifier.error('ordinary failure');
+      expect(mockShowToast).toHaveBeenCalledWith('first', 2000);
+      expect(mockShowError).toHaveBeenNthCalledWith(
+        1,
+        'archive unavailable',
+        expect.any(Function),
+        { datasetBrowser: 'dataset-browser.toggle', help: 'help.toggle' },
+        { autoDismiss: false }
+      );
+      // No options at all: the dialog's own auto-dismiss default applies.
+      expect(mockShowError).toHaveBeenNthCalledWith(2, 'ordinary failure', expect.any(Function), {
+        datasetBrowser: 'dataset-browser.toggle',
+        help: 'help.toggle',
+      });
+
+      // dispose() clears the backend; the next lifetime installs it again.
+      app.dispose();
+      await app.init({ canvas: mockCanvas, src: '' });
+      notifier.toast('second');
+      expect(mockShowToast).toHaveBeenLastCalledWith('second', 2000);
+    });
+  });
+
   describe('dispose', () => {
     beforeEach(async () => {
       mockFetch.mockResolvedValue({ ok: true });
@@ -1398,7 +1446,6 @@ describe('LuxarApp', () => {
       expect(mockSceneManager.dispose).toHaveBeenCalledTimes(1);
       expect(mockAnimationController.dispose).toHaveBeenCalledTimes(1);
       expect(mockAddEventListener.mock.calls.map((call) => call[0])).toEqual([
-        'luxar-layers-changed',
         'luxar-layers-changed',
       ]);
       for (const [event, listener] of mockAddEventListener.mock.calls) {
@@ -1988,7 +2035,7 @@ describe('LuxarApp', () => {
       );
     });
 
-    it('stops a kiosk watchdog installed by a load that finishes after dispose', async () => {
+    it('leaves no kiosk watchdog behind a load that finishes after dispose', async () => {
       const canvas = { addEventListener: vi.fn(), removeEventListener: vi.fn() };
       mockSceneManager.renderer = { domElement: canvas };
       await app.init({ canvas: mockCanvas, src: '' });
@@ -2012,8 +2059,9 @@ describe('LuxarApp', () => {
       const removals = canvas.removeEventListener.mock.calls.filter(
         (call) => call[0] === 'webglcontextlost'
       );
-      expect(additions).toHaveLength(1);
-      expect(removals).toEqual([['webglcontextlost', additions[0][1]]]);
+      // The stale load stops before applying its viewer config, so it never
+      // installs one; anything that was installed must have been removed.
+      expect(removals).toEqual(additions);
     });
 
     it('a superseded load never writes its viewer config into a newer session', async () => {
@@ -2038,6 +2086,67 @@ describe('LuxarApp', () => {
       expect(app.getViewerState().controlPanel).toBeNull();
     });
 
+    it('a load disposed mid-flight runs none of its tail into the next lifetime', async () => {
+      // dispose() + init() while a switch is still in loadSceneData: the old
+      // load must not restart the animation, warm programs, build overlays on
+      // the app, or announce its src to the new lifetime's listeners.
+      await app.init({ canvas: mockCanvas, src: '' });
+      let releaseOld!: () => void;
+      mockSceneManager.loadSceneData.mockImplementationOnce(
+        () => new Promise<void>((resolve) => (releaseOld = resolve))
+      );
+      const oldSwitch = app.switchDataset('http://example.com/old.zarr');
+      await vi.waitFor(() => expect(mockSceneManager.loadSceneData).toHaveBeenCalledTimes(1));
+      app.dispose();
+      await app.init({ canvas: mockCanvas, src: '' });
+      const onLoaded = vi.fn();
+      app.on('dataset-loaded', onLoaded);
+      mockAnimationController.startAnimation.mockClear();
+      mockSceneManager.warmBlendModePrograms.mockClear();
+      mockInputHandler.initDimensionSliders.mockClear();
+
+      releaseOld();
+      await oldSwitch;
+
+      expect(mockInputHandler.initDimensionSliders).not.toHaveBeenCalled();
+      expect(mockAnimationController.startAnimation).not.toHaveBeenCalled();
+      expect(mockSceneManager.warmBlendModePrograms).not.toHaveBeenCalled();
+      expect(onLoaded).not.toHaveBeenCalled();
+    });
+
+    it("an overlay load that outlives its app never replaces the next lifetime's overlays", async () => {
+      // The window inside initOverlays: the stale manager must be disposed,
+      // not assigned over the new lifetime's.
+      const root = {
+        name: 'LuxarScene',
+        children: [],
+        traverse: vi.fn(),
+        userData: { overlayConfigs: [{ type: 'text' }], zarrBaseUrl: 'http://example.com/a.zarr' },
+      };
+      mockSceneManager.scene = { children: [root] };
+      await app.init({ canvas: mockCanvas, src: '' });
+      let releaseOverlays!: () => void;
+      const loadOverlays = vi
+        .spyOn(OverlayManager.prototype, 'loadOverlays')
+        .mockImplementationOnce(() => new Promise<void>((resolve) => (releaseOverlays = resolve)));
+      const oldSwitch = app.switchDataset('http://example.com/old.zarr');
+      await vi.waitFor(() => expect(loadOverlays).toHaveBeenCalledTimes(1));
+      app.dispose();
+      loadOverlays.mockResolvedValue(undefined);
+      await app.init({ canvas: mockCanvas, src: 'http://example.com/new.zarr' });
+      const internals = app as unknown as { overlayManager: OverlayManager | undefined };
+      const current = internals.overlayManager;
+      expect(current).toBeDefined();
+      const staleDispose = vi.spyOn(OverlayManager.prototype, 'dispose');
+
+      releaseOverlays();
+      await oldSwitch;
+
+      expect(internals.overlayManager).toBe(current);
+      expect(staleDispose).toHaveBeenCalledTimes(1);
+      expect(staleDispose.mock.contexts[0]).not.toBe(current);
+    });
+
     it('keeps authored scene overlays visible in kiosk mode', async () => {
       await app.init({ canvas: mockCanvas, src: SRC });
       const hideOverlay = vi.fn();
@@ -2055,6 +2164,24 @@ describe('LuxarApp', () => {
 
   describe('programmatic embedder API', () => {
     const SRC = 'http://example.com/data.zarr';
+
+    it('re-emits WebGPU device loss as the public webgpu-device-lost event', async () => {
+      // Unrecoverable in this release: an embedder must be able to react
+      // (reload, show its own error) without reaching into the renderer.
+      const listeners: Array<[string, (event: unknown) => void]> = [];
+      mockSceneManager.addEventListener = vi.fn((type: string, fn: (event: unknown) => void) =>
+        listeners.push([type, fn])
+      );
+      mockSceneManager.removeEventListener = vi.fn();
+      await app.init({ canvas: mockCanvas, src: SRC });
+      const onLost = vi.fn();
+      app.on('webgpu-device-lost', onLost);
+
+      const event = { type: 'webgpu-device-lost', reason: 'destroyed', message: 'gone' };
+      for (const [type, fn] of listeners) if (type === 'webgpu-device-lost') fn(event);
+
+      expect(onLost).toHaveBeenCalledExactlyOnceWith({ reason: 'destroyed', message: 'gone' });
+    });
 
     it('emits dataset-loaded when switchDataset succeeds', async () => {
       await app.init({ canvas: mockCanvas, src: SRC });

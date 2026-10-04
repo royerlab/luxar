@@ -37,7 +37,7 @@ import type { LuxarAppOptions } from '../options';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import { wireDensityGuard } from './density-guard-wiring';
 import { buildEnvironmentSettledPredicate, buildLoadActivityPredicate } from './load-activity';
-import { wireSceneEnvironment } from './environment-wiring';
+import { wireEnvironmentToLayers, wireSceneEnvironment } from './environment-wiring';
 import { getInputProfile } from '../../../utils/input-capabilities';
 import { eventBus } from '../../../utils/cross-layer/event-bus';
 import { RenderAudit, canvasReadback } from '../../../scene/animation/render-audit';
@@ -474,9 +474,10 @@ export async function runInitPipeline(
   const isLoadActive = buildLoadActivityPredicate(loadActivitySources);
   adaptiveDPRManager.setLoadActivityPredicate(isLoadActive);
 
-  // The scene environment's live behaviour (re-capture on commit / slice /
-  // appearance change once SETTLED — the same predicate, inverted, that also
-  // waits out a LOD level dissolve) and the `?bakeEnv` one-shot.
+  // The scene environment's live behaviour (re-capture on commit / slice change
+  // once SETTLED — the same predicate, inverted, that also waits out a LOD level
+  // dissolve; appearance edits are wired once the layers panel exists, below) and
+  // the `?bakeEnv` one-shot.
   wireSceneEnvironment({
     sceneManager,
     animationController,
@@ -713,6 +714,9 @@ export async function runInitPipeline(
   const layersPanel = factories.layersPanel(document.body, animationController);
   partial.layersPanel = layersPanel;
   inputHandler.setLayersPanel(layersPanel);
+  // A scene-derived environment re-captures after a Layers-panel appearance edit
+  // (the commit / slice triggers were wired with the environment above).
+  wireEnvironmentToLayers(sceneManager, layersPanel.layerState, ports.events);
 
   // Left activity rail — the always-visible, discoverable entry point to the
   // otherwise keyboard-only panels. Buttons dispatch through the same command

@@ -8,7 +8,10 @@
  *
  * Concatenation is the only line-specific wrinkle: `segments` indices
  * are LOCAL to each subgroup's vertex array, so we offset-adjust them
- * by the cumulative vertex count when concatenating.
+ * by the cumulative vertex count when concatenating — and, for a ladder whose
+ * parent carries a per-vertex label CSR, each level's on-disk vertex ranges are
+ * shifted into that CSR's index space (`levelOffsets`, the twin of the Points
+ * ladder composition, #1439).
  *
  * @module data/lines/lines-progressive-loader
  */
@@ -22,7 +25,6 @@ import type {
   MonitorEventListener,
   QueryInfo,
 } from '../../types/data-monitor-types';
-import { assertColorLayout } from '../loaders';
 import { ProgressiveMonitorAdapter } from '../loaders/progressive-monitor-adapter';
 import {
   concatColorsWhiteFilled,
@@ -36,15 +38,92 @@ import {
 import { LINE_FLOATS_PER_SEGMENT } from '../../rendering/element-texture-layout';
 import type { LadderResidency } from '../scene-loader/progressive/residency-budget';
 import type { SliceCache } from '../../cache/slice-cache';
-import { Modules } from '../../utils/log';
+import { log, Modules } from '../../utils/log';
+
+/**
+ * Compose the retained payloads' on-disk VERTEX ranges into the parent's union
+ * label CSR index space (#1422): payload `i`, covering logical levels
+ * `[payloadLevelStarts[i], next)`, is shifted by `levelOffsets[start]` and
+ * bounded by its own span, so a range can never name a sibling level's row.
+ * A folded prefix starts at level 0, where the shift is 0 — its ranges are
+ * already in union space. The concatenated ranges describe the concatenated
+ * vertices in order, which is all `composeLinesElementIds` needs.
+ *
+ * Returns `null` (after one `warn`) when the inputs are inconsistent; picking
+ * then falls back to the raw slot. An empty payload contributes nothing.
+ */
+function composeLadderVertexRanges(
+  parts: LoadedLinesData[],
+  payloadLevelStarts: readonly number[],
+  logicalDepth: number,
+  levelOffsets: readonly number[],
+  warn: (message: string) => void
+): Uint32Array | null {
+  const fail = (why: string): null => {
+    warn(`Progressive Lines: ${why} — picking labels fall back to the visible-buffer slot.`);
+    return null;
+  };
+  if (payloadLevelStarts.length !== parts.length || levelOffsets.length <= logicalDepth) {
+    return fail(`inconsistent retained-payload lineage at logical depth ${logicalDepth}`);
+  }
+  const out: number[] = [];
+  for (const [i, part] of parts.entries()) {
+    if (part.vertexCount === 0) continue;
+    const end = payloadLevelStarts[i + 1] ?? logicalDepth;
+    const why = appendShiftedRanges(part, levelOffsets, payloadLevelStarts[i], end, out);
+    if (why !== null) return fail(`payload ${i} ${why}`);
+  }
+  return Uint32Array.from(out);
+}
+
+/**
+ * Append one payload's on-disk vertex ranges, covering logical levels
+ * `[start, end)`, shifted into the union space. Returns why it refused, or null.
+ */
+function appendShiftedRanges(
+  part: LoadedLinesData,
+  levelOffsets: readonly number[],
+  start: number,
+  end: number,
+  out: number[]
+): string | null {
+  if (!(start >= 0 && end > start && end < levelOffsets.length)) {
+    return `has an invalid logical level range [${start}, ${end})`;
+  }
+  const bounds = part.vertexRangeBounds;
+  if (bounds === undefined || bounds.length % 2 !== 0) {
+    return 'published no usable on-disk vertex ranges';
+  }
+  const base = levelOffsets[start];
+  const span = levelOffsets[end] - base;
+  for (let k = 0; k < bounds.length; k += 2) {
+    // Negated compare so a NaN also fails closed.
+    if (!(bounds[k] <= bounds[k + 1] && bounds[k + 1] <= span)) {
+      return `names vertex rows past its ${span} on-disk rows`;
+    }
+    out.push(base + bounds[k], base + bounds[k + 1]);
+  }
+  return null;
+}
 
 /**
  * Concatenate per-LOD `LoadedLinesData`. Segment indices are
  * offset-adjusted by the cumulative vertex count across earlier
  * levels — local indices in level *k* become global indices in the
  * concatenated buffer.
+ *
+ * `levelOffsets` (non-null only for a ladder whose PARENT declares a per-vertex
+ * string/image CSR) composes the levels' on-disk vertex ranges into that CSR's
+ * index space ({@link composeLadderVertexRanges}); without it no ranges are
+ * published at all.
  */
-function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
+function concatenateLinesData(
+  parts: LoadedLinesData[],
+  payloadLevelStarts: readonly number[],
+  logicalDepth: number,
+  levelOffsets: readonly number[] | null,
+  warn: (message: string) => void
+): LoadedLinesData {
   if (parts.length === 0) {
     return {
       positions: new Float32Array(0),
@@ -57,27 +136,20 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
       ndim: 3,
     };
   }
+  const ranges =
+    levelOffsets === null
+      ? null
+      : composeLadderVertexRanges(parts, payloadLevelStarts, logicalDepth, levelOffsets, warn);
   if (parts.length === 1) {
-    // GUARD (belt-and-braces): a ladder payload must never publish the on-disk
-    // VERTEX range bounds. Not because `parts[0]`'s ranges describe the wrong
-    // space — it is always `additive_0`, whose on-disk vertex range IS the
-    // parent per-vertex union CSR's PREFIX (#1422), so passing them through
-    // would in fact resolve correctly while it is the only committed level. It
-    // is that `parts.length === 1` is not "unladdered": this loader only exists
-    // for `n_additive_sublods` nodes, so it is the first-paint state of EVERY
-    // ladder — and a tooltip that is right at first paint and silently degrades
-    // to the raw slot the moment a second level lands is worse than one
-    // consistently at the raw slot, which is what every doc surface promises.
-    // `createProgressiveLinesLoader` now also clears `has_labels` /
-    // `has_image_labels` / `has_keys` on each sub-LOD's attrs, so the ranges are
-    // normally never published at all; this keeps the invariant true whatever
-    // attrs a sub-LOD carries. (A ladder's supported labels/keys channels each
-    // have ONE per-vertex union CSR on the parent since #1422; composing a map
-    // across the levels of that union is what #1439 did for the POINTS ladder —
-    // `points-progressive-loader.ts`'s `levelOffsets` path — and lines has no
-    // counterpart yet, so a laddered lines node still hovers at the raw slot.)
+    // `additive_0` at first paint, or a folded prefix: both start at level 0,
+    // so composed ranges equal the payload's own and it passes through. Without
+    // them (no parent CSR, or a failed composition) the payload must not publish
+    // its ranges: on a ladder they are level-space, and a tooltip right at first
+    // paint that silently degrades once a second level lands is worse than one
+    // consistently at the raw slot. Stripped as a copy — the level's own payload
+    // is still owned by its accumulator.
     const only = parts[0];
-    if (only.vertexRangeBounds === undefined) return only;
+    if (ranges !== null || only.vertexRangeBounds === undefined) return only;
     const stripped: LoadedLinesData = { ...only };
     delete stripped.vertexRangeBounds;
     return stripped;
@@ -98,23 +170,6 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
           'dataset dimensionality.'
       );
     }
-  }
-  // Per-part color-layout check, distinct from the cross-level mismatch
-  // guarded below: those throws catch LODs that DISAGREE on dtype/layout,
-  // but a single part can carry an RGBA buffer while OMITTING
-  // `colorComponents: 4` (it defaults to 3). That satisfies the downstream
-  // `count·3` minimum yet mis-strides every vertex after the first — silent
-  // corruption. Assert each part's raw length against its own declared
-  // layout before allocation so an omitted declaration throws loudly here.
-  // Names the offending level (concat-helpers' convention) so a corrupt
-  // store is diagnosable without a debugger.
-  for (const [levelIdx, part] of parts.entries()) {
-    assertColorLayout(
-      part.colors,
-      part.vertexCount,
-      part.colorComponents ?? 3,
-      `concatenateLinesData (LOD level ${levelIdx})`
-    );
   }
   const totalVertices = parts.reduce((s, p) => s + p.vertexCount, 0);
   const totalSegments = parts.reduce((s, p) => s + p.segmentCount, 0);
@@ -167,9 +222,6 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
     segmentOffset += part.segmentCount;
   }
 
-  // No `vertexRangeBounds`: the concat interleaves several levels' on-disk vertex
-  // spaces into one buffer, so no single ascending on-disk range list describes
-  // it (same reason the single-part branch above strips them).
   const result: LoadedLinesData = {
     positions,
     segments,
@@ -184,6 +236,7 @@ function concatenateLinesData(parts: LoadedLinesData[]): LoadedLinesData {
   if (scalars !== undefined) {
     result.scalars = scalars;
   }
+  if (ranges !== null) result.vertexRangeBounds = ranges;
   return result;
 }
 
@@ -194,8 +247,9 @@ const LINES_LADDER: LadderGeometry<LoadedLinesData> = {
   unit: 'segments',
   warnPrefix: 'Lines',
   countOf: (data) => data.segmentCount,
-  concat: (parts) => concatenateLinesData(parts),
-  empty: () => concatenateLinesData([]),
+  concat: (parts, layout) =>
+    concatenateLinesData(parts, layout.payloadLevelStarts, layout.loadedLevels, null, () => {}),
+  empty: () => concatenateLinesData([], [], 0, null, () => {}),
   // 6 RGBA32F texels/segment — the largest element row of any geometry, and
   // ~3.6x this payload's own bytes per vertex. Omitting it made the shared
   // budget under-count Lines far more than GSplats.
@@ -212,14 +266,32 @@ export class LinesProgressiveLoader implements LinesDataLoader {
   private readonly core: AdditiveLadderCore<LoadedLinesData, LinesSpatialIndexLoader>;
   private readonly monitor: ProgressiveMonitorAdapter;
 
+  // One fail-closed composition warning per LOADER (the concat re-runs on every
+  // memo miss — tens per second under playback), as in the Points twin.
+  private composeWarned = false;
+
   constructor(
     lodLoaders: LinesSpatialIndexLoader[],
     nLods: number,
     path: string,
     energyTable?: ReadonlyArray<number | null | undefined>,
-    sliceCache?: SliceCache | null
+    sliceCache?: SliceCache | null,
+    levelOffsets?: readonly number[] | null
   ) {
-    this.core = new AdditiveLadderCore(lodLoaders, nLods, path, LINES_LADDER, {
+    // CSR-style bounds over the levels' ON-DISK vertex counts (`nLods + 1`
+    // entries) inside the parent's union label CSR; null publishes no ranges.
+    const offsets = levelOffsets ?? null;
+    const warn = (message: string): void => {
+      if (this.composeWarned) return;
+      this.composeWarned = true;
+      log.warning(Modules.LINES_LOADER, `${message} (logged once per node)`);
+    };
+    const geometry: LadderGeometry<LoadedLinesData> = {
+      ...LINES_LADDER,
+      concat: (parts, layout) =>
+        concatenateLinesData(parts, layout.payloadLevelStarts, layout.loadedLevels, offsets, warn),
+    };
+    this.core = new AdditiveLadderCore(lodLoaders, nLods, path, geometry, {
       energyTable,
       sliceCache,
     });
@@ -313,8 +385,7 @@ export class LinesProgressiveLoader implements LinesDataLoader {
   }
 
   getMetrics(): LoaderMetrics {
-    const metrics = this.monitor.getMetrics();
-    return { ...metrics, memoryUsed: metrics.memoryUsed + this.core.concatMemoryBytes() };
+    return this.core.nodeMetrics(this.monitor.getMetrics());
   }
 
   /** Clean up all LOD loaders. */

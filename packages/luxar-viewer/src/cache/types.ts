@@ -84,8 +84,11 @@ export interface OPFSMetadata {
   lastValidatedAt?: number;
 }
 
-/** Current OPFS filename-encoding version. Bumped only when keyToFileName changes. */
-export const OPFS_ENCODING_VERSION = 2;
+/**
+ * Current OPFS filename-encoding version. Bumped only when keyToFileName
+ * changes (3: chunk file names carry the content-hash tag).
+ */
+export const OPFS_ENCODING_VERSION = 3;
 
 /**
  * Snapshot returned by `MultiLevelCachingStore.getStats()`. Aggregates

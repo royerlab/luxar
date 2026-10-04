@@ -34,6 +34,7 @@ zarr scene -> SceneManager.loadSceneData()
                           - ui.show_*          -> panel show()/hide()
                           - theme              -> setTheme(themeId)
                           - dimensions.current_step[i] -> setDimensionValue(i, v)
+                          - dimensions.selected_dimension -> inputHandler.setSelectedDimension(n)
                           - animation[i]       -> startDimensionAnimation(i, options)
 ```
 
@@ -64,6 +65,10 @@ Key contract details:
   exists (dimension metadata / `overlay_groups` / layer arrays).
 - `dimensions.current_step` writes one value per dimension index via
   `setDimensionValue(i, v)` — no theme/UI side effects.
+- `dimensions.selected_dimension` picks the dimension the `[` / `]` keys
+  navigate, by NAVIGABLE position among the non-displayed dimensions (the
+  number-key numbering), through `inputHandler.setSelectedDimension(n)`;
+  anything but a non-negative integer is ignored.
 - `animation[i]` starts only entries with `playing: true`, after applying
   `current_step`. Persisted FPS values are clamped to the GUI range, unknown
   loop/direction strings fall back to viewer defaults, and `step_size` remains

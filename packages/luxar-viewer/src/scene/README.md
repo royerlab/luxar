@@ -401,7 +401,13 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    feedback loop. `lodBias` keeps its area-unit meaning, so the footprint
    limit is divided by `sqrt(b)`. Missing, invalid, or display-dimension-
    mismatched stamps fall through to the occupancy path, as do explicit
-   `coverage_fractions` ladders. Per-tile `adaptive` ladders are stamped, so
+   `coverage_fractions` ladders and a camera INSIDE the node's box — where
+   step 4's metric saturates to the finest level, and a footprint sized at
+   the box-centre depth says nothing about the splats at the eye. Only GSplat
+   levels are stamped (the merge measures each level's median splat scale):
+   a Points or Lines ladder keeps its original Points/Lines node as the
+   finest level, which has no splat scale to stamp, so its stamps are never
+   complete and it stays on occupancy. Per-tile `adaptive` ladders are stamped, so
    footprint selection supersedes their partition-bound occupancy anchor;
    `overview` ladders are intentionally incomplete and remain on occupancy.
    Footprint-selected switches are hard swaps even when `lodFade` is enabled.

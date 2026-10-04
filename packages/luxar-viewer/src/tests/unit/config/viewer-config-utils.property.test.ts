@@ -191,4 +191,20 @@ describe('renderingSettingsToZarr — unknown-key warning (visibility fix)', () 
       .filter((m: string) => m.includes('futureUnknownField'));
     expect(matching).toHaveLength(1);
   });
+
+  test('camera and viewer-local keys are dropped without a warning', () => {
+    // The lens belongs to the camera block captureViewerState writes; the orbit
+    // zoom / damping and fly-look speeds have no viewer_config field at all.
+    const settings = {
+      fov: 50,
+      fovPreset: '35mm',
+      near: 0.1,
+      far: 100,
+      orbitZoomSpeed: 1,
+      orbitDampingFactor: 0.1,
+      flyLookSpeed: 1,
+    } as unknown as Partial<RenderingSettings>;
+    expect(renderingSettingsToZarr(settings)).toEqual({});
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
 });

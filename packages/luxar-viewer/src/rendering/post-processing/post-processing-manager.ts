@@ -125,11 +125,6 @@ export class PostProcessingManager {
   private bloomRadius: number = config.renderingControls.defaults.bloomRadius;
   private bloomThreshold: number = config.renderingControls.defaults.bloomThreshold;
 
-  // Deferred-rebuild: kept for API compatibility with cinematic-mode batching;
-  // with the mega-shader, rebuilds are cheap so the deferred path is a
-  // no-op pass-through.
-  private deferRebuildDepth = 0;
-
   private disposed = false;
   private captureDepth = 0;
   private onCaptureReleased: (() => void) | null = null;
@@ -331,31 +326,6 @@ export class PostProcessingManager {
     this.bloomChain = null;
     this.fxaaPass = null;
     this.refractionSplit = null;
-  }
-
-  // ================================================================
-  // Deferred rebuild (kept for cinematic-mode batching API)
-  // ================================================================
-
-  startDeferRebuild(): void {
-    this.deferRebuildDepth++;
-  }
-
-  endDeferRebuild(): void {
-    if (this.deferRebuildDepth === 0) {
-      log.warning(Modules.POST_PROCESSING, 'endDeferRebuild called with depth=0; ignoring');
-      return;
-    }
-    this.deferRebuildDepth--;
-  }
-
-  withDeferredRebuild<T>(fn: () => T): T {
-    this.startDeferRebuild();
-    try {
-      return fn();
-    } finally {
-      this.endDeferRebuild();
-    }
   }
 
   // ================================================================

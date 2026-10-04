@@ -8,6 +8,7 @@ import {
 } from '../../../cache/multi-level-caching-store/opfs-read-gate';
 import { OPFS_NAMESPACE_DIR } from '../../../cache/multi-level-caching-store/opfs-store/opfs-root';
 import { createFakeOpfsRoot } from '../../mocks/opfs.mock';
+import { OPFS_ENCODING_VERSION } from '../../../cache/types';
 import { perfCounters } from '../../../profiling/perf-counters';
 
 describe('OPFSStore', () => {
@@ -155,7 +156,7 @@ describe('OPFSStore', () => {
           totalSize: 1000,
           orderCounter: 2,
           contentHash: 'abc123',
-          encodingVersion: 2,
+          encodingVersion: OPFS_ENCODING_VERSION,
         })
       );
 
@@ -1082,8 +1083,10 @@ describe('OPFSStore', () => {
       // the field-shape assertions behind `if (metaStr)` — meaning a
       // regression that produced an empty/falsy string would silently skip
       // the inner asserts. Drop the if and force unconditional shape checks.
-      await store.set('key1', new Uint8Array(1000));
+      // Hash first, as validation does: an entry written while no hash was known
+      // is named under no hash tag, so adopting a hash retires it.
       store.setContentHash('test-hash');
+      await store.set('key1', new Uint8Array(1000));
 
       await store.dispose();
 
@@ -1481,7 +1484,7 @@ describe('OPFSStore', () => {
           totalSize: -999,
           orderCounter: 1,
           contentHash: 'abc',
-          encodingVersion: 2,
+          encodingVersion: OPFS_ENCODING_VERSION,
         })
       );
       const recoveredStore = new OPFSStore(

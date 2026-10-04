@@ -604,13 +604,6 @@ export function hasNdTransform(
 }
 
 /**
- * Type guard to check if attributes are for a points node
- */
-export function isPointsNode(attrs: ZarrNodeAttrs): boolean {
-  return attrs.type === 'points';
-}
-
-/**
  * Type guard to check if attributes contain scene dimensions
  */
 export function hasSceneDimensions(

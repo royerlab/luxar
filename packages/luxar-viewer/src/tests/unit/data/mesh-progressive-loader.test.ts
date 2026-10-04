@@ -727,7 +727,7 @@ describe('MeshProgressiveLoader — aggregate byte budget (#1517)', () => {
 
     expect(loader.hasMoreLODs).toBe(true);
     await expect(loader.updateView(VIEW)).rejects.toThrow(LoaderError);
-    // This is the property that actually stops `queue-next.ts` from scheduling
+    // This is the property that actually stops `PassScheduler` from scheduling
     // `runMeshRefinement` on the dead node — the latched error alone is not
     // enough if a caller never re-observes it.
     expect(loader.hasMoreLODs).toBe(false);

@@ -19,6 +19,10 @@ import { extractEnvironmentConfig } from '../../../config/zarr-bridge/viewer-con
  * Each per-overlay / per-system init step is supplied as a callback so
  * the helper composes the orchestrator's other delegate methods without
  * the helper needing to know how they're implemented internally.
+ *
+ * `isStale` is checked after every await: a load whose app was disposed (or
+ * disposed and re-initialized) meanwhile stops there instead of running its
+ * tail against a torn-down — or a newer — lifetime.
  */
 export interface LoadDatasetPorts {
   inputHandler: InputHandler;
@@ -36,6 +40,7 @@ export interface LoadDatasetPorts {
   initPicking: () => Promise<void>;
   applyViewerConfigState: (config: ZarrViewerConfig | undefined) => void;
   openCacheStatsView: () => void;
+  isStale: () => boolean;
 }
 
 export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise<void> {
@@ -69,6 +74,7 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
   await ports.sceneManager.loadSceneData(src, ports.loaderConfig, {
     applyViewerConfigFov: applyViewerConfigDefaults,
   });
+  if (ports.isStale()) return;
 
   // Pass zarr viewer_config to rendering controls (available after scene loads).
   // If no localStorage settings exist for this scene, apply zarr defaults. An
@@ -144,9 +150,11 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
 
   // Initialize overlays (screen-space annotations from zarr)
   await ports.initOverlays();
+  if (ports.isStale()) return;
 
   // Initialize GPU picking system (if any node has labels)
   await ports.initPicking();
+  if (ports.isStale()) return;
 
   // Apply zarr viewer_config: UI visibility, theme, dimension state, animation
   ports.applyViewerConfigState(viewerConfig);

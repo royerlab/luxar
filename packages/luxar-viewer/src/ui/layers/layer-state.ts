@@ -221,6 +221,26 @@ function deriveColormapFromDescendants(node: SceneNode): string | undefined {
 }
 
 /**
+ * The LUT bytes behind a layer whose palette resolved to `'custom'`, found where
+ * the palette itself came from: the node's own `colormap_lut`, else the first
+ * descendant's (a wrapper whose parts carry it — same walk and stop rule as
+ * {@link deriveColormapFromDescendants}), else the composed ancestry's, which
+ * carries the bytes of whichever ancestor supplied the inherited `'custom'`.
+ */
+function deriveCustomLut(node: SceneNode, index: SceneNodeIndex): Uint8Array | undefined {
+  const inSubtree = (n: SceneNode): Uint8Array | undefined => {
+    const bytes = n.attrs.customLutBytes;
+    if (n.attrs.colormap === 'custom' && bytes instanceof Uint8Array) return bytes;
+    for (const child of n.children ?? []) {
+      const found = isLayerEnabled(child.attrs.layer) ? undefined : inSubtree(child);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  return inSubtree(node) ?? getEffectiveAttrsOfChain(index.ancestorChain(node.path)).customLutBytes;
+}
+
+/**
  * A numeric mesh appearance attr (`ambient` / `shade_exponent` / `alpha_cutoff` /
  * `specular` / `shininess`) read from `node`, else from the first descendant that
  * carries one.
@@ -528,7 +548,18 @@ export interface LayerInfo {
   sound?: SoundLayerInfo;
   /** Active colormap name (undefined = direct RGB colors) */
   colormap?: string;
-  /** Whether this node supports colormap (has scalars or amplitudes) */
+  /**
+   * The authored LUT (`colormap_lut` bytes, 256 × RGB or RGBA) when the layer's
+   * AUTHORED palette is `'custom'` — how the compiler stores every non-builtin
+   * palette. Lets the dropdown, the row menu and the legend name and draw it;
+   * `undefined` for a builtin or no authored palette.
+   */
+  customLut?: Uint8Array;
+  /**
+   * Whether a colormap can render on this layer: always for gsplats (the
+   * amplitude is the scalar), for points / lines / mesh only with scalars, for a
+   * group when a data descendant can — or whenever a palette is authored.
+   */
   supportsColormap: boolean;
   /** Exact categorical vocabulary exposed by gsplat label_ids. */
   labelVocabulary?: Array<{ id: string; name: string }>;
@@ -595,8 +626,18 @@ export type { DisplayUniforms } from '../../rendering/display-range';
 /** Selection mode for layer clicks */
 export type SelectionMode = 'single' | 'add' | 'range';
 
+/** What a change notification carries. */
+export interface LayerChange {
+  /**
+   * False when nothing a layer renders changed — the selection moved, or a sound
+   * row's gain did — so a listener reacting to appearance (the scene
+   * environment's re-capture) skips it.
+   */
+  appearance: boolean;
+}
+
 /** Listener callback type */
-export type LayerChangeListener = () => void;
+export type LayerChangeListener = (change: LayerChange) => void;
 
 /**
  * Manages the state of all layers in the Layers panel.
@@ -628,6 +669,41 @@ export function resolveLayerBlendingMode(
   return type === 'mesh' ? resolveMeshBlendingMode(mode) : mode;
 }
 
+/**
+ * How the dropdown and the row menu name the `'custom'` palette: the authored
+ * non-builtin LUT ({@link LayerInfo.customLut}).
+ */
+export const CUSTOM_COLORMAP_LABEL = 'custom (authored)';
+
+/**
+ * Whether `layer` may take the palette `name`. `'custom'` names a layer's OWN
+ * authored LUT ({@link LayerInfo.customLut}): only a layer that has one can take
+ * it — and, when copying another layer's palette (`sourceLut`), only one whose LUT
+ * holds the same bytes. Stamped anywhere else it would render viridis under the
+ * name `custom` and leave the dropdown blank. Every other name (or none) applies
+ * to any layer.
+ */
+export function canTakeColormap(
+  layer: Pick<LayerInfo, 'customLut'>,
+  name: string | undefined,
+  sourceLut?: Uint8Array
+): boolean {
+  if (name !== 'custom') return true;
+  const own = layer.customLut;
+  if (!own) return false;
+  return !sourceLut || (own.length === sourceLut.length && own.every((b, i) => b === sourceLut[i]));
+}
+
+/**
+ * Whether a blending-mode control reaches this layer's material. A `sound` row has
+ * no material, and a `material="physical"` mesh runs three's PBR material, which
+ * implements none of the house modes (`applyBlendingMode` is a no-op on it). The
+ * Blend dropdown and the row menu's Blending submenu both gate on this one rule.
+ */
+export function layerHasBlending(layer: Pick<LayerInfo, 'type' | 'material'>): boolean {
+  return layer.type !== 'sound' && !(layer.type === 'mesh' && layer.material === 'physical');
+}
+
 export class LayerStateManager {
   /** Ordered list of layer paths (insertion order from scene graph walk) */
   private layerOrder: string[] = [];
@@ -646,6 +722,9 @@ export class LayerStateManager {
    * layer's composed attrs read its root→node chain from it in O(1) instead of
    * descending the graph per layer. Without one (or with an index over a
    * different graph) one is built here — a single O(N) pass.
+   *
+   * Notifies (as an appearance change): a re-init — "Reset all layers" — replaces
+   * every layer's state.
    */
   initFromSceneGraph(root: SceneNode, sceneIndex?: SceneNodeIndex | null): void {
     this.soloState = null;
@@ -655,6 +734,7 @@ export class LayerStateManager {
 
     const index = sceneIndex?.root === root ? sceneIndex : new SceneNodeIndex(root);
     this.walkSceneGraph(root, index, undefined);
+    this.notify();
   }
 
   private walkSceneGraph(
@@ -689,13 +769,11 @@ export class LayerStateManager {
         const ampRange = node.attrs.amplitude_data_range as [number, number] | undefined;
         const scalarRange = node.attrs.scalar_data_range as [number, number] | undefined;
 
-        // Colormap support — gsplats inherit palettes directly; points / lines /
-        // mesh inherit one only when they have scalars. A group inherits only
-        // when at least one descendant can consume the palette.
-        // Gsplats only support a colormap when they actually have scalar
-        // data (`has_scalars`) or an authored `colormap`; a bare gsplats
-        // node with no scalars must NOT advertise colormap support, or
-        // the UI offers a no-op colormap dropdown.
+        // Colormap support — gsplats always can (their amplitude IS the scalar,
+        // see `supportsScalarColormap`); points / lines / mesh only when they
+        // have scalars. A group can when at least one data descendant can, so a
+        // kind=lod / kind=partition wrapper answers exactly like its leaves. The
+        // same rule decides whether an ancestor's palette is inherited.
         const groupCanUseInheritedColormap =
           node.type === 'group' &&
           collectDataDescendants(node).some(
@@ -711,8 +789,7 @@ export class LayerStateManager {
           deriveColormapFromDescendants(node) ||
           inheritedColormap;
         const scalarWindow = !!colormap || usesColormap(node);
-        const supportsColormap =
-          groupCanUseInheritedColormap || !!node.attrs.has_scalars || !!colormap;
+        const supportsColormap = canUseInheritedColormap || !!colormap;
         const colormapScalarRange =
           scalarRange || ampRange || deriveScalarRangeFromDescendants(node);
         const labelVocabulary =
@@ -906,6 +983,7 @@ export class LayerStateManager {
           layerOrderExplicit: ownLayerOrder !== undefined,
           selected: false,
           colormap,
+          customLut: colormap === 'custom' ? deriveCustomLut(node, index) : undefined,
           supportsColormap,
           labelVocabulary,
           colorByLabel: false,
@@ -984,7 +1062,7 @@ export class LayerStateManager {
     const layer = this.layers.get(path);
     if (!layer?.sound || !Number.isFinite(gain)) return;
     layer.sound.gain = Math.min(2, Math.max(0, gain));
-    this.notify();
+    this.notify(false);
   }
 
   /** Get all layers in display order */
@@ -1050,7 +1128,7 @@ export class LayerStateManager {
       }
     }
 
-    this.notify();
+    this.notify(false);
   }
 
   /** Get all currently selected layers */
@@ -1279,15 +1357,18 @@ export class LayerStateManager {
 
   // ─── Events ──────────────────────────────────────────────
 
-  /** Subscribe to state changes. Returns an unsubscribe function. */
+  /**
+   * Subscribe to state changes (each tells whether a layer's appearance changed).
+   * Returns an unsubscribe function.
+   */
   onChange(listener: LayerChangeListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  private notify(): void {
+  private notify(appearance = true): void {
     for (const listener of this.listeners) {
-      listener();
+      listener({ appearance });
     }
   }
 

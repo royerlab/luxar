@@ -844,6 +844,27 @@ function takeOwnedEntries<K, V>(
 }
 
 /**
+ * Run the first writes into a FRESH geometry's element storage (just
+ * attached by {@link attachElementStorage}). If they throw — a texel
+ * writer's short-source guard — the geometry is disposed, which frees the
+ * texture its dispose listener owns, and the error is rethrown: the pair
+ * has no owner yet, and every caller keeps its mesh on the OLD geometry
+ * when a build throws. The one rule for the points, lines and gsplats
+ * non-pool builders.
+ */
+export function writeFreshElementStorage(
+  geometry: THREE.InstancedBufferGeometry,
+  write: () => void
+): void {
+  try {
+    write();
+  } catch (err) {
+    geometry.dispose();
+    throw err;
+  }
+}
+
+/**
  * Create the element data texture + `aSortedIndex` attribute pair on a
  * geometry, sized for `capacity` elements of `layout`. Returns the
  * texture.

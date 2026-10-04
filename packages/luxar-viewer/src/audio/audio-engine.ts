@@ -382,7 +382,9 @@ export class AudioEngine {
       (a, b) => Number(b.isAudibleNow) - Number(a.isAudibleNow)
     );
     for (const node of ordered) {
-      if (this.disposed || !this.nodes.has(node.path)) return;
+      // Identity, not path: a detach + re-attach of the same store reuses the
+      // paths with new nodes, and this loop must then yield to theirs.
+      if (this.disposed || this.nodes.get(node.path) !== node) return;
       try {
         const bytes = await node.desc.readClip();
         if (!bytes) {
@@ -391,7 +393,7 @@ export class AudioEngine {
         }
         const copy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
         const buffer = await ctx.decodeAudioData(copy as ArrayBuffer);
-        if (this.disposed || !this.nodes.has(node.path)) return;
+        if (this.disposed || this.nodes.get(node.path) !== node) return;
         node.setBuffer(buffer);
       } catch (error) {
         log.warning(Modules.AUDIO, `${node.path}: could not decode clip`, error);

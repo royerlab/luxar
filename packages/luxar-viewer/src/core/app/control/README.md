@@ -56,6 +56,9 @@ opt-in by construction.
 
 **`camera-changed` is throttled.** It fires at frame rate, and an auto-rotating
 kiosk never stops moving. Unthrottled it would crowd out the taps that matter.
+At most one per `CONTROL_CAMERA_EVENT_MIN_INTERVAL_MS` (20 Hz), with a trailing
+flush: the newest pose dropped inside an interval is sent when it ends, so a
+controller always ends on the camera's final pose.
 
 **`dispose` is not on the wire.** It tears the viewer down in one frame and
 `init` is not exposed, so there would be no way back — a single frame would

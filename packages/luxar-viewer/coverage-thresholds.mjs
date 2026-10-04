@@ -84,8 +84,9 @@ export const COVERAGE_THRESHOLDS = {
   // lines 93 -> 95 and branches 86 -> 88 after the fly-touch orchestration
   // and input/touch.ts tests moved the subtree past the slack budget.
   // functions 88 -> 90 after the shared view-axis roll regression tests
-  // lifted the subtree from 90.72 -> 91.21.
-  'src/controls/**': { lines: 95, functions: 90, branches: 88 },
+  // lifted the subtree from 90.72 -> 91.21; 90 -> 92 after the unused orbit
+  // keyboard-pan path was deleted, lifting it to 93.19.
+  'src/controls/**': { lines: 95, functions: 92, branches: 88 },
 
   // The bulk of the codebase.
   // functions 87 -> 90 after the L0-cache-wiring + spatial-extend-dims
@@ -108,7 +109,7 @@ export const COVERAGE_THRESHOLDS = {
   // `ui/control-panel/render-panel` is port-injected, so the grid fitting, the
   // centred final row and the active-tile marking are all reachable from
   // jsdom; the subtree went 91.90 -> 92.00 and the old floor went stale.
-  'src/ui/**': { lines: 91, functions: 86, branches: 77 },
+  'src/ui/**': { lines: 91, functions: 86, branches: 79 },
   // branches 83 -> 85 after the #2508 capture-readiness tests reached the
   // version-skew branches nothing had exercised (a cap refusing on a partial
   // snapshot, the unreadable-figure paths, the hostile-string guard): the
@@ -137,7 +138,7 @@ export const COVERAGE_THRESHOLDS = {
   // the five TSL pick graphs with a real WGSLNodeBuilder (no GPU), which runs
   // their factory bodies: measured lines 85.93, functions 86.27. The visual
   // shader bodies are still reached only by the browser parity spec.
-  'src/rendering/**': { lines: 84, functions: 85, branches: 76 },
+  'src/rendering/**': { lines: 84, functions: 85, branches: 78 },
 
   // The last two measured top-level source directories without a sub-gate;
   // until 2026-10 their coverage could erode freely inside the global pool.
@@ -157,13 +158,13 @@ export const COVERAGE_RECORDED = {
   'src/utils/**': { lines: 99.6, functions: 100, branches: 94.08 },
   'src/scene/**': { lines: 96.28, functions: 91.08, branches: 91.15 },
   'src/cache/**': { lines: 95.03, functions: 95.12, branches: 87.23 },
-  'src/controls/**': { lines: 96.32, functions: 91.21, branches: 89.44 },
+  'src/controls/**': { lines: 96.32, functions: 93.19, branches: 89.44 },
   'src/data/**': { lines: 93.6, functions: 93.08, branches: 87.31 },
   'src/workers/**': { lines: 95.0, functions: 95.58, branches: 90.04 },
-  'src/ui/**': { lines: 92.0, functions: 86.95, branches: 79.58 },
+  'src/ui/**': { lines: 92.0, functions: 86.95, branches: 80.06 },
   'src/core/**': { lines: 92.15, functions: 81.03, branches: 86.94 },
   'src/input/**': { lines: 93.09, functions: 90.39, branches: 85.26 },
-  'src/rendering/**': { lines: 85.93, functions: 86.27, branches: 78.59 },
+  'src/rendering/**': { lines: 85.93, functions: 86.27, branches: 79.46 },
   'src/audio/**': { lines: 96.38, functions: 95.48, branches: 82.9 },
   'src/profiling/**': { lines: 96.94, functions: 96.34, branches: 89.61 },
 };

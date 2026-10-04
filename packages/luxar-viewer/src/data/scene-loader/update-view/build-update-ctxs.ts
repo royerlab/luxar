@@ -5,8 +5,9 @@
  * `data/{points,lines,gsplats,mesh}/handler.ts::loadAndStage`. Each handler
  * needs a small per-type ctx that shares most fields (rootGroup,
  * viewStateQueue, clearFailure, currentVersion, deriveNodeViewState)
- * plus a few type-specific bits (updateVersion for the version-gated
- * info log, the extendedToleranceCache shared between Points + GSplats + Mesh).
+ * plus `updateVersion` (the pass counter every handler's first-update log is
+ * gated on) and the extendedToleranceCache shared between Points + GSplats +
+ * Mesh.
  *
  * Centralising the construction here keeps `updateView` focused on
  * orchestration and avoids three near-identical literal blocks in the
@@ -64,6 +65,7 @@ export function buildUpdateCtxs(input: UpdateCtxsInput): {
     viewStateQueue: input.viewStateQueue,
     clearFailure: input.clearFailure,
     currentVersion: input.currentVersion,
+    updateVersion: input.updateVersion,
     extendedToleranceCache: input.extendedToleranceCache,
     signal: input.signal,
     frameBudgetMs: input.frameBudgetMs,
@@ -97,6 +99,7 @@ export function buildUpdateCtxs(input: UpdateCtxsInput): {
     rootGroup: input.rootGroup,
     clearFailure: input.clearFailure,
     currentVersion: input.currentVersion,
+    updateVersion: input.updateVersion,
     extendedToleranceCache: input.extendedToleranceCache,
     signal: input.signal,
     frameBudgetMs: input.frameBudgetMs,

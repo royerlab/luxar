@@ -144,7 +144,7 @@ describe('renderOverviewContent — per-type hero cards', () => {
     );
     for (const label of [
       'VISIBLE POINTS',
-      'VISIBLE LINES',
+      'VISIBLE SEGMENTS',
       'VISIBLE SPLATS',
       'VISIBLE TRIANGLES',
     ]) {
@@ -152,7 +152,7 @@ describe('renderOverviewContent — per-type hero cards', () => {
     }
     for (const field of [
       'visible-points',
-      'visible-lines',
+      'visible-segments',
       'visible-splats',
       'visible-triangles',
     ]) {
@@ -173,7 +173,7 @@ describe('renderOverviewContent — per-type hero cards', () => {
       statsWith({ datasetSegments: 20, visibleSegments: 2, datasetTriangles: 40 }),
       NO_CACHE
     );
-    expect(html).toContain('VISIBLE LINES');
+    expect(html).toContain('VISIBLE SEGMENTS');
     expect(html).toContain('VISIBLE TRIANGLES');
     expect(html).not.toContain('VISIBLE POINTS');
     expect(html).not.toContain('VISIBLE SPLATS');

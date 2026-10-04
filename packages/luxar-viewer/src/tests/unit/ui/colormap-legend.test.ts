@@ -104,11 +104,8 @@ function toSceneGraph(layers: LayerInfo[]): SceneNode {
 
 /**
  * Wrap a real `LayerStateManager` with the test-only `setLayers` /
- * `callbackCount` accessors the existing tests use. `initFromSceneGraph`
- * is a one-time setup call in production and does NOT notify listeners;
- * the wrapper invokes the private `notify` after a re-init so the
- * legend's `onChange` callback fires (production never needs this
- * because it subscribes AFTER init).
+ * `callbackCount` accessors the existing tests use. A re-init notifies its
+ * listeners, so the legend's `onChange` callback fires on `setLayers`.
  */
 function makeLayerState(initialLayers: LayerInfo[] = []) {
   const mgr = new LayerStateManager();
@@ -117,7 +114,6 @@ function makeLayerState(initialLayers: LayerInfo[] = []) {
   return Object.assign(mgr, {
     setLayers(next: LayerInfo[]) {
       mgr.initFromSceneGraph(toSceneGraph(next));
-      (mgr as unknown as { notify: () => void }).notify();
     },
     callbackCount: (): number => (mgr as unknown as { listeners: Set<unknown> }).listeners.size,
   });
@@ -319,6 +315,88 @@ describe('ColormapLegend', () => {
         '.luxar-colormap-legend__gradient'
       );
       expect(canvasAfterIdempotentUpdate).toBe(canvas);
+    });
+
+    it("draws an authored custom palette from the layer's own LUT, not the gray fallback", () => {
+      // jsdom has no 2d context, so record what the gradient paints instead.
+      const painted: string[] = [];
+      const fakeCtx = {
+        set fillStyle(v: string) {
+          painted.push(v);
+        },
+        fillRect: vi.fn(),
+      };
+      const getContext = vi
+        .spyOn(HTMLCanvasElement.prototype, 'getContext')
+        .mockReturnValue(fakeCtx as unknown as CanvasRenderingContext2D);
+      try {
+        const lut = new Uint8Array(768);
+        for (let i = 0; i < 256; i++) lut.set([i, 10, 20], i * 3);
+        const custom = new LayerStateManager();
+        custom.initFromSceneGraph({
+          path: '',
+          type: 'scene',
+          attrs: {},
+          hasSpatialIndex: false,
+          children: [
+            {
+              path: 'layer/fire',
+              type: 'gsplats',
+              attrs: { layer: true, colormap: 'custom', customLutBytes: lut },
+              hasSpatialIndex: true,
+            },
+          ],
+        });
+        const customLegend = new ColormapLegend({ layerState: custom });
+        customLegend.show();
+
+        expect(painted).not.toContain('#888');
+        expect(painted).toHaveLength(120);
+        expect(painted[0]).toBe('rgb(0,10,20)');
+        expect(painted.every((style) => /^rgb\(\d+,10,20\)$/.test(style))).toBe(true);
+        customLegend.dispose();
+      } finally {
+        getContext.mockRestore();
+      }
+    });
+
+    it('draws the gray swatch for a LUT the renderer would reject (not 768 or 1024 bytes)', () => {
+      // The renderer falls back to viridis for such bytes; the legend must not
+      // paint invalid colours from a fractional stride.
+      const painted: string[] = [];
+      const fakeCtx = {
+        set fillStyle(v: string) {
+          painted.push(v);
+        },
+        fillRect: vi.fn(),
+      };
+      const getContext = vi
+        .spyOn(HTMLCanvasElement.prototype, 'getContext')
+        .mockReturnValue(fakeCtx as unknown as CanvasRenderingContext2D);
+      try {
+        const odd = new LayerStateManager();
+        odd.initFromSceneGraph({
+          path: '',
+          type: 'scene',
+          attrs: {},
+          hasSpatialIndex: false,
+          children: [
+            {
+              path: 'layer/odd',
+              type: 'gsplats',
+              attrs: { layer: true, colormap: 'custom', customLutBytes: new Uint8Array(500) },
+              hasSpatialIndex: true,
+            },
+          ],
+        });
+        const oddLegend = new ColormapLegend({ layerState: odd });
+        oddLegend.show();
+
+        expect(painted).toEqual(['#888']);
+        oddLegend.dispose();
+      } finally {
+        getContext.mockRestore();
+      }
     });
   });
 });

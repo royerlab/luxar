@@ -37,6 +37,7 @@ import type {
 } from '../../../../../data/data-loader-types';
 import type { LinesDataLoader, LoadedLinesData } from '../../../../../types/lines';
 import type { GSplatsDataLoader, LoadedGSplatsData } from '../../../../../types/gsplats';
+import type { LoadedMeshData, MeshDataLoader } from '../../../../../types/mesh';
 import {
   createLineWorkingSetGate,
   EAGER_CHILD_LOAD_CONCURRENCY,
@@ -144,6 +145,11 @@ function makeGSplatsLoader(
   updateView: (vs: ViewState) => Promise<LoadedGSplatsData | null>
 ): GSplatsDataLoader {
   return { updateView } as unknown as GSplatsDataLoader;
+}
+function makeMeshLoader(
+  updateView: (vs: ViewState) => Promise<LoadedMeshData | null>
+): MeshDataLoader {
+  return { updateView } as unknown as MeshDataLoader;
 }
 
 const PATH = '/scene/node';
@@ -358,7 +364,7 @@ describe('retryFailedLoaderUnlocked — derived view state reaches the loader in
   // and `verifyAndClear` then blesses that result.
 
   // `Promise<null>` is assignable to every loader's `Promise<LoadedX | null>`,
-  // so one signature serves all three makers.
+  // so one signature serves all four makers.
   type StubUpdateView = (vs: ViewState) => Promise<null>;
   const registerFor: Record<
     string,
@@ -370,9 +376,10 @@ describe('retryFailedLoaderUnlocked — derived view state reaches the loader in
       registry.registerLinesLoader(PATH, makeLinesLoader(updateView)),
     gsplats: (registry, updateView) =>
       registry.registerGSplatsLoader(PATH, makeGSplatsLoader(updateView)),
+    mesh: (registry, updateView) => registry.registerMeshLoader(PATH, makeMeshLoader(updateView)),
   };
 
-  it.each(['points', 'lines', 'gsplats'])('forwards noPreimage for %s', async (kind) => {
+  it.each(['points', 'lines', 'gsplats', 'mesh'])('forwards noPreimage for %s', async (kind) => {
     const updateView = vi.fn().mockResolvedValue(null);
     const ctx = makeRetryCtx({ rootGroup: makeRootGroupWith(PATH) });
     const derivedViewState: ViewState = { ...makeViewState(), noPreimage: true };
@@ -384,6 +391,53 @@ describe('retryFailedLoaderUnlocked — derived view state reaches the loader in
 
     expect(updateView).toHaveBeenCalledTimes(1);
     expect(updateView.mock.calls[0][0].noPreimage).toBe(true);
+  });
+});
+
+describe('retryFailedLoaderUnlocked — Mesh loader success path', () => {
+  it('processes with the committed node attrs, then commits and clears the failure', async () => {
+    // `RetryCtx` carries no node attrs, so the mesh arm reads winding and
+    // membership inputs off the committed object's `userData.attrs`.
+    const data = { faceCount: 1 } as unknown as LoadedMeshData;
+    const updateView = vi.fn().mockResolvedValue(data);
+    const attrs = {
+      normal_dims: [0, 1, 2],
+      double_sided: false,
+      extend_to_all: ['t'],
+      slab_tolerance: 0.25,
+    };
+    const ctx = makeRetryCtx({ rootGroup: makeRootGroupWith(PATH, attrs) });
+    ctx.registry.registerMeshLoader(PATH, makeMeshLoader(updateView));
+    ctx.registry.recordFailure(PATH, new Error('initial failure'));
+
+    const ok = await retryFailedLoaderUnlocked(PATH, ctx);
+
+    expect(ok).toBe(true);
+    const derivedViewState = ctx.spies.deriveNodeViewState.mock.results[0].value.viewState;
+    expect(updateView).toHaveBeenCalledWith(derivedViewState);
+    expect(ctx.processMeshData).toHaveBeenCalledWith(PATH, data, derivedViewState, attrs);
+    const staged = await (ctx.processMeshData as ReturnType<typeof vi.fn>).mock.results[0].value;
+    expect(ctx.commitMeshGeometry).toHaveBeenCalledWith(staged);
+    expect(ctx.registry.failedLoaders.has(PATH)).toBe(false);
+    // Mesh takes the partial-extend tolerance (only Lines opts out).
+    expect(ctx.spies.deriveNodeViewState).toHaveBeenCalledWith(PATH, attrs, {
+      applyPartialExtendTolerance: true,
+    });
+  });
+
+  it('defaults double_sided to true when the node does not author it', async () => {
+    const ctx = makeRetryCtx({ rootGroup: makeRootGroupWith(PATH, {}) });
+    ctx.registry.registerMeshLoader(PATH, makeMeshLoader(vi.fn().mockResolvedValue({})));
+    ctx.registry.recordFailure(PATH, new Error('initial failure'));
+
+    await retryFailedLoaderUnlocked(PATH, ctx);
+
+    expect((ctx.processMeshData as ReturnType<typeof vi.fn>).mock.calls[0][3]).toEqual({
+      normal_dims: undefined,
+      double_sided: true,
+      extend_to_all: undefined,
+      slab_tolerance: undefined,
+    });
   });
 });
 
@@ -522,6 +576,27 @@ describe('retryFailedLoaderUnlocked — per-attempt retryCount accounting', () =
     const updated = ctx.registry.failedLoaders.get(PATH);
     expect(updated?.retryCount).toBe(1);
     expect(updated?.error.message).toBe('network down');
+  });
+});
+
+describe('retryFailedLoaderUnlocked — a failed retry unwinds its ladder pass', () => {
+  // The retry streams rungs from the loader's cursor before the commit that can
+  // throw; without the unwind the NEXT retry resumes past the failed prefix and
+  // attempts a larger allocation (#2426, `pass-rollback.ts`).
+  it.each(['points', 'lines', 'gsplats', 'mesh'] as const)('%s', async (kind) => {
+    const rollbackToPassStart = vi.fn(() => 1);
+    const loader = {
+      updateView: vi.fn().mockRejectedValue(new RangeError('Array buffer allocation failed')),
+      rollbackToPassStart,
+    } as never;
+    const ctx = makeRetryCtx({ rootGroup: makeRootGroupWith(PATH) });
+    ctx.registry.register(kind, PATH, loader);
+    ctx.registry.recordFailure(PATH, new Error('initial failure'));
+
+    await expect(retryFailedLoaderUnlocked(PATH, ctx)).resolves.toBe(false);
+
+    expect(rollbackToPassStart).toHaveBeenCalledTimes(1);
+    expect(ctx.registry.failedLoaders.get(PATH)?.retryCount).toBe(1);
   });
 });
 

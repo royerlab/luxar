@@ -30,7 +30,9 @@ rule, lazily — nothing is built until the material manager's physical-material
      `core/app/init/environment-wiring.ts`). Camera motion is NOT a trigger: a cube map
      from a fixed probe is view-independent.
    - `hdri` — an equirectangular image at `url` (`hdri.ts`; `.hdr` through a dynamically
-     imported `HDRLoader`, anything else as LDR). The room stands in until it loads.
+     imported `HDRLoader`, anything else as LDR). The room stands in until it loads, and
+     for good if it fails: each URL is requested once, and a load superseded by a newer
+     URL is discarded without touching the newer one.
 3. **The room** — three's procedural `RoomEnvironment`, prefiltered once.
 
 `probe.ts` resolves where a capture looks out from: `auto` (the committed bounds centre),
@@ -74,9 +76,10 @@ disposed. Both hosts build it through the material manager's `onPhysicalMaterial
 hook, dispose it during teardown before releasing the material manager (the targets are
 the renderer's GPU resources), and call `rebuild()` after a WebGL context restore — which
 re-creates whatever was active and preserves laziness when nothing had requested a light
-yet. A dataset switch goes through `resetForDataset()`: it clears the demand, releases the
-capture target and the dataset-owned baked / HDRI textures, and keeps the reusable room
-PMREM.
+yet. A dataset switch goes through `resetForDataset()`: it clears the demand, returns the
+config to the default (the next scene's physical materials ask for light before its own
+config is applied), releases the capture target and the dataset-owned baked / HDRI
+textures, and keeps the reusable room PMREM.
 
 ## Testing
 

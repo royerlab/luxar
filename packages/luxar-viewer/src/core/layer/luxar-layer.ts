@@ -222,6 +222,17 @@ export interface LuxarLayerOptions {
    */
   densityGuard?: boolean;
   /**
+   * Session-only override of the density guard's blendable cap (elements per
+   * drawing-buffer pixel), as `LuxarAppOptions.densityCap`. Undefined ⇒
+   * `config.densityGuard.capElementsPerPixel`.
+   */
+  densityCap?: number;
+  /**
+   * WebGL blend-program warm-up, as `LuxarAppOptions.blendWarmup`. Default
+   * true on laptops/desktops; always off on phones/tablets and under WebGPU.
+   */
+  blendWarmup?: boolean;
+  /**
    * Worker-based back-to-front sorting for order-dependent geometry. Default
    * true. `false` also skips the per-frame cross-node order pass (authored
    * cross-layer bands, physical glass drawn first), which needs the
@@ -914,7 +925,10 @@ export class LuxarLayer {
   private configureBlendWarmup(): void {
     const renderer = isWebGLRenderer(this.options.renderer) ? this.options.renderer : null;
     this.blendWarmup.configure({
-      enabled: renderer !== null && getInputProfile().deviceClass !== 'mobile',
+      enabled:
+        renderer !== null &&
+        this.options.blendWarmup !== false &&
+        getInputProfile().deviceClass !== 'mobile',
       renderer,
       camera: this.options.getCamera(),
       targetScene: this.options.scene,
@@ -1098,6 +1112,7 @@ export class LuxarLayer {
       configEnabled: config.densityGuard.enabled,
       option: this.options.densityGuard,
       config: config.densityGuard,
+      capOverride: this.options.densityCap,
       energyComp: this.options.lodEnergyComp ?? true,
       getViewContext: () => this.viewContext.get(),
       sceneManager: {

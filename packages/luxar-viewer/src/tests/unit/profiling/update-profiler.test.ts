@@ -497,63 +497,6 @@ describe('UpdateProfiler — hierarchy', () => {
 });
 
 // ---------------------------------------------------------------------
-// Listeners
-// ---------------------------------------------------------------------
-
-describe('UpdateProfiler — listeners', () => {
-  it('notifies listeners after each completed update', () => {
-    const profiler = new UpdateProfiler();
-    const listener = vi.fn();
-    profiler.addListener(listener);
-
-    profiler.beginUpdate();
-    profiler.endUpdate();
-    expect(listener).toHaveBeenCalledTimes(1);
-
-    profiler.beginUpdate();
-    profiler.endUpdate();
-    expect(listener).toHaveBeenCalledTimes(2);
-  });
-
-  it('notifies listeners on reset()', () => {
-    const profiler = new UpdateProfiler();
-    const listener = vi.fn();
-    profiler.addListener(listener);
-
-    profiler.reset();
-    expect(listener).toHaveBeenCalledTimes(1);
-  });
-
-  it('removeListener() stops further notifications', () => {
-    const profiler = new UpdateProfiler();
-    const listener = vi.fn();
-    profiler.addListener(listener);
-    profiler.removeListener(listener);
-
-    profiler.beginUpdate();
-    profiler.endUpdate();
-    expect(listener).not.toHaveBeenCalled();
-  });
-
-  it('a throwing listener does not break the profiler', () => {
-    const profiler = new UpdateProfiler();
-    const ok = vi.fn();
-    const bad = vi.fn(() => {
-      throw new Error('listener-explode');
-    });
-    profiler.addListener(bad);
-    profiler.addListener(ok);
-
-    expect(() => {
-      profiler.beginUpdate();
-      profiler.endUpdate();
-    }).not.toThrow();
-    expect(ok).toHaveBeenCalledTimes(1);
-    expect(bad).toHaveBeenCalledTimes(1);
-  });
-});
-
-// ---------------------------------------------------------------------
 // Reset & re-entry
 // ---------------------------------------------------------------------
 

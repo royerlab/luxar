@@ -184,7 +184,9 @@ DEGENERATE_RECT_HALF_EXTENT = 1e-3
 W_EPSILON = 1e-6
 
 #: ``config.lod.hysteresisRatio`` (``config/sections/lod/data.ts``), the default the
-#: viewer's ``pickChildWithHysteresis`` uses.
+#: viewer's ``pickChildWithHysteresis`` uses. Not read from the viewer config: the
+#: committed parity fixture (``tests/test_lod_metric_parity.py``) records it and
+#: the viewer's ``lod-metric-parity.test.ts`` fails when the two defaults differ.
 HYSTERESIS_RATIO = 0.1
 
 #: The three aspect ratios every group is reported at, as ``(label, value)``.
@@ -508,6 +510,10 @@ def project_box_ndc_rect(
     Args:
         box: A world-space box.
         proj_view: The row-major ``projection @ view`` product.
+        near: The camera's near-plane distance, where a box the eye plane cuts
+            (eye outside) is clipped — the viewer passes ``camera.near``.
+            ``None`` clips at the matrix's own ``z + w = 0`` plane, the same
+            physical plane under a WebGL perspective projection.
 
     Returns:
         The NDC rect, or ``None`` when the camera is inside ``box``.
@@ -783,6 +789,10 @@ def project_box_area_fraction(
         box: A box in the frame ``proj_view`` maps to clip space — group-local
             bounds with ``P·V·matrixWorld``, or world bounds with ``P·V``.
         proj_view: The row-major box-to-clip matrix.
+        near: The camera's near-plane distance, where a box the eye plane cuts
+            (eye outside) is clipped — the viewer passes ``camera.near``.
+            ``None`` clips at the matrix's own ``z + w = 0`` plane, the same
+            physical plane under a WebGL perspective projection.
 
     When the eye plane cuts the box (no finite near depth to size the ellipse
     at) the metric is ``+inf`` with the camera INSIDE the box, else the
@@ -839,6 +849,10 @@ def project_box_diagonal_px(
         proj_view: The row-major ``projection @ view`` product.
         width: Viewport width in pixels.
         height: Viewport height in pixels.
+        near: The camera's near-plane distance, where a box the eye plane cuts
+            (eye outside) is clipped — the viewer passes ``camera.near``.
+            ``None`` clips at the matrix's own ``z + w = 0`` plane, the same
+            physical plane under a WebGL perspective projection.
 
     Returns:
         The pixel diagonal, or ``+inf`` with the camera inside the box.
@@ -850,7 +864,11 @@ def project_box_diagonal_px(
 
 
 def legacy_coverage_metric(
-    box: Box3, proj_view: np.ndarray, width: float, height: float
+    box: Box3,
+    proj_view: np.ndarray,
+    width: float,
+    height: float,
+    near: Optional[float] = None,
 ) -> float:
     """The dimensionless legacy ``selector="coverage"`` metric.
 
@@ -865,12 +883,16 @@ def legacy_coverage_metric(
         proj_view: The row-major ``projection @ view`` product.
         width: Viewport width in pixels.
         height: Viewport height in pixels.
+        near: The camera's near-plane distance, where a box the eye plane cuts
+            (eye outside) is clipped — the viewer passes ``camera.near``.
+            ``None`` clips at the matrix's own ``z + w = 0`` plane, the same
+            physical plane under a WebGL perspective projection.
 
     Returns:
         The coverage metric, or ``+inf`` with the camera inside the box.
     """
     fitted_axis_px = min(width, height)
-    return project_box_diagonal_px(box, proj_view, width, height) / (
+    return project_box_diagonal_px(box, proj_view, width, height, near) / (
         FILL_FACTOR * fitted_axis_px
     )
 
@@ -1657,7 +1679,7 @@ def _measure(
             area_metric
             if geometry.selector == DERIVED_LOD_SELECTOR
             else legacy_coverage_metric(
-                geometry.metric_local, box_to_clip, width, height
+                geometry.metric_local, box_to_clip, width, height, near
             )
         )
         today_index = pick_child_with_hysteresis(

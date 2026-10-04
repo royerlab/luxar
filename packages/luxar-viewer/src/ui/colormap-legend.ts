@@ -10,6 +10,7 @@
 import { UIComponent } from './overlay-widgets/ui-component';
 import type { LayerStateManager, LayerInfo } from './layers/layer-state';
 import { BUILTIN_COLORMAPS } from '../rendering/colormap-data';
+import { isValidCustomLut } from '../rendering/colormap-textures';
 
 /**
  * Construction options for {@link ColormapLegend}.
@@ -20,24 +21,26 @@ export interface ColormapLegendConfig {
 }
 
 /**
- * Draw a colormap gradient onto a canvas element.
+ * Draw a layer's colormap gradient onto a canvas element: a builtin by name, or
+ * the authored `'custom'` LUT (256 × RGB or RGBA) the layer carries.
  */
-function drawColormapGradient(canvas: HTMLCanvasElement, colormapName: string): void {
+function drawColormapGradient(canvas: HTMLCanvasElement, layer: LayerInfo): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
-  const lut = BUILTIN_COLORMAPS[colormapName];
-  if (!lut) {
-    // Unknown colormap — draw gray
+  const lut = layer.colormap === 'custom' ? layer.customLut : BUILTIN_COLORMAPS[layer.colormap!];
+  if (!lut || (layer.colormap === 'custom' && !isValidCustomLut(lut))) {
+    // Unknown colormap, or LUT bytes the renderer rejects — draw gray
     ctx.fillStyle = '#888';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     return;
   }
 
+  const stride = lut.length / 256;
   const w = canvas.width;
   const h = canvas.height;
   for (let x = 0; x < w; x++) {
-    const i = Math.floor((x / w) * 255) * 3;
+    const i = Math.floor((x / w) * 255) * stride;
     ctx.fillStyle = `rgb(${lut[i]},${lut[i + 1]},${lut[i + 2]})`;
     ctx.fillRect(x, 0, 1, h);
   }
@@ -128,7 +131,7 @@ export class ColormapLegend extends UIComponent<ColormapLegendConfig> {
     canvas.className = `${this.getClassName()}__gradient`;
     canvas.width = 120;
     canvas.height = 12;
-    drawColormapGradient(canvas, layer.colormap!);
+    drawColormapGradient(canvas, layer);
     barRow.appendChild(canvas);
     entry.appendChild(barRow);
 

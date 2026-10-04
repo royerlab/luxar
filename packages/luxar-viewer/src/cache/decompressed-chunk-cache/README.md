@@ -33,10 +33,13 @@ getSignal?, getOrigin? }`) returns a
    **Abort isolation:** the shared decode runs under the entry's OWN
    `AbortController`; each waiter races it against its own signal (the call's
    `options.signal`, else `getSignal()`), rejecting only itself on abort. The
-   decode is cancelled only once EVERY waiter has aborted (and is then
-   deregistered, so a later caller starts afresh); a decode that is not fully
-   abandoned completes and is cached. Only a still-registered entry commits, so
-   `cache.clear()` also orphans in-flight decodes.
+   decode is cancelled only once EVERY waiter has aborted; it stays registered
+   until it settles, so a caller arriving meanwhile takes its result if the
+   cancellation came too late to stop it, and starts afresh if it was really
+   cancelled (rejected with the abort reason, or an `AbortError`). A decode
+   that is not fully abandoned completes and is cached. Only a
+   still-registered entry commits, so `cache.clear()` also orphans in-flight
+   decodes.
 5. **Residency reporting** — when an optional `getProbe` accessor is
    supplied, every `getChunk()` calls `getProbe()?.record(hit)` against
    the currently-active `ResidencyProbe` (see `../residency-probe`). L0

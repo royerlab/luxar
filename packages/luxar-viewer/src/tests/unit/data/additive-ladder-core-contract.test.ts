@@ -126,6 +126,7 @@ interface Ladder {
     predicted: ViewState,
     signal?: AbortSignal
   ): Promise<void>;
+  ladderResidency(): { loadedRungs: number; elementCount: number; residentBytes: number };
   dispose(): void;
 }
 
@@ -271,6 +272,25 @@ describe.each(GEOMETRIES)('$name progressive loader — shared ladder engine', (
     expect(slices).toEqual([4, 6]);
     const signal = rungs[0].prefetchChunks.mock.calls[0][1] as AbortSignal;
     expect(signalPriority(signal)?.value).toBe('speculative');
+  });
+
+  it('a rung landing after dispose() is dropped, not appended to the dead ladder', async () => {
+    const rungs = Array.from({ length: 2 }, (_, i) => rung(make, i + 1));
+    let land!: () => void;
+    rungs[0].updateViewWithResidency.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => (land = resolve));
+      return { data: make(1), allResident: true };
+    });
+    const loader = build(rungs);
+    const pass = loader.updateView(viewAt(0));
+    await vi.waitFor(() => expect(land).toBeDefined());
+    loader.dispose();
+    land();
+    await pass.catch(() => undefined);
+    const residency = loader.ladderResidency();
+    expect(residency.loadedRungs).toBe(0);
+    expect(residency.elementCount).toBe(0);
+    expect(residency.residentBytes).toBe(0);
   });
 
   it('answers the predicted-view prefetch by warming its coarse rung', async () => {

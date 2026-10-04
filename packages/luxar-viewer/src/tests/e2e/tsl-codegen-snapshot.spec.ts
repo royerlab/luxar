@@ -6,7 +6,7 @@
  * brightness computations across `colorNode` and `depthNode`,
  * unnecessary varyings, etc.). This spec captures the actual shader
  * code emitted by `WebGPURenderer({ forceWebGL: true })` for each
- * pinned shader variant (points, lines, gsplats + their pick and
+ * pinned shader variant (points, lines, gsplats, mesh + their pick and
  * fast-path builds) and pins it to a checked-in snapshot file under
  * `src/tests/__codegen__/`.
  *
@@ -263,7 +263,7 @@ function assertSnapshot(shader: string, kind: 'vertex' | 'fragment', actual: str
 
 // Shaders to snapshot. Includes all geometry kinds and their picking
 // variants so attribute-packing changes (Float16 colours, etc.) have a
-// regression gate across Points, Lines, and GSplats.
+// regression gate across Points, Lines, GSplats and Mesh.
 const SHADERS = [
   'line',
   'line-pick',
@@ -401,6 +401,13 @@ const SHADERS = [
   'line-variant-persp',
   'line-pick-variant-ortho',
   'line-pick-variant-persp',
+  // The mesh gamma == 1 and no-GOG fast paths (GLSL twins: LUXAR_GAMMA_ONE /
+  // LUXAR_NO_GOG) — the mesh peers of `point-gamma-one` / `point-no-gog` & co. A
+  // default mesh renders with the no-GOG build. Appended rather than grouped with
+  // the other mesh entries so they cannot reorder the render group of any
+  // snapshot above.
+  'mesh-gamma-one',
+  'mesh-no-gog',
 ] as const;
 
 test.describe('TSL → generated-shader snapshots', () => {

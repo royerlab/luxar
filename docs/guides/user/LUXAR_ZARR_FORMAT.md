@@ -520,7 +520,7 @@ default (the finest level the `.centers` accessor returns).
   consistent robust extent. Decimation, culling, and filtering must recompute or
   remove the derived bound. Producer-side authoring policy is tracked in #1655.
 - Children themselves are standard nodes — they retain their own
-  `type` (`gsplats` / `points` / `lines` / `group`, possibly with their
+  `type` (`gsplats` / `points` / `lines` / `mesh` / `group`, possibly with their
   own `kind` attr) and full attr set.
 
 **Builder API (Python):**
@@ -715,9 +715,10 @@ PR #1425 introduced for **flat** nodes) into this union index space, offsetting
 level `i` by the preceding levels' on-disk counts, so a labelled Points ladder
 resolves exactly under an nD slice too (issue #1439). Where the levels' metadata is
 inconsistent the viewer publishes no map at all and falls back to the raw committed
-slot, rather than composing an index it cannot trust. For **Lines** no map is
-composed across the levels, so a laddered lines node still resolves at the raw
-committed slot.
+slot, rather than composing an index it cannot trust. **Lines** is composed the
+same way at vertex granularity: each level's on-disk vertex ranges are offset by
+the preceding levels' `n_vertices`, so a labelled Lines ladder resolves the picked
+segment's start vertex in this union index space.
 
 Two further notes. Under the documented `partition=`-outer +
 `additive_lod=`-inner composition the CSR lands on each `part_<i>` ladder parent,
@@ -727,11 +728,8 @@ resolves too, through the same per-geometry path as an unpartitioned ladder. And
 per-vertex, matching the flat Lines writer, while the viewer's Lines pick id is a
 per-segment storage slot. Issue #1424 bridged that granularity for **flat** Lines
 nodes — a labelled flat lines node resolves the picked segment's slot back to that
-segment's start vertex row in the stored ordering — but it does so through the same
-visible-slot → on-disk-index map a **lines** ladder does not publish, so across a lines
-ladder the hover only lands on the right string when every element carries the same one
-(there is no broadcast label form — `labels` is always one entry per element). #1439
-carried that map over the levels for Points only; a laddered Lines node is still open.
+segment's start vertex row in the stored ordering — and a **lines** ladder publishes
+the same map, its levels' vertex ranges composed into the union space as above.
 
 **Builder API (Python):**
 ```python
@@ -1498,9 +1496,11 @@ chunk_packs/                        # a SIDECAR: no `type`, no `kind` attr
 A pack file is a 4-byte little-endian header length, a UTF-8 JSON header
 `{"members": {"additive_0/centers/c/0": [offset, length], …}}` (chunk keys
 relative to `prefix`, offsets into the data after the header), then the chunk
-bytes back to back. Every chunk object the node stores is a member, so the
-index needs no member list; it stays ~150 B per pack because it rides in the
-root's consolidated metadata, which every load fetches first. (A first design
+bytes back to back. Every chunk object the node stores is a member, except a
+broadcast array's row, which the viewer takes from the array's `encoding.value`
+and never requests. The index needs no member list; it stays ~150 B per pack
+because it rides in the root's consolidated metadata, which every load fetches
+first. (A first design
 listed the members in the attrs: +637 KB, +7.6%, on tp50's 8.4 MB root.)
 
 A node is packed whole, rungs included, when its stored chunk bytes are at most
@@ -1518,8 +1518,12 @@ warm cache keyed on it stay valid. A reader therefore uses the packs only when
 `scene_content_hash` equals the root `content_hash`; an edit that changes the
 chunks and restamps the hash makes them stale, and they are ignored. An attrs-only
 `luxar restamp-lod` keeps packs current only if they were current before the
-restamp; already-stale packs remain stale. The viewer also checks each pack's
-SHA-256 and reads the plain chunks when that fails.
+restamp; already-stale packs remain stale. `luxar optimize` recognises the
+sidecar by its attrs (`scene_content_hash` and `packs`, no `type`), so a
+same-named group in a generic store is copied as data; in a compiled scene the
+name is reserved.
+The viewer also checks each pack's SHA-256 and reads the plain chunks when that
+fails.
 Every plain chunk stays where it was, so zarr-python, napari and viewers that
 predate packs read the store as if the sidecar were absent (the pack files are
 plain keys in a group: a consolidated open never lists them, and an
@@ -2048,10 +2052,8 @@ ladder parent, which is the node that declares `has_labels`. A laddered
 into that union CSR's index space (issue #1439), so `{hover_index}` is the
 on-disk row under culling and compaction too — it degrades to the raw committed
 slot only when the levels' own metadata is inconsistent. A laddered **Lines**
-node publishes no mapping across its levels, so `{hover_index}` there is the raw
-committed slot, which is a per-*segment* one against the per-*vertex* union CSR
-and so wrong at the granularity whatever the slicing (see the **Labels**
-paragraph of the multi-additive-LOD section above).
+node resolves the same way, at the picked segment's start vertex (see the
+**Labels** paragraph of the multi-additive-LOD section above).
 
 ### Compound Ordering
 

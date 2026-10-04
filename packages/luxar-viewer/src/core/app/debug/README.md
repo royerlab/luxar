@@ -316,7 +316,9 @@ API is invoked under `?debug`); `rendering/line-geometry` and
 part of the main bundle (production modules), so dynamic-importing them would
 save no chunk bytes.
 
-It builds one of three geometry types — Points, Lines, or GSplats. The
+It builds one of three geometry types — Points, Lines, or GSplats; never a
+Mesh, which is whole-node resident rather than instanced and is benched from a
+real store (see `scene/synthetic-scene.ts`). The
 shared options are `count` (elements to generate), `bounds` (half-extent of
 the generation volume, default 100) and `seed` (deterministic PRNG seed,
 default 1; the same `(type, count, bounds, seed, clusters)` yields

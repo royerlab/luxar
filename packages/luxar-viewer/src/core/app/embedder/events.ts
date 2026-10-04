@@ -104,10 +104,8 @@ export interface SelectionPayload {
    * there (#1422). On POINTS that resolves like a flat node: the per-level maps
    * are composed into the union CSR's index space (#1439), so the index holds
    * under culling and compaction too, degrading to the raw committed slot only
-   * when the levels' own metadata is inconsistent. On LINES no map is composed
-   * across the levels, so it reports the raw committed slot, which is a
-   * per-segment one against the per-vertex union CSR — wrong at the granularity
-   * whatever the slicing (#1439 covers Points only). Otherwise it is the
+   * when the levels' own metadata is inconsistent; LINES composes its levels'
+   * vertex ranges the same way, resolving the start vertex. Otherwise it is the
    * element's slot in the buffer that reached the GPU, which after spatial
    * range loading or nD compaction is NOT the on-disk index — and on a Lines
    * node without a per-element string channel it is a per-segment slot in what
@@ -291,4 +289,11 @@ export interface LuxarEmbedderEventMap {
    * an arrival from wherever the camera stopped.
    */
   'waypoint-arrived': { index: number; completed: boolean };
+  /**
+   * The WebGPU device was lost. Unrecoverable in this release: the canvas
+   * stays blank until the page reloads (the viewer shows a reload dialog, and
+   * a kiosk watchdog reloads on its own). WebGL context loss is recovered
+   * internally and emits nothing.
+   */
+  'webgpu-device-lost': { reason?: string; message?: string };
 }

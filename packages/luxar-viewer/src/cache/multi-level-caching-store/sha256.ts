@@ -2,8 +2,10 @@
  * SHA-256 with a secure-context-independent fallback.
  *
  * The cache layer hashes small inputs — a dataset URL, the raw `.zattrs`
- * bytes — to derive OPFS cache-bucket ids and validation tokens. These are
- * cache keys, NOT a security mechanism.
+ * bytes — to derive OPFS cache-bucket ids and validation tokens, and checks
+ * each chunk pack (`luxar optimize --pack`, at most 64 KB of chunks) against
+ * its recorded digest. These are cache keys and integrity checks against a
+ * stale or truncated object, NOT a security mechanism.
  *
  * `crypto.subtle` (Web Crypto / SubtleCrypto) is only defined in a *secure
  * context* — HTTPS, `localhost`, or `file:`. Over plain HTTP (a LAN box, a
@@ -17,11 +19,12 @@
  * way so cache-bucket ids stay stable regardless of origin.
  *
  * Why pure JS and not a WASM hash library: the inputs here are tens of bytes
- * to a few KB, hashed a handful of times per session. Pure JS runs at
- * ~50-150 MB/s, i.e. microseconds per call. A WASM path's module fetch +
- * instantiation (~ms) and per-call FFI copy would be strictly slower at these
- * sizes; WASM/SIMD hashing only wins when streaming hundreds of KB to GB,
- * which the viewer never does on this path.
+ * to a few KB, plus one digest per fetched chunk pack of at most ~64 KB. Pure
+ * JS runs at ~50-150 MB/s: microseconds for the small inputs and under ~1.3 ms
+ * for a full-size pack, which only a non-secure origin pays (a secure one uses
+ * `crypto.subtle`). A WASM path's module fetch + instantiation (~ms) and
+ * per-call FFI copy would not beat that at these sizes; WASM/SIMD hashing only
+ * wins when streaming hundreds of KB to GB, which the viewer never does here.
  */
 
 /** Round constants: first 32 bits of the fractional parts of the cube roots

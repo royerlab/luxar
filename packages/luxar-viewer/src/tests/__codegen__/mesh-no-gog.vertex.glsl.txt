@@ -1,0 +1,132 @@
+#version 300 es
+
+// Three.js r185 - Node System
+
+
+// extensions
+
+
+// precision
+
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp sampler3D;
+precision highp samplerCube;
+precision highp sampler2DArray;
+
+precision highp usampler2D;
+precision highp usampler3D;
+precision highp usamplerCube;
+precision highp usampler2DArray;
+
+precision highp isampler2D;
+precision highp isampler3D;
+precision highp isamplerCube;
+precision highp isampler2DArray;
+
+precision highp sampler2DShadow;
+precision highp sampler2DArrayShadow;
+precision highp samplerCubeShadow;
+
+
+// structs
+
+
+
+
+
+// uniforms
+
+layout( std140 ) uniform render {
+	mat4 cameraProjectionMatrix;
+	mat4 cameraViewMatrix;
+};
+
+layout( std140 ) uniform object {
+	float nodeUniform0;
+	mat3 nodeUniform2;
+	vec2 nodeUniform3;
+	uint nodeUniform4;
+	float nodeUniform5;
+	float nodeUniform6;
+	float nodeUniform7;
+	float nodeUniform8;
+	float nodeUniform9;
+	float nodeUniform10;
+	float nodeUniform12;
+	float nodeUniform13;
+	float nodeUniform14;
+	mat4 nodeUniform16;
+	mat3 nodeUniform17;
+};
+
+
+// varyings
+out vec3 nodeVarying0;
+out float nodeVarying1;
+out vec3 nodeVarying2;
+out vec3 nodeVarying3;
+out vec2 nodeVarying4;
+
+
+// attributes
+layout( location = 0 ) in vec3 position;
+layout( location = 1 ) in vec4 color;
+layout( location = 2 ) in vec3 normal;
+
+
+// vars
+vec3 nodeVar6;
+vec3 nodeVar10;
+vec3 nodeVar18;
+mat4 modelViewMatrix;
+vec4 nodeVar27;
+float nodeVar28;
+vec4 nodeVar29;
+
+// codes
+
+
+void main() {
+
+	// transforms
+
+
+	// flow
+	// code
+
+	nodeVarying4 = vec2( 0.0, 1.0 );
+	nodeVar6 = vec3( 0.0, 0.0, 0.0 );
+	nodeVarying2 = nodeVar6;
+	nodeVar10 = vec3( 0.0, 0.0, 0.0 );
+	nodeVarying3 = nodeVar10;
+	nodeVar18 = vec3( 0.0, 0.0, 0.0 );
+	nodeVarying0 = nodeVar18;
+	nodeVarying1 = 1.0;
+	modelViewMatrix = ( cameraViewMatrix * nodeUniform16 );
+	nodeVar27 = ( modelViewMatrix * vec4( position, 1.0 ) );
+	nodeVarying0 = color.xyz;
+
+	if ( ( ( color.w < 1e30 ) && ( color.w > -1e30 ) ) ) {
+
+		nodeVar28 = min( max( color.w, 0.0 ), 1.0 );
+
+	} else {
+
+		nodeVar28 = 1.0;
+
+	}
+
+	nodeVarying1 = nodeVar28;
+	nodeVarying2 = nodeVar27.xyz;
+	nodeVarying3 = ( cameraViewMatrix * vec4( ( nodeUniform17 * normal ), 0.0 ) ).xyz;
+	nodeVar29 = ( cameraProjectionMatrix * nodeVar27 );
+	nodeVarying4 = nodeVar29.zw;
+
+	// result
+	gl_Position = nodeVar29;
+
+	gl_PointSize = 1.0;
+
+}

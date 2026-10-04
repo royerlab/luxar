@@ -19,7 +19,7 @@ const RANGES: ReadonlyArray<[keyof LodConfig, Range]> = [
   ['playbackProbeIntervalMs', { min: 0, max: Infinity }],
   ['staleHoldMs', { min: 0, max: Infinity }],
   ['staleHoldMinRatio', { min: 0, max: 1 }],
-  ['failedRetryMs', { min: 0, max: Infinity }],
+  ['failedRetryMs', { min: 0, max: Infinity, openMin: true }],
   ['lazyActivationRequestTimeoutMs', { min: 0, max: Infinity, openMin: true }],
   ['partitionFrustumMargin', { min: 0, max: Infinity }],
   ['hysteresisRatio', { min: 0, max: 1, openMax: true }],

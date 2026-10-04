@@ -22,7 +22,7 @@
  *   4. EOG (Exposure-Offset-Gamma)
  *   5. Tone mapping (mode-switched via `LUXAR_TONE_MAPPING_MODE`
  *      shader-define; values are Luxar-internal IDs 1..6, NOT THREE's
- *      enum values — see `toneMappingModeDefine` in the material file
+ *      enum values — see `luxarToneMappingMode` in `../tone-mapping.ts`
  *      for the mapping. `NoToneMapping` aliases to Linear so it
  *      clamps to [0,1].)
  *   6. Vignette
@@ -351,8 +351,8 @@ export const MEGA_FRAGMENT_SHADER = /* glsl */ `
     color = pow(color, vec3(1.0 / uGlobalGamma));
 
     // (5) Tone mapping — LUXAR_TONE_MAPPING_MODE is a Luxar-internal
-    //     compressed ID (1..6) set by toneMappingModeDefine() in the
-    //     material file. THREE.NoToneMapping is aliased to mode 1
+    //     compressed ID (1..6) set by luxarToneMappingMode() in
+    //     tone-mapping.ts. THREE.NoToneMapping is aliased to mode 1
     //     (Linear) so it clamps to [0,1]. Functions come from
     //     <tonemapping_pars_fragment>.
     #if LUXAR_TONE_MAPPING_MODE == 1

@@ -11,7 +11,10 @@
  *     opacity, gain — `../_shared/visibility-glsl.ts`), so an invisible
  *     point is not pickable.
  *   - Brightness-as-depth so the brightest overlapping fragment wins
- *     the depth test (matters for hover-through-translucent point stacks).
+ *     the depth test (matters for hover-through-translucent point stacks) —
+ *     except in the depth-ordered `opaque` / `normal` modes
+ *     (`uSurfaceDepth == 1`, `../_shared/surface-pick.ts`), where the real
+ *     projected depth is written so the FRONT-MOST point wins.
  *
  * Source-of-truth for GLSL3; the WebGPU counterpart lives in `./pick.tsl`
  * and is referenced through the `ShaderSource.webgpu` factory below.

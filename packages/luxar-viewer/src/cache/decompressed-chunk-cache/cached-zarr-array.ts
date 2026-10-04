@@ -194,7 +194,8 @@ export interface CachedArrayHooks {
  * never under a caller's signal. Each caller races the decode against its own
  * signal (the call's `options.signal`, else `hooks.getSignal()`), and the
  * decode is cancelled only once EVERY waiter has aborted. A decode that is not
- * fully abandoned completes and is cached.
+ * fully abandoned completes and is cached; so does an abandoned one that the
+ * cancellation could no longer stop.
  *
  * All other zarr.Array properties and methods pass through unchanged.
  *
@@ -415,11 +416,21 @@ async function awaitAbandoned(
     req.probe?.record(true);
     return result;
   } catch (error) {
-    if (req.signal?.aborted || (error as { name?: unknown } | null)?.name !== 'AbortError') {
-      throw error;
-    }
+    if (req.signal?.aborted || !isCancellation(error, pending)) throw error;
     return acquireChunk(ctx, req);
   }
+}
+
+/**
+ * Whether `error` is the abandoned decode's own cancellation: the reason its
+ * controller was aborted with (fetch rejects with the signal's reason, which
+ * may be any value), or an `AbortError` raised by the read it cancelled.
+ */
+function isCancellation(error: unknown, pending: InflightDecode): boolean {
+  return (
+    error === pending.controller.signal.reason ||
+    (error as { name?: unknown } | null)?.name === 'AbortError'
+  );
 }
 
 /**
@@ -438,7 +449,9 @@ type InflightBuilder = { -readonly [K in keyof InflightDecode]: InflightDecode[K
 /**
  * Start the shared decode for `req.key` under its own controller and register
  * it on the cache. Only a still-registered entry commits its result, so a
- * decode that was fully abandoned (or orphaned by `cache.clear()`) is dropped.
+ * decode orphaned by `cache.clear()` is dropped. A fully abandoned one stays
+ * registered until it settles, so if its cancellation came too late to stop
+ * it (the bytes had already arrived) its result is still cached.
  */
 function startDecode(ctx: AcquireContext, req: AcquireRequest): InflightDecode {
   const { cache, historyPrefix } = ctx;

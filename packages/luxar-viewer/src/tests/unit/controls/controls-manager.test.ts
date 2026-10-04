@@ -608,6 +608,18 @@ describe('ControlsManager', () => {
       controlsManager.setEnabled(true);
       expect(controlsManager.getControls()!.enabled).toBe(true);
     });
+
+    it('keeps controls disabled across mode switches (kiosk allow_pointer: false)', () => {
+      controlsManager.setEnabled(false);
+      for (const type of ['fly', 'ortho', 'orbit'] as const) {
+        controlsManager.setControlType(type);
+        expect(controlsManager.getControls()!.enabled).toBe(false);
+      }
+
+      controlsManager.setEnabled(true);
+      controlsManager.setControlType('fly');
+      expect(controlsManager.getControls()!.enabled).toBe(true);
+    });
   });
 
   describe('saveState/reset roundtrip', () => {

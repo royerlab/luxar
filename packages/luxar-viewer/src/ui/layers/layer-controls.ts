@@ -16,6 +16,9 @@
 
 import type { BlendingMode } from '../../rendering';
 import {
+  CUSTOM_COLORMAP_LABEL,
+  canTakeColormap,
+  layerHasBlending,
   resolveLayerBlendingMode,
   type LayerInfo,
   type LayerStateManager,
@@ -128,6 +131,8 @@ export class LayerControls {
   private blendSelect: HTMLSelectElement | null = null;
   private layerOrderInput: HTMLInputElement | null = null;
   private colormapSelect: HTMLSelectElement | null = null;
+  /** The `'custom'` entry, attached only while the primary layer has an authored LUT. */
+  private customColormapOption: HTMLOptionElement | null = null;
   private labelColorSelect: HTMLSelectElement | null = null;
   private labelFilterSelect: HTMLSelectElement | null = null;
   /**
@@ -293,7 +298,7 @@ export class LayerControls {
 
     // Absorption κ — only meaningful in volumetric mode; hidden for every
     // other mode (see syncAbsorptionVisibility). τ = κ · rayMass with the
-    // same normalised ray mass in all three geometry families, so κ ≈ 1 is
+    // same normalised ray mass in all three emissive families, so κ ≈ 1 is
     // the useful anchor everywhere and one fixed LOG track serves every
     // scene (absorption-range.ts widens it only for an out-of-range authored
     // κ). Position 0 on a log track is an exact κ=0 — the additive limit.
@@ -572,6 +577,9 @@ export class LayerControls {
     noneOpt.value = '';
     noneOpt.textContent = '(direct colors)';
     this.colormapSelect.appendChild(noneOpt);
+    // The authored non-builtin palette (stored as 'custom' + its LUT); placed by
+    // syncColormapSelect for the layers that have one.
+    this.customColormapOption = new Option(CUSTOM_COLORMAP_LABEL, 'custom');
 
     // Add categorized options
     for (const [category, names] of Object.entries(COLORMAP_CATEGORIES)) {
@@ -601,10 +609,12 @@ export class LayerControls {
       const wasColormapped = new Map(
         this.deps.state.getSelected().map((l) => [l.path, l.scalarWindow])
       );
+      // A layer without the authored LUT keeps its palette (see canTakeColormap).
       this.deps.state.applyToSelected((l) => {
-        l.colormap = cmName;
+        if (canTakeColormap(l, cmName)) l.colormap = cmName;
       });
       for (const sel of this.deps.state.getSelected()) {
+        if (!canTakeColormap(sel, cmName)) continue;
         // The display window means a different thing on each side of the
         // off↔on toggle (scalar data range vs authored-RGB identity), so
         // re-default it BEFORE applying — `applyColormap` derives the
@@ -831,15 +841,7 @@ export class LayerControls {
     this.syncAbsorptionVisibility();
     this.syncMeshAppearanceVisibility();
 
-    if (this.colormapSelect) {
-      if (primary.supportsColormap) {
-        this.colormapSelect.parentElement!.style.display = '';
-        this.colormapSelect.value = primary.colormap ?? '';
-      } else {
-        // Hide colormap control for layers that don't support it
-        this.colormapSelect.parentElement!.style.display = 'none';
-      }
-    }
+    this.syncColormapSelect(primary);
 
     if (this.labelColorSelect && this.labelFilterSelect) {
       const container = this.labelColorSelect.parentElement!;
@@ -892,10 +894,25 @@ export class LayerControls {
   }
 
   /**
+   * Show the colormap dropdown for layers that support one, offering the
+   * `'custom'` entry only to a layer with an authored LUT (any other layer would
+   * fall back to viridis under that name), and seat it on the layer's palette.
+   */
+  private syncColormapSelect(primary: LayerInfo): void {
+    if (!this.colormapSelect || !this.customColormapOption) return;
+    this.colormapSelect.parentElement!.style.display = primary.supportsColormap ? '' : 'none';
+    if (!primary.supportsColormap) return;
+    if (primary.customLut) this.colormapSelect.options[0].after(this.customColormapOption);
+    else this.customColormapOption.remove();
+    this.colormapSelect.value = primary.colormap ?? '';
+  }
+
+  /**
    * Show the Absorption (κ) slider only when it can do something: the
-   * primary selection's mode is `volumetric`. All three geometry types
-   * implement the volumetric math (gsplats phase 1, points phase 3,
-   * lines phase 4), so the mode alone decides. Called from render() and
+   * primary selection's mode is `volumetric`. All three emissive geometry
+   * types implement the volumetric math (gsplats phase 1, points phase 3,
+   * lines phase 4) and a mesh resolves `volumetric` to `opaque`, so the
+   * mesh-resolved mode alone decides. Called from render() and
    * the blend-dropdown change handler (mode switches must reveal/hide
    * it immediately).
    */
@@ -940,6 +957,13 @@ export class LayerControls {
       house && resolveLayerBlendingMode(primary.type, primary.blendingMode) === 'opaque';
     this.setHouseShadingVisible(house && primary.shading !== 'none', cutout);
     this.setPhysicalFamilyVisible(physical);
+    this.setBlendVisible(!!primary && layerHasBlending(primary));
+  }
+
+  /** The Blend dropdown, on the same rule as the row menu's Blending submenu. */
+  private setBlendVisible(visible: boolean): void {
+    const blendGroup = this.blendSelect?.parentElement;
+    if (blendGroup) blendGroup.style.display = visible ? '' : 'none';
   }
 
   /** The four lighting sliders, and the cutoff on its own narrower gate. */
@@ -952,13 +976,11 @@ export class LayerControls {
   }
 
   /**
-   * Swap the house-only generic controls (Gamma, Blend) for the physical controls,
-   * and back.
+   * Swap the house-only Gamma slider for the physical controls, and back (the
+   * Blend dropdown follows `layerHasBlending`, which hides it here too).
    */
   private setPhysicalFamilyVisible(physical: boolean): void {
     this.gammaSlider?.setVisible(!physical);
-    const blendGroup = this.blendSelect?.parentElement;
-    if (blendGroup) blendGroup.style.display = physical ? 'none' : '';
     if (this.physicalGroupEl) this.physicalGroupEl.style.display = physical ? '' : 'none';
   }
 
