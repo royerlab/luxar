@@ -325,7 +325,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     rootLoc,
     (sceneAttrs as Record<string, unknown>).content_hash,
     cacheResult.rootIndexFromNetwork(),
-    () => zarr.root(zarr.createStoreForUrl(normalizedUrl))
+    () => zarr.root(cacheResult.sidecarSourceStore())
   );
 
   // Watch the dataset's identity from here on: a demo/dev server dying and a

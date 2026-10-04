@@ -38,7 +38,9 @@ vi.mock('../../../../../data/zarr', () => ({
 
 import { setupCaches } from '../../../../../data/scene-loader/cache/cache-setup';
 import { PackedChunkSource } from '../../../../../cache/chunk-source/packed-chunk-source';
+import { ZipChunkSource } from '../../../../../cache/chunk-source/zip-chunk-source';
 import { HttpChunkSource } from '../../../../../cache/chunk-source/http-chunk-source';
+import { LuxarZipStore } from '../../../../../data/zip/store';
 import {
   resetRootDocumentPrefetchForTests,
   SharedRootDocumentSource,
@@ -150,7 +152,7 @@ describe('setupCaches — cache telemetry state resolution', () => {
     appConfig.cache.enabled = true;
     appConfig.cache.l0Enabled = true;
 
-    await setupCaches('http://example.com/scene.luxar.zarr.zip', {});
+    const zipped = await setupCaches('http://example.com/scene.luxar.zarr.zip', {});
     // Each source sits under the chunk-pack reader, which passes every key it
     // holds no pack for straight to it.
     const inner = (): unknown => {
@@ -171,6 +173,10 @@ describe('setupCaches — cache telemetry state resolution', () => {
     expect(typeof zippedArg).toBe('object');
     expect(zippedArg).toHaveProperty('identity', 'http://example.com/scene.luxar.zarr.zip');
     expect(zippedArg).not.toBeInstanceOf(SharedRootDocumentSource);
+    expect(zippedArg).toBeInstanceOf(ZipChunkSource);
+    const archiveReader = Reflect.get(zippedArg as object, 'reader');
+    expect(archiveReader).toBeInstanceOf(LuxarZipStore);
+    expect(zipped.sidecarSourceStore()).toBe(archiveReader);
     // The directory store's validation probe and root read share one fetch; its
     // identity (the OPFS bucket key) is still the URL verbatim.
     expect(directoryArg).toBeInstanceOf(SharedRootDocumentSource);
