@@ -1181,7 +1181,8 @@ def restamp_lod_store(
     move: the ladders are still written, but the report comes back
     :data:`HASH_UNSTAMPABLE` and therefore NOT :attr:`~RestampReport.clean`, since
     a warm viewer cache would keep serving the old ladder until the store is
-    republished under a new URL prefix.
+    republished under a new URL prefix. Existing chunk packs keep their old
+    binding; regenerate them after restamping before the viewer can use them.
 
     All-or-nothing on the write side. Every group is classified in a read-only
     planning walk first; if any write then fails, every attr already written is

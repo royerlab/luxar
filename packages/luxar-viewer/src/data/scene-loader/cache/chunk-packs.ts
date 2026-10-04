@@ -24,7 +24,7 @@ export async function adoptChunkPacks(
   rootLoc: zarr.Location<zarr.Readable>,
   contentHash: unknown,
   indexFresh: boolean,
-  sourceRootLoc: zarr.Location<zarr.Readable>
+  sourceRootLoc: () => zarr.Location<zarr.Readable>
 ): Promise<number> {
   if (!packs) return 0;
   try {
@@ -36,7 +36,7 @@ export async function adoptChunkPacks(
           )
         : undefined;
     if (indexFresh && listed === false) return 0;
-    const location = indexFresh && listed === true ? rootLoc : sourceRootLoc;
+    const location = indexFresh && listed === true ? rootLoc : sourceRootLoc();
     const group = await zarr.openGroupPreferV3(location.resolve(CHUNK_PACKS_GROUP));
     const used = packs.usePacks(group.attrs, contentHash);
     log.info(Modules.SCENE_LOADER, `chunk packs: ${used} in use`);

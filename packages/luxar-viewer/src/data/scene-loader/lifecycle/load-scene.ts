@@ -285,7 +285,8 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // (released by `dispose.ts`).
   retainCustomColormapTextures(datasetAbortController);
 
-  const cacheResult = await setupCaches(ctx.normalizeURL(url), {
+  const normalizedUrl = ctx.normalizeURL(url);
+  const cacheResult = await setupCaches(normalizedUrl, {
     noCache: ctx.config.noCache,
     noSliceCache: ctx.config.noSliceCache,
     noOpfs: ctx.config.noOpfs,
@@ -324,7 +325,7 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     rootLoc,
     (sceneAttrs as Record<string, unknown>).content_hash,
     cacheResult.rootIndexFromNetwork(),
-    zarr.root(zarr.createStoreForUrl(url))
+    () => zarr.root(zarr.createStoreForUrl(normalizedUrl))
   );
 
   // Watch the dataset's identity from here on: a demo/dev server dying and a
@@ -333,7 +334,6 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // read — not after the full load — so a swap during a LONG load (or a load
   // that subsequently fails because the server vanished) is caught too.
   // Identity is baselined on these attrs, so there is no window to race.
-  const normalizedUrl = ctx.normalizeURL(url);
   if (SceneIdentityWatchdog.isWatchable(normalizedUrl)) {
     const loadedHash = (sceneAttrs as Record<string, unknown>)?.content_hash;
     // Hash-less fallback baseline: the attrs we actually loaded, canonically

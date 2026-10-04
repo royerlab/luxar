@@ -1,6 +1,6 @@
 /**
  * `adoptChunkPacks`: the packed store's index reaches the source, and an
- * unpacked store pays nothing for the feature existing.
+ * freshly indexed unpacked store pays nothing for the feature existing.
  */
 
 import { describe, it, expect } from 'vitest';
@@ -41,22 +41,27 @@ describe('adoptChunkPacks', () => {
   it('reads nothing when the index lists no chunk_packs group', async () => {
     const s = store([{ path: '/', kind: 'group' }]);
     const root = zarr.root(s as unknown as zarr.Readable);
-    const used = await adoptChunkPacks(packs(), root, HASH, true, root);
+    let sourceOpens = 0;
+    const used = await adoptChunkPacks(packs(), root, HASH, true, () => {
+      sourceOpens++;
+      return root;
+    });
     expect(used).toBe(0);
+    expect(sourceOpens).toBe(0);
     expect(s.reads).toEqual([]);
   });
 
   it('adopts the listed sidecar for the root content_hash', async () => {
     const s = store([{ path: '/chunk_packs', kind: 'group' }]);
     const root = zarr.root(s as unknown as zarr.Readable);
-    const used = await adoptChunkPacks(packs(), root, HASH, true, root);
+    const used = await adoptChunkPacks(packs(), root, HASH, true, () => root);
     expect(used).toBe(1);
   });
 
   it('adopts nothing for another content_hash (the packs are stale)', async () => {
     const s = store([{ path: '/chunk_packs', kind: 'group' }]);
     const root = zarr.root(s as unknown as zarr.Readable);
-    const used = await adoptChunkPacks(packs(), root, 'other', true, root);
+    const used = await adoptChunkPacks(packs(), root, 'other', true, () => root);
     expect(used).toBe(0);
   });
 
@@ -68,7 +73,7 @@ describe('adoptChunkPacks', () => {
       zarr.root(cached as unknown as zarr.Readable),
       HASH,
       false,
-      zarr.root(network as unknown as zarr.Readable)
+      () => zarr.root(network as unknown as zarr.Readable)
     );
     expect(used).toBe(1);
     expect(cached.reads).toEqual([]);
@@ -84,7 +89,7 @@ describe('adoptChunkPacks', () => {
       zarr.root(cached as unknown as zarr.Readable),
       HASH,
       false,
-      zarr.root(network as unknown as zarr.Readable)
+      () => zarr.root(network as unknown as zarr.Readable)
     );
     expect(used).toBe(1);
     expect(cached.reads).toEqual([]);

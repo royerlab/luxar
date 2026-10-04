@@ -81,7 +81,7 @@ describe('chunk packs written by luxar optimize --pack (Python-written, TS-read)
   it('serves every member byte-identical to its plain chunk, one request per pack', async () => {
     const { source, reads } = diskSource(store);
     const packs = new PackedChunkSource(source);
-    expect(await adoptChunkPacks(packs, rootLoc, contentHash, true, rootLoc)).toBe(
+    expect(await adoptChunkPacks(packs, rootLoc, contentHash, true, () => rootLoc)).toBe(
       index.packs.length
     );
     expect(index.packs.length).toBeGreaterThan(1);
