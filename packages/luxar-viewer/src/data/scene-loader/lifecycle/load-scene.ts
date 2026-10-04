@@ -322,7 +322,9 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   await adoptChunkPacks(
     cacheResult.chunkPacks,
     rootLoc,
-    (sceneAttrs as Record<string, unknown>).content_hash
+    (sceneAttrs as Record<string, unknown>).content_hash,
+    cacheResult.rootIndexFromNetwork(),
+    zarr.root(zarr.createStoreForUrl(url))
   );
 
   // Watch the dataset's identity from here on: a demo/dev server dying and a

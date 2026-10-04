@@ -1517,8 +1517,10 @@ neither `type` nor `kind`, so the viewer's node discovery skips it, and it is in
 warm cache keyed on it stay valid. A reader therefore uses the packs only when
 `scene_content_hash` equals the root `content_hash`; an edit that changes the
 chunks and restamps the hash makes them stale, and they are ignored. An attrs-only
-`luxar restamp-lod` keeps packs current only if they were current before the
-restamp; already-stale packs remain stale. `luxar optimize` recognises the
+`luxar restamp-lod` leaves the pack binding unchanged, so packs must be
+regenerated after restamping before the viewer uses them again. The stored
+root hash alone cannot prove that an earlier chunk edit left the pack copies
+current. `luxar optimize` recognises the
 sidecar by its attrs (`scene_content_hash` and `packs`, no `type`), so a
 same-named group in a generic store is copied as data; in a compiled scene the
 name is reserved.
