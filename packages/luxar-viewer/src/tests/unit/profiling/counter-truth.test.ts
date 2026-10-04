@@ -204,6 +204,7 @@ function isExactlyAsserted(sf: ts.SourceFile, node: ts.Node): boolean {
       if (
         ts.isPropertyAccessExpression(parent.expression) &&
         EXACT_MATCHERS.has(parent.expression.name.text) &&
+        isExpectCall(parent.expression.expression) &&
         parent.arguments.includes(child as ts.Expression)
       ) {
         return !readsDelta(parent);
@@ -280,6 +281,7 @@ describe('every perf counter has an exact-value test', () => {
     "expect(perfCounters.get('l2.hits') > 0).toBe(true)",
     "const before = perfCounters.get('l2.hits'); expect(perfCounters.get('l2.hits') - before).toBe(1)",
     "const before = 0; const read = () => perfCounters.get('l2.hits') - before; expect(read()).toBe(1)",
+    "const snap = {}; expect(snap).not.toEqual({ 'l2.hits': 1 })",
   ])('rejects non-exact assertion: %s', (assertion) => {
     const sf = ts.createSourceFile('probe.ts', assertion, ts.ScriptTarget.Latest, true);
     let counter: ts.StringLiteral | undefined;
