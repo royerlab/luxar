@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   judge,
+  pickWithinDraw,
   quantile,
   scoreBlocks,
   scoreFloatBuffers,
@@ -215,5 +216,97 @@ describe('scorePickBuffers', () => {
     const s = scorePickBuffers(a, a.slice());
     expect(s.hits).toBe(2);
     expect(s.mismatches).toBe(0);
+  });
+});
+
+describe('pickWithinDraw', () => {
+  /**
+   * An 8x8 HDR frame (bottom-up) with a lit square at x, y in [lo, hi), and the
+   * matching 4x4 pick buffer (half resolution) with ids where `ids` says.
+   */
+  function view({ lo = 2, hi = 6, ids, topDown = false, padTo = 4, bg = 0 }) {
+    const width = 8;
+    const height = 8;
+    const hdr = new Float32Array(width * height * 4).fill(bg);
+    for (let y = lo; y < hi; y++) {
+      for (let x = lo; x < hi; x++) hdr.set([1, 0.5, 0.25, 1], (y * width + x) * 4);
+    }
+    const pw = 4;
+    const ph = 4;
+    const pick = new Float32Array(padTo * ph * 4);
+    for (const [x, y] of ids) {
+      const row = topDown ? ph - 1 - y : y;
+      pick.set([7, 3, 0.5, 0], (row * padTo + x) * 4);
+    }
+    return { hdr, width, height, pick, pickWidth: pw, pickHeight: ph };
+  }
+  /** The pick cells the lit square [2, 6) covers at half resolution. */
+  const INSIDE = [
+    [1, 1],
+    [2, 1],
+    [1, 2],
+    [2, 2],
+  ];
+
+  it('passes a pick that lies inside the draw, and reports its coverage', () => {
+    const r = pickWithinDraw(view({ ids: INSIDE.slice(0, 2) }));
+    expect(r.pass).toBe(true);
+    expect(r.outside).toBe(0);
+    expect(r.hits).toBe(2);
+    expect(r.drawn).toBe(4);
+    expect(r.coverage).toBe(0.5);
+    expect(r.rowOrder).toBe('bottom-up');
+  });
+
+  it('tolerates one pick pixel of edge, and fails a pick beyond it', () => {
+    expect(pickWithinDraw(view({ ids: [...INSIDE, [3, 2]] })).pass).toBe(true);
+    const far = pickWithinDraw(
+      view({
+        lo: 0,
+        hi: 2,
+        ids: [
+          [0, 0],
+          [3, 3],
+        ],
+      })
+    );
+    expect(far.pass).toBe(false);
+    expect(far.outside).toBe(1);
+    expect(far.failures.join()).toMatch(/pick outside draw: 1 of 2 pick px/);
+  });
+
+  it('fails a blank pick, and a pick that covers too little of the draw', () => {
+    expect(pickWithinDraw(view({ ids: [] })).failures).toEqual(['pick buffer carries no ids']);
+    const thin = pickWithinDraw(view({ ids: [[1, 1]] }), { minCoverage: 0.5 });
+    expect(thin.pass).toBe(false);
+    expect(thin.failures.join()).toMatch(/pick covers 0\.250 of the drawn px/);
+  });
+
+  it('aligns a top-down readback and reads past row padding', () => {
+    // A square in the bottom-left corner, picked along its bottom row; stored
+    // top-down with an 8-pixel row stride as a padded native readback would be.
+    // Read bottom-up, those ids would sit in the empty top row.
+    const r = pickWithinDraw(
+      view({
+        lo: 0,
+        hi: 4,
+        ids: [
+          [0, 0],
+          [1, 0],
+        ],
+        topDown: true,
+        padTo: 8,
+      })
+    );
+    expect(r.pass).toBe(true);
+    expect(r.rowOrder).toBe('top-down');
+    expect(r.hits).toBe(2);
+  });
+
+  it('measures the draw against the frame background, not against zero', () => {
+    const r = pickWithinDraw(view({ ids: INSIDE, bg: 0.02 }));
+    expect(r.drawn).toBe(4);
+    expect(r.coverage).toBe(1);
+    expect(r.pass).toBe(true);
   });
 });

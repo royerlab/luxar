@@ -36,7 +36,13 @@ import { fileURLToPath } from 'node:url';
 
 import { browserKit, selectBackends } from './browser.mjs';
 import { ensureBuild } from './builds.mjs';
-import { judge, scoreBlocks, scoreFloatBuffers, scorePickBuffers } from './exactness.mjs';
+import {
+  judge,
+  pickWithinDraw,
+  scoreBlocks,
+  scoreFloatBuffers,
+  scorePickBuffers,
+} from './exactness.mjs';
 import { writeUlpHeatmap } from './heatmap.mjs';
 import * as ops from './page-ops.mjs';
 import { judgePerf, median, noiseFloor, ROTATIONS } from './perf-stats.mjs';
@@ -215,6 +221,8 @@ async function captureArm(browser, origin, c, variant) {
           hdr: decode(cap.hdr),
           ldr: decode(cap.ldr),
           pick: cap.pick ? decode({ format: 'f32', data: cap.pick.data }) : null,
+          pickWidth: cap.pick?.width ?? 0,
+          pickHeight: cap.pick?.height ?? 0,
         };
       }
     }
@@ -235,6 +243,21 @@ function strip(score) {
   const rest = { ...score };
   delete rest.perPixelUlp;
   return rest;
+}
+
+/**
+ * The candidate's own pick must stay inside its own draw (`pickWithinDraw`):
+ * an absolute property of one build, judged alongside the A/B comparison. A
+ * view that already failed or errored keeps its status; one that passed,
+ * changed or stayed unchanged fails when its pick leaves the draw.
+ */
+function applyPickWithinDraw(row, shot) {
+  if (!shot.pick || !shot.pickWidth) return;
+  const within = pickWithinDraw(shot);
+  row.pickWithinDraw = { ...within };
+  if (within.pass || !['pass', 'changed', 'unchanged'].includes(row.status)) return;
+  row.status = 'fail';
+  row.failures = [...(row.failures ?? []), ...within.failures];
 }
 
 async function runExact(session, servers, outDir) {
@@ -310,6 +333,7 @@ async function runExact(session, servers, outDir) {
           row.status = verdict.pass ? 'pass' : 'fail';
           row.failures = verdict.failures;
         }
+        applyPickWithinDraw(row, b);
         if (hdr.differing > 0) {
           const file = `${c.id}-${variant.backend}-dsf${variant.dsf}-${view.replace('#', '')}.png`;
           writeUlpHeatmap(join(outDir, 'heatmaps', file), hdr.perPixelUlp, a.width, a.height);
@@ -467,7 +491,12 @@ function markdown(meta, exact, perf, suites) {
       '|---|---|---|---|---|---|---|---|---|'
     );
     for (const r of exact) {
-      const pick = r.pick ? `node ${r.pick.nodeMismatches} / element ${r.pick.mismatches}` : '';
+      const within = r.pickWithinDraw
+        ? `; within draw: ${r.pickWithinDraw.outside} outside, coverage ${r.pickWithinDraw.coverage.toFixed(2)}`
+        : '';
+      const pick = r.pick
+        ? `node ${r.pick.nodeMismatches} / element ${r.pick.mismatches}${within}`
+        : '';
       lines.push(
         `| ${r.case} | ${r.backend} | ${r.dsf} | ${r.view} | ${r.cls ?? ''} | ${r.status}${r.failures?.length ? ` (${r.failures.join('; ')})` : ''} | ${fmtScore(r.hdr)} | ${fmtScore(r.ldr)} | ${pick} |`
       );

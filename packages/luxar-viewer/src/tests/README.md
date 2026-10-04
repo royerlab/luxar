@@ -177,6 +177,28 @@ flags hand-written geometry-type subsets in `src/` (not in tests): an
 `GEOMETRY_CAPABILITIES` instead, or key a `Record<GeometryTypeName, …>`. The
 existing sites are baselined in `eslint-suppressions.json` and ratchet down.
 
+**The draw/pick table** (`_conformance/pick-visibility-rules.ts`) declares,
+for every `(type, primitive variant)`, how each per-element visibility rule
+relates the draw shader to the pick shader. The rules are density drop, the
+sorted-index slot, near fade, the label filter, reach, alpha cutout and the
+glass partition. A cell is `'same'`, a `deliberate` pick ⊂ draw (with the
+evidence that it still is), `drawOnly`, or `neither`. It is held three ways:
+
+- `unit/rendering/picking/draw-pick-parity.test.ts` checks the source.
+  `'same'` needs the shared helper's call in both GLSL sources, its emitted
+  block in both TSL codegen snapshots (`__codegen__/`), and its call in both
+  TSL factory sources. Every `PICKING_FACTORIES` kind, material variant and
+  pick shader the picking tree exports must have a row, so a new pick variant
+  cannot ship unlisted;
+- `e2e/tsl-shader-parity.spec.ts` (`draw/pick coverage`) checks the pixels.
+  It renders one fixture through draw and pick, on both backends, and requires
+  pick ⊆ draw (1 px slack) and a per-type coverage floor. With `uDensityDrop`
+  set, the dropped element must be gone from both frames. The harness's
+  `renderGLSL(name, uniforms)` / `renderTSL(name, { uniforms })` take the
+  uniform overrides;
+- the render gate's `pickWithinDraw` judgement checks the same property on
+  real GPUs, for every pickable gate scene (`docs/guides/developer/RENDER_GATE.md`).
+
 ---
 
 ## Test Organization

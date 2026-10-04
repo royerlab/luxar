@@ -110,6 +110,23 @@ winning element is a near-tie that any rounding flips. A 1-ulp nudge of the line
 width changed the element at up to 35% of a dense line scene's pick pixels, and
 changed the node at none.
 
+**Pick within draw.** Every pickable case is also judged on the candidate
+alone: its pick must stay inside its own draw (`pickWithinDraw` in
+`exactness.mjs`). Draw and pick decide visibility in two shaders, and a
+pick-only divergence changes no drawn pixel, so none of the A/B scores above can
+see it. The capsule line pick that ignored the density guard's drop was one.
+Each pick pixel is compared with the HDR block it samples. A pick id where the
+frame draws nothing, beyond one pick pixel of edge slack, fails the view. So
+does a pick that covers less than 5% of the drawn pixels, which catches a pick
+shader that went blank. The pick readback keeps the renderer's native row order
+(bottom-up through WebGL, top-down from native WebGPU), and the HDR capture is
+normalised bottom-up, so the judgement aligns the two by overlap and reports
+the order it used. The report's pick column shows the outside count and the
+coverage. The coverage floor is a first, conservative setting; tighten it per
+case once real GPUs have measured it. The source-level half of the same
+contract is `tests/_conformance/pick-visibility-rules.ts`, held by
+`draw-pick-parity.test.ts`.
+
 **How the `ULP` limits were set.** They are calibrated, not guessed. Calibration
 arms scale one derived quantity by (1 + ε): the point size factor, the line
 width scale or the splat focal length. The real commits of the

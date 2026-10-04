@@ -27,6 +27,10 @@
 
 import { test, expect, type Page } from '@playwright/test';
 
+import type { GeometryTypeName } from '../../types/format-contract';
+import type { PrimitiveVariant } from '../helpers/geometry-materials';
+import { PICK_VISIBILITY_RULES } from '../_conformance/pick-visibility-rules';
+
 const HARNESS_URL = '/tsl-harness.html';
 
 type TSLResult = {
@@ -47,19 +51,33 @@ async function bootHarness(page: Page): Promise<string[]> {
   return page.evaluate(() => window.__tslHarness!.listShaders());
 }
 
-async function runGLSL(page: Page, shaderName: string): Promise<number[]> {
-  return page.evaluate((name) => Array.from(window.__tslHarness!.renderGLSL(name)), shaderName);
+async function runGLSL(
+  page: Page,
+  shaderName: string,
+  uniforms?: Record<string, number>
+): Promise<number[]> {
+  return page.evaluate(
+    ([name, overrides]) => Array.from(window.__tslHarness!.renderGLSL(name, overrides)),
+    [shaderName, uniforms] as const
+  );
 }
 
-async function runTSL(page: Page, shaderName: string): Promise<TSLResult> {
-  return page.evaluate(async (name) => {
-    const result = await window.__tslHarness!.renderTSL(name);
-    return {
-      pixels: Array.from(result.pixels),
-      vertexShader: result.vertexShader,
-      fragmentShader: result.fragmentShader,
-    };
-  }, shaderName);
+async function runTSL(
+  page: Page,
+  shaderName: string,
+  uniforms?: Record<string, number>
+): Promise<TSLResult> {
+  return page.evaluate(
+    async ([name, overrides]) => {
+      const result = await window.__tslHarness!.renderTSL(name, { uniforms: overrides });
+      return {
+        pixels: Array.from(result.pixels),
+        vertexShader: result.vertexShader,
+        fragmentShader: result.fragmentShader,
+      };
+    },
+    [shaderName, uniforms] as const
+  );
 }
 
 async function runBloomChain(
@@ -3311,4 +3329,140 @@ test.describe('TSL ↔ GLSL shader parity', () => {
     expect(thinCovered, 'thin fold: hairline-sized joint only').toBeLessThan(60);
     expect(thinCovered, 'thin fold ≪ wide fold').toBeLessThan(wideCovered / 2);
   });
+});
+
+/**
+ * Draw/pick coverage: the pixel-level half of the draw/pick conformance table
+ * (`tests/_conformance/pick-visibility-rules.ts`; the source-level half is
+ * `tests/unit/rendering/picking/draw-pick-parity.test.ts`).
+ *
+ * Each `(type, variant)` renders ONE fixture through its draw shader and its
+ * pick shader, on both backends, and compares the two coverage masks:
+ *
+ * - pick ⊆ draw: no pick pixel where the draw covers nothing, beyond one pixel
+ *   of rasterisation edge;
+ * - the pick covers at least `minCoverage` of the drawn pixels, so a pick that
+ *   went blank, or shrank far below its declared footprint, fails. The floors
+ *   sit about half-way under what SwiftShader measured (points, lines and
+ *   mesh 1.0, capsule 0.994, gsplats 0.275 — the gsplat pick truncates at
+ *   1.5σ, the table's one deliberate shrink at this fixture's scale);
+ * - with `uDensityDrop` set, the fixture's element (storage index 0, whose
+ *   hash is 0, so any drop removes it) is gone from BOTH frames, for every
+ *   cell the table declares `densityDrop: 'same'`. This is the check the
+ *   capsule line pick that ignored the drop would have failed.
+ */
+const DRAW_PICK_PAIRS: Record<
+  GeometryTypeName,
+  Partial<Record<PrimitiveVariant, { draw: string; pick: string; minCoverage: number }>>
+> = {
+  points: { quad: { draw: 'point', pick: 'point-pick', minCoverage: 0.5 } },
+  lines: {
+    quad: { draw: 'line', pick: 'line-pick', minCoverage: 0.5 },
+    capsule: { draw: 'line-capsule-fat', pick: 'line-capsule-pick-sideon', minCoverage: 0.5 },
+  },
+  gsplats: { quad: { draw: 'gsplat', pick: 'gsplat-pick', minCoverage: 0.15 } },
+  mesh: { triangle: { draw: 'mesh', pick: 'mesh-pick', minCoverage: 0.9 } },
+};
+
+/**
+ * The harness renderers' clear: black, opaque (`alpha: false`). Coverage is
+ * measured against it rather than against a frame's first pixel, because the
+ * mesh fixture's quad covers the corners.
+ */
+const HARNESS_CLEAR = [0, 0, 0, 255] as const;
+
+/** Pixels a frame wrote: anything that is not the clear. */
+function coverageMask(pixels: number[]): Uint8Array {
+  const mask = new Uint8Array(pixels.length / 4);
+  for (let i = 0; i < mask.length; i++) {
+    const o = i * 4;
+    for (let c = 0; c < 4; c++) {
+      if (pixels[o + c] !== HARNESS_CLEAR[c]) mask[i] = 1;
+    }
+  }
+  return mask;
+}
+
+/** Pick pixels outside the (1-px grown) draw, and the share of the draw the pick covers. */
+function pickWithinDraw(draw: number[], pick: number[], size: number) {
+  const drawn = coverageMask(draw);
+  const picked = coverageMask(pick);
+  let outside = 0;
+  let drawnCount = 0;
+  let overlap = 0;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = y * size + x;
+      if (drawn[i]) drawnCount++;
+      if (!picked[i]) continue;
+      if (drawn[i]) overlap++;
+      let near = false;
+      for (let dy = -1; dy <= 1 && !near; dy++) {
+        for (let dx = -1; dx <= 1 && !near; dx++) {
+          const xx = x + dx;
+          const yy = y + dy;
+          near = xx >= 0 && yy >= 0 && xx < size && yy < size && drawn[yy * size + xx] === 1;
+        }
+      }
+      if (!near) outside++;
+    }
+  }
+  return { outside, coverage: drawnCount > 0 ? overlap / drawnCount : 0, drawnCount };
+}
+
+const DRAW_PICK_CELLS = (
+  Object.entries(DRAW_PICK_PAIRS) as [GeometryTypeName, (typeof DRAW_PICK_PAIRS)['points']][]
+).flatMap(([type, variants]) =>
+  (
+    Object.entries(variants) as [
+      PrimitiveVariant,
+      { draw: string; pick: string; minCoverage: number },
+    ][]
+  ).map(([variant, pair]) => ({ type, variant, ...pair }))
+);
+
+test.describe('draw/pick coverage: the pick stays inside the draw', () => {
+  test('every (type, variant) of the rule table has a draw/pick pair', () => {
+    for (const [type, variants] of Object.entries(PICK_VISIBILITY_RULES)) {
+      for (const variant of Object.keys(variants)) {
+        expect(
+          DRAW_PICK_PAIRS[type as GeometryTypeName][variant as PrimitiveVariant],
+          `${type} ${variant}`
+        ).toBeDefined();
+      }
+    }
+  });
+
+  for (const { type, variant, draw, pick, minCoverage } of DRAW_PICK_CELLS) {
+    for (const backend of ['glsl', 'tsl'] as const) {
+      test(`${type} ${variant} (${backend}): ${pick} lies within ${draw}`, async ({ page }) => {
+        await bootHarness(page);
+        const render = async (name: string, uniforms?: Record<string, number>) =>
+          backend === 'glsl'
+            ? runGLSL(page, name, uniforms)
+            : (await runTSL(page, name, uniforms)).pixels;
+
+        const drawPixels = await render(draw);
+        const pickPixels = await render(pick);
+        assertNeitherFrameEmpty(drawPixels, pickPixels, `${draw} / ${pick}`);
+        const { outside, coverage } = pickWithinDraw(drawPixels, pickPixels, 64);
+        test.info().annotations.push({
+          type: 'coverage',
+          description: `${type} ${variant} ${backend}: outside ${outside}, coverage ${coverage.toFixed(3)}`,
+        });
+        expect(outside, `${pick} reports pixels ${draw} does not draw`).toBe(0);
+        expect(coverage, `${pick} covers too little of ${draw}`).toBeGreaterThanOrEqual(
+          minCoverage
+        );
+
+        if (PICK_VISIBILITY_RULES[type][variant]?.densityDrop !== 'same') return;
+        // Storage index 0 hashes to 0, so any positive drop removes the element.
+        const dropped = { uDensityDrop: 0.5 };
+        const drawDropped = await render(draw, dropped);
+        const pickDropped = await render(pick, dropped);
+        expect(nonUniformPixelCount(drawDropped), `${draw}: a dropped element is drawn`).toBe(0);
+        expect(nonUniformPixelCount(pickDropped), `${pick}: a dropped element is pickable`).toBe(0);
+      });
+    }
+  }
 });
