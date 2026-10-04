@@ -421,3 +421,38 @@ describe('SliceCache stage outputs (#2944 B2)', () => {
     expect(c.getStats().size).toBe(0);
   });
 });
+
+describe('SliceCache stage perf counters', () => {
+  const stage = (sig: string, bytes: number) => ({ sig, value: { sig }, bytes });
+
+  it('count stage hits, misses, rejections and sheds, and gauge the retained stage bytes', () => {
+    perfCounters.reset();
+    const c = new SliceCache({ maxSize: 1000 });
+    const keys = ['a', 'b', 'c'].map((v) => SliceCache.makeKey('/n', v));
+    const entries = keys.map(() => entry(100));
+    keys.forEach((k, i) => c.set(k, entries[i]));
+    keys.forEach((k, i) => c.setStage(k, entries[i].payload, stage('s', 200)));
+    expect(perfCounters.get('scache.stage.bytes')).toBe(600);
+
+    c.getStage(keys[1], entries[1].payload, 's'); // hit
+    c.getStage(keys[1], entries[1].payload, 'other-params'); // miss
+    c.getStage(keys[1], { other: 'payload' }, 's'); // not this entry's payload: neither
+    // 2000 bytes cannot fit even after shedding every other output.
+    expect(c.canAdmitStage(keys[2], entries[2].payload, 2000)).toBe(false);
+    // A 250-byte slice needs 150 bytes: shedding the oldest output (a's) suffices.
+    c.set(SliceCache.makeKey('/n', 'd'), entry(250));
+
+    expect(perfCounters.get('scache.stage.hits')).toBe(1);
+    expect(perfCounters.get('scache.stage.misses')).toBe(1);
+    expect(perfCounters.get('scache.stage.rejected')).toBe(1);
+    expect(perfCounters.get('scache.stage.shed')).toBe(1);
+    expect(perfCounters.get('scache.stage.bytes')).toBe(400);
+    const s = c.getStats();
+    expect([s.stageHits, s.stageMisses, s.stageRejected, s.stageShed, s.stageBytes]).toEqual([
+      1, 1, 1, 1, 400,
+    ]);
+
+    c.clear();
+    expect(perfCounters.get('scache.stage.bytes')).toBe(0);
+  });
+});

@@ -293,4 +293,35 @@ describe('fetch-concurrency perf counters', () => {
       nowSpy.mockRestore();
     }
   });
+
+  it('tallies data-lane requests, highWater and queued wait the same way', async () => {
+    perfCounters.reset();
+    let nowMs = 0;
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => nowMs);
+    try {
+      const releasers: Array<() => void> = [];
+      const fire = () =>
+        withFetchGate(() => new Promise<void>((resolve) => releasers.push(resolve)), 'data');
+      const N = MAX_CONCURRENT_CHUNK_FETCHES + 3;
+      const calls = Array.from({ length: N }, fire);
+      await Promise.resolve();
+      expect(perfCounters.get('fetch.data.requests')).toBe(N);
+      expect(perfCounters.get('fetch.data.highWater')).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
+      expect(perfCounters.get('fetch.data.queueWaitMs')).toBe(0);
+
+      // The three queued calls start 5 ms after they were enqueued.
+      nowMs = 5;
+      while (releasers.length) {
+        releasers.shift()!();
+        await Promise.resolve();
+        await Promise.resolve();
+      }
+      await Promise.all(calls);
+      expect(perfCounters.get('fetch.data.queueWaitMs')).toBe(15);
+      expect(perfCounters.get('fetch.data.highWater')).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
+      expect(perfCounters.get('fetch.metadata.requests')).toBe(0);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 });

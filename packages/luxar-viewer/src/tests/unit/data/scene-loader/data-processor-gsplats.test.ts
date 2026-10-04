@@ -51,6 +51,7 @@ import {
 import type { LoadedGSplatsData, GSplatsViewState } from '../../../../types/gsplats';
 import { WorkerTimeoutError, WorkerUnavailableError } from '../../../../workers/worker-pool/errors';
 import { SliceCache } from '../../../../cache/slice-cache';
+import { perfCounters } from '../../../../profiling/perf-counters';
 import {
   restoreLadder,
   storeLadder,
@@ -455,6 +456,24 @@ describe('projectGSplatsTo3DUsingWorker', () => {
     const result = await projectGSplatsTo3DUsingWorker(makeData(), makeViewState(), 3.0, 1);
     expect(result.splatCount).toBe(1);
     expect(Array.from(result.centers3D)).toEqual([1, 2, 3]);
+  });
+
+  it('projection.gsplats.worker counts every projection handed to the pool, a fallback included', async () => {
+    perfCounters.reset();
+    const projectGSplatsTo3D = vi.fn(async () => makeDispatcherResult(1));
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async (_op, _kind, fn) => fn({ projectGSplatsTo3D })),
+    });
+    await projectGSplatsTo3DUsingWorker(makeData(), makeViewState(), 3.0, 1);
+    mockGetWorkerPool.mockReturnValue({
+      runWithTimeout: vi.fn(async () => {
+        throw new WorkerUnavailableError('[WorkerPool] No workers available after initialization');
+      }),
+    });
+    mockProcessGSplats.mockReturnValue(makeDispatcherResult(7));
+    await projectGSplatsTo3DUsingWorker(makeData(), makeViewState(), 3.0, 1);
+
+    expect(perfCounters.get('projection.gsplats.worker')).toBe(2);
   });
 
   // Worker UNAVAILABILITY — the pool never got the work to a worker at all, so

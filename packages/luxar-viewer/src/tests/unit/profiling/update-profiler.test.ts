@@ -26,6 +26,7 @@ import {
   hasOverBudget,
   type TimingEntry,
 } from '../../../profiling/update-profiler';
+import { perfCounters } from '../../../profiling/perf-counters';
 
 const FRAME_BUDGET_MS = 16.67;
 
@@ -1216,5 +1217,26 @@ describe('UpdateProfiler — path-keyed merge (A5)', () => {
     expect(v200 / Math.max(v50, 1), `visits: 50 loaders=${v50}, 200 loaders=${v200}`).toBeLessThan(
       6
     );
+  });
+});
+
+describe('UpdateProfiler — profiler.mergeMs perf counter', () => {
+  it('sums the time each merge spends, one interval per merged session', () => {
+    // A clock that ticks 1 ms on EVERY read: a merge brackets its work with
+    // exactly two reads, so each merged session adds exactly 1 ms.
+    let now = 0;
+    vi.spyOn(performance, 'now').mockImplementation(() => now++);
+    try {
+      const p = new UpdateProfiler();
+      perfCounters.reset();
+      p.beginUpdate();
+      p.begin('A').end();
+      p.begin('B').end();
+      p.endUpdate();
+      // Two child merges plus the root merge.
+      expect(perfCounters.get('profiler.mergeMs')).toBe(3);
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });

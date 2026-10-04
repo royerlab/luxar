@@ -1,0 +1,85 @@
+/**
+ * Where each perf counter's value is proven: the unit test file (relative to
+ * `src/tests/unit/`) that drives a known event sequence and asserts the exact
+ * value the counter must read.
+ *
+ * Keyed by the registry's own name types, so declaring a counter in
+ * `profiling/perf-counters.ts` without naming its test here does not compile.
+ * `unit/profiling/counter-truth.test.ts` then checks that the named file
+ * really holds an exact-value assertion (`toBe` / `toEqual` of the counter's
+ * value — a "greater than" or a `before + 1` delta does not count).
+ */
+
+import type { FixedPerfCounterName, PerfCounterFamily } from '../../profiling/perf-counters';
+
+export const PERF_COUNTER_TESTS: Record<FixedPerfCounterName | PerfCounterFamily, string> = {
+  'render.count': 'scene/animation-controller.test.ts',
+  'render.ticks': 'scene/animation-controller-render-on-change.test.ts',
+  'render.skippedTicks': 'scene/animation-controller-render-on-change.test.ts',
+  'render.once': 'scene/animation-controller.test.ts',
+  'render.missedDirty': 'scene/animation-controller-render-on-change.test.ts',
+  'render.auditCompares': 'scene/animation-controller-render-on-change.test.ts',
+  'render.byReason.': 'scene/animation-controller-render-on-change.test.ts',
+  'adaptiveDpr.samples': 'scene/animation-controller-render-on-change.test.ts',
+  'playback.ticks': 'scene/dimension-animation-manager.test.ts',
+  'lod.levelSwaps': 'scene/lod-group-registry.test.ts',
+  'lod.blendFrames': 'scene/lod-group-registry.test.ts',
+  'partition.partsActivated': 'scene/lod-group-registry-partition-activation.test.ts',
+  'partition.partsInitialised': 'data/scene-loader/nodes/load-partition-group-node.test.ts',
+  'scene.getObjectByName': 'core/bootstrap.test.ts',
+  'gpu.uploadCalls': 'rendering/upload-counters.test.ts',
+  'gpu.uploadBytes': 'rendering/upload-counters.test.ts',
+  'gpu.uploadBytes.buffer': 'rendering/upload-counters.test.ts',
+  'gpu.uploadBytes.texture': 'rendering/upload-counters.test.ts',
+  'loaders.swept': 'data/scene-loader/loaders/run-loader-updates.test.ts',
+  'projection.gsplats.worker': 'data/scene-loader/data-processor-gsplats.test.ts',
+  'projection.gsplats.stageHits': 'data/scene-loader/projection-stage-cache.test.ts',
+  'projection.lines.worker': 'data/scene-loader/data-processor-lines.test.ts',
+  'projection.lines.stageHits': 'data/scene-loader/projection-stage-cache.test.ts',
+  'codec.blosc.worker': 'data/worker-codec-offload.test.ts',
+  'codec.blosc.main': 'data/worker-codec-offload.test.ts',
+  'codec.blosc.fallback': 'data/worker-codec-offload.test.ts',
+  'codec.delta.fused': 'data/worker-codec-offload.test.ts',
+  'worker.dispatches': 'workers/worker-pool/selection/dispatch-tracker.test.ts',
+  'worker.busyMs': 'workers/worker-pool/selection/dispatch-tracker.test.ts',
+  'worker.misroutes': 'workers/worker-pool/selection/dispatch-tracker.test.ts',
+  'l0.hits': 'cache/cached-zarr-array.test.ts',
+  'l0.misses': 'cache/cached-zarr-array.test.ts',
+  'l0.coalesced': 'cache/cached-zarr-array.test.ts',
+  'l0.cloneBytes': 'cache/cached-zarr-array.test.ts',
+  'decode.count': 'cache/cached-zarr-array.test.ts',
+  'decode.bytes': 'cache/cached-zarr-array.test.ts',
+  'decode.duplicates': 'cache/cached-zarr-array.test.ts',
+  'decode.count.': 'cache/cached-zarr-array.test.ts',
+  'decode.count.foreground': 'cache/cached-zarr-array.test.ts',
+  'decode.count.shadow': 'cache/cached-zarr-array.test.ts',
+  'decode.count.lookahead': 'cache/cached-zarr-array.test.ts',
+  'decode.count.prefetch': 'cache/cached-zarr-array.test.ts',
+  'scache.pinnedEntries': 'cache/slice-cache.test.ts',
+  'scache.pinnedBytes': 'cache/slice-cache.test.ts',
+  'scache.stage.hits': 'cache/slice-cache.test.ts',
+  'scache.stage.misses': 'cache/slice-cache.test.ts',
+  'scache.stage.rejected': 'cache/slice-cache.test.ts',
+  'scache.stage.shed': 'cache/slice-cache.test.ts',
+  'scache.stage.bytes': 'cache/slice-cache.test.ts',
+  'l2.hits': 'cache/multi-level-caching-store.test.ts',
+  'fetch.bytes': 'data/zip/store-request-economy.test.ts',
+  'fetch.data.requests': 'utils/fetch-concurrency.test.ts',
+  'fetch.data.highWater': 'utils/fetch-concurrency.test.ts',
+  'fetch.data.queueWaitMs': 'utils/fetch-concurrency.test.ts',
+  'fetch.metadata.requests': 'utils/fetch-concurrency.test.ts',
+  'fetch.metadata.highWater': 'utils/fetch-concurrency.test.ts',
+  'fetch.metadata.queueWaitMs': 'utils/fetch-concurrency.test.ts',
+  'opfs.writes': 'cache/opfs-store.test.ts',
+  'opfs.writesDropped': 'cache/opfs-write-queue.test.ts',
+  'opfs.estimateCalls': 'cache/opfs-store.test.ts',
+  'opfs.saveAttempts': 'cache/opfs-store/metadata.test.ts',
+  'opfs.indexSaves': 'cache/opfs-store/metadata.test.ts',
+  'console.calls': 'utils/console-interceptor.test.ts',
+  'console.calls.log': 'utils/console-interceptor.test.ts',
+  'console.calls.warn': 'utils/console-interceptor.test.ts',
+  'console.calls.error': 'utils/console-interceptor.test.ts',
+  'console.calls.info': 'utils/console-interceptor.test.ts',
+  'console.calls.debug': 'utils/console-interceptor.test.ts',
+  'profiler.mergeMs': 'profiling/update-profiler.test.ts',
+};

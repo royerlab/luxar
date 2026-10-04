@@ -44,6 +44,7 @@ import {
 } from '../../../scene/scene-manager/clipping/bounds-math';
 import { updateCameraAspect } from '../../../utils/camera-utils';
 import { log } from '../../../utils/log';
+import { perfCounters } from '../../../profiling/perf-counters';
 
 // `evaluatePerFrame` reports a level swap and a partition cull flip SEPARATELY:
 // only the first is a content change for adaptive DPR (see LODFrameChanges).
@@ -5838,6 +5839,7 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
   });
 
   it('a level change dissolves over fadeMs, then draws the new level alone', () => {
+    perfCounters.reset();
     const clock = { t: 1000 };
     const { reg, zoom } = makeTimedReg(clock);
     const coarse = fadeChild(0);
@@ -5866,6 +5868,10 @@ describe('LODGroupRegistry — coverage-band cross-fade', () => {
     expect(drawn(children)).toEqual([1]);
     expect(liveOpacity(fine)).toBe(1);
     expect(isAnimating(reg)).toBe(false);
+    // One displayed-level change, drawn as a two-level dissolve on the two
+    // frames between its start and its landing.
+    expect(perfCounters.get('lod.levelSwaps')).toBe(1);
+    expect(perfCounters.get('lod.blendFrames')).toBe(2);
   });
 
   it('a retarget mid-dissolve starts from the current opacities (no pop)', () => {

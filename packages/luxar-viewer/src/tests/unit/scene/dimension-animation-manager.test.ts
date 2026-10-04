@@ -18,6 +18,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { DimensionAnimationManager } from '../../../scene/animation/dimension-animation-manager';
 import { log } from '../../../utils/log';
+import { perfCounters } from '../../../profiling/perf-counters';
 import { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import {
   AnimationController,
@@ -543,6 +544,25 @@ describe('DimensionAnimationManager', () => {
       mockTime += 200;
       perFrameCallback?.();
       expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(afterFirst + 1);
+    });
+
+    it('playback.ticks counts the ticks that stepped, not throttled or gated frames', async () => {
+      vi.spyOn(sceneDimsManager, 'waitForUpdate').mockResolvedValue(undefined);
+      perfCounters.reset();
+      manager.play(3, { targetFPS: 10, direction: 'forward' });
+
+      mockTime += 20; // inside the 100ms FPS window: throttled
+      perFrameCallback?.();
+      mockTime += 200;
+      perFrameCallback?.(); // step 1
+      mockTime += 200;
+      perFrameCallback?.(); // gated: step 1's update has not settled yet
+      await Promise.resolve();
+      mockTime += 200;
+      perFrameCallback?.(); // step 2
+
+      expect(perfCounters.get('playback.ticks')).toBe(2);
+      expect(perfCounters.records('playback.tick')).toHaveLength(2);
     });
 
     it('should respect FPS throttling - skip frames if too soon', () => {
