@@ -205,7 +205,13 @@ export default [
         ...(() => {
           const geo = '/^(points|lines|gsplats|mesh)$/';
           const compare = (path) =>
-            `[${path}.type='BinaryExpression'][${path}.operator=/^(===|!==)$/][${path}.right.value=${geo}]`;
+            `:matches([${path}.type='BinaryExpression'][${path}.operator=/^(===|!==)$/][${path}.right.value=${geo}], [${path}.type='BinaryExpression'][${path}.operator=/^(===|!==)$/][${path}.left.value=${geo}])`;
+          const arrayPaths = [
+            'ArrayExpression',
+            'TSAsExpression > ArrayExpression',
+            'TSSatisfiesExpression > ArrayExpression',
+          ];
+          const literalPair = `:has(> Literal[value=${geo}] ~ Literal[value=${geo}])`;
           const message =
             'Hand-written geometry-type subset. Read GEOMETRY_CAPABILITIES ' +
             '(types/geometry-capabilities.ts) or key a Record<GeometryTypeName, …> so ' +
@@ -214,15 +220,15 @@ export default [
             // `a === 'points' || a === 'lines'` (and every longer chain, through its innermost pair)
             { selector: `LogicalExpression${compare('left')}${compare('right')}`, message },
             // `new Set(['points', 'lines'])`
-            {
-              selector: `NewExpression[callee.name='Set'] > ArrayExpression:has(> Literal[value=${geo}] ~ Literal[value=${geo}])`,
+            ...arrayPaths.map((path) => ({
+              selector: `NewExpression[callee.name='Set'] > ${path}${literalPair}`,
               message,
-            },
+            })),
             // `['points', 'lines'].includes(x)`
-            {
-              selector: `CallExpression[callee.property.name='includes'] > MemberExpression > ArrayExpression:has(> Literal[value=${geo}] ~ Literal[value=${geo}])`,
+            ...arrayPaths.map((path) => ({
+              selector: `CallExpression[callee.property.name='includes'] > MemberExpression > ${path}${literalPair}`,
               message,
-            },
+            })),
           ];
         })(),
       ],
