@@ -23,6 +23,7 @@ export const CI_CHECKS = [
   'lint',
   'check:layers',
   'check:knip:ci',
+  'check:knip:ratchet',
   'test:coverage',
   'check:coverage-slack',
 ];

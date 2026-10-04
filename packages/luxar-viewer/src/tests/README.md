@@ -39,8 +39,13 @@ A killed check still stops immediately. If a failed coverage run produced no
 summary, the dependent slack check is reported as skipped instead of adding a
 misleading second failure. Local runs can request fail-fast behavior with
 `--bail`. The static checks include the `check:overrides` pnpm security-pin
-guard, dependency-cruiser layer rules, and the `check:knip:ci`
-unused-export/unused-file gate. Coverage thresholds and their last accepted
+guard, dependency-cruiser layer rules, the `check:knip:ci`
+unused-file/unused-dependency gate, and the `check:knip:ratchet` unused-export
+ratchet (`scripts/check-knip-ratchet.mjs` against `knip-baseline.json`: a new
+unused export, type or enum member fails; so does a paid-down or moved entry
+until `pnpm run check:knip:ratchet --update-baseline` refreshes it, and a
+`knip.json` or knip-version change fails closed). Delete dead code rather than
+baselining it; tag a deliberate unimported export `@internal`. Coverage thresholds and their last accepted
 measurements live together in `coverage-thresholds.mjs`; after coverage moves,
 run `pnpm check:coverage-slack -- --print`, update floors when required, and
 refresh the recorded measurements when accepting the new state. A downward

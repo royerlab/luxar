@@ -22,6 +22,8 @@ scripts/
 ├── check-e2e-timeout-budgets.test.mjs # unit coverage for the E2E timeout-budget ratchet
 ├── e2e-timeout-budget-baseline.json # Per-file shared-helper deadline debt counts
 ├── e2e-timeout-budget-exceptions.json # Reasoned, stale-failing timeout-budget opt-outs
+├── check-knip-ratchet.mjs         # Unused-export ratchet against ../knip-baseline.json
+├── check-knip-ratchet.test.mjs    # unit coverage for the knip ratchet
 ├── check-lib-exports.mjs          # Post-build sanity check on dist/lib/
 ├── check-node-types-version.mjs   # Node runtime/@types major-version declaration guard
 ├── check-node-types-version.test.mjs # unit coverage for the Node types guard

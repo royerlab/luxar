@@ -114,10 +114,11 @@
     "update:e2e-timeout-budget-baseline": "node scripts/check-e2e-timeout-budgets.mjs --update-baseline",
     "check:knip": "knip --no-progress --no-config-hints",
     "check:knip:ci": "knip --no-progress --no-config-hints --include files,dependencies",
+    "check:knip:ratchet": "node scripts/check-knip-ratchet.mjs",
     "format": "prettier --write --cache --cache-strategy content src scripts tools examples \"*.{ts,mts,cts,js,mjs,cjs}\"",
     "check:format": "prettier --check --cache --cache-strategy content src scripts tools examples \"*.{ts,mts,cts,js,mjs,cjs}\"",
     "check": "pnpm run check:format && pnpm run typecheck && pnpm run lint && pnpm test --run",
-    "check:static": "pnpm run check:overrides && pnpm run check:node-types && pnpm run check:three-types && pnpm run check:jsdom-version && pnpm run check:e2e-timeout-budgets && pnpm run check:format && pnpm run typecheck && pnpm run lint && pnpm run check:layers && pnpm run check:knip:ci",
+    "check:static": "pnpm run check:overrides && pnpm run check:node-types && pnpm run check:three-types && pnpm run check:jsdom-version && pnpm run check:e2e-timeout-budgets && pnpm run check:format && pnpm run typecheck && pnpm run lint && pnpm run check:layers && pnpm run check:knip:ci && pnpm run check:knip:ratchet",
     "check:coverage-slack": "node scripts/check-coverage-slack.mjs",
     "check:ci": "node scripts/run-ci-checks.mjs",
     "ci:release": "pnpm run build:lib && pnpm run build:lib:check"

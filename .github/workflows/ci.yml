@@ -1001,14 +1001,15 @@ jobs:
         #   → check:three-types (@types/three and embed pins match the three peer minor)
         #   → check:format → typecheck → lint → check:layers (dependency-cruiser)
         #   → check:knip:ci (dead-file + unlisted-dependency gate)
+        #   → check:knip:ratchet (unused exports/types vs knip-baseline.json)
         #   → test:coverage (vitest with thresholds)
         #   → check:coverage-slack (reject stale or empty coverage floors)
         # Independent checks run after ordinary failures so the runner can report
         # the complete failure set. The slack check is skipped only when a failed
         # coverage run produced no summary for it to inspect.
-        # knip:ci runs with --include files,dependencies so policy-level
-        # "unused exports" findings (test builders, type guards) don't fail
-        # CI; only true dead files and unlisted deps do.
+        # knip:ci fails on any dead file or unlisted dep; unused exports are
+        # RATCHETED instead (check:knip:ratchet), so the recorded backlog is
+        # tolerated but a new one fails.
         run: pnpm run check:ci
 
   release-readiness:

@@ -139,7 +139,7 @@ make check-record-attribution   # opt-in OFFLINE audit: does the captured Zenodo
                   # the audit FINDS would gate on prose only Zenodo can change.
 make check-cold-fetch           # opt-in hosted demo cold-fetch gate before payload removal
 make check-external-references  # aggregate external audits (report-only, non-gating)
-make check-knip   # REPORT only (non-gating): unused viewer files/exports/deps
+make check-knip   # REPORT only; check:ci gates files/deps + RATCHETS unused exports (knip-baseline.json; --update-baseline)
 make check-gallery-staleness  # REPORT only; requires full Git history
 make format-all   # Format all code (Python, TypeScript, Rust, Go, CUDA)
 
