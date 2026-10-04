@@ -1079,8 +1079,8 @@ def test_a_real_run_keeps_the_baked_environment_current(legacy_scene: Path) -> N
         close(root)
 
 
-def test_a_real_run_leaves_chunk_packs_unbound(legacy_scene: Path) -> None:
-    """Restamp cannot prove the packed copies still match the plain chunks."""
+def test_a_real_run_keeps_matching_chunk_packs_bound(legacy_scene: Path) -> None:
+    """An attrs-only restamp preserves packs whose copies still match."""
     root = open_group(legacy_scene, mode="r+")
     before = root.attrs["content_hash"]
     count = write_chunk_packs(root, before)
@@ -1094,7 +1094,7 @@ def test_a_real_run_leaves_chunk_packs_unbound(legacy_scene: Path) -> None:
     try:
         after = root.attrs["content_hash"]
         assert report.content_hash == after != before
-        assert root[CHUNK_PACKS_GROUP].attrs["scene_content_hash"] == before
+        assert root[CHUNK_PACKS_GROUP].attrs["scene_content_hash"] == after
     finally:
         close(root)
 
@@ -1828,7 +1828,7 @@ def test_a_failed_run_restores_a_digest_it_could_not_have_recomputed(
 
     after = _node_attrs(legacy_scene)
     assert (ENVIRONMENT_GROUP, "scene_content_hash") in writes
-    assert (CHUNK_PACKS_GROUP, "scene_content_hash") not in writes
+    assert (CHUNK_PACKS_GROUP, "scene_content_hash") in writes
     assert after["/"]["content_hash"] == "LEGACY-DIGEST"
     assert [path for path, attrs in after.items() if "content_hash" in attrs] == ["/"]
     assert after == stale, "an attrs-level rollback has to be exact everywhere"

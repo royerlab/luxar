@@ -354,8 +354,8 @@ luxar optimize arbitrary.zarr out.zarr --generic           # a plain (non-Luxar)
 # store), and packing does not change content_hash (the sidecar is excluded
 # from it; optimize still stamps its output's fresh hash, as without --pack).
 # The sidecar records the hash it was built for, so an edit that restamps the
-# hash makes the viewer ignore it. `restamp-lod` also leaves packs unbound;
-# repack the scene to make their copies current again.
+# hash makes the viewer ignore it. `restamp-lod` rebinds packs only when every
+# packed copy still matches its plain chunk; stale packs stay unbound.
 luxar optimize scene.luxar.zarr out.luxar.zarr --pack
 # Re-derive a store's LOD switch thresholds IN PLACE — attrs only, no chunk data
 # moves. Every `kind=lod` group still on the legacy `coverage` diagonal metric

@@ -21,8 +21,8 @@ metadata, which every load fetches first:
     The root ``content_hash`` the packs were built for. The sidecar is excluded
     from that hash (like the baked ``environment`` group), so packing leaves the
     hash alone and a reader can tell a stale pack from a current one without
-    reading a single chunk. An attrs-only ``restamp-lod`` leaves this binding
-    unchanged; repack after restamping to make the copies current.
+    reading a single chunk. ``restamp-lod`` rebinds only when every packed
+    copy still matches its plain chunk; stale packs retain their old binding.
 ``max_bytes``
     The stored chunk-byte limit used when selecting nodes for packing.
 ``packs``
