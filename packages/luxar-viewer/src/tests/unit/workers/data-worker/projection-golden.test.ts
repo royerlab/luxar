@@ -321,7 +321,7 @@ describe('lines dispatcher: basic 3D projection', () => {
 });
 
 describe('lines dispatcher: hidden-dim clipping + culling', () => {
-  it('culls a segment entirely outside the slice (4D, hidden dim 3)', async () => {
+  it('culls an off-slice one-chunk segment and keeps it on-slice (4D)', async () => {
     const loaded: LoadedLinesData = {
       // both vertices at dim3=10, slice at dim3=0 ± 0.5 → invisible
       positions: new Float32Array([0, 0, 0, 10, 1, 0, 0, 10]),
@@ -340,6 +340,15 @@ describe('lines dispatcher: hidden-dim clipping + culling', () => {
       [0, 1, 2]
     );
     expect(out.segmentCount).toBe(0);
+    // The one-chunk Lines index shortcut loads this segment on either slice;
+    // clipping must make the off-slice payload invisible.
+    const onSlice = await runLinesBothBackends(
+      loaded,
+      [0, 0, 0, 10],
+      [1e10, 1e10, 1e10, 0.5],
+      [0, 1, 2]
+    );
+    expect(onSlice.segmentCount).toBe(1);
   });
 
   it('accepts the canonical empty payload and projects to an empty result (nD scrub re-cull regression)', async () => {

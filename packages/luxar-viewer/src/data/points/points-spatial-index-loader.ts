@@ -255,6 +255,47 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   async initialize(signal?: AbortSignal): Promise<void> {
     // Load chunk-based spatial index
     try {
+      const spatialExtendDims = await this.loadSpatialExtendDimsFromSceneDimensions();
+      if (spatialExtendDims) {
+        this._effectiveRadiusConfig = {
+          spatialExtendDims,
+          maxRadius: this.attrs.max_radius || appConfig.dataLoading.spatial.defaultMaxRadius,
+        };
+
+        const spatialDims = spatialExtendDims
+          .map((isSpatial: boolean, idx: number) => (isSpatial ? idx : null))
+          .filter((idx: number | null) => idx !== null);
+
+        log.info(
+          Modules.SPATIAL_INDEX_LOADER,
+          `Spatial extension enabled for dimensions: [${spatialDims.join(', ')}]`
+        );
+      }
+
+      // Open radii for effective-radius projection when available.
+      if (!isArrayListed(this.node, 'radii')) {
+        log.info(
+          Modules.SPATIAL_INDEX_LOADER,
+          'No radii array in the store listing (using default radii)'
+        );
+      } else {
+        try {
+          let radiiArray = await zarr.open(this.zarrLocation.resolve('radii'), { kind: 'array' });
+          this.registerBounds('radii', radiiArray);
+          if (this.l0Cache) {
+            radiiArray = wrapWithCache(radiiArray, this.l0Cache, `${this.node.path}/radii`, {
+              getProbe: () => this._lifetime.calls.probe,
+              getSignal: () => this._lifetime.calls.signal,
+            });
+          }
+          this.arrays.radii = radiiArray;
+        } catch (e: unknown) {
+          if (!isNotFoundError(e)) {
+            log.info(Modules.SPATIAL_INDEX_LOADER, 'No radii array found (using default radii)');
+          }
+        }
+      }
+
       this.chunkIndex = await loadPointsChunkIndex(
         this.zarrLocation,
         this.node.attrs as PointsNodeAttrs,
@@ -332,26 +373,6 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
           `  Ordering dims: [${this.chunkIndex.metadata.ordering_dims.join(', ')}], Slice dims: [${this.chunkIndex.metadata.slice_dims.join(', ')}]`
         );
       }
-
-      // Load spatial extension configuration from scene_dimensions (derived from root attributes)
-      // This determines which dimensions points physically extend through vs categorical dimensions
-      const spatialExtendDims = await this.loadSpatialExtendDimsFromSceneDimensions();
-      if (spatialExtendDims) {
-        this._effectiveRadiusConfig = {
-          spatialExtendDims: spatialExtendDims,
-          maxRadius: this.attrs.max_radius || appConfig.dataLoading.spatial.defaultMaxRadius,
-        };
-
-        // Log which dimensions are spatial
-        const spatialDims = spatialExtendDims
-          .map((isSpatial: boolean, idx: number) => (isSpatial ? idx : null))
-          .filter((idx: number | null) => idx !== null);
-
-        log.info(
-          Modules.SPATIAL_INDEX_LOADER,
-          `Spatial extension enabled for dimensions: [${spatialDims.join(', ')}]`
-        );
-      }
     } catch (error) {
       log.error(
         Modules.SPATIAL_INDEX_LOADER,
@@ -411,31 +432,6 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         // Colors are optional - only log if it's not a 404
         if (!isNotFoundError(e)) {
           log.info(Modules.SPATIAL_INDEX_LOADER, 'No colors array found (using default colors)');
-        }
-      }
-    }
-
-    if (!isArrayListed(this.node, 'radii')) {
-      log.info(
-        Modules.SPATIAL_INDEX_LOADER,
-        'No radii array in the store listing (using default radii)'
-      );
-    } else {
-      try {
-        let radiiArray = await zarr.open(this.zarrLocation.resolve('radii'), { kind: 'array' });
-        this.registerBounds('radii', radiiArray);
-        // Wrap with L0 cache if enabled
-        if (this.l0Cache) {
-          radiiArray = wrapWithCache(radiiArray, this.l0Cache, `${this.node.path}/radii`, {
-            getProbe: () => this._lifetime.calls.probe,
-            getSignal: () => this._lifetime.calls.signal,
-          });
-        }
-        this.arrays.radii = radiiArray;
-      } catch (e: unknown) {
-        // Radii are optional - only log if it's not a 404
-        if (!isNotFoundError(e)) {
-          log.info(Modules.SPATIAL_INDEX_LOADER, 'No radii array found (using default radii)');
         }
       }
     }

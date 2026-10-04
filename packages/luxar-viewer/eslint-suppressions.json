@@ -1168,11 +1168,6 @@
       "count": 3
     }
   },
-  "src/tests/unit/workers/worker-pool/selection/load-balancing.test.ts": {
-    "@typescript-eslint/no-misused-promises": {
-      "count": 1
-    }
-  },
   "src/themes/glass-filters.ts": {
     "max-lines-per-function": {
       "count": 1

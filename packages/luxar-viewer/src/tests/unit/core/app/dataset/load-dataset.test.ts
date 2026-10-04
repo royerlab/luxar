@@ -14,6 +14,8 @@ import { loadDataset, type LoadDatasetPorts } from '../../../../../core/app/data
 import { captureViewerState } from '../../../../../config/zarr-bridge/viewer-state-capture';
 import { config } from '../../../../../config';
 import { syncCameraFovState } from '../../../../../ui/rendering-controls/sync-current-state';
+import { deferred, type Deferred } from '../../../../helpers/deferred';
+import { defineLifecycleContract } from '../../../_shared/lifecycle-contract';
 
 vi.mock('../../../../../data/scene-loader-manager', () => ({
   getSceneLoader: vi.fn(),
@@ -476,5 +478,70 @@ describe('loadDataset', () => {
       loaderConfig,
       { applyViewerConfigFov: true }
     );
+  });
+});
+
+describe('loadDataset — lifecycle', () => {
+  beforeEach(() => {
+    (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(null);
+  });
+
+  defineLifecycleContract('loadDataset', {
+    create: () => {
+      // LuxarApp.loadDataset's session discipline: starting a load disposes the
+      // outgoing session, and disposing the app disposes the current one.
+      const staleSessions = new Set<number>();
+      let sessions = 0;
+      let disposed = false;
+      const steps: Array<Deferred<void>> = [];
+      const step = (): Promise<void> => {
+        const d = deferred();
+        steps.push(d);
+        return d.promise;
+      };
+      /** The tail a load commits once its data has loaded. */
+      const committed: string[] = [];
+      return {
+        start: (n) => {
+          for (let s = 0; s < sessions; s++) staleSessions.add(s);
+          const session = sessions++;
+          const trace: Trace = { order: [], recordedViewerConfig: undefined };
+          const ports = makePorts(trace, {
+            initOverlays: step,
+            initPicking: step,
+            applyViewerConfigState: () => committed.push(`viewerConfigState:${n}`),
+            isStale: () => disposed || staleSessions.has(session),
+          });
+          Object.assign(ports.sceneManager, { loadSceneData: step });
+          Object.assign(ports.renderingControls, {
+            setZarrViewerConfig: () => committed.push(`zarrViewerConfig:${n}`),
+          });
+          Object.assign(ports.animationController, {
+            startAnimation: () => committed.push(`startAnimation:${n}`),
+          });
+          return loadDataset(`scene-${n}.zarr`, ports);
+        },
+        pending: () => steps.length,
+        settle: (index, outcome) =>
+          outcome === 'ok' ? steps[index].resolve() : steps[index].reject(new Error('404')),
+        observe: () => [...committed],
+        dispose: () => {
+          disposed = true;
+        },
+      };
+    },
+    cases: {
+      abort: {
+        na: 'loadDataset takes no signal: a newer load or an app dispose makes its session stale, and it stops at its next await (the isStale port)',
+      },
+      dispose: true,
+      failure: true,
+      retry: true,
+      supersede: true,
+      doubleDispose: true,
+    },
+    usableAfterDispose: {
+      na: 'disposing the app ends its sessions; the next load belongs to a re-initialised app and opens a new session (LuxarApp.loadDataset)',
+    },
   });
 });

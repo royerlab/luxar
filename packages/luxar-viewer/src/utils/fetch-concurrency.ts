@@ -111,6 +111,7 @@ export class FetchPriorityCell {
 /** Priority classes carried on abort signals — see {@link tagSignalPriority}. */
 const SIGNAL_PRIORITIES = new WeakMap<AbortSignal, FetchPriorityCell>();
 
+// lifecycle-exempt: attaches a priority cell to a signal; starts and owns no work
 /**
  * Give every gated read made under `signal` the priority `priority` (B9c).
  *
@@ -144,6 +145,7 @@ export function tagSignalPriority(
   return cell;
 }
 
+// lifecycle-exempt: looks up a signal's priority cell; starts and owns no work
 /** The priority cell {@link tagSignalPriority} attached to `signal`, if any. */
 export function signalPriority(
   signal: AbortSignal | null | undefined

@@ -60,13 +60,15 @@ export interface PointsChunkIndex {
 /**
  * Probe `chunk_bounds` under `zarrLocation` (the read rides `signal`, which
  * carries its fetch priority) and assemble a
- * `PointsChunkIndex`. Returns `null` for the two soft-fail cases
+ * `PointsChunkIndex`. Returns `null` for these soft-fail cases
  * the loader already handled inline:
  *   - the node has no spatial ordering (`ordering` is undefined or
  *     `'none'`) — the dataset is 3D-without-Morton/Hilbert and the
  *     loader should fall back to "load all points";
  *   - the `chunk_bounds` array is missing or the shape's last dim
  *     isn't 2 — same fallback path.
+ *   - a one-chunk node: projection checks each point's slice membership,
+ *     so loading that chunk is safe without bounds.
  *
  * Logs warnings (does not raise) on length mismatches and on
  * dimension-coverage mismatches between `ordering_dims ∪ slice_dims`

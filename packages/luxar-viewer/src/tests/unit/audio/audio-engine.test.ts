@@ -15,10 +15,15 @@ import { SceneNodeIndex } from '../../../data/scene-loader/view-state/scene-node
 import type { SimpleDims } from '../../../types/dims';
 import { StorageKeys } from '../../../utils/storage-keys';
 import {
+  FakeAudioBuffer,
   FakeAudioContext,
   FakeGainNode,
   installFakeAudioContext,
 } from '../../mocks/fake-audio-context.mock';
+import { SoundNode } from '../../../audio/sound-node';
+import { log } from '../../../utils/log';
+import { deferred } from '../../helpers/deferred';
+import { defineLifecycleContract } from '../_shared/lifecycle-contract';
 
 function storyDims(step: number): SimpleDims {
   return {
@@ -813,5 +818,69 @@ describe('AudioEngine — scene-node index', () => {
     vi.advanceTimersByTime(1);
     expect(h.engine.getState().playing).toEqual(['hum']);
     expect(walks).toBe(0);
+  });
+});
+
+describe('AudioEngine — clip decode lifecycle', () => {
+  let subjects = 0;
+  defineLifecycleContract('AudioEngine clip decode', {
+    create: () => {
+      // Node paths are unique per subject: the setBuffer / warning spies are
+      // shared by every subject a contract case builds.
+      const prefix = `/subject${subjects++}`;
+      const h = makeHarness();
+      // Inner work in request order: each clip read, then its decode.
+      const inner: Array<{ ok(): void; fail(): void }> = [];
+      h.ctx.decodeAudioData = (_data: ArrayBuffer) => {
+        const decode = deferred<FakeAudioBuffer>();
+        inner.push({
+          ok: () => decode.resolve(new FakeAudioBuffer(2)),
+          fail: () => decode.reject(new Error('EncodingError')),
+        });
+        return decode.promise;
+      };
+      const setBuffer = vi.spyOn(SoundNode.prototype, 'setBuffer');
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      const mine = (path: unknown): boolean => String(path).startsWith(`${prefix}-`);
+      return {
+        start: (n) => {
+          // A dataset switch: the app detaches the outgoing scene's sounds first.
+          h.engine.detachScene();
+          const root = new THREE.Group();
+          const placeholder = soundPlaceholder(`${prefix}-clip${n}`, { trigger: 'continuous' });
+          (placeholder.userData.sound as SoundSourceDescriptor).readClip = () => {
+            const read = deferred<Uint8Array>();
+            inner.push({
+              ok: () => read.resolve(new Uint8Array([1, 2, 3, 4])),
+              fail: () => read.reject(new Error('404')),
+            });
+            return read.promise;
+          };
+          root.add(placeholder);
+          h.engine.attachScene(root);
+        },
+        pending: () => inner.length,
+        settle: (index, outcome) => (outcome === 'ok' ? inner[index].ok() : inner[index].fail()),
+        observe: () =>
+          setBuffer.mock.contexts
+            .map((node) => (node as SoundNode).desc.path)
+            .filter(mine)
+            .map((path) => path.slice(prefix.length)),
+        failures: () => warning.mock.calls.filter((call) => call.some(mine)).length,
+        dispose: () => h.engine.dispose(),
+        reset: () => h.engine.detachScene(),
+      };
+    },
+    cases: {
+      abort: {
+        na: 'clip decoding takes no signal: a detach (dataset switch) or a dispose makes the loop yield at its next await (decodeAll checks node identity)',
+      },
+      dispose: true,
+      failure: true,
+      retry: true,
+      supersede: true,
+      doubleDispose: true,
+    },
+    resets: true,
   });
 });

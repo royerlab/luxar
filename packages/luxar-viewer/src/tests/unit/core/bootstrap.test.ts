@@ -555,9 +555,13 @@ describe('bootstrapStandalone', () => {
       await vi.waitFor(() => expect(mocks.init).toHaveBeenCalled());
       try {
         expect(lodLoadStatsEnabled()).toBe(true);
-        const before = perfCounters.get('scene.getObjectByName');
+        perfCounters.reset();
+        // One count per CALL, not per node walked: the search below visits two.
+        const group = new THREE.Group();
+        group.add(new THREE.Group());
+        group.getObjectByName('anything');
         new THREE.Group().getObjectByName('anything');
-        expect(perfCounters.get('scene.getObjectByName')).toBe(before + 1);
+        expect(perfCounters.get('scene.getObjectByName')).toBe(2);
         eventBus.emit('frame-start', {});
         eventBus.emit('frame-end', { rendered: true });
         expect(getRendererInfoSnapshot()).toMatchObject({ calls: 7, triangles: 70 });

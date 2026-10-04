@@ -33,7 +33,11 @@ describe('range decode signal on initial node builds', () => {
     expect(secondInternals.rangeLoader._getSignal()).toBe(secondInternals._lifetime.signal);
     const update = new AbortController();
     await firstInternals._lifetime.calls.runWithSignal(update.signal, async () => {
-      expect(firstInternals.rangeLoader._getSignal()).toBe(update.signal);
+      const readSignal = firstInternals.rangeLoader._getSignal();
+      expect(readSignal).not.toBe(firstInternals._lifetime.signal);
+      expect(readSignal?.aborted).toBe(false);
+      update.abort();
+      expect(readSignal?.aborted).toBe(true);
     });
 
     first.dispose();

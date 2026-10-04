@@ -25,6 +25,7 @@ import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-c
 import type { SceneNode } from '../../../../../data/data-loader-types';
 import { ROOT_ATTR_DOCS, rootAttributes } from '../../../../../types/zarr-documents';
 import { log, Modules } from '../../../../../utils/log';
+import { perfCounters } from '../../../../../profiling/perf-counters';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -938,6 +939,7 @@ describe('loadPartitionGroupNode — gated loading (B4)', () => {
 
   it('out-of-slice parts do not initialise their higher rungs', async () => {
     attachStubChildren();
+    perfCounters.reset();
     const registerPartition = vi.fn();
     const children = [timePart(0, 0), timePart(1, 1), timePart(2, 2)];
 
@@ -958,10 +960,12 @@ describe('loadPartitionGroupNode — gated loading (B4)', () => {
     expect(wrapper.children.map((c) => c.userData.partIndex)).toEqual([0, 1, 2]);
     expect(registerPartition).toHaveBeenCalledOnce();
     expect(registerPartition.mock.calls[0][0].children).toHaveLength(3);
+    expect(perfCounters.get('partition.partsInitialised')).toBe(1);
   });
 
   it('a registry activation registers the deferred part without loading its data', async () => {
     attachStubChildren();
+    perfCounters.reset();
     const registerPartition = vi.fn();
 
     await loadPartitionGroupNode(
@@ -982,6 +986,8 @@ describe('loadPartitionGroupNode — gated loading (B4)', () => {
     const [node, , , activationCtx] = loadSceneNodesMock.mock.calls[1];
     expect(node.path).toBe('/partition/part_0');
     expect(activationCtx.registerOnly).toBe(true);
+    // The eager in-slice part, then the activated one.
+    expect(perfCounters.get('partition.partsInitialised')).toBe(2);
   });
 
   it('a failed activation records a retryable failure on its part and can run again', async () => {

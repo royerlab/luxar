@@ -10,41 +10,18 @@
  * the pool's `workers` array and forcing `initPromise` to resolved,
  * so we can run in jsdom without a Worker API.
  *
- * AUDIT NOTE (workers.md C3): the `makePool` helper mutates private
- * fields of a real WorkerPool via `as any`. Same caveat as the
- * load-balancing file — the helper is duped here intentionally rather
- * than extracted to a shared module; both files are slim and the
- * shape is unlikely to change.
+ * AUDIT NOTE (workers.md C3): `poolWithWorkers` (`tests/helpers/fake-worker.ts`,
+ * shared with the selection tests) mutates private fields of a real
+ * WorkerPool. Same caveat as the load-balancing file.
  */
 import { getEventListeners } from 'node:events';
 import { describe, it, expect, vi } from 'vitest';
-import { WorkerPool } from '../../../../../workers/worker-pool';
-
-interface FakeWorkerInstance {
-  worker: { terminate: () => void };
-  api: { handle: ReturnType<typeof vi.fn> };
-  activeQueries: number;
-}
-
-function makePool(workers: FakeWorkerInstance[]): WorkerPool {
-  const pool = new WorkerPool() as any;
-  pool.workers = workers;
-  pool.initPromise = Promise.resolve();
-  return pool;
-}
-
-function makeFakeWorker(label: string, activeQueries = 0): FakeWorkerInstance {
-  return {
-    worker: { terminate: vi.fn() },
-    api: { handle: vi.fn().mockResolvedValue(label) },
-    activeQueries,
-  };
-}
+import { makeFakeWorker, poolWithWorkers } from '../../../../helpers/fake-worker';
 
 describe('WorkerPool — AbortSignal', () => {
   it('rejects immediately when called with an already-aborted signal', async () => {
     const w0 = makeFakeWorker('A');
-    const pool = makePool([w0]);
+    const pool = poolWithWorkers([w0]);
     const controller = new AbortController();
     controller.abort();
     await expect(
@@ -64,7 +41,7 @@ describe('WorkerPool — AbortSignal', () => {
     // settle the promise.
     const w0 = makeFakeWorker('A');
     w0.api.handle = vi.fn(() => new Promise(() => {}));
-    const pool = makePool([w0]);
+    const pool = poolWithWorkers([w0]);
     const controller = new AbortController();
     const promise = (pool as any).runWithTimeout(
       'mid-flight-abort',
@@ -79,7 +56,7 @@ describe('WorkerPool — AbortSignal', () => {
   });
 
   it('releases its listener on the caller signal after a completed call', async () => {
-    const pool = makePool([makeFakeWorker('A')]);
+    const pool = poolWithWorkers([makeFakeWorker('A')]);
     const callerController = new AbortController();
 
     const result = await (pool as any).runWithTimeout(

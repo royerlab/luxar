@@ -496,11 +496,14 @@ describe('AnimationController render-on-change', () => {
       expect(renders()).toBe(3);
       expect(perfCounters.get('render.missedDirty')).toBe(0);
       expect(perfCounters.get('render.byReason.audit')).toBe(2);
+      // Each audit frame is read back and compared once.
+      expect(perfCounters.get('render.auditCompares')).toBe(2);
 
       // Drawn state changed silently (nobody requested a render).
       pixel = 200;
       runFrames(3);
       expect(perfCounters.get('render.missedDirty')).toBe(1);
+      expect(perfCounters.get('render.auditCompares')).toBe(5);
     });
 
     it('a reported change is not a missed dirty', () => {

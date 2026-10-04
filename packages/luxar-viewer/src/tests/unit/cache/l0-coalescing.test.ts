@@ -23,6 +23,8 @@ import {
 import { warmChunk } from '../../../cache/decompressed-chunk-cache/warm-chunk';
 import { perfCounters } from '../../../profiling/perf-counters';
 import { ResidencyAccumulator } from '../../../cache/residency-probe';
+import { deferred, type Deferred } from '../../helpers/deferred';
+import { defineLifecycleContract } from '../_shared/lifecycle-contract';
 
 interface Counter {
   decodes: number;
@@ -375,5 +377,53 @@ describe('L0 — a cancelled read-ahead whose decode is already past its fetch',
     await a.getChunk([0, 0]); // an L0 hit: the paid-for decode was kept
     expect(counter.starts).toBe(1);
     expect(perfCounters.get('l0.hits')).toBe(1);
+  });
+});
+
+describe('L0 in-flight decode — lifecycle', () => {
+  defineLifecycleContract('L0 in-flight decode', {
+    create: () => {
+      const cache = new DecompressedChunkCache({ maxSize: 1 << 20 });
+      const reads: Array<Deferred<{ data: Float32Array; shape: number[]; stride: number[] }>> = [];
+      // A store read that honours its signal the way the multi-level store does.
+      const array = {
+        shape: [1000, 3],
+        chunks: [100, 3],
+        getChunk(_coords: number[], options?: { signal?: AbortSignal }) {
+          const read = deferred<{ data: Float32Array; shape: number[]; stride: number[] }>();
+          reads.push(read);
+          options?.signal?.addEventListener('abort', () =>
+            read.reject(new DOMException('aborted', 'AbortError'))
+          );
+          return read.promise;
+        },
+      };
+      const wrapped = wrapWithCache(array as never, cache, '/p/positions');
+      const key = (n: number) => DecompressedChunkCache.makeKey('/p/positions', [n]);
+      return {
+        start: (n, signal) => wrapped.getChunk([n], { signal }),
+        pending: () => reads.length,
+        settle: (index, outcome) =>
+          outcome === 'ok'
+            ? reads[index].resolve({ data: new Float32Array(300), shape: [100, 3], stride: [3, 1] })
+            : reads[index].reject(new Error('503')),
+        observe: () => [0, 1, 2].filter((n) => cache.has(key(n))),
+        inFlight: () => cache.inflightCount,
+        dispose: () => cache.dispose(),
+      };
+    },
+    cases: {
+      abort: true,
+      dispose: true,
+      failure: true,
+      retry: true,
+      supersede: {
+        na: 'nothing supersedes an L0 read: a second caller of the same chunk joins its decode, other chunks are independent',
+      },
+      doubleDispose: true,
+    },
+    usableAfterDispose: {
+      na: 'dispose() is clear(): the cache stays usable for the next scene (DecompressedChunkCache.dispose)',
+    },
   });
 });

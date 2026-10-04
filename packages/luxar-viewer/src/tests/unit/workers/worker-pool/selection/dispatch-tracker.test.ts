@@ -8,9 +8,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DispatchTracker } from '../../../../../workers/worker-pool/selection/dispatch-tracker';
 import type { WorkerInstance } from '../../../../../workers/worker-pool/types';
-import { WorkerPool, WorkerAbortError } from '../../../../../workers/worker-pool';
+import { WorkerAbortError } from '../../../../../workers/worker-pool';
 import { perfCounters } from '../../../../../profiling/perf-counters';
 import { deferred } from '../../../../helpers/deferred';
+import { poolWithWorkers } from '../../../../helpers/fake-worker';
 
 function makeInstance(label: string): WorkerInstance {
   return {
@@ -97,10 +98,7 @@ describe('WorkerPool dispatch counters', () => {
   it('no misroute after a caller abort: the slot stays busy until the worker settles (B7)', async () => {
     const a = makeInstance('A');
     const b = makeInstance('B');
-    const pool = new WorkerPool() as unknown as Record<string, unknown>;
-    pool.workers = [a, b];
-    pool.initPromise = Promise.resolve();
-    const typed = pool as unknown as WorkerPool;
+    const typed = poolWithWorkers([a, b]);
 
     const stuck = deferred<string>();
     const controller = new AbortController();
