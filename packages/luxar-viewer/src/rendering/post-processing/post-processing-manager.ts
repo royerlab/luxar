@@ -128,6 +128,7 @@ export class PostProcessingManager {
   private disposed = false;
   private captureDepth = 0;
   private onCaptureReleased: (() => void) | null = null;
+  private static readonly CAPTURE_TIMEOUT_MS = 60_000;
 
   // Wall-clock timestamp of the previous render() call, used to derive
   // the inter-frame delta for detector-noise time advancement. 0 means
@@ -878,9 +879,18 @@ export class PostProcessingManager {
   /** Keep the frame loop from drawing over a capture target during readback. */
   async suspendFrameRendersDuring<T>(capture: () => Promise<T>): Promise<T> {
     this.captureDepth++;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
-      return await capture();
+      const result = capture();
+      const timeout = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error('Capture timed out after 60 seconds')),
+          PostProcessingManager.CAPTURE_TIMEOUT_MS
+        );
+      });
+      return await Promise.race([result, timeout]);
     } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
       this.captureDepth--;
       if (this.captureDepth === 0 && !this.disposed) this.onCaptureReleased?.();
     }

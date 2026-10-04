@@ -67,7 +67,9 @@ PostProcessingManager (class)
   draws during pixel readback, including `luxar env bake`. The injected
   render-skip predicate also excludes those draw-free ticks from adaptive DPR.
   When the last capture releases, its callback restarts the loop so a capture
-  that outlasted the idle timeout does not leave the canvas stale.
+  that outlasted the idle timeout does not leave the canvas stale. Each capture
+  has a 60-second deadline: a stalled readback rejects and releases its own
+  guard, so it cannot freeze the viewport indefinitely.
 - **Capture mode contract** (see `capture.ts::CaptureMode`):
   - `raw-scene-hdr` — scene-only render, no bloom, no mega-shader.
   - `hdr-effects-pre-tone` — bloom kept (HDR-space), EOG / tone / vignette /
