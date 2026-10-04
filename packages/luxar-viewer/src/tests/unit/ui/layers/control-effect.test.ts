@@ -475,12 +475,6 @@ function shownControls(ctx: Ctx): LayerControlId[] {
   });
 }
 
-/**
- * Cells red on dev, kept as `it.fails` until their fix lands: Reset re-derives the
- * layer state but leaves a locked Active level in the LOD registry.
- */
-const KNOWN_GAPS = new Set(['LOD group / activeLevel', 'partition of LOD groups / activeLevel']);
-
 describe.each(FIXTURES)('Layers panel controls — $name', (fixture) => {
   it('shows exactly the declared controls, and exactly what LAYER_CONTROL_RULES allows', () => {
     const ctx = mount(fixture);
@@ -490,28 +484,23 @@ describe.each(FIXTURES)('Layers panel controls — $name', (fixture) => {
     expect([...allowed].sort()).toEqual([...fixture.shows].sort());
   });
 
-  for (const id of LAYER_CONTROL_IDS) {
-    const cell = KNOWN_GAPS.has(`${fixture.name} / ${id}`) ? it.fails : it;
-    cell(`${id}, when shown, has an effect that Reset undoes`, () => {
-      const ctx = mount(fixture);
-      // An invisible control asserts nothing; the test above pins which are shown.
-      if (!shownControls(ctx).includes(id)) return;
-      const initial = observe(ctx);
-      PROBES[id].prepare?.(ctx);
-      const before = observe(ctx);
-      PROBES[id].drive(ctx);
-      expect(observe(ctx), `${id} on ${fixture.name} changed nothing observable`).not.toEqual(
-        before
-      );
-      resetLayer(ctx);
-      // A subset match: switching a colormap off leaves its (now unread) uniforms
-      // declared at neutral values, but every observed key of the initial state —
-      // defines and userData included, compared whole — must be back.
-      expect(observe(ctx), `Reset left ${id} on ${fixture.name} changed`).toMatchObject(
-        initial as object
-      );
-    });
-  }
+  it.each(LAYER_CONTROL_IDS)('%s, when shown, has an effect that Reset undoes', (id) => {
+    const ctx = mount(fixture);
+    // An invisible control asserts nothing; the test above pins which are shown.
+    if (!shownControls(ctx).includes(id)) return;
+    const initial = observe(ctx);
+    PROBES[id].prepare?.(ctx);
+    const before = observe(ctx);
+    PROBES[id].drive(ctx);
+    expect(observe(ctx), `${id} on ${fixture.name} changed nothing observable`).not.toEqual(before);
+    resetLayer(ctx);
+    // A subset match: switching a colormap off leaves its (now unread) uniforms
+    // declared at neutral values, but every observed key of the initial state —
+    // defines and userData included, compared whole — must be back.
+    expect(observe(ctx), `Reset left ${id} on ${fixture.name} changed`).toMatchObject(
+      initial as object
+    );
+  });
 });
 
 describe('LAYER_CONTROL_RULES completeness', () => {

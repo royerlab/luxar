@@ -44,6 +44,7 @@ import { BLENDING_MODES } from '../../rendering/blending-state';
 import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
 import { SceneLoaderManager } from '../../data/scene-loader-manager';
 import type { LODGroupRegistry } from '../../scene/lod-group-registry';
+import type { LODGroupSelectorMode } from '../../types/lod-group';
 import {
   displayedGeometricErrorFraction,
   displayedQualityFraction,
@@ -68,6 +69,15 @@ const COLOUR_RANGE_LABEL = 'Colour range';
 const SCALAR_RANGE_TOOLTIP = 'Scalar data values in this range are mapped across the colormap.';
 const COLOUR_RANGE_TOOLTIP =
   "Input RGB values in this range are mapped to the full output range. This controls colour gain and offset, not the layer's data extents.";
+
+/** The lod_group paths the Active-level control drives for `layer`. */
+function activeLevelPaths(layer: LayerInfo): string[] {
+  if (layer.kind === 'lod') return [layer.path];
+  if (layer.kind === 'partition' && layer.nestedLodGroupPaths?.length) {
+    return layer.nestedLodGroupPaths;
+  }
+  return [];
+}
 
 /**
  * Dependencies injected by the owning {@link LayersPanel}. `state` and
@@ -733,36 +743,7 @@ export class LayerControls {
       const value = this.lodLevelSelect!.value;
       const primary = this.deps.state.getPrimarySelected();
       if (primary) {
-        const registry = this.getLodGroupRegistry();
-        if (registry) {
-          const mode = value === 'auto' ? 'auto' : { lockLevel: Number(value) };
-          // Resolve the set of paths to update. A kind=lod layer updates
-          // itself; a kind=partition layer that wraps lod_groups broadcasts
-          // to every nested path (clamped per-group by setSelectorMode
-          // on ragged ladders — see lod-group-registry).
-          const paths: string[] =
-            primary.kind === 'lod'
-              ? [primary.path]
-              : primary.kind === 'partition' &&
-                  primary.nestedLodGroupPaths &&
-                  primary.nestedLodGroupPaths.length > 0
-                ? primary.nestedLodGroupPaths
-                : [];
-          let anyApplied = false;
-          for (const p of paths) {
-            try {
-              registry.setSelectorMode(p, mode);
-              anyApplied = true;
-            } catch (err) {
-              log.warning(Modules.UI, `Failed to set lod_group selector: ${err}`);
-            }
-          }
-          // The actual visibility swap happens in a per-frame callback;
-          // if the animation loop is idle (no camera/slice change),
-          // setSelectorMode alone is not enough. Wake the loop so the
-          // new active level is painted.
-          if (anyApplied) this.deps.requestRender();
-        }
+        this.applyActiveLevel(primary, value === 'auto' ? 'auto' : { lockLevel: Number(value) });
       }
       this.controlsInteracting = false;
     });
@@ -785,6 +766,44 @@ export class LayerControls {
   private getLodGroupRegistry(): LODGroupRegistry | null {
     const loader = SceneLoaderManager.getInstance().getDefaultLoader();
     return loader?.lodGroupRegistry ?? null;
+  }
+
+  /**
+   * Point every lod_group the Active-level control drives for `layer` at `mode`:
+   * a kind=lod layer drives itself, a kind=partition layer every nested lod_group
+   * (clamped per group by `setSelectorMode` on ragged ladders).
+   */
+  private applyActiveLevel(layer: LayerInfo, mode: LODGroupSelectorMode): void {
+    const registry = this.getLodGroupRegistry();
+    if (!registry) return;
+    let anyApplied = false;
+    for (const path of activeLevelPaths(layer)) {
+      try {
+        registry.setSelectorMode(path, mode);
+        anyApplied = true;
+      } catch (err) {
+        log.warning(Modules.UI, `Failed to set lod_group selector: ${err}`);
+      }
+    }
+    // The actual visibility swap happens in a per-frame callback; if the animation
+    // loop is idle (no camera/slice change), setSelectorMode alone is not enough.
+    // Wake the loop so the new active level is painted.
+    if (anyApplied) this.deps.requestRender();
+  }
+
+  /**
+   * Return a locked Active level to `auto` — the authored state, since every
+   * lod_group loads in `auto`. Part of the panel's reset apply set; a no-op for a
+   * layer whose groups are already in `auto` (or not registered yet).
+   */
+  resetActiveLevel(layer: LayerInfo): void {
+    const registry = this.getLodGroupRegistry();
+    if (!registry) return;
+    const locked = activeLevelPaths(layer).some((path) => {
+      const mode = registry.get(path)?.selectorMode;
+      return mode !== undefined && mode !== 'auto';
+    });
+    if (locked) this.applyActiveLevel(layer, 'auto');
   }
 
   /** Populate the lod-level dropdown's options for the given child count. */

@@ -297,8 +297,8 @@ export class LayersPanel {
   /**
    * Reset every layer's parameters — visibility, display range, gamma,
    * opacity, blending mode, colormap, the mesh shading values (Ambient,
-   * Shade falloff, Specular, Shininess, Alpha cutoff), a physical mesh's knobs and
-   * a sound row's gain — back to their authored defaults.
+   * Shade falloff, Specular, Shininess, Alpha cutoff), a physical mesh's knobs,
+   * a sound row's gain and a locked Active level — back to their authored defaults.
    *
    * Re-derives the default state from the scene graph (the same walk
    * `initFromScene` uses) and pushes every parameter through the regular
@@ -354,6 +354,9 @@ export class LayersPanel {
     // And for a sound row's gain, which the slider writes straight to the audio
     // graph: the re-derived state alone would only move the slider.
     if (layer.sound) this.audioPort?.setNodeGain(layer.path, layer.sound.gain);
+    // And for a locked Active level, which lives in the LOD registry rather than
+    // in the layer state: every lod_group loads in `auto`.
+    this.controls.resetActiveLevel(layer);
   }
 
   show(): void {
