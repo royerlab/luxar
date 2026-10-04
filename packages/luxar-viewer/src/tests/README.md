@@ -158,7 +158,9 @@ tests/
 ├── builders/                      # Test data builders & helpers
 │   └── test-data-builders.ts      # Fluent builders for test data
 │
-├── helpers/                       # Shared test utilities (array compare, WASM artifact loader, …)
+├── helpers/                       # Shared test utilities (deferred, fake workers, source scan, …)
+│
+├── _conformance/                  # Declared tables the conformance guards check (see below)
 │
 ├── setup.ts                       # Global test setup (installs mocks)
 ├── test-config.ts                 # Vitest configuration helpers
@@ -174,6 +176,61 @@ tests/
 ├── test_gsplats_centers_array_ref.luxar.zarr  # GSplats centers/amplitudes array_ref (#2490)
 └── ... (more fixtures)
 ```
+
+---
+
+## Conformance guards
+
+Some bug kinds recur because the paths that show them rarely run. Each guard
+below is a declared table, a runner that checks the code against it, and a
+meta-check that fails when the table goes stale. A guard that goes red is
+asking for a row, a test or a reasoned exemption, not for a looser check.
+
+### Lifecycle contract (`unit/_shared/lifecycle-contract.ts`)
+
+`defineLifecycleContract(name, adapter)` emits the standard cases for one
+cancellable or disposable async operation: abort mid-flight (settles
+promptly, commits nothing), dispose mid-flight (a late settlement is ignored,
+a call after dispose is a no-op, and with `releasesWaitersOnDispose` a waiting
+caller is released), failure (surfaces once, nothing left stuck), retry
+(every attempt costs the same, the last success lands), supersede (only the
+newest result lands), double dispose, and — for an owner with a `reset` — a
+mid-flight dataset switch. The adapter wires the real code to inner work the
+harness settles itself (`helpers/deferred.ts`; `helpers/fake-worker.ts` for
+pool workers) and describes what the operation commits through `observe()`.
+A case the operation cannot express is declared `{ na: '<reason>' }`, and its
+reason shows in the run.
+
+Every operation is a row of `_conformance/async-operations.ts`, naming its
+symbols and the tests that prove its lifecycle (`contract` when one of them
+runs the shared contract). `unit/conformance/async-operations.test.ts` scans
+`src/` for exported functions and public methods taking an `AbortSignal`, and
+for exported classes defining `dispose()` beside an `async` method; each must
+be in a row or carry `// lifecycle-exempt: <reason>` (signal tagging and
+lookups are the only exemptions today). Rows naming a missing export or test
+fail too.
+
+### Counter truth (`unit/profiling/counter-truth.test.ts`)
+
+The render gate judges builds on the perf counters, so each one must count
+exactly what it claims. `profiling/perf-counters.ts` declares every counter in
+`PERF_COUNTERS` (and the two run-time-suffixed families in
+`PERF_COUNTER_FAMILIES`); the singleton only accepts declared names, so a typo
+does not compile. `_conformance/perf-counter-tests.ts` names, per counter, the
+test file holding its exact-value assertion; the test then checks that:
+
+- every name the source passes to `perfCounters.slot` / `.inc` is declared,
+  and every declared name is still written (no dead entries);
+- loading every counter-owning module registers exactly the declared names;
+- the named file asserts the counter's exact value after a known event
+  sequence — `expect(perfCounters.get('<name>')).toBe(<n>)`, or the name
+  inside an exact matcher's expected value or a local getter the expect calls.
+  A `before + 1` delta or a `toBeGreaterThan(0)` does not count.
+
+`scripts/render-gate/gate-scenes.test.mjs` adds the gate side: every counter a
+`gate-scenes.json` metric judges (a `/tick` metric by its `of` / `per`) must be
+declared, `ext.*` metrics must be installed by `ext-counters.mjs`, and the
+harness-produced metrics are listed explicitly.
 
 ---
 
