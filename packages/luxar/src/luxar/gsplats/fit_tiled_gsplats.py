@@ -698,7 +698,7 @@ def fit_tile(
         with _asection(f"Denoising tile {spec.index} (h={_denoise_h:.4f})"):
             tile_data = denoise_volume_array(tile_data, h=_denoise_h, **_denoise_params)
 
-    # Pop cull_retention — per-tile culling is disabled (fit_tiled culls the merged result)
+    # Pop cull_retention — fitting does not cull; the merge step applies it.
     fit_kwargs.pop("cull_retention", None)
 
     # 1c. Subtract the floor from the RAW tile, BEFORE apodization. The two
@@ -749,7 +749,7 @@ def fit_tile(
             max_passes=max_passes,
             voxel_size=voxel_size,
             output_space=output_space,
-            cull_retention=None,  # Disable per-tile; fit_tiled culls the merged result
+            cull_retention=None,  # The merge step applies retention.
             **fit_kwargs,
         )
     else:
@@ -757,7 +757,7 @@ def fit_tile(
             tile_data,
             voxel_size=voxel_size,
             output_space=output_space,
-            cull_retention=None,  # Disable per-tile; fit_tiled culls the merged result
+            cull_retention=None,  # The merge step applies retention.
             **fit_kwargs,
         )
 

@@ -492,14 +492,14 @@ def content_scoped_stats(stats: "MutableMapping[str, Any]") -> "Dict[str, Any]":
     """Snapshot the measured scores so a PRODUCER can re-attach them, deep.
 
     For the fitters' own last step, which is a high-retention cumulative cull
-    (``cull_retention``, default 0.95 flat/tiled and 0.98 progressive) applied
+    (``cull_retention``, default 0.95 flat, 0.999 tiled, and 0.98 progressive) applied
     AFTER ``finalize_results`` has scored the reconstruction. That trim is part of
     producing the artifact rather than a later rewrite of a published one, and the
     score cannot be retaken without a second full render of the volume — so the
     fitters snapshot their measurement across it and put it back. Scrubbing there
     instead would leave EVERY default fit with no ``psnr_db`` at all, which is a
-    worse answer than one taken before a trim that drops 5% of total amplitude
-    (the fit's own summary quotes exactly this number, so it would also start
+    worse answer than one taken before a small amplitude trim
+    (the fit's own summary quotes the retention, so it would also start
     disagreeing with the store it wrote).
 
     Post-fit ``cull`` / ``filter`` / ``slice`` / ``decimate`` on a stored artifact
@@ -511,7 +511,7 @@ def content_scoped_stats(stats: "MutableMapping[str, Any]") -> "Dict[str, Any]":
     pre-trim counts to a different splat set, and the op that scrubbed the record
     re-stamps its own right after. Restoring an older cull's ``n_original`` /
     ``amplitude_retention`` over it would publish the wrong reduction (a tiled
-    fit culls each tile, then culls the merge).
+    fit culls either each partition part or the flat merge).
 
     The nested per-pass lists are deep-copied so the snapshot is independent of
     the dataset it was taken from — a later edit of the source (or of the trimmed

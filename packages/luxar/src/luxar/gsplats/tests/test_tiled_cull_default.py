@@ -26,7 +26,7 @@ def test_default_cull_preserves_tiled_overlap(partition: bool) -> None:
     default = fit_tiled(image, **options)
     unculled = fit_tiled(image, cull_retention=None, **options)
 
-    def overlap_mse(result: object) -> float:
+    def overlap_mse(result) -> float:
         splats = GSplatData.from_default_selection(result) if partition else result
         reconstruction = splats.render_to_volume(shape=image.shape, device="cpu")
         return float(np.mean((reconstruction[:, 24:32] - image[:, 24:32]) ** 2))
