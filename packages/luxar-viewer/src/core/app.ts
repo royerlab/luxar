@@ -637,6 +637,8 @@ export class LuxarApp {
     // partially-constructed app can reach before its options are set — and a
     // missing option means "no ?kiosk", not a crash that aborts the rest of the
     // load (theme, dimension state, the render loop after it).
+    // Release the previous mode before the next one snapshots input state.
+    session.setKioskTeardown(null);
     session.setKioskTeardown(
       applySceneKiosk(viewerConfig?.ui?.kiosk, this.options?.kiosk === true, () => ({
         setKeyboardEnabled: (enabled) => this.inputHandler.setEnabled(enabled),

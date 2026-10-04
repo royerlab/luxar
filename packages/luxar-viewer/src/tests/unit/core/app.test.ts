@@ -225,6 +225,8 @@ describe('LuxarApp', () => {
       // The ControlsManager surface the embedder hooks subscribe to.
       controls: {
         setEnabled: vi.fn(),
+        setPointerEnabled: vi.fn(),
+        isPointerEnabled: vi.fn(() => true),
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
         getFocusTarget: vi.fn(() => ({ x: 0, y: 0, z: 0 })),
@@ -279,6 +281,7 @@ describe('LuxarApp', () => {
       pushContext: vi.fn(),
       popContext: vi.fn(),
       setEnabled: vi.fn(),
+      isEnabled: vi.fn(() => true),
       setRenderingControls: vi.fn(),
       setScaleBar: vi.fn(),
       setRecordingPanel: vi.fn(),
@@ -2033,6 +2036,31 @@ describe('LuxarApp', () => {
         'webglcontextlost',
         canvas.addEventListener.mock.calls.find((call) => call[0] === 'webglcontextlost')?.[1]
       );
+    });
+
+    it('keeps input locked when kiosk mode is reapplied in one session', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      let keyboardEnabled = true;
+      let pointerEnabled = true;
+      mockInputHandler.isEnabled.mockImplementation(() => keyboardEnabled);
+      mockInputHandler.setEnabled.mockImplementation((enabled: boolean) => {
+        keyboardEnabled = enabled;
+      });
+      mockSceneManager.controls.isPointerEnabled.mockImplementation(() => pointerEnabled);
+      mockSceneManager.controls.setPointerEnabled.mockImplementation((enabled: boolean) => {
+        pointerEnabled = enabled;
+      });
+      const internals = app as unknown as {
+        applyKiosk: (config: { ui: { kiosk: { enabled: boolean } } }) => void;
+      };
+      const locked = { ui: { kiosk: { enabled: true } } };
+      internals.applyKiosk(locked);
+      internals.applyKiosk(locked);
+      expect(keyboardEnabled).toBe(false);
+      expect(pointerEnabled).toBe(false);
+      app.dispose();
+      expect(keyboardEnabled).toBe(true);
+      expect(pointerEnabled).toBe(true);
     });
 
     it('leaves no kiosk watchdog behind a load that finishes after dispose', async () => {

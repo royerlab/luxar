@@ -91,7 +91,12 @@ describe('ControlsManager', () => {
 
       controlsManager.setPointerEnabled(false);
       controlsManager.setControlType('orbit');
-      expect((controlsManager.getControls() as LuxarOrbitControls).pointerEnabled).toBe(false);
+      const orbit = controlsManager.getControls() as LuxarOrbitControls;
+      expect(orbit.pointerEnabled).toBe(false);
+      const beforeWheel = camera.position.clone();
+      domElement.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
+      orbit.update(0.1);
+      expect(camera.position.distanceTo(beforeWheel)).toBe(0);
     });
 
     it('should switch from orbit to fly controls', () => {
