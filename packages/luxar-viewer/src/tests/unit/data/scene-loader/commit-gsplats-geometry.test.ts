@@ -892,6 +892,24 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     commitGSplatsGeometry(next, testHost(root, pool as never), undefined, V);
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
+
+  it('still seeds a lineage-proven GROW when the truncate uniform changed', () => {
+    // Truncate only sizes the splat quad: it gates reusing the uploaded prefix
+    // (the append), not whether the prefix holds the same splats, and a grow
+    // rewrites every texel anyway. So the drawn order still seeds the new geometry.
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+    const pool = makePool(sortedGeometry([3, 2, 1, 0]));
+    const next = primeAndExtend(root, pool, 4, 6);
+    (root.children[0] as THREE.Mesh).material = {
+      uniforms: { uTruncate: { value: 5.0 } },
+    } as never;
+    pool.acquireGSplatsGeometry.mockReturnValue(new THREE.InstancedBufferGeometry());
+    pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
+    commitGSplatsGeometry(next, testHost(root, pool as never), undefined, V);
+    expect(lastOpts(pool).fromInstance).toBe(0);
+    expect(seedOf(pool)).toEqual([3, 2, 1, 0]);
+  });
 });
 
 describe('commitGSplatsGeometry — RenderObject invalidation on non-pool rebuild', () => {
