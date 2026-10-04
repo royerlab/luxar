@@ -18,8 +18,9 @@
  * Mesh is declared absent (no-op): its draw order IS its index buffer, which
  * a commit rewrites whole, so the extension draws its full population in
  * storage order at once and the next sort permutes it atomically
- * (`triangle-ordering.ts`). The probe asserts exactly that, so a mesh hold
- * landing later would turn this cell red and prompt the matrix update.
+ * (`triangle-ordering.ts`). The mesh adapter ignores `extending` because
+ * `mesh-progressive-loader.ts` stamps no prefix lineage; this probe asserts
+ * the current whole-index rewrite, not a future lineage-triggered hold.
  */
 import * as THREE from 'three';
 import { expect } from 'vitest';

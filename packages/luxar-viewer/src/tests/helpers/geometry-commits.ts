@@ -177,6 +177,8 @@ export interface GeometryCommitAdapter {
    * payload carries prefix lineage to the node's last commit — the proof a
    * progressive ladder's next rung carries that it EXTENDS what is drawn
    * (`types/prefix-lineage.ts`), which the instanced commits' append path keys on.
+   * Mesh ignores `extending`: its loader stamps no lineage and its commit
+   * rewrites the whole index buffer.
    */
   commit(loader: SceneLoader, count: number, extending?: boolean): Promise<void>;
 }
