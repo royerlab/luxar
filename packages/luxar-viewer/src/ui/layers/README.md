@@ -28,6 +28,10 @@ Rendering attributes compose along the scene graph per the Luxar composition spe
 
 Edits made in the panel are viewer-only and not persisted back to the zarr store; reload the page to return to the authored state.
 
+### Which controls are shown: `LAYER_CONTROL_RULES`
+
+Every gate described above — the sound row's empty section, κ's volumetric mode, the mesh sliders' house / physical / shading / cutout conditions, Gamma and Blend hiding for a physical mesh, the colormap and custom-LUT entries, Classes, Active level, the row's gain slider — is one row of `LAYER_CONTROL_RULES` (`layer-control-rules.ts`), keyed by a control id that the control's DOM also carries as `data-control`. The appearance section, the row and the row menu's Colormap / Blending submenus all read that table, so the dropdown and the menu cannot disagree about a layer. The rule a control follows is "shown only where it has an effect": `src/tests/unit/ui/layers/control-effect.test.ts` mounts one layer of each kind with real materials, drives every shown control through its DOM, and fails when the change is unobservable (no uniform, define, material flag, render-order slot, audio gain or LOD selector moved) or when "Reset this layer" does not put it back. A new control needs a rule row, a `data-control` id and an effect probe in that test.
+
 ### Specialized groups (LOD / partition)
 
 `group` nodes carrying a `kind` attr of `'lod'` or `'partition'` are surfaced
@@ -177,6 +181,7 @@ throws. `LuxarApp.getLayers()` / `setLayer()` are thin wrappers over these (see
 layer-state.ts     Pure data model, selection logic (re-exports the min/max ↔ intensity/offset math from rendering/display-range.ts)
 layers-panel.ts    DOM panel (list + lifecycle), event handling; facade over the two below
 layer-controls.ts  LayerControls — the controls section (sliders, blend/colormap/LOD selects, LOD readout)
+layer-control-rules.ts  LAYER_CONTROL_RULES — when each control is shown (section, row and row menu)
 layer-apply.ts     LayerApplyEngine — attr composition + scene/material application
 luxar-material.ts  LuxarMaterial contract + colormap-vs-direct routing helpers
 range-slider.ts    Dual-thumb [min, max] slider (click-to-edit + scroll-adjust bounds)
@@ -454,6 +459,7 @@ control.
 | `layer-state.ts`                           | `LayerStateManager`, selection logic; re-exports `computeUniforms` / `computeDisplayRange` (now in `rendering/display-range.ts`) |
 | `layers-panel.ts`                          | `LayersPanel` class — panel/list DOM + lifecycle; facade over controls + apply                                                   |
 | `layer-controls.ts`                        | `LayerControls` — controls-section DOM (sliders, selects, live LOD readout)                                                      |
+| `layer-control-rules.ts`                   | `LAYER_CONTROL_RULES` — the visibility rule per control id (`data-control`), read by the section, the rows and the row menu      |
 | `layer-apply.ts`                           | `LayerApplyEngine` — attr composition + material application per data-leaf                                                       |
 | `luxar-material.ts`                        | `LuxarMaterial` interface, `isColormapActive` / `applyColorAdjustments` routing                                                  |
 | `range-slider.ts`                          | `RangeSlider` — dual-thumb input component with editable / scrollable bound labels                                               |

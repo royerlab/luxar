@@ -31,15 +31,11 @@ import { log, Modules } from '../../utils/log';
 import { EventGroup } from '../../utils/cross-layer/event-group';
 import { attachLongPress } from '../../utils/long-press';
 import { openContextMenu, type ContextMenuItem } from '../overlay-widgets/context-menu';
+import { isControlVisible, layerHasAppearance } from './layer-control-rules';
 import { BLENDING_MODES } from '../../rendering/blending-state';
 import type { BlendingMode } from '../../rendering';
 import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
-import {
-  CUSTOM_COLORMAP_LABEL,
-  canTakeColormap,
-  layerHasBlending,
-  resolveLayerBlendingMode,
-} from './layer-state';
+import { CUSTOM_COLORMAP_LABEL, canTakeColormap, resolveLayerBlendingMode } from './layer-state';
 import { showToast } from '../toast';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import { LayerApplyEngine } from './layer-apply';
@@ -611,12 +607,12 @@ export class LayersPanel {
    * panel steps aside for it on the same grounds.
    */
   private buildAppearanceMenuItems(layer: LayerInfo): ContextMenuItem[] {
-    if (layer.type === 'sound') return [];
+    if (!layerHasAppearance(layer)) return [];
     const items: ContextMenuItem[] = [];
-    if (layer.supportsColormap) {
+    if (isControlVisible('colormap', layer)) {
       items.push({ label: 'Colormap', submenu: this.buildColormapSubmenu(layer) });
     }
-    if (layerHasBlending(layer)) {
+    if (isControlVisible('blend', layer)) {
       items.push({
         label: 'Blending',
         submenu: BLENDING_MODES.map((mode) => ({
@@ -649,7 +645,9 @@ export class LayersPanel {
     });
     return [
       radio('(direct colors)', undefined),
-      ...(layer.customLut ? [radio(CUSTOM_COLORMAP_LABEL, 'custom')] : []),
+      ...(isControlVisible('customColormap', layer)
+        ? [radio(CUSTOM_COLORMAP_LABEL, 'custom')]
+        : []),
       ...Object.values(COLORMAP_CATEGORIES)
         .flat()
         .map((name) => radio(name, name)),
@@ -1330,6 +1328,7 @@ export class LayersPanel {
     const gainInput = document.createElement('input');
     gainInput.type = 'range';
     gainInput.className = 'luxar-layer-row__gain';
+    gainInput.dataset.control = 'gain';
     gainInput.min = '0';
     gainInput.max = '2';
     gainInput.step = '0.01';
@@ -1410,7 +1409,7 @@ export class LayersPanel {
 
     // Sound rows: an inline gain slider (the row IS the control — the
     // appearance section below the list has nothing to say about a clip).
-    const gainInput = layer.sound ? this.buildGainSlider(layer) : null;
+    const gainInput = isControlVisible('gain', layer) ? this.buildGainSlider(layer) : null;
     const badge = buildTypeBadge(layer);
 
     // Optional kind-specific badge: ``N LODs`` for kind=lod, ``N parts``

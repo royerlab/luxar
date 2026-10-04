@@ -694,16 +694,6 @@ export function canTakeColormap(
   return !sourceLut || (own.length === sourceLut.length && own.every((b, i) => b === sourceLut[i]));
 }
 
-/**
- * Whether a blending-mode control reaches this layer's material. A `sound` row has
- * no material, and a `material="physical"` mesh runs three's PBR material, which
- * implements none of the house modes (`applyBlendingMode` is a no-op on it). The
- * Blend dropdown and the row menu's Blending submenu both gate on this one rule.
- */
-export function layerHasBlending(layer: Pick<LayerInfo, 'type' | 'material'>): boolean {
-  return layer.type !== 'sound' && !(layer.type === 'mesh' && layer.material === 'physical');
-}
-
 export class LayerStateManager {
   /** Ordered list of layer paths (insertion order from scene graph walk) */
   private layerOrder: string[] = [];
