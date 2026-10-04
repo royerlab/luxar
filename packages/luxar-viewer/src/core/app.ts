@@ -626,8 +626,8 @@ export class LuxarApp {
   /**
    * Lock the display down when the scene or the URL asks for it
    * (`core/app/kiosk/apply-kiosk.ts`). Re-applied on every dataset load; the
-   * session owns the watchdog, so switching scenes cannot accumulate listeners
-   * on a long-running exhibit.
+   * session owns the teardown, so switching scenes restores input permissions
+   * and cannot accumulate watchdog listeners on a long-running exhibit.
    */
   private applyKiosk(
     viewerConfig: ZarrViewerConfig | undefined,
@@ -640,7 +640,9 @@ export class LuxarApp {
     session.setKioskTeardown(
       applySceneKiosk(viewerConfig?.ui?.kiosk, this.options?.kiosk === true, () => ({
         setKeyboardEnabled: (enabled) => this.inputHandler.setEnabled(enabled),
-        setControlsEnabled: (enabled) => this.sceneManager.controls?.setEnabled(enabled),
+        getKeyboardEnabled: () => this.inputHandler.isEnabled(),
+        setPointerEnabled: (enabled) => this.sceneManager.controls?.setPointerEnabled(enabled),
+        getPointerEnabled: () => this.sceneManager.controls?.isPointerEnabled() ?? true,
         hidePanels: () => {
           this.renderingControls.hide();
           this.scaleBar?.hide();

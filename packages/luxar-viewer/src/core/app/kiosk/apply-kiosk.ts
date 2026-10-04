@@ -9,7 +9,7 @@
  *
  * Ports-injected and returning its own teardown, so the whole thing is
  * testable without a browser and a `switchDataset` cannot leave a previous
- * scene's watchdog running.
+ * scene's input restrictions or watchdog running.
  *
  * @module core/app/kiosk/apply-kiosk
  */
@@ -21,8 +21,9 @@ import { startKioskWatchdog, type KioskWatchdog } from './watchdog';
 export interface KioskPorts {
   /** Enable or disable routed keyboard handling. */
   setKeyboardEnabled: (enabled: boolean) => void;
+  getKeyboardEnabled: () => boolean;
   /**
-   * Enable or disable the CAMERA CONTROLS.
+   * Enable or disable canvas gestures while leaving the camera update loop live.
    *
    * Separate from `setKeyboardEnabled`, and necessarily so: that one reaches
    * `InputContextManager.setEnabled`, whose entire effect is to drop keydown
@@ -32,7 +33,8 @@ export interface KioskPorts {
    * left the camera fully draggable under `?kiosk` — measured at 46x the
    * auto-rotate drift, so a visitor could still swing the view off the tour.
    */
-  setControlsEnabled?: (enabled: boolean) => void;
+  setPointerEnabled: (enabled: boolean) => void;
+  getPointerEnabled: () => boolean;
   /** Hide every panel and the rail. */
   hidePanels?: () => void;
   /** The canvas, for the watchdog's context listeners. Absent in tests. */
@@ -46,13 +48,19 @@ export interface KioskPorts {
 /**
  * Apply pointer and keyboard permissions independently.
  */
-function applyInputPermissions(mode: KioskMode, ports: KioskPorts): void {
-  if (!mode.allowPointer) ports.setControlsEnabled?.(false);
+function applyInputPermissions(mode: KioskMode, ports: KioskPorts): () => void {
+  const previousPointer = !mode.allowPointer ? ports.getPointerEnabled() : undefined;
+  const previousKeyboard = !mode.allowKeyboard ? ports.getKeyboardEnabled() : undefined;
+  if (!mode.allowPointer) ports.setPointerEnabled(false);
   if (!mode.allowKeyboard) ports.setKeyboardEnabled(false);
+  return () => {
+    if (previousPointer !== undefined) ports.setPointerEnabled(previousPointer);
+    if (previousKeyboard !== undefined) ports.setKeyboardEnabled(previousKeyboard);
+  };
 }
 
 /**
- * Apply `mode`. Returns a teardown that undoes the watchdog.
+ * Apply `mode`. Returns a teardown that restores input and disposes the watchdog.
  *
  * A no-op when kiosk mode is off — including the teardown — so a caller can
  * apply unconditionally and not branch.
@@ -60,25 +68,33 @@ function applyInputPermissions(mode: KioskMode, ports: KioskPorts): void {
 export function applyKioskMode(mode: KioskMode, ports: KioskPorts): () => void {
   if (!mode.enabled) return () => undefined;
 
-  applyInputPermissions(mode, ports);
+  const restoreInput = applyInputPermissions(mode, ports);
   if (!mode.showPanels) ports.hidePanels?.();
 
-  if (!mode.watchdogReload || ports.canvas === undefined) return () => undefined;
-  const watchdog: KioskWatchdog = startKioskWatchdog({
-    canvas: ports.canvas,
-    graceS: mode.watchdogGraceS,
-    reload: ports.reload ?? (() => window.location.reload()),
-    onUnrecoverableLoss: ports.onDeviceLost,
-  });
-  return () => watchdog.dispose();
+  const watchdog: KioskWatchdog | undefined =
+    mode.watchdogReload && ports.canvas !== undefined
+      ? startKioskWatchdog({
+          canvas: ports.canvas,
+          graceS: mode.watchdogGraceS,
+          reload: ports.reload ?? (() => window.location.reload()),
+          onUnrecoverableLoss: ports.onDeviceLost,
+        })
+      : undefined;
+  let disposed = false;
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    watchdog?.dispose();
+    restoreInput();
+  };
 }
 
 /**
  * Lock the display down when the scene or the URL asks for it: resolve the mode
  * from the authored `ui.kiosk` block and `?kiosk` (the URL wins — see
  * `config/kiosk.ts`), then apply it with the ports `ports()` builds. Returns
- * the watchdog teardown (a no-op when kiosk mode is off), which the dataset
- * session owns, so neither a switch nor a dispose can leave a watchdog running.
+ * the input and watchdog teardown (a no-op when kiosk mode is off), which the
+ * dataset session owns.
  */
 export function applySceneKiosk(
   authored: ZarrKioskConfig | null | undefined,

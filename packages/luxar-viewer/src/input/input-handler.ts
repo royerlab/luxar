@@ -759,6 +759,10 @@ export class InputHandler {
     this.contextManager.setEnabled(enabled);
   }
 
+  public isEnabled(): boolean {
+    return this.contextManager.isEnabled();
+  }
+
   /**
    * Toggle dimension sliders panel visibility.
    *

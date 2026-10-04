@@ -143,9 +143,17 @@ describe('startKioskWatchdog', () => {
 
 describe('applyKioskMode', () => {
   function ports() {
+    let keyboardEnabled = true;
+    let pointerEnabled = true;
     return {
-      setKeyboardEnabled: vi.fn(),
-      setControlsEnabled: vi.fn(),
+      setKeyboardEnabled: vi.fn((enabled: boolean) => {
+        keyboardEnabled = enabled;
+      }),
+      getKeyboardEnabled: () => keyboardEnabled,
+      setPointerEnabled: vi.fn((enabled: boolean) => {
+        pointerEnabled = enabled;
+      }),
+      getPointerEnabled: () => pointerEnabled,
       hidePanels: vi.fn(),
       reload: vi.fn(),
     };
@@ -155,7 +163,7 @@ describe('applyKioskMode', () => {
     const p = ports();
     const teardown = applyKioskMode(KIOSK_MODE_OFF, p);
     expect(p.setKeyboardEnabled).not.toHaveBeenCalled();
-    expect(p.setControlsEnabled).not.toHaveBeenCalled();
+    expect(p.setPointerEnabled).not.toHaveBeenCalled();
     expect(p.hidePanels).not.toHaveBeenCalled();
     // The teardown must be safe to call unconditionally.
     expect(() => teardown()).not.toThrow();
@@ -165,7 +173,7 @@ describe('applyKioskMode', () => {
     const p = ports();
     applyKioskMode(resolveKioskMode({ enabled: true }, false), p);
     expect(p.setKeyboardEnabled).toHaveBeenCalledWith(false);
-    expect(p.setControlsEnabled).toHaveBeenCalledWith(false);
+    expect(p.setPointerEnabled).toHaveBeenCalledWith(false);
     expect(p.hidePanels).toHaveBeenCalledTimes(1);
   });
 
@@ -177,7 +185,7 @@ describe('applyKioskMode', () => {
       p
     );
     expect(p.setKeyboardEnabled).not.toHaveBeenCalled();
-    expect(p.setControlsEnabled).not.toHaveBeenCalled();
+    expect(p.setPointerEnabled).not.toHaveBeenCalled();
     expect(p.hidePanels).toHaveBeenCalledTimes(1);
   });
 
@@ -188,7 +196,7 @@ describe('applyKioskMode', () => {
       p
     );
     expect(p.setKeyboardEnabled).toHaveBeenCalledWith(false);
-    expect(p.setControlsEnabled).not.toHaveBeenCalled();
+    expect(p.setPointerEnabled).not.toHaveBeenCalled();
   });
 
   it('keeps keyboard input live when only pointer controls are locked', () => {
@@ -197,8 +205,40 @@ describe('applyKioskMode', () => {
       resolveKioskMode({ enabled: true, allow_pointer: false, allow_keyboard: true }, false),
       p
     );
-    expect(p.setControlsEnabled).toHaveBeenCalledWith(false);
+    expect(p.setPointerEnabled).toHaveBeenCalledWith(false);
     expect(p.setKeyboardEnabled).not.toHaveBeenCalled();
+  });
+
+  it('restores the prior input permissions on dataset teardown', () => {
+    const p = ports();
+    p.setPointerEnabled(false);
+    p.setKeyboardEnabled(true);
+    const teardown = applyKioskMode(resolveKioskMode({ enabled: true }, false), p);
+    expect(p.getPointerEnabled()).toBe(false);
+    expect(p.getKeyboardEnabled()).toBe(false);
+    teardown();
+    expect(p.getPointerEnabled()).toBe(false);
+    expect(p.getKeyboardEnabled()).toBe(true);
+    p.setKeyboardEnabled(false);
+    teardown();
+    expect(p.getKeyboardEnabled()).toBe(false);
+  });
+
+  it('re-enables pointer and keyboard input before a new scene is applied', () => {
+    const p = ports();
+    const teardown = applyKioskMode(resolveKioskMode({ enabled: true }, false), p);
+    expect(p.getPointerEnabled()).toBe(false);
+    expect(p.getKeyboardEnabled()).toBe(false);
+    teardown();
+    expect(p.getPointerEnabled()).toBe(true);
+    expect(p.getKeyboardEnabled()).toBe(true);
+
+    applyKioskMode(
+      resolveKioskMode({ enabled: true, allow_pointer: false, allow_keyboard: true }, false),
+      p
+    );
+    expect(p.getPointerEnabled()).toBe(false);
+    expect(p.getKeyboardEnabled()).toBe(true);
   });
 
   it('keeps panels when the author asked for them', () => {

@@ -845,6 +845,10 @@ export class InputContextManager {
     this.enabled = enabled;
   }
 
+  public isEnabled(): boolean {
+    return this.enabled;
+  }
+
   /**
    * Get debug information about current context manager state.
    *

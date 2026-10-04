@@ -104,7 +104,7 @@ export class DatasetSession {
     else this.waypoints = waypoints;
   }
 
-  /** Replace the kiosk watchdog teardown (stopped at once on a disposed session). */
+  /** Replace the kiosk input/watchdog teardown (run at once on a disposed session). */
   setKioskTeardown(teardown: (() => void) | null): void {
     this.kioskTeardown?.();
     this.kioskTeardown = null;

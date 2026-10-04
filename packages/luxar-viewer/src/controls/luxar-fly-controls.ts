@@ -109,6 +109,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   end: {};
 }> {
   public enabled: boolean = true;
+  public pointerEnabled: boolean = true;
 
   // Configuration
   public movementSpeed: number = config.controls.fly.movement.speed.default;
@@ -256,7 +257,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
   private makeMouseCtx(): FlyMouseCtx {
     return {
-      enabled: this.enabled,
+      enabled: this.enabled && this.pointerEnabled,
       inertialMode: this.inertialMode,
       lookSpeed: this.lookSpeed,
       movementSpeed: this.movementSpeed,
@@ -282,7 +283,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
   private makeWheelCtx(): FlyWheelCtx {
     return {
-      enabled: this.enabled,
+      enabled: this.enabled && this.pointerEnabled,
       inertialMode: this.inertialMode,
       movementSpeed: this.movementSpeed,
       rotationSpeed: this.rotationSpeed,
@@ -299,7 +300,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
 
   private makeTouchCtx(): FlyTouchCtx {
     return {
-      enabled: this.enabled,
+      enabled: this.enabled && this.pointerEnabled,
       inertialMode: this.inertialMode,
       lookSpeed: this.lookSpeed,
       movementSpeed: this.movementSpeed,

@@ -25,6 +25,9 @@ describe('applySceneKiosk', () => {
     };
     const teardown = applySceneKiosk({ watchdog_reload: true }, true, () => ({
       setKeyboardEnabled,
+      getKeyboardEnabled: () => true,
+      setPointerEnabled: vi.fn(),
+      getPointerEnabled: () => true,
       canvas,
       reload: vi.fn(),
     }));
