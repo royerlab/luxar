@@ -16,6 +16,7 @@
 
 const signalOrigins = new WeakMap<AbortSignal, string>();
 
+// lifecycle-exempt: attaches an attribution tag to a signal; starts and owns no work
 /**
  * Tag `signal` so decodes triggered by reads carrying it are counted under
  * `decode.count.<origin>`. A signal already tagged keeps its first tag unless
@@ -32,6 +33,7 @@ export function tagSignalOrigin(
   signalOrigins.set(signal, origin);
 }
 
+// lifecycle-exempt: looks up a signal's tag; starts and owns no work
 /** The origin `signal` was tagged with, if any. */
 export function signalOrigin(signal: AbortSignal | null | undefined): string | undefined {
   return signal ? signalOrigins.get(signal) : undefined;
