@@ -8,7 +8,7 @@
  *   sources, and its emitted block is in BOTH TSL codegen snapshots (every
  *   draw variant's, and the pick's) — or, where the snapshot fixture does not
  *   exercise the rule, in both TSL factory sources.
- * - `deliberate`: the pick source carries the evidence of its tighter footprint.
+ * - `deliberate`: both pick sources carry the evidence of the declared footprint.
  * - `drawOnly`: the draw has it and the pick does not.
  * - `neither`: absent from both, so a rule that starts applying shows up.
  *
@@ -226,9 +226,15 @@ function checkCell(
     return `declared 'same' but draw lacks [${missing(draw)}], pick lacks [${missing(pick)}]`;
   }
   if ('deliberate' in verdict) {
-    return verdict.pickEvidence.test(shaders.pick.glsl)
-      ? null
-      : `declared deliberate, but the pick GLSL no longer shows ${verdict.pickEvidence}`;
+    if (!verdict.pickEvidence.test(shaders.pick.glsl)) {
+      return `declared deliberate, but the pick GLSL no longer shows ${verdict.pickEvidence}`;
+    }
+    const missingTSL = verdict.tslEvidence.filter(
+      (evidence) => !shaders.pick.tslSources.some((source) => evidence.test(read(source)))
+    );
+    return missingTSL.length
+      ? `declared deliberate, but the pick TSL no longer shows [${missingTSL}]`
+      : null;
   }
   if ('drawOnly' in verdict) {
     if (allTrue(draw) && allFalse(pick)) return null;

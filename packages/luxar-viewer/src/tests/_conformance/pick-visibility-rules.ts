@@ -40,7 +40,11 @@ import type { PrimitiveVariant } from '../helpers/geometry-materials';
 /** How one rule relates draw and pick for one `(type, variant)`. */
 export type RuleVerdict =
   | 'same'
-  | { readonly deliberate: string; readonly pickEvidence: RegExp }
+  | {
+      readonly deliberate: string;
+      readonly pickEvidence: RegExp;
+      readonly tslEvidence: readonly RegExp[];
+    }
   | { readonly drawOnly: string }
   | { readonly neither: string };
 
@@ -165,6 +169,7 @@ export const PICK_VISIBILITY_RULES: Readonly<
         deliberate:
           'The pick disc is 80% of the drawn radius, so a pick never lands on the faint rim.',
         pickEvidence: /basePointSize \* 0\.8/,
+        tslEvidence: [/basePointSize\.mul\(0\.8\)/],
       },
       alphaCutoff: NO_CUTOUT,
       glassPartition: GLASS,
@@ -203,6 +208,10 @@ export const PICK_VISIBILITY_RULES: Readonly<
           'The pick quad shares the drawn reach radius, but the pick fragment truncates at ' +
           '1.5σ (Mahalanobis² 2.25) instead of the node’s own T.',
         pickEvidence: /if \(mahalSq > uTruncateSq\) discard;/,
+        tslEvidence: [
+          /Discard\(mahalSq\.greaterThan\(uTruncateSq\)\)/,
+          /const truncate = .* \?\? 1\.5;/,
+        ],
       },
       alphaCutoff: NO_CUTOUT,
       glassPartition: GLASS,
