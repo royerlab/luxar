@@ -17,8 +17,9 @@
  *    the counter's name appears inside an `expect(...)` (directly, or inside a
  *    local getter the expect calls) whose matcher is `toBe` / `toEqual` /
  *    `toStrictEqual` / `toMatchObject`, or inside such a matcher's expected
- *    value — and that expected value does not read a `before` / `prev` /
- *    `baseline` / `initial` / `start…` snapshot, which would make it a delta.
+ *    value — and neither side compares against a `before` / `prev` /
+ *    `baseline` / `initial` / `start…` snapshot or reduces the observed
+ *    counter to a comparison or difference.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -119,7 +120,33 @@ function exactMatcherOf(expectCall: ts.CallExpression): ts.CallExpression | unde
 
 function readsDelta(matcher: ts.CallExpression): boolean {
   let delta = false;
+  const actual = ts.isPropertyAccessExpression(matcher.expression)
+    ? matcher.expression.expression
+    : undefined;
+  if (actual && isExpectCall(actual)) {
+    for (const arg of actual.arguments) {
+      const scan = (node: ts.Node): void => {
+        if (ts.isIdentifier(node) && DELTA_IDENTIFIER.test(node.text)) delta = true;
+        if (
+          ts.isBinaryExpression(node) &&
+          [
+            ts.SyntaxKind.GreaterThanToken,
+            ts.SyntaxKind.GreaterThanEqualsToken,
+            ts.SyntaxKind.LessThanToken,
+            ts.SyntaxKind.LessThanEqualsToken,
+            ts.SyntaxKind.MinusToken,
+          ].includes(node.operatorToken.kind)
+        ) {
+          delta = true;
+        }
+        ts.forEachChild(node, scan);
+      };
+      scan(arg);
+    }
+  }
   for (const arg of matcher.arguments) {
+    if (arg.kind === ts.SyntaxKind.TrueKeyword || arg.kind === ts.SyntaxKind.FalseKeyword)
+      delta = true;
     const scan = (node: ts.Node): void => {
       if (ts.isIdentifier(node) && DELTA_IDENTIFIER.test(node.text)) delta = true;
       ts.forEachChild(node, scan);
@@ -242,6 +269,36 @@ describe('perf counter registry ↔ the code that writes it', () => {
 });
 
 describe('every perf counter has an exact-value test', () => {
+  it('rejects comparisons and deltas in the observed value', () => {
+    for (const assertion of [
+      "expect(perfCounters.get('l2.hits') > 0).toBe(true)",
+      "const before = perfCounters.get('l2.hits'); expect(perfCounters.get('l2.hits') - before).toBe(1)",
+    ]) {
+      const sf = ts.createSourceFile('probe.ts', assertion, ts.ScriptTarget.Latest, true);
+      let counter: ts.StringLiteral | undefined;
+      forEachNode(sf, (node) => {
+        if (ts.isStringLiteral(node) && node.text === 'l2.hits') counter = node;
+      });
+      expect(counter, assertion).toBeDefined();
+      expect(isExactlyAsserted(sf, counter!), assertion).toBe(false);
+    }
+  });
+
+  it('accepts an absolute counter value', () => {
+    const sf = ts.createSourceFile(
+      'probe.ts',
+      "expect(perfCounters.get('l2.hits')).toBe(1)",
+      ts.ScriptTarget.Latest,
+      true
+    );
+    let counter: ts.StringLiteral | undefined;
+    forEachNode(sf, (node) => {
+      if (ts.isStringLiteral(node) && node.text === 'l2.hits') counter = node;
+    });
+    expect(counter).toBeDefined();
+    expect(isExactlyAsserted(sf, counter!)).toBe(true);
+  });
+
   it.each(Object.entries(PERF_COUNTER_TESTS))('%s → %s', (name, testFile) => {
     expect(existsSync(join(UNIT_TESTS_DIR, testFile)), `${testFile} does not exist`).toBe(true);
     const lines = exactAssertionLines(testFile, name, FAMILIES.includes(name));
