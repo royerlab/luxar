@@ -222,9 +222,7 @@ describe('PointsSpatialIndexLoader', () => {
       await loader.ensureInitialized();
 
       expect(
-        vi
-          .mocked(zarr.open)
-          .mock.calls.filter(([location]) => String(location).includes('chunk_bounds'))
+        vi.mocked(zarr.open).mock.calls.filter((c: any[]) => String(c[0]).includes('chunk_bounds'))
       ).toHaveLength(1);
     });
 
@@ -261,9 +259,7 @@ describe('PointsSpatialIndexLoader', () => {
       await loader.ensureInitialized();
 
       expect(
-        vi
-          .mocked(zarr.open)
-          .mock.calls.filter(([location]) => String(location).includes('chunk_bounds'))
+        vi.mocked(zarr.open).mock.calls.filter((c: any[]) => String(c[0]).includes('chunk_bounds'))
       ).toHaveLength(1);
     });
 
@@ -318,9 +314,7 @@ describe('PointsSpatialIndexLoader', () => {
       expect(offSlice.pointCount).toBe(0);
       expect(onSlice.pointCount).toBe(2);
       expect(
-        vi
-          .mocked(zarr.open)
-          .mock.calls.filter(([location]) => String(location).includes('chunk_bounds'))
+        vi.mocked(zarr.open).mock.calls.filter((c: any[]) => String(c[0]).includes('chunk_bounds'))
       ).toHaveLength(0);
     });
 
