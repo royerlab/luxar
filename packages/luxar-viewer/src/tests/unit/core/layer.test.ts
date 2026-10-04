@@ -419,6 +419,19 @@ describe('LuxarLayer', () => {
       });
     });
 
+    it('honours blendWarmup: false like the app does', async () => {
+      const options = makeOptions({ blendWarmup: false });
+      const layer = new LuxarLayer(options);
+      await layer.load('http://example.test/scene.zarr');
+
+      expect(configureBlendModeProgramWarmup).toHaveBeenCalledWith({
+        enabled: false,
+        renderer: options.renderer,
+        camera: expect.any(THREE.Camera),
+        targetScene: options.scene,
+      });
+    });
+
     it('disables WebGL blend-program warm-up for a WebGPU renderer', async () => {
       const options = makeOptions({
         renderer: {
@@ -596,6 +609,15 @@ describe('LuxarLayer', () => {
       new LuxarLayer(makeOptions({ densityGuard: false }));
       // Off: bytes-only admission.
       expect(setRefinementDensityProvider).toHaveBeenLastCalledWith(null, expect.any(Object));
+    });
+
+    it('threads densityCap into the guard like the app does', () => {
+      // Same option, same wiring as LuxarAppOptions.densityCap (?densityCap=N).
+      new LuxarLayer(makeOptions({ densityCap: 7 }));
+      expect(setRefinementDensityProvider).toHaveBeenLastCalledWith(
+        expect.any(Function),
+        expect.objectContaining({ blendable: 7 })
+      );
     });
 
     it('threads the LOD flags through to the registry', () => {

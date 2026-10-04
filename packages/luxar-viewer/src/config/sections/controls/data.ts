@@ -15,7 +15,6 @@ export const controlsConfig: ControlsConfig = {
     },
     movement: {
       speed: { min: 0.01, max: 5.0, default: 0.5, step: 0.01 },
-      acceleration: { min: 0.1, max: 2.0, default: 0.5, step: 0.1 },
       damping: { min: 0.9, max: 0.99999, default: 0.999, step: 0.0001 },
     },
     rotation: {

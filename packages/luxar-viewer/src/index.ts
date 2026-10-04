@@ -54,7 +54,9 @@ export type {
  * the host keeps its pipeline, the layer contributes a `THREE.Group` plus the
  * per-frame LOD / depth-sort bookkeeping.
  *
- * Same single-instance rule as `LuxarApp`, and mutually exclusive with it.
+ * One `LuxarApp` and any number of `LuxarLayer`s may share a page; two
+ * `LuxarApp`s may not (docs/specs/LUXAR_LAYER_SPEC.md, "Several hosts on one
+ * page").
  */
 export { LuxarLayer, type LuxarLayerOptions, type ViewportSize } from './core/layer/luxar-layer';
 
@@ -84,7 +86,13 @@ export type {
   AudioPatch,
   AudioBusName,
   PanningModel,
+  RenderingSettings,
+  LayerType,
 } from './core/app/embedder/events';
+/** `ViewerState.controlPanel` — the scene's authored touch control-panel block. */
+export type { ControlPanelSettings } from './config/zarr-bridge/control-panel';
+/** `LuxarAppOptions.factories` — construction overrides for the heavy components. */
+export type { AppFactories } from './core/app/factories';
 /**
  * JSON-serializable snapshot of viewer state (camera placement + per-dimension
  * slice position) so an external caller can reproduce a specific view across

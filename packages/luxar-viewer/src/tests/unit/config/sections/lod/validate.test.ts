@@ -63,6 +63,8 @@ describe('validateLod', () => {
     ['staleHoldMs', -5],
     ['staleHoldMinRatio', 2],
     ['failedRetryMs', Number.POSITIVE_INFINITY],
+    // 0 would retry a failed level every frame: 0 · 2^n never backs off.
+    ['failedRetryMs', 0],
     ['lazyActivationRequestTimeoutMs', 0],
     ['partitionFrustumMargin', -0.1],
     ['hysteresisRatio', 1],

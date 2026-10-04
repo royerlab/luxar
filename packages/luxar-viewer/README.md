@@ -91,6 +91,13 @@ group table.
 | `lodFinest`        | `boolean`             | `false`         | Force the finest replacement LOD regardless of projected coverage; useful for high-quality still or video capture.                                                                                                                           |
 | `lodBias`          | `number`              | `1`             | Bias replacement LOD selection in screen-area units; `2` selects one occupancy-halved level finer and `4` selects two. Below `1`, a partition-anchored ladder cannot reach its finest level; below `0.5`, neither can a whole-object ladder. |
 | `depthSort`        | `boolean`             | `true`          | Enable worker-based back-to-front sorting for order-dependent geometry; disable for deterministic comparisons.                                                                                                                               |
+| `blendWarmup`      | `boolean`             | device          | WebGL blend-program warm-up (one variant compile per macrotask). On for laptops/desktops, off on phones/tablets; `false` opts out (`?noBlendWarmup`).                                                                                        |
+| `densityGuard`     | `boolean`             | `true`          | Projected-density guard: thin blendable nodes packing more elements per pixel than `config.densityGuard` allows (brightness compensated) and cap refinement rungs (`?noDensityGuard`).                                                       |
+| `densityCap`       | `number`              | config          | Session-only override of the density guard's blendable cap, in elements per drawing-buffer pixel (`?densityCap=8`).                                                                                                                          |
+| `bakeEnvironment`  | `object`              | —               | `{ probe?, resolution? }`: bake the scene-derived environment once the load settles, for `luxar env bake` (`?bakeEnv&probe=…&envResolution=…`). Omit for normal viewing.                                                                     |
+| `control`          | `string \| null`      | —               | Attach to a remote-control hub at this WebSocket URL (`?control`). The embedder is responsible for the URL; see [`docs/guides/specs/REMOTE_CONTROL_SPEC.md`](../../docs/guides/specs/REMOTE_CONTROL_SPEC.md).                                |
+| `controlToken`     | `string \| null`      | —               | Shared secret presented to the hub (`luxar serve --control-token`).                                                                                                                                                                          |
+| `kiosk`            | `boolean`             | `false`         | Lock the display down for unattended use (`?kiosk`); a hard override over the scene's authored `ui.kiosk` block — it can lock, never unlock.                                                                                                 |
 | `allowLinks`       | `boolean`             | `true`          | Allow element-authored links to navigate. Set `false` to keep `element-click` / `element-contextmenu` events and copy actions while suppressing navigation and link menu items.                                                              |
 | `factories`        | `AppFactories`        | —               | Construction overrides for the heavy components built by `init()` (scene manager, recording panel, …). For tests and advanced embedders; omit for the production path.                                                                       |
 
@@ -98,8 +105,10 @@ group table.
 
 Beyond `init()`/`dispose()`, `LuxarApp` exposes flat methods so a host page can
 drive the viewer without the built-in UI. All throw if called before `init()`,
-except `shortcutForAction()` and `getDatasetFault()`. The former returns
-`undefined` until input is available; the latter returns `null` until a dataset is loaded.
+except `on()`, `onDispose()`, `awaitDimensionUpdate()`, `shortcutForAction()` and
+`getDatasetFault()`: the first three only register or wait, `shortcutForAction()`
+returns `undefined` until input is available, and `getDatasetFault()` returns
+`null` until a dataset is loaded.
 
 ```ts
 // Dataset
@@ -123,6 +132,20 @@ app.resize();
 // Screenshot (async — WebGPU readback is async)
 const blob = await app.screenshot({ format: 'png' }); // 'png' | 'webp' | 'jpeg'
 
+// Share-a-view snapshot (camera placement + slice position, JSON-serializable)
+const view = app.captureSnapshot();
+app.restoreSnapshot(view); // { cameraApplied, dimsApplied }
+
+// Remote control: flight, rendering, layers, sound, one-call state
+const { completed } = await app.flyTo(pose, { durationMs: 2000 });
+app.setRenderingSettings({ exposure: 0.5 }); // getRenderingSettings() reads them
+app.setLayer(app.getLayers()[0].path, { opacity: 0.3 });
+const state = app.getViewerState(); // { src, title, camera, dimensions, rendering, layers, audio, controlPanel }
+app.setAudio({ muted: true }); // getAudioState(), playSound(name), stopSound(name)
+
+// Lifetime-scoped cleanup, run by dispose()
+app.onDispose(() => myOverlay.remove());
+
 // Keyboard input
 app.registerContext('annotation', {
   priority: 100,
@@ -145,6 +168,9 @@ app.setInputEnabled(false);
 const helpKey = app.shortcutForAction('help.toggle');
 ```
 
+See [`src/core/app/embedder/README.md`](src/core/app/embedder/README.md) for each
+method's contract (the remote-control table) and the full event table.
+
 **Events** — subscribe with `on(event, listener)`, which returns an unsubscribe:
 
 ```ts
@@ -155,6 +181,10 @@ app.on('dimensions-changed', (dims) => updateMyUI(dims));
 app.on('selection', (sel) => console.log(sel)); // { nodeName, elementIndex, hitNodeName } | null
 app.on('element-click', (event) => console.log(event));
 app.on('element-contextmenu', (event) => console.log(event));
+app.on('camera-changed', (pose) => mirror(pose)); // frame rate while moving; throttle if relaying
+app.on('sound-started', ({ name }) => console.log('playing', name)); // and 'sound-ended'
+app.on('waypoint-arrived', ({ index, completed }) => console.log(index, completed)); // and 'waypoint-departed'
+app.on('webgpu-device-lost', ({ reason }) => location.reload()); // unrecoverable in this release
 // off();
 ```
 
@@ -241,13 +271,15 @@ Note that a scene's `tone_mapping` does **not** apply in layer mode: Luxar
 tone-maps in a post-processing pass the layer does not own, so a host wanting a
 filmic rolloff over additive geometry must set `renderer.toneMapping` itself.
 
-Same single-instance rule as `LuxarApp`, and the two are mutually exclusive. See
+One `LuxarApp` and any number of `LuxarLayer`s may share a page (each layer owns
+its loaders, dimension, material and depth-sort state; the worker pools are
+shared and lease-counted); two `LuxarApp`s may not. See
 [`docs/specs/LUXAR_LAYER_SPEC.md`](../../docs/specs/LUXAR_LAYER_SPEC.md) for the normative public
 contract and [`src/core/layer/README.md`](src/core/layer/README.md) for implementation rationale.
 
 ### What's NOT supported in v1
 
-- **Multiple viewers on the same page.** `ThemeManager`, the worker pool, and several UI components are still page-singletons. Mounting two `LuxarApp` instances at once will share state.
+- **Two `LuxarApp`s on the same page.** The app owns page-global UI (`ThemeManager`, `document.title`, `__luxarDebug`, DOM panels, the keyboard), so a second instance would share it. One app plus any number of `LuxarLayer`s is supported (see Layer mode above).
 - **Shadow DOM isolation.** The viewer uses regular DOM. The CSS is prefixed under `.luxar-*` classnames, but a host page that already styles `.luxar-foo` will collide.
 - **SSR / non-browser rendering.** `LuxarApp.init()` throws a friendly error if `window`/`document` are unavailable.
 

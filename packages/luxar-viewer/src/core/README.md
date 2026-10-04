@@ -375,9 +375,9 @@ async init(options: LuxarAppOptions): Promise<void> {
 ```
 
 `bootstrapStandalone()` catches and displays fatal startup errors. Dataset
-failures during `init()` emit `dataset-error`; the standalone app also shows a
-persistent dialog through its notifier. An embedder should register a listener
-before calling `init()`:
+failures during `init()` emit `dataset-error` and show a persistent dialog
+through the notifier backend `init()` installs. An embedder that wants its own
+surface should register a listener before calling `init()`:
 
 ```typescript
 app.on('dataset-error', ({ src, error }) => showDatasetError(src, error));

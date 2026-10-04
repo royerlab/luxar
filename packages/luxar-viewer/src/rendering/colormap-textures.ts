@@ -27,6 +27,15 @@ const builtinCache = new Map<string, THREE.DataTexture>();
 const customCache = new Map<string, THREE.DataTexture>();
 
 /**
+ * Custom textures that left {@link customCache} (LRU eviction, hash collision)
+ * but may still be bound to a live material. Disposing one there would not free
+ * it: three re-uploads a disposed texture on its next draw, into a GPU texture
+ * no cache tracks any more. They are disposed with the cache at dataset release
+ * ({@link disposeCustomColormapTextures}), when their materials go too.
+ */
+const retiredCustomTextures = new Set<THREE.DataTexture>();
+
+/**
  * Per-process counters for the custom-LUT cache. Used to validate the
  * LRU is doing useful work (high hit rate) and to spot fingerprint-
  * collision induced misses. Counters are cumulative since process
@@ -44,11 +53,10 @@ const customCacheStats = {
 };
 
 /**
- * Maximum number of custom LUT textures kept in the per-app cache.
- * Once exceeded, the oldest entry is disposed and dropped. 16 covers
- * realistic use (a single dataset rarely uses more than 2–3 unique
- * custom LUTs at once); higher values would just delay an inevitable
- * dispose for users that swap many unique LUTs over a long session.
+ * Maximum number of custom LUT textures kept in the lookup cache. Once
+ * exceeded, the least recently used entry is retired (dropped from lookup,
+ * disposed at dataset release). 16 covers realistic use (a single dataset
+ * rarely uses more than 2–3 unique custom LUTs at once).
  */
 const CUSTOM_LUT_CACHE_MAX = 16;
 
@@ -73,13 +81,7 @@ function customCacheLruSet(key: string, value: THREE.DataTexture): void {
     const lruTex = customCache.get(lruKey);
     customCache.delete(lruKey);
     customCacheStats.evictions++;
-    if (lruTex) {
-      try {
-        lruTex.dispose();
-      } catch {
-        // Ignore — texture may already be disposed.
-      }
-    }
+    if (lruTex) retiredCustomTextures.add(lruTex);
   }
   customCache.set(key, value);
 }
@@ -183,22 +185,18 @@ export function getColormapTexture(
  * @returns THREE.DataTexture
  */
 /**
- * Capture a small fingerprint (first/last 16 bytes + length) of
- * the LUT so a cache hit can be content-validated before being
- * returned. Defends against the (unlikely but possible) DJB2 hash
- * collision that would otherwise map two distinct LUTs to the same
- * cache key. Total fingerprint memory is ~33 B per cached entry.
+ * Capture a small fingerprint (first/last 16 bytes) of the LUT so a
+ * cache hit can be content-validated before being returned. Defends
+ * against the (unlikely but possible) DJB2 hash collision that would
+ * otherwise map two distinct LUTs to the same cache key; the length is
+ * already part of the key. 32 B per cached entry.
  */
 function lutFingerprint(lut: Uint8Array): Uint8Array {
-  const fp = new Uint8Array(32 + 1);
-  fp[0] = lut.length & 0xff;
-  // Length is 768 or 1024 — fits in one byte mod 256, but we use it as
-  // a low-confidence pre-check anyway; the byte-comparison below is
-  // what catches collisions.
+  const fp = new Uint8Array(32);
   const head = Math.min(16, lut.length);
-  for (let i = 0; i < head; i++) fp[1 + i] = lut[i];
+  for (let i = 0; i < head; i++) fp[i] = lut[i];
   const tail = Math.min(16, lut.length);
-  for (let i = 0; i < tail; i++) fp[17 + i] = lut[lut.length - tail + i];
+  for (let i = 0; i < tail; i++) fp[16 + i] = lut[lut.length - tail + i];
   return fp;
 }
 
@@ -225,22 +223,16 @@ export function createCustomColormapTexture(lut: Uint8Array): THREE.DataTexture 
   if (cached) {
     // Validate cache hit against fingerprint. If two distinct LUTs
     // hashed to the same key, the fingerprints will (with overwhelming
-    // probability) diverge — dispose the stale entry and re-create.
+    // probability) diverge — retire the stale entry and re-create.
     const cachedFp = (cached.userData as { originalLutSample?: Uint8Array }).originalLutSample;
     if (cachedFp && fingerprintMatches(cachedFp, incomingFp)) {
       customCacheStats.hits++;
       return cached;
     }
-    // Fingerprint mismatch → collision. Dispose and fall through.
+    // Fingerprint mismatch → collision. Retire it (it may be bound, like an
+    // evicted entry) and fall through; customCacheLruSet replaces the key.
     customCacheStats.collisions++;
-    try {
-      cached.dispose();
-    } catch {
-      // Ignore disposal errors — texture may already be invalid.
-    }
-    // The LRU map kept the key on hit; we need to delete before
-    // re-insert so the new texture takes the slot.
-    // Note: customCacheLruSet handles this by checking has() first.
+    retiredCustomTextures.add(cached);
   }
   customCacheStats.misses++;
 
@@ -262,7 +254,7 @@ export function createCustomColormapTexture(lut: Uint8Array): THREE.DataTexture 
     texture = createTexture(lut);
   }
   // Stash the fingerprint on userData so future lookups can
-  // validate. ~33 B per cache entry is negligible vs the 1024 B LUT.
+  // validate. 32 B per cache entry is negligible vs the 1024 B LUT.
   (texture.userData as { originalLutSample?: Uint8Array }).originalLutSample = incomingFp;
   customCacheLruSet(key, texture);
   return texture;
@@ -304,6 +296,10 @@ export function disposeCustomColormapTextures(): void {
     tex.dispose();
   }
   customCache.clear();
+  for (const tex of retiredCustomTextures) {
+    tex.dispose();
+  }
+  retiredCustomTextures.clear();
 }
 
 /** Datasets currently holding the custom-LUT cache (see {@link retainCustomColormapTextures}). */

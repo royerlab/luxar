@@ -15,7 +15,7 @@
  * gsplats, points, lines and mesh; needsDepthSort on the live mode).
  *
  * Per-frame protocol (driven by `evaluateDepthSortPerFrame`):
- * 1. {@link clearRenderOrderFrameState} at the top of the frame,
+ * 1. {@link beginRenderOrderFrame} at the top of the frame,
  * 2. {@link collectRenderOrderSlot} once per surviving sorted-mode mesh,
  * 3. {@link assignGlobalRenderOrder} after the loop.
  *
@@ -448,7 +448,7 @@ function wrapperPartRanks(
 }
 
 /**
- * One order-pass entry per visible sorted-mode gsplat mesh, rebuilt every
+ * One order-pass entry per visible sorted-mode mesh, rebuilt every
  * frame (fresh array per frame — a grow-only pool would pin disposed
  * meshes across frames; counts are tens).
  */
@@ -883,7 +883,7 @@ export function beginRenderOrderFrame(displayDims: (() => readonly number[] | nu
 
 /**
  * COLLECT half of the cross-node ordering: record one order slot for a
- * visible sorted-mode gsplat mesh. `mv` is the mesh's model-view matrix
+ * visible sorted-mode mesh. `mv` is the mesh's model-view matrix
  * and `camPos` the camera world position, both computed by the caller's
  * per-frame loop (shared with the re-sort trigger math).
  *

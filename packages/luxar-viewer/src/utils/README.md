@@ -55,6 +55,7 @@ utils/
 ├── image-mime.ts            # detectMimeType() from magic bytes
 ├── input-capabilities.ts    # getInputProfile(), isTouchLikePointer(), deriveInputProfile() (import-free)
 ├── json-rpc.ts              # JSON-RPC 2.0 framing for the remote-control channel (pure)
+├── keyboard-key.ts          # pressedKey(): the binding key of a KeyboardEvent (undoes macOS Option composition)
 ├── log.ts                   # log object, Modules registry, LogEmoji, createModuleLogger
 ├── long-press.ts            # attachLongPress(el, …) — touch long-press → secondary action, single opener across platforms
 ├── lod-child-failure.ts     # Lazy-child failure latch and clear with status invalidation
@@ -203,7 +204,7 @@ Dependency-inverted UI notification surface so lower layers can surface user-vis
 
 - `NotifierBackend` — Interface a concrete backend implements (`showError`, `showToast`, `showHelpOverlay`, `hideHelpOverlay`, `showLoadingIndicator`, `hideLoadingIndicator`, `clearError`)
 - `notifier` — Stable call surface: `error`, `toast`, `showHelp`, `hideHelp`, `showLoading`, `hideLoading`, `clearError`. Drops calls silently (with a single warn) when no backend is registered, so unit tests and early-startup paths don't crash.
-- `setNotifierBackend(b)` — Called once by the UI bootstrap to plug in the concrete `ui/` helpers; subsequent calls replace the backend (useful for tests)
+- `setNotifierBackend(b)` — Called by `LuxarApp.init()` (via `core/app/lifecycle/notifier-backend.ts`) to plug in the concrete `ui/` helpers; subsequent calls replace the backend (useful for tests)
 - `clearNotifierBackend()` — Tear down the backend; also resets the once-only missing-backend warning flag
 
 ### input-capabilities.ts - Input / Device Capability Profile
@@ -215,6 +216,10 @@ The single answer to "is this a touch-first device, is it an iPhone or an iPad, 
 - `isTouchLikePointer(event)` — a finger, or a pen used as a finger on a coarse-pointer device (iPad + Pencil, with no secondary button held). Consistent across a gesture: `pointermove` reports `button === -1`, so held buttons are read from `buttons`. A pen on a fine-pointer desktop keeps the mouse mapping.
 - `deriveInputProfile(signals)`, `inferDeviceClass(signals)`, `readInputSignals()` — the pure derivation and its raw browser signals (`InputSignals`), injectable for tests. No-signal default (node, jsdom) is a hover-capable fine-pointer laptop, i.e. the historical desktop behaviour.
 - `resetInputProfileForTests()`.
+
+### keyboard-key.ts - The Key a Binding Names
+
+`pressedKey(event)` — the lowercased key a keyboard binding matches. macOS Option composes characters (Option+W reports `'∑'`, Option+E a dead key), so with Alt held and a reported key that is not a plain letter or digit it reads the physical `event.code` instead; otherwise the layout key wins, so non-QWERTY layouts keep their own letters. The input context manager and the fly keyboard both match through it, so `⌥ W / S` (fly up/down) works on a Mac.
 
 ### long-press.ts - Long-press → secondary action (touch)
 
@@ -228,7 +233,7 @@ The single answer to "is this a touch-first device, is it an iPhone or an iPad, 
 
 ### abort-signals.ts - Abort-Signal Combinator
 
-- `combineAbortSignals(a, b?)` — The viewer's one "abort when either aborts" merge (fetch retry, caching store, zip reader, scene-loader dataset signal, mesh loader). Returns a scope `{ signal, dispose }`: native `AbortSignal.any` when present, else a relay that carries the first abort's reason and whose idempotent `dispose()` removes its source listeners — call it when the work using `signal` settles. One input is returned as is; none gives `undefined`.
+- `combineAbortSignals(a, b?)` — The viewer's one "abort when either aborts" merge (fetch retry, caching store, zip reader, scene-loader dataset signal). Returns a scope `{ signal, dispose }`: native `AbortSignal.any` when present, else a relay that carries the first abort's reason and whose idempotent `dispose()` removes its source listeners — call it when the work using `signal` settles. One input is returned as is; none gives `undefined`.
 
 ### race-timeout.ts - Promise-vs-Timer Race
 
@@ -385,7 +390,7 @@ export function configureHDRRenderer(_renderer: unknown, capabilities: HDRCapabi
 
 Three utilities exist specifically to let lower layers reach the UI without violating layer order (see `CONVENTIONS.md` §10):
 
-- **`notifier`** — Single backend, fixed method dictionary. The UI bootstrap calls `setNotifierBackend(...)` once with concrete implementations from `ui/` helper modules; lower layers call `notifier.toast(...)`, `notifier.error(...)`, etc. Pre-registration calls drop silently with a single warn.
+- **`notifier`** — Single backend, fixed method dictionary. `LuxarApp.init()` calls `setNotifierBackend(...)` with concrete implementations from `ui/` helper modules (the dispose pipeline clears it); lower layers call `notifier.toast(...)`, `notifier.error(...)`, etc. Pre-registration calls drop silently with a single warn.
 - **`eventBus`** — Open subscriber sets typed against `LuxarEventMap`. Panels can subscribe late without bootstrap-order coupling. Events with no listener drop silently — that's the design.
 - **`EventGroup`** — Per-component listener-collection so a panel's entire DOM-listener set tears down in one `dispose()` call.
 

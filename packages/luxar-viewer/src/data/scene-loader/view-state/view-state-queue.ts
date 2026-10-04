@@ -49,8 +49,7 @@ export class ViewStateQueue {
    * predictions overlap (one chunk spans several slices), and aborting the
    * predecessor before the new one's reads join its in-flight fetches would
    * cancel those fetches outright and make the new prediction refetch them.
-   * A dataset switch / retry baseline ({@link clearPrev}) and
-   * {@link forgetPath} abort them all.
+   * {@link clearPrev} (dispose) and {@link forgetPath} abort them all.
    */
   private _predictionControllers: Map<string, AbortController[]> = new Map();
 
@@ -160,9 +159,8 @@ export class ViewStateQueue {
   }
 
   /**
-   * Clear the per-loader prefetch predictor state. Called on dataset
-   * switch + on retry-baseline failures so a reused SceneLoader doesn't
-   * extrapolate from a prior dataset.
+   * Clear the per-loader prefetch predictor state and abort every live
+   * prediction. Called on dispose.
    */
   clearPrev(): void {
     this._prevPerNodeViewState.clear();

@@ -351,8 +351,11 @@ luxar optimize arbitrary.zarr out.zarr --generic           # a plain (non-Luxar)
 # them, so the viewer reads the node in one request instead of one per chunk —
 # the win for many-tiny-node stores (laddered timelapse partitions), nothing
 # for nodes already at the chunk target. Plain chunks stay (still a plain zarr
-# store), content_hash is unchanged, and the sidecar records the hash it was
-# built for, so an edit that restamps the hash makes the viewer ignore it.
+# store), and packing does not change content_hash (the sidecar is excluded
+# from it; optimize still stamps its output's fresh hash, as without --pack).
+# The sidecar records the hash it was built for, so an edit that restamps the
+# hash makes the viewer ignore it — except `restamp-lod`, which moves only
+# attrs and so restamps the packs too.
 luxar optimize scene.luxar.zarr out.luxar.zarr --pack
 # Re-derive a store's LOD switch thresholds IN PLACE — attrs only, no chunk data
 # moves. Every `kind=lod` group still on the legacy `coverage` diagonal metric

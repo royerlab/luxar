@@ -29,8 +29,8 @@
  *   `elementIds` for Points, `ranges` for GSplats, `vertexRangeBounds` for
  *   Lines — is already the one the node's label CSR is keyed by, which the
  *   concat must otherwise strip off a shallow copy. That holds when the object
- *   publishes no index space at all, and — for a Points ladder whose parent
- *   carries the union CSR (#1439) — also when it publishes one, since a lone
+ *   publishes no index space at all, and — for a Points or Lines ladder whose
+ *   parent carries the union CSR (#1439) — also when it publishes one, since a lone
  *   retained payload spans a prefix beginning at offset 0 of that union space)
  *   or DEEP-CLONED
  *   (slice-cache ladder restore), so a

@@ -37,6 +37,7 @@ import { clearChildFailure } from '../../../../utils/lod-child-failure';
 import type { LODGroupChild } from '../../../../scene/lod-group-registry';
 import { failedLoadsVersion } from '../../../../utils/failed-loads-version';
 import { DensityGuard } from '../../../../scene/density-guard';
+import { SceneNodeIndex } from '../../../../data/scene-loader/view-state/scene-node-index';
 
 // `showToast` lives in src/ui/toast; mock so the empty-scene branch
 // is observable.
@@ -478,6 +479,24 @@ describe('LayersPanel.initFromScene', () => {
     const panel = new LayersPanel(container, animationController);
     panel.initFromScene(new THREE.Group(), makeLayeredSceneGraph());
 
+    expect(panel.layerState.count).toBe(1);
+  });
+
+  it("reuses the loader's SceneNodeIndex only when it indexes the same graph", () => {
+    const indexOf = (p: LayersPanel) =>
+      (p as unknown as { sceneNodeIndex: SceneNodeIndex | null }).sceneNodeIndex;
+    const graph = makeLayeredSceneGraph();
+    const shared = new SceneNodeIndex(graph);
+    const panel = new LayersPanel(container, animationController);
+    panel.initFromScene(new THREE.Group(), graph, shared);
+    expect(indexOf(panel)).toBe(shared);
+
+    // An index over ANOTHER graph (a stale one from the previous dataset) is
+    // not trusted: the panel builds its own over the graph it was given.
+    const next = makeLayeredSceneGraph();
+    panel.initFromScene(new THREE.Group(), next, shared);
+    expect(indexOf(panel)).not.toBe(shared);
+    expect(indexOf(panel)?.root).toBe(next);
     expect(panel.layerState.count).toBe(1);
   });
 

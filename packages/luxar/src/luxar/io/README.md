@@ -337,8 +337,12 @@ After the restamp, `write_chunk_packs` copies the chunk objects of every
 geometry node with at most `PACK_MAX_BYTES` (64 KB) of stored chunks into one
 plain `<n>.pack` file per node (header-indexed) under the root `chunk_packs/`
 sidecar, and lists them (key, SHA-256, node prefix) in the sidecar's attrs with
-the `scene_content_hash` they were built for. `optimize` never copies an
-existing sidecar. The sidecar is hash-excluded like
+the `scene_content_hash` they were built for. A broadcast array whose row
+rides in `encoding.value` is skipped (the viewer never requests its chunk).
+`optimize` never copies an existing sidecar, recognised by its attrs
+(`is_chunk_packs_sidecar`), so a user group that only shares the name is
+copied as data; `restamp-lod` restamps its `scene_content_hash` along with the
+root hash. The sidecar is hash-excluded like
 `environment/`, so packing leaves `content_hash` alone; the viewer adopts the
 packs only for a matching root hash. Compiled scenes only. Format:
 `docs/guides/user/LUXAR_ZARR_FORMAT.md` (Chunk Packs).

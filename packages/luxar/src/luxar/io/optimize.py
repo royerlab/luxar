@@ -132,7 +132,7 @@ from ._compiler.finalize.hashing import (
     _payload_terms,
     _storage_identity,
 )
-from .chunk_pack import write_chunk_packs
+from .chunk_pack import is_chunk_packs_sidecar, write_chunk_packs
 
 __all__ = [
     "CHUNK_PROFILES",
@@ -1012,9 +1012,10 @@ def _copy_group(
         _copy_array(source[name], dest, name, plan.target_chunks, target_format)
     for name in sorted(group_keys(source)):
         child_path = f"{path}/{name}" if path else name
-        if child_path == CHUNK_PACKS_GROUP:
+        if child_path == CHUNK_PACKS_GROUP and is_chunk_packs_sidecar(source[name]):
             # Derived, and keyed to the source's chunk grid and hash: `--pack`
-            # rebuilds it for the output, and without it there is none.
+            # rebuilds it for the output, and without it there is none. A group
+            # that only shares the name is data, and is copied.
             continue
         _copy_group(
             source[name], dest.create_group(name), plans, target_format, child_path
@@ -1402,7 +1403,7 @@ def _verify(source: zarr.Group, dest: zarr.Group) -> tuple[int, int]:
     dest_groups = dict(_walk_groups(dest))
     payloads = 0
     for group_path, src_group in _walk_groups(source):
-        if group_path == CHUNK_PACKS_GROUP:
+        if group_path == CHUNK_PACKS_GROUP and is_chunk_packs_sidecar(src_group):
             continue  # derived; never copied (see `_copy_group`)
         dst_group = dest_groups.get(group_path)
         if dst_group is None:

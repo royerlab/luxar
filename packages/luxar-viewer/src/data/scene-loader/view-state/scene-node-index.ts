@@ -55,7 +55,7 @@ export class SceneNodeIndex {
   ): void {
     if (visited.has(node)) {
       throw new Error(
-        `computeWorldNdTransform: malformed scene graph — node "${node.path}" ` +
+        `SceneNodeIndex: malformed scene graph — node "${node.path}" ` +
           'encountered twice (cycle or shared reference). Aborting traversal.'
       );
     }

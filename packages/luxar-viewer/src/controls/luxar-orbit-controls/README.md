@@ -23,7 +23,7 @@ orchestrators stay structurally parallel (see `../README.md`'s
 ## Subpackages
 
 - `math/` — pure functions for trackball axis-angle derivation, screen-space pan, and zoom-scale application (perspective distance multiply vs orthographic `camera.zoom` scale). Consumed by both `update.ts` and the input handlers. See `math/README.md`.
-- `input/` — DOM-event handler bodies (`pointer.ts`, `touch.ts`, `keyboard.ts`) extracted from the orchestrator's bound listeners. Each handler reads its math from `../math/` and writes deltas onto the orchestrator's accumulators (`rotationDelta`, `panDelta`, `zoomDelta`, `rollDelta`) which the next `update()` tick drains with damping. See `input/README.md`.
+- `input/` — DOM-event handler bodies (`pointer.ts`, `touch.ts`) extracted from the orchestrator's bound listeners. Each handler reads its math from `../math/` and writes deltas onto the orchestrator's accumulators (`rotationDelta`, `panDelta`, `zoomDelta`, `rollDelta`) which the next `update()` tick drains with damping. See `input/README.md`.
 
 ## ASCII tree
 
@@ -32,7 +32,7 @@ luxar-orbit-controls/
 ├── camera-application.ts   # applyToCamera (hot), initializeFromCamera (cold)
 ├── update.ts               # runUpdateStep — nine-step per-frame sequencer
 ├── math/                   # pure math: trackball, pan, zoom
-└── input/                  # DOM handlers: pointer, touch, keyboard
+└── input/                  # DOM handlers: pointer, touch
 ```
 
 ## Invariants

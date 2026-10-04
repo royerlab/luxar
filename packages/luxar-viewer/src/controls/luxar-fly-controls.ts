@@ -218,6 +218,7 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
       onPointerDown: (event) => this.onPointerDown(event),
       onPointerMove: (event) => this.onPointerMove(event),
       onPointerUp: (event) => this.onPointerUp(event),
+      onFocusLost: () => this.releaseHeldInput(),
     });
   }
 
@@ -230,10 +231,10 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
   }
 
   /**
-   * Public method to handle key up events (for external input management)
+   * Public method to handle key up events (for external input management).
+   * Not gated on `enabled`: a release must always land.
    */
   public handleKeyUp(event: KeyboardEvent): void {
-    if (!this.enabled) return;
     this.onKeyUp(event);
   }
 
@@ -464,7 +465,17 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     this.velocity.set(0, 0, 0);
     this.angularVelocity.set(0, 0, 0);
 
-    // Reset movement state
+    this.releaseHeldInput();
+    this.updateOrientation();
+  }
+
+  /**
+   * Release every held key, button and finger: movement, look, speed boost,
+   * mouse drag, touch. Run on reset and when focus is lost — the releases of
+   * input held at that moment never arrive. Velocity is left alone, so an
+   * inertial glide still coasts out.
+   */
+  private releaseHeldInput(): void {
     this.moveState.forward = 0;
     this.moveState.back = 0;
     this.moveState.left = 0;
@@ -472,18 +483,14 @@ export class LuxarFlyControls extends THREE.EventDispatcher<{
     this.moveState.up = 0;
     this.moveState.down = 0;
 
-    // Reset look state
     this.lookState.horizontal = 0;
     this.lookState.vertical = 0;
     this.lookState.roll = 0;
 
-    // Reset speed boost, mouse and touch state
     this.speedBoost = false;
     this.activeMouseAction = 'none';
     this.touchPointers.clear();
     this.pinch = null;
-
-    this.updateOrientation();
   }
 
   /**

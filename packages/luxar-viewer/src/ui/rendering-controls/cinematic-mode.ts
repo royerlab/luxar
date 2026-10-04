@@ -150,44 +150,40 @@ export class CinematicModeController {
       settings.fovPreset = '50mm Normal';
     }
 
-    // Batch post-processing changes through `withDeferredRebuild` so the
-    // depth counter unwinds even when a sub-setter throws.
-    postProcessing.withDeferredRebuild(() => {
-      postProcessing.setToneMapping(toneMappingFromName(settings.toneMapping));
+    postProcessing.setToneMapping(toneMappingFromName(settings.toneMapping));
 
-      postProcessing.setBloomEnabled(
-        settings.bloomEnabled,
-        settings.bloomStrength,
-        settings.bloomRadius,
-        settings.bloomThreshold
-      );
-      postProcessing.setBloomLevels(settings.bloomLevels);
+    postProcessing.setBloomEnabled(
+      settings.bloomEnabled,
+      settings.bloomStrength,
+      settings.bloomRadius,
+      settings.bloomThreshold
+    );
+    postProcessing.setBloomLevels(settings.bloomLevels);
 
-      postProcessing.setDetectorNoiseEnabled(
-        settings.detectorNoiseEnabled,
-        settings.detectorNoiseReadoutSigma,
-        settings.detectorNoisePhotonGain,
-        settings.detectorNoiseFpnSigma
-      );
+    postProcessing.setDetectorNoiseEnabled(
+      settings.detectorNoiseEnabled,
+      settings.detectorNoiseReadoutSigma,
+      settings.detectorNoisePhotonGain,
+      settings.detectorNoiseFpnSigma
+    );
 
-      postProcessing.setVignetteEnabled(
-        settings.vignetteEnabled,
-        settings.vignetteDarkness,
-        settings.vignetteOffset
-      );
+    postProcessing.setVignetteEnabled(
+      settings.vignetteEnabled,
+      settings.vignetteDarkness,
+      settings.vignetteOffset
+    );
 
-      postProcessing.setChromaticLensDistortionEnabled(
-        settings.chromaticLensDistortionEnabled,
-        settings.chromaticLensDistortionX,
-        settings.chromaticLensDistortionY,
-        settings.chromaticLensDispersion,
-        settings.chromaticLensPrincipalPointX,
-        settings.chromaticLensPrincipalPointY,
-        settings.chromaticLensFocalLengthX,
-        settings.chromaticLensFocalLengthY,
-        settings.chromaticLensSkew
-      );
-    });
+    postProcessing.setChromaticLensDistortionEnabled(
+      settings.chromaticLensDistortionEnabled,
+      settings.chromaticLensDistortionX,
+      settings.chromaticLensDistortionY,
+      settings.chromaticLensDispersion,
+      settings.chromaticLensPrincipalPointX,
+      settings.chromaticLensPrincipalPointY,
+      settings.chromaticLensFocalLengthX,
+      settings.chromaticLensFocalLengthY,
+      settings.chromaticLensSkew
+    );
 
     // Apply FOV change to camera.
     const targetFOV = settings.fov;

@@ -4,11 +4,11 @@
 
 ## Overview
 
-The Luxar Rendering package provides a high-performance rendering pipeline built on Three.js r185. Each of the 9 production shaders (3 geometry visual + 3 geometry picking + mega-shader + FXAA + bloom-threshold) ships as a `ShaderSource` pair: a `WebGLRenderer`-targeted GLSL3 string and a `WebGPURenderer`-targeted TSL factory. `MaterialManager` dispatches on `RendererCapabilities.apiSurface` so the same scene graph renders identically through either backend. Post-processing runs through a hand-written **mega-shader** that fuses all per-pixel effects into a single fullscreen fragment pass — bloom is a separate pre-pass (needs neighbor reads) and FXAA is a separate post-pass (edge detection on the LDR output).
+The Luxar Rendering package provides a high-performance rendering pipeline built on Three.js r185. Every production shader — the visual and picking shaders of the four geometry types (lines add a capsule variant of each), the mega-shader, FXAA and the three bloom passes — ships as a `ShaderSource` pair: a `WebGLRenderer`-targeted GLSL3 string and a `WebGPURenderer`-targeted TSL factory. `MaterialManager` dispatches on `RendererCapabilities.apiSurface` so the same scene graph renders identically through either backend. (The opt-in `material="physical"` mesh material is three's own lighting model, `materials/mesh-physical/`, on either backend.) Post-processing runs through a hand-written **mega-shader** that fuses all per-pixel effects into a single fullscreen fragment pass — bloom is a separate pre-pass (needs neighbor reads) and FXAA is a separate post-pass (edge detection on the LDR output).
 
 The default backend is `THREE.WebGLRenderer` (GLSL `ShaderMaterial`). `WebGPURenderer` (TSL `NodeMaterial`) is selectable via `?renderer=webgpu` or `VITE_LUXAR_USE_WEBGPU=1`; it falls back to its internal WebGL2 backend when no WebGPU adapter is available. Every TSL shader is validated against its GLSL counterpart through `tsl-shader-parity.spec.ts`. For diagnostics, `?renderer=webgpu&webgpuForceWebgl` constructs `WebGPURenderer({ forceWebGL: true })`: Luxar still uses TSL `NodeMaterial` shaders and the WebGPURenderer API surface, but Three.js routes rendering through its internal WebGL2 backend instead of native WebGPU.
 
-**The TSL half is lazily loaded.** Because WebGL is the default, the entire `three/webgpu` cone — the 9 TSL material classes and every TSL graph factory — sits behind a single `await import()` in `rendering/tsl/load.ts` and is fetched only when `selectBackend()` actually chooses WebGPU. That keeps ~182 kB gzipped off the initial payload for the default session (issue #1679). Consequences worth knowing before you edit a material: the `MaterialManager` dispatch tables hold **thunks**, not classes (`VISUAL_FACTORIES[kind][backend]()`); the `ShaderSource.webgpu` closures obtain their factory from `requireTslMaterials()` rather than importing it; `material-sync-helpers.ts` uses structural probes instead of `instanceof` on TSL classes; and a value import of `three/webgpu` from production code outside the lazy cone — `rendering/tsl/registry.ts` and the `*-tsl` / `*.tsl` modules it owns — is an ESLint error (`src/tests/**` is exempt: it ships nothing, and the parity harness drives the WebGPU path directly). See `tsl/README.md`.
+**The TSL half is lazily loaded.** Because WebGL is the default, the entire `three/webgpu` cone — every TSL material class and graph factory — sits behind a single `await import()` in `rendering/tsl/load.ts` and is fetched only when `selectBackend()` actually chooses WebGPU. That keeps ~182 kB gzipped off the initial payload for the default session (issue #1679). Consequences worth knowing before you edit a material: the `MaterialManager` dispatch tables hold **thunks**, not classes (`VISUAL_FACTORIES[kind][backend]()`); the `ShaderSource.webgpu` closures obtain their factory from `requireTslMaterials()` rather than importing it; `material-sync-helpers.ts` uses structural probes instead of `instanceof` on TSL classes; and a value import of `three/webgpu` from production code outside the lazy cone — `rendering/tsl/registry.ts` and the `*-tsl` / `*.tsl` modules it owns — is an ESLint error (`src/tests/**` is exempt: it ships nothing, and the parity harness drives the WebGPU path directly). See `tsl/README.md`.
 
 ### Key Features
 
@@ -25,11 +25,11 @@ The default backend is `THREE.WebGLRenderer` (GLSL `ShaderMaterial`). `WebGPURen
 ```
 rendering/
 ├── material-manager.ts                 # Per-node material creation + global camera updates
-├── node-factory.ts                     # Scene-node factories for Points / Lines / GSplats
+├── node-factory.ts                     # Scene-node factories for Points / Lines / GSplats / Mesh
 ├── gpu-buffer-pool.ts                  # Geometry reuse with count and byte-budget eviction
 ├── gpu-byte-budget.ts                  # Single adaptive VRAM budget (pool + LOD registry share it)
 ├── upload-counters.ts                  # Counts GPU upload bytes/calls (WebGL2 + WebGPU queue) into perf counters; a ranged texture upload counts its region, not the whole source view
-├── adaptive-dpr-manager.ts             # Adaptive resolution
+├── adaptive-dpr-manager.ts             # Adaptive resolution (helpers in adaptive-dpr/)
 ├── pixel-ratio-cap.ts                  # The max DPR the viewer may render at (high DPR is opt-in; 2 on a phone/tablet)
 ├── colormap-textures.ts                # Built-in/custom DataTexture creation and cache disposal
 ├── colormap-data.ts                    # Built-in colormap lookup tables (auto-generated)
@@ -39,23 +39,27 @@ rendering/
 ├── material-sync-helpers.ts            # Geometry-commit material sync helpers
 ├── webgl-blend-warmup.ts               # WebGL-only pre-link of every reachable blend-mode program variant (`?noBlendWarmup`)
 ├── tsl/                                # The lazy three/webgpu boundary — registry.ts (sole entry to the cone) + load.ts (sole `await import()`) + slot.ts (zero-runtime-import accessor). See tsl/README.md.
-├── display-range.ts                    # Pure display-window ↔ shader intensity/offset math + resolveColormapWindow (shared by all 3 node factories)
+├── display-range.ts                    # Pure display-window ↔ shader intensity/offset math + resolveColormapWindow (shared by all 4 node factories)
 
 ├── line-geometry.ts                    # Line quad base + 6-texel layout/texel writer + mesh create/update
 ├── gsplat-geometry.ts                  # Instanced GSplat mesh creation/update helpers
 ├── element-texture-layout.ts           # RGBA32F element-texture layout authority (gsplat + point + line bindings)
 ├── element-storage.ts                  # Shared texture-backed element storage + aSortedIndex writers
 ├── element-texture-row-upload.ts       # WebGPU backends: element textures upload only their dirty rows (#2944)
-├── depth-sort-coordinator.ts           # Main-thread side of the depth-sort worker + camera re-sort scheduler (Phases 2-3)
+├── depth-sort-coordinator.ts           # Main-thread side of the depth-sort worker + camera re-sort scheduler (submodules in depth-sort-coordinator/)
 ├── render-layers.ts                    # Object3D layer bits — two, used transiently by the refraction split
 ├── point-geometry.ts                   # Point quad base + 3-texel layout/texel writer
 ├── mesh-geometry.ts                    # Plain indexed BufferGeometry for Mesh (NOT instanced/texture-backed): WebGPU-safe colour dtypes, capacity-sized vertex buffers + index + drawRange
+├── mesh-texture.ts                     # Decoded mesh base-colour texture → GPU texture (colour space, wrap, mipmaps)
+├── ktx2-texture-decoder.ts             # KTX2 (Basis) mesh-texture decoding through three's KTX2Loader
 ├── widen-to-float32.ts                 # Dtype widening for the texel writers
 │
 ├── materials/                          # Per-geometry material and shader stacks
 │   ├── point/   { material-glsl, material-tsl, shader-glsl, shader-tsl }
-│   ├── line/    { material-glsl, material-tsl, shader-glsl, shader-tsl }
+│   ├── line/    { material-glsl, material-tsl, shader-glsl(-capsule), shader-tsl(-capsule) }
 │   ├── gsplat/  { material-glsl, material-tsl, shader-glsl, shader-tsl, math }
+│   ├── mesh/    { material-glsl, material-tsl, shader-glsl, shader-tsl, appearance }
+│   ├── mesh-physical/ { config, material-glsl, material-tsl, refraction-apodization(-tsl) }
 │   └── _shared/ { camera-aware-material, colormap-aware-material, camera-uniforms,
 │                  uniform-helpers, material-builder, tsl-helpers, glsl-lib, shader-source }
 │
@@ -69,7 +73,8 @@ rendering/
 │   ├── transforms.ts                   # applyTransform
 │   ├── create-points-node.ts           # createPointsGeometry + createPointsMaterial
 │   ├── create-lines-node.ts            # createLinesNode + createEmptyLinesNode
-│   └── create-gsplats-node.ts          # createGSplatsNode + createEmptyGSplatsNode
+│   ├── create-gsplats-node.ts          # createGSplatsNode + createEmptyGSplatsNode
+│   └── create-mesh-node.ts             # createEmptyMeshNode + the mesh shading / texture / side appliers
 │
 ├── post-processing/                    # HDR post-processing pipeline
 │   ├── post-processing-manager.ts      # Public API — HDR pipeline orchestrator
@@ -79,18 +84,23 @@ rendering/
 │   ├── mega/                           # material / material-tsl / shader.glsl / shader.tsl
 │   ├── hdr/                            # pixel-utils / capture
 │   ├── render-target-sizing.ts
+│   ├── tone-mapping.ts                 # Tone-mapping name ↔ THREE enum ↔ mega-shader mode (single source)
 │   └── post-processing-manager/        # PostProcessingManager helper modules
 │       ├── resource-lifecycle.ts       # buildTransientResources / disposeTransientResources / sizing
 │       ├── settings.ts                 # bloom / msaa / vignette / chromatic-lens setters
 │       ├── pipeline.ts                 # runPipeline (scene → HDR → bloom → mega → FXAA)
-│       └── capture.ts                  # captureHDRPixels / captureHDRAsEXR / renderToImageData
+│       ├── capture.ts                  # captureHDRPixels / captureHDRAsEXR / renderToImageData
+│       ├── refraction-split.ts         # Multi-pass scene split: refract_data glass refracts the data behind it
+│       └── inside-closed-mesh.ts       # Is the camera inside a closed glass mesh (a split input)
 │
 ├── picking/                            # GPU picking materials + orchestration
 │   ├── picking-system.ts               # Orchestrator
 │   ├── PICKING_DESIGN.md               # Backend readback strategy + 1-frame-latency rationale
 │   ├── point/    { material, material-tsl, shaders (GLSL), pick.tsl (TSL) }
-│   ├── line/     { material, material-tsl, shaders (GLSL), pick.tsl (TSL) }
+│   ├── line/     { material, material-tsl, shaders(-capsule) (GLSL), pick(-capsule).tsl (TSL) }
 │   ├── gsplat/   { material, material-tsl, shaders (GLSL), pick.tsl (TSL) }
+│   ├── mesh/     { material, material-tsl, shaders (GLSL), pick.tsl (TSL), pick-mode, provoking-vertex }
+│   ├── _shared/                        # Pick visibility weight, pick-depth convention, shared TSL pick graph
 │   └── picking-system/                 # PickingSystem helper modules
 │       ├── registration.ts             # disposePickMaterial / unregisterAllPickMaterials / PickNodeEntry
 │       ├── ray-aabb.ts                 # rayHitsAnyNode / getOrComputeWorldBox / invalidateBoxCache
@@ -100,16 +110,21 @@ rendering/
 │       └── settle-scheduler.ts         # Debounced settle-pass scheduling
 │
 ├── gpu-buffer-pool/                    # Per-type adapters + eviction
+│   ├── texture-backed-adapter.ts       # The shared pool lifecycle the three adapters extend
 │   ├── {points,lines,gsplats}-adapter.ts
 │   ├── eviction-policy.ts / pool-stats.ts
 │   ├── capacity.ts                     # chooseCapacity (1.5× growth capped at 262,144 elements of headroom, min-instance floor)
 │   ├── geometry-bytes.ts               # estimateGeometryBytes + cached size invalidation
 │   └── byte-budget-evictor.ts          # Cross-type byte-budget enforcement
 │
+├── environment/                        # scene.environment for physical meshes: room / live capture / HDRI / baked map (see environment/README.md)
+├── depth-sort-coordinator/             # Coordinator submodules: state, scheduler, render-order, ordering-apply, triangle-ordering, worker-lifecycle, capture
+├── adaptive-dpr/                       # FPS, stall, refresh-rate and hysteresis trackers behind adaptive-dpr-manager
+│
 ├── shaders/                            # Barrel only — re-exports GLSL constants from materials/<kind>/shader-glsl.ts
 │   └── index.ts                        # Stable re-export spelling; no importer today (knip-ignored)
 │
-├── index.ts                            # Public-API barrel
+├── index.ts                            # Internal barrel (materialManager, BlendingMode, PostProcessingManager); the embedder API is src/index.ts
 └── README.md                           # This documentation
 ```
 
@@ -279,7 +294,7 @@ Specialized shader material for volumetric Gaussian splatting with nD slicing su
 - **Screen-coverage fade**: unconditional amplitude fade toward the
   extent clamp (no hard-edged clamped rectangles, any sigma scale)
 
-**Architecture Note:** GSplats use `THREE.Mesh` with `InstancedBufferGeometry` for instanced quad rendering, similar to the line material approach — but since the depth-sorting Phase 1 migration their per-splat data does NOT live in vertex attributes: it lives in an RGBA32F **splat texture** (4 texels/splat; layout authority in `element-texture-layout.ts`) fetched in the vertex stage via `texelFetch`, indexed by the double-buffered ordering pair `aSortedIndex`/`aSortedIndexB` (Uint32; both buffers are allocated at attach so the vertex layout is invariant — see the depth-sorting paragraph below). Points storage migrated the same way (3 texels/point — center+radius, color+sharpness, scalar+alpha; layout documented in `point-geometry.ts`, ≈56 B/point), and lines followed (6 texels/segment; layout in `line-geometry.ts`), so all three geometry types share the `element-storage.ts` texture+ordering machinery. This decouples draw order from storage order so the SortWorker can permute draw order without rewriting element data. The texture shares its geometry's lifetime (`element-storage.ts::attachElementStorage` registers a geometry-`dispose` listener) and costs ≈72 B/splat — 64 B of texels + 8 B for the ordering pair (≈ +38% vs the 52 B interleaved era; see `gpu-byte-budget.ts`; ≈56 B/point and ≈104 B/segment on the same rule). ALL visual materials are therefore **per node** (each binds its node's `uSplatTex` / `uPointTex` / `uLineTex`) — the historical material-manager LRU died with the lines migration.
+**Architecture Note:** GSplats use `THREE.Mesh` with `InstancedBufferGeometry` for instanced quad rendering, similar to the line material approach — but since the depth-sorting Phase 1 migration their per-splat data does NOT live in vertex attributes: it lives in an RGBA32F **splat texture** (4 texels/splat; layout authority in `element-texture-layout.ts`) fetched in the vertex stage via `texelFetch`, indexed by the double-buffered ordering pair `aSortedIndex`/`aSortedIndexB` (Uint32; both buffers are allocated at attach so the vertex layout is invariant — see the depth-sorting paragraph below). Points storage migrated the same way (3 texels/point — center+radius, color+sharpness, scalar+alpha; layout documented in `point-geometry.ts`, ≈56 B/point), and lines followed (6 texels/segment; layout in `line-geometry.ts`), so all three instanced geometry types share the `element-storage.ts` texture+ordering machinery (Mesh is a plain indexed geometry, `mesh-geometry.ts`). This decouples draw order from storage order so the SortWorker can permute draw order without rewriting element data. The texture shares its geometry's lifetime (`element-storage.ts::attachElementStorage` registers a geometry-`dispose` listener) and costs ≈72 B/splat — 64 B of texels + 8 B for the ordering pair (≈ +38% vs the 52 B interleaved era; see `gpu-byte-budget.ts`; ≈56 B/point and ≈104 B/segment on the same rule). ALL visual materials are therefore **per node** (each binds its node's `uSplatTex` / `uPointTex` / `uLineTex`) — the historical material-manager LRU died with the lines migration.
 
 **Element-texture uploads:** every writer registers its dirty element span on the texture as per-row `updateRanges` (`registerElementTexelDirtyRange`; a span of 75% of the rows or more, or `markElementTextureFullDirty`, requests a full upload instead). The classic `WebGLRenderer` honours the ranges itself. three r185's `WebGPURenderer` backends do not (native WebGPU writes the whole image with one `queue.writeTexture`, the WebGL2 fallback with one whole-image `texSubImage2D`), so `element-texture-row-upload.ts` wraps the backend's `updateTexture` once at renderer creation (`renderer-setup.ts`, beside `installUploadCounters`): for an element texture whose GPU resource is in sync it writes the whole rows the pending ranges cover, then clears the ranges; anything else — a non-element texture, a pending full upload, a new or reallocated resource of an already-uploaded texture, an unexpected format or shape, an out-of-bounds range, a throwing write — takes three's own full upload. It runs after three's bookkeeping (resource creation, version stamps) and before `onUpdate`, so three's view of the texture never changes. A never-uploaded texture's first upload is ranged too, as on the classic path: its backing store was zero-filled at attach, every write since is still in the ranges, and both APIs zero-initialise new textures. Measured on native WebGPU (Apple M4 Max): playback commits fell to within 6-7% of the WebGL bytes (the residue is whole rows versus WebGL's partial-row spans) from 1.3-1.5x, and progressive loads from 1.5x to within 1-10% (both counted by the corrected `upload-counters`), with the GPU texture read back byte-identical to `image.data`.
 
@@ -484,7 +499,7 @@ The `AdaptiveDPRManager` dynamically adjusts device pixel ratio based on real-ti
 
 ### 10. Colormap Textures
 
-`colormap-textures.ts` manages creation and caching of `THREE.DataTexture` instances from built-in and custom colormap LUTs. Built-in textures live for the app lifetime; custom LUT textures are bounded and can be disposed on dataset unload.
+`colormap-textures.ts` manages creation and caching of `THREE.DataTexture` instances from built-in and custom colormap LUTs. Built-in textures live for the app lifetime. Custom LUT textures sit in a bounded LRU lookup cache, but an entry leaving it (eviction, hash collision) is only retired, never disposed on the spot: it may still be bound to a live material, and three would re-upload a disposed texture into a GPU texture nothing tracks. Every custom texture, retired or cached, is disposed at dataset release.
 
 ### 11. Global EOG (Exposure-Offset-Gamma)
 
@@ -852,7 +867,6 @@ function animate() {
 | `renderToImageData()`                                        | Render once and read back as ImageData (sRGB)                                                                                                                                                                                     |
 | `rebuildAfterContextRestore()`                               | Rebuild GPU resources after a WebGL2 `webglcontextrestored` event. WebGPU device loss uses a different model (`device.lost` promise) and is currently treated as unrecoverable — see `scene-manager.ts::setupContextLossHandling` |
 | `setDPRScale(value)`                                         | Apply an adaptive DPR scale                                                                                                                                                                                                       |
-| `startDeferRebuild()` / `endDeferRebuild()`                  | Defer rebuilds during bulk changes (no-op in mega-shader pipeline)                                                                                                                                                                |
 | `dispose()`                                                  | Clean up resources                                                                                                                                                                                                                |
 
 ---

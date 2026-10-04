@@ -64,6 +64,7 @@ import {
   getElementTexture,
   registerElementTexelDirtyRange,
   elementTexelCapacity,
+  writeFreshElementStorage,
   writeSortedIndexIdentity,
 } from './element-storage';
 import type { LinesProjectionBounds } from '../types/lines';
@@ -507,16 +508,10 @@ function buildLinesGeometry(meshConfig: InstancedLinesMeshConfig): THREE.Instanc
   const segmentCount = clampLineCapacity(meshConfig.segmentCount);
 
   const texture = attachLineStorage(geometry, segmentCount);
-  try {
+  writeFreshElementStorage(geometry, () => {
     writeLineTexels(texture, meshConfig, segmentCount);
     writeSortedIndexIdentity(geometry, segmentCount);
-  } catch (err) {
-    // The texture was attached above; a guard-throwing write would
-    // otherwise leak the fresh geometry+texture pair (nobody owns it
-    // yet — callers keep the mesh on its OLD geometry when this throws).
-    geometry.dispose();
-    throw err;
-  }
+  });
 
   geometry.instanceCount = segmentCount;
   geometry.setDrawRange(0, 6);

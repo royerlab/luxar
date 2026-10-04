@@ -1843,6 +1843,25 @@ describe('GSplatsProgressiveLoader', () => {
       expect(loader.getMetrics().memoryUsed).toBe(measureLodBytes([result]));
     });
 
+    it('getMetrics reports visibleElements from the current ladder, not stale level counters', async () => {
+      // Each level's own counter refreshes only when THAT level queries. A pass
+      // pinned to rung 0 (or a SliceCache restore) leaves the deeper levels'
+      // counters from an earlier slice, which a plain sum would add in.
+      lodA = makeSubLoader(makeLodData(100), { visibleElements: 100 });
+      lodB = makeSubLoader(makeLodData(50), { visibleElements: 50 });
+      lodC = makeSubLoader(makeLodData(25), { visibleElements: 25 });
+      loader = new GSplatsProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as GSplatsSpatialIndexLoader[],
+        3,
+        '/test_gsplats'
+      );
+
+      await loader.updateView({ ...baseViewState, ladderDepth: 1 });
+
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.getMetrics().visibleElements).toBe(100); // rung 0's splats only
+    });
+
     it('addEventListener / removeEventListener fan out to every inner loader', () => {
       // The wrapper registers a re-pathing wrapper (not the raw listener) on
       // each inner loader — the re-path itself is asserted in the

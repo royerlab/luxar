@@ -38,7 +38,6 @@ import {
   handleWheel,
 } from './luxar-orbit-controls/input/pointer';
 import { handleTouchStart, handleTouchMove } from './luxar-orbit-controls/input/touch';
-import { attachKeyboardPan } from './luxar-orbit-controls/input/keyboard';
 import { VIEW_AXIS_ROLL_SIGN } from './touch-twist';
 
 /**
@@ -235,10 +234,6 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
 
   // Ortho view-axis rotation
   private viewAxisRotationHandler: ((e: WheelEvent) => void) | null = null;
-
-  // Keyboard pan
-  public keyPanSpeed: number = 7; // pixels per arrow key press
-  private keyboardDisposer: (() => void) | null = null;
 
   constructor(camera: LuxarCamera, domElement: HTMLElement, config?: LuxarOrbitControlsConfig) {
     super();
@@ -537,8 +532,6 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
       this.viewAxisRotationHandler = null;
     }
 
-    this.stopListenToKeyEvents();
-
     // Release any active pointer captures
     for (const pointer of this.pointers) {
       try {
@@ -654,27 +647,5 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
 
   private onWheel(event: WheelEvent): void {
     handleWheel(this.makeInputCtx(), event);
-  }
-
-  /**
-   * Enable keyboard controls (arrow keys for panning).
-   * Call with the element that should receive key events (typically window or canvas).
-   */
-  public listenToKeyEvents(element: HTMLElement | Window): void {
-    if (this.keyboardDisposer) return; // Already listening
-    this.keyboardDisposer = attachKeyboardPan(element, {
-      enabled: () => this.enabled,
-      enablePan: () => this.enablePan,
-      keyPanSpeed: () => this.keyPanSpeed,
-      pan: (dx, dy) => this.pan(dx, dy),
-    });
-  }
-
-  /** Stop listening for keyboard events. */
-  public stopListenToKeyEvents(): void {
-    if (this.keyboardDisposer) {
-      this.keyboardDisposer();
-      this.keyboardDisposer = null;
-    }
   }
 }

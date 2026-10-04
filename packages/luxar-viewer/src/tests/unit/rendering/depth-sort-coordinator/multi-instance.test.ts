@@ -230,6 +230,24 @@ describe('two depth-sort coordinators on one page', () => {
     expect(terminated).toBe(1);
   });
 
+  it("the LAST host's late commit after dispose spawns no orphan worker", async () => {
+    const mod = await loadModule();
+    const host = new mod.DepthSortCoordinator();
+    host.configure({ getCamera: () => cameraLookingFrom(0, 20), requestRender: vi.fn() });
+    host.noteCommit(makeMesh(3), centers(), 3);
+    await flush();
+    expect(mockApi.initialize).toHaveBeenCalledTimes(1);
+    host.dispose();
+    expect(terminated).toBe(1);
+
+    // A commit already in flight when the host was torn down lands afterwards:
+    // the worker it would spawn has no coordinator left to terminate it.
+    host.noteCommit(makeMesh(3), centers(), 3);
+    await flush();
+    expect(mockApi.initialize).toHaveBeenCalledTimes(1);
+    expect(mockApi.registerNode).toHaveBeenCalledTimes(1);
+  });
+
   it('routes a mesh release to the coordinator the mesh was committed through', async () => {
     const { mod, meshA, meshB } = await twoHosts();
     mockApi.releaseNode.mockClear();

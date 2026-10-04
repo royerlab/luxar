@@ -160,6 +160,13 @@ describe('handleKeyDown — gating', () => {
     expect(moveState.forward).toBe(0);
   });
 
+  it('still releases a held key when disabled (keyup is never gated)', () => {
+    const { ctx, moveState } = makeCtx({ enabled: false });
+    moveState.forward = 1;
+    handleKeyUp(ctx, new KeyboardEvent('keyup', { key: 'w' }));
+    expect(moveState.forward).toBe(0);
+  });
+
   it('dispatches "change" on every recognized keydown', () => {
     const { ctx } = makeCtx();
     handleKeyDown(ctx, new KeyboardEvent('keydown', { key: 'w' }));
@@ -279,6 +286,19 @@ describe('handleKeyDown — preventDefault contract (controls.md G13, G14)', () 
     } finally {
       input.remove();
     }
+  });
+});
+
+describe('macOS Option composes a character (Option+W → "∑")', () => {
+  it.each([
+    ['KeyW', '∑', 'up'],
+    ['KeyS', 'ß', 'down'],
+  ] as const)('Option+%s (key %s) drives %s, and its keyup releases it', (code, key, axis) => {
+    const { ctx, moveState } = makeCtx();
+    handleKeyDown(ctx, new KeyboardEvent('keydown', { key, code, altKey: true }));
+    expect(moveState[axis]).toBe(1);
+    handleKeyUp(ctx, new KeyboardEvent('keyup', { key, code, altKey: true }));
+    expect(moveState[axis]).toBe(0);
   });
 });
 

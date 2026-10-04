@@ -71,11 +71,11 @@ export function handleMouseDown(ctx: FlyMouseCtx, event: MouseEvent): void {
 /**
  * End a mouse drag when the released button matches the active action
  * (left↔strafe, right↔rotate): clears the active action and dispatches
- * `end`. Ignores releases that don't match the in-progress gesture.
+ * `end`. Ignores releases that don't match the in-progress gesture. Runs even
+ * while disabled, like orbit's pointer-up and fly touch-up, so a drag disabled
+ * mid-gesture is not left active.
  */
 export function handleMouseUp(ctx: FlyMouseCtx, event: MouseEvent): void {
-  if (!ctx.enabled) return;
-
   const action = ctx.getActiveMouseAction();
   if ((event.button === 0 && action === 'strafe') || (event.button === 2 && action === 'rotate')) {
     ctx.setActiveMouseAction('none');

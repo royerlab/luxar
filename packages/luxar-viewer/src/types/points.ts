@@ -560,20 +560,6 @@ export interface PointsUserData {
 // ============================================================================
 
 /**
- * Check if metadata is for a Points node.
- *
- * @param attrs - Unknown attributes object
- * @returns True if attrs is PointsMetadata
- */
-export function isPointsMetadata(attrs: unknown): attrs is PointsMetadata {
-  return (
-    typeof attrs === 'object' &&
-    attrs !== null &&
-    (attrs as Record<string, unknown>).type === 'points'
-  );
-}
-
-/**
  * Check if userData indicates a Points object.
  *
  * @param userData - THREE.Object3D userData

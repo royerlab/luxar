@@ -341,11 +341,11 @@ index against a world ruler and cursor.
 
 ### 9.3 Where It's Applied
 
-In `data/scene-loader/view-state/derive-node-view-state.ts`, centralized alongside the existing `extend_to_all` tolerance modification. Applied ONCE per node update, BEFORE passing viewState to the loader:
+In `data/scene-loader/view-state/derive-node-view-state.ts`, centralized alongside the existing `extend_to_all` tolerance modification. Applied ONCE per node update, BEFORE passing viewState to the loader. The world transform is an O(1) lookup in the loader's `SceneNodeIndex` (§9.6), not a walk of the graph:
 
 ```typescript
 // After the extend_to_all tolerance override:
-const worldNdT = computeWorldNdTransform(sceneGraph, path);
+const worldNdT = sceneIndex.worldNdTransform(path);
 if (hasOwnProperties(worldNdT) && derived.dimensions) {
   const inverted = invertNdTransformForQuery(
     derived.slicePosition, derived.tolerance,
@@ -381,7 +381,7 @@ The no-preimage rule (§9.2.1) exempts extended dimensions from the node's `exte
 
 **Python side**: Full hierarchical composition is implemented via `world_nd_transform` property, which walks the parent chain and composes all nd_transforms.
 
-**TypeScript viewer side**: Parent nd_transforms ARE automatically composed via `computeWorldNdTransform()` in `scene-loader.ts`. This function traverses the scene graph and composes nd_transforms from parent to child. This means:
+**TypeScript viewer side**: Parent nd_transforms ARE automatically composed. `SceneNodeIndex` (`data/scene-loader/view-state/scene-node-index.ts`) composes every node's world nd_transform from parent to child in ONE pass when the scene graph is built, so each derive above is a lookup; `computeWorldNdTransform()` (`data/transforms/nd-transform.ts`) is the equivalent root-down walk for a single path, which the index is tested against. This means:
 - `nd_transform` on a group propagates correctly to all child data nodes in the viewer
 - `nd_transform` on a points/lines/gsplats/mesh node applies correctly in the viewer
 - Composition follows the same rules as the Python side (affine composition for continuous/discrete, permutation composition for categorical)

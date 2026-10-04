@@ -27,7 +27,9 @@ input/
 `FlyLookState`, `FlyMouseAction` types and `FlyKeyboardCtx`.
 
 - **WASD** drives `moveState.{forward,back,left,right}`; **Alt/Meta+W**
-  and **Alt/Meta+S** redirect to `moveState.{up,down}` instead.
+  and **Alt/Meta+S** redirect to `moveState.{up,down}` instead. Keys are read
+  through `utils/keyboard-key.ts::pressedKey`, so macOS Option+W (reported as
+  `'∑'`) is still W.
 - **Q / E** sets `lookState.roll` to ±1.
 - **Arrow keys** set `lookState.{horizontal,vertical}` for continuous
   look (via the private `startLookChange` helper).
@@ -36,6 +38,8 @@ input/
   when the active element is not an `<input>`, `<textarea>`, or
   `contenteditable` host — so typing in the GUI is never swallowed.
 - Every handled key ends with `ctx.dispatch('change')`.
+- `enabled` gates `handleKeyDown` only: a keyup always releases, so a key
+  held when the controls were disabled is not left latched.
 
 ## `mouse.ts`
 
@@ -46,7 +50,8 @@ per-event allocation.
 - **Left button (0)** activates `'strafe'`; **right button (2)**
   activates `'rotate'`. Both stash the cursor position and dispatch
   `'start'`. `handleMouseUp` only clears the action if the released
-  button matches the active action, then dispatches `'end'`.
+  button matches the active action, then dispatches `'end'` — even while
+  disabled, like orbit's pointer-up and fly's touch-up.
 - **rotate** converts mouse deltas into pitch/yaw angular impulses
   (`±delta * lookSpeed * 2.5`) around the camera's local X and Y axes
   derived from `orientation`, accumulated into `angularVelocity`.

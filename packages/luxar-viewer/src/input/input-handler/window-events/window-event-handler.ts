@@ -16,7 +16,8 @@
  *     viewport transition completes, so a single rAF is enough).
  *
  * The class registers its listeners via `attach(cleanups)` and
- * pushes the unregistration thunks onto the caller's cleanup array,
+ * pushes the unregistration thunks (plus one that cancels a pending
+ * fullscreen resize frame) onto the caller's cleanup array,
  * matching the InputHandler's existing `eventListeners` ownership
  * model. There's no separate `dispose()` — the InputHandler runs the
  * cleanup array on its own dispose path.
@@ -45,6 +46,9 @@ export class WindowEventHandler {
    * wiping every inline style. `null` when not in fullscreen.
    */
   private savedCanvasStyle: string | null = null;
+
+  /** The deferred post-fullscreen resize frame, cancelled on cleanup. */
+  private fullscreenFrame: number | null = null;
 
   constructor(
     private sceneManager: SceneManager,
@@ -91,7 +95,8 @@ export class WindowEventHandler {
       () => window.removeEventListener('resize', onResize),
       () => window.removeEventListener('wheel', onWheel),
       () => document.removeEventListener('fullscreenchange', onFullscreenChange),
-      () => document.removeEventListener('webkitfullscreenchange', onFullscreenChange)
+      () => document.removeEventListener('webkitfullscreenchange', onFullscreenChange),
+      () => this.cancelFullscreenFrame()
     );
   }
 
@@ -145,12 +150,21 @@ export class WindowEventHandler {
       this.savedCanvasStyle = null;
     }
 
-    requestAnimationFrame(() => {
+    // One frame per transition: a newer change supersedes a pending one.
+    this.cancelFullscreenFrame();
+    this.fullscreenFrame = requestAnimationFrame(() => {
+      this.fullscreenFrame = null;
       this.sceneManager.updateSize();
       // updateSize schedules the actual resize for the next frame. Arm the
       // loop after it so that frame repaints at the new size.
       this.animationController.startAnimation();
     });
+  }
+
+  private cancelFullscreenFrame(): void {
+    if (this.fullscreenFrame === null) return;
+    cancelAnimationFrame(this.fullscreenFrame);
+    this.fullscreenFrame = null;
   }
 
   /**

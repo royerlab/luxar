@@ -253,6 +253,32 @@ describe('PassScheduler — resync stash', () => {
     expect(host.runPass).toHaveBeenCalledTimes(1);
     expect(host.runPass).toHaveBeenCalledWith({ slicePosition: [5] });
   });
+
+  it('a resync parked during a retry runs once the retry releases', async () => {
+    // A layer re-shown while a retry holds the lock (`requestReprocess` with
+    // resync paths) must not wait for some later view pass to be folded in.
+    const host = makeHost();
+    const passes = new PassScheduler(host);
+    expect(await passes.acquireForRetry()).toBe(true);
+    void passes.request({}, { resyncPaths: new Set(['/p/part_1']) });
+    passes.releaseRetry();
+    expect(passes.drainPending()).toBe(true);
+    await Promise.resolve();
+    expect(host.runPass).toHaveBeenCalledWith({}, { resyncPaths: new Set(['/p/part_1']) });
+  });
+
+  it('a retry that reloads the whole view drops the parked resync (a superset)', async () => {
+    const host = makeHost();
+    const passes = new PassScheduler(host);
+    expect(await passes.acquireForRetry()).toBe(true);
+    void passes.request({}, { resyncPaths: new Set(['/p/part_1']) });
+    passes.releaseRetry(true);
+    expect(passes.drainPending()).toBe(false);
+    // The reload's own full pass: nothing parked rides its end.
+    void runPass(passes, {});
+    expect(frames).toHaveLength(0);
+    expect(host.runPass).not.toHaveBeenCalled();
+  });
 });
 
 describe('PassScheduler — refinement start, release and failure', () => {
@@ -279,6 +305,18 @@ describe('PassScheduler — refinement start, release and failure', () => {
     expect(passes.locked).toBe(false);
     expect(resolve).toHaveBeenCalledTimes(1);
     expect(host.runPass).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an archive-faulted', { isFaulted: vi.fn(() => true) }],
+    ['a disposed', { isDisposed: vi.fn(() => true) }],
+  ])('a start on %s loader runs nothing and releases the lock', (_label, overrides) => {
+    const host = makeHost(overrides);
+    const passes = new PassScheduler(host);
+    passes.locked = true;
+    passes.startRefinement('Post-load progressive refinement failed');
+    expect(host.runRefinement).not.toHaveBeenCalled();
+    expect(passes.locked).toBe(false);
   });
 
   it('the cancellation hand-off re-enters the newest state after one frame', () => {

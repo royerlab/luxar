@@ -1,22 +1,23 @@
 /**
- * Unit tests for the points / lines / gsplats type guards in
- * `types/{points,lines,gsplats}.ts`.
+ * Unit tests for the points / lines / gsplats / mesh userData guards in
+ * `types/{points,lines,gsplats,mesh}.ts`.
  *
- * Each pair (isXMetadata + isXUserData) checks the respective
- * `type` / `nodeType` discriminator field. These are pure runtime
- * predicates — no mocks, no DOM.
+ * Each isXUserData guard checks the `nodeType` discriminator a
+ * scene-graph object carries. These are pure runtime predicates — no
+ * mocks, no DOM.
  *
  * [types.md/O1][P10] Single source of truth for the three-geometry guard
  * test suite. Per-module test files (points.test.ts, lines.test.ts,
  * gsplats.test.ts) host only module-specific tests (e.g.
  * choleskyPackedSize, CHOLESKY_SIZES); they no longer duplicate the
- * isXMetadata / isXUserData / isValidLineType coverage that lives here.
+ * isXUserData coverage that lives here.
  */
 
 import { describe, it, expect } from 'vitest';
-import { isPointsMetadata, isPointsUserData } from '../../../types/points';
-import { isLinesMetadata, isLinesUserData, isValidLineType } from '../../../types/lines';
-import { isGSplatsMetadata, isGSplatsUserData } from '../../../types/gsplats';
+import { isPointsUserData } from '../../../types/points';
+import { isLinesUserData } from '../../../types/lines';
+import { isGSplatsUserData } from '../../../types/gsplats';
+import { isMeshUserData } from '../../../types/mesh';
 
 // Shared defensive-rejection table — every guard accepts `unknown`, so
 // every guard MUST defensively reject primitives, arrays, null and
@@ -31,39 +32,6 @@ const NON_OBJECT_INPUTS = [
   ['boolean', true],
   ['array', [{ nodeType: 'gsplats' }]],
 ] as const;
-
-describe('isPointsMetadata', () => {
-  it('returns true for { type: "points" }', () => {
-    expect(isPointsMetadata({ type: 'points' })).toBe(true);
-  });
-
-  it('returns true for a richly-populated points metadata payload', () => {
-    const valid = {
-      type: 'points',
-      n_points: 1000,
-      ndim: 3,
-      max_radius: 1.5,
-      has_colors: true,
-      has_radii: true,
-      ordering: 'morton',
-    };
-    expect(isPointsMetadata(valid)).toBe(true);
-  });
-
-  it('returns false for other geometry types', () => {
-    expect(isPointsMetadata({ type: 'lines' })).toBe(false);
-    expect(isPointsMetadata({ type: 'gsplats' })).toBe(false);
-    expect(isPointsMetadata({ type: 'group' })).toBe(false);
-  });
-
-  it('returns false for an empty object (no type field)', () => {
-    expect(isPointsMetadata({})).toBe(false);
-  });
-
-  it.each(NON_OBJECT_INPUTS)('rejects %s defensively', (_label, value) => {
-    expect(isPointsMetadata(value)).toBe(false);
-  });
-});
 
 describe('isPointsUserData', () => {
   it('returns true for { nodeType: "points" }', () => {
@@ -90,40 +58,6 @@ describe('isPointsUserData', () => {
 
   it.each(NON_OBJECT_INPUTS)('rejects %s defensively', (_label, value) => {
     expect(isPointsUserData(value)).toBe(false);
-  });
-});
-
-describe('isLinesMetadata', () => {
-  it('returns true for { type: "lines" }', () => {
-    expect(isLinesMetadata({ type: 'lines' })).toBe(true);
-  });
-
-  it('returns true for a richly-populated lines metadata payload', () => {
-    const valid = {
-      type: 'lines',
-      n_vertices: 100,
-      n_segments: 50,
-      ndim: 3,
-      original_line_type: 'polyline',
-      max_width: 0.5,
-      has_colors: true,
-      has_sharpness: true,
-      ordering: 'morton',
-    };
-    expect(isLinesMetadata(valid)).toBe(true);
-  });
-
-  it('returns false for other geometry types', () => {
-    expect(isLinesMetadata({ type: 'points' })).toBe(false);
-    expect(isLinesMetadata({ type: 'gsplats' })).toBe(false);
-  });
-
-  it('returns false for missing type', () => {
-    expect(isLinesMetadata({ n_vertices: 100, n_segments: 50 })).toBe(false);
-  });
-
-  it.each(NON_OBJECT_INPUTS)('rejects %s defensively', (_label, value) => {
-    expect(isLinesMetadata(value)).toBe(false);
   });
 });
 
@@ -166,39 +100,6 @@ describe('isLinesUserData', () => {
   });
 });
 
-describe('isGSplatsMetadata', () => {
-  it('returns true for { type: "gsplats" }', () => {
-    expect(isGSplatsMetadata({ type: 'gsplats' })).toBe(true);
-  });
-
-  it('returns true for a richly-populated gsplats metadata payload', () => {
-    const valid = {
-      type: 'gsplats',
-      n_splats: 1000,
-      ndim: 3,
-      has_colors: true,
-      chunk_size: 2000,
-      amplitude_range: { min: 0.0, max: 10.0 },
-      center_bounds: { min: [0, 0, 0], max: [100, 100, 100] },
-      ordering: 'hilbert',
-    };
-    expect(isGSplatsMetadata(valid)).toBe(true);
-  });
-
-  it('returns false for other geometry types', () => {
-    expect(isGSplatsMetadata({ type: 'points' })).toBe(false);
-    expect(isGSplatsMetadata({ type: 'lines' })).toBe(false);
-  });
-
-  it('returns false for missing type', () => {
-    expect(isGSplatsMetadata({ n_splats: 1000, ndim: 3 })).toBe(false);
-  });
-
-  it.each(NON_OBJECT_INPUTS)('rejects %s defensively', (_label, value) => {
-    expect(isGSplatsMetadata(value)).toBe(false);
-  });
-});
-
 describe('isGSplatsUserData', () => {
   it('returns true for { nodeType: "gsplats" }', () => {
     expect(isGSplatsUserData({ nodeType: 'gsplats' })).toBe(true);
@@ -237,42 +138,23 @@ describe('isGSplatsUserData', () => {
   });
 });
 
-describe('isValidLineType', () => {
-  it.each(['segments', 'polyline', 'loop', 'indexed'] as const)('accepts %s', (t) => {
-    expect(isValidLineType(t)).toBe(true);
-  });
-
-  it.each(['strip', 'wireframe', '', 'lines', 'Segments', 'SEGMENTS'])(
-    'rejects unknown / case-mismatched %s',
-    (t) => {
-      expect(isValidLineType(t)).toBe(false);
-    }
-  );
-
-  it.each([
-    ['null', null],
-    ['undefined', undefined],
-    ['number', 42],
-    ['object', {}],
-    ['array', []],
-  ] as const)('rejects non-string %s', (_label, value) => {
-    expect(isValidLineType(value as any)).toBe(false);
-  });
-});
-
-describe('cross-cutting: each metadata guard rejects every other geometry', () => {
+describe('cross-cutting: each userData guard accepts its own node type only', () => {
   const cases = [
-    { name: 'points', guard: isPointsMetadata, attr: { type: 'points' } },
-    { name: 'lines', guard: isLinesMetadata, attr: { type: 'lines' } },
-    { name: 'gsplats', guard: isGSplatsMetadata, attr: { type: 'gsplats' } },
+    { name: 'points', guard: isPointsUserData },
+    { name: 'lines', guard: isLinesUserData },
+    { name: 'gsplats', guard: isGSplatsUserData },
+    { name: 'mesh', guard: isMeshUserData },
   ];
 
-  it('every pair of (X-guard, Y-attrs) where X !== Y returns false', () => {
+  it('every pair of (X-guard, Y-userData) where X !== Y returns false', () => {
     for (const a of cases) {
       for (const b of cases) {
-        const expected = a.name === b.name;
-        expect(a.guard(b.attr)).toBe(expected);
+        expect(a.guard({ nodeType: b.name })).toBe(a.name === b.name);
       }
     }
+  });
+
+  it.each(NON_OBJECT_INPUTS)('isMeshUserData rejects %s defensively', (_label, value) => {
+    expect(isMeshUserData(value)).toBe(false);
   });
 });

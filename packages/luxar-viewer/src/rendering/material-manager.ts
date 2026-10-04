@@ -1,9 +1,11 @@
 /**
  * Material Manager for Luxar
  *
- * This module manages all materials in the scene, providing caching,
- * global uniform updates, and support for multiple material types.
- * Supports point, line, and GSplat materials.
+ * This module creates every node material — per node, never cached: the
+ * visual and picking materials of points, lines, gsplats and mesh, and the
+ * opt-in `physical` mesh material — and keeps them in one registry for the
+ * global uniform updates and disposal. It also creates the post-processing
+ * mega-shader material, which `PostProcessingManager` owns.
  */
 
 import * as THREE from 'three';

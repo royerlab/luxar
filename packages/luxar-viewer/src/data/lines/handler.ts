@@ -30,7 +30,10 @@ export interface LinesHandlerCtx extends PassDirectives {
   viewStateQueue: ViewStateQueue;
   clearFailure(path: string): void;
   currentVersion: number;
-  /** Forwarded to the data processor so its first-update logs are version-gated. */
+  /**
+   * Passes run so far — gates the first-update `[GEOM]` logs here and in the
+   * data processor (the view version does not move on a same-view pass).
+   */
   updateVersion: number;
   deriveNodeViewState(
     path: string,
@@ -96,7 +99,7 @@ export async function loadAndStage(
     }
     return { path, noop: true, sourceData: data };
   }
-  if (ctx.currentVersion <= 1) {
+  if (ctx.updateVersion <= 1) {
     log.info(
       Modules.SCENE_LOADER,
       `[GEOM] v${ctx.currentVersion} lines ${path}: ${data.segmentCount} loaded`

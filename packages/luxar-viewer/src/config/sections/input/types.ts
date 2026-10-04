@@ -2,7 +2,6 @@
  * Input handling configuration
  */
 export interface InputConfig {
-  defaultSensitivity: number;
   keyboard: {
     shortcuts: {
       toggleFullscreen: string;

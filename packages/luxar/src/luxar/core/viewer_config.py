@@ -206,7 +206,7 @@ class CameraConfig:
         )
 
 
-#: Seconds a kiosk watchdog waits for the WebGL context to come back before
+#: Seconds a kiosk watchdog waits for the GPU context to come back before
 #: reloading the page. Generous, because the viewer's own recovery gets first
 #: refusal and a reload throws away every warm cache the display has built.
 DEFAULT_KIOSK_WATCHDOG_S = 10.0
@@ -235,9 +235,10 @@ class KioskConfig:
     allow_keyboard: Optional[bool] = None
     #: Show the rail and its panels. Off in kiosk mode.
     show_panels: Optional[bool] = None
-    #: Reload the page when the WebGL context is lost and does not come back.
-    #: The viewer recovers on its own where it can; this is the last resort for
-    #: a screen with nobody in front of it.
+    #: Reload the page when the WebGL context is lost and does not come back,
+    #: or the WebGPU device is lost (never recovered in this release). The
+    #: viewer recovers on its own where it can; this is the last resort for a
+    #: screen with nobody in front of it.
     watchdog_reload: Optional[bool] = None
     #: How long to give recovery before reloading. See
     #: :data:`DEFAULT_KIOSK_WATCHDOG_S`.

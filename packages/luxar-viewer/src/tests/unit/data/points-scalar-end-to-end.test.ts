@@ -173,44 +173,54 @@ describe('projectPointsTo3D scalar pass-through', () => {
     expect(result.scalars![1]).toBe(200);
   });
 
-  it('writes through targetBuffers.scalars (zero-allocation path)', () => {
-    const positions = new Float32Array([0, 0, 0, 1, 0, 0]);
+  it('compacts scalars in the accumulator buffer (zero-allocation path)', () => {
+    // Wired as `PointsSpatialIndexLoader` wires it: the accumulator's own
+    // buffers are the projection targets, pre-filled with the source scalars,
+    // and the result is the accumulator's view of them. The first point sits
+    // off the current hidden-dim slice, so it is culled and the survivor's
+    // scalar must be moved down to slot 0 in place.
+    const positions = new Float32Array([0, 0, 0, 5, 1, 0, 0, 0]);
     const scalars = new Float32Array([0.25, 0.75]);
-    const target: ProjectionTargetBuffers = {
-      positions3D: new Float32Array(6),
-      colors: new Float32Array(6),
-      radii: new Float32Array(2),
-      sharpness: new Float32Array(2),
-      scalars: new Float32Array(2),
-    };
-    const acc = new LoadedPointsDataAccumulator(64, 3, 100);
-    // Initialize accumulator types so getData() honors hasScalars.
+    const acc = new LoadedPointsDataAccumulator(64, 4, 100);
+    acc.ensureCapacity(2);
+    const radii = new Float32Array([1, 1]);
     acc.fill(0, {
-      positions: new Float32Array([0, 0, 0]),
-      scalars: new Float32Array([0]),
+      positions: new Float32Array(3),
+      radii: radii.subarray(0, 1),
+      scalars: scalars.subarray(0, 1),
     });
-    const projCtx: ProjectionContext = { ...ctx(), accumulator: acc };
+    const target: ProjectionTargetBuffers = {
+      positions3D: acc.getPositionBuffer(),
+      colors: acc.getColorBuffer(),
+      radii: acc.getRadiiBuffer(),
+      sharpness: acc.getSharpnessBuffer(),
+      scalars: acc.getScalarBuffer(),
+    };
+    (target.scalars as Float32Array).set(scalars);
+    const view: ViewState = {
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0, 0],
+      tolerance: [0, 0, 0, 0.5],
+    };
     const result = projectPointsTo3D(
       wasm,
       positions,
       null,
+      radii,
       null,
-      null,
-      viewState(),
+      view,
       [{ start: 0, end: 2 }],
-      projCtx,
+      {
+        ...ctx({ ...pointsAttrs(), ndim: 4 }),
+        accumulator: acc,
+        effectiveRadiusConfig: { spatialExtendDims: [true, true, true, true], maxRadius: 1 },
+      },
       target,
       scalars
     );
-    void result;
-    // The accumulator's scalar buffer should NOT have been touched by
-    // projection (it only writes target.scalars during compaction; with
-    // no filtering, scalars stay in the source). The target.scalars
-    // we passed is the same buffer the accumulator returned via
-    // getScalarBuffer(), so writes go to the accumulator's buffer
-    // when filtering DOES happen — see the next test for that path.
-    // Sanity: target scalars passed in are intact.
-    expect(target.scalars).toBeDefined();
+    expect(result.pointCount).toBe(1);
+    expect(result.scalars?.buffer).toBe(acc.getScalarBuffer().buffer);
+    expect(Array.from(result.scalars ?? [])).toEqual([0.75]);
   });
 });
 

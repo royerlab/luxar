@@ -714,7 +714,7 @@ the namespace dir with `create: false` and treats a cold origin's
 luxar/                       # Viewer namespace dir (OPFS_NAMESPACE_DIR)
 └── zarr-cache-{url-hash}/   # One dataset dir per base URL (SHA-256)
     ├── 00/                  # Bucket directories (256 total)
-    │   ├── cG9pbnRz...      # Base64-encoded zarr keys
+    │   ├── 3f1c….cG9pbnRz…  # {hash tag}.{base64url zarr key}
     │   └── ...
     ├── 01/
     ├── ...
@@ -731,7 +731,14 @@ again.
 
 1. **Hash the key**: `"points/positions/0.0.0"` → bucket `23`
 2. **Base64 encode**: `"points/positions/0.0.0"` → `cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA`
-3. **Store**: `23/cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA`
+3. **Tag the content hash** it is written under (`hashTag`, 16 hex chars;
+   none when the dataset has no hash): `{tag}.cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA`
+4. **Store**: `23/{tag}.cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA`
+
+The tag is what keeps two tabs on one directory apart. A tab still at the old
+hash of a republished dataset keeps writing after the new hash's tab cleared
+the directory; its files carry the old tag, so the new-hash store never reads
+them, and its reconcile deletes them rather than recovering them.
 
 ### Benefits
 
@@ -759,14 +766,18 @@ those files usable anyway:
    therefore has a known provenance, even when no index save ever landed. With
    no index, the identity is the cached hash validation compares against, so a
    changed dataset still clears every tier.
-2. **A key's file path is a function of the key** (`{bucket(key)}/{base64url(key)}`).
-   While unindexed files may remain, an L2 lookup of a key the index does not
-   list reads that path, and a hit is indexed (size and LRU accounted) and
-   served. This is what serves a reload's first-frame reads; it stops once the
-   open-time reconcile (below) has accounted for every file.
+2. **A key's file path is a function of the key and the hash**
+   (`{bucket(key)}/{tag(hash)}.{base64url(key)}`). While the open-time
+   reconcile (below) runs, an L2 lookup of a key the index does not list reads
+   that path, and a hit is indexed (size and LRU accounted) and served. This is
+   what serves a reload's first-frame reads; it stops when the reconcile ends
+   (a budget-capped crawl leaves the rest for the next session rather than
+   paying a lookup per L2 miss all session).
 3. **The open-time reconcile** (`opfs-store/orphan-reconcile.ts`, per-session
-   budgeted, in the background) re-indexes every unindexed file under the
-   recovery hash that fits under `maxSize` and deletes the rest.
+   budgeted, in the background) re-indexes every unindexed file of the
+   recovery hash's tag that still fits under `maxSize` when it merges, and
+   deletes the rest (other tags included). A key written meanwhile keeps its
+   live entry; one written and then evicted during the crawl is not resurrected.
 
 Recovery is gated on the same hash that makes indexed entries trustworthy: the
 identity file's hash, unless an index that did land names a different one. A
@@ -997,7 +1008,13 @@ await window.__luxarDebug.cache.clearAll();
   exactly what plain reads would have. Adopts the `chunk_packs` index only for
   the root `content_hash` it was built for (`adoptChunkPacks`, data layer), and
   reads plainly when a pack is missing, fails its SHA-256, or lacks the key. Unadopted,
-  it is the inner source.
+  it is the inner source. Each member is handed out once; unserved members (a
+  rung the view never loads) are held least-recently-used within
+  `maxHeldBytes` (4 MB), and a member read again after the caches evicted it,
+  or one of a pack let go, refetches the pack (one request, as a plain read).
+  Each caller races its own abort signal against the shared pack fetch, a
+  joining caller raises that fetch's class, and the pack's bytes over the wire
+  are reported once.
 - `chunk-source/zip-chunk-source.ts` — the zipped-store source: members read out
   of one archive, identity from a probe on the archive, and archive-level faults
   reported as `fatal` so the store rethrows instead of rendering an empty scene.

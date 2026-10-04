@@ -49,8 +49,12 @@ async function persistedIndexEntries(page: Page): Promise<number> {
  */
 async function l2OnDisk(page: Page): Promise<{ keys: string[]; indexed: number }> {
   return page.evaluate(async () => {
+    // A chunk file is `{hash tag}.{base64url key}` (bare base64url without a hash).
     const decode = (name: string): string => {
-      const b64 = name.replace(/-/g, '+').replace(/_/g, '/');
+      const b64 = name
+        .slice(name.indexOf('.') + 1)
+        .replace(/-/g, '+')
+        .replace(/_/g, '/');
       const bin = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4));
       return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
     };

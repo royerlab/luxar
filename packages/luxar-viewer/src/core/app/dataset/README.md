@@ -84,6 +84,12 @@ initial load. If the user opens the browser during the probe, init's own
 - **Overlays dispose in lockstep with scene clear.** `disposeOverlays`
   runs before `loadSceneData`; if the new scene fails to load, the
   user sees a blank canvas, not stale overlay DOM on top of nothing.
+- **A superseded load stops at its next await.** `loadDataset` checks the
+  `isStale` port (the load's `DatasetSession` was disposed — app disposed, or
+  disposed and re-initialized) after every await, and the orchestrator emits
+  neither `dataset-loaded` nor `dataset-error` for it, so a stale tail never
+  restarts the animation, builds overlays or picking on the app, or speaks to
+  the next lifetime's listeners.
 - **Browser callbacks never mutate orchestrator state directly.** All
   side effects (src update, browser handle reset, host-URL
   replacement) flow through `ShowDatasetBrowserPorts`, keeping the

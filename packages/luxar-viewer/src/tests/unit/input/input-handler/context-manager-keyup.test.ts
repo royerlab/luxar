@@ -171,6 +171,85 @@ describe('InputContextManager - keyupHandler Feature', () => {
     });
   });
 
+  describe('macOS Option composes a character (Option+W → "∑")', () => {
+    it('matches the Alt binding by the physical key, on keydown and keyup', () => {
+      const handler = vi.fn();
+      const keyupHandler = vi.fn();
+      manager.setContext(InputContext.FLY_CONTROLS);
+      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
+        key: 'w',
+        modifiers: { alt: true },
+        handler,
+        keyupHandler,
+      });
+
+      const init = { key: '∑', code: 'KeyW', altKey: true };
+      expect(manager.handleKeyEvent(new KeyboardEvent('keydown', init), 'down')).toBe(true);
+      expect(manager.handleKeyEvent(new KeyboardEvent('keyup', init), 'up')).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(keyupHandler).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the layout key when Alt yields a plain letter (Windows / Linux)', () => {
+      const handler = vi.fn();
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'z',
+        modifiers: { alt: true },
+        handler,
+      });
+      // AZERTY: the key labelled Z sits at the QWERTY W position.
+      const event = new KeyboardEvent('keydown', { key: 'z', code: 'KeyW', altKey: true });
+      expect(manager.handleKeyEvent(event, 'down')).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('a key released under a modifier it was not pressed with', () => {
+    it.each([
+      ['ctrlKey', 'w'],
+      ['metaKey', 'w'],
+      ['ctrlKey', 'Shift'],
+    ] as const)('delivers a %s release of %s to the base binding', (modifier, key) => {
+      // Hold W, press Ctrl, release W: the release is still W's. Without this
+      // the keyup looks up the unbound "ctrl+w" and fly movement stays latched.
+      const keyupHandler = vi.fn();
+      manager.setContext(InputContext.FLY_CONTROLS);
+      registerTestBinding(manager, InputContext.FLY_CONTROLS, {
+        key,
+        handler: vi.fn(),
+        keyupHandler,
+      });
+
+      const release = new KeyboardEvent('keyup', { key, [modifier]: true });
+      expect(manager.handleKeyEvent(release, 'up')).toBe(true);
+      expect(keyupHandler).toHaveBeenCalledExactlyOnceWith(release);
+    });
+
+    it('prefers the exact modifier binding, and never widens keydown matching', () => {
+      const baseKeyup = vi.fn();
+      const ctrlKeyup = vi.fn();
+      const baseDown = vi.fn();
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'w',
+        handler: baseDown,
+        keyupHandler: baseKeyup,
+      });
+      registerTestBinding(manager, InputContext.NAVIGATION, {
+        key: 'w',
+        modifiers: { ctrl: true },
+        handler: vi.fn(),
+        keyupHandler: ctrlKeyup,
+      });
+
+      manager.handleKeyEvent(new KeyboardEvent('keyup', { key: 'w', ctrlKey: true }), 'up');
+      expect(ctrlKeyup).toHaveBeenCalledTimes(1);
+      expect(baseKeyup).not.toHaveBeenCalled();
+
+      manager.handleKeyEvent(new KeyboardEvent('keydown', { key: 'w', metaKey: true }), 'down');
+      expect(baseDown).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Toggle actions should NOT double-trigger', () => {
     it('should only call handler on keydown for toggle actions without keyupHandler', () => {
       let cinematicMode = false;

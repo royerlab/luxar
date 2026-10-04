@@ -163,6 +163,21 @@ describe('concatColorsWhiteFilled', () => {
   const get = (p: Part) => ({ colors: p.colors, components: p.k });
   const count = (p: Part) => p.n;
 
+  it('asserts each coloured part against its OWN declared layout, naming the level', () => {
+    // A 2-element RGBA buffer declared RGB: 8 values for 2 x 3.
+    expect(() =>
+      concatColorsWhiteFilled<Part>(
+        [
+          { n: 1, colors: new Uint8Array(3) },
+          { n: 2, colors: new Uint8Array(8) },
+        ],
+        get,
+        count,
+        't'
+      )
+    ).toThrow(/t \(LOD level 1\): colors length 8 does not match/);
+  });
+
   it('is null when no part carries colours', () => {
     expect(concatColorsWhiteFilled<Part>([{ n: 2 }, { n: 1 }], get, count, 't')).toBeNull();
   });

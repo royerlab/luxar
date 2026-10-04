@@ -249,6 +249,9 @@
   "src/data/lines/lines-progressive-loader.ts": {
     "complexity": {
       "count": 1
+    },
+    "max-params": {
+      "count": 1
     }
   },
   "src/data/lines/lines-spatial-index-loader.ts": {

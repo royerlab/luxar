@@ -190,6 +190,10 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   private storedDistanceLimits: { min: number; max: number } | null = null;
   private storedZoomLimits: { min: number; max: number } | null = null;
 
+  // setEnabled() state, persisted across mode switches: a fresh control
+  // instance starts enabled, which would undo a kiosk's allow_pointer: false.
+  private enabled = true;
+
   // Saved camera state for switching
   private savedCameraPosition = new THREE.Vector3();
   private savedCameraRotation = new THREE.Euler();
@@ -260,6 +264,7 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     }
 
     this.currentType = type;
+    if (this.currentControls) this.currentControls.enabled = this.enabled;
 
     // Restore camera state
     this.restoreCameraState();
@@ -420,7 +425,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   // Configuration setters
   // ---------------------------------------------------------------------------
 
+  /** Enable or disable user input on the active controls and every later mode. */
   public setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
     if (this.currentControls) {
       this.currentControls.enabled = enabled;
     }

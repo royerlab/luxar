@@ -1,7 +1,7 @@
 /**
  * Tests for colormap texture management.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   getBuiltinColormapTexture,
   getColormapTexture,
@@ -11,6 +11,7 @@ import {
   disposeBuiltinColormapTextures,
   disposeCustomColormapTextures,
   _customColormapCacheSize,
+  getCustomColormapCacheStats,
 } from '../../../rendering/colormap-textures';
 import { BUILTIN_COLORMAPS, BUILTIN_COLORMAP_NAMES } from '../../../rendering/colormap-data';
 
@@ -157,7 +158,7 @@ describe('colormap-textures', () => {
       return lut;
     }
 
-    it('caps cache size at the LRU bound (16) and disposes evicted entries', () => {
+    it('caps cache size at the LRU bound (16)', () => {
       disposeColormapTextures(); // clean slate
       // Load 20 unique LUTs; cache must not exceed 16, and the first 4 should
       // have been disposed.
@@ -191,6 +192,48 @@ describe('colormap-textures', () => {
       // seed=0 must still be present.
       const stillThere = createCustomColormapTexture(makeLut(0));
       expect(stillThere).toBe(first);
+    });
+  });
+
+  describe('a texture leaving the lookup cache may still be bound to a material', () => {
+    // Disposing it there makes three re-upload it on the next draw, into a GPU
+    // texture the cache no longer tracks, so release could never free it. It is
+    // released with the rest of the custom cache instead.
+    function makeLut(seed: number): Uint8Array {
+      const lut = new Uint8Array(768);
+      for (let i = 0; i < 768; i++) lut[i] = (seed + i) % 256;
+      return lut;
+    }
+
+    it('LRU eviction does not dispose; dataset release does', () => {
+      disposeColormapTextures();
+      const first = createCustomColormapTexture(makeLut(0));
+      const dispose = vi.spyOn(first, 'dispose');
+      for (let i = 1; i <= 16; i++) createCustomColormapTexture(makeLut(i));
+      expect(createCustomColormapTexture(makeLut(0))).not.toBe(first); // evicted
+      expect(dispose).not.toHaveBeenCalled();
+
+      disposeCustomColormapTextures();
+      expect(dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it('a hash collision replaces the entry without disposing it; release does', () => {
+      disposeColormapTextures();
+      const a = makeLut(40); // a[1] = 41 >= 31, so the -31 below cannot wrap
+      // The key hash is h * 31 + c: +1 on one byte and -31 on the next keep it.
+      const b = a.slice();
+      b[0] += 1;
+      b[1] -= 31;
+      const first = createCustomColormapTexture(a);
+      const dispose = vi.spyOn(first, 'dispose');
+      const collisions = getCustomColormapCacheStats().collisions;
+      const second = createCustomColormapTexture(b);
+      expect(getCustomColormapCacheStats().collisions).toBe(collisions + 1);
+      expect(second).not.toBe(first);
+      expect(dispose).not.toHaveBeenCalled();
+
+      disposeCustomColormapTextures();
+      expect(dispose).toHaveBeenCalledTimes(1);
     });
   });
 

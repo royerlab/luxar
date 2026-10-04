@@ -40,6 +40,7 @@ function makeCtx(withRC: boolean) {
     sceneManager: {} as SceneManager,
     renderingControls: withRC ? ({} as RenderingControls) : undefined,
     animationManager: undefined,
+    selectedDimension: 2,
   };
 }
 
@@ -77,6 +78,8 @@ describe('exportViewerState', () => {
   it('captures state and writes the JSON to the clipboard', async () => {
     exportViewerState(makeCtx(true));
     expect(captureViewerState).toHaveBeenCalledTimes(1);
+    // The keyboard-selected dimension rides along (dimensions.selected_dimension).
+    expect((captureViewerState as ReturnType<typeof vi.fn>).mock.calls[0][4]).toBe(2);
     expect(writeText).toHaveBeenCalledTimes(1);
     const [json] = writeText.mock.calls[0];
     // The arg should be valid JSON parseable back into the mocked state.

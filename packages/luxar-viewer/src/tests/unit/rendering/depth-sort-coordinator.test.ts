@@ -956,6 +956,40 @@ describe('depth-sort coordinator', () => {
     setSortedIndexChunkElementsForTests(null);
   });
 
+  it('resortForCapture does not wait on a chunked apply parked by a HIDDEN node', async () => {
+    // The pump skips a hidden node (#715: write nothing while not drawn), so
+    // its half-streamed apply can never finish during a capture. Counting it
+    // against quiescence made every captured frame burn the full maxWaitMs.
+    const coord = await loadCoordinator();
+    const camera = makeCamera();
+    coord.configure({ getCamera: () => camera, requestRender: vi.fn() });
+    const { setSortedIndexChunkElementsForTests, configureSortedIndexChunkedApply } =
+      await import('../../../rendering/element-storage');
+    configureSortedIndexChunkedApply(true);
+    setSortedIndexChunkElementsForTests(1);
+
+    const mesh = makeGSplatsMesh(3, 'normal');
+    coord.noteCommit(mesh, new Float32Array([0, 0, -10, 1, 0, -1, 2, 0, -5]), 3);
+    await flush();
+    sortResolvers[0]({
+      generation: mockApi.sort.mock.calls[0][0].generation as number,
+      ordering: new Uint32Array([0, 2, 1]),
+    });
+    await flush();
+    coord.evaluatePerFrame(); // slice 1 of 3 written, then the node is hidden
+    const { hasPendingSortedIndexOrderingApply } =
+      await import('../../../rendering/element-storage');
+    const geometry = mesh.geometry as THREE.InstancedBufferGeometry;
+    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(true);
+    mesh.visible = false;
+
+    const start = performance.now();
+    await coord.resortForCapture(1000);
+    expect(performance.now() - start).toBeLessThan(500);
+
+    setSortedIndexChunkElementsForTests(null);
+  });
+
   it('a slice upload acknowledged DURING resortForCapture does not wake the loop either', async () => {
     // The per-slice render hook (#715 resume gap) must honour the capture's
     // requestRender suppression like every other wake path: a draw landing

@@ -495,8 +495,7 @@ export class PointsProgressiveLoader implements PointsDataLoader {
   }
 
   getMetrics(): LoaderMetrics {
-    const metrics = this.monitor.getMetrics();
-    return { ...metrics, memoryUsed: metrics.memoryUsed + this.core.concatMemoryBytes() };
+    return this.core.nodeMetrics(this.monitor.getMetrics());
   }
 
   /** Clean up all LOD loaders. */

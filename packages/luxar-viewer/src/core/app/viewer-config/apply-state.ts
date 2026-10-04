@@ -31,7 +31,11 @@ export interface ViewerConfigPorts {
   showHelp: () => void;
   renderingControls: { show: () => void; hide: () => void };
   performanceMonitor: { show: () => void };
-  inputHandler: { showDimensionSliders: () => void };
+  inputHandler: {
+    showDimensionSliders: () => void;
+    /** The navigable dimension the [ / ] keys target (`dimensions.selected_dimension`). */
+    setSelectedDimension: (index: number) => void;
+  };
   scaleBar?: { show: () => void; hide: () => void };
   layersPanel?: { show: () => void; hide: () => void };
   overlayManager?: { show: () => void; hide: () => void };
@@ -108,6 +112,13 @@ export function applyViewerConfigState(
     for (let i = 0; i < viewerConfig.dimensions.current_step.length; i++) {
       ports.setDimensionValue(i, viewerConfig.dimensions.current_step[i]);
     }
+  }
+  // Indexed by NAVIGABLE position among the non-displayed dimensions (the
+  // number-key numbering), not absolute; a value past the navigable count
+  // resolves to "nothing selected". Untyped JSON: a non-negative integer only.
+  const selected: unknown = viewerConfig.dimensions?.selected_dimension;
+  if (typeof selected === 'number' && Number.isInteger(selected) && selected >= 0) {
+    ports.inputHandler.setSelectedDimension(selected);
   }
 
   // --- Playback detail (authored default) ---

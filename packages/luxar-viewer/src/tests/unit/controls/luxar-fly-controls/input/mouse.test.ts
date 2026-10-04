@@ -120,11 +120,12 @@ describe('handleMouseUp', () => {
     expect(ctx.dispatch).not.toHaveBeenCalled();
   });
 
-  it('does nothing when disabled', () => {
+  it('still releases the drag when disabled mid-drag (like orbit and fly touch)', () => {
     const { ctx, state } = makeCtx({ enabled: false });
     state.activeMouseAction = 'strafe';
     handleMouseUp(ctx, new MouseEvent('mouseup', { button: 0 }));
-    expect(state.activeMouseAction).toBe('strafe'); // unchanged
+    expect(state.activeMouseAction).toBe('none');
+    expect(ctx.dispatch).toHaveBeenCalledWith('end');
   });
 });
 

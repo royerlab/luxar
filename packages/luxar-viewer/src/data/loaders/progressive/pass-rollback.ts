@@ -28,8 +28,10 @@
  *
  * The fix is to make a failed pass leave the loader exactly as the pass found
  * it, so a retry re-attempts the SAME prefix. Each loader records the level
- * count at pass start and exposes a `rollbackToPassStart()` that its
- * refinement wrapper calls from its catch. The DECISION lives here as a pure
+ * count at pass start and exposes a `rollbackToPassStart()` that every catch
+ * around a pass calls — the update sweep (`run-loader-updates`), the atomic
+ * commit, the refinement wrapper, and the initial-load and retry paths
+ * (`recordFailedPass`). The DECISION lives here as a pure
  * function so the four loaders cannot drift — the same reason
  * `streaming-policy.ts` owns the streaming discipline — while the mutation
  * stays in the loader, which is the only thing that can touch its private

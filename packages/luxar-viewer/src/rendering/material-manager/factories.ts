@@ -92,9 +92,9 @@ export interface LineMaterialProperties {
   offset: number;
   /**
    * Join style at degree-2 polyline joints (#790). Omitted ⇒ the session
-   * default. No cache-key concern: line materials are PER NODE (each owns its
-   * `uLineTex`), so unlike the point materials there is no LRU entry two nodes
-   * with different styles could collide on — which matters here because the TSL
+   * default. No cache-key concern: every material is PER NODE (a line material
+   * owns its `uLineTex`), so there is no shared cache entry two nodes with
+   * different styles could collide on — which matters here because the TSL
    * backend BAKES this into the graph.
    */
   join?: LineJoinStyle;
@@ -141,9 +141,9 @@ export interface GSplatMaterialProperties {
  *   `nearCull`, because the shared near fade applies to a surface too (#1431);
  * - `blendingMode` defaults to `'opaque'`, not `'additive'` — the only mode
  *   unconditionally correct without per-triangle depth sorting (§6.3);
- * - `flatNormal` is new: mesh is the first shaded type, and the stored-normal vs
- *   derivative-normal choice is a compile-time shader variant the caller resolves
- *   once per node.
+ * - `shading` is new: mesh is the first shaded type, and the stored-normal vs
+ *   derivative-normal vs unlit choice is a compile-time shader variant the caller
+ *   resolves once per node.
  */
 export interface MeshMaterialProperties {
   blendingMode: BlendingMode;

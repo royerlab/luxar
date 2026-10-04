@@ -91,6 +91,7 @@ import { initColormapLegend as initColormapLegendImpl } from './app/overlays/ini
 import { initOverlays as initOverlaysImpl } from './app/overlays/init-overlays';
 import { installFocusHandling } from './app/lifecycle/focus-handling';
 import { installOnlineRetry } from './app/lifecycle/online-retry';
+import { installNotifierBackend } from './app/lifecycle/notifier-backend';
 import { getSceneLoader, SceneLoaderManager } from '../data/scene-loader-manager';
 import { notifier } from '../utils/cross-layer/notifier';
 import { initScaleBar as initScaleBarImpl } from './app/overlays/init-scale-bar';
@@ -266,6 +267,10 @@ export class LuxarApp {
     // container is also promoted to a containing block so fixed overlays
     // scope to it; resetViewerContainer() in the dispose pipeline restores it.
     setViewerContainer(options.container ?? document.body);
+    // Toasts, the error dialog, the spinner: lower layers reach the UI through
+    // the notifier, for a library embed as much as the standalone page. The
+    // dispose pipeline clears it, so every lifetime installs its own.
+    installNotifierBackend((actionId) => this.shortcutForAction(actionId));
 
     // Claim the input surface before any async initialization or dataset
     // loading leaves an embedder-supplied canvas browser-owned.
@@ -489,19 +494,24 @@ export class LuxarApp {
         disposePicking: () => this.disposePicking(),
         initScaleBar: () => this.initScaleBar(),
         initColormapLegend: () => this.initColormapLegend(),
-        initOverlays: () => this.initOverlays(),
+        initOverlays: () => this.initOverlays(session),
         initPicking: () => this.initPicking(),
         // THIS load's session: a load superseded mid-flight must never write
         // its scene's waypoints / kiosk / control panel into a newer session.
         applyViewerConfigState: (config) => this.applyViewerConfigState(config, session),
         openCacheStatsView: () => this.openCacheStatsView(),
+        isStale: () => session.isDisposed,
       });
+      // Superseded mid-flight (dispose, or dispose + init): the dataset was
+      // never this lifetime's, so it announces nothing.
+      if (session.isDisposed) return;
       session.markLoaded(getSceneLoader());
       // A replayed latched fault is post-load state, so preserve the public
       // ordering: the dataset becomes available before its fault is reported.
       this.embedderEvents.emit('dataset-loaded', { src });
       session.reportFaults((error) => this.embedderEvents.emit('dataset-fault', { src, error }));
     } catch (error) {
+      if (session.isDisposed) throw error;
       this.embedderEvents.emit('dataset-error', {
         src,
         error: error instanceof Error ? error : new Error(String(error)),
@@ -536,6 +546,12 @@ export class LuxarApp {
     };
     controls.addEventListener('change', cameraListener);
     this.events.add(() => controls.removeEventListener('change', cameraListener));
+
+    // Unrecoverable in this release (the init pipeline shows the reload
+    // dialog): tell the embedder too, so a host can reload or report it.
+    this.events.add(
+      this.onWebGPUDeviceLost((info) => this.embedderEvents.emit('webgpu-device-lost', info))
+    );
 
     // flyTo() driver. The canvas is the input surface whose pointer / wheel /
     // touch events hand control back to the user mid-flight.
@@ -631,8 +647,20 @@ export class LuxarApp {
           this.layersPanel?.hide();
         },
         canvas: this.sceneManager.renderer?.domElement,
+        onDeviceLost: (listener) => this.onWebGPUDeviceLost(listener),
       }))
     );
+  }
+
+  /** Subscribe to the scene manager's WebGPU device loss; returns the unsubscribe. */
+  private onWebGPUDeviceLost(
+    listener: (info: { reason?: string; message?: string }) => void
+  ): () => void {
+    const sceneManager = this.sceneManager;
+    const handler = (event: { reason?: string; message?: string }): void =>
+      listener({ reason: event.reason, message: event.message });
+    sceneManager.addEventListener('webgpu-device-lost', handler);
+    return () => sceneManager.removeEventListener('webgpu-device-lost', handler);
   }
 
   /** Bind the sound layer to the loaded scene (`viewer-config/install-audio.ts`). */
@@ -804,13 +832,20 @@ export class LuxarApp {
    * collaborator. The manager just stays empty until `loadOverlays` (or a
    * runtime caller, e.g. a test) populates it.
    */
-  private async initOverlays(): Promise<void> {
-    this.overlayManager = await initOverlaysImpl({
+  private async initOverlays(session: DatasetSession): Promise<void> {
+    const manager = await initOverlaysImpl({
       disposePrevious: () => this.disposeOverlays(),
       sceneManager: this.sceneManager,
       inputHandler: this.inputHandler,
       recordingPanel: this.recordingPanel,
     });
+    // The overlay files load asynchronously: a manager whose load outlived
+    // its session must not replace the current lifetime's.
+    if (session.isDisposed) {
+      manager.dispose();
+      return;
+    }
+    this.overlayManager = manager;
     // Story captions wait for the camera when a waypoint asks for it: the gate
     // reads the LIVE driver, so it holds whichever scene's waypoints are
     // installed, before or after the overlays themselves were created.
@@ -1083,8 +1118,8 @@ export class LuxarApp {
   /**
    * Subscribe to a public embedder event. Returns an unsubscribe function.
    *
-   * Events: `dataset-loaded`, `dataset-error`, `dataset-fault`, `dimensions-changed`,
-   * `selection` (see {@link LuxarEmbedderEventMap}). Safe to call before
+   * Every event of {@link LuxarEmbedderEventMap} — dataset, dimension,
+   * camera, picking, sound, waypoint and GPU-loss events. Safe to call before
    * `init()`; the per-app emitter outlives individual init/dispose cycles.
    *
    * @example

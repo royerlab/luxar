@@ -43,8 +43,22 @@ const _IDENTITY_QUAT = new THREE.Quaternion();
  */
 const NEGLIGIBLE_ROTATION_SIN_HALF = 1e-8;
 
-/** Remaining pan, as a fraction of the camera distance, below which it is dropped (same bound). */
+/**
+ * Remaining pan, as a fraction of the view's length scale, below which it is
+ * dropped (same bound). The scale is the camera distance in perspective and
+ * the VISIBLE field width `(right - left) / zoom` in orthographic, where the
+ * distance does not set what one pixel spans: a distance-scaled gate froze a
+ * pan at extreme zoom-in and kept a sub-pixel one alive zoomed out.
+ */
 const NEGLIGIBLE_PAN_FRACTION = 1e-8;
+
+/** The length scale {@link NEGLIGIBLE_PAN_FRACTION} is a fraction of. */
+function panScale(ctx: OrbitUpdateCtx): number {
+  const camera = ctx.camera;
+  return camera instanceof THREE.OrthographicCamera
+    ? (camera.right - camera.left) / camera.zoom
+    : ctx.getDistance();
+}
 
 /** Whether `q` (a unit rotation) is within {@link NEGLIGIBLE_ROTATION_SIN_HALF} of the identity. */
 function isNegligibleRotation(q: THREE.Quaternion): boolean {
@@ -200,7 +214,7 @@ export function runUpdateStep(ctx: OrbitUpdateCtx, deltaTime?: number): boolean 
   }
 
   // 5. Apply pan with damping. A negligible residue is dropped, as above.
-  if (ctx.panDelta.lengthSq() < (NEGLIGIBLE_PAN_FRACTION * ctx.getDistance()) ** 2) {
+  if (ctx.panDelta.lengthSq() < (NEGLIGIBLE_PAN_FRACTION * panScale(ctx)) ** 2) {
     ctx.panDelta.set(0, 0, 0);
   } else if (ctx.enableDamping) {
     ctx.target.addScaledVector(ctx.panDelta, ctx.dampingFactor);

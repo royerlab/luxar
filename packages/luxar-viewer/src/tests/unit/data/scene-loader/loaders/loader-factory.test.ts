@@ -621,6 +621,40 @@ describe('createProgressiveLinesLoader', () => {
     expect(lodNode.attrs.has_image_labels).toBe(false);
   });
 });
+describe('createProgressiveLinesLoader — ladder picking layout', () => {
+  afterEach(() => {
+    zarrOpenMock.mockImplementation(async () => ({ attrs: { foo: 'bar' } }));
+  });
+
+  it('turns the level label flags on and passes per-VERTEX levelOffsets when the parent has a CSR', async () => {
+    zarrOpenMock
+      .mockImplementationOnce((async () => ({ attrs: { n_vertices: 20 } })) as never)
+      .mockImplementationOnce((async () => ({ attrs: { n_vertices: 10 } })) as never);
+    const node = makeNode('/l', 'lines');
+    node.attrs = { ...node.attrs, has_labels: true, n_vertices: 30 };
+
+    await createProgressiveLinesLoader(node, 2, {} as SceneNode['attrs'], makeDeps());
+
+    for (const args of linesCtorArgs) {
+      expect((args[1] as SceneNode).attrs.has_labels).toBe(true);
+    }
+    expect(linesProgressiveCtorArgs[0][5]).toEqual([0, 20, 30]);
+  });
+
+  it('publishes no offsets (flags off) when the levels disagree with the parent total', async () => {
+    zarrOpenMock.mockImplementation((async () => ({ attrs: { n_vertices: 20 } })) as never);
+    const node = makeNode('/l', 'lines');
+    node.attrs = { ...node.attrs, has_labels: true, n_vertices: 99 };
+
+    await createProgressiveLinesLoader(node, 2, {} as SceneNode['attrs'], makeDeps());
+
+    for (const args of linesCtorArgs) {
+      expect((args[1] as SceneNode).attrs.has_labels).toBe(false);
+    }
+    expect(linesProgressiveCtorArgs[0][5]).toBeNull();
+  });
+});
+
 // The energy-table (quality stamps) plumbing: each additive_<i> subgroup's
 // `lod_stats.energy_fraction_cum` is collected into a table and passed as the
 // progressive loaders' 4th constructor arg (→ committedEnergyFraction, the
@@ -707,16 +741,7 @@ describe('createProgressiveMeshLoader', () => {
   }
 
   it('builds one whole-node loader per additive subgroup', async () => {
-    const decodeKTX2 = Object.assign(vi.fn(), { dispose: vi.fn() });
-    await createProgressiveMeshLoader(
-      meshLadderNode({}),
-      3,
-      {},
-      {
-        ...makeDeps(),
-        decodeKTX2,
-      }
-    );
+    await createProgressiveMeshLoader(meshLadderNode({}), 3, {}, makeDeps());
 
     expect(meshCtorArgs).toHaveLength(3);
     expect(meshCtorArgs.map((args) => args[0])).toEqual([
@@ -727,9 +752,6 @@ describe('createProgressiveMeshLoader', () => {
     expect(meshProgressiveCtorArgs).toHaveLength(1);
     expect(meshProgressiveCtorArgs[0][1]).toBe(3);
     expect(meshProgressiveCtorArgs[0][2]).toBe('/surf');
-    for (const args of meshCtorArgs) {
-      expect(args[3]).toMatchObject({ decodeKTX2 });
-    }
   });
 
   it('clears the label flags on every sub-LOD', async () => {
@@ -839,5 +861,20 @@ describe('createProgressiveMeshLoader', () => {
       makeDeps()
     );
     expect(meshProgressiveCtorArgs).toHaveLength(1);
+  });
+
+  it.each([
+    ['has_texture', { has_texture: true, has_uvs: true }],
+    ['has_uvs', { has_uvs: true }],
+  ])('refuses a two-level textured ladder (%s)', async (_label, levelAttrs) => {
+    // The writer refuses `texture=` with `additive_lod=`, and the level concat
+    // carries no uvs or texture (and level 0's release would close the bitmap
+    // its material samples), so a hand-written textured ladder must fail loudly
+    // with a node-scoped error rather than render untextured.
+    zarrOpenMock.mockResolvedValue({ attrs: { ...levelAttrs } });
+    await expect(
+      createProgressiveMeshLoader(meshLadderNode({}), 2, {}, makeDeps())
+    ).rejects.toThrow(/texture.*reveal ladder|reveal ladder.*texture/);
+    expect(meshProgressiveCtorArgs).toHaveLength(0);
   });
 });

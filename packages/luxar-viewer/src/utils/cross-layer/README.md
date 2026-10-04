@@ -12,7 +12,7 @@ cross-layer/
 └── notifier.ts       # Single-backend method dictionary (toast, error, help, loading)
 ```
 
-The bus and the notifier are deliberately distinct: the **notifier** has one backend and a fixed method dictionary (the UI bootstrap calls `setNotifierBackend(...)` once); the **bus** has open subscriber sets typed against `LuxarEventMap` and lets panels subscribe late without bootstrap-order coupling. `EventGroup` is unrelated to either — it's a lifecycle helper that any component (UI or otherwise) uses to bundle its DOM listeners.
+The bus and the notifier are deliberately distinct: the **notifier** has one backend and a fixed method dictionary (`LuxarApp.init()` calls `setNotifierBackend(...)` once per app lifetime); the **bus** has open subscriber sets typed against `LuxarEventMap` and lets panels subscribe late without bootstrap-order coupling. `EventGroup` is unrelated to either — it's a lifecycle helper that any component (UI or otherwise) uses to bundle its DOM listeners.
 
 ## Modules
 
@@ -48,7 +48,7 @@ lower layers can share the contract without importing `ui/`.
 
 - `NotifierBackend` — Interface a concrete backend implements (`showError`, `showToast`, `showHelpOverlay`, `hideHelpOverlay`, `showLoadingIndicator`, `hideLoadingIndicator`, `clearError`).
 - `notifier` — Stable call surface: `error`, `toast`, `showHelp`, `hideHelp`, `showLoading`, `hideLoading`, `clearError`. `error(message, { persistent: true })` asks the backend to suppress auto-dismissal. Pre-registration calls drop silently after a single one-time warn so unit tests and early-startup paths don't crash.
-- `setNotifierBackend(b)` — Called once by the UI bootstrap with concrete `ui/` helpers; later calls replace the backend (useful for tests).
+- `setNotifierBackend(b)` — Called by `LuxarApp.init()` with concrete `ui/` helpers; later calls replace the backend (useful for tests).
 - `clearNotifierBackend()` — Tear down and reset the one-time missing-backend warning flag.
 
 ## Usage Examples
@@ -83,7 +83,7 @@ class Panel {
 ```typescript
 import { notifier, setNotifierBackend } from '../utils/cross-layer/notifier';
 
-// UI bootstrap (once)
+// LuxarApp.init() (core/app/lifecycle/notifier-backend.ts)
 setNotifierBackend({
   showError,
   showToast,

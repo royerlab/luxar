@@ -68,7 +68,6 @@ function makeStubCapabilities(): import('../../../../rendering/renderer-capabili
     },
     maxMSAASamples: 0,
     pointSizeRange: [1, 64] as const,
-    readBackbufferPixels: vi.fn(),
   } as unknown as import('../../../../rendering/renderer-capabilities').RendererCapabilities;
 }
 

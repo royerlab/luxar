@@ -2,7 +2,7 @@ import type { CacheValidationMode } from '../types';
 import { log, Modules } from '../../utils/log';
 import { getErrorMessage } from '../../utils/format-error';
 import { config } from '../../config';
-import { OPFSBucketCache, getBucket, keyToFileName } from './opfs-store/buckets';
+import { OPFSBucketCache, getBucket, hashTag, keyToFileName } from './opfs-store/buckets';
 import { getLuxarOpfsRoot } from './opfs-store/opfs-root';
 import {
   IDENTITY_FILE,
@@ -50,7 +50,7 @@ export interface CachedDatasetSummary {
  * OPFS persistence layer (L2 cache) with LRU eviction and shallow bucketing.
  *
  * Uses 256 bucket directories to distribute files and avoid filesystem limits.
- * Files are stored as: `{bucket}/{base64-encoded-key}`
+ * Files are stored as: `{bucket}/{hash tag}.{base64-encoded-key}` (see `hashTag`)
  *
  * Structure (everything under the viewer's `luxar/` OPFS namespace dir, see
  * `opfs-store/opfs-root.ts`):
@@ -70,8 +70,9 @@ export interface CachedDatasetSummary {
  * file whose write completed is served by the next session of the same dataset
  * even if no index save recorded it. `_cache_identity.json` holds the content
  * hash and is written before any chunk under that hash; a lookup of a key the
- * index does not list reads the key's deterministic path while unindexed files
- * may remain; the open-time reconcile re-indexes or deletes them.
+ * index does not list reads the key's deterministic path while the open-time
+ * reconcile, which re-indexes or deletes the files the index never recorded,
+ * runs.
  *
  * Benefits:
  * - Max ~250-500 files per directory instead of 65,000+
@@ -88,6 +89,11 @@ export class OPFSStore {
   private datasetId: string;
   private baseUrl: string;
   private contentHash: string | null = null;
+  // `hashTag(contentHash)`, which names every chunk file this store reads or
+  // writes (`keyToFileName`), so all index entries share it. Another tab still
+  // at an older hash writes differently named files into a shared directory,
+  // which this store therefore never reads nor recovers. See adoptContentHash.
+  private fileTag = '';
   // External-dataset validation mode + last-validated timestamp.
   // Persisted to OPFSMetadata so the next session can apply a TTL
   // window across page loads.
@@ -180,6 +186,8 @@ export class OPFSStore {
   // has accounted for every file, so a long session pays no probe per miss.
   private probeUnindexed = false;
   private orphansReindexed = 0;
+  // The running crawl's recorded recoveries (key → size), merged when it ends.
+  private reconcileRecovered: Map<string, number> | null = null;
 
   // The dataset identity file (`_cache_identity.json`, see metadata.ts): the
   // hash last requested on disk, and the chained write putting it there. Every
@@ -512,6 +520,7 @@ export class OPFSStore {
       this.totalSize = outcome.totalSize;
       this.orderCounter = outcome.orderCounter;
       this.contentHash = outcome.contentHash;
+      this.fileTag = hashTag(outcome.contentHash);
       this.validationMode = outcome.validationMode;
       this.lastValidatedAt = outcome.lastValidatedAt;
     }
@@ -519,7 +528,7 @@ export class OPFSStore {
     // identity as the only record of what the files were written under. It
     // becomes the cached hash, so validation compares the remote hash against
     // it exactly as against an indexed one — and clears on a mismatch.
-    if (this.contentHash === null) this.contentHash = identity;
+    if (this.contentHash === null) this.adoptContentHash(identity);
     this.recoveryHash = recoveryHashFor(outcome, identity);
     this.probeUnindexed = this.recoveryHash !== null;
   }
@@ -536,8 +545,8 @@ export class OPFSStore {
    * set (`recoveryHash`), the file is non-empty, and it fits under `maxSize`;
    * otherwise it is DELETED. Recovered entries join the LRU head (oldest), so
    * they are the first evicted. Bounded per session by
-   * ORPHAN_RECONCILE_MAX_ACTIONS. A COMPLETE crawl disarms the unindexed-read
-   * probe (`probeUnindexed`): every file is then indexed or gone.
+   * ORPHAN_RECONCILE_MAX_ACTIONS. The end of the crawl disarms the
+   * unindexed-read probe (`probeUnindexed`).
    *
    * Runs concurrently with normal traffic, so every action re-checks against
    * the live state: a key this store is writing or has indexed is never
@@ -549,16 +558,21 @@ export class OPFSStore {
     const root = this.opfsRoot;
     if (!root) return;
     const generation = this.generation;
+    const tag = this.fileTag;
     const expected = new Set<string>();
-    for (const key of this.index.keys()) expected.add(keyToFileName(key));
+    for (const key of this.index.keys()) expected.add(keyToFileName(key, tag));
     const recovered = new Map<string, number>();
     let recoveredBytes = 0;
     const stale = (): boolean =>
       this.disposed || this.generation !== generation || this.opfsRoot !== root;
 
     const onOrphan = async (orphan: OrphanFile): Promise<void> => {
+      // A file of another hash tag is never one of this store's chunks: delete.
+      const parsed = orphan.parsed;
       const key =
-        orphan.key !== null && getBucket(orphan.key) === orphan.bucketName ? orphan.key : null;
+        parsed !== null && parsed.tag === tag && getBucket(parsed.key) === orphan.bucketName
+          ? parsed.key
+          : null;
       if (key !== null && (this.isKeyLive(key) || recovered.has(key))) return;
       if (key !== null && this.recoveryHash !== null) {
         const size = await this.orphanSize(orphan);
@@ -572,23 +586,28 @@ export class OPFSStore {
       await this.removeOrphanFile(orphan, key);
     };
 
-    let complete = false;
+    // A write or adoption of a recorded key supersedes its record (doSet,
+    // adoptUnindexed): merging it later would resurrect an entry that a
+    // subsequent eviction had already deleted from disk.
+    this.reconcileRecovered = recovered;
     try {
-      const result = await crawlOrphans(root, {
+      await crawlOrphans(root, {
         expectedFileNames: expected,
         maxOrphans: OPFSStore.ORPHAN_RECONCILE_MAX_ACTIONS,
         maxExamined: OPFSStore.ORPHAN_RECONCILE_MAX_EXAMINED,
         shouldStop: stale,
         onOrphan,
       });
-      complete = result.complete;
     } catch {
       // Best-effort: a failed crawl leaves the orphans for the next session.
     }
+    if (this.reconcileRecovered === recovered) this.reconcileRecovered = null;
     if (stale()) return;
     this.mergeRecovered(recovered);
-    // Every file on disk is now indexed or gone: unindexed reads cannot hit.
-    if (complete) this.probeUnindexed = false;
+    // The probe served the first reads while the crawl ran. Past it, a probe
+    // hit needs a file a budget-capped (or failed) crawl did not reach, while
+    // every L2 miss would pay a lookup; such files wait for the next session.
+    this.probeUnindexed = false;
   }
 
   /** Byte size of an orphan file, or null when it cannot be read in time. */
@@ -638,13 +657,15 @@ export class OPFSStore {
   /**
    * Fold recovered orphans into the index as its LRU head. Synchronous, so it
    * is atomic against every other index mutation; a key indexed meanwhile
-   * (a concurrent write) keeps its live entry.
+   * (a concurrent write) keeps its live entry. Writes during the crawl may
+   * have used the room it budgeted, so a recovery that no longer fits under
+   * `maxSize` is skipped (its file waits, unindexed, for the next reconcile).
    */
   private mergeRecovered(recovered: Map<string, number>): void {
     const merged = new Map<string, { size: number; order: number }>();
     let added = 0;
     for (const [key, size] of recovered) {
-      if (this.isKeyLive(key)) continue;
+      if (this.isKeyLive(key) || this.totalSize + added + size > this.maxSize) continue;
       merged.set(key, { size, order: 0 });
       added += size;
     }
@@ -704,7 +725,7 @@ export class OPFSStore {
         return this.timed(
           hold(
             (async () => {
-              const fileHandle = await this.buckets.navigateToFile(root, key, false);
+              const fileHandle = await this.buckets.navigateToFile(root, key, this.fileTag, false);
               const file = await fileHandle.getFile();
               return new Uint8Array(await file.arrayBuffer());
             })()
@@ -799,7 +820,7 @@ export class OPFSStore {
         return this.timed(
           hold(
             (async () => {
-              const fileHandle = await this.buckets.navigateToFile(root, key, false);
+              const fileHandle = await this.buckets.navigateToFile(root, key, this.fileTag, false);
               const file = await fileHandle.getFile();
               return new Uint8Array(await file.arrayBuffer());
             })()
@@ -822,6 +843,7 @@ export class OPFSStore {
   private adoptUnindexed(key: string, size: number): void {
     if (this.totalSize + size > this.maxSize) return;
     this.index.set(key, { size, order: this.orderCounter++ });
+    this.reconcileRecovered?.delete(key);
     this.totalSize += size;
     this.orphansReindexed++;
     if (this.orderCounter > 1e12) this.compactOrderCounter();
@@ -926,6 +948,9 @@ export class OPFSStore {
     // mutation must be skipped — otherwise a slow set() that began
     // before clear() will repopulate the just-cleared cache.
     const startGeneration = this.generation;
+    // The file is named under the tag current at entry; a tag change while it
+    // is written bumps the generation, so it is then removed, never indexed.
+    const tag = this.fileTag;
 
     const size = data.byteLength;
 
@@ -1037,7 +1062,7 @@ export class OPFSStore {
       try {
         await this.timed(
           (async () => {
-            const fileHandle = await this.buckets.navigateToFile(this.opfsRoot!, key, true);
+            const fileHandle = await this.buckets.navigateToFile(this.opfsRoot!, key, tag, true);
             const writable = await fileHandle.createWritable();
             // Write the VIEW itself: `write()` takes any BufferSource and writes
             // exactly the view's bytes, so a sub-view of a larger buffer is safe
@@ -1062,7 +1087,7 @@ export class OPFSStore {
             const bucket = getBucket(key);
             const bucketHandle = await this.buckets.getHandle(this.opfsRoot!, bucket, false);
             if (bucketHandle) {
-              await bucketHandle.removeEntry(keyToFileName(key));
+              await bucketHandle.removeEntry(keyToFileName(key, tag));
             }
           } catch {
             // Best-effort; orphaned file is harmless and will be reclaimed
@@ -1079,6 +1104,7 @@ export class OPFSStore {
           this.index.delete(key);
         }
         this.index.set(key, { size, order: this.orderCounter++ });
+        this.reconcileRecovered?.delete(key);
         this.totalSize += size;
         this.debitQuota(size - (existingEntry?.size ?? 0), size);
         this.writeCount++;
@@ -1221,7 +1247,7 @@ export class OPFSStore {
       const bucket = getBucket(key);
       const bucketHandle = await this.buckets.getHandle(this.opfsRoot!, bucket, false);
       if (bucketHandle) {
-        await bucketHandle.removeEntry(keyToFileName(key));
+        await bucketHandle.removeEntry(keyToFileName(key, this.fileTag));
       }
     } catch (error) {
       // NotFound means the desired disk state already holds. Reconcile the
@@ -1314,6 +1340,7 @@ export class OPFSStore {
     this.totalSize = 0;
     this.orderCounter = 0;
     this.contentHash = null;
+    this.fileTag = '';
     this.identityOnDisk = null;
     this.stopRecovery();
     this.validationMode = 'none';
@@ -1525,9 +1552,28 @@ export class OPFSStore {
     // Unindexed files were written under `recoveryHash`; under any other hash
     // they are not this dataset's chunks, so stop recovering them.
     if (hash !== this.recoveryHash) this.stopRecovery();
-    this.contentHash = hash;
+    this.adoptContentHash(hash);
     this.persistIdentity(hash);
     this.scheduleMetadataSave();
+  }
+
+  /**
+   * Make `hash` the content hash. Index entries were written under the old
+   * hash's file tag, so a different tag retires them: the index empties (their
+   * files become orphans the next reconcile deletes) and the generation bump
+   * discards any write still in flight under the old tag. In practice the index
+   * is already empty here — a hash change goes through clear() — except for
+   * entries written while no hash was known.
+   */
+  private adoptContentHash(hash: string | null): void {
+    this.contentHash = hash;
+    const tag = hashTag(hash);
+    if (tag === this.fileTag) return;
+    this.fileTag = tag;
+    this.generation++;
+    this.index = new Map();
+    this.totalSize = 0;
+    this.orderCounter = 0;
   }
 
   /** Recover no unindexed file from here on (the reconcile deletes them). */

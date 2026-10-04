@@ -21,6 +21,7 @@ function harness(graceS = 10) {
   const canvas = new EventTarget();
   const reload = vi.fn();
   const onRecovered = vi.fn();
+  const lossListeners = new Set<() => void>();
   let nextHandle = 1;
   const timers = new Map<number, () => void>();
   const watchdog = startKioskWatchdog({
@@ -28,6 +29,10 @@ function harness(graceS = 10) {
     graceS,
     reload,
     onRecovered,
+    onUnrecoverableLoss: (listener) => {
+      lossListeners.add(listener);
+      return () => lossListeners.delete(listener);
+    },
     setTimer: (handler) => {
       const handle = nextHandle++;
       timers.set(handle, handler);
@@ -43,6 +48,10 @@ function harness(graceS = 10) {
     onRecovered,
     watchdog,
     pending: () => timers.size,
+    loseDevice: () => {
+      for (const listener of [...lossListeners]) listener();
+    },
+    lossListenerCount: () => lossListeners.size,
     fireTimers: () => {
       for (const handler of [...timers.values()]) handler();
       timers.clear();
@@ -51,6 +60,24 @@ function harness(graceS = 10) {
 }
 
 describe('startKioskWatchdog', () => {
+  it('reloads after the grace period when the GPU device is lost for good (WebGPU)', () => {
+    // WebGPU device loss has no restore event: without this the kiosk stays
+    // blank until someone walks up to it.
+    const h = harness();
+    h.loseDevice();
+    expect(h.pending()).toBe(1);
+    expect(h.reload).not.toHaveBeenCalled();
+    h.fireTimers();
+    expect(h.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops listening for device loss on dispose', () => {
+    const h = harness();
+    expect(h.lossListenerCount()).toBe(1);
+    h.watchdog.dispose();
+    expect(h.lossListenerCount()).toBe(0);
+  });
+
   it('does nothing until the context is lost', () => {
     const h = harness();
     expect(h.pending()).toBe(0);

@@ -63,7 +63,6 @@ function mockCaps(
     maxRenderbufferSize: 4096,
     maxMSAASamples: 4,
     pointSizeRange: [1, 1024],
-    readBackbufferPixels: () => Promise.resolve({ pixels: new Uint8Array(), width: 0, height: 0 }),
     ...overrides,
   };
 }
@@ -113,7 +112,6 @@ type ManagerInternals = {
   };
   megaPass: { dispose(): void };
   disposed: boolean;
-  deferRebuildDepth: number;
   renderer: { setSize: ReturnType<typeof vi.fn>; domElement: HTMLCanvasElement };
 };
 
@@ -713,48 +711,6 @@ describe('PostProcessingManager → rebuildAfterContextRestore preserves effect 
     mgr.dispose();
     // Should not re-allocate resources after disposal.
     expect(() => mgr.rebuildAfterContextRestore()).not.toThrow();
-  });
-});
-
-describe('PostProcessingManager → deferred-rebuild depth', () => {
-  beforeEach(() => {
-    materialManager.setCaps(mockCaps('webgl2'));
-  });
-
-  it('matched start/end pairs return depth to zero', () => {
-    const mgr = makeManager();
-    expect(peek(mgr).deferRebuildDepth).toBe(0);
-
-    mgr.startDeferRebuild();
-    mgr.startDeferRebuild();
-    expect(peek(mgr).deferRebuildDepth).toBe(2);
-
-    mgr.endDeferRebuild();
-    mgr.endDeferRebuild();
-    expect(peek(mgr).deferRebuildDepth).toBe(0);
-
-    mgr.dispose();
-  });
-
-  it('withDeferredRebuild always pairs start/end even when fn throws', () => {
-    const mgr = makeManager();
-    expect(() =>
-      mgr.withDeferredRebuild(() => {
-        throw new Error('inner');
-      })
-    ).toThrow('inner');
-    expect(peek(mgr).deferRebuildDepth).toBe(0);
-
-    mgr.dispose();
-  });
-
-  it('endDeferRebuild at depth=0 logs a warning but does not underflow', () => {
-    const mgr = makeManager();
-    mgr.endDeferRebuild();
-    // Depth stays clamped at 0 — no negative depth, no exception.
-    expect(peek(mgr).deferRebuildDepth).toBe(0);
-
-    mgr.dispose();
   });
 });
 

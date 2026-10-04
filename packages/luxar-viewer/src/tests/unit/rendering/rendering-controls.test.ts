@@ -193,8 +193,6 @@ describe('RenderingControls', () => {
       setVignetteEnabled: vi.fn(),
       setChromaticLensDistortionEnabled: vi.fn(),
       updateChromaticLensDistortion: vi.fn(),
-      startDeferRebuild: vi.fn(),
-      endDeferRebuild: vi.fn(),
     };
 
     // Setup mock animation controller

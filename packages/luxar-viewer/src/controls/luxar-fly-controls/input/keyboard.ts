@@ -10,6 +10,8 @@
  * manager as the dispatch site (Non-Goal 2).
  */
 
+import { pressedKey } from '../../../utils/keyboard-key';
+
 /** Which mouse drag, if any, is currently in progress in fly mode. */
 export type FlyMouseAction = 'none' | 'strafe' | 'rotate';
 
@@ -61,6 +63,8 @@ export interface FlyKeyboardCtx {
  */
 export function handleKeyDown(ctx: FlyKeyboardCtx, event: KeyboardEvent): void {
   if (!ctx.enabled) return;
+  // Option+W reports '∑' on macOS; pressedKey() reads the physical key then.
+  const key = pressedKey(event);
 
   // Only prevent default for arrow keys (always used for camera look)
   if (event.key.startsWith('Arrow')) {
@@ -75,10 +79,7 @@ export function handleKeyDown(ctx: FlyKeyboardCtx, event: KeyboardEvent): void {
       activeElement.tagName === 'TEXTAREA' ||
       activeElement.getAttribute('contenteditable') === 'true');
 
-  if (
-    !isTyping &&
-    ['w', 'a', 's', 'd', 'q', 'e', 'W', 'A', 'S', 'D', 'Q', 'E'].includes(event.key)
-  ) {
+  if (!isTyping && ['w', 'a', 's', 'd', 'q', 'e'].includes(key)) {
     event.preventDefault();
   }
 
@@ -97,7 +98,7 @@ export function handleKeyDown(ctx: FlyKeyboardCtx, event: KeyboardEvent): void {
   // makes the transition reachable, switch to the ternary form:
   //   ctx.moveState.forward = isAltLike ? 0 : 1;
   //   ctx.moveState.up = isAltLike ? 1 : 0;
-  switch (event.key.toLowerCase()) {
+  switch (key) {
     case 'w':
       if (event.altKey || event.metaKey) {
         ctx.moveState.up = 1; // Alt/Option+W for up
@@ -153,13 +154,13 @@ export function handleKeyDown(ctx: FlyKeyboardCtx, event: KeyboardEvent): void {
  * Clear the movement/look state a key was driving on keyup. W/S clear both
  * their forward/back and up/down components (covering an Alt release mid-hold),
  * A/D and Q/E clear their axes, Shift releases speed boost, and arrow keys
- * zero the matching look axis. Dispatches `change`; no-op while disabled.
+ * zero the matching look axis. Dispatches `change`. Runs even while disabled,
+ * so a key held when the controls were disabled is not left latched.
  */
 export function handleKeyUp(ctx: FlyKeyboardCtx, event: KeyboardEvent): void {
-  if (!ctx.enabled) return;
-
+  const key = pressedKey(event);
   // WASD movement release
-  switch (event.key.toLowerCase()) {
+  switch (key) {
     case 'w':
       ctx.moveState.forward = 0;
       ctx.moveState.up = 0; // Also clear up in case Alt was held

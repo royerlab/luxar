@@ -6,8 +6,11 @@
  * in lock-step with the visible footprint. Strips colormap and color
  * varyings (not needed for picking) and adds the `uNodeId` uniform and
  * `vNodeId` / `vElementId` varyings written into the RGBA32F pick
- * buffer as `(nodeId, elementId-low16, brightness, elementId-high16)`. Brightness-as-depth
- * keeps overlapping segments correctly resolved.
+ * buffer as `(nodeId, elementId-low16, brightness, elementId-high16)`.
+ * Overlapping segments resolve by the depth it writes, which follows
+ * `uSurfaceDepth` (`../_shared/surface-pick.ts`): brightness-as-depth (the
+ * brightest wins) in the commutative modes, the real projected depth (the
+ * front-most wins) in the depth-ordered `opaque` / `normal` modes.
  *
  * Lines use **full** pick width (unlike points / gsplats which truncate
  * — thin lines are already narrow with a sharp parabolic profile).

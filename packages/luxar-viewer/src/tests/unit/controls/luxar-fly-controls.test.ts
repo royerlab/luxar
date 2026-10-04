@@ -45,6 +45,7 @@ describe('LuxarFlyControls', () => {
     config.controls.wheelZoomSensitivity = defaultWheelZoomSensitivity;
     controls.dispose();
     document.body.removeChild(domElement);
+    vi.restoreAllMocks();
   });
 
   describe('wheel input', () => {
@@ -152,6 +153,43 @@ describe('LuxarFlyControls', () => {
 
       const moveState = (controls as any).moveState;
       expect(moveState.forward).toBe(0);
+    });
+
+    it.each([
+      ['the window loses focus', () => window.dispatchEvent(new Event('blur'))],
+      [
+        'the page is hidden',
+        () => {
+          vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+          document.dispatchEvent(new Event('visibilitychange'));
+        },
+      ],
+    ])('releases held keys and drags when %s', (_label, lose) => {
+      // The keyup (and mouseup) of a key held while focus leaves never arrive.
+      controls.handleKeyDown(new KeyboardEvent('keydown', { key: 'w' }));
+      controls.handleKeyDown(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+      controls.handleKeyDown(new KeyboardEvent('keydown', { key: 'Shift' }));
+      domElement.dispatchEvent(new MouseEvent('mousedown', { button: 2 }));
+
+      lose();
+
+      const internals = controls as any;
+      expect(internals.moveState.forward).toBe(0);
+      expect(internals.lookState.horizontal).toBe(0);
+      expect(internals.speedBoost).toBe(false);
+      expect(internals.activeMouseAction).toBe('none');
+    });
+
+    it('releases a key and a drag held when the controls are disabled', () => {
+      controls.handleKeyDown(new KeyboardEvent('keydown', { key: 'w' }));
+      domElement.dispatchEvent(new MouseEvent('mousedown', { button: 0 }));
+      controls.enabled = false;
+
+      controls.handleKeyUp(new KeyboardEvent('keyup', { key: 'w' }));
+      window.dispatchEvent(new MouseEvent('mouseup', { button: 0 }));
+
+      expect((controls as any).moveState.forward).toBe(0);
+      expect((controls as any).activeMouseAction).toBe('none');
     });
 
     it('should dispatch change event on key press', () => {

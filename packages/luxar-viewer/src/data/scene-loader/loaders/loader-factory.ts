@@ -1,21 +1,18 @@
 /**
  * Loader-factory concern extracted from `scene-loader.ts`.
  *
- * Four constructor helpers, one per geometry kind:
- *   - `createPointsLoader` → `PointsSpatialIndexLoader`
- *   - `createLinesLoader` → `LinesSpatialIndexLoader`
- *   - `createGSplatsLoader` → `GSplatsSpatialIndexLoader`
- *   - `createProgressiveGSplatsLoader` → `GSplatsProgressiveLoader`
- *     wrapping N `GSplatsSpatialIndexLoader`s (one per LOD)
+ * Eight constructor helpers, two per geometry kind:
+ *   - single-LOD: `createPointsLoader` / `createLinesLoader` /
+ *     `createGSplatsLoader` → the matching `*SpatialIndexLoader`, and
+ *     `createMeshLoader` → `MeshWholeNodeLoader`;
+ *   - progressive (additive ladder): `createProgressivePointsLoader` /
+ *     `createProgressiveLinesLoader` / `createProgressiveGSplatsLoader` wrap one
+ *     per-level loader per `additive_<i>` subgroup in the matching
+ *     `*ProgressiveLoader`, and `createProgressiveMeshLoader` builds the mesh
+ *     reveal ladder (`MeshProgressiveLoader`).
  *
- * All four follow the same path-resolution pattern: a leaf at `/` uses
- * the supplied `loc`; otherwise we resolve from the store root so
- * absolute paths in the scene graph map to zarr group locations
- * correctly.
- *
- * Behavior matches the inline original — same constructor argument
- * order, same logging, same null-coalescing of optional cache /
- * prefetcher dependencies.
+ * A leaf at `/` uses the supplied `loc`; any other path is resolved from the
+ * store root, so absolute scene-graph paths map to zarr group locations.
  *
  * @module data/scene-loader/loaders/loader-factory
  */
@@ -396,6 +393,7 @@ export async function createProgressiveMeshLoader(
   );
 
   const levels = await openAdditiveLevels(node, nAdditive, deps);
+  assertLevelsUntextured(node, levels);
   // Per-level DECLARED counts, for the parent-total cross-check below.
   const levelVertices = levels.map((level) =>
     typeof level.attrs.n_vertices === 'number' ? level.attrs.n_vertices : undefined
@@ -423,14 +421,7 @@ export async function createProgressiveMeshLoader(
         {
           zarrStore: deps.zarrStore,
           arrayRefRegistry: deps.arrayRefRegistry,
-          // Forwarded for the same reason the leaf path forwards it. A
-          // Luxar-written ladder cannot carry a texture at all (the writer
-          // refuses `texture=` alongside every structural route), but a
-          // hand-written store can declare one, and without this the level
-          // fails with "no renderer-owned decoder configured" — blaming the
-          // viewer's init order for a decoder that exists and was simply not
-          // handed over.
-          decodeKTX2: deps.decodeKTX2 ?? undefined,
+          // No `decodeKTX2`: a level is refused above if it declares a texture.
         }
       )
   );
@@ -441,6 +432,30 @@ export async function createProgressiveMeshLoader(
   });
 
   return new MeshProgressiveLoader(lodLoaders, nAdditive, node.path);
+}
+
+/**
+ * Refuse a mesh reveal ladder whose levels declare a texture or UVs.
+ *
+ * The writer never authors one (`add_mesh` refuses `texture=` with
+ * `additive_lod=`: the image would be stored once per shell), and the level
+ * concat carries neither — so a hand-written textured ladder would render
+ * untextured, and level 0's release would close the bitmap its material
+ * samples. Refused before any level is fetched, like the totals check below.
+ */
+function assertLevelsUntextured(node: SceneNode, levels: AdditiveLevel[]): void {
+  for (const [i, level] of levels.entries()) {
+    if (level.attrs.has_texture !== true && level.attrs.has_uvs !== true) continue;
+    throw new LoaderError(
+      'Validation',
+      node.path,
+      new Error(
+        `Mesh reveal ladder level additive_${i} declares a texture or UVs. A reveal ` +
+          'ladder carries no texture (the writer refuses texture= with additive_lod=); ' +
+          'write the textured surface as a plain mesh leaf.'
+      )
+    );
+  }
 }
 
 /**
@@ -525,6 +540,116 @@ function assertLadderTotalsBackedByLevels(
 }
 
 /**
+ * Decide a Points or Lines ladder's per-level label flags and its picking-map
+ * level offsets over the PARENT's union string/image CSR (#1422, #1439).
+ *
+ * `countKey` names each level's on-disk element count in that CSR's index
+ * space: `n_points` for Points, `n_vertices` for Lines (whose CSR is
+ * per-VERTEX). `levelOffsets` is CSR-style (`levels.length + 1` entries) or
+ * `null` when the composition cannot run; the label flags are on only when it
+ * can, so no level builds a map the concat would discard.
+ */
+function ladderPickingLayout(
+  node: SceneNode,
+  levels: AdditiveLevel[],
+  countKey: 'n_points' | 'n_vertices',
+  label: 'Points' | 'Lines'
+): { levelOffsets: number[] | null; labels: LevelLabelFlags } {
+  // Per-level ON-DISK row counts (`countKey` on each `additive_<i>` group, NOT
+  // the loaded count) — the offsets into the parent CSR's index space.
+  const onDiskCounts = levels.map((level) =>
+    typeof level.attrs[countKey] === 'number' ? (level.attrs[countKey] as number) : undefined
+  );
+
+  // Does the PARENT node carry a UNION string/image CSR? Each CSR is keyed
+  // by the concatenation `additive_0 || additive_1 || …`, each level in its own
+  // stored order (#1422), so it is the parent — never a sub-LOD — that decides
+  // whether a ladder has readable per-element metadata at all.
+  const parentDeclaresStringChannel =
+    node.attrs.has_labels === true ||
+    node.attrs.has_image_labels === true ||
+    node.attrs.has_keys === true;
+  // CSR-style bounds over the on-disk counts, length `nAdditive + 1`:
+  // `levelOffsets[i]` is where level `i` starts inside the parent's union CSR
+  // index space (so [0] === 0) and `levelOffsets[i + 1]` is where it ends, so
+  // the composer can also BOUND each level's ids instead of only shifting
+  // them. The last entry is the union's total row count.
+  // Only meaningful when the parent declares a string/image channel; otherwise stay
+  // null (hover then reports the raw slot — no better than before #1439, but
+  // never an id composed into someone else's CSR row).
+  let levelOffsets: number[] | null = null;
+  if (parentDeclaresStringChannel) {
+    const usable = onDiskCounts.every((n) => n !== undefined && Number.isSafeInteger(n) && n >= 0);
+    if (!usable) {
+      log.warning(
+        Modules.SCENE_LOADER,
+        `Progressive ${label} ${node.path} declares a string/image channel but a sub-LOD is missing a valid ` +
+          `\`${countKey}\`; per-level picking maps are disabled (hover falls back to the ` +
+          'visible-buffer slot).'
+      );
+    } else {
+      const total = (onDiskCounts as number[]).reduce((s, n) => s + n, 0);
+      // Free cross-check: the writer's parent count IS the sum of the
+      // levels' row counts, so a mismatch means the CSR and
+      // the levels come from different builds — composing would land in
+      // someone else's row. Only checked when the parent actually carries the
+      // attr; its absence is not evidence of anything.
+      if (typeof node.attrs[countKey] === 'number' && node.attrs[countKey] !== total) {
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Progressive ${label} ${node.path}: sub-LOD row counts sum to ${total} but the parent ` +
+            `declares ${countKey}=${String(node.attrs[countKey])}; the parent CSR and the levels disagree, ` +
+            'so per-level picking maps are disabled (hover falls back to the visible-buffer slot).'
+        );
+      } else if (total > 0xffffffff) {
+        // The composed map is a `Uint32Array` of union indices, so a union
+        // wider than 2^32 rows would wrap silently into another CSR row (and
+        // past 2^53 the prefix sums stop being exact at all). Individually
+        // safe-integer counts can still sum past both bounds, so the SUM is
+        // what has to be checked.
+        log.warning(
+          Modules.SCENE_LOADER,
+          `Progressive ${label} ${node.path}: sub-LOD row counts sum to ${total}, past the ` +
+            '2^32 index range the picking map is stored in; per-level picking maps are ' +
+            'disabled (hover falls back to the visible-buffer slot).'
+        );
+      } else {
+        levelOffsets = [];
+        let acc = 0;
+        for (const n of onDiskCounts as number[]) {
+          levelOffsets.push(acc);
+          acc += n;
+        }
+        // Closing bound: `levelOffsets[nAdditive]` === the union row count, so
+        // every level — the last one included — has an end to be checked against.
+        levelOffsets.push(acc);
+      }
+    }
+  }
+  // Per-level maps are only ever USED when the offsets exist to place them.
+  const levelsBuildMaps = parentDeclaresStringChannel && levelOffsets !== null;
+
+  // A ladder's string/image CSR lives on the PARENT node, spanning the levels in
+  // `additive_<i>` order (#1422), and that is also the only path the pick path
+  // ever resolves per-element metadata against — a sub-LOD carries no CSR of ITS
+  // OWN that any reader can key by, so a sub-LOD's stored flags are never trusted
+  // and are always overridden here. They are overridden with the parent's
+  // declaration, AND only when the composition can actually run: with
+  // `levelOffsets` each level publishes its own level-space map (Points: slot →
+  // on-disk; Lines: its loaded on-disk vertex ranges) and the ladder concat
+  // offsets it into the parent's index space by the preceding levels' on-disk
+  // counts (#1439). Without them (no parent CSR, or a
+  // failed cross-check) all stay false, so no per-level map is built only to be
+  // discarded, and picking stays allocation-free exactly as before.
+  const labels: LevelLabelFlags = {
+    has_labels: levelsBuildMaps && node.attrs.has_labels === true,
+    has_image_labels: levelsBuildMaps && node.attrs.has_image_labels === true,
+    has_keys: levelsBuildMaps && node.attrs.has_keys === true,
+  };
+  return { levelOffsets, labels };
+}
+
+/**
  * Create a progressive points loader for a multi-additive-LOD scene
  * node. Mirrors :func:`createProgressiveGSplatsLoader` for Points.
  *
@@ -551,98 +676,9 @@ export async function createProgressivePointsLoader(
   // per-level picking map that the concat is going to discard.
   const levels = await openAdditiveLevels(node, nAdditive, deps);
   const energyTable = levels.map((level) => energyFractionFromAttrs(level.attrs));
-  // Per-level ON-DISK row counts (`n_points` on each `additive_<i>` group, NOT
-  // the loaded count) — the offsets into the parent CSR's index space.
-  const onDiskCounts = levels.map((level) =>
-    typeof level.attrs.n_points === 'number' ? level.attrs.n_points : undefined
-  );
-
-  // Does the PARENT node carry a UNION string/image CSR? Each CSR is keyed
-  // by the concatenation `additive_0 || additive_1 || …`, each level in its own
-  // stored order (#1422), so it is the parent — never a sub-LOD — that decides
-  // whether a ladder has readable per-element metadata at all.
-  const parentDeclaresStringChannel =
-    node.attrs.has_labels === true ||
-    node.attrs.has_image_labels === true ||
-    node.attrs.has_keys === true;
-  // CSR-style bounds over the on-disk counts, length `nAdditive + 1`:
-  // `levelOffsets[i]` is where level `i` starts inside the parent's union CSR
-  // index space (so [0] === 0) and `levelOffsets[i + 1]` is where it ends, so
-  // the composer can also BOUND each level's ids instead of only shifting
-  // them. The last entry is the union's total row count.
-  // Only meaningful when the parent declares a string/image channel; otherwise stay
-  // null (hover then reports the raw slot — no better than before #1439, but
-  // never an id composed into someone else's CSR row).
-  let levelOffsets: number[] | null = null;
-  if (parentDeclaresStringChannel) {
-    const usable = onDiskCounts.every((n) => n !== undefined && Number.isSafeInteger(n) && n >= 0);
-    if (!usable) {
-      log.warning(
-        Modules.SCENE_LOADER,
-        `Progressive Points ${node.path} declares a string/image channel but a sub-LOD is missing a valid ` +
-          '`n_points`; per-level picking maps are disabled (hover falls back to the ' +
-          'visible-buffer slot).'
-      );
-    } else {
-      const total = (onDiskCounts as number[]).reduce((s, n) => s + n, 0);
-      // Free cross-check: the writer's parent `n_points` IS the sum of the
-      // levels' row counts (`n_points_total`), so a mismatch means the CSR and
-      // the levels come from different builds — composing would land in
-      // someone else's row. Only checked when the parent actually carries the
-      // attr; its absence is not evidence of anything.
-      if (typeof node.attrs.n_points === 'number' && node.attrs.n_points !== total) {
-        log.warning(
-          Modules.SCENE_LOADER,
-          `Progressive Points ${node.path}: sub-LOD row counts sum to ${total} but the parent ` +
-            `declares n_points=${node.attrs.n_points}; the parent CSR and the levels disagree, ` +
-            'so per-level picking maps are disabled (hover falls back to the visible-buffer slot).'
-        );
-      } else if (total > 0xffffffff) {
-        // The composed map is a `Uint32Array` of union indices, so a union
-        // wider than 2^32 rows would wrap silently into another CSR row (and
-        // past 2^53 the prefix sums stop being exact at all). Individually
-        // safe-integer counts can still sum past both bounds, so the SUM is
-        // what has to be checked.
-        log.warning(
-          Modules.SCENE_LOADER,
-          `Progressive Points ${node.path}: sub-LOD row counts sum to ${total}, past the ` +
-            '2^32 index range the picking map is stored in; per-level picking maps are ' +
-            'disabled (hover falls back to the visible-buffer slot).'
-        );
-      } else {
-        levelOffsets = [];
-        let acc = 0;
-        for (const n of onDiskCounts as number[]) {
-          levelOffsets.push(acc);
-          acc += n;
-        }
-        // Closing bound: `levelOffsets[nAdditive]` === the union row count, so
-        // every level — the last one included — has an end to be checked against.
-        levelOffsets.push(acc);
-      }
-    }
-  }
-  // Per-level maps are only ever USED when the offsets exist to place them.
-  const levelsBuildMaps = parentDeclaresStringChannel && levelOffsets !== null;
+  const { levelOffsets, labels } = ladderPickingLayout(node, levels, 'n_points', 'Points');
 
   // PASS 2 — synthesize each sub-LOD node and its loader.
-  //
-  // A ladder's string/image CSR lives on the PARENT node, spanning the levels in
-  // `additive_<i>` order (#1422), and that is also the only path the pick path
-  // ever resolves per-element metadata against — a sub-LOD carries no CSR of ITS
-  // OWN that any reader can key by, so a sub-LOD's stored flags are never trusted
-  // and are always overridden here. They are overridden with the parent's
-  // declaration, AND only when the composition can actually run: with
-  // `levelOffsets` each level builds its own level-space slot → on-disk map and
-  // `concatenatePointsData` offsets it into the parent's index space by the
-  // preceding levels' on-disk counts (#1439). Without them (no parent CSR, or a
-  // failed cross-check) all stay false, so no per-level map is built only to be
-  // discarded, and picking stays allocation-free exactly as before.
-  const labels: LevelLabelFlags = {
-    has_labels: levelsBuildMaps && node.attrs.has_labels === true,
-    has_image_labels: levelsBuildMaps && node.attrs.has_image_labels === true,
-    has_keys: levelsBuildMaps && node.attrs.has_keys === true,
-  };
   const lodLoaders = levels.map(
     (level, i) =>
       new PointsSpatialIndexLoader(
@@ -687,19 +723,12 @@ export async function createProgressiveLinesLoader(
   );
 
   const levels = await openAdditiveLevels(node, nAdditive, deps);
-  // A ladder's string/image CSR lives on the PARENT node, per-VERTEX and spanning
-  // the levels in `additive_<i>` order (#1422), and that is also the only path the
-  // pick path ever resolves per-element metadata against — a sub-LOD carries no CSR
-  // of its own, so no reader can key by a sub-LOD's on-disk index. Clearing the
-  // flags keeps the spatial-index loader from publishing per-level
-  // `vertexRangeBounds` — and the projection from composing a per-level
-  // segment-slot → on-disk start-vertex map (#1424's chain) — that the ladder
-  // concat then has to discard. Extending that map ACROSS the ladder (offsetting
-  // each level by the preceding levels' on-disk VERTEX counts, which is exactly the
-  // parent CSR's index space) is what would let a sliced ladder hover correctly —
-  // #1439 did exactly that for POINTS (`levelOffsets` in
-  // `createProgressivePointsLoader`); a lines ladder still needs it, and at the
-  // per-VERTEX granularity above.
+  // The ladder's string/image CSR lives on the PARENT, per-VERTEX and spanning
+  // the levels in `additive_<i>` order (#1422), so the offsets are over each
+  // level's on-disk VERTEX count. With them each level publishes its loaded
+  // on-disk vertex ranges and `concatenateLinesData` shifts them into the
+  // parent's index space — the lines twin of the Points composition (#1439).
+  const { levelOffsets, labels } = ladderPickingLayout(node, levels, 'n_vertices', 'Lines');
   const lodLoaders = levels.map(
     (level, i) =>
       new LinesSpatialIndexLoader(
@@ -708,7 +737,7 @@ export async function createProgressiveLinesLoader(
           node,
           i,
           'lines',
-          composeLevelAttrs(level, node, parentEffectiveAttrs, NO_LEVEL_LABELS)
+          composeLevelAttrs(level, node, parentEffectiveAttrs, labels)
         ),
         deps.arrayRefRegistry,
         deps.zarrStore,
@@ -722,6 +751,7 @@ export async function createProgressiveLinesLoader(
     nAdditive,
     node.path,
     levels.map((level) => energyFractionFromAttrs(level.attrs)),
-    deps.sliceCache ?? undefined
+    deps.sliceCache ?? undefined,
+    levelOffsets
   );
 }

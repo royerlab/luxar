@@ -5,34 +5,42 @@
  * one, every frame:
  *
  *   1. Fold each child's raw nD ``positionBounds`` into a cached per-entry
- *      **local-space** :type:`BoundingBox`, using the current ``displayDims``
- *      to map nD axes onto X/Y/Z, then transform it to world space for the
- *      frustum gate. Eviction uses the same full-geometry box.
- *   2. When any child publishes optional robust ``lodBounds``, fold them the
- *      same way (falling back per child to ``positionBounds``) for metric
- *      sizing only, so excluded outliers remain visible and resident.
- *   3. Transform the metric box into world space via
- *      :func:`transformBoundingBox` and the lod_group's ``matrixWorld``.
- *   4. Project the 8 corners through the camera and reduce them to the
- *      dimensionless **coverage metric**, on whichever scale the entry's
- *      ``selector`` names — the two branches of ``evaluateEntry``:
- *      - ``'screen-area'`` (what every derived ladder stamps): the fraction of
- *        the viewport the projected AABB covers by AREA, via
- *        {@link projectBoxAreaFraction}. Aspect-free, tops out at 1.0.
- *      - ``'coverage'`` (legacy): back to pixel coordinates, then the diagonal
- *        of the screen-space AABB divided by ``FILL_FACTOR × fittedAxisPx``
- *        (``fittedAxisPx`` is ``min(viewport.width, viewport.height)`` — the
- *        extent ``calculateCameraDistance`` actually fits; see the
- *        ``FILL_FACTOR`` doc), so 1.0 == the object's projected diagonal has
- *        reached ``FILL_FACTOR`` of the fitted axis.
- *   5. Pick the **finest** child whose ``coverage_fraction`` threshold is
- *      satisfied by that coverage metric, with 10% asymmetric hysteresis on
- *      the downgrade direction to suppress threshold-edge flicker.
+ *      **local-space** :type:`BoundingBox`, mapping nD axes onto X/Y/Z through
+ *      the current ``displayDims``; when any child publishes robust
+ *      ``lodBounds``, fold a second (metric) box the same way, falling back per
+ *      child to ``positionBounds`` (outliers stay visible and resident).
+ *   2. Lift the complete-geometry box to world space through the group's
+ *      ``matrixWorld`` (:func:`transformBoundingBox`). **Off-screen gate**: a
+ *      world box entirely outside the camera frustum holds the group at its
+ *      coarsest READY level. Eviction uses the same box.
+ *   3. Otherwise measure the metric box ON SCREEN: its LOCAL corners go
+ *      through projView × ``matrixWorld`` (so a rotated group is sized by its
+ *      own box, not by its inflated world AABB), in the units the entry's
+ *      ``selector`` names:
+ *      - ``'screen-area'`` (what every derived ladder stamps): the viewport
+ *        fraction covered by the box's INSCRIBED ellipsoid, projected exactly
+ *        and sized at its near depth ({@link projectBoxAreaFraction}).
+ *        Viewport-clipped, tops out at 1.0;
+ *      - ``'coverage'`` (legacy): the pixel diagonal of the projected corners'
+ *        AABB ÷ ``FILL_FACTOR × fittedAxisPx`` (``min(viewport.width,
+ *        viewport.height)``, the extent ``calculateCameraDistance`` fits).
+ *      Both saturate to ``+Infinity`` (finest) with the camera INSIDE the box.
+ *      The session ``lodBias`` then scales the metric in area units.
+ *   4. For a ``screen-area`` ladder whose every level carries a
+ *      ``median_footprint`` stamp, the projected-FOOTPRINT pick decides
+ *      instead: the coarsest level whose median splat stays under
+ *      ``config.lod.maxMedianFootprintPx`` — except while the metric is
+ *      saturated, where the finest level stands.
+ *   5. Otherwise pick the **finest** child whose ``coverage_fraction``
+ *      threshold the metric satisfies, with 10% asymmetric hysteresis on the
+ *      downgrade direction (and, during playback, capped at the finest level
+ *      whose measured load time fits the period).
  *   6. If the desired child differs from the current active one, swap
- *      visibility atomically — gated by the **never-downgrade display
- *      gate**: a fresh aspiration whose additive ladder is still streaming
- *      is not shown while the previously-displayed level looks strictly
- *      better (see ``shouldHoldPreviousDisplay`` in ``lod-display-gate.ts``).
+ *      visibility — a dissolve for blendable groups — gated by the
+ *      **never-downgrade display gate**: a fresh aspiration whose additive
+ *      ladder is still streaming is not shown while the previously-displayed
+ *      level looks strictly better (``shouldHoldPreviousDisplay`` in
+ *      ``lod-display-gate.ts``).
  *
  * The atomic-swap invariant on initial load is realized by
  * ``loadLodGroupNode`` (sequential awaits + ``visible=false`` after
@@ -584,8 +592,9 @@ export interface LODGroupEntry {
   /**
    * The level index the selector WANTED this frame, recorded BEFORE the
    * ready/freshness gates below it get a say. Written by ``evaluateEntry``
-   * once a ``desired`` has been computed — the explicit lock and all three
-   * auto branches (off-screen hold, screen-area pick, legacy coverage pick).
+   * once a ``desired`` has been computed — the explicit lock and every auto
+   * branch (off-screen hold, footprint pick, screen-area or legacy coverage
+   * threshold pick).
    * ``undefined`` (never evaluated) ⇒ read it as ``activeChildIndex``.
    *
    * It is NOT rewritten on every frame: ``evaluateEntry`` returns before
@@ -1141,9 +1150,14 @@ export class LODGroupRegistry {
     return own.get();
   }
 
-  /** Register a newly-loaded lod_group (called by the scene loader). */
+  /**
+   * Register a newly-loaded lod_group (called by the scene loader). A
+   * re-registration of a path (a re-activated partition part) starts the new
+   * entry's per-path state — dissolve, band preload, one-shot warnings — fresh.
+   */
   register(entry: LODGroupEntry): void {
     this.cancelEntryRetryWakes(entry.path);
+    this.forgetEntryState(entry.path);
     const footprintDims = entry.children[0]?.footprintDims;
     bumpForFailedEntryReplacement(this.entries.get(entry.path), entry);
     this.entries.set(entry.path, entry);
@@ -1261,6 +1275,22 @@ export class LODGroupRegistry {
     }
     this.entries.delete(path);
     this.caches.delete(path);
+    this.forgetEntryState(path);
+  }
+
+  /**
+   * Drop every lod_group and partition at or under ``path`` — a subtree that
+   * was discarded (a failed partition part activation), whose entries would
+   * otherwise keep being evaluated against detached objects.
+   */
+  unregisterSubtree(path: string): void {
+    const under = (p: string): boolean => p === path || p.startsWith(`${path}/`);
+    const paths = [...this.entries.keys(), ...this.partitions.paths()].filter(under);
+    for (const p of new Set(paths)) this.unregister(p);
+  }
+
+  /** Per-path state an entry accumulates beyond its registration. */
+  private forgetEntryState(path: string): void {
     this.warnedNoReadyChild.delete(path);
     this.warnedEmptyLevel.delete(path);
     this.dissolves.forget(path);
@@ -1787,7 +1817,10 @@ export class LODGroupRegistry {
    * The on-screen pick: the threshold pick on the (biased) coverage metric, or
    * — for a ``screen-area`` group whose levels carry complete footprint stamps —
    * the projected-footprint pick, which then decides alone (and leaves the band
-   * preload and the dissolve out, see ``dissolveStep``).
+   * preload and the dissolve out, see ``dissolveStep``). Not when the metric
+   * saturated (the camera is inside the box, or ``forceFinest``): the footprint
+   * is sized at the box-centre depth and says nothing about the splats at the
+   * eye, so the finest level stands.
    */
   private pickOnScreen(
     entry: LODGroupEntry,
@@ -1800,7 +1833,7 @@ export class LODGroupRegistry {
     const lodBias = resolveLodBias(this.deps.getLodBias?.());
     coverageMetric *= entry.selector === 'screen-area' ? lodBias : Math.sqrt(lodBias);
     const footprintDesired =
-      forceFinest || entry.selector !== 'screen-area'
+      entry.selector !== 'screen-area' || !Number.isFinite(coverageMetric)
         ? null
         : pickStampedFootprintChild(entry, cache, worldBox, frame.view, {
             viewportHeight: frame.viewport.height,
@@ -2046,8 +2079,9 @@ export class LODGroupRegistry {
    * difference, not by the rendered hard-swap pop.
    *
    * Off / non-blendable / off-screen / locked / a held-stale display ⇒ no
-   * dissolve (byte-identical hard swap). Nor for a level picked by the GSplat
-   * projected-FOOTPRINT rule (``PICK.usedFootprint``). That rule picks the
+   * dissolve (byte-identical hard swap). Nor for a level picked by the
+   * projected-FOOTPRINT rule (``PICK.usedFootprint``; only GSplat levels carry
+   * the stamps, see scene/README step 5). That rule picks the
    * coarsest level whose median splat stays under
    * ``config.lod.maxMedianFootprintPx``, so its swaps happen where splats are
    * about a pixel across and the two levels are expected to read alike — the

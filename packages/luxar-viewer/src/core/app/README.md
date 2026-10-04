@@ -30,7 +30,7 @@ app/
 ├── dataset/        # src URL → scene routing, the load sequence, and DatasetSession (per-dataset state)
 ├── viewer-config/  # Apply zarr viewer_config onto the live app (incl. scene audio) + panel-visibility capture
 ├── camera/         # CameraFlight (flyTo tween) + story waypoints (WaypointDriver, installStoryWaypoints)
-├── kiosk/          # ?kiosk / ui.kiosk lock-down + the context-loss reload watchdog
+├── kiosk/          # ?kiosk / ui.kiosk lock-down + the GPU-loss reload watchdog
 ├── control/        # Remote-control client (?control=ws://…) and its method allowlist
 ├── interaction/    # Canvas gesture / context-menu ownership, element actions, double-tap-to-fit
 ├── snapshot/       # JSON capture/restore of camera + per-dimension slice position
@@ -73,7 +73,8 @@ app/
   owns.
 - **`kiosk/`** — `applySceneKiosk` resolves kiosk mode from the scene's
   `ui.kiosk` block and `?kiosk` (URL wins) and applies it (`applyKioskMode`:
-  input permissions, hidden panels, the `watchdog.ts` context-loss reload),
+  input permissions, hidden panels, the `watchdog.ts` reload on a WebGL context that
+  never returns or a lost WebGPU device),
   returning the watchdog teardown the dataset session owns.
 - **`control/`** — The `?control=` remote-control WebSocket client, its
   callable-method allowlist and wire-value sanitizers.

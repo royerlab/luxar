@@ -1723,6 +1723,25 @@ describe('PointsProgressiveLoader', () => {
       expect(loader.getMetrics().memoryUsed).toBe(measureLodBytes([result]));
     });
 
+    it('getMetrics reports visibleElements from the current ladder, not stale level counters', async () => {
+      // Each level's own counter refreshes only when THAT level queries. A pass
+      // pinned to rung 0 (or a SliceCache restore) leaves the deeper levels'
+      // counters from an earlier slice, which a plain sum would add in.
+      lodA = makeSubLoader(makeLodData(100), { visibleElements: 100 });
+      lodB = makeSubLoader(makeLodData(50), { visibleElements: 50 });
+      lodC = makeSubLoader(makeLodData(25), { visibleElements: 25 });
+      loader = new PointsProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as PointsSpatialIndexLoader[],
+        3,
+        '/points'
+      );
+
+      await loader.updateView({ ...baseViewState, ladderDepth: 1 });
+
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.getMetrics().visibleElements).toBe(100); // rung 0's points only
+    });
+
     it('addEventListener / removeEventListener fan out to every inner loader', () => {
       const listener = vi.fn();
       loader.addEventListener(listener);
@@ -1902,6 +1921,24 @@ describe('PointsProgressiveLoader — RGBA color layout (per-point opacity)', ()
     );
     await expect(loader.loadPoints(baseViewState)).rejects.toThrow(
       /mixed color layouts .*level 1: 3 vs 4 components/
+    );
+  });
+
+  it('rejects an RGBA level that omits colorComponents, naming the level', async () => {
+    // Defaulted to 3, the RGBA buffer passes the cross-level layout compare
+    // (3 vs 3) and fits the allocation, so without the per-level length check
+    // it is copied at stride 3 and silently mis-strides every point after it.
+    const undeclared = makeRgbaLodData(3, 0.9);
+    delete undeclared.colorComponents;
+    const lodA = makeSubLoader(undeclared);
+    const lodB = makeSubLoader(makeLodData(3, 3, { color: 'float32' })); // RGB
+    const loader = new PointsProgressiveLoader(
+      [lodA, lodB] as unknown as PointsSpatialIndexLoader[],
+      2,
+      '/points'
+    );
+    await expect(loader.loadPoints(baseViewState)).rejects.toThrow(
+      /concatenatePointsData \(LOD level 0\): colors length 12 does not match/
     );
   });
 
