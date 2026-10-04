@@ -92,8 +92,8 @@ export async function projectGSplatsTo3D(
 - **Zero-copy results.** Every return goes through `comlink.transfer()`
   with the full list of result-array buffers, so the main thread adopts
   them without an intermediate copy. (Points' zero-alloc accumulator
-  `outputBuffers` path lives with its main-thread projection in
-  `data/points/projection.ts`.)
+  write-through (`ProjectionTargetBuffers`) lives with its main-thread
+  projection in `data/points/projection.ts`.)
 - **`extend_to_all` is geometry-aware.** GSplats receives an explicit
   `extendToAllDims` index list and removes those dims from the active
   hidden-dim set before Mahalanobis attenuation. Lines has no

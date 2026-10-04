@@ -47,7 +47,7 @@ Every helper plugs its instance into the `InputHandler` so the existing keyboard
 
 ## Managed elsewhere
 
-Other on-screen overlays in the viewer — `HelpOverlay`, `ErrorOverlay`, `DatasetBrowser`, layers panel, recording panel — are **not** managed by this folder. They are constructed directly by `LuxarApp` or by other helpers in `core/app/` and follow their own lifecycle (typically the `UIComponent` base in `ui/overlay-widgets/`). This folder is scoped to the three scene-dependent HUD overlays whose lifetime tracks `loadDataset()`.
+Other on-screen overlays in the viewer — the help overlay (`showHelpOverlay`), the error overlay (`showError`), `DatasetBrowser`, layers panel, recording panel — are **not** managed by this folder. They are constructed directly by `LuxarApp` or by other helpers in `core/app/` and follow their own lifecycle (typically the `UIComponent` base in `ui/overlay-widgets/`). This folder is scoped to the three scene-dependent HUD overlays whose lifetime tracks `loadDataset()`.
 
 ## Design note: ports-and-callbacks
 

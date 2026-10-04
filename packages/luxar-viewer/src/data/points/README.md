@@ -56,9 +56,9 @@ space is not one any reader can key by (#1439).
 - **Effective radius is Points-only.** Lines use precomputed segment
   bounds (already in the chunk-bounds index); GSplats use
   Cholesky-derived tolerance. Points need a per-dim radius adjustment
-  because a `pointRadius` of `r` enlarges visibility by `r` in every
+  because a point radius of `r` enlarges visibility by `r` in every
   non-displayed axis — that's exactly what
-  `EffectiveRadiusCalculator` computes.
+  `calculateEffectiveRadii` (`effective-radius-calculator.ts`) computes.
 - **Zero-allocation accumulator hot path.** The loader owns a
   `LoadedPointsDataAccumulator` sized to the dataset's `pointCount`. Every
   nD scrub writes through pre-allocated `positions3D` / `colors` /

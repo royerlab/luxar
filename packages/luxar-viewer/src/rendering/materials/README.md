@@ -111,7 +111,7 @@ than by omission (each bullet below records its own exception):
 - **Same public surface**: `updateOpacity`, `updateGamma`, `updateIntensity`,
   `updateOffset`, `applyBlendingMode`, `clone`, `setColormapTexture`,
   `setScalarRange` — plus `updateCameraParams` on the three instanced-quad
-  types, and `updateFlatNormal` on Mesh alone (nothing else shades).
+  types, and `updateShading` on Mesh alone (nothing else shades).
 - **Same shared helpers** from `_shared/`: every wrapper consumes
   `clampGamma`, the sanitiser snippets, `CameraAwareMaterial`, and
   `ColormapAwareMaterial`. Points, Lines and GSplats read their projection

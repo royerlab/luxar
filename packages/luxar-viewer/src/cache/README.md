@@ -203,8 +203,9 @@ These contracts span every tier and are enforced by the unit tests in
 - **Pending writes drain**: `clear()` awaits in-flight `pendingWrites`
   via `Promise.allSettled` before resetting state.
 - **Disposed flag**: post-`dispose()` `set/get/touch` are no-ops.
-- **In-flight metadata save tracking**: `dispose()` awaits
-  `metadataSaveInFlight` before the final flush.
+- **In-flight metadata save tracking**: `dispose()` awaits the
+  metadata manager's in-flight save (`awaitInFlight()`) before the final
+  flush.
 
 ### L0 read-only chunk contract
 

@@ -34,12 +34,12 @@ The most complex controller. Optionally renders a range slider (when both `min` 
 
 **Slider behavior**
 
-| Interaction  | Effect                                                                                                                                         |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Drag         | Live `change` events; `finishChange` on `mouseup` / `touchend`.                                                                                |
-| Wheel scroll | Move by one authored `step`; `Shift` finer, `Ctrl` coarse, `Ctrl+Shift` finest (below). Debounced `finishChange` 150 ms after scrolling stops. |
-| Double-click | Reset to the value captured at construction (`initialValue`).                                                                                  |
-| Alt+click    | Focus and select the companion number input for keyboard entry.                                                                                |
+| Interaction  | Effect                                                                                                                                           |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Drag         | Live `change` events; `onFinishChange` on `mouseup` / `touchend`.                                                                                |
+| Wheel scroll | Move by one authored `step`; `Shift` finer, `Ctrl` coarse, `Ctrl+Shift` finest (below). Debounced `onFinishChange` 150 ms after scrolling stops. |
+| Double-click | Reset to the value captured at construction (`initialValue`).                                                                                    |
+| Alt+click    | Focus and select the companion number input for keyboard entry.                                                                                  |
 
 The slider's `title` tooltip advertises these shortcuts.
 
@@ -52,7 +52,7 @@ controller-originated wheel events never enter it alongside the coarse tier.
 
 **Number input behavior**
 
-Live `change` events on every keystroke; `finishChange` on commit (`change` event). Invalid input reverts to the current value via `updateDisplay()`.
+Live `change` events on every keystroke; `onFinishChange` on commit (`change` event). Invalid input reverts to the current value via `updateDisplay()`.
 
 **Constraints**
 

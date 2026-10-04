@@ -299,7 +299,7 @@ An append commit of any instanced type (gsplats, points, lines) — or a pool GR
 
 The per-frame scheduler runs ONLY inside the rAF loop. Offline capture (the gallery orbit-video pass) STOPS that loop, moves the camera per frame, and renders synchronously — so the scheduler never fires and every frame would be filmed with the back-to-front permutation frozen at the pre-orbit pose (order-dependent modes: normal / volumetric).
 
-`resortForCapture(maxWaitMs = 3000)` (the app's, exposed as `__luxarDebug.resortDepthOrderingForCapture`, and handed to the recording panel's frame loop as `resortDepthOrdering`) drives THIS host's ordering by hand for the current pose:
+`resortForCapture(maxWaitMs = 3000)` (the app's, exposed as `__luxarDebug.resortDepthOrderingForCapture`, and called by the recording panel's offline frame loop through `sceneManager.depthSort`) drives THIS host's ordering by hand for the current pose:
 
 1. FORCE a fresh sort on every eligible node (`isEffectivelyVisible` + `hasCommittedData` + `isLiveOrderDependent`) — offline can afford a full sort per frame, so the ordering is exact for THIS pose, not only when a threshold trips
 2. Run the cross-node renderOrder pass + pump chunked applies via `evaluateDepthSortPerFrame(c)`
