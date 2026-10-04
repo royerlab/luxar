@@ -541,6 +541,15 @@ table honest.
   flags, render-order slot, audio gain, LOD selector); "Reset this layer" must
   restore it; every `data-control` element needs a rule. A new control needs a
   rule row, a `data-control` id and a `PROBES` entry (keyed by the id type).
+- **README claims are checked** — `unit/readme/readme-claims.test.ts` (extractors
+  in `helpers/readme-claims.ts`). Every code-shaped name in an inline code span of
+  a `src/**/README.md` (camelCase, PascalCase, UPPER_SNAKE; dotted or called) must still
+  be used by the viewer's sources (`src/`, `scripts/`, `tools/`; comments do not
+  count) or by three / the DOM / Playwright; the rest sit in the test's
+  allowlist with a reason (Python names, the launcher's env var, names a README cites as REMOVED).
+  A list fenced by `<!-- mirrors: <file>#exports -->` or
+  `<!-- mirrors: <file>#<Class>.getters -->` … `<!-- /mirrors -->` must list exactly
+  that code set (the loaders README's factory helpers and registry accessors).
 
 ---
 
