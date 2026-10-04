@@ -1,9 +1,13 @@
 /**
  * `uDensityDrop` plumbing: the duck-typed uniform helper, the GLSL hash
- * helper's presence in the shared ordering snippet, and the invariant that
- * every leaf material (visual + picking, GLSL + TSL) declares the uniform so
- * the guard and the pick pass can find it.
+ * helper's presence in the shared ordering snippet, and the geometry-behaviour
+ * matrix row `densityGuard`: every leaf material (visual + picking, GLSL + TSL,
+ * every primitive variant) of a type that thins declares the uniform, so the
+ * guard and the pick pass can find it, and the real guard thins an over-dense
+ * node through it. Mesh declares the row absent: no mesh material carries the
+ * uniform and the guard leaves a mesh untouched.
  */
+import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -13,12 +17,10 @@ import {
   setDensityDrop,
 } from '../../../../rendering/materials/_shared/density-drop';
 import { GLSL_SORTED_INDEX } from '../../../../rendering/materials/_shared/glsl-lib';
-import { PointMaterial } from '../../../../rendering/materials/point/material-glsl';
-import { LineMaterial } from '../../../../rendering/materials/line/material-glsl';
-import { GSplatMaterial } from '../../../../rendering/materials/gsplat/material-glsl';
-import { PointPickingMaterial } from '../../../../rendering/picking/point/material';
-import { LinePickingMaterial } from '../../../../rendering/picking/line/material';
-import { GSplatPickingMaterial } from '../../../../rendering/picking/gsplat/material';
+import { DensityGuard } from '../../../../scene/density-guard';
+import type { GeometryTypeName } from '../../../../types/format-contract';
+import { allMaterialsOf, GEOMETRY_MATERIAL_VARIANTS } from '../../../helpers/geometry-materials';
+import { defineBehaviourConformance } from '../../../_conformance/define-behaviour-conformance';
 
 describe('density-drop helper', () => {
   it('reads 0 when the material has no uniform record or a non-numeric value', () => {
@@ -59,30 +61,64 @@ describe('GLSL_SORTED_INDEX density-drop helper', () => {
   });
 });
 
-describe('every GLSL leaf material declares uDensityDrop at 0', () => {
-  it.each([
-    ['PointMaterial', () => new PointMaterial({})],
-    ['LineMaterial', () => new LineMaterial({})],
-    ['GSplatMaterial', () => new GSplatMaterial({})],
-    ['PointPickingMaterial', () => new PointPickingMaterial({ nodeId: 1 })],
-    ['LinePickingMaterial', () => new LinePickingMaterial({ nodeId: 1 })],
-    ['GSplatPickingMaterial', () => new GSplatPickingMaterial({ nodeId: 1 })],
-  ])('%s', (_name, make) => {
-    const mat = make() as unknown as { uniforms: Record<string, { value: unknown }> };
-    expect(mat.uniforms[DENSITY_DROP_UNIFORM]).toEqual({ value: 0 });
-    expect(setDensityDrop(mat, 0.25)).toBe(true);
-    expect(getDensityDrop(mat)).toBe(0.25);
-  });
+type Uniforms = { uniforms?: Record<string, { value: unknown }> };
 
-  it('picking clones carry the drop value', () => {
-    for (const make of [
-      () => new PointPickingMaterial({ nodeId: 1 }),
-      () => new LinePickingMaterial({ nodeId: 1 }),
-      () => new GSplatPickingMaterial({ nodeId: 1 }),
-    ]) {
-      const src = make();
-      setDensityDrop(src, 0.75);
-      expect(getDensityDrop(src.clone())).toBe(0.75);
-    }
+/**
+ * Run the real guard over one over-dense frame of `type`'s GLSL visual
+ * material in `additive` (every variant); returns the nodes it observed.
+ */
+function observeOverDense(type: GeometryTypeName): THREE.Mesh[] {
+  const guard = new DensityGuard();
+  guard.configure({
+    config: () => ({
+      capElementsPerPixel: 4,
+      minKeepFraction: 1 / 64,
+      enterRatio: 1.5,
+      leaveRatio: 0.75,
+    }),
+    energyComp: () => false,
   });
+  return GEOMETRY_MATERIAL_VARIANTS[type].map(({ visual }) => {
+    const material = visual.glsl('additive');
+    const mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
+    mesh.userData._layerMaterialCloned = true;
+    guard.observe(mesh, {
+      path: '/dense',
+      areaPx: 1000,
+      elements: 539_000,
+      elementsPerPixel: 539,
+      onScreen: true,
+      frame: 1,
+      keep: 1,
+      blendable: true,
+    });
+    return mesh;
+  });
+}
+
+defineBehaviourConformance('densityGuard', {
+  holds(type) {
+    for (const [label, mat] of allMaterialsOf(type)) {
+      expect((mat as Uniforms).uniforms?.[DENSITY_DROP_UNIFORM], label).toEqual({ value: 0 });
+      expect(setDensityDrop(mat, 0.25), label).toBe(true);
+      expect(getDensityDrop(mat), label).toBe(0.25);
+      // A pick material is cloned per pick render target; the clone keeps the drop.
+      if (label.includes('pick glsl')) expect(getDensityDrop(mat.clone()), label).toBe(0.25);
+    }
+    for (const observed of observeOverDense(type)) {
+      expect(getDensityDrop(observed.material)).toBeCloseTo(1 - 1 / 64, 12);
+      expect(observed.userData.densityKeep).toBe(1 / 64);
+    }
+  },
+  enforced: {
+    'no-op': (type) => {
+      for (const [label, mat] of allMaterialsOf(type)) {
+        expect(hasDensityDrop(mat), label).toBe(false);
+      }
+      for (const observed of observeOverDense(type)) {
+        expect(getDensityDrop(observed.material)).toBe(0);
+        expect(observed.userData.densityKeep).toBeUndefined();
+      }
+    },
+  },
 });

@@ -127,6 +127,56 @@ delivering). A spec that wants the in-app buffer specifically — for its
 `hover-tooltip`, `hover-overlay`, `mouse-interactions` and
 `recording-panel` do from their own `test.afterEach`.
 
+### Geometry conformance: what each type does, and draw/pick parity
+
+Per-type behaviour is written once per type, so it drifts: one type gains a
+fix the other three lack, or a new type ships without one. Two declared tables
+in `_conformance/` turn that into failing tests.
+
+**The behaviour matrix** (`_conformance/geometry-behaviours.ts`) is the one
+table to read to learn what Points, Lines, GSplats and Mesh each do. A row is a
+behaviour, such as the sorted-append hold, the L0 chunk cache, colormap support
+or pick registration. A cell is `'yes'`, or an `Absent` that gives the reason,
+how the absence is enforced (`refuse`, `hidden` or `no-op`) and the spec
+section that decides it. Every row names the test file that probes it. That
+file calls `defineBehaviourConformance(row, probe)`
+(`_conformance/define-behaviour-conformance.ts`), which emits one test per
+type: a `'yes'` cell runs the probe against real code, and an absent cell runs
+the probe's checker for its declared enforcement. A cell that claims `'yes'`
+but does nothing fails, and so does an absent cell whose type quietly started
+doing the thing. New probes live in `unit/conformance/`. Probes that need a
+file's module mocks live in that file, which is how the existing per-type tests
+were folded behind the matrix rather than copied. The shared per-type fixtures
+are `helpers/geometry-commits.ts` (one real commit per type) and
+`helpers/geometry-materials.ts` (every visual and pick material, per variant
+and backend).
+
+`unit/conformance/geometry-behaviours.test.ts` keeps the matrix honest, and
+catches the drift no single row can:
+
+- every row is probed exactly once, in the file it names. Every absent cell's
+  spec reference must resolve to a file, and to a heading for a `§` section.
+  The capability rows must equal `GEOMETRY_CAPABILITIES` cell for cell;
+- an `it.each` / `describe.each` / `test.each` over two or three geometry
+  names (plural, or the singular material-kind keys) must say why, with
+  `// geometry-subset: <reason>` directly above the call. This is the "three
+  types, mesh forgotten" shape. The TypeScript-AST scanner
+  (`_conformance/source-scans.ts`) follows named consts and `.map` chains, and
+  is tested on synthetic sources first;
+- the parallel per-type module families (`commit-<t>-geometry.ts`,
+  `load-<t>-node.ts`, `<t>-progressive-loader.ts`) must export the same names,
+  and their exported classes the same public members, once the type token is
+  normalised. Otherwise the asymmetry is declared in
+  `MODULE_FAMILY_ASYMMETRIES` with its reason. This catches "added to GSplats
+  only".
+
+Production code has the matching lint rule. ESLint `no-restricted-syntax`
+flags hand-written geometry-type subsets in `src/` (not in tests): an
+`x === 'points' || x === 'lines'` chain, a `new Set([...])` or an
+`[...].includes(x)` over two or more type literals. Ask
+`GEOMETRY_CAPABILITIES` instead, or key a `Record<GeometryTypeName, …>`. The
+existing sites are baselined in `eslint-suppressions.json` and ratchet down.
+
 ---
 
 ## Test Organization

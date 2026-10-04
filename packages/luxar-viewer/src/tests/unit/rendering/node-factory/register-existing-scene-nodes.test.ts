@@ -27,7 +27,8 @@ import { LinePickingMaterial } from '../../../../rendering/picking/line/material
 import { GSplatPickingMaterial } from '../../../../rendering/picking/gsplat/material';
 import { MeshPickingMaterial } from '../../../../rendering/picking/mesh/material';
 import { PhysicalMeshMaterial } from '../../../../rendering/materials/mesh-physical/material-glsl';
-import { GEOMETRY_TYPES } from '../../../../types/format-contract';
+import type { GeometryTypeName } from '../../../../types/format-contract';
+import { defineBehaviourConformance } from '../../../_conformance/define-behaviour-conformance';
 import { LINE_JOIN_UNIFORM, type LineJoinStyle } from '../../../../types/line-join';
 import { DEFAULT_LINE_PRIMITIVE } from '../../../../types/line-primitive';
 import type { PickingSystem } from '../../../../rendering/picking/picking-system';
@@ -36,6 +37,14 @@ import { attachPointStorage } from '../../../../rendering/point-geometry';
 import { attachLineStorage } from '../../../../rendering/line-geometry';
 import { attachSplatStorage } from '../../../../rendering/gsplat-geometry';
 import type { MeshDataLoader, MeshMetadata, MeshTextureData } from '../../../../types/mesh';
+
+/** The pick material class each geometry type's pick node must carry. */
+const PICK_MATERIAL_CLASS: Record<GeometryTypeName, new (...args: never[]) => THREE.Material> = {
+  points: PointPickingMaterial,
+  lines: LinePickingMaterial,
+  gsplats: GSplatPickingMaterial,
+  mesh: MeshPickingMaterial,
+};
 
 /** Minimal PickingSystem stand-in: the three members the pass touches. */
 function stubPickingSystem() {
@@ -91,40 +100,24 @@ describe('registerExistingSceneNodes', () => {
     factory = new NodeFactory();
   });
 
-  it('registers a node of EVERY geometry type in the contract', () => {
-    // Driven off `GEOMETRY_TYPES` rather than a hand-written list of four, so a fifth
-    // geometry type joins this assertion automatically instead of quietly shipping
-    // unpickable. This is the assertion that mesh's absence would have failed.
-    const { stub, registered } = stubPickingSystem();
-    factory.setPickingSystem(stub);
+  // The geometry-behaviour matrix row `pickRegistration`. Mesh's absence from
+  // this pass is what made it unpickable on every first load; the row makes a
+  // fifth type declare its pick registration before it can ship.
+  defineBehaviourConformance('pickRegistration', {
+    holds(type) {
+      const { stub, registered } = stubPickingSystem();
+      factory.setPickingSystem(stub);
+      const root = new THREE.Group();
+      root.add(makeNode(type, `/${type}`));
 
-    const root = new THREE.Group();
-    for (const type of GEOMETRY_TYPES) root.add(makeNode(type, `/${type}`));
+      factory.registerExistingSceneNodes(root);
 
-    factory.registerExistingSceneNodes(root);
-
-    expect(registered).toHaveLength(GEOMETRY_TYPES.length);
-    expect(registered.map((r) => r.main.name).sort()).toEqual(
-      GEOMETRY_TYPES.map((t) => `/${t}`).sort()
-    );
-  });
-
-  it('gives each type its OWN pick material class', () => {
-    // Not just "something was registered": a table keyed by type could still map two
-    // types to the same builder, which would silently give one of them the other's
-    // element-id semantics.
-    const { stub, registered } = stubPickingSystem();
-    factory.setPickingSystem(stub);
-
-    const root = new THREE.Group();
-    for (const type of GEOMETRY_TYPES) root.add(makeNode(type, `/${type}`));
-    factory.registerExistingSceneNodes(root);
-
-    const byName = new Map(registered.map((r) => [r.main.name, r.pick.material]));
-    expect(byName.get('/points')).toBeInstanceOf(PointPickingMaterial);
-    expect(byName.get('/lines')).toBeInstanceOf(LinePickingMaterial);
-    expect(byName.get('/gsplats')).toBeInstanceOf(GSplatPickingMaterial);
-    expect(byName.get('/mesh')).toBeInstanceOf(MeshPickingMaterial);
+      expect(registered).toHaveLength(1);
+      expect(registered[0].main.name).toBe(`/${type}`);
+      // Its OWN type's pick material: a table keyed by type could still map two
+      // types to one builder, silently giving one the other's element-id semantics.
+      expect(registered[0].pick.material).toBeInstanceOf(PICK_MATERIAL_CLASS[type]);
+    },
   });
 
   it('binds the geometry-owned element texture on the pick material of every pooled type', () => {

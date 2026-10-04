@@ -65,6 +65,7 @@ function loaderWithDataset(): {
 }
 
 describe('worker projections race the loader’s own dataset signal', () => {
+  // geometry-subset: only lines and gsplats project on a worker; points arrive display-ready and mesh projects on the main thread
   it.each([
     ['lines', 'processLinesData', processors.lines],
     ['gsplats', 'processGSplatsData', processors.gsplats],

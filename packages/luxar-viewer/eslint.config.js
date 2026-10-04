@@ -185,6 +185,50 @@ export default [
     },
   },
   {
+    // Hand-written geometry-type subsets. `x === 'points' || x === 'lines'`
+    // chains, and `new Set(['points', 'lines'])` / `['points', 'lines'].includes(x)`
+    // literals, all look identical, so a sweep that widens the vocabulary widens
+    // them too — silently enabling a feature for a type that cannot do it — and
+    // adding a geometry type to the contract never flags them. That has been
+    // caught in review more than once (see the `types/geometry-capabilities.ts`
+    // header). Ask `GEOMETRY_CAPABILITIES` (`supportsLod`, `isPooledGeometry`, …)
+    // or key a `Record<GeometryTypeName, …>` instead, so the compiler asks every
+    // question again when a type is added. Existing sites are baselined in
+    // eslint-suppressions.json and ratchet down; PRODUCTION ONLY, since a test
+    // spelling types out is the point of the test (test lists have their own
+    // check: `tests/unit/conformance/geometry-behaviours.test.ts`).
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/tests/**', 'src/**/*.test.ts', 'src/**/*.spec.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        ...(() => {
+          const geo = '/^(points|lines|gsplats|mesh)$/';
+          const compare = (path) =>
+            `[${path}.type='BinaryExpression'][${path}.operator=/^(===|!==)$/][${path}.right.value=${geo}]`;
+          const message =
+            'Hand-written geometry-type subset. Read GEOMETRY_CAPABILITIES ' +
+            '(types/geometry-capabilities.ts) or key a Record<GeometryTypeName, …> so ' +
+            'adding a geometry type makes the compiler ask this question again.';
+          return [
+            // `a === 'points' || a === 'lines'` (and every longer chain, through its innermost pair)
+            { selector: `LogicalExpression${compare('left')}${compare('right')}`, message },
+            // `new Set(['points', 'lines'])`
+            {
+              selector: `NewExpression[callee.name='Set'] > ArrayExpression:has(> Literal[value=${geo}] ~ Literal[value=${geo}])`,
+              message,
+            },
+            // `['points', 'lines'].includes(x)`
+            {
+              selector: `CallExpression[callee.property.name='includes'] > MemberExpression > ArrayExpression:has(> Literal[value=${geo}] ~ Literal[value=${geo}])`,
+              message,
+            },
+          ];
+        })(),
+      ],
+    },
+  },
+  {
     // Size and complexity. 218K LOC of production TypeScript had no size,
     // nesting, parameter-count or complexity gate of any kind (audit A2-05) —
     // 36 methods at 120+ lines and 13 at 200+ were invisible to everything,

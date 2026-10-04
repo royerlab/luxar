@@ -274,6 +274,7 @@ describe('LayersPanel — a partition part activated after the panel initialised
     expect(fresh).toBe(eager);
   });
 
+  // geometry-subset: gsplats is the leaf type of every other case in this file
   it.each(['points', 'lines', 'mesh'] as const)(
     'replays a panel-selected colormap to a late %s leaf before its first data commit',
     (type) => {

@@ -524,6 +524,7 @@ describe('post-grow reclaim (#2426 pool retention)', () => {
 
   // Contrast gpu-buffer-pool.test.ts's "Grow-path OOM re-claim window":
   // those throws occur inside the grow try and must restore the released buffer.
+  // geometry-subset: the pool grows only the instanced types; a mesh registers its bytes but is never grown
   it.each([
     ['points', 100, 5000], // 66,764 → 453,164 B
     ['lines', 100, 5000], // 66,716 → 780,236 B

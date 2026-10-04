@@ -104,6 +104,7 @@ const { LinePickingTSLMaterial } = await import('../../../../rendering/picking/l
 
 type Bindable = THREE.Material & { customProgramCacheKey(): string };
 
+// geometry-subset: only the instanced types sample an element texture; a mesh pick keys on gl_VertexID
 describe.each([
   // Distinct widths per family so a graph cached by an earlier case cannot mask a later one.
   [

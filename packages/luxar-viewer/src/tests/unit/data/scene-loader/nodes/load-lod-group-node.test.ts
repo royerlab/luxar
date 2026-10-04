@@ -69,6 +69,7 @@ import { ArchiveFaultError } from '../../../../../cache/chunk-source';
 import { LODGroupRegistry } from '../../../../../scene/lod-group-registry';
 import { log } from '../../../../../utils/log';
 import { makeTestNodeBuildCtx } from '../../../../helpers/make-test-node-build-ctx';
+import { defineBehaviourConformance } from '../../../../_conformance/define-behaviour-conformance';
 import type { NodeBuildCtx } from '../../../../../data/scene-loader/nodes/build-ctx';
 import type { SceneNode } from '../../../../../data/data-loader-types';
 
@@ -697,10 +698,10 @@ describe('loadLodGroupNode — lazy level loading', () => {
   // parent the writer back-fills to display_type='mesh'. (The shorthand
   // `lod.add_mesh(…, partition=…)` writes the same tree but puts
   // `coverage_fraction` on the PARTS, not the wrapper, so it is the explicit
-  // route above that produces the shape this test models.)
-  it.each(['gsplats', 'points', 'lines', 'mesh'] as const)(
-    'defers a non-leaf group child (display_type=%s) and loads its subtree on activation',
-    async (displayType) => {
+  // route above that produces the shape this test models.) The cells are the
+  // geometry-behaviour matrix row `lodGroupChildActivation`.
+  defineBehaviourConformance('lodGroupChildActivation', {
+    async holds(displayType) {
       attachStubChildren();
       const reg = makeReg();
       const ctx = makeCtx(reg);
@@ -741,8 +742,8 @@ describe('loadLodGroupNode — lazy level loading', () => {
       // refinement is only scheduled at update-view tails, so the activation
       // must kick the orchestrator or the branch stalls at chunk-1 per part.
       expect(ctx.kickRefinementIfIdle).toHaveBeenCalledTimes(1);
-    }
-  );
+    },
+  });
 
   it('activating a deferred GROUP child a second time loads nothing (no duplicate subtree)', async () => {
     // `loadChildren` attaches a fresh THREE.Group on every call, so a second

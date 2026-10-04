@@ -39,6 +39,7 @@ const src = (rel: string): string =>
   readFileSync(path.resolve(HERE, '../../../../rendering/picking', rel), 'utf8');
 
 describe('GLSL point/line pick fragments switch the depth convention', () => {
+  // geometry-subset: gsplats and mesh already pick by projected depth in the surface modes; this pins the switch points and lines gained
   it.each([
     ['point', POINT_PICK_FRAGMENT_SHADER],
     ['line', LINE_PICK_FRAGMENT_SHADER],
@@ -52,6 +53,7 @@ describe('GLSL point/line pick fragments switch the depth convention', () => {
 });
 
 describe('TSL point/line pick factories switch the depth convention', () => {
+  // geometry-subset: gsplats and mesh already pick by projected depth in the surface modes; this pins the switch points and lines gained
   it.each(['point/pick.tsl.ts', 'line/pick.tsl.ts', 'line/pick-capsule.tsl.ts'])('%s', (file) => {
     const tsl = src(file);
     const start = tsl.indexOf('const depthNode');
@@ -100,6 +102,7 @@ const PAIRS = [
   ],
 ] as const;
 
+// geometry-subset: gsplats and mesh already pick by projected depth in the surface modes; this pins the switch points and lines gained
 describe.each(PAIRS)(
   '%s: renderPickBuffer syncs the depth convention',
   (_n, makeMain, makePick) => {

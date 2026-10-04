@@ -30,6 +30,7 @@ const glslDropCalls = (shader: string): number =>
   [...shader.matchAll(/luxarDensityDropped\(\)(?!\s*\{)/g)].length;
 
 describe('every GLSL pick vertex shader culls a density-dropped element', () => {
+  // geometry-subset: the density guard never thins a mesh (no uDensityDrop on either mesh shader)
   it.each([
     ['point', POINT_PICK_VERTEX_SHADER],
     ['gsplat', GSPLAT_PICK_VERTEX_SHADER],
@@ -41,6 +42,7 @@ describe('every GLSL pick vertex shader culls a density-dropped element', () => 
 });
 
 describe('every TSL pick factory culls a density-dropped element', () => {
+  // geometry-subset: the density guard never thins a mesh (no uDensityDrop on either mesh shader)
   it.each([
     ['point/pick.tsl.ts'],
     ['gsplat/pick.tsl.ts'],

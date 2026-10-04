@@ -1,6 +1,8 @@
 /**
  * Differential characterization test: L0-cache wiring across all three
- * spatial-index loaders (points / lines / gsplats).
+ * spatial-index loaders (points / lines / gsplats). The cells are the
+ * geometry-behaviour matrix row `l0ChunkCache`, which also pins mesh's
+ * deliberate absence (a mesh loads whole and keeps its decode).
  *
  * WHY THIS FILE EXISTS
  * --------------------
@@ -39,7 +41,7 @@
  * extraction has something to be checked against.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { LoaderLifetime } from '../../../../data/loaders/loader-lifetime';
 import * as zarr from 'zarrita';
 
@@ -48,6 +50,8 @@ import { LinesSpatialIndexLoader } from '../../../../data/lines/lines-spatial-in
 import { GSplatsSpatialIndexLoader } from '../../../../data/gsplats/gsplats-spatial-index-loader';
 import type { SceneNode } from '../../../../data';
 import { makeMockZarrLocation } from '../../../builders/spatial-loader-fixtures';
+import { createMeshLoader } from '../../../../data/scene-loader/loaders/loader-factory';
+import { defineBehaviourConformance } from '../../../_conformance/define-behaviour-conformance';
 
 // ── zarrita mock ────────────────────────────────────────────────────────
 // `NotFoundError` is a real class here on purpose. The loaders funnel every
@@ -252,7 +256,7 @@ function gsplatsGeometry(): Geometry {
   };
 }
 
-const GEOMETRIES = [pointsGeometry, linesGeometry, gsplatsGeometry];
+const GEOMETRIES = { points: pointsGeometry, lines: linesGeometry, gsplats: gsplatsGeometry };
 
 describe('L0 cache wiring (differential across the three spatial-index loaders)', () => {
   let opened: string[];
@@ -291,98 +295,136 @@ describe('L0 cache wiring (differential across the three spatial-index loaders)'
     );
   }
 
-  describe.each(GEOMETRIES.map((g) => [g().name, g] as const))('%s', (_name, makeGeometry) => {
-    it('routes every successfully-opened array through the L0 cache', async () => {
-      const geometry = makeGeometry();
-      wireZarr(geometry);
-      const cache = makeFakeL0Cache();
-      const loader = geometry.construct(makeMockZarrLocation(), geometry.node, cache);
+  /** 1. No successfully-opened array bypasses the cache. */
+  async function routesEveryOpenedArray(geometry: Geometry): Promise<void> {
+    wireZarr(geometry);
+    const cache = makeFakeL0Cache();
+    const loader = geometry.construct(makeMockZarrLocation(), geometry.node, cache);
 
-      await geometry.load(loader).catch(() => undefined);
+    await geometry.load(loader).catch(() => undefined);
 
-      // Sanity: the fixture must actually have opened something, or the
-      // invariant below would hold vacuously.
-      expect(opened.length).toBeGreaterThan(0);
+    // Sanity: the fixture must actually have opened something, or the
+    // invariant below would hold vacuously.
+    expect(opened.length).toBeGreaterThan(0);
 
-      const wrappedPaths = wrapSpy.mock.calls.map((call) => call[2] as string);
-      const wrappedNames = new Set(wrappedPaths.map((p) => p.split('/').pop()));
+    const wrappedPaths = wrapSpy.mock.calls.map((call) => call[2] as string);
+    const wrappedNames = new Set(wrappedPaths.map((p) => p.split('/').pop()));
 
-      // THE invariant: nothing that was opened escapes the cache.
-      expect([...new Set(opened)].sort()).toEqual([...wrappedNames].sort());
+    // THE invariant: nothing that was opened escapes the cache.
+    expect([...new Set(opened)].sort()).toEqual([...wrappedNames].sort());
 
-      loader.dispose();
-    });
+    loader.dispose();
+  }
 
-    it('keys every wrap under the node path so sibling nodes cannot collide', async () => {
-      const geometry = makeGeometry();
-      wireZarr(geometry);
-      const cache = makeFakeL0Cache();
-      const loader = geometry.construct(makeMockZarrLocation(), geometry.node, cache);
+  /** 2. Every wrap is keyed under the node path, against the one cache. */
+  async function keysUnderNodePath(geometry: Geometry): Promise<void> {
+    wireZarr(geometry);
+    const cache = makeFakeL0Cache();
+    const loader = geometry.construct(makeMockZarrLocation(), geometry.node, cache);
 
-      await geometry.load(loader).catch(() => undefined);
+    await geometry.load(loader).catch(() => undefined);
 
-      expect(wrapSpy).toHaveBeenCalled();
-      for (const call of wrapSpy.mock.calls) {
-        expect(call[1]).toBe(cache); // the one cache instance, not a copy
-        expect(call[2]).toMatch(new RegExp(`^${geometry.node.path}/[a-z_]+$`));
+    expect(wrapSpy).toHaveBeenCalled();
+    for (const call of wrapSpy.mock.calls) {
+      expect(call[1]).toBe(cache); // the one cache instance, not a copy
+      expect(call[2]).toMatch(new RegExp(`^${geometry.node.path}/[a-z_]+$`));
+    }
+
+    loader.dispose();
+  }
+
+  /** 3. Probe and signal reach the wrapper as live accessors, not snapshots. */
+  async function handsLiveAccessors(geometry: Geometry): Promise<void> {
+    wireZarr(geometry);
+    const cache = makeFakeL0Cache();
+    const loader = geometry.construct(makeMockZarrLocation(), geometry.node, cache);
+
+    await geometry.load(loader).catch(() => undefined);
+    expect(wrapSpy).toHaveBeenCalled();
+
+    const [, , , { getProbe, getSignal }] = wrapSpy.mock.calls[0];
+    expect(typeof getProbe).toBe('function');
+    expect(typeof getSignal).toBe('function');
+
+    // Between loads both are null...
+    expect(getProbe()).toBeNull();
+    expect(getSignal()).toBeNull();
+
+    // ...and a later state change must be VISIBLE through the same
+    // accessor. A snapshot (`this._lifetime.calls.probe` instead of
+    // `() => this._lifetime.calls.probe`) would still return null here.
+    const controller = new AbortController();
+    const calls = (loader as unknown as { _lifetime: LoaderLifetime })._lifetime.calls;
+    let release!: () => void;
+    const running = calls.runWithSignal(controller.signal, () =>
+      calls.runWithProbe(() => new Promise<void>((resolve) => (release = resolve)))
+    );
+
+    const probe = getProbe();
+    expect(probe).not.toBeNull();
+    expect(getSignal()).toBe(controller.signal);
+
+    // Every wrapped array must share that liveness, not just the first.
+    for (const call of wrapSpy.mock.calls) {
+      expect(call[3].getProbe()).toBe(probe);
+      expect(call[3].getSignal()).toBe(controller.signal);
+    }
+    release();
+    await running;
+
+    loader.dispose();
+  }
+
+  /** 4. Degenerate control arm: no L0 cache, nothing wrapped, still loads. */
+  async function wrapsNothingWithoutCache(geometry: Geometry): Promise<void> {
+    wireZarr(geometry);
+    const loader = geometry.construct(makeMockZarrLocation(), geometry.node, undefined);
+
+    await expect(geometry.load(loader)).resolves.toBeDefined();
+
+    expect(opened.length).toBeGreaterThan(0);
+    expect(wrapSpy).not.toHaveBeenCalled();
+
+    loader.dispose();
+  }
+
+  // The geometry-behaviour matrix row `l0ChunkCache` declares which types do
+  // this; each property runs against a fresh fixture.
+  defineBehaviourConformance('l0ChunkCache', {
+    async holds(type) {
+      const makeGeometry = GEOMETRIES[type as keyof typeof GEOMETRIES];
+      expect(makeGeometry, `no l0-cache fixture for ${type}`).toBeDefined();
+      for (const property of [
+        routesEveryOpenedArray,
+        keysUnderNodePath,
+        handsLiveAccessors,
+        wrapsNothingWithoutCache,
+      ]) {
+        wrapSpy.mockClear();
+        opened = [];
+        await property(makeGeometry());
       }
-
-      loader.dispose();
-    });
-
-    it('hands the wrapper live probe/signal accessors, not snapshots', async () => {
-      const geometry = makeGeometry();
-      wireZarr(geometry);
-      const cache = makeFakeL0Cache();
-      const loader = geometry.construct(makeMockZarrLocation(), geometry.node, cache);
-
-      await geometry.load(loader).catch(() => undefined);
-      expect(wrapSpy).toHaveBeenCalled();
-
-      const [, , , { getProbe, getSignal }] = wrapSpy.mock.calls[0];
-      expect(typeof getProbe).toBe('function');
-      expect(typeof getSignal).toBe('function');
-
-      // Between loads both are null...
-      expect(getProbe()).toBeNull();
-      expect(getSignal()).toBeNull();
-
-      // ...and a later state change must be VISIBLE through the same
-      // accessor. A snapshot (`this._lifetime.calls.probe` instead of
-      // `() => this._lifetime.calls.probe`) would still return null here.
-      const controller = new AbortController();
-      const calls = (loader as unknown as { _lifetime: LoaderLifetime })._lifetime.calls;
-      let release!: () => void;
-      const running = calls.runWithSignal(controller.signal, () =>
-        calls.runWithProbe(() => new Promise<void>((resolve) => (release = resolve)))
-      );
-
-      const probe = getProbe();
-      expect(probe).not.toBeNull();
-      expect(getSignal()).toBe(controller.signal);
-
-      // Every wrapped array must share that liveness, not just the first.
-      for (const call of wrapSpy.mock.calls) {
-        expect(call[3].getProbe()).toBe(probe);
-        expect(call[3].getSignal()).toBe(controller.signal);
-      }
-      release();
-      await running;
-
-      loader.dispose();
-    });
-
-    it('wraps nothing when no L0 cache is configured, and still loads', async () => {
-      const geometry = makeGeometry();
-      wireZarr(geometry);
-      const loader = geometry.construct(makeMockZarrLocation(), geometry.node, undefined);
-
-      await expect(geometry.load(loader)).resolves.toBeDefined();
-
-      expect(opened.length).toBeGreaterThan(0);
-      expect(wrapSpy).not.toHaveBeenCalled();
-
-      loader.dispose();
-    });
+    },
+    enforced: {
+      // A mesh loader is never handed the cache: building one through the real
+      // factory, with an L0 cache configured, leaves the cache unreferenced.
+      'no-op': (type) => {
+        expect(type).toBe('mesh');
+        const cache = makeFakeL0Cache();
+        const loader = createMeshLoader(
+          { path: '/', type: 'mesh', attrs: {}, hasSpatialIndex: false } as SceneNode,
+          makeMockZarrLocation() as never,
+          {
+            zarrStore: {} as never,
+            arrayRefRegistry: {} as never,
+            l0Cache: cache as never,
+            sliceCache: null,
+            cachingStore: null,
+          }
+        );
+        expect(Object.values(loader as object)).not.toContain(cache);
+        expect(wrapSpy).not.toHaveBeenCalled();
+      },
+    },
   });
 });

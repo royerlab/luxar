@@ -10,110 +10,33 @@
  *
  * The fix funnels a `requestRender` callback (wired by the app pipeline
  * to `AnimationController.startAnimation`, which is idempotent) through
- * the three SceneLoader commit methods that every late-commit path
- * converges on. These tests pin the funnel for all three geometry types
- * (three-geometry symmetry), its optionality (bare loaders must not
- * throw), and the SceneLoaderManager wire-through.
+ * the SceneLoader commit methods that every late-commit path converges
+ * on. The per-type funnel is the geometry-behaviour matrix row
+ * `commitRequestsRender`, probed below for all four types; the rest pin its
+ * optionality (bare loaders must not throw), the footprint invalidation on a
+ * throwing commit, and the SceneLoaderManager wire-through.
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import * as THREE from 'three';
 import { SceneLoader } from '../../../../data/scene-loader';
 import { SceneLoaderManager } from '../../../../data/scene-loader-manager';
-import type { LoadedPointsData } from '../../../../data/data-loader-types';
-import type { StagedLinesCommit } from '../../../../data/scene-loader/process/data-processor-lines';
-import type { StagedGSplatsCommit } from '../../../../data/scene-loader/process/data-processor-gsplats';
 import type { StagedMeshCommit } from '../../../../data/scene-loader/process/data-processor-mesh';
-
-/** Reach-in surface for the private commit methods under test. */
-interface SceneLoaderInternals {
-  rootGroup: THREE.Group | null;
-  lodGroupRegistry: { invalidatePartitionFootprint(path: string): void };
-  _gpuBufferPool: unknown;
-  updatePointsGeometry(path: string, data: LoadedPointsData): void;
-  commitLinesGeometry(staged: StagedLinesCommit): void;
-  commitGSplatsGeometry(staged: StagedGSplatsCommit): void;
-  commitMeshGeometry(staged: StagedMeshCommit): void;
-}
-
-const internals = (loader: SceneLoader): SceneLoaderInternals =>
-  loader as unknown as SceneLoaderInternals;
-
-function makePointsData(pointCount: number): LoadedPointsData {
-  return {
-    positions: new Float32Array(pointCount * 3),
-    colors: new Uint8Array(pointCount * 3),
-    radii: undefined,
-    sharpness: undefined,
-    pointCount,
-    metadata: {
-      bounds: new THREE.Box3(new THREE.Vector3(-1, -1, -1), new THREE.Vector3(1, 1, 1)),
-    },
-  } as unknown as LoadedPointsData;
-}
+import {
+  commitInternals as internals,
+  GEOMETRY_COMMITS,
+  makeCommitScene,
+  makePointsData,
+  makeStagedGSplats,
+  makeStagedLines,
+} from '../../../helpers/geometry-commits';
+import { defineBehaviourConformance } from '../../../_conformance/define-behaviour-conformance';
 
 function makeMesh(name: string, nodeType: 'points' | 'lines' | 'gsplats'): THREE.Mesh {
   const mesh = new THREE.Mesh();
   mesh.name = name;
-  mesh.userData = {
-    nodeType,
-    attrs: {},
-    visiblePointCount: 0,
-    visibleSegmentCount: 0,
-    visibleSplatCount: 0,
-  };
+  mesh.userData = { nodeType, attrs: {} };
   return mesh;
-}
-
-function makeStagedLines(segmentCount = 2): StagedLinesCommit {
-  return {
-    path: '/lines',
-    sourceData: {
-      positions: new Float32Array(segmentCount * 2 * 3),
-      segments: new Uint32Array(segmentCount * 2),
-      widths: new Float32Array(segmentCount * 2),
-      colors: null,
-      sharpness: null,
-      segmentCount,
-      vertexCount: segmentCount * 2,
-      ndim: 3,
-    },
-    processed: {
-      startPositions: new Float32Array(segmentCount * 3),
-      endPositions: new Float32Array(segmentCount * 3),
-      startColors: new Float32Array(segmentCount * 3),
-      endColors: new Float32Array(segmentCount * 3),
-      startWidths: new Float32Array(segmentCount),
-      endWidths: new Float32Array(segmentCount),
-      startSharpness: new Float32Array(segmentCount),
-      endSharpness: new Float32Array(segmentCount),
-      segmentLengths: new Float32Array(segmentCount),
-      startJointCode: new Float32Array(segmentCount),
-      endJointCode: new Float32Array(segmentCount),
-      segmentCount,
-    },
-  } as StagedLinesCommit;
-}
-
-function makeStagedGSplats(splatCount = 2): StagedGSplatsCommit {
-  return {
-    path: '/g',
-    sourceData: {
-      positions: new Float32Array(splatCount * 3),
-      amplitudes: new Float32Array(splatCount),
-      choleskyFactors: new Float32Array(splatCount * 6),
-      colors: null,
-      splatCount,
-      ndim: 3,
-    },
-    processed: {
-      centers3D: new Float32Array(splatCount * 3),
-      choleskyFactors3D: new Float32Array(splatCount * 6),
-      amplitudes: new Float32Array(splatCount),
-      colors: new Float32Array(splatCount * 3),
-      splatCount,
-    },
-  } as StagedGSplatsCommit;
 }
 
 function makeLoaderWithScene(): {
@@ -126,36 +49,11 @@ function makeLoaderWithScene(): {
   const invalidatePartitionFootprint = vi.fn();
   loader.setRequestRender(spy);
   internals(loader).lodGroupRegistry = { invalidatePartitionFootprint };
-  const root = new THREE.Group();
-  root.add(makeMesh('/p', 'points'));
-  root.add(makeMesh('/lines', 'lines'));
-  root.add(makeMesh('/g', 'gsplats'));
-  internals(loader).rootGroup = root;
+  makeCommitScene(loader);
   return { loader, spy, invalidatePartitionFootprint };
 }
 
 describe('SceneLoader commit → requestRender funnel', () => {
-  it('updatePointsGeometry invokes the render request', () => {
-    const { loader, spy, invalidatePartitionFootprint } = makeLoaderWithScene();
-    internals(loader).updatePointsGeometry('/p', makePointsData(2));
-    expect(spy).toHaveBeenCalled();
-    expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/p');
-  });
-
-  it('commitLinesGeometry invokes the render request', () => {
-    const { loader, spy, invalidatePartitionFootprint } = makeLoaderWithScene();
-    internals(loader).commitLinesGeometry(makeStagedLines(2));
-    expect(spy).toHaveBeenCalled();
-    expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/lines');
-  });
-
-  it('commitGSplatsGeometry invokes the render request', () => {
-    const { loader, spy, invalidatePartitionFootprint } = makeLoaderWithScene();
-    internals(loader).commitGSplatsGeometry(makeStagedGSplats(2));
-    expect(spy).toHaveBeenCalled();
-    expect(invalidatePartitionFootprint).toHaveBeenCalledWith('/g');
-  });
-
   it('commitMeshGeometry invalidates the partition footprint', () => {
     const { loader, invalidatePartitionFootprint } = makeLoaderWithScene();
     internals(loader).rootGroup = null;
@@ -230,26 +128,25 @@ describe('SceneLoader commit → requestRender funnel', () => {
 // held fine level, every timepoint also re-commits the hidden eager coarse
 // level; redrawing for it cost one wasted render per tick (#2944 C3).
 describe('SceneLoader commit → requestRender says whether the frame changed', () => {
-  type Commit = (loader: SceneLoader) => void;
-  const commits: [string, string, Commit][] = [
-    ['points', '/p', (l) => internals(l).updatePointsGeometry('/p', makePointsData(2))],
-    ['lines', '/lines', (l) => internals(l).commitLinesGeometry(makeStagedLines(2))],
-    ['gsplats', '/g', (l) => internals(l).commitGSplatsGeometry(makeStagedGSplats(2))],
-  ];
+  // The geometry-behaviour matrix row `commitRequestsRender`
+  // (tests/_conformance/geometry-behaviours.ts): every type's commit wakes the
+  // loop, and asks for a redraw only when its node is drawn.
+  defineBehaviourConformance('commitRequestsRender', {
+    async holds(type) {
+      const adapter = GEOMETRY_COMMITS[type];
 
-  it.each(commits)('a drawn %s commit asks for a redraw', (_kind, _path, commit) => {
-    const { loader, spy } = makeLoaderWithScene();
-    commit(loader);
-    expect(spy).toHaveBeenCalledWith(true);
-    expect(spy).not.toHaveBeenCalledWith(false);
-  });
+      const drawn = makeLoaderWithScene();
+      await adapter.commit(drawn.loader, 2);
+      expect(drawn.spy).toHaveBeenCalledWith(true);
+      expect(drawn.spy).not.toHaveBeenCalledWith(false);
+      expect(drawn.invalidatePartitionFootprint).toHaveBeenCalledWith(adapter.path);
 
-  it.each(commits)('a hidden %s level commit wakes without a redraw', (_kind, path, commit) => {
-    const { loader, spy } = makeLoaderWithScene();
-    internals(loader).rootGroup!.getObjectByName(path)!.visible = false;
-    commit(loader);
-    expect(spy).toHaveBeenCalledWith(false);
-    expect(spy).not.toHaveBeenCalledWith(true);
+      const hidden = makeLoaderWithScene();
+      internals(hidden.loader).rootGroup!.getObjectByName(adapter.path)!.visible = false;
+      await adapter.commit(hidden.loader, 2);
+      expect(hidden.spy).toHaveBeenCalledWith(false);
+      expect(hidden.spy).not.toHaveBeenCalledWith(true);
+    },
   });
 
   it('a commit under a hidden ancestor wakes without a redraw', () => {
