@@ -270,7 +270,7 @@ def dump_default_config(preset: str = "standard") -> str:
         f"dynamic_ops_verbose: {_fmt(vals.get('dynamic_ops_verbose'))}  # Verbose logging for dynamic ops",
         "",
         "# --- Post-Processing ---",
-        f"cull_retention: {_fmt(vals.get('cull_retention', 0.95))}  # Post-fit cumulative culling (0-1, null=disabled)",
+        f"cull_retention: {_fmt(vals.get('cull_retention', 0.999))}  # Post-fit cumulative culling (0-1, null=disabled)",
         f"voxel_footprint_correction: {_fmt(vals.get('voxel_footprint_correction'))}  # Inflate covariances by voxel footprint",
         "",
         "# --- Boundary Containment ---",

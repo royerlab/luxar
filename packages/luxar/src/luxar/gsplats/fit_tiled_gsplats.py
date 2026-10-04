@@ -1008,7 +1008,7 @@ def fit_tiled(
     max_splats_per_pass: int = 5000,
     psnr_patience: float = 0.5,
     max_passes: Optional[int] = None,
-    cull_retention: float | None = 0.95,
+    cull_retention: float | None = 0.999,
     partition: bool = False,
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
@@ -1092,11 +1092,11 @@ def fit_tiled(
         NOT fitted and contributes a 0-splat placeholder, mirroring the
         ``--allow-empty-tile`` batch worker (the inner fitter rejects a
         non-positive integer ``seeds``).
-    cull_retention : float or None, default=0.95
-        Post-fit cumulative culling on the merged result.  Keeps the top
-        splats that account for this fraction of total amplitude (0--1).
-        Per-tile culling is disabled automatically; only the merged result
-        is culled.  Set to ``None`` to disable.
+    cull_retention : float or None, default=0.999
+        Post-fit cumulative culling. Keeps the top splats that account for
+        this fraction of total amplitude (0--1). Per-tile fitting disables
+        culling; the merged result is culled once, or each tile is culled
+        separately when ``partition=True``. Set to ``None`` to disable.
     source_shape : sequence of int, optional
         Grid of the ACQUISITION, when ``volume`` is already a preprocessed copy
         of it — a caller that decimated before tiling must declare it, or the
