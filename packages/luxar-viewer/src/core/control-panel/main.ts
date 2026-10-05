@@ -53,7 +53,6 @@ const DEFAULT_IDLE_RESET_S = 120;
 export const CHAPTER_RETRY_BASE_MS = 500;
 /** Keep retry traffic bounded while a display remains offline. */
 export const CHAPTER_RETRY_MAX_MS = 5_000;
-
 /**
  * The one line of instruction the panel gives.
  *
@@ -385,6 +384,25 @@ function applyChapterLabels(
   }
 }
 
+/**
+ * The attract-loop timer: `restart(seconds)` re-arms it after each tap (0
+ * disarms), and `reset` runs once the visitor has been gone that long.
+ */
+function createIdleReset(reset: () => void): { restart(seconds: number): void; cancel(): void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cancel = (): void => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+  };
+  return {
+    restart(seconds) {
+      cancel();
+      if (seconds !== 0) timer = setTimeout(reset, seconds * 1000);
+    },
+    cancel,
+  };
+}
+
 /** Renew the viewer-local subscription, then refresh the panel's position. */
 async function readPosition(
   socket: ControllerSocket | undefined,
@@ -410,30 +428,22 @@ function startConnectedPanel(
   let source: ChapterSource | null = null;
   /** The display's title and authored block, fetched once. */
   const presentation = createPresentationCache();
-  let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let chapterRetryTimer: ReturnType<typeof setTimeout> | undefined;
   let chapterRetryDelayMs = CHAPTER_RETRY_BASE_MS;
   const customPanelState: { current: CustomPanelState } = { current: 'unmounted' };
   const connectionState = { refused: false };
+  const idle = createIdleReset(() => {
+    const first = source?.chapters[0];
+    if (first !== undefined && source !== null) {
+      socket?.notify('setDimensionValue', [source.dimensionIndex, first.value]);
+    }
+  });
 
   const panel = (ports.createPanel ?? createControlPanel)({
     root,
     call: (method, callParams) => socket?.notify(method, callParams),
-    onInteraction: () => restartIdleTimer(),
+    onInteraction: () => idle.restart(presentation.config?.idleResetS ?? DEFAULT_IDLE_RESET_S),
   });
-
-  function restartIdleTimer(): void {
-    if (idleTimer !== undefined) clearTimeout(idleTimer);
-    idleTimer = undefined;
-    const idleResetS = presentation.config?.idleResetS ?? DEFAULT_IDLE_RESET_S;
-    if (idleResetS === 0) return;
-    idleTimer = setTimeout(() => {
-      const first = source?.chapters[0];
-      if (first !== undefined && source !== null) {
-        socket?.notify('setDimensionValue', [source.dimensionIndex, first.value]);
-      }
-    }, idleResetS * 1000);
-  }
 
   function cancelChapterRetry(resetDelay = true): void {
     if (chapterRetryTimer !== undefined) clearTimeout(chapterRetryTimer);
@@ -537,7 +547,7 @@ function startConnectedPanel(
 
   const teardown = (): void => {
     source = null;
-    if (idleTimer !== undefined) clearTimeout(idleTimer);
+    idle.cancel();
     cancelChapterRetry();
     socket?.dispose();
   };
