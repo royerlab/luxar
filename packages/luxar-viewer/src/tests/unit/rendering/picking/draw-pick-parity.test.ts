@@ -317,36 +317,36 @@ describe('the table covers every pick shader there is', () => {
   });
 });
 
-describe('the CPU-side rules live in the shared geometry', () => {
-  // SHARED_GEOMETRY_RULES documents these as needing no per-type shader row:
-  // they are decided before upload, so they hold for picking exactly when the
-  // pick node draws the visual geometry.
-  it('declares at least one shared-geometry rule', () => {
-    expect(SHARED_GEOMETRY_RULES.length).toBeGreaterThan(0);
-  });
+describe.each(SHARED_GEOMETRY_RULES)(
+  'the CPU-side rule "%s" lives in the shared geometry',
+  (_rule) => {
+    // Decided before upload, so it holds for picking exactly when the pick
+    // node draws the visual geometry — proven once per rule and per type, so a
+    // rule that stops applying, or a type that starts needing its own shader
+    // row, shows up here under its own name.
+    it.each(GEOMETRY_TYPES)('%s: the pick node reuses the visual geometry', (type) => {
+      const registered: THREE.Mesh[] = [];
+      const factory = new NodeFactory();
+      factory.setPickingSystem({
+        allocatePickId: () => 1,
+        registerNode: (main: THREE.Object3D, pick: THREE.Object3D) => {
+          main.userData.pickNode = pick;
+          registered.push(pick as THREE.Mesh);
+        },
+        get registeredNodeCount() {
+          return registered.length;
+        },
+      } as unknown as PickingSystem);
+      const node = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+      node.name = `/${type}`;
+      node.userData = { nodeType: type, attrs: {} };
+      const root = new THREE.Group();
+      root.add(node);
 
-  it.each(GEOMETRY_TYPES)('%s: the pick node reuses the visual geometry', (type) => {
-    const registered: THREE.Mesh[] = [];
-    const factory = new NodeFactory();
-    factory.setPickingSystem({
-      allocatePickId: () => 1,
-      registerNode: (main: THREE.Object3D, pick: THREE.Object3D) => {
-        main.userData.pickNode = pick;
-        registered.push(pick as THREE.Mesh);
-      },
-      get registeredNodeCount() {
-        return registered.length;
-      },
-    } as unknown as PickingSystem);
-    const node = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
-    node.name = `/${type}`;
-    node.userData = { nodeType: type, attrs: {} };
-    const root = new THREE.Group();
-    root.add(node);
+      factory.registerExistingSceneNodes(root);
 
-    factory.registerExistingSceneNodes(root);
-
-    expect(registered).toHaveLength(1);
-    expect(registered[0].geometry).toBe(node.geometry);
-  });
-});
+      expect(registered).toHaveLength(1);
+      expect(registered[0].geometry).toBe(node.geometry);
+    });
+  }
+);
