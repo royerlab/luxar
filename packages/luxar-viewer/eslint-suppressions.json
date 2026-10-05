@@ -521,9 +521,6 @@
   "src/data/scene-loader/monitor/scene-graph-converter.ts": {
     "complexity": {
       "count": 1
-    },
-    "no-restricted-syntax": {
-      "count": 1
     }
   },
   "src/data/scene-loader/nodes/build-scene-graph.ts": {
@@ -744,11 +741,6 @@
   },
   "src/rendering/line-geometry.ts": {
     "complexity": {
-      "count": 1
-    }
-  },
-  "src/rendering/material-colormap-helpers.ts": {
-    "no-restricted-syntax": {
       "count": 1
     }
   },
@@ -983,9 +975,6 @@
   "src/rendering/webgl-blend-warmup.ts": {
     "complexity": {
       "count": 4
-    },
-    "no-restricted-syntax": {
-      "count": 1
     }
   },
   "src/scene/animation/advance-value.ts": {
@@ -1042,9 +1031,6 @@
   "src/scene/scene-manager/camera/camera-framing.ts": {
     "complexity": {
       "count": 2
-    },
-    "no-restricted-syntax": {
-      "count": 1
     }
   },
   "src/scene/scene-manager/camera/camera-setup.ts": {

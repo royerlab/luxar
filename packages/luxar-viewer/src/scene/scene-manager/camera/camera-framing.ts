@@ -31,6 +31,7 @@ import {
   type LuxarCamera,
 } from '../../../utils/camera-utils';
 import type { ControlsManager } from '../../../controls/controls-manager';
+import { isPooledGeometry } from '../../../types/geometry-capabilities';
 
 /**
  * How far the user can zoom IN relative to the "scene fits in view"
@@ -134,7 +135,7 @@ export function computeSceneBoundingBox(scene: THREE.Object3D): SceneBoundingBox
     const isLuxarInstancedMesh =
       object instanceof THREE.Mesh &&
       object.geometry instanceof THREE.InstancedBufferGeometry &&
-      (nodeType === 'points' || nodeType === 'lines' || nodeType === 'gsplats');
+      isPooledGeometry(nodeType);
     // Mesh's own arm: a plain indexed `BufferGeometry`, so it matches neither of the
     // two branches above. Deliberately not folded into the instanced test — see the
     // false-fix note in the docstring.

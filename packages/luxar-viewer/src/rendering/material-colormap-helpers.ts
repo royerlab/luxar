@@ -129,26 +129,18 @@ export function supportsScalarColormap(
   nodeType: GeometryTypeName,
   geometry?: THREE.BufferGeometry
 ): boolean {
-  if (nodeType === 'gsplats') return true;
-  if (nodeType === 'points' || nodeType === 'lines' || nodeType === 'mesh') {
-    // Scalar presence stamp — see the doc block above.
-    //
-    // `mesh` shares the stamp rather than probing for an attribute, even though a
-    // mesh binds real vertex attributes instead of packing texels: the stamp is
-    // the signal every other type already uses, so keeping one rule avoids a
-    // second way to be wrong. `createMeshGeometry` stamps it when it binds
-    // `aScalar`, so a mesh without scalars fails closed here.
-    return geometry ? geometry.userData?.hasScalars === true : false;
+  switch (nodeType) {
+    case 'gsplats':
+      return true;
+    case 'points':
+    case 'lines':
+    case 'mesh':
+      // Scalar presence stamp — see the doc block above.
+      // `createMeshGeometry` stamps it when it binds `aScalar`.
+      return geometry ? geometry.userData?.hasScalars === true : false;
+    default:
+      // Exhaustive at compile time; fail closed for untyped JS callers.
+      void (nodeType satisfies never);
+      return false;
   }
-  // Exhaustiveness guard: with every GeometryTypeName handled above, `nodeType`
-  // is `never` here. Adding a geometry type breaks this assignment, forcing an
-  // explicit decision instead of a silent fail-closed `false`.
-  //
-  // The value is deliberately NOT returned. This function is `@public` and
-  // re-exported from the package index, so an untyped JS caller can reach it with
-  // anything; returning `unhandled` would hand back the truthy input string and
-  // ENABLE a colormap the geometry cannot feed. Fail closed at runtime, break at
-  // compile time.
-  void (nodeType satisfies never);
-  return false;
 }

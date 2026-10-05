@@ -22,9 +22,9 @@
 
 import * as THREE from 'three';
 import { BLENDING_MODES, type BlendingMode } from '../types/blending';
+import { isGeometryType } from '../types/geometry-capabilities';
+import type { GeometryTypeName } from '../types/format-contract';
 import { log, Modules } from '../utils/log';
-
-type WarmupNodeType = 'points' | 'lines' | 'gsplats' | 'mesh';
 
 const BLEND_VARIANT_DEFINES = new Set([
   'LUXAR_MAX_RGB_CONTRIBUTION',
@@ -189,10 +189,6 @@ function defaultCompileOne(
   compileScene.remove(compileObject);
 }
 
-function isWarmupNodeType(value: unknown): value is WarmupNodeType {
-  return value === 'points' || value === 'lines' || value === 'gsplats' || value === 'mesh';
-}
-
 function hasWarmupMaterialApi(
   material: THREE.Material | null | undefined
 ): material is WarmupMaterial {
@@ -294,7 +290,7 @@ export function buildBlendWarmupFingerprint(
   ].join('@@');
 }
 
-function hasRenderableContent(object: THREE.Object3D, nodeType: WarmupNodeType): boolean {
+function hasRenderableContent(object: THREE.Object3D, nodeType: GeometryTypeName): boolean {
   const userData = object.userData as {
     visiblePointCount?: number;
     visibleSegmentCount?: number;
@@ -471,7 +467,7 @@ export class WebGLBlendWarmupManager {
     }
 
     const nodeType = (object.userData as { nodeType?: unknown }).nodeType;
-    if (!isWarmupNodeType(nodeType) || !hasRenderableContent(object, nodeType)) return;
+    if (!isGeometryType(nodeType) || !hasRenderableContent(object, nodeType)) return;
 
     if (!(
       object instanceof THREE.Mesh ||
