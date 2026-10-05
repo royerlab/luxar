@@ -396,6 +396,28 @@ describe('control-panel bootstrap', () => {
     expect(context.panel.setActive).toHaveBeenLastCalledWith(0);
   });
 
+  it('pauses resync while hidden and resumes when visible', async () => {
+    vi.useFakeTimers();
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    try {
+      const context = harness();
+      context.socketPorts.onStatus?.('open');
+      await settle();
+      vi.mocked(context.socket.call).mockClear();
+
+      await vi.advanceTimersByTimeAsync(PANEL_RESYNC_MS * 2);
+      expect(context.socket.call).not.toHaveBeenCalled();
+
+      visibility.mockReturnValue('visible');
+      await vi.advanceTimersByTimeAsync(PANEL_RESYNC_MS);
+      expect(context.socket.call).toHaveBeenCalledWith('getDimensions');
+      expect(context.socket.call).toHaveBeenCalledWith('subscribe', ['dimensions-changed']);
+      context.teardown();
+    } finally {
+      visibility.mockRestore();
+    }
+  });
+
   it('starts no resync before chapters load, and stops it on teardown', async () => {
     vi.useFakeTimers();
     const context = harness();
