@@ -48,6 +48,9 @@ MAX_BUFFERED_EVENTS = 1024
 #: JSON-RPC code the hub answers with when no viewer is attached.
 NO_VIEWER_CODE = -32001
 
+# Kept independent of luxar.cli; the contract test pins the wire name.
+_VIEWER_ATTACHED_EVENT = "viewer-attached"
+
 # Match uvicorn's control-hub frame ceiling while allowing display-sized PNGs.
 _MAX_FRAME_SIZE_BYTES = 16 * 1024 * 1024
 
@@ -101,6 +104,7 @@ class Viewer:
         self._timeout_s = timeout_s
         self._ids = itertools.count(1)
         self._events: deque[Tuple[str, Any]] = deque(maxlen=MAX_BUFFERED_EVENTS)
+        self._subscriptions: set[str] = set()
         self._socket = _connect(self._url, timeout_s)
 
     # ── lifecycle ────────────────────────────────────────────────────────────
@@ -171,7 +175,7 @@ class Viewer:
         while True:
             remaining_s = max(0.0, deadline - time.monotonic())
             frame = json.loads(self._socket.recv(timeout=remaining_s))
-            event = _event_from_frame(frame)
+            event = self._read_event(frame)
             if event is not None:
                 self._events.append(event)
                 continue
@@ -191,7 +195,9 @@ class Viewer:
         subscribed to nothing still sees whatever another controller — a touch
         panel, say — asked for. Match on ``name`` rather than assuming.
 
-        Events received while :meth:`call` waits for its reply are buffered and
+        A ``viewer-attached`` event also renews this controller's active
+        subscriptions before it is returned. Events received while :meth:`call`
+        waits for its reply are buffered and
         returned first. That buffer holds at most
         :data:`MAX_BUFFERED_EVENTS`; past the cap the OLDEST are dropped, so a
         long-lived controller that never reads events cannot grow without
@@ -214,9 +220,16 @@ class Viewer:
                 frame = json.loads(self._socket.recv(timeout=remaining_s))
             except TimeoutError:
                 return None
-            event = _event_from_frame(frame)
+            event = self._read_event(frame)
             if event is not None:
                 return event
+
+    def _read_event(self, frame: Any) -> Optional[Tuple[str, Any]]:
+        event = _event_from_frame(frame)
+        if event is not None and event[0] == _VIEWER_ATTACHED_EVENT:
+            for name in sorted(self._subscriptions):
+                self.notify("subscribe", name)
+        return event
 
     # ── named methods ────────────────────────────────────────────────────────
     # A thin layer over `call`, for the handful a controller reaches for most.
@@ -278,9 +291,11 @@ class Viewer:
     def subscribe(self, event: str) -> None:
         """Start receiving ``event`` notifications on this socket."""
         self.call("subscribe", event)
+        self._subscriptions.add(event)
 
     def unsubscribe(self, event: str) -> None:
         """Stop receiving ``event`` notifications."""
+        self._subscriptions.discard(event)
         self.call("unsubscribe", event)
 
 

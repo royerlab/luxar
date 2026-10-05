@@ -97,6 +97,7 @@ CLOSE_POLICY_VIOLATION = 1008
 #: JSON-RPC.
 JSONRPC_VERSION = "2.0"
 EVENT_METHOD = "event"
+VIEWER_ATTACHED_EVENT = "viewer-attached"
 PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
 NO_VIEWER = -32001
@@ -446,6 +447,15 @@ class Relay:
     def _serve_viewer(self, peer: _Peer) -> None:
         with self._lock:
             self._viewer = peer
+        self._broadcast(
+            json.dumps(
+                {
+                    "jsonrpc": JSONRPC_VERSION,
+                    "method": EVENT_METHOD,
+                    "params": [VIEWER_ATTACHED_EVENT, None],
+                }
+            )
+        )
         try:
             for text in peer.messages():
                 self._from_viewer(text)

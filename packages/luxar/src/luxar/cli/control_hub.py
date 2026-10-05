@@ -246,6 +246,7 @@ class ControlHub:
         key = next(self._next_socket)
         registry = self._viewers if role == ROLE_VIEWER else self._controllers
         registry[key] = websocket
+        await self._notify_viewer_attached(role)
         aprint(
             f"🔌 control: {role} attached "
             f"({self.viewer_count} viewer(s), {self.controller_count} controller(s))"
@@ -270,6 +271,16 @@ class ControlHub:
             if role == ROLE_CONTROLLER:
                 self._drop_pending_for(key)
             aprint(f"🔌 control: {role} detached")
+
+    async def _notify_viewer_attached(self, role: str) -> None:
+        if role == ROLE_VIEWER:
+            await self._to_controllers(
+                {
+                    "jsonrpc": _contract.JSONRPC_VERSION,
+                    "method": _contract.EVENT_METHOD,
+                    "params": [_contract.VIEWER_ATTACHED_EVENT, None],
+                }
+            )
 
     def _drop_pending_for(self, controller_key: int) -> None:
         """Forget requests whose asker has gone; their replies are unroutable."""

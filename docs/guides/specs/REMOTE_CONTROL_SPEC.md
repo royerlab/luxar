@@ -161,6 +161,16 @@ the hub does not announce its re-attachment. Controllers that need events
 across a reload must renew their subscriptions; the touch panel does so every
 `PANEL_RESYNC_MS` (five seconds) while visible.
 
+When a viewer attaches, the hub sends every connected controller a JSON-RPC
+`event` notification with positional params `["viewer-attached", null]` and no
+`id`. This includes a viewer returning after a page reload. Controllers that
+need events across reloads renew their `subscribe` calls on this notification
+and re-read any state they mirror. A controller connecting after the viewer
+may subscribe immediately; it does not receive a retrospective attachment
+notification. The Python `Viewer` renews its recorded subscriptions when it
+reads the notification. A controller must keep reading its socket for recovery
+to happen.
+
 ### 3.2 Wire format
 
 JSON text frames, JSON-RPC 2.0 shape. The method set is **literally the

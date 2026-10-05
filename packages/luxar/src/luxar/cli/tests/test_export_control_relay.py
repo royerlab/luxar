@@ -56,6 +56,7 @@ def test_contract_values_match_the_contract() -> None:
         "CLOSE_POLICY_VIOLATION",
         "JSONRPC_VERSION",
         "EVENT_METHOD",
+        "VIEWER_ATTACHED_EVENT",
         "PARSE_ERROR",
         "INVALID_REQUEST",
         "NO_VIEWER",
@@ -339,6 +340,20 @@ def attached_viewer(relay: template.Relay) -> tuple[template._Peer, io.BytesIO]:
     peer, written = peer_reading()
     relay._viewer = peer
     return peer, written
+
+
+def test_viewer_attachment_notifies_exported_controllers() -> None:
+    relay = template.Relay()
+    controller, output = peer_reading()
+    relay._controllers[1] = controller
+    viewer, _ = peer_reading()
+
+    relay._serve_viewer(viewer)
+
+    frames = [json.loads(payload) for _, payload in server_frames(output.getvalue())]
+    assert frames == [
+        {"jsonrpc": "2.0", "method": "event", "params": ["viewer-attached", None]}
+    ]
 
 
 def test_a_controllers_request_reaches_the_viewer_with_a_hub_id() -> None:
