@@ -343,10 +343,8 @@ def run_content_fit(
                 # `0.0` ("keep every splat") is not None, so it still wins here.
                 "cull_retention": cull_retention,
             },
-            # Content tiling's own baseline, layered just above the fitter's
-            # harvested defaults: `--preset`, a `cull_retention:` in a `--config`
-            # and `--cull-retention` all still win. Shared with `fit_planned` so
-            # the CLI and library agree on a preset-less content box.
+            # Pin content tiling's baseline if the fitter default changes.
+            # Presets, config files, and --cull-retention still win.
             command_defaults={"cull_retention": CONTENT_CULL_RETENTION},
         )
         _fill_source_dtype(fk, source_dtype)

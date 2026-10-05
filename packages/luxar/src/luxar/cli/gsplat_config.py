@@ -126,8 +126,8 @@ def load_fit_config(
         cli_overrides: Dict of CLI-provided values (None values are ignored)
         command_defaults: Per-command defaults that displace the harvested
             function defaults but yield to preset / YAML / CLI (None values are
-            ignored, so a caller can pass a sentinel-free dict). Lets one command
-            carry a different baseline from a bare ``fit``.
+            ignored, so a caller can pass a sentinel-free dict). Lets a command
+            pin its baseline independently of a bare ``fit``.
 
     Returns:
         Merged config dict ready to pass as ``**kwargs`` to fit_gaussian_splats

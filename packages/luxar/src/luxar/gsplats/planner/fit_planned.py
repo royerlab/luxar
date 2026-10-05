@@ -39,16 +39,9 @@ ProgressCallback = Callable[[int, int, str], None]
 
 #: Near-lossless post-fit retention every content box is fitted at.
 #:
-#: This matches the fitter default and every CLI preset. Previously the fitter
-#: defaulted to ``0.95``, which discarded the bottom 5% of cumulative amplitude
-#: after every fit and helped cause a false ``signal_limited`` calibration curve.
-#: A per-box cull also compounds (the merged store loses the weakest splats of
-#: every box rather than of the volume), though that argument does not single
-#: content out: uniform tiling's
-#: default partition merge culls each tile independently too (only its ``--flat``
-#: merge culls once, globally) and stays at the fitter default on purpose.
-#: The CLI content path imports this constant so its default and the library's
-#: cannot drift apart.
+#: Pin the content path to 0.999 so a future fitter-default change does not
+#: silently change its per-box retention. The CLI content path imports the same
+#: value so it and the library cannot drift apart.
 CONTENT_CULL_RETENTION: float = 0.999
 
 

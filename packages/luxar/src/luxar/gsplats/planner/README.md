@@ -83,8 +83,8 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   skip that discarded scoring work; `--keep-tiles` retains the outputs and opts
   their workers back into scoring.
 - **`CONTENT_CULL_RETENTION = 0.999`** (`fit_planned.py`) — the near-lossless
-  post-fit retention every content box is fitted at, matching the fitter's own
-  0.999 default. The explicit shared value keeps the content paths aligned.
+  post-fit retention every content box is fitted at. This pins the content path
+  if the fitter's default changes later.
   `fit_planned` defaults to it directly; `fit_planned_parallel` has no fit kwargs to
   default, so its boxes reach the same value through the CLI content path described
   above, which imports this same constant as its per-command default — the CLI and
