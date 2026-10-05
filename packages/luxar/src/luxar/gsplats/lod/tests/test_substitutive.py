@@ -1344,7 +1344,13 @@ class TestVolumeRefit:
             r2 = sum((grid[d] - c[d]) ** 2 for d in range(3))
             vol += rng.uniform(0.4, 1.0) * np.exp(-r2 / (2 * s * s))
         fine = fit_gaussian_splats(
-            vol, seeds=80, n_iters=200, device="cpu", verbose=False
+            vol,
+            seeds=80,
+            n_iters=200,
+            # Preserve the DC gap exercised by the mass-pinning tests.
+            cull_retention=0.95,
+            device="cpu",
+            verbose=False,
         )
         return vol, fine
 
