@@ -41,7 +41,7 @@ class FitPreset(str, Enum):
 # ``max_eccentricity`` (10 → 20 from ``draft`` to ``ultra``).
 #
 # Why this matters: the previous presets defaulted to the fitter's former
-# ``cull_retention=0.95``, which silently dropped 5% of splats by amplitude
+# ``cull_retention=0.95``, which silently dropped 5% of amplitude
 # after every fit. Combined with too few iterations at high K, this made
 # ``luxar gsplat cal`` report artificially rising held-out PSNR ("signal
 # limited") instead of the true plateau / overfit curve the manuscript's
@@ -127,8 +127,7 @@ def load_fit_config(
         command_defaults: Per-command defaults that displace the harvested
             function defaults but yield to preset / YAML / CLI (None values are
             ignored, so a caller can pass a sentinel-free dict). Lets one command
-            carry a different baseline from a bare ``fit`` — e.g. the
-            content-tiling path's near-lossless ``cull_retention``.
+            carry a different baseline from a bare ``fit``.
 
     Returns:
         Merged config dict ready to pass as ``**kwargs`` to fit_gaussian_splats

@@ -7,6 +7,7 @@ import pytest
 @pytest.mark.parametrize("progressive", [False, True])
 def test_default_cull_matches_explicit_near_lossless_retention(
     progressive: bool,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     torch = pytest.importorskip("torch")
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
@@ -30,7 +31,7 @@ def test_default_cull_matches_explicit_near_lossless_retention(
                 max_passes=2,
                 psnr_patience=0.0,
                 residual_pass_min_iters=50,
-                verbose=False,
+                verbose=use_default,
                 device="cpu",
                 floor="none",
                 **cull_kwarg,
@@ -39,7 +40,7 @@ def test_default_cull_matches_explicit_near_lossless_retention(
             volume,
             seeds=120,
             n_iters=50,
-            verbose=False,
+            verbose=use_default,
             device="cpu",
             enable_dynamic_ops=False,
             seed_method="peaks",
@@ -50,9 +51,11 @@ def test_default_cull_matches_explicit_near_lossless_retention(
     # The explicit unculled result is the same fit before the last-step trim.
     unculled = fit(None)
     default = fit(None, use_default=True)
+    assert "retention=99.9%" in capsys.readouterr().out
     expected = unculled.cull(method="cumulative", retention=0.999)
     old = unculled.cull(method="cumulative", retention=0.98 if progressive else 0.95)
     assert expected.n_splats > old.n_splats
     assert default.n_splats == expected.n_splats
+    assert "psnr_db" in default.stats
     np.testing.assert_allclose(default.centers, expected.centers)
     np.testing.assert_allclose(default.amplitudes, expected.amplitudes)

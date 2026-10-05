@@ -72,11 +72,11 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   there is no `--truncate` flag), so without the forwarding `-j N` silently fitted
   at the 2.75 default; and substituting `standard` for an absent `--preset` made a
   box resolve 5000 iterations where `-j 1` resolves 1000 (#1637). An absent
-  `--cull-retention` does NOT mean the fitter's default: the worker re-enters the same
-  CLI resolution and lands on `CONTENT_CULL_RETENTION` itself, so `-j N` and `-j 1`
-  cull identically. The CLI also hands the parent process's reference volume to
-  the merge, so parallel flat and partition results get the same whole-volume
-  score as the sequential path; direct callers that omit it receive an explicit
+  `--cull-retention` resolves to `CONTENT_CULL_RETENTION` through the same CLI
+  config path, so `-j N` and `-j 1` cull identically. The CLI also hands the
+  parent process's reference volume to the merge, so parallel flat and partition
+  results get the same whole-volume score as the sequential path; direct callers
+  that omit it receive an explicit
   notice. Each standalone `fit --plan-box` worker persists its own re-measured
   fitting block, but the parent scrubs those measured and region-scoped stamps
   before merging so parts match the sequential path. Disposable `-j N` workers
