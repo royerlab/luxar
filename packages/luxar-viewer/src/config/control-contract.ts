@@ -27,6 +27,8 @@ export const CLOSE_POLICY_VIOLATION = 1008;
 /** JSON-RPC. */
 export const JSONRPC_VERSION = '2.0';
 export const EVENT_METHOD = 'event';
+/** @internal */
+export const VIEWER_ATTACHED_EVENT = 'viewer-attached';
 export const PARSE_ERROR = -32700;
 export const INVALID_REQUEST = -32600;
 export const METHOD_NOT_FOUND = -32601;

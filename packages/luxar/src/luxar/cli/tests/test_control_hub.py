@@ -140,6 +140,19 @@ class TestRouting:
 class TestEvents:
     """A viewer's event notifications fan out to controllers only."""
 
+    def test_viewer_reattachment_notifies_existing_controllers(self) -> None:
+        api, _ = _app()
+        with TestClient(api) as client, client.websocket_connect(
+            "/control?role=controller"
+        ) as controller:
+            for _ in range(2):
+                with client.websocket_connect("/control?role=viewer"):
+                    assert controller.receive_json() == {
+                        "jsonrpc": "2.0",
+                        "method": "event",
+                        "params": ["viewer-attached", None],
+                    }
+
     def test_events_reach_every_controller_and_no_viewer(self) -> None:
         api, _ = _app()
         with (

@@ -177,6 +177,10 @@ func (h *hub) serveViewer(ctx context.Context, p *peer) {
 	h.mu.Lock()
 	h.viewer = p
 	h.mu.Unlock()
+	h.broadcast(ctx, []byte(fmt.Sprintf(
+		`{"jsonrpc":%q,"method":%q,"params":[%q,null]}`,
+		JSONRPCVersion, EventMethod, ViewerAttachedEvent,
+	)))
 	defer func() {
 		h.mu.Lock()
 		if h.viewer == p {

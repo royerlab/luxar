@@ -101,6 +101,7 @@ class Viewer:
         self._timeout_s = timeout_s
         self._ids = itertools.count(1)
         self._events: deque[Tuple[str, Any]] = deque(maxlen=MAX_BUFFERED_EVENTS)
+        self._subscriptions: set[str] = set()
         self._socket = _connect(self._url, timeout_s)
 
     # ── lifecycle ────────────────────────────────────────────────────────────
@@ -171,7 +172,7 @@ class Viewer:
         while True:
             remaining_s = max(0.0, deadline - time.monotonic())
             frame = json.loads(self._socket.recv(timeout=remaining_s))
-            event = _event_from_frame(frame)
+            event = self._read_event(frame)
             if event is not None:
                 self._events.append(event)
                 continue
@@ -214,9 +215,16 @@ class Viewer:
                 frame = json.loads(self._socket.recv(timeout=remaining_s))
             except TimeoutError:
                 return None
-            event = _event_from_frame(frame)
+            event = self._read_event(frame)
             if event is not None:
                 return event
+
+    def _read_event(self, frame: Any) -> Optional[Tuple[str, Any]]:
+        event = _event_from_frame(frame)
+        if event is not None and event[0] == "viewer-attached":
+            for name in sorted(self._subscriptions):
+                self.notify("subscribe", name)
+        return event
 
     # ── named methods ────────────────────────────────────────────────────────
     # A thin layer over `call`, for the handful a controller reaches for most.
@@ -278,10 +286,12 @@ class Viewer:
     def subscribe(self, event: str) -> None:
         """Start receiving ``event`` notifications on this socket."""
         self.call("subscribe", event)
+        self._subscriptions.add(event)
 
     def unsubscribe(self, event: str) -> None:
         """Stop receiving ``event`` notifications."""
         self.call("unsubscribe", event)
+        self._subscriptions.discard(event)
 
 
 def _with_query(url: str, *, role: str, token: Optional[str]) -> str:

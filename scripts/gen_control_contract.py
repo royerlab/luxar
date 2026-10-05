@@ -125,6 +125,7 @@ def render_python(c: Dict[str, Any]) -> str:
     lines.append("# JSON-RPC.")
     lines.append(f'JSONRPC_VERSION = "{c["jsonrpc"]["version"]}"')
     lines.append(f'EVENT_METHOD = "{c["jsonrpc"]["event_method"]}"')
+    lines.append(f'VIEWER_ATTACHED_EVENT = "{c["jsonrpc"]["viewer_attached_event"]}"')
     for key, int_value in _int_items(c, "jsonrpc", "error_codes"):
         lines.append(f"{key.upper()} = {int_value}")
     lines.append("")
@@ -167,6 +168,8 @@ def render_typescript(c: Dict[str, Any]) -> str:
     lines.append("/** JSON-RPC. */")
     lines.append(f"export const JSONRPC_VERSION = '{c['jsonrpc']['version']}';")
     lines.append(f"export const EVENT_METHOD = '{c['jsonrpc']['event_method']}';")
+    lines.append("/** @internal */")
+    lines.append(f"export const VIEWER_ATTACHED_EVENT = '{c['jsonrpc']['viewer_attached_event']}';")
     for key, int_value in _int_items(c, "jsonrpc", "error_codes"):
         lines.append(f"export const {key.upper()} = {int_value};")
     lines.append("")
@@ -232,6 +235,7 @@ def render_go(c: Dict[str, Any]) -> str:
             [
                 ("JSONRPCVersion", f'"{c["jsonrpc"]["version"]}"'),
                 ("EventMethod", f'"{c["jsonrpc"]["event_method"]}"'),
+                ("ViewerAttachedEvent", f'"{c["jsonrpc"]["viewer_attached_event"]}"'),
                 *[
                     (f"Code{_go_name(k)}", str(v))
                     for k, v in _int_items(c, "jsonrpc", "error_codes")

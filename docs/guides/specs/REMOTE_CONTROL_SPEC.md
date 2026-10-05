@@ -157,6 +157,16 @@ several is not supported. The hub keeps no state of its own beyond the
 attachment list; the viewer is the source of truth (`getViewerState()` on
 connect).
 
+When a viewer attaches, the hub sends every connected controller a JSON-RPC
+`event` notification with positional params `["viewer-attached", null]` and no
+`id`. This includes a viewer returning after a page reload. Controllers that
+need events across reloads renew their `subscribe` calls on this notification
+and re-read any state they mirror. A controller connecting after the viewer
+may subscribe immediately; it does not receive a retrospective attachment
+notification. The Python `Viewer` renews its recorded subscriptions when it
+reads the notification. A controller must keep reading its socket for recovery
+to happen.
+
 ### 3.2 Wire format
 
 JSON text frames, JSON-RPC 2.0 shape. The method set is **literally the

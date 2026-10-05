@@ -246,6 +246,14 @@ class ControlHub:
         key = next(self._next_socket)
         registry = self._viewers if role == ROLE_VIEWER else self._controllers
         registry[key] = websocket
+        if role == ROLE_VIEWER:
+            await self._to_controllers(
+                {
+                    "jsonrpc": _contract.JSONRPC_VERSION,
+                    "method": _contract.EVENT_METHOD,
+                    "params": [_contract.VIEWER_ATTACHED_EVENT, None],
+                }
+            )
         aprint(
             f"🔌 control: {role} attached "
             f"({self.viewer_count} viewer(s), {self.controller_count} controller(s))"

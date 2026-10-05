@@ -166,6 +166,25 @@ func TestEventsReachEveryController(t *testing.T) {
 	}
 }
 
+func TestViewerAttachNotifiesControllers(t *testing.T) {
+	h, base := serve(t, "")
+	controller := dial(t, base, "?role=controller", nil)
+	waitFor(t, "controller", func() bool { return h.controllerCount() == 1 })
+	for i := 0; i < 2; i++ {
+		viewer := dial(t, base, "?role=viewer", nil)
+		frame := recv(t, controller)
+		if frame["method"] != EventMethod || jsonNumber(frame["id"]) != "null" {
+			t.Fatalf("unexpected attachment frame: %v", frame)
+		}
+		params, ok := frame["params"].([]any)
+		if !ok || len(params) != 2 || params[0] != "viewer-attached" || params[1] != nil {
+			t.Fatalf("unexpected attachment params: %v", frame)
+		}
+		_ = viewer.CloseNow()
+		waitFor(t, "viewer to detach", func() bool { return !h.viewerAttached() })
+	}
+}
+
 func TestPendingIsBounded(t *testing.T) {
 	// A wedged viewer never replies. Without a cap, one map entry leaks per
 	// tap for the lifetime of the process.

@@ -40,6 +40,9 @@ jsonrpc:
   # The notification a viewer sends to fan an event out to controllers. Carries
   # positional params `[name, payload]` and no id.
   event_method: event
+  # Hub-originated event when a display socket attaches. Existing controllers
+  # use it to renew viewer-local subscriptions after a reload.
+  viewer_attached_event: viewer-attached
   error_codes:
     parse_error: -32700
     invalid_request: -32600

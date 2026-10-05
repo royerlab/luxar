@@ -314,6 +314,24 @@ class TestNamedMethods:
 
 
 class TestEvents:
+    def test_attachment_renews_only_current_subscriptions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        socket = FakeSocket([{"result": True}, {"result": True}, {"result": True}])
+        viewer = make_viewer(monkeypatch, socket)
+        viewer.subscribe("camera-changed")
+        viewer.subscribe("dimensions-changed")
+        viewer.unsubscribe("camera-changed")
+        socket.replies.append(
+            {"method": "event", "params": ["viewer-attached", None], "id": None}
+        )
+        assert viewer.recv_event() == ("viewer-attached", None)
+        assert socket.last() == {
+            "jsonrpc": "2.0",
+            "method": "subscribe",
+            "params": ["dimensions-changed"],
+        }
+
     def test_recv_event_returns_a_notification(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
