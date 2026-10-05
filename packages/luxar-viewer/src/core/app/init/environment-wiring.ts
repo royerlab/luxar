@@ -37,12 +37,7 @@ import { parseProbeSpec } from '../../../rendering/environment/probe';
 import { downloadBlob } from '../../../ui/recording-panel/screenshot-exporter';
 import type { LuxarAppOptions } from '../options';
 import { buildInfo } from '../../../config/build-info';
-import { getLoadTimeline } from '../../../profiling/load-timeline';
-import { config } from '../../../config';
-import {
-  hasDataWorkerPoolInitializationFailed,
-  isDataWorkerPoolInitializationPending,
-} from '../../../workers/worker-pool';
+import { isDataWorkerPoolInitializationPending } from '../../../workers/worker-pool';
 
 /** What the wiring needs from the app. */
 export interface EnvironmentWiringDeps {
@@ -66,12 +61,7 @@ export function wireSceneEnvironment(deps: EnvironmentWiringDeps): void {
 
   // Keep the runtime available for store-relative HDRI URLs and redraws from
   // init. Only a live scene capture waits for the worker pool (#3021).
-  const captureReady = (): boolean =>
-    !isDataWorkerPoolInitializationPending() &&
-    (!config.dataLoading.performance.useWebWorkers ||
-      typeof Worker === 'undefined' ||
-      getLoadTimeline().milestones.poolReady !== undefined ||
-      hasDataWorkerPoolInitializationFailed());
+  const captureReady = (): boolean => !isDataWorkerPoolInitializationPending();
   sceneManager.attachEnvironmentRuntime(isSettled, captureReady);
 
   // `pre-render`: a capture this frame sees the frame's final view state

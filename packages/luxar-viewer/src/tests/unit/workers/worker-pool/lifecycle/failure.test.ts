@@ -74,11 +74,9 @@ describe('WorkerPool initialization failure handling', () => {
 
     expect(pool.isInitialized()).toBe(false);
     expect(first.isDataWorkerPoolInitializationPending()).toBe(false);
-    expect(first.hasDataWorkerPoolInitializationFailed()).toBe(true);
     expect(first.workers).toHaveLength(3);
     expect(first.workers.every((worker) => worker.terminate.mock.calls.length === 1)).toBe(true);
     first.disposeWorkerPool();
-    expect(first.hasDataWorkerPoolInitializationFailed()).toBe(false);
 
     const second = await loadWorkerPoolWithInitializationResults(['success', 'success']);
     const retryPool = new second.WorkerPool();
@@ -86,7 +84,6 @@ describe('WorkerPool initialization failure handling', () => {
     await expect(retryPool.initialize()).resolves.toBeUndefined();
     expect(retryPool.getWorkerCount()).toBe(2);
     expect(retryPool.isInitializationPending()).toBe(false);
-    expect(retryPool.hasInitializationFailed()).toBe(false);
   });
 
   it('MED-22: empty-pool throw leaves no pending workers behind', async () => {

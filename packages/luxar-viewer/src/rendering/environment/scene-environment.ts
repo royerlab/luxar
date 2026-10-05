@@ -239,7 +239,7 @@ export class SceneEnvironment {
 
   /**
    * Per-frame hook (the init pipeline registers it). Captures the first settled
-   * scene after the pool is ready, or re-captures a stale live environment after
+   * scene after any pool startup finishes, or re-captures a stale live environment after
    * the debounce. Returns whether a capture ran.
    */
   tick(now: number = performance.now()): boolean {

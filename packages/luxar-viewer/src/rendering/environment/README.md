@@ -42,8 +42,8 @@ or a literal `x,y,z`.
 Ordering caveat: the first physical material is created DURING the scene load, before
 `load-dataset.ts` has handed over the authored config and any baked map, so the first
 light is the room and `configure()` / `setBaked()` re-apply a few milliseconds
-later. A live scene capture waits for worker-pool startup (or in-process fallback)
-and loader settlement, so the first capture sees the finished scene.
+later. A live scene capture waits for any worker-pool startup in progress and
+loader settlement, so the first capture sees the finished scene.
 
 ## Baking
 

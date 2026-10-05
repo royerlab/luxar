@@ -108,7 +108,6 @@ export class WorkerPool {
   private workers: WorkerInstance[] = [];
   private initPromise: Promise<void> | null = null;
   private initializationPending = false;
-  private initializationFailed = false;
   /**
    * "At least ONE worker is usable" gate, settled as soon as the first worker
    * is published — rejected only when the attempt ends with none.
@@ -181,7 +180,6 @@ export class WorkerPool {
     // Return existing promise if initialization already started or completed
     if (this.initPromise) return this.initPromise;
     this.initializationPending = true;
-    this.initializationFailed = false;
 
     // Capture the generation token AND a per-attempt workers list.
     // The IIFE-level cleanup paths must only touch attempt-local state,
@@ -340,7 +338,6 @@ export class WorkerPool {
           throw e;
         }
         this.initializationPending = false;
-        this.initializationFailed = true;
         // Generation current — full cleanup of this generation's state.
         for (const { worker } of this.workers) {
           worker.terminate();
@@ -861,11 +858,6 @@ export class WorkerPool {
     return this.workers.length > 0;
   }
 
-  /** Whether the current initialization attempt failed without a usable pool. */
-  hasInitializationFailed(): boolean {
-    return this.initializationFailed;
-  }
-
   /** Whether this pool is still completing its initial worker handshakes. */
   isInitializationPending(): boolean {
     return this.initializationPending;
@@ -913,7 +905,6 @@ export class WorkerPool {
     // instead of attempting a fresh `initialize()`.
     this.initPromise = null;
     this.initializationPending = false;
-    this.initializationFailed = false;
     // Settle the usable-worker gate before dropping it: an in-flight attempt
     // takes its stale-generation branch and returns WITHOUT publishing, so a
     // hot-path caller parked in `whenUsable()` would otherwise wait forever.
@@ -937,11 +928,6 @@ export function getWorkerPool(): WorkerPool {
     installCodecBackend(workerPoolInstance);
   }
   return workerPoolInstance;
-}
-
-/** A failed warm-up means scene capture need not wait for a pool-ready mark. */
-export function hasDataWorkerPoolInitializationFailed(): boolean {
-  return workerPoolInstance?.hasInitializationFailed() ?? false;
 }
 
 /** An in-flight pool still needs the main thread, even if settings change. */
@@ -1034,7 +1020,7 @@ export function disposeWorkerPool(): void {
       // Drop the codec route with the pool: blosc decodes run on the main
       // thread until a new pool is created.
       setBloscDecodeBackend(null);
-      // A new pool marks `poolReady` again; the next load must wait for it.
+      // A new pool marks `poolReady` again after its next warm-up.
       noteLoadResourceReleased('poolReady');
     }
   }

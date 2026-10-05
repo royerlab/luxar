@@ -23,14 +23,6 @@ vi.mock('../../../../../rendering/environment/bake', () => ({
 vi.mock('../../../../../ui/recording-panel/screenshot-exporter', () => ({
   downloadBlob: vi.fn(),
 }));
-// Scene capture and baking are gated on the load timeline's poolReady milestone (#3021).
-const { loadTimeline } = vi.hoisted(() => ({
-  loadTimeline: { milestones: { poolReady: undefined as number | undefined } },
-}));
-vi.mock('../../../../../profiling/load-timeline', () => ({
-  getLoadTimeline: () => loadTimeline,
-}));
-
 import {
   BAKE_SETTLED_FRAMES,
   wireEnvironmentToLayers,
@@ -96,7 +88,6 @@ function makeHarness(options: { bakeEnvironment?: { probe?: string; resolution?:
 describe('wireSceneEnvironment', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    loadTimeline.milestones.poolReady = undefined;
     config.dataLoading.performance.useWebWorkers = true;
     vi.stubGlobal('Worker', class {});
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
@@ -146,12 +137,35 @@ describe('wireSceneEnvironment', () => {
     pending.mockRestore();
   });
 
-  it('captures and bakes after worker initialization fails', async () => {
-    const failed = vi
-      .spyOn(workerPool, 'hasDataWorkerPoolInitializationFailed')
+  it('captures and bakes when workers are enabled but no pool has started', async () => {
+    const h = makeHarness({ bakeEnvironment: { resolution: 8 } });
+    const captureReady = vi.mocked(h.sceneManager.attachEnvironmentRuntime).mock.calls[0][1];
+    expect(workerPool.isDataWorkerPoolInitializationPending()).toBe(false);
+    expect(captureReady()).toBe(true);
+
+    h.settled.value = false;
+    eventBus.emit('geometry-committed', {});
+    expect(h.callbacks.has('environment-capture-ready')).toBe(true);
+    h.settled.value = true;
+    h.environment.tick.mockReturnValueOnce(true);
+    expect(h.callbacks.get('environment-capture-ready')!()).toBe(true);
+    expect(h.callbacks.has('environment-capture-ready')).toBe(false);
+
+    const bake = h.callbacks.get('environment-bake')!;
+    for (let i = 0; i < BAKE_SETTLED_FRAMES; i++) bake();
+    expect(bakeEnvironment).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(window.__luxarDebug?.environment?.lastBake).toBeDefined());
+    h.events.dispose();
+  });
+
+  it('captures and bakes after worker initialization stops pending', async () => {
+    const pending = vi
+      .spyOn(workerPool, 'isDataWorkerPoolInitializationPending')
       .mockReturnValue(true);
     const h = makeHarness({ bakeEnvironment: { resolution: 8 } });
     const captureReady = vi.mocked(h.sceneManager.attachEnvironmentRuntime).mock.calls[0][1];
+    expect(captureReady()).toBe(false);
+    pending.mockReturnValue(false);
     expect(captureReady()).toBe(true);
 
     h.settled.value = false;
@@ -165,10 +179,13 @@ describe('wireSceneEnvironment', () => {
     expect(bakeEnvironment).toHaveBeenCalledTimes(1);
     await vi.waitFor(() => expect(window.__luxarDebug?.environment?.lastBake).toBeDefined());
     h.events.dispose();
-    failed.mockRestore();
+    pending.mockRestore();
   });
 
   it('attaches the runtime at init, gates capture, then ticks and marks stale', () => {
+    const pending = vi
+      .spyOn(workerPool, 'isDataWorkerPoolInitializationPending')
+      .mockReturnValue(true);
     const h = makeHarness();
     expect(h.sceneManager.attachEnvironmentRuntime).toHaveBeenCalledTimes(1);
     const captureReady = vi.mocked(h.sceneManager.attachEnvironmentRuntime).mock.calls[0][1];
@@ -190,7 +207,7 @@ describe('wireSceneEnvironment', () => {
     const ready = h.callbacks.get('environment-capture-ready')!;
     expect(ready()).toBe(false);
     h.settled.value = false;
-    loadTimeline.milestones.poolReady = 12;
+    pending.mockReturnValue(false);
     expect(captureReady()).toBe(true);
     expect(ready()).toBe(false);
     h.settled.value = true;
@@ -210,6 +227,7 @@ describe('wireSceneEnvironment', () => {
     ).notifyListeners(true);
     expect(h.environment.markStale).toHaveBeenCalledTimes(2);
     expect(h.callbacks.size).toBe(0);
+    pending.mockRestore();
   });
 
   it('marks stale on every Layers-panel appearance edit, but not on a selection or gain change', () => {
@@ -277,13 +295,16 @@ describe('wireSceneEnvironment', () => {
   });
 
   it('under ?bakeEnv, bakes once after the loader stays settled for the grace window', async () => {
+    const pending = vi
+      .spyOn(workerPool, 'isDataWorkerPoolInitializationPending')
+      .mockReturnValue(true);
     const h = makeHarness({ bakeEnvironment: { probe: 'node:shell', resolution: 32 } });
     const bake = h.callbacks.get('environment-bake')!;
     expect(bake).toBeDefined();
 
     for (let i = 0; i < BAKE_SETTLED_FRAMES + 1; i++) bake();
     expect(bakeEnvironment).not.toHaveBeenCalled();
-    loadTimeline.milestones.poolReady = 12;
+    pending.mockReturnValue(false);
 
     // An unsettled frame resets the count.
     for (let i = 0; i < BAKE_SETTLED_FRAMES - 1; i++) bake();
@@ -313,12 +334,12 @@ describe('wireSceneEnvironment', () => {
       base64: 'AQID',
       byteLength: 3,
     });
+    pending.mockRestore();
   });
 
   it('a malformed ?probe= records the error instead of baking', async () => {
     const h = makeHarness({ bakeEnvironment: { probe: 'centre' } });
     const bake = h.callbacks.get('environment-bake')!;
-    loadTimeline.milestones.poolReady = 12;
     for (let i = 0; i < BAKE_SETTLED_FRAMES; i++) bake();
     await vi.waitFor(() =>
       expect(window.__luxarDebug?.environment?.bakeError).toContain("malformed probe 'centre'")
