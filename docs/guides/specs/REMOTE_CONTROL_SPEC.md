@@ -156,6 +156,10 @@ a viewer's replies and events go to the controllers. Addressing one viewer of
 several is not supported. The hub keeps no state of its own beyond the
 attachment list; the viewer is the source of truth (`getViewerState()` on
 connect).
+Subscriptions live in the viewer, so a reloaded viewer starts with none, and
+the hub does not announce its re-attachment. Controllers that need events
+across a reload must renew their subscriptions; the touch panel does so every
+`PANEL_RESYNC_MS` (five seconds) while visible.
 
 ### 3.2 Wire format
 
