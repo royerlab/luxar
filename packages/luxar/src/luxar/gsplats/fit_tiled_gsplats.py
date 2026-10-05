@@ -1533,7 +1533,7 @@ def merge_tile_results(
         if verbose and merged.n_splats < n_before:
             aprint(
                 f"Post-fit culling: {n_before} -> {merged.n_splats} splats "
-                f"(retained {cull_retention * 100:.0f}% of amplitude)"
+                f"(retained {cull_retention * 100:.1f}% of amplitude)"
             )
 
     merged.stats.update(

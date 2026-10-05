@@ -8,7 +8,9 @@ from luxar.gsplats.gsplat_data import GSplatData
 
 
 @pytest.mark.parametrize("partition", [False, True])
-def test_default_cull_preserves_tiled_overlap(partition: bool) -> None:
+def test_default_cull_preserves_tiled_overlap(
+    partition: bool, capsys: pytest.CaptureFixture[str]
+) -> None:
     y, x = np.mgrid[:24, :48]
     image = np.exp(-((y - 12) ** 2 / 50 + (x - 24) ** 2 / 450)).astype(np.float32)
     options = dict(
@@ -20,10 +22,12 @@ def test_default_cull_preserves_tiled_overlap(partition: bool) -> None:
         output_space="voxel",
         floor="none",
         partition=partition,
-        verbose=False,
+        verbose=not partition,
     )
 
     default = fit_tiled(image, **options)
+    if not partition:
+        assert "retained 99.9% of amplitude" in capsys.readouterr().out
     unculled = fit_tiled(image, cull_retention=None, **options)
 
     def overlap_mse(result) -> float:
