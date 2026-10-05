@@ -123,11 +123,14 @@ function filesOutsideLintScript(scriptName) {
 }
 
 /** Parsed TypeScript project configuration. */
-function parsedTypeScriptConfig(configName) {
+function parsedTypeScriptConfig(configName, additionalFiles = []) {
   const configPath = join(PKG, configName);
   const loaded = ts.readConfigFile(configPath, ts.sys.readFile);
   expect(loaded.error).toBeUndefined();
-  const parsed = ts.parseJsonConfigFileContent(loaded.config, ts.sys, PKG, undefined, configPath);
+  const config = additionalFiles.length
+    ? { ...loaded.config, files: [...(loaded.config.files ?? []), ...additionalFiles] }
+    : loaded.config;
+  const parsed = ts.parseJsonConfigFileContent(config, ts.sys, PKG, undefined, configPath);
   expect(parsed.errors).toEqual([]);
   return parsed;
 }
@@ -165,7 +168,7 @@ function typecheckedFiles(configName) {
 
 /** Diagnostics for one synthetic source under a project's compiler options. */
 function sourceDiagnostics(configName, relativePath, sourceText, additionalFiles = []) {
-  const parsed = parsedTypeScriptConfig(configName);
+  const parsed = parsedTypeScriptConfig(configName, additionalFiles);
   const sourcePath = join(PKG, relativePath);
   const options = { ...parsed.options, noLib: true, noResolve: true };
   const host = ts.createCompilerHost(options);
@@ -186,7 +189,7 @@ function sourceDiagnostics(configName, relativePath, sourceText, additionalFiles
       /\bdeclare\b/.test(readFileSync(file, 'utf8'))
   );
   const program = ts.createProgram(
-    [...declarationFiles, ...selectedTypeDeclarations(parsed), ...additionalFiles, sourcePath],
+    [...declarationFiles, ...selectedTypeDeclarations(parsed), sourcePath],
     options,
     host
   );
