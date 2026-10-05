@@ -592,8 +592,22 @@ def create_luxar_scene(
     if output_path is None:
         output_path = get_demos_output_dir() / "gsplats_2d_cmu1_pathology.luxar.zarr"
 
-    # Channel -> colormap mapping
-    CHANNEL_COLORMAPS = ["red", "green", "blue"]
+    # Channel -> colormap mapping. The archives are fits of the *inverted*
+    # brightfield (`data = 1.0 - data` at ingest), so each per-channel amplitude
+    # encodes ABSORPTION in that primary, not emitted light. Painting the R/G/B
+    # absorption channels with the matching red/green/blue colormaps and summing
+    # additively therefore renders the COMPLEMENT of the stain — eosin (which
+    # absorbs green) comes out green, nuclei (red+green absorption) come out
+    # red-orange: a false-colour fluorescence look, not H&E (#3043).
+    #
+    # Brightfield is a subtractive image, so the faithful composite paints each
+    # absorption channel with its SUBTRACTIVE (CMY) complement: red absorption ->
+    # cyan, green -> magenta, blue -> yellow. The additive sum of those then
+    # reconstructs the perceived stain hue — eosin cytoplasm reads pink/magenta,
+    # hematoxylin nuclei read blue-purple. This is scene-setup only (the fitted
+    # amplitudes are unchanged); the one thing it cannot recover is the white
+    # slide background, since the inverted fit placed no splats there.
+    CHANNEL_COLORMAPS = ["cyan", "magenta", "yellow"]
 
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
@@ -651,10 +665,11 @@ Tiled Fitting:
   - Tile size: {TILE_SIZE} px, overlap: {OVERLAP} px
   - Seeds per tile: {SEEDS_PER_TILE:,}, iterations: {N_ITERS:,}
 
-Channels (inverted brightfield RGB, each a separate layer):
-  - Red:   Eosin / cytoplasm / connective tissue
-  - Green: Mixed contribution from both stains
-  - Blue:  Hematoxylin / nuclei / basophilic structures
+Channels (inverted-brightfield absorption, painted in subtractive
+CMY so the additive sum reconstructs the H&E stain colours):
+  - Red absorption   -> cyan   : eosin cytoplasm reads pink/magenta
+  - Green absorption -> magenta : mixed stain contribution
+  - Blue absorption  -> yellow  : hematoxylin nuclei read blue-purple
 
 Controls:
   - Press L to open the Layers panel
