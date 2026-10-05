@@ -15,7 +15,6 @@
  */
 
 export { calculate_effective_radii } from './effective-radii';
-/** @internal The fallback class exposes this kernel through WasmModule. */
 export { points_slice_membership } from './points-membership';
 export { sort_splats_by_depth } from './depth-sort';
 export {

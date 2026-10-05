@@ -26,7 +26,7 @@
  *
  * The CPU-side rules (nD slice, slab, position clipping) need no row per
  * shader: the pick node REUSES the visual node's geometry, which the parity
- * test asserts for every type.
+ * test asserts for every type (`SHARED_GEOMETRY_RULES`).
  *
  * The pixel-level half lives in the TSL harness (`tsl-shader-parity.spec.ts`,
  * pick ⊆ draw masks) and the render gate's `pickWithinDraw` judgement.
@@ -123,6 +123,13 @@ export const VISIBILITY_RULES = {
 } as const satisfies Record<string, RuleSignature>;
 
 export type VisibilityRuleId = keyof typeof VISIBILITY_RULES;
+
+/** The rules that live in the shared geometry, so draw and pick cannot disagree. */
+export const SHARED_GEOMETRY_RULES = [
+  'nD slice (the commit uploads only the in-slice elements)',
+  'slab tolerance (the same projection decides membership)',
+  'position-bounds clipping',
+] as const;
 
 const NO_THINNING = {
   neither: 'A shaded surface is never thinned; neither mesh material declares uDensityDrop.',
