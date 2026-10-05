@@ -1143,7 +1143,7 @@ rewrites a store must apply all three rules:
   within their own precision rather than thrown away.
 
   One exemption, on the producing side: the fitters end with a high-retention
-  cumulative trim (`cull_retention`, 0.95 by default) *after* scoring, and carry
+  cumulative trim (the fitter's `cull_retention`) *after* scoring, and carry
   their measurement across it — so a stored fit's score is taken on the pre-trim
   splats, which hold 100% of the amplitude minus the retention. Re-scoring would
   cost a second full render of the volume, and the alternative is a fit that
