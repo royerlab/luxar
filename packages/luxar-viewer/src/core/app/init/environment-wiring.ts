@@ -38,6 +38,11 @@ import { downloadBlob } from '../../../ui/recording-panel/screenshot-exporter';
 import type { LuxarAppOptions } from '../options';
 import { buildInfo } from '../../../config/build-info';
 import { getLoadTimeline } from '../../../profiling/load-timeline';
+import { config } from '../../../config';
+import {
+  hasDataWorkerPoolInitializationFailed,
+  isDataWorkerPoolInitializationPending,
+} from '../../../workers/worker-pool';
 
 /** What the wiring needs from the app. */
 export interface EnvironmentWiringDeps {
@@ -61,7 +66,12 @@ export function wireSceneEnvironment(deps: EnvironmentWiringDeps): void {
 
   // Keep the runtime available for store-relative HDRI URLs and redraws from
   // init. Only a live scene capture waits for the worker pool (#3021).
-  const captureReady = (): boolean => getLoadTimeline().milestones.poolReady !== undefined;
+  const captureReady = (): boolean =>
+    !isDataWorkerPoolInitializationPending() &&
+    (!config.dataLoading.performance.useWebWorkers ||
+      typeof Worker === 'undefined' ||
+      getLoadTimeline().milestones.poolReady !== undefined ||
+      hasDataWorkerPoolInitializationFailed());
   sceneManager.attachEnvironmentRuntime(isSettled, captureReady);
 
   // `pre-render`: a capture this frame sees the frame's final view state
@@ -99,7 +109,7 @@ export function wireSceneEnvironment(deps: EnvironmentWiringDeps): void {
   sceneDimsManager.addListener(markStaleOnSliceChange);
   events.add(() => sceneDimsManager.removeListener(markStaleOnSliceChange));
 
-  if (options.bakeEnvironment) scheduleBake(deps, options.bakeEnvironment);
+  if (options.bakeEnvironment) scheduleBake(deps, options.bakeEnvironment, captureReady);
 }
 
 /**
@@ -125,7 +135,8 @@ export function wireEnvironmentToLayers(
 
 function scheduleBake(
   deps: EnvironmentWiringDeps,
-  request: NonNullable<LuxarAppOptions['bakeEnvironment']>
+  request: NonNullable<LuxarAppOptions['bakeEnvironment']>,
+  captureReady: () => boolean
 ): void {
   const { sceneManager, animationController, events, isSettled } = deps;
   let settledFrames = 0;
@@ -138,8 +149,7 @@ function scheduleBake(
       // Not before a dataset load has begun and produced a scene root.
       const hasScene = sceneManager.scene.children.some((c) => c.name === 'LuxarScene');
       if (!getSceneLoader('default') || !hasScene) return false;
-      settledFrames =
-        getLoadTimeline().milestones.poolReady !== undefined && isSettled() ? settledFrames + 1 : 0;
+      settledFrames = captureReady() && isSettled() ? settledFrames + 1 : 0;
       if (settledFrames < BAKE_SETTLED_FRAMES) return false;
       started = true;
       animationController.removePerFrameCallback(id);

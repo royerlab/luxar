@@ -43,6 +43,8 @@ import { downloadBlob } from '../../../../../ui/recording-panel/screenshot-expor
 import { eventBus } from '../../../../../utils/cross-layer/event-bus';
 import { EventGroup } from '../../../../../utils/cross-layer/event-group';
 import { sceneDimsManager } from '../../../../../scene/scene-dims-manager';
+import { config } from '../../../../../config';
+import * as workerPool from '../../../../../workers/worker-pool';
 import type { SceneManager } from '../../../../../scene/scene-manager';
 import type { AnimationController } from '../../../../../scene/animation/animation-controller';
 
@@ -95,7 +97,75 @@ describe('wireSceneEnvironment', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     loadTimeline.milestones.poolReady = undefined;
+    config.dataLoading.performance.useWebWorkers = true;
+    vi.stubGlobal('Worker', class {});
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
+  });
+
+  it('captures and bakes after settlement when Web Workers are disabled', async () => {
+    config.dataLoading.performance.useWebWorkers = false;
+    const h = makeHarness({ bakeEnvironment: { resolution: 8 } });
+    const captureReady = vi.mocked(h.sceneManager.attachEnvironmentRuntime).mock.calls[0][1];
+    expect(captureReady()).toBe(true);
+
+    h.settled.value = false;
+    eventBus.emit('geometry-committed', {});
+    expect(h.callbacks.has('environment-capture-ready')).toBe(true);
+    expect(h.callbacks.get('environment-capture-ready')!()).toBe(false);
+    h.settled.value = true;
+    h.environment.tick.mockReturnValueOnce(true);
+    expect(h.callbacks.get('environment-capture-ready')!()).toBe(true);
+    expect(h.callbacks.has('environment-capture-ready')).toBe(false);
+
+    const bake = h.callbacks.get('environment-bake')!;
+    for (let i = 0; i < BAKE_SETTLED_FRAMES; i++) bake();
+    expect(bakeEnvironment).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(window.__luxarDebug?.environment?.lastBake).toBeDefined());
+    h.events.dispose();
+  });
+
+  it('allows capture when the Worker API is unavailable', () => {
+    vi.stubGlobal('Worker', undefined);
+    const h = makeHarness();
+    const captureReady = vi.mocked(h.sceneManager.attachEnvironmentRuntime).mock.calls[0][1];
+    expect(captureReady()).toBe(true);
+    h.events.dispose();
+  });
+
+  it('keeps waiting if workers are disabled during an in-flight initialization', () => {
+    const pending = vi
+      .spyOn(workerPool, 'isDataWorkerPoolInitializationPending')
+      .mockReturnValue(true);
+    config.dataLoading.performance.useWebWorkers = false;
+    const h = makeHarness();
+    const captureReady = vi.mocked(h.sceneManager.attachEnvironmentRuntime).mock.calls[0][1];
+    expect(captureReady()).toBe(false);
+    pending.mockReturnValue(false);
+    expect(captureReady()).toBe(true);
+    h.events.dispose();
+    pending.mockRestore();
+  });
+
+  it('captures and bakes after worker initialization fails', async () => {
+    const failed = vi
+      .spyOn(workerPool, 'hasDataWorkerPoolInitializationFailed')
+      .mockReturnValue(true);
+    const h = makeHarness({ bakeEnvironment: { resolution: 8 } });
+    const captureReady = vi.mocked(h.sceneManager.attachEnvironmentRuntime).mock.calls[0][1];
+    expect(captureReady()).toBe(true);
+
+    h.settled.value = false;
+    eventBus.emit('geometry-committed', {});
+    expect(h.callbacks.has('environment-capture-ready')).toBe(true);
+    h.settled.value = true;
+    expect(h.callbacks.get('environment-capture-ready')!()).toBe(false);
+    expect(h.callbacks.has('environment-capture-ready')).toBe(false);
+    const bake = h.callbacks.get('environment-bake')!;
+    for (let i = 0; i < BAKE_SETTLED_FRAMES; i++) bake();
+    expect(bakeEnvironment).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(window.__luxarDebug?.environment?.lastBake).toBeDefined());
+    h.events.dispose();
+    failed.mockRestore();
   });
 
   it('attaches the runtime at init, gates capture, then ticks and marks stale', () => {
