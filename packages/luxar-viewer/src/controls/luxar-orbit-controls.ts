@@ -112,6 +112,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
 }> {
   // --- Public API ---
   public enabled: boolean = true;
+  public pointerEnabled: boolean = true;
   public target: THREE.Vector3;
 
   // Configuration
@@ -488,7 +489,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
     if (this.viewAxisRotationHandler) return; // Already enabled
 
     this.viewAxisRotationHandler = (event: WheelEvent) => {
-      if (!event.shiftKey || !this.enabled) return;
+      if (!event.shiftKey || !this.enabled || !this.pointerEnabled) return;
       event.preventDefault();
       event.stopImmediatePropagation();
 
@@ -592,7 +593,7 @@ export class LuxarOrbitControls extends THREE.EventDispatcher<{
 
   private makeInputCtx(): OrbitInputCtx {
     return {
-      enabled: this.enabled,
+      enabled: this.enabled && this.pointerEnabled,
       enableRotate: this.enableRotate,
       enablePan: this.enablePan,
       enableZoom: this.enableZoom,

@@ -3479,6 +3479,7 @@ describe('SceneLoader', () => {
       gsplatLoaders: Map<string, unknown>;
       loaders: Map<string, unknown>; // points
       linesLoaders: Map<string, unknown>;
+      meshLoaders: Map<string, unknown>;
       viewStateQueue: { setPending(s: unknown): void; hasPending(): boolean };
       scheduleProgressiveRefinement: () => Promise<void>;
     }
@@ -3572,11 +3573,13 @@ describe('SceneLoader', () => {
       }
     });
 
-    // anyLoaderHasMoreLODs consults all THREE loader maps (gsplats/points/lines),
-    // not just gsplats — a points- or lines-substitutive ladder must kick too.
+    // The kick consults EVERY kind's loader map, not just gsplats — a points,
+    // lines or mesh ladder must kick too.
     it.each([
       ['points', 'loaders' as const],
       ['lines', 'linesLoaders' as const],
+      ['gsplats', 'gsplatLoaders' as const],
+      ['mesh', 'meshLoaders' as const],
     ])('kicks when only the %s loader map has more LODs', (_label, mapKey) => {
       const { internals, spy } = stubOrchestrator(false);
       const map = internals[mapKey];

@@ -7,6 +7,7 @@ const location = { resolve: (path: string) => path };
 const node = { path: '/node', attrs: {} };
 
 describe('range decode signal on initial node builds', () => {
+  // geometry-subset: mesh has no spatial-index loader (it loads whole), so it owns no range decode
   it.each([
     ['points', PointsSpatialIndexLoader],
     ['lines', LinesSpatialIndexLoader],

@@ -24,6 +24,7 @@ import type { Renderer, RendererCapabilities } from '../../../../rendering/rende
 // only dereferenced inside the function bodies (long after the module
 // graph has evaluated), so the cycle is benign under ESM live bindings.
 import { SHADER_REGISTRY } from './index';
+import type { RegistryEntry } from './types';
 import { loadTslMaterials } from '../../../../rendering/tsl/load';
 
 /** Edge length (px) of the square offscreen render target the parity harness draws into. */
@@ -340,10 +341,29 @@ export async function renderBloomChainTSL(
 }
 
 /**
+ * A registry entry's uniforms with `overrides` applied on top — how a spec
+ * renders the same fixture under a different uniform state (the draw/pick
+ * density-drop check sets `uDensityDrop`) without a registry entry per state.
+ * Applied BEFORE the TSL material is built, since the TSL node builders read
+ * the uniform values at construction.
+ */
+function entryUniforms(
+  entry: RegistryEntry,
+  overrides: Readonly<Record<string, number>> = {}
+): Record<string, THREE.IUniform> {
+  const uniforms = entry.buildUniforms();
+  for (const [name, value] of Object.entries(overrides)) uniforms[name] = { value };
+  return uniforms;
+}
+
+/**
  * Render the GLSL3 path of a registered shader to an offscreen target
  * and return the readback pixel buffer (RGBA8, length = w*h*4).
  */
-export function renderGLSL(shaderName: string): Uint8Array {
+export function renderGLSL(
+  shaderName: string,
+  uniformOverrides?: Readonly<Record<string, number>>
+): Uint8Array {
   const entry = SHADER_REGISTRY[shaderName];
   if (!entry) throw new Error(`Unknown shader: ${shaderName}`);
 
@@ -352,7 +372,7 @@ export function renderGLSL(shaderName: string): Uint8Array {
   // throws with a clear diagnostic if it doesn't (shouldn't happen
   // for any shader currently in the registry).
   const glsl = requireWebGLSources(entry.source);
-  const uniforms = entry.buildUniforms();
+  const uniforms = entryUniforms(entry, uniformOverrides);
   if (!uniforms.uPixelRatio) uniforms.uPixelRatio = { value: 1 };
   // Build the ShaderMaterial. `defines` is always an object (never
   // undefined — Three.js warns "parameter 'defines' has value of
@@ -447,7 +467,7 @@ export function renderGLSL(shaderName: string): Uint8Array {
  */
 export async function renderTSL(
   shaderName: string,
-  opts: { native?: boolean } = {}
+  opts: { native?: boolean; uniforms?: Readonly<Record<string, number>> } = {}
 ): Promise<{ pixels: Uint8Array; vertexShader: string; fragmentShader: string }> {
   const entry = SHADER_REGISTRY[shaderName];
   if (!entry) throw new Error(`Unknown shader: ${shaderName}`);
@@ -462,7 +482,7 @@ export async function renderTSL(
   // covers every shader the harness can be asked to build.
   await loadTslMaterials();
 
-  const uniforms = entry.buildUniforms();
+  const uniforms = entryUniforms(entry, opts.uniforms);
   if (!uniforms.uPixelRatio) uniforms.uPixelRatio = { value: 1 };
   const material = entry.buildTSLMaterial
     ? entry.buildTSLMaterial(uniforms)

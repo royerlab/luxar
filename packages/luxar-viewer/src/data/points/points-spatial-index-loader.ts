@@ -255,7 +255,6 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
   async initialize(signal?: AbortSignal): Promise<void> {
     // Load chunk-based spatial index
     try {
-      // The one-chunk shortcut is safe only when projection can filter each point.
       const spatialExtendDims = await this.loadSpatialExtendDimsFromSceneDimensions();
       if (spatialExtendDims) {
         this._effectiveRadiusConfig = {
@@ -273,7 +272,7 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
         );
       }
 
-      // Open radii before deciding whether projection can replace the bounds gate.
+      // Open radii for effective-radius projection when available.
       if (!isArrayListed(this.node, 'radii')) {
         log.info(
           Modules.SPATIAL_INDEX_LOADER,
@@ -300,9 +299,6 @@ export class PointsSpatialIndexLoader implements DataLoader, LoaderMonitor {
       this.chunkIndex = await loadPointsChunkIndex(
         this.zarrLocation,
         this.node.attrs as PointsNodeAttrs,
-        this.node.attrs.has_radii === true &&
-          this._effectiveRadiusConfig !== null &&
-          this.arrays.radii !== undefined,
         signal
       );
 

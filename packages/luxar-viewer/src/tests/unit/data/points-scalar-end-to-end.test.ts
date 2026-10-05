@@ -222,6 +222,45 @@ describe('projectPointsTo3D scalar pass-through', () => {
     expect(result.scalars?.buffer).toBe(acc.getScalarBuffer().buffer);
     expect(Array.from(result.scalars ?? [])).toEqual([0.75]);
   });
+
+  it('compacts an unordered no-radii slice in the accumulator buffer', () => {
+    const positions = new Float32Array([0, 0, 0, 5, 1, 0, 0, 0]);
+    const scalars = new Float32Array([0.25, 0.75]);
+    const acc = new LoadedPointsDataAccumulator(64, 4, 2);
+    acc.ensureCapacity(2);
+    acc.fill(0, {
+      positions: new Float32Array(3),
+      scalars: scalars.subarray(0, 1),
+    });
+    const target: ProjectionTargetBuffers = {
+      positions3D: acc.getPositionBuffer(),
+      colors: acc.getColorBuffer(),
+      radii: acc.getRadiiBuffer(),
+      sharpness: acc.getSharpnessBuffer(),
+      scalars: acc.getScalarBuffer(),
+    };
+    (target.scalars as Float32Array).set(scalars);
+    const result = projectPointsTo3D(
+      wasm,
+      positions,
+      null,
+      null,
+      null,
+      {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0.5],
+      },
+      [{ start: 0, end: 2 }],
+      { ...ctx({ ...pointsAttrs(), ndim: 4 }), accumulator: acc },
+      target,
+      scalars
+    );
+    expect(result.pointCount).toBe(1);
+    expect(Array.from(result.positions)).toEqual([1, 0, 0]);
+    expect(result.scalars?.buffer).toBe(acc.getScalarBuffer().buffer);
+    expect(Array.from(result.scalars ?? [])).toEqual([0.75]);
+  });
 });
 
 describe('GPUBufferPool scalar texel slot', () => {

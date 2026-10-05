@@ -5,6 +5,17 @@
  * Both the compiled WASM and the TypeScript fallback implement this interface.
  */
 export interface WasmModule {
+  /** Mark points inside every hidden dimension's selected slice. */
+  points_slice_membership(
+    positions: Float32Array,
+    displayDims: Uint32Array,
+    slicePosition: Float32Array,
+    tolerance: Float32Array,
+    discreteDims: Uint8Array,
+    ndim: number,
+    numPoints: number,
+    output: Uint8Array
+  ): number;
   /**
    * Calculate effective radii for nD points when sliced.
    *

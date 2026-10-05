@@ -67,6 +67,38 @@ describe('ControlsManager', () => {
   });
 
   describe('control type switching', () => {
+    it('keeps fly keyboard motion while pointer input is disabled across mode switches', () => {
+      controlsManager.setPointerEnabled(false);
+      controlsManager.setControlType('fly');
+      const fly = controlsManager.getControls() as LuxarFlyControls;
+      const before = camera.position.clone();
+      fly.handleKeyDown(new KeyboardEvent('keydown', { key: 'w' }));
+      fly.update(0.1);
+      expect(camera.position.distanceTo(before)).toBeGreaterThan(0);
+
+      fly.handleKeyUp(new KeyboardEvent('keyup', { key: 'w' }));
+      fly.reset();
+      const afterReset = camera.position.clone();
+      domElement.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
+      fly.update(0.1);
+      expect(camera.position.distanceTo(afterReset)).toBe(0);
+      expect(fly.pointerEnabled).toBe(false);
+
+      controlsManager.setPointerEnabled(true);
+      domElement.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
+      fly.update(0.1);
+      expect(camera.position.distanceTo(afterReset)).toBeGreaterThan(0);
+
+      controlsManager.setPointerEnabled(false);
+      controlsManager.setControlType('orbit');
+      const orbit = controlsManager.getControls() as LuxarOrbitControls;
+      expect(orbit.pointerEnabled).toBe(false);
+      const beforeWheel = camera.position.clone();
+      domElement.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
+      orbit.update(0.1);
+      expect(camera.position.distanceTo(beforeWheel)).toBe(0);
+    });
+
     it('should switch from orbit to fly controls', () => {
       controlsManager.setControlType('fly');
       expect(controlsManager.getControlType()).toBe('fly');

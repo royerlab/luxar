@@ -477,7 +477,9 @@ canvas themselves. So panels hid, the flag read as set, and the camera stayed
 fully draggable. The scene auto-rotates, which makes a plain
 before/after prove nothing; against a *control arm* the drag moved the camera
 62.3 units against 1.36 of idle drift, a factor of 46. Kiosk mode therefore
-also calls `ControlsManager.setEnabled(false)`.
+also calls `ControlsManager.setPointerEnabled(false)`. `setEnabled(false)` also
+stops fly key handling and per-frame updates, which froze WASD navigation when
+`allow_pointer` was false (#3049).
 
 **Launching the display.** The big screen runs Chrome in kiosk mode; these flags
 are the operator's side of the contract (the scene-side block above cannot set

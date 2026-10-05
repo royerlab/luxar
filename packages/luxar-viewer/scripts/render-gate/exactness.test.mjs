@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   judge,
+  pickWithinDraw,
   quantile,
   scoreBlocks,
   scoreFloatBuffers,
@@ -215,5 +216,152 @@ describe('scorePickBuffers', () => {
     const s = scorePickBuffers(a, a.slice());
     expect(s.hits).toBe(2);
     expect(s.mismatches).toBe(0);
+  });
+});
+
+describe('pickWithinDraw', () => {
+  /**
+   * An 8x8 HDR frame (bottom-up) with a lit square at x, y in [lo, hi), and the
+   * matching 4x4 pick buffer (half resolution) with ids where `ids` says.
+   */
+  function view({ lo = 2, hi = 6, ids, topDown = false, padTo = 4, bg = 0 }) {
+    const width = 8;
+    const height = 8;
+    const hdr = new Float32Array(width * height * 4).fill(bg);
+    for (let y = lo; y < hi; y++) {
+      for (let x = lo; x < hi; x++) hdr.set([1, 0.5, 0.25, 1], (y * width + x) * 4);
+    }
+    const pw = 4;
+    const ph = 4;
+    const pick = new Float32Array(padTo * ph * 4);
+    for (const [x, y] of ids) {
+      const row = topDown ? ph - 1 - y : y;
+      pick.set([7, 3, 0.5, 0], (row * padTo + x) * 4);
+    }
+    return { hdr, width, height, pick, pickWidth: pw, pickHeight: ph };
+  }
+  /** The pick cells the lit square [2, 6) covers at half resolution. */
+  const INSIDE = [
+    [1, 1],
+    [2, 1],
+    [1, 2],
+    [2, 2],
+  ];
+
+  it('passes a pick that lies inside the draw, and reports its coverage', () => {
+    const r = pickWithinDraw(view({ ids: INSIDE.slice(0, 2) }));
+    expect(r.pass).toBe(true);
+    expect(r.outside).toBe(0);
+    expect(r.hits).toBe(2);
+    expect(r.drawn).toBe(4);
+    expect(r.coverage).toBe(0.5);
+    expect(r.rowOrder).toBe('bottom-up');
+  });
+
+  it('tolerates one pick pixel of edge, and fails a pick beyond it', () => {
+    expect(pickWithinDraw(view({ ids: [...INSIDE, [3, 2]] })).pass).toBe(true);
+    const far = pickWithinDraw(
+      view({
+        lo: 0,
+        hi: 2,
+        ids: [
+          [0, 0],
+          [3, 3],
+        ],
+      })
+    );
+    expect(far.pass).toBe(false);
+    expect(far.outside).toBe(1);
+    expect(far.failures.join()).toMatch(/pick outside draw: 1 of 2 pick px/);
+  });
+
+  it('fails a blank pick, and a pick that covers too little of the draw', () => {
+    expect(pickWithinDraw(view({ ids: [] })).failures).toEqual(['pick buffer carries no ids']);
+    const thin = pickWithinDraw(view({ ids: [[1, 1]] }), { minCoverage: 0.5 });
+    expect(thin.pass).toBe(false);
+    expect(thin.failures.join()).toMatch(/pick covers 0\.250 of the drawn px/);
+  });
+
+  it('aligns a top-down readback and reads past row padding', () => {
+    // A square in the bottom-left corner, picked along its bottom row; stored
+    // top-down with an 8-pixel row stride as a padded native readback would be.
+    // Read bottom-up, those ids would sit in the empty top row.
+    const r = pickWithinDraw(
+      view({
+        lo: 0,
+        hi: 4,
+        ids: [
+          [0, 0],
+          [1, 0],
+        ],
+        topDown: true,
+        padTo: 8,
+      })
+    );
+    expect(r.pass).toBe(true);
+    expect(r.rowOrder).toBe('top-down');
+    expect(r.hits).toBe(2);
+  });
+
+  it('measures the draw against the frame background, not against zero', () => {
+    const r = pickWithinDraw(view({ ids: INSIDE, bg: 0.02 }));
+    expect(r.drawn).toBe(4);
+    expect(r.coverage).toBe(1);
+    expect(r.pass).toBe(true);
+  });
+  /**
+   * A 16x16 frame (8x8 pick cells) whose every pixel is drawn saturated white
+   * except a black background block of `bgCells` cells in the bottom-left
+   * corner, with a pick id on every cell for which `picked(x, y)` holds.
+   */
+  function saturatedView(bgCells, picked) {
+    const width = 16;
+    const height = 16;
+    const hdr = new Float32Array(width * height * 4);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const isBg = x < 2 * bgCells && y < 2;
+        hdr.set(isBg ? [0, 0, 0, 1] : [1, 1, 1, 1], (y * width + x) * 4);
+      }
+    }
+    const pick = new Float32Array(8 * 8 * 4);
+    for (let y = 0; y < 8; y++) {
+      for (let x = 0; x < 8; x++) if (picked(x, y)) pick.set([2, 9, 0.5, 0], (y * 8 + x) * 4);
+    }
+    return { hdr, width, height, pick, pickWidth: 8, pickHeight: 8 };
+  }
+
+  it('takes the background from where the pick is empty, not from the frame’s commonest value', () => {
+    // The surface_pick close-up (ortho#1): opaque points at a gain above 1 fill
+    // almost the whole frame with saturated white, so white is the frame's
+    // MODE. Read as the background, every white pixel looked undrawn and the
+    // picks on them as outside the draw (658 of 129,347 pick px on obsidian),
+    // while the true black background held no pick id at all.
+    const r = pickWithinDraw(saturatedView(1, (x, y) => x > 0 || y > 0));
+    expect(r.failures).toEqual([]);
+    expect(r.outside).toBe(0);
+    expect(r.drawn).toBe(63);
+    expect(r.coverage).toBe(1);
+  });
+
+  it('still fails a pick that lands on the background next to an empty cell', () => {
+    // Two background cells; the pick covers one of them (a dropped or culled
+    // element still picked). The empty one still says what background is.
+    const r = pickWithinDraw(
+      saturatedView(4, (x, y) => !(x === 0 && y === 0)),
+      { slack: 0 }
+    );
+    expect(r.pass).toBe(false);
+    expect(r.outside).toBe(3);
+  });
+
+  it('falls back to the frame’s commonest value when the pick leaves no cell empty', () => {
+    // A pick that covers EVERY cell has no empty cell to sample; the frame
+    // mode (here the large background) then decides, so a fullscreen pick over
+    // a small draw still fails.
+    const all = [0, 1, 2, 3].flatMap((y) => [0, 1, 2, 3].map((x) => [x, y]));
+    const r = pickWithinDraw(view({ ids: all }), { slack: 0 });
+    expect(r.pass).toBe(false);
+    expect(r.outside).toBe(12);
   });
 });

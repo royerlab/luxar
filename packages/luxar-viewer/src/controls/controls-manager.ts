@@ -190,9 +190,10 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   private storedDistanceLimits: { min: number; max: number } | null = null;
   private storedZoomLimits: { min: number; max: number } | null = null;
 
-  // setEnabled() state, persisted across mode switches: a fresh control
-  // instance starts enabled, which would undo a kiosk's allow_pointer: false.
+  // Both gates persist across mode switches: a fresh control starts with
+  // pointer input enabled, which would undo a kiosk's allow_pointer: false.
   private enabled = true;
+  private pointerEnabled = true;
 
   // Saved camera state for switching
   private savedCameraPosition = new THREE.Vector3();
@@ -264,7 +265,10 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     }
 
     this.currentType = type;
-    if (this.currentControls) this.currentControls.enabled = this.enabled;
+    if (this.currentControls) {
+      this.currentControls.enabled = this.enabled;
+      this.currentControls.pointerEnabled = this.pointerEnabled;
+    }
 
     // Restore camera state
     this.restoreCameraState();
@@ -431,6 +435,16 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     if (this.currentControls) {
       this.currentControls.enabled = enabled;
     }
+  }
+
+  /** Gate canvas gestures without stopping keyboard driven fly motion or auto rotation. */
+  public setPointerEnabled(enabled: boolean): void {
+    this.pointerEnabled = enabled;
+    if (this.currentControls) this.currentControls.pointerEnabled = enabled;
+  }
+
+  public isPointerEnabled(): boolean {
+    return this.pointerEnabled;
   }
 
   public setAutoRotate(enabled: boolean): void {

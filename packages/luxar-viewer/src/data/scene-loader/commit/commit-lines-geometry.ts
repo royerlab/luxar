@@ -35,10 +35,6 @@ import { getPrefixParent, setPrefixParent } from '../../../types/prefix-lineage'
 import type { LoadedLinesData } from '../../../types/lines';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
 
-// Re-export so callers can import this name from the commit module while
-// the implementation lives in the rendering layer (points parity).
-export { syncLineMaterialWithGeometry };
-
 /**
  * True when every optional field a lines append would leave un-rewritten in
  * the prefix agrees with the committed parent (see the append gate).

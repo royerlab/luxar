@@ -1,8 +1,10 @@
 /**
  * `uGlassPartition` / `uGlassDepth` plumbing (spec MESH_PHYSICAL_MATERIALS §3.4 Phase
  * 3): the duck-typed uniform helper, the one shared depth texture, the GLSL guard's
- * shape, and the invariant that every VISUAL data material on both backends declares
- * the pair — while no PICK material does (picking must see all the data).
+ * shape, and the geometry-behaviour matrix row `glassPartitionGuard`: every VISUAL
+ * data material of every type, variant and backend declares the pair and its fragment
+ * shader classifies before its first discard — while no PICK material does (picking
+ * must see all the data).
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
@@ -26,18 +28,12 @@ import { LINE_FRAGMENT_SHADER } from '../../../../rendering/materials/line/shade
 import { CAPSULE_LINE_FRAGMENT_SHADER } from '../../../../rendering/materials/line/shader-glsl-capsule';
 import { GSPLAT_FRAGMENT_SHADER } from '../../../../rendering/materials/gsplat/shader-glsl';
 import { MESH_FRAGMENT_SHADER } from '../../../../rendering/materials/mesh/shader-glsl';
-import { PointMaterial } from '../../../../rendering/materials/point/material-glsl';
-import { LineMaterial } from '../../../../rendering/materials/line/material-glsl';
-import { GSplatMaterial } from '../../../../rendering/materials/gsplat/material-glsl';
-import { MeshMaterial } from '../../../../rendering/materials/mesh/material-glsl';
-import { PointTSLMaterial } from '../../../../rendering/materials/point/material-tsl';
-import { LineTSLMaterial } from '../../../../rendering/materials/line/material-tsl';
-import { GSplatTSLMaterial } from '../../../../rendering/materials/gsplat/material-tsl';
-import { MeshTSLMaterial } from '../../../../rendering/materials/mesh/material-tsl';
-import { PointPickingMaterial } from '../../../../rendering/picking/point/material';
-import { LinePickingMaterial } from '../../../../rendering/picking/line/material';
-import { GSplatPickingMaterial } from '../../../../rendering/picking/gsplat/material';
-import { MeshPickingMaterial } from '../../../../rendering/picking/mesh/material';
+import type { GeometryTypeName } from '../../../../types/format-contract';
+import {
+  GEOMETRY_MATERIAL_VARIANTS,
+  type PrimitiveVariant,
+} from '../../../helpers/geometry-materials';
+import { defineBehaviourConformance } from '../../../_conformance/define-behaviour-conformance';
 import { POINT_PICK_FRAGMENT_SHADER } from '../../../../rendering/picking/point/shaders';
 
 describe('glass-partition helper', () => {
@@ -100,61 +96,57 @@ describe('the GLSL guard', () => {
     expect(GLSL_GLASS_PARTITION_GUARD.trim().startsWith('if (uGlassPartition != 0) {')).toBe(true);
   });
 
-  it.each([
-    ['point', POINT_FRAGMENT_SHADER],
-    ['line', LINE_FRAGMENT_SHADER],
-    ['line-capsule', CAPSULE_LINE_FRAGMENT_SHADER],
-    ['gsplat', GSPLAT_FRAGMENT_SHADER],
-    ['mesh', MESH_FRAGMENT_SHADER],
-  ])(
-    '%s fragment shader carries the uniforms and runs the guard before its first discard',
-    (_n, src) => {
-      expect(src).toContain('uniform int uGlassPartition;');
-      expect(src).toContain('uniform sampler2D uGlassDepth;');
-      const guardAt = src.indexOf('if (uGlassPartition != 0) {');
-      const mainAt = src.indexOf('void main() {');
-      expect(guardAt).toBeGreaterThan(mainAt);
-      // Nothing else discards, computes or samples before the classification.
-      const body = src.slice(mainAt, guardAt);
-      expect(body).not.toContain('discard');
-      expect(body).not.toContain('texture(');
-    }
-  );
-
   it('the pick shaders know nothing of the partition (picking must see all the data)', () => {
     expect(POINT_PICK_FRAGMENT_SHADER).not.toContain('uGlassPartition');
   });
 });
 
-describe('every visual data material declares the pair, bound to the shared texture', () => {
+/** The GLSL visual fragment shader of each type's primitive variants. */
+const VISUAL_FRAGMENT_SHADERS: Record<
+  GeometryTypeName,
+  Partial<Record<PrimitiveVariant, string>>
+> = {
+  points: { quad: POINT_FRAGMENT_SHADER },
+  lines: { quad: LINE_FRAGMENT_SHADER, capsule: CAPSULE_LINE_FRAGMENT_SHADER },
+  gsplats: { quad: GSPLAT_FRAGMENT_SHADER },
+  mesh: { triangle: MESH_FRAGMENT_SHADER },
+};
+
+type Uniforms = { uniforms: Record<string, { value: unknown }> };
+
+describe('glass partition, per geometry type', () => {
   afterEach(() => resetGlassDepthTextureForTests());
 
-  it.each([
-    ['PointMaterial', () => new PointMaterial({})],
-    ['LineMaterial', () => new LineMaterial({})],
-    ['GSplatMaterial', () => new GSplatMaterial({})],
-    ['MeshMaterial', () => new MeshMaterial({})],
-    ['PointTSLMaterial', () => new PointTSLMaterial({})],
-    ['LineTSLMaterial', () => new LineTSLMaterial({})],
-    ['GSplatTSLMaterial', () => new GSplatTSLMaterial({})],
-    ['MeshTSLMaterial', () => new MeshTSLMaterial({})],
-  ])('%s', (_n, make) => {
-    const mat = make() as unknown as { uniforms: Record<string, { value: unknown }> };
-    expect(hasGlassPartition(mat)).toBe(true);
-    expect(getGlassPartition(mat)).toBe(0);
-    expect(mat.uniforms[GLASS_DEPTH_UNIFORM].value).toBe(getGlassDepthTexture());
-    expect(setGlassPartition(mat, GLASS_PARTITION_FRONT)).toBe(true);
-    expect(mat.uniforms[GLASS_PARTITION_UNIFORM].value).toBe(2);
-  });
+  defineBehaviourConformance('glassPartitionGuard', {
+    holds(type) {
+      for (const { variant, visual, pick } of GEOMETRY_MATERIAL_VARIANTS[type]) {
+        // The fragment shader classifies before it discards, computes or samples.
+        const src = VISUAL_FRAGMENT_SHADERS[type][variant];
+        expect(src, `${type} ${variant}: no GLSL fragment shader listed`).toBeDefined();
+        expect(src).toContain('uniform int uGlassPartition;');
+        expect(src).toContain('uniform sampler2D uGlassDepth;');
+        const guardAt = src!.indexOf('if (uGlassPartition != 0) {');
+        const mainAt = src!.indexOf('void main() {');
+        expect(guardAt, `${type} ${variant}: guard inside main`).toBeGreaterThan(mainAt);
+        const body = src!.slice(mainAt, guardAt);
+        expect(body, `${type} ${variant}: discard before the guard`).not.toContain('discard');
+        expect(body, `${type} ${variant}: sample before the guard`).not.toContain('texture(');
 
-  it.each([
-    ['PointPickingMaterial', () => new PointPickingMaterial({ nodeId: 1 })],
-    ['LinePickingMaterial', () => new LinePickingMaterial({ nodeId: 1 })],
-    ['GSplatPickingMaterial', () => new GSplatPickingMaterial({ nodeId: 1 })],
-    ['MeshPickingMaterial', () => new MeshPickingMaterial({ nodeId: 1 })],
-  ])('%s does NOT (a broadcast no-ops on it)', (_n, make) => {
-    const mat = make();
-    expect(hasGlassPartition(mat)).toBe(false);
-    expect(setGlassPartition(mat, GLASS_PARTITION_BEHIND)).toBe(false);
+        for (const backend of ['glsl', 'tsl'] as const) {
+          const label = `${type} ${variant} ${backend}`;
+          // Every visual material declares the pair, bound to the one shared texture…
+          const mat = visual[backend]() as unknown as Uniforms;
+          expect(hasGlassPartition(mat), label).toBe(true);
+          expect(getGlassPartition(mat), label).toBe(0);
+          expect(mat.uniforms[GLASS_DEPTH_UNIFORM].value, label).toBe(getGlassDepthTexture());
+          expect(setGlassPartition(mat, GLASS_PARTITION_FRONT), label).toBe(true);
+          expect(mat.uniforms[GLASS_PARTITION_UNIFORM].value, label).toBe(2);
+          // …and no pick material does, so a broadcast no-ops on it.
+          const pickMat = pick[backend]();
+          expect(hasGlassPartition(pickMat), `${label} pick`).toBe(false);
+          expect(setGlassPartition(pickMat, GLASS_PARTITION_BEHIND), `${label} pick`).toBe(false);
+        }
+      }
+    },
   });
 });

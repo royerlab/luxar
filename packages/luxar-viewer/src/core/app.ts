@@ -178,6 +178,8 @@ export class LuxarApp {
    * session so readers never branch on its absence.
    */
   private session = new DatasetSession(undefined);
+  /** Held across dataset loads so a failed switch cannot unlock kiosk input. */
+  private kioskInputRestore: (() => void) | null = null;
   /** Smooth camera transitions for {@link flyTo}; created in {@link setupEmbedderHooks}. */
   private cameraFlight?: CameraFlight;
   /** Remote-control channel, present only when `options.control` is set. */
@@ -626,8 +628,8 @@ export class LuxarApp {
   /**
    * Lock the display down when the scene or the URL asks for it
    * (`core/app/kiosk/apply-kiosk.ts`). Re-applied on every dataset load; the
-   * session owns the watchdog, so switching scenes cannot accumulate listeners
-   * on a long-running exhibit.
+   * session owns the watchdog, while the app keeps input restrictions
+   * through the next load (including a failed one).
    */
   private applyKiosk(
     viewerConfig: ZarrViewerConfig | undefined,
@@ -637,19 +639,25 @@ export class LuxarApp {
     // partially-constructed app can reach before its options are set — and a
     // missing option means "no ?kiosk", not a crash that aborts the rest of the
     // load (theme, dimension state, the render loop after it).
-    session.setKioskTeardown(
-      applySceneKiosk(viewerConfig?.ui?.kiosk, this.options?.kiosk === true, () => ({
-        setKeyboardEnabled: (enabled) => this.inputHandler.setEnabled(enabled),
-        setControlsEnabled: (enabled) => this.sceneManager.controls?.setEnabled(enabled),
-        hidePanels: () => {
-          this.renderingControls.hide();
-          this.scaleBar?.hide();
-          this.layersPanel?.hide();
-        },
-        canvas: this.sceneManager.renderer?.domElement,
-        onDeviceLost: (listener) => this.onWebGPUDeviceLost(listener),
-      }))
-    );
+    // Release the previous mode only when the next one can take its snapshot.
+    this.kioskInputRestore?.();
+    this.kioskInputRestore = null;
+    session.setKioskTeardown(null);
+    const teardown = applySceneKiosk(viewerConfig?.ui?.kiosk, this.options?.kiosk === true, () => ({
+      setKeyboardEnabled: (enabled) => this.inputHandler.setEnabled(enabled),
+      getKeyboardEnabled: () => this.inputHandler.isEnabled(),
+      setPointerEnabled: (enabled) => this.sceneManager.controls?.setPointerEnabled(enabled),
+      getPointerEnabled: () => this.sceneManager.controls?.isPointerEnabled() ?? true,
+      hidePanels: () => {
+        this.renderingControls.hide();
+        this.scaleBar?.hide();
+        this.layersPanel?.hide();
+      },
+      canvas: this.sceneManager.renderer?.domElement,
+      onDeviceLost: (listener) => this.onWebGPUDeviceLost(listener),
+    }));
+    this.kioskInputRestore = teardown.restoreInput;
+    session.setKioskTeardown(teardown.disposeWatchdog);
   }
 
   /** Subscribe to the scene manager's WebGPU device loss; returns the unsubscribe. */
@@ -1518,6 +1526,8 @@ export class LuxarApp {
     // listens on the canvas and owns a reload timer that would otherwise
     // reload the page after the app is gone.
     this.session.dispose();
+    this.kioskInputRestore?.();
+    this.kioskInputRestore = null;
 
     runDisposePipeline({
       events: this.events,

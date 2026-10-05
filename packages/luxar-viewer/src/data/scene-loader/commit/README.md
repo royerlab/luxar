@@ -114,8 +114,7 @@ are allowed inside commit — by contract.
   `updateInstancedLinesMesh` / `updateInstancedGSplatsMesh`
   pool-disabled fallbacks.
 - `../../../rendering/material-sync-helpers.ts` —
-  `syncPointMaterialWithGeometry` (re-exported from
-  `commit-points-geometry.ts`).
+  `syncPointMaterialWithGeometry` / `syncLineMaterialWithGeometry`.
 - `../../../rendering/material-manager/soft-dispose-flag.ts` — the
   `SOFT_DISPOSE_FLAG` symbol (a zero-import leaf module so this folder
   can tag events without pulling in the material factories); the

@@ -123,11 +123,14 @@ function filesOutsideLintScript(scriptName) {
 }
 
 /** Parsed TypeScript project configuration. */
-function parsedTypeScriptConfig(configName) {
+function parsedTypeScriptConfig(configName, additionalFiles = []) {
   const configPath = join(PKG, configName);
   const loaded = ts.readConfigFile(configPath, ts.sys.readFile);
   expect(loaded.error).toBeUndefined();
-  const parsed = ts.parseJsonConfigFileContent(loaded.config, ts.sys, PKG, undefined, configPath);
+  const config = additionalFiles.length
+    ? { ...loaded.config, files: [...(loaded.config.files ?? []), ...additionalFiles] }
+    : loaded.config;
+  const parsed = ts.parseJsonConfigFileContent(config, ts.sys, PKG, undefined, configPath);
   expect(parsed.errors).toEqual([]);
   return parsed;
 }
@@ -164,8 +167,8 @@ function typecheckedFiles(configName) {
 }
 
 /** Diagnostics for one synthetic source under a project's compiler options. */
-function sourceDiagnostics(configName, relativePath, sourceText) {
-  const parsed = parsedTypeScriptConfig(configName);
+function sourceDiagnostics(configName, relativePath, sourceText, additionalFiles = []) {
+  const parsed = parsedTypeScriptConfig(configName, additionalFiles);
   const sourcePath = join(PKG, relativePath);
   const options = { ...parsed.options, noLib: true, noResolve: true };
   const host = ts.createCompilerHost(options);
@@ -342,22 +345,24 @@ describe('typecheck scope', () => {
   }, 30_000);
 
   it('includes project ambient declarations when probing browser globals', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'luxar-browser-scope-'));
     const declarations = [
       ['d.ts', 'declare global { var browserScopeProbe: string; }\nexport {};\n'],
       ['ts', 'declare global { var browserScopeProbe: string; }\nexport {};\n'],
       ['ts', 'declare var browserScopeProbe: string;\n'],
     ];
-    for (const [extension, declaration] of declarations) {
-      const declarationPath = join(PKG, `src/types/node-global-probe.test-only.${extension}`);
-      writeFileSync(declarationPath, declaration);
-
-      try {
+    try {
+      for (const [extension, declaration] of declarations) {
+        const declarationPath = join(fixture, `node-global-probe.${extension}`);
+        writeFileSync(declarationPath, declaration);
         expect(
-          sourceDiagnostics('tsconfig.json', 'src/browser-scope-probe.ts', 'browserScopeProbe;\n')
+          sourceDiagnostics('tsconfig.json', 'src/browser-scope-probe.ts', 'browserScopeProbe;\n', [
+            declarationPath,
+          ])
         ).toEqual([]);
-      } finally {
-        rmSync(declarationPath, { force: true });
       }
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
     }
   });
 });

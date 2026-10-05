@@ -50,10 +50,13 @@ declare global {
   interface Window {
     __tslHarness?: {
       ready: Promise<void>;
-      renderGLSL: (shaderName: string) => Uint8Array;
+      renderGLSL: (
+        shaderName: string,
+        uniformOverrides?: Readonly<Record<string, number>>
+      ) => Uint8Array;
       renderTSL: (
         shaderName: string,
-        opts?: { native?: boolean }
+        opts?: { native?: boolean; uniforms?: Readonly<Record<string, number>> }
       ) => Promise<{ pixels: Uint8Array; vertexShader: string; fragmentShader: string }>;
       renderBloomChainGLSL: (fixture?: BloomChainFixture) => Promise<BloomChainRenderResult>;
       renderBloomChainTSL: (fixture?: BloomChainFixture) => Promise<BloomChainRenderResult>;

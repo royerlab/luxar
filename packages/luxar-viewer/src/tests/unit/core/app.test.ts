@@ -225,6 +225,8 @@ describe('LuxarApp', () => {
       // The ControlsManager surface the embedder hooks subscribe to.
       controls: {
         setEnabled: vi.fn(),
+        setPointerEnabled: vi.fn(),
+        isPointerEnabled: vi.fn(() => true),
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
         getFocusTarget: vi.fn(() => ({ x: 0, y: 0, z: 0 })),
@@ -279,6 +281,7 @@ describe('LuxarApp', () => {
       pushContext: vi.fn(),
       popContext: vi.fn(),
       setEnabled: vi.fn(),
+      isEnabled: vi.fn(() => true),
       setRenderingControls: vi.fn(),
       setScaleBar: vi.fn(),
       setRecordingPanel: vi.fn(),
@@ -2033,6 +2036,85 @@ describe('LuxarApp', () => {
         'webglcontextlost',
         canvas.addEventListener.mock.calls.find((call) => call[0] === 'webglcontextlost')?.[1]
       );
+    });
+
+    it('keeps input locked when kiosk mode is reapplied in one session', async () => {
+      await app.init({ canvas: mockCanvas, src: SRC });
+      let keyboardEnabled = true;
+      let pointerEnabled = true;
+      mockInputHandler.isEnabled.mockImplementation(() => keyboardEnabled);
+      mockInputHandler.setEnabled.mockImplementation((enabled: boolean) => {
+        keyboardEnabled = enabled;
+      });
+      mockSceneManager.controls.isPointerEnabled.mockImplementation(() => pointerEnabled);
+      mockSceneManager.controls.setPointerEnabled.mockImplementation((enabled: boolean) => {
+        pointerEnabled = enabled;
+      });
+      const internals = app as unknown as {
+        applyKiosk: (config: { ui: { kiosk: { enabled: boolean } } }) => void;
+      };
+      const locked = { ui: { kiosk: { enabled: true } } };
+      internals.applyKiosk(locked);
+      internals.applyKiosk(locked);
+      expect(keyboardEnabled).toBe(false);
+      expect(pointerEnabled).toBe(false);
+      app.dispose();
+      expect(keyboardEnabled).toBe(true);
+      expect(pointerEnabled).toBe(true);
+    });
+
+    it('keeps URL kiosk input locked during a failed dataset switch', async () => {
+      let keyboardEnabled = true;
+      let pointerEnabled = true;
+      mockInputHandler.isEnabled.mockImplementation(() => keyboardEnabled);
+      mockInputHandler.setEnabled.mockImplementation((enabled: boolean) => {
+        keyboardEnabled = enabled;
+      });
+      mockSceneManager.controls.isPointerEnabled.mockImplementation(() => pointerEnabled);
+      mockSceneManager.controls.setPointerEnabled.mockImplementation((enabled: boolean) => {
+        pointerEnabled = enabled;
+      });
+      await app.init({ canvas: mockCanvas, src: SRC, kiosk: true });
+      expect([keyboardEnabled, pointerEnabled]).toEqual([false, false]);
+
+      let rejectLoad!: (reason: Error) => void;
+      mockSceneManager.loadSceneData.mockImplementationOnce(
+        () => new Promise<void>((_resolve, reject) => (rejectLoad = reject))
+      );
+      const switching = app.switchDataset('http://example.com/next.zarr');
+      await vi.waitFor(() => expect(rejectLoad).toBeDefined());
+      expect([keyboardEnabled, pointerEnabled]).toEqual([false, false]);
+
+      rejectLoad(new Error('network failure'));
+      await expect(switching).rejects.toThrow('network failure');
+      expect([keyboardEnabled, pointerEnabled]).toEqual([false, false]);
+      app.dispose();
+      expect([keyboardEnabled, pointerEnabled]).toEqual([true, true]);
+    });
+
+    it('restores the pre-kiosk input state when leaving kiosk after an embedder write', async () => {
+      let keyboardEnabled = false;
+      let pointerEnabled = true;
+      mockInputHandler.isEnabled.mockImplementation(() => keyboardEnabled);
+      mockInputHandler.setEnabled.mockImplementation((enabled: boolean) => {
+        keyboardEnabled = enabled;
+      });
+      mockSceneManager.controls.isPointerEnabled.mockImplementation(() => pointerEnabled);
+      mockSceneManager.controls.setPointerEnabled.mockImplementation((enabled: boolean) => {
+        pointerEnabled = enabled;
+      });
+      mockSceneManager.getSceneViewerConfig
+        .mockReturnValueOnce({ ui: { kiosk: { enabled: true } } })
+        .mockReturnValueOnce(undefined);
+      await app.init({ canvas: mockCanvas, src: SRC });
+      expect(keyboardEnabled).toBe(false);
+      expect(pointerEnabled).toBe(false);
+
+      app.setInputEnabled(true);
+      expect(keyboardEnabled).toBe(true);
+      await app.switchDataset('http://example.com/next.zarr');
+      expect(keyboardEnabled).toBe(false);
+      expect(pointerEnabled).toBe(true);
     });
 
     it('leaves no kiosk watchdog behind a load that finishes after dispose', async () => {

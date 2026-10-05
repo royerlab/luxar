@@ -127,6 +127,78 @@ delivering). A spec that wants the in-app buffer specifically — for its
 `hover-tooltip`, `hover-overlay`, `mouse-interactions` and
 `recording-panel` do from their own `test.afterEach`.
 
+### Geometry conformance: what each type does, and draw/pick parity
+
+Per-type behaviour is written once per type, so it drifts: one type gains a
+fix the other three lack, or a new type ships without one. Two declared tables
+in `_conformance/` turn that into failing tests.
+
+**The behaviour matrix** (`_conformance/geometry-behaviours.ts`) is the one
+table to read to learn what Points, Lines, GSplats and Mesh each do. A row is a
+behaviour, such as the sorted-append hold, the L0 chunk cache, colormap support
+or pick registration. A cell is `'yes'`, or an `Absent` that gives the reason,
+how the absence is enforced (`refuse`, `hidden` or `no-op`) and the spec
+section that decides it. Every row names the test file that probes it. That
+file calls `defineBehaviourConformance(row, probe)`
+(`_conformance/define-behaviour-conformance.ts`), which emits one test per
+type: a `'yes'` cell runs the probe against real code, and an absent cell runs
+the probe's checker for its declared enforcement. A cell that claims `'yes'`
+but does nothing fails, and so does an absent cell whose type quietly started
+doing the thing. New probes live in `unit/conformance/`. Probes that need a
+file's module mocks live in that file, which is how the existing per-type tests
+were folded behind the matrix rather than copied. The shared per-type fixtures
+are `helpers/geometry-commits.ts` (one real commit per type) and
+`helpers/geometry-materials.ts` (every visual and pick material, per variant
+and backend).
+
+`unit/conformance/geometry-behaviours.test.ts` keeps the matrix honest, and
+catches the drift no single row can:
+
+- every row is probed exactly once, in the file it names. Every absent cell's
+  spec reference must resolve to a file, and to a heading for a `§` section.
+  The capability rows must equal `GEOMETRY_CAPABILITIES` cell for cell;
+- an `it.each` / `describe.each` / `test.each` over two or three geometry
+  names (plural, or the singular material-kind keys) must say why, with
+  `// geometry-subset: <reason>` directly above the call. This is the "three
+  types, mesh forgotten" shape. The TypeScript-AST scanner
+  (`_conformance/source-scans.ts`) follows named consts and `.map` chains, and
+  is tested on synthetic sources first;
+- the parallel per-type module families (`commit-<t>-geometry.ts`,
+  `load-<t>-node.ts`, `<t>-progressive-loader.ts`) must export the same names,
+  and their exported classes the same public members, once the type token is
+  normalised. Otherwise the asymmetry is declared in
+  `MODULE_FAMILY_ASYMMETRIES` with its reason. This catches "added to GSplats
+  only".
+
+Production code has the matching lint rule. ESLint `no-restricted-syntax`
+flags hand-written geometry-type subsets in `src/` (not in tests): an
+`x === 'points' || x === 'lines'` chain, a `new Set([...])` or an
+`[...].includes(x)` over two or more type literals. Ask
+`GEOMETRY_CAPABILITIES` instead, or key a `Record<GeometryTypeName, …>`. The
+existing sites are baselined in `eslint-suppressions.json` and ratchet down.
+
+**The draw/pick table** (`_conformance/pick-visibility-rules.ts`) declares,
+for every `(type, primitive variant)`, how each per-element visibility rule
+relates the draw shader to the pick shader. The rules are density drop, the
+sorted-index slot, near fade, the label filter, reach, alpha cutout and the
+glass partition. A cell is `'same'`, a `deliberate` pick ⊂ draw (with the
+evidence that it still is), `drawOnly`, or `neither`. It is held three ways:
+
+- `unit/rendering/picking/draw-pick-parity.test.ts` checks the source.
+  `'same'` needs the shared helper's call in both GLSL sources, its emitted
+  block in both TSL codegen snapshots (`__codegen__/`), and its call in both
+  TSL factory sources. Every `PICKING_FACTORIES` kind, material variant and
+  pick shader the picking tree exports must have a row, so a new pick variant
+  cannot ship unlisted;
+- `e2e/tsl-shader-parity.spec.ts` (`draw/pick coverage`) checks the pixels.
+  It renders one fixture through draw and pick, on both backends, and requires
+  pick ⊆ draw (1 px slack) and a per-type coverage floor. With `uDensityDrop`
+  set, the dropped element must be gone from both frames. The harness's
+  `renderGLSL(name, uniforms)` / `renderTSL(name, { uniforms })` take the
+  uniform overrides;
+- the render gate's `pickWithinDraw` judgement checks the same property on
+  real GPUs, for every pickable gate scene (`docs/guides/developer/RENDER_GATE.md`).
+
 ---
 
 ## Test Organization

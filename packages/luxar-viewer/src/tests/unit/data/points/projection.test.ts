@@ -162,7 +162,7 @@ describe('projectPointsTo3D', () => {
       makeViewState({
         displayDims: [1, 3, 4],
         slicePosition: [0, 0, 0, 0, 0],
-        tolerance: [0, 0, 0, 0, 0],
+        tolerance: [1e10, 0, 1e10, 0, 0],
       }),
       [{ start: 0, end: 2 }] as PointRange[],
       makeCtx()
@@ -183,7 +183,7 @@ describe('projectPointsTo3D', () => {
       makeViewState({
         displayDims: [0],
         slicePosition: [0, 0],
-        tolerance: [0, 0],
+        tolerance: [0, 1e10],
       }),
       [{ start: 0, end: 2 }] as PointRange[],
       makeCtx()
@@ -203,7 +203,7 @@ describe('projectPointsTo3D', () => {
       makeViewState({
         displayDims: [0, 1, 2],
         slicePosition: [0, 0, 0, 0],
-        tolerance: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 1e10],
       }),
       [{ start: 0, end: 1 }] as PointRange[],
       makeCtx({ chunkIndex: makeChunkIndex(99) })
@@ -577,7 +577,7 @@ describe('multi-range projection', () => {
       makeViewState({
         displayDims: [3, 0, 1],
         slicePosition: [0, 0, 0, 0],
-        tolerance: [0, 0, 0, 0],
+        tolerance: [0, 0, 1e10, 0],
       }),
       [
         { start: 0, end: 1 },
@@ -818,7 +818,7 @@ describe('projectPointsTo3D — WASM-boundary validation guards', () => {
       makeViewState({
         displayDims: [0, 1, 2],
         slicePosition: new Array(17).fill(0),
-        tolerance: new Array(17).fill(0),
+        tolerance: new Array(17).fill(1e10),
       }),
       [{ start: 0, end: 1 }] as PointRange[],
       makeCtx()

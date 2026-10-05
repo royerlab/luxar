@@ -13,7 +13,7 @@ to the Points node type.
 | `lod-refinement.ts`              | Progressive Points LOD refinement — thin wrapper over the generic `data/scene-loader/progressive/refinement.ts`. Drives the per-frame refinement loop for progressive loaders (those exposing `hasMoreLODs`); commits each refined load directly via `updatePointsGeometry`. Mirrors `data/gsplats/lod-refinement.ts`.                                                                                                                                                                                                                                          |
 | `projection.ts`                  | The single, **WASM-accelerated** nD→3D Points projection (`projectPointsTo3D`) + `createEmptyPointsData`. Runs the `extract_3d_positions` / `calculate_effective_radii` WASM kernels (via a `wasm` backend from `getPointsBackend`), then filters by visibility, normalizes uint8 radii (`/255`), and writes through `targetBuffers` (zero-alloc accumulator). Runs on the **main thread** — Points projection is bandwidth-bound and pairs with the accumulator, so it isn't worker-offloaded (W4b removed the former dead worker dispatcher copy).            |
 | `effective-radius-calculator.ts` | `calculateSpatialQueryTolerance` + `shouldApplyEffectiveRadius` (used by the loader), plus a TS reference `calculateEffectiveRadii` (the production path now uses the WASM kernel; the TS twin lives in `wasm/typescript/effective-radii.ts`). Points-only — Lines and GSplats carry equivalent info in segment bounds / Cholesky factors.                                                                                                                                                                                                                      |
-| `chunk-index-loader.ts`          | Loads the Points chunk-bounds index from zarr metadata (skipped, with no request, when `n_points <= chunk_size`, `has_radii` is true, and scene dimensions allow per-point slice gating; other one-chunk nodes still need bounds for slice visibility); exposes `registerPointsArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds`.                                                                                                                                                                                                 |
+| `chunk-index-loader.ts`          | Loads the Points chunk-bounds index from zarr metadata (skipped, with no request, when `n_points <= chunk_size`; projection filters hidden dimensions per point with or without radii); exposes `registerPointsArrayBounds` as a per-type wrapper around `ChunkPrefetcher.registerArrayBounds`.                                                                                                                                                                                                                                                                 |
 | `handler.ts`                     | Per-type wiring for the scene-loader's load + stage phase. Exports `loadAndStage` (skip → `loader.updateView` → failure-clear → metadata → predictive-prefetch dispatch), plus `kind`/`label` constants and the `StagedPointsCommit` / `PointsHandlerCtx` shapes. Lines and GSplats mirror this shape so all first-class geometry kinds stay symmetrical.                                                                                                                                                                                                       |
 
 ## Public surface
@@ -35,13 +35,19 @@ implementation; the loader calls it directly with a WASM backend from
 `getPointsBackend(ndim)`. It is always on the main thread (WASM-accelerated)
 — there is no worker round-trip for Points.
 
+The projection checks each point against hidden dimensions even when it has
+no radii or effective-radius configuration. Discrete dimensions use absolute
+±0.5 membership, the same as the effective-radius gate; continuous dimensions
+use the node's maximum radius as their reach. This keeps
+unordered and one-chunk nodes slice-correct without a chunk-bounds index.
+
 It also emits `elementIds` (via the shared `buildElementIdMap` in
 `data/loaders/element-ids.ts`, which GSplats and Lines compose with too): the
 visible-buffer slot → on-disk element index map that picking uses for
 per-element string/image lookups. It is built only for a node declaring
 `has_labels` / `has_image_labels` / `has_keys` — the readers it exists for, and
 it costs 4 B/point on the zero-allocation path — and omitted on the identity
-path (one range starting at 0, no effective-radius compaction). A node without
+path (one range starting at 0, no per-point compaction). A node without
 one of those channels can still be picked when an interaction template or an
 embedder `selection` / element-action listener provisions picking, and its
 `elementIndex` keeps reporting the storage slot. Across an additive ladder,

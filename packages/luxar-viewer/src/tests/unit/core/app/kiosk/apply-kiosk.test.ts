@@ -13,7 +13,8 @@ describe('applySceneKiosk', () => {
     const ports = vi.fn();
     const teardown = applySceneKiosk(undefined, false, ports);
     expect(ports).not.toHaveBeenCalled();
-    expect(() => teardown()).not.toThrow();
+    expect(() => teardown.disposeWatchdog()).not.toThrow();
+    expect(() => teardown.restoreInput()).not.toThrow();
   });
 
   it('applies the URL flag and returns the watchdog teardown', () => {
@@ -25,13 +26,16 @@ describe('applySceneKiosk', () => {
     };
     const teardown = applySceneKiosk({ watchdog_reload: true }, true, () => ({
       setKeyboardEnabled,
+      getKeyboardEnabled: () => true,
+      setPointerEnabled: vi.fn(),
+      getPointerEnabled: () => true,
       canvas,
       reload: vi.fn(),
     }));
 
     expect(setKeyboardEnabled).toHaveBeenCalledWith(false);
     expect(canvas.addEventListener).toHaveBeenCalledWith('webglcontextlost', expect.any(Function));
-    teardown();
+    teardown.disposeWatchdog();
     expect(canvas.removeEventListener).toHaveBeenCalledWith(
       'webglcontextlost',
       expect.any(Function)

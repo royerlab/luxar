@@ -93,6 +93,7 @@ describe('GLSL pick shaders weigh by the visual factors', () => {
     expect(GSPLAT_PICK_VERTEX_SHADER).toContain('uniform float uRayIntegralFactor;');
   });
 
+  // geometry-subset: the gsplat weight is pinned by the test above; a mesh pick weighs by its own coverage uniforms (picking/mesh/opacity-sync.test.ts)
   it.each([
     ['point', POINT_PICK_VERTEX_SHADER, POINT_PICK_FRAGMENT_SHADER],
     ['line', LINE_PICK_VERTEX_SHADER, LINE_PICK_FRAGMENT_SHADER],
@@ -105,6 +106,7 @@ describe('GLSL pick shaders weigh by the visual factors', () => {
 });
 
 describe('TSL pick factories weigh by the visual factors', () => {
+  // geometry-subset: a mesh pick weighs by its own coverage uniforms (picking/mesh/opacity-sync.test.ts)
   it.each([
     ['gsplat/pick.tsl.ts', 'pickAlphaFactorTSL('],
     ['point/pick.tsl.ts', 'pickWeightTSL('],

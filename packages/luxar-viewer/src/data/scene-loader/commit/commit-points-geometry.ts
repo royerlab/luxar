@@ -51,10 +51,6 @@ import { invalidateRenderObjectFor } from './invalidate-render-object';
 import { planInstancedOrdering } from './plan-instanced-ordering';
 import { DEFAULT_POINT_RADIUS } from '../../../config/constants';
 
-// Re-export so callers can import this name from the commit module while
-// the implementation lives in the rendering layer.
-export { syncPointMaterialWithGeometry };
-
 /** Per-part detail line (hot on time-partitioned stores): `?verboseLog` only. */
 function logClearedPoints(path: string): void {
   log.verbose(

@@ -56,6 +56,7 @@ export const REQUIRED_WASM_EXPORTS = [
   'mesh_vertex_visibility_mask',
   'compact_visible_faces',
   'project_gsplats_nd_to_3d',
+  'points_slice_membership',
 ] as const satisfies readonly (keyof WasmModule)[];
 
 type RequiredExport = (typeof REQUIRED_WASM_EXPORTS)[number];

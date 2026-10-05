@@ -183,25 +183,45 @@ describe('PointsSpatialIndexLoader', () => {
   });
 
   describe('initialization', () => {
-    it('probes bounds for an ordered one-chunk 4D node without radii', async () => {
+    it('filters a one-chunk 4D node without radii and skips bounds', async () => {
       loader.dispose();
       loader = new PointsSpatialIndexLoader(mockZarrLocation, {
         ...mockNode,
-        attrs: { ...mockNode.attrs, n_points: 64, chunk_size: 64, has_radii: false },
+        attrs: { ...mockNode.attrs, n_points: 2, chunk_size: 2, has_radii: false },
+        arrays: new Set(['positions']),
       });
-      mockArrays.positions.shape = [64, 4];
-      const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      mockArrays.positions.shape = [2, 4];
+      vi.mocked(zarr.get).mockImplementation(((array: any) =>
+        Promise.resolve({
+          data:
+            array === mockArrays.positions
+              ? new Float32Array([1, 2, 3, 5, 4, 5, 6, 5])
+              : new Float32Array(2),
+        })) as any);
+      const view: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0.25],
+        dimensions: [
+          { name: 'x', unit: '', scale: 1, discrete: false, step: 1 },
+          { name: 'y', unit: '', scale: 1, discrete: false, step: 1 },
+          { name: 'z', unit: '', scale: 1, discrete: false, step: 1 },
+          { name: 'time', unit: '', scale: 1, discrete: true, step: 1 },
+        ],
+      };
 
-      await loader.ensureInitialized();
+      const offSlice = await loader.loadPoints(view);
+      const onSlice = await loader.loadPoints({ ...view, slicePosition: [0, 0, 0, 5] });
 
-      expect(warning).not.toHaveBeenCalled();
+      expect(offSlice.pointCount).toBe(0);
+      expect(onSlice.pointCount).toBe(2);
+      expect(Array.from(onSlice.positions)).toEqual([1, 2, 3, 4, 5, 6]);
       expect(
         (zarr.open as any).mock.calls.some((c: any[]) => String(c[0]).includes('chunk_bounds'))
-      ).toBe(true);
-      warning.mockRestore();
+      ).toBe(false);
     });
 
-    it('probes bounds with radii when scene dimensions are unavailable', async () => {
+    it('skips bounds with radii when scene dimensions are unavailable', async () => {
       loader.dispose();
       const rootStore = {};
       loader = new PointsSpatialIndexLoader(
@@ -223,10 +243,10 @@ describe('PointsSpatialIndexLoader', () => {
 
       expect(
         vi.mocked(zarr.open).mock.calls.filter((c: any[]) => String(c[0]).includes('chunk_bounds'))
-      ).toHaveLength(1);
+      ).toHaveLength(0);
     });
 
-    it('probes bounds when a radii-stamped node has no radii array', async () => {
+    it('skips bounds when a radii-stamped node has no radii array', async () => {
       loader.dispose();
       const rootStore = {};
       loader = new PointsSpatialIndexLoader(
@@ -260,7 +280,7 @@ describe('PointsSpatialIndexLoader', () => {
 
       expect(
         vi.mocked(zarr.open).mock.calls.filter((c: any[]) => String(c[0]).includes('chunk_bounds'))
-      ).toHaveLength(1);
+      ).toHaveLength(0);
     });
 
     it('hides radii-bearing points off-slice without probing one-chunk bounds', async () => {
@@ -1339,7 +1359,7 @@ describe('PointsSpatialIndexLoader', () => {
   describe('plain-leaf S-cache', () => {
     const hiddenDimView: ViewState = {
       displayDims: [0, 1, 2],
-      slicePosition: [0, 0, 0, 5],
+      slicePosition: [0, 0, 0, 0],
       tolerance: [0, 0, 0, 0.25],
     };
     let sliceCache: SliceCache;
@@ -1450,7 +1470,7 @@ describe('PointsSpatialIndexLoader', () => {
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 5],
+        slicePosition: [0, 0, 0, 0],
         tolerance: [0, 0, 0, 0.1],
       };
 
@@ -1491,7 +1511,7 @@ describe('PointsSpatialIndexLoader', () => {
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 5],
+        slicePosition: [0, 0, 0, 0],
         tolerance: [0, 0, 0, 0.1],
       };
 
@@ -1521,7 +1541,7 @@ describe('PointsSpatialIndexLoader', () => {
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 5],
+        slicePosition: [0, 0, 0, 0],
         tolerance: [0, 0, 0, 0.1],
       };
 
@@ -1693,7 +1713,7 @@ describe('PointsSpatialIndexLoader', () => {
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 5],
+        slicePosition: [0, 0, 0, 0],
         tolerance: [0, 0, 0, 0.1],
       };
 

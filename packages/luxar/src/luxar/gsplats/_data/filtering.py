@@ -511,7 +511,7 @@ def content_scoped_stats(stats: "MutableMapping[str, Any]") -> "Dict[str, Any]":
     pre-trim counts to a different splat set, and the op that scrubbed the record
     re-stamps its own right after. Restoring an older cull's ``n_original`` /
     ``amplitude_retention`` over it would publish the wrong reduction (a tiled
-    fit culls each tile, then culls the merge).
+    fit culls either each partition part or the flat merge).
 
     The nested per-pass lists are deep-copied so the snapshot is independent of
     the dataset it was taken from — a later edit of the source (or of the trimmed
