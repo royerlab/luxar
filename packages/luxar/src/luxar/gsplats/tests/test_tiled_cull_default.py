@@ -35,7 +35,8 @@ def test_default_cull_preserves_tiled_overlap(
         reconstruction = splats.render_to_volume(shape=image.shape, device="cpu")
         return float(np.mean((reconstruction[:, 24:32] - image[:, 24:32]) ** 2))
 
-    # The old 0.95 default yields 0.0051 (flat) / 0.0047 (partition), versus
-    # 0.0019 without culling. Near-lossless retention stays within 0.0002.
+    # Historical CPU measurements: the old 0.95 default yielded MSEs of
+    # 0.0051 flat and 0.0047 partitioned, versus 0.0019 unculled. The
+    # tolerance below is the contract; exact MSEs may drift across CPUs.
     assert overlap_mse(default) <= overlap_mse(unculled) + 0.0005
     assert default.n_splats >= 0.9 * unculled.n_splats
