@@ -23,6 +23,13 @@ vi.mock('../../../../../rendering/environment/bake', () => ({
 vi.mock('../../../../../ui/recording-panel/screenshot-exporter', () => ({
   downloadBlob: vi.fn(),
 }));
+// The runtime attach is gated on the load timeline's poolReady milestone (#3021).
+const { loadTimeline } = vi.hoisted(() => ({
+  loadTimeline: { measures: { poolReadyMs: null as number | null } },
+}));
+vi.mock('../../../../../profiling/load-timeline', () => ({
+  getLoadTimeline: () => loadTimeline,
+}));
 
 import {
   BAKE_SETTLED_FRAMES,
@@ -87,14 +94,33 @@ function makeHarness(options: { bakeEnvironment?: { probe?: string; resolution?:
 describe('wireSceneEnvironment', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    loadTimeline.measures.poolReadyMs = null;
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
   });
 
-  it('attaches the runtime, ticks per frame, and marks stale on commit / slice', () => {
+  it('defers the runtime attach to pool-ready + settled, then ticks and marks stale', () => {
     const h = makeHarness();
-    expect(h.sceneManager.attachEnvironmentRuntime).toHaveBeenCalledTimes(1);
+    // Deferred: the multi-second capture must not race worker-pool init (#3021).
+    expect(h.sceneManager.attachEnvironmentRuntime).not.toHaveBeenCalled();
+    expect(h.callbacks.has('environment-runtime-attach')).toBe(true);
     expect(h.callbacks.has('environment-capture')).toBe(true);
     expect(h.callbacks.has('environment-bake')).toBe(false);
+
+    const attach = h.callbacks.get('environment-runtime-attach')!;
+    // Not before the pool is ready, even while settled.
+    expect(attach()).toBe(false);
+    expect(h.sceneManager.attachEnvironmentRuntime).not.toHaveBeenCalled();
+    // Pool ready but not settled: still deferred (avoids a mid-load capture).
+    loadTimeline.measures.poolReadyMs = 12;
+    h.settled.value = false;
+    expect(attach()).toBe(false);
+    expect(h.sceneManager.attachEnvironmentRuntime).not.toHaveBeenCalled();
+    // Pool ready AND settled: attach once, request a draw, and remove itself.
+    h.settled.value = true;
+    expect(attach()).toBe(false);
+    expect(h.sceneManager.attachEnvironmentRuntime).toHaveBeenCalledTimes(1);
+    expect(h.animationController.requestRender).toHaveBeenCalledWith('environmentRuntimeAttach');
+    expect(h.callbacks.has('environment-runtime-attach')).toBe(false);
 
     // The callback reports whether a capture landed (render-on-change).
     h.environment.tick.mockReturnValueOnce(false).mockReturnValueOnce(true);

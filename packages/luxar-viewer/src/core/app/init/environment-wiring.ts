@@ -37,6 +37,7 @@ import { parseProbeSpec } from '../../../rendering/environment/probe';
 import { downloadBlob } from '../../../ui/recording-panel/screenshot-exporter';
 import type { LuxarAppOptions } from '../options';
 import { buildInfo } from '../../../config/build-info';
+import { getLoadTimeline } from '../../../profiling/load-timeline';
 
 /** What the wiring needs from the app. */
 export interface EnvironmentWiringDeps {
@@ -57,7 +58,31 @@ export const BAKE_SETTLED_FRAMES = 30;
 
 export function wireSceneEnvironment(deps: EnvironmentWiringDeps): void {
   const { sceneManager, animationController, events, options, isSettled } = deps;
-  sceneManager.attachEnvironmentRuntime(isSettled);
+
+  // Defer attaching the capture runtime until the worker pool is ready AND the
+  // loader has settled. A scene-source environment's first light is an immediate,
+  // multi-second SYNCHRONOUS CubeCamera capture (six scene renders + a PMREM
+  // prefilter); running it while the data-worker pool is still handshaking its
+  // workers on the same main thread pushed worker init past its 30 s deadline
+  // under load (#3021). Until the runtime is attached the scene is lit by the room
+  // PMREM stand-in; gating on `poolReadyMs` keeps the capture off the worker-init
+  // critical path, and also gating on `isSettled` folds the former first-light +
+  // first-commit double capture into a single one (the loader settles before the
+  // pool reports ready, so one capture of the finished scene replaces both).
+  const attachId = 'environment-runtime-attach';
+  animationController.addPerFrameCallback(
+    attachId,
+    () => {
+      if (getLoadTimeline().measures.poolReadyMs === null || !isSettled()) return false;
+      animationController.removePerFrameCallback(attachId);
+      sceneManager.attachEnvironmentRuntime(isSettled);
+      // Attaching may capture synchronously; make sure the new map is drawn.
+      animationController.requestRender('environmentRuntimeAttach');
+      return false;
+    },
+    { continuous: true }
+  );
+  events.add(() => animationController.removePerFrameCallback(attachId));
 
   // `pre-render`: a capture this frame sees the frame's final view state
   // (camera writers and view callbacks, including a dimension step, have run).
