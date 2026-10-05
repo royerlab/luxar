@@ -166,7 +166,8 @@ describe('applyKioskMode', () => {
     expect(p.setPointerEnabled).not.toHaveBeenCalled();
     expect(p.hidePanels).not.toHaveBeenCalled();
     // The teardown must be safe to call unconditionally.
-    expect(() => teardown()).not.toThrow();
+    expect(() => teardown.disposeWatchdog()).not.toThrow();
+    expect(() => teardown.restoreInput()).not.toThrow();
   });
 
   it('disables input and hides panels when locked down', () => {
@@ -209,18 +210,18 @@ describe('applyKioskMode', () => {
     expect(p.setKeyboardEnabled).not.toHaveBeenCalled();
   });
 
-  it('restores the prior input permissions on dataset teardown', () => {
+  it('restores the prior input permissions when the app releases kiosk', () => {
     const p = ports();
     p.setPointerEnabled(false);
     p.setKeyboardEnabled(true);
     const teardown = applyKioskMode(resolveKioskMode({ enabled: true }, false), p);
     expect(p.getPointerEnabled()).toBe(false);
     expect(p.getKeyboardEnabled()).toBe(false);
-    teardown();
+    teardown.restoreInput();
     expect(p.getPointerEnabled()).toBe(false);
     expect(p.getKeyboardEnabled()).toBe(true);
     p.setKeyboardEnabled(false);
-    teardown();
+    teardown.restoreInput();
     expect(p.getKeyboardEnabled()).toBe(false);
   });
 
@@ -229,7 +230,7 @@ describe('applyKioskMode', () => {
     const teardown = applyKioskMode(resolveKioskMode({ enabled: true }, false), p);
     expect(p.getPointerEnabled()).toBe(false);
     expect(p.getKeyboardEnabled()).toBe(false);
-    teardown();
+    teardown.restoreInput();
     expect(p.getPointerEnabled()).toBe(true);
     expect(p.getKeyboardEnabled()).toBe(true);
 
@@ -255,7 +256,7 @@ describe('applyKioskMode', () => {
       resolveKioskMode({ enabled: true, watchdog_reload: true }, false),
       p
     );
-    expect(() => teardown()).not.toThrow();
+    expect(() => teardown.disposeWatchdog()).not.toThrow();
   });
 
   it('wires the watchdog to the canvas when asked', () => {
@@ -268,7 +269,7 @@ describe('applyKioskMode', () => {
     );
     canvas.dispatchEvent(new Event('webglcontextlost'));
     expect(vi.getTimerCount()).toBe(1);
-    teardown();
+    teardown.disposeWatchdog();
     expect(vi.getTimerCount()).toBe(0);
     expect(p.reload).not.toHaveBeenCalled();
   });

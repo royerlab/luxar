@@ -7,9 +7,9 @@
  * dispatcher a second, differently-sourced input and hoping every future
  * reader noticed which fields came from where.
  *
- * Ports-injected and returning its own teardown, so the whole thing is
- * testable without a browser and a `switchDataset` cannot leave a previous
- * scene's input restrictions or watchdog running.
+ * Ports-injected and returning separate input and watchdog teardowns, so the
+ * app can keep input locked during a dataset load while releasing the old
+ * scene's watchdog immediately.
  *
  * @module core/app/kiosk/apply-kiosk
  */
@@ -19,7 +19,11 @@ import { startKioskWatchdog, type KioskWatchdog } from './watchdog';
 
 /** What applying kiosk mode needs from the app. */
 export interface KioskPorts {
-  /** Enable or disable routed keyboard handling. */
+  /**
+   * Enable or disable routed keyboard handling. Kiosk snapshots this shared
+   * flag and restores it on release. Embedder `setInputEnabled()` writes take
+   * effect during kiosk, but do not replace the saved pre-kiosk state.
+   */
   setKeyboardEnabled: (enabled: boolean) => void;
   getKeyboardEnabled: () => boolean;
   /**
@@ -45,6 +49,11 @@ export interface KioskPorts {
   onDeviceLost?: (listener: () => void) => () => void;
 }
 
+export interface KioskTeardown {
+  disposeWatchdog: () => void;
+  restoreInput: () => void;
+}
+
 /**
  * Apply pointer and keyboard permissions independently.
  */
@@ -53,20 +62,23 @@ function applyInputPermissions(mode: KioskMode, ports: KioskPorts): () => void {
   const previousKeyboard = !mode.allowKeyboard ? ports.getKeyboardEnabled() : undefined;
   if (!mode.allowPointer) ports.setPointerEnabled(false);
   if (!mode.allowKeyboard) ports.setKeyboardEnabled(false);
+  let restored = false;
   return () => {
+    if (restored) return;
+    restored = true;
     if (previousPointer !== undefined) ports.setPointerEnabled(previousPointer);
     if (previousKeyboard !== undefined) ports.setKeyboardEnabled(previousKeyboard);
   };
 }
 
 /**
- * Apply `mode`. Returns a teardown that restores input and disposes the watchdog.
+ * Apply `mode`. Returns separate input and watchdog teardowns.
  *
  * A no-op when kiosk mode is off — including the teardown — so a caller can
  * apply unconditionally and not branch.
  */
-export function applyKioskMode(mode: KioskMode, ports: KioskPorts): () => void {
-  if (!mode.enabled) return () => undefined;
+export function applyKioskMode(mode: KioskMode, ports: KioskPorts): KioskTeardown {
+  if (!mode.enabled) return { disposeWatchdog: () => undefined, restoreInput: () => undefined };
 
   const restoreInput = applyInputPermissions(mode, ports);
   if (!mode.showPanels) ports.hidePanels?.();
@@ -80,12 +92,9 @@ export function applyKioskMode(mode: KioskMode, ports: KioskPorts): () => void {
           onUnrecoverableLoss: ports.onDeviceLost,
         })
       : undefined;
-  let disposed = false;
-  return () => {
-    if (disposed) return;
-    disposed = true;
-    watchdog?.dispose();
-    restoreInput();
+  return {
+    disposeWatchdog: () => watchdog?.dispose(),
+    restoreInput,
   };
 }
 
@@ -93,16 +102,17 @@ export function applyKioskMode(mode: KioskMode, ports: KioskPorts): () => void {
  * Lock the display down when the scene or the URL asks for it: resolve the mode
  * from the authored `ui.kiosk` block and `?kiosk` (the URL wins — see
  * `config/kiosk.ts`), then apply it with the ports `ports()` builds. Returns
- * the input and watchdog teardown (a no-op when kiosk mode is off), which the
- * dataset session owns.
+ * separate input and watchdog teardowns (no-ops when kiosk mode is off).
  */
 export function applySceneKiosk(
   authored: ZarrKioskConfig | null | undefined,
   urlKiosk: boolean,
   ports: () => KioskPorts
-): () => void {
+): KioskTeardown {
   const mode = resolveKioskMode(authored, urlKiosk);
   // Ports are built only for a mode that is on: the viewer-config pass can run
   // on a partially constructed app, and "kiosk off" must not touch it.
-  return mode.enabled ? applyKioskMode(mode, ports()) : () => undefined;
+  return mode.enabled
+    ? applyKioskMode(mode, ports())
+    : { disposeWatchdog: () => undefined, restoreInput: () => undefined };
 }

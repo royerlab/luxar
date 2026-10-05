@@ -75,7 +75,8 @@ app/
   `ui.kiosk` block and `?kiosk` (URL wins) and applies it (`applyKioskMode`:
   input permissions, hidden panels, the `watchdog.ts` reload on a WebGL context that
   never returns or a lost WebGPU device),
-  returning the input and watchdog teardown the dataset session owns.
+  returning separate teardowns: the app owns input restoration across loads,
+  while the dataset session owns the watchdog.
 - **`control/`** — The `?control=` remote-control WebSocket client, its
   callable-method allowlist and wire-value sanitizers.
 - **`interaction/`** — Claims the canvas's gestures and context menu for the

@@ -2063,6 +2063,53 @@ describe('LuxarApp', () => {
       expect(pointerEnabled).toBe(true);
     });
 
+    it('keeps URL kiosk input locked during a failed dataset switch', async () => {
+      let keyboardEnabled = true;
+      let pointerEnabled = true;
+      mockInputHandler.isEnabled.mockImplementation(() => keyboardEnabled);
+      mockInputHandler.setEnabled.mockImplementation((enabled: boolean) => {
+        keyboardEnabled = enabled;
+      });
+      mockSceneManager.controls.isPointerEnabled.mockImplementation(() => pointerEnabled);
+      mockSceneManager.controls.setPointerEnabled.mockImplementation((enabled: boolean) => {
+        pointerEnabled = enabled;
+      });
+      await app.init({ canvas: mockCanvas, src: SRC, kiosk: true });
+      expect([keyboardEnabled, pointerEnabled]).toEqual([false, false]);
+
+      let rejectLoad!: (reason: Error) => void;
+      mockSceneManager.loadSceneData.mockImplementationOnce(
+        () => new Promise<void>((_resolve, reject) => (rejectLoad = reject))
+      );
+      const switching = app.switchDataset('http://example.com/next.zarr');
+      await vi.waitFor(() => expect(rejectLoad).toBeDefined());
+      expect([keyboardEnabled, pointerEnabled]).toEqual([false, false]);
+
+      rejectLoad(new Error('network failure'));
+      await expect(switching).rejects.toThrow('network failure');
+      expect([keyboardEnabled, pointerEnabled]).toEqual([false, false]);
+      app.dispose();
+      expect([keyboardEnabled, pointerEnabled]).toEqual([true, true]);
+    });
+
+    it('restores the pre-kiosk input state when leaving kiosk after an embedder write', async () => {
+      let keyboardEnabled = false;
+      mockInputHandler.isEnabled.mockImplementation(() => keyboardEnabled);
+      mockInputHandler.setEnabled.mockImplementation((enabled: boolean) => {
+        keyboardEnabled = enabled;
+      });
+      mockSceneManager.getSceneViewerConfig
+        .mockReturnValueOnce({ ui: { kiosk: { enabled: true } } })
+        .mockReturnValueOnce(undefined);
+      await app.init({ canvas: mockCanvas, src: SRC });
+      expect(keyboardEnabled).toBe(false);
+
+      app.setInputEnabled(true);
+      expect(keyboardEnabled).toBe(true);
+      await app.switchDataset('http://example.com/next.zarr');
+      expect(keyboardEnabled).toBe(false);
+    });
+
     it('leaves no kiosk watchdog behind a load that finishes after dispose', async () => {
       const canvas = { addEventListener: vi.fn(), removeEventListener: vi.fn() };
       mockSceneManager.renderer = { domElement: canvas };
