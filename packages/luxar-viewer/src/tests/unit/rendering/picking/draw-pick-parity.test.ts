@@ -65,6 +65,7 @@ import {
 } from '../../../helpers/geometry-materials';
 import {
   PICK_VISIBILITY_RULES,
+  SHARED_GEOMETRY_RULES,
   VISIBILITY_RULES,
   type RuleSignature,
   type RuleVerdict,
@@ -317,8 +318,13 @@ describe('the table covers every pick shader there is', () => {
 });
 
 describe('the CPU-side rules live in the shared geometry', () => {
-  // nD slice, slab and position clipping are decided before upload, so they
-  // hold for picking exactly when the pick node draws the visual geometry.
+  // SHARED_GEOMETRY_RULES documents these as needing no per-type shader row:
+  // they are decided before upload, so they hold for picking exactly when the
+  // pick node draws the visual geometry.
+  it('declares at least one shared-geometry rule', () => {
+    expect(SHARED_GEOMETRY_RULES.length).toBeGreaterThan(0);
+  });
+
   it.each(GEOMETRY_TYPES)('%s: the pick node reuses the visual geometry', (type) => {
     const registered: THREE.Mesh[] = [];
     const factory = new NodeFactory();
