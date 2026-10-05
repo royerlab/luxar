@@ -1020,14 +1020,14 @@ class TestBatchPlanRegression:
         assert len(specs) == 1
 
     def test_cull_retention_defaults(self) -> None:
-        """fit_gaussian_splats should default to cull_retention=0.95."""
+        """fit_gaussian_splats should share the CLI's retention default."""
         import inspect
 
         from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 
         sig = inspect.signature(fit_gaussian_splats)
         default = sig.parameters["cull_retention"].default
-        assert default == 0.95
+        assert default == 0.999
 
     def test_6d_channel_decoding(self) -> None:
         """Flat channel index should decode to channel-like axis coordinates."""

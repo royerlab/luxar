@@ -492,13 +492,13 @@ def content_scoped_stats(stats: "MutableMapping[str, Any]") -> "Dict[str, Any]":
     """Snapshot the measured scores so a PRODUCER can re-attach them, deep.
 
     For the fitters' own last step, which is a high-retention cumulative cull
-    (``cull_retention``, default 0.95 flat/tiled and 0.98 progressive) applied
+    (``cull_retention``, default 0.999 for every fitter) applied
     AFTER ``finalize_results`` has scored the reconstruction. That trim is part of
     producing the artifact rather than a later rewrite of a published one, and the
     score cannot be retaken without a second full render of the volume — so the
     fitters snapshot their measurement across it and put it back. Scrubbing there
     instead would leave EVERY default fit with no ``psnr_db`` at all, which is a
-    worse answer than one taken before a trim that drops 5% of total amplitude
+    worse answer than one taken before a trim that drops at most 0.1% of amplitude
     (the fit's own summary quotes exactly this number, so it would also start
     disagreeing with the store it wrote).
 

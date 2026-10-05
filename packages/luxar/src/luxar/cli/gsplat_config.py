@@ -40,7 +40,7 @@ class FitPreset(str, Enum):
 # differ in optimiser budget (``n_iters`` + ``early_stop_patience``) plus
 # ``max_eccentricity`` (10 → 20 from ``draft`` to ``ultra``).
 #
-# Why this matters: the previous presets defaulted to the fitter's
+# Why this matters: the previous presets defaulted to the fitter's former
 # ``cull_retention=0.95``, which silently dropped 5% of splats by amplitude
 # after every fit. Combined with too few iterations at high K, this made
 # ``luxar gsplat cal`` report artificially rising held-out PSNR ("signal
@@ -270,7 +270,7 @@ def dump_default_config(preset: str = "standard") -> str:
         f"dynamic_ops_verbose: {_fmt(vals.get('dynamic_ops_verbose'))}  # Verbose logging for dynamic ops",
         "",
         "# --- Post-Processing ---",
-        f"cull_retention: {_fmt(vals.get('cull_retention', 0.95))}  # Post-fit cumulative culling (0-1, null=disabled)",
+        f"cull_retention: {_fmt(vals.get('cull_retention', 0.999))}  # Post-fit cumulative culling (0-1, null=disabled)",
         f"voxel_footprint_correction: {_fmt(vals.get('voxel_footprint_correction'))}  # Inflate covariances by voxel footprint",
         "",
         "# --- Boundary Containment ---",

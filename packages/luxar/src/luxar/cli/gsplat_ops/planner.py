@@ -345,9 +345,8 @@ def run_content_fit(
             },
             # Content tiling's own baseline, layered just above the fitter's
             # harvested defaults: `--preset`, a `cull_retention:` in a `--config`
-            # and `--cull-retention` all still win — only the fitter's 0.95 is
-            # displaced. Shared with `fit_planned` so the CLI and the library
-            # cannot disagree about what a preset-less content box is fitted at.
+            # and `--cull-retention` all still win. Shared with `fit_planned` so
+            # the CLI and library agree on a preset-less content box.
             command_defaults={"cull_retention": CONTENT_CULL_RETENTION},
         )
         _fill_source_dtype(fk, source_dtype)

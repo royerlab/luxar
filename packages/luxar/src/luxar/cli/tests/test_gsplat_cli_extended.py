@@ -298,9 +298,9 @@ class TestLoadFitConfig:
         This is the only layer that can: `setdefault` on the resolved config is a
         no-op, because every signature default is already a key by then.
         """
-        assert load_fit_config()["cull_retention"] == 0.95  # function default
-        config = load_fit_config(command_defaults={"cull_retention": 0.999})
-        assert config["cull_retention"] == 0.999
+        assert load_fit_config()["cull_retention"] == 0.999  # function default
+        config = load_fit_config(command_defaults={"cull_retention": 0.75})
+        assert config["cull_retention"] == 0.75
 
     def test_preset_beats_command_defaults(self) -> None:
         config = load_fit_config(
@@ -330,7 +330,7 @@ class TestLoadFitConfig:
     def test_command_defaults_skip_none_values(self) -> None:
         """A sentinel-free dict: a None entry leaves the layer below alone."""
         config = load_fit_config(command_defaults={"cull_retention": None})
-        assert config["cull_retention"] == 0.95
+        assert config["cull_retention"] == 0.999
 
     def test_omitting_command_defaults_changes_nothing(self) -> None:
         assert load_fit_config() == load_fit_config(command_defaults=None)
