@@ -1,7 +1,7 @@
 """The CMU-1 channel order is load-bearing, so the guard that checks it is gated.
 
-``create_luxar_scene`` assigns the red/green/blue colormaps by POSITION in the
-resolved path list, so a channel arriving out of order paints hematoxylin red —
+``create_luxar_scene`` assigns the channel colormaps by POSITION in the
+resolved path list, so a channel arriving out of order gets the wrong colour —
 a wrong picture that renders perfectly happily. ``resolve_data`` refuses that
 case, but its only live trigger is a real run against the hosted 114 MB
 artifacts, and demos are omitted from coverage: the refusal had no test at all.
@@ -180,8 +180,9 @@ def test_scene_reladders_every_grafted_part(tmp_path, monkeypatch) -> None:
     out = demo.create_luxar_scene(paths, tmp_path / "cmu1.luxar.zarr")
 
     root = zarr.open_group(str(out), mode="r")
+    assert demo.CHANNEL_COLORMAPS == ["cyan", "magenta", "yellow"]
     parts_seen = 0
-    for colormap in ("red", "green", "blue"):
+    for colormap in demo.CHANNEL_COLORMAPS:
         layer = root[f"gsplats_{colormap}"]
         assert layer.attrs["kind"] == "partition"
         for name, part in layer.groups():
