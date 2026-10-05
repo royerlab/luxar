@@ -16,6 +16,7 @@
 
 import '../../styles/control-panel.css';
 
+import { VIEWER_ATTACHED_EVENT } from '../../config/control-contract';
 import {
   activeChapterIndex,
   deriveChapters,
@@ -426,6 +427,7 @@ function startConnectedPanel(
 ): void {
   let socket: ControllerSocket | undefined;
   let source: ChapterSource | null = null;
+  let disposed = false;
   /** The display's title and authored block, fetched once. */
   const presentation = createPresentationCache();
   let chapterRetryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -462,7 +464,7 @@ function startConnectedPanel(
   }
 
   function markActive(position: number | undefined): void {
-    if (source === null || position === undefined) return;
+    if (disposed || source === null || position === undefined) return;
     panel.setActive(activeChapterIndex(source, position));
   }
 
@@ -533,7 +535,8 @@ function startConnectedPanel(
     token: params.controlToken,
     onStatus,
     onEvent: (name, payload) => {
-      if (name === 'viewer-attached') {
+      if (disposed) return;
+      if (name === VIEWER_ATTACHED_EVENT) {
         void readPosition(socket, source, markActive);
         return;
       }
@@ -546,6 +549,7 @@ function startConnectedPanel(
   socket.connect();
 
   const teardown = (): void => {
+    disposed = true;
     source = null;
     idle.cancel();
     cancelChapterRetry();
