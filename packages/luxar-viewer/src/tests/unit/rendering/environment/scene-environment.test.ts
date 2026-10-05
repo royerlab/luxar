@@ -455,6 +455,33 @@ describe('SceneEnvironment — sources and precedence (Phase 4)', () => {
     expect(roomOnly.env.tick(performance.now() + 10_000)).toBe(false);
   });
 
+  it('keeps the room until capture is ready, then captures the settled scene once', () => {
+    const { env, scene, gen, renders } = makeEnv();
+    const { runtime } = makeRuntime(new THREE.Group());
+    let ready = false;
+    runtime.captureReady = () => ready;
+    env.attachRuntime(runtime);
+    env.configure({ ...DEFAULT_ENVIRONMENT_CONFIG, source: 'scene' });
+    env.ensure();
+    expect(env.activeKind()).toBe('room');
+    expect(scene.environment).toBe(gen.texture);
+    expect(env.captureCount).toBe(0);
+    expect(renders).toHaveLength(0);
+    expect(env.tick()).toBe(false);
+
+    ready = true;
+    runtime.settled = false;
+    expect(env.ensure()).toBe(false);
+    expect(env.tick()).toBe(false);
+    runtime.settled = true;
+    expect(env.tick()).toBe(true);
+    expect(env.activeKind()).toBe('scene');
+    expect(env.captureCount).toBe(1);
+    expect(renders).toHaveLength(6);
+    expect(env.tick()).toBe(false);
+    expect(env.captureCount).toBe(1);
+  });
+
   it('a baked map wins over the authored source, and clearing it falls back', () => {
     const { env, scene, gen, targets } = makeEnv();
     env.configure({ ...DEFAULT_ENVIRONMENT_CONFIG, source: 'scene' });
@@ -505,6 +532,28 @@ describe('SceneEnvironment — sources and precedence (Phase 4)', () => {
 describe('SceneEnvironment — HDRI load ownership', () => {
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
   const hdri = (url: string) => ({ ...DEFAULT_ENVIRONMENT_CONFIG, source: 'hdri' as const, url });
+
+  it('resolves a store-relative HDRI before scene capture is ready and redraws when it lands', async () => {
+    hdriLoads.length = 0;
+    const { env, scene } = makeEnv();
+    const requestRender = vi.fn();
+    env.attachRuntime({
+      ...makeRuntime(null).runtime,
+      captureReady: () => false,
+      baseUrl: () => 'https://store.example/scene.luxar.zarr',
+      requestRender,
+    });
+    env.ensure();
+    env.configure(hdri('env/studio.hdr'));
+    expect(hdriLoads.map((load) => load.url)).toEqual([
+      'https://store.example/scene.luxar.zarr/env/studio.hdr',
+    ]);
+    const texture = new THREE.Texture();
+    hdriLoads[0].resolve(texture);
+    await settle();
+    expect(scene.environment).toBe(texture);
+    expect(requestRender).toHaveBeenCalledTimes(1);
+  });
 
   it('a stale rejection does not make the newer load discard its own texture', async () => {
     hdriLoads.length = 0;

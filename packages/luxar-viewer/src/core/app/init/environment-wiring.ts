@@ -59,30 +59,10 @@ export const BAKE_SETTLED_FRAMES = 30;
 export function wireSceneEnvironment(deps: EnvironmentWiringDeps): void {
   const { sceneManager, animationController, events, options, isSettled } = deps;
 
-  // Defer attaching the capture runtime until the worker pool is ready AND the
-  // loader has settled. A scene-source environment's first light is an immediate,
-  // multi-second SYNCHRONOUS CubeCamera capture (six scene renders + a PMREM
-  // prefilter); running it while the data-worker pool is still handshaking its
-  // workers on the same main thread pushed worker init past its 30 s deadline
-  // under load (#3021). Until the runtime is attached the scene is lit by the room
-  // PMREM stand-in; gating on `poolReadyMs` keeps the capture off the worker-init
-  // critical path, and also gating on `isSettled` folds the former first-light +
-  // first-commit double capture into a single one (the loader settles before the
-  // pool reports ready, so one capture of the finished scene replaces both).
-  const attachId = 'environment-runtime-attach';
-  animationController.addPerFrameCallback(
-    attachId,
-    () => {
-      if (getLoadTimeline().measures.poolReadyMs === null || !isSettled()) return false;
-      animationController.removePerFrameCallback(attachId);
-      sceneManager.attachEnvironmentRuntime(isSettled);
-      // Attaching may capture synchronously; make sure the new map is drawn.
-      animationController.requestRender('environmentRuntimeAttach');
-      return false;
-    },
-    { continuous: true }
-  );
-  events.add(() => animationController.removePerFrameCallback(attachId));
+  // Keep the runtime available for store-relative HDRI URLs and redraws from
+  // init. Only a live scene capture waits for the worker pool (#3021).
+  const captureReady = (): boolean => getLoadTimeline().milestones.poolReady !== undefined;
+  sceneManager.attachEnvironmentRuntime(isSettled, captureReady);
 
   // `pre-render`: a capture this frame sees the frame's final view state
   // (camera writers and view callbacks, including a dimension step, have run).
@@ -95,7 +75,24 @@ export function wireSceneEnvironment(deps: EnvironmentWiringDeps): void {
   events.add(() => animationController.removePerFrameCallback('environment-capture'));
 
   const markStale = (): void => sceneManager.environment?.markStale();
-  events.add(eventBus.on('geometry-committed', markStale));
+  const readyId = 'environment-capture-ready';
+  const onCommit = (): void => {
+    markStale();
+    if (captureReady() && isSettled()) return;
+    // A commit means a load is in progress. Keep ticking until the pool and
+    // loader settle so the room can be replaced even if the viewer idled.
+    animationController.addPerFrameCallback(
+      readyId,
+      () => {
+        if (!captureReady() || !isSettled()) return false;
+        animationController.removePerFrameCallback(readyId);
+        return sceneManager.environment?.tick() ?? false;
+      },
+      { continuous: true, phase: 'pre-render' }
+    );
+  };
+  events.add(eventBus.on('geometry-committed', onCommit));
+  events.add(() => animationController.removePerFrameCallback(readyId));
   const markStaleOnSliceChange = (changed: boolean): void => {
     if (changed) markStale();
   };
@@ -141,7 +138,8 @@ function scheduleBake(
       // Not before a dataset load has begun and produced a scene root.
       const hasScene = sceneManager.scene.children.some((c) => c.name === 'LuxarScene');
       if (!getSceneLoader('default') || !hasScene) return false;
-      settledFrames = isSettled() ? settledFrames + 1 : 0;
+      settledFrames =
+        getLoadTimeline().milestones.poolReady !== undefined && isSettled() ? settledFrames + 1 : 0;
       if (settledFrames < BAKE_SETTLED_FRAMES) return false;
       started = true;
       animationController.removePerFrameCallback(id);

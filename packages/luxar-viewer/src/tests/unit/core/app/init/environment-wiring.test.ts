@@ -23,9 +23,9 @@ vi.mock('../../../../../rendering/environment/bake', () => ({
 vi.mock('../../../../../ui/recording-panel/screenshot-exporter', () => ({
   downloadBlob: vi.fn(),
 }));
-// The runtime attach is gated on the load timeline's poolReady milestone (#3021).
+// Scene capture and baking are gated on the load timeline's poolReady milestone (#3021).
 const { loadTimeline } = vi.hoisted(() => ({
-  loadTimeline: { measures: { poolReadyMs: null as number | null } },
+  loadTimeline: { milestones: { poolReady: undefined as number | undefined } },
 }));
 vi.mock('../../../../../profiling/load-timeline', () => ({
   getLoadTimeline: () => loadTimeline,
@@ -94,33 +94,19 @@ function makeHarness(options: { bakeEnvironment?: { probe?: string; resolution?:
 describe('wireSceneEnvironment', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    loadTimeline.measures.poolReadyMs = null;
+    loadTimeline.milestones.poolReady = undefined;
     delete (window as { __luxarDebug?: unknown }).__luxarDebug;
   });
 
-  it('defers the runtime attach to pool-ready + settled, then ticks and marks stale', () => {
+  it('attaches the runtime at init, gates capture, then ticks and marks stale', () => {
     const h = makeHarness();
-    // Deferred: the multi-second capture must not race worker-pool init (#3021).
-    expect(h.sceneManager.attachEnvironmentRuntime).not.toHaveBeenCalled();
-    expect(h.callbacks.has('environment-runtime-attach')).toBe(true);
+    expect(h.sceneManager.attachEnvironmentRuntime).toHaveBeenCalledTimes(1);
+    const captureReady = vi.mocked(h.sceneManager.attachEnvironmentRuntime).mock.calls[0][1];
+    expect(captureReady()).toBe(false);
     expect(h.callbacks.has('environment-capture')).toBe(true);
     expect(h.callbacks.has('environment-bake')).toBe(false);
-
-    const attach = h.callbacks.get('environment-runtime-attach')!;
-    // Not before the pool is ready, even while settled.
-    expect(attach()).toBe(false);
-    expect(h.sceneManager.attachEnvironmentRuntime).not.toHaveBeenCalled();
-    // Pool ready but not settled: still deferred (avoids a mid-load capture).
-    loadTimeline.measures.poolReadyMs = 12;
-    h.settled.value = false;
-    expect(attach()).toBe(false);
-    expect(h.sceneManager.attachEnvironmentRuntime).not.toHaveBeenCalled();
-    // Pool ready AND settled: attach once, request a draw, and remove itself.
-    h.settled.value = true;
-    expect(attach()).toBe(false);
-    expect(h.sceneManager.attachEnvironmentRuntime).toHaveBeenCalledTimes(1);
-    expect(h.animationController.requestRender).toHaveBeenCalledWith('environmentRuntimeAttach');
     expect(h.callbacks.has('environment-runtime-attach')).toBe(false);
+    expect(h.callbacks.has('environment-capture-ready')).toBe(false);
 
     // The callback reports whether a capture landed (render-on-change).
     h.environment.tick.mockReturnValueOnce(false).mockReturnValueOnce(true);
@@ -130,6 +116,16 @@ describe('wireSceneEnvironment', () => {
 
     eventBus.emit('geometry-committed', {});
     expect(h.environment.markStale).toHaveBeenCalledTimes(1);
+    expect(h.callbacks.has('environment-capture-ready')).toBe(true);
+    const ready = h.callbacks.get('environment-capture-ready')!;
+    expect(ready()).toBe(false);
+    h.settled.value = false;
+    loadTimeline.milestones.poolReady = 12;
+    expect(captureReady()).toBe(true);
+    expect(ready()).toBe(false);
+    h.settled.value = true;
+    expect(ready()).toBe(false);
+    expect(h.callbacks.has('environment-capture-ready')).toBe(false);
     // The dims manager notifies its listeners on a value change.
     (
       sceneDimsManager as unknown as { notifyListeners: (changed: boolean) => void }
@@ -215,6 +211,10 @@ describe('wireSceneEnvironment', () => {
     const bake = h.callbacks.get('environment-bake')!;
     expect(bake).toBeDefined();
 
+    for (let i = 0; i < BAKE_SETTLED_FRAMES + 1; i++) bake();
+    expect(bakeEnvironment).not.toHaveBeenCalled();
+    loadTimeline.milestones.poolReady = 12;
+
     // An unsettled frame resets the count.
     for (let i = 0; i < BAKE_SETTLED_FRAMES - 1; i++) bake();
     h.settled.value = false;
@@ -248,6 +248,7 @@ describe('wireSceneEnvironment', () => {
   it('a malformed ?probe= records the error instead of baking', async () => {
     const h = makeHarness({ bakeEnvironment: { probe: 'centre' } });
     const bake = h.callbacks.get('environment-bake')!;
+    loadTimeline.milestones.poolReady = 12;
     for (let i = 0; i < BAKE_SETTLED_FRAMES; i++) bake();
     await vi.waitFor(() =>
       expect(window.__luxarDebug?.environment?.bakeError).toContain("malformed probe 'centre'")

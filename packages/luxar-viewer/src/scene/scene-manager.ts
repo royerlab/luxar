@@ -1008,7 +1008,7 @@ export class SceneManager extends THREE.EventDispatcher<{
    * whose per-draw hook re-points it at its cached perspective graph for the faces
    * (a lookup, no build; see `selectProjectionVariant`).
    */
-  attachEnvironmentRuntime(isSettled: () => boolean): void {
+  attachEnvironmentRuntime(isSettled: () => boolean, captureReady: () => boolean): void {
     const root = (): THREE.Object3D | null =>
       this.scene.children.find((c) => c.name === 'LuxarScene') ?? null;
     this.environment?.attachRuntime({
@@ -1018,6 +1018,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       },
       restoreCameraParams: () => this.updateMaterialsForCurrentCamera(),
       isSettled,
+      captureReady,
       baseUrl: () => root()?.userData?.zarrBaseUrl as string | undefined,
       // An HDRI landing asynchronously: the 'change' event wakes the loop.
       requestRender: () => this.dispatchEvent({ type: 'change' }),
