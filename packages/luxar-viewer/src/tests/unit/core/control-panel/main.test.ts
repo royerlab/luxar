@@ -496,6 +496,21 @@ describe('control-panel bootstrap', () => {
     expect(context.socket.notify).not.toHaveBeenCalled();
   });
 
+  it('ignores attachment events before chapters load and after teardown', async () => {
+    const context = harness();
+    context.socketPorts.onEvent?.('viewer-attached', null);
+    await settle();
+    expect(context.socket.call).not.toHaveBeenCalled();
+
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    context.teardown();
+    vi.mocked(context.socket.call).mockClear();
+    context.socketPorts.onEvent?.('viewer-attached', null);
+    await settle();
+    expect(context.socket.call).not.toHaveBeenCalled();
+  });
+
   it('reports a malformed dimensions reply without rendering chapters', async () => {
     const context = harness();
     vi.mocked(context.socket.call).mockResolvedValue({ displayed: [] });

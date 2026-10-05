@@ -536,6 +536,7 @@ function startConnectedPanel(
   socket.connect();
 
   const teardown = (): void => {
+    source = null;
     if (idleTimer !== undefined) clearTimeout(idleTimer);
     cancelChapterRetry();
     socket?.dispose();
