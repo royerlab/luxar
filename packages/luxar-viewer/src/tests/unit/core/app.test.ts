@@ -2094,20 +2094,27 @@ describe('LuxarApp', () => {
 
     it('restores the pre-kiosk input state when leaving kiosk after an embedder write', async () => {
       let keyboardEnabled = false;
+      let pointerEnabled = true;
       mockInputHandler.isEnabled.mockImplementation(() => keyboardEnabled);
       mockInputHandler.setEnabled.mockImplementation((enabled: boolean) => {
         keyboardEnabled = enabled;
+      });
+      mockSceneManager.controls.isPointerEnabled.mockImplementation(() => pointerEnabled);
+      mockSceneManager.controls.setPointerEnabled.mockImplementation((enabled: boolean) => {
+        pointerEnabled = enabled;
       });
       mockSceneManager.getSceneViewerConfig
         .mockReturnValueOnce({ ui: { kiosk: { enabled: true } } })
         .mockReturnValueOnce(undefined);
       await app.init({ canvas: mockCanvas, src: SRC });
       expect(keyboardEnabled).toBe(false);
+      expect(pointerEnabled).toBe(false);
 
       app.setInputEnabled(true);
       expect(keyboardEnabled).toBe(true);
       await app.switchDataset('http://example.com/next.zarr');
       expect(keyboardEnabled).toBe(false);
+      expect(pointerEnabled).toBe(true);
     });
 
     it('leaves no kiosk watchdog behind a load that finishes after dispose', async () => {

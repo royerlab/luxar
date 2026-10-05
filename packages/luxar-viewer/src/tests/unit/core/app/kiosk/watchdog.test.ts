@@ -230,6 +230,9 @@ describe('applyKioskMode', () => {
     const teardown = applyKioskMode(resolveKioskMode({ enabled: true }, false), p);
     expect(p.getPointerEnabled()).toBe(false);
     expect(p.getKeyboardEnabled()).toBe(false);
+    teardown.disposeWatchdog();
+    expect(p.getPointerEnabled()).toBe(false);
+    expect(p.getKeyboardEnabled()).toBe(false);
     teardown.restoreInput();
     expect(p.getPointerEnabled()).toBe(true);
     expect(p.getKeyboardEnabled()).toBe(true);
