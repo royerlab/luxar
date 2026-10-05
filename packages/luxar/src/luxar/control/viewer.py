@@ -292,8 +292,8 @@ class Viewer:
 
     def unsubscribe(self, event: str) -> None:
         """Stop receiving ``event`` notifications."""
-        self.call("unsubscribe", event)
         self._subscriptions.discard(event)
+        self.call("unsubscribe", event)
 
 
 def _with_query(url: str, *, role: str, token: Optional[str]) -> str:

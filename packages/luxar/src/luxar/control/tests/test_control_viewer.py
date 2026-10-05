@@ -355,6 +355,31 @@ class TestEvents:
             "params": ["dimensions-changed"],
         }
 
+    def test_failed_unsubscribe_is_not_renewed_on_attachment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        socket = FakeSocket(
+            [
+                {"result": True},
+                {"error": {"code": -32001, "message": "no viewer"}},
+            ]
+        )
+        viewer = make_viewer(monkeypatch, socket)
+        viewer.subscribe("camera-changed")
+
+        with pytest.raises(ControlError) as caught:
+            viewer.unsubscribe("camera-changed")
+        assert caught.value.no_viewer_attached
+
+        socket.replies.append(
+            {"method": "event", "params": ["viewer-attached", None], "id": None}
+        )
+        assert viewer.recv_event() == ("viewer-attached", None)
+        assert [frame["method"] for frame in socket.sent] == [
+            "subscribe",
+            "unsubscribe",
+        ]
+
     def test_recv_event_returns_a_notification(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
