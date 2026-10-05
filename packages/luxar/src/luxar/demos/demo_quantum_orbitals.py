@@ -156,8 +156,8 @@ RADIAL_CONTAINMENT = 0.995
 #: crushed by a handful of hot voxels. It costs 0.1% of voxels on every state.
 NORM_PERCENTILE = 99.9
 
-#: Post-fit culling retention. Higher than the 0.95 default on purpose: the
-#: faint outer cloud IS the orbital's character here, not background to discard.
+#: Post-fit culling retention. Keep the faint outer cloud that gives the
+#: orbital its character.
 CULL_RETENTION = 0.995
 
 #: Phase tints (linear RGB). Warm = ψ > 0, cool = ψ < 0.
