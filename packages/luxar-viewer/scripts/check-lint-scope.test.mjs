@@ -164,7 +164,7 @@ function typecheckedFiles(configName) {
 }
 
 /** Diagnostics for one synthetic source under a project's compiler options. */
-function sourceDiagnostics(configName, relativePath, sourceText) {
+function sourceDiagnostics(configName, relativePath, sourceText, additionalFiles = []) {
   const parsed = parsedTypeScriptConfig(configName);
   const sourcePath = join(PKG, relativePath);
   const options = { ...parsed.options, noLib: true, noResolve: true };
@@ -186,7 +186,7 @@ function sourceDiagnostics(configName, relativePath, sourceText) {
       /\bdeclare\b/.test(readFileSync(file, 'utf8'))
   );
   const program = ts.createProgram(
-    [...declarationFiles, ...selectedTypeDeclarations(parsed), sourcePath],
+    [...declarationFiles, ...selectedTypeDeclarations(parsed), ...additionalFiles, sourcePath],
     options,
     host
   );
@@ -342,22 +342,24 @@ describe('typecheck scope', () => {
   }, 30_000);
 
   it('includes project ambient declarations when probing browser globals', () => {
+    const fixture = mkdtempSync(join(tmpdir(), 'luxar-browser-scope-'));
     const declarations = [
       ['d.ts', 'declare global { var browserScopeProbe: string; }\nexport {};\n'],
       ['ts', 'declare global { var browserScopeProbe: string; }\nexport {};\n'],
       ['ts', 'declare var browserScopeProbe: string;\n'],
     ];
-    for (const [extension, declaration] of declarations) {
-      const declarationPath = join(PKG, `src/types/node-global-probe.test-only.${extension}`);
-      writeFileSync(declarationPath, declaration);
-
-      try {
+    try {
+      for (const [extension, declaration] of declarations) {
+        const declarationPath = join(fixture, `node-global-probe.${extension}`);
+        writeFileSync(declarationPath, declaration);
         expect(
-          sourceDiagnostics('tsconfig.json', 'src/browser-scope-probe.ts', 'browserScopeProbe;\n')
+          sourceDiagnostics('tsconfig.json', 'src/browser-scope-probe.ts', 'browserScopeProbe;\n', [
+            declarationPath,
+          ])
         ).toEqual([]);
-      } finally {
-        rmSync(declarationPath, { force: true });
       }
+    } finally {
+      rmSync(fixture, { recursive: true, force: true });
     }
   });
 });
