@@ -48,6 +48,9 @@ MAX_BUFFERED_EVENTS = 1024
 #: JSON-RPC code the hub answers with when no viewer is attached.
 NO_VIEWER_CODE = -32001
 
+# Kept independent of luxar.cli; the contract test pins the wire name.
+_VIEWER_ATTACHED_EVENT = "viewer-attached"
+
 # Match uvicorn's control-hub frame ceiling while allowing display-sized PNGs.
 _MAX_FRAME_SIZE_BYTES = 16 * 1024 * 1024
 
@@ -223,7 +226,7 @@ class Viewer:
 
     def _read_event(self, frame: Any) -> Optional[Tuple[str, Any]]:
         event = _event_from_frame(frame)
-        if event is not None and event[0] == "viewer-attached":
+        if event is not None and event[0] == _VIEWER_ATTACHED_EVENT:
             for name in sorted(self._subscriptions):
                 self.notify("subscribe", name)
         return event

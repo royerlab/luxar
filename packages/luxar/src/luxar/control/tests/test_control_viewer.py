@@ -16,7 +16,9 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from luxar.cli import _control_contract as contract
 from luxar.control import ControlError, Viewer
+from luxar.control import viewer as controller
 from luxar.control.viewer import MAX_BUFFERED_EVENTS, _connect, _with_query
 
 
@@ -314,6 +316,9 @@ class TestNamedMethods:
 
 
 class TestEvents:
+    def test_attachment_event_name_matches_hub_contract(self) -> None:
+        assert controller._VIEWER_ATTACHED_EVENT == contract.VIEWER_ATTACHED_EVENT
+
     def test_attachment_during_a_call_renews_and_remains_readable(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
