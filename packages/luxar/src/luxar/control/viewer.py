@@ -192,7 +192,9 @@ class Viewer:
         subscribed to nothing still sees whatever another controller — a touch
         panel, say — asked for. Match on ``name`` rather than assuming.
 
-        Events received while :meth:`call` waits for its reply are buffered and
+        A ``viewer-attached`` event also renews this controller's active
+        subscriptions before it is returned. Events received while :meth:`call`
+        waits for its reply are buffered and
         returned first. That buffer holds at most
         :data:`MAX_BUFFERED_EVENTS`; past the cap the OLDEST are dropped, so a
         long-lived controller that never reads events cannot grow without

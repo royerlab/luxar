@@ -173,7 +173,8 @@ func TestViewerAttachNotifiesControllers(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		viewer := dial(t, base, "?role=viewer", nil)
 		frame := recv(t, controller)
-		if frame["method"] != EventMethod || jsonNumber(frame["id"]) != "null" {
+		_, hasID := frame["id"]
+		if frame["method"] != EventMethod || hasID {
 			t.Fatalf("unexpected attachment frame: %v", frame)
 		}
 		params, ok := frame["params"].([]any)

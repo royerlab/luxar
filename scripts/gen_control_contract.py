@@ -169,7 +169,9 @@ def render_typescript(c: Dict[str, Any]) -> str:
     lines.append(f"export const JSONRPC_VERSION = '{c['jsonrpc']['version']}';")
     lines.append(f"export const EVENT_METHOD = '{c['jsonrpc']['event_method']}';")
     lines.append("/** @internal */")
-    lines.append(f"export const VIEWER_ATTACHED_EVENT = '{c['jsonrpc']['viewer_attached_event']}';")
+    lines.append(
+        f"export const VIEWER_ATTACHED_EVENT = '{c['jsonrpc']['viewer_attached_event']}';"
+    )
     for key, int_value in _int_items(c, "jsonrpc", "error_codes"):
         lines.append(f"export const {key.upper()} = {int_value};")
     lines.append("")

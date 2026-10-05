@@ -92,6 +92,12 @@ waits for its answer are buffered for it. `camera-changed` is throttled
 viewer-side to 20 Hz; it fires at frame rate otherwise, and an auto-rotating
 kiosk never stops moving.
 
+The hub also sends a `viewer-attached` event with a `null` payload when a
+display connects or reloads. `Viewer` renews its active subscriptions as it
+reads that event, including while waiting for a call reply. A script mirroring
+viewer state can use the event to fetch a fresh snapshot. Keep reading the
+socket with `recv_event` or `call` so recovery can run.
+
 Two things to know about that stream. It is **not filtered to your own
 subscriptions** — the hub fans a viewer's events out to every attached
 controller, so a script that subscribed to nothing still receives whatever a

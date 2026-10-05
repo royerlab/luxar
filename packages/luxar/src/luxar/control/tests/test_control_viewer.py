@@ -314,6 +314,29 @@ class TestNamedMethods:
 
 
 class TestEvents:
+    def test_attachment_during_a_call_renews_and_remains_readable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        socket = FakeSocket(
+            [
+                {"result": True, "id": 1},
+                {"method": "event", "params": ["viewer-attached", None], "id": None},
+                {"result": "layers", "id": 2},
+            ]
+        )
+        socket.echo_id = False
+        viewer = make_viewer(monkeypatch, socket)
+        viewer.subscribe("dimensions-changed")
+
+        assert viewer.call("getLayers") == "layers"
+        assert socket.last() == {
+            "jsonrpc": "2.0",
+            "method": "subscribe",
+            "params": ["dimensions-changed"],
+        }
+        assert viewer.recv_event() == ("viewer-attached", None)
+        assert len(socket.sent) == 3
+
     def test_attachment_renews_only_current_subscriptions(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
