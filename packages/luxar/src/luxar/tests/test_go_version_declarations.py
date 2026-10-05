@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -173,7 +174,13 @@ def test_old_local_go_reports_reinstall_remedy(tmp_path: Path) -> None:
         "#!/bin/sh\necho 'go version go1.22.10 linux/amd64'\n", encoding="utf-8"
     )
     go.chmod(0o755)
-    env = os.environ | {"HOME": str(home), "PATH": os.defpath}
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    for name in ("make", "bash", "awk", "sed", "cut"):
+        binary = shutil.which(name)
+        assert binary is not None
+        (tools / name).symlink_to(binary)
+    env = os.environ | {"HOME": str(home), "PATH": str(tools)}
     result = subprocess.run(
         ["make", "--silent", "install-go", "OS=linux"],
         cwd=REPO,
