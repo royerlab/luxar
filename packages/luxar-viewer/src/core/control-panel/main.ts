@@ -385,6 +385,22 @@ function applyChapterLabels(
   }
 }
 
+/** Renew the viewer-local subscription, then refresh the panel's position. */
+async function readPosition(
+  socket: ControllerSocket | undefined,
+  source: ChapterSource | null,
+  markActive: (position: number | undefined) => void
+): Promise<void> {
+  if (source === null) return;
+  try {
+    await socket?.call('subscribe', ['dimensions-changed']);
+    const dims = await socket?.call('getDimensions');
+    if (isWireDimensions(dims)) markActive(dims.currentStep[source.dimensionIndex]);
+  } catch {
+    // A later attachment or socket reconnect will retry the read.
+  }
+}
+
 function startConnectedPanel(
   params: ConnectedUrlParams,
   root: HTMLElement,
@@ -507,6 +523,10 @@ function startConnectedPanel(
     token: params.controlToken,
     onStatus,
     onEvent: (name, payload) => {
+      if (name === 'viewer-attached') {
+        void readPosition(socket, source, markActive);
+        return;
+      }
       if (name !== 'dimensions-changed' || source === null) return;
       const dims = payload as WireDimensions;
       markActive(dims.currentStep?.[source.dimensionIndex]);

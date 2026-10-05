@@ -477,6 +477,25 @@ describe('control-panel bootstrap', () => {
     expect(context.panel.setActive).toHaveBeenCalledWith(0);
   });
 
+  it('renews its subscription and reads the current position when a viewer attaches', async () => {
+    const context = harness();
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    expect(context.panel.setActive).toHaveBeenLastCalledWith(1);
+
+    vi.mocked(context.socket.call).mockClear();
+    vi.mocked(context.socket.call).mockImplementation(async (method: string) =>
+      method === 'getDimensions' ? { ...DIMS, currentStep: [0, 0, 0, 0] } : undefined
+    );
+    context.socketPorts.onEvent?.('viewer-attached', null);
+    await settle();
+
+    expect(context.socket.call).toHaveBeenNthCalledWith(1, 'subscribe', ['dimensions-changed']);
+    expect(context.socket.call).toHaveBeenNthCalledWith(2, 'getDimensions');
+    expect(context.panel.setActive).toHaveBeenLastCalledWith(0);
+    expect(context.socket.notify).not.toHaveBeenCalled();
+  });
+
   it('reports a malformed dimensions reply without rendering chapters', async () => {
     const context = harness();
     vi.mocked(context.socket.call).mockResolvedValue({ displayed: [] });
