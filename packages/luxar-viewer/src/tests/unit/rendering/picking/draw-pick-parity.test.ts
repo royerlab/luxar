@@ -321,9 +321,8 @@ describe.each(SHARED_GEOMETRY_RULES)(
   'the CPU-side rule "%s" lives in the shared geometry',
   (_rule) => {
     // Decided before upload, so it holds for picking exactly when the pick
-    // node draws the visual geometry — proven once per rule and per type, so a
-    // rule that stops applying, or a type that starts needing its own shader
-    // row, shows up here under its own name.
+    // node draws the visual geometry — the one check below, run once per
+    // type and listed here under each rule's own name.
     it.each(GEOMETRY_TYPES)('%s: the pick node reuses the visual geometry', (type) => {
       const registered: THREE.Mesh[] = [];
       const factory = new NodeFactory();
