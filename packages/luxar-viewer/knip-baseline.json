@@ -44,6 +44,7 @@
     "exports:src/wasm/typescript/index.ts::decode_log_perchannel_u8",
     "exports:src/wasm/typescript/index.ts::decode_signed_log_perchannel_u16",
     "exports:src/wasm/typescript/index.ts::decode_signed_log_perchannel_u8",
+    "exports:src/wasm/typescript/index.ts::points_slice_membership",
     "types:src/cache/decompressed-chunk-cache/cached-zarr-array.ts::WarmChunkOptions",
     "types:src/cache/decompressed-chunk-cache/cached-zarr-array.ts::WarmableArray",
     "types:src/config/control-contract.ts::ControlRole",
