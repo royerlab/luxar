@@ -613,11 +613,11 @@ def run_fit_volume(
         "A --tile k/M worker applies this independently to its tile; batch-fit "
         "does the same before merging, so --flat approximates rather than exactly "
         "matches one global cull over the merged splats. "
-        "For example, 0.95 — what a bare fit falls through to — discards splats "
+        "For example, an aggressive 0.95 discards splats "
         "in the bottom 5% of cumulative amplitude; how many splats that is "
         "depends on how heavy-tailed the data is, and on a sparse volume it can "
-        "be most of them. Every --preset sets 0.999 instead "
-        "(near-lossless), and so does --tiling content even without a preset. "
+        "be most of them. The bare fitter and every --preset use 0.999 "
+        "(near-lossless), as does --tiling content without a preset. "
         "Set to 0 to keep every splat.",
     ),
     # Denoising
