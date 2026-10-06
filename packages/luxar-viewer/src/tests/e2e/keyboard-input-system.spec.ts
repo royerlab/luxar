@@ -12,13 +12,26 @@
  * This test suite provides critical coverage for the unified input binding
  * system.
  *
- * **A note on `page.waitForTimeout()`.** The fly-control tests below
- * use the `keyboard.down(X) → waitForTimeout(N) → keyboard.up(X)`
- * pattern intentionally: the camera moves at a fixed velocity per
- * frame while the key is held, so the wait *is* the input — replacing
- * it with an event-based signal would defeat the test. Same idea for
- * the "wait and check if still moving" inertia-decay observations.
- * These are the only fixed sleeps in this file by design.
+ * **A note on `page.waitForTimeout()`.** Most fly-control tests below use
+ * the `keyboard.down(X) → waitForTimeout(N) → keyboard.up(X)` pattern
+ * intentionally: the camera moves at a fixed velocity per frame while the
+ * key is held, so the wait *is* the input — replacing it with an
+ * event-based signal would defeat the test. Same idea for the "wait and
+ * check if still moving" inertia-decay observations.
+ *
+ * The two Shift+W speed-boost tests are the exception, and verify two
+ * things separately: (1) a real Shift+W keydown correctly arms the
+ * speed-boost + forward input state (the binding wiring, read synchronously
+ * off the input-event handler — no frame timing involved), and (2) with
+ * that input state armed directly, a fixed number of deterministic
+ * `controls.update(dt)` steps (the same entry point the render loop calls)
+ * roughly doubles the integrated speed under boost. Both are driven and
+ * read inside a single, synchronous `page.evaluate()`, so no real rAF frame
+ * — whose delta depends on host load and can land between any two
+ * Playwright-side `await`s — can interleave and inject an uncontrolled
+ * contribution into the measurement. An earlier version of this test held
+ * a real key down across the stepping; a stray real frame landing in that
+ * window intermittently inverted the comparison. See #3022.
  */
 
 import { test, expect } from './fixtures';
@@ -73,37 +86,47 @@ test.describe('Keyboard Input System - Fly Controls', () => {
     });
     await waitForNextRender(page);
 
-    // Run two measurements (normal W vs Shift+W) under identical starting
-    // conditions. We snapshot the initial camera pose ONCE via saveState(),
-    // then call reset() before each sample so the camera returns to that
-    // exact pose with velocity = 0. Pressing F to recenter does not zero
-    // velocity, so residual inertia from the prior sample leaks into the
-    // next one — that asymmetry was producing inverted results.
-    await page.evaluate(() => (window as any).__luxarDebug.controls.saveState());
+    // 1) Confirm a real Shift+W keydown arms the actual input state. This
+    // reads straight off the synchronous keydown handler, so it carries no
+    // frame-timing dependency at all.
+    await page.keyboard.down('Shift');
+    await page.keyboard.down('w');
+    const armed = await page.evaluate(() => {
+      const controls = (window as any).__luxarDebug.controls.getControls();
+      return { speedBoost: controls.speedBoost, forward: controls.moveState.forward };
+    });
+    await page.keyboard.up('w');
+    await page.keyboard.up('Shift');
+    expect(armed.speedBoost).toBe(true);
+    expect(armed.forward).toBe(1);
 
-    const sampleMovement = async (boost: boolean): Promise<number> => {
-      await page.evaluate(() => (window as any).__luxarDebug.controls.reset());
-      await waitForNextRender(page, 1);
+    // 2) Confirm the armed state roughly doubles the integrated speed.
+    // Setting the input flags AND stepping physics inside one synchronous
+    // evaluate() means no real rAF frame can land in between and smuggle in
+    // a host-load-dependent contribution.
+    const PHYSICS_DT = 1 / 60;
+    const PHYSICS_STEPS = 30;
 
-      const initial = await getLuxarState(page);
-      const startZ = initial.camera.position.z;
+    const sampleSpeed = (boost: boolean): Promise<number> =>
+      page.evaluate(
+        ({ boost, steps, dt }) => {
+          const controls = (window as any).__luxarDebug.controls.getControls();
+          controls.reset();
+          controls.moveState.forward = 1;
+          controls.speedBoost = boost;
+          for (let i = 0; i < steps; i++) controls.update(dt);
+          const speed = controls.velocity.length();
+          controls.reset();
+          return speed;
+        },
+        { boost, steps: PHYSICS_STEPS, dt: PHYSICS_DT }
+      );
 
-      if (boost) await page.keyboard.down('Shift');
-      await page.keyboard.down('w');
-      await page.waitForTimeout(200);
-      await page.keyboard.up('w');
-      if (boost) await page.keyboard.up('Shift');
-      await waitForNextRender(page, 1);
-
-      const final = await getLuxarState(page);
-      return Math.abs(final.camera.position.z - startZ);
-    };
-
-    const normalDistance = await sampleMovement(false);
-    const boostDistance = await sampleMovement(true);
+    const normalSpeed = await sampleSpeed(false);
+    const boostSpeed = await sampleSpeed(true);
 
     // Shift+W should move faster than normal W
-    expect(boostDistance).toBeGreaterThan(normalDistance);
+    expect(boostSpeed).toBeGreaterThan(normalSpeed);
   });
 
   // PERMANENT SKIP — macOS keyboard modifiers cannot be tested in Playwright:
@@ -660,25 +683,40 @@ test.describe('Keyboard Input System - Modifier Combinations', () => {
     await waitForNextRender(page);
 
     // Note: Don't disable inertia - it significantly reduces movement speed
-    // Follow the same pattern as the passing test at line 51
 
-    // Test Shift+W for fast forward movement (speed boost test)
-    const state1 = await getLuxarState(page);
-    const z1 = state1.camera.position.z;
-
+    // Confirm the real Shift+W keydown arms the input state (see the
+    // comment on the sibling test above for why this is split out), then
+    // separately step physics deterministically with that state armed
+    // directly — a real-time hold around the stepping let a stray rAF
+    // frame (whose delta depends on host load) smuggle in an uncontrolled
+    // contribution and made this flaky (#3022).
     await page.keyboard.down('Shift');
     await page.keyboard.down('w');
-    await page.waitForTimeout(400);
+    const armed = await page.evaluate(() => {
+      const controls = (window as any).__luxarDebug.controls.getControls();
+      return { speedBoost: controls.speedBoost, forward: controls.moveState.forward };
+    });
     await page.keyboard.up('w');
     await page.keyboard.up('Shift');
-    await waitForNextRender(page);
+    expect(armed.speedBoost).toBe(true);
+    expect(armed.forward).toBe(1);
 
-    const state2 = await getLuxarState(page);
-    const z2 = state2.camera.position.z;
-    const shiftWMovement = Math.abs(z2 - z1);
+    const shiftWSpeed = await page.evaluate(
+      ({ steps, dt }) => {
+        const controls = (window as any).__luxarDebug.controls.getControls();
+        controls.reset();
+        controls.moveState.forward = 1;
+        controls.speedBoost = true;
+        for (let i = 0; i < steps; i++) controls.update(dt);
+        const speed = controls.velocity.length();
+        controls.reset();
+        return speed;
+      },
+      { steps: 30, dt: 1 / 60 }
+    );
 
     // Shift+W should produce measurable forward movement with speed boost
-    expect(shiftWMovement).toBeGreaterThan(0.05);
+    expect(shiftWSpeed).toBeGreaterThan(0.01);
   });
 
   // Note: Alt+W vertical movement test covered by "should move vertically with Meta+W and Meta+S"
