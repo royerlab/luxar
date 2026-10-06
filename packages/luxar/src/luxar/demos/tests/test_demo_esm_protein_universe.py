@@ -374,6 +374,13 @@ def test_overview_panel_carries_the_count_and_the_credit() -> None:
     assert "Twenty stories" in panel
 
 
+def test_a_private_showing_drops_the_permission_note_but_keeps_the_citation() -> None:
+    """`--no-permission-note` (the VIP kiosk) keeps the credit, not the licence line."""
+    panel = overview_panel_html(7_714_508, permission_note=False)
+    assert demo.DEMO_META["citation"]["ref"] in panel
+    assert demo.DEMO_META["citation"]["license"] not in panel
+
+
 # --------------------------------------------------------------------------- #
 # The shipped stories
 # --------------------------------------------------------------------------- #
@@ -464,12 +471,14 @@ def test_shipped_stories_author_valid_waypoints() -> None:
 
 
 def test_default_viewer_config_is_the_laptop_build() -> None:
-    """The hosted default avoids kiosk-only supersampling and dolly costs."""
+    """The hosted default avoids kiosk-only supersampling and the 95% swing."""
     from luxar.demos import demo_esm_protein_universe as demo
 
     vc = demo._viewer_config([], (0.0, 0.0, 100.0), auto_rotate=True, audio=False)
     assert vc.ssaa_enabled is False
-    assert vc.auto_dolly_amplitude_percent == 20.0
+    assert vc.auto_dolly_amplitude_percent == 60.0
+    # Pinned on every platform: the viewer's own default is Mac-only.
+    assert vc.natural_drag is True
 
 
 def test_resolution_is_full_and_fixed_in_every_build() -> None:
@@ -502,8 +511,8 @@ def test_auto_dolly_rides_with_the_turntable() -> None:
 
     spinning = demo._viewer_config([], (0.0, 0.0, 100.0), auto_rotate=True, audio=False)
     assert spinning.auto_dolly is True
-    assert spinning.auto_dolly_amplitude_percent == 20.0
-    assert spinning.auto_dolly_period == 58.5
+    assert spinning.auto_dolly_amplitude_percent == 60.0
+    assert spinning.auto_dolly_period == 50.5
 
     still = demo._viewer_config([], (0.0, 0.0, 100.0), auto_rotate=False, audio=False)
     assert still.auto_dolly is False

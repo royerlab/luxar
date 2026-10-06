@@ -2705,8 +2705,13 @@ def check_spur_story(universe: Universe, cluster: StoryCluster) -> float:
     return share
 
 
-def overview_panel_html(n_clusters: int) -> str:
-    """The overview panel shown at story 0."""
+def overview_panel_html(n_clusters: int, *, permission_note: bool = True) -> str:
+    """The overview panel shown at story 0.
+
+    ``permission_note=False`` drops the licence half of the attribution line,
+    keeping the citation, for a private showing (``--no-permission-note``).
+    """
+    attribution = ATTRIBUTION if permission_note else DEMO_META["citation"]["ref"]
     return (
         '<div style="font-size:1.3vh;line-height:1.35;color:#e8e8e8;'
         "background:rgba(0,0,0,0.62);padding:1.4vh 1.6vh;border-radius:6px;"
@@ -2715,7 +2720,7 @@ def overview_panel_html(n_clusters: int) -> str:
         f"{html.escape(OVERVIEW_TITLE)}</div>"
         f"{OVERVIEW_HTML.format(n=n_clusters)}"
         f'<div style="margin-top:1.1vh;font-size:1.05vh;color:rgba(232,232,232,0.55)">'
-        f"{html.escape(ATTRIBUTION)}</div>"
+        f"{html.escape(attribution)}</div>"
         "</div>"
     )
 
@@ -2857,14 +2862,17 @@ def _viewer_config(
         #
         # NOTE the cost, which is real (see `auto_dolly_amplitude_percent`):
         # screen area goes as 1/d^2, so the 95% kiosk swing makes the LOD ladder
-        # load finer levels at the near extreme. The hosted/laptop build uses a
-        # gentler breath; the kiosk serves its larger swing from a warm local
-        # cache.
+        # load finer levels at the near extreme. The default build breathes 60%
+        # over 50.5 s, the setting chosen on the kiosk display; `--high-quality`
+        # swings 95% and serves it from a warm local cache.
         auto_dolly=auto_rotate,
-        auto_dolly_amplitude_percent=(95.0 if high_quality else 20.0)
+        auto_dolly_amplitude_percent=(95.0 if high_quality else 60.0)
         if auto_rotate
         else None,
-        auto_dolly_period=58.5 if auto_rotate else None,
+        auto_dolly_period=50.5 if auto_rotate else None,
+        # Pinned rather than left to the viewer, whose default is Mac-only: a
+        # kiosk on Linux or Windows would otherwise drag the opposite way.
+        natural_drag=True,
         # Render quality: supersampling is a 4x fragment cost on top of the 4x a
         # 2x display already asks for, so it stays on the `--high-quality`
         # (kiosk / big-GPU) switch. The display's full device pixel ratio is
@@ -2897,6 +2905,7 @@ def _add_overlays(
     assets: dict[str, TurntableAssets],
     n: int,
     units: dict[int, str],
+    permission_note: bool = True,
 ) -> None:
     scene.add_text(
         "ESM Protein Universe",
@@ -2920,7 +2929,7 @@ def _add_overlays(
         hover=True,
     )
     scene.add_html(
-        overview_panel_html(n),
+        overview_panel_html(n, permission_note=permission_note),
         position=(0.98, 0.5),
         anchor="center-right",
         width=PANEL_WIDTH,
@@ -3210,6 +3219,7 @@ def build_universe_scene(
     turntable_cache: Path | None = None,
     audio: bool = True,
     high_quality: bool = False,
+    permission_note: bool = True,
 ) -> int:
     """Write the universe scene. Returns the number of clusters in the backdrop.
 
@@ -3369,7 +3379,15 @@ def build_universe_scene(
             _add_bubbles(scene, stories, clusters)
             with asection("Constellations"):
                 _add_constellations(scene, stories, figures)
-            _add_overlays(scene, stories, clusters, assets, n, units)
+            _add_overlays(
+                scene,
+                stories,
+                clusters,
+                assets,
+                n,
+                units,
+                permission_note=permission_note,
+            )
             if audio:
                 with asection("Sound layer"):
                     add_story_sounds(
@@ -3404,6 +3422,9 @@ def main() -> None:
     # Kiosk / big-GPU build: SSAA and the 95% dolly swing. Off by default so
     # the hosted demo runs on an ordinary laptop; full DPR applies to both.
     high_quality = "--high-quality" in sys.argv
+    # A private showing (the VIP kiosk) keeps the citation and drops the
+    # permission note from the overview card's footer.
+    permission_note = "--no-permission-note" not in sys.argv
     try:
         annotations = find_input(ANNOTATIONS_PARQUET, parse_path_arg("annotations"))
         cache = CACHE_DIR / UNIVERSE_CACHE
@@ -3421,6 +3442,7 @@ def main() -> None:
         turntables=turntables,
         audio=audio,
         high_quality=high_quality,
+        permission_note=permission_note,
     )
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "esm_protein_universe.luxar.zarr"
