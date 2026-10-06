@@ -648,7 +648,11 @@ def test_the_scatter_story_is_the_one_family_that_is_not_a_family() -> None:
     assert story.pattern and story.pfam  # name match UNION the dedicated Pfam
     assert story.region is None  # not a map-wide predicate: a family selector
     assert story.frame_fraction >= 1.0  # pulled back to hold the whole scatter
-    assert any("never form a family of their own" in f for f in story.facts)
+    # The panel must say so in words, once: in the subtitle or a fact.
+    assert any(
+        "never a family of its own" in t or "never form a family of their own" in t
+        for t in (story.subtitle, *story.facts)
+    )
     assert not story.constellation
 
 
@@ -771,7 +775,9 @@ def test_only_one_story_claims_the_tour_is_tightest_knot() -> None:
     assert unscoped == ["Reverse gyrase"], unscoped
     assert scoped == ["Worm chemoreceptors"], scoped
     # And the one that claims it is the smallest knot is the same story.
-    smallest = [s.key for s in STORIES if "smallest" in " ".join(s.facts).lower()]
+    smallest = [
+        s.key for s in STORIES if "smallest" in " ".join((s.subtitle, *s.facts)).lower()
+    ]
     assert smallest == ["Reverse gyrase"], smallest
 
 
