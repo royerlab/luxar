@@ -92,8 +92,8 @@ export interface SceneEnvironmentDeps {
 }
 
 /**
- * What a live capture needs from the running app — attached by the init pipeline once
- * those pieces exist. Without it, `scene` falls back to the room.
+ * What a live capture and HDRI URL resolution need from the running app — attached
+ * by the init pipeline once those pieces exist. Without it, `scene` falls back to the room.
  */
 export interface CaptureRuntime {
   /** The scene root (`LuxarScene`), for probe resolution and physical-mesh hiding. */
@@ -104,6 +104,8 @@ export interface CaptureRuntime {
   restoreCameraParams: () => void;
   /** Whether the loader has settled (no update sweep, load pass or LOD load in flight). */
   isSettled: () => boolean;
+  /** Whether a live capture can run without delaying worker-pool initialization. */
+  captureReady?: () => boolean;
   /** Base URL of the store, for a store-relative `hdri` url. */
   baseUrl: () => string | undefined;
   /**
@@ -205,7 +207,7 @@ export class SceneEnvironment {
     if (this.wanted) this.apply();
   }
 
-  /** Give the environment what a live capture needs (the init pipeline does this once). */
+  /** Give the environment its app runtime (the init pipeline does this once). */
   attachRuntime(runtime: CaptureRuntime | null): void {
     this.runtime = runtime;
     if (this.wanted && this.active === 'room' && this.config.source === 'scene') this.apply();
@@ -236,14 +238,16 @@ export class SceneEnvironment {
   }
 
   /**
-   * Per-frame hook (the init pipeline registers it). Re-captures a stale live
-   * environment once the debounce has passed and the loader is settled. Returns
-   * whether a capture ran.
+   * Per-frame hook (the init pipeline registers it). Captures the first settled
+   * scene after any pool startup finishes, or re-captures a stale live environment after
+   * the debounce. Returns whether a capture ran.
    */
   tick(now: number = performance.now()): boolean {
-    if (this.staleSince === null || this.active !== 'scene' || !this.runtime) return false;
+    if (!this.canCapture()) return false;
+    if (this.pendingSceneCapture()) return this.apply();
+    if (this.staleSince === null || this.active !== 'scene') return false;
     if (now - this.staleSince < CAPTURE_DEBOUNCE_MS) return false;
-    if (!this.runtime.isSettled()) return false;
+    if (!this.runtime?.isSettled()) return false;
     this.staleSince = null;
     return this.captureScene() !== null;
   }
@@ -322,15 +326,28 @@ export class SceneEnvironment {
 
   // ---------------------------------------------------------------------------
 
+  private canCapture(): boolean {
+    const runtime = this.runtime;
+    return (
+      runtime !== null &&
+      runtime.captureReady?.() !== false &&
+      (runtime.captureReady === undefined || runtime.isSettled())
+    );
+  }
+
+  private pendingSceneCapture(): boolean {
+    return this.wanted && this.active === 'room' && this.config.source === 'scene';
+  }
+
   /** Apply the precedence rule for the current state. Returns whether anything changed. */
   private apply(): boolean {
     if (this.baked) return this.applyBaked(this.baked);
     switch (this.config.source) {
       case 'scene':
-        if (this.runtime) {
+        if (this.canCapture()) {
           if (this.captureMatchesConfig()) return false;
-          // First light is an immediate capture — of whatever is resident now — and
-          // every later commit re-captures through `markStale` / `tick`.
+          // First live capture sees the settled scene; later commits re-capture
+          // through `markStale` / `tick`.
           return this.captureScene() !== null;
         }
         return this.applyRoom();

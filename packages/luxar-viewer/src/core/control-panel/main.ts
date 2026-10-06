@@ -53,6 +53,17 @@ const DEFAULT_IDLE_RESET_S = 120;
 export const CHAPTER_RETRY_BASE_MS = 500;
 /** Keep retry traffic bounded while a display remains offline. */
 export const CHAPTER_RETRY_MAX_MS = 5_000;
+/**
+ * How often a loaded panel re-reads the display's position and re-subscribes.
+ *
+ * The subscription lives in the DISPLAY, not the hub: a display that reloads
+ * (a refresh, a crash, a kiosk watchdog) comes back with no subscribers, and
+ * the hub does not tell controllers it re-attached. Without this the panel
+ * kept driving the new display but its highlighted tile froze on the story it
+ * last heard about. Re-subscribing is idempotent, and one small reply every
+ * few seconds is nothing next to a tap's camera flight.
+ */
+export const PANEL_RESYNC_MS = 5_000;
 
 /**
  * The one line of instruction the panel gives.
@@ -385,6 +396,58 @@ function applyChapterLabels(
   }
 }
 
+/**
+ * The attract-loop timer: `restart(seconds)` re-arms it after each tap (0
+ * disarms), and `reset` runs once the visitor has been gone that long.
+ */
+function createIdleReset(reset: () => void): { restart(seconds: number): void; cancel(): void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cancel = (): void => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+  };
+  return {
+    restart(seconds) {
+      cancel();
+      if (seconds !== 0) timer = setTimeout(reset, seconds * 1000);
+    },
+    cancel,
+  };
+}
+
+/**
+ * Run `read` every {@link PANEL_RESYNC_MS} while the page is visible; returns
+ * the stop. Started with the panel: `read` is a no-op until chapters load.
+ */
+function startResync(read: () => Promise<void>): () => void {
+  const timer = setInterval(() => {
+    if (document.visibilityState !== 'hidden') void read();
+  }, PANEL_RESYNC_MS);
+  return () => clearInterval(timer);
+}
+
+/**
+ * Re-read the display's position, mark it, and renew the subscription.
+ *
+ * Every failure is ignored: a display that is away now is caught by the next
+ * tick, and the status handler already reports a socket that drops.
+ */
+async function readPosition(
+  socket: ControllerSocket | undefined,
+  source: ChapterSource | null,
+  markActive: (position: number | undefined) => void
+): Promise<void> {
+  if (source === null) return;
+  try {
+    const dims = await socket?.call('getDimensions');
+    if (!isWireDimensions(dims)) return;
+    markActive(dims.currentStep[source.dimensionIndex]);
+    await socket?.call('subscribe', ['dimensions-changed']);
+  } catch {
+    // Retried on the next tick.
+  }
+}
+
 function startConnectedPanel(
   params: ConnectedUrlParams,
   root: HTMLElement,
@@ -394,30 +457,23 @@ function startConnectedPanel(
   let source: ChapterSource | null = null;
   /** The display's title and authored block, fetched once. */
   const presentation = createPresentationCache();
-  let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let chapterRetryTimer: ReturnType<typeof setTimeout> | undefined;
   let chapterRetryDelayMs = CHAPTER_RETRY_BASE_MS;
   const customPanelState: { current: CustomPanelState } = { current: 'unmounted' };
   const connectionState = { refused: false };
+  const stopResync = startResync(() => readPosition(socket, source, markActive));
+  const idle = createIdleReset(() => {
+    const first = source?.chapters[0];
+    if (first !== undefined && source !== null) {
+      socket?.notify('setDimensionValue', [source.dimensionIndex, first.value]);
+    }
+  });
 
   const panel = (ports.createPanel ?? createControlPanel)({
     root,
     call: (method, callParams) => socket?.notify(method, callParams),
-    onInteraction: () => restartIdleTimer(),
+    onInteraction: () => idle.restart(presentation.config?.idleResetS ?? DEFAULT_IDLE_RESET_S),
   });
-
-  function restartIdleTimer(): void {
-    if (idleTimer !== undefined) clearTimeout(idleTimer);
-    idleTimer = undefined;
-    const idleResetS = presentation.config?.idleResetS ?? DEFAULT_IDLE_RESET_S;
-    if (idleResetS === 0) return;
-    idleTimer = setTimeout(() => {
-      const first = source?.chapters[0];
-      if (first !== undefined && source !== null) {
-        socket?.notify('setDimensionValue', [source.dimensionIndex, first.value]);
-      }
-    }, idleResetS * 1000);
-  }
 
   function cancelChapterRetry(resetDelay = true): void {
     if (chapterRetryTimer !== undefined) clearTimeout(chapterRetryTimer);
@@ -516,7 +572,8 @@ function startConnectedPanel(
   socket.connect();
 
   const teardown = (): void => {
-    if (idleTimer !== undefined) clearTimeout(idleTimer);
+    idle.cancel();
+    stopResync();
     cancelChapterRetry();
     socket?.dispose();
   };
