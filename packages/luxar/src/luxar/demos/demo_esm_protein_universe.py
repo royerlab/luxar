@@ -84,6 +84,7 @@ Usage:
     python -m luxar.demos.demo_esm_protein_universe --no-serve
     python -m luxar.demos.demo_esm_protein_universe --no-audio --no-turntables
     python -m luxar.demos.demo_esm_protein_universe --high-quality   # kiosk: SSAA + 95% dolly
+    python -m luxar.demos.demo_esm_protein_universe --no-permission-note   # private showing: citation only
     python -m luxar.demos.demo_esm_protein_universe --coords X.parquet --annotations Y.parquet
 
 Touch panel (off by default):
@@ -2836,9 +2837,10 @@ def _viewer_config(
     high_quality: bool = False,
     control_panel: ControlPanelConfig | None = None,
 ) -> ViewerConfig:
-    # Mirrors the Swiss-Prot tour's kiosk settings (see its build for the why),
-    # except for render quality: see `high_quality` below. `overview` is the raw
-    # distance-tuned pose; `pull_in` carries it to the cinematic 63° lens.
+    # Based on the Swiss-Prot tour's kiosk settings, with a different dolly,
+    # natural drag pinned on, and render quality selected by `high_quality`.
+    # `overview` is the raw distance-tuned pose; `pull_in` carries it to the
+    # cinematic 63° lens.
     return ViewerConfig(
         # Names the browser tab AND the control panel's header — see the same
         # note in demo_esm3_protein_stories. A filename is not a title.
@@ -2870,8 +2872,8 @@ def _viewer_config(
         if auto_rotate
         else None,
         auto_dolly_period=50.5 if auto_rotate else None,
-        # Pinned rather than left to the viewer, whose default is Mac-only: a
-        # kiosk on Linux or Windows would otherwise drag the opposite way.
+        # The viewer defaults to natural drag only on macOS; on Linux or Windows,
+        # a left-drag would pan instead of orbit without this pin.
         natural_drag=True,
         # Render quality: supersampling is a 4x fragment cost on top of the 4x a
         # 2x display already asks for, so it stays on the `--high-quality`
