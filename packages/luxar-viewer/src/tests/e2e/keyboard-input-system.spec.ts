@@ -19,19 +19,19 @@
  * event-based signal would defeat the test. Same idea for the "wait and
  * check if still moving" inertia-decay observations.
  *
- * The two Shift+W speed-boost tests are the exception, and verify two
+ * The Shift+W speed-boost test below is the exception, and verifies two
  * things separately: (1) a real Shift+W keydown correctly arms the
  * speed-boost + forward input state (the binding wiring, read synchronously
- * off the input-event handler — no frame timing involved), and (2) with
- * that input state armed directly, a fixed number of deterministic
- * `controls.update(dt)` steps (the same entry point the render loop calls)
- * roughly doubles the integrated speed under boost. Both are driven and
- * read inside a single, synchronous `page.evaluate()`, so no real rAF frame
- * — whose delta depends on host load and can land between any two
- * Playwright-side `await`s — can interleave and inject an uncontrolled
- * contribution into the measurement. An earlier version of this test held
- * a real key down across the stepping; a stray real frame landing in that
- * window intermittently inverted the comparison. See #3022.
+ * off the input-event handler right after the keydown — no frame timing
+ * involved), and (2) with that input state set directly, a fixed number of
+ * deterministic `controls.update(dt)` steps (the same entry point the
+ * render loop calls) doubles the integrated speed under boost. Part (2)
+ * sets the input state AND steps physics inside one synchronous
+ * `page.evaluate()`, so no real rAF frame — whose delta depends on host
+ * load and can land between any two Playwright-side `await`s — can
+ * interleave and inject an uncontrolled contribution into the measurement.
+ * A real-time hold across the stepping let a stray real frame land in that
+ * window and intermittently invert the comparison.
  */
 
 import { test, expect } from './fixtures';
@@ -100,10 +100,10 @@ test.describe('Keyboard Input System - Fly Controls', () => {
     expect(armed.speedBoost).toBe(true);
     expect(armed.forward).toBe(1);
 
-    // 2) Confirm the armed state roughly doubles the integrated speed.
-    // Setting the input flags AND stepping physics inside one synchronous
-    // evaluate() means no real rAF frame can land in between and smuggle in
-    // a host-load-dependent contribution.
+    // 2) Confirm the armed state doubles the integrated speed. Setting the
+    // input flags AND stepping physics inside one synchronous evaluate()
+    // means no real rAF frame can land in between and smuggle in a
+    // host-load-dependent contribution.
     const PHYSICS_DT = 1 / 60;
     const PHYSICS_STEPS = 30;
 
@@ -125,8 +125,14 @@ test.describe('Keyboard Input System - Fly Controls', () => {
     const normalSpeed = await sampleSpeed(false);
     const boostSpeed = await sampleSpeed(true);
 
-    // Shift+W should move faster than normal W
-    expect(boostSpeed).toBeGreaterThan(normalSpeed);
+    // The boost is a flat 2x multiplier on the drive acceleration
+    // (`speedMultiplier` in physics.ts), and velocity is linear in that
+    // acceleration for a fixed step count starting from rest — so the
+    // boosted speed isn't merely greater, it's exactly 2x. Asserting the
+    // ratio (rather than a loose `>`) would also catch a multiplier
+    // regressed to e.g. 1.01x.
+    expect(normalSpeed).toBeGreaterThan(0);
+    expect(boostSpeed / normalSpeed).toBeCloseTo(2, 5);
   });
 
   // PERMANENT SKIP — macOS keyboard modifiers cannot be tested in Playwright:
@@ -672,52 +678,10 @@ test.describe('Keyboard Input System - Escape Key', () => {
 });
 
 test.describe('Keyboard Input System - Modifier Combinations', () => {
-  test('should handle Shift+W speed boost', async ({ page }) => {
-    await page.goto(`/?src=${DATASETS.sliders5D}&debug`);
-    await waitForLuxarReady(page);
-
-    // Switch to fly mode via API (more reliable than counting V key presses)
-    await page.evaluate(() => {
-      (window as any).__luxarDebug.controls.setControlType('fly');
-    });
-    await waitForNextRender(page);
-
-    // Note: Don't disable inertia - it significantly reduces movement speed
-
-    // Confirm the real Shift+W keydown arms the input state (see the
-    // comment on the sibling test above for why this is split out), then
-    // separately step physics deterministically with that state armed
-    // directly — a real-time hold around the stepping let a stray rAF
-    // frame (whose delta depends on host load) smuggle in an uncontrolled
-    // contribution and made this flaky (#3022).
-    await page.keyboard.down('Shift');
-    await page.keyboard.down('w');
-    const armed = await page.evaluate(() => {
-      const controls = (window as any).__luxarDebug.controls.getControls();
-      return { speedBoost: controls.speedBoost, forward: controls.moveState.forward };
-    });
-    await page.keyboard.up('w');
-    await page.keyboard.up('Shift');
-    expect(armed.speedBoost).toBe(true);
-    expect(armed.forward).toBe(1);
-
-    const shiftWSpeed = await page.evaluate(
-      ({ steps, dt }) => {
-        const controls = (window as any).__luxarDebug.controls.getControls();
-        controls.reset();
-        controls.moveState.forward = 1;
-        controls.speedBoost = true;
-        for (let i = 0; i < steps; i++) controls.update(dt);
-        const speed = controls.velocity.length();
-        controls.reset();
-        return speed;
-      },
-      { steps: 30, dt: 1 / 60 }
-    );
-
-    // Shift+W should produce measurable forward movement with speed boost
-    expect(shiftWSpeed).toBeGreaterThan(0.01);
-  });
+  // Note: Shift+W speed-boost coverage lives in "should move faster with
+  // Shift+W (speed boost)" in the "Fly Controls" describe block above — it
+  // already checks both the input-binding wiring and the resulting speed
+  // multiplier, so a second copy here added no coverage of its own.
 
   // Note: Alt+W vertical movement test covered by "should move vertically with Meta+W and Meta+S"
   // Using Meta instead of Alt because macOS Option key produces special characters.
