@@ -10,7 +10,7 @@ import {
   bootstrap,
   type ControlPanelBootstrapPorts,
 } from '../../../../core/control-panel/main';
-import { VIEWER_ATTACHED_EVENT } from '../../../../config/control-contract';
+import { VIEWER_ATTACHED_EVENT, VIEWER_NOT_READY } from '../../../../config/control-contract';
 import {
   ControllerCallError,
   type ControllerSocket,
@@ -312,6 +312,52 @@ describe('control-panel bootstrap', () => {
 
     expect(context.socket.call).toHaveBeenCalledWith('subscribe', ['dimensions-changed']);
     expect(context.panel.render).toHaveBeenCalledTimes(1);
+  });
+
+  it('loads chapters after an attached display finishes initializing', async () => {
+    vi.useFakeTimers();
+    const context = harness();
+    vi.mocked(context.socket.call)
+      .mockRejectedValueOnce(
+        new ControllerCallError({ code: VIEWER_NOT_READY, message: 'viewer not ready' })
+      )
+      .mockImplementation(async (method: string) =>
+        method === 'getDimensions' ? DIMS : undefined
+      );
+
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    expect(context.panel.render).not.toHaveBeenCalled();
+    expect(context.panel.showMessage).toHaveBeenLastCalledWith(
+      'Waiting for the display',
+      expect.any(String)
+    );
+
+    await vi.advanceTimersByTimeAsync(CHAPTER_RETRY_BASE_MS);
+    expect(context.panel.render).toHaveBeenCalledTimes(1);
+    expect(context.panel.setActive).toHaveBeenLastCalledWith(1);
+    expect(context.socket.call).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(context.socket.call).toHaveBeenCalledTimes(4);
+    context.teardown();
+  });
+
+  it('does not retry a genuine viewer failure', async () => {
+    vi.useFakeTimers();
+    const context = harness();
+    vi.mocked(context.socket.call).mockRejectedValue(
+      new ControllerCallError({ code: -32603, message: 'scene load failed' })
+    );
+
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    expect(context.panel.showMessage).toHaveBeenLastCalledWith(
+      'Could not read the chapters',
+      expect.any(String)
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(context.socket.call).toHaveBeenCalledTimes(1);
+    context.teardown();
   });
 
   it('caps the missing-viewer retry interval', async () => {

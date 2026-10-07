@@ -48,6 +48,9 @@ MAX_BUFFERED_EVENTS = 1024
 #: JSON-RPC code the hub answers with when no viewer is attached.
 NO_VIEWER_CODE = -32001
 
+#: JSON-RPC code the viewer answers with when getDimensions precedes initialization.
+VIEWER_NOT_READY_CODE = -32002
+
 # Kept independent of luxar.cli; the contract test pins the wire name.
 _VIEWER_ATTACHED_EVENT = "viewer-attached"
 
@@ -59,8 +62,9 @@ class ControlError(RuntimeError):
     """A viewer (or the hub) refused a call.
 
     ``code`` is the JSON-RPC error code — ``-32601`` for a method the viewer's
-    policy does not expose, ``-32001`` for "no viewer attached", ``-32603`` for
-    a method that threw inside the viewer.
+    policy does not expose, ``-32001`` for "no viewer attached", ``-32002`` for
+    a viewer still initializing, ``-32603`` for a method that threw inside the
+    viewer.
     """
 
     def __init__(self, code: int, message: str) -> None:
@@ -76,6 +80,11 @@ class ControlError(RuntimeError):
         yet is something to wait for, not an error to abort on.
         """
         return self.code == NO_VIEWER_CODE
+
+    @property
+    def viewer_not_ready(self) -> bool:
+        """Whether an attached viewer is still initializing ``getDimensions``."""
+        return self.code == VIEWER_NOT_READY_CODE
 
 
 class Viewer:

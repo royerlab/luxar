@@ -100,10 +100,12 @@ describe('ControllerSocket calls', () => {
       name: 'ControllerCallError',
       code: -32001,
       noViewerAttached: true,
+      viewerNotReady: false,
     });
     expect(new ControllerCallError({ code: -32603, message: 'failed' }).noViewerAttached).toBe(
       false
     );
+    expect(new ControllerCallError({ code: -32002, message: 'loading' }).viewerNotReady).toBe(true);
   });
 
   it('times out a call and ignores its late reply', async () => {

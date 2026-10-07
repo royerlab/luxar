@@ -65,6 +65,8 @@ its `dimensions-changed` subscription, then re-reads `getDimensions` to refresh
 the highlight. If the display is still loading, the read retries with capped
 backoff until it answers or a dimension event arrives. This read never sends
 `notify` or moves the display.
+Chapter loading uses the same capped retry when an attached display answers
+`getDimensions` with `viewer_not_ready` during initialization.
 
 **It ships without `ThemeManager`.** That singleton persists its choice to
 `localStorage`, and the panel shares an origin with the display — so setting a
