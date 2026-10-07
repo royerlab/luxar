@@ -37,12 +37,7 @@ import { fileURLToPath } from 'node:url';
 import { browserKit, selectBackends } from './browser.mjs';
 import { ensureBuild } from './builds.mjs';
 import { classifyRow, sameCounts, scoreControlPick, strip } from './classify.mjs';
-import {
-  pickWithinDraw,
-  scoreBlocks,
-  scoreFloatBuffers,
-  scorePickBuffers,
-} from './exactness.mjs';
+import { pickWithinDraw, scoreBlocks, scoreFloatBuffers, scorePickBuffers } from './exactness.mjs';
 import { writeUlpHeatmap } from './heatmap.mjs';
 import * as ops from './page-ops.mjs';
 import { judgePerf, median, noiseFloor, ROTATIONS } from './perf-stats.mjs';
