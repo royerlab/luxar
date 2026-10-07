@@ -34,6 +34,7 @@ export const INVALID_REQUEST = -32600;
 export const METHOD_NOT_FOUND = -32601;
 export const INTERNAL_ERROR = -32603;
 export const NO_VIEWER = -32001;
+export const VIEWER_NOT_READY = -32002;
 
 /** Limits bounding what an untrusted peer can make us hold. */
 export const MAX_PENDING_PER_CONTROLLER = 64;

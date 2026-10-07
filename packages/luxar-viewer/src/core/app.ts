@@ -20,7 +20,7 @@ import type {
 } from './app/embedder/events';
 import { CameraFlight, type FlyToOptions, type FlightResult } from './app/camera/camera-flight';
 import { installStoryWaypoints } from './app/camera/install-waypoints';
-import { ControlClient } from './app/control/control-client';
+import { ControlClient, ViewerNotReadyError } from './app/control/control-client';
 import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';
 import { replaceBrowserDataSourceUrl } from '../config/url-params';
 import { applySceneKiosk } from './app/kiosk/apply-kiosk';
@@ -1212,7 +1212,7 @@ export class LuxarApp {
    */
   getDimensions(): EmbedderDimensions {
     if (!this.isInitialized) {
-      throw new Error('LuxarApp.getDimensions called before init()');
+      throw new ViewerNotReadyError('LuxarApp.getDimensions called before init()');
     }
     const dims = sceneDimsManager.getDims();
     if (!dims) {

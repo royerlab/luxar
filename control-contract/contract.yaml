@@ -32,9 +32,9 @@ close_codes:
   policy_violation: 1008
 
 # ── JSON-RPC ─────────────────────────────────────────────────────────────────
-# The standard codes plus one of ours. `no_viewer` is in the implementation
-# -32000..-32099 reserved range, and means the relay is up but no display has
-# attached — something a kiosk script WAITS for, not an error to abort on.
+# The standard codes plus two of ours. Both custom codes are in the
+# implementation -32000..-32099 reserved range: `no_viewer` means no display
+# is attached, while `viewer_not_ready` means it attached but has not initialized.
 jsonrpc:
   version: '2.0'
   # The notification a viewer sends to fan an event out to controllers. Carries
@@ -49,6 +49,7 @@ jsonrpc:
     method_not_found: -32601
     internal_error: -32603
     no_viewer: -32001
+    viewer_not_ready: -32002
 
 # ── Limits ───────────────────────────────────────────────────────────────────
 # Each of these bounds something an untrusted peer controls, so each is a

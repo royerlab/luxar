@@ -84,7 +84,13 @@ def test_contract_covers_every_shared_name() -> None:
     # buffers nothing; `METHOD_NOT_FOUND` and `INTERNAL_ERROR` are the VIEWER's
     # answers to a controller (the method policy lives there), and a relay that
     # emitted either would be claiming to know the method vocabulary.
-    unmirrored = {"ROLES", "MAX_BUFFERED_EVENTS", "METHOD_NOT_FOUND", "INTERNAL_ERROR"}
+    unmirrored = {
+        "ROLES",
+        "MAX_BUFFERED_EVENTS",
+        "METHOD_NOT_FOUND",
+        "INTERNAL_ERROR",
+        "VIEWER_NOT_READY",
+    }
     assert projected - unmirrored <= set(vars(template))
 
 

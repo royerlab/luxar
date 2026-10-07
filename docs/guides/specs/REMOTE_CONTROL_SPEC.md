@@ -193,6 +193,9 @@ on both sides of the wire, and that table drifts the first time a signature
 changes. Positional params follow mechanically from the TypeScript signature.
 The `event` notification obeys the same rule:
 `{"method": "event", "params": ["dimensions-changed", payload]}`.
+An attached viewer that has not finished initializing returns `-32002`
+(`viewer_not_ready`) for `getDimensions`; clients may retry that read. The hub
+returns `-32001` (`no_viewer`) when no display is attached.
 The `flyTo` pose has the complete shape returned by `getCameraPose()`; callers
 normally copy that object and change the fields they want to animate.
 
