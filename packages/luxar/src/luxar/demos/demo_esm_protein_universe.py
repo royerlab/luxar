@@ -2842,10 +2842,10 @@ OVERVIEW_HTML = (
 #: The kiosk build's overview: shorter, and it points at the touch screen,
 #: the only control a visitor there has. See :class:`KioskText`.
 KIOSK_OVERVIEW_HTML = (
-    "Every point is one of {n:,} protein clusters from the ESM Atlas, a "
-    "map of protein space built from 6.8 billion unique sequences in "
-    "eight public databases, most read straight out of soil, seawater and "
-    "guts. A protein language model grouped them so that similar clusters "
+    "Every point is one of {n:,} protein clusters from the ESM Atlas, the "
+    "largest map of protein space yet made: 6.8 billion unique sequences "
+    "from eight public databases, most read straight out of soil, seawater "
+    "and guts. A protein language model grouped them so that similar clusters "
     "sit close together. Colours are the main branches of life; the dim "
     "points are clusters nobody has characterised.<br><br>Touch a story "
     "to fly to it: the machines every cell runs on, the dark proteome, "
