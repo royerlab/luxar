@@ -120,6 +120,10 @@ export class RenderingControls {
   private storedContentHash: string | undefined;
   /** The loaded scene's build, recorded with every save (`adoptSceneContentHash`). */
   private sceneContentHash: string | undefined;
+  /** An edit made after setSceneId but before root metadata supplied its hash. */
+  private savedBeforeContentHash = false;
+  /** A save in the current load must not be replaced by late scene defaults. */
+  private savedSinceSceneId = false;
 
   /** Reference to post-processing manager */
   private postProcessing: PostProcessingManager;
@@ -355,6 +359,9 @@ export class RenderingControls {
 
     // Clear saved settings for this scene (before applying, so user sees clean state).
     clearStoredSettings(this.sceneId);
+    this.hasStoredLocalSettings = false;
+    this.savedSinceSceneId = false;
+    this.savedBeforeContentHash = false;
 
     // Apply the reset DPR settings. Neither reaches the manager through
     // `applySettings()` below — that drives the post-processing pipeline
@@ -491,6 +498,8 @@ export class RenderingControls {
     this.sceneId = sceneName ? `${baseId}_${sceneName}` : baseId;
     // Unknown until the scene's root document has loaded.
     this.sceneContentHash = undefined;
+    this.savedBeforeContentHash = false;
+    this.savedSinceSceneId = false;
 
     // Load settings for this scene (will apply if found)
     this.loadSettings();
@@ -555,10 +564,10 @@ export class RenderingControls {
   }
 
   /**
-   * Whether this scene has stored settings in localStorage.
+   * Whether this scene has stored settings or edits saved during this load.
    */
   hasStoredSettings(): boolean {
-    return this.hasStoredLocalSettings;
+    return this.hasStoredLocalSettings || this.savedSinceSceneId;
   }
 
   /**
@@ -864,6 +873,10 @@ export class RenderingControls {
    */
   public saveSettings(): void {
     saveSettingsToStorage(this.sceneId, this.settings, this.sceneContentHash);
+    if (this.sceneId) {
+      this.savedSinceSceneId = true;
+      if (this.sceneContentHash === undefined) this.savedBeforeContentHash = true;
+    }
   }
 
   /**
@@ -881,6 +894,16 @@ export class RenderingControls {
    */
   adoptSceneContentHash(contentHash: string | undefined): boolean {
     this.sceneContentHash = contentHash;
+    if (
+      contentHash !== undefined &&
+      this.savedBeforeContentHash &&
+      (!this.hasStoredLocalSettings || this.storedContentHash === contentHash)
+    ) {
+      this.saveSettings();
+      this.savedBeforeContentHash = false;
+      this.storedContentHash = contentHash;
+      return false;
+    }
     if (!this.hasStoredLocalSettings || contentHash === undefined) return false;
     if (this.storedContentHash === contentHash) return false;
     log.info(

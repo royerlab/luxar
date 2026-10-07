@@ -221,6 +221,20 @@ describe('RenderingControls', () => {
   });
 
   describe('saved edits and the scene build they were made on', () => {
+    it('stamps edits saved before metadata arrives so they survive the next load', () => {
+      localStorage.clear();
+      renderingControls.setSceneId('loading-test');
+      renderingControls.settings.fov = 37;
+      renderingControls.saveSettings();
+      expect(renderingControls.hasStoredSettings()).toBe(true);
+      expect(renderingControls.adoptSceneContentHash('hash-a')).toBe(false);
+
+      renderingControls.setSceneId('loading-test');
+      expect(renderingControls.hasStoredSettings()).toBe(true);
+      expect(renderingControls.settings.fov).toBe(37);
+      expect(renderingControls.adoptSceneContentHash('hash-a')).toBe(false);
+    });
+
     it('keeps edits from this build and sets aside edits from another', () => {
       localStorage.clear();
       renderingControls.setSceneId('build-test');

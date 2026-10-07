@@ -1002,6 +1002,33 @@ describe('SceneManager', () => {
       expect(positionAtHook[0]).toEqual(sceneManager.camera.position.toArray());
     });
 
+    it('resolves scene settings before metadata framing and node loading', async () => {
+      const { atNodeLoad } = loadSceneRecordingNodeLoad({
+        viewerConfig: { camera: { fov: 47 } },
+        positionBounds: { min: [0, 0, 0], max: [40, 40, 40] },
+      });
+      sceneManager.setFov(20);
+      const autoFrameCamera = vi.spyOn(
+        sceneManager as unknown as { autoFrameCamera: () => void },
+        'autoFrameCamera'
+      );
+      const beforeFrame = vi.fn((_root: THREE.Group) => {
+        sceneManager.setFov(47);
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr', undefined, {
+        applyViewerConfigFov: true,
+        beforeFrame,
+      });
+
+      expect(beforeFrame).toHaveBeenCalledOnce();
+      expect(beforeFrame.mock.invocationCallOrder[0]).toBeLessThan(
+        autoFrameCamera.mock.invocationCallOrder[0]
+      );
+      expect(atNodeLoad.position).toEqual(sceneManager.camera.position.toArray());
+      expect((sceneManager.camera as THREE.PerspectiveCamera).fov).toBe(47);
+    });
+
     it('places the AUTHORED opening camera before the scene nodes load', async () => {
       const { atNodeLoad } = loadSceneRecordingNodeLoad({
         viewerConfig: { camera: { position: [3, 3, 8], target: [3, 3, 0], up: [0, 1, 0] } },

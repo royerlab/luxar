@@ -111,6 +111,8 @@ const FOV_APPLY_DEADBAND_DEG = 0.5;
 export interface SceneLoadOptions {
   /** Apply scene FOV before auto-framing; authored positions carry it regardless. */
   applyViewerConfigFov?: boolean;
+  /** Resolve settings against root metadata before the opening camera is framed. */
+  beforeFrame?: (root: THREE.Group) => void;
 }
 
 /**
@@ -856,6 +858,7 @@ export class SceneManager extends THREE.EventDispatcher<{
         // Frame first, then hand the root to an embedder's own hook, which
         // then sees the pose the scene opens on (as load-time decisions do).
         onSceneMetadata: (metaRoot) => {
+          options.beforeFrame?.(metaRoot);
           this.frameBeforeNodesLoad(metaRoot, options);
           embedderOnSceneMetadata?.(metaRoot);
         },
