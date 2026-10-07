@@ -19,6 +19,7 @@ import {
   loadUserSettings,
   saveUserSettings,
   resetUserSettingsForTests,
+  applyUrlPerformanceOverrides,
 } from '../../../../config/user-settings';
 import { config } from '../../../../config';
 import type { SceneLoader } from '../../../../data/scene-loader';
@@ -31,6 +32,7 @@ interface ControllerStub {
   hide: ReturnType<typeof vi.fn>;
   show: ReturnType<typeof vi.fn>;
   _onChangeFn: ((value: unknown) => void) | null;
+  domElement: HTMLElement;
   /** Simulate a user edit: write the value onto the bound object, then fire onChange. */
   set(value: unknown): void;
 }
@@ -59,6 +61,7 @@ function makeController(boundObj: Record<string, unknown>, prop: string): Contro
     hide: vi.fn(),
     show: vi.fn(),
     _onChangeFn: null,
+    domElement: document.createElement('div'),
     set(value: unknown) {
       boundObj[prop] = value;
       this._onChangeFn?.(value);
@@ -306,5 +309,44 @@ describe('buildSettingsPopover', () => {
     expect(hint.style.display).toBe('none');
     byProp('budgetMB').set(1024);
     expect(hint.style.display).toBe('');
+  });
+});
+
+describe('machine settings the launch URL set', () => {
+  it('show the URL value, locked and labelled, and never touch the saved preference', () => {
+    saveUserSettings({
+      ...defaultUserSettings(),
+      performance: {
+        ...defaultUserSettings().performance,
+        workerCount: 0,
+        networkMaxConcurrent: 4,
+      },
+    });
+    applyUrlPerformanceOverrides(16, 12, 'webgpu');
+    const { teardown } = build();
+
+    for (const [prop, value, label] of [
+      ['workerCount', 16, 'Workers (launch URL)'],
+      ['networkMaxConcurrent', 12, 'Prefetch Limit (launch URL)'],
+      ['renderer', 'webgpu', 'Renderer (launch URL)'],
+    ] as const) {
+      const c = byProp(prop);
+      expect(c.boundObj[prop]).toBe(value);
+      expect(c.name).toHaveBeenCalledWith(label);
+      expect(c.onChange).not.toHaveBeenCalled();
+      expect(c.domElement.style.pointerEvents).toBe('none');
+    }
+    expect(loadUserSettings().performance.workerCount).toBe(0);
+    expect(loadUserSettings().performance.networkMaxConcurrent).toBe(4);
+    teardown();
+  });
+
+  it('edit the saved preference as usual when the URL set nothing', () => {
+    const { teardown } = build();
+    const c = byProp('workerCount');
+    expect(c.name).toHaveBeenCalledWith('Workers (0 = auto)');
+    c.set(8);
+    expect(loadUserSettings().performance.workerCount).toBe(8);
+    teardown();
   });
 });

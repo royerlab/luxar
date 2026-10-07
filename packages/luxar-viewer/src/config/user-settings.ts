@@ -323,6 +323,14 @@ export function applyUrlPerformanceOverrides(
  * The Settings popover shows the SAVED preferences, which the URL deliberately
  * leaves alone, so without this line a launcher's values are invisible there.
  */
+export function urlSessionOverrides(): {
+  workers: number | null;
+  prefetch: number | null;
+  renderer: 'webgl' | 'webgpu' | null;
+} {
+  return { workers: urlWorkerCount, prefetch: urlPrefetch, renderer: urlRenderer };
+}
+
 export function describeUrlSessionOverrides(): string | null {
   const parts: string[] = [];
   if (urlWorkerCount !== null) {
