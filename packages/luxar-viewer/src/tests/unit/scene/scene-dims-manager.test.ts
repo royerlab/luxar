@@ -29,6 +29,29 @@ describe('SceneDimsManager', () => {
     };
   });
 
+  it('keeps app listeners across a scene reset and honors explicit removal', () => {
+    const persistent = vi.fn();
+    const oldSceneUi = vi.fn();
+    manager.addListener(persistent);
+    manager.addListener(oldSceneUi);
+    manager.initFromScene(mockScene);
+    manager.setDimensionValue(4, 1);
+    expect(persistent).toHaveBeenCalledTimes(1);
+    expect(oldSceneUi).toHaveBeenCalledTimes(1);
+
+    manager.removeListener(oldSceneUi);
+    manager.reset();
+    expect(manager.getDims()).toBeNull();
+    manager.initFromScene(mockScene);
+    manager.setDimensionValue(4, 2);
+    expect(persistent).toHaveBeenCalledTimes(2);
+    expect(oldSceneUi).toHaveBeenCalledTimes(1);
+
+    manager.removeListener(persistent);
+    manager.setDimensionValue(4, 3);
+    expect(persistent).toHaveBeenCalledTimes(2);
+  });
+
   describe('initialization', () => {
     it('should initialize from scene with dimension metadata', () => {
       const initialized = manager.initFromScene(mockScene);
