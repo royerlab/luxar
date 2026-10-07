@@ -77,13 +77,12 @@ def export_scene(
             "Viewer not built. Run: cd packages/luxar-viewer && pnpm build"
         )
     _require_third_party_notices(get_viewer_dist_path())
+    facts = read_scene_facts(source)
 
     if output.exists():
         shutil.rmtree(output)
 
     output.mkdir(parents=True, exist_ok=True)
-
-    facts = read_scene_facts(source)
 
     with asection("Exporting standalone scene"):
         # Step 1: Copy viewer

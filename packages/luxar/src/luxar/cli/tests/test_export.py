@@ -209,6 +209,29 @@ class TestExportScene:
         assert sentinel.read_text() == "user's prior export"
         assert not (output / "viewer").exists()
 
+    def test_invalid_launch_does_not_wipe_existing_output(
+        self,
+        sample_scene: Path,
+        mock_viewer_dist: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Launch validation must finish before overwrite removes old output."""
+        output = tmp_path / "existing"
+        output.mkdir()
+        sentinel = output / "important.txt"
+        sentinel.write_text("user's prior export")
+        attrs = dict(export_module.read_node_attrs(sample_scene))
+        attrs["viewer_config"] = {"launch": {"workers": 99}}
+        monkeypatch.setattr(export_module, "read_node_attrs", lambda _p: attrs)
+
+        p1, p2 = _patch_viewer(mock_viewer_dist)
+        with p1, p2, pytest.raises(ValueError, match="launch.workers"):
+            export_scene(sample_scene, output, overwrite=True)
+
+        assert sentinel.read_text() == "user's prior export"
+        assert sorted(p.name for p in output.iterdir()) == ["important.txt"]
+
     def test_fails_on_invalid_zarr(self, tmp_path: Path) -> None:
         """ValueError for non-zarr directory."""
         source = tmp_path / "not_zarr"
