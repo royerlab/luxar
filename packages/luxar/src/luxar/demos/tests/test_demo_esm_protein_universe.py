@@ -1237,10 +1237,6 @@ def test_a_squat_molecule_gets_its_caption_tucked_under_it(tmp_path: Path) -> No
     poster = tmp_path / "poster.png"
     Image.fromarray(rgba, "RGBA").save(poster)
     assert demo.poster_content_bottom(poster) == pytest.approx(0.70)
-    _, low = demo.turntable_caption_position(1.0, 0.70)
-    _, edge = demo.turntable_caption_position(1.0)
-    assert low == pytest.approx(edge - 0.3 * demo.TURNTABLE_WIDTH)
-
     Image.fromarray(rgba[..., :3], "RGB").save(tmp_path / "flat.png")
     assert demo.poster_content_bottom(tmp_path / "flat.png") == 1.0
     assert demo.poster_content_bottom(tmp_path / "missing.png") == 1.0

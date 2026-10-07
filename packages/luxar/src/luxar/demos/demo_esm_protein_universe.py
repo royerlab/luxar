@@ -3406,22 +3406,17 @@ def kiosk_caption_anchor() -> tuple[float, float]:
     return (x + TURNTABLE_WIDTH / 2, y)
 
 
-def turntable_caption_position(
-    aspect: float, content_bottom: float = 1.0
-) -> tuple[float, float]:
-    """Where the structure caption goes: centred just under the molecule.
+def turntable_caption_position(aspect: float) -> tuple[float, float]:
+    """Where the default structure caption goes: centred under the clip.
 
     The clip is a square ``TURNTABLE_WIDTH`` of the viewport WIDTH, centred at
     ``TURNTABLE_POSITION``'s height, so it is ``TURNTABLE_WIDTH * aspect`` of
-    the viewport HEIGHT tall. ``content_bottom`` is how far down that clip the
-    molecule reaches (:func:`poster_content_bottom`; 1.0 = the clip's edge), so
-    a squat molecule's caption rides up under it instead of floating at the
-    bottom of an empty frame.
+    the viewport HEIGHT tall.
     """
     x, y = TURNTABLE_POSITION
     height = TURNTABLE_WIDTH * aspect
     top = y - height / 2
-    return (x + TURNTABLE_WIDTH / 2, top + height * content_bottom + CAPTION_GAP)
+    return (x + TURNTABLE_WIDTH / 2, top + height + CAPTION_GAP)
 
 
 def _viewer_config(
