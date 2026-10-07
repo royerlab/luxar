@@ -3350,8 +3350,9 @@ DEFAULT_ASPECT = 16 / 9
 NOISE_PHOTON_GAIN = 0.0001
 
 
-#: Gap between the molecule's lowest point and its caption, in viewport height.
-CAPTION_GAP = 0.012
+#: Gap below the poster's molecule, including room for perspective growth
+#: as the turntable spins, in viewport height.
+CAPTION_GAP = 0.022
 #: Alpha above which a poster pixel counts as molecule rather than margin.
 POSTER_ALPHA_FLOOR = 16
 
@@ -3359,10 +3360,9 @@ POSTER_ALPHA_FLOOR = 16
 def poster_content_bottom(poster: Path) -> float:
     """The molecule's lowest point in its turntable frame, as a fraction of its height.
 
-    Read from the poster's alpha. The turntable spins about the vertical axis,
-    which moves no atom up or down, so the poster's lowest opaque row is the
-    lowest the molecule reaches in any frame. 1.0 (the frame's edge) when the
-    poster has no alpha or cannot be read.
+    Read from the poster's alpha. Perspective can make later frames extend
+    below this row; ``CAPTION_GAP`` leaves room for that motion. Returns 1.0
+    (the frame's edge) when the poster has no alpha or cannot be read.
     """
     from PIL import Image
 

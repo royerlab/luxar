@@ -1215,13 +1215,16 @@ def test_panel_type_follows_the_viewer_text_scale() -> None:
     assert "var(--luxar-text-scale, 1)" in overview_panel_html(7_714_508)
 
 
-@pytest.mark.parametrize(("aspect", "expected"), [(1.0, 0.642), (16 / 9, 0.743)])
+@pytest.mark.parametrize(("aspect", "expected"), [(1.0, 0.652), (16 / 9, 0.753)])
 def test_the_caption_sits_just_under_the_turntable(
     aspect: float, expected: float
 ) -> None:
     """The clip is sized in viewport WIDTH, so its bottom edge moves with the aspect."""
     x, y = demo.turntable_caption_position(aspect)
     assert y == pytest.approx(expected, abs=1e-3)
+    # Perspective rotation can lower the silhouette ~0.01 viewport height
+    # beyond the poster on a square display; leave visible room after that.
+    assert demo.CAPTION_GAP >= 0.02
     assert x == pytest.approx(0.06 + 0.26 / 2)
 
 
