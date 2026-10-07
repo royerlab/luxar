@@ -196,6 +196,8 @@ The `event` notification obeys the same rule:
 An attached viewer that has not finished initializing returns `-32002`
 (`viewer_not_ready`) for `getDimensions`; clients may retry that read. The hub
 returns `-32001` (`no_viewer`) when no display is attached.
+Other guarded methods, including `getCameraPose`, `setDimensionValue`, and
+`switchDataset`, still return `-32603` before initialization.
 The `flyTo` pose has the complete shape returned by `getCameraPose()`; callers
 normally copy that object and change the fields they want to animate.
 
