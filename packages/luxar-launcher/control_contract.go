@@ -34,6 +34,7 @@ const (
 	CodeMethodNotFound  = -32601
 	CodeInternalError   = -32603
 	CodeNoViewer        = -32001
+	CodeViewerNotReady  = -32002
 )
 
 // Limits bounding what an untrusted peer can make us hold.

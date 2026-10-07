@@ -284,6 +284,82 @@ class KioskConfig:
         return cls(**{name: data.get(name) for name in cls._FIELDS})
 
 
+#: Render backends a :class:`LaunchConfig` may ask for (the viewer's ``?renderer=``).
+VALID_LAUNCH_RENDERERS = ("webgl", "webgpu")
+
+
+@dataclass
+class LaunchConfig:
+    """Per-machine viewer settings an exported package opens the viewer with.
+
+    These are the Settings popover's machine preferences: the render backend,
+    the worker pool and the prefetch limit. The viewer resolves them before it
+    has read a byte of the scene, so a scene cannot apply them on load the way
+    it applies everything else in :class:`ViewerConfig`. Instead ``luxar
+    export`` bakes them into the viewer URL its ``serve.py`` opens, as
+    ``?renderer=`` / ``?workers=`` / ``?prefetch=``, which win over that
+    machine's saved preferences for the session without rewriting them.
+
+    Meant for a package built for known hardware, such as an exhibit display.
+    A scene served any other way (``luxar serve``, a hosted link) ignores the
+    block, because what suits one machine is a guess about every other.
+    All fields optional; unset leaves the viewer's own choice.
+    """
+
+    #: ``"webgl"`` or ``"webgpu"``.
+    renderer: Optional[str] = None
+    #: Worker pool size, 0 (auto) to 16.
+    workers: Optional[int] = None
+    #: Concurrent chunk fetches, 1 to 12.
+    prefetch: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        """Validate every field that is set."""
+        if self.renderer is not None and self.renderer not in VALID_LAUNCH_RENDERERS:
+            raise ValueError(
+                f"launch.renderer must be one of {VALID_LAUNCH_RENDERERS}, "
+                f"got {self.renderer!r}"
+            )
+        for name, low, high in (("workers", 0, 16), ("prefetch", 1, 12)):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"launch.{name} must be an int, got {value!r}")
+            if not low <= value <= high:
+                raise ValueError(
+                    f"launch.{name} must be in [{low}, {high}], got {value}"
+                )
+
+    _FIELDS = ("prefetch", "renderer", "workers")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary, omitting None fields."""
+        return {
+            name: getattr(self, name)
+            for name in self._FIELDS
+            if getattr(self, name) is not None
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> LaunchConfig:
+        """Create from dictionary. Unknown keys are ignored."""
+        return cls(**{name: data.get(name) for name in cls._FIELDS})
+
+    def query(self) -> str:
+        """The URL fragment to append to a viewer URL (``""`` when empty)."""
+        parts = [
+            f"&{key}={value}"
+            for key, value in (
+                ("renderer", self.renderer),
+                ("workers", self.workers),
+                ("prefetch", self.prefetch),
+            )
+            if value is not None
+        ]
+        return "".join(parts)
+
+
 @dataclass
 class UIConfig:
     """UI panel visibility configuration.
@@ -1363,6 +1439,18 @@ class ViewerConfig:
     # popover toggle). Unset leaves the viewer default (on).
     density_guard_enabled: Optional[bool] = None
 
+    # Multiplier on every overlay's type, 0.25 to 4 (the viewer's `?textScale=`
+    # wins over it). Only the type changes size: overlay positions, widths and
+    # anchors stay where they were authored, so one layout can be tuned for a
+    # screen read from across a room. Authored HTML opts in by writing its
+    # sizes as `calc(1.3vh * var(--luxar-text-scale, 1))`; text overlays
+    # follow it automatically.
+    text_scale: Optional[float] = None
+
+    # Machine settings an exported package opens the viewer with. See
+    # `LaunchConfig`: applied by `luxar export`'s serve.py, not on load.
+    launch: Optional[LaunchConfig] = None
+
     # UI panel visibility
     ui: Optional[UIConfig] = None
 
@@ -1394,6 +1482,7 @@ class ViewerConfig:
         self._validate_waypoints()
         self._validate_audio()
         self._validate_control_panel()
+        self._validate_text_and_launch()
 
         if self.title is not None:
             if not isinstance(self.title, str) or not self.title.strip():
@@ -1533,6 +1622,7 @@ class ViewerConfig:
         "adaptive_dpr_enabled",
         "allow_high_dpr",
         "density_guard_enabled",
+        "text_scale",
         "theme",
     ]
 
@@ -1543,7 +1633,14 @@ class ViewerConfig:
     _RENDERING_FIELDS = frozenset(
         f
         for f in _SIMPLE_FIELDS
-        if f not in ("title", "background_color", "theme", "playback_lod_depth")
+        if f
+        not in (
+            "title",
+            "background_color",
+            "theme",
+            "playback_lod_depth",
+            "text_scale",
+        )
     )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -1565,6 +1662,7 @@ class ViewerConfig:
 
         # Nested configs
         _put_nonempty_config(result, "ui", self.ui)
+        _put_nonempty_config(result, "launch", self.launch)
         _put_nonempty_config(result, "dimensions", self.dimensions)
 
         if self.animation is not None:
@@ -1589,6 +1687,11 @@ class ViewerConfig:
     def _validate_audio(self) -> None:
         if self.audio is not None and not isinstance(self.audio, AudioConfig):
             raise ValueError("audio must be an AudioConfig")
+
+    def _validate_text_and_launch(self) -> None:
+        _validate_range(self.text_scale, "text_scale", 0.25, 4.0)
+        if self.launch is not None and not isinstance(self.launch, LaunchConfig):
+            raise ValueError("launch must be a LaunchConfig")
 
     def _validate_control_panel(self) -> None:
         if self.control_panel is not None and not isinstance(
@@ -1624,6 +1727,7 @@ class ViewerConfig:
                 ("dimensions", DimensionsConfig.from_dict),
                 ("audio", AudioConfig.from_dict),
                 ("control_panel", ControlPanelConfig.from_dict),
+                ("launch", LaunchConfig.from_dict),
             )
             if isinstance(data.get(name), dict)
         }
@@ -1647,6 +1751,7 @@ class ViewerConfig:
             "waypoints": waypoints,
             "audio": nested.get("audio"),
             "control_panel": nested.get("control_panel"),
+            "launch": nested.get("launch"),
         }
 
         # Populate simple fields from data

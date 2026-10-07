@@ -78,13 +78,20 @@ def test_contract_covers_every_shared_name() -> None:
     projected = {
         name for name in vars(contract) if name.isupper() and not name.startswith("_")
     }
-    # Four values a dumb relay has no use for, each for its own reason:
+    # Five values a dumb relay has no use for, each for its own reason:
     # `ROLES` is a frozenset of the two roles it already checks directly;
     # `MAX_BUFFERED_EVENTS` bounds a CLIENT's event buffer, and this relay
     # buffers nothing; `METHOD_NOT_FOUND` and `INTERNAL_ERROR` are the VIEWER's
     # answers to a controller (the method policy lives there), and a relay that
     # emitted either would be claiming to know the method vocabulary.
-    unmirrored = {"ROLES", "MAX_BUFFERED_EVENTS", "METHOD_NOT_FOUND", "INTERNAL_ERROR"}
+    # `VIEWER_NOT_READY` likewise comes from the viewer during initialization.
+    unmirrored = {
+        "ROLES",
+        "MAX_BUFFERED_EVENTS",
+        "METHOD_NOT_FOUND",
+        "INTERNAL_ERROR",
+        "VIEWER_NOT_READY",
+    }
     assert projected - unmirrored <= set(vars(template))
 
 
@@ -804,3 +811,21 @@ def test_the_generated_script_hosts_the_relay(tmp_path: Path) -> None:
 
     assert "control.html?control&controlToken=s3cret" in stdout
     assert "src=http://127.0.0.1:%d/scene_data&title=My%%20Scene" % port in stdout
+
+
+def test_text_scale_rides_on_the_display_url_only() -> None:
+    viewer, panel = template.urls(
+        "127.0.0.1", 8000, control=True, token=None, text_scale=0.8
+    )
+    assert "&textScale=0.8" in viewer
+    assert "textScale" not in panel
+    (viewer,) = template.urls("127.0.0.1", 8000, control=False, token=None)
+    assert "textScale" not in viewer
+
+
+def test_text_scale_flag_is_parsed_and_range_checked() -> None:
+    assert template._parse_args(["--text-scale", "0.8"]).text_scale == 0.8
+    assert template._parse_args([]).text_scale is None
+    for bad in ("0.1", "9", "big"):
+        with pytest.raises(SystemExit):
+            template._parse_args(["--text-scale", bad])

@@ -15,7 +15,7 @@
  * @see docs/guides/specs/REMOTE_CONTROL_SPEC.md §3.3
  */
 
-import { CLOSE_POLICY_VIOLATION } from '../../../config/control-contract';
+import { CLOSE_POLICY_VIOLATION, VIEWER_NOT_READY } from '../../../config/control-contract';
 import { normalizeDataSourceUrl } from '../../../config/url-params';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import {
@@ -41,6 +41,9 @@ import { encodeBlobForWire, isBlobLike, sanitizeForWire } from './wire-values';
 export const CONTROL_RECONNECT_BASE_MS = 500;
 /** Ceiling for the doubling reconnect delay. */
 export const CONTROL_RECONNECT_MAX_MS = 30_000;
+
+/** The display is attached, but its initial scene is not ready for a read. */
+export class ViewerNotReadyError extends Error {}
 
 function displayRefusalReason(reason: string | undefined): string {
   return reason || 'check the ?controlToken in its URL';
@@ -307,7 +310,7 @@ export class ControlClient {
       // "unknown layer '/x'"), and a throw must never reach the socket's
       // handler, where it would look like a transport failure.
       this.reply(id, null, {
-        code: JSON_RPC_INTERNAL_ERROR,
+        code: error instanceof ViewerNotReadyError ? VIEWER_NOT_READY : JSON_RPC_INTERNAL_ERROR,
         message: error instanceof Error ? error.message : String(error),
       });
     }

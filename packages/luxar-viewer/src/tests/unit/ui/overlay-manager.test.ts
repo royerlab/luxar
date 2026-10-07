@@ -186,6 +186,20 @@ describe('OverlayManager.loadOverlays', () => {
     vi.restoreAllMocks();
   });
 
+  it('scales text by default and leaves opted-out text at its authored font size', async () => {
+    await manager.loadOverlays(
+      [
+        makeTextOverlay({ name: 'scaled', font_size: 0.02 }),
+        makeTextOverlay({ name: 'fixed', font_size: 0.02, scale_text: false }),
+      ],
+      'http://example.com'
+    );
+    const scaled = document.querySelector('[data-overlay-name="scaled"]') as HTMLDivElement;
+    const fixed = document.querySelector('[data-overlay-name="fixed"]') as HTMLDivElement;
+    expect(scaled.style.fontSize).toBe('calc(2vh * var(--luxar-text-scale, 1))');
+    expect(fixed.style.fontSize).toBe('2vh');
+  });
+
   it('creates a div per overlay with the luxar-overlay class', async () => {
     await manager.loadOverlays(
       [makeTextOverlay({ name: 'a' }), makeTextOverlay({ name: 'b' })],

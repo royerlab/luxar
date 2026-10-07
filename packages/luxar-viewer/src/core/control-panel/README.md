@@ -67,6 +67,10 @@ read retries with capped backoff until it answers or a dimension event arrives.
 On `dataset-loaded`, the panel re-reads dimensions and the authored presentation
 so a dataset switch replaces the previous scene's chapters. This read never
 sends `notify` or moves the display.
+Chapter loading uses the same capped retry when an attached display answers
+`getDimensions` with `viewer_not_ready` during initialization.
+A custom `?panel=` module owns its page and must subscribe to and handle
+`dataset-loaded` itself.
 
 **It ships without `ThemeManager`.** That singleton persists its choice to
 `localStorage`, and the panel shares an origin with the display — so setting a

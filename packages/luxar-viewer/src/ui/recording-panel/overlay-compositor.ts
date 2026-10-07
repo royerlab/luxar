@@ -23,6 +23,7 @@
  * @module ui/recording-panel/overlay-compositor
  */
 
+import { textScaleOf } from '../overlay-text-scale';
 import type { OverlayManager } from '../overlay-manager';
 import { FONT_PRESETS } from '../overlay-manager';
 import type { OverlayConfig } from '../../data/loaders';
@@ -229,7 +230,8 @@ export function compositeTextOverlay(
 
   // Font sizes / paddings / strokes are authored as vh fractions, and
   // `width` as a vw fraction — the same units the DOM overlay uses.
-  const fontSize = (config.font_size ?? 0.03) * metrics.vh;
+  const scale = config.scale_text === false ? 1 : textScaleOf(el);
+  const fontSize = (config.font_size ?? 0.03) * metrics.vh * scale;
   const fontFamily = FONT_PRESETS[config.font ?? 'sans'] ?? config.font ?? FONT_PRESETS.sans;
   ctx.font = `${fontSize}px ${fontFamily}`;
   ctx.textBaseline = 'top';

@@ -590,12 +590,14 @@ function startConnectedPanel(
     } catch (error) {
       if (disposed || generation !== chapterGeneration) return;
       log.warning(Modules.APP, 'control panel: could not load chapters:', error);
-      if (error instanceof ControllerCallError && error.noViewerAttached) {
-        // The ONLY error that licenses this message: the hub said so.
-        panel.showMessage(
-          'Waiting for the display',
-          'Connected to the hub, but no viewer has attached yet.'
-        );
+      if (
+        error instanceof ControllerCallError &&
+        (error.noViewerAttached || error.viewerNotReady)
+      ) {
+        const message = error.noViewerAttached
+          ? 'Connected to the hub, but no viewer has attached yet.'
+          : 'The viewer is still loading its scene.';
+        panel.showMessage('Waiting for the display', message);
         chapterRetry.schedule();
         return;
       }

@@ -155,6 +155,17 @@ class TestAddText:
         store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
         assert store["overlays/overlay_0"].attrs["width"] == 0.3
 
+    def test_text_scale_opt_out_is_stored_only_when_taken(self, tmp_path) -> None:
+        """A title keeps its size under the text scale only if it says so."""
+        with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as c:
+            scene = c.create_scene(dimensions=Dimensions.default_3d())
+            scene.add_text("Body", position=(0.5, 0.5))
+            scene.add_text("Title", position=(0.5, 0.1), scale_text=False)
+
+        store = zarr.open_group(tmp_path / "test.luxar.zarr", mode="r")
+        assert "scale_text" not in store["overlays/overlay_0"].attrs
+        assert store["overlays/overlay_1"].attrs["scale_text"] is False
+
     def test_overlays_property(self, tmp_path) -> None:
         """Scene.overlays returns list of all overlays."""
         with LuxarZarrCompiler(tmp_path / "test.luxar.zarr") as c:

@@ -384,6 +384,7 @@ class Scene(Group):
         interactive: bool = False,
         blend_mode: str = "normal",
         hover: bool = False,
+        scale_text: bool = True,
     ) -> Overlay:
         """Add a text overlay to the scene.
 
@@ -417,6 +418,10 @@ class Scene(Group):
                 for XOR-style text that inverts the background colors.
             hover: If True, this overlay is a hover tooltip updated by GPU
                 picking. The ``text`` is treated as a template (default False).
+            scale_text: Follow the viewer's text scale (``viewer_config.text_scale``
+                or ``?textScale=``), default True. Pass False for a title that is
+                part of the layout and should keep its size when the reading
+                text is scaled for a particular screen.
 
         Returns:
             Overlay metadata object.
@@ -456,6 +461,7 @@ class Scene(Group):
             interactive=interactive,
             blend_mode=blend_mode,
             hover=hover,
+            scale_text=scale_text,
         )
 
     def add_image(

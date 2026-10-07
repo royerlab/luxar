@@ -85,6 +85,8 @@ Usage:
     python -m luxar.demos.demo_esm_protein_universe --no-audio --no-turntables
     python -m luxar.demos.demo_esm_protein_universe --high-quality   # kiosk: SSAA + 95% dolly
     python -m luxar.demos.demo_esm_protein_universe --no-permission-note   # private showing: citation only
+    python -m luxar.demos.demo_esm_protein_universe --kiosk   # the exhibit display (see KIOSK_*)
+    python -m luxar.demos.demo_esm_protein_universe --kiosk --kiosk-aspect 1.0
     python -m luxar.demos.demo_esm_protein_universe --coords X.parquet --annotations Y.parquet
 
 Touch panel (off by default):
@@ -156,7 +158,7 @@ import html
 import sys
 import tempfile
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -173,6 +175,7 @@ from luxar.core.viewer_config import (
     Chapter,
     ControlPanelConfig,
     EnvironmentConfig,
+    LaunchConfig,
     ViewerConfig,
     Waypoint,
 )
@@ -181,6 +184,7 @@ from luxar.demos import (
     control_serve_args,
     launch_viewer,
     parse_path_arg,
+    parse_str_arg,
 )
 from luxar.demos._cinematic_camera import CINEMATIC_FOV_DEG, pull_in
 from luxar.demos._dependencies import require_module
@@ -206,7 +210,6 @@ from luxar.demos.demo_esm3_protein_stories import (
     TOUR_FLIGHT_TRAJECTORY,
     TOUR_LONG_FLIGHT_MS,
     TURNTABLE_CACHE,
-    TURNTABLE_CAPTION_POSITION,
     TURNTABLE_POSITION,
     TURNTABLE_WIDTH,
     Story,
@@ -220,6 +223,7 @@ from luxar.demos.demo_esm3_protein_stories import (
     story_camera_distance,
     story_node_name,
     story_panel_html,
+    text_vh,
 )
 from luxar.demos.demo_esm3_protein_stories import (
     STORIES as SWISSPROT_STORIES,
@@ -2362,6 +2366,461 @@ def _ordered(
 
 STORIES: tuple[UniverseStory, ...] = _ordered(_STORY_POOL, TOUR_ORDER)
 
+
+#: The kiosk build's caption under each story's turntable, by story key: one
+#: short line, in sentence case, read from across a room. The default build
+#: keeps the story's own ``pdb_caption``, else the RCSB entry title.
+KIOSK_PDB_CAPTIONS: dict[str, str] = {
+    "Hemoglobin": "Human deoxyhaemoglobin",
+    "Photosystem II": "Photosystem II from a hot-spring cyanobacterium",
+    "RuBisCO": "Activated spinach RuBisCO",
+    "ATP synthase": "ATP synthase from Bacillus PS3",
+    "Hsp70": "E. coli Hsp70 (DnaK) holding a substrate",
+    "RecA and Rad51": "E. coli RecA filament",
+    "ABC transporters": "Multidrug ABC transporter Sav1866",
+    "Dark proteome": "A DUF433 protein from Anabaena, function unknown",
+    "Phage": "Bacteriophage P68",
+    "Viral surface proteins": "SARS-CoV-2 spike, closed",
+    "CRISPR-Cas": "Cas9 with guide RNA and target DNA",
+    "TnpB and Fanzor": "TnpB from Deinococcus radiodurans with its RNA",
+    "Beta-lactamases": "TEM-1 beta-lactamase from E. coli",
+    "Lanthipeptides": "Nisin cyclase NisC",
+    "Ice-binding proteins": "Ice-binding protein from an Antarctic sea-ice bacterium",
+    "Reverse gyrase": "Reverse gyrase from Archaeoglobus fulgidus",
+    "Olfactory receptors": "Human olfactory receptor OR51E2, held by a G protein",
+    "Insect odorant receptors": "Aphid odorant receptor OR5 with its partner Orco",
+    "Worm chemoreceptors": "FSHR-1, a worm hormone receptor standing in: no nematode chemoreceptor is solved",
+    "Levodopa and the gut": "Bacterial tyrosine decarboxylase",
+}
+
+
+@dataclass(frozen=True)
+class KioskText:
+    """A story's reading text for the kiosk build.
+
+    The exhibit wall is read standing, from across a room, while the tour keeps
+    moving: the panel may take at most a third of the screen's height. So each
+    story keeps its title and count and gets a shorter subtitle (when the
+    default one runs long), fewer facts and a one-sentence open question, all
+    drawn from the default text; the default build keeps the full panels.
+    """
+
+    facts: tuple[str, ...]
+    mystery: str
+    subtitle: str | None = None
+
+
+#: Every story's kiosk text, by story key. See :class:`KioskText`.
+KIOSK_TEXT: dict[str, KioskText] = {
+    "Hemoglobin": KioskText(
+        subtitle="One fold in four places, animal and bacterial",
+        facts=(
+            (
+                "Each red blood cell carries roughly 280 million hemoglobin "
+                "molecules, each able to hold four oxygen molecules."
+            ),
+            (
+                "In 1949 sickle-cell anaemia became the first “molecular disease”; "
+                "the fault was later pinned to one swapped amino acid."
+            ),
+            (
+                "The lines join the four places where the model filed this fold, one "
+                "of animal globins and three mostly bacterial."
+            ),
+        ),
+        mystery=(
+            "Hemoglobin also turns up in dopamine neurons of the brain, nowhere "
+            "near blood. What is it doing there?"
+        ),
+    ),
+    "Photosystem II": KioskText(
+        subtitle="The reaction centre in pieces, joined by lines",
+        facts=(
+            (
+                "D1 sits at the heart of photosystem II, the only known enzyme that "
+                "splits water. About 2.4 billion years ago, cyanobacteria running it "
+                "began filling the air with oxygen."
+            ),
+            (
+                "Splitting water wrecks D1, so in daylight a leaf replaces half its "
+                "D1 every hour or two."
+            ),
+            (
+                "Two in five D1 clusters here are viral, from cyanophages that carry "
+                "their own copy to keep the host photosynthesising."
+            ),
+        ),
+        mystery=(
+            "Water-splitting may have begun a billion years before oxygen rose. "
+            "Why did the planet wait so long?"
+        ),
+    ),
+    "RuBisCO": KioskText(
+        facts=(
+            (
+                "Nearly every carbon atom in every living thing passed through this "
+                "enzyme. Earth carries about 0.7 billion tonnes of it."
+            ),
+            (
+                "It is slow, a few reactions a second, and it confuses O₂ with CO₂, "
+                "losing carbon and energy each time. Plants make up for it in sheer "
+                "quantity."
+            ),
+            ("This knot is the large chain, half from plants and half from bacteria."),
+        ),
+        mystery=(
+            "Three billion years of evolution have not produced a fast, accurate "
+            "RuBisCO. Is that a hard limit?"
+        ),
+    ),
+    "ATP synthase": KioskText(
+        facts=(
+            (
+                "A flow of protons turns its axle, and each turn presses out three "
+                "ATP molecules. In 1997 a single motor was watched spinning under the "
+                "microscope."
+            ),
+            "You make and spend roughly your own body weight in ATP every day.",
+            (
+                "This knot is the beta subunit as bacteria build it. Our mitochondria "
+                "inherited the same motor from bacteria."
+            ),
+        ),
+        mystery=(
+            "Almost all the energy going into this motor comes out as rotation, "
+            "next to none as heat. How does a protein manage that?"
+        ),
+    ),
+    "Hsp70": KioskText(
+        subtitle="Nearly four thousand clusters of one chaperone, in dozens of knots",
+        facts=(
+            (
+                "Hsp70 (DnaK in bacteria) holds unfolded proteins, refolds damaged "
+                "ones and hands hopeless ones to the shredder. Almost every "
+                "bacterium, plant, animal and fungus carries one."
+            ),
+            (
+                "Separated for some two billion years, human Hsp70 and E. coli DnaK "
+                "are still about 47% identical."
+            ),
+            (
+                "Its story began by accident in 1962, when a nudged incubator raised "
+                "new “puffs” on fruit-fly chromosomes."
+            ),
+        ),
+        mystery=(
+            "Cancer cells over-produce Hsp70 to survive, yet no drug against it "
+            "has been approved. Why is it so hard to target?"
+        ),
+    ),
+    "RecA and Rad51": KioskText(
+        subtitle="One recombinase, from phages to our own BRCA2 pathway",
+        facts=(
+            (
+                "RecA coats a broken DNA strand into a filament that searches the "
+                "genome for the matching sequence and pairs the two."
+            ),
+            (
+                "Our version, RAD51, is loaded onto broken DNA by BRCA2, whose "
+                "inherited faults are behind many hereditary breast cancers."
+            ),
+            (
+                "The densest RecA knot on this map belongs to phages, many of which "
+                "carry a RecA of their own."
+            ),
+        ),
+        mystery=(
+            "A RecA filament finds one matching stretch among millions of base "
+            "pairs in minutes. How it searches that fast is unresolved."
+        ),
+    ),
+    "ABC transporters": KioskText(
+        facts=(
+            (
+                "ABC transporters pump molecules across membranes, burning ATP: "
+                "nutrients in, toxins out. Every genome has them."
+            ),
+            "Humans have 48. A broken one, CFTR, causes cystic fibrosis.",
+            (
+                "A family this large and this tightly knit has so little in common "
+                "with anything else that the map pushes it clear of the crowd."
+            ),
+        ),
+        mystery=(
+            "How does the ATP cycle move the cargo? For most of the family, no "
+            "one knows."
+        ),
+    ),
+    "Dark proteome": KioskText(
+        facts=(
+            (
+                "Two million of the 7.7 million clusters here contain no protein with "
+                "a domain of known function. They are the dim points of this map."
+            ),
+            (
+                "Most of this atlas, 5.6 of its 6.8 billion sequences, was read "
+                "straight out of soil, seawater and guts, from organisms nobody has "
+                "grown in a lab."
+            ),
+            (
+                "Uncharacterised clusters mostly sit beside each other, in families "
+                "of their own."
+            ),
+        ),
+        mystery=(
+            "Are these families new chemistry, or old folds whose sequences "
+            "drifted beyond recognition?"
+        ),
+    ),
+    "Phage": KioskText(
+        subtitle=(
+            "Half a million clusters of tailed phages, half of them uncharacterised"
+        ),
+        facts=(
+            (
+                "Bacteriophages, the viruses of bacteria, are the most abundant "
+                "biological entities on Earth, about ten for every microbial cell."
+            ),
+            (
+                "In the oceans they kill around a fifth of all microbial biomass "
+                "every day, and its carbon spills back into the water."
+            ),
+            (
+                "They were medicine before penicillin, and with antibiotic resistance "
+                "rising, phage therapy is being tried again."
+            ),
+        ),
+        mystery="What do most phage genes do, and how many kinds of phage are there?",
+    ),
+    "Viral surface proteins": KioskText(
+        facts=(
+            (
+                "Flu haemagglutinin, the coronavirus spike, HIV's envelope and "
+                "Ebola's glycoprotein come from unrelated viruses, yet all snap into "
+                "the same six-helix bundle to fuse virus and cell."
+            ),
+            (
+                "The SARS-CoV-2 spike grips the ACE2 receptor on our cells to get in. "
+                "COVID-19 vaccines teach the immune system to recognise it."
+            ),
+            (
+                "This knot is the coronavirus spike in hundreds of versions, from "
+                "viruses of bats, birds, pigs, camels and people."
+            ),
+        ),
+        mystery=(
+            "How many more spikes hide in the dark parts of this map, invisible "
+            "to a sequence search?"
+        ),
+    ),
+    "CRISPR-Cas": KioskText(
+        subtitle="Hundreds of clusters of Cas9 and its kin",
+        facts=(
+            (
+                "CRISPR is a bacterial immune system. Bacteria keep snippets of viral "
+                "DNA, and Cas proteins use them as guides to find and cut the same "
+                "virus next time."
+            ),
+            (
+                "In 2012 Jennifer Doudna and Emmanuelle Charpentier turned Cas9 into "
+                "programmable scissors and shared the 2020 Nobel Prize in Chemistry."
+            ),
+            (
+                "Eleven years later the first CRISPR medicine was approved, for "
+                "sickle-cell disease."
+            ),
+        ),
+        mystery=(
+            "Many highly successful bacteria do without CRISPR. Why would an "
+            "organism give up an immune system?"
+        ),
+    ),
+    "TnpB and Fanzor": KioskText(
+        facts=(
+            (
+                "TnpB, a third the size of Cas9, travels with jumping genes. Guided "
+                "by a short RNA, it cuts DNA wherever the guide matches."
+            ),
+            (
+                "The Cas12 family, which includes gene editors, arose from enzymes "
+                "like it about fifty separate times."
+            ),
+            (
+                "One cluster here folds like the best-studied TnpB yet shares fewer "
+                "than one letter in seven with it."
+            ),
+        ),
+        mystery=(
+            "Three hundred and fifteen unannotated clusters look like members of "
+            "this family. Could some be new RNA-guided systems?"
+        ),
+    ),
+    "Beta-lactamases": KioskText(
+        subtitle="Nine thousand clusters share the fold; this knot is TEM-1's family",
+        facts=(
+            (
+                "A beta-lactamase cuts open penicillin's four-membered ring before "
+                "the drug can jam the enzymes that build the bacterial cell wall."
+            ),
+            (
+                "An E. coli enzyme that destroyed penicillin was described in 1940, "
+                "weeks before purified penicillin first treated a patient."
+            ),
+            (
+                "Drug-resistant infections are now associated with nearly five "
+                "million deaths a year."
+            ),
+        ),
+        mystery=(
+            "New variants appear every year. Can new drugs keep pace with an "
+            "enzyme family that keeps evolving in hospitals?"
+        ),
+    ),
+    "Lanthipeptides": KioskText(
+        subtitle="Eight places that together make one antibiotic assembly line",
+        facts=(
+            (
+                "Nisin is a short peptide stapled into five rings by sulfur bridges. "
+                "It has preserved processed cheese for seventy years."
+            ),
+            (
+                "It grabs lipid II, the brick the bacterial cell wall is built from, "
+                "then uses it as an anchor to punch pores in the membrane."
+            ),
+            (
+                "The lines join eight places: the enzymes that prepare and close the "
+                "rings, the immunity proteins, and one ring-stitched peptide."
+            ),
+        ),
+        mystery=(
+            "Why has resistance to nisin never become a real problem in all its "
+            "years of use?"
+        ),
+    ),
+    "Ice-binding proteins": KioskText(
+        facts=(
+            (
+                "Antifreeze proteins were found in Antarctic fish in 1969, keeping "
+                "blood liquid at minus 1.9 degrees."
+            ),
+            "They sit on the face of a growing ice crystal and stop it growing.",
+            (
+                "The most widespread ice-binding domain is scattered across the tree "
+                "of life, probably passed sideways between species."
+            ),
+        ),
+        mystery=(
+            "Ice is nothing but ordered water. How does a protein recognise it at all?"
+        ),
+    ),
+    "Reverse gyrase": KioskText(
+        subtitle="Fourteen clusters, the tightest knot on this tour",
+        facts=(
+            (
+                "Every cell carries enzymes that take twist out of its DNA. Reverse "
+                "gyrase winds extra twist in, the only enzyme known to do so."
+            ),
+            (
+                "It turns up in every organism that grows best above eighty degrees, "
+                "and almost never in cooler relatives."
+            ),
+            (
+                "The extra twist is thought to hold the double helix shut in the "
+                "heat, though this has never been proven."
+            ),
+        ),
+        mystery=(
+            "Without the gene, an archaeon that likes a hundred degrees cannot "
+            "grow above ninety. What changes across those degrees is unknown."
+        ),
+    ),
+    "Olfactory receptors": KioskText(
+        subtitle="136 clusters, almost all vertebrate",
+        facts=(
+            (
+                "The human genome holds about four hundred working olfactory receptor "
+                "genes; mice carry close to three times as many."
+            ),
+            (
+                "Each sensory neuron in the nose settles on a single receptor, and a "
+                "smell is read as the pattern across many of them."
+            ),
+            (
+                "The first structure of a human olfactory receptor arrived only in "
+                "2023: OR51E2, holding the acid behind Swiss cheese."
+            ),
+        ),
+        mystery=(
+            "Most human receptors have no known odour. Can we read what a "
+            "receptor detects from its sequence?"
+        ),
+    ),
+    "Insect odorant receptors": KioskText(
+        facts=(
+            (
+                "Insects do not smell with anything related to our receptors. An "
+                "insect odorant receptor is itself an ion channel, opening when the "
+                "odorant binds."
+            ),
+            (
+                "Each works with a partner, Orco. Knock out Orco and a malaria "
+                "mosquito is largely no longer drawn to human odour."
+            ),
+            (
+                "These clusters sit far from the vertebrate knot, because the two "
+                "receptor families are unrelated."
+            ),
+        ),
+        mystery=(
+            "What gives each receptor its own chemical taste is still being worked out."
+        ),
+    ),
+    "Worm chemoreceptors": KioskText(
+        facts=(
+            (
+                "The worm C. elegans spends some thirteen hundred of its twenty "
+                "thousand genes on chemoreceptors. We spend two per cent of ours on "
+                "smell."
+            ),
+            (
+                "It has only about thirty chemosensory neurons, so each carries many "
+                "receptors, where a neuron in our nose carries one."
+            ),
+            (
+                "No nematode chemoreceptor structure has been solved. The model "
+                "beside this panel is a hormone receptor from the same worm."
+            ),
+        ),
+        mystery=(
+            "What do almost all of these receptors detect, and why does a worm "
+            "need so many?"
+        ),
+    ),
+    "Levodopa and the gut": KioskText(
+        facts=(
+            (
+                "Levodopa, the mainstay of Parkinson's treatment, must reach the "
+                "brain. Gut bacteria carrying this enzyme turn it into dopamine on "
+                "the way, where it is no use."
+            ),
+            (
+                "Carbidopa, given to block the human version of that reaction, does "
+                "not block the bacterial one."
+            ),
+            "Its specks spread across a fifth of the map.",
+        ),
+        mystery="Could profiling this one enzyme in a patient's gut guide the dose?",
+    ),
+}
+
+
+def pdb_caption(story: UniverseStory, fallback: str, *, kiosk: bool = False) -> str:
+    """The structure caption for ``story``: the kiosk line, else its own, else ``fallback``."""
+    if kiosk and story.key in KIOSK_PDB_CAPTIONS:
+        return KIOSK_PDB_CAPTIONS[story.key]
+    return story.pdb_caption or fallback
+
+
 OVERVIEW_TITLE = "Twenty stories in the protein universe"
 ATTRIBUTION = f"{DEMO_META['citation']['ref']} · {DEMO_META['citation']['license']}"
 OVERVIEW_HTML = (
@@ -2379,6 +2838,19 @@ OVERVIEW_HTML = (
     "penicillin and antibiotics stitched into rings. Then life in ice, life near "
     "boiling and three separate inventions of smell. Last, a gut enzyme that "
     "eats a Parkinson's drug."
+)
+#: The kiosk build's overview: shorter, and it points at the touch screen,
+#: the only control a visitor there has. See :class:`KioskText`.
+KIOSK_OVERVIEW_HTML = (
+    "Every point is one of {n:,} protein clusters from the ESM Atlas, the "
+    "largest map of protein space yet made: 6.8 billion unique sequences "
+    "from eight public databases, most read straight out of soil, seawater "
+    "and guts. A protein language model grouped them so that similar clusters "
+    "sit close together. Colours are the main branches of life; the dim "
+    "points are clusters nobody has characterised.<br><br>Touch a story "
+    "to fly to it: the machines every cell runs on, the dark proteome, "
+    "the arms race between microbes and their viruses, life at the "
+    "extremes and three separate inventions of smell."
 )
 #: Spoken introduction at the Overview slot.
 OVERVIEW_NARRATION = (
@@ -2706,21 +3178,50 @@ def check_spur_story(universe: Universe, cluster: StoryCluster) -> float:
     return share
 
 
-def overview_panel_html(n_clusters: int, *, permission_note: bool = True) -> str:
+def story_panel_for(
+    story: UniverseStory,
+    n_members: int,
+    index: int,
+    total: int,
+    *,
+    unit: str,
+    kiosk: bool = False,
+) -> str:
+    """The story panel, with the kiosk build's shorter text when ``kiosk``.
+
+    Only the reading text changes (see :data:`KIOSK_TEXT`); the title, the
+    count and the layout are the same in both builds.
+    """
+    if kiosk:
+        text = KIOSK_TEXT[story.key]
+        story = replace(
+            story,
+            subtitle=text.subtitle or story.subtitle,
+            facts=text.facts,
+            mystery=text.mystery,
+        )
+    return story_panel_html(story, n_members, index, total, unit=unit)
+
+
+def overview_panel_html(
+    n_clusters: int, *, permission_note: bool = True, kiosk: bool = False
+) -> str:
     """The overview panel shown at story 0.
 
     ``permission_note=False`` drops the licence half of the attribution line,
     keeping the citation, for a private showing (``--no-permission-note``).
+    ``kiosk`` swaps in :data:`KIOSK_OVERVIEW_HTML`.
     """
     attribution = ATTRIBUTION if permission_note else DEMO_META["citation"]["ref"]
+    body = (KIOSK_OVERVIEW_HTML if kiosk else OVERVIEW_HTML).format(n=n_clusters)
     return (
-        '<div style="font-size:1.3vh;line-height:1.35;color:#e8e8e8;'
+        f'<div style="font-size:{text_vh(1.3)};line-height:1.35;color:#e8e8e8;'
         "background:rgba(0,0,0,0.62);padding:1.4vh 1.6vh;border-radius:6px;"
         'border-left:0.5vh solid #ffffff">'
-        f'<div style="font-size:2.2vh;font-weight:bold;margin-bottom:0.6vh">'
+        f'<div style="font-size:{text_vh(2.2)};font-weight:bold;margin-bottom:{text_vh(0.6)}">'
         f"{html.escape(OVERVIEW_TITLE)}</div>"
-        f"{OVERVIEW_HTML.format(n=n_clusters)}"
-        f'<div style="margin-top:1.1vh;font-size:1.05vh;color:rgba(232,232,232,0.55)">'
+        f"{body}"
+        f'<div style="margin-top:{text_vh(1.1)};font-size:{text_vh(1.05)};color:rgba(232,232,232,0.55)">'
         f"{html.escape(attribution)}</div>"
         "</div>"
     )
@@ -2828,6 +3329,74 @@ def _render_story_turntables(
         return assets
 
 
+# The exhibit display (`--kiosk`): a wall-sized touch screen on a workstation
+# GPU, read from anywhere in the room. What changes against the default build,
+# all of it chosen on that display:
+#: Reading text at 0.8x: the panel and the structure caption read as too large
+#: from the middle of the room. The title keeps its size (`scale_text=False`).
+KIOSK_TEXT_SCALE = 0.8
+#: The machine settings the display runs with, applied by the exported
+#: package's serve.py (they must be known before the scene loads): WebGPU, the
+#: full worker pool, the full prefetch limit.
+KIOSK_LAUNCH = LaunchConfig(renderer="webgpu", workers=16, prefetch=12)
+#: Width / height of the display. The turntable is sized in viewport WIDTH, so
+#: its caption's height on screen depends on the shape of the screen.
+KIOSK_ASPECT = 1.0
+#: Shape the default build lays the caption out for.
+DEFAULT_ASPECT = 16 / 9
+
+#: Detector noise, Poisson (shot) only, at its gentlest gain: the cinematic
+#: preset's readout and fixed-pattern terms read as grain across a wall.
+NOISE_PHOTON_GAIN = 0.0001
+
+
+#: Gap below the poster's molecule, including room for perspective growth
+#: as the turntable spins, in viewport height.
+CAPTION_GAP = 0.022
+#: Alpha above which a poster pixel counts as molecule rather than margin.
+POSTER_ALPHA_FLOOR = 16
+
+
+def poster_content_bottom(poster: Path) -> float:
+    """The molecule's lowest point in its turntable frame, as a fraction of its height.
+
+    Read from the poster's alpha. Perspective can make later frames extend
+    below this row; ``CAPTION_GAP`` leaves room for that motion. Returns 1.0
+    (the frame's edge) when the poster has no alpha or cannot be read.
+    """
+    from PIL import Image
+
+    try:
+        with Image.open(poster) as im:
+            if "A" not in im.getbands():
+                return 1.0
+            alpha = np.asarray(im.getchannel("A"))
+    except OSError:
+        return 1.0
+    rows = np.flatnonzero((alpha > POSTER_ALPHA_FLOOR).any(axis=1))
+    if rows.size == 0:
+        return 1.0
+    return float(rows[-1] + 1) / alpha.shape[0]
+
+
+def turntable_caption_position(
+    aspect: float, content_bottom: float = 1.0
+) -> tuple[float, float]:
+    """Where the structure caption goes: centred just under the molecule.
+
+    The clip is a square ``TURNTABLE_WIDTH`` of the viewport WIDTH, centred at
+    ``TURNTABLE_POSITION``'s height, so it is ``TURNTABLE_WIDTH * aspect`` of
+    the viewport HEIGHT tall. ``content_bottom`` is how far down that clip the
+    molecule reaches (:func:`poster_content_bottom`; 1.0 = the clip's edge), so
+    a squat molecule's caption rides up under it instead of floating at the
+    bottom of an empty frame.
+    """
+    x, y = TURNTABLE_POSITION
+    height = TURNTABLE_WIDTH * aspect
+    top = y - height / 2
+    return (x + TURNTABLE_WIDTH / 2, top + height * content_bottom + CAPTION_GAP)
+
+
 def _viewer_config(
     waypoints: list[Waypoint],
     overview: tuple[float, float, float],
@@ -2835,10 +3404,12 @@ def _viewer_config(
     auto_rotate: bool,
     audio: bool,
     high_quality: bool = False,
+    kiosk: bool = False,
     control_panel: ControlPanelConfig | None = None,
 ) -> ViewerConfig:
     # Based on the Swiss-Prot tour's kiosk settings, with a different dolly,
     # natural drag pinned on, and render quality selected by `high_quality`.
+    # `kiosk` adds the exhibit display's settings (see KIOSK_TEXT_SCALE).
     # `overview` is the raw distance-tuned pose; `pull_in` carries it to the
     # cinematic 63° lens.
     return ViewerConfig(
@@ -2881,11 +3452,23 @@ def _viewer_config(
         # always allowed and held fixed rather than adapted: the map's fine
         # structure is what the tour is about, and a resolution that drops while
         # the camera travels and recovers on arrival reads as the map going soft
-        # in flight. The Density Guard (a viewer default) still sheds load where
-        # points pile up.
+        # in flight.
         ssaa_enabled=high_quality,
         allow_high_dpr=True,
         adaptive_dpr_enabled=False,
+        # Shot noise only (see NOISE_PHOTON_GAIN), overriding the cinematic
+        # preset's readout and fixed-pattern grain.
+        detector_noise_enabled=True,
+        detector_noise_readout_sigma=0.0,
+        detector_noise_photon_gain=NOISE_PHOTON_GAIN,
+        detector_noise_fpn_sigma=0.0,
+        # The exhibit GPU draws every point: the Density Guard's thinning is a
+        # laptop safeguard, and on the wall it shows as the map flickering
+        # sparser where it is densest. The default build keeps the viewer's
+        # default (on).
+        density_guard_enabled=False if kiosk else None,
+        text_scale=KIOSK_TEXT_SCALE if kiosk else None,
+        launch=KIOSK_LAUNCH if kiosk else None,
         environment=EnvironmentConfig(source="scene", probe="auto"),
         waypoints=waypoints,
         audio=AudioConfig(
@@ -2908,6 +3491,8 @@ def _add_overlays(
     n: int,
     units: dict[int, str],
     permission_note: bool = True,
+    aspect: float = DEFAULT_ASPECT,
+    kiosk: bool = False,
 ) -> None:
     scene.add_text(
         "ESM Protein Universe",
@@ -2916,6 +3501,8 @@ def _add_overlays(
         anchor="top-left",
         color="rgba(255,255,255,0.65)",
         blend_mode="difference",
+        # Part of the layout, not reading text: it keeps its size.
+        scale_text=False,
     )
     scene.add_text(
         "{hover_label}",
@@ -2931,7 +3518,7 @@ def _add_overlays(
         hover=True,
     )
     scene.add_html(
-        overview_panel_html(n, permission_note=permission_note),
+        overview_panel_html(n, permission_note=permission_note, kiosk=kiosk),
         position=(0.98, 0.5),
         anchor="center-right",
         width=PANEL_WIDTH,
@@ -2942,7 +3529,7 @@ def _add_overlays(
     total = len(stories)
     for k, (s, c) in enumerate(zip(stories, clusters, strict=True), start=1):
         scene.add_html(
-            story_panel_html(s, len(c.indices), k, total, unit=units[k]),
+            story_panel_for(s, len(c.indices), k, total, unit=units[k], kiosk=kiosk),
             position=(0.98, 0.5),
             anchor="center-right",
             width=PANEL_WIDTH,
@@ -2966,8 +3553,10 @@ def _add_overlays(
             transition_duration=0.35,
         )
         scene.add_text(
-            f"PDB {a.pdb_id} · {s.pdb_caption or a.title}",
-            position=TURNTABLE_CAPTION_POSITION,
+            f"PDB {a.pdb_id} · {pdb_caption(s, a.title, kiosk=kiosk)}",
+            position=turntable_caption_position(
+                aspect, poster_content_bottom(a.poster) if kiosk else 1.0
+            ),
             anchor="top-center",
             text_align="center",
             font_size=0.013,
@@ -2979,7 +3568,7 @@ def _add_overlays(
         )
     scene.add_html(
         '<div style="font-size:1.05vh;letter-spacing:0.22em;'
-        "font-weight:300;color:rgba(255,255,255,0.22);"
+        "font-weight:300;color:rgba(255,255,255,0.176);"
         'text-transform:uppercase;white-space:nowrap">'
         "Designed by Loic A. Royer</div>",
         position=(0.02, 0.97),
@@ -3222,12 +3811,19 @@ def build_universe_scene(
     audio: bool = True,
     high_quality: bool = False,
     permission_note: bool = True,
+    kiosk: bool = False,
+    aspect: float | None = None,
 ) -> int:
     """Write the universe scene. Returns the number of clusters in the backdrop.
 
     ``high_quality`` re-enables kiosk supersampling and the 95% dolly swing;
-    both builds use the display's full device pixel ratio.
+    both builds use the display's full device pixel ratio. ``kiosk`` adds the
+    exhibit display's settings (see :data:`KIOSK_TEXT_SCALE`); ``aspect`` is the
+    screen's width / height for the caption layout, defaulting to
+    :data:`KIOSK_ASPECT` for a kiosk build and :data:`DEFAULT_ASPECT` otherwise.
     """
+    if aspect is None:
+        aspect = KIOSK_ASPECT if kiosk else DEFAULT_ASPECT
     n = len(universe)
     assets: dict[str, TurntableAssets] = {}
     if turntables:
@@ -3301,6 +3897,7 @@ def build_universe_scene(
             auto_rotate=auto_rotate,
             audio=audio,
             high_quality=high_quality,
+            kiosk=kiosk,
         )
 
     dims = Dimensions(
@@ -3389,6 +3986,8 @@ def build_universe_scene(
                 n,
                 units,
                 permission_note=permission_note,
+                aspect=aspect,
+                kiosk=kiosk,
             )
             if audio:
                 with asection("Sound layer"):
@@ -3427,6 +4026,17 @@ def main() -> None:
     # A private showing (the VIP kiosk) keeps the citation and drops the
     # permission note from the overview card's footer.
     permission_note = "--no-permission-note" not in sys.argv
+    # The exhibit display: reading text at 0.8x, no Density Guard, and the
+    # WebGPU / 16-worker / 12-fetch machine settings for the exported package.
+    kiosk = "--kiosk" in sys.argv
+    aspect_arg = parse_str_arg("kiosk-aspect")
+    try:
+        aspect = float(aspect_arg) if aspect_arg is not None else None
+        if aspect is not None and not 0.2 <= aspect <= 5.0:
+            raise ValueError(f"--kiosk-aspect must be in [0.2, 5], got {aspect}")
+    except ValueError as e:
+        aprint(f"\nError: {e}")
+        sys.exit(1)
     try:
         annotations = find_input(ANNOTATIONS_PARQUET, parse_path_arg("annotations"))
         cache = CACHE_DIR / UNIVERSE_CACHE
@@ -3445,6 +4055,8 @@ def main() -> None:
         audio=audio,
         high_quality=high_quality,
         permission_note=permission_note,
+        kiosk=kiosk,
+        aspect=aspect,
     )
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "esm_protein_universe.luxar.zarr"

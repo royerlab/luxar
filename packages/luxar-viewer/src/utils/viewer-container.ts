@@ -13,7 +13,8 @@
  *      (`contain: layout` + `position: relative` when static), so the
  *      viewer's fixed overlays render inside the container box rather than
  *      against the viewport. The pre-existing inline `position`/`contain`
- *      values are saved and restored on {@link resetViewerContainer}.
+ *      values are saved and restored on {@link resetViewerContainer}, along
+ *      with the text-scale property applied during scene load.
  *
  * This is a page-level singleton, matching the viewer's other module
  * singletons (eventBus, ThemeManager, …). It is set at the start of
@@ -31,6 +32,7 @@ interface SavedContainerStyles {
   element: HTMLElement;
   position: string;
   contain: string;
+  textScale: string;
 }
 let savedStyles: SavedContainerStyles | null = null;
 
@@ -65,6 +67,7 @@ export function setViewerContainer(element: HTMLElement): void {
     element,
     position: element.style.position,
     contain: element.style.contain,
+    textScale: element.style.getPropertyValue('--luxar-text-scale'),
   };
   if (computedPosition === 'static') {
     element.style.position = 'relative';
@@ -80,18 +83,21 @@ export function setViewerContainer(element: HTMLElement): void {
  * styles {@link setViewerContainer} mutated on a custom container.
  */
 export function resetViewerContainer(): void {
+  if (!savedStyles) (viewerContainer ?? document.body).style.removeProperty('--luxar-text-scale');
   restoreSavedStyles();
   viewerContainer = null;
 }
 
 function restoreSavedStyles(): void {
   if (!savedStyles) return;
-  const { element, position, contain } = savedStyles;
+  const { element, position, contain, textScale } = savedStyles;
   // Restore exactly: an empty saved value means there was no inline rule, so
   // remove ours rather than leaving an empty declaration behind.
   if (position) element.style.position = position;
   else element.style.removeProperty('position');
   if (contain) element.style.contain = contain;
   else element.style.removeProperty('contain');
+  if (textScale) element.style.setProperty('--luxar-text-scale', textScale);
+  else element.style.removeProperty('--luxar-text-scale');
   savedStyles = null;
 }

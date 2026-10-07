@@ -15,6 +15,7 @@ import {
   loadUserSettings,
   saveUserSettings,
   applyLiveConfigOverrides,
+  applyUrlPerformanceOverrides,
   initUserSettings,
   reloadRequired,
   resetUserSettingsForTests,
@@ -241,5 +242,38 @@ describe('initUserSettings + reloadRequired', () => {
     saveUserSettings(s);
     initUserSettings();
     expect(config.camera.fovSensitivity).toBe(0.11);
+  });
+});
+
+describe('applyUrlPerformanceOverrides', () => {
+  it('keeps URL limits after a live Settings edit without saving them', () => {
+    const settings = initUserSettings();
+    applyUrlPerformanceOverrides(16, 12);
+    settings.input.fovSensitivity = 0.15;
+    applyLiveConfigOverrides(settings);
+
+    expect(config.camera.fovSensitivity).toBe(0.15);
+    expect(config.dataLoading.performance.workerCount).toBe(16);
+    expect(config.dataLoading.network.maxConcurrent).toBe(12);
+    expect(localStorage.getItem(KEY)).toBeNull();
+  });
+
+  it('applies the URL worker count and prefetch limit, clamped to the Settings ranges', () => {
+    applyUrlPerformanceOverrides(16, 12);
+    expect(config.dataLoading.performance.workerCount).toBe(16);
+    expect(config.dataLoading.network.maxConcurrent).toBe(12);
+    applyUrlPerformanceOverrides(99, 99);
+    expect(config.dataLoading.performance.workerCount).toBe(16);
+    expect(config.dataLoading.network.maxConcurrent).toBe(12);
+  });
+
+  it('leaves the stored values in force for a null override, and persists nothing', () => {
+    config.dataLoading.performance.workerCount = 3;
+    config.dataLoading.network.maxConcurrent = 5;
+    applyUrlPerformanceOverrides(null, null);
+    expect(config.dataLoading.performance.workerCount).toBe(3);
+    expect(config.dataLoading.network.maxConcurrent).toBe(5);
+    applyUrlPerformanceOverrides(8, null);
+    expect(localStorage.getItem(KEY)).toBeNull();
   });
 });

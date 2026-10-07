@@ -237,6 +237,9 @@ Append parameters to the viewer URL to control startup behavior.
 | `renderAudit` | flag | Debug only (needs `debug`): render every tick and count, in the perf counter `render.missedDirty`, ticks the render-on-change scheduler would have skipped whose pixels nonetheless changed. |
 | `gpuBudgetMB` | number | Pin the GPU-geometry byte budget in MB, bypassing auto-sizing. `0` disables the budget (unbounded resident geometry). |
 | `cacheBudgetMB` | number | Total in-memory cache pool (L0 + L1 + S-cache) in MB, for environments without `performance.memory` (Safari, WKWebView). Also supplies the implied non-cache remainder as a GPU-geometry/LOD residency signal; without `deviceMemory`, it replaces the 512 MB fallback and may raise or lower it, capped at 2 GB. |
+| `workers` | number | Worker pool size for this session (`0` = auto, max 16). Beats the stored Settings value without rewriting it. |
+| `prefetch` | number | Concurrent chunk fetches for this session (the Settings "Prefetch Limit", 1-12). Beats the stored value without rewriting it. |
+| `textScale` | number | Multiplier on every overlay's type (e.g. `0.8`), beating the scene's `viewer_config.text_scale`. Positions, widths and anchors stay as authored. Clamped to [0.25, 4]. |
 | `dpr` | number | Pin a fixed device pixel ratio and disable adaptive DPR (clamped to [0.25, native DPR]). Overrides the high-DPR ceiling, so `?dpr=2` renders at 2 even with **Allow High DPR** off. For deterministic E2E/visual runs. |
 | `input` | `touch` \| `mouse` | Force the session's JS input profile: pointer flags, hover capability, touch points, and device tier. This changes device-class fallback budgets (`touch` only — `mouse` keeps the detected tier), primary-tip pen routing, the Safari gesture-canceller gate, and whether the help overlay lists its Touch section; `touch` additionally applies the mobile rendering budgets (adaptive-DPR floor and refresh ceiling, high-DPR cap, GPU-byte and element-texture ceilings, data-worker count) and skips the blend-variant program warm-up. Stylesheets and non-pen gesture routing still follow the real media features and `PointerEvent.pointerType`, so a faithful check needs device emulation or a real device. Detected by default, including an iPad whose Safari reports a macOS user agent. |
 | `lineJoin` | `none` \| `miter` | Force the line join style for the session — **applies only to `linePrimitive=screen-space`**. The default capsule primitive partitions every interior joint along its bisector unconditionally, so this parameter (and each node's authored `join` attribute) is a no-op there. |
@@ -715,6 +718,8 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | Detector noise | `detector_noise_enabled`, `detector_noise_readout_sigma`, `detector_noise_photon_gain` |
 | Anti-aliasing | `fxaa_enabled`, `msaa_enabled`, `ssaa_enabled` |
 | Performance | `adaptive_dpr_enabled`, `allow_high_dpr`, `density_guard_enabled` |
+| Overlay text | `text_scale` (multiplier on overlay type; `?textScale=` wins; a text overlay opts out with `add_text(..., scale_text=False)`, authored HTML opts in with `calc(1.3vh * var(--luxar-text-scale, 1))`) |
+| Exported launch | `launch` (`LaunchConfig`: `renderer`, `workers`, `prefetch`): machine settings `luxar export` bakes into the URL its `serve.py` opens, for a package built for known hardware. Ignored on load |
 | Fly controls | `fly_movement_speed`, `fly_rotation_speed`, `fly_inertial_mode`, `fly_damping` |
 | UI visibility | `ui.show_help`, `ui.show_rendering_controls`, `ui.show_dimensions`, `ui.show_performance_monitor`, `ui.show_scale_bar`, `ui.show_layers` |
 | Dimensions | `dimensions.current_step`, `dimensions.selected_dimension` |

@@ -53,6 +53,7 @@ def add_text_impl(
     interactive: bool = False,
     blend_mode: str = "normal",
     hover: bool = False,
+    scale_text: bool = True,
 ) -> Overlay:
     from ....validation.overlays import (
         validate_anchor,
@@ -103,6 +104,8 @@ def add_text_impl(
         attrs["blend_mode"] = blend_mode
     if hover:
         attrs["hover"] = True
+    if not scale_text:
+        attrs["scale_text"] = False
     if validated_range is not None:
         attrs["visible_range"] = validated_range
 

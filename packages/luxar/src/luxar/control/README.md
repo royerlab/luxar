@@ -37,9 +37,9 @@ with Viewer("ws://kiosk.local:5173/control", token="hunter2") as viewer:
     viewer.call("setLayer", "/points", {"visible": False})
 ```
 
-If nothing is listening yet — the display has not booted, or its browser is
-closed — the call raises `ControlError` with `no_viewer_attached` set, which is
-a thing to wait for rather than an error to abort on:
+If nothing is listening yet, a call raises `ControlError` with
+`no_viewer_attached` set. An attached display still initializing answers
+`get_dimensions()` with `viewer_not_ready`. Both are reasons to wait:
 
 ```python
 import time
@@ -48,10 +48,10 @@ from luxar.control import ControlError, Viewer
 with Viewer("ws://kiosk.local:5173/control") as viewer:
     while True:
         try:
-            viewer.get_viewer_state()
+            viewer.get_dimensions()
             break
         except ControlError as error:
-            if not error.no_viewer_attached:
+            if not (error.no_viewer_attached or error.viewer_not_ready):
                 raise
             time.sleep(1.0)
 ```
@@ -61,7 +61,7 @@ with Viewer("ws://kiosk.local:5173/control") as viewer:
 | Name | Purpose |
 |---|---|
 | `Viewer` | A connected controller. Context manager; `close()` is idempotent. |
-| `ControlError` | A refused call, carrying the JSON-RPC `code`. `no_viewer_attached` distinguishes "nothing is listening" from "that failed". |
+| `ControlError` | A refused call, carrying the JSON-RPC `code`. `no_viewer_attached` means no display is connected; `viewer_not_ready` means an attached display is still initializing `getDimensions`. |
 
 `Viewer.call(method, *params)` is both the engine room and the escape hatch:
 every named method is one line of it, and a method with no wrapper yet is

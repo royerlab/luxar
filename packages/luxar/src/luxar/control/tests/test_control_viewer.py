@@ -19,7 +19,12 @@ import pytest
 from luxar.cli import _control_contract as contract
 from luxar.control import ControlError, Viewer
 from luxar.control import viewer as controller
-from luxar.control.viewer import MAX_BUFFERED_EVENTS, _connect, _with_query
+from luxar.control.viewer import (
+    MAX_BUFFERED_EVENTS,
+    VIEWER_NOT_READY_CODE,
+    _connect,
+    _with_query,
+)
 
 
 class FakeSocket:
@@ -220,6 +225,21 @@ class TestErrors:
         with pytest.raises(ControlError) as caught:
             viewer.call("getLayers")
         assert caught.value.no_viewer_attached is True
+        assert caught.value.viewer_not_ready is False
+
+    def test_viewer_not_ready_is_distinguishable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert VIEWER_NOT_READY_CODE == contract.VIEWER_NOT_READY
+        socket = FakeSocket(
+            [{"error": {"code": contract.VIEWER_NOT_READY, "message": "initializing"}}]
+        )
+        viewer = make_viewer(monkeypatch, socket)
+        with pytest.raises(ControlError) as caught:
+            viewer.get_dimensions()
+        assert caught.value.code == contract.VIEWER_NOT_READY
+        assert caught.value.viewer_not_ready is True
+        assert caught.value.no_viewer_attached is False
 
     def test_an_ordinary_failure_is_not_flagged_as_no_viewer(
         self, monkeypatch: pytest.MonkeyPatch
@@ -229,6 +249,7 @@ class TestErrors:
         with pytest.raises(ControlError) as caught:
             viewer.call("getLayers")
         assert caught.value.no_viewer_attached is False
+        assert caught.value.viewer_not_ready is False
 
 
 class TestConnection:

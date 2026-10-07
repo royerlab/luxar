@@ -26,7 +26,7 @@ import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
 import { buildInfo, buildInfoLine } from '../config/build-info';
 import { VIEWER_VERSION } from '../version';
-import { initUserSettings } from '../config/user-settings';
+import { applyUrlPerformanceOverrides, initUserSettings } from '../config/user-settings';
 import { configureGpuByteBudget } from '../rendering/gpu-byte-budget';
 import { cachePoolOverrideBytes } from '../cache/heap-budget';
 import { setInputProfileOverride } from '../utils/input-capabilities';
@@ -130,6 +130,10 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // further down with the precedence URL param > stored setting > default.
   // Standalone-only — library embedders configure via LuxarAppOptions.
   const userSettings = initUserSettings();
+  // `?workers=` / `?prefetch=` beat the stored values for this session only:
+  // a launcher on a dedicated display machine sets them without rewriting that
+  // machine's saved preferences.
+  applyUrlPerformanceOverrides(urlParams.workers, urlParams.prefetch);
 
   if (urlParams.opfsReadConcurrency !== null) {
     config.cache.opfsReadConcurrency = urlParams.opfsReadConcurrency;
@@ -337,6 +341,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     densityGuard: urlParams.densityGuard,
     // `?densityCap=<N>` sweeps the guard's threshold for one session.
     densityCap: urlParams.densityCap ?? undefined,
+    // `?textScale=` — overlay type size for this display (a launcher flag).
+    textScale: urlParams.textScale ?? undefined,
     // Opt-in capture-quality override (`?lodFinest` — the gallery harness).
     lodFinest: urlParams.lodFinest,
     // Session-wide replacement-LOD threshold bias (`?lodBias=N`).

@@ -209,6 +209,29 @@ class TestExportScene:
         assert sentinel.read_text() == "user's prior export"
         assert not (output / "viewer").exists()
 
+    def test_invalid_launch_does_not_wipe_existing_output(
+        self,
+        sample_scene: Path,
+        mock_viewer_dist: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Launch validation must finish before overwrite removes old output."""
+        output = tmp_path / "existing"
+        output.mkdir()
+        sentinel = output / "important.txt"
+        sentinel.write_text("user's prior export")
+        attrs = dict(export_module.read_node_attrs(sample_scene))
+        attrs["viewer_config"] = {"launch": {"workers": 99}}
+        monkeypatch.setattr(export_module, "read_node_attrs", lambda _p: attrs)
+
+        p1, p2 = _patch_viewer(mock_viewer_dist)
+        with p1, p2, pytest.raises(ValueError, match="launch.workers"):
+            export_scene(sample_scene, output, overwrite=True)
+
+        assert sentinel.read_text() == "user's prior export"
+        assert sorted(p.name for p in output.iterdir()) == ["important.txt"]
+
     def test_fails_on_invalid_zarr(self, tmp_path: Path) -> None:
         """ValueError for non-zarr directory."""
         source = tmp_path / "not_zarr"
@@ -1272,3 +1295,47 @@ def test_the_exported_scripts_import_on_the_oldest_python_they_promise(
             f"{name} needs Python > {'.'.join(map(str, EXPORT_PYTHON_FLOOR))}: "
             + "; ".join(problems)
         )
+
+
+def test_the_serve_script_opens_the_viewer_with_the_scene_launch_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`viewer_config.launch` reaches the URL serve.py opens, and only there."""
+    attrs = _scene_attrs(control_panel=True)
+    attrs["viewer_config"]["launch"] = {
+        "renderer": "webgpu",
+        "workers": 16,
+        "prefetch": 12,
+    }
+    monkeypatch.setattr(export_module, "read_node_attrs", lambda _p: attrs)
+    facts = export_module.read_scene_facts(tmp_path)
+    assert facts.launch_query == "&renderer=webgpu&workers=16&prefetch=12"
+    script = export_module._get_serve_script_content("data", None, facts)
+    assert "LAUNCH_QUERY = '&renderer=webgpu&workers=16&prefetch=12'" in script
+    plain = export_module._get_serve_script_content("data", None, None)
+    assert "LAUNCH_QUERY = ''" in plain
+
+
+def test_an_invalid_launch_block_fails_the_export(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Dropping it silently would ship a kiosk on the wrong backend."""
+    attrs = _scene_attrs(control_panel=True)
+    attrs["viewer_config"]["launch"] = {"workers": 99}
+    monkeypatch.setattr(export_module, "read_node_attrs", lambda _p: attrs)
+    with pytest.raises(ValueError, match="launch.workers"):
+        export_module.read_scene_facts(tmp_path)
+
+
+def test_a_launch_scene_gets_dedicated_display_notes() -> None:
+    """Chrome flags, the renderer check and the saved-settings reset, only with `launch`."""
+    facts = export_module.SceneFacts(launch_query="&renderer=webgpu&workers=16")
+    section = export_module._dedicated_display_section(facts, "pkg_1")
+    assert "renderer=webgpu workers=16" in section
+    assert '--user-data-dir="$HOME/.config/luxar-pkg_1"' in section
+    assert "--enable-unsafe-webgpu" in section
+    assert "Rendering API: webgpu" in section
+    assert "Reset" in section
+    assert (
+        export_module._dedicated_display_section(export_module.SceneFacts(), "x") == ""
+    )
