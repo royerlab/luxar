@@ -64,7 +64,7 @@ export interface OverlayConfig {
   padding?: number;
   stroke_color?: string;
   stroke_width?: number;
-  /** False keeps `font_size` fixed under the session text scale. */
+  /** On text overlays, false keeps `font_size` fixed under the session text scale. */
   scale_text?: boolean;
 
   /** CSS mix-blend-mode (e.g. 'difference', 'screen', 'multiply') */

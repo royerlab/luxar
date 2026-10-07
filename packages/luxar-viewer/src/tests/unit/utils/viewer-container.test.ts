@@ -12,6 +12,7 @@ import {
   setViewerContainer,
   resetViewerContainer,
 } from '../../../utils/viewer-container';
+import { applyTextScale, TEXT_SCALE_PROPERTY } from '../../../ui/overlay-text-scale';
 
 describe('viewer-container registry', () => {
   afterEach(() => {
@@ -76,11 +77,30 @@ describe('viewer-container registry', () => {
   it('removes our inline props entirely when none were authored', () => {
     const host = document.createElement('div');
     setViewerContainer(host);
+    applyTextScale(0.8);
     expect(host.style.contain).toBe('layout');
+    expect(host.style.getPropertyValue(TEXT_SCALE_PROPERTY)).toBe('0.8');
 
     resetViewerContainer();
     // No inline declaration left behind — not an empty `contain:;`.
     expect(host.getAttribute('style') ?? '').not.toContain('contain');
+    expect(host.style.getPropertyValue(TEXT_SCALE_PROPERTY)).toBe('');
+  });
+
+  it('restores an authored text scale on a host container', () => {
+    const host = document.createElement('div');
+    host.style.setProperty(TEXT_SCALE_PROPERTY, '1.4');
+    setViewerContainer(host);
+    applyTextScale(0.8);
+    resetViewerContainer();
+    expect(host.style.getPropertyValue(TEXT_SCALE_PROPERTY)).toBe('1.4');
+  });
+
+  it('clears the scale from the standalone body on reset', () => {
+    setViewerContainer(document.body);
+    applyTextScale(0.8);
+    resetViewerContainer();
+    expect(document.body.style.getPropertyValue(TEXT_SCALE_PROPERTY)).toBe('');
   });
 
   it('restores the previous container styles when swapped directly', () => {
