@@ -389,6 +389,11 @@ export class SceneDimsManager {
     this.listeners.add(callback);
   }
 
+  /** Number of registered dimension observers. */
+  get listenerCount(): number {
+    return this.listeners.size;
+  }
+
   /**
    * Unregisters a dimension change callback.
    *

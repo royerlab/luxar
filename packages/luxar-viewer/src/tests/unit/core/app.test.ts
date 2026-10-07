@@ -2302,8 +2302,11 @@ describe('LuxarApp', () => {
       app.on('dimensions-changed', onChanged);
       sceneDimsManager.setDimensionValue(3, 1);
       expect(onChanged).toHaveBeenCalledTimes(1);
+      const initialListenerCount = sceneDimsManager.listenerCount;
+      expect(initialListenerCount).toBeGreaterThan(0);
 
       await app.switchDataset('http://example.com/other.zarr');
+      expect(sceneDimsManager.listenerCount).toBe(initialListenerCount);
       sceneDimsManager.setDimensionValue(3, 2);
       expect(onChanged).toHaveBeenCalledTimes(2);
       expect(onChanged).toHaveBeenLastCalledWith(
@@ -2311,6 +2314,9 @@ describe('LuxarApp', () => {
           currentStep: [0, 0, 0, 2],
         })
       );
+      await app.switchDataset('http://example.com/third.zarr');
+      await app.switchDataset('http://example.com/fourth.zarr');
+      expect(sceneDimsManager.listenerCount).toBe(initialListenerCount);
     });
 
     it('writes the switched-to dataset into ?src when the app owns the URL', async () => {

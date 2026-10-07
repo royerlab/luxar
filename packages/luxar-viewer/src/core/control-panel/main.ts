@@ -533,6 +533,29 @@ async function loadChaptersForScene(context: {
   await socket?.call('subscribe', ['dimensions-changed']);
 }
 
+function renewAfterViewerAttached(
+  source: ChapterSource | null,
+  isOpen: boolean,
+  customPanelState: CustomPanelState,
+  actions: { loadChapters: () => Promise<void>; retryPosition: () => void }
+): void {
+  if (source === null && isOpen && !customPanelOwnsPage(customPanelState)) {
+    void actions.loadChapters();
+  } else {
+    actions.retryPosition();
+  }
+}
+
+function cancelPanelTimers(context: {
+  idle: { cancel(): void };
+  positionRetry: { cancel(): void };
+  chapterRetry: { cancel(): void };
+}): void {
+  context.idle.cancel();
+  context.positionRetry.cancel();
+  context.chapterRetry.cancel();
+}
+
 function startConnectedPanel(
   params: ConnectedUrlParams,
   root: HTMLElement,
@@ -541,6 +564,7 @@ function startConnectedPanel(
   let socket: ControllerSocket | undefined;
   let source: ChapterSource | null = null;
   let disposed = false;
+  let isOpen = false;
   /** The display's title and authored block, fetched once per dataset. */
   let presentation = createPresentationCache();
   let chapterGeneration = 0;
@@ -623,6 +647,7 @@ function startConnectedPanel(
     loadChaptersWithRetry,
   });
   const onStatus = (status: ControllerStatus): void => {
+    isOpen = status === 'open';
     if (status !== 'open' && status !== 'connecting') positionRetry.cancel();
     handleStatus(status);
   };
@@ -634,23 +659,21 @@ function startConnectedPanel(
     onEvent: (name, payload) => {
       if (disposed) return;
       if (name === VIEWER_ATTACHED_EVENT) {
-        positionRetry.start();
+        renewAfterViewerAttached(source, isOpen, customPanelState.current, {
+          loadChapters: loadChaptersWithRetry,
+          retryPosition: positionRetry.start,
+        });
         return;
       }
       if (name === 'dataset-loaded' && !customPanelOwnsPage(customPanelState.current)) {
         source = null;
-        idle.cancel();
-        positionRetry.cancel();
-        chapterRetry.cancel();
+        cancelPanelTimers({ idle, positionRetry, chapterRetry });
         presentation = createPresentationCache();
-        applyAuthorStylesheet(undefined);
         void loadChaptersWithRetry();
-        return;
       }
       if (name !== 'dimensions-changed' || source === null) return;
       positionRetry.cancel();
-      const dims = payload as WireDimensions;
-      markActive(dims.currentStep?.[source.dimensionIndex]);
+      markActive((payload as WireDimensions).currentStep?.[source.dimensionIndex]);
     },
   });
   panel.showMessage('Connecting', 'Looking for the control hub...');
@@ -659,9 +682,7 @@ function startConnectedPanel(
   const teardown = (): void => {
     disposed = true;
     source = null;
-    idle.cancel();
-    chapterRetry.cancel();
-    positionRetry.cancel();
+    cancelPanelTimers({ idle, positionRetry, chapterRetry });
     socket?.dispose();
   };
   registerBeforeUnload(ports, teardown);

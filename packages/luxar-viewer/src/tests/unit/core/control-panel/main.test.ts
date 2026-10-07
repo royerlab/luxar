@@ -215,6 +215,9 @@ describe('control-panel bootstrap', () => {
 
     scene = 1;
     context.socketPorts.onEvent?.('dataset-loaded', { src: 'new.zarr' });
+    expect(document.getElementById('luxar-control-author-style')?.textContent).toBe(
+      '.tile { color: red; }'
+    );
     await settle();
     expect(context.socket.call).toHaveBeenCalledWith('subscribe', ['dataset-loaded']);
     expect(context.panel.render).toHaveBeenLastCalledWith(
@@ -440,9 +443,9 @@ describe('control-panel bootstrap', () => {
     await vi.advanceTimersByTimeAsync(CHAPTER_RETRY_BASE_MS);
     expect(context.panel.render).toHaveBeenCalledTimes(1);
     expect(context.panel.setActive).toHaveBeenLastCalledWith(1);
-    expect(context.socket.call).toHaveBeenCalledTimes(4);
+    expect(context.socket.call).toHaveBeenCalledTimes(5);
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(context.socket.call).toHaveBeenCalledTimes(4);
+    expect(context.socket.call).toHaveBeenCalledTimes(5);
     context.teardown();
   });
 
@@ -524,6 +527,36 @@ describe('control-panel bootstrap', () => {
     expect(context.socket.call).toHaveBeenNthCalledWith(3, 'getDimensions');
     // Recovery never drives the display: only a visitor's tap or the idle reset does.
     expect(context.socket.notify).not.toHaveBeenCalled();
+  });
+
+  it('reloads chapters after a display reload when the previous scene had none', async () => {
+    const context = harness();
+    let dimensions: unknown = {
+      ndim: 3,
+      displayed: [0, 1, 2],
+      metadata: [],
+      ranges: [],
+      currentStep: [0, 0, 0],
+    };
+    vi.mocked(context.socket.call).mockImplementation(async (method: string) =>
+      method === 'getDimensions' ? dimensions : undefined
+    );
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    expect(context.panel.render).toHaveBeenLastCalledWith(null, expect.anything());
+
+    vi.mocked(context.socket.call).mockClear();
+    context.socketPorts.onEvent?.(VIEWER_ATTACHED_EVENT, null);
+    await settle();
+    expect(context.socket.call).toHaveBeenCalledWith('subscribe', ['dataset-loaded']);
+
+    dimensions = DIMS;
+    context.socketPorts.onEvent?.('dataset-loaded', { src: 'chaptered.zarr' });
+    await settle();
+    expect(context.panel.render).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dimensionName: 'story' }),
+      expect.anything()
+    );
   });
 
   it('retries an attachment read until the reloaded display finishes initialization', async () => {
