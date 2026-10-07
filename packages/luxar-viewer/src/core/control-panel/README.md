@@ -62,7 +62,9 @@ comes back as a `dimensions-changed` event, which marks the active tile.
 `call()` is for the things that genuinely need an answer. A reloaded display
 forgets its subscribers. On the hub's `viewer-attached` event, the panel renews
 its `dimensions-changed` subscription, then re-reads `getDimensions` to refresh
-the highlight. This read never sends `notify` or moves the display.
+the highlight. If the display is still loading, the read retries with capped
+backoff until it answers or a dimension event arrives. This read never sends
+`notify` or moves the display.
 
 **It ships without `ThemeManager`.** That singleton persists its choice to
 `localStorage`, and the panel shares an origin with the display — so setting a

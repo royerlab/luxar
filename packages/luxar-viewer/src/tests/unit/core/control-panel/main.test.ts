@@ -375,6 +375,87 @@ describe('control-panel bootstrap', () => {
     expect(context.socket.notify).not.toHaveBeenCalled();
   });
 
+  it('retries an attachment read until the reloaded display finishes initialization', async () => {
+    vi.useFakeTimers();
+    const context = harness();
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    vi.mocked(context.socket.call).mockClear();
+
+    let ready = false;
+    vi.mocked(context.socket.call).mockImplementation(async (method: string) => {
+      if (method !== 'getDimensions') return undefined;
+      if (!ready) {
+        throw new ControllerCallError({ code: -32603, message: 'called before init()' });
+      }
+      return { ...DIMS, currentStep: [0, 0, 0, 0] };
+    });
+    context.socketPorts.onEvent?.(VIEWER_ATTACHED_EVENT, null);
+    await settle();
+    expect(context.panel.setActive).toHaveBeenLastCalledWith(1);
+
+    ready = true;
+    await vi.advanceTimersByTimeAsync(CHAPTER_RETRY_BASE_MS);
+    expect(context.socket.call).toHaveBeenNthCalledWith(3, 'subscribe', ['dimensions-changed']);
+    expect(context.socket.call).toHaveBeenNthCalledWith(4, 'getDimensions');
+    expect(context.panel.setActive).toHaveBeenLastCalledWith(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(context.socket.call).toHaveBeenCalledTimes(4);
+    context.teardown();
+  });
+
+  it('cancels attachment retries when the panel is torn down', async () => {
+    vi.useFakeTimers();
+    const context = harness();
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    vi.mocked(context.socket.call).mockClear();
+    vi.mocked(context.socket.call).mockRejectedValue(
+      new ControllerCallError({ code: -32603, message: 'called before init()' })
+    );
+    context.socketPorts.onEvent?.(VIEWER_ATTACHED_EVENT, null);
+    await settle();
+    context.teardown();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(context.socket.call).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops attachment retries when a dimension event supplies the position', async () => {
+    vi.useFakeTimers();
+    const context = harness();
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    vi.mocked(context.socket.call).mockClear();
+    vi.mocked(context.socket.call).mockImplementation(async (method: string) => {
+      if (method === 'getDimensions') throw new Error('called before init()');
+      return undefined;
+    });
+    context.socketPorts.onEvent?.(VIEWER_ATTACHED_EVENT, null);
+    await settle();
+
+    context.socketPorts.onEvent?.('dimensions-changed', { currentStep: [0, 0, 0, 0] });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(context.panel.setActive).toHaveBeenLastCalledWith(0);
+    expect(context.socket.call).toHaveBeenCalledTimes(2);
+    context.teardown();
+  });
+
+  it('cancels attachment retries when the socket closes', async () => {
+    vi.useFakeTimers();
+    const context = harness();
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    vi.mocked(context.socket.call).mockClear();
+    vi.mocked(context.socket.call).mockRejectedValue(new Error('called before init()'));
+    context.socketPorts.onEvent?.(VIEWER_ATTACHED_EVENT, null);
+    await settle();
+
+    context.socketPorts.onStatus?.('closed');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(context.socket.call).toHaveBeenCalledTimes(1);
+    context.teardown();
+  });
+
   it('recovers on a later attachment when the first renewal fails', async () => {
     const context = harness();
     context.socketPorts.onStatus?.('open');
