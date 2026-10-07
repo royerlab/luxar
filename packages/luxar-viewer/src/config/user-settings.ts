@@ -121,6 +121,9 @@ const BUILTIN_LIVE_DEFAULTS = Object.freeze({
   networkMaxConcurrent: config.dataLoading.network.maxConcurrent,
 } as const);
 
+let urlWorkerCount: number | null = null;
+let urlPrefetch: number | null = null;
+
 /** Defaults derived from the built-in config, via the module-load snapshot
  *  above (so later live-config mutation cannot make the defaults drift). */
 export function defaultUserSettings(): UserSettings {
@@ -285,6 +288,8 @@ export function applyLiveConfigOverrides(settings: UserSettings): void {
   // before app init is effective; after init it needs a reload.
   config.dataLoading.performance.workerCount = settings.performance.workerCount;
   config.dataLoading.network.maxConcurrent = settings.performance.networkMaxConcurrent;
+  if (urlWorkerCount !== null) config.dataLoading.performance.workerCount = urlWorkerCount;
+  if (urlPrefetch !== null) config.dataLoading.network.maxConcurrent = urlPrefetch;
 }
 
 /**
@@ -300,15 +305,11 @@ export function applyUrlPerformanceOverrides(
 ): void {
   const clamp = (v: number, r: { min: number; max: number }): number =>
     Math.round(Math.min(r.max, Math.max(r.min, v)));
-  if (workers !== null) {
-    config.dataLoading.performance.workerCount = clamp(workers, USER_SETTINGS_RANGES.workerCount);
-  }
-  if (prefetch !== null) {
-    config.dataLoading.network.maxConcurrent = clamp(
-      prefetch,
-      USER_SETTINGS_RANGES.networkMaxConcurrent
-    );
-  }
+  urlWorkerCount = workers === null ? null : clamp(workers, USER_SETTINGS_RANGES.workerCount);
+  urlPrefetch =
+    prefetch === null ? null : clamp(prefetch, USER_SETTINGS_RANGES.networkMaxConcurrent);
+  if (urlWorkerCount !== null) config.dataLoading.performance.workerCount = urlWorkerCount;
+  if (urlPrefetch !== null) config.dataLoading.network.maxConcurrent = urlPrefetch;
 }
 
 /**
@@ -355,4 +356,6 @@ export function initUserSettings(): UserSettings {
 /** Test hook: reset the boot snapshot (module state) between tests. */
 export function resetUserSettingsForTests(): void {
   bootSnapshot = null;
+  urlWorkerCount = null;
+  urlPrefetch = null;
 }

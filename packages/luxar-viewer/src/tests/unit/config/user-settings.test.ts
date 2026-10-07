@@ -246,6 +246,18 @@ describe('initUserSettings + reloadRequired', () => {
 });
 
 describe('applyUrlPerformanceOverrides', () => {
+  it('keeps URL limits after a live Settings edit without saving them', () => {
+    const settings = initUserSettings();
+    applyUrlPerformanceOverrides(16, 12);
+    settings.input.fovSensitivity = 0.15;
+    applyLiveConfigOverrides(settings);
+
+    expect(config.camera.fovSensitivity).toBe(0.15);
+    expect(config.dataLoading.performance.workerCount).toBe(16);
+    expect(config.dataLoading.network.maxConcurrent).toBe(12);
+    expect(localStorage.getItem(KEY)).toBeNull();
+  });
+
   it('applies the URL worker count and prefetch limit, clamped to the Settings ranges', () => {
     applyUrlPerformanceOverrides(16, 12);
     expect(config.dataLoading.performance.workerCount).toBe(16);
