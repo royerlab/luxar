@@ -304,7 +304,6 @@ function createPresentationCache(): PresentationCache {
         const state = await fetchState();
         title = titleFromViewerState(state);
         config = panelConfigFromViewerState(state);
-        applyAuthorStylesheet(config?.stylesheet);
         loaded = true;
       } catch {
         // Presentation is decoration. A panel that refuses to draw because one
@@ -411,6 +410,7 @@ async function readPosition(
 ): Promise<number | undefined> {
   try {
     await socket?.call('subscribe', ['dimensions-changed']);
+    await socket?.call('subscribe', ['dataset-loaded']);
     const dims = await socket?.call('getDimensions');
     if (isWireDimensions(dims)) return dims.currentStep[source.dimensionIndex];
   } catch {
@@ -488,6 +488,51 @@ function createChapterRetry(retry: () => void): {
   };
 }
 
+async function readChapterDimensions(
+  socket: ControllerSocket | undefined,
+  panel: ControlPanelView,
+  isCurrent: () => boolean
+): Promise<Required<WireDimensions> | null> {
+  // Subscribe before the snapshot so a switch completing during the read
+  // cannot leave the panel on an empty or superseded chapter list.
+  await socket?.call('subscribe', ['dataset-loaded']);
+  if (!isCurrent()) return null;
+  const dims = await socket?.call('getDimensions');
+  if (!isCurrent()) return null;
+  if (!isWireDimensions(dims)) {
+    panel.showMessage('Unexpected reply', 'The viewer did not describe its dimensions.');
+    return null;
+  }
+  return dims;
+}
+
+async function loadChaptersForScene(context: {
+  socket: ControllerSocket | undefined;
+  presentation: PresentationCache;
+  panel: ControlPanelView;
+  isCurrent: () => boolean;
+  onSource: (source: ChapterSource | null, position: number | undefined) => void;
+}): Promise<void> {
+  const { socket, presentation, panel, isCurrent, onSource } = context;
+  const dims = await readChapterDimensions(socket, panel, isCurrent);
+  if (dims === null) return;
+  await presentation.load(() => socket?.call('getViewerState') ?? Promise.resolve(null));
+  if (!isCurrent()) return;
+  applyAuthorStylesheet(presentation.config?.stylesheet);
+  const source = deriveChapters(
+    {
+      displayed: dims.displayed,
+      metadata: dims.metadata as DimensionMetadata[],
+      ranges: dims.ranges as Array<[number, number]>,
+    },
+    { dimensionName: presentation.config?.chapterDimension ?? null }
+  );
+  applyChapterLabels(source, presentation.config);
+  panel.render(source, presentationOptions(presentation.config, presentation.title, source));
+  onSource(source, dims.currentStep[source?.dimensionIndex ?? -1]);
+  await socket?.call('subscribe', ['dimensions-changed']);
+}
+
 function startConnectedPanel(
   params: ConnectedUrlParams,
   root: HTMLElement,
@@ -496,8 +541,9 @@ function startConnectedPanel(
   let socket: ControllerSocket | undefined;
   let source: ChapterSource | null = null;
   let disposed = false;
-  /** The display's title and authored block, fetched once. */
-  const presentation = createPresentationCache();
+  /** The display's title and authored block, fetched once per dataset. */
+  let presentation = createPresentationCache();
+  let chapterGeneration = 0;
   const customPanelState: { current: CustomPanelState } = { current: 'unmounted' };
   const connectionState = { refused: false };
   const idle = createIdleReset(() => {
@@ -527,36 +573,22 @@ function startConnectedPanel(
     isDisposed: () => disposed,
   });
 
-  async function loadChapters(): Promise<void> {
-    const dims = await socket?.call('getDimensions');
-    if (!isWireDimensions(dims)) {
-      panel.showMessage('Unexpected reply', 'The viewer did not describe its dimensions.');
-      return;
-    }
-    // AFTER the dimensions land, and once. Asking earlier would spend a call
-    // on every failed retry — and while no viewer is attached the hub answers
-    // -32001, so those calls could only fail anyway.
-    await presentation.load(() => socket?.call('getViewerState') ?? Promise.resolve(null));
-    source = deriveChapters(
-      {
-        displayed: dims.displayed,
-        metadata: dims.metadata as DimensionMetadata[],
-        ranges: dims.ranges as Array<[number, number]>,
-      },
-      // By NAME, so the authoring survives a `Dimensions([...])` reorder.
-      { dimensionName: presentation.config?.chapterDimension ?? null }
-    );
-    applyChapterLabels(source, presentation.config);
-    panel.render(source, presentationOptions(presentation.config, presentation.title, source));
-    markActive(dims.currentStep[source?.dimensionIndex ?? -1]);
-    await socket?.call('subscribe', ['dimensions-changed']);
-  }
-
   async function loadChaptersWithRetry(): Promise<void> {
+    const generation = ++chapterGeneration;
     try {
-      await loadChapters();
-      chapterRetry.cancel();
+      await loadChaptersForScene({
+        socket,
+        presentation,
+        panel,
+        isCurrent: () => !disposed && generation === chapterGeneration,
+        onSource: (nextSource, position) => {
+          source = nextSource;
+          markActive(position);
+        },
+      });
+      if (generation === chapterGeneration) chapterRetry.cancel();
     } catch (error) {
+      if (disposed || generation !== chapterGeneration) return;
       log.warning(Modules.APP, 'control panel: could not load chapters:', error);
       if (error instanceof ControllerCallError && error.noViewerAttached) {
         // The ONLY error that licenses this message: the hub said so.
@@ -601,6 +633,16 @@ function startConnectedPanel(
       if (disposed) return;
       if (name === VIEWER_ATTACHED_EVENT) {
         positionRetry.start();
+        return;
+      }
+      if (name === 'dataset-loaded' && !customPanelOwnsPage(customPanelState.current)) {
+        source = null;
+        idle.cancel();
+        positionRetry.cancel();
+        chapterRetry.cancel();
+        presentation = createPresentationCache();
+        applyAuthorStylesheet(undefined);
+        void loadChaptersWithRetry();
         return;
       }
       if (name !== 'dimensions-changed' || source === null) return;

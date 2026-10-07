@@ -52,6 +52,16 @@ describe('SceneDimsManager', () => {
     expect(persistent).toHaveBeenCalledTimes(2);
   });
 
+  it('releases subscribers on app teardown', () => {
+    const listener = vi.fn();
+    manager.addListener(listener);
+    manager.initFromScene(mockScene);
+    manager.dispose();
+    manager.initFromScene(mockScene);
+    manager.setDimensionValue(4, 1);
+    expect(listener).not.toHaveBeenCalled();
+  });
+
   describe('initialization', () => {
     it('should initialize from scene with dimension metadata', () => {
       const initialized = manager.initFromScene(mockScene);

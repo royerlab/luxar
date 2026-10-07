@@ -474,6 +474,12 @@ export class SceneDimsManager {
     // Scene dimension manager has been reset
   }
 
+  /** Release subscribers when the owning app is torn down. */
+  dispose(): void {
+    this.reset();
+    this.listeners.clear();
+  }
+
   /**
    * Extracts human-readable names for all dimensions.
    *
