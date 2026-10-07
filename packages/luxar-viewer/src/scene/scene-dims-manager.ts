@@ -172,8 +172,7 @@ export class SceneDimsManager {
       // Drop any PREVIOUS scene's dims: this is a singleton, so leaving them
       // in place would let a 3D-only scene loaded after an nD one be read
       // through the old scene's `displayed` axes (bounds projection,
-      // auto-framing). Listeners are deliberately kept — they are owned by
-      // the input handler across scene switches, unlike `reset()`.
+      // auto-framing). Listeners keep their own lifetimes across scene switches.
       this.dims = null;
       this.dimensionRanges = null;
       return false;
@@ -390,6 +389,11 @@ export class SceneDimsManager {
     this.listeners.add(callback);
   }
 
+  /** Number of registered dimension observers. */
+  get listenerCount(): number {
+    return this.listeners.size;
+  }
+
   /**
    * Unregisters a dimension change callback.
    *
@@ -467,15 +471,18 @@ export class SceneDimsManager {
     return this.dims?.metadata || [];
   }
 
-  /**
-   * Reset the dimension manager to initial state
-   */
+  /** Reset scene state while retaining listeners owned by longer-lived components. */
   reset(): void {
     this.dims = null;
     this.dimensionRanges = null;
     this.pendingUpdatePromise = null;
-    this.listeners.clear();
     // Scene dimension manager has been reset
+  }
+
+  /** Release subscribers when the owning app is torn down. */
+  dispose(): void {
+    this.reset();
+    this.listeners.clear();
   }
 
   /**

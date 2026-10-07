@@ -2276,6 +2276,49 @@ describe('LuxarApp', () => {
       expect(onLoaded).toHaveBeenCalledWith({ src: 'http://example.com/other.zarr' });
     });
 
+    it('keeps dimensions-changed after switchDataset resets dimension state', async () => {
+      const scene = {
+        userData: {
+          sceneDimensions: {
+            dimensions: ['x', 'y', 'z', 'story'].map((name, index) => ({
+              name,
+              unit: '',
+              range: [0, 3],
+              step: 1,
+              display: index < 3,
+              discrete: index === 3,
+            })),
+          },
+        },
+        children: [],
+        getObjectByName: () => undefined,
+      } as unknown as Parameters<typeof sceneDimsManager.initFromScene>[0];
+      mockInputHandler.clearDimensionUI.mockImplementation(() => sceneDimsManager.reset());
+      mockInputHandler.initDimensionSliders.mockImplementation(() =>
+        sceneDimsManager.initFromScene(scene)
+      );
+      await app.init({ canvas: mockCanvas, src: SRC });
+      const onChanged = vi.fn();
+      app.on('dimensions-changed', onChanged);
+      sceneDimsManager.setDimensionValue(3, 1);
+      expect(onChanged).toHaveBeenCalledTimes(1);
+      const initialListenerCount = sceneDimsManager.listenerCount;
+      expect(initialListenerCount).toBeGreaterThan(0);
+
+      await app.switchDataset('http://example.com/other.zarr');
+      expect(sceneDimsManager.listenerCount).toBe(initialListenerCount);
+      sceneDimsManager.setDimensionValue(3, 2);
+      expect(onChanged).toHaveBeenCalledTimes(2);
+      expect(onChanged).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          currentStep: [0, 0, 0, 2],
+        })
+      );
+      await app.switchDataset('http://example.com/third.zarr');
+      await app.switchDataset('http://example.com/fourth.zarr');
+      expect(sceneDimsManager.listenerCount).toBe(initialListenerCount);
+    });
+
     it('writes the switched-to dataset into ?src when the app owns the URL', async () => {
       // A kiosk / remote-control story switch, then a reload, must reopen the
       // scene on screen — not the one the page started with. Same contract as

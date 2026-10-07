@@ -61,12 +61,16 @@ not wait: the display should move immediately, and the authoritative position
 comes back as a `dimensions-changed` event, which marks the active tile.
 `call()` is for the things that genuinely need an answer. A reloaded display
 forgets its subscribers. On the hub's `viewer-attached` event, the panel renews
-its `dimensions-changed` subscription, then re-reads `getDimensions` to refresh
-the highlight. If the display is still loading, the read retries with capped
-backoff until it answers or a dimension event arrives. This read never sends
-`notify` or moves the display.
+its `dimensions-changed` and `dataset-loaded` subscriptions, then re-reads
+`getDimensions` to refresh the highlight. If the display is still loading, the
+read retries with capped backoff until it answers or a dimension event arrives.
+On `dataset-loaded`, the panel re-reads dimensions and the authored presentation
+so a dataset switch replaces the previous scene's chapters. This read never
+sends `notify` or moves the display.
 Chapter loading uses the same capped retry when an attached display answers
 `getDimensions` with `viewer_not_ready` during initialization.
+A custom `?panel=` module owns its page and must subscribe to and handle
+`dataset-loaded` itself.
 
 **It ships without `ThemeManager`.** That singleton persists its choice to
 `localStorage`, and the panel shares an origin with the display — so setting a

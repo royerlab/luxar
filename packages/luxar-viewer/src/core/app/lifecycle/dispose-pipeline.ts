@@ -191,9 +191,9 @@ export function runDisposePipeline(ports: DisposePipelinePorts): void {
   // Process-global singletons that hold cross-app state. Resetting them on
   // dispose keeps a serial mount/unmount cycle clean (stale dim listeners,
   // notifier backends bound to torn-down UI, and a patched host console must
-  // not survive into the next init). sceneDims listeners + the notifier
-  // backend are cleared before the scene/UI owners are fully gone.
-  safeDispose('sceneDimsManager', () => sceneDimsManager.reset());
+  // not survive into the next init). Dataset resets retain longer-lived
+  // subscribers, so final app teardown explicitly clears them here.
+  safeDispose('sceneDimsManager', () => sceneDimsManager.dispose());
   safeDispose('notifierBackend', () => clearNotifierBackend());
   safeDispose('consoleInterceptor', () => disposeConsoleInterceptor());
   // Restore the viewer container to document.body and undo any
