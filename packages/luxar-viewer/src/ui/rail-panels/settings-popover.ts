@@ -29,6 +29,8 @@ import {
   loadUserSettings,
   saveUserSettings,
   applyLiveConfigOverrides,
+  describeUrlSessionOverrides,
+  urlSessionOverrides,
   reloadRequired,
   USER_SETTINGS_RANGES,
 } from '../../config/user-settings';
@@ -56,6 +58,41 @@ function describeBudgets(loader: SceneLoader | null): string {
     `Resolved (${budgets.source}): ` +
     `L0 ${mb(budgets.l0Bytes)} · L1 ${mb(budgets.l1Bytes)} · S ${mb(budgets.sliceBytes)} MB`
   );
+}
+
+/** The slice of a GUI controller the URL-aware helper needs. */
+interface UrlAwareController {
+  domElement: HTMLElement;
+  name(label: string): UrlAwareController;
+  onChange(callback: () => void): UrlAwareController;
+}
+
+/**
+ * Add a machine-setting control that is honest about the URL. When this page's
+ * URL set the value (`?workers=`, `?prefetch=`, `?renderer=`), the control is
+ * bound to a copy holding THAT value, so it shows what is actually in force, and
+ * it is locked: the URL wins again on every load, and the saved preference
+ * underneath must stay untouched. Otherwise it edits the saved preference.
+ */
+function addUrlAware(
+  add: (target: Record<string, unknown>) => UrlAwareController,
+  spec: { saved: Record<string, unknown>; key: string; urlValue: unknown; label: string },
+  commit: () => void
+): void {
+  const { saved, key, urlValue, label } = spec;
+  if (urlValue === null) {
+    add(saved).name(label).onChange(commit);
+    return;
+  }
+  const controller = add({ [key]: urlValue }).name(`${label.split(' (')[0]} (launch URL)`);
+  controller.domElement.style.pointerEvents = 'none';
+  controller.domElement.style.opacity = '0.6';
+  controller.domElement
+    .querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select')
+    .forEach((input) => {
+      input.disabled = true;
+    });
+  controller.domElement.title = "Set by this page's launch URL";
 }
 
 /**
@@ -145,26 +182,40 @@ export function buildSettingsPopover(host: HTMLElement, ctx: SettingsPopoverCont
         commit();
       });
     perfFolder.add(settings.performance, 'useWebWorkers').name('Web Workers').onChange(commit);
-    perfFolder
-      .add(
-        settings.performance,
-        'workerCount',
-        USER_SETTINGS_RANGES.workerCount.min,
-        USER_SETTINGS_RANGES.workerCount.max,
-        1
-      )
-      .name('Workers (0 = auto)')
-      .onChange(commit);
-    perfFolder
-      .add(
-        settings.performance,
-        'networkMaxConcurrent',
-        USER_SETTINGS_RANGES.networkMaxConcurrent.min,
-        USER_SETTINGS_RANGES.networkMaxConcurrent.max,
-        1
-      )
-      .name('Prefetch Limit')
-      .onChange(commit);
+    // A value the URL set shows in its control, locked (see `addUrlAware`).
+    const fromUrl = urlSessionOverrides();
+    const perf = settings.performance as unknown as Record<string, unknown>;
+    const { workerCount: wr, networkMaxConcurrent: pr } = USER_SETTINGS_RANGES;
+    addUrlAware(
+      (t) => perfFolder.add(t, 'workerCount', wr.min, wr.max, 1) as unknown as UrlAwareController,
+      { saved: perf, key: 'workerCount', urlValue: fromUrl.workers, label: 'Workers (0 = auto)' },
+      commit
+    );
+    addUrlAware(
+      (t) =>
+        perfFolder.add(
+          t,
+          'networkMaxConcurrent',
+          pr.min,
+          pr.max,
+          1
+        ) as unknown as UrlAwareController,
+      {
+        saved: perf,
+        key: 'networkMaxConcurrent',
+        urlValue: fromUrl.prefetch,
+        label: 'Prefetch Limit',
+      },
+      commit
+    );
+    // Repeat the launch URL values shown in locked controls in one place.
+    const sessionLine = describeUrlSessionOverrides();
+    if (sessionLine) {
+      const sessionNote = document.createElement('div');
+      sessionNote.className = 'luxar-control-rail__popover-note';
+      sessionNote.textContent = sessionLine;
+      perfFolder.domElement?.appendChild(sessionNote);
+    }
 
     // ── Caching
     const cacheFolder = gui.addFolder('Caching', FOLDER_ICONS.caching);
@@ -230,14 +281,21 @@ export function buildSettingsPopover(host: HTMLElement, ctx: SettingsPopoverCont
 
     // ── Advanced
     const advFolder = gui.addFolder('Advanced', FOLDER_ICONS.advanced);
-    advFolder
-      .add(settings.advanced, 'renderer', {
-        Auto: 'auto',
-        WebGL: 'webgl',
-        WebGPU: 'webgpu',
-      })
-      .name('Renderer')
-      .onChange(commit);
+    addUrlAware(
+      (t) =>
+        advFolder.add(t, 'renderer', {
+          Auto: 'auto',
+          WebGL: 'webgl',
+          WebGPU: 'webgpu',
+        }) as unknown as UrlAwareController,
+      {
+        saved: settings.advanced as unknown as Record<string, unknown>,
+        key: 'renderer',
+        urlValue: urlSessionOverrides().renderer,
+        label: 'Renderer',
+      },
+      commit
+    );
     // Line primitive policy (#1352 follow-up). 'Auto' sizes the whole
     // scene before material build (capsule, except very large scenes → quad);
     // the forced values exist for A/B checks and taste. Reload-gated

@@ -3351,7 +3351,8 @@ NOISE_PHOTON_GAIN = 0.0001
 
 
 #: Gap below the poster's molecule, including room for perspective growth
-#: as the turntable spins, in viewport height.
+#: as the turntable spins: viewport height for the default build's caption,
+#: viewport width for the kiosk's (:func:`kiosk_caption_html`).
 CAPTION_GAP = 0.022
 #: Alpha above which a poster pixel counts as molecule rather than margin.
 POSTER_ALPHA_FLOOR = 16
@@ -3379,22 +3380,43 @@ def poster_content_bottom(poster: Path) -> float:
     return float(rows[-1] + 1) / alpha.shape[0]
 
 
-def turntable_caption_position(
-    aspect: float, content_bottom: float = 1.0
-) -> tuple[float, float]:
-    """Where the structure caption goes: centred just under the molecule.
+def kiosk_caption_html(text: str, content_bottom: float) -> str:
+    """The kiosk build's structure caption, placed in the turntable's own units.
+
+    The clip is a square sized in viewport WIDTH, so a caption placed in
+    viewport HEIGHT lands under the molecule on one screen shape only and over
+    it on any wider one. This overlay is anchored at the clip's centre instead
+    (:func:`kiosk_caption_anchor`) and pushed down by a ``vw`` offset: half the
+    clip to the molecule's lowest point (``content_bottom``, see
+    :func:`poster_content_bottom`), plus :data:`CAPTION_GAP` (here in viewport
+    width, the unit the clip and its perspective swing scale with). Right under
+    the molecule on any screen shape.
+    """
+    offset_vw = 100 * (TURNTABLE_WIDTH * (content_bottom - 0.5) + CAPTION_GAP)
+    return (
+        f'<div style="padding-top:{offset_vw:.2f}vw;font-size:{text_vh(1.3)};'
+        'line-height:1.3;color:rgba(255,255,255,0.7);text-align:center">'
+        f"{html.escape(text)}</div>"
+    )
+
+
+def kiosk_caption_anchor() -> tuple[float, float]:
+    """The centre of the turntable clip, where :func:`kiosk_caption_html` hangs from."""
+    x, y = TURNTABLE_POSITION
+    return (x + TURNTABLE_WIDTH / 2, y)
+
+
+def turntable_caption_position(aspect: float) -> tuple[float, float]:
+    """Where the default structure caption goes: centred under the clip.
 
     The clip is a square ``TURNTABLE_WIDTH`` of the viewport WIDTH, centred at
     ``TURNTABLE_POSITION``'s height, so it is ``TURNTABLE_WIDTH * aspect`` of
-    the viewport HEIGHT tall. ``content_bottom`` is how far down that clip the
-    molecule reaches (:func:`poster_content_bottom`; 1.0 = the clip's edge), so
-    a squat molecule's caption rides up under it instead of floating at the
-    bottom of an empty frame.
+    the viewport HEIGHT tall.
     """
     x, y = TURNTABLE_POSITION
     height = TURNTABLE_WIDTH * aspect
     top = y - height / 2
-    return (x + TURNTABLE_WIDTH / 2, top + height * content_bottom + CAPTION_GAP)
+    return (x + TURNTABLE_WIDTH / 2, top + height + CAPTION_GAP)
 
 
 def _viewer_config(
@@ -3552,11 +3574,22 @@ def _add_overlays(
             transition="fade",
             transition_duration=0.35,
         )
+        caption = f"PDB {a.pdb_id} · {pdb_caption(s, a.title, kiosk=kiosk)}"
+        if kiosk:
+            scene.add_html(
+                kiosk_caption_html(caption, poster_content_bottom(a.poster)),
+                position=kiosk_caption_anchor(),
+                anchor="top-center",
+                width=TURNTABLE_WIDTH,
+                interactive=False,
+                visible_range={STORY_DIM: k},
+                transition="fade",
+                transition_duration=0.35,
+            )
+            continue
         scene.add_text(
-            f"PDB {a.pdb_id} · {pdb_caption(s, a.title, kiosk=kiosk)}",
-            position=turntable_caption_position(
-                aspect, poster_content_bottom(a.poster) if kiosk else 1.0
-            ),
+            caption,
+            position=turntable_caption_position(aspect),
             anchor="top-center",
             text_align="center",
             font_size=0.013,

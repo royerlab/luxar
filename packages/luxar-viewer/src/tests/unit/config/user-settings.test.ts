@@ -16,6 +16,7 @@ import {
   saveUserSettings,
   applyLiveConfigOverrides,
   applyUrlPerformanceOverrides,
+  describeUrlSessionOverrides,
   initUserSettings,
   reloadRequired,
   resetUserSettingsForTests,
@@ -275,5 +276,17 @@ describe('applyUrlPerformanceOverrides', () => {
     expect(config.dataLoading.network.maxConcurrent).toBe(5);
     applyUrlPerformanceOverrides(8, null);
     expect(localStorage.getItem(KEY)).toBeNull();
+  });
+});
+
+describe('describeUrlSessionOverrides', () => {
+  it('names the machine settings the URL set for this page, and nothing otherwise', () => {
+    expect(describeUrlSessionOverrides()).toBeNull();
+    applyUrlPerformanceOverrides(16, 12, 'webgpu');
+    expect(describeUrlSessionOverrides()).toBe(
+      'This page: 16 workers, prefetch 12, WebGPU (from its URL)'
+    );
+    applyUrlPerformanceOverrides(0, null, null);
+    expect(describeUrlSessionOverrides()).toBe('This page: auto workers (from its URL)');
   });
 });

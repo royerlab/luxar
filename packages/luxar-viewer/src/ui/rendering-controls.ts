@@ -116,6 +116,14 @@ export class RenderingControls {
   private sceneId: string = '';
   private zarrViewerConfig: ZarrViewerConfig | undefined = undefined;
   private hasStoredLocalSettings: boolean = false;
+  /** The scene build the stored edits were made on, as read by `loadSettings`. */
+  private storedContentHash: string | undefined;
+  /** The loaded scene's build, recorded with every save (`adoptSceneContentHash`). */
+  private sceneContentHash: string | undefined;
+  /** An edit made after setSceneId but before root metadata supplied its hash. */
+  private savedBeforeContentHash = false;
+  /** A save in the current load must not be replaced by late scene defaults. */
+  private savedSinceSceneId = false;
 
   /** Reference to post-processing manager */
   private postProcessing: PostProcessingManager;
@@ -351,6 +359,9 @@ export class RenderingControls {
 
     // Clear saved settings for this scene (before applying, so user sees clean state).
     clearStoredSettings(this.sceneId);
+    this.hasStoredLocalSettings = false;
+    this.savedSinceSceneId = false;
+    this.savedBeforeContentHash = false;
 
     // Apply the reset DPR settings. Neither reaches the manager through
     // `applySettings()` below — that drives the post-processing pipeline
@@ -485,6 +496,10 @@ export class RenderingControls {
     // Generate a unique ID from URL and scene name
     const baseId = zarrUrl.replace(/[^a-zA-Z0-9]/g, '_');
     this.sceneId = sceneName ? `${baseId}_${sceneName}` : baseId;
+    // Unknown until the scene's root document has loaded.
+    this.sceneContentHash = undefined;
+    this.savedBeforeContentHash = false;
+    this.savedSinceSceneId = false;
 
     // Load settings for this scene (will apply if found)
     this.loadSettings();
@@ -549,15 +564,15 @@ export class RenderingControls {
   }
 
   /**
-   * Whether this scene has stored settings in localStorage.
+   * Whether this scene has stored settings or edits saved during this load.
    */
   hasStoredSettings(): boolean {
-    return this.hasStoredLocalSettings;
+    return this.hasStoredLocalSettings || this.savedSinceSceneId;
   }
 
   /**
-   * Apply zarr viewer_config as defaults for a first-time scene visit.
-   * Called when no localStorage exists and zarr provides scene-specific defaults.
+   * Apply zarr viewer_config as defaults for a first-time scene visit,
+   * including when an edit was saved before the scene finished loading.
    * Re-applies the full 3-tier priority chain and updates the scene.
    */
   applyZarrDefaults(): void {
@@ -660,6 +675,13 @@ export class RenderingControls {
     // and the ceiling must move before the first frame is sized.
     if (zarrOverrides.allowHighDPR !== undefined) {
       this.adaptiveDPRManager?.setHighDPRAllowed(this.settings.allowHighDPR);
+    }
+    // And `adaptive_dpr_enabled`, AFTER the ceiling (the order `loadSettings`
+    // uses): without it the checkbox read "off" while the manager kept
+    // stepping the resolution at its default, and every step reallocates the
+    // full-screen targets.
+    if (zarrOverrides.adaptiveDPREnabled !== undefined) {
+      this.adaptiveDPRManager?.setEnabled(this.settings.adaptiveDPREnabled);
     }
     // An authored `density_guard_enabled` reaches the live guard the same way
     // the stored flag does (left alone while `?noDensityGuard` holds it off).
@@ -857,7 +879,45 @@ export class RenderingControls {
    * the shared `settings` object stays the single source of truth.
    */
   public saveSettings(): void {
-    saveSettingsToStorage(this.sceneId, this.settings);
+    saveSettingsToStorage(this.sceneId, this.settings, this.sceneContentHash);
+    if (this.sceneId) {
+      this.savedSinceSceneId = true;
+      if (this.sceneContentHash === undefined) this.savedBeforeContentHash = true;
+    }
+  }
+
+  /**
+   * Record the loaded scene's build, and report whether the stored edits were
+   * made on a DIFFERENT one — in which case the caller resets to the scene's
+   * defaults (`resetToDefaults`, which also drops the stored document).
+   *
+   * Why: the stored document is keyed by URL alone, and a stored document
+   * replaces every authored rendering default at load. So a scene rebuilt and
+   * served at the same address — the normal life of an exhibit package —
+   * would never show its new defaults on a machine where anyone had once
+   * nudged a slider. Edits made on this build keep winning, as before; a
+   * document from before this field existed counts as another build when the
+   * scene records a hash. A scene that records none keeps the old behaviour.
+   */
+  adoptSceneContentHash(contentHash: string | undefined): boolean {
+    this.sceneContentHash = contentHash;
+    if (
+      contentHash !== undefined &&
+      this.savedBeforeContentHash &&
+      (!this.hasStoredLocalSettings || this.storedContentHash === contentHash)
+    ) {
+      this.saveSettings();
+      this.savedBeforeContentHash = false;
+      this.storedContentHash = contentHash;
+      return false;
+    }
+    if (!this.hasStoredLocalSettings || contentHash === undefined) return false;
+    if (this.storedContentHash === contentHash) return false;
+    log.info(
+      Modules.RENDERER,
+      `Saved rendering settings for ${this.sceneId} were made on another build of this scene; using its defaults`
+    );
+    return true;
   }
 
   /** Load settings from localStorage and apply them to GUI / managers. */
@@ -867,8 +927,9 @@ export class RenderingControls {
     // Snapshot is session-only; clear it when loading persisted settings
     this.cinematic?.clearSnapshot();
 
-    const { stored, loaded } = loadSettingsFromStorage(this.sceneId);
+    const { stored, loaded, contentHash } = loadSettingsFromStorage(this.sceneId);
     this.hasStoredLocalSettings = stored;
+    this.storedContentHash = contentHash;
 
     if (!stored) return;
 

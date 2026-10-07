@@ -201,6 +201,7 @@ describe('LuxarApp', () => {
       getSceneViewerConfig: vi.fn().mockReturnValue(undefined),
       setCameraZoom: vi.fn(),
       getSceneBakedEnvironment: vi.fn().mockReturnValue(null),
+      getSceneContentHash: vi.fn().mockReturnValue(undefined),
       attachEnvironmentRuntime: vi.fn(),
       environment: null,
       // The app's depth-sort coordinator rides the scene manager.
@@ -305,6 +306,8 @@ describe('LuxarApp', () => {
       setSceneId: vi.fn(),
       setZarrViewerConfig: vi.fn(),
       hasStoredSettings: vi.fn().mockReturnValue(false),
+      adoptSceneContentHash: vi.fn().mockReturnValue(false),
+      resetToDefaults: vi.fn(),
       applyZarrDefaults: vi.fn(),
       syncCameraFovState: vi.fn(),
       applyOverrides: vi.fn(),
@@ -615,7 +618,7 @@ describe('LuxarApp', () => {
       expect(mockSceneManager.loadSceneData).toHaveBeenCalledWith(
         'http://example.com/data.zarr',
         undefined,
-        { applyViewerConfigFov: true }
+        { applyViewerConfigFov: true, beforeFrame: expect.any(Function) }
       );
       expect(DatasetBrowser).not.toHaveBeenCalled();
     });
@@ -658,7 +661,7 @@ describe('LuxarApp', () => {
       expect(mockSceneManager.loadSceneData).toHaveBeenCalledWith(
         'http://example.com/store',
         undefined,
-        { applyViewerConfigFov: true }
+        { applyViewerConfigFov: true, beforeFrame: expect.any(Function) }
       );
       expect(DatasetBrowser).not.toHaveBeenCalled();
     });
@@ -1557,7 +1560,7 @@ describe('LuxarApp', () => {
       expect(mockSceneManager.loadSceneData).toHaveBeenCalledWith(
         'http://example.com/a.zarr',
         undefined,
-        { applyViewerConfigFov: true }
+        { applyViewerConfigFov: true, beforeFrame: expect.any(Function) }
       );
       // The rejected selection must not leave the configured src or the
       // host-page URL pointing at the dataset that never loaded.

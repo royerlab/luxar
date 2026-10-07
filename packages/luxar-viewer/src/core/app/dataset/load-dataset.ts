@@ -68,12 +68,30 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
   // Set scene ID for rendering controls persistence BEFORE loading scene
   // This ensures saved settings (like HDR intensity) are applied before materials are created
   ports.renderingControls.setSceneId(src);
-  const applyViewerConfigDefaults = !ports.renderingControls.hasStoredSettings();
+  const hadStoredSettings = ports.renderingControls.hasStoredSettings();
+  let applyViewerConfigDefaults = !hadStoredSettings;
+  let staleStoredSettings = false;
+  let metadataAdopted = false;
+  const sceneLoadOptions = {
+    applyViewerConfigFov: applyViewerConfigDefaults,
+    beforeFrame: (root: THREE.Group) => {
+      if (ports.isStale()) return;
+      metadataAdopted = true;
+      const hash = root.userData.contentHash;
+      ports.renderingControls.setZarrViewerConfig(
+        root.userData.viewerConfig as ZarrViewerConfig | undefined
+      );
+      staleStoredSettings = ports.renderingControls.adoptSceneContentHash(
+        typeof hash === 'string' ? hash : undefined
+      );
+      if (staleStoredSettings) ports.renderingControls.resetToDefaults();
+      applyViewerConfigDefaults = staleStoredSettings || !hadStoredSettings;
+      sceneLoadOptions.applyViewerConfigFov = applyViewerConfigDefaults;
+    },
+  };
 
   // Load scene data (animation loop will continue even if this fails)
-  await ports.sceneManager.loadSceneData(src, ports.loaderConfig, {
-    applyViewerConfigFov: applyViewerConfigDefaults,
-  });
+  await ports.sceneManager.loadSceneData(src, ports.loaderConfig, sceneLoadOptions);
   if (ports.isStale()) return;
 
   // Pass zarr viewer_config to rendering controls (available after scene loads).
@@ -87,9 +105,29 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
     viewerConfig ? (extractEnvironmentConfig(viewerConfig) ?? null) : null
   );
   ports.sceneManager.environment?.setBaked(ports.sceneManager.getSceneBakedEnvironment());
-  if (applyViewerConfigDefaults && viewerConfig) {
+  // Edits saved against another build of this scene (same URL, new
+  // content_hash) give way to the new build's authored defaults.
+  if (!metadataAdopted) {
+    staleStoredSettings = ports.renderingControls.adoptSceneContentHash(
+      ports.sceneManager.getSceneContentHash()
+    );
+  }
+  if (staleStoredSettings) {
+    if (!metadataAdopted) ports.renderingControls.resetToDefaults();
+    // Metadata framing computes automatic planes even in manual mode. A
+    // fresh load applies authored planes afterwards; do the same here.
+    const settings = ports.renderingControls.getSettingsSnapshot();
+    if (!settings.dynamicClippingEnabled) {
+      ports.sceneManager.updateClippingPlanes(settings.near, settings.far);
+    }
+  } else if (applyViewerConfigDefaults && viewerConfig) {
     ports.renderingControls.applyZarrDefaults();
-  } else if (!applyViewerConfigDefaults) {
+    // A first-load edit was saved before the authored defaults were available.
+    // Persist their combined state so a later visit keeps both.
+    if (!hadStoredSettings && ports.renderingControls.hasStoredSettings()) {
+      ports.renderingControls.saveSettings();
+    }
+  } else if (!applyViewerConfigDefaults || ports.renderingControls.hasStoredSettings()) {
     // The scene may have replaced the stored FOV to keep an authored position
     // paired with its lens. Keep panel state and Ctrl+Shift+S export aligned
     // with the live camera before any later settings application can reuse it.

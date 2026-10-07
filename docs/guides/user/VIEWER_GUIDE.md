@@ -690,7 +690,9 @@ with luxar.LuxarZarrCompiler("output.luxar.zarr") as compiler:
 Settings are resolved with the following priority (highest first):
 
 1. **localStorage overrides** -- per-scene user changes made in the browser,
-   except that an authored camera position is restored with its resolved scene FOV
+   except that an authored camera position is restored with its resolved scene FOV.
+   They are kept per URL and remember the scene's `content_hash`: a store rebuilt
+   and served at the same address sets them aside and loads with its own defaults
 2. **viewer_config** -- defaults stored in the Zarr file
 3. **Built-in defaults** -- the viewer's own defaults
 

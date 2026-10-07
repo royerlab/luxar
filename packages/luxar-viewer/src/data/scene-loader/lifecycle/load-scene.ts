@@ -423,6 +423,10 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
     );
   }
 
+  // The scene's identity: saved per-scene settings record which build they
+  // were made on (see `RenderingControls.adoptSceneContentHash`).
+  rootGroup.userData.contentHash = sceneAttrs?.content_hash;
+
   // Extract viewer_config if present (Python API scene defaults)
   if (sceneAttrs?.viewer_config) {
     rootGroup.userData.viewerConfig = sceneAttrs.viewer_config;
