@@ -261,9 +261,9 @@ with snake_case wrappers for the handful most used —
 `get_viewer_state`, `get_dimensions`, `set_dimension_value`, `get_camera_pose`,
 `fly_to`, `recenter_camera`, `subscribe` / `unsubscribe`, plus `recv_event` for
 reading notifications. A refusal arrives as `ControlError` carrying
-the JSON-RPC code, and `ControlError.no_viewer_attached`
-distinguishes "nothing is listening yet" from "that failed" — a display that has
-not booted is something a kiosk script waits for, not an error to abort on.
+the JSON-RPC code. `ControlError.no_viewer_attached` distinguishes an absent
+display, and `ControlError.viewer_not_ready` distinguishes an attached display
+still initializing `getDimensions`; a kiosk script can retry either case.
 
 `dimension_index(name)` resolves a dimension by name, because
 `setDimensionValue` takes a positional index and an index moves when the author
