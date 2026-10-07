@@ -123,6 +123,7 @@ const BUILTIN_LIVE_DEFAULTS = Object.freeze({
 
 let urlWorkerCount: number | null = null;
 let urlPrefetch: number | null = null;
+let urlRenderer: 'webgl' | 'webgpu' | null = null;
 
 /** Defaults derived from the built-in config, via the module-load snapshot
  *  above (so later live-config mutation cannot make the defaults drift). */
@@ -301,8 +302,12 @@ export function applyLiveConfigOverrides(settings: UserSettings): void {
  */
 export function applyUrlPerformanceOverrides(
   workers: number | null,
-  prefetch: number | null
+  prefetch: number | null,
+  renderer: 'webgl' | 'webgpu' | null = null
 ): void {
+  // The renderer is applied by bootstrap (it picks the backend before any of
+  // this); it is only recorded here so the Settings popover can say so.
+  urlRenderer = renderer;
   const clamp = (v: number, r: { min: number; max: number }): number =>
     Math.round(Math.min(r.max, Math.max(r.min, v)));
   urlWorkerCount = workers === null ? null : clamp(workers, USER_SETTINGS_RANGES.workerCount);
@@ -310,6 +315,22 @@ export function applyUrlPerformanceOverrides(
     prefetch === null ? null : clamp(prefetch, USER_SETTINGS_RANGES.networkMaxConcurrent);
   if (urlWorkerCount !== null) config.dataLoading.performance.workerCount = urlWorkerCount;
   if (urlPrefetch !== null) config.dataLoading.network.maxConcurrent = urlPrefetch;
+}
+
+/**
+ * One line saying which machine settings this page runs with because its URL
+ * set them (`?workers=`, `?prefetch=`, `?renderer=`), or null when none did.
+ * The Settings popover shows the SAVED preferences, which the URL deliberately
+ * leaves alone, so without this line a launcher's values are invisible there.
+ */
+export function describeUrlSessionOverrides(): string | null {
+  const parts: string[] = [];
+  if (urlWorkerCount !== null) {
+    parts.push(urlWorkerCount === 0 ? 'auto workers' : `${urlWorkerCount} workers`);
+  }
+  if (urlPrefetch !== null) parts.push(`prefetch ${urlPrefetch}`);
+  if (urlRenderer !== null) parts.push(urlRenderer === 'webgpu' ? 'WebGPU' : 'WebGL');
+  return parts.length ? `This page: ${parts.join(', ')} (from its URL)` : null;
 }
 
 /**
@@ -358,4 +379,5 @@ export function resetUserSettingsForTests(): void {
   bootSnapshot = null;
   urlWorkerCount = null;
   urlPrefetch = null;
+  urlRenderer = null;
 }

@@ -87,7 +87,14 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
     viewerConfig ? (extractEnvironmentConfig(viewerConfig) ?? null) : null
   );
   ports.sceneManager.environment?.setBaked(ports.sceneManager.getSceneBakedEnvironment());
-  if (applyViewerConfigDefaults && viewerConfig) {
+  // Edits saved against another build of this scene (same URL, new
+  // content_hash) give way to the new build's authored defaults.
+  const staleStoredSettings = ports.renderingControls.adoptSceneContentHash(
+    ports.sceneManager.getSceneContentHash()
+  );
+  if (staleStoredSettings) {
+    ports.renderingControls.resetToDefaults();
+  } else if (applyViewerConfigDefaults && viewerConfig) {
     ports.renderingControls.applyZarrDefaults();
   } else if (!applyViewerConfigDefaults) {
     // The scene may have replaced the stored FOV to keep an authored position

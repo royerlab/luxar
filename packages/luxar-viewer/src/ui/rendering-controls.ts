@@ -116,6 +116,10 @@ export class RenderingControls {
   private sceneId: string = '';
   private zarrViewerConfig: ZarrViewerConfig | undefined = undefined;
   private hasStoredLocalSettings: boolean = false;
+  /** The scene build the stored edits were made on, as read by `loadSettings`. */
+  private storedContentHash: string | undefined;
+  /** The loaded scene's build, recorded with every save (`adoptSceneContentHash`). */
+  private sceneContentHash: string | undefined;
 
   /** Reference to post-processing manager */
   private postProcessing: PostProcessingManager;
@@ -485,6 +489,8 @@ export class RenderingControls {
     // Generate a unique ID from URL and scene name
     const baseId = zarrUrl.replace(/[^a-zA-Z0-9]/g, '_');
     this.sceneId = sceneName ? `${baseId}_${sceneName}` : baseId;
+    // Unknown until the scene's root document has loaded.
+    this.sceneContentHash = undefined;
 
     // Load settings for this scene (will apply if found)
     this.loadSettings();
@@ -857,7 +863,31 @@ export class RenderingControls {
    * the shared `settings` object stays the single source of truth.
    */
   public saveSettings(): void {
-    saveSettingsToStorage(this.sceneId, this.settings);
+    saveSettingsToStorage(this.sceneId, this.settings, this.sceneContentHash);
+  }
+
+  /**
+   * Record the loaded scene's build, and report whether the stored edits were
+   * made on a DIFFERENT one — in which case the caller resets to the scene's
+   * defaults (`resetToDefaults`, which also drops the stored document).
+   *
+   * Why: the stored document is keyed by URL alone, and a stored document
+   * replaces every authored rendering default at load. So a scene rebuilt and
+   * served at the same address — the normal life of an exhibit package —
+   * would never show its new defaults on a machine where anyone had once
+   * nudged a slider. Edits made on this build keep winning, as before; a
+   * document from before this field existed counts as another build when the
+   * scene records a hash. A scene that records none keeps the old behaviour.
+   */
+  adoptSceneContentHash(contentHash: string | undefined): boolean {
+    this.sceneContentHash = contentHash;
+    if (!this.hasStoredLocalSettings || contentHash === undefined) return false;
+    if (this.storedContentHash === contentHash) return false;
+    log.info(
+      Modules.RENDERER,
+      `Saved rendering settings for ${this.sceneId} were made on another build of this scene; using its defaults`
+    );
+    return true;
   }
 
   /** Load settings from localStorage and apply them to GUI / managers. */
@@ -867,8 +897,9 @@ export class RenderingControls {
     // Snapshot is session-only; clear it when loading persisted settings
     this.cinematic?.clearSnapshot();
 
-    const { stored, loaded } = loadSettingsFromStorage(this.sceneId);
+    const { stored, loaded, contentHash } = loadSettingsFromStorage(this.sceneId);
     this.hasStoredLocalSettings = stored;
+    this.storedContentHash = contentHash;
 
     if (!stored) return;
 

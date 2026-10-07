@@ -29,6 +29,7 @@ import {
   loadUserSettings,
   saveUserSettings,
   applyLiveConfigOverrides,
+  describeUrlSessionOverrides,
   reloadRequired,
   USER_SETTINGS_RANGES,
 } from '../../config/user-settings';
@@ -165,6 +166,15 @@ export function buildSettingsPopover(host: HTMLElement, ctx: SettingsPopoverCont
       )
       .name('Prefetch Limit')
       .onChange(commit);
+    // The sliders show the SAVED preferences; a launcher's URL values win for
+    // this page without touching them, so say what is actually in force.
+    const sessionLine = describeUrlSessionOverrides();
+    if (sessionLine) {
+      const sessionNote = document.createElement('div');
+      sessionNote.className = 'luxar-control-rail__popover-note';
+      sessionNote.textContent = sessionLine;
+      perfFolder.domElement?.appendChild(sessionNote);
+    }
 
     // ── Caching
     const cacheFolder = gui.addFolder('Caching', FOLDER_ICONS.caching);

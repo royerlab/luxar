@@ -303,3 +303,21 @@ describe('settings-persistence — dynamic clipping never persists its planes', 
     }
   });
 });
+
+describe('settings-persistence — the scene build the edits were made on', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('records the content_hash with the edits and reads it back', () => {
+    saveSettingsToStorage('scene_a', { ...config.renderingControls.defaults }, 'hash-a');
+    const loaded = loadSettingsFromStorage('scene_a');
+    expect(loaded.stored).toBe(true);
+    expect(loaded.contentHash).toBe('hash-a');
+  });
+
+  it('writes no hash for a scene that records none', () => {
+    saveSettingsToStorage('scene_b', { ...config.renderingControls.defaults });
+    const raw = JSON.parse(localStorage.getItem(StorageKeys.rendering('scene_b')) ?? '{}');
+    expect(raw.contentHash).toBeUndefined();
+    expect(loadSettingsFromStorage('scene_b').contentHash).toBeUndefined();
+  });
+});

@@ -43,6 +43,8 @@ function makePorts(trace: Trace, overrides: Partial<LoadDatasetPorts> = {}): Loa
     setSceneId: vi.fn(() => trace.order.push('setSceneId')),
     setZarrViewerConfig: vi.fn(() => trace.order.push('setZarrViewerConfig')),
     hasStoredSettings: vi.fn().mockReturnValue(false),
+    adoptSceneContentHash: vi.fn().mockReturnValue(false),
+    resetToDefaults: vi.fn(() => trace.order.push('resetToDefaults')),
     applyZarrDefaults: vi.fn(() => trace.order.push('applyZarrDefaults')),
     syncCameraFovState: vi.fn(() => trace.order.push('syncCameraFovState')),
     updateSceneScale: vi.fn(() => trace.order.push('updateSceneScale')),
@@ -50,6 +52,7 @@ function makePorts(trace: Trace, overrides: Partial<LoadDatasetPorts> = {}): Loa
   const sceneManager = {
     loadSceneData: vi.fn().mockImplementation(async () => trace.order.push('loadSceneData')),
     getSceneViewerConfig: vi.fn().mockReturnValue(viewerConfig),
+    getSceneContentHash: vi.fn().mockReturnValue('hash-b'),
     warmBlendModePrograms: vi.fn(async () => {
       trace.order.push('warmBlendModePrograms');
     }),
@@ -543,5 +546,32 @@ describe('loadDataset — lifecycle', () => {
     usableAfterDispose: {
       na: 'disposing the app ends its sessions; the next load belongs to a re-initialised app and opens a new session (LuxarApp.loadDataset)',
     },
+  });
+});
+
+describe('loadDataset with saved settings from another build', () => {
+  it('resets to the new build defaults instead of keeping the stale edits', async () => {
+    const trace: Trace = { order: [], recordedViewerConfig: undefined };
+    const ports = makePorts(trace);
+    (ports.renderingControls.hasStoredSettings as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (ports.renderingControls.adoptSceneContentHash as ReturnType<typeof vi.fn>).mockReturnValue(
+      true
+    );
+    await loadDataset('scene.zarr', ports);
+
+    expect(ports.renderingControls.adoptSceneContentHash).toHaveBeenCalledWith('hash-b');
+    expect(trace.order).toContain('resetToDefaults');
+    expect(trace.order).not.toContain('syncCameraFovState');
+  });
+
+  it('keeps edits saved on this same build', async () => {
+    const trace: Trace = { order: [], recordedViewerConfig: undefined };
+    const ports = makePorts(trace);
+    (ports.renderingControls.hasStoredSettings as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    await loadDataset('scene.zarr', ports);
+
+    expect(trace.order).not.toContain('resetToDefaults');
+    expect(trace.order).not.toContain('applyZarrDefaults');
+    expect(trace.order).toContain('syncCameraFovState');
   });
 });

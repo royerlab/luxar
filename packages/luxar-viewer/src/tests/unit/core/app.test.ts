@@ -201,6 +201,7 @@ describe('LuxarApp', () => {
       getSceneViewerConfig: vi.fn().mockReturnValue(undefined),
       setCameraZoom: vi.fn(),
       getSceneBakedEnvironment: vi.fn().mockReturnValue(null),
+      getSceneContentHash: vi.fn().mockReturnValue(undefined),
       attachEnvironmentRuntime: vi.fn(),
       environment: null,
       // The app's depth-sort coordinator rides the scene manager.
@@ -305,6 +306,8 @@ describe('LuxarApp', () => {
       setSceneId: vi.fn(),
       setZarrViewerConfig: vi.fn(),
       hasStoredSettings: vi.fn().mockReturnValue(false),
+      adoptSceneContentHash: vi.fn().mockReturnValue(false),
+      resetToDefaults: vi.fn(),
       applyZarrDefaults: vi.fn(),
       syncCameraFovState: vi.fn(),
       applyOverrides: vi.fn(),

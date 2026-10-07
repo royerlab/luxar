@@ -990,6 +990,13 @@ export class SceneManager extends THREE.EventDispatcher<{
     return root?.userData?.viewerConfig as ZarrViewerConfig | undefined;
   }
 
+  /** The loaded scene's `content_hash` (undefined for a store that records none). */
+  getSceneContentHash(): string | undefined {
+    const root = this.scene.children.find((c) => c.name === 'LuxarScene');
+    const hash = root?.userData?.contentHash;
+    return typeof hash === 'string' ? hash : undefined;
+  }
+
   /** The baked environment map the loader found in the store, if any (see `loadBakedEnvironment`). */
   getSceneBakedEnvironment(): BakedEnvironment | null {
     const root = this.scene.children.find((c) => c.name === 'LuxarScene');

@@ -37,7 +37,7 @@ Defines `SetupContext` and `SetupResult` — the shared call-shape used by every
 
 ### `settings-persistence.ts`
 
-localStorage I/O and defaults building. No DOM, no manager calls — just structured merging:
+localStorage I/O and defaults building. No DOM, no manager calls — just structured merging. A saved document records the `content_hash` of the scene it was made on; `RenderingControls.adoptSceneContentHash` reports a document from another build, and the load resets to the new build's defaults instead of applying it:
 
 | Export                                     | Purpose                                                                                                                                      |
 | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -596,12 +596,12 @@ Check the renderer once: open chrome://gpu and look for "WebGPU: Hardware
 accelerated", or open the viewer's console (F12) and look for the line
 "Rendering API: webgpu". "webgl" there means the WebGPU flags did not take.
 
-Saved settings win over the scene. The viewer remembers Rendering Controls
-edits (noise, density guard, auto-rotate, dolly...) per URL, and a remembered
-edit replaces ALL of the scene's own rendering settings at load, for every
-package later served at the same address. Either launch with a fresh
---user-data-dir for each new package, as above, or click Home -> Reset
-rendering once after loading it.
+Saved settings. The viewer remembers Rendering Controls edits (noise,
+density guard, auto-rotate, dolly...) per URL, and on this same package they
+win over its own settings. A new package served at the same address sets them
+aside and loads with its own. Home -> Reset rendering clears them by hand. The
+Settings panel shows the saved machine preferences; the line under its
+Performance section says what the URL set for this page.
 
 """
 

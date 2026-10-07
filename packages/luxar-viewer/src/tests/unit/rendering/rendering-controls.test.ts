@@ -220,6 +220,33 @@ describe('RenderingControls', () => {
     expect(gui.domElement.style.top).toContain('safe-area-inset-top');
   });
 
+  describe('saved edits and the scene build they were made on', () => {
+    it('keeps edits from this build and sets aside edits from another', () => {
+      localStorage.clear();
+      renderingControls.setSceneId('build-test');
+      expect(renderingControls.adoptSceneContentHash('hash-a')).toBe(false); // nothing stored
+      renderingControls.saveSettings(); // saved on build hash-a
+
+      renderingControls.setSceneId('build-test'); // a later load at the same URL
+      expect(renderingControls.hasStoredSettings()).toBe(true);
+      expect(renderingControls.adoptSceneContentHash('hash-a')).toBe(false);
+
+      renderingControls.setSceneId('build-test');
+      expect(renderingControls.adoptSceneContentHash('hash-b')).toBe(true);
+    });
+
+    it('treats a document without a hash as another build, unless the scene has none', () => {
+      localStorage.clear();
+      renderingControls.setSceneId('legacy-test');
+      renderingControls.saveSettings(); // hash unknown: written without one
+
+      renderingControls.setSceneId('legacy-test');
+      expect(renderingControls.adoptSceneContentHash(undefined)).toBe(false);
+      renderingControls.setSceneId('legacy-test');
+      expect(renderingControls.adoptSceneContentHash('hash-a')).toBe(true);
+    });
+  });
+
   describe('lifecycle cleanup', () => {
     it('should cancel deferred click-outside setup on dispose', () => {
       vi.useFakeTimers();

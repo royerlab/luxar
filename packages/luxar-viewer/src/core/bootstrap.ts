@@ -133,7 +133,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // `?workers=` / `?prefetch=` beat the stored values for this session only:
   // a launcher on a dedicated display machine sets them without rewriting that
   // machine's saved preferences.
-  applyUrlPerformanceOverrides(urlParams.workers, urlParams.prefetch);
+  applyUrlPerformanceOverrides(urlParams.workers, urlParams.prefetch, urlParams.renderer);
 
   if (urlParams.opfsReadConcurrency !== null) {
     config.cache.opfsReadConcurrency = urlParams.opfsReadConcurrency;

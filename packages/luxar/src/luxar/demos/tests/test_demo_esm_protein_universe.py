@@ -1244,3 +1244,14 @@ def test_a_squat_molecule_gets_its_caption_tucked_under_it(tmp_path: Path) -> No
     Image.fromarray(rgba[..., :3], "RGB").save(tmp_path / "flat.png")
     assert demo.poster_content_bottom(tmp_path / "flat.png") == 1.0
     assert demo.poster_content_bottom(tmp_path / "missing.png") == 1.0
+
+
+def test_the_kiosk_caption_hangs_from_the_clip_in_its_own_units() -> None:
+    """Offset in vw from the clip centre, so it lands under the molecule on any aspect."""
+    html_ = demo.kiosk_caption_html("PDB 1ABC · A <b>thing</b>", 0.70)
+    expected = 100 * (demo.TURNTABLE_WIDTH * 0.20 + demo.CAPTION_GAP)
+    assert f"padding-top:{expected:.2f}vw" in html_
+    assert "&lt;b&gt;" in html_  # the caption is text, not markup
+    assert "var(--luxar-text-scale, 1)" in html_
+    x, y = demo.kiosk_caption_anchor()
+    assert (x, y) == (pytest.approx(0.06 + 0.26 / 2), demo.TURNTABLE_POSITION[1])
