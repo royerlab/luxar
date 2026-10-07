@@ -25,6 +25,12 @@ The script behind it is `packages/luxar-viewer/scripts/render-gate/run-gate.mjs`
 (pass extra flags with `GATE_ARGS=`, e.g. `GATE_ARGS="--backends webgl --dsf 1"`).
 Reports land in `delme/gate/<label>/`: `report.md`, `report.json` and, for every
 view that differed, a heatmap PNG (black: identical; blue: drift; red: flip).
+An excluded control view also records the A/A HDR and LDR scores (each with the
+`bbox` and count of its differing pixels, so lens-confined vs scene-wide reads off
+`report.json`), heatmaps, pick mismatches (or `lengthMismatch` when the two pick
+buffers differ in size), element counts, camera matrices, and within-page
+stability in `report.json`; the report links the control heatmaps and summarizes
+those fields.
 
 ## How a run works
 
@@ -160,7 +166,7 @@ heatmap.
 
 **Control arm.** The baseline is captured twice, from two page loads, and each
 capture is taken twice within its page. A view whose baseline does not agree with
-itself is **excluded**, and any exclusion makes the run **INCOMPLETE** (exit 3),
+itself (HDR, LDR, or pick ids or pick buffer size) is **excluded**, and any exclusion makes the run **INCOMPLETE** (exit 3),
 never a pass: a gate that could not see a view has not certified it.
 
 **First-load effect (ANGLE/Metal).** On WebGL the first page load of a scene in a
