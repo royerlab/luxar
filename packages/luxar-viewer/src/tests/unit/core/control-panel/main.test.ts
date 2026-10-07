@@ -342,6 +342,24 @@ describe('control-panel bootstrap', () => {
     context.teardown();
   });
 
+  it('does not retry a genuine viewer failure', async () => {
+    vi.useFakeTimers();
+    const context = harness();
+    vi.mocked(context.socket.call).mockRejectedValue(
+      new ControllerCallError({ code: -32603, message: 'scene load failed' })
+    );
+
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    expect(context.panel.showMessage).toHaveBeenLastCalledWith(
+      'Could not read the chapters',
+      expect.any(String)
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(context.socket.call).toHaveBeenCalledTimes(1);
+    context.teardown();
+  });
+
   it('caps the missing-viewer retry interval', async () => {
     vi.useFakeTimers();
     const context = harness();

@@ -562,13 +562,10 @@ function startConnectedPanel(
         error instanceof ControllerCallError &&
         (error.noViewerAttached || error.viewerNotReady)
       ) {
-        // Either the hub has no display or the attached display is still loading.
-        panel.showMessage(
-          'Waiting for the display',
-          error.noViewerAttached
-            ? 'Connected to the hub, but no viewer has attached yet.'
-            : 'The viewer is still loading its scene.'
-        );
+        const message = error.noViewerAttached
+          ? 'Connected to the hub, but no viewer has attached yet.'
+          : 'The viewer is still loading its scene.';
+        panel.showMessage('Waiting for the display', message);
         chapterRetry.schedule();
         return;
       }

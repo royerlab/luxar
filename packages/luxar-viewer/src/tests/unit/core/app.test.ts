@@ -170,6 +170,7 @@ Object.defineProperty(LayersPanel.prototype, 'layerState', {
 
 // Import LuxarApp after all mocks are set up
 import { LuxarApp } from '../../../core/app';
+import { ViewerNotReadyError } from '../../../core/app/control/control-client';
 import { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import { setDocumentTitle } from '../../../core/document-title';
 import { SceneLoaderManager } from '../../../data/scene-loader-manager';
@@ -2461,6 +2462,7 @@ describe('LuxarApp', () => {
     it('throws on the guarded methods before init()', () => {
       expect(() => app.switchDataset('x')).toThrow(/before init/);
       expect(() => app.getDimensions()).toThrow(/before init/);
+      expect(() => app.getDimensions()).toThrow(ViewerNotReadyError);
       expect(() => app.setDimensionValue(0, 1)).toThrow(/before init/);
       expect(() => app.recenterCamera()).toThrow(/before init/);
       expect(() => app.resize()).toThrow(/before init/);

@@ -78,12 +78,13 @@ def test_contract_covers_every_shared_name() -> None:
     projected = {
         name for name in vars(contract) if name.isupper() and not name.startswith("_")
     }
-    # Four values a dumb relay has no use for, each for its own reason:
+    # Five values a dumb relay has no use for, each for its own reason:
     # `ROLES` is a frozenset of the two roles it already checks directly;
     # `MAX_BUFFERED_EVENTS` bounds a CLIENT's event buffer, and this relay
     # buffers nothing; `METHOD_NOT_FOUND` and `INTERNAL_ERROR` are the VIEWER's
     # answers to a controller (the method policy lives there), and a relay that
     # emitted either would be claiming to know the method vocabulary.
+    # `VIEWER_NOT_READY` likewise comes from the viewer during initialization.
     unmirrored = {
         "ROLES",
         "MAX_BUFFERED_EVENTS",
