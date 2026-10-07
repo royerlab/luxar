@@ -88,8 +88,13 @@ function isTrackedDataMesh(obj: THREE.Object3D): obj is THREE.Mesh {
  * Project a view-space sphere to its screen ellipse area in buffer pixels.
  *
  * Perspective: radii scale by `P[0]/depth` and `P[5]/depth` (the projection
- * matrix's focal terms); a camera inside or in front of the sphere
- * (`depth <= radius`) counts as full-buffer. Orthographic: the focal terms
+ * matrix's focal terms); the centre also includes P[8]/P[9] for off-axis
+ * projections. One wholly behind the eye (`depth < -radius`) is off-screen.
+ * One crossing the eye plane (`|depth| <= radius`) is full-buffer only when
+ * the eye is INSIDE it (`|centre| <= radius`); otherwise (a node running past
+ * the camera) it reads the clipped rect of its view-space box's part in front
+ * of the near plane, like the LOD metric's straddling rule
+ * (`lod-selector-math.ts`). Orthographic: the focal terms
  * apply without the depth division. Off-screen (the ellipse does not touch
  * the NDC square) returns 0; otherwise the ellipse area, clipped to the
  * buffer. The clip is a coarse min, not an exact intersection — the guard
@@ -110,11 +115,13 @@ export function projectSphereAreaPx(
   let cy: number;
   if ((camera as THREE.PerspectiveCamera).isPerspectiveCamera) {
     const depth = -centerView.z;
-    if (depth <= radius) return { areaPx: full, onScreen: true };
+    // Wholly behind the eye: nothing of it is drawn (#2944 A4).
+    if (depth < -radius) return { areaPx: 0, onScreen: false };
+    if (depth <= radius) return straddlingAreaPx(centerView, radius, camera, full);
     rx = (radius * p[0]) / depth;
     ry = (radius * p[5]) / depth;
-    cx = (centerView.x * p[0]) / depth;
-    cy = (centerView.y * p[5]) / depth;
+    cx = (centerView.x * p[0] + centerView.z * p[8]) / depth;
+    cy = (centerView.y * p[5] + centerView.z * p[9]) / depth;
   } else {
     rx = radius * p[0];
     ry = radius * p[5];
@@ -124,6 +131,46 @@ export function projectSphereAreaPx(
   if (Math.abs(cx) > 1 + rx || Math.abs(cy) > 1 + ry) return { areaPx: 0, onScreen: false };
   const areaPx = Math.min(full, Math.PI * (rx * width * 0.5) * (ry * height * 0.5));
   return { areaPx, onScreen: true };
+}
+
+/**
+ * {@link projectSphereAreaPx} for a perspective sphere crossing the eye plane:
+ * the whole buffer with the eye inside it, else the viewport-clipped NDC rect
+ * of its view-space bounding box cut at the near plane (`z <= -near`), which
+ * leaves every corner at a finite depth. Off-screen when nothing of it is in
+ * front of the near plane or the rect misses the viewport.
+ */
+function straddlingAreaPx(
+  c: { x: number; y: number; z: number },
+  radius: number,
+  camera: THREE.Camera,
+  full: number
+): { areaPx: number; onScreen: boolean } {
+  if (c.x * c.x + c.y * c.y + c.z * c.z <= radius * radius) return { areaPx: full, onScreen: true };
+  const zFar = c.z - radius;
+  const zNear = Math.min(c.z + radius, -(camera as THREE.PerspectiveCamera).near);
+  if (zFar > zNear) return { areaPx: 0, onScreen: false };
+  const p = camera.projectionMatrix.elements;
+  // Perspective scales 1/depth at the box's far and near faces (both > 0).
+  const sFar = -1 / zFar;
+  const sNear = -1 / zNear;
+  const w = ndcOverlap((c.x - radius) * p[0], (c.x + radius) * p[0], p[8], sFar, sNear);
+  const h = ndcOverlap((c.y - radius) * p[5], (c.y + radius) * p[5], p[9], sFar, sNear);
+  if (w < 0 || h < 0) return { areaPx: 0, onScreen: false };
+  return { areaPx: (full * w * h) / 4, onScreen: true };
+}
+
+/**
+ * Signed overlap with NDC `[-1, 1]` of one axis of the projected box: its
+ * view-space extent times the focal term is `[lo, hi]`, its depths give the
+ * perspective scales `sFar`, `sNear`. The projection `a·s - skew` is bilinear
+ * in `a` and `s`, so its extremes lie on the four corners. Unrolled: no
+ * allocation on the per-frame path.
+ */
+function ndcOverlap(lo: number, hi: number, skew: number, sFar: number, sNear: number): number {
+  const min = Math.min(lo * sFar, hi * sFar, lo * sNear, hi * sNear) - skew;
+  const max = Math.max(lo * sFar, hi * sFar, lo * sNear, hi * sNear) - skew;
+  return Math.min(max, 1) - Math.max(min, -1);
 }
 
 export class ProjectedDensityTracker {

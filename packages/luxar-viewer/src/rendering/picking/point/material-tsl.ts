@@ -23,13 +23,27 @@ import * as THREE from 'three';
 import { texture, uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { pointPickWebGPUFactory } from './pick.tsl';
-import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import {
+  getPlaceholderElementTexture,
+  POINT_TEXTURE_LAYOUT,
+  resolveElementTextureWidth,
+} from '../../element-texture-layout';
+import { applySharedPickGraph } from '../_shared/shared-pick-graph-tsl';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { computeMaxPointSize } from '../../materials/_shared/camera-uniforms';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
+import {
+  createPickVisibilityTSLNodes,
+  proxyPickVisibilityUniforms,
+} from '../_shared/visibility-tsl';
+import { copyPickVisibilityUniforms } from '../_shared/visibility-uniforms';
+import type { SurfacePickAwareMaterial } from '../_shared/surface-pick';
 import type { PointPickingMaterialConfig } from './material';
 
-export class PointPickingTSLMaterial extends NodeMaterial implements CameraAwareMaterial {
+export class PointPickingTSLMaterial
+  extends NodeMaterial
+  implements CameraAwareMaterial, SurfacePickAwareMaterial
+{
   uniforms: Record<string, THREE.IUniform>;
 
   private tslNodes: {
@@ -42,6 +56,11 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     uResolution: TSLNode;
     uSortedIndexSlot: TSLNode;
     uDensityDrop: TSLNode;
+    uIntensity: TSLNode;
+    uOpacity: TSLNode;
+    uHasElementAlpha: TSLNode;
+    uVolumetric: TSLNode;
+    uSurfaceDepth: TSLNode;
   };
 
   constructor(config: PointPickingMaterialConfig) {
@@ -67,6 +86,12 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
       // `uniforms` below.
       uSortedIndexSlot: uniform(0),
       uDensityDrop: uniform(0),
+      // Visual-pass weight inputs, neutral until the first pick render
+      // syncs the node's own (picking-system/visibility-sync.ts).
+      ...createPickVisibilityTSLNodes(),
+      // 0 = brightness-as-depth, 1 = real fragment depth (front-most wins;
+      // opaque/normal) — mirrors the GLSL wrapper.
+      uSurfaceDepth: uniform(0),
     };
 
     this.uniforms = {
@@ -79,11 +104,31 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
       uResolution: proxyIUniform(this.tslNodes.uResolution),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
+      ...proxyPickVisibilityUniforms(this.tslNodes),
+      uSurfaceDepth: proxyIUniform(this.tslNodes.uSurfaceDepth),
     };
 
     this.toneMapped = false;
 
-    pointPickWebGPUFactory(this.tslNodes, this);
+    this.rebuildGraph();
+  }
+
+  /**
+   * Point this material at the SHARED graph of its configuration
+   * (`../_shared/shared-pick-graph-tsl.ts`): one node build per configuration,
+   * keyed on the baked element-texture width, instead of one per material.
+   */
+  private rebuildGraph(): void {
+    const key = {
+      elementTextureWidth: resolveElementTextureWidth(
+        POINT_TEXTURE_LAYOUT,
+        this.tslNodes.uPointTex.value as { image?: { width?: number } } | null
+      ),
+    };
+    applySharedPickGraph(this, 'point-pick', key, this.tslNodes, (inputs, scratch) => {
+      // The width from the key, not from the forwarding leaf (a stand-in).
+      pointPickWebGPUFactory(inputs, scratch, key);
+    });
   }
 
   /**
@@ -98,7 +143,7 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     if (current === next) return;
     this.tslNodes.uPointTex = texture(next);
     this.uniforms.uPointTex = proxyIUniform(this.tslNodes.uPointTex);
-    pointPickWebGPUFactory(this.tslNodes, this);
+    this.rebuildGraph();
     this.needsUpdate = true;
   }
 
@@ -126,15 +171,24 @@ export class PointPickingTSLMaterial extends NodeMaterial implements CameraAware
     // until the coordinator's next per-frame re-assert.
     cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
+    copyPickVisibilityUniforms(this.uniforms, cloned.uniforms);
+    cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
     return cloned as this;
   }
 
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
+  /**
+   * Select the pick depth convention (`SurfacePickAwareMaterial`): `true`
+   * under the depth-ordered surface modes (`opaque` / `normal`) writes the
+   * real projected depth so the FRONT-MOST element wins, as the user sees
+   * it; `false` (default) keeps brightness-as-depth so the BRIGHTEST wins,
+   * right for the commutative modes. Synced per pick render by
+   * `PickingSystem.renderPickBuffer()`.
+   */
+  setSurfacePickDepth(on: boolean): void {
+    this.uniforms.uSurfaceDepth.value = on ? 1 : 0;
+  }
+
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     if (nearCull !== undefined) this.uniforms.uNearCull.value = nearCull;
     this.uniforms.maxPointSize.value = computeMaxPointSize(resolution.y);
     this.uniforms.uPixelRatio.value = pixelRatio;

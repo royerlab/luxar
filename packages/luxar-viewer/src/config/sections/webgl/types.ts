@@ -22,19 +22,6 @@ export interface WebGLContextAttributes {
 export interface WebGLRendererConfig {
   logarithmicDepthBuffer: boolean;
   precision: 'highp' | 'mediump' | 'lowp';
-  shadowMap: {
-    enabled: boolean;
-    type: number;
-  };
-}
-
-/**
- * WebGL render target configuration
- */
-export interface WebGLRenderTargetConfig {
-  depthBuffer: boolean;
-  stencilBuffer: boolean;
-  samples: number;
 }
 
 /**
@@ -43,5 +30,4 @@ export interface WebGLRenderTargetConfig {
 export interface WebGLConfig {
   context: WebGLContextAttributes;
   renderer: WebGLRendererConfig;
-  renderTarget: WebGLRenderTargetConfig;
 }

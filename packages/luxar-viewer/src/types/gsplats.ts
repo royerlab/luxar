@@ -460,20 +460,6 @@ export interface GSplatsUserData {
 // ============================================================================
 
 /**
- * Check if metadata is for a GSplats node.
- *
- * @param attrs - Unknown attributes object
- * @returns True if attrs is GSplatsMetadata
- */
-export function isGSplatsMetadata(attrs: unknown): attrs is GSplatsMetadata {
-  return (
-    typeof attrs === 'object' &&
-    attrs !== null &&
-    (attrs as Record<string, unknown>).type === 'gsplats'
-  );
-}
-
-/**
  * Check if userData indicates a GSplats object.
  *
  * @param userData - THREE.Object3D userData

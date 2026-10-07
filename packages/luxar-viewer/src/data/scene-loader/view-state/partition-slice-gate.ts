@@ -47,7 +47,8 @@ export interface PartitionSliceBounds {
 
 /** Fraction of a step beyond which no renderer can draw a part's element. */
 const MARGIN_STEPS = 0.75;
-/** Absolute floor: the points membership gate is `0.5`, whatever the step. */
+/** Absolute floor: the points-membership kernels and effective-radius-calculator.ts
+ * gate at `0.5`, whatever the step. */
 const MIN_MARGIN = 0.5;
 /** Relative slop for float32-stored coordinates against a float64 slice. */
 const RELATIVE_SLOP = 1e-6;

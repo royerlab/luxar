@@ -89,3 +89,15 @@ Transforms
 .. automodule:: luxar.core.transforms
    :members:
    :undoc-members:
+
+Waypoint trajectories
+---------------------
+
+How a :class:`~luxar.core.viewer_config.Waypoint` flies the camera to its pose.
+Pass one of these as ``Waypoint(trajectory=...)``, or its name for its defaults.
+The user guide's *Waypoint trajectories* section compares them side by side.
+
+.. automodule:: luxar.core.trajectories
+   :members: Orbit, ZoomPan, Arc, Straight, Swing, FlyThrough, Via
+   :no-undoc-members:
+   :show-inheritance:

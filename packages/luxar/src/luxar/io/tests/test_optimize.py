@@ -2404,6 +2404,33 @@ class TestDestinationGuards:
         assert output["environment/temperature"].chunks == (16_384,)
         assert dict(output["environment"].attrs) == {"units": "celsius"}
 
+    def test_generic_store_keeps_a_top_level_chunk_packs_group(
+        self, tmp_path: Path
+    ) -> None:
+        """Only the pack sidecar is derived and dropped; a group that merely
+        shares the name (legal before packs existed) is data and is copied."""
+        src = tmp_path / "survey.zarr"
+        root = open_group(src, mode="w")
+        packs = root.create_group("chunk_packs")
+        packs.attrs["units"] = "crates"
+        create_array(
+            packs,
+            "counts",
+            data=np.arange(32_768, dtype=np.float32),
+            chunks=(1000,),
+            compressor=None,
+        )
+        consolidate(root)
+
+        dst = tmp_path / "out.zarr"
+        optimize_store(src, dst, generic=True, verify=True)
+
+        output = open_group(dst, mode="r")
+        assert dict(output["chunk_packs"].attrs) == {"units": "crates"}
+        np.testing.assert_array_equal(
+            output["chunk_packs/counts"][:], np.arange(32_768, dtype=np.float32)
+        )
+
     def test_generic_store_does_not_treat_an_environment_array_as_a_sidecar(
         self, tmp_path: Path
     ) -> None:

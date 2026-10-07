@@ -27,7 +27,16 @@ const mocks = vi.hoisted(() => ({
   restoreSnapshot: vi.fn(),
   setRenderingSettings: vi.fn(),
   flyTo: vi.fn().mockResolvedValue({ completed: true }),
+  switchDataset: vi.fn().mockResolvedValue(undefined),
   disposeCleanups: [] as Array<() => void>,
+  renderer: {
+    info: {
+      autoReset: true,
+      reset: () => undefined,
+      render: { frame: 1, calls: 7, triangles: 70, points: 0, lines: 0 },
+      memory: { geometries: 2, textures: 3 },
+    },
+  },
 }));
 
 vi.mock('../../../core/app', () => ({
@@ -40,6 +49,8 @@ vi.mock('../../../core/app', () => ({
     setRenderingSettings: mocks.setRenderingSettings,
     getLayers: () => [],
     flyTo: mocks.flyTo,
+    switchDataset: mocks.switchDataset,
+    components: { sceneManager: { renderer: mocks.renderer } },
     onDispose: (cleanup: () => void) => {
       mocks.disposeCleanups.push(cleanup);
     },
@@ -98,8 +109,18 @@ import { ArchiveFaultError } from '../../../cache/chunk-source';
 import { UnsupportedFormatVersionError } from '../../../data/format-version';
 import { setDocumentTitle } from '../../../core/document-title';
 import { log } from '../../../utils/log';
-import { notifier } from '../../../utils/cross-layer/notifier';
 import type { UrlParams } from '../../../config/url-params';
+import * as THREE from 'three';
+import { perfCounters } from '../../../profiling/perf-counters';
+import { eventBus } from '../../../utils/cross-layer/event-bus';
+import {
+  lodLoadStatsEnabled,
+  setLodLoadStatsEnabled,
+} from '../../../data/scene-loader/lod-load-stats';
+import {
+  getRendererInfoSnapshot,
+  uninstallRendererInfoSampler,
+} from '../../../core/app/debug/renderer-info-sampler';
 import { resetRootDocumentPrefetchForTests } from '../../../cache/root-document-prefetch';
 import {
   defaultUserSettings,
@@ -146,6 +167,9 @@ const EMPTY_PARAMS: UrlParams = {
   renderAudit: false,
   gpuBudgetMB: null,
   cacheBudgetMB: null,
+  workers: null,
+  prefetch: null,
+  textScale: null,
   dpr: null,
   input: null,
   lineJoin: null,
@@ -402,36 +426,6 @@ describe('bootstrapStandalone', () => {
     });
   });
 
-  describe('notifier backend', () => {
-    it('disables auto-dismiss only for persistent errors', async () => {
-      await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
-
-      notifier.error('archive unavailable', { persistent: true });
-      notifier.error('ordinary failure');
-
-      expect(mocks.showError).toHaveBeenNthCalledWith(
-        1,
-        'archive unavailable',
-        expect.any(Function),
-        {
-          datasetBrowser: 'dataset-browser.toggle',
-          help: 'help.toggle',
-        },
-        { autoDismiss: false }
-      );
-      expect(mocks.showError).toHaveBeenNthCalledWith(
-        2,
-        'ordinary failure',
-        expect.any(Function),
-        {
-          datasetBrowser: 'dataset-browser.toggle',
-          help: 'help.toggle',
-        },
-        undefined
-      );
-    });
-  });
-
   describe('theme resolution', () => {
     it('applies the theme from urlParams.theme when present', async () => {
       await bootstrapStandalone({
@@ -547,6 +541,40 @@ describe('bootstrapStandalone', () => {
       expect(window.__luxarDebug).toBeUndefined();
     });
 
+    it('installs the debug perf instruments before the first load starts', async () => {
+      // A probe reading getPerf() during the first load (the case the perf
+      // gates measure) must see the getObjectByName counter, the lazy-LOD
+      // stage timings and the renderer.info sampler — not only after it.
+      let releaseInit!: () => void;
+      mocks.init.mockImplementationOnce(
+        () => new Promise<void>((resolve) => (releaseInit = resolve))
+      );
+      setLodLoadStatsEnabled(false);
+      uninstallRendererInfoSampler();
+      const booting = bootstrapStandalone({
+        canvas: CANVAS,
+        urlParams: { ...EMPTY_PARAMS, debug: true },
+      });
+      await vi.waitFor(() => expect(mocks.init).toHaveBeenCalled());
+      try {
+        expect(lodLoadStatsEnabled()).toBe(true);
+        perfCounters.reset();
+        // One count per CALL, not per node walked: the search below visits two.
+        const group = new THREE.Group();
+        group.add(new THREE.Group());
+        group.getObjectByName('anything');
+        new THREE.Group().getObjectByName('anything');
+        expect(perfCounters.get('scene.getObjectByName')).toBe(2);
+        eventBus.emit('frame-start', {});
+        eventBus.emit('frame-end', { rendered: true });
+        expect(getRendererInfoSnapshot()).toMatchObject({ calls: 7, triangles: 70 });
+      } finally {
+        releaseInit();
+        await booting;
+        uninstallRendererInfoSampler();
+      }
+    });
+
     it('forwards debug:true to LuxarApp.init()', async () => {
       await bootstrapStandalone({
         canvas: CANVAS,
@@ -577,6 +605,47 @@ describe('bootstrapStandalone', () => {
   });
 
   describe('success and error paths', () => {
+    it('keeps a cross-dataset bookmark in the URL after switching sources', async () => {
+      const bookmark = {
+        version: 1,
+        src: '/other.zarr',
+        snapshot: {
+          version: 1,
+          camera: {
+            position: [1, 2, 3],
+            target: [0, 0, 0],
+            up: [0, 1, 0],
+            isOrtho: false,
+            fov: 45,
+            near: 0.1,
+            far: 100,
+          },
+        },
+        rendering: { exposure: 1.5 },
+        layers: [],
+      };
+      mocks.switchDataset.mockImplementationOnce(async () => {
+        window.history.replaceState(null, '', '/viewer?src=%2Fother.zarr');
+      });
+      window.history.replaceState(
+        null,
+        '',
+        `/viewer?src=%2Fsample.zarr#view=${encodeURIComponent(JSON.stringify(bookmark))}`
+      );
+      try {
+        await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
+        window.dispatchEvent(new HashChangeEvent('hashchange'));
+        await vi.waitFor(() => expect(mocks.switchDataset).toHaveBeenCalledWith('/other.zarr'));
+        await vi.waitFor(() =>
+          expect(new URLSearchParams(window.location.hash.slice(1)).get('view')).toBe(
+            JSON.stringify(bookmark)
+          )
+        );
+      } finally {
+        window.history.replaceState(null, '', '/');
+      }
+    });
+
     it('restores a new #view on same-document navigation and removes the listener on dispose', async () => {
       const app = await bootstrapStandalone({ canvas: CANVAS, urlParams: EMPTY_PARAMS });
       const bookmark = {

@@ -146,6 +146,26 @@ from luxar.utils.paths import get_demos_output_dir
 # an audience is the wrong place to discover a hallucinated statistic.
 
 
+#: How a tour flies between stops, shared by both protein tours: paced travel, not
+#: a jump. ``zoom-pan`` is van Wijk & Nuij's path, which pulls back while it
+#: travels and dives in at the end, so a jump across the map crosses the screen at
+#: an even pace instead of racing past at close range. Its length measures pan in
+#: view heights and zoom in log scale, so ``TOUR_FLIGHT_SPEED`` times every flight
+#: by its perceived distance: on these maps the steps run from almost nothing to
+#: about 5.4 units (median 3.2-3.5), so 0.35 units a second puts the typical flight
+#: near 10 s and the longest near 15 s: a journey through the map rather than a
+#: cut between stops. ``cruise`` holds that speed for the middle
+#: three fifths of the flight, between smooth ramps.
+TOUR_FLIGHT_TRAJECTORY = "zoom-pan"
+TOUR_FLIGHT_EASING = "cruise"
+TOUR_FLIGHT_SPEED = 0.35
+TOUR_FLIGHT_DURATION_RANGE_MS = (5000.0, 16000.0)
+#: Fixed durations for readers that do not support ``speed``: to an ordinary
+#: stop, and to the Overview or a stop that frames the whole map.
+TOUR_FLIGHT_MS = 10000
+TOUR_LONG_FLIGHT_MS = 12000
+
+
 @dataclass(frozen=True)
 class Story:
     """One stop of the tour: which proteins, where to look, what to say."""
@@ -176,7 +196,7 @@ class Story:
     frame_fraction: float = 0.46
     #: A safety floor only: the smallest bubble (radius 0.35) frames at ~1.2.
     min_distance: float = 1.0
-    flight_ms: int = 2500
+    flight_ms: int = TOUR_FLIGHT_MS
     tags: tuple[str, ...] = field(default_factory=tuple)
     #: Representative PDB entry rendered as the left-hand turntable ("" = none).
     pdb_id: str = ""
@@ -199,28 +219,34 @@ class Story:
 STORIES: tuple[Story, ...] = (
     Story(
         key="Hemoglobin",
-        title="Hemoglobin — the molecule of breath",
+        title="Hemoglobin, the molecule of breath",
         subtitle="About 550 hemoglobin chains from fish to humans, in one tight knot",
         pattern=r"^Hemoglobin subunit",
         color=(0.98, 0.22, 0.28),
         facts=(
             # ~280 million Hb molecules per red cell: standard physiology
             # figure (EBSCO Research Starters; LibreTexts).
-            "Each red blood cell carries roughly 280 million hemoglobin "
-            "molecules, and each of them can hold four oxygen molecules.",
+            (
+                "Each red blood cell carries roughly 280 million hemoglobin "
+                "molecules, each able to hold four oxygen molecules."
+            ),
             # Pauling, Itano, Singer & Wells, Science 110:543 (1949); Ingram,
             # Nature 178:792 (1956) and Nature 180:326 (1957) for the
             # substitution.
-            "In 1949 Linus Pauling and Harvey Itano showed that sickle-cell anaemia "
-            "comes from a faulty hemoglobin — the first “molecular disease”. Seven "
-            "years later Vernon Ingram pinned the fault to a single letter: one "
-            "amino acid, glutamate, swapped for valine.",
+            (
+                "In 1949 Linus Pauling and Harvey Itano traced sickle-cell anaemia "
+                "to a faulty hemoglobin, the first “molecular disease”. Seven years "
+                "later Vernon Ingram pinned the fault to one amino acid: glutamate "
+                "swapped for valine."
+            ),
             # Perutz's low-resolution model, 1959; Nobel 1962 with Kendrew
             # (MRC LMB; Britannica).
-            "Max Perutz needed 22 years of X-ray work to see the molecule: "
-            "his 1959 model, carved from balsa wood, showed four chains "
-            "cradling four heme groups. Nobel Prize 1962, shared with John "
-            "Kendrew for myoglobin.",
+            (
+                "Max Perutz spent 22 years on X-ray work before his 1959 balsa-wood "
+                "model showed the molecule: four chains cradling four heme groups. "
+                "He shared the 1962 Nobel Prize with John Kendrew, who solved "
+                "myoglobin."
+            ),
             "The same fold turns up elsewhere: in muscle as myoglobin, and in the "
             "roots of beans and peas as leghemoglobin, the ingredient that makes "
             "some plant-based burgers look as if they bleed. Their sequences "
@@ -229,8 +255,8 @@ STORIES: tuple[Story, ...] = (
         # Biagioli et al., PNAS 106:15454 (2009); reviews since.
         mystery=(
             "Hemoglobin also turns up inside dopamine neurons of the midbrain, "
-            "nowhere near blood. What it does there — and whether it matters "
-            "in Parkinson's disease — is still debated."
+            "nowhere near blood. What is it doing there, and does it matter in "
+            "Parkinson's disease?"
         ),
         tags=("blood", "medicine", "structure"),
         pdb_id="2HHB",
@@ -247,27 +273,33 @@ STORIES: tuple[Story, ...] = (
     ),
     Story(
         key="Photosystem II",
-        title="Photosystem II D1 — the protein that made the sky breathable",
+        title="Photosystem II D1, the protein that made the sky breathable",
         subtitle="The reaction-centre protein of the only enzyme that splits water",
         pattern=r"Photosystem II protein D1",
         color=(0.4, 0.98, 0.4),
         radius=0.6,
         facts=(
             # Umena, Kawakami, Shen & Kamiya, Nature 473:55 (2011).
-            "D1 sits at the heart of photosystem II, the only enzyme known that "
-            "splits water. Its manganese–calcium cluster, the spot where water is "
-            "pulled apart, was finally seen atom by atom in 2011.",
+            (
+                "D1 sits at the heart of photosystem II, the only known enzyme that "
+                "splits water. Its manganese–calcium cluster, where the water is "
+                "pulled apart, was first seen atom by atom in 2011."
+            ),
             # Great Oxidation Event ~2.3–2.4 Gya (Current Biology 2009; ScienceDirect).
-            "Cyanobacteria running this machine drove the Great Oxidation "
-            "Event about 2.4 billion years ago — the moment Earth's atmosphere "
-            "began to fill with oxygen.",
+            (
+                "About 2.4 billion years ago, cyanobacteria running this machine "
+                "began filling Earth's atmosphere with oxygen: the Great Oxidation "
+                "Event."
+            ),
             # D1 turns over fastest of all thylakoid proteins: half-life ~2 h
             # at growth irradiance in leaves (Sundby et al., J. Biol. Chem.
             # 268:25476 (1993)); 30-60 min under intense illumination in
             # pulse-chase measurements (Aro et al., BBA 1143:113 (1993)).
-            "Splitting water has a price: the chemistry wrecks D1 itself. A leaf "
-            "replaces half its D1 every hour or two, faster in strong sun, and no "
-            "other part of photosystem II is rebuilt so often.",
+            (
+                "Splitting water wrecks D1 itself. A leaf replaces half its D1 every "
+                "hour or two, faster in strong sun; no other part of photosystem II "
+                "is rebuilt so often."
+            ),
             # Purple-bacteria reaction centre L/M chains are homologous to
             # D1/D2. Deisenhofer, Huber & Michel solved that reaction centre,
             # the first membrane protein seen atom by atom (Nobel 1988).
@@ -297,23 +329,28 @@ STORIES: tuple[Story, ...] = (
     ),
     Story(
         key="Hsp70",
-        title="Hsp70 — the oldest job in the cell",
+        title="Hsp70, the oldest job in the cell",
         subtitle="Hundreds of bacteria share one knot; our own copy sits far away",
         pattern=r"Heat shock 70|Heat shock cognate 71|Chaperone protein [Dd]naK",
         color=(1.0, 0.82, 0.25),
         radius=0.7,
         facts=(
-            "Hsp70 — DnaK in bacteria — is a chaperone: it holds unfolded proteins, "
-            "refolds the damaged ones and hands the hopeless ones to the shredder. "
-            "Almost every bacterium and every plant, animal and fungus carries one.",
+            (
+                "Hsp70 (DnaK in bacteria) is a chaperone: it holds unfolded "
+                "proteins, refolds damaged ones and hands hopeless ones to the "
+                "shredder. Almost every bacterium, plant, animal and fungus carries "
+                "one."
+            ),
             # Human HSPA1A vs E. coli DnaK: 47.9% identity (global alignment,
             # UniProt P0DMV8 / P0A6Y8). The cytosolic eukaryotic lineage has a
             # prokaryotic ancestor of uncertain identity (Brocchieri et al.,
             # BMC Evol. Biol. 8:19 (2008)), so the separation is at least as
             # old as eukaryotes.
-            "Separated for some two billion years, human Hsp70 and E. coli DnaK are "
-            "still about 47% identical, letter for letter — one of the most "
-            "conserved proteins known.",
+            (
+                "Separated for some two billion years, human Hsp70 and E. coli DnaK "
+                "are still about 47% identical, letter for letter, making it one of "
+                "the most conserved proteins known."
+            ),
             # Map audit: all 567 members are named DnaK: 541 bacteria, 12
             # archaea, 14 algal chloroplast copies; the nearest eukaryotic
             # cytosolic Hsp70 sits ~10 units away.
@@ -322,10 +359,11 @@ STORIES: tuple[Story, ...] = (
             "sequence has drifted, but it still does the same job.",
             # Ritossa, Experientia 18:571 (1962); Ritossa's own account,
             # Cell Stress Chaperones 1:97 (1996).
-            "It was found by accident. In 1962 Ferruccio Ritossa saw new “puffs” on "
-            "fruit-fly chromosomes after someone in the lab had nudged his "
-            "incubator's temperature — the first glimpse of the heat-shock "
-            "response.",
+            (
+                "It was found by accident: in 1962 Ferruccio Ritossa saw new “puffs” "
+                "on fruit-fly chromosomes after someone nudged his incubator's "
+                "temperature, the first glimpse of the heat-shock response."
+            ),
         ),
         mystery=(
             "Cancer cells over-produce Hsp70 to survive their own chaos, and drugs "
@@ -360,7 +398,7 @@ STORIES: tuple[Story, ...] = (
         radius=1.2,
         kingdom="Viruses",
         frame_fraction=0.72,
-        flight_ms=3000,
+        flight_ms=TOUR_LONG_FLIGHT_MS,
         facts=(
             # Class I fusion proteins share the six-helix-bundle mechanism
             # (J. Virol. 77:8801 (2003); reviews PMC9166635, PMC8709411).
@@ -448,34 +486,38 @@ STORIES: tuple[Story, ...] = (
     ),
     Story(
         key="ATP synthase",
-        title="ATP synthase — the cell's turbine",
+        title="ATP synthase, the cell's turbine",
         subtitle="The rotary motor that makes life's energy currency",
         pattern=r"ATP synthase subunit beta\b",
         color=(1.0, 0.5, 0.12),
         radius=0.6,
         facts=(
             # Boyer & Walker, Nobel Prize in Chemistry 1997 (NobelPrize.org).
-            "ATP synthase is a machine with a rotating axle: a flow of protons "
-            "turns it, and each turn presses out three ATP molecules. Paul "
-            "Boyer proposed the mechanism, John Walker solved the structure — "
-            "Nobel Prize 1997.",
+            (
+                "ATP synthase has a rotating axle: a flow of protons turns it, and "
+                "each turn presses out three ATP molecules. Paul Boyer proposed the "
+                "mechanism and John Walker solved the structure, sharing the 1997 "
+                "Nobel Prize."
+            ),
             # Noji, Yasuda, Yoshida & Kinosita, Nature 386:299 (1997).
             "In 1997 the rotation was watched directly: a single motor, with a "
             "glowing filament glued to its axle, spun under the microscope at "
             "several turns a second.",
             # ~100–150 mol ATP/day ≈ 50–75 kg (BNID 105606; NIGMS Biobeat).
-            "You make and spend roughly your own body weight in ATP every day "
-            "— some 50 to 75 kilograms — recycling each molecule hundreds of "
-            "times.",
+            (
+                "You make and spend roughly your own body weight in ATP every day "
+                "(some 50 to 75 kilograms), recycling each molecule hundreds of "
+                "times."
+            ),
             # Map audit: 372 members, 3 plastid and 1 mitochondrial.
             "This knot is the beta subunit from hundreds of bacteria, with a few "
             "copies from chloroplasts and mitochondria among them: the same motor, "
             "inherited from the bacteria that became those organelles.",
         ),
         mystery=(
-            "This motor is one of the most efficient known: almost all of the "
-            "energy that goes in comes out as rotation, with next to nothing lost "
-            "as heat. How a protein manages that is still debated."
+            "Almost all the energy that goes into this motor comes out as "
+            "rotation, next to nothing as heat. How a protein manages that is "
+            "not yet understood."
         ),
         tags=("energy", "structure"),
         # The WHOLE machine — F1 head, stalk and Fo rotor in the membrane —
@@ -492,33 +534,39 @@ STORIES: tuple[Story, ...] = (
     ),
     Story(
         key="RuBisCO",
-        title="RuBisCO — the enzyme that feeds the world, and one of the slowest",
+        title="RuBisCO, the slow enzyme that feeds the world",
         subtitle="The protein that pulls carbon out of the air for almost all life",
         pattern=r"^Ribulose bisphosphate carboxylase large chain",
         color=(0.72, 1.0, 0.3),
         radius=0.6,
         facts=(
             # Bar-On & Milo, PNAS 116:4738 (2019): ~0.7 Gt; Raven 2013.
-            "Nearly every carbon atom in every living thing passed through this "
-            "enzyme. Earth carries about 0.7 billion tonnes of it — roughly a "
-            "person's weight for every person alive.",
+            (
+                "Nearly every carbon atom in every living thing passed through this "
+                "enzyme. Earth carries about 0.7 billion tonnes of it, roughly a "
+                "person's weight for every person alive."
+            ),
             # Time-averaged ~0.03 s⁻¹ on land, an annual mean over day and
             # night (Bar-On & Milo 2019); plant kcat a few per second, the
             # fastest known form ~22/s (Davidi et al., EMBO J 39:e104081 (2020)).
-            "It is also remarkably slow: a few reactions a second in plants, and "
-            "counting nights and winters, about one CO₂ every thirty seconds. "
-            "Plants make up for it by making enormous amounts.",
-            "It makes mistakes, too: it cannot tell O₂ from CO₂ well, and every "
-            "time it grabs oxygen the plant loses carbon and burns energy putting "
-            "the mistake right. Cyanobacteria and algae pack the enzyme into tiny "
-            "compartments to feed it concentrated CO₂.",
+            (
+                "It is also slow: a few reactions a second in plants or, counting "
+                "nights and winters, about one CO₂ every thirty seconds. Plants make "
+                "up for it in sheer quantity."
+            ),
+            (
+                "It also confuses O₂ with CO₂, and every time it grabs oxygen the "
+                "plant loses carbon and burns energy repairing the mistake. "
+                "Cyanobacteria and algae pack the enzyme into tiny compartments fed "
+                "with concentrated CO₂."
+            ),
             "The large chain, the part that does the chemistry, forms one tight "
             "knot here; its distant microbial relatives sit far off across the map.",
         ),
         mystery=(
-            "Three billion years of evolution have not produced a fast, "
-            "accurate RuBisCO. Is speed against specificity a wall that cannot "
-            "be climbed, or has nobody — nature or engineer — found the path?"
+            "Three billion years of evolution have not produced a fast, accurate "
+            "RuBisCO. Is the trade between speed and specificity a hard limit, "
+            "or has neither nature nor any engineer found the way around it?"
         ),
         tags=("photosynthesis", "enzyme"),
         pdb_id="8RUC",
@@ -535,7 +583,7 @@ STORIES: tuple[Story, ...] = (
     Story(
         # No '/' — the key doubles as a node name.
         key="RecA and Rad51",
-        title="RecA and Rad51 — the machine that mends broken DNA",
+        title="RecA and Rad51, which mend broken DNA",
         subtitle="One recombinase, from E. coli to the BRCA2 pathway in our cells",
         pattern=r"^Protein RecA|DNA repair protein RAD51",
         color=(0.62, 0.48, 1.0),
@@ -543,11 +591,12 @@ STORIES: tuple[Story, ...] = (
         facts=(
             # Clark & Margulies 1965 (PNAS); reviewed Bell & Kowalczykowski,
             # Trends Biochem. Sci. 2016.
-            "Found in 1965 by screening E. coli mutants that could no longer "
-            "swap genes, RecA turned out to be the heart of homologous "
-            "recombination: it coats a broken DNA strand into a filament that "
-            "searches the whole genome for the matching sequence and pairs "
-            "them up.",
+            (
+                "Found in 1965 in E. coli mutants that could no longer swap genes, "
+                "RecA is the heart of homologous recombination: it coats a broken "
+                "DNA strand into a filament that searches the genome for the "
+                "matching sequence and pairs the two."
+            ),
             # SOS response: RecA–ssDNA filament triggers LexA self-cleavage.
             "In bacteria the same filament is an alarm: it triggers the SOS "
             "response, switching on dozens of repair genes when DNA is "
@@ -566,8 +615,8 @@ STORIES: tuple[Story, ...] = (
         ),
         mystery=(
             "A RecA filament finds one matching stretch among millions of base "
-            "pairs in minutes. How the search is that fast — sliding, hopping, "
-            "or testing many sites at once — is still argued over."
+            "pairs in minutes. Whether it slides, hops or tests many sites at "
+            "once to search that fast is unresolved."
         ),
         tags=("DNA repair", "cancer"),
         # Wild-type E. coli RecA, 1.9 A, one chain, no engineering.
@@ -1094,6 +1143,18 @@ def story_narration(story: Story) -> str:
     return f"{story.title}. {story.mystery}"
 
 
+def text_vh(size: float) -> str:
+    """A CSS length of ``size`` vh that follows the viewer's text scale.
+
+    The panels are authored HTML, so they opt in to ``viewer_config.text_scale``
+    (and the viewer's ``?textScale=``) by multiplying by its custom property;
+    the ``1`` fallback keeps them at their authored size anywhere it is unset.
+    Used for font sizes and the gaps between lines of text, never for the
+    panel's box (padding, border, width), so a scaled panel keeps its place.
+    """
+    return f"calc({size:g}vh * var(--luxar-text-scale, 1))"
+
+
 def story_panel_html(
     story: Story, n_members: int, index: int, total: int, *, unit: str = "proteins"
 ) -> str:
@@ -1105,26 +1166,27 @@ def story_panel_html(
     r, g, b = (int(round(v * 255)) for v in story.color)
     colour = f"#{r:02x}{g:02x}{b:02x}"
     items = "".join(
-        f'<li style="margin-bottom:0.7vh">{html.escape(f)}</li>' for f in story.facts
+        f'<li style="margin-bottom:{text_vh(0.7)}">{html.escape(f)}</li>'
+        for f in story.facts
     )
     # Sized in vh so the panel scales with the display; at 1.3vh body text five
     # facts plus the question fit a 16:9 screen with room to spare and a square
     # window without spilling (checked in the browser).
     return (
-        '<div style="font-size:1.3vh;line-height:1.35;color:#e8e8e8;'
+        f'<div style="font-size:{text_vh(1.3)};line-height:1.35;color:#e8e8e8;'
         "background:rgba(0,0,0,0.62);padding:1.4vh 1.6vh;border-radius:6px;"
         f'border-left:0.5vh solid {colour}">'
-        f'<div style="font-size:1.0vh;color:#aaa;letter-spacing:0.15em;'
+        f'<div style="font-size:{text_vh(1.0)};color:#aaa;letter-spacing:0.15em;'
         f'text-transform:uppercase">Story {index} of {total}</div>'
-        f'<div style="font-size:2.2vh;font-weight:bold;color:{colour};'
-        f'margin:0.3vh 0 0.2vh">{html.escape(story.title)}</div>'
-        f'<div style="font-size:1.25vh;color:#bbb;margin-bottom:1.0vh">'
+        f'<div style="font-size:{text_vh(2.2)};font-weight:bold;color:{colour};'
+        f'margin:{text_vh(0.3)} 0 {text_vh(0.2)}">{html.escape(story.title)}</div>'
+        f'<div style="font-size:{text_vh(1.25)};color:#bbb;margin-bottom:{text_vh(1.0)}">'
         f"{html.escape(story.subtitle)}</div>"
         f'<ul style="margin:0 0 0.8vh 1.4vh;padding:0">{items}</ul>'
         f'<div style="font-style:italic;color:#ffd48a;border-top:1px solid '
-        f'rgba(255,255,255,0.15);padding-top:0.8vh">'
+        f'rgba(255,255,255,0.15);padding-top:{text_vh(0.8)}">'
         f"Open question: {html.escape(story.mystery)}</div>"
-        f'<div style="font-size:1.0vh;color:#888;margin-top:0.8vh">'
+        f'<div style="font-size:{text_vh(1.0)};color:#888;margin-top:{text_vh(0.8)}">'
         f"{n_members:,} {html.escape(unit)} highlighted</div>"
         "</div>"
     )
@@ -1133,13 +1195,13 @@ def story_panel_html(
 def overview_panel_html(n_proteins: int) -> str:
     """The overview panel shown at story 0."""
     return (
-        '<div style="font-size:1.3vh;line-height:1.35;color:#e8e8e8;'
+        f'<div style="font-size:{text_vh(1.3)};line-height:1.35;color:#e8e8e8;'
         "background:rgba(0,0,0,0.62);padding:1.4vh 1.6vh;border-radius:6px;"
         'border-left:0.5vh solid #ffffff">'
-        f'<div style="font-size:2.2vh;font-weight:bold;margin-bottom:0.6vh">'
+        f'<div style="font-size:{text_vh(2.2)};font-weight:bold;margin-bottom:{text_vh(0.6)}">'
         f"{html.escape(OVERVIEW_TITLE)}</div>"
         f"{OVERVIEW_HTML.format(n=n_proteins)}"
-        f'<div style="margin-top:1.1vh;font-size:1.05vh;color:rgba(232,232,232,0.55)">'
+        f'<div style="margin-top:{text_vh(1.1)};font-size:{text_vh(1.05)};color:rgba(232,232,232,0.55)">'
         f"{html.escape(ATTRIBUTION)}</div>"
         "</div>"
     )
@@ -1382,7 +1444,11 @@ def build_stories_scene(
                 camera=CameraConfig(
                     position=overview_position, target=(0.0, 0.0, 0.0), up=(0, 1, 0)
                 ),
-                duration_ms=3000,
+                duration_ms=TOUR_LONG_FLIGHT_MS,
+                easing=TOUR_FLIGHT_EASING,
+                trajectory=TOUR_FLIGHT_TRAJECTORY,
+                speed=TOUR_FLIGHT_SPEED,
+                duration_range_ms=TOUR_FLIGHT_DURATION_RANGE_MS,
                 reveal="on_arrival",
             )
         ]
@@ -1392,6 +1458,10 @@ def build_stories_scene(
                     when={STORY_DIM: k},
                     camera=story_camera(c, s, global_centre),
                     duration_ms=s.flight_ms,
+                    easing=TOUR_FLIGHT_EASING,
+                    trajectory=TOUR_FLIGHT_TRAJECTORY,
+                    speed=TOUR_FLIGHT_SPEED,
+                    duration_range_ms=TOUR_FLIGHT_DURATION_RANGE_MS,
                     reveal="on_arrival",
                 )
             )

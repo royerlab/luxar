@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { log } from '../../../utils/log';
 import { LinesProgressiveLoader } from '../../../data/lines/lines-progressive-loader';
 import type { LinesSpatialIndexLoader } from '../../../data/lines/lines-spatial-index-loader';
 import type { LinesViewState, LoadedLinesData } from '../../../types/lines';
@@ -32,10 +33,17 @@ import {
   snapshotLodLoadStats,
 } from '../../../data/scene-loader/lod-load-stats';
 
+/** A log message as logged: a string, or the thunk `log.verbose` defers. */
+function messageOf(message: unknown): string {
+  return typeof message === 'function' ? (message as () => string)() : String(message);
+}
+
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
   updateViewWithResidency: ReturnType<typeof vi.fn>;
   prefetchChunks: ReturnType<typeof vi.fn>;
+  prefetchChunkBoundary: ReturnType<typeof vi.fn>;
+  ensureInitialized: ReturnType<typeof vi.fn>;
   releaseAccumulator: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   getMetrics: ReturnType<typeof vi.fn>;
@@ -145,6 +153,8 @@ function makeSubLoader(
     updateView,
     updateViewWithResidency,
     prefetchChunks: vi.fn().mockResolvedValue(undefined),
+    prefetchChunkBoundary: vi.fn().mockResolvedValue(undefined),
+    ensureInitialized: vi.fn().mockResolvedValue(undefined),
     releaseAccumulator: vi.fn(),
     dispose: vi.fn(),
     getMetrics: vi.fn(() => stubMetrics(metrics)),
@@ -326,9 +336,9 @@ describe('LinesProgressiveLoader', () => {
       const result = await loader.loadLines(baseViewState);
       const retained = (
         loader as unknown as {
-          loadedLODs: LoadedLinesData[];
+          core: { loadedLODs: LoadedLinesData[] };
         }
-      ).loadedLODs;
+      ).core.loadedLODs;
 
       expect(loader.loadedLODCount).toBe(3);
       expect(retained).toHaveLength(1);
@@ -688,9 +698,9 @@ describe('LinesProgressiveLoader', () => {
 
       const retained = (
         loader as unknown as {
-          loadedLODs: LoadedLinesData[];
+          core: { loadedLODs: LoadedLinesData[] };
         }
-      ).loadedLODs;
+      ).core.loadedLODs;
       expect(retained).toHaveLength(1);
 
       // A later pass starts from the completed folded ladder and appends no
@@ -1721,6 +1731,25 @@ describe('LinesProgressiveLoader', () => {
       expect(loader.getMetrics().memoryUsed).toBe(measureLodBytes([result]));
     });
 
+    it('getMetrics reports visibleElements from the current ladder, not stale level counters', async () => {
+      // Each level's own counter refreshes only when THAT level queries. A pass
+      // pinned to rung 0 (or a SliceCache restore) leaves the deeper levels'
+      // counters from an earlier slice, which a plain sum would add in.
+      lodA = makeSubLoader(makeLodData(20, 10), { visibleElements: 10 });
+      lodB = makeSubLoader(makeLodData(10, 5), { visibleElements: 5 });
+      lodC = makeSubLoader(makeLodData(4, 2), { visibleElements: 2 });
+      loader = new LinesProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as LinesSpatialIndexLoader[],
+        3,
+        '/lines'
+      );
+
+      await loader.updateView({ ...baseViewState, ladderDepth: 1 });
+
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.getMetrics().visibleElements).toBe(10); // rung 0's segments only
+    });
+
     it('addEventListener / removeEventListener fan out to every inner loader', () => {
       const listener = vi.fn();
       loader.addEventListener(listener);
@@ -2025,7 +2054,7 @@ testLadderFoldContract('Lines', async () => {
   };
 });
 
-describe('LinesProgressiveLoader — vertexRangeBounds are never published (issue #1424)', () => {
+describe('LinesProgressiveLoader — no levelOffsets: vertexRangeBounds are never published (issue #1424)', () => {
   // A ladder payload must NEVER carry the on-disk VERTEX range bounds: each part is a
   // sub-LOD (`additive_<i>`) whose vertices live in their own on-disk space, while the
   // labels those bounds would serve are ONE per-vertex union CSR on the parent
@@ -2070,6 +2099,61 @@ describe('LinesProgressiveLoader — vertexRangeBounds are never published (issu
     );
     const result = await loader.loadLines(baseViewState);
     expect(result.vertexCount).toBe(30);
+    expect(result.vertexRangeBounds).toBeUndefined();
+  });
+});
+
+describe('LinesProgressiveLoader — levelOffsets compose the ladder picking ranges', () => {
+  // The ladder's per-vertex label CSR lives on the PARENT, keyed by
+  // `additive_0 || additive_1 || …` (#1422). Each level publishes its loaded
+  // on-disk vertex ranges in ITS OWN space; shifted by the preceding levels'
+  // on-disk vertex counts they land in the parent's — the twin of the Points
+  // composition (#1439). Without it a sliced ladder hovers the raw segment slot
+  // against a per-vertex CSR: a wrong label.
+  function sliced(vertexCount: number, segmentCount: number, bounds: number[]) {
+    const data = makeLodData(vertexCount, segmentCount, 3, { color: 'uint8' });
+    data.vertexRangeBounds = new Uint32Array(bounds);
+    return data;
+  }
+  function ladder(lods: LoadedLinesData[], levelOffsets: number[]) {
+    return new LinesProgressiveLoader(
+      lods.map((d) => makeSubLoader(d)) as unknown as LinesSpatialIndexLoader[],
+      lods.length,
+      '/lines',
+      undefined,
+      undefined,
+      levelOffsets
+    );
+  }
+
+  it("shifts each level by the preceding levels' on-disk vertex counts", async () => {
+    // Level 0 holds 20 on-disk vertices (two ranges loaded), level 1 holds 10.
+    const loader = ladder([sliced(10, 5, [4, 9, 12, 17]), sliced(6, 3, [0, 6])], [0, 20, 30]);
+    const result = await loader.loadLines(baseViewState);
+    expect(result.vertexCount).toBe(16);
+    expect(Array.from(result.vertexRangeBounds ?? [])).toEqual([4, 9, 12, 17, 20, 26]);
+  });
+
+  it('keeps the first-paint ranges (level 0 IS the union prefix)', async () => {
+    const loader = ladder([sliced(10, 5, [4, 9, 12, 17])], [0, 20]);
+    const result = await loader.loadLines(baseViewState);
+    expect(Array.from(result.vertexRangeBounds ?? [])).toEqual([4, 9, 12, 17]);
+  });
+
+  it('fails closed when a level names rows past its own on-disk span', async () => {
+    // Level 1 holds 10 on-disk vertices; a range ending at 12 would name a row of
+    // a SIBLING level once shifted — a confidently wrong label.
+    const loader = ladder([sliced(10, 5, [0, 10]), sliced(6, 3, [6, 12])], [0, 10, 20]);
+    const result = await loader.loadLines(baseViewState);
+    expect(result.vertexRangeBounds).toBeUndefined();
+  });
+
+  it('fails closed when a non-empty level published no ranges', async () => {
+    const loader = ladder(
+      [sliced(10, 5, [0, 10]), makeLodData(6, 3, 3, { color: 'uint8' })],
+      [0, 10, 20]
+    );
+    const result = await loader.loadLines(baseViewState);
     expect(result.vertexRangeBounds).toBeUndefined();
   });
 });
@@ -2144,5 +2228,25 @@ describe('LinesProgressiveLoader — no pin after the shadow pass is torn down',
       await pending;
     });
     expect(pins).toBe(0);
+  });
+});
+
+describe('LinesProgressiveLoader — per-pass logging', () => {
+  it('a streaming pass logs its ladder summary at verbose, never at info', async () => {
+    const info = vi.spyOn(log, 'info');
+    const verbose = vi.spyOn(log, 'verbose');
+    const lods = [makeSubLoader(makeLodData(20, 10)), makeSubLoader(makeLodData(10, 5))];
+    const l = new LinesProgressiveLoader(
+      lods as unknown as LinesSpatialIndexLoader[],
+      2,
+      '/lines-log'
+    );
+    await l.updateView(baseViewState);
+    expect(info).not.toHaveBeenCalled();
+    expect(
+      verbose.mock.calls.some((call) => messageOf(call[2]).includes('Progressive Lines'))
+    ).toBe(true);
+    info.mockRestore();
+    verbose.mockRestore();
   });
 });

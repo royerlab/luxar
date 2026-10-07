@@ -598,6 +598,16 @@ class TestViewerConfig:
         assert vc.allow_high_dpr is None
         assert "allow_high_dpr" not in vc.to_dict()
 
+    def test_density_guard_enabled_round_trips(self) -> None:
+        # The viewer persists its Density Guard toggle as
+        # `density_guard_enabled`; a scene must be able to author it and a
+        # Ctrl+Shift+S export must load back.
+        vc = ViewerConfig(density_guard_enabled=False)
+        d = vc.to_dict()
+        assert d["density_guard_enabled"] is False
+        assert ViewerConfig.from_dict(d).density_guard_enabled is False
+        assert "density_guard_enabled" not in ViewerConfig().to_dict()
+
     def test_ui_config(self) -> None:
         vc = ViewerConfig(ui=UIConfig(show_help=False, show_dimensions=True))
         d = vc.to_dict()
@@ -901,6 +911,44 @@ class TestWaypoint:
         # Zero is a legal "snap".
         assert Waypoint(when={"story": 0}, camera=cam, duration_ms=0).duration_ms == 0
 
+    def test_smooth_easing_and_zoom_pan_trajectory_round_trip(self) -> None:
+        cam = CameraConfig(position=(0, 0, 1))
+        wp = Waypoint(
+            when={"story": 1}, camera=cam, easing="smooth", trajectory="zoom-pan"
+        )
+        d = wp.to_dict()
+        assert d["easing"] == "smooth"
+        assert d["trajectory"] == "zoom-pan"
+        back = Waypoint.from_dict(json.loads(json.dumps(d)))
+        assert (back.easing, back.trajectory) == ("smooth", "zoom-pan")
+        with pytest.raises(ValueError, match="trajectory"):
+            Waypoint(when={"story": 0}, camera=cam, trajectory="spline")
+        assert "trajectory" not in Waypoint(when={"story": 0}, camera=cam).to_dict()
+
+    def test_paced_flights_round_trip_and_are_validated(self) -> None:
+        cam = CameraConfig(position=(0, 0, 1))
+        wp = Waypoint(
+            when={"story": 1},
+            camera=cam,
+            easing="cruise",
+            trajectory="zoom-pan",
+            speed=0.7,
+            duration_range_ms=(2500, 8000),
+        )
+        d = json.loads(json.dumps(wp.to_dict()))
+        assert d["speed"] == 0.7 and d["duration_range_ms"] == [2500, 8000]
+        back = Waypoint.from_dict(d)
+        assert (back.easing, back.speed, back.duration_range_ms) == (
+            "cruise",
+            0.7,
+            (2500, 8000),
+        )
+        for bad in (0, -1, float("inf")):
+            with pytest.raises(ValueError, match="speed"):
+                Waypoint(when={"story": 0}, camera=cam, speed=bad)
+        with pytest.raises(ValueError, match="duration_range_ms"):
+            Waypoint(when={"story": 0}, camera=cam, duration_range_ms=(8000, 2500))
+
     def test_reveal_is_validated_and_round_trips(self) -> None:
         cam = CameraConfig(position=(0, 0, 1))
         with pytest.raises(ValueError, match="reveal"):
@@ -1150,7 +1198,26 @@ class TestControlPanelConfig:
         with pytest.raises(ValueError, match="must be a ControlPanelConfig"):
             ViewerConfig(control_panel={"title": "nope"})  # type: ignore[arg-type]
 
-    @pytest.mark.parametrize("field_name", ["label", "sublabel"])
+    def test_short_texts_round_trip_in_the_store_spelling(self) -> None:
+        # The viewer reads exactly these snake_case keys.
+        chapter = Chapter(
+            label="Insect odorant receptors",
+            sublabel="Seventy-five arthropod clusters, in a region of their own",
+            short_label="Odorant receptors",
+            short_sublabel="Seventy-five arthropod clusters",
+        )
+        assert chapter.to_dict() == {
+            "label": "Insect odorant receptors",
+            "sublabel": "Seventy-five arthropod clusters, in a region of their own",
+            "short_label": "Odorant receptors",
+            "short_sublabel": "Seventy-five arthropod clusters",
+        }
+        assert Chapter.from_dict(chapter.to_dict()) == chapter
+        assert Chapter(short_sublabel="Brief").to_dict() == {"short_sublabel": "Brief"}
+
+    @pytest.mark.parametrize(
+        "field_name", ["label", "sublabel", "short_label", "short_sublabel"]
+    )
     def test_chapter_rejects_a_blank_override(self, field_name: str) -> None:
         with pytest.raises(ValueError, match="non-empty string"):
             Chapter(**{field_name: "   "})

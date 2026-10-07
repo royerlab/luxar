@@ -14,7 +14,7 @@
  * Build with: pnpm build:wasm (or make build-wasm)
  */
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, it, expect, beforeAll } from 'vitest';
 import { TypeScriptFallback } from '../../../wasm/typescript';
 import { ArrayDecoder } from '../../../data/array-decoder/decoder';
@@ -40,15 +40,22 @@ let tsModule: WasmModule;
 const wasmFilesExist = wasmArtifactExists();
 const requireWasmTests = process.env.LUXAR_REQUIRE_WASM_TESTS === '1';
 
-const RUST_DECODE_SOURCE_URL = new URL('../../../wasm/rust/src/decode.rs', import.meta.url);
-const TYPESCRIPT_DECODE_SOURCE_URL = new URL('../../../wasm/typescript/decode.ts', import.meta.url);
+const RUST_SOURCE_DIR = new URL('../../../wasm/rust/src/', import.meta.url);
 
-function exportedDecodeNames(source: string, language: 'rust' | 'typescript'): string[] {
-  const pattern =
-    language === 'rust'
-      ? /^pub fn (decode_[a-z0-9_]+)/gm
-      : /^export function (decode_[a-z0-9_]+)/gm;
-  return [...source.matchAll(pattern)].map((match) => match[1]).sort();
+/**
+ * Every `#[wasm_bindgen]` free function in the crate, with its parameter count
+ * (the attribute may be followed by others, e.g. `#[allow(...)]`).
+ */
+function rustKernelArities(): Record<string, number> {
+  const kernel = /^#\[wasm_bindgen[^\]]*\]\s*(?:#\[[^\]]*\]\s*)*pub fn (\w+)\s*\(([^)]*)\)/gm;
+  const arities: Record<string, number> = {};
+  for (const file of readdirSync(RUST_SOURCE_DIR).filter((name) => name.endsWith('.rs'))) {
+    const source = readFileSync(new URL(file, RUST_SOURCE_DIR), 'utf8');
+    for (const [, name, params] of source.matchAll(kernel)) {
+      arities[name] = params.split(',').filter((param) => param.trim() !== '').length;
+    }
+  }
+  return arities;
 }
 
 /**
@@ -191,21 +198,30 @@ beforeAll(async () => {
   if (wasmModule) console.log('[Test] WASM module loaded successfully');
 });
 
-describe('decode kernel source parity', () => {
-  it('keeps Rust and TypeScript decode exports in sync', () => {
-    const rustNames = exportedDecodeNames(readFileSync(RUST_DECODE_SOURCE_URL, 'utf8'), 'rust');
-    const typescriptNames = exportedDecodeNames(
-      readFileSync(TYPESCRIPT_DECODE_SOURCE_URL, 'utf8'),
-      'typescript'
+describe('kernel source parity', () => {
+  // Artifact-free: runs whether or not a WASM build exists, so a kernel added,
+  // renamed or re-signatured on one side only fails here on every machine.
+  it('keeps every Rust #[wasm_bindgen] kernel and its TypeScript fallback in sync', () => {
+    const rust = rustKernelArities();
+    const typescript = Object.fromEntries(
+      Object.entries(new TypeScriptFallback()).map(([name, fn]) => [
+        name,
+        (fn as (...args: never[]) => unknown).length,
+      ])
     );
 
-    expect(rustNames, 'The Rust export scan must find the established decode kernels').toContain(
-      'decode_quantized_u8'
+    expect(Object.keys(rust), 'The Rust scan must find the established kernels').toEqual(
+      expect.arrayContaining(['decode_quantized_u8', 'project_gsplats_nd_to_3d'])
     );
     expect(
-      rustNames,
-      'Rust and TypeScript decode_* exports must match; TypeScript is the production fallback'
-    ).toEqual(typescriptNames);
+      Object.keys(rust).sort(),
+      'Rust kernels and TypeScriptFallback members must match; TypeScript is the ' +
+        'production fallback (and the >16D backend)'
+    ).toEqual(Object.keys(typescript).sort());
+    // The fallback takes every argument the kernel does. It may take more: a
+    // trailing optional TS-only parameter (clip_segment_single's workspace).
+    const shortFallbacks = Object.keys(rust).filter((name) => typescript[name] < rust[name]);
+    expect(shortFallbacks, 'TypeScript fallbacks missing a kernel parameter').toEqual([]);
   });
 });
 

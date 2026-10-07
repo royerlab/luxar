@@ -41,6 +41,7 @@ import {
   resetInputProfileForTests,
   setInputProfileOverride,
 } from '../../../../../utils/input-capabilities';
+import { deferred } from '../../../../helpers/deferred';
 
 vi.mock('../../../../../utils/platform', () => ({
   isMacPlatform: vi.fn(),
@@ -195,14 +196,6 @@ function gesture(
 async function flush(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
-}
-
-function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve!: () => void;
-  const promise = new Promise<void>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
 }
 
 const LINKED = { link: 'https://www.uniprot.org/uniprotkb/{hover_label}/entry' };

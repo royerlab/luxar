@@ -35,13 +35,19 @@ throws a clear `... called before init()` error when used too early.
 ### 2.1 Camera flight
 
 ```ts
-flyTo(pose: CameraSnapshot, opts?: { durationMs?: number; easing?: 'linear' | 'ease-in-out' })
+flyTo(pose: CameraSnapshot, opts?: { durationMs?: number; easing?: 'linear' | 'ease-in-out' | 'smooth' | 'cruise'; trajectory?: FlightTrajectorySpec; sceneCentre?: [number, number, number]; speed?: number; durationRangeMs?: [number, number] })
+// FlightTrajectorySpec: a name ('orbit' | 'zoom-pan' | 'arc' | 'straight' | 'swing' | 'fly-through')
+// or a parameterised object ({ kind: 'arc', lift }, { kind: 'via', via }, …); see
+// core/app/camera/flight-trajectories.ts and VIEWER_GUIDE.md "Waypoint trajectories".
   : Promise<{ completed: boolean }>
 ```
 
 - `pose` is the shape `getCameraPose()` returns (position, target, up,
   near/far, `fov` or `zoom`). Flights therefore compose with the existing
   snapshot machinery: capture a pose interactively, store it, fly back to it.
+- A `swing` trajectory without its own pivot uses `sceneCentre` if supplied;
+  otherwise it pivots about the midpoint of the two targets. Waypoint flights
+  supply the scene centre from the dataset.
 - Interpolation happens in the **orbit parameterisation**: the focus target
   moves linearly, the camera's offset from it is slerped in direction and
   log-interpolated in distance, `up` is slerped. A raw position lerp between two
@@ -114,7 +120,7 @@ stored state cannot drift apart.
 ### 2.4 State mirror and events
 
 ```ts
-getViewerState(): { src, camera, dimensions, rendering, layers }   // all copies
+getViewerState(): { src, title, camera, dimensions, rendering, layers, audio, controlPanel }   // all copies
 on('camera-changed', (pose: CameraSnapshot) => void)
 ```
 
@@ -151,6 +157,17 @@ several is not supported. The hub keeps no state of its own beyond the
 attachment list; the viewer is the source of truth (`getViewerState()` on
 connect).
 
+When a viewer attaches, the hub sends every connected controller a JSON-RPC
+`event` notification with positional params `["viewer-attached", null]` and no
+`id`. Subscriptions live in the viewer, so a viewer returning after a page
+reload starts with none. Controllers that need events across reloads renew
+their `subscribe` calls on this notification and re-read any state they mirror;
+the touch panel renews `dimensions-changed` and re-reads `getDimensions`.
+A controller connecting after the viewer may subscribe immediately; it does
+not receive a retrospective attachment notification. The Python `Viewer`
+renews its recorded subscriptions when it reads the notification. A controller
+must keep reading its socket for recovery to happen.
+
 ### 3.2 Wire format
 
 JSON text frames, JSON-RPC 2.0 shape. The method set is **literally the
@@ -176,6 +193,11 @@ on both sides of the wire, and that table drifts the first time a signature
 changes. Positional params follow mechanically from the TypeScript signature.
 The `event` notification obeys the same rule:
 `{"method": "event", "params": ["dimensions-changed", payload]}`.
+An attached viewer that has not finished initializing returns `-32002`
+(`viewer_not_ready`) for `getDimensions`; clients may retry that read. The hub
+returns `-32001` (`no_viewer`) when no display is attached.
+Other guarded methods, including `getCameraPose`, `setDimensionValue`, and
+`switchDataset`, still return `-32603` before initialization.
 The `flyTo` pose has the complete shape returned by `getCameraPose()`; callers
 normally copy that object and change the fields they want to animate.
 
@@ -230,7 +252,8 @@ time*, so the client attaches to every event eagerly at construction and
 `subscribe` gates only *forwarding* — a lazily-attached client would leave
 those three events permanently dead with no error. And `camera-changed` is
 throttled to 20 Hz, because it fires at frame rate and an auto-rotating kiosk
-never stops moving.
+never stops moving; a pose dropped inside the interval is held and the newest
+one sent when it ends, so a controller always ends on the final pose.
 
 ### 3.4 Python side
 
@@ -240,9 +263,9 @@ with snake_case wrappers for the handful most used —
 `get_viewer_state`, `get_dimensions`, `set_dimension_value`, `get_camera_pose`,
 `fly_to`, `recenter_camera`, `subscribe` / `unsubscribe`, plus `recv_event` for
 reading notifications. A refusal arrives as `ControlError` carrying
-the JSON-RPC code, and `ControlError.no_viewer_attached`
-distinguishes "nothing is listening yet" from "that failed" — a display that has
-not booted is something a kiosk script waits for, not an error to abort on.
+the JSON-RPC code. `ControlError.no_viewer_attached` distinguishes an absent
+display, and `ControlError.viewer_not_ready` distinguishes an attached display
+still initializing `getDimensions`; a kiosk script can retry either case.
 
 `dimension_index(name)` resolves a dimension by name, because
 `setDimensionValue` takes a positional index and an index moves when the author
@@ -443,7 +466,7 @@ scene.viewer_config.ui.kiosk = KioskConfig(
     allow_pointer=False,      # ignore pointer/wheel/touch on the canvas
     allow_keyboard=False,     # ignore the keyboard entirely
     show_panels=False,        # no rail, no panels, no dataset browser
-    watchdog_reload=True,     # reload on WebGL context loss
+    watchdog_reload=True,     # reload on GPU context / device loss
     watchdog_grace_s=10.0,    # ... but only after recovery has had its chance
 )
 ```
@@ -453,7 +476,9 @@ Every field is optional and unset keeps the viewer's ordinary behaviour, so
 exception to that shape: it stays **off** unless asked for, because a reload is
 destructive to a recovery already in progress — the viewer restores a lost
 WebGL context on its own where it can, and the watchdog fires only after
-`watchdog_grace_s` has passed without that working.
+`watchdog_grace_s` has passed without that working. A lost WebGPU device has no
+recovery in this release, so it always ends in the reload, after the same grace
+period; embedders see it as the `webgpu-device-lost` event.
 
 `?kiosk` on the URL is a hard override for a display whose store predates the
 block. It can **lock** such a display and deliberately cannot unlock one: a URL
@@ -468,7 +493,9 @@ canvas themselves. So panels hid, the flag read as set, and the camera stayed
 fully draggable. The scene auto-rotates, which makes a plain
 before/after prove nothing; against a *control arm* the drag moved the camera
 62.3 units against 1.36 of idle drift, a factor of 46. Kiosk mode therefore
-also calls `ControlsManager.setEnabled(false)`.
+also calls `ControlsManager.setPointerEnabled(false)`. `setEnabled(false)` also
+stops fly key handling and per-frame updates, which froze WASD navigation when
+`allow_pointer` was false (#3049).
 
 **Launching the display.** The big screen runs Chrome in kiosk mode; these flags
 are the operator's side of the contract (the scene-side block above cannot set
@@ -504,6 +531,10 @@ scene.viewer_config.control_panel = ControlPanelConfig(
     chapters={1: Chapter(sublabel="the molecule of breath")},
 )
 ```
+
+A `Chapter` may also carry `short_label` and `short_sublabel`: shorter texts
+the panel shows instead of the full ones when a tile is too small for them.
+See *Tile text* below for when each one is used.
 
 **`chapters` is a keyed map of overrides, not a second list.** The tiles are
 derived from the dimension's own `categories`, so a parallel list of chapter
@@ -542,6 +573,36 @@ will use once. Tracks are half-tile wide (2× columns, each tile spanning 2) —
 that is what makes a partial final row expressible as centred rather than
 trailing a hole. Labels size against the tile with `cqmin`, not the viewport,
 since the cell shrinks as chapters are added while the screen does not.
+
+**Tile text gives way in a fixed order.** On a phone with twenty chapters, a
+tile is too small for a sentence-long sublabel at any readable size. After
+layout the panel measures every tile and walks a ladder, stopping at the first
+step where every tile fits (`config/control-panel/tile-text-fit.ts`,
+`ui/control-panel/fit-tile-text.ts`):
+
+1. the full texts;
+2. the `short_sublabel`;
+3. the sublabel limited to three, two, then one line, ending in an ellipsis;
+4. no sublabel;
+5. no tour numeral;
+6. the `short_label`;
+7. the label at 90%, then 80%, of its size;
+8. a label that may break inside a word.
+
+Labels otherwise break only between words. A word too long for its tile is
+caught as horizontal overflow and answered by a later step. The step applies
+to the whole grid, so the tiles stay alike: the tile with the longest text
+decides for all of them. Steps for texts the scene does not have are skipped.
+The grid shape and the text are fitted together. The best-shaped grid is kept
+whenever its tiles hold all their text. When they cannot, the next two shapes
+are also tried, and the one that gives up the least wins. On a small phone
+that means three columns of whole titles rather than four columns of broken
+words. The chosen step is exposed on the grid as
+`data-label-text`, `data-sublabel-text`, `data-tile-index`, `data-label-wrap`,
+`--luxar-control-sublabel-lines` and `--luxar-control-label-scale`, so an
+authored stylesheet can follow the same decision. Tile content is centred with
+auto margins rather than `justify-content: center`, so anything that still
+overflows runs off the bottom of the tile, never the top.
 
 ### 4.5 Where the hub lives (implemented)
 

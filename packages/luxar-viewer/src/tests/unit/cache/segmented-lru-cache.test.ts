@@ -249,24 +249,33 @@ describe('SegmentedLRUCache', () => {
       expect(stats.chunksSize).toBe(2000);
     });
 
+    it('keeps a chunk segment, within budget, when L1 is below the 10 MB metadata floor', () => {
+      // `?cacheBudgetMB=40` scales L1 to ~8 MB (heap-budget.ts). A fixed 10 MB
+      // metadata floor left the chunk segment at 0 — every L1 chunk insert was
+      // rejected — and the two segments together over the configured budget.
+      const MB = 1024 * 1024;
+      const small = new SegmentedLRUCache(8 * MB);
+      for (let i = 0; i < 16; i++) small.set(`points/c/${i}`, new Uint8Array(MB));
+      for (let i = 0; i < 16; i++) small.set(`n${i}/zarr.json`, new Uint8Array(MB));
+      const stats = small.getStats();
+      expect(stats.chunksCount).toBeGreaterThan(0);
+      expect(stats.metadataCount).toBeGreaterThan(0);
+      expect(stats.chunksSize + stats.metadataSize).toBeLessThanOrEqual(8 * MB);
+    });
+
     // workers.md O3 / cache.md G6 [P5]: audit-id moved to comment per Phase E54.
-    it('clamps chunksSize to 0 when totalSize < MIN_METADATA_SIZE (10MB)', () => {
-      // [cache.md/G6][P5] Pre-audit boundary: a regression that flipped the
-      // `Math.max(0, ...)` in the source to allow negative chunksSize would
-      // corrupt eviction but pass current tests. Pin: with totalSize=1MB
-      // (well below the 10MB metadata floor), the chunks segment holds
-      // nothing (every chunk write must immediately be rejected/evicted).
+    it('halves a total below 20 MB between the segments instead of a 10 MB floor', () => {
+      // [cache.md/G6][P5] with totalSize=1MB the 10MB metadata floor gives way
+      // to half the total, so both segments hold something and neither can
+      // push the cache over its budget.
       const tiny = new SegmentedLRUCache(1024 * 1024);
 
-      // A 100-byte chunk goes to the chunks segment. With chunksSize===0
-      // budget, the entry must immediately be rejected (oversized) or
-      // evicted; the chunks-count and chunks-size remain at 0.
       tiny.set('chunk', new Uint8Array(100));
+      tiny.set('big-chunk', new Uint8Array(600 * 1024)); // > the 512 KB chunk segment
       const stats = tiny.getStats();
-      expect(stats.chunksSize).toBe(0);
-      expect(stats.chunksCount).toBe(0);
+      expect(stats.chunksCount).toBe(1);
+      expect(stats.chunksSize).toBe(100);
 
-      // Metadata, on the other hand, fits in the 10MB floor.
       tiny.set('.zmetadata', new Uint8Array(1000));
       const stats2 = tiny.getStats();
       expect(stats2.metadataCount).toBe(1);

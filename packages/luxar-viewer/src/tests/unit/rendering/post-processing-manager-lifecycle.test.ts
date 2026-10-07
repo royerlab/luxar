@@ -63,7 +63,6 @@ function mockCaps(
     maxRenderbufferSize: 4096,
     maxMSAASamples: 4,
     pointSizeRange: [1, 1024],
-    readBackbufferPixels: () => Promise.resolve({ pixels: new Uint8Array(), width: 0, height: 0 }),
     ...overrides,
   };
 }
@@ -113,13 +112,180 @@ type ManagerInternals = {
   };
   megaPass: { dispose(): void };
   disposed: boolean;
-  deferRebuildDepth: number;
   renderer: { setSize: ReturnType<typeof vi.fn>; domElement: HTMLCanvasElement };
 };
 
 function peek(mgr: PostProcessingManager): ManagerInternals {
   return mgr as unknown as ManagerInternals;
 }
+
+describe('PostProcessingManager → capture guard', () => {
+  it('times out a capture that never settles and restarts rendering once', async () => {
+    vi.useFakeTimers();
+    try {
+      const mgr = makeManager();
+      const released = vi.fn();
+      mgr.setCaptureReleasedCallback(released);
+      let finish!: () => void;
+      const capture = mgr.suspendFrameRendersDuring(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          })
+      );
+
+      expect(mgr.isCaptureInProgress).toBe(true);
+      const settled = vi.fn();
+      void capture.then(
+        () => settled('resolved'),
+        () => settled('rejected')
+      );
+      const rejection = expect(capture).rejects.toThrow('Capture timed out after 60 s');
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(settled).toHaveBeenCalledWith('rejected');
+      await rejection;
+      expect(mgr.isCaptureInProgress).toBe(false);
+      expect(released).toHaveBeenCalledTimes(1);
+      finish();
+      await Promise.resolve();
+      expect(released).toHaveBeenCalledTimes(1);
+      await mgr.suspendFrameRendersDuring(async () => {});
+      expect(released).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+      mgr.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('releases only the timed-out capture when another capture is still pending', async () => {
+    vi.useFakeTimers();
+    try {
+      const mgr = makeManager();
+      const released = vi.fn();
+      mgr.setCaptureReleasedCallback(released);
+      let finish!: () => void;
+      const stalled = mgr.suspendFrameRendersDuring(() => new Promise<void>(() => {}));
+      const stalledSettled = vi.fn();
+      void stalled.then(
+        () => stalledSettled('resolved'),
+        () => stalledSettled('rejected')
+      );
+      const stalledRejection = expect(stalled).rejects.toThrow('timed out');
+      await vi.advanceTimersByTimeAsync(1_000);
+      const healthy = mgr.suspendFrameRendersDuring(
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          })
+      );
+
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(stalledSettled).toHaveBeenCalledWith('rejected');
+      await stalledRejection;
+      expect(mgr.isCaptureInProgress).toBe(true);
+      expect(released).not.toHaveBeenCalled();
+
+      finish();
+      await healthy;
+      expect(mgr.isCaptureInProgress).toBe(false);
+      expect(released).toHaveBeenCalledTimes(1);
+      mgr.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not restart rendering when a capture times out after disposal', async () => {
+    vi.useFakeTimers();
+    try {
+      const mgr = makeManager();
+      const released = vi.fn();
+      mgr.setCaptureReleasedCallback(released);
+      const capture = mgr.suspendFrameRendersDuring(() => new Promise<void>(() => {}));
+      const rejection = expect(capture).rejects.toThrow('timed out');
+
+      mgr.dispose();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await rejection;
+      expect(mgr.isCaptureInProgress).toBe(false);
+      expect(released).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('requests one repaint when the outermost capture releases, including on failure', async () => {
+    const mgr = makeManager();
+    const released = vi.fn();
+    mgr.setCaptureReleasedCallback(released);
+    let finishFirst!: () => void;
+    const first = mgr.suspendFrameRendersDuring(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirst = resolve;
+        })
+    );
+
+    await mgr.suspendFrameRendersDuring(async () => {});
+    expect(released).not.toHaveBeenCalled();
+    finishFirst();
+    await first;
+    expect(released).toHaveBeenCalledTimes(1);
+    expect(mgr.isCaptureInProgress).toBe(false);
+
+    await expect(
+      mgr.suspendFrameRendersDuring(async () => {
+        throw new Error('readback failed');
+      })
+    ).rejects.toThrow('readback failed');
+    expect(released).toHaveBeenCalledTimes(2);
+    expect(mgr.isCaptureInProgress).toBe(false);
+    mgr.dispose();
+  });
+
+  it('keeps draws suppressed until every capture settles, including after a rejection', async () => {
+    const mgr = makeManager();
+    let finishFirst!: () => void;
+    const first = mgr.suspendFrameRendersDuring(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirst = resolve;
+        })
+    );
+    expect(mgr.isCaptureInProgress).toBe(true);
+
+    await expect(
+      mgr.suspendFrameRendersDuring(async () => {
+        throw new Error('readback failed');
+      })
+    ).rejects.toThrow('readback failed');
+    expect(mgr.isCaptureInProgress).toBe(true);
+
+    finishFirst();
+    await first;
+    expect(mgr.isCaptureInProgress).toBe(false);
+    mgr.dispose();
+  });
+
+  it('does not restart rendering when a pending capture settles after disposal', async () => {
+    const mgr = makeManager();
+    const released = vi.fn();
+    mgr.setCaptureReleasedCallback(released);
+    let finish!: () => void;
+    const capture = mgr.suspendFrameRendersDuring(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        })
+    );
+
+    mgr.dispose();
+    finish();
+    await capture;
+    expect(released).not.toHaveBeenCalled();
+  });
+});
 
 describe('PostProcessingManager → dispose lifecycle', () => {
   beforeEach(() => {
@@ -354,6 +520,11 @@ describe('PostProcessingManager → resize render-target lifecycle', () => {
       scene: new THREE.Scene(),
       camera,
       onResize: vi.fn(),
+      glassSource: {
+        collectRefractingGlass: (out) => out,
+        collectUnpartitionedMeshes: (out) => out,
+        applyGlassPartition: () => 0,
+      },
     });
 
     mgr.setSSAAEnabled(true);
@@ -635,48 +806,6 @@ describe('PostProcessingManager → rebuildAfterContextRestore preserves effect 
     mgr.dispose();
     // Should not re-allocate resources after disposal.
     expect(() => mgr.rebuildAfterContextRestore()).not.toThrow();
-  });
-});
-
-describe('PostProcessingManager → deferred-rebuild depth', () => {
-  beforeEach(() => {
-    materialManager.setCaps(mockCaps('webgl2'));
-  });
-
-  it('matched start/end pairs return depth to zero', () => {
-    const mgr = makeManager();
-    expect(peek(mgr).deferRebuildDepth).toBe(0);
-
-    mgr.startDeferRebuild();
-    mgr.startDeferRebuild();
-    expect(peek(mgr).deferRebuildDepth).toBe(2);
-
-    mgr.endDeferRebuild();
-    mgr.endDeferRebuild();
-    expect(peek(mgr).deferRebuildDepth).toBe(0);
-
-    mgr.dispose();
-  });
-
-  it('withDeferredRebuild always pairs start/end even when fn throws', () => {
-    const mgr = makeManager();
-    expect(() =>
-      mgr.withDeferredRebuild(() => {
-        throw new Error('inner');
-      })
-    ).toThrow('inner');
-    expect(peek(mgr).deferRebuildDepth).toBe(0);
-
-    mgr.dispose();
-  });
-
-  it('endDeferRebuild at depth=0 logs a warning but does not underflow', () => {
-    const mgr = makeManager();
-    mgr.endDeferRebuild();
-    // Depth stays clamped at 0 — no negative depth, no exception.
-    expect(peek(mgr).deferRebuildDepth).toBe(0);
-
-    mgr.dispose();
   });
 });
 

@@ -23,7 +23,7 @@
 import * as THREE from 'three';
 import {
   releaseDepthSortNode,
-  releaseAllDepthSortNodes,
+  type DepthSortCoordinator,
 } from '../../../rendering/depth-sort-coordinator';
 
 /**
@@ -70,17 +70,20 @@ export function disposeObjectTree(obj: THREE.Object3D): void {
  * For each remaining direct child, disposes its full subtree via
  * `disposeObjectTree` and removes it from the scene.
  *
- * This is the dataset-switch teardown, so it ALSO drops every
- * depth-sort registration wholesale: the per-mesh release inside
+ * This is the dataset-switch teardown, so it ALSO drops every one of the
+ * app coordinator's depth-sort registrations: the per-mesh release inside
  * `disposeObjectTree` covers meshes reachable from the scene walk, and
- * `releaseAllDepthSortNodes` sweeps any coordinator/worker state whose
+ * `depthSort.releaseAllNodes()` sweeps any coordinator/worker state whose
  * mesh was never attached (or was detached before the switch) — the old
  * dataset's registrations must not outlive it either way.
  *
  * @returns number of removed objects (for logging by the caller).
  */
-export function clearLoadedSceneContent(scene: THREE.Scene): number {
-  releaseAllDepthSortNodes();
+export function clearLoadedSceneContent(
+  scene: THREE.Scene,
+  depthSort: DepthSortCoordinator
+): number {
+  depthSort.releaseAllNodes();
 
   const objectsToRemove: THREE.Object3D[] = [];
 
@@ -110,14 +113,17 @@ export function clearLoadedSceneContent(scene: THREE.Scene): number {
  *
  * Skips non-renderable Object3Ds; those have nothing to dispose.
  */
-export function disposeSceneGraphResources(scene: THREE.Scene): void {
-  // Defense-in-depth: the canonical teardown (dispose-pipeline) calls
-  // disposeDepthSort() separately, but an embedder driving THIS shutdown
-  // path alone would otherwise leave the module-scoped coordinator map
-  // pinning every sorted mesh (+ geometry + element texture) it ever
-  // registered. Releasing here makes the final-shutdown traversal
-  // self-sufficient; it is a no-op under the wired pipeline.
-  releaseAllDepthSortNodes();
+export function disposeSceneGraphResources(
+  scene: THREE.Scene,
+  depthSort: DepthSortCoordinator
+): void {
+  // Defense-in-depth: the canonical teardown (dispose-pipeline) disposes the
+  // coordinator separately, but an embedder driving THIS shutdown path alone
+  // would otherwise leave the coordinator's node map pinning every sorted mesh
+  // (+ geometry + element texture) it ever registered. Releasing here makes
+  // the final-shutdown traversal self-sufficient; it is a no-op under the
+  // wired pipeline.
+  depthSort.releaseAllNodes();
   scene.traverse((object) => {
     if ('geometry' in object && 'material' in object) {
       const mesh = object as THREE.Mesh;

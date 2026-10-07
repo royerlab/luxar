@@ -1,24 +1,24 @@
 import { DatasetBrowser } from '../../../ui/dataset-browser';
-import { clearError, showError } from '../../../ui/error-overlay';
+import { clearError } from '../../../ui/error-overlay';
+import { showViewerError } from '../error-dialog';
 import { showToast } from '../../../ui/toast';
-import { replaceBrowserDataSourceUrl } from '../../../config/url-params';
 import { log, Modules } from '../../../utils/log';
 import { getViewerContainer } from '../../../utils/viewer-container';
-import { KeyAction, type InputHandler } from '../../../input';
+import type { InputHandler } from '../../../input';
 
 /**
  * Open the dataset browser modal. Returns the new instance so the
  * caller can track it on its own field; the helper never mutates
  * orchestrator state directly. All side effects on the orchestrator
- * (options.src update, datasetBrowser reset, host-URL replacement)
- * flow through the supplied ports.
+ * (options.src update, datasetBrowser reset) flow through the supplied
+ * ports; the host-URL replacement belongs to the guarded switch itself
+ * (`LuxarApp.switchDataset`), so a programmatic switch writes it too.
  *
  * Caller is responsible for checking that no browser is already open
  * before calling this function — re-opening would stack modals.
  */
 export interface ShowDatasetBrowserPorts {
   currentSrc: string | undefined;
-  updateBrowserUrl: boolean;
   inputHandler: InputHandler;
   onSrcChange: (src: string) => void;
   /**
@@ -28,9 +28,8 @@ export interface ShowDatasetBrowserPorts {
   isInitializing: () => boolean;
   /**
    * True while a guarded dataset switch is already in flight. Consulted before
-   * the selection side effects (host-URL replacement, onSrcChange): the
-   * dispatch below will reject, and the host URL or src snapshot must not end
-   * up pointing at a dataset that never loaded.
+   * the `onSrcChange` side effect: the dispatch below will reject, and the src
+   * snapshot must not end up pointing at a dataset that never loaded.
    */
   isSwitchInFlight: () => boolean;
   loadDataset: (src: string) => Promise<void>;
@@ -55,18 +54,11 @@ export function showDatasetBrowser(ports: ShowDatasetBrowserPorts): DatasetBrows
         return false;
       }
 
-      // Selection side effects run only when the guarded switch can actually
+      // The src side effect runs only when the guarded switch can actually
       // start. If another switch is already in flight, `loadDataset` below
-      // rejects — running these first would leave
-      // the host URL and src snapshot pointing at a dataset that never loaded.
+      // rejects — running it first would leave the src snapshot pointing at a
+      // dataset that never loaded. (The host URL is the switch's own job.)
       if (!ports.isSwitchInFlight()) {
-        // Reflect the chosen dataset in the URL bar only for callers that opt in.
-        // The standalone bootstrap opts in; programmatic/embedded usage defaults
-        // to no host-page URL mutation.
-        if (ports.updateBrowserUrl) {
-          replaceBrowserDataSourceUrl(cleanUrl);
-        }
-
         // Track the new src in our options snapshot so a subsequent browser
         // open lands in the right directory.
         ports.onSrcChange(cleanUrl);
@@ -83,10 +75,7 @@ export function showDatasetBrowser(ports: ShowDatasetBrowserPorts): DatasetBrows
       return ports.loadDataset(cleanUrl).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         log.error(Modules.LUXAR, `loadDataset failed for ${cleanUrl}: ${message}`, error);
-        showError(`Failed to load dataset: ${message}`, ports.shortcutForAction, {
-          datasetBrowser: KeyAction.toggleDatasetBrowser,
-          help: KeyAction.toggleHelp,
-        });
+        showViewerError(`Failed to load dataset: ${message}`, ports.shortcutForAction);
         throw error;
       });
     },

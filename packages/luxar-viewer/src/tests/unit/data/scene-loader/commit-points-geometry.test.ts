@@ -10,9 +10,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as THREE from 'three';
 
 const mockNoteDepthSortCommit = vi.fn();
-vi.mock('../../../../rendering/depth-sort-coordinator', () => ({
-  noteDepthSortCommit: (...args: unknown[]) => mockNoteDepthSortCommit(...args),
-}));
 
 import { commitPointsGeometry } from '../../../../data/scene-loader/commit/commit-points-geometry';
 import {
@@ -31,6 +28,20 @@ import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import { configureRenderObjectEviction } from '../../../../data/scene-loader/commit/invalidate-render-object';
 import type { LoadedPointsData } from '../../../../data/data-loader-types';
 import type { NodeFactory } from '../../../../rendering/node-factory';
+import type { DepthSortCoordinator } from '../../../../rendering/depth-sort-coordinator';
+import type { GPUBufferPool } from '../../../../rendering/gpu-buffer-pool';
+
+/** The commit host; its coordinator only records `noteCommit` calls. */
+function testHost(
+  rootGroup: THREE.Group | null,
+  gpuBufferPool: GPUBufferPool | null,
+  nodeFactory: NodeFactory
+) {
+  const depthSort = {
+    noteCommit: (...args: unknown[]) => mockNoteDepthSortCommit(...args),
+  } as unknown as DepthSortCoordinator;
+  return { rootGroup, gpuBufferPool, nodeFactory, depthSort };
+}
 
 function makeData(pointCount: number, withRadii = false): LoadedPointsData {
   return {
@@ -81,7 +92,7 @@ beforeEach(() => {
 describe('commitPointsGeometry', () => {
   it('no-ops when rootGroup is null', () => {
     expect(() =>
-      commitPointsGeometry('/p', makeData(5), null, null, mockNodeFactory, undefined, 0)
+      commitPointsGeometry('/p', makeData(5), testHost(null, null, mockNodeFactory), undefined, 0)
     ).not.toThrow();
   });
 
@@ -90,9 +101,7 @@ describe('commitPointsGeometry', () => {
       commitPointsGeometry(
         '/missing',
         makeData(5),
-        new THREE.Group(),
-        null,
-        mockNodeFactory,
+        testHost(new THREE.Group(), null, mockNodeFactory),
         undefined,
         0
       )
@@ -111,7 +120,7 @@ describe('commitPointsGeometry', () => {
     // existing 0-count geometry takes the dispose+recreate branch (the in-place
     // branch requires pointCount > 0). Pin the actual dispatch AND assert no crash.
     expect(() =>
-      commitPointsGeometry('/p', makeData(0), root, null, mockNodeFactory, undefined, 0)
+      commitPointsGeometry('/p', makeData(0), testHost(root, null, mockNodeFactory), undefined, 0)
     ).not.toThrow();
     expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(0);
     expect(disposeSpy).toHaveBeenCalledTimes(1);
@@ -135,9 +144,7 @@ describe('commitPointsGeometry', () => {
     commitPointsGeometry(
       '/p',
       makeData(3),
-      root,
-      gpuBufferPool as never,
-      mockNodeFactory,
+      testHost(root, gpuBufferPool as never, mockNodeFactory),
       undefined,
       0
     );
@@ -167,9 +174,7 @@ describe('commitPointsGeometry', () => {
     commitPointsGeometry(
       '/p',
       makeData(3),
-      root,
-      gpuBufferPool as never,
-      mockNodeFactory,
+      testHost(root, gpuBufferPool as never, mockNodeFactory),
       undefined,
       0
     );
@@ -195,9 +200,7 @@ describe('commitPointsGeometry', () => {
     commitPointsGeometry(
       '/p',
       makeData(3),
-      root,
-      gpuBufferPool as never,
-      mockNodeFactory,
+      testHost(root, gpuBufferPool as never, mockNodeFactory),
       undefined,
       0
     );
@@ -209,7 +212,7 @@ describe('commitPointsGeometry', () => {
     const root = new THREE.Group();
     const points = makePoints('/p');
     root.add(points);
-    commitPointsGeometry('/p', makeData(3), root, null, mockNodeFactory, undefined, 9);
+    commitPointsGeometry('/p', makeData(3), testHost(root, null, mockNodeFactory), undefined, 9);
     expect((points.userData as { loadedViewVersion?: number }).loadedViewVersion).toBe(9);
   });
 
@@ -221,7 +224,7 @@ describe('commitPointsGeometry', () => {
     const disposeSpy = vi.spyOn(oldGeom, 'dispose');
 
     // Existing geometry has 0 positions; new data has 3 → counts differ.
-    commitPointsGeometry('/p', makeData(3), root, null, mockNodeFactory, undefined, 0);
+    commitPointsGeometry('/p', makeData(3), testHost(root, null, mockNodeFactory), undefined, 0);
     expect(disposeSpy).toHaveBeenCalledTimes(1);
     expect(mockCreatePointsGeometry).toHaveBeenCalledTimes(1);
   });
@@ -235,12 +238,12 @@ describe('commitPointsGeometry', () => {
     const root = new THREE.Group();
     const points = makePoints('/p');
     root.add(points);
-    commitPointsGeometry('/p', makeData(3), root, null, mockNodeFactory, undefined, 0);
+    commitPointsGeometry('/p', makeData(3), testHost(root, null, mockNodeFactory), undefined, 0);
     const firstGeometry = points.geometry;
     const disposeSpy = vi.spyOn(firstGeometry, 'dispose');
     mockCreatePointsGeometry.mockClear();
 
-    commitPointsGeometry('/p', makeData(3), root, null, mockNodeFactory, undefined, 1);
+    commitPointsGeometry('/p', makeData(3), testHost(root, null, mockNodeFactory), undefined, 1);
     expect(mockCreatePointsGeometry).toHaveBeenCalledTimes(1);
     expect(disposeSpy).toHaveBeenCalledTimes(1);
     expect(points.geometry).not.toBe(firstGeometry);
@@ -263,9 +266,7 @@ describe('commitPointsGeometry', () => {
     commitPointsGeometry(
       '/p',
       makeData(3, /*withRadii=*/ true),
-      root,
-      null,
-      realNodeFactory,
+      testHost(root, null, realNodeFactory),
       undefined,
       0
     );
@@ -296,12 +297,12 @@ describe('commitPointsGeometry — non-pool path against REAL factory geometry',
     const points = makePoints('/p');
     root.add(points);
 
-    commitPointsGeometry('/p', makeData(3), root, null, realNodeFactory, undefined, 0);
+    commitPointsGeometry('/p', makeData(3), testHost(root, null, realNodeFactory), undefined, 0);
 
     const second = makeData(3); // fresh reference (no no-op skip), same count
     second.positions[0] = 7;
     expect(() =>
-      commitPointsGeometry('/p', second, root, null, realNodeFactory, undefined, 1)
+      commitPointsGeometry('/p', second, testHost(root, null, realNodeFactory), undefined, 1)
     ).not.toThrow();
 
     // Per-point data lives in the point texture: center.x is float 0 of
@@ -318,12 +319,12 @@ describe('commitPointsGeometry — non-pool path against REAL factory geometry',
 
     const first = makeData(3);
     first.colors = new Uint16Array(9).fill(65535);
-    commitPointsGeometry('/p', first, root, null, realNodeFactory, undefined, 0);
+    commitPointsGeometry('/p', first, testHost(root, null, realNodeFactory), undefined, 0);
 
     const second = makeData(3);
     second.colors = new Uint16Array(9).fill(65535);
     second.positions[0] = 1;
-    commitPointsGeometry('/p', second, root, null, realNodeFactory, undefined, 1);
+    commitPointsGeometry('/p', second, testHost(root, null, realNodeFactory), undefined, 1);
 
     // Uint16 sources widen into the texture with the ÷65535 divisor, so
     // 65535 lands as exactly 1.0 in texel 1's color slots. A ÷255
@@ -349,7 +350,7 @@ describe('commitPointsGeometry — non-pool path against REAL factory geometry',
         (points.material as unknown as Record<symbol, boolean>)[SOFT_DISPOSE_FLAG] === true;
     });
 
-    commitPointsGeometry('/p', makeData(3), root, null, realNodeFactory, undefined, 0);
+    commitPointsGeometry('/p', makeData(3), testHost(root, null, realNodeFactory), undefined, 0);
     expect(sawSoftDispose).toBe(true);
   });
 });
@@ -378,7 +379,13 @@ describe('commitPointsGeometry — exception-window ownership handoff', () => {
 
     const data = makeData(3);
     expect(() =>
-      commitPointsGeometry('/p', data, root, gpuBufferPool as never, mockNodeFactory, undefined, 0)
+      commitPointsGeometry(
+        '/p',
+        data,
+        testHost(root, gpuBufferPool as never, mockNodeFactory),
+        undefined,
+        0
+      )
     ).toThrow('upload failed');
 
     expect(points.geometry).toBe(newGeometry);
@@ -403,7 +410,13 @@ describe('commitPointsGeometry — exception-window ownership handoff', () => {
       didLastAcquireRebuildAttributes: vi.fn(() => false),
     };
     const first = makeData(2);
-    commitPointsGeometry('/p', first, root, gpuBufferPool as never, mockNodeFactory, undefined, 1);
+    commitPointsGeometry(
+      '/p',
+      first,
+      testHost(root, gpuBufferPool as never, mockNodeFactory),
+      undefined,
+      1
+    );
     expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(2);
 
     gpuBufferPool.updatePointsGeometry.mockImplementation(() => {
@@ -413,9 +426,7 @@ describe('commitPointsGeometry — exception-window ownership handoff', () => {
       commitPointsGeometry(
         '/p',
         makeData(5),
-        root,
-        gpuBufferPool as never,
-        mockNodeFactory,
+        testHost(root, gpuBufferPool as never, mockNodeFactory),
         undefined,
         2
       )
@@ -448,9 +459,7 @@ describe('commitPointsGeometry — exception-window ownership handoff', () => {
     commitPointsGeometry(
       '/p',
       makeData(2),
-      root,
-      gpuBufferPool as never,
-      mockNodeFactory,
+      testHost(root, gpuBufferPool as never, mockNodeFactory),
       undefined,
       1
     );
@@ -463,9 +472,7 @@ describe('commitPointsGeometry — exception-window ownership handoff', () => {
       commitPointsGeometry(
         '/p',
         makeData(5),
-        root,
-        gpuBufferPool as never,
-        mockNodeFactory,
+        testHost(root, gpuBufferPool as never, mockNodeFactory),
         undefined,
         2
       )
@@ -492,7 +499,7 @@ describe('commitPointsGeometry — exception-window ownership handoff', () => {
     } as unknown as NodeFactory;
 
     expect(() =>
-      commitPointsGeometry('/p', makeData(3), root, null, throwingFactory, undefined, 0)
+      commitPointsGeometry('/p', makeData(3), testHost(root, null, throwingFactory), undefined, 0)
     ).toThrow('malformed data');
 
     expect(points.geometry).toBe(prevGeometry);
@@ -510,7 +517,7 @@ describe('commitPointsGeometry — no-op commit skip (committedData)', () => {
     // `elementIdMap` stamp (issue #1421/#1423), written in lockstep with
     // `committedData`, so pin both here.
     data.elementIds = new Uint32Array([2048, 2049, 4096]);
-    commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 4);
+    commitPointsGeometry('/p', data, testHost(root, null, mockNodeFactory), undefined, 4);
     expect((points.userData as { committedData?: unknown }).committedData).toBe(data);
     expect(getCommittedData(points) as LoadedPointsData).toBe(data);
     expect(getElementIdMap(points)).toBe(data.elementIds);
@@ -524,7 +531,7 @@ describe('commitPointsGeometry — no-op commit skip (committedData)', () => {
 
     const data = makeData(3);
     expect(data.elementIds).toBeUndefined();
-    commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 5);
+    commitPointsGeometry('/p', data, testHost(root, null, mockNodeFactory), undefined, 5);
 
     // Left in place, the old map would describe geometry that is no longer on
     // the GPU — a silently wrong label rather than "no answer".
@@ -537,11 +544,11 @@ describe('commitPointsGeometry — no-op commit skip (committedData)', () => {
     const points = makePoints('/p');
     root.add(points);
     const data = makeData(3);
-    commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 4);
+    commitPointsGeometry('/p', data, testHost(root, null, mockNodeFactory), undefined, 4);
     const geometryAfterFirst = points.geometry;
     mockCreatePointsGeometry.mockClear();
 
-    commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 9);
+    commitPointsGeometry('/p', data, testHost(root, null, mockNodeFactory), undefined, 9);
 
     // Geometry untouched, no rebuild dispatched, stamp refreshed.
     expect(points.geometry).toBe(geometryAfterFirst);
@@ -554,11 +561,11 @@ describe('commitPointsGeometry — no-op commit skip (committedData)', () => {
     const points = makePoints('/p');
     root.add(points);
     const first = makeData(3);
-    commitPointsGeometry('/p', first, root, null, mockNodeFactory, undefined, 4);
+    commitPointsGeometry('/p', first, testHost(root, null, mockNodeFactory), undefined, 4);
     mockCreatePointsGeometry.mockClear();
 
     const second = makeData(5); // different reference AND count → rebuild path
-    commitPointsGeometry('/p', second, root, null, mockNodeFactory, undefined, 5);
+    commitPointsGeometry('/p', second, testHost(root, null, mockNodeFactory), undefined, 5);
 
     expect(mockCreatePointsGeometry).toHaveBeenCalledTimes(1);
     expect((points.userData as { committedData?: unknown }).committedData).toBe(second);
@@ -589,9 +596,7 @@ describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstan
     commitPointsGeometry(
       '/p',
       makeData(prevCount),
-      root,
-      pool as never,
-      mockNodeFactory,
+      testHost(root, pool as never, mockNodeFactory),
       undefined,
       0
     );
@@ -606,7 +611,7 @@ describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstan
     root.add(makePoints('/p'));
     const pool = makePool(new THREE.BufferGeometry());
     const next = primeAndExtend(root, pool, 4, 6);
-    commitPointsGeometry('/p', next, root, pool as never, mockNodeFactory, undefined, 1);
+    commitPointsGeometry('/p', next, testHost(root, pool as never, mockNodeFactory), undefined, 1);
     expect(lastOpts(pool).fromInstance).toBe(4);
     // Positive-path bookkeeping stamp re-enables the NEXT append.
     expect((root.children[0].userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact).toBe(true);
@@ -615,13 +620,39 @@ describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstan
     expect(getPrefixParent(next)).toBeUndefined();
   });
 
+  it('consumes the lineage entry on the NON-pool path too', () => {
+    // The consume-and-clear ran only in the pool branch, so a non-pool commit
+    // kept the parent concat's CPU arrays pinned for as long as the payload
+    // lived (prefix-lineage.ts retention contract).
+    const root = new THREE.Group();
+    root.add(makePoints('/p'));
+    commitPointsGeometry('/p', makeData(4), testHost(root, null, mockNodeFactory), undefined, 0);
+    const committed = (root.children[0].userData as { committedData: object }).committedData;
+    const next = makeData(6);
+    setPrefixParent(next, committed);
+    commitPointsGeometry('/p', next, testHost(root, null, mockNodeFactory), undefined, 1);
+    expect(getPrefixParent(next)).toBeUndefined();
+  });
+
   it('does NOT append (fromInstance 0) when there is no prefix lineage (unrelated reload)', () => {
     const root = new THREE.Group();
     root.add(makePoints('/p'));
     const pool = makePool(new THREE.BufferGeometry());
-    commitPointsGeometry('/p', makeData(4), root, pool as never, mockNodeFactory, undefined, 0);
+    commitPointsGeometry(
+      '/p',
+      makeData(4),
+      testHost(root, pool as never, mockNodeFactory),
+      undefined,
+      0
+    );
     // A larger commit with NO lineage stamp: full rewrite.
-    commitPointsGeometry('/p', makeData(6), root, pool as never, mockNodeFactory, undefined, 1);
+    commitPointsGeometry(
+      '/p',
+      makeData(6),
+      testHost(root, pool as never, mockNodeFactory),
+      undefined,
+      1
+    );
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
@@ -631,7 +662,7 @@ describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstan
     const pool = makePool(new THREE.BufferGeometry());
     const next = primeAndExtend(root, pool, 4, 6);
     (root.children[0].userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact = false;
-    commitPointsGeometry('/p', next, root, pool as never, mockNodeFactory, undefined, 1);
+    commitPointsGeometry('/p', next, testHost(root, pool as never, mockNodeFactory), undefined, 1);
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
@@ -643,7 +674,7 @@ describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstan
     // Grow handed back a different geometry with rebuilt attributes.
     pool.acquirePointsGeometry.mockReturnValue(new THREE.BufferGeometry());
     pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
-    commitPointsGeometry('/p', next, root, pool as never, mockNodeFactory, undefined, 1);
+    commitPointsGeometry('/p', next, testHost(root, pool as never, mockNodeFactory), undefined, 1);
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
@@ -652,11 +683,17 @@ describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstan
     root.add(makePoints('/p'));
     const pool = makePool(new THREE.BufferGeometry());
     const same = primeAndExtend(root, pool, 5, 5); // same count, lineage set
-    commitPointsGeometry('/p', same, root, pool as never, mockNodeFactory, undefined, 1);
+    commitPointsGeometry('/p', same, testHost(root, pool as never, mockNodeFactory), undefined, 1);
     expect(lastOpts(pool).fromInstance).toBe(0);
     const shrunk = makeData(3);
     setPrefixParent(shrunk, (root.children[0].userData as { committedData: object }).committedData);
-    commitPointsGeometry('/p', shrunk, root, pool as never, mockNodeFactory, undefined, 2);
+    commitPointsGeometry(
+      '/p',
+      shrunk,
+      testHost(root, pool as never, mockNodeFactory),
+      undefined,
+      2
+    );
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
@@ -672,16 +709,14 @@ describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstan
     commitPointsGeometry(
       '/p',
       makeData(4, /*withRadii=*/ true),
-      root,
-      pool as never,
-      mockNodeFactory,
+      testHost(root, pool as never, mockNodeFactory),
       undefined,
       0
     );
     const committed = (root.children[0].userData as { committedData: object }).committedData;
     const next = makeData(6, /*withRadii=*/ false); // radii dropped
     setPrefixParent(next, committed);
-    commitPointsGeometry('/p', next, root, pool as never, mockNodeFactory, undefined, 1);
+    commitPointsGeometry('/p', next, testHost(root, pool as never, mockNodeFactory), undefined, 1);
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
@@ -714,16 +749,20 @@ describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstan
       commitPointsGeometry(
         '/p',
         makeDataWithField(4, field, /*present=*/ true),
-        root,
-        pool as never,
-        mockNodeFactory,
+        testHost(root, pool as never, mockNodeFactory),
         undefined,
         0
       );
       const committed = (root.children[0].userData as { committedData: object }).committedData;
       const next = makeDataWithField(6, field, /*present=*/ false); // field dropped
       setPrefixParent(next, committed);
-      commitPointsGeometry('/p', next, root, pool as never, mockNodeFactory, undefined, 1);
+      commitPointsGeometry(
+        '/p',
+        next,
+        testHost(root, pool as never, mockNodeFactory),
+        undefined,
+        1
+      );
       expect(lastOpts(pool).fromInstance, `presence flip: ${field}`).toBe(0);
     }
   });
@@ -737,7 +776,13 @@ describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstan
     root.add(makePoints('/p'));
     const pool = makePool(new THREE.BufferGeometry());
     // Committed prefix: RGB (colorComponents unset → 3).
-    commitPointsGeometry('/p', makeData(4), root, pool as never, mockNodeFactory, undefined, 0);
+    commitPointsGeometry(
+      '/p',
+      makeData(4),
+      testHost(root, pool as never, mockNodeFactory),
+      undefined,
+      0
+    );
     const committed = (root.children[0].userData as { committedData: object }).committedData;
     // Genuine extension in every other respect — lineage intact, count grew,
     // colors present — but declared RGBA.
@@ -745,7 +790,7 @@ describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstan
     next.colors = new Uint8Array(6 * 4);
     next.colorComponents = 4;
     setPrefixParent(next, committed);
-    commitPointsGeometry('/p', next, root, pool as never, mockNodeFactory, undefined, 1);
+    commitPointsGeometry('/p', next, testHost(root, pool as never, mockNodeFactory), undefined, 1);
     expect(lastOpts(pool).fromInstance).toBe(0); // full rewrite, not an append
   });
 
@@ -761,8 +806,66 @@ describe('commitPointsGeometry — append fast path (Phase 4 Stage 2, fromInstan
     pool.acquirePointsGeometry.mockReturnValue(new THREE.BufferGeometry());
     // didLastAcquireRebuildAttributes stays FALSE (makePool default) — the
     // geometry-identity conjunct must gate alone.
-    commitPointsGeometry('/p', next, root, pool as never, mockNodeFactory, undefined, 1);
+    commitPointsGeometry('/p', next, testHost(root, pool as never, mockNodeFactory), undefined, 1);
     expect(lastOpts(pool).fromInstance).toBe(0);
+  });
+  // A pool GROW (every ladder rung that doubles crosses the 1.5x capacity
+  // headroom) cannot append, and the fresh geometry would otherwise draw the
+  // whole node in storage order until the worker's sort lands. When the commit
+  // provably extends the drawn population, the previous geometry's drawn
+  // permutation is an exact ordering of the new prefix (gsplats parity).
+  const sortedGeometry = (ordering: number[], capacity = 8): THREE.InstancedBufferGeometry => {
+    const g = new THREE.InstancedBufferGeometry();
+    const a = new Uint32Array(capacity);
+    a.set(ordering);
+    g.setAttribute('aSortedIndex', new THREE.InstancedBufferAttribute(a, 1));
+    g.setAttribute(
+      'aSortedIndexB',
+      new THREE.InstancedBufferAttribute(new Uint32Array(capacity), 1)
+    );
+    g.instanceCount = ordering.length;
+    return g;
+  };
+  const seedOf = (pool: ReturnType<typeof makePool>): number[] | undefined => {
+    const opts = (pool.updatePointsGeometry.mock.calls.at(-1) as unknown[])[3] as {
+      seedOrdering?: Uint32Array;
+    };
+    return opts.seedOrdering ? Array.from(opts.seedOrdering) : undefined;
+  };
+
+  it('a grow that extends the drawn population seeds the new geometry with its drawn order', () => {
+    const root = new THREE.Group();
+    root.add(makePoints('/p'));
+    const pool = makePool(sortedGeometry([3, 2, 1, 0]));
+    const next = primeAndExtend(root, pool, 4, 6);
+    pool.acquirePointsGeometry.mockReturnValue(new THREE.InstancedBufferGeometry());
+    pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
+    commitPointsGeometry('/p', next, testHost(root, pool as never, mockNodeFactory), undefined, 1);
+    expect(lastOpts(pool).fromInstance).toBe(0);
+    expect(seedOf(pool)).toEqual([3, 2, 1, 0]);
+  });
+
+  it('a grow WITHOUT prefix lineage gets no seed (the prefix is not the same points)', () => {
+    const root = new THREE.Group();
+    root.add(makePoints('/p'));
+    const pool = makePool(sortedGeometry([3, 2, 1, 0]));
+    commitPointsGeometry(
+      '/p',
+      makeData(4),
+      testHost(root, pool as never, mockNodeFactory),
+      undefined,
+      0
+    );
+    pool.acquirePointsGeometry.mockReturnValue(new THREE.InstancedBufferGeometry());
+    pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
+    commitPointsGeometry(
+      '/p',
+      makeData(6),
+      testHost(root, pool as never, mockNodeFactory),
+      undefined,
+      1
+    );
+    expect(seedOf(pool)).toBeUndefined();
   });
 });
 
@@ -775,7 +878,7 @@ describe('commitPointsGeometry — committedLadderComplete stamp', () => {
     const points = makePoints('/p');
     points.userData.loader = { hasMoreLODs: true };
     root.add(points);
-    commitPointsGeometry('/p', makeData(3), root, null, mockNodeFactory, undefined, 0);
+    commitPointsGeometry('/p', makeData(3), testHost(root, null, mockNodeFactory), undefined, 0);
     expect(ladderComplete(points)).toBe(false);
   });
 
@@ -785,7 +888,7 @@ describe('commitPointsGeometry — committedLadderComplete stamp', () => {
       const points = makePoints('/p');
       if (loader) points.userData.loader = loader;
       root.add(points);
-      commitPointsGeometry('/p', makeData(2), root, null, mockNodeFactory, undefined, 0);
+      commitPointsGeometry('/p', makeData(2), testHost(root, null, mockNodeFactory), undefined, 0);
       expect(ladderComplete(points)).toBe(true);
     }
   });
@@ -796,10 +899,10 @@ describe('commitPointsGeometry — committedLadderComplete stamp', () => {
     points.userData.loader = { hasMoreLODs: true };
     root.add(points);
     const data = makeData(3);
-    commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 1);
+    commitPointsGeometry('/p', data, testHost(root, null, mockNodeFactory), undefined, 1);
     // Force a stale stamp, then recommit the SAME reference → stamp-only path.
     points.userData.committedLadderComplete = true;
-    commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 2);
+    commitPointsGeometry('/p', data, testHost(root, null, mockNodeFactory), undefined, 2);
     expect(ladderComplete(points)).toBe(false); // refreshed from the live loader
   });
 });
@@ -813,7 +916,7 @@ describe('commitPointsGeometry — committedEnergyFraction stamp', () => {
     const points = makePoints('/p');
     points.userData.loader = { hasMoreLODs: true, committedEnergyFraction: 0.42 };
     root.add(points);
-    commitPointsGeometry('/p', makeData(3), root, null, mockNodeFactory, undefined, 0);
+    commitPointsGeometry('/p', makeData(3), testHost(root, null, mockNodeFactory), undefined, 0);
     expect(energy(points)).toBe(0.42);
   });
 
@@ -823,14 +926,14 @@ describe('commitPointsGeometry — committedEnergyFraction stamp', () => {
     points.userData.loader = { hasMoreLODs: true, committedEnergyFraction: null };
     points.userData.committedEnergyFraction = 0.9; // stale
     root.add(points);
-    commitPointsGeometry('/p', makeData(3), root, null, mockNodeFactory, undefined, 0);
+    commitPointsGeometry('/p', makeData(3), testHost(root, null, mockNodeFactory), undefined, 0);
     expect(energy(points)).toBeUndefined();
 
     const root2 = new THREE.Group();
     const plain = makePoints('/p');
     plain.userData.loader = {};
     root2.add(plain);
-    commitPointsGeometry('/p', makeData(2), root2, null, mockNodeFactory, undefined, 0);
+    commitPointsGeometry('/p', makeData(2), testHost(root2, null, mockNodeFactory), undefined, 0);
     expect(energy(plain)).toBe(1);
   });
 });
@@ -853,7 +956,7 @@ describe('commitPointsGeometry — depth-sort integration (points sort registrat
     const data = makeData(3);
     (data.positions as Float32Array).set([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     const pool = makePool(new THREE.BufferGeometry());
-    commitPointsGeometry('/p', data, root, pool as never, mockNodeFactory, undefined, 0);
+    commitPointsGeometry('/p', data, testHost(root, pool as never, mockNodeFactory), undefined, 0);
 
     expect(mockNoteDepthSortCommit).toHaveBeenCalledTimes(1);
     const [mesh, provider, count] = mockNoteDepthSortCommit.mock.calls[0] as [
@@ -879,7 +982,7 @@ describe('commitPointsGeometry — depth-sort integration (points sort registrat
     const root = new THREE.Group();
     const points = makePoints('/p');
     root.add(points);
-    commitPointsGeometry('/p', makeData(4), root, null, mockNodeFactory, undefined, 0);
+    commitPointsGeometry('/p', makeData(4), testHost(root, null, mockNodeFactory), undefined, 0);
     expect(mockNoteDepthSortCommit).toHaveBeenCalledTimes(1);
     expect(mockNoteDepthSortCommit.mock.calls[0][0]).toBe(points);
     expect(mockNoteDepthSortCommit.mock.calls[0][2]).toBe(4);
@@ -899,7 +1002,7 @@ describe('commitPointsGeometry — depth-sort integration (points sort registrat
     const values = [0.5, 1.5, -2, 3, -0.25, 8];
     data.positions = (F16 ? new F16(values) : new Float64Array(values)) as never;
     const pool = makePool(new THREE.BufferGeometry());
-    commitPointsGeometry('/p', data, root, pool as never, mockNodeFactory, undefined, 0);
+    commitPointsGeometry('/p', data, testHost(root, pool as never, mockNodeFactory), undefined, 0);
 
     const provider = mockNoteDepthSortCommit.mock.calls[0][1] as () => Float32Array;
     const centers = provider();
@@ -908,7 +1011,7 @@ describe('commitPointsGeometry — depth-sort integration (points sort registrat
   });
 
   it('is success-only: a throwing GPU write must NOT bump the sort generation', () => {
-    // Mirrors the gsplats ordering (noteDepthSortCommit after the write
+    // Mirrors the gsplats ordering (`depthSort.noteCommit` after the write
     // block): the buffer holds partially-written data, committedData was
     // not stamped, and the next commit full-rewrites + registers.
     const root = new THREE.Group();
@@ -919,7 +1022,13 @@ describe('commitPointsGeometry — depth-sort integration (points sort registrat
       throw new Error('device lost');
     });
     expect(() =>
-      commitPointsGeometry('/p', makeData(3), root, pool as never, mockNodeFactory, undefined, 0)
+      commitPointsGeometry(
+        '/p',
+        makeData(3),
+        testHost(root, pool as never, mockNodeFactory),
+        undefined,
+        0
+      )
     ).toThrow('device lost');
     expect(mockNoteDepthSortCommit).not.toHaveBeenCalled();
   });
@@ -929,11 +1038,11 @@ describe('commitPointsGeometry — depth-sort integration (points sort registrat
     const points = makePoints('/p');
     root.add(points);
     const data = makeData(3);
-    commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 0);
+    commitPointsGeometry('/p', data, testHost(root, null, mockNodeFactory), undefined, 0);
     expect(mockNoteDepthSortCommit).toHaveBeenCalledTimes(1);
     // SAME reference again: the no-op path must not bump the generation
     // (spec §5 generation contract, shared with the gsplats staged.noop).
-    commitPointsGeometry('/p', data, root, null, mockNodeFactory, undefined, 1);
+    commitPointsGeometry('/p', data, testHost(root, null, mockNodeFactory), undefined, 1);
     expect(mockNoteDepthSortCommit).toHaveBeenCalledTimes(1);
   });
 
@@ -941,7 +1050,7 @@ describe('commitPointsGeometry — depth-sort integration (points sort registrat
     const root = new THREE.Group();
     const points = makePoints('/p');
     root.add(points);
-    commitPointsGeometry('/p', makeData(0), root, null, mockNodeFactory, undefined, 0);
+    commitPointsGeometry('/p', makeData(0), testHost(root, null, mockNodeFactory), undefined, 0);
     expect(mockNoteDepthSortCommit).toHaveBeenCalledTimes(1);
     expect(mockNoteDepthSortCommit.mock.calls[0][2]).toBe(0);
   });
@@ -961,14 +1070,26 @@ describe('commitPointsGeometry — depth-sort integration (points sort registrat
       const points = makePoints('/p');
       root.add(points);
       const pool = makePool(new THREE.BufferGeometry());
-      commitPointsGeometry('/p', makeData(100), root, pool as never, mockNodeFactory, undefined, 0);
+      commitPointsGeometry(
+        '/p',
+        makeData(100),
+        testHost(root, pool as never, mockNodeFactory),
+        undefined,
+        0
+      );
 
       expect((points.userData as { visiblePointCount: number }).visiblePointCount).toBe(12);
       expect((points.userData as { requestedElementCount: number }).requestedElementCount).toBe(
         100
       );
       expect((points.userData as { droppedElementCount: number }).droppedElementCount).toBe(88);
-      commitPointsGeometry('/p', makeData(5), root, pool as never, mockNodeFactory, undefined, 1);
+      commitPointsGeometry(
+        '/p',
+        makeData(5),
+        testHost(root, pool as never, mockNodeFactory),
+        undefined,
+        1
+      );
       expect((points.userData as { requestedElementCount: number }).requestedElementCount).toBe(5);
       expect((points.userData as { droppedElementCount: number }).droppedElementCount).toBe(0);
       const [, provider, count] = mockNoteDepthSortCommit.mock.calls[0] as [
@@ -1002,13 +1123,25 @@ describe('commitPointsGeometry — preserve-ordering on same-node same-count rec
     const pool = makePool(new THREE.BufferGeometry());
     // First commit: no committedData stamp yet → the geometry's ordering
     // is unvouched-for, identity must be written.
-    commitPointsGeometry('/p', makeData(7), root, pool as never, mockNodeFactory, undefined, 0);
+    commitPointsGeometry(
+      '/p',
+      makeData(7),
+      testHost(root, pool as never, mockNodeFactory),
+      undefined,
+      0
+    );
     expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
     // Same-node same-count recommit on the SAME pooled geometry: the
     // previous permutation of [0,7) is still valid — keep it as a
     // no-worse prior until the commit-triggered re-sort lands. Equal
     // count is NOT an append, so fromInstance stays 0.
-    commitPointsGeometry('/p', makeData(7), root, pool as never, mockNodeFactory, undefined, 1);
+    commitPointsGeometry(
+      '/p',
+      makeData(7),
+      testHost(root, pool as never, mockNodeFactory),
+      undefined,
+      1
+    );
     expect(lastOpts(pool)).toEqual({ preserveOrdering: true, fromInstance: 0 });
   });
 
@@ -1016,7 +1149,13 @@ describe('commitPointsGeometry — preserve-ordering on same-node same-count rec
     const root = new THREE.Group();
     root.add(makePoints('/p'));
     const pool = makePool(new THREE.BufferGeometry());
-    commitPointsGeometry('/p', makeData(7), root, pool as never, mockNodeFactory, undefined, 0);
+    commitPointsGeometry(
+      '/p',
+      makeData(7),
+      testHost(root, pool as never, mockNodeFactory),
+      undefined,
+      0
+    );
     // A permutation of [0,7) is not a permutation of [0,9) — true, and the
     // reason `preserveOrdering` stays false. But it is REBUILT over the new
     // population rather than given up: `repairFromCount` carries the previous
@@ -1024,7 +1163,13 @@ describe('commitPointsGeometry — preserve-ordering on same-node same-count rec
     // of falling back to storage order. This is the branch an nD re-slice
     // actually takes at almost every step, and the unsorted frame it used to
     // draw is #2290's per-timepoint flash.
-    commitPointsGeometry('/p', makeData(9), root, pool as never, mockNodeFactory, undefined, 1);
+    commitPointsGeometry(
+      '/p',
+      makeData(9),
+      testHost(root, pool as never, mockNodeFactory),
+      undefined,
+      1
+    );
     expect(lastOpts(pool)).toEqual({
       preserveOrdering: false,
       repairFromCount: 7,
@@ -1037,9 +1182,21 @@ describe('commitPointsGeometry — preserve-ordering on same-node same-count rec
     const points = makePoints('/p');
     root.add(points);
     const pool = makePool(new THREE.BufferGeometry());
-    commitPointsGeometry('/p', makeData(7), root, pool as never, mockNodeFactory, undefined, 0);
+    commitPointsGeometry(
+      '/p',
+      makeData(7),
+      testHost(root, pool as never, mockNodeFactory),
+      undefined,
+      0
+    );
     delete (points.userData as { committedData?: unknown }).committedData;
-    commitPointsGeometry('/p', makeData(7), root, pool as never, mockNodeFactory, undefined, 1);
+    commitPointsGeometry(
+      '/p',
+      makeData(7),
+      testHost(root, pool as never, mockNodeFactory),
+      undefined,
+      1
+    );
     expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
   });
 
@@ -1047,13 +1204,25 @@ describe('commitPointsGeometry — preserve-ordering on same-node same-count rec
     const root = new THREE.Group();
     root.add(makePoints('/p'));
     const pool = makePool(new THREE.BufferGeometry());
-    commitPointsGeometry('/p', makeData(7), root, pool as never, mockNodeFactory, undefined, 0);
+    commitPointsGeometry(
+      '/p',
+      makeData(7),
+      testHost(root, pool as never, mockNodeFactory),
+      undefined,
+      0
+    );
     // Best-fit reuse handed the node a DIFFERENT geometry (holding some
     // other node's permutation over a different prior count) and reported
     // an attribute rebuild — identity must be written.
     pool.acquirePointsGeometry.mockReturnValue(new THREE.BufferGeometry());
     pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
-    commitPointsGeometry('/p', makeData(7), root, pool as never, mockNodeFactory, undefined, 1);
+    commitPointsGeometry(
+      '/p',
+      makeData(7),
+      testHost(root, pool as never, mockNodeFactory),
+      undefined,
+      1
+    );
     expect(lastOpts(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
   });
 });

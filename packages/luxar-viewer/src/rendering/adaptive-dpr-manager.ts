@@ -504,9 +504,7 @@ export class AdaptiveDPRManager {
     // Tracking the old ceiling means "follow the new one"; anything else
     // is an explicit reduction/manual value, kept but clamped.
     const wasTrackingCeiling = Math.abs(this.currentDPR - previousCeiling) < 0.01;
-    this.currentDPR = wasTrackingCeiling ? newCeiling : Math.min(this.currentDPR, newCeiling);
-    this.applyDPR();
-    this.isReducedResolution = this.currentDPR < newCeiling * 0.95;
+    this.transitionTo(wasTrackingCeiling ? newCeiling : Math.min(this.currentDPR, newCeiling));
 
     log.info(
       Modules.ADAPTIVE_DPR,
@@ -514,10 +512,6 @@ export class AdaptiveDPRManager {
         `cap ${previousCap} → ${liveCap}); rebased (DPR ${this.currentDPR.toFixed(2)}, ` +
         `ceiling ${newCeiling.toFixed(2)}, floor/probe/FPS state cleared)`
     );
-
-    if (this.onDPRChange) {
-      this.onDPRChange(this.currentDPR, this.isReducedResolution);
-    }
     return live;
   }
 
@@ -865,9 +859,7 @@ export class AdaptiveDPRManager {
 
     // Rejected: revert and floor (repeated identical rejections
     // escalate the retry TTL exponentially — see BoundsLedger).
-    this.currentDPR = probe.previousDPR;
-    this.isReducedResolution = this.currentDPR < this.ceiling() * 0.95;
-    this.applyDPR();
+    this.transitionTo(probe.previousDPR);
     const ttlMs = this.boundsLedger.recordRejection(probe.probedDPR, timestamp);
 
     log.warning(
@@ -882,10 +874,6 @@ export class AdaptiveDPRManager {
           : '') +
         '.'
     );
-
-    if (this.onDPRChange) {
-      this.onDPRChange(this.currentDPR, this.isReducedResolution);
-    }
   }
 
   /**
@@ -954,12 +942,8 @@ export class AdaptiveDPRManager {
     if (Math.abs(newDPR - this.currentDPR) < 0.01) return;
 
     const previousDPR = this.currentDPR;
-    this.currentDPR = newDPR;
-    this.applyDPR();
+    this.transitionTo(newDPR);
     this.scaleDownCount += 1;
-
-    // Update reduced resolution mode status
-    this.isReducedResolution = newDPR < this.ceiling() * 0.95;
 
     log.custom(
       LogEmoji.PERFORMANCE,
@@ -984,11 +968,6 @@ export class AdaptiveDPRManager {
         startTime: timestamp,
       });
     }
-
-    // Notify callback
-    if (this.onDPRChange) {
-      this.onDPRChange(newDPR, this.isReducedResolution);
-    }
   }
 
   /**
@@ -1008,13 +987,7 @@ export class AdaptiveDPRManager {
     );
     if (this.currentDPR <= 1.0 + 0.001) return;
 
-    this.currentDPR = 1.0;
-    this.isReducedResolution = this.currentDPR < this.ceiling() * 0.95;
-    this.applyDPR();
-
-    if (this.onDPRChange) {
-      this.onDPRChange(this.currentDPR, this.isReducedResolution);
-    }
+    this.transitionTo(1.0);
   }
 
   /**
@@ -1042,31 +1015,37 @@ export class AdaptiveDPRManager {
     this.boundsLedger.recordAscent(newDPR, timestamp);
     this.scaleUpCount += 1;
 
-    this.currentDPR = newDPR;
-    this.applyDPR();
-
-    // Update reduced resolution mode status
-    this.isReducedResolution = newDPR < this.ceiling() * 0.95;
+    this.transitionTo(newDPR);
 
     log.custom(
       LogEmoji.PERFORMANCE,
       Modules.ADAPTIVE_DPR,
       `Scaled up: DPR ${newDPR.toFixed(2)} (FPS: ${fps.toFixed(1)})`
     );
-
-    // Notify callback
-    if (this.onDPRChange) {
-      this.onDPRChange(newDPR, this.isReducedResolution);
-    }
   }
 
   /**
-   * Apply current DPR to renderer
+   * The ONE commit path for an operating-DPR change: record it, push it to
+   * the renderer, and tell the DPR-change listener (the resolution
+   * indicator). Every transition — adaptation, probe revert, ceiling
+   * demotion or rebase, manual value, enable/disable, idle rest and resume —
+   * goes through here, so none of them can skip the notify.
+   *
+   * @param dpr - The new operating DPR.
+   * @param options.reduced - Override the reduced-resolution flag (default:
+   *   below 95% of the live ceiling).
+   * @param options.ifMoved - Record and apply only when `dpr` differs from the
+   *   current DPR by at least 0.01: the renderer resize reallocates targets
+   *   and clears the canvas, which an unchanged value must not pay. The
+   *   listener is notified either way.
    */
-  private applyDPR(): void {
-    if (this.renderer) {
-      this.renderer.setAdaptivePixelRatio(this.currentDPR);
+  private transitionTo(dpr: number, options: { reduced?: boolean; ifMoved?: boolean } = {}): void {
+    if (!options.ifMoved || Math.abs(dpr - this.currentDPR) >= 0.01) {
+      this.currentDPR = dpr;
+      this.renderer?.setAdaptivePixelRatio(this.currentDPR);
     }
+    this.isReducedResolution = options.reduced ?? this.currentDPR < this.ceiling() * 0.95;
+    this.onDPRChange?.(this.currentDPR, this.isReducedResolution);
   }
 
   /**
@@ -1093,10 +1072,6 @@ export class AdaptiveDPRManager {
       // adaptation off means "stop lowering quality for FPS", not
       // "ignore the allow-high-DPR setting".
       this.syncNativeDPR();
-      const ceiling = this.ceiling();
-      this.currentDPR = ceiling;
-      this.applyDPR();
-      this.isReducedResolution = false;
       this.hysteresis.clear();
       this.probeController.void_();
       this.boundsLedger.reset();
@@ -1106,10 +1081,9 @@ export class AdaptiveDPRManager {
       this.nonStallIntervals = 0;
       this.restingAtCeiling = false;
       this.lastOperatingDPR = null;
-
-      if (this.onDPRChange) {
-        this.onDPRChange(ceiling, false);
-      }
+      // Only when it moves: a resize clears the canvas, and this runs off-tick
+      // (a UI toggle, a capture starting), where nothing redraws by itself.
+      this.transitionTo(this.ceiling(), { reduced: false, ifMoved: true });
     }
 
     log.info(
@@ -1240,9 +1214,7 @@ export class AdaptiveDPRManager {
     // avoid repeating that expensive path for duplicate slider/input events.
     if (Math.abs(clampedDPR - this.currentDPR) < 0.01) return;
 
-    this.currentDPR = clampedDPR;
-    this.isReducedResolution = clampedDPR < ceiling * 0.95;
-    this.applyDPR();
+    this.transitionTo(clampedDPR);
 
     log.info(Modules.ADAPTIVE_DPR, `Manual DPR set to ${clampedDPR.toFixed(2)}`);
   }
@@ -1292,21 +1264,13 @@ export class AdaptiveDPRManager {
 
     const ceiling = this.ceiling();
     const target = this.isEnabled ? ceiling : Math.min(beforeDPR, ceiling);
-    if (Math.abs(target - this.currentDPR) >= 0.01) {
-      this.currentDPR = target;
-      this.applyDPR();
-    }
-    this.isReducedResolution = this.currentDPR < ceiling * 0.95;
+    this.transitionTo(target, { ifMoved: true });
 
     log.info(
       Modules.ADAPTIVE_DPR,
       `High DPR ${allowed ? 'allowed' : 'disallowed'} ` +
         `(ceiling ${ceiling.toFixed(2)}, DPR ${this.currentDPR.toFixed(2)})`
     );
-
-    if (this.onDPRChange) {
-      this.onDPRChange(this.currentDPR, this.isReducedResolution);
-    }
   }
 
   /** Whether the viewer may currently render above CSS resolution. */
@@ -1438,20 +1402,14 @@ export class AdaptiveDPRManager {
     if (this.currentDPR >= ceiling - 0.01) return false;
 
     this.lastOperatingDPR = this.currentDPR;
-    this.currentDPR = ceiling;
     this.restingAtCeiling = true;
-    this.isReducedResolution = false;
-    this.applyDPR();
+    this.transitionTo(ceiling, { reduced: false });
 
     log.info(
       Modules.ADAPTIVE_DPR,
       `Idle: restored DPR to the ceiling ${ceiling.toFixed(2)} for the resting frame ` +
         `(operating DPR ${this.lastOperatingDPR.toFixed(2)} remembered for resume)`
     );
-
-    if (this.onDPRChange) {
-      this.onDPRChange(this.currentDPR, this.isReducedResolution);
-    }
     return true;
   }
 
@@ -1476,18 +1434,12 @@ export class AdaptiveDPRManager {
     this.lastOperatingDPR = null;
     if (Math.abs(target - this.currentDPR) < 0.01) return;
 
-    this.currentDPR = target;
-    this.isReducedResolution = target < ceiling * 0.95;
-    this.applyDPR();
+    this.transitionTo(target);
 
     log.info(
       Modules.ADAPTIVE_DPR,
       `Resume: snapped back to operating DPR ${target.toFixed(2)} in one step`
     );
-
-    if (this.onDPRChange) {
-      this.onDPRChange(this.currentDPR, this.isReducedResolution);
-    }
   }
 
   /**

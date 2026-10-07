@@ -642,3 +642,92 @@ describe('runUpdateStep — damped rotation residue converges (no ULP limit cycl
     expect(runUpdateStep(ctx)).toBe(true);
   });
 });
+
+// The damped tail used to run until the rotation's half-angle sine fell below
+// 1e-12 (and pan had no gate at all). A 4 px drag in the viewer then rendered
+// ~58 frames AFTER its last pixel change, half of all its renders (gate stores
+// mixed and partition_normal, full-resolution readback, obsidian). A tail whose
+// whole remaining rotation, or pan as a fraction of the camera distance (of the
+// visible field width in orthographic), is below 1e-8 moves every drawn
+// position by less than its own float32 resolution (~6e-8 relative), the same
+// bound as zoom's 1e-8 gate.
+describe('runUpdateStep — the damped tail ends below float32 resolution', () => {
+  const rotation = (angle: number): THREE.Quaternion =>
+    new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+
+  it('drops a remaining rotation of 1e-8 rad instead of applying it', () => {
+    const { ctx } = makeCtx({ enableDamping: true, rotationDelta: rotation(1e-8) });
+    expect(runUpdateStep(ctx)).toBe(false);
+    expect(ctx.rotationDelta.equals(new THREE.Quaternion())).toBe(true);
+  });
+
+  it('still applies a remaining rotation of 1e-6 rad', () => {
+    const { ctx } = makeCtx({ enableDamping: true, rotationDelta: rotation(1e-6) });
+    expect(runUpdateStep(ctx)).toBe(true);
+  });
+
+  it('drops a remaining pan of 1e-9 of the camera distance instead of applying it', () => {
+    const { ctx, state } = makeCtx({ enableDamping: true });
+    ctx.panDelta.set(1e-9 * state.distance, 0, 0);
+    expect(runUpdateStep(ctx)).toBe(false);
+    expect(ctx.panDelta.length()).toBe(0);
+    expect(ctx.target.x).toBe(0);
+  });
+
+  it('still applies a remaining pan of 1e-6 of the camera distance', () => {
+    const { ctx, state } = makeCtx({ enableDamping: true });
+    ctx.panDelta.set(1e-6 * state.distance, 0, 0);
+    expect(runUpdateStep(ctx)).toBe(true);
+  });
+
+  it('keeps a one-pixel pan live in an orthographic view at extreme zoom', () => {
+    // The ortho pan gate is a fraction of the VISIBLE field ((right-left)/zoom),
+    // not of the (zoom-independent) camera distance: at zoom 1e6 the field is
+    // 2e-5 wide, so a 1 px pan of a 1000 px view is 2e-11 — far below 1e-8 of the
+    // distance 5, yet a whole pixel on screen.
+    const camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
+    camera.zoom = 1e6;
+    camera.position.set(0, 0, 5);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    const { ctx } = makeCtx({ enableDamping: true, camera, minZoom: 1e-3, maxZoom: 1e7 });
+    const field = (camera.right - camera.left) / camera.zoom;
+    ctx.panDelta.set(field / 1000, 0, 0);
+    expect(runUpdateStep(ctx)).toBe(true);
+    expect(ctx.target.x).toBeGreaterThan(0);
+  });
+
+  it('drops an orthographic pan below 1e-8 of the visible field when zoomed out', () => {
+    // Zoom 0.01: the field is 2000 wide, so 1e-9 of it (2e-6) is sub-pixel —
+    // yet 4e-7 of the distance 5, which the distance-scaled gate kept applying.
+    const camera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.1, 1000);
+    camera.zoom = 0.01;
+    camera.position.set(0, 0, 5);
+    camera.updateProjectionMatrix();
+    camera.updateMatrixWorld();
+    const { ctx } = makeCtx({ enableDamping: true, camera });
+    ctx.panDelta.set((1e-9 * (camera.right - camera.left)) / camera.zoom, 0, 0);
+    expect(runUpdateStep(ctx)).toBe(false);
+    expect(ctx.target.x).toBe(0);
+  });
+
+  it('gates an undamped pan the same way: drops a negligible one, applies a real one whole', () => {
+    const { ctx, state } = makeCtx({ enableDamping: false });
+    ctx.panDelta.set(1e-9 * state.distance, 0, 0);
+    expect(runUpdateStep(ctx)).toBe(false);
+    expect(ctx.target.x).toBe(0);
+
+    ctx.panDelta.set(0.5, 0, 0);
+    expect(runUpdateStep(ctx)).toBe(true);
+    expect(ctx.target.x).toBe(0.5); // undamped: the whole delta at once
+    expect(ctx.panDelta.length()).toBe(0);
+  });
+
+  it('ends the damped tail of a drag-sized rotation within 50 frames', () => {
+    // 0.01 rad at damping 0.25: the 1e-12 gate ran the tail 78 frames.
+    const { ctx } = makeCtx({ enableDamping: true, rotationDelta: rotation(0.01) });
+    let moved = 0;
+    for (let i = 0; i < 400; i++) if (runUpdateStep(ctx)) moved++;
+    expect(moved).toBeLessThanOrEqual(50);
+  });
+});

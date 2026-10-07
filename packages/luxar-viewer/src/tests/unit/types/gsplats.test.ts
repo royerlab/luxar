@@ -1,7 +1,7 @@
 /**
  * Unit tests for gsplats-specific utilities.
  *
- * [types.md/O1][P10] The isGSplatsMetadata / isGSplatsUserData guard
+ * [types.md/O1][P10] The isGSplatsUserData guard
  * coverage has been consolidated into `geometry-guards.test.ts` (single
  * source of truth across all three geometry types). This file now hosts
  * only the gsplats-specific surface: `choleskyPackedSize` arithmetic

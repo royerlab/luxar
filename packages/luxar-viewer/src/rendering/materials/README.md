@@ -16,9 +16,10 @@ the same public update surface (`updateOpacity`, `updateGamma`,
 
 `CameraAwareMaterial` is the one contract all four implement, but mesh takes only
 **half** of it: Point / Line / GSplat compute a screen-space sprite extent and
-need fov/resolution/ortho broadcast to them every time the camera changes, while
-a mesh's size _is_ its geometry, so it ignores fov/resolution and consumes only
-`isOrtho`/`nearCull` — the two inputs of the shared near fade, which applies to a
+need resolution / pixel ratio broadcast to them every time the viewport changes
+(the projection itself, ortho test included, is read in shader), while a mesh's
+size _is_ its geometry, so it ignores resolution and consumes only `nearCull` —
+the one CPU input of the shared near fade, which applies to a
 surface exactly as it does to a sprite (#1431). All four therefore live in the
 manager's camera-broadcast `registeredMaterials`; `staticMaterials` survives only
 as the fallback for a non-camera-aware `register()` caller, which no geometry
@@ -110,7 +111,7 @@ than by omission (each bullet below records its own exception):
 - **Same public surface**: `updateOpacity`, `updateGamma`, `updateIntensity`,
   `updateOffset`, `applyBlendingMode`, `clone`, `setColormapTexture`,
   `setScalarRange` — plus `updateCameraParams` on the three instanced-quad
-  types, and `updateFlatNormal` on Mesh alone (nothing else shades).
+  types, and `updateShading` on Mesh alone (nothing else shades).
 - **Same shared helpers** from `_shared/`: every wrapper consumes
   `clampGamma`, the sanitiser snippets, `CameraAwareMaterial`, and
   `ColormapAwareMaterial`. Points, Lines and GSplats read their projection

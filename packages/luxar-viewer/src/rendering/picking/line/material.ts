@@ -12,6 +12,8 @@ import * as THREE from 'three';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { LINE_PICK_SOURCE } from './shaders';
 import { CAPSULE_LINE_PICK_SOURCE } from './shaders-capsule';
+import { copyPickVisibilityUniforms, pickVisibilityUniforms } from '../_shared/visibility-uniforms';
+import type { SurfacePickAwareMaterial } from '../_shared/surface-pick';
 import { requireWebGLSources } from '../../materials/_shared/shader-source';
 import {
   getElementTextureWidth,
@@ -48,7 +50,10 @@ export interface LinePickingMaterialConfig {
   primitive?: LinePrimitive;
 }
 
-export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraAwareMaterial {
+export class LinePickingMaterial
+  extends THREE.ShaderMaterial
+  implements CameraAwareMaterial, SurfacePickAwareMaterial
+{
   constructor(config: LinePickingMaterialConfig) {
     // The primitive picks the shader-source pair (visual-material parity).
     const primitive = resolveLinePrimitive(config.primitive);
@@ -60,13 +65,19 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
         uLineTex: { value: null },
         uResolution: { value: new THREE.Vector2(1, 1) },
         uPixelRatio: { value: 1 },
-        uIsOrtho: { value: 0 },
         // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
         // Flipped by the depth-sort coordinator once the inactive buffer
         // holds a whole permutation (runtime uniform: never a define — a
         // flip must not recompile the program).
         uSortedIndexSlot: { value: 0 },
         uDensityDrop: { value: 0 },
+        // Visual-pass weight inputs (../_shared/visibility-glsl.ts), neutral
+        // until the first pick render syncs the node's own.
+        ...pickVisibilityUniforms(),
+        // 0 = brightness-as-depth (brightest wins; commutative modes), 1 =
+        // real projected depth (front-most wins; opaque/normal). Synced per
+        // pick render via setSurfacePickDepth().
+        uSurfaceDepth: { value: 0 },
         // 0.1 matches the visual line material ctor default (pre-first-
         // broadcast only; updateCameraParams overwrites with the scene value).
         uNearCull: { value: 0.1 },
@@ -121,7 +132,6 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
     // session-width pre-stamp).
     cloned.updateLineTexture(this.uniforms.uLineTex.value as THREE.DataTexture | null);
     cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
-    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
@@ -131,17 +141,29 @@ export class LinePickingMaterial extends THREE.ShaderMaterial implements CameraA
     // until the coordinator's next per-frame re-assert.
     cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
+    copyPickVisibilityUniforms(this.uniforms, cloned.uniforms);
+    cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
     return cloned as this;
   }
 
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
+  /**
+   * Select the pick depth convention (`SurfacePickAwareMaterial`): `true`
+   * under the depth-ordered surface modes (`opaque` / `normal`) writes the
+   * real projected depth so the FRONT-MOST element wins, as the user sees
+   * it; `false` (default) keeps brightness-as-depth so the BRIGHTEST wins,
+   * right for the commutative modes. Synced per pick render by
+   * `PickingSystem.renderPickBuffer()`.
+   */
+  setSurfacePickDepth(on: boolean): void {
+    this.uniforms.uSurfaceDepth.value = on ? 1 : 0;
+  }
+
+  /**
+   * Camera-dependent uniforms. The ortho branch is read in shader from the
+   * projection matrix of the draw (`luxarLineIsOrtho`), so none is pushed.
+   */
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     this.uniforms.uResolution.value.copy(resolution);
-    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     // Accept ANY defined value, including 0 — matching the point/gsplat
     // wrappers (the shader floors at 1e-20). The old `> 0` gate silently
     // KEPT a stale value on zero-diagonal scenes (or, with LRU-cached

@@ -351,6 +351,35 @@ describe('compositeTextOverlay', () => {
     expect(fake.font).toBe('108px system-ui, -apple-system, sans-serif');
   });
 
+  it('records the session text scale unless the overlay opts out', () => {
+    const host = document.createElement('div');
+    host.style.setProperty('--luxar-text-scale', '0.5');
+    const el = makeTextOverlay('Hi');
+    host.appendChild(el);
+    const fake = makeFakeCtx();
+    const config = makeConfig({ font_size: 0.05 });
+
+    compositeTextOverlay(
+      fake as unknown as CanvasRenderingContext2D,
+      el,
+      config,
+      0,
+      0,
+      unitMetrics()
+    );
+    expect(fake.font).toBe('15px system-ui, -apple-system, sans-serif');
+
+    compositeTextOverlay(
+      fake as unknown as CanvasRenderingContext2D,
+      el,
+      { ...config, scale_text: false },
+      0,
+      0,
+      unitMetrics()
+    );
+    expect(fake.font).toBe('30px system-ui, -apple-system, sans-serif');
+  });
+
   it('wraps text to the configured width instead of drawing one long line', () => {
     // With `width` set the DOM overlay wraps (`width: …vw` +
     // `word-wrap: break-word`); fillText does not, so the capture used to

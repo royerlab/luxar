@@ -37,6 +37,7 @@ import { __resetMaterialManagerForTests } from '../../../../rendering/material-m
 import { computeScalarRangeUniforms } from '../../../../rendering/materials/_shared/scalar-range';
 import { loadSceneNodes } from '../../../../data/scene-loader/nodes/load-scene-nodes';
 import { applyEffectiveAttrs } from '../../../../data/scene-loader/view-state/effective-attrs';
+import { SceneNodeIndex } from '../../../../data/scene-loader/view-state/scene-node-index';
 import { findObjectByName } from '../../../../utils/scene-graph-index';
 import { log } from '../../../../utils/log';
 import { makeTestNodeBuildCtx } from '../../../helpers/make-test-node-build-ctx';
@@ -48,7 +49,7 @@ import type { PointsMetadata } from '../../../../types/points';
 import type { LinesMetadata, LinesDataLoader } from '../../../../types/lines';
 import type { MeshMetadata, MeshDataLoader } from '../../../../types/mesh';
 import type { DataLoader } from '../../../../data/data-loader-types';
-import { configureDepthSort, disposeDepthSort } from '../../../../rendering/depth-sort-coordinator';
+import { DepthSortCoordinator } from '../../../../rendering/depth-sort-coordinator';
 
 const AMPLITUDE_RANGE: [number, number] = [5.409804826328468e-10, 0.06948927677778476];
 
@@ -146,7 +147,7 @@ async function loadAndInitPanel(graph: SceneNode = sceneGraph()): Promise<Harnes
   const registerPartition = vi.fn();
   const ctx: NodeBuildCtx = makeTestNodeBuildCtx({
     nodeFactory: new NodeFactory(),
-    applyEffectiveAttrs: (node: SceneNode) => applyEffectiveAttrs(graph, node),
+    applyEffectiveAttrs: (node: SceneNode) => applyEffectiveAttrs(new SceneNodeIndex(graph), node),
     lodGroupRegistry: { registerPartition } as unknown as NodeBuildCtx['lodGroupRegistry'],
     viewState: {
       displayDims: [0, 1, 2],
@@ -273,6 +274,7 @@ describe('LayersPanel — a partition part activated after the panel initialised
     expect(fresh).toBe(eager);
   });
 
+  // geometry-subset: gsplats is the leaf type of every other case in this file
   it.each(['points', 'lines', 'mesh'] as const)(
     'replays a panel-selected colormap to a late %s leaf before its first data commit',
     (type) => {
@@ -318,7 +320,7 @@ describe('LayersPanel — a partition part activated after the panel initialised
       const factory = new NodeFactory();
       const loader = { dispose: vi.fn() };
       const create = (leaf: SceneNode): THREE.Mesh => {
-        const attrs = applyEffectiveAttrs(graph, leaf);
+        const attrs = applyEffectiveAttrs(new SceneNodeIndex(graph), leaf);
         if (type === 'points') {
           return factory.createEmptyPointsNode(
             leaf.path,
@@ -375,9 +377,11 @@ describe('LayersPanel — a partition part activated after the panel initialised
   it('a part activated after a switch INTO a sorted mode asks for no extra pass', async () => {
     // Its first commit registers it with the sorter under the LIVE mode; a
     // switch hook on the empty placeholder would only queue a full re-sweep
-    // for every part a playback step activates.
+    // for every part a playback step activates. (The routed switch hook also
+    // ignores a mesh no coordinator has seen, so the guard holds twice over.)
     const requestReprocess = vi.fn();
-    configureDepthSort({ getCamera: () => null, requestRender: vi.fn(), requestReprocess });
+    const depthSort = new DepthSortCoordinator();
+    depthSort.configure({ getCamera: () => null, requestRender: vi.fn(), requestReprocess });
     try {
       const graph = sceneGraph();
       graph.children![0].attrs.blending_mode = 'additive';
@@ -391,7 +395,7 @@ describe('LayersPanel — a partition part activated after the panel initialised
       expect((fresh.material as THREE.Material).userData.blendingMode).toBe('normal');
       expect(requestReprocess).not.toHaveBeenCalled();
     } finally {
-      disposeDepthSort();
+      depthSort.dispose();
     }
   });
 

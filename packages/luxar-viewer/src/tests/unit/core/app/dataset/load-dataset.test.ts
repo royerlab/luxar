@@ -14,6 +14,8 @@ import { loadDataset, type LoadDatasetPorts } from '../../../../../core/app/data
 import { captureViewerState } from '../../../../../config/zarr-bridge/viewer-state-capture';
 import { config } from '../../../../../config';
 import { syncCameraFovState } from '../../../../../ui/rendering-controls/sync-current-state';
+import { deferred, type Deferred } from '../../../../helpers/deferred';
+import { defineLifecycleContract } from '../../../_shared/lifecycle-contract';
 
 vi.mock('../../../../../data/scene-loader-manager', () => ({
   getSceneLoader: vi.fn(),
@@ -41,13 +43,19 @@ function makePorts(trace: Trace, overrides: Partial<LoadDatasetPorts> = {}): Loa
     setSceneId: vi.fn(() => trace.order.push('setSceneId')),
     setZarrViewerConfig: vi.fn(() => trace.order.push('setZarrViewerConfig')),
     hasStoredSettings: vi.fn().mockReturnValue(false),
+    getSettingsSnapshot: vi.fn(() => ({ ...config.renderingControls.defaults })),
+    adoptSceneContentHash: vi.fn().mockReturnValue(false),
+    resetToDefaults: vi.fn(() => trace.order.push('resetToDefaults')),
     applyZarrDefaults: vi.fn(() => trace.order.push('applyZarrDefaults')),
+    saveSettings: vi.fn(() => trace.order.push('saveSettings')),
     syncCameraFovState: vi.fn(() => trace.order.push('syncCameraFovState')),
     updateSceneScale: vi.fn(() => trace.order.push('updateSceneScale')),
   };
   const sceneManager = {
     loadSceneData: vi.fn().mockImplementation(async () => trace.order.push('loadSceneData')),
     getSceneViewerConfig: vi.fn().mockReturnValue(viewerConfig),
+    getSceneContentHash: vi.fn().mockReturnValue('hash-b'),
+    updateClippingPlanes: vi.fn(() => trace.order.push('updateClippingPlanes')),
     warmBlendModePrograms: vi.fn(async () => {
       trace.order.push('warmBlendModePrograms');
     }),
@@ -80,6 +88,7 @@ function makePorts(trace: Trace, overrides: Partial<LoadDatasetPorts> = {}): Loa
       trace.recordedViewerConfig = config;
     }),
     openCacheStatsView: vi.fn(() => trace.order.push('openCacheStatsView')),
+    isStale: vi.fn(() => false),
     ...overrides,
   };
 }
@@ -183,7 +192,7 @@ describe('loadDataset', () => {
     expect(ports.sceneManager.loadSceneData).toHaveBeenCalledExactlyOnceWith(
       'scene.zarr',
       undefined,
-      { applyViewerConfigFov: true }
+      { applyViewerConfigFov: true, beforeFrame: expect.any(Function) }
     );
     expect(trace.order).toContain('applyZarrDefaults');
   });
@@ -197,7 +206,7 @@ describe('loadDataset', () => {
     expect(ports.sceneManager.loadSceneData).toHaveBeenCalledExactlyOnceWith(
       'scene.zarr',
       undefined,
-      { applyViewerConfigFov: false }
+      { applyViewerConfigFov: false, beforeFrame: expect.any(Function) }
     );
     expect(ports.renderingControls.applyZarrDefaults).not.toHaveBeenCalled();
   });
@@ -446,6 +455,24 @@ describe('loadDataset', () => {
     expect(resolved).toBe(true);
   });
 
+  it.each([
+    ['loadSceneData', 'initDimensionSliders'],
+    ['initOverlays', 'initPicking'],
+    ['initPicking', 'applyViewerConfigState'],
+  ])('a load gone stale during %s stops before %s', async (staleAfter, firstSkipped) => {
+    const trace: Trace = { order: [], recordedViewerConfig: undefined };
+    const ports = makePorts(trace, {
+      isStale: () => trace.order.includes(staleAfter),
+    });
+
+    await loadDataset('scene.zarr', ports);
+
+    expect(trace.order).toContain(staleAfter);
+    expect(trace.order).not.toContain(firstSkipped);
+    expect(trace.order).not.toContain('startAnimation');
+    expect(trace.order).not.toContain('warmBlendModePrograms');
+  });
+
   it('loaderConfig is forwarded to sceneManager.loadSceneData', async () => {
     const trace: Trace = { order: [], recordedViewerConfig: undefined };
     const loaderConfig = { prefetch: true } as never;
@@ -455,7 +482,195 @@ describe('loadDataset', () => {
     expect(ports.sceneManager.loadSceneData).toHaveBeenCalledExactlyOnceWith(
       'scene.zarr',
       loaderConfig,
-      { applyViewerConfigFov: true }
+      { applyViewerConfigFov: true, beforeFrame: expect.any(Function) }
     );
+  });
+});
+
+describe('loadDataset — lifecycle', () => {
+  beforeEach(() => {
+    (getSceneLoader as unknown as ReturnType<typeof vi.fn>).mockReturnValue(null);
+  });
+
+  defineLifecycleContract('loadDataset', {
+    create: () => {
+      // LuxarApp.loadDataset's session discipline: starting a load disposes the
+      // outgoing session, and disposing the app disposes the current one.
+      const staleSessions = new Set<number>();
+      let sessions = 0;
+      let disposed = false;
+      const steps: Array<Deferred<void>> = [];
+      const step = (): Promise<void> => {
+        const d = deferred();
+        steps.push(d);
+        return d.promise;
+      };
+      /** The tail a load commits once its data has loaded. */
+      const committed: string[] = [];
+      return {
+        start: (n) => {
+          for (let s = 0; s < sessions; s++) staleSessions.add(s);
+          const session = sessions++;
+          const trace: Trace = { order: [], recordedViewerConfig: undefined };
+          const ports = makePorts(trace, {
+            initOverlays: step,
+            initPicking: step,
+            applyViewerConfigState: () => committed.push(`viewerConfigState:${n}`),
+            isStale: () => disposed || staleSessions.has(session),
+          });
+          Object.assign(ports.sceneManager, { loadSceneData: step });
+          Object.assign(ports.renderingControls, {
+            setZarrViewerConfig: () => committed.push(`zarrViewerConfig:${n}`),
+          });
+          Object.assign(ports.animationController, {
+            startAnimation: () => committed.push(`startAnimation:${n}`),
+          });
+          return loadDataset(`scene-${n}.zarr`, ports);
+        },
+        pending: () => steps.length,
+        settle: (index, outcome) =>
+          outcome === 'ok' ? steps[index].resolve() : steps[index].reject(new Error('404')),
+        observe: () => [...committed],
+        dispose: () => {
+          disposed = true;
+        },
+      };
+    },
+    cases: {
+      abort: {
+        na: 'loadDataset takes no signal: a newer load or an app dispose makes its session stale, and it stops at its next await (the isStale port)',
+      },
+      dispose: true,
+      failure: true,
+      retry: true,
+      supersede: true,
+      doubleDispose: true,
+    },
+    usableAfterDispose: {
+      na: 'disposing the app ends its sessions; the next load belongs to a re-initialised app and opens a new session (LuxarApp.loadDataset)',
+    },
+  });
+});
+
+describe('loadDataset with saved settings from another build', () => {
+  it('does not adopt metadata from a superseded load', async () => {
+    const trace: Trace = { order: [], recordedViewerConfig: undefined };
+    const ports = makePorts(trace, { isStale: () => true });
+    (ports.sceneManager.loadSceneData as ReturnType<typeof vi.fn>).mockImplementation(
+      (_src: string, _config: unknown, options: { beforeFrame?: (root: THREE.Group) => void }) => {
+        const root = new THREE.Group();
+        root.userData.contentHash = 'hash-b';
+        options.beforeFrame?.(root);
+      }
+    );
+    await loadDataset('scene.zarr', ports);
+
+    expect(ports.renderingControls.adoptSceneContentHash).not.toHaveBeenCalled();
+    expect(ports.renderingControls.resetToDefaults).not.toHaveBeenCalled();
+  });
+
+  it('restores authored manual clipping planes after metadata framing', async () => {
+    const trace: Trace = { order: [], recordedViewerConfig: undefined };
+    const ports = makePorts(trace);
+    (ports.renderingControls.hasStoredSettings as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (ports.renderingControls.adoptSceneContentHash as ReturnType<typeof vi.fn>).mockReturnValue(
+      true
+    );
+    (ports.renderingControls.getSettingsSnapshot as ReturnType<typeof vi.fn>).mockReturnValue({
+      dynamicClippingEnabled: false,
+      near: 0.5,
+      far: 500,
+    });
+    (ports.sceneManager.loadSceneData as ReturnType<typeof vi.fn>).mockImplementation(
+      (_src: string, _config: unknown, options: { beforeFrame?: (root: THREE.Group) => void }) => {
+        const root = new THREE.Group();
+        root.userData.contentHash = 'hash-b';
+        options.beforeFrame?.(root);
+        trace.order.push('frameFromRootMetadata');
+      }
+    );
+    await loadDataset('scene.zarr', ports);
+
+    expect(ports.sceneManager.updateClippingPlanes).toHaveBeenCalledExactlyOnceWith(0.5, 500);
+    expect(trace.order.indexOf('updateClippingPlanes')).toBeGreaterThan(
+      trace.order.indexOf('frameFromRootMetadata')
+    );
+  });
+
+  it.each(['before metadata', 'after metadata'])(
+    'applies authored defaults and saves an edit made %s on a first load',
+    async (editTiming) => {
+      const trace: Trace = { order: [], recordedViewerConfig: undefined };
+      const ports = makePorts(trace);
+      let edited = false;
+      const frame = vi.fn();
+      (ports.renderingControls.hasStoredSettings as ReturnType<typeof vi.fn>).mockImplementation(
+        () => edited
+      );
+      (ports.sceneManager.loadSceneData as ReturnType<typeof vi.fn>).mockImplementation(
+        (
+          _src: string,
+          _config: unknown,
+          options: { beforeFrame?: (root: THREE.Group) => void; applyViewerConfigFov: boolean }
+        ) => {
+          const root = new THREE.Group();
+          root.userData.contentHash = 'hash-b';
+          if (editTiming === 'before metadata') edited = true;
+          options.beforeFrame?.(root);
+          frame(options.applyViewerConfigFov);
+          if (editTiming === 'after metadata') edited = true;
+        }
+      );
+      await loadDataset('scene.zarr', ports);
+
+      expect(frame).toHaveBeenCalledExactlyOnceWith(true);
+      expect(ports.renderingControls.applyZarrDefaults).toHaveBeenCalledOnce();
+      expect(ports.renderingControls.saveSettings).toHaveBeenCalledOnce();
+      expect(trace.order.indexOf('saveSettings')).toBeGreaterThan(
+        trace.order.indexOf('applyZarrDefaults')
+      );
+    }
+  );
+
+  it('resets to the new build defaults instead of keeping the stale edits', async () => {
+    const trace: Trace = { order: [], recordedViewerConfig: undefined };
+    const ports = makePorts(trace);
+    (ports.renderingControls.hasStoredSettings as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    (ports.renderingControls.adoptSceneContentHash as ReturnType<typeof vi.fn>).mockReturnValue(
+      true
+    );
+    const frame = vi.fn();
+    (ports.sceneManager.loadSceneData as ReturnType<typeof vi.fn>).mockImplementation(
+      (
+        _src: string,
+        _config: unknown,
+        options: {
+          beforeFrame?: (root: THREE.Group) => void;
+          applyViewerConfigFov: boolean;
+        }
+      ) => {
+        const root = new THREE.Group();
+        root.userData.contentHash = 'hash-b';
+        root.userData.viewerConfig = { theme: 'dark' };
+        options.beforeFrame?.(root);
+        frame(options.applyViewerConfigFov, trace.order.includes('resetToDefaults'));
+      }
+    );
+    await loadDataset('scene.zarr', ports);
+
+    expect(frame).toHaveBeenCalledExactlyOnceWith(true, true);
+    expect(ports.renderingControls.adoptSceneContentHash).toHaveBeenCalledWith('hash-b');
+    expect(trace.order).not.toContain('syncCameraFovState');
+  });
+
+  it('keeps edits saved on this same build', async () => {
+    const trace: Trace = { order: [], recordedViewerConfig: undefined };
+    const ports = makePorts(trace);
+    (ports.renderingControls.hasStoredSettings as ReturnType<typeof vi.fn>).mockReturnValue(true);
+    await loadDataset('scene.zarr', ports);
+
+    expect(trace.order).not.toContain('resetToDefaults');
+    expect(trace.order).not.toContain('applyZarrDefaults');
+    expect(trace.order).toContain('syncCameraFovState');
   });
 });

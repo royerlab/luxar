@@ -6,7 +6,11 @@
 
 Depth sorting orders transparent elements back-to-front for correct order-dependent blending (normal and volumetric modes). **Within-node sorting** is driven by the `SortWorker` (Phase 2); **cross-node ordering** (THREE.js `renderOrder`) is driven here in Phase 3.
 
-This module is the **main-thread authority** for the depth-sort subsystem. It serves **all four geometry types** via a geometry-agnostic mechanism: projected 3D centers in, back-to-front permutation out. The commit call sites (`commit-gsplats-geometry.ts`, `commit-points-geometry.ts`, `commit-lines-geometry.ts`, `commit-mesh-geometry.ts`) and the app lifecycle (init/dispose) are far apart, so all talk to this module instead of threading a coordinator object through constructors.
+This module is the **main-thread authority** for the depth-sort subsystem. It serves **all four geometry types** via a geometry-agnostic mechanism: projected 3D centers in, back-to-front permutation out.
+
+**One `DepthSortCoordinator` per host.** The LuxarApp's lives on its `SceneManager` (`sceneManager.depthSort`); every `LuxarLayer` owns its own. A coordinator tracks only the nodes its host commits, sorts them against its host's camera, and wakes only its host's render loop, so a LuxarApp and a LuxarLayer — or two layers — on one page each get their own ordering. (Before, the coordinator was module-scoped and both hosts configured it, so the last configuration won: every node was sorted against the last-configured camera and the first host's `requestRender` never fired.) The host hands its coordinator to what needs it: the host's `SceneLoaderManager.setDepthSortCoordinator` → every loader it creates (`SceneLoader.setDepthSortCoordinator`) → the commit helpers' `GeometryCommitHost.depthSort`; the post-processing glass split (`GlassMeshSource`); the data monitor's degrade note; the offline-capture loop; `__luxarDebug`.
+
+What the coordinators SHARE is the one **SortWorker** (`workerHost` in `state.ts`). Sharing needs no routing table: registrations are keyed by the page-unique mesh uuid, and every sort RPC resolves through its own promise back into the coordinator that dispatched it. The worker's startup state is page-wide too, so `getDepthSortWorkerStatus()`, `setSortWorkerUrl()` and `setSortWorkerWasmPath()` stay free functions. Two MESH-scoped operations are free functions as well, because their callers (the disposal walk, LOD demotion, the Layers panel) reach a mesh without its host in hand: `releaseDepthSortNode(mesh)` and `noteDepthSortBlendingModeSwitch(mesh, …)` route to the coordinator the mesh was last committed through.
 
 **There are two APPLY paths, and only the apply differs.** A "center" is a splat/point center, a line segment midpoint, or a triangle centroid — 3 floats either way, so registration, worker and kernel are shared:
 
@@ -23,23 +27,44 @@ Mesh cannot double-buffer because `geometry.index` is _bound_ state: no uniform 
 ## File Map
 
 ```
+depth-sort-coordinator.ts (parent dir) — PUBLIC entry point: the DepthSortCoordinator
+│                          class (configure, commit, blending-mode switch, node
+│                          release, per-frame pass, capture, glass registry,
+│                          dispose), the routed mesh operations; re-exports the rest
 depth-sort-coordinator/
+├── state.ts             — The two state objects: per-instance `CoordinatorState`
+│                          (node map, wired callbacks, capture suppression, sync
+│                          budget) and the page-wide `workerHost` (worker handle,
+│                          init bookkeeping, attached coordinators) + small
+│                          helpers (live blending mode, held-draw release, pose
+│                          clear, the per-coordinator apply hooks)
+├── worker-lifecycle.ts  — SortWorker spawn + guarded init, starved/dead
+│                          classification, bounded retry + self-wake, status,
+│                          post-retry re-registration, warm-up, coordinator
+│                          attach/detach (the last detach terminates the worker)
+├── ordering-apply.ts    — Slot → material sync, draw-acknowledgement hook, the
+│                          commit-time synchronous first sort, resolve helpers
+├── scheduler.ts         — scheduleSort (single in flight, resolve + apply), the
+│                          chunked apply pump, the per-frame camera-motion pass
+├── capture.ts           — resortForCapture / isCaptureQuiescent (offline drain)
 ├── render-order.ts      — Cross-node renderOrder assignment: BSP partition traversal +
 │                          centroid fallback, ONE global scale
 └── triangle-ordering.ts — The INDEXED (mesh) apply: face centroids + atomic index
                            permutation + the draw-acknowledgement lifecycle
 ```
 
-The main facade `rendering/depth-sort-coordinator.ts` owns:
+The coordinator as a whole owns:
 
-- SortWorker spawn + initialization + disposal
-- Per-node **generation** tracking (bumped on every non-noop commit)
-- Single-in-flight-per-node sort rule + queue-exactly-one re-sort
-- Ordering application: `writeSortedIndexOrdering` (element-storage) for the instanced types, `writeSortedTriangleOrdering` (`triangle-ordering.ts`) for mesh
-- Per-frame camera-motion re-sort scheduler (angle/translation thresholds)
-- Offline-capture entry point (`resortForCapture` / `isCaptureQuiescent`) — pose-fresh sort + drain to quiescence when the rAF loop is stopped
+- SortWorker spawn + initialization + teardown, shared by every coordinator on the page (`worker-lifecycle.ts`)
+- Per-node **generation** tracking (bumped on every non-noop commit; the public file)
+- Single-in-flight-per-node sort rule + queue-exactly-one re-sort (`scheduler.ts`)
+- Ordering application: `writeSortedIndexOrdering` (element-storage) for the instanced types, `writeSortedTriangleOrdering` (`triangle-ordering.ts`) for mesh (`scheduler.ts`; the commit-time synchronous sort in `ordering-apply.ts`)
+- Per-frame camera-motion re-sort scheduler (angle/translation thresholds; `scheduler.ts`)
+- Offline-capture entry point (`resortForCapture` / `isCaptureQuiescent`; `capture.ts`) — pose-fresh sort + drain to quiescence for an offline capture
 - Blending-mode switch hook (TO sorted: reprocess; AWAY: release)
 - Node release (disposal / LOD demotion)
+
+Every submodule function that touches host state takes the instance's `CoordinatorState` as its first argument (`scheduleSort(c, …)`, `evaluateDepthSortPerFrame(c)`, `resortForCapture(c, …)`); the class holds that state privately and its methods are thin delegates. See "Per-Instance State, Shared Worker".
 
 The submodule `render-order.ts` owns:
 
@@ -56,28 +81,31 @@ The submodule `triangle-ordering.ts` owns:
 
 ## Architecture
 
-### Module-Scoped Live Authority
+### Per-Instance State, Shared Worker
 
-Both files are **module-scoped singletons** (the `element-texture-layout.ts` pattern):
+**Per coordinator** (`CoordinatorState` in `state.ts`, one per `DepthSortCoordinator`):
 
-- Commit paths (all four geometry types) and app lifecycle are far apart
-- All callers talk to this module via exported functions
-- No coordinator object is threaded through constructors
+- `nodeStates: Map<string, NodeSortState>` — per-node tracking (generation, in-flight flag, last sort pose, queued re-sort, registered flag) for THIS host's nodes
+- Injected callbacks: `getCamera` (getter, not captured reference), `requestRender`, `requestReprocess`, `isLoadInProgress`, `getProfiler`, `getDisplayDims` (handed to each frame's render-order pass)
+- Master switch: `depthSortEnabled` (from `config.depthSort.enabled` + `?depthSort=0` / `LuxarLayerOptions.depthSort`)
+- Offline-capture suppression (`captureSuppressDepth`, `requestRenderBeforeCapture`), the synchronous-first-sort budget (`syncSortElementsRemaining`) and the per-frame `drawnStateChanged` flag
 
-**Module state** (depth-sort-coordinator.ts):
+Every ordering a coordinator stages carries `orderingApplyHooks(c)` in its `SortedIndexApplyCallbacks`: an `owner` tag (the per-owner teardown sweeps `cancelAllSortedIndexOrderingApplies(c)` / `cancelAllTriangleOrderingApplies(c)` filter on it, so one host's dataset switch never abandons another's streams), the `requestFrame` a consumed slice fires to resume an idle stream (#715 — it wakes the OWNER's loop), and the capture back-pressure bypass (on while the owner's `captureSuppressDepth > 0`). These used to be module-wide switches in `element-storage.ts`.
 
-- `worker` — the single persistent SortWorker (spawned at app init by `warmUpDepthSortWorker()`, terminated on app dispose)
-- `api` — Comlink-wrapped `SortWorkerAPI` (registerNode, sort, releaseNode, releaseAllNodes)
+**Page-wide** (`workerHost` in `state.ts`, plus `nextGeneration` and the `meshOwners` routing map in `depth-sort-coordinator.ts`):
+
+- `worker` — the single persistent SortWorker (spawned at host init by `DepthSortCoordinator.warmUp()`, terminated when the LAST attached coordinator is disposed)
+- `api` — Comlink-wrapped `SortWorkerAPI` (registerNode, sort, releaseNode). There is no release-everything RPC: a host releases only its own nodes, one by one
 - `initPromise` — cached initialization promise (deduplicated). A cached REJECTION is dropped only by `maybeRetryStarvedWorkerInit()`, so a commit can never spend a retry attempt
-- `initEpoch` — attempt epoch; every module write past an `await` inside the init closure is skipped when it no longer matches (bumped by `disposeDepthSort` and by a retry that supersedes an attempt, because the deadline timer lives in a closure and nothing outside it can cancel it)
-- `workerInitState: 'idle' | 'ready' | 'starved' | 'failed'` — the observable init verdict (`getDepthSortWorkerStatus()`), and what `isDepthSortAvailable()` reads (false only at `'failed'` AND with a node that wants sorting)
-- `initTimeoutRetryPending` / `initTimeoutCount` / `initRetryNotBeforeMs` / `initRetryWakeTimer` — starved-retry bookkeeping: whether a retry is armed, deadline misses so far (bounds the attempts), the `performance.now()` instant the next attempt may start, and the one self-wake `setTimeout` armed alongside it
-- `nodeStates: Map<string, NodeSortState>` — per-node tracking (generation, in-flight flag, last sort pose, queued re-sort, registered flag)
-- `nextGeneration` — monotonic counter (unique across a node's LIFETIMES, not just within one)
-- Injected callbacks: `getCamera` (getter, not captured reference), `requestRender`, `requestReprocess`, `isLoadInProgress`, `getProfiler`, `getDisplayDims`
-- Session master switch: `depthSortEnabled` (from `config.depthSort.enabled` + `?depthSort=0`)
+- `initEpoch` — attempt epoch; every host write past an `await` inside the init closure is skipped when it no longer matches (bumped by the host reset when the last coordinator detaches and by a retry that supersedes an attempt, because the deadline timer lives in a closure and nothing outside it can cancel it)
+- `workerInitState: 'idle' | 'ready' | 'starved' | 'failed'` — the observable init verdict (`getDepthSortWorkerStatus()`), and what each coordinator's `isAvailable()` reads (false only at `'failed'` AND with one of ITS nodes wanting sorting)
+- `initTimeoutRetryPending` / `initTimeoutCount` / `initRetryNotBeforeMs` / `initRetryWakeTimer` — starved-retry bookkeeping: whether a retry is armed, deadline misses so far (bounds the attempts), the `performance.now()` instant the next attempt may start, and the one self-wake `setTimeout` armed alongside it (it wakes EVERY attached coordinator)
+- `warnedWorkerUnavailable` — the commit path's warn-once flag (per unavailability episode)
+- `coordinators: Set<CoordinatorState>` — the attached coordinators (attached by `configure` / `warmUp` / `noteCommit`, detached by `dispose`); a late retried init re-registers the nodes of every one of them
+- `nextGeneration` — monotonic counter (unique across a node's LIFETIMES, not just within one, and across coordinators)
+- `meshOwners: WeakMap<THREE.Mesh, DepthSortCoordinator>` — which coordinator each mesh was last committed through; the routing table of `releaseDepthSortNode` / `noteDepthSortBlendingModeSwitch`. A mesh no coordinator has seen has nothing to release, and its first commit reads the live mode, so routing it nowhere is correct
 
-**Module state** (render-order.ts):
+**Module state** (render-order.ts — shared, but every pass runs clear → collect → assign synchronously inside ONE coordinator's `evaluatePerFrame`, so a pass never sees another coordinator's slots; `beginRenderOrderFrame(getDisplayDims)` installs the running coordinator's display-dims accessor):
 
 - `partitionRankCache: Map<THREE.Object3D, Map<number, number> | null>` — per-frame strong-key BSP lookup cache (cleared every frame)
 - `partitionRankMemo: WeakMap<THREE.Object3D, PartitionRankMemo>` — cross-frame BSP ranks keyed by immutable tree + live display dimensions; reused until the camera crosses a split plane
@@ -87,15 +115,15 @@ Both files are **module-scoped singletons** (the `element-texture-layout.ts` pat
 
 ### SortWorker Lifecycle
 
-1. **Warm up** — at app init, `warmUpDepthSortWorker()` (called from `core/app/init/pipeline.ts`, gated on `depthSortEnabled`) runs `ensureWorker()`:
+1. **Warm up** — at host init, `DepthSortCoordinator.warmUp()` (called from `core/app/init/pipeline.ts` and `LuxarLayer`, gated on the coordinator's `depthSortEnabled`) runs `ensureWorker()` (a no-op when another host already spawned it):
    - Constructs `new SortWorker()` (Vite `?worker` import) or `new Worker(sortWorkerUrlOverride)` (embedder override)
    - Wraps via Comlink: `api = wrap<SortWorkerAPI>(worker)`
    - Calls `api.initialize(sortWorkerWasmPathOverride)` through the shared `worker-pool/lifecycle/init-with-guard.ts` (deadline + `onerror` + `onmessageerror`)
    - Logs ready message with `wasmFallback` flag (WASM compiled or TypeScript fallback)
    - **Why at init, not on first commit**: the first order-dependent commit lands exactly when this thread and the data-worker pool are saturated decoding the scene, and the worker's reply must be dispatched on this thread. At ~3 M points it missed a 30 s deadline there, and the session rendered unsorted from then on. Starting while the app is idle removes the overlap.
    - **What it costs**: the sort-worker chunk plus its WASM are fetched on EVERY page load, including scenes with no order-dependent geometry at all. `?depthSort=0` is the opt-out (nothing is spawned). The warm-up also no-ops where there is no `Worker` global (node/jsdom unit runs, SSR) rather than latching a `'failed'` verdict for the environment's sake; the commit path stays unguarded.
-2. **Persist** — the worker lives across commits and frames (NOT part of the round-robin data-worker pool). `noteDepthSortCommit` still calls `ensureWorker()`; it dedupes on `initPromise` and covers embedders that configure late.
-3. **Terminate** — on `disposeDepthSort()` (app teardown / test reset), or on ANY failed init attempt (a permanent one latches; a starved retry spawns a fresh worker).
+2. **Persist** — the worker lives across commits and frames (NOT part of the round-robin data-worker pool). `noteCommit` still calls `ensureWorker()`; it dedupes on `initPromise` and covers embedders that configure late.
+3. **Terminate** — on the LAST attached coordinator's `dispose()` (host teardown / test reset; an earlier dispose only releases its own registrations), or on ANY failed init attempt (a permanent one latches; a starved retry spawns a fresh worker).
 
 **Init-settle guard**: A worker whose script dies during async module evaluation (before `expose()`) emits an `error` event but never settles the Comlink `initialize` RPC. Left pending forever, every order-dependent commit would attach a continuation (closing over its centers provider, which for points pins the full `LoadedPointsData`), accumulating unbounded. The shared `worker-pool/lifecycle/init-with-guard.ts` races the RPC against the `config.depthSort.workerInitTimeoutMs` deadline and the worker's own `onerror` / `onmessageerror` events, so the promise settles on every attempt, draining all queued continuations into the documented warn-once degrade path. (Sharing the guard with the data pool is what keeps the two startup paths from drifting; the coordinator's hand-rolled copy never had the `onmessageerror` arm.) Settling is not the same as giving up, though — how long that degrade lasts depends on WHICH failure it was:
 
@@ -108,7 +136,7 @@ Both files are **module-scoped singletons** (the `element-texture-layout.ts` pat
 | `initialize()` rejects (the worker answered: it cannot work) | permanent     | terminate, cache the rejection, warn once                              |
 | deadline missed                                              | **transient** | terminate, keep the rejection cached, respawn from the per-frame retry |
 
-**The settle is unconditional; the degrade is CLASSIFIED** (issue #1694). Only the deadline arm rejects with `WorkerInitTimeoutError` (the guard's own type — the same reasoning `isWorkerInfrastructureError` already applies to RPC timeouts); a worker `error`/`messageerror` event, a rejected `initialize` and a constructor throw (CSP-blocked script) stay permanently fatal. A missed deadline says nothing about the worker's health — at ~3M points the main thread stays saturated long enough during a load for worker startup to lose the race — so it is retried up to `SORT_WORKER_INIT_MAX_ATTEMPTS` (3: the initial attempt plus 2) with a `SORT_WORKER_INIT_RETRY_BASE_MS × miss` backoff on the monotonic `performance.now()` clock. The bound is what preserves the anti-leak property: each attempt opens one more deadline window in which commits can queue continuations, and between attempts the cached rejection is still what every commit drains into — which is also why a commit re-entering `ensureWorker()` cannot spend an attempt. `maybeRetryStarvedWorkerInit()` runs from `evaluateDepthSortPerFrame`, where it is explicitly suppressed while `isLoadInProgress()` is true (the in-flight sweep IS the starvation), and declines to spend an attempt during an offline capture or when no visible, still-committed, order-dependent node wants sorting; since the on-demand loop idle-pauses after `config.animation.idleTimeoutMs`, arming a retry also arms ONE self-wake `setTimeout` (`scheduleInitRetryWake`) that requests a frame just after the backoff — re-arming itself if `requestRender` is unavailable at that instant (before `configureDepthSort`, or nulled by an offline capture). A late success runs `reregisterAfterLateWorkerInit()`: the fresh worker holds no registrations and no centers are retained, so it invalidates BOTH freshness stamps on every unregistered, still-committed, order-dependent node and requests ONE reprocess (the same recovery as the switch-to-sorted mode hook, shared via `invalidateSortedNodeCommitStamps`). `getDepthSortWorkerStatus()` reports `idle` / `ready` / `starved` (armed **or in flight**) / `failed` plus the deadline-miss count, and is exposed on `__luxarDebug`. Once the verdict is `'failed'` — a dead script, or the retry budget spent — AND some visible, still-committed, order-dependent node actually wants sorting (`anyNodeWantsSorting()`, the same predicate the retry gate uses), `isDepthSortAvailable()` goes false and the data-loading monitor's footer says `depth sort UNAVAILABLE`. What that note proves is narrow and worth stating exactly: visible order-dependent geometry IS being drawn in storage order. Its absence proves nothing — a `'starved'` init reports available for the whole retry window while identity order is drawn, `?depthSort=0` reports available by definition, and a single commit that could not reach a healthy worker never shows up here either. The demand half exists because the warm-up spawns unconditionally: without it a CSP-blocked chunk would announce a degraded subsystem on an all-additive scene that never sorts.
+**The settle is unconditional; the degrade is CLASSIFIED** (issue #1694). Only the deadline arm rejects with `WorkerInitTimeoutError` (the guard's own type — the same reasoning `isWorkerInfrastructureError` already applies to RPC timeouts); a worker `error`/`messageerror` event, a rejected `initialize` and a constructor throw (CSP-blocked script) stay permanently fatal. A missed deadline says nothing about the worker's health — at ~3M points the main thread stays saturated long enough during a load for worker startup to lose the race — so it is retried up to `SORT_WORKER_INIT_MAX_ATTEMPTS` (3: the initial attempt plus 2) with a `SORT_WORKER_INIT_RETRY_BASE_MS × miss` backoff on the monotonic `performance.now()` clock. The bound is what preserves the anti-leak property: each attempt opens one more deadline window in which commits can queue continuations, and between attempts the cached rejection is still what every commit drains into — which is also why a commit re-entering `ensureWorker()` cannot spend an attempt. `maybeRetryStarvedWorkerInit(c)` runs from each coordinator's `evaluateDepthSortPerFrame`, where it is explicitly suppressed while that host's `isLoadInProgress()` is true (the in-flight sweep IS the starvation), and declines to spend an attempt during that host's offline capture or when none of its visible, still-committed, order-dependent nodes wants sorting; since the on-demand loop idle-pauses after `config.animation.idleTimeoutMs`, arming a retry also arms ONE self-wake `setTimeout` (`scheduleInitRetryWake`) that requests a frame from EVERY attached coordinator just after the backoff — re-arming itself if none has a `requestRender` at that instant (before `configure`, or nulled by an offline capture). A late success runs `reregisterAfterLateWorkerInit()`: the fresh worker holds no registrations and no centers are retained, so it invalidates BOTH freshness stamps on every unregistered, still-committed, order-dependent node of every attached coordinator and requests ONE reprocess per coordinator (the same recovery as the switch-to-sorted mode hook, shared via `invalidateSortedNodeCommitStamps`). `getDepthSortWorkerStatus()` reports `idle` / `ready` / `starved` (armed **or in flight**) / `failed` plus the deadline-miss count, and is exposed on `__luxarDebug`. Once the verdict is `'failed'` — a dead script, or the retry budget spent — AND some visible, still-committed, order-dependent node actually wants sorting (`anyNodeWantsSorting()`, the same predicate the retry gate uses), the coordinator's `isAvailable()` goes false and the data-loading monitor's footer says `depth sort UNAVAILABLE` (the init pipeline wires the app coordinator's verdict into the monitor with `setDepthSortAvailabilityProvider`). What that note proves is narrow and worth stating exactly: visible order-dependent geometry IS being drawn in storage order. Its absence proves nothing — a `'starved'` init reports available for the whole retry window while identity order is drawn, `?depthSort=0` reports available by definition, and a single commit that could not reach a healthy worker never shows up here either. The demand half exists because the warm-up spawns unconditionally: without it a CSP-blocked chunk would announce a degraded subsystem on an all-additive scene that never sorts.
 
 `getDepthSortWorkerStatus()`'s verdict is likewise about INIT only — a worker that dies after initializing keeps reporting `'ready'`, and each sort then burns `SORT_RPC_TIMEOUT_MS`.
 
@@ -121,7 +149,7 @@ Both files are **module-scoped singletons** (the `element-texture-layout.ts` pat
 - Stale-drop at TWO checkpoints:
   1. **Worker side** (`workers/sort-worker/sorting.ts::sortNode`): returns `null` when `node.generation !== params.generation`
   2. **Main thread** (`scheduleSort` resolve handler): applies the ordering only when `result.generation === current.generation` AND `hasCommittedData(mesh)` (LOD demotion signal)
-- **Unique across lifetimes**, not just within one: `releaseDepthSortNode` deletes the node state, and a re-promotion recommit would otherwise restart the counter — letting a stale in-flight sort from the previous life pass the guard and apply a CORRUPT permutation over the new (differently-sized) commit (found by randomized interleaving fuzz; see the `nextGeneration` invariant in `depth-sort-coordinator.ts`)
+- **Unique across lifetimes**, not just within one: `releaseNode` deletes the node state, and a re-promotion recommit would otherwise restart the counter — letting a stale in-flight sort from the previous life pass the guard and apply a CORRUPT permutation over the new (differently-sized) commit (found by randomized interleaving fuzz; see the `nextGeneration` invariant in `depth-sort-coordinator.ts`)
 
 ### NodeSortState (Per-Node Tracking)
 
@@ -142,11 +170,11 @@ Each registered node gets a `NodeSortState` entry:
 **Key fields**:
 
 - `lastSortAxis` / `lastSortOffset` — the pose the last sort was dispatched from; `null` before the first dispatch. The per-frame scheduler compares live poses against these to decide when a re-sort is due.
-- `registered` — true iff centers for the CURRENT generation were dispatched to the worker. Set where the register RPC is issued; cleared on every release branch (empty/commutative commit, mode-switch-away). Used by `evaluateDepthSortPerFrame()` to recover a node whose first dispatch raced a null camera: `registered && lastSortAxis === null` means "worker has centers, no sort ever left" — dispatch one now.
+- `registered` — true iff centers for the CURRENT generation were dispatched to the worker. Set where the register RPC is issued; cleared on every release branch (empty/commutative commit, mode-switch-away). Used by the per-frame pass (`evaluatePerFrame`) to recover a node whose first dispatch raced a null camera: `registered && lastSortAxis === null` means "worker has centers, no sort ever left" — dispatch one now.
 
-### Commit Flow (noteDepthSortCommit)
+### Commit Flow (DepthSortCoordinator.noteCommit)
 
-Called on every non-noop commit of a sortable node (gsplats, points, lines). Always bumps the node's generation (dropping any in-flight sort's result). When the node's LIVE effective blending mode is order-dependent, transfers the projected centers to the SortWorker and requests one sort from the current camera pose.
+Called on every non-noop commit of a sortable node (gsplats, points, lines, mesh) — by the commit helpers through the `GeometryCommitHost.depthSort` their SceneLoader hands them, so a node always lands in its own host's coordinator. The coordinator also becomes the mesh's OWNER (`meshOwners`), the routing target of the free mesh operations. Always bumps the node's generation (dropping any in-flight sort's result). When the node's LIVE effective blending mode is order-dependent, transfers the projected centers to the SortWorker and requests one sort from the current camera pose.
 
 **Parameters**:
 
@@ -161,7 +189,7 @@ Called on every non-noop commit of a sortable node (gsplats, points, lines). Alw
 1. Get or create `NodeSortState` for `mesh.uuid`
 2. Bump `state.generation = ++nextGeneration`
 3. **Early-exit** (identity ordering) when:
-   - Depth sorting disabled (`!depthSortEnabled` — session master switch)
+   - Depth sorting disabled (`!depthSortEnabled` — the coordinator's master switch)
    - Commutative blending (`!isLiveOrderDependent(mode)`)
    - Empty (`count === 0`)
    - On early-exit: clear the node's recorded pose (`clearSortPose`), release worker-side registration (`releaseWorkerNode`), return
@@ -170,7 +198,7 @@ Called on every non-noop commit of a sortable node (gsplats, points, lines). Alw
    - Resolve lazy centers provider NOW (after the generation re-check, so a superseded commit never pays the copy)
    - Set `current.registered = true` BEFORE the register RPC (a throwing provider leaves the node unregistered instead of stranding a phantom registration)
    - Transfer centers: `api.registerNode(transfer({ nodeId, generation, centers3, count }, [buffer.buffer]))`
-   - `scheduleSort(mesh, nodeId)`
+   - `scheduleSort(c, mesh, nodeId)`
 5. Catch: once per EPISODE (a successful — possibly retried — init re-arms the flag), log that this commit could not reach the SortWorker and the identity order is drawn, quoting `getDepthSortWorkerStatus()` rather than asserting a cause: every later commit lands here while the cached `initPromise` is rejected, but the same catch also fires for a throwing lazy centers provider or a `transfer()` of an already-detached buffer. Rendering degrades gracefully to unsorted normal mode
 
 ### Single-In-Flight Rule (scheduleSort)
@@ -181,7 +209,7 @@ Enforces **at most one in-flight sort per node**; a commit landing mid-sort queu
 
 **Flow**:
 
-1. Get `state`, `camera` (from `getCamera()`) — and return unless the worker is actually usable: `api` is wrapped BEFORE `initializeWithGuard` is awaited, so a live handle is not a ready worker, and `sort` is the one RPC that `requireWasm`s worker-side. `workerInitState === 'ready'` is therefore part of the gate, here rather than at each caller (the offline-capture force loop dispatches without consulting `registered`). Skipping also keeps `recordSortPose` below from stamping a pose for a sort that never ran, which would silence the per-frame `!lastSortAxis` recovery dispatch
+1. Get `state` (from THIS coordinator's node map), `camera` (from its `getCamera()`) — and return unless the worker is actually usable: `api` is wrapped BEFORE `initializeWithGuard` is awaited, so a live handle is not a ready worker, and `sort` is the one RPC that `requireWasm`s worker-side. `workerInitState === 'ready'` is therefore part of the gate, here rather than at each caller (the offline-capture force loop dispatches without consulting `registered`). Skipping also keeps `recordSortPose` below from stamping a pose for a sort that never ran, which would silence the per-frame `!lastSortAxis` recovery dispatch
 2. Return if already `inFlight` — set `resortQueued = true` and return
 3. Set `inFlight = true`
 4. Refresh `mesh.matrixWorld` and `camera.matrixWorld` (can be stale when a commit fires before the next frame)
@@ -194,9 +222,9 @@ Enforces **at most one in-flight sort per node**; a commit landing mid-sort queu
    - Clear `inFlight`
    - **Stale-drop**: stage only when `result.generation === current.generation` AND `hasCommittedData(mesh)` (LOD demotion signal)
    - Set profiler metadata: `splats`, `kernelMs`, `boundaryMs` (worker overhead), `queueMs` (round-trip minus worker time), and `info` with ordering bytes labeled `sched`
-   - Stage the ordering with lifecycle callbacks: `writeSortedIndexOrdering(geometry, result.ordering, count, callbacks)`; the per-frame pump streams slices into the inactive buffer
+   - Stage the ordering with lifecycle callbacks: `writeSortedIndexOrdering(geometry, result.ordering, count, callbacks)` — `callbacks` always carries the owner hooks (`orderingApplyHooks(c)`) and, with a profiler session, `onApplied` / `onAbandoned`; the per-frame pump streams slices into the inactive buffer
    - Transfer profiler-session ownership to those callbacks and request the bootstrap frame
-   - Drain `resortQueued` if set: `scheduleSort(mesh, nodeId)`
+   - Drain `resortQueued` if set: `scheduleSort(c, mesh, nodeId)`
 10. On **rendered application**:
     - The final pump selects the complete buffer but does not yet report it applied
     - The mesh's chained `onAfterRender` hook acknowledges that THREE consumed the pending attribute ranges and completed a draw with the selected buffer
@@ -215,23 +243,23 @@ Every ordering uses the same staged-apply path; orderings larger than one 1M-ind
 - The resolve path only records the pending state (`writeSortedIndexOrdering`)
 - The per-frame pump (`pumpChunkedOrderingApplies`, called from `evaluateDepthSortPerFrame`) writes at most one slice per rendered frame
 - Each written slice arms an upload-pending flag cleared by the attribute's `onUploadCallback`; the next pump stalls until that callback proves the prior slice reached the GPU
-- Hidden nodes are not pumped, and a stalled pump requests no extra frame; the consumed-slice upload callback requests the precise continuation frame when a culled node becomes drawable again
+- Hidden nodes are not pumped, and a stalled pump requests no extra frame; the consumed-slice upload callback requests the precise continuation frame (the ordering's `requestFrame` hook — its OWNER's loop) when a culled node becomes drawable again
 - Slices land in the INACTIVE buffer of the double-buffered `aSortedIndex` / `aSortedIndexB` pair; the `uSortedIndexSlot` uniform flips only once that buffer holds the whole new permutation, so mid-application frames keep rendering the previous COMPLETE ordering (no old/new mix)
 - The flip only **selects** the new buffer. The ordering becomes applied only after the mesh's `onAfterRender` hook acknowledges a completed draw with that selection
 - A newer ordering arriving mid-stream is HELD and started after the flip (restart-on-arrival never converges under a continuous orbit)
 - On **completion**, drain a queued re-sort (a commit that landed mid-sort parked it)
 - **Abort** when `committedData` is cleared, the node/scene is released, or the geometry is disposed; accepted-but-unrendered profiler sessions close as abandoned rather than uploaded
-- The WebGPU backends ignore attribute update ranges (full re-upload per flush), so chunk slicing/back-pressure is gated off there (`configureSortedIndexChunkedApply`, wired in renderer-setup); double buffering and post-render acknowledgement remain unconditional
+- Chunk slicing/back-pressure is gated to the classic WebGL backend (`configureSortedIndexChunkedApply`, wired in renderer-setup): the back-pressure waits on the attribute's `onUploadCallback`, which neither WebGPU backend fires, so there an ordering is written in one slice and flips on the next pump. The WebGPU backends do honour attribute update ranges, but three re-uploads a `DynamicDrawUsage` attribute on every render, so the pair is `StaticDrawUsage` there (`sortedIndexUsage`). Double buffering and post-render acknowledgement remain unconditional
 
 **Bounded per node, not globally**: several large nodes resolving simultaneously each add one slice's cost to a frame (simultaneous 10M-scale resolves are already serialized by the per-node single-in-flight sort rule).
 
 ### Held Append Draws
 
-A gsplat append commit — or a pool GROW that extends the drawn population, seeded with the previous geometry's drawn permutation — HOLDS its draw at the previous population (see `holdSortedIndexDrawForAppend` / `holdSortedIndexDrawFromSeed` in `element-storage.ts`): the suffix texels are uploaded but `instanceCount` stays at the drawn count until an ordering of the WHOLE grown population is installed — the slot flip of the worker's ordering, or the synchronous first sort's live write. So every frame is an exact back-to-front draw of some population instead of storage order for the 75-225 ms a large sort takes. The coordinator owns the other exit, `releaseHeldDraw` (a repaired full permutation, all elements drawn), on every path where that ordering will not arrive: an order-independent / depth-sort-off / empty commit, a missing API, a failed `registerNode`, a commit that cannot reach the worker, a `scheduleSort` that cannot dispatch, a current-generation sort that stages nothing (null result, rejected write), a failed sort RPC, a switch to a commutative mode, and node release. A STALE result does not release: the newer commit's sort is queued behind it. A release that ends a hold marks the drawn state changed and calls `requestRender`, since most release paths run in a promise callback after the commit's own render request was consumed; under render-on-change the held draw would otherwise stay on screen.
+An append commit of any instanced type (gsplats, points, lines) — or a pool GROW that extends the drawn population, seeded with the previous geometry's drawn permutation — HOLDS its draw at the previous population (see `holdSortedIndexDrawForAppend` / `holdSortedIndexDrawFromSeed` in `element-storage.ts`): the suffix texels are uploaded but `instanceCount` stays at the drawn count until an ordering of the WHOLE grown population is installed — the slot flip of the worker's ordering, or the synchronous first sort's live write. So every frame is an exact back-to-front draw of some population instead of storage order for the 75-225 ms a large sort takes. The coordinator owns the other exit, `releaseHeldDraw` (a repaired full permutation, all elements drawn), on every path where that ordering will not arrive: an order-independent / depth-sort-off / empty commit, a missing API, a failed `registerNode`, a commit that cannot reach the worker, a `scheduleSort` that cannot dispatch, a current-generation sort that stages nothing (null result, rejected write), a failed sort RPC, a switch to a commutative mode, and node release. A STALE result does not release: the newer commit's sort is queued behind it. A release that ends a hold marks the drawn state changed and calls `requestRender`, since most release paths run in a promise callback after the commit's own render request was consumed; under render-on-change the held draw would otherwise stay on screen.
 
 ### Per-Frame Camera Re-Sort Scheduler (Phase 3)
 
-`evaluateDepthSortPerFrame()` runs as the `'depth-sort-scheduler'` per-frame callback (registered beside `'lod-group-selector'`). For each order-dependent node with a completed dispatch on record, compares the live model-view z-row against the pose the last sort was dispatched from and dispatches a re-sort when either:
+`DepthSortCoordinator.evaluatePerFrame()` (→ `evaluateDepthSortPerFrame(c)`) runs as the host's `'depth-sort-scheduler'` per-frame callback (registered beside `'lod-group-selector'`; a `LuxarLayer` calls it from `update()`). It visits only THAT coordinator's nodes, against that host's camera. For each order-dependent node with a completed dispatch on record, compares the live model-view z-row against the pose the last sort was dispatched from and dispatches a re-sort when either:
 
 - The view axis has rotated past `config.depthSort.angleThresholdDeg` (default 3°, relative to the node — a spinning node triggers it too), OR
 - The camera has translated ALONG the view axis past `config.depthSort.translationFraction` (default 0.05) × the node's bounding-sphere radius (which changes the behind-camera set the kernel clamps to the far bucket)
@@ -249,7 +277,7 @@ A gsplat append commit — or a pool GROW that extends the drawn population, see
 
 **Flow**:
 
-1. **Clear render-order state FIRST** (before any early-return) — `clearRenderOrderFrameState()` drops the previous frame's partition-wrapper subtree references
+1. **Clear render-order state FIRST** (before any early-return) — `beginRenderOrderFrame(c.getDisplayDims)` drops the previous pass's partition-wrapper subtree references and installs this coordinator's display-dims accessor
 2. **Pump chunked applies** (before any early-return) — delaying them during a load would postpone convergence to the newest complete ordering
 3. Early-exit if `!depthSortEnabled` or `nodeStates.size === 0` or no camera
 4. For each node in `nodeStates`:
@@ -264,24 +292,24 @@ A gsplat append commit — or a pool GROW that extends the drawn population, see
      - Compare live axis/offset against `lastSortAxis` / `lastSortOffset`:
        - Angle: `axis.dot(lastSortAxis) < cosThreshold`
        - Translation: `abs(offset - lastSortOffset) > translationFraction × radius`
-     - If moved: `scheduleSort(mesh, nodeId)`
+     - If moved: `scheduleSort(c, mesh, nodeId)`
 5. **Assign global renderOrder** — `assignGlobalRenderOrder()` (see render-order.ts below)
 
-### Offline Capture (resortForCapture)
+### Offline Capture (DepthSortCoordinator.resortForCapture)
 
 The per-frame scheduler runs ONLY inside the rAF loop. Offline capture (the gallery orbit-video pass) STOPS that loop, moves the camera per frame, and renders synchronously — so the scheduler never fires and every frame would be filmed with the back-to-front permutation frozen at the pre-orbit pose (order-dependent modes: normal / volumetric).
 
-`resortForCapture(maxWaitMs = 3000)` (exposed as `__luxarDebug.resortDepthOrderingForCapture`) drives the ordering by hand for the current pose:
+`resortForCapture(maxWaitMs = 3000)` (the app's, exposed as `__luxarDebug.resortDepthOrderingForCapture`, and called by the recording panel's offline frame loop through `sceneManager.depthSort`) drives THIS host's ordering by hand for the current pose:
 
 1. FORCE a fresh sort on every eligible node (`isEffectivelyVisible` + `hasCommittedData` + `isLiveOrderDependent`) — offline can afford a full sort per frame, so the ordering is exact for THIS pose, not only when a threshold trips
-2. Run the cross-node renderOrder pass + pump chunked applies via `evaluateDepthSortPerFrame`
-3. Drain worker sorts + chunked applies to quiescence (`isCaptureQuiescent`: no node `inFlight` / `resortQueued` / `hasPendingSortedIndexOrderingApply`), yielding a macrotask (`setTimeout(0)`) per iteration, bounded by `maxWaitMs` so a wedged worker can never hang the capture. The drain BYPASSES the #715 slice back-pressure (`setSortedIndexApplyBackPressureBypassed`): it never draws, so the upload ack that releases a stall can never fire, and a multi-slice apply (>1M elements) would otherwise wedge every frame until the timeout — offline, the slices fold into one upload on the capture's own render, which is exactly acceptable
+2. Run the cross-node renderOrder pass + pump chunked applies via `evaluateDepthSortPerFrame(c)`
+3. Drain worker sorts + chunked applies to quiescence (`isCaptureQuiescent`: no VISIBLE node `inFlight` / `resortQueued` / `hasPendingSortedIndexOrderingApply` — a hidden node is not filmed and its stream stays parked while hidden), yielding a macrotask (`setTimeout(0)`) per iteration, bounded by `maxWaitMs` so a wedged worker can never hang the capture. The drain BYPASSES the #715 slice back-pressure for this coordinator's streams (their `bypassBackPressure` hook reads `captureSuppressDepth > 0`; another host's interactive streams keep their bound): it never draws, so the upload ack that releases a stall can never fire, and a multi-slice apply (>1M elements) would otherwise wedge every frame until the timeout — offline, the slices fold into one upload on the capture's own render, which is exactly acceptable
 
 It **suppresses the `requestRender` wake** for the duration (depth-counted / reentrancy-safe via `captureSuppressDepth` / `requestRenderBeforeCapture`; only the OUTERMOST call snapshots + restores) so draining can't re-arm the loop the capture deliberately stopped. **No-op** when depth sorting is disabled, no order-dependent node exists, or the worker is unavailable — including the merely-not-ready-yet case of a capture launched during startup warm-up, since `scheduleSort` gates on `workerInitState === 'ready'` (the pure-main-thread renderOrder pass still runs).
 
-### Blending-Mode Switch Hook (noteDepthSortBlendingModeSwitch)
+### Blending-Mode Switch Hook (noteBlendingModeSwitch)
 
-Reacts to a sortable layer's blending mode changing at runtime (the LayersPanel compose chain). Wired for all four geometry types (gsplats, points, lines, mesh).
+Reacts to a sortable layer's blending mode changing at runtime (the LayersPanel compose chain). Wired for all four geometry types (gsplats, points, lines, mesh). The Layers panel calls the free `noteDepthSortBlendingModeSwitch(mesh, …)`, which routes to the mesh's owning coordinator (a mesh no coordinator has seen is a no-op: its first commit reads the live mode).
 
 **Flow**:
 
@@ -298,31 +326,33 @@ Reacts to a sortable layer's blending mode changing at runtime (the LayersPanel 
 
 **Sorted modes = normal ∪ volumetric (`needsDepthSort`)**, for the three emissive types; mesh has no `volumetric` (its material maps the request onto `opaque`), so its sorted set is just `normal`. A switch BETWEEN two sorted modes (e.g. normal→volumetric) is deliberately a no-op here: the ordering stays valid; the projection/output change is the material's problem (TSL rebuild / GLSL define recompile).
 
-### Node Release (releaseDepthSortNode / releaseAllDepthSortNodes)
+### Node Release (releaseNode / releaseAllNodes)
 
-**`releaseDepthSortNode(mesh)`** — wired to node disposal and lazy-LOD release for every sortable type:
+**`releaseDepthSortNode(mesh)`** (free, routed to the owner's `releaseNode`) — wired to node disposal (`disposeObjectTree`, `LuxarLayer` root detach) and lazy-LOD release for every sortable type:
 
-1. Delete `nodeStates.get(mesh.uuid)`
+1. Delete the owner's `nodeStates.get(mesh.uuid)`
 2. Abort any in-flight chunked apply: `cancelSortedIndexOrderingApply(geometry)` (with the node state gone the per-frame pump would never visit this geometry again)
 3. Fire-and-forget worker-side release: `releaseWorkerNode(nodeId)` (swallows rejections — releases run during teardown flows where the worker may already be terminating)
 
-**`releaseAllDepthSortNodes()`** — wired to dataset-switch teardown (`clearLoadedSceneContent`) ahead of the per-mesh walk:
+**`releaseAllNodes()`** — wired to the app's dataset-switch teardown (`clearLoadedSceneContent(scene, sceneManager.depthSort)`) ahead of the per-mesh walk:
 
-1. Clear `nodeStates` map
-2. Abort all in-flight chunked applies: `cancelAllSortedIndexOrderingApplies()`
-3. Fire-and-forget worker-side release: `api?.releaseAllNodes().catch(() => {})`
+1. Fire-and-forget worker-side release of EACH of this coordinator's nodes (`releaseWorkerNode`) — never the whole worker, which other hosts share
+2. Clear this coordinator's `nodeStates` map
+3. Abort this coordinator's in-flight applies: `cancelAllSortedIndexOrderingApplies(c)` / `cancelAllTriangleOrderingApplies(c)` (owner-filtered)
 
 The sweep covers registrations whose mesh was never attached to the scene; the walk's per-mesh releases then no-op.
 
-### Disposal (disposeDepthSort)
+### Disposal (DepthSortCoordinator.dispose)
 
-App teardown / test reset:
+Host teardown / test reset (the app's from the dispose pipeline, a layer's from `LuxarLayer.dispose`):
 
-1. Clear `nodeStates` map
-2. Abort all in-flight chunked applies: `cancelAllSortedIndexOrderingApplies()`
-3. Clear render-order frame state: `clearRenderOrderFrameState()` (module-state reset completeness — an embedder that disposes and re-inits in one page must not have the old scene pinned)
-4. Terminate worker: `worker?.terminate()`
-5. Reset module state: `worker = null`, `api = null`, `initPromise = null` (+ `initEpoch++`, which ORPHANS an attempt still in flight — the one reset nulling a variable cannot do, since its init deadline timer lives in a closure nothing here can cancel), all injected callbacks `= null`, `depthSortEnabled = true`, `warnedWorkerUnavailable = false`, the offline-capture suppression state (`captureSuppressDepth = 0`, `requestRenderBeforeCapture = null`, back-pressure bypass off), and the init-failure bookkeeping (`workerInitState = 'idle'`, `initTimeoutRetryPending = false`, `initTimeoutCount = 0`, `initRetryNotBeforeMs = 0`, pending self-wake cancelled) — so an embedder that disposes and re-inits in one page starts with a full retry budget and a truthful status
+1. When another coordinator still uses the worker, release this one's registrations node by node (the last one's terminate drops them wholesale instead)
+2. Clear `nodeStates`; abort this coordinator's in-flight applies (owner-filtered)
+3. Reset the offline-capture suppression state (`captureSuppressDepth = 0`, which also ends the back-pressure bypass; `requestRenderBeforeCapture = null`) and clear render-order frame state (`clearRenderOrderFrameState()` — an embedder that disposes and re-inits in one page must not have the old scene or accessor closure pinned)
+4. Null every injected callback, `depthSortEnabled = true`, refill the sync budget
+5. `detachCoordinator(c)`. The LAST detach terminates the worker and resets the host: `worker = null`, `api = null`, `initPromise = null` (+ `initEpoch++`, which ORPHANS an attempt still in flight — the one reset nulling a variable cannot do, since its init deadline timer lives in a closure nothing here can cancel), `warnedWorkerUnavailable = false`, and the init-failure bookkeeping (`workerInitState = 'idle'`, `initTimeoutRetryPending = false`, `initTimeoutCount = 0`, `initRetryNotBeforeMs = 0`, pending self-wake cancelled) — so an embedder that disposes and re-inits in one page starts with a full retry budget and a truthful status
+
+The instance can be configured again after `dispose()`.
 
 ## Cross-Node (Inter-Mesh) Ordering (render-order.ts)
 
@@ -332,15 +362,15 @@ Depth sorting orders elements WITHIN a mesh; THREE orders transparent MESHES by 
 
 ### Per-Frame Protocol
 
-Driven by `evaluateDepthSortPerFrame` (depth-sort-coordinator.ts):
+Driven by `evaluateDepthSortPerFrame(c)` (`scheduler.ts`), once per coordinator pass:
 
-1. `clearRenderOrderFrameState()` at the top of the frame (before any early-return)
+1. `beginRenderOrderFrame(c.getDisplayDims)` at the top of the pass (before any early-return)
 2. `collectRenderOrderSlot(mesh, mv, camPos)` once per surviving sorted-mode mesh
 3. `assignGlobalRenderOrder()` after the loop
 
 ### Global Scale Assignment
 
-Because `renderOrder` is compared **globally** across all transparent meshes, the assignment must put every sorted-mode mesh on ONE sequential integer scale (1..M, farthest first), reserving THREE's default 0 for empty parts that have not committed yet. Steps:
+Because `renderOrder` is compared **globally** across all transparent meshes, the assignment must put every sorted-mode mesh of the coordinator on ONE sequential integer scale (1..M, farthest first), reserving THREE's default 0 for empty parts that have not committed yet. Steps:
 
 1. **Group by wrapper/leaf identity** — meshes sharing a partition wrapper form one order group; a single-leaf mesh is its own group of one
 1. **Band by authored `layer_order`** (the PRIMARY key — `docs/guides/specs/LAYER_ORDER_SPEC.md`) — a layer may author an integer draw order, higher = nearer the camera = drawn later, composed nearest-setter-wins and read off `mesh.userData.layerOrder`. Groups sort by `(level, meanZ)`, and **containment edges below are honoured only WITHIN a band** — bands are hard partitions of the draw order, so an authored level is the author's stated intent overriding an inferred relation, and a cross-band containment relation is not outranked but unrepresentable (it warns once, naming both paths, because dropping it is the one way a level can wash out an embedded layer). Unset ⇒ band 0, so with nothing authored every group lands in ONE band, the comparator falls through to mean view-z alone, the edge set is unchanged, and the output is bit-identical to before the feature existed — structurally, not via a guarded fast path. A **commutative** layer (`additive`/`luminous`/`max`) is normally pinned at `renderOrder` 0 and always drawn first; authoring a level is the only way to state where it sits relative to an order-dependent one, and is the sole reason such a layer enters this pass at all (it never requests a within-mesh sort). Two things a band deliberately does NOT do: it cannot cross THREE's opaque→transparent bucket split (`renderOrder` is only compared within a bucket, so a conflicting authored order warns), and it buys _stability_, not correctness — for concave interpenetrating layers no valid whole-object order exists from any viewpoint, so a level pins such a pair to one stated wrong answer instead of a camera-dependent one
@@ -403,10 +433,12 @@ The sibling partition-footprint cache in `scene/lod-group-registry.ts` uses push
 ### App Init (core/app/init/pipeline.ts)
 
 ```typescript
-// Session master switch: bootstrap threads `?depthSort=0` into the app options.
-setDepthSortEnabled(config.depthSort.enabled && (ports.options.depthSort ?? true));
+// THIS app's coordinator, owned by its scene manager.
+const depthSort = sceneManager.depthSort;
+// Master switch: bootstrap threads `?depthSort=0` into the app options.
+depthSort.setEnabled(config.depthSort.enabled && (ports.options.depthSort ?? true));
 
-configureDepthSort({
+depthSort.configure({
   getCamera: () => sceneManager.camera, // GETTER, not a captured reference
   requestRender: () => animationController.requestRender('depthSort'),
   // The loader changes per dataset, so it is resolved at call time.
@@ -419,32 +451,39 @@ configureDepthSort({
   // displayed dims; read live so nD navigation is tracked.
   getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? null,
 });
-warmUpDepthSortWorker();
+depthSort.warmUp();
 ```
+
+`SceneManager.loadSceneData` hands the same instance to the app's loader manager (`SceneLoaderManager.getInstance().setDepthSortCoordinator(this.depthSort)` before `loadScene`), its post-processing (`glassSource`) and its dataset switch (`clearLoadedSceneContent(scene, this.depthSort)`). A `LuxarLayer` does the same with its own instance in `installDepthSort` / `load` / `update` / `dispose`.
 
 ### Per-Frame Registration
 
 ```typescript
 // Returns true when the pass changed a renderOrder or an ordering-buffer
 // slot, so the render-on-change loop redraws exactly then.
-animationController.addPerFrameCallback('depth-sort-scheduler', () => evaluateDepthSortPerFrame());
+animationController.addPerFrameCallback('depth-sort-scheduler', () => depthSort.evaluatePerFrame());
 ```
 
 ### Commit-Time First Sort
 
-Eligible instanced nodes publish their first ordering synchronously inside the
+Eligible nodes publish their first ordering synchronously inside the
 commit so the next frame does not wait for the SortWorker round trip.
 `depthSort.syncSortMaxElements` is both the per-node ceiling and the shared
-element budget between `evaluateDepthSortPerFrame()` calls; once spent, later
+element budget between one coordinator's `evaluatePerFrame()` calls; once spent, later
 commits keep the repaired prior ordering and use the normal async pipeline.
-Indexed Mesh nodes skip this path because they apply orderings through
-`geometry.index`, not `aSortedIndex`.
+Instanced nodes write `aSortedIndex` live; indexed Mesh nodes sort their face
+centroids and write the permuted triples into `geometry.index`
+(`writeSortedTriangleOrdering`) — a mesh commit rewrites the index in canonical
+order on every slice move, so this is what keeps nD playback from drawing one
+storage-order frame per timepoint. A resolved worker ordering whose length is
+not the committed count (the worker clamps an under-delivering registration) is
+dropped, and a held append draw is released rather than left waiting.
 
 ### Disposal
 
 ```typescript
-// In app dispose pipeline
-disposeDepthSort();
+// In app dispose pipeline (a LuxarLayer disposes its own the same way)
+ports.sceneManager?.depthSort.dispose();
 ```
 
 ## Invariants & Contracts
@@ -467,7 +506,7 @@ Every release path (empty/commutative commit, mode-switch-away, node disposal) m
 
 ### Frame-State Lifetime
 
-The strong-reference render-order containers (`partitionRankCache`, `orderSlots`) are cleared/reset every frame and never outlive a frame. `clearRenderOrderFrameState()` resets exactly these two — it runs FIRST in `evaluateDepthSortPerFrame`, before any early-return, so a disposed/dataset-switched frame can't leave them holding stale THREE object references. `partitionRankMemo` is weak-keyed, while `scratch` and containment scratch hold only numeric state; all three are therefore safe to keep across frames.
+The strong-reference render-order containers (`partitionRankCache`, `orderSlots`) are cleared/reset every frame and never outlive a frame. `clearRenderOrderFrameState()` resets exactly these two (plus the frame's display-dims accessor) — `beginRenderOrderFrame` runs it FIRST in `evaluateDepthSortPerFrame`, before any early-return, so a disposed/dataset-switched frame can't leave them holding stale THREE object references. `partitionRankMemo` is weak-keyed, while `scratch` and containment scratch hold only numeric state; all three are therefore safe to keep across frames.
 
 ### Allocation-Free Hot Path
 

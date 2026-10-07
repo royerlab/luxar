@@ -12,7 +12,7 @@ The Profiling package provides performance profiling for data loading and render
 - **Exponential Moving Average**: Stable timing averages with EMA (alpha=0.1)
 - **Ambient root context**: `time()`/`begin()` attach to the root session — handy for flat top-level entries
 - **Concurrent-safe top-level entries**: `timeTopLevel()` is safe under `Promise.all` for parallel loader updates
-- **Metadata Tracking**: Points, segments, splats, geometry-neutral elements, skip flags, plus optional chunk / cache / info fields on `TimingMetadata`
+- **Metadata Tracking**: Points, segments, splats, triangles, geometry-neutral elements, skip flags, plus optional chunk / cache / info fields on `TimingMetadata`
 - **UI Integration**: `DataLoadingMonitor` displays the timing panel
 
 ## Load timeline (`load-timeline.ts`)
@@ -33,6 +33,11 @@ panel) and mirrored into an allocation-free in-memory snapshot read by
 | `initUpdateDone`     | first `updateAllNDNodes` after load resolved               |
 | `refinementComplete` | final refinement phase ran every ladder to completion      |
 
+`poolReady` and `wasmReady` describe resources that outlive a dataset switch,
+so a later `loadStart` re-states them at its own start time (`{ carried: true }`,
+measure 0) until the worker pool is disposed (`noteLoadResourceReleased`); a
+real mark replaces a carried one.
+
 `getLoadTimeline().measures` derives `ttfpMs` (earliest first commit),
 `sceneLoadedMs`, `initUpdateDoneMs`, `refinementCompleteMs`, … relative to
 `loadStart`; `refinement` counts passes and rungs. Everything is best-effort:
@@ -49,9 +54,25 @@ store per event (`perfCounters.add(S, n)`); `max` keeps a high-water mark and
 `gauge` overwrites. `record(kind, rec)` appends to a bounded per-kind ring
 (4096) for per-tick traces.
 
+Every counter is declared in the `PERF_COUNTERS` table (unit, kind —
+`sum` / `max` / `gauge` — and a one-line meaning); the two run-time-suffixed
+families (`render.byReason.<reason>`, `decode.count.<origin>`) are declared in
+`PERF_COUNTER_FAMILIES`. The `perfCounters` singleton accepts only declared
+names (`PerfCounterName`), so a misspelt counter is a compile error instead of
+a fresh zero the render gate would read as `n/a`. The names are types only — a
+slot still resolves once and an event is still one store. Adding a counter
+means adding its row here and naming its exact-value test in
+`src/tests/_conformance/perf-counter-tests.ts`; `counter-truth.test.ts`
+checks that the registry, the code writing the counters and those tests agree,
+and `scripts/render-gate/gate-scenes.test.mjs` that every counter a gate
+scene judges is declared.
+
 Read them through `__luxarDebug.getPerf().counters` (a flat `name -> number`
 map, available from bootstrap on), `__luxarDebug.getPerfRecords(kind)`, and
-reset with `__luxarDebug.resetPerfCounters()`. Counters are the base for every
+reset with `__luxarDebug.resetPerfCounters()`. A reset starts a new measurement
+window — counters, high-water marks and records clear — but a gauge keeps its
+value: it describes current state, and its owner republishes it only on change.
+Counters are the base for every
 gated perf comparison, so a counter must exist on both the base and the
 candidate build before a commit can be judged on it.
 
@@ -83,7 +104,7 @@ try {
     return this.processData(data);
   });
 } finally {
-  profiler.endUpdate(); // Triggers listeners, updates UI
+  profiler.endUpdate(); // Merges into the persistent tree the monitor polls
 }
 ```
 
@@ -92,18 +113,20 @@ try {
 | Method                   | Purpose                                                      |
 | ------------------------ | ------------------------------------------------------------ |
 | `beginUpdate()`          | Start timing cycle (root session)                            |
-| `endUpdate()`            | End cycle, notify listeners                                  |
+| `endUpdate()`            | End cycle, merge into the persistent tree                    |
 | `time(name, fn)`         | Time a function with automatic nesting                       |
 | `timeWithMeta(name, fn)` | Time with metadata callback                                  |
 | `timeTopLevel(name, fn)` | Time a top-level parallel operation (safe for `Promise.all`) |
 | `begin(name)`            | Start manual timing entry (child of current)                 |
 | `beginTopLevel(name)`    | Start timing entry directly under root                       |
+| `beginPass()`            | Start a background refinement pass ('LOD Refinement' tree)   |
+| `beginDepthSortPass()`   | Start a SortWorker round-trip ('Depth Sort' tree)            |
 | `skip(name, reason)`     | Mark operation as skipped                                    |
 | `isActive()`             | Check if profiling is active                                 |
 | `current()`              | Get current innermost session                                |
 | `getTimings()`           | Get timing hierarchy for UI                                  |
-| `addListener(fn)`        | Add update listener                                          |
-| `removeListener(fn)`     | Remove update listener                                       |
+| `getRefinementTimings()` | Get the 'LOD Refinement' tree                                |
+| `getDepthSortTimings()`  | Get the 'Depth Sort' tree                                    |
 | `reset()`                | Clear all timing data                                        |
 
 ### Utility Functions
@@ -186,8 +209,8 @@ update with N loaders costs O(N) to merge rather than O(N²).
 ## Metadata Per Entry
 
 `TimingMetadata` fields (all optional): `chunks`, `cacheHits`,
-`cacheMisses`, `points`, `segments`, `splats`, `elements`, `skipped`,
-`skipReason`, `info`.
+`cacheMisses`, `points`, `segments`, `splats`, `triangles`, `elements`,
+`skipped`, `skipReason`, `info`.
 
 | Entry Type      | Metadata Fields typically set |
 | --------------- | ----------------------------- |
@@ -195,6 +218,7 @@ update with N loaders costs O(N) to merge rather than O(N²).
 | Points          | `points` (visible count)      |
 | Lines           | `segments` (visible count)    |
 | GSplats         | `splats` (visible count)      |
+| Mesh            | `triangles` (loaded faces)    |
 | Depth Sort      | `elements` (sorted count)     |
 | Skipped entries | `skipped: true`, `skipReason` |
 | Sub-operations  | (none, time is the metric)    |
@@ -269,15 +293,31 @@ this.monitor.setProfiler(this.profiler);
 
 - `update-profiler.ts` — `UpdateProfiler`, `RootSession`, the
   `TimingEntry` / `TimingMetadata` / `UpdateSession` interfaces, plus the
-  `formatMs` and `hasOverBudget` helpers.
+  `formatMs` and `hasOverBudget` helpers. One instance per
+  `SceneLoaderManager`, reset at every `loadStart`.
+- `load-timeline.ts` — the per-load milestone timeline (see above):
+  `markLoad`, `markFirstCommit`, the refinement counters, and
+  `getLoadTimeline()`.
+- `perf-counters.ts` — `PerfCounters` and the process-wide `perfCounters`
+  registry (see above).
 
 ## Public Exports
 
 - `class UpdateProfiler`, `class RootSession`
 - Interfaces: `UpdateSession`, `TimingEntry`, `TimingMetadata`
 - Functions: `formatMs(ms)`, `hasOverBudget(entry)`
+- `load-timeline.ts`: `markLoad`, `markFirstCommit`, `noteRefinementPass`,
+  `noteRefinementDensityDeferral`, `noteRefinementStarted`,
+  `noteRefinementAborted`, `noteRefinementComplete`,
+  `noteLoadResourceReleased`, `getLoadTimeline`, `resetLoadTimeline` (tests)
+- `perf-counters.ts`: `class PerfCounters`, `perfCounters`, `PERF_COUNTERS`,
+  `PERF_COUNTER_FAMILIES`, `perfCounterSpec`, `PERF_RECORD_RING_SIZE`,
+  `type PerfCounterSlot`, `type PerfCounterSpec`, `type PerfCounterName`,
+  `type FixedPerfCounterName`, `type PerfCounterFamily`
 
 ## Dependencies
 
-- Internal: `../utils/log` (for `log.warning` / `log.error` on session
-  misuse and listener errors).
+- Internal: `../utils/log` (for `log.warning` on session misuse);
+  `update-profiler.ts` also tallies its merge
+  cost into `perf-counters.ts`. `load-timeline.ts` and `perf-counters.ts`
+  import nothing.

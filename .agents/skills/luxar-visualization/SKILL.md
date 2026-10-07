@@ -166,10 +166,10 @@ the `add_*` call or it is lost. Five things about that round-trip surprise peopl
   it.** The Zebrahub streamlines shipped at strength 0.74 / radius 0.55 /
   threshold 0; the reviewed values were threshold 0.01, strength 0.05, radius 1.0
   over 8 mipmap levels — a faint, wide glow that keeps only the brightest cores.
-- **SSAA and `allow_high_dpr` together are a 16x fragment bill.** Ship the laptop
-  build by default (SSAA off, DPR capped at 1.0) and put the kiosk settings behind
-  a `--high-quality` flag (`demo_esm_protein_universe.py`). A demo tuned on a
-  dedicated big-GPU display will crawl on the machines its visitors own.
+- **SSAA and `allow_high_dpr` together are a 16x fragment bill.** The protein
+  universe demo keeps full, fixed DPR in both builds so its fine structure stays
+  sharp during flights, but enables SSAA only with `--high-quality`
+  (`demo_esm_protein_universe.py`). Check the cost on the machines visitors use.
 - **Amplitudes MUST be normalised into `[0, ~1]` before the node enters the
   scene, and no viewer control can substitute for it.** A fitted
   `.gsplats.zarr` stores amplitudes in RAW SOURCE UNITS — the fitter multiplies

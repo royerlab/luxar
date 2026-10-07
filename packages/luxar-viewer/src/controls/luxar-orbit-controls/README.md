@@ -23,7 +23,7 @@ orchestrators stay structurally parallel (see `../README.md`'s
 ## Subpackages
 
 - `math/` — pure functions for trackball axis-angle derivation, screen-space pan, and zoom-scale application (perspective distance multiply vs orthographic `camera.zoom` scale). Consumed by both `update.ts` and the input handlers. See `math/README.md`.
-- `input/` — DOM-event handler bodies (`pointer.ts`, `touch.ts`, `keyboard.ts`) extracted from the orchestrator's bound listeners. Each handler reads its math from `../math/` and writes deltas onto the orchestrator's accumulators (`rotationDelta`, `panDelta`, `zoomDelta`, `rollDelta`) which the next `update()` tick drains with damping. See `input/README.md`.
+- `input/` — DOM-event handler bodies (`pointer.ts`, `touch.ts`) extracted from the orchestrator's bound listeners. Each handler reads its math from `../math/` and writes deltas onto the orchestrator's accumulators (`rotationDelta`, `panDelta`, `zoomDelta`, `rollDelta`) which the next `update()` tick drains with damping. See `input/README.md`.
 
 ## ASCII tree
 
@@ -32,7 +32,7 @@ luxar-orbit-controls/
 ├── camera-application.ts   # applyToCamera (hot), initializeFromCamera (cold)
 ├── update.ts               # runUpdateStep — nine-step per-frame sequencer
 ├── math/                   # pure math: trackball, pan, zoom
-└── input/                  # DOM handlers: pointer, touch, keyboard
+└── input/                  # DOM handlers: pointer, touch
 ```
 
 ## Invariants
@@ -49,14 +49,17 @@ luxar-orbit-controls/
   against `lastPosition` / `lastQuaternion`.
 - **Every damped delta has a "negligible" gate, and the tail must end.**
   Roll (`1e-6` rad) and zoom (`1e-8`) always had one; the trackball
-  rotation's is a half-angle sine below `1e-12`, snapped to the identity
-  and not applied. Without it the rotation residue decays geometrically for
+  rotation's is a half-angle sine below `1e-8`, and pan's a remaining length
+  below `1e-8` of the camera distance, both snapped to zero and not applied.
+  Without the rotation gate the residue decays geometrically for
   thousands of frames, and multiplying it in + re-normalizing every frame
   can flip the orientation between two ULP-apart quaternions FOREVER — the
   exact change test then fires every frame, and the render loop (which
   renders only on change, and idles only without one) never went idle after
-  roughly one drag in eight. The gate is far below anything drawable: the
-  whole remaining tail moves the camera by less than float32 resolution.
+  roughly one drag in eight. The gates are below anything drawable: the
+  whole remaining tail moves every drawn position by less than its own
+  float32 resolution. They used to be tighter (`1e-12`, and none for pan),
+  which kept a 4 px drag rendering ~59 frames identical to their predecessor.
 - **The two DRIVEN motions bypass the damping accumulators.**
   Auto-rotation premultiplies the orientation directly rather than feeding
   `rotationDelta`, and the auto-dolly multiplies the distance directly

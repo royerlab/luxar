@@ -31,7 +31,7 @@ prefetch/
 3. **Shadow loaders** — `SlicePrefetcher` lazily builds a second loader per
    registered node from the same `loader-factory` helpers (plain or
    progressive by `n_additive_sublods`). Foreground loader instances cannot be
-   reused: they hold a reused accumulator, `_activeSignal`, and progressive
+   reused: they hold a reused accumulator, the per-call signal context, and progressive
    ladder state, and `SceneLoader.updateView` is single-flight. Shadows share
    **nothing mutable** with the foreground — the S-cache is the only handoff.
    They are deliberately NOT monitor-connected (no metric double-counting).

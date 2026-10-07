@@ -258,7 +258,7 @@ describe('GSplatMaterial.applyBlendingMode (GLSL)', () => {
     // constructor defaults (stale near-cull) until the next global camera
     // broadcast. The ortho test is read in shader, so there is no flag.
     const mat = new GSplatMaterial();
-    mat.updateCameraParams(new THREE.Vector2(640, 480), /*isOrtho=*/ true, 0.42);
+    mat.updateCameraParams(new THREE.Vector2(640, 480), 0.42);
     const cloned = mat.clone();
     expect(cloned.uniforms.uIsOrtho).toBeUndefined();
     expect(cloned.uniforms.uNearCull.value).toBeCloseTo(0.42, 5);
@@ -466,7 +466,7 @@ describe('GSplatTSLMaterial.applyBlendingMode (TSL)', () => {
     // the projection kind from cameraProjectionMatrix, so a value copy of
     // the remaining camera state suffices.
     const mat = new GSplatTSLMaterial();
-    mat.updateCameraParams(new THREE.Vector2(640, 480), /*isOrtho=*/ true, 0.42);
+    mat.updateCameraParams(new THREE.Vector2(640, 480), 0.42);
     const cloned = mat.clone();
     expect(cloned.uniforms.uIsOrtho).toBeUndefined();
     expect(cloned.uniforms.uNearCull.value).toBeCloseTo(0.42, 5);

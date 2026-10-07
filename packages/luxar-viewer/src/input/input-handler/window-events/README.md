@@ -8,7 +8,8 @@ during `init()`.
   `SceneManager.updateSize()`), `wheel` (intercepts Ctrl/Meta+wheel for
   FOV; orbit/ortho controls own the regular zoom), and
   `fullscreenchange` (toggles canvas inline styles + runs one rAF
-  `updateSize()` after the viewport transition).
+  `updateSize()` after the viewport transition; the pending frame is
+  cancelled by a newer change and by cleanup).
 - `fullscreen-toggle.ts` — `toggleFullscreen` body. Requests
   fullscreen on `document.documentElement`; falls back to the WebGL
   canvas if the document request rejects; exits otherwise.

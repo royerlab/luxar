@@ -54,6 +54,13 @@ parallel tests) applies at the **node, attribute, writer and loader** layers. It
 the storage layer, nor to the ADDITIVE LOD ladder (the substitutive flavour is symmetric — see the
 table), and pretending otherwise would produce a worse design.
 
+The table below is the layer-level summary. The behaviour-level one, which says
+what each geometry type does and why a mesh does not, is the viewer's
+geometry-behaviour matrix,
+[`geometry-behaviours.ts`](../../packages/luxar-viewer/src/tests/_conformance/geometry-behaviours.ts).
+Every cell there is checked against the code by a probe, and every mesh absence
+cites the section of this spec that decides it.
+
 | Layer | Symmetric with Points/Lines/GSplats? | Notes |
 |---|---|---|
 | `DataNode` subclass, metadata, `n_elements` | ✅ Yes | Direct mirror of `core/lines.py` |

@@ -9,9 +9,9 @@
  * does neither: it joins/starts the cache-wide decode with the caller's own
  * signal, no probe, and (by default) origin `'prefetch'`.
  *
- * Kept dependency-free (no `DecompressedChunkCache` import, whose static
- * initializer reads config) so data-layer helpers can call it without pulling
- * the cache module into their import graph; the proxy implements the method.
+ * Kept dependency-free (no `DecompressedChunkCache` import) so data-layer
+ * helpers can call it without pulling the cache module into their import
+ * graph; the proxy implements the method.
  *
  * @module cache/decompressed-chunk-cache/warm-chunk
  */
@@ -40,13 +40,17 @@ export interface WarmableArray {
 
 /** Minimal array surface the fallback needs (a raw zarrita array has it). */
 interface ChunkReadable {
-  getChunk(chunkCoords: number[], options?: { signal?: AbortSignal }): Promise<unknown>;
+  getChunk(
+    chunkCoords: number[],
+    options?: { signal?: AbortSignal; suppressPrefetch?: boolean }
+  ): Promise<unknown>;
 }
 
 /**
  * Warm one chunk: through the L0 proxy's `warmChunk` when `array` is wrapped
  * (decode + cache, no probe record, no output assembly), else a bare
  * `getChunk` that fetches (warming L1/L2) and decodes with no output assembly.
+ * Either way the store read is a prefetch (`suppressPrefetch`).
  */
 export async function warmChunk(
   array: unknown,
@@ -59,5 +63,8 @@ export async function warmChunk(
     return;
   }
   options.signal?.throwIfAborted();
-  await (array as ChunkReadable).getChunk(chunkCoords, { signal: options.signal });
+  await (array as ChunkReadable).getChunk(chunkCoords, {
+    signal: options.signal,
+    suppressPrefetch: true,
+  });
 }

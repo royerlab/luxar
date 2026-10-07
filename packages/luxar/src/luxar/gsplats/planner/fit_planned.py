@@ -39,18 +39,9 @@ ProgressCallback = Callable[[int, int, str], None]
 
 #: Near-lossless post-fit retention every content box is fitted at.
 #:
-#: The fitter's own default is ``0.95``, which discards the bottom 5% of
-#: cumulative amplitude after EVERY fit. Content is the ``--cal``-driven path, so
-#: it is where that ``0.95`` — one half of the false ``signal_limited`` curve
-#: ``luxar gsplat cal`` used to report, the other half being too few iterations at
-#: high K — is most in play; every preset overrides it, and a preset-less content
-#: fit should not be the one invocation that keeps it. A per-box cull also
-#: compounds (the merged store loses the weakest splats of every box rather than of
-#: the volume), though that argument does not single content out: uniform tiling's
-#: default partition merge culls each tile independently too (only its ``--flat``
-#: merge culls once, globally) and stays at the fitter default on purpose.
-#: The CLI content path imports this constant so its default and the library's
-#: cannot drift apart.
+#: Pin the content path to 0.999 so a future fitter-default change does not
+#: silently change its per-box retention. The CLI content path imports the same
+#: value so it and the library cannot drift apart.
 CONTENT_CULL_RETENTION: float = 0.999
 
 

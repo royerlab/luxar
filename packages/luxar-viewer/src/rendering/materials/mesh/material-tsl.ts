@@ -30,7 +30,14 @@
 import * as THREE from 'three';
 import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { meshWebGPUFactory, type MeshTSLNodes } from './shader-tsl';
+import {
+  applyMeshMaterialState,
+  meshWebGPUFactory,
+  type MeshTSLConfig,
+  type MeshTSLNodes,
+} from './shader-tsl';
+import { copyRuntimeUniforms, MESH_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
+import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
 import {
   MESH_DEFAULTS,
   clampAppearanceFraction,
@@ -263,25 +270,31 @@ export class MeshTSLMaterial
     const useBaseColorTexture = has('LUXAR_MESH_BASE_COLOR_TEX');
     this.rebuildColormapNodes(useColormap);
     this.rebuildBaseColorTextureNode(useBaseColorTexture);
-    meshWebGPUFactory(
-      this.tslNodes as MeshTSLNodes,
-      {
-        useColormap,
-        useBaseColorTexture,
-        baseColorTextureLuminance: has('LUXAR_MESH_TEX_LUMINANCE'),
-        gammaOne: has('LUXAR_GAMMA_ONE'),
-        noGOG: has('LUXAR_NO_GOG'),
-        // Read back OUT of the defines rather than from `userData.shading`, so the
-        // define record stays the single source of truth for which variant is built
-        // — the same record the GLSL twin hands to the preprocessor.
-        shading: has('LUXAR_MESH_NO_SHADING')
-          ? 'none'
-          : has('LUXAR_MESH_FLAT_NORMAL')
-            ? 'flat'
-            : 'smooth',
-        blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'opaque',
-      },
-      this
+    const config: MeshTSLConfig = {
+      useColormap,
+      useBaseColorTexture,
+      baseColorTextureLuminance: has('LUXAR_MESH_TEX_LUMINANCE'),
+      gammaOne: has('LUXAR_GAMMA_ONE'),
+      noGOG: has('LUXAR_NO_GOG'),
+      // Read back OUT of the defines rather than from `userData.shading`, so the
+      // define record stays the single source of truth for which variant is built
+      // — the same record the GLSL twin hands to the preprocessor.
+      shading: has('LUXAR_MESH_NO_SHADING')
+        ? 'none'
+        : has('LUXAR_MESH_FLAT_NORMAL')
+          ? 'flat'
+          : 'smooth',
+      blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'opaque',
+    };
+    // ONE graph per configuration, shared by every mesh material of it
+    // (see shared-graph-tsl.ts): the build cache keys on node ids.
+    applySharedTSLGraph(this, 'mesh', config, this.tslNodes, (inputs, scratch) => {
+      meshWebGPUFactory(inputs as MeshTSLNodes, config, scratch);
+    });
+    applyMeshMaterialState(
+      this,
+      config.blendingMode ?? 'opaque',
+      (this.tslNodes.uOpacity.value as number | undefined) ?? 1.0
     );
     // Re-apply the explicit constructor overrides over the factory tail's
     // mode-derived state on EVERY rebuild — see the `_explicitDepthTest` field doc.
@@ -294,17 +307,12 @@ export class MeshTSLMaterial
   }
 
   /**
-   * @see MeshMaterial.updateCameraParams — `_resolution` / `_isOrtho` are accepted
-   * and ignored (a mesh has no screen-space size, and the near fade's ortho test
-   * reads `cameraProjectionMatrix`); only `nearCull` is consumed. It is a plain
+   * @see MeshMaterial.updateCameraParams — `_resolution` is accepted and ignored
+   * (a mesh has no screen-space size; the near fade's ortho test reads
+   * `cameraProjectionMatrix`); only `nearCull` is consumed. It is a plain
    * runtime uniform, so this never rebuilds the graph.
    */
-  updateCameraParams(
-    _resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    _pixelRatio?: number
-  ): void {
+  updateCameraParams(_resolution: THREE.Vector2, nearCull?: number, _pixelRatio?: number): void {
     if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;
     }
@@ -507,11 +515,8 @@ export class MeshTSLMaterial
     }
     // `side` is epoch state, not config — carry the live value (see the GLSL twin).
     cloned.side = this.side;
-    cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
-    // Camera state rides along for the same reason it does on the GLSL twin: a
-    // clone left at the perspective/0.1 defaults would fade against the wrong near
-    // plane — and under ortho, where the fade is the identity, would fade at all.
-    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    // Runtime state a fresh clone would reset (MESH_RUNTIME_UNIFORMS, ../_shared/runtime-uniforms.ts).
+    copyRuntimeUniforms(this, cloned, MESH_RUNTIME_UNIFORMS);
     return cloned as this;
   }
 

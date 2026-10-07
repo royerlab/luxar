@@ -13,6 +13,28 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import * as THREE from 'three';
+
+// The HDRI fetch is the one network edge here: each test hands out deferred loads.
+const hdriLoads = vi.hoisted(() => {
+  type Load = {
+    url: string;
+    resolve: (texture: unknown) => void;
+    reject: (error: unknown) => void;
+  };
+  return [] as Load[];
+});
+vi.mock('../../../../rendering/environment/hdri', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../rendering/environment/hdri')>();
+  return {
+    ...actual,
+    loadEquirectangularTexture: vi.fn(
+      (url: string) =>
+        new Promise((resolve, reject) => {
+          hdriLoads.push({ url, resolve, reject });
+        })
+    ),
+  };
+});
 import {
   CAPTURE_DEBOUNCE_MS,
   ROOM_ENVIRONMENT_SIGMA,
@@ -26,6 +48,8 @@ import { MeshMaterial } from '../../../../rendering/materials/mesh/material-glsl
 import { PointMaterial } from '../../../../rendering/materials/point/material-glsl';
 import { PhysicalMeshMaterial } from '../../../../rendering/materials/mesh-physical/material-glsl';
 import { DEFAULT_ENVIRONMENT_CONFIG, type BakedEnvironment } from '../../../../types/environment';
+import { log } from '../../../../utils/log';
+import { defineLifecycleContract } from '../../_shared/lifecycle-contract';
 
 function makeGenerator(): {
   factory: () => PmremGeneratorLike;
@@ -431,6 +455,33 @@ describe('SceneEnvironment — sources and precedence (Phase 4)', () => {
     expect(roomOnly.env.tick(performance.now() + 10_000)).toBe(false);
   });
 
+  it('keeps the room until capture is ready, then captures the settled scene once', () => {
+    const { env, scene, gen, renders } = makeEnv();
+    const { runtime } = makeRuntime(new THREE.Group());
+    let ready = false;
+    runtime.captureReady = () => ready;
+    env.attachRuntime(runtime);
+    env.configure({ ...DEFAULT_ENVIRONMENT_CONFIG, source: 'scene' });
+    env.ensure();
+    expect(env.activeKind()).toBe('room');
+    expect(scene.environment).toBe(gen.texture);
+    expect(env.captureCount).toBe(0);
+    expect(renders).toHaveLength(0);
+    expect(env.tick()).toBe(false);
+
+    ready = true;
+    runtime.settled = false;
+    expect(env.ensure()).toBe(false);
+    expect(env.tick()).toBe(false);
+    runtime.settled = true;
+    expect(env.tick()).toBe(true);
+    expect(env.activeKind()).toBe('scene');
+    expect(env.captureCount).toBe(1);
+    expect(renders).toHaveLength(6);
+    expect(env.tick()).toBe(false);
+    expect(env.captureCount).toBe(1);
+  });
+
   it('a baked map wins over the authored source, and clearing it falls back', () => {
     const { env, scene, gen, targets } = makeEnv();
     env.configure({ ...DEFAULT_ENVIRONMENT_CONFIG, source: 'scene' });
@@ -475,5 +526,181 @@ describe('SceneEnvironment — sources and precedence (Phase 4)', () => {
     expect(env.isReady()).toBe(false);
     expect(env.captureCount).toBe(1);
     expect(gen.disposeTarget).not.toHaveBeenCalled(); // the room was never built here
+  });
+});
+
+describe('SceneEnvironment — HDRI load ownership', () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const hdri = (url: string) => ({ ...DEFAULT_ENVIRONMENT_CONFIG, source: 'hdri' as const, url });
+
+  it('resolves a store-relative HDRI before scene capture is ready and redraws when it lands', async () => {
+    hdriLoads.length = 0;
+    const { env, scene } = makeEnv();
+    const requestRender = vi.fn();
+    env.attachRuntime({
+      ...makeRuntime(null).runtime,
+      captureReady: () => false,
+      baseUrl: () => 'https://store.example/scene.luxar.zarr',
+      requestRender,
+    });
+    env.ensure();
+    env.configure(hdri('env/studio.hdr'));
+    expect(hdriLoads.map((load) => load.url)).toEqual([
+      'https://store.example/scene.luxar.zarr/env/studio.hdr',
+    ]);
+    const texture = new THREE.Texture();
+    hdriLoads[0].resolve(texture);
+    await settle();
+    expect(scene.environment).toBe(texture);
+    expect(requestRender).toHaveBeenCalledTimes(1);
+  });
+
+  it('a stale rejection does not make the newer load discard its own texture', async () => {
+    hdriLoads.length = 0;
+    const { env, scene } = makeEnv();
+    env.configure(hdri('a.hdr'));
+    env.ensure();
+    env.configure(hdri('b.hdr'));
+    expect(hdriLoads.map((l) => l.url)).toEqual(['a.hdr', 'b.hdr']);
+
+    hdriLoads[0].reject(new Error('404'));
+    await settle();
+    const texture = new THREE.Texture();
+    const dispose = vi.spyOn(texture, 'dispose');
+    hdriLoads[1].resolve(texture);
+    await settle();
+
+    expect(dispose).not.toHaveBeenCalled();
+    expect(env.activeKind()).toBe('hdri');
+    expect(scene.environment).toBe(texture);
+  });
+
+  it("resetForDataset forgets the previous dataset's config, so its HDRI never lights the next", async () => {
+    hdriLoads.length = 0;
+    const { env, scene } = makeEnv();
+    env.configure({ ...hdri('a.hdr'), intensity: 3 });
+    env.ensure();
+    hdriLoads[0].resolve(new THREE.Texture());
+    await settle();
+    expect(env.activeKind()).toBe('hdri');
+
+    env.resetForDataset();
+    expect(env.getConfig()).toBe(DEFAULT_ENVIRONMENT_CONFIG);
+    expect(scene.environmentIntensity).toBe(DEFAULT_ENVIRONMENT_CONFIG.intensity);
+    // A physical material of the NEW scene asks for light before its config lands.
+    env.ensure();
+    expect(env.activeKind()).toBe('room');
+    expect(hdriLoads).toHaveLength(1);
+
+    env.configure(hdri('b.hdr'));
+    expect(hdriLoads.map((l) => l.url)).toEqual(['a.hdr', 'b.hdr']);
+    const next = new THREE.Texture();
+    hdriLoads[1].resolve(next);
+    await settle();
+    expect(scene.environment).toBe(next);
+  });
+
+  it('a loaded HDRI is keyed by its URL: configuring another one replaces it', async () => {
+    hdriLoads.length = 0;
+    const { env, scene } = makeEnv();
+    env.configure(hdri('a.hdr'));
+    env.ensure();
+    const first = new THREE.Texture();
+    const disposeFirst = vi.spyOn(first, 'dispose');
+    hdriLoads[0].resolve(first);
+    await settle();
+
+    env.configure(hdri('b.hdr'));
+    expect(hdriLoads.map((l) => l.url)).toEqual(['a.hdr', 'b.hdr']);
+    expect(disposeFirst).toHaveBeenCalled();
+    expect(env.activeKind()).toBe('room');
+    const second = new THREE.Texture();
+    hdriLoads[1].resolve(second);
+    await settle();
+    expect(scene.environment).toBe(second);
+    expect(env.activeKind()).toBe('hdri');
+  });
+
+  it('a URL that cannot be resolved keeps the room instead of throwing out of ensure()', () => {
+    hdriLoads.length = 0;
+    const { env } = makeEnv();
+    env.attachRuntime({ ...makeRuntime(null).runtime, baseUrl: () => 'not-an-absolute-base' });
+    env.configure(hdri('studio.hdr'));
+    expect(() => env.ensure()).not.toThrow();
+    expect(env.activeKind()).toBe('room');
+    expect(hdriLoads).toHaveLength(0);
+    // Failed once for this URL: later light requests neither retry nor throw.
+    expect(() => env.ensure()).not.toThrow();
+  });
+});
+
+describe('SceneEnvironment — HDRI load lifecycle', () => {
+  let subjects = 0;
+  defineLifecycleContract('SceneEnvironment HDRI load', {
+    create: () => {
+      // Every subject names its URLs uniquely: the mocked loader's queue is
+      // shared by the whole file, and a contract case builds a reference
+      // subject next to the one under test.
+      const prefix = `subject${subjects++}`;
+      const { env, scene } = makeEnv();
+      env.ensure(); // a physical material asked for light
+      const loads: typeof hdriLoads = [];
+      const textures: THREE.Texture[] = [];
+      const disposed = new Set<THREE.Texture>();
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      const nameOf = (url: string): string => url.slice(prefix.length + 1);
+      return {
+        start: (n) => {
+          const before = hdriLoads.length;
+          env.configure({
+            ...DEFAULT_ENVIRONMENT_CONFIG,
+            source: 'hdri',
+            url: `${prefix}-${n}.hdr`,
+          });
+          loads.push(...hdriLoads.slice(before));
+        },
+        pending: () => loads.length,
+        settle: (index, outcome) => {
+          const load = loads[index];
+          if (outcome === 'fail') {
+            load.reject(new Error('404'));
+            return;
+          }
+          const texture = new THREE.Texture();
+          texture.name = nameOf(load.url);
+          texture.dispose = () => disposed.add(texture);
+          textures.push(texture);
+          load.resolve(texture);
+        },
+        observe: () => ({
+          lit: env.activeKind(),
+          hdri: scene.environment?.name || null,
+          leakedTextures: textures.filter((t) => !disposed.has(t) && scene.environment !== t)
+            .length,
+        }),
+        failures: () =>
+          warning.mock.calls.filter((call) => call.some((arg) => String(arg).includes(prefix)))
+            .length,
+        dispose: () => env.dispose(),
+        // A dataset switch: the next scene's physical material asks for light again.
+        reset: () => {
+          env.resetForDataset();
+          env.ensure();
+        },
+      };
+    },
+    cases: {
+      abort: {
+        na: 'the HDRI fetch takes no signal: a superseded or reset request is dropped (and its texture disposed) on arrival, see startHdri',
+      },
+      dispose: true,
+      failure: true,
+      retry: {
+        na: 'a failed URL is not re-requested until the configured URL changes, by design (startHdri)',
+      },
+      supersede: true,
+      doubleDispose: true,
+    },
+    resets: true,
   });
 });

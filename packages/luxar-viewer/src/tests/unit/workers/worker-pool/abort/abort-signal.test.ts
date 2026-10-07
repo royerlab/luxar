@@ -10,51 +10,18 @@
  * the pool's `workers` array and forcing `initPromise` to resolved,
  * so we can run in jsdom without a Worker API.
  *
- * AUDIT NOTE (workers.md C3): the `makePool` helper mutates private
- * fields of a real WorkerPool via `as any`. Same caveat as the
- * load-balancing file — the helper is duped here intentionally rather
- * than extracted to a shared module; both files are slim and the
- * shape is unlikely to change.
+ * AUDIT NOTE (workers.md C3): `poolWithWorkers` (`tests/helpers/fake-worker.ts`,
+ * shared with the selection tests) mutates private fields of a real
+ * WorkerPool. Same caveat as the load-balancing file.
  */
 import { getEventListeners } from 'node:events';
 import { describe, it, expect, vi } from 'vitest';
-import { WorkerPool } from '../../../../../workers/worker-pool';
-
-interface FakeWorkerInstance {
-  worker: { terminate: () => void };
-  api: { handle: ReturnType<typeof vi.fn> };
-  activeQueries: number;
-}
-
-function makePool(workers: FakeWorkerInstance[]): WorkerPool {
-  const pool = new WorkerPool() as any;
-  pool.workers = workers;
-  pool.initPromise = Promise.resolve();
-  pool.nextWorkerIndex = 0;
-  return pool;
-}
-
-function makeFakeWorker(label: string, activeQueries = 0): FakeWorkerInstance {
-  return {
-    worker: { terminate: vi.fn() },
-    api: { handle: vi.fn().mockResolvedValue(label) },
-    activeQueries,
-  };
-}
-
-function forceAbortSignalAnyFallback(): () => void {
-  const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
-  Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
-  return () => {
-    if (descriptor) Object.defineProperty(AbortSignal, 'any', descriptor);
-    else delete (AbortSignal as unknown as { any?: unknown }).any;
-  };
-}
+import { makeFakeWorker, poolWithWorkers } from '../../../../helpers/fake-worker';
 
 describe('WorkerPool — AbortSignal', () => {
   it('rejects immediately when called with an already-aborted signal', async () => {
     const w0 = makeFakeWorker('A');
-    const pool = makePool([w0]);
+    const pool = poolWithWorkers([w0]);
     const controller = new AbortController();
     controller.abort();
     await expect(
@@ -74,7 +41,7 @@ describe('WorkerPool — AbortSignal', () => {
     // settle the promise.
     const w0 = makeFakeWorker('A');
     w0.api.handle = vi.fn(() => new Promise(() => {}));
-    const pool = makePool([w0]);
+    const pool = poolWithWorkers([w0]);
     const controller = new AbortController();
     const promise = (pool as any).runWithTimeout(
       'mid-flight-abort',
@@ -88,65 +55,18 @@ describe('WorkerPool — AbortSignal', () => {
     await expect(promise).rejects.toMatchObject({ name: 'WorkerAbortError' });
   });
 
-  it('releases fallback listeners after a completed call with pool and caller signals', async () => {
-    const restore = forceAbortSignalAnyFallback();
-    try {
-      const pool = makePool([makeFakeWorker('A')]);
-      const poolController = new AbortController();
-      const callerController = new AbortController();
-      pool.setAbortSignal(poolController.signal);
-      const listenersBefore = getEventListeners(poolController.signal, 'abort').length;
-
-      const result = await (pool as any).runWithTimeout(
-        'fallback-cleanup',
-        'projection',
-        (api: any) => api.handle(),
-        callerController.signal
-      );
-
-      expect(result).toBe('A');
-      expect(getEventListeners(poolController.signal, 'abort')).toHaveLength(listenersBefore);
-      expect(getEventListeners(callerController.signal, 'abort')).toHaveLength(0);
-    } finally {
-      restore();
-    }
-  });
-
-  it('pool-wide setAbortSignal applies to every subsequent runWithTimeout', async () => {
-    const w0 = makeFakeWorker('A');
-    const pool = makePool([w0]);
-    const controller = new AbortController();
-    pool.setAbortSignal(controller.signal);
-    controller.abort();
-    await expect(
-      (pool as any).runWithTimeout('pool-signal-op', 'projection', (api: any) => api.handle())
-    ).rejects.toMatchObject({ name: 'WorkerAbortError' });
-    // Clearing the pool signal restores normal behavior.
-    pool.setAbortSignal(undefined);
-    const result = await (pool as any).runWithTimeout('after-clear-op', 'projection', (api: any) =>
-      api.handle()
-    );
-    expect(result).toBe('A');
-  });
-
-  it('dispose clears a stale pool-wide abort signal before reuse', async () => {
-    const pool = makePool([makeFakeWorker('before-dispose')]);
-    const controller = new AbortController();
-    pool.setAbortSignal(controller.signal);
-    controller.abort();
-
-    pool.dispose();
-
-    const w0 = makeFakeWorker('after-dispose');
-    (pool as any).workers = [w0];
-    (pool as any).initPromise = Promise.resolve();
-    (pool as any).nextWorkerIndex = 0;
+  it('releases its listener on the caller signal after a completed call', async () => {
+    const pool = poolWithWorkers([makeFakeWorker('A')]);
+    const callerController = new AbortController();
 
     const result = await (pool as any).runWithTimeout(
-      'after-dispose-op',
+      'listener-cleanup',
       'projection',
-      (api: any) => api.handle()
+      (api: any) => api.handle(),
+      callerController.signal
     );
-    expect(result).toBe('after-dispose');
+
+    expect(result).toBe('A');
+    expect(getEventListeners(callerController.signal, 'abort')).toHaveLength(0);
   });
 });

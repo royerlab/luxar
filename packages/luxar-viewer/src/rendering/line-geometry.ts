@@ -64,9 +64,11 @@ import {
   getElementTexture,
   registerElementTexelDirtyRange,
   elementTexelCapacity,
+  writeFreshElementStorage,
   writeSortedIndexIdentity,
 } from './element-storage';
 import type { LinesProjectionBounds } from '../types/lines';
+import { installProjectionVariantHook } from './materials/_shared/projection-variant';
 
 /**
  * Create the base quad geometry for line instances.
@@ -506,16 +508,10 @@ function buildLinesGeometry(meshConfig: InstancedLinesMeshConfig): THREE.Instanc
   const segmentCount = clampLineCapacity(meshConfig.segmentCount);
 
   const texture = attachLineStorage(geometry, segmentCount);
-  try {
+  writeFreshElementStorage(geometry, () => {
     writeLineTexels(texture, meshConfig, segmentCount);
     writeSortedIndexIdentity(geometry, segmentCount);
-  } catch (err) {
-    // The texture was attached above; a guard-throwing write would
-    // otherwise leak the fresh geometry+texture pair (nobody owns it
-    // yet — callers keep the mesh on its OLD geometry when this throws).
-    geometry.dispose();
-    throw err;
-  }
+  });
 
   geometry.instanceCount = segmentCount;
   geometry.setDrawRange(0, 6);
@@ -548,6 +544,9 @@ export function createInstancedLinesMesh(
   const geometry = buildLinesGeometry(meshConfig);
   const mesh = new THREE.Mesh(geometry, material);
   mesh.frustumCulled = true;
+  // The TSL screen-space quad picks its compile-time projection variant per
+  // draw from the drawn camera (`_shared/projection-variant.ts`).
+  installProjectionVariantHook(mesh);
   return mesh;
 }
 

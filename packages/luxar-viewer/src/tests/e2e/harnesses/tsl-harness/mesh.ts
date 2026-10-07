@@ -285,6 +285,8 @@ function meshPickUniforms(
     uAlphaCutout: { value: surfaceMode ? 1 : 0 },
     uSurfaceDepth: { value: surfaceMode ? 1 : 0 },
     uNearCull: { value: fade.uNearCull },
+    // The house shader's near fade applies (0 only for a physical visual).
+    uNearFade: { value: 1 },
     ...(withTexture ? { uBaseColorTex: { value: buildBaseColorTexture() } } : {}),
   };
 }
@@ -346,6 +348,28 @@ export const MESH_SHADERS: Record<string, RegistryEntry> = {
     buildUniforms: () => meshUniforms(),
     buildDefines: () => ({ LUXAR_MAX_RGB_CONTRIBUTION: '' }),
     buildTSLMaterial: buildMeshTSL({ blendingMode: 'max' }),
+    buildMesh: buildMeshObject(),
+  },
+  // The gamma == 1 fast path (GLSL twin: LUXAR_GAMMA_ONE): `mesh` with uInvGamma = 1
+  // and `gammaOne: true`, so the colour pow() drops from the generated code. The
+  // production material builds it whenever the authored gamma is 1. Mirrors
+  // `point-gamma-one` / `line-gamma-one` / `gsplat-gamma-one`.
+  'mesh-gamma-one': {
+    source: MESH_SOURCE,
+    buildUniforms: () => ({ ...meshUniforms(), uInvGamma: { value: 1.0 } }),
+    buildDefines: () => ({ LUXAR_MESH_ALPHA_CUTOUT: '', LUXAR_GAMMA_ONE: '' }),
+    buildTSLMaterial: buildMeshTSL({ blendingMode: 'opaque', gammaOne: true }),
+    buildMesh: buildMeshObject(),
+  },
+  // The no-GOG fast path (GLSL twin: LUXAR_NO_GOG): `mesh` (gain 1, offset 0) with
+  // `noGOG: true`, so the gain/offset/clamp chain drops. A DEFAULT mesh takes this
+  // build in production (its gain and offset are the identity). Gamma stays on the
+  // slow path so only the no-GOG arm is exercised. Mirrors `point-no-gog` & co.
+  'mesh-no-gog': {
+    source: MESH_SOURCE,
+    buildUniforms: () => meshUniforms(),
+    buildDefines: () => ({ LUXAR_MESH_ALPHA_CUTOUT: '', LUXAR_NO_GOG: '' }),
+    buildTSLMaterial: buildMeshTSL({ blendingMode: 'opaque', noGOG: true }),
     buildMesh: buildMeshObject(),
   },
   // The derivative flat-normal variant: neither the `normal` attribute nor its

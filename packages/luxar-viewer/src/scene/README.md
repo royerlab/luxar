@@ -30,7 +30,13 @@ scene/
 ├── scene-dims-manager.ts           # nD dimension coordination
 ├── dimension-loading.ts            # Current-slice loading + playback prefetch
 ├── view-context.ts                 # The camera snapshot (view, projection, frustum, sizes); rebuilt on a camera change or per-frame invalidate
-├── lod-group-registry.ts           # Per-frame LOD-group selector (policy/state machine)
+├── lod-group-registry.ts           # Per-frame LOD-group selector (the orchestrator)
+├── lod-dissolve.ts                 # Time-driven level dissolve state machine
+├── playback-aspiration.ts          # Reload timing (EWMA), playback level cap, probes
+├── partition-gate.ts               # kind=partition culling, re-entry resync, lazy part activation
+├── capture-quiescence.ts           # Offline-capture "frame is final" predicate
+├── tick-demand.ts                  # Liveness contract: until when a component needs ticks
+├── retry-wakes.ts                  # One-shot, backed-off wakes for failure cooldowns / unanswered part requests
 ├── lod-selector-math.ts            # Selector math: world-box fold, box→area/diagonal projections, hysteresis pick
 ├── lod-blend.ts                    # Pure opacity math: level-dissolve curve + energy compensation
 ├── lod-fade.ts                     # Material-level fade appliers (clone-on-first-fade)
@@ -372,14 +378,17 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    `calculateCameraDistance` actually fits), so its finest anchor
    (`coverage_fraction` 1.0) is reached once the projected diagonal is
    half of the fitted screen axis. Both projections are `w`-aware: if
-   any corner (for `screen-area`, any point of the ellipsoid) is
-   at/behind the camera plane (camera inside or straddling the box),
-   they return `+Infinity` so the selector
-   saturates to the finest level — instead of the collapsed/garbage
-   value an unguarded perspective divide would produce on close
-   approach. Under an ORTHOGRAPHIC projection nothing degenerates (`w`
-   stays 1), so neither function ever saturates and each metric's plain
-   value is used directly.
+   any corner is at/behind the camera plane, they return `+Infinity`
+   when the camera is INSIDE the box, so the selector saturates to the
+   finest level — instead of the collapsed/garbage value an unguarded
+   perspective divide would produce on close approach. With the camera
+   beside the box (a node running past the eye) they measure the part
+   in front of the near plane instead (`screen-area`: its
+   viewport-clipped rect area), so a node grazing a corner of the view
+   does not force the finest level (#2944 review B). Under an
+   ORTHOGRAPHIC projection nothing degenerates (`w` stays 1), so neither
+   function ever saturates and each metric's plain value is used
+   directly.
    A session-wide replacement-LOD bias (`?lodBias` / `LuxarAppOptions.lodBias`)
    is applied between measurement and selection: `b` multiplies `screen-area`,
    while `sqrt(b)` multiplies legacy diagonal `coverage`, so both move by the
@@ -392,7 +401,13 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    feedback loop. `lodBias` keeps its area-unit meaning, so the footprint
    limit is divided by `sqrt(b)`. Missing, invalid, or display-dimension-
    mismatched stamps fall through to the occupancy path, as do explicit
-   `coverage_fractions` ladders. Per-tile `adaptive` ladders are stamped, so
+   `coverage_fractions` ladders and a camera INSIDE the node's box — where
+   step 4's metric saturates to the finest level, and a footprint sized at
+   the box-centre depth says nothing about the splats at the eye. Only GSplat
+   levels are stamped (the merge measures each level's median splat scale):
+   a Points or Lines ladder keeps its original Points/Lines node as the
+   finest level, which has no splat scale to stamp, so its stamps are never
+   complete and it stays on occupancy. Per-tile `adaptive` ladders are stamped, so
    footprint selection supersedes their partition-bound occupancy anchor;
    `overview` ladders are intentionally incomplete and remain on occupancy.
    Footprint-selected switches are hard swaps even when `lodFade` is enabled.
@@ -421,7 +436,7 @@ levels, and bounds resident VRAM with an LRU eviction pass.
    sample therefore cannot demote a level whose warm reloads fit, while a
    consistently slow level is still capped after its second load. The
    capped aspiration is reloaded on every timepoint without the settle
-   debounce (`FINE_RELOAD_SETTLE_MS` = 130 ms, which a playing timelapse
+   debounce (`config.lod.fineReloadSettleMs` = 130 ms, which a playing timelapse
    never satisfies). Once per second the next finer capped level gets one
    reload to re-measure it, and that reload REPLACES its average (the
    samples it held are a second or more old — typically the first loop's
@@ -607,7 +622,7 @@ one the selector nominally displays.
 
 **Partition frustum gating + targeted resync:** a `kind=partition`
 group registers through `registerPartition`, and every frame each part
-is tested against a frustum padded by `PARTITION_FRUSTUM_MARGIN` (10 %,
+is tested against a frustum padded by `config.lod.partitionFrustumMargin` (10 %,
 so a cold part preloads just before it enters). A part outside it is
 hidden and stamped `userData.partitionFrustumVisible = false` — on
 EVERY object the part emitted, since one part node may produce several,
@@ -840,14 +855,14 @@ The scene manager supports automatic per-frame clipping plane adjustment:
 **How It Works:**
 
 1. Each frame, computes a bounding sphere from the cached scene bounds (with safety margin)
-2. Near plane = `max(nearPlaneFloor(R, far), distToCenter - R)` where `R` is the safety-expanded radius and `nearPlaneFloor(R, far) = max(minNearForRadius(R), far / MAX_NEAR_FAR_RATIO)` -- smoothly transitions to that floor as the camera enters the sphere
+2. Near plane = `max(nearPlaneFloor(R, far), viewDepthToCenter - R)` where `R` is the safety-expanded radius and `nearPlaneFloor(R, far) = max(minNearForRadius(R), far / MAX_NEAR_FAR_RATIO)` -- smoothly transitions to that floor as the camera approaches the sphere's near side
 3. Far plane = `distToCenter + R` -- distance to farthest point on the sphere
 4. The bounds cache is invalidated on scene load/clear; zero per-frame scene-graph traversal in steady state
 
 **Benefits:**
 
 - Always-optimal Z-buffer precision as camera moves
-- **Direction-independent clipping** -- no sharp jumps at bounding box edges
+- Sphere-based clipping has no sharp jumps at bounding box edges
 - Near plane drops to the floor as camera enters the scene, but no further: `MAX_NEAR_FAR_RATIO = 1200` caps the near/far ratio so 24-bit depth stays usable (an unbounded ratio z-fights, and pops while orbiting). The cap sits below the `nearCull` depth at which all four geometry types have already faded out: Points/GSplats/Mesh are rejected outright below the shared 0.01 threshold, so it costs those three nothing, and a line is attenuated to under 1% of its authored contribution (its own discard is a separate colour test the fade never enters)
 - Eliminates need for manual clipping adjustment
 - Perfect for exploring large-scale scenes from any viewpoint
@@ -1323,7 +1338,7 @@ _For implementation details, see the source files in this directory._
 
 - `scene-manager.ts` — `SceneManager` orchestrator: renderer, camera,
   controls, post-processing, resize, disposal.
-- `scene-dims-manager.ts` — Singleton dimension state across all nD
+- `scene-dims-manager.ts` — Dimension state across all nD (the `sceneDimsManager` singleton is the LuxarApp's; a `LuxarLayer` constructs its own `SceneDimsManager` and resolves it from its own root)
   objects in the scene (exported as both class `SceneDimsManager`
   and lazy-Proxy singleton `sceneDimsManager`).
 - `dimension-loading.ts` — Applies the current scene-dimension selection,
@@ -1338,15 +1353,38 @@ _For implementation details, see the source files in this directory._
   - asymmetric hysteresis), lazy-load gating, and the display/fade/
     eviction orchestration. Re-exports `projectBoxAreaFraction`,
     `projectBoxDiagonalPx` and `pickChildWithHysteresis` from
-    `lod-selector-math.ts`.
+    `lod-selector-math.ts`, and the partition types from
+    `partition-gate.ts`. Its stateful collaborators each own one concern
+    and state their liveness through `tick-demand.ts`
+    (`tickUntilMs()`: until when the loop must keep ticking —
+    `NO_TICK`, a deadline, or `UNTIL_RESOLVED`); `evaluatePerFrame` folds
+    them into one `requestTick`:
+  - `lod-dissolve.ts` — `LodDissolves`: the in-flight level dissolves
+    (start, retarget, end, drop) as a state machine; ticks while one is
+    in flight.
+  - `playback-aspiration.ts` — `foldLoadTime` (the reload EWMA; only full
+    loads/reloads are timed) and `PlaybackAspiration` (admission with
+    keep-budget hysteresis, the periodic probe whose replace mark is set
+    only when its reload starts and cleared when playback stops).
+  - `partition-gate.ts` — `PartitionGate`: per-part frustum/slice culling,
+    the coalesced re-entry resync, deferred-part (B4) activation and its
+    request timeout; ticks while a visible resync is outstanding (only when
+    `requestReprocess` is wired).
+  - `retry-wakes.ts` — `RetryWakes`: waits that only have to END (a failed
+    level's retry cooldown, an unanswered part activation request) tick
+    nothing; each schedules one wake at its expiry, and each consecutive
+    retry of the same key doubles the wait (capped at 30 s). A success or an
+    explicit Retry resets it.
+  - `capture-quiescence.ts` — `isCaptureQuiescent`, the offline-capture
+    drain predicate over lod_groups and partitions.
 - `lod-selector-math.ts` — The selector's camera-geometry math:
   `computeEntryWorldBox` (nD raw or robust bounds → world box via
   displayDims), `projectBoxAreaFraction` (world box → fraction of the
   viewport area) and `projectBoxDiagonalPx` (→ screen-space pixel
-  diagonal) — both with near-plane saturation — and
+  diagonal) — both saturate when the eye is inside the box and near-clip a box beside it — and
   `pickChildWithHysteresis`.
 - `lod-fade.ts` — Material-level appliers for the two LOD anti-popping
-  mechanisms: `applyLodFade` (write coverage-weight × `1/e(k)` opacity
+  mechanisms: `applyLodFade` (write dissolve-weight × `1/e(k)` opacity
   per fadeable leaf, clone-on-first-fade) and `isBlendableSubtree`
   (uniformly additive/luminous/volumetric check — `BLENDABLE_MODES`).
   The material-touching counterpart of `lod-blend.ts`'s pure math.
@@ -1381,7 +1419,7 @@ _For implementation details, see the source files in this directory._
   GSplats get valid lower-triangular Cholesky factors with varied
   scale, anisotropy, and orientation so depth-sorted 'normal'
   blending is order-dependent; the injector emits the production
-  commit signals (`committedData` stamp + `noteDepthSortCommit`) so
+  commit signals (`committedData` stamp + `depthSort.noteCommit`) so
   the sort subsystem engages on injected nodes.
 
 ## Subpackages

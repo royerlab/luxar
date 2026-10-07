@@ -477,6 +477,19 @@ class TestEncodeCholeskySplit:
         helper_off = ArrayEncoder._perchannel_log_roundtrip(off, 8, signed=True)
         np.testing.assert_allclose(decoded_off, helper_off, rtol=0, atol=1e-6)
 
+    def test_zero_offdiag_records_its_row_and_writes_no_chunk(self):
+        """Axis-aligned splats: the zero off-diagonal half broadcasts on its own.
+
+        Its stored row equals the fill value, so zarr writes NO chunk and a
+        reader that fetches the row gets a 404. The row is in the attrs instead.
+        """
+        diag, off = self._make(n=64, seed=7)
+        g = self._encode(diag, np.zeros_like(off), EncodingMode.AUTO)
+        assert g["cholesky_factors_diag"].attrs["encoding"]["name"] != "broadcasted"
+        enc = g["cholesky_factors_offdiag"].attrs["encoding"]
+        assert enc == {"name": "broadcasted", "n_elements": 64, "value": [0.0] * 3}
+        assert g["cholesky_factors_offdiag"].nchunks_initialized == 0
+
 
 class TestDecoderValidation:
     """The per-channel decoders must reject malformed scales (matching the

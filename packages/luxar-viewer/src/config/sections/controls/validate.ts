@@ -9,7 +9,6 @@ export function validateControls(config: AppConfig, errors: string[], _warnings:
   // Validate all ConfigRange objects: min < max and min <= default <= max
   const ranges: Array<{ name: string; range: { min: number; max: number; default: number } }> = [
     { name: 'fly.movement.speed', range: controls.fly.movement.speed },
-    { name: 'fly.movement.acceleration', range: controls.fly.movement.acceleration },
     { name: 'fly.movement.damping', range: controls.fly.movement.damping },
     { name: 'fly.rotation.speed', range: controls.fly.rotation.speed },
     { name: 'fly.rotation.damping', range: controls.fly.rotation.damping },

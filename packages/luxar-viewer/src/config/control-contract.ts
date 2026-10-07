@@ -27,11 +27,14 @@ export const CLOSE_POLICY_VIOLATION = 1008;
 /** JSON-RPC. */
 export const JSONRPC_VERSION = '2.0';
 export const EVENT_METHOD = 'event';
+/** @internal */
+export const VIEWER_ATTACHED_EVENT = 'viewer-attached';
 export const PARSE_ERROR = -32700;
 export const INVALID_REQUEST = -32600;
 export const METHOD_NOT_FOUND = -32601;
 export const INTERNAL_ERROR = -32603;
 export const NO_VIEWER = -32001;
+export const VIEWER_NOT_READY = -32002;
 
 /** Limits bounding what an untrusted peer can make us hold. */
 export const MAX_PENDING_PER_CONTROLLER = 64;

@@ -10,9 +10,10 @@ import { describe, expect, it } from 'vitest';
 import {
   attachElementStorage,
   getActiveSortedIndexAttribute,
+  holdSortedIndexDrawForAppend,
+  releaseSortedIndexDrawHold,
   repairSortedIndexForCount,
   writeSortedIndexIdentity,
-  writeSortedIndexIdentityRange,
   writeSortedIndexOrderingLive,
 } from '../../../rendering/element-storage';
 import { POINT_TEXTURE_LAYOUT } from '../../../rendering/element-texture-layout';
@@ -68,10 +69,11 @@ describe('identity ordering writes skip what the buffer already holds', () => {
     expect(isIdentity(attr, 4)).toBe(true);
   });
 
-  it('an append after a permutation keeps the permutation and stays unknown', () => {
+  it('a released append after a permutation keeps the permutation and stays unknown', () => {
     const geometry = makeGeometry();
     writeSortedIndexOrderingLive(geometry, new Uint32Array([1, 0]), 2);
-    writeSortedIndexIdentityRange(geometry, 2, 4);
+    geometry.instanceCount = holdSortedIndexDrawForAppend(geometry, 2, 4);
+    releaseSortedIndexDrawHold(geometry);
     const attr = active(geometry);
     expect(Array.from((attr.array as Uint32Array).subarray(0, 4))).toEqual([1, 0, 2, 3]);
     const version = attr.version;
@@ -89,5 +91,20 @@ describe('identity ordering writes skip what the buffer already holds', () => {
     const version = attr.version;
     writeSortedIndexIdentity(geometry, 14);
     expect(attr.version).toBe(version);
+  });
+
+  it('releasing a held append over an identity prefix uploads only the appended tail', () => {
+    // An order-independent node's append is held and released inside the same
+    // commit (the coordinator's commutative branch), so the release must cost
+    // what an identity append does: the new suffix, not the whole population.
+    const geometry = makeGeometry();
+    writeSortedIndexIdentity(geometry, 20);
+    const attr = active(geometry);
+    attr.clearUpdateRanges(); // as the backend does after uploading
+    geometry.instanceCount = holdSortedIndexDrawForAppend(geometry, 20, 50);
+    expect(releaseSortedIndexDrawHold(geometry)).toBe(true);
+    expect(geometry.instanceCount).toBe(50);
+    expect(isIdentity(attr, 50)).toBe(true);
+    expect(attr.updateRanges).toEqual([{ start: 20, count: 30 }]);
   });
 });

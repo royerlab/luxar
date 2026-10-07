@@ -6,12 +6,13 @@ import { describe, it, expect, vi } from 'vitest';
 import { captureViewerState } from '../../../config/zarr-bridge/viewer-state-capture';
 
 // Mock ThemeManager
+const getThemeManager = vi.hoisted(() =>
+  vi.fn(() => ({
+    getCurrentTheme: () => ({ id: 'dark', name: 'Dark Theme' }),
+  }))
+);
 vi.mock('../../../themes/theme-manager', () => ({
-  ThemeManager: {
-    getInstance: () => ({
-      getCurrentTheme: () => ({ id: 'dark', name: 'Dark Theme' }),
-    }),
-  },
+  ThemeManager: { getInstance: getThemeManager },
 }));
 
 // Create mock objects. IMPORTANT: settings.{fov,near,far} are the
@@ -202,6 +203,37 @@ describe('captureViewerState', () => {
     expect(state.allow_high_dpr).toBe(true);
   });
 
+  it('exports the Density Guard toggle and warns only for truly unknown keys', async () => {
+    // fov / fovPreset / near / far are captured into the camera block, and the
+    // orbit / fly-look tuning is viewer-local; none of them is "unknown". A
+    // fresh module so the once-per-key warning set is empty.
+    vi.resetModules();
+    const { captureViewerState: capture } =
+      await import('../../../config/zarr-bridge/viewer-state-capture');
+    const { log } = await import('../../../utils/log');
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    const renderingControls = createMockRenderingControls();
+    Object.assign(renderingControls.settings, {
+      densityGuardEnabled: false,
+      orbitZoomSpeed: 1,
+      orbitDampingFactor: 0.1,
+      flyLookSpeed: 0.2,
+      notARealSetting: 1,
+    });
+
+    const result = capture(
+      createMockSceneManager(),
+      renderingControls,
+      createMockSceneDimsManager() as never
+    );
+
+    expect((result as Record<string, unknown>).density_guard_enabled).toBe(false);
+    const warned = warn.mock.calls.map((call) => String(call[1]));
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toContain('notARealSetting');
+    warn.mockRestore();
+  });
+
   it('should capture theme', () => {
     const state = captureViewerState(
       createMockSceneManager(),
@@ -221,6 +253,18 @@ describe('captureViewerState', () => {
 
     expect(state.dimensions).toBeDefined();
     expect(state.dimensions!.current_step).toEqual([5, 0, 0, 0]);
+  });
+
+  it('captures the keyboard-selected dimension alongside current_step', () => {
+    const state = captureViewerState(
+      createMockSceneManager(),
+      createMockRenderingControls(),
+      createMockSceneDimsManager(),
+      undefined,
+      2
+    );
+
+    expect(state.dimensions).toEqual({ current_step: [5, 0, 0, 0], selected_dimension: 2 });
   });
 
   it('should handle missing dimensions gracefully', () => {
@@ -403,17 +447,15 @@ describe('captureViewerState — animation block', () => {
 // a known fixture, which means the `try/catch` at lines 73-77 of source
 // (the "ThemeManager not initialized" path) was completely untested.
 //
-// We can exercise the catch by passing an explicit `themeManager` whose
-// `getCurrentTheme()` throws — that flows through the same try/catch
-// without touching the module-level singleton (no `vi.doMock` gymnastics
-// needed, no production-source edits).
+// We exercise the catch by having the mocked `getInstance()` hand back, once,
+// a manager whose `getCurrentTheme()` throws.
 describe('captureViewerState — ThemeManager catch branch', () => {
   it('omits result.theme when the supplied themeManager.getCurrentTheme() throws', () => {
-    const throwingTM = {
+    getThemeManager.mockReturnValueOnce({
       getCurrentTheme: () => {
         throw new Error('ThemeManager not initialized');
       },
-    } as any;
+    } as any);
 
     const state = captureViewerState(
       {
@@ -428,9 +470,7 @@ describe('captureViewerState — ThemeManager catch branch', () => {
         controls: { getFocusTarget: () => ({ x: 0, y: 0, z: 0 }) },
       } as any,
       { settings: {} } as any,
-      { getDims: () => null } as any,
-      undefined,
-      throwingTM
+      { getDims: () => null } as any
     );
 
     // The catch must SWALLOW the throw; capture must still produce a

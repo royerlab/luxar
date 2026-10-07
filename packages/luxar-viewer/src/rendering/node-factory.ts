@@ -7,13 +7,18 @@
  * This separation enables the picking system to hook into node creation
  * and create parallel pick-scene shadow nodes.
  *
- * Implicit dependency: uses the `materialManager` singleton from
- * ../rendering/material-manager (same pattern as SceneLoader).
+ * Materials come from the HOST's material manager: the factory brackets every
+ * node-creating call with {@link runWithMaterialManager} when its owner installed
+ * one ({@link NodeFactory.setMaterialManager} — a LuxarLayer's loaders do), so the
+ * shared create-* code reaching `materialManager` lands in that host's registry.
+ * Without one, `materialManager` is the LuxarApp's.
  */
 
 import * as THREE from 'three';
 import {
   materialManager,
+  runWithMaterialManager,
+  type MaterialManager,
   type BlendingMode,
   type LuxarMeshPickingMaterial,
   type LuxarPointMaterial,
@@ -288,6 +293,18 @@ function syncMeshPickMaterialToVisual(obj: THREE.Mesh): void {
 
 export class NodeFactory {
   private pickingSystem: PickingSystem | null = null;
+  /** The host's material manager, or null for the LuxarApp's (see the module doc). */
+  private materials: MaterialManager | null = null;
+
+  /** Install (or clear) the host's material manager for every node this factory creates. */
+  setMaterialManager(materials: MaterialManager | null): void {
+    this.materials = materials;
+  }
+
+  /** Run a node-creating call against the host's material manager. */
+  private withMaterials<T>(fn: () => T): T {
+    return this.materials ? runWithMaterialManager(this.materials, fn) : fn();
+  }
 
   /** Wire up the picking system. When set, all subsequent node creations
    *  will also create shadow pick-scene nodes. */
@@ -303,7 +320,7 @@ export class NodeFactory {
    * the controls 'change' event, not this method.)
    *
    * @param drawn - Whether any committed node was on screen (default true);
-   *   forwarded on `geometry-committed`.
+   *   forwarded on `geometry-committed` (emitted for the LuxarApp's factories only).
    */
   markPickingDirty(drawn = true): void {
     this.pickingSystem?.markDirty();
@@ -312,8 +329,11 @@ export class NodeFactory {
     // the committed scene — today the scene-derived environment capture
     // (`rendering/environment/`), which marks itself stale here and rebuilds
     // once the loader settles. `drawn` is false when no committed node was on
-    // screen, so the render loop need not redraw for it.
-    eventBus.emit('geometry-committed', { drawn });
+    // screen, so the render loop need not redraw for it. The bus is the PAGE's,
+    // read by the LuxarApp alone: a factory with a host material manager (a
+    // LuxarLayer's) stays off it — its host redraws through its own loader's
+    // requestRender.
+    if (this.materials === null) eventBus.emit('geometry-committed', { drawn });
   }
 
   /**
@@ -372,9 +392,14 @@ export class NodeFactory {
    * and re-create them via {@link registerExistingSceneNodes}, which
    * produces fresh pick materials against the new context.
    *
-   * Mirror of `MaterialManager.rebuildAfterContextRestore` — both are
-   * called from `SceneManager.contextRestoredHandler` in the order
-   * post-processing → materials → nodes.
+   * The last step of the restore sequence in
+   * `scene/scene-manager/render-pipeline/webgl-context-recovery.ts`
+   * (post-processing → materials → nodes): that module dispatches
+   * `webgl-context-restored`, whose subscriber (`core/app/init/pipeline.ts`,
+   * or `LuxarLayer` for a host renderer) calls this. The materials step,
+   * `MaterialManager.rebuildAfterContextRestore`, is a deliberate no-op —
+   * materials are per node, so the registrations rebuilt here are the
+   * per-context state that actually needs work.
    *
    * Also re-uploads geometry GPU buffers for every POOLED geometry type. A
    * context loss zeroes the GPU-side storage — the element textures +
@@ -447,14 +472,8 @@ export class NodeFactory {
     isPlaceholder: boolean = false,
     leafAttrs?: Partial<PointsMetadata>
   ): THREE.Mesh {
-    return createPointsNodeImpl(
-      path,
-      attrs,
-      data,
-      loader,
-      this.pickingSystem,
-      isPlaceholder,
-      leafAttrs
+    return this.withMaterials(() =>
+      createPointsNodeImpl(path, attrs, data, loader, this.pickingSystem, isPlaceholder, leafAttrs)
     );
   }
 
@@ -465,7 +484,9 @@ export class NodeFactory {
     processed: InstancedLinesMeshConfig,
     loader: LinesDataLoader
   ): THREE.Mesh {
-    return createLinesNodeImpl(path, nodeAttrs, attrs, processed, loader, this.pickingSystem);
+    return this.withMaterials(() =>
+      createLinesNodeImpl(path, nodeAttrs, attrs, processed, loader, this.pickingSystem)
+    );
   }
 
   // ============================================================================
@@ -479,7 +500,9 @@ export class NodeFactory {
     meshConfig: InstancedGSplatsMeshConfig,
     loader: GSplatsDataLoader
   ): THREE.Mesh {
-    return createGSplatsNodeImpl(path, nodeAttrs, attrs, meshConfig, loader, this.pickingSystem);
+    return this.withMaterials(() =>
+      createGSplatsNodeImpl(path, nodeAttrs, attrs, meshConfig, loader, this.pickingSystem)
+    );
   }
 
   // ============================================================================
@@ -509,7 +532,9 @@ export class NodeFactory {
     loader: DataLoader,
     leafAttrs?: Partial<PointsMetadata>
   ): THREE.Mesh {
-    return createEmptyPointsNodeImpl(path, attrs, loader, this.pickingSystem, leafAttrs);
+    return this.withMaterials(() =>
+      createEmptyPointsNodeImpl(path, attrs, loader, this.pickingSystem, leafAttrs)
+    );
   }
 
   /**
@@ -522,7 +547,9 @@ export class NodeFactory {
     attrs: LinesMetadata,
     loader: LinesDataLoader
   ): THREE.Mesh {
-    return createEmptyLinesNodeImpl(path, nodeAttrs, attrs, loader, this.pickingSystem);
+    return this.withMaterials(() =>
+      createEmptyLinesNodeImpl(path, nodeAttrs, attrs, loader, this.pickingSystem)
+    );
   }
 
   /**
@@ -535,7 +562,9 @@ export class NodeFactory {
     attrs: GSplatsMetadata,
     loader: GSplatsDataLoader
   ): THREE.Mesh {
-    return createEmptyGSplatsNodeImpl(path, nodeAttrs, attrs, loader, this.pickingSystem);
+    return this.withMaterials(() =>
+      createEmptyGSplatsNodeImpl(path, nodeAttrs, attrs, loader, this.pickingSystem)
+    );
   }
 
   /**
@@ -559,7 +588,9 @@ export class NodeFactory {
     loader: MeshDataLoader,
     leafAttrs?: Partial<MeshMetadata>
   ): THREE.Mesh {
-    return createEmptyMeshNodeImpl(path, attrs, loader, this.pickingSystem, leafAttrs);
+    return this.withMaterials(() =>
+      createEmptyMeshNodeImpl(path, attrs, loader, this.pickingSystem, leafAttrs)
+    );
   }
 
   // ============================================================================
@@ -608,6 +639,8 @@ export class NodeFactory {
     path?: string,
     leafAttrs?: Partial<PointsMetadata>
   ): LuxarPointMaterial {
-    return createPointsMaterialImpl(attrs, radiusScale, geometry, path, leafAttrs);
+    return this.withMaterials(() =>
+      createPointsMaterialImpl(attrs, radiusScale, geometry, path, leafAttrs)
+    );
   }
 }

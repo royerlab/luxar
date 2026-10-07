@@ -14,6 +14,7 @@ import * as zarr from '../zarr';
 import { readArray, abortOptions } from '../zarr';
 import { log, Modules } from '../../utils/log';
 import { decode_log_scalar_u8, decode_log_scalar_u16 } from '../../wasm/typescript/decode';
+import { readBroadcastRow } from './broadcast-row';
 import { ArrayRefRegistry } from './ref-registry';
 import type { ArrayMetadata, EncodingMetadata } from './types';
 import {
@@ -25,7 +26,6 @@ import {
 
 export { ArrayRefRegistry } from './ref-registry';
 export type { ArrayMetadata, EncodingMetadata } from './types';
-export { loadAndDecodeOptionalArray } from './load-and-decode';
 
 /**
  * Main array decoder class
@@ -76,15 +76,7 @@ export class ArrayDecoder {
         return new Float32Array(0);
       }
 
-      // Load the single value
-      const rawData = await readArray(zarrArray, undefined, abortOptions(signal));
-      const rawArray = rawData.data;
-      // Changing this cast requires re-deriving the writer's
-      // positive_scalar_round_trip_slack chunk-bound allowance.
-      const data =
-        rawArray instanceof Float32Array
-          ? rawArray
-          : new Float32Array(rawArray as ArrayBuffer | number[]);
+      const data = await readBroadcastRow(zarrArray, enc, signal);
 
       const shape = zarrArray.shape;
       const k = shape.length > 1 ? shape[1] : 1;
@@ -693,25 +685,29 @@ export class ArrayDecoder {
     );
   }
 
+  /** Modes classified by encoding name alone, checked in order. */
+  private static readonly NAMED_MODES: ReadonlyArray<readonly [(name: string) => boolean, string]> =
+    [
+      [ArrayDecoder.isLUTEncodingName, 'lut'],
+      [ArrayDecoder.isPerChannelQuantEncodingName, 'perchannel'],
+      [ArrayDecoder.isLogScalarEncodingName, 'log_scalar'],
+      [ArrayDecoder.isGeologScalarEncodingName, 'geolog_scalar'],
+    ];
+
   /**
    * Helper: Get encoding mode from metadata
    *
    * Returns a string describing the encoding mode
    */
   static getEncodingMode(attrs: ArrayMetadata): string {
-    if (!attrs) return 'direct';
-    const enc = attrs.encoding;
-    if (!enc || !enc.name) return 'direct';
+    const name = attrs?.encoding?.name;
+    if (!name) return 'direct';
 
     // Map encoding name to mode
-    if (enc.name === 'array_ref') return 'array_ref';
-    if (enc.name === 'broadcasted') return 'broadcasted';
-    if (ArrayDecoder.isLUTEncodingName(enc.name)) return 'lut';
-    if (ArrayDecoder.isLogScalarEncodingName(enc.name)) return 'log_scalar';
-    if (ArrayDecoder.isGeologScalarEncodingName(enc.name)) return 'geolog_scalar';
-    if (ArrayDecoder.isQuantizedEncoding(attrs)) return 'quantized';
-
-    return 'direct';
+    if (name === 'array_ref' || name === 'broadcasted') return name;
+    const named = ArrayDecoder.NAMED_MODES.find(([matches]) => matches(name));
+    if (named) return named[1];
+    return ArrayDecoder.isQuantizedEncoding(attrs) ? 'quantized' : 'direct';
   }
 
   /**

@@ -120,9 +120,9 @@ export function resolveLineJoin(authored?: LineJoinStyle | null): number {
  *
  * The two backends encode the style differently on purpose: GLSL keeps it a
  * runtime uniform (a `?lineJoin=` override must not recompile a program) while
- * TSL bakes it into the graph, the same asymmetry the line factories already
- * have for `uIsOrtho`. A `ShaderSource.webgpu` factory is handed the GLSL-shaped
- * uniform RECORD, so it needs this to pick the matching graph variant.
+ * TSL bakes it into the graph. A `ShaderSource.webgpu` factory is handed the
+ * GLSL-shaped uniform RECORD, so it needs this to pick the matching graph
+ * variant.
  *
  * `undefined` (no such uniform in the record) returns `undefined`, which the
  * factories treat as "unauthored" and resolve through the normal precedence —

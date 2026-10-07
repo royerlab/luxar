@@ -51,9 +51,14 @@ def volume() -> np.ndarray:
 
 @pytest.fixture(scope="module")
 def merge_seed(volume: np.ndarray) -> GSplatData:
-    """A coarse level's merge output: fine fit -> K=4 merge -> level 1."""
+    """A coarse K=4 merge from a fine fit with a visible DC deficit."""
     fine = fit_gaussian_splats(
-        volume, seeds=80, n_iters=200, device="cpu", verbose=False
+        volume,
+        seeds=80,
+        n_iters=200,
+        cull_retention=0.95,
+        device="cpu",
+        verbose=False,
     )
     ladder = make_substitutive_lod(fine, compression_factor=4, levels=1, device="cpu")
     return ladder.at_substitutive(1)

@@ -17,12 +17,12 @@ import * as THREE from 'three';
 import { isLinesUserData } from '../../../types/lines';
 import { log, LogEmoji, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
-import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import { updateInstancedLinesMesh } from '../../../rendering/line-geometry';
-import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
+import type { GeometryCommitHost } from './commit-host';
 import { clampLineCapacity } from '../../../rendering/element-texture-layout';
 import { syncLineMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
+import { planInstancedOrdering } from './plan-instanced-ordering';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
 import { markFirstCommit } from '../../../profiling/load-timeline';
 import {
@@ -35,9 +35,18 @@ import { getPrefixParent, setPrefixParent } from '../../../types/prefix-lineage'
 import type { LoadedLinesData } from '../../../types/lines';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
 
-// Re-export so callers can import this name from the commit module while
-// the implementation lives in the rendering layer (points parity).
-export { syncLineMaterialWithGeometry };
+/**
+ * True when every optional field a lines append would leave un-rewritten in
+ * the prefix agrees with the committed parent (see the append gate).
+ */
+function sameOptionalLineFields(data: LoadedLinesData, committed: LoadedLinesData): boolean {
+  return (
+    !!data.colors === !!committed.colors &&
+    (data.colorComponents ?? 3) === (committed.colorComponents ?? 3) &&
+    !!data.sharpness === !!committed.sharpness &&
+    !!data.scalars === !!committed.scalars
+  );
+}
 
 /**
  * Synchronous GPU commit step: write the staged buffers into the
@@ -51,11 +60,11 @@ export { syncLineMaterialWithGeometry };
  */
 export function commitLinesGeometry(
   staged: StagedLinesCommit,
-  rootGroup: THREE.Group | null,
-  gpuBufferPool: GPUBufferPool | null,
+  host: GeometryCommitHost,
   session: UpdateSession | undefined,
   loadedViewVersion: number
 ): void {
+  const { rootGroup, gpuBufferPool, depthSort } = host;
   if (!rootGroup) return;
 
   const mesh = findObjectByName(rootGroup, staged.path) as THREE.Mesh;
@@ -87,6 +96,9 @@ export function commitLinesGeometry(
   // writers run: the pool branch reassigns `mesh.geometry`, and
   // `visibleSegmentCount` is overwritten in the success-only tail.
   const prevGeometry = mesh.geometry;
+  // A pool grow releases the old geometry without ending its held draw.
+  // Preserve the count that was actually on screen.
+  const prevDrawnCount = (prevGeometry as THREE.InstancedBufferGeometry).instanceCount;
   const hadCommittedData = hasCommittedData(mesh);
   const prevCount = mesh.userData.visibleSegmentCount;
 
@@ -117,85 +129,48 @@ export function commitLinesGeometry(
       // the interleaved era's scalar spec-set dimension is gone).
       const geometry = gpuBufferPool.acquireLinesGeometry(staged.path, segmentCount);
       const attributesRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
-      // Keep the previous depth-sort permutation on a same-node
-      // same-count in-place recommit (timepoint scrub): a permutation of
-      // [0,count) is a strictly-no-worse prior than storage order for
-      // the ≥1 frame until the re-sort dispatched by noteDepthSortCommit
-      // below lands. Guards mirror the points/gsplats twins.
-      // The same-buffer prior splits in two on the count.
-      //
-      // Equal count: keep the permutation verbatim (`preserveOrdering`).
-      //
-      // CHANGED count: hand the adapter the previous count so it can REBUILD
-      // the permutation over the new population (`repairSortedIndexForCount`)
-      // instead of falling back to storage order. This is the branch a
-      // timelapse actually takes — an nD re-slice changes the resident count
-      // at almost every step, so the equal-count guard alone never fired and
-      // every timepoint drew at least one unsorted frame. Under an
-      // order-dependent blending mode that reads as a flash per timepoint
-      // (#2290). Measured on the `cloud` demo at a frozen camera pose, as the
-      // fraction of sampled element pairs composited in correct back-to-front
-      // order: storage order 0.617, repaired 0.858, a real sort 1.000.
-      //
-      // The other three conjuncts are what make the buffer's contents
-      // meaningful at all, and are unchanged.
-      const sameBuffers = hadCommittedData && !attributesRebuilt && geometry === prevGeometry;
-      const preserveOrdering = sameBuffers && prevCount === segmentCount;
-      const repairFromCount =
-        sameBuffers && prevCount !== undefined && prevCount !== segmentCount
-          ? prevCount
-          : undefined;
-      // Append fast path (depth-sorting Phase 4 Stage 2): when this commit
-      // merely EXTENDS the segment prefix already on the GPU, write & upload
-      // only the new `[prevCount, segmentCount)` suffix. Clipping is an
+      // Ordering + append gate, shared with points/gsplats
+      // (plan-instanced-ordering.ts, which states the prior/lineage rules).
+      // A proven lineage makes the longer projection's first `prevCount`
+      // segments the previous commit's whole output: clipping is an
       // order-preserving drop + in-place endpoint clip (never splits or
-      // reorders), so under an unchanged view state the longer projection's
-      // first `prevCount` surviving segments are byte-identical to the
-      // previous commit's whole output. For cap suppression this
-      // additionally rests on `concatenateLinesData`
-      // (lines-progressive-loader.ts) offset-adjusting each additive-LOD
-      // level's segment indices into a DISJOINT vertex-index range
-      // (`part.segments[i] + vertexOffset`): suppression joints are keyed
-      // on SHARED vertex indices, so an appended level can never register
-      // a joint on — and thereby alter — a prefix endpoint's suppression.
-      // Conjuncts as in the points/gsplats
-      // twins (see commit-gsplats-geometry.ts for the full rationale), plus:
-      // - optional-field presence must MATCH the committed parent: a
-      //   presence flip (e.g. the new level introduces colors) re-fills the
-      //   prefix through the interpolation kernel, which need not be
-      //   bit-exact with the constant default the prefix was committed
-      //   with. (The fixed texel layout means the pool no longer rebuilds
-      //   on a scalar-presence change — these presence conjuncts are now
-      //   the SOLE guard for every optional field, scalars included.)
+      // reorders). For cap suppression this additionally rests on
+      // `concatenateLinesData` (lines-progressive-loader.ts) offset-adjusting
+      // each additive-LOD level's segment indices into a DISJOINT vertex-index
+      // range: suppression joints are keyed on SHARED vertex indices, so an
+      // appended level can never alter a prefix endpoint's suppression. The
+      // suffix-only upload additionally needs the GPU prefix intact (a WebGL
+      // context restore clears the flag) and optional-field PRESENCE parity: a
+      // flip (e.g. the new level introduces colors) re-fills the prefix through
+      // the interpolation kernel, which need not be bit-exact with the
+      // constant default the prefix was committed with. The colour LAYOUT
+      // (RGB vs RGBA) must match too, or the prefix's texel5.zw alphas would
+      // be stranded at the other layout's values. (The fixed texel layout
+      // means the pool no longer rebuilds on presence changes, so these
+      // conjuncts are the SOLE guard for every optional field.)
       const committed = getCommittedData(mesh) as LoadedLinesData | undefined;
-      const canAppend =
-        hadCommittedData &&
-        !attributesRebuilt &&
-        geometry === prevGeometry &&
-        mesh.userData.gpuPrefixIntact === true &&
-        segmentCount > (prevCount ?? 0) &&
-        committed !== undefined &&
-        getPrefixParent(staged.sourceData) !== undefined &&
-        getPrefixParent(staged.sourceData) === committed &&
-        !!staged.sourceData.colors === !!committed.colors &&
-        // Color LAYOUT parity, not just presence: an append writes only
-        // the suffix texels, so an RGB↔RGBA flip between levels would
-        // strand the prefix's texel5.zw alphas at the other layout's
-        // values (mirrors commit-points-geometry's conjunct).
-        (staged.sourceData.colorComponents ?? 3) === (committed.colorComponents ?? 3) &&
-        !!staged.sourceData.sharpness === !!committed.sharpness &&
-        !!staged.sourceData.scalars === !!committed.scalars;
+      const orderingOptions = planInstancedOrdering({
+        geometry,
+        prevGeometry,
+        prevDrawnCount,
+        hadCommittedData,
+        prevCount,
+        count: segmentCount,
+        attributesRebuilt,
+        prefixParent: getPrefixParent(staged.sourceData),
+        committedData: committed,
+        prefixReusable:
+          mesh.userData.gpuPrefixIntact === true &&
+          committed !== undefined &&
+          sameOptionalLineFields(staged.sourceData, committed),
+      });
       // Consume-and-clear (see prefix-lineage.ts retention contract): the
       // lineage entry existed solely for the gate check above — clearing it
       // unpins the parent concat's CPU arrays. A retry after a throwing
       // write below reads `undefined` and full-rewrites, the safe direction.
       setPrefixParent(staged.sourceData, null);
       try {
-        gpuBufferPool.updateLinesGeometry(geometry, processed, segmentCount, {
-          preserveOrdering,
-          repairFromCount,
-          fromInstance: canAppend ? (prevCount ?? 0) : 0,
-        });
+        gpuBufferPool.updateLinesGeometry(geometry, processed, segmentCount, orderingOptions);
       } catch (err) {
         // Defense-in-depth: a throwing write leaves the buffer content
         // unproven — clear the append-safety flag so the next commit
@@ -225,6 +200,10 @@ export function commitLinesGeometry(
         }
       }
     } else {
+      // Consume-and-clear on this path too (prefix-lineage.ts retention
+      // contract): no append gate reads the lineage here, and leaving it set
+      // would keep the parent concat's CPU arrays pinned for the payload's life.
+      setPrefixParent(staged.sourceData, null);
       // Non-pool path: a size change rebuilds a fresh exact-size
       // geometry+texture pair — evict Three's cached RenderObject and
       // rebind the texture exactly like the pool branch above.
@@ -274,7 +253,7 @@ export function commitLinesGeometry(
     // points/gsplats twins, success-only, with the CLAMPED count so
     // permutation values stay inside [0, textureCapacity). The lazy
     // provider defers the O(N) midpoint computation to the sorted path.
-    noteDepthSortCommit(mesh, sortCenters3, segmentCount);
+    depthSort?.noteCommit(mesh, sortCenters3, segmentCount);
   } finally {
     bufferSession?.end();
   }

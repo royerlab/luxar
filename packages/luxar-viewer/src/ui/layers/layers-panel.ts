@@ -22,6 +22,7 @@
 import { findObjectByName } from '../../utils/scene-graph-index';
 import * as THREE from 'three';
 import type { SceneNode } from '../../data/data-loader-types';
+import { SceneNodeIndex } from '../../data/scene-loader/view-state/scene-node-index';
 import type { FailedLoadsProviderPort } from '../../data/scene-loader-monitor-port';
 import { LayerStateManager, type LayerInfo, type SelectionMode } from './layer-state';
 import type { LayerPatch, LayerSummary } from '../../core/app/embedder/events';
@@ -30,10 +31,11 @@ import { log, Modules } from '../../utils/log';
 import { EventGroup } from '../../utils/cross-layer/event-group';
 import { attachLongPress } from '../../utils/long-press';
 import { openContextMenu, type ContextMenuItem } from '../overlay-widgets/context-menu';
+import { isControlVisible, layerHasAppearance } from './layer-control-rules';
 import { BLENDING_MODES } from '../../rendering/blending-state';
 import type { BlendingMode } from '../../rendering';
 import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
-import { resolveLayerBlendingMode } from './layer-state';
+import { CUSTOM_COLORMAP_LABEL, canTakeColormap, resolveLayerBlendingMode } from './layer-state';
 import { showToast } from '../toast';
 import type { AnimationController } from '../../scene/animation/animation-controller';
 import { LayerApplyEngine } from './layer-apply';
@@ -136,6 +138,8 @@ export class LayersPanel {
   /** The sound layer, for `sound` rows (null before wiring / in tests). */
   private audioPort: LayersAudioPort | null = null;
   private sceneGraph: SceneNode | null = null;
+  /** Path index over {@link sceneGraph}: every leaf's root→leaf chain in O(1). */
+  private sceneNodeIndex: SceneNodeIndex | null = null;
   private animationController: AnimationController;
 
   private state = new LayerStateManager();
@@ -147,12 +151,12 @@ export class LayersPanel {
 
   /**
    * Scene-application engine: recomposes + pushes attrs to materials.
-   * Constructed with ACCESSORS for rootGroup/sceneGraph (both reassigned in
+   * Constructed with ACCESSORS for rootGroup/sceneNodeIndex (both reassigned in
    * initFromScene), never captured values — see the stale-capture pitfall.
    */
   private applyEngine = new LayerApplyEngine({
     getRootGroup: () => this.rootGroup,
-    getSceneGraph: () => this.sceneGraph,
+    getSceneNodeIndex: () => this.sceneNodeIndex,
     state: this.state,
     requestRender: () => this.requestRender(),
     requestReprocess: (paths) =>
@@ -229,14 +233,24 @@ export class LayersPanel {
   /**
    * Initialize the panel from a loaded scene.
    * Must be called after the scene is loaded and rootGroup is available.
+   *
+   * `sceneIndex` is the scene loader's `SceneNodeIndex` over `sceneGraph`
+   * (`SceneLoader.sceneNodeIndex`); without one, or with one over another
+   * graph, the panel builds its own (one O(N) pass).
    */
-  initFromScene(rootGroup: THREE.Group, sceneGraph: SceneNode): void {
+  initFromScene(
+    rootGroup: THREE.Group,
+    sceneGraph: SceneNode,
+    sceneIndex?: SceneNodeIndex | null
+  ): void {
     // Clean up previous state
     this.clear();
 
     this.rootGroup = rootGroup;
     this.sceneGraph = sceneGraph;
-    this.state.initFromSceneGraph(sceneGraph);
+    this.sceneNodeIndex =
+      sceneIndex?.root === sceneGraph ? sceneIndex : new SceneNodeIndex(sceneGraph);
+    this.state.initFromSceneGraph(sceneGraph, this.sceneNodeIndex);
 
     // Subscribe to state changes — only update selection highlights and controls,
     // NOT full list re-renders (those are expensive and cause flicker)
@@ -282,8 +296,9 @@ export class LayersPanel {
 
   /**
    * Reset every layer's parameters — visibility, display range, gamma,
-   * opacity, blending mode, colormap, and the mesh shading values (Ambient,
-   * Shade falloff, Specular, Shininess, Alpha cutoff) — back to their authored defaults.
+   * opacity, blending mode, colormap, the mesh shading values (Ambient,
+   * Shade falloff, Specular, Shininess, Alpha cutoff), a physical mesh's knobs,
+   * a sound row's gain and a locked Active level — back to their authored defaults.
    *
    * Re-derives the default state from the scene graph (the same walk
    * `initFromScene` uses) and pushes every parameter through the regular
@@ -293,31 +308,9 @@ export class LayersPanel {
   resetAllLayers(): void {
     if (!this.sceneGraph || this.state.count === 0) return;
 
-    this.state.initFromSceneGraph(this.sceneGraph);
+    this.state.initFromSceneGraph(this.sceneGraph, this.sceneNodeIndex);
     const layers = this.state.getLayers();
-    for (const layer of layers) {
-      // Visibility applies unconditionally: a currently-hidden layer whose
-      // authored default is visible must come back.
-      this.applyVisibility(layer.path, layer.visible);
-      // applyColormap restores the authored colormap (or none) and then
-      // recomposes opacity/gamma/intensity/offset/blending via applyComposed.
-      this.applyEngine.applyColormap(layer);
-      // Layer order lives in a dedicated render-state slot rather than a
-      // material, so applyComposed cannot restore it.
-      this.applyEngine.applyLayerOrder(layer);
-      // applyLabelStyle restores authored colours / all classes on both the
-      // visual and pick materials.
-      this.applyEngine.applyLabelStyle(layer);
-      // applyMeshAppearance restores the mesh-only shading uniforms (Ambient,
-      // Shade falloff, Specular, Shininess, Alpha cutoff) on both the visual and pick materials.
-      // These are not composed, so applyComposed never touches them — without
-      // this call the surface keeps the dragged uniforms while the readouts
-      // show the reset defaults. Safe no-op on a non-mesh leaf.
-      this.applyEngine.applyMeshAppearance(layer);
-      // Same story for a physical layer's knobs: live sliders write the material
-      // directly, so the authored values come back only if pushed again.
-      this.applyEngine.applyPhysicalKnobs(layer);
-    }
+    for (const layer of layers) this.reapplyLayer(layer);
 
     // Rebuild the row list + controls so the panel reflects the fresh state
     // (initFromSceneGraph replaced every LayerInfo the rows were bound to).
@@ -328,6 +321,42 @@ export class LayersPanel {
     if (layers.length > 0) this.state.select(layers[0].path, 'single');
 
     log.info(Modules.UI, `Layers reset to defaults (${layers.length} layer(s))`);
+  }
+
+  /**
+   * Push a freshly re-derived layer back through every apply path — the one
+   * apply set both resets share, so the scene and the audio graph agree with the
+   * readouts afterwards.
+   */
+  private reapplyLayer(layer: LayerInfo): void {
+    // Visibility applies unconditionally: a currently-hidden layer whose
+    // authored default is visible must come back.
+    this.applyVisibility(layer.path, layer.visible);
+    // applyColormap restores the authored colormap (or none) and then
+    // recomposes opacity/gamma/intensity/offset/blending/absorption via its
+    // trailing applyComposed (the material-state reset test pins this).
+    this.applyEngine.applyColormap(layer);
+    // Layer order lives in a dedicated render-state slot rather than a
+    // material, so applyComposed cannot restore it.
+    this.applyEngine.applyLayerOrder(layer);
+    // applyLabelStyle restores authored colours / all classes on both the
+    // visual and pick materials.
+    this.applyEngine.applyLabelStyle(layer);
+    // applyMeshAppearance restores the mesh-only shading uniforms (Ambient,
+    // Shade falloff, Specular, Shininess, Alpha cutoff) on both the visual and pick
+    // materials. These are not composed, so applyComposed never touches them —
+    // without this call the surface keeps the dragged uniforms while the readouts
+    // show the reset defaults. Safe no-op on a non-mesh leaf.
+    this.applyEngine.applyMeshAppearance(layer);
+    // Same story for a physical layer's knobs and its refract_data switch: the
+    // live controls write the material directly.
+    this.applyEngine.applyPhysicalKnobs(layer);
+    // And for a sound row's gain, which the slider writes straight to the audio
+    // graph: the re-derived state alone would only move the slider.
+    if (layer.sound) this.audioPort?.setNodeGain(layer.path, layer.sound.gain);
+    // And for a locked Active level, which lives in the LOD registry rather than
+    // in the layer state: every lod_group loads in `auto`.
+    this.controls.resetActiveLevel(layer);
   }
 
   show(): void {
@@ -362,7 +391,7 @@ export class LayersPanel {
         showToast('No layers in this scene (use layer=True in Python API)');
         log.info(
           Modules.UI,
-          'Layers panel toggle: no layers found. Use layer=True on add_points/add_lines/add_gsplats.'
+          'Layers panel toggle: no layers found. Use layer=True on add_points/add_lines/add_gsplats/add_mesh.'
         );
         return;
       }
@@ -572,43 +601,60 @@ export class LayersPanel {
         },
       },
     ];
-    if (layer.supportsColormap) {
-      const current = this.state.getLayer(layer.path)?.colormap;
-      const sub: ContextMenuItem[] = [
-        {
-          label: '(direct colors)',
-          kind: 'radio',
-          checked: !current,
-          action: () => this.setLayerColormap(layer.path, undefined),
-        },
-      ];
-      for (const names of Object.values(COLORMAP_CATEGORIES)) {
-        for (const name of names) {
-          sub.push({
-            label: name,
-            kind: 'radio',
-            checked: current === name,
-            action: () => this.setLayerColormap(layer.path, name),
-          });
-        }
-      }
-      items.push({ label: 'Colormap', separatorBefore: true, submenu: sub });
+    return [...items, ...this.buildAppearanceMenuItems(layer)];
+  }
+
+  /**
+   * Row menu: the appearance submenus and the copy verb, behind one separator.
+   * None for a sound row — it has no material, and the appearance section of the
+   * panel steps aside for it on the same grounds.
+   */
+  private buildAppearanceMenuItems(layer: LayerInfo): ContextMenuItem[] {
+    if (!layerHasAppearance(layer)) return [];
+    const items: ContextMenuItem[] = [];
+    if (isControlVisible('colormap', layer)) {
+      items.push({ label: 'Colormap', submenu: this.buildColormapSubmenu(layer) });
     }
-    items.push({
-      label: 'Blending',
-      separatorBefore: !layer.supportsColormap,
-      submenu: BLENDING_MODES.map((mode) => ({
-        label: mode,
-        kind: 'radio' as const,
-        checked: this.state.getLayer(layer.path)?.blendingMode === mode,
-        action: () => this.setLayerBlending(layer.path, mode),
-      })),
-    });
+    if (isControlVisible('blend', layer)) {
+      items.push({
+        label: 'Blending',
+        submenu: BLENDING_MODES.map((mode) => ({
+          label: mode,
+          kind: 'radio' as const,
+          checked: this.state.getLayer(layer.path)?.blendingMode === mode,
+          action: () => this.setLayerBlending(layer.path, mode),
+        })),
+      });
+    }
     items.push({
       label: 'Apply appearance to all layers',
       action: () => this.applyAppearanceToAll(layer.path),
     });
+    items[0].separatorBefore = true;
     return items;
+  }
+
+  /**
+   * The Colormap submenu: direct colours, the authored custom LUT when the layer
+   * has one (the only way back to it after trying another palette), every builtin.
+   */
+  private buildColormapSubmenu(layer: LayerInfo): ContextMenuItem[] {
+    const current = this.state.getLayer(layer.path)?.colormap;
+    const radio = (label: string, name: string | undefined): ContextMenuItem => ({
+      label,
+      kind: 'radio',
+      checked: current === name,
+      action: () => this.setLayerColormap(layer.path, name),
+    });
+    return [
+      radio('(direct colors)', undefined),
+      ...(isControlVisible('customColormap', layer)
+        ? [radio(CUSTOM_COLORMAP_LABEL, 'custom')]
+        : []),
+      ...Object.values(COLORMAP_CATEGORIES)
+        .flat()
+        .map((name) => radio(name, name)),
+    ];
   }
 
   private buildHeaderMenuItems(): ContextMenuItem[] {
@@ -661,30 +707,13 @@ export class LayersPanel {
     const live = this.state.getLayer(path);
     if (!live) return;
     const scratch = new LayerStateManager();
-    scratch.initFromSceneGraph(this.sceneGraph);
+    scratch.initFromSceneGraph(this.sceneGraph, this.sceneNodeIndex);
     const fresh = scratch.getLayer(path);
     scratch.dispose();
     if (!fresh) return;
     this.state.resetLayerState(path, fresh);
-    // Same apply set as resetAllLayers(), for the same reasons:
-    // applyVisibility unconditionally (a hidden layer whose authored default
-    // is visible must come back); applyColormap restores the authored
-    // palette (or none) AND then recomposes display range / gamma / opacity /
-    // absorption / blending onto the materials via its trailing
-    // applyComposed (layer-apply.ts — the material-state reset test pins
-    // this dependency); applyLabelStyle restores authored colours / all
-    // classes on the visual and pick materials; applyMeshAppearance covers
-    // the mesh-only shading uniforms, which are not composed.
-    this.applyVisibility(path, live.visible);
-    this.applyEngine.applyColormap(live);
-    this.applyEngine.applyLayerOrder(live);
-    this.applyEngine.applyLabelStyle(live);
-    this.applyEngine.applyMeshAppearance(live);
-    // And a physical layer's live knobs + its refract_data switch, which the
-    // sliders wrote straight onto the material (resetAllLayers has always done this;
-    // the per-row reset missed it, leaving a dragged knob on the surface while the
-    // readouts showed the authored values).
-    this.applyEngine.applyPhysicalKnobs(live);
+    // The same apply set as resetAllLayers(): the two resets cannot drift apart.
+    this.reapplyLayer(live);
     this.refreshRowVisual(path);
     this.controls.render();
   }
@@ -848,13 +877,14 @@ export class LayersPanel {
    * layer order, and opacity/visibility — those are per-layer compositing
    * choices, not "appearance" (copying opacity would flatten a scene the user
    * balanced layer-by-layer, while copying order would collapse every layer
-   * into one band).
+   * into one band). Sound rows neither give nor receive: they have no material,
+   * only placeholder appearance fields.
    */
   private applyAppearanceToAll(sourcePath: string): void {
     const src = this.state.getLayer(sourcePath);
-    if (!src) return;
+    if (!src || src.type === 'sound') return;
     for (const l of this.state.getLayers()) {
-      if (l.path === sourcePath) continue;
+      if (l.path === sourcePath || l.type === 'sound') continue;
       const min = Math.max(src.displayMin, l.dataMin);
       const max = Math.min(src.displayMax, l.dataMax);
       if (min < max) {
@@ -866,7 +896,9 @@ export class LayersPanel {
       l.blendingMode = resolveLayerBlendingMode(l.type, src.blendingMode);
       l.blendingModeExplicit = true;
       this.applyEngine.applyBlendingMode(l);
-      if (l.supportsColormap) this.setLayerColormap(l.path, src.colormap);
+      if (l.supportsColormap && canTakeColormap(l, src.colormap, src.customLut)) {
+        this.setLayerColormap(l.path, src.colormap);
+      }
     }
     this.controls.render();
   }
@@ -895,6 +927,7 @@ export class LayersPanel {
     // unconditionally.
     this.animationController.removePerFrameCallback('layers-lod-status');
     this.sceneGraph = null;
+    this.sceneNodeIndex = null;
     this.applyEngine.resetPushed();
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
@@ -1298,6 +1331,7 @@ export class LayersPanel {
     const gainInput = document.createElement('input');
     gainInput.type = 'range';
     gainInput.className = 'luxar-layer-row__gain';
+    gainInput.dataset.control = 'gain';
     gainInput.min = '0';
     gainInput.max = '2';
     gainInput.step = '0.01';
@@ -1378,7 +1412,7 @@ export class LayersPanel {
 
     // Sound rows: an inline gain slider (the row IS the control — the
     // appearance section below the list has nothing to say about a clip).
-    const gainInput = layer.sound ? this.buildGainSlider(layer) : null;
+    const gainInput = isControlVisible('gain', layer) ? this.buildGainSlider(layer) : null;
     const badge = buildTypeBadge(layer);
 
     // Optional kind-specific badge: ``N LODs`` for kind=lod, ``N parts``

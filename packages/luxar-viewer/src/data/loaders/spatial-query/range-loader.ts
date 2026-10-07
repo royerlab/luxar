@@ -34,7 +34,7 @@ export class RangeLoader {
   private decoder: ArrayDecoder;
   private config: ResolvedRangeLoaderConfig;
   private _verbose = true;
-  // Source of the owning loader's per-update abort signal. Resolved once at
+  // Source of the owning loader's abort signal. Resolved once at
   // the top of each loadRanges call and forwarded into the worker-decode
   // calls so a superseded update's LUT/quantized/broadcasted decode bails.
   private _getSignal?: () => AbortSignal | null;
@@ -62,9 +62,9 @@ export class RangeLoader {
   }
 
   /**
-   * Wire the owning loader's per-update abort signal source. The thunk reads
-   * the loader's transient `_activeSignal`, so worker decodes started by a
-   * superseded update bail before dispatch (see WorkerPool.runWithTimeout).
+   * Wire the owning loader's abort signal source. A per-call signal wins when
+   * present; an initial build uses the loader lifetime signal, so disposal
+   * also settles its worker decodes (see WorkerPool.runWithTimeout).
    */
   setSignalSource(getSignal: () => AbortSignal | null): void {
     this._getSignal = getSignal;

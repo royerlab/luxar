@@ -5,11 +5,15 @@ are the worker-side bodies that the main-thread `data/scene-loader/process/`
 stage dispatches to via Comlink (`projectLinesTo3D`, `projectGSplatsTo3D`
 on the `DataWorkerAPI`), or runs in-process via `in-process.ts`.
 
-**Points are not here.** Points projection is memory-bandwidth-bound and
-pairs with a zero-allocation accumulator, so it runs on the **main thread**
-(still WASM-accelerated) in `data/points/projection.ts` — see that module
-and `getPointsBackend` in `in-process.ts`. All three geometries thus share
-the same WASM kernels; only Lines/GSplats are worker-offloaded.
+**Points and Mesh are not here.** Points projection is
+memory-bandwidth-bound and pairs with a zero-allocation accumulator, so it
+runs on the **main thread** (still WASM-accelerated) in
+`data/points/projection.ts`, on the backend `getPointsBackend` in
+`in-process.ts` resolves. Mesh is whole-node resident and rebuilds only its
+index buffer per slice, so `data/mesh/projection.ts` runs its cull kernels
+on the main thread too, on the backend `getMeshBackend` resolves (worker
+offload is a follow-up to be measured). All four geometries share the same
+WASM kernels; only Lines/GSplats are worker-offloaded.
 
 ## Files
 
@@ -23,9 +27,10 @@ the same WASM kernels; only Lines/GSplats are worker-offloaded.
 
 ## Public surface
 
-All three functions take a `ctx: WasmCtx` (from `../state.ts`) plus a
+Both functions take a `ctx: WasmCtx` (from `../state.ts`) plus a
 `params` object and return a Comlink-`transfer()`-wrapped result whose
-typed-array buffers move to the main thread without copying.
+typed-array buffers move to the main thread without copying. Optional
+members are present only when requested or computable.
 
 ```typescript
 // Both share the same ProjectionViewState shape from ../types.ts.
@@ -46,10 +51,14 @@ export async function projectLinesTo3D(
   endSharpness;
   startScalars;
   endScalars; // per-vertex colormap scalars
+  startAlphas;
+  endAlphas;
   segmentLengths;
   startJointCode;
   endJointCode;
   visibleSegmentCount;
+  sourceSegmentIndices?; // emitted slot → source segment (picking)
+  bounds?; // projected 3D bounds, widths included
 }>;
 export async function projectGSplatsTo3D(
   ctx,
@@ -59,14 +68,15 @@ export async function projectGSplatsTo3D(
   choleskyFactors3D;
   amplitudes;
   colors;
-  sharpness;
   visibleCount;
+  bounds?; // projected 3D bounds of the visible splats
+  sourceIndices?; // emitted slot → source splat (picking)
 }>;
 ```
 
 ## Invariants
 
-- **Three-geometry symmetry.** One file per geometry, same name shape
+- **Geometry symmetry.** One file per worker-offloaded geometry, same name shape
   (`<geometry>.ts`), same `(ctx, params) → transfer(result)` signature,
   same `ProjectionViewState` input. Shared boundary checks live in
   `../validation.ts` (`validateProjectionInputs`,
@@ -82,8 +92,8 @@ export async function projectGSplatsTo3D(
 - **Zero-copy results.** Every return goes through `comlink.transfer()`
   with the full list of result-array buffers, so the main thread adopts
   them without an intermediate copy. (Points' zero-alloc accumulator
-  `outputBuffers` path lives with its main-thread projection in
-  `data/points/projection.ts`.)
+  write-through (`ProjectionTargetBuffers`) lives with its main-thread
+  projection in `data/points/projection.ts`.)
 - **`extend_to_all` is geometry-aware.** GSplats receives an explicit
   `extendToAllDims` index list and removes those dims from the active
   hidden-dim set before Mahalanobis attenuation. Lines has no
@@ -106,7 +116,8 @@ export async function projectGSplatsTo3D(
   the projection (`projectLinesTo3DUsingWorker`,
   `projectGSplatsTo3DUsingWorker` dispatchers + worker thresholds).
 - `../../../data/lines/projection.ts`,
-  `../../../data/gsplats/projection.ts` — main-thread fallback
-  kernels that mirror these files when `useWebWorkers` is off.
+  `../../../data/gsplats/projection.ts` — only the empty-payload
+  constructors; the main-thread path runs THESE files via
+  `in-process.ts` (there is no second copy of the math).
 - `../../../wasm/` — compiled WASM module + the pure-TS fallback that
   satisfies the same `wasmModule.*` surface these files call.

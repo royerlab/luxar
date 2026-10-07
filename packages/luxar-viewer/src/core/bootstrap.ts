@@ -18,7 +18,6 @@
 
 import { LuxarApp, type LuxarAppOptions } from './app';
 import { parseBookmark, restoreBookmark } from './app/bookmark-state';
-import { KeyAction } from '../input';
 import { dataSourceDocumentTitle, setDocumentTitle } from './document-title';
 import { config } from '../config';
 import { archiveFaultFrom } from '../cache/chunk-source';
@@ -27,25 +26,21 @@ import { validateAndLog } from '../config/validation';
 import { readUrlParams, type UrlParams } from '../config/url-params';
 import { buildInfo, buildInfoLine } from '../config/build-info';
 import { VIEWER_VERSION } from '../version';
-import { initUserSettings } from '../config/user-settings';
+import { applyUrlPerformanceOverrides, initUserSettings } from '../config/user-settings';
 import { configureGpuByteBudget } from '../rendering/gpu-byte-budget';
 import { cachePoolOverrideBytes } from '../cache/heap-budget';
 import { setInputProfileOverride } from '../utils/input-capabilities';
 import { setLineJoinOverride } from '../types/line-join';
 import { setLinePrimitiveOverride, setLinePrimitivePolicy } from '../types/line-primitive';
 import { StorageKeys } from '../utils/storage-keys';
-import { showError, clearError } from '../ui/error-overlay';
-import { showToast } from '../ui/toast';
-import { showHelpOverlay, hideHelpOverlay } from '../ui/help-overlay';
-import { showLoadingIndicator, hideLoadingIndicator } from '../ui/loading-indicator';
-import { showSceneIdentityBanner, hideSceneIdentityBanner } from '../ui/scene-identity-banner';
-import { setNotifierBackend } from '../utils/cross-layer/notifier';
+import { showViewerError } from './app/error-dialog';
 import { ThemeManager } from '../themes/theme-manager';
 import { consoleInterceptor } from '../utils/console-interceptor';
 import { log, Modules, LogEmoji, setVerboseLogging } from '../utils/log';
 import { getErrorMessage } from '../utils/format-error';
 import { codecRegistry } from '../data/zarr';
 import { computePerfSnapshot } from './app/debug/perf-snapshot';
+import { installDebugPerfInstruments } from './app/debug/perf-instruments';
 import { perfCounters } from '../profiling/perf-counters';
 import { prefetchRootDocument } from '../cache/root-document-prefetch';
 import { normalizeURL } from '../data/scene-loader/lifecycle/url-normalization';
@@ -135,6 +130,10 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // further down with the precedence URL param > stored setting > default.
   // Standalone-only — library embedders configure via LuxarAppOptions.
   const userSettings = initUserSettings();
+  // `?workers=` / `?prefetch=` beat the stored values for this session only:
+  // a launcher on a dedicated display machine sets them without rewriting that
+  // machine's saved preferences.
+  applyUrlPerformanceOverrides(urlParams.workers, urlParams.prefetch, urlParams.renderer);
 
   if (urlParams.opfsReadConcurrency !== null) {
     config.cache.opfsReadConcurrency = urlParams.opfsReadConcurrency;
@@ -215,31 +214,6 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     consoleInterceptor.patch();
   }
   log.custom(LogEmoji.START, Modules.LUXAR, `Luxar viewer ${buildInfoLine()}`);
-
-  // Wire the cross-layer notifier surface to the concrete UI helpers.
-  // Lower layers (data, scene, input) call notifier.toast / .error /
-  // .showHelp etc. without importing the ui/ helper modules directly —
-  // that's what keeps the dependency-cruiser layer order clean.
-  setNotifierBackend({
-    showError: (message, options) =>
-      showError(
-        message,
-        shortcutForAction,
-        {
-          datasetBrowser: KeyAction.toggleDatasetBrowser,
-          help: KeyAction.toggleHelp,
-        },
-        options?.persistent ? { autoDismiss: false } : undefined
-      ),
-    showToast,
-    showHelpOverlay,
-    hideHelpOverlay,
-    showLoadingIndicator,
-    hideLoadingIndicator,
-    clearError,
-    showSceneIdentityBanner,
-    hideSceneIdentityBanner,
-  });
 
   if (validateConfig) {
     const ok = validateAndLog(config);
@@ -367,6 +341,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     densityGuard: urlParams.densityGuard,
     // `?densityCap=<N>` sweeps the guard's threshold for one session.
     densityCap: urlParams.densityCap ?? undefined,
+    // `?textScale=` — overlay type size for this display (a launcher flag).
+    textScale: urlParams.textScale ?? undefined,
     // Opt-in capture-quality override (`?lodFinest` — the gallery harness).
     lodFinest: urlParams.lodFinest,
     // Session-wide replacement-LOD threshold bias (`?lodBias=N`).
@@ -394,6 +370,10 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   app = new LuxarApp();
 
   if (isDebugMode) {
+    // Instrument the FIRST load too: probes read getPerf() while it runs. The
+    // renderer is resolved per frame, so it reads as absent until init() has
+    // built the scene manager.
+    installDebugPerfInstruments(() => app?.components.sceneManager?.renderer);
     // Seed the debug surface before init() so consumers (e.g. Playwright)
     // that hook into `window.__luxarDebug` can rely on `.app` being there
     // even while init() is still in flight. LuxarApp.setupDebugInterface()
@@ -428,11 +408,7 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       getPerf: () => computePerfSnapshot(),
       getPerfRecords: (kind: string) => perfCounters.records(kind),
       resetPerfCounters: () => perfCounters.reset(),
-      showError: (message) =>
-        showError(message, shortcutForAction, {
-          datasetBrowser: KeyAction.toggleDatasetBrowser,
-          help: KeyAction.toggleHelp,
-        }),
+      showError: (message) => showViewerError(message, shortcutForAction),
     };
     log.custom(LogEmoji.CONSOLE, Modules.LUXAR, 'Debug interface available at window.__luxarDebug');
   }
@@ -444,6 +420,16 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       if (bookmark) {
         try {
           await restoreBookmark(app, bookmark);
+          // A cross-dataset switch rewrites ?src and drops the old view.
+          // Keep the just-restored bookmark in the URL for a reload.
+          if (!window.location.hash.startsWith('#view=')) {
+            const hash = new URLSearchParams({ view: raw }).toString();
+            window.history.replaceState(
+              window.history.state,
+              '',
+              `${window.location.pathname}${window.location.search}#${hash}`
+            );
+          }
         } catch (error) {
           log.warning(Modules.LUXAR, 'Could not restore view bookmark:', error);
         }
@@ -468,15 +454,11 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     // names the version, the supported set and the remedy). Everything else
     // is a programming/environment error and keeps the generic text.
     const surfaced = archiveFaultFrom(error) ?? unsupportedFormatVersionFrom(error);
-    showError(
+    showViewerError(
       surfaced
         ? surfaced.message
         : 'Failed to start the application. Please check the console for details.',
       shortcutForAction,
-      {
-        datasetBrowser: KeyAction.toggleDatasetBrowser,
-        help: KeyAction.toggleHelp,
-      },
       { autoDismiss: false }
     );
     throw error;

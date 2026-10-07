@@ -32,12 +32,33 @@ import type { AutoRotateAxis } from '../types';
 const _IDENTITY_QUAT = new THREE.Quaternion();
 
 /**
- * Sine of the half-angle below which a rotation delta is dropped (≈ 2e-12
- * rad). Far below anything a frame can show: the whole remaining damped tail
- * (`delta / dampingFactor`) moves a camera 1e4 units from its target by under
- * 1e-7 units, beneath float32 resolution of the matrices the GPU receives.
+ * Sine of the half-angle below which a rotation delta is dropped (≈ 2e-8 rad).
+ * The damped tail applies, in total, exactly the remaining delta, so dropping
+ * it moves no drawn position by more than 2e-8 of its distance from the
+ * target, below its own float32 resolution (~6e-8 relative) — the same bound
+ * as the zoom gate's 1e-8. Below it a step only flips float32 roundings of
+ * the camera matrices: on a 4 px drag the old 1e-12 gate rendered ~59 frames
+ * identical to their predecessor, after a few whose only change was 1/255 in
+ * a few dozen pixels.
  */
-const NEGLIGIBLE_ROTATION_SIN_HALF = 1e-12;
+const NEGLIGIBLE_ROTATION_SIN_HALF = 1e-8;
+
+/**
+ * Remaining pan, as a fraction of the view's length scale, below which it is
+ * dropped (same bound). The scale is the camera distance in perspective and
+ * the VISIBLE field width `(right - left) / zoom` in orthographic, where the
+ * distance does not set what one pixel spans: a distance-scaled gate froze a
+ * pan at extreme zoom-in and kept a sub-pixel one alive zoomed out.
+ */
+const NEGLIGIBLE_PAN_FRACTION = 1e-8;
+
+/** The length scale {@link NEGLIGIBLE_PAN_FRACTION} is a fraction of. */
+function panScale(ctx: OrbitUpdateCtx): number {
+  const camera = ctx.camera;
+  return camera instanceof THREE.OrthographicCamera
+    ? (camera.right - camera.left) / camera.zoom
+    : ctx.getDistance();
+}
 
 /** Whether `q` (a unit rotation) is within {@link NEGLIGIBLE_ROTATION_SIN_HALF} of the identity. */
 function isNegligibleRotation(q: THREE.Quaternion): boolean {
@@ -192,8 +213,10 @@ export function runUpdateStep(ctx: OrbitUpdateCtx, deltaTime?: number): boolean 
     }
   }
 
-  // 5. Apply pan with damping
-  if (ctx.enableDamping) {
+  // 5. Apply pan with damping. A negligible residue is dropped, as above.
+  if (ctx.panDelta.lengthSq() < (NEGLIGIBLE_PAN_FRACTION * panScale(ctx)) ** 2) {
+    ctx.panDelta.set(0, 0, 0);
+  } else if (ctx.enableDamping) {
     ctx.target.addScaledVector(ctx.panDelta, ctx.dampingFactor);
     ctx.panDelta.multiplyScalar(1 - ctx.dampingFactor);
   } else {

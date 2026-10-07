@@ -4,17 +4,9 @@ import type { UIConfig } from './types';
  * UI configuration for overlays and visual elements
  */
 export const uiConfig: UIConfig = {
+  // Only the panels that set an inline z-index read these; every other layer
+  // is stacked by CSS (the theme's --luxar-z-* scale).
   zIndex: {
-    // Base layer components (100-199)
-    dimensionSliders: 100, // Dimension sliders at bottom
-    performanceMonitor: 100, // Performance stats panel
-    debugConsole: 150, // Debug console (slightly above base)
-
-    // Mid-layer overlays (1000-1999)
-    datasetBrowser: 1000, // Dataset browser modal
-    loading: 1000, // Loading indicator
-    error: 1000, // Error messages
-    help: 1001, // Help overlay (above errors)
     // The three left-DOCKED panels live below the control rail (modal - 2 in
     // control-rail.css): the rail's hover tooltips extend rightward OVER the
     // docked panel, and a panel above the rail buries them. The dock is
@@ -31,77 +23,24 @@ export const uiConfig: UIConfig = {
     errorAutoDismissMs: 10000, // Auto-dismiss error messages after 10s
     helpClickDelayMs: 100, // Delay before help can be closed by click
   },
-  spinner: {
-    size: 24, // Loading spinner size in pixels
-    borderWidth: 3, // Spinner border width
-  },
   // Styling is provided by CSS variables and classes in src/styles/
   // (see the theming system in src/themes/).
 
-  // Debug console configuration
+  // Debug console drag-resize limits (its default size, position and look
+  // live in debug-console.css).
   debugConsole: {
     panel: {
-      defaultWidth: 600,
-      defaultHeight: 400,
       minWidth: 400,
       maxWidth: 1200,
       minHeight: 200,
       maxHeight: 800,
-      bottomOffset: 20,
-      leftOffset: 20,
     },
     resize: {
       borderWidth: 4,
-    },
-    style: {
-      backgroundColor: 'rgba(30, 30, 30, 0.95)',
-      borderColor: 'rgba(255, 255, 255, 0.1)',
-      borderRadius: 8,
-      backdropBlur: 10,
-      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
     },
   },
   scaleBar: {
     targetWidthPx: 150,
     position: 'bottom-left' as const,
-  },
-  // UI component-specific configuration for consistent styling
-  components: {
-    datasetBrowser: {
-      borderRadius: {
-        panel: 12,
-        section: 6,
-        element: 4,
-      },
-      padding: {
-        panel: 20,
-        section: 15,
-        element: 10,
-      },
-    },
-    debugConsole: {
-      borderRadius: {
-        header: 8,
-        content: 4,
-        button: 3,
-      },
-    },
-    renderingControls: {
-      borderRadius: {
-        checkbox: 4,
-        section: 4,
-        header: 4,
-      },
-    },
-    dataMonitor: {
-      borderRadius: {
-        card: 4,
-        section: 6,
-      },
-      padding: {
-        default: 10,
-        compact: 8,
-      },
-    },
   },
 };

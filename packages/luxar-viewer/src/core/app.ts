@@ -1,5 +1,6 @@
 // Main application class for the Luxar scene player
 
+import { applyTextScale, resolveTextScale } from '../ui/overlay-text-scale';
 import type { SceneManager } from '../scene/scene-manager';
 import {
   captureSnapshot as captureViewerSnapshot,
@@ -19,21 +20,17 @@ import type {
   ViewerState,
 } from './app/embedder/events';
 import { CameraFlight, type FlyToOptions, type FlightResult } from './app/camera/camera-flight';
-import { WaypointDriver, resolveWaypointPose } from './app/camera/waypoint-driver';
-import { ControlClient } from './app/control/control-client';
+import { installStoryWaypoints } from './app/camera/install-waypoints';
+import { ControlClient, ViewerNotReadyError } from './app/control/control-client';
 import { extractRenderingOverrides } from '../config/zarr-bridge/viewer-config-utils';
-import { extractAudioConfig } from '../config/zarr-bridge/audio-config';
-import { resolveKioskMode } from '../config/kiosk';
-import { applyKioskMode } from './app/kiosk/apply-kiosk';
-import {
-  extractControlPanelConfig,
-  type ControlPanelSettings,
-} from '../config/zarr-bridge/control-panel';
+import { replaceBrowserDataSourceUrl } from '../config/url-params';
+import { applySceneKiosk } from './app/kiosk/apply-kiosk';
+import { installSceneAudio } from './app/viewer-config/install-audio';
+import { DatasetSession } from './app/dataset/dataset-session';
+import { extractControlPanelConfig } from '../config/zarr-bridge/control-panel';
 import type { AudioEngine } from '../audio/audio-engine';
 import type { AudioPatch, AudioState } from '../types/audio';
-import { resolveTargetNodeCenter } from '../scene/scene-manager/camera/camera-setup';
-import { config, type RenderingSettings } from '../config';
-import type * as THREE from 'three';
+import type { RenderingSettings } from '../config';
 import type { ZarrWaypoint } from '../types/zarr';
 import { captureScreenshot } from './app/embedder/screenshot';
 import type { AnimationController } from '../scene/animation/animation-controller';
@@ -74,6 +71,7 @@ import { runDisposePipeline } from './app/lifecycle/dispose-pipeline';
 import { shouldShowBrowser as shouldShowBrowserImpl } from './app/dataset/should-show-browser';
 import { showDatasetBrowser as showDatasetBrowserImpl } from './app/dataset/show-browser';
 import { loadDataset as loadDatasetImpl } from './app/dataset/load-dataset';
+import { datasetLoadErrorMessage } from './app/dataset/dataset-error-message';
 import { dataSourceDocumentTitle, setDocumentTitle } from './document-title';
 import { installDebugInterface } from './app/debug/debug-interface';
 import {
@@ -94,8 +92,8 @@ import { initColormapLegend as initColormapLegendImpl } from './app/overlays/ini
 import { initOverlays as initOverlaysImpl } from './app/overlays/init-overlays';
 import { installFocusHandling } from './app/lifecycle/focus-handling';
 import { installOnlineRetry } from './app/lifecycle/online-retry';
+import { installNotifierBackend } from './app/lifecycle/notifier-backend';
 import { getSceneLoader, SceneLoaderManager } from '../data/scene-loader-manager';
-import type { SceneLoader } from '../data/scene-loader';
 import { notifier } from '../utils/cross-layer/notifier';
 import { initScaleBar as initScaleBarImpl } from './app/overlays/init-scale-bar';
 
@@ -146,6 +144,10 @@ export class LuxarApp {
    * components (potentially double-freeing GPU resources). Reset by `init()`.
    */
   private isDisposed = false;
+  /** Invalidates work from an earlier init after dispose or re-init. */
+  private initGeneration = 0;
+  /** A new init waits until an overtaken init has released its partial pipeline. */
+  private pendingInit: Promise<void> | null = null;
   /**
    * App-level event listeners (beforeunload, focus, visibilitychange,
    * luxar-open-dataset-browser, plus the picking system's mousemove + control
@@ -170,35 +172,19 @@ export class LuxarApp {
    * multi-instance-ready.
    */
   private embedderEvents = createEventBus<LuxarEmbedderEventMap>();
-  private datasetFaultUnsubscribe?: Unsubscribe;
-  private datasetFaultLoader?: SceneLoader;
-  private currentDatasetSrc?: string;
+  /**
+   * Everything the current dataset installed (fault subscription, story
+   * waypoints, kiosk watchdog, control-panel authoring), replaced at every
+   * load start and disposed with the app. Starts as the empty "no dataset yet"
+   * session so readers never branch on its absence.
+   */
+  private session = new DatasetSession(undefined);
+  /** Held across dataset loads so a failed switch cannot unlock kiosk input. */
+  private kioskInputRestore: (() => void) | null = null;
   /** Smooth camera transitions for {@link flyTo}; created in {@link setupEmbedderHooks}. */
   private cameraFlight?: CameraFlight;
-  /**
-   * Dims-manager listener driving the loaded scene's authored story waypoints
-   * (`viewer_config.waypoints`); the driver itself lives in its closure.
-   */
-  private waypointListener?: () => void;
-  private waypointDriver?: WaypointDriver;
   /** Remote-control channel, present only when `options.control` is set. */
   private controlClient?: ControlClient;
-  /**
-   * The scene's authored control-panel block, as last loaded.
-   *
-   * Held for `getViewerState()` alone: the touch panel is a separate page and
-   * cannot read the store's attributes itself. Reset on every dataset load, so
-   * switching scenes cannot leave the previous scene's panel authoring behind.
-   */
-  private controlPanelConfig: ControlPanelSettings | null = null;
-  /**
-   * Teardown for the kiosk watchdog, if one is running.
-   *
-   * Held so `switchDataset` cannot leave the previous scene's watchdog
-   * listening on a canvas whose context state it no longer describes.
-   */
-  private kioskTeardown: (() => void) | null = null;
-
   /**
    * Observes the canvas box so the viewer re-fits when the host container
    * resizes (not just the window). Disconnected on dispose via {@link events}.
@@ -228,16 +214,21 @@ export class LuxarApp {
    * even during long load operations.
    *
    * @param options - Init-time options. URL parameters are not consulted
-   *                  here — main.ts is responsible for reading them and
-   *                  passing the result.
+   *                  here — the standalone bootstrap (`core/bootstrap.ts`)
+   *                  reads them and passes the result.
    *
-   * @returns Promise that resolves when initialization is complete and
-   *          dataset loading has started (may still be loading in background).
-   *          Does NOT wait for all chunks to load.
+   * @returns Promise that resolves once the subsystems are wired and the first
+   *          dataset has loaded (its first slice committed) or failed, or the
+   *          dataset browser has opened. Progressive refinement keeps
+   *          streaming afterwards.
    *
    * @throws {Error} If WebGL is not supported by browser
-   * @throws {Error} If scene manager initialization fails
-   * @throws {Error} Dataset loading errors are caught and displayed to user
+   * @throws {Error} If a subsystem (scene manager, input, panels, …) fails to
+   *                 initialize — the partial app is disposed first.
+   *
+   * A failed first DATASET load does not throw: the app stays initialized,
+   * emits `dataset-error`, and shows a persistent error dialog whose
+   * dataset-browser hint works (see {@link loadInitialDataset}).
    *
    * @example
    * ```typescript
@@ -251,7 +242,12 @@ export class LuxarApp {
    * @see {@link SceneManager} for rendering pipeline setup
    * @see README.md - initialization sequence section for detailed init flow
    */
-  async init(options: LuxarAppOptions): Promise<void> {
+  init(options: LuxarAppOptions): Promise<void> {
+    const pending = this.pendingInit;
+    return pending ? pending.then(() => this.init(options)) : this.startInit(options);
+  }
+
+  private async startInit(options: LuxarAppOptions): Promise<void> {
     if (this.isInitialized) {
       throw new Error('LuxarApp is already initialized. Call dispose() before initializing again.');
     }
@@ -263,7 +259,9 @@ export class LuxarApp {
     // works even if the same instance was already initialized and
     // disposed.
     this.isDisposed = false;
-    this.options = options;
+    // A private copy: a dataset switch replaces `src`, and the embedder's own
+    // options object is not ours to write.
+    this.options = { ...options };
 
     applyModuleOverrides(options);
 
@@ -272,6 +270,10 @@ export class LuxarApp {
     // container is also promoted to a containing block so fixed overlays
     // scope to it; resetViewerContainer() in the dispose pipeline restores it.
     setViewerContainer(options.container ?? document.body);
+    // Toasts, the error dialog, the spinner: lower layers reach the UI through
+    // the notifier, for a library embed as much as the standalone page. The
+    // dispose pipeline clears it, so every lifetime installs its own.
+    installNotifierBackend((actionId) => this.shortcutForAction(actionId));
 
     // Claim the input surface before any async initialization or dataset
     // loading leaves an embedder-supplied canvas browser-owned.
@@ -306,6 +308,10 @@ export class LuxarApp {
     };
 
     this.isInitializing = true;
+    const generation = ++this.initGeneration;
+    let finishInit!: () => void;
+    const completion = new Promise<void>((resolve) => (finishInit = resolve));
+    this.pendingInit = completion;
     try {
       const result = await runInitPipeline(
         {
@@ -315,11 +321,19 @@ export class LuxarApp {
           getPanelVisibilityStates: () => this.getPanelVisibilityStates(),
           restorePanelVisibilityStates: (states) => this.restorePanelVisibilityStates(states),
           emitEmbedderEvent: (event, payload) => this.embedderEvents.emit(event, payload),
+          // Read lazily: `this.pickingSystem` is (re)assigned per dataset load.
+          invalidatePickBuffer: () => this.pickingSystem?.markDirty(),
         },
         partial
       );
 
       assignFromPartial();
+      if (this.isTornDown(generation)) {
+        // dispose() ran while the pipeline was awaiting scene-manager setup.
+        // Its first pass could not see the components accumulated in partial.
+        this.disposePartialInit();
+        return;
+      }
 
       // The layers panel edits a mesh's pick coverage (opacity/cutoff/blending)
       // with a stationary camera, which nothing else invalidates — give it a
@@ -339,19 +353,11 @@ export class LuxarApp {
       // The control client eagerly attaches the selection / element event
       // consumers that picking checks once, during dataset provisioning.
       this.installControlClient();
-      if (await this.shouldShowBrowser(result.sceneSrc)) {
-        try {
-          this.showDatasetBrowser();
-        } catch (error) {
-          log.warning(
-            Modules.APP,
-            'Dataset browser initialization had issues, but browser is shown:',
-            error
-          );
-        }
-      } else {
-        await this.loadDataset(result.sceneSrc);
-      }
+      await this.routeInitialDataset(result.sceneSrc, generation);
+      // A dispose() that landed while routing awaited has already torn the app
+      // down: wiring the app-level hooks below would leak them onto a disposed
+      // instance and mark it initialized.
+      if (this.isTornDown(generation)) return;
 
       this.setupDisposeOnUnload();
       this.setupFocusHandling();
@@ -375,10 +381,40 @@ export class LuxarApp {
       // top-level error UI; any in-progress error UI from sub-loaders
       // is wiped along with everything else.
       assignFromPartial();
-      this.dispose();
+      this.disposePartialInit();
       throw error;
     } finally {
       this.isInitializing = false;
+      this.pendingInit = null;
+      finishInit();
+    }
+  }
+
+  private disposePartialInit(): void {
+    // A prior dispose may have run before the pipeline published its components.
+    this.isDisposed = false;
+    this.dispose();
+  }
+
+  /**
+   * Open the dataset browser, or load the initial dataset. A dispose() that
+   * lands during the zarr probe wins: nothing is loaded into a disposed app.
+   */
+  private async routeInitialDataset(src: string, generation: number): Promise<void> {
+    const showBrowser = await this.shouldShowBrowser(src);
+    if (this.isTornDown(generation)) return;
+    if (!showBrowser) {
+      await this.loadInitialDataset(src);
+      return;
+    }
+    try {
+      this.showDatasetBrowser();
+    } catch (error) {
+      log.warning(
+        Modules.APP,
+        'Dataset browser initialization had issues, but browser is shown:',
+        error
+      );
     }
   }
 
@@ -400,7 +436,6 @@ export class LuxarApp {
     if (this.datasetBrowser || this.switchInFlight) return;
     this.datasetBrowser = showDatasetBrowserImpl({
       currentSrc: this.options.src,
-      updateBrowserUrl: this.options.updateBrowserUrl === true,
       inputHandler: this.inputHandler,
       onSrcChange: (src) => {
         this.options = { ...this.options, src };
@@ -421,15 +456,32 @@ export class LuxarApp {
   }
 
   /**
+   * The first dataset load. A DATASET failure (a `?src` typo, a 404, a refused
+   * format version) leaves the viewer running: {@link loadDataset} has already
+   * emitted `dataset-error`, the persistent dialog names the failure and
+   * points at the dataset browser, and that browser works because the app is
+   * alive. Only a subsystem failure — anything init() throws outside this call
+   * — still disposes the app.
+   */
+  private async loadInitialDataset(src: string): Promise<void> {
+    try {
+      await this.loadDataset(src);
+    } catch (error) {
+      log.error(Modules.APP, `Initial dataset load failed: ${getErrorMessage(error)}`, error);
+      notifier.error(datasetLoadErrorMessage(error), { persistent: true });
+    }
+  }
+
+  /**
    * Load a dataset and initialize UI
    */
   private async loadDataset(src: string): Promise<void> {
-    this.datasetFaultUnsubscribe?.();
-    this.datasetFaultUnsubscribe = undefined;
-    this.datasetFaultLoader = undefined;
-    this.currentDatasetSrc = undefined;
-    // The outgoing scene's waypoints must not fire on the incoming scene's dims.
-    this.disposeWaypoints();
+    // The outgoing scene's session goes first: its waypoints must not fire on
+    // the incoming scene's dims, its watchdog must not outlive it, and its
+    // fault latch is not the new scene's.
+    this.session.dispose();
+    const session = new DatasetSession(src);
+    this.session = session;
     // ...and its sounds must stop before the new store loads.
     this.audioEngine?.detachScene();
     try {
@@ -445,24 +497,24 @@ export class LuxarApp {
         disposePicking: () => this.disposePicking(),
         initScaleBar: () => this.initScaleBar(),
         initColormapLegend: () => this.initColormapLegend(),
-        initOverlays: () => this.initOverlays(),
+        initOverlays: () => this.initOverlays(session),
         initPicking: () => this.initPicking(),
-        applyViewerConfigState: (config) => this.applyViewerConfigState(config),
+        // THIS load's session: a load superseded mid-flight must never write
+        // its scene's waypoints / kiosk / control panel into a newer session.
+        applyViewerConfigState: (config) => this.applyViewerConfigState(config, session),
         openCacheStatsView: () => this.openCacheStatsView(),
+        isStale: () => session.isDisposed,
       });
-      this.currentDatasetSrc = src;
-      const sceneLoader = getSceneLoader();
-      this.datasetFaultLoader = sceneLoader ?? undefined;
+      // Superseded mid-flight (dispose, or dispose + init): the dataset was
+      // never this lifetime's, so it announces nothing.
+      if (session.isDisposed) return;
+      session.markLoaded(getSceneLoader());
       // A replayed latched fault is post-load state, so preserve the public
       // ordering: the dataset becomes available before its fault is reported.
       this.embedderEvents.emit('dataset-loaded', { src });
-      if (sceneLoader) {
-        this.datasetFaultUnsubscribe = sceneLoader.onArchiveFault(
-          (error) => this.embedderEvents.emit('dataset-fault', { src, error }),
-          { replayCurrent: true }
-        );
-      }
+      session.reportFaults((error) => this.embedderEvents.emit('dataset-fault', { src, error }));
     } catch (error) {
+      if (session.isDisposed) throw error;
       this.embedderEvents.emit('dataset-error', {
         src,
         error: error instanceof Error ? error : new Error(String(error)),
@@ -497,6 +549,12 @@ export class LuxarApp {
     };
     controls.addEventListener('change', cameraListener);
     this.events.add(() => controls.removeEventListener('change', cameraListener));
+
+    // Unrecoverable in this release (the init pipeline shows the reload
+    // dialog): tell the embedder too, so a host can reload or report it.
+    this.events.add(
+      this.onWebGPUDeviceLost((info) => this.embedderEvents.emit('webgpu-device-lost', info))
+    );
 
     // flyTo() driver. The canvas is the input surface whose pointer / wheel /
     // touch events hand control back to the user mid-flight.
@@ -550,157 +608,121 @@ export class LuxarApp {
    * Only explicitly set fields (not undefined) are applied — unset fields
    * preserve the viewer's built-in defaults.
    */
-  private applyViewerConfigState(viewerConfig: ZarrViewerConfig | undefined): void {
+  private applyViewerConfigState(
+    viewerConfig: ZarrViewerConfig | undefined,
+    session: DatasetSession = this.session
+  ): void {
     this.applyViewerConfigStateCore(viewerConfig);
     // AFTER the core pass: `dimensions.current_step` has been applied, so the
     // load-time match sees the authored opening position and snaps to it.
-    this.installWaypoints(viewerConfig?.waypoints);
+    this.installWaypoints(viewerConfig?.waypoints, session);
     // AFTER the waypoints: the opening slice is final, so the first slab
     // evaluation starts exactly the sounds the opening story owns.
-    this.installAudio(viewerConfig?.audio);
+    this.installAudio(viewerConfig?.audio, session);
     // Kept rather than applied: nothing in THIS page reads it. The control
     // panel is a separate page and asks for it over the wire, so the display's
     // only job is to remember what the store said.
-    this.controlPanelConfig = extractControlPanelConfig(viewerConfig?.control_panel);
-    this.applyKiosk(viewerConfig);
+    session.controlPanelConfig = extractControlPanelConfig(viewerConfig?.control_panel);
+    this.applyKiosk(viewerConfig, session);
+    // Re-applied on every load, so a switch to a scene without one resets it.
+    applyTextScale(resolveTextScale(this.options?.textScale, viewerConfig?.text_scale));
   }
 
   /**
-   * Lock the display down when the scene or the URL asks for it.
-   *
-   * Resolved from BOTH the authored `ui.kiosk` block and `?kiosk`, with the URL
-   * winning — see `config/kiosk.ts`. Re-applied on every dataset load, and the
-   * previous watchdog torn down first, so switching scenes cannot accumulate
-   * listeners on a long-running exhibit.
+   * Lock the display down when the scene or the URL asks for it
+   * (`core/app/kiosk/apply-kiosk.ts`). Re-applied on every dataset load; the
+   * session owns the watchdog, while the app keeps input restrictions
+   * through the next load (including a failed one).
    */
-  private applyKiosk(viewerConfig: ZarrViewerConfig | undefined): void {
-    this.kioskTeardown?.();
-    this.kioskTeardown = null;
-    // `this.options?` because this now runs inside the viewer-config pass,
-    // which a partially-constructed app can reach before its options are set —
-    // and a missing option means "no ?kiosk", not a crash that aborts the rest
-    // of the load (theme, dimension state, the render loop after it).
-    const mode = resolveKioskMode(viewerConfig?.ui?.kiosk, this.options?.kiosk === true);
-    if (!mode.enabled) return;
-    this.kioskTeardown = applyKioskMode(mode, {
+  private applyKiosk(
+    viewerConfig: ZarrViewerConfig | undefined,
+    session: DatasetSession = this.session
+  ): void {
+    // `this.options?` because this runs inside the viewer-config pass, which a
+    // partially-constructed app can reach before its options are set — and a
+    // missing option means "no ?kiosk", not a crash that aborts the rest of the
+    // load (theme, dimension state, the render loop after it).
+    // Release the previous mode only when the next one can take its snapshot.
+    this.kioskInputRestore?.();
+    this.kioskInputRestore = null;
+    session.setKioskTeardown(null);
+    const teardown = applySceneKiosk(viewerConfig?.ui?.kiosk, this.options?.kiosk === true, () => ({
       setKeyboardEnabled: (enabled) => this.inputHandler.setEnabled(enabled),
-      setControlsEnabled: (enabled) => this.sceneManager.controls?.setEnabled(enabled),
+      getKeyboardEnabled: () => this.inputHandler.isEnabled(),
+      setPointerEnabled: (enabled) => this.sceneManager.controls?.setPointerEnabled(enabled),
+      getPointerEnabled: () => this.sceneManager.controls?.isPointerEnabled() ?? true,
       hidePanels: () => {
         this.renderingControls.hide();
         this.scaleBar?.hide();
         this.layersPanel?.hide();
       },
       canvas: this.sceneManager.renderer?.domElement,
-    });
+      onDeviceLost: (listener) => this.onWebGPUDeviceLost(listener),
+    }));
+    this.kioskInputRestore = teardown.restoreInput;
+    session.setKioskTeardown(teardown.disposeWatchdog);
   }
 
-  /**
-   * Bind the sound layer to the loaded scene: apply the authored
-   * `viewer_config.audio` defaults (the listener's persisted mute / master gain
-   * win), then hand the engine the scene root so it finds the sound-node
-   * placeholders `loadSoundNode` attached and starts decoding their clips.
-   */
-  private installAudio(audio: unknown): void {
+  /** Subscribe to the scene manager's WebGPU device loss; returns the unsubscribe. */
+  private onWebGPUDeviceLost(
+    listener: (info: { reason?: string; message?: string }) => void
+  ): () => void {
+    const sceneManager = this.sceneManager;
+    const handler = (event: { reason?: string; message?: string }): void =>
+      listener({ reason: event.reason, message: event.message });
+    sceneManager.addEventListener('webgpu-device-lost', handler);
+    return () => sceneManager.removeEventListener('webgpu-device-lost', handler);
+  }
+
+  /** Bind the sound layer to the loaded scene (`viewer-config/install-audio.ts`). */
+  private installAudio(audio: unknown, session: DatasetSession = this.session): void {
     if (!this.audioEngine) return;
-    this.audioEngine.detachScene();
-    this.audioEngine.applySceneConfig(extractAudioConfig(audio));
-    const root = this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene');
-    if (root) {
-      this.audioEngine.attachScene(root);
-      this.layersPanel?.pushAudioMutes();
-    }
-    // The waypoints install first and snap to the opening waypoint before any
-    // sound node exists, so the load-time arrival is replayed here — otherwise
-    // the opening story's `on_arrive` narration would never fire.
-    const driver = this.waypointDriver;
-    const opening = driver ? driver.getWaypoint(driver.currentIndex) : undefined;
-    if (opening?.when) this.audioEngine.notifyWaypoint('arrive', opening.when);
+    const driver = session.waypointDriver;
+    installSceneAudio(audio, {
+      audioEngine: this.audioEngine,
+      sceneRoot: this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene'),
+      pushAudioMutes: () => this.layersPanel?.pushAudioMutes(),
+      openingWaypointWhen: driver ? driver.getWaypoint(driver.currentIndex)?.when : undefined,
+    });
   }
 
   /**
-   * Bind the scene's authored story waypoints to the dims manager: match once
-   * now (snap — the opening framing, ahead of the plain `camera` block), then
-   * fly whenever a dimension change makes a different waypoint match. Each
-   * port is a piece the app already owns; the driver only sequences them.
+   * Bind the scene's authored story waypoints (`camera/install-waypoints.ts`);
+   * the session owns the binding.
    */
-  private installWaypoints(waypoints: ZarrWaypoint[] | undefined): void {
-    this.disposeWaypoints();
-    if (!Array.isArray(waypoints) || waypoints.length === 0) {
-      this.overlayManager?.updateVisibility();
-      return;
-    }
-
-    const driver = new WaypointDriver(waypoints, {
-      getDims: () => sceneDimsManager.getDims(),
-      getLivePose: () => captureViewerSnapshot(this.sceneManager).camera,
-      resolvePose: (camera, live) =>
-        resolveWaypointPose(camera, live, {
-          resolveNodeCenter: (name) => {
-            const root = this.sceneManager.scene?.children?.find((c) => c.name === 'LuxarScene') as
-              THREE.Group | undefined;
-            return root ? resolveTargetNodeCenter(root, name) : null;
-          },
-          fovPresets: config.camera.fovPresets,
-        }),
-      snapTo: (pose) => restoreCamera(this.sceneManager, pose),
-      autoRotateActive: () => this.sceneManager.controls.isAutoRotateActive(),
-      flyTo: (pose, opts) => {
-        // The first load's config pass runs before setupEmbedderHooks(), so the
-        // flight driver may not exist yet; a snap is the faithful fallback.
-        if (this.cameraFlight) return this.cameraFlight.flyTo(pose, opts);
-        restoreCamera(this.sceneManager, pose);
-        return Promise.resolve({ completed: true });
-      },
-      // Snake_case keys → the same validated override path authored defaults take.
-      applyRendering: (rendering) =>
-        this.renderingControls.applyOverrides(
-          extractRenderingOverrides(rendering as ZarrViewerConfig),
-          'Applied waypoint rendering overrides'
-        ),
-      // The two story events: onto the embedder bus for controllers, and to the
-      // sound layer for its `on_depart` / `on_arrive` nodes.
-      emit: (event, payload) => {
-        if (event === 'waypoint-departed') {
-          this.embedderEvents.emit(event, { index: payload.index });
-        } else {
-          this.embedderEvents.emit(event, {
-            index: payload.index,
-            completed: 'completed' in payload ? payload.completed : true,
-          });
-          // The flight resolved and the driver's gate is open: reveal the
-          // overlays a `reveal: "on_arrival"` waypoint held back.
-          this.overlayManager?.updateVisibility();
-        }
-        const when = waypoints[payload.index]?.when;
-        if (when && this.audioEngine) {
-          this.audioEngine.notifyWaypoint(
-            event === 'waypoint-departed' ? 'depart' : 'arrive',
-            when
-          );
-        }
-      },
-    });
-    const listener = (): void => {
-      driver.evaluate('fly');
-      // The overlay manager listens to the same dims manager and may have run
-      // first with the previous gate state. Re-run its pass now whether the
-      // new match closes OR opens the gate — same task, so nothing paints in
-      // between.
-      this.overlayManager?.updateVisibility();
-    };
-    sceneDimsManager.addListener(listener);
-    this.waypointListener = listener;
-    this.waypointDriver = driver;
-    driver.evaluate('snap');
-    this.overlayManager?.updateVisibility();
+  private installWaypoints(
+    waypoints: ZarrWaypoint[] | undefined,
+    session: DatasetSession = this.session
+  ): void {
+    session.setWaypoints(null);
+    session.setWaypoints(
+      installStoryWaypoints(waypoints, {
+        sceneManager: this.sceneManager,
+        getCameraFlight: () => this.cameraFlight,
+        // Snake_case keys → the same validated override path authored defaults take.
+        applyRendering: (rendering) =>
+          this.renderingControls.applyOverrides(
+            extractRenderingOverrides(rendering as ZarrViewerConfig),
+            'Applied waypoint rendering overrides'
+          ),
+        emit: (story) => {
+          if (story.event === 'waypoint-departed') {
+            this.embedderEvents.emit(story.event, { index: story.index });
+          } else {
+            this.embedderEvents.emit(story.event, {
+              index: story.index,
+              completed: story.completed,
+            });
+          }
+        },
+        notifySound: (kind, when) => this.audioEngine?.notifyWaypoint(kind, when),
+        updateOverlayVisibility: () => this.overlayManager?.updateVisibility(),
+      })
+    );
   }
 
   private disposeWaypoints(): void {
-    if (this.waypointListener) {
-      sceneDimsManager.removeListener(this.waypointListener);
-      this.waypointListener = undefined;
-    }
-    this.waypointDriver = undefined;
+    this.session.setWaypoints(null);
   }
 
   /**
@@ -821,17 +843,24 @@ export class LuxarApp {
    * collaborator. The manager just stays empty until `loadOverlays` (or a
    * runtime caller, e.g. a test) populates it.
    */
-  private async initOverlays(): Promise<void> {
-    this.overlayManager = await initOverlaysImpl({
+  private async initOverlays(session: DatasetSession): Promise<void> {
+    const manager = await initOverlaysImpl({
       disposePrevious: () => this.disposeOverlays(),
       sceneManager: this.sceneManager,
       inputHandler: this.inputHandler,
       recordingPanel: this.recordingPanel,
     });
+    // The overlay files load asynchronously: a manager whose load outlived
+    // its session must not replace the current lifetime's.
+    if (session.isDisposed) {
+      manager.dispose();
+      return;
+    }
+    this.overlayManager = manager;
     // Story captions wait for the camera when a waypoint asks for it: the gate
     // reads the LIVE driver, so it holds whichever scene's waypoints are
     // installed, before or after the overlays themselves were created.
-    this.overlayManager.setTransitGate(() => this.waypointDriver?.inTransit === true);
+    this.overlayManager.setTransitGate(() => this.session.waypointDriver?.inTransit === true);
   }
 
   /**
@@ -1100,8 +1129,8 @@ export class LuxarApp {
   /**
    * Subscribe to a public embedder event. Returns an unsubscribe function.
    *
-   * Events: `dataset-loaded`, `dataset-error`, `dataset-fault`, `dimensions-changed`,
-   * `selection` (see {@link LuxarEmbedderEventMap}). Safe to call before
+   * Every event of {@link LuxarEmbedderEventMap} — dataset, dimension,
+   * camera, picking, sound, waypoint and GPU-loss events. Safe to call before
    * `init()`; the per-app emitter outlives individual init/dispose cycles.
    *
    * @example
@@ -1135,7 +1164,8 @@ export class LuxarApp {
    * Load a different dataset into the running viewer, reusing the full
    * teardown+reload path (the same one the built-in dataset browser uses).
    * Resolves when the new scene is loaded; emits `dataset-loaded` /
-   * `dataset-error`.
+   * `dataset-error`. With `updateBrowserUrl: true` the page's `?src` follows
+   * the switch, so a reload reopens the new scene.
    *
    * Rejects if a switch is already in progress (the reload does a full scene
    * teardown — overlapping calls would corrupt state).
@@ -1156,7 +1186,11 @@ export class LuxarApp {
     }
     // A flight aimed at the outgoing scene has nothing to land on.
     this.cameraFlight?.cancel();
-    this.options.src = src;
+    this.options = { ...this.options, src };
+    // An app that owns the page URL keeps `?src` on the scene it shows, so a
+    // reload after a kiosk / remote-control / browser switch reopens it. After
+    // the in-flight guard: a refused switch must not repoint the URL.
+    if (this.options.updateBrowserUrl === true) replaceBrowserDataSourceUrl(src);
     // Re-title the tab for the incoming scene BEFORE the load. Neither of the
     // two things that could be naming it survives a switch: `?title=` names
     // the dataset the server started with (and is dropped from the address bar
@@ -1181,7 +1215,7 @@ export class LuxarApp {
    */
   getDimensions(): EmbedderDimensions {
     if (!this.isInitialized) {
-      throw new Error('LuxarApp.getDimensions called before init()');
+      throw new ViewerNotReadyError('LuxarApp.getDimensions called before init()');
     }
     const dims = sceneDimsManager.getDims();
     if (!dims) {
@@ -1206,9 +1240,7 @@ export class LuxarApp {
 
   /** Current latched fault episode, or null when no dataset is loaded or the latch is clear. */
   getDatasetFault(): DatasetFaultPayload | null {
-    const error = this.datasetFaultLoader?.archiveFault;
-    if (!error || !this.currentDatasetSrc) return null;
-    return { src: this.currentDatasetSrc, error };
+    return this.session.fault;
   }
 
   /**
@@ -1359,7 +1391,7 @@ export class LuxarApp {
       throw new Error('LuxarApp.getViewerState called before init()');
     }
     return {
-      src: this.currentDatasetSrc ?? this.options.src ?? null,
+      src: this.session.loadedSrc ?? this.options.src ?? null,
       // Read from the document rather than kept as a field: the authored
       // title, the `?title=` parameter and the built-in default all land
       // there already, so this reports what is actually on the tab.
@@ -1369,7 +1401,7 @@ export class LuxarApp {
       rendering: this.getRenderingSettings(),
       layers: this.getLayers(),
       audio: this.getAudioState(),
-      controlPanel: this.controlPanelConfig,
+      controlPanel: this.session.controlPanelConfig,
     };
   }
 
@@ -1478,6 +1510,7 @@ export class LuxarApp {
     // we are already tearing down, do nothing.
     if (this.isDisposing) return;
     this.isDisposing = true;
+    this.initGeneration++;
 
     // Flip initialized at entry so any concurrent observer of `app.initialized`
     // sees the correct state from the first instant of teardown, even if
@@ -1492,10 +1525,12 @@ export class LuxarApp {
     // step that throws partway can't strand it.
     setDocumentTitle(null);
 
-    this.datasetFaultUnsubscribe?.();
-    this.datasetFaultUnsubscribe = undefined;
-    this.datasetFaultLoader = undefined;
-    this.currentDatasetSrc = undefined;
+    // Everything the dataset installed — among it the kiosk watchdog, which
+    // listens on the canvas and owns a reload timer that would otherwise
+    // reload the page after the app is gone.
+    this.session.dispose();
+    this.kioskInputRestore?.();
+    this.kioskInputRestore = null;
 
     runDisposePipeline({
       events: this.events,
@@ -1556,6 +1591,11 @@ export class LuxarApp {
 
     this.isDisposing = false;
     this.isDisposed = true;
+  }
+
+  /** True once {@link dispose} has started — an awaiting init() must bail. */
+  private isTornDown(generation: number): boolean {
+    return this.isDisposing || this.isDisposed || generation !== this.initGeneration;
   }
 
   /** Register cleanup owned by this app's current lifetime. */

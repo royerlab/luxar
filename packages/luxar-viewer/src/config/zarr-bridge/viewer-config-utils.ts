@@ -109,6 +109,9 @@ export const RENDERING_SETTINGS_MAP: Record<string, keyof RenderingSettings> = {
   // Adaptive resolution
   adaptive_dpr_enabled: 'adaptiveDPREnabled',
   allow_high_dpr: 'allowHighDPR',
+
+  // Projected-density guard (the Performance popover toggle)
+  density_guard_enabled: 'densityGuardEnabled',
 };
 
 /**
@@ -251,8 +254,26 @@ function expandCinematicPreset(
 }
 
 /**
+ * RenderingSettings keys that are deliberately NOT top-level viewer_config
+ * fields, so dropping them is not worth a warning: the lens and clipping planes
+ * belong to the `camera` block (`captureViewerState` writes it), and the orbit
+ * zoom / damping and fly-look speeds are viewer-local preferences with no
+ * viewer_config counterpart.
+ */
+const NOT_TOP_LEVEL_KEYS: ReadonlySet<string> = new Set([
+  'fov',
+  'fovPreset',
+  'near',
+  'far',
+  'orbitZoomSpeed',
+  'orbitDampingFactor',
+  'flyLookSpeed',
+]);
+
+/**
  * Convert RenderingSettings (camelCase) to zarr viewer_config format (snake_case).
- * Only includes non-undefined fields from the input settings.
+ * Only includes non-undefined fields from the input settings; the camera and
+ * viewer-local keys in `NOT_TOP_LEVEL_KEYS` are left out silently.
  *
  * @param settings - Full or partial RenderingSettings object
  * @returns Partial ZarrViewerConfig with snake_case keys
@@ -271,7 +292,7 @@ export function renderingSettingsToZarr(
     const snakeKey = REVERSE_SETTINGS_MAP[camelKey];
     if (snakeKey) {
       result[snakeKey] = value;
-    } else if (!_warnedUnknownRenderingKeys.has(camelKey)) {
+    } else if (!NOT_TOP_LEVEL_KEYS.has(camelKey) && !_warnedUnknownRenderingKeys.has(camelKey)) {
       _warnedUnknownRenderingKeys.add(camelKey);
       log.warning(
         Modules.RENDERING_CONTROLS,
@@ -279,9 +300,6 @@ export function renderingSettingsToZarr(
       );
     }
   }
-
-  // camera-related fields (fov, fovPreset, near, far) go under camera.*
-  // These are handled separately by the state capture function
 
   return result as Partial<ZarrViewerConfig>;
 }

@@ -154,12 +154,11 @@ export interface PickResultHandlerPorts {
  *   progressive loader produces when it concatenates the committed levels, so
  *   the lookup is correct — for POINTS also under slicing, since the loader now
  *   composes each level's slot → on-disk map into that union space, offsetting
- *   level `i` by the preceding levels' on-disk `n_points` (#1439). Not for
- *   LINES: its raw slot is a per-*segment* one while the union CSR is
- *   per-*vertex* (#1424), so a laddered lines node with a string channel is
- *   wrong at the granularity, not merely at an offset, whatever the slicing —
- *   and nothing composes a lines ladder's LEVELS either; gsplat ladders carry
- *   no labels/keys at all; and
+ *   level `i` by the preceding levels' on-disk `n_points` (#1439) — and for
+ *   LINES, whose loader shifts each level's on-disk VERTEX ranges by the
+ *   preceding levels' `n_vertices`, so the per-node segment → start-vertex
+ *   chain (#1424) resolves against the union too; gsplat ladders carry no
+ *   labels/keys at all; and
  *   (ii) `result.elementId` is only sometimes the on-disk CSR index. It
  *   arrives already resolved wherever the node can resolve one — Points,
  *   GSplats and Lines all do, for a node declaring `has_labels` /
@@ -173,12 +172,9 @@ export interface PickResultHandlerPorts {
  *   vertex row in the on-disk (spatially sorted) VERTEX ordering, not a
  *   segment row: line string channels are per-vertex, and a segment carries a
  *   single `flat` pick id, so exactly one of its two endpoints can be
- *   reported and by convention it is the start (#1424). That resolution
- *   is published for a FLAT lines node only, so any lines node without
- *   it — one with no string channel, and equally a LADDERED one with a
- *   string channel, whose per-level maps a lines ladder's concat still
- *   drops (limit (i), where only Points composes them) — still reports the raw
- *   visible-segment slot, which is neither an on-disk row nor even the
+ *   reported and by convention it is the start (#1424). A lines node
+ *   without that resolution — one with no string channel — still reports the
+ *   raw visible-segment slot, which is neither an on-disk row nor even the
  *   right granularity for a per-vertex CSR. A Points or GSplats node with
  *   no per-element string channel likewise keeps the raw storage slot — no
  *   CSR to miss, but an embedder reading `SelectionPayload.elementIndex`

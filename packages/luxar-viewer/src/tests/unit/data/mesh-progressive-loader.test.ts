@@ -16,6 +16,7 @@
  */
 
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
+import { log } from '../../../utils/log';
 import {
   MeshProgressiveLoader,
   concatenateMeshData,
@@ -726,7 +727,7 @@ describe('MeshProgressiveLoader — aggregate byte budget (#1517)', () => {
 
     expect(loader.hasMoreLODs).toBe(true);
     await expect(loader.updateView(VIEW)).rejects.toThrow(LoaderError);
-    // This is the property that actually stops `queue-next.ts` from scheduling
+    // This is the property that actually stops `PassScheduler` from scheduling
     // `runMeshRefinement` on the dead node — the latched error alone is not
     // enough if a caller never re-observes it.
     expect(loader.hasMoreLODs).toBe(false);
@@ -909,4 +910,24 @@ testLadderFoldContract('Mesh', async () => {
       },
     },
   };
+});
+
+describe('MeshProgressiveLoader — per-pass logging', () => {
+  it('a streaming pass logs its ladder summary at verbose, never at info', async () => {
+    const info = vi.spyOn(log, 'info');
+    const verbose = vi.spyOn(log, 'verbose');
+    const subs = [level(3, [0, 1, 2]), level(3, [0, 1, 2], { base: 10 })].map((d) => subLoader(d));
+    const loader = new MeshProgressiveLoader(subs, 2, '/surf-log');
+    await loader.updateView({
+      displayDims: [0, 1, 2],
+      slicePosition: [0, 0, 0],
+      tolerance: [0, 0, 0],
+    } as MeshViewState);
+    expect(info).not.toHaveBeenCalled();
+    expect(
+      verbose.mock.calls.some((call) => String(call.at(-1)).includes('Progressive Mesh'))
+    ).toBe(true);
+    info.mockRestore();
+    verbose.mockRestore();
+  });
 });

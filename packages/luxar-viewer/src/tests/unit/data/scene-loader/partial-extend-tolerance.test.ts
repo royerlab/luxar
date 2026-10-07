@@ -12,7 +12,10 @@
  *
  * 1. Every drawable kind has an entry, derived from the format contract's
  *    vocabulary rather than from a list written here.
- * 2. Lines remains the one kind that opts out.
+ * 2. The flag each kind's descriptor carries does what the geometry-behaviour
+ *    matrix (`partialExtendTolerance`) declares: a partially-extended node's
+ *    tolerance widens for every kind but lines, through the real
+ *    `deriveNodeViewState`.
  * 3. The descriptor's field equals the table, so the two cannot drift.
  * 4. No production source under `src/` writes the literal in a code position.
  *    This is the one that would have caught the original state, and the only
@@ -25,6 +28,10 @@ import { join } from 'node:path';
 import { PARTIAL_EXTEND_TOLERANCE } from '../../../../data/scene-loader/partial-extend-tolerance';
 import { GEOMETRY_DESCRIPTORS } from '../../../../data/scene-loader/geometry-descriptors';
 import { LOADER_TYPES } from '../../../../types/format-contract';
+import { deriveNodeViewState } from '../../../../data/scene-loader/view-state/derive-node-view-state';
+import { EXTEND_TO_ALL_TOLERANCE } from '../../../../data/scene-loader/view-state/extend-tolerance';
+import type { ViewState } from '../../../../data/data-loader-types';
+import { defineBehaviourConformance } from '../../../_conformance/define-behaviour-conformance';
 
 const SRC_ROOT = join(__dirname, '..', '..', '..', '..');
 
@@ -42,6 +49,39 @@ function productionSources(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
+/**
+ * A node extended through `time` but not `channel`, viewed with both hidden:
+ * the partial case, where only the descriptor's flag decides whether `time`'s
+ * tolerance widens.
+ */
+function derivePartiallyExtended(kind: (typeof LOADER_TYPES)[number]): ViewState {
+  const base: ViewState = {
+    displayDims: [2, 3],
+    slicePosition: [5, 1, 0, 0],
+    tolerance: [0.5, 0.5, 0, 0],
+    dimensions: [
+      { name: 'time', unit: '', scale: 1 },
+      { name: 'channel', unit: '', scale: 1 },
+      { name: 'z', unit: 'um', scale: 1 },
+      { name: 'y', unit: 'um', scale: 1 },
+    ],
+  };
+  return deriveNodeViewState('/node', { extend_to_all: ['time'] }, base, null, {
+    applyPartialExtendTolerance: GEOMETRY_DESCRIPTORS[kind].applyPartialExtendTolerance,
+  }).viewState;
+}
+
+defineBehaviourConformance('partialExtendTolerance', {
+  holds(kind) {
+    expect(derivePartiallyExtended(kind).tolerance).toEqual([EXTEND_TO_ALL_TOLERANCE, 0.5, 0, 0]);
+  },
+  enforced: {
+    'no-op': (kind) => {
+      expect(derivePartiallyExtended(kind).tolerance).toEqual([0.5, 0.5, 0, 0]);
+    },
+  },
+});
+
 describe('PARTIAL_EXTEND_TOLERANCE', () => {
   it('covers every drawable geometry kind', () => {
     // Derived from the format contract, so a kind added there without an entry
@@ -54,16 +94,6 @@ describe('PARTIAL_EXTEND_TOLERANCE', () => {
       ).toHaveProperty(kind);
       expect(typeof PARTIAL_EXTEND_TOLERANCE[kind]).toBe('boolean');
     }
-  });
-
-  it('records lines as the one kind that opts out', () => {
-    // Spelled out rather than derived: this is the asymmetry the whole table
-    // exists for, and a table that became uniformly `true` would satisfy every
-    // structural check above while being wrong.
-    expect(PARTIAL_EXTEND_TOLERANCE.lines).toBe(false);
-    expect(PARTIAL_EXTEND_TOLERANCE.points).toBe(true);
-    expect(PARTIAL_EXTEND_TOLERANCE.gsplats).toBe(true);
-    expect(PARTIAL_EXTEND_TOLERANCE.mesh).toBe(true);
   });
 
   it('agrees with GEOMETRY_DESCRIPTORS for every kind', () => {

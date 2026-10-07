@@ -72,19 +72,19 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   there is no `--truncate` flag), so without the forwarding `-j N` silently fitted
   at the 2.75 default; and substituting `standard` for an absent `--preset` made a
   box resolve 5000 iterations where `-j 1` resolves 1000 (#1637). An absent
-  `--cull-retention` does NOT mean the fitter's 0.95: the worker re-enters the same
-  CLI resolution and lands on `CONTENT_CULL_RETENTION` itself, so `-j N` and `-j 1`
-  cull identically. The CLI also hands the parent process's reference volume to
-  the merge, so parallel flat and partition results get the same whole-volume
-  score as the sequential path; direct callers that omit it receive an explicit
+  `--cull-retention` resolves to `CONTENT_CULL_RETENTION` through the same CLI
+  config path, so `-j N` and `-j 1` cull identically. The CLI also hands the
+  parent process's reference volume to the merge, so parallel flat and partition
+  results get the same whole-volume score as the sequential path; direct callers
+  that omit it receive an explicit
   notice. Each standalone `fit --plan-box` worker persists its own re-measured
   fitting block, but the parent scrubs those measured and region-scoped stamps
   before merging so parts match the sequential path. Disposable `-j N` workers
   skip that discarded scoring work; `--keep-tiles` retains the outputs and opts
   their workers back into scoring.
 - **`CONTENT_CULL_RETENTION = 0.999`** (`fit_planned.py`) — the near-lossless
-  post-fit retention every content box is fitted at, instead of the fitter's own
-  0.95 (whose bottom-5% cull would compound across the re-merged boxes).
+  post-fit retention every content box is fitted at. This pins the content path
+  if the fitter's default changes later.
   `fit_planned` defaults to it directly; `fit_planned_parallel` has no fit kwargs to
   default, so its boxes reach the same value through the CLI content path described
   above, which imports this same constant as its per-command default — the CLI and

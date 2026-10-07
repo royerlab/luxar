@@ -36,12 +36,17 @@ config/
 ├── index.ts                       # Composes section literals into the `config` AppConfig
 ├── types.ts                       # Barrel re-exports of section types + AppConfig interface
 ├── validation.ts                  # Dispatcher; imports per-section validators
-├── url-params.ts                  # URL ?param=value parsing (self-contained)
+├── url-params.ts                  # URL ?param=value parsing + the one host-URL writer
 ├── build-info.ts                  # Runtime reader for the Vite-injected build identity
+├── kiosk.ts                       # Kiosk mode: resolve the authored ui.kiosk block + ?kiosk (URL wins)
+├── control-contract.ts            # GENERATED remote-control wire contract (roles, methods, events)
+│                                  #   from control-contract/contract.yaml — do not edit
 ├── user-settings.ts               # Persisted global prefs (localStorage luxar.settings) —
 │                                  #   Settings-popover model; live values mutate config, startup
 │                                  #   values thread through bootstrap (URL params always win)
-├── constants.ts                   # WASM ABI constants
+├── constants.ts                   # Values that must stay literally equal across modules and/or
+│                                  #   Rust/WASM: MAX_SUPPORTED_DIMS, the gsplat truncation radius
+│                                  #   and Cholesky epsilon, the default point radius, mesh caps
 ├── cinematic-preset.ts            # Cinematic-mode preset values — shared by the C-key toggle
 │                                  #   (ui/rendering-controls/cinematic-mode.ts, which re-exports
 │                                  #   them) and the zarr bridge's cinematic_mode expansion
@@ -50,24 +55,30 @@ config/
 │   ├── animation/          {data,types}.ts
 │   ├── adaptive-dpr/       {data,types,validate}.ts
 │   ├── depth-sort/         {data,types,validate}.ts
-│   ├── lod/                {data,types,validate}.ts   # LOD display policy (fadeMs, preloadBandFraction)
+│   ├── density-guard/      {data,types,validate}.ts   # projected-density guard caps + keep ladder
+│   ├── lod/                {data,types,validate}.ts   # LOD display policy + registry timing/budget tunables
 │   ├── scene/              {data,types,validate}.ts   # includes ShaderConfig
-│   ├── ui/                 {data,types}.ts            # includes DebugConsoleConfig, UIComponentsConfig
+│   ├── ui/                 {data,types}.ts            # includes DebugConsoleConfig
 │   ├── rendering-controls/ {data,types,validate}.ts   # includes RenderingSettings, validateBloomConsistency
 │   ├── controls/           {data,types,validate}.ts   # includes Fly/Orbit/ScaleMultipliers/ConfigRange
-│   ├── input/              {data,types,validate}.ts
+│   ├── input/              {data,types}.ts
 │   ├── data-loading/       {data,types,validate}.ts   # composes the 5 sub-sections below
 │   │   ├── spatial/        {data,types}.ts
 │   │   ├── network/        {data,types,validate}.ts
 │   │   ├── memory/         {data,types,validate}.ts
 │   │   ├── monitor/        {data,types}.ts
 │   │   └── performance/    {data,types,validate}.ts
-│   ├── webgl/              {data,types,validate}.ts
+│   ├── webgl/              {data,types,validate}.ts   # context attributes + renderer ctor params
 │   ├── cache/              {data,types,validate}.ts
 │   └── dimension-animation/{data,types}.ts
+├── control-panel/
+│   ├── derive-chapters.ts         # A tour's chapters from the scene's own dimension metadata
+│   └── fit-grid.ts                # Column count that fills a kiosk panel without scrolling
 └── zarr-bridge/
     ├── viewer-config-utils.ts     # snake_case ↔ camelCase conversion for zarr viewer_config
-    └── viewer-state-capture.ts    # Captures complete viewer state for export (Ctrl+Shift+S)
+    ├── viewer-state-capture.ts    # Captures complete viewer state for export (Ctrl+Shift+S)
+    ├── audio-config.ts            # viewer_config.audio → the audio engine's overrides
+    └── control-panel.ts           # viewer_config.control_panel → ControlPanelSettings
 ```
 
 The architecture groups each configuration section's data + types + validator into a `sections/<name>/` triplet:
@@ -104,22 +115,19 @@ Point rendering uses `falloff * opacity` for alpha, matching line material behav
 
 ### User Interface Configuration
 
-UI element behavior, timing, and styling:
+UI element layering and timing (styling lives in CSS):
 
 ```typescript
 ui: {
   zIndex: {
-    loading: 1000,
-    error: 1000,
-    help: 1001
+    renderingControls: 1600,      // Left-docked panels, below the control rail
+    recordingPanel: 1500,
+    layersPanel: 1500,
+    statsMonitor: 2000            // Three.js stats monitor
   },
   timings: {
     errorAutoDismissMs: 10000,    // Auto-hide errors
     helpClickDelayMs: 100         // Help interaction delay
-  },
-  spinner: {
-    size: 24,                     // Loading spinner size
-    borderWidth: 3
   }
 }
 ```
@@ -230,22 +238,17 @@ webgl: {
   context: {
     alpha: false,                       // No canvas transparency
     antialias: false,                  // Backbuffer MSAA off (scene renders
-                                       // to the HDR target; renderTarget.samples
-                                       // controls real MSAA)
+                                       // to the HDR target; real MSAA is
+                                       // renderingControls.msaaEnabled/msaaSamples)
     depth: true,                       // Enable depth buffer
     stencil: false,                    // No stencil (saves memory)
     powerPreference: 'high-performance', // GPU preference
     preserveDrawingBuffer: false,      // Better performance
     desynchronized: true,              // Async updates
   },
-  renderer: {
+  renderer: {                          // spread into the WebGLRenderer ctor
     precision: 'highp',                // Shader precision
     logarithmicDepthBuffer: false,    // Standard depth (faster)
-  },
-  renderTarget: {
-    depthBuffer: true,                 // Depth testing
-    stencilBuffer: false,              // No stencil
-    samples: 0,                        // MSAA samples
   },
 }
 ```
@@ -355,16 +358,11 @@ Development and debugging features. The debug console settings live under
 `config.ui.debugConsole` (see the `ui/` section), not at the top level:
 
 ```typescript
-// Access via config.ui.debugConsole
+// Access via config.ui.debugConsole: the drag-resize limits. The default
+// size, position and look live in debug-console.css.
 config.ui.debugConsole = {
-  panel: {
-    defaultWidth: 600,
-    defaultHeight: 400,
-    minWidth: 400,
-    maxWidth: 1200,
-    // minHeight, maxHeight, bottomOffset, leftOffset also defined
-  },
-  // resize + style sub-objects also defined
+  panel: { minWidth: 400, maxWidth: 1200, minHeight: 200, maxHeight: 800 },
+  resize: { borderWidth: 4 },
 };
 ```
 
@@ -508,7 +506,7 @@ import type { CameraConfig } from '../config';
 import { config } from '../config';
 
 // Access debug settings
-const panelWidth = config.ui.debugConsole.panel.defaultWidth;
+const maxWidth = config.ui.debugConsole.panel.maxWidth;
 ```
 
 ### Versioning

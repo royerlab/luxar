@@ -22,6 +22,13 @@ from urllib.parse import urlsplit
 
 from ..typing_utils._format_contract import TONE_MAPPINGS
 from ..validation.overlays import validate_visible_range
+from .trajectories import (
+    TRAJECTORY_NAMES,
+    Trajectory,
+    trajectory_from_json,
+    trajectory_to_json,
+    validate_trajectory,
+)
 
 # Tone-mapping operator names: single-sourced from
 # `format-contract/contract.yaml::tone_mappings` (the viewer's
@@ -199,7 +206,7 @@ class CameraConfig:
         )
 
 
-#: Seconds a kiosk watchdog waits for the WebGL context to come back before
+#: Seconds a kiosk watchdog waits for the GPU context to come back before
 #: reloading the page. Generous, because the viewer's own recovery gets first
 #: refusal and a reload throws away every warm cache the display has built.
 DEFAULT_KIOSK_WATCHDOG_S = 10.0
@@ -228,9 +235,10 @@ class KioskConfig:
     allow_keyboard: Optional[bool] = None
     #: Show the rail and its panels. Off in kiosk mode.
     show_panels: Optional[bool] = None
-    #: Reload the page when the WebGL context is lost and does not come back.
-    #: The viewer recovers on its own where it can; this is the last resort for
-    #: a screen with nobody in front of it.
+    #: Reload the page when the WebGL context is lost and does not come back,
+    #: or the WebGPU device is lost (never recovered in this release). The
+    #: viewer recovers on its own where it can; this is the last resort for a
+    #: screen with nobody in front of it.
     watchdog_reload: Optional[bool] = None
     #: How long to give recovery before reloading. See
     #: :data:`DEFAULT_KIOSK_WATCHDOG_S`.
@@ -274,6 +282,82 @@ class KioskConfig:
     def from_dict(cls, data: Dict[str, Any]) -> KioskConfig:
         """Create from dictionary. Unknown keys are ignored."""
         return cls(**{name: data.get(name) for name in cls._FIELDS})
+
+
+#: Render backends a :class:`LaunchConfig` may ask for (the viewer's ``?renderer=``).
+VALID_LAUNCH_RENDERERS = ("webgl", "webgpu")
+
+
+@dataclass
+class LaunchConfig:
+    """Per-machine viewer settings an exported package opens the viewer with.
+
+    These are the Settings popover's machine preferences: the render backend,
+    the worker pool and the prefetch limit. The viewer resolves them before it
+    has read a byte of the scene, so a scene cannot apply them on load the way
+    it applies everything else in :class:`ViewerConfig`. Instead ``luxar
+    export`` bakes them into the viewer URL its ``serve.py`` opens, as
+    ``?renderer=`` / ``?workers=`` / ``?prefetch=``, which win over that
+    machine's saved preferences for the session without rewriting them.
+
+    Meant for a package built for known hardware, such as an exhibit display.
+    A scene served any other way (``luxar serve``, a hosted link) ignores the
+    block, because what suits one machine is a guess about every other.
+    All fields optional; unset leaves the viewer's own choice.
+    """
+
+    #: ``"webgl"`` or ``"webgpu"``.
+    renderer: Optional[str] = None
+    #: Worker pool size, 0 (auto) to 16.
+    workers: Optional[int] = None
+    #: Concurrent chunk fetches, 1 to 12.
+    prefetch: Optional[int] = None
+
+    def __post_init__(self) -> None:
+        """Validate every field that is set."""
+        if self.renderer is not None and self.renderer not in VALID_LAUNCH_RENDERERS:
+            raise ValueError(
+                f"launch.renderer must be one of {VALID_LAUNCH_RENDERERS}, "
+                f"got {self.renderer!r}"
+            )
+        for name, low, high in (("workers", 0, 16), ("prefetch", 1, 12)):
+            value = getattr(self, name)
+            if value is None:
+                continue
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(f"launch.{name} must be an int, got {value!r}")
+            if not low <= value <= high:
+                raise ValueError(
+                    f"launch.{name} must be in [{low}, {high}], got {value}"
+                )
+
+    _FIELDS = ("prefetch", "renderer", "workers")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to dictionary, omitting None fields."""
+        return {
+            name: getattr(self, name)
+            for name in self._FIELDS
+            if getattr(self, name) is not None
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> LaunchConfig:
+        """Create from dictionary. Unknown keys are ignored."""
+        return cls(**{name: data.get(name) for name in cls._FIELDS})
+
+    def query(self) -> str:
+        """The URL fragment to append to a viewer URL (``""`` when empty)."""
+        parts = [
+            f"&{key}={value}"
+            for key, value in (
+                ("renderer", self.renderer),
+                ("workers", self.workers),
+                ("prefetch", self.prefetch),
+            )
+            if value is not None
+        ]
+        return "".join(parts)
 
 
 @dataclass
@@ -443,7 +527,8 @@ class AnimationConfig:
         )
 
 
-VALID_WAYPOINT_EASINGS = ("linear", "ease-in-out")
+VALID_WAYPOINT_EASINGS = ("linear", "ease-in-out", "smooth", "cruise")
+VALID_WAYPOINT_TRAJECTORIES = TRAJECTORY_NAMES
 VALID_WAYPOINT_REVEALS = ("immediate", "on_arrival")
 
 # A `when` clause: dimension NAME -> exact value, or an inclusive (min, max)
@@ -479,7 +564,26 @@ class Waypoint:
             ``target_node``) to re-aim without moving.
         duration_ms: Flight duration in milliseconds; ``None`` uses the viewer
             default (1500). ``0`` snaps.
-        easing: ``"ease-in-out"`` (default) or ``"linear"``.
+        easing: ``"ease-in-out"`` (default, smoothstep), ``"smooth"``
+            (smootherstep: also starts and lands with zero ACCELERATION, so a
+            flight has no kick at departure or arrival), ``"cruise"`` (smooth
+            ramps over the first and last fifth, a constant speed between:
+            paced travel, the camera visibly moving for nearly all of the
+            flight) or ``"linear"``.
+        trajectory: The path between poses: a trajectory object from
+            :mod:`luxar.core.trajectories` (``Orbit``, ``ZoomPan(rho=...)``,
+            ``Arc(lift=...)``, ``Straight``, ``Swing(pivot=...)``,
+            ``FlyThrough(look_ahead=..., turn=...)``, ``Via(camera=...)``) or the
+            name of one for its defaults (``"zoom-pan"``). ``None`` is
+            ``"orbit"``. See that module for what each does and when to use it.
+        speed: Pace the flight instead of timing it: it lasts its path's
+            perceived length divided by ``speed`` (units per second). The length
+            counts panning in view heights, zooming in log scale and turning in
+            radians, so travel time follows the distance the viewer perceives,
+            zoom included, for every trajectory. Takes precedence over
+            ``duration_ms``.
+        duration_range_ms: ``(min, max)`` bounds on a paced flight's duration;
+            the viewer default (1500, 8000) when ``None``.
         rendering: Optional rendering overrides applied on arrival, using the
             same snake_case keys as ``ViewerConfig`` itself (``exposure``,
             ``bloom_strength``, ``tone_mapping``, ...). Validated against that
@@ -503,6 +607,9 @@ class Waypoint:
     easing: Optional[str] = None
     rendering: Optional[Dict[str, Any]] = None
     reveal: Optional[str] = None
+    trajectory: Optional[Union[str, Trajectory]] = None
+    speed: Optional[float] = None
+    duration_range_ms: Optional[Tuple[float, float]] = None
 
     def __post_init__(self) -> None:
         self._validate_when()
@@ -524,6 +631,8 @@ class Waypoint:
                 f"easing must be one of {VALID_WAYPOINT_EASINGS}, got '{self.easing}'"
             )
 
+        self._validate_flight()
+
         if self.reveal is not None and self.reveal not in VALID_WAYPOINT_REVEALS:
             raise ValueError(
                 f"reveal must be one of {VALID_WAYPOINT_REVEALS}, got '{self.reveal}'"
@@ -540,6 +649,28 @@ class Waypoint:
                     f"rendering has unknown keys {unknown}; use ViewerConfig field "
                     "names such as 'exposure' or 'bloom_strength'"
                 )
+
+    def _validate_flight(self) -> None:
+        """Validate the path and pacing of the flight into this waypoint."""
+        if self.speed is not None and not (
+            math.isfinite(self.speed) and self.speed > 0
+        ):
+            raise ValueError(f"speed must be finite and > 0, got {self.speed}")
+
+        if self.duration_range_ms is not None:
+            rng = tuple(self.duration_range_ms)
+            if not (
+                len(rng) == 2
+                and all(math.isfinite(v) and v >= 0 for v in rng)
+                and rng[0] <= rng[1]
+            ):
+                raise ValueError(
+                    "duration_range_ms must be (min, max) with 0 <= min <= max, "
+                    f"got {self.duration_range_ms}"
+                )
+
+        if self.trajectory is not None:
+            validate_trajectory(self.trajectory)
 
     def _validate_when(self) -> None:
         if not isinstance(self.when, dict) or not self.when:
@@ -588,6 +719,12 @@ class Waypoint:
             result["rendering"] = dict(self.rendering)
         if self.reveal is not None:
             result["reveal"] = self.reveal
+        if self.trajectory is not None:
+            result["trajectory"] = trajectory_to_json(self.trajectory)
+        if self.speed is not None:
+            result["speed"] = self.speed
+        if self.duration_range_ms is not None:
+            result["duration_range_ms"] = list(self.duration_range_ms)
         return result
 
     @classmethod
@@ -605,6 +742,13 @@ class Waypoint:
             easing=data.get("easing"),
             rendering=data.get("rendering"),
             reveal=data.get("reveal"),
+            trajectory=trajectory_from_json(data.get("trajectory")),
+            speed=data.get("speed"),
+            duration_range_ms=(
+                tuple(data["duration_range_ms"])
+                if data.get("duration_range_ms") is not None
+                else None
+            ),
         )
 
 
@@ -861,10 +1005,21 @@ class Chapter:
     label: Optional[str] = None
     #: A second, quieter line under the label.
     sublabel: Optional[str] = None
+    #: A shorter label, shown instead of the full one on a tile too small for
+    #: it (a phone, or a tour with many stops). The panel uses it only once it
+    #: has dropped the sublabel and the tour numeral; until then it keeps the
+    #: full label.
+    short_label: Optional[str] = None
+    #: A shorter sublabel, the panel's first fallback when a tile cannot hold
+    #: the full one. Past that it shortens the sublabel to fewer lines, then
+    #: drops it.
+    short_sublabel: Optional[str] = None
+
+    _TEXT_FIELDS = ("label", "sublabel", "short_label", "short_sublabel")
 
     def __post_init__(self) -> None:
         """Validate every field that is set."""
-        for name in ("label", "sublabel"):
+        for name in self._TEXT_FIELDS:
             value = getattr(self, name)
             if value is None:
                 continue
@@ -876,17 +1031,16 @@ class Chapter:
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary, omitting None fields."""
-        result: Dict[str, Any] = {}
-        if self.label is not None:
-            result["label"] = self.label
-        if self.sublabel is not None:
-            result["sublabel"] = self.sublabel
-        return result
+        return {
+            name: getattr(self, name)
+            for name in self._TEXT_FIELDS
+            if getattr(self, name) is not None
+        }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> Chapter:
         """Create from dictionary. Unknown keys are ignored."""
-        return cls(label=data.get("label"), sublabel=data.get("sublabel"))
+        return cls(**{name: data.get(name) for name in cls._TEXT_FIELDS})
 
 
 @dataclass
@@ -1280,6 +1434,23 @@ class ViewerConfig:
     # proves otherwise; those are where the cap earns its keep.
     allow_high_dpr: Optional[bool] = None
 
+    # Whether the projected-density guard may thin node draws that pack more
+    # elements per pixel than the screen can show (the viewer's Performance
+    # popover toggle). Unset leaves the viewer default (on).
+    density_guard_enabled: Optional[bool] = None
+
+    # Multiplier on every overlay's type, 0.25 to 4 (the viewer's `?textScale=`
+    # wins over it). Only the type changes size: overlay positions, widths and
+    # anchors stay where they were authored, so one layout can be tuned for a
+    # screen read from across a room. Authored HTML opts in by writing its
+    # sizes as `calc(1.3vh * var(--luxar-text-scale, 1))`; text overlays
+    # follow it automatically.
+    text_scale: Optional[float] = None
+
+    # Machine settings an exported package opens the viewer with. See
+    # `LaunchConfig`: applied by `luxar export`'s serve.py, not on load.
+    launch: Optional[LaunchConfig] = None
+
     # UI panel visibility
     ui: Optional[UIConfig] = None
 
@@ -1311,6 +1482,7 @@ class ViewerConfig:
         self._validate_waypoints()
         self._validate_audio()
         self._validate_control_panel()
+        self._validate_text_and_launch()
 
         if self.title is not None:
             if not isinstance(self.title, str) or not self.title.strip():
@@ -1449,6 +1621,8 @@ class ViewerConfig:
         "dynamic_clipping_enabled",
         "adaptive_dpr_enabled",
         "allow_high_dpr",
+        "density_guard_enabled",
+        "text_scale",
         "theme",
     ]
 
@@ -1459,7 +1633,14 @@ class ViewerConfig:
     _RENDERING_FIELDS = frozenset(
         f
         for f in _SIMPLE_FIELDS
-        if f not in ("title", "background_color", "theme", "playback_lod_depth")
+        if f
+        not in (
+            "title",
+            "background_color",
+            "theme",
+            "playback_lod_depth",
+            "text_scale",
+        )
     )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -1481,6 +1662,7 @@ class ViewerConfig:
 
         # Nested configs
         _put_nonempty_config(result, "ui", self.ui)
+        _put_nonempty_config(result, "launch", self.launch)
         _put_nonempty_config(result, "dimensions", self.dimensions)
 
         if self.animation is not None:
@@ -1505,6 +1687,11 @@ class ViewerConfig:
     def _validate_audio(self) -> None:
         if self.audio is not None and not isinstance(self.audio, AudioConfig):
             raise ValueError("audio must be an AudioConfig")
+
+    def _validate_text_and_launch(self) -> None:
+        _validate_range(self.text_scale, "text_scale", 0.25, 4.0)
+        if self.launch is not None and not isinstance(self.launch, LaunchConfig):
+            raise ValueError("launch must be a LaunchConfig")
 
     def _validate_control_panel(self) -> None:
         if self.control_panel is not None and not isinstance(
@@ -1540,6 +1727,7 @@ class ViewerConfig:
                 ("dimensions", DimensionsConfig.from_dict),
                 ("audio", AudioConfig.from_dict),
                 ("control_panel", ControlPanelConfig.from_dict),
+                ("launch", LaunchConfig.from_dict),
             )
             if isinstance(data.get(name), dict)
         }
@@ -1563,6 +1751,7 @@ class ViewerConfig:
             "waypoints": waypoints,
             "audio": nested.get("audio"),
             "control_panel": nested.get("control_panel"),
+            "launch": nested.get("launch"),
         }
 
         # Populate simple fields from data

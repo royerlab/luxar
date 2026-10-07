@@ -1232,9 +1232,9 @@ def test_the_fitters_keep_the_score_across_their_own_closing_trim() -> None:
     """The deliberate exemption, at the seam the fitters use.
 
     Every fitter ends with a high-retention cumulative cull (``cull_retention``,
-    0.95 by default) applied AFTER it scored the reconstruction. Scrubbing there
+    0.999 by default) applied AFTER it scored the reconstruction. Scrubbing there
     would leave every default fit with no ``psnr_db`` at all — a worse answer than
-    one taken before a trim that drops 5% of the amplitude, and re-scoring costs a
+    one taken before the trim, and re-scoring costs a
     second full render. The per-pass ladder scores live in the sub-LOD dicts, so
     the snapshot reaches those too. Final scale populations stay scrubbed because
     their pre-trim counts cannot describe the delivered splat set.
@@ -1338,7 +1338,7 @@ def test_fitter_score_restore_refuses_a_pruned_ladder_shape() -> None:
 
 
 def test_a_real_fit_still_publishes_its_psnr() -> None:
-    """End to end, on the default path: `cull_retention=0.95` fires every time."""
+    """End to end, a closing cull preserves measured scores."""
     pytest.importorskip("torch")
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
 
@@ -1346,10 +1346,16 @@ def test_a_real_fit_still_publishes_its_psnr() -> None:
     V[4:8, 4:8] = 1.0
     V[10:13, 9:12] = 0.6
     result = fit_gaussian_splats(
-        V, seeds=40, n_iters=20, verbose=False, device="cpu", napari_movie=False
+        V,
+        seeds=40,
+        n_iters=20,
+        verbose=False,
+        device="cpu",
+        napari_movie=False,
+        cull_retention=0.95,
     )
     assert result.stats.get("culled") is True, (
-        "the fit did not reach its closing trim — the test proves nothing"
+        "the fit did not reach its explicit closing trim — the test proves nothing"
     )
     assert result.stats["n_original"] > result.n_splats, (
         "the closing trim removed no splats — the population scrub proves nothing"

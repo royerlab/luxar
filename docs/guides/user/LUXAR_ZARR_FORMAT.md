@@ -420,9 +420,9 @@ legacy `selector: "coverage"` (older stores, and explicitly authored
 `coverage_fractions=[...]` lists) the thresholds are diagonal-metric units in
 `[0, 4]`: the viewer compares them against the projected bbox diagonal over
 `FILL_FACTOR=0.5 ×` the fitted screen axis (`min(width, height)` — the extent
-the camera framing actually fits). Under a PERSPECTIVE camera, a group whose bounds
-reach the camera's near plane has no meaningful projection (the homogeneous
-divide degenerates), so both selectors saturate to the **finest** child; an
+the camera framing actually fits). Under a PERSPECTIVE camera, a group containing
+the camera saturates to the **finest** child. A box crossing the eye plane
+beside the camera instead uses the projection of its near-clipped portion; an
 ORTHOGRAPHIC projection never degenerates, so the ordinary clipped metric
 applies directly (a camera inside a large group still reads full coverage
 naturally — see the normative rules in `docs/specs/GSPLATS_ZARR_FORMAT.md`).
@@ -520,7 +520,7 @@ default (the finest level the `.centers` accessor returns).
   consistent robust extent. Decimation, culling, and filtering must recompute or
   remove the derived bound. Producer-side authoring policy is tracked in #1655.
 - Children themselves are standard nodes — they retain their own
-  `type` (`gsplats` / `points` / `lines` / `group`, possibly with their
+  `type` (`gsplats` / `points` / `lines` / `mesh` / `group`, possibly with their
   own `kind` attr) and full attr set.
 
 **Builder API (Python):**
@@ -715,9 +715,10 @@ PR #1425 introduced for **flat** nodes) into this union index space, offsetting
 level `i` by the preceding levels' on-disk counts, so a labelled Points ladder
 resolves exactly under an nD slice too (issue #1439). Where the levels' metadata is
 inconsistent the viewer publishes no map at all and falls back to the raw committed
-slot, rather than composing an index it cannot trust. For **Lines** no map is
-composed across the levels, so a laddered lines node still resolves at the raw
-committed slot.
+slot, rather than composing an index it cannot trust. **Lines** is composed the
+same way at vertex granularity: each level's on-disk vertex ranges are offset by
+the preceding levels' `n_vertices`, so a labelled Lines ladder resolves the picked
+segment's start vertex in this union index space.
 
 Two further notes. Under the documented `partition=`-outer +
 `additive_lod=`-inner composition the CSR lands on each `part_<i>` ladder parent,
@@ -727,11 +728,8 @@ resolves too, through the same per-geometry path as an unpartitioned ladder. And
 per-vertex, matching the flat Lines writer, while the viewer's Lines pick id is a
 per-segment storage slot. Issue #1424 bridged that granularity for **flat** Lines
 nodes — a labelled flat lines node resolves the picked segment's slot back to that
-segment's start vertex row in the stored ordering — but it does so through the same
-visible-slot → on-disk-index map a **lines** ladder does not publish, so across a lines
-ladder the hover only lands on the right string when every element carries the same one
-(there is no broadcast label form — `labels` is always one entry per element). #1439
-carried that map over the levels for Points only; a laddered Lines node is still open.
+segment's start vertex row in the stored ordering — and a **lines** ladder publishes
+the same map, its levels' vertex ranges composed into the union space as above.
 
 **Builder API (Python):**
 ```python
@@ -1467,6 +1465,76 @@ bits. `luxar optimize` copies the array verbatim and restamps its
 likewise updates the stamp after changing the scene digest (`luxar info` does
 not list the group).
 
+## Chunk Packs (`chunk_packs/` sidecar)
+
+**`chunk_packs/` group** (optional; written only by `luxar optimize --pack`):
+COPIES of small geometry nodes' chunk objects, so a viewer can fetch such a node
+in one request instead of one per chunk. A laddered timelapse part is typically
+a dozen ~1 KB chunks, and its cost is round trips, not bytes.
+
+```
+chunk_packs/                        # a SIDECAR: no `type`, no `kind` attr
+├── zarr.json                       # attrs, below
+├── 0.pack                          # plain files, one per packed node
+└── 1.pack …
+```
+
+```json
+{
+  "scene_content_hash": "…",        // the root content_hash the packs were built for
+  "max_bytes": 65536,               // the size limit used, in stored chunk bytes
+  "packs": [
+    {
+      "key": "chunk_packs/0.pack",  // the pack file, as a store key
+      "sha256": "…",                // of the whole file
+      "prefix": "splats/part_0/"    // the packed node
+    }
+  ]
+}
+```
+
+A pack file is a 4-byte little-endian header length, a UTF-8 JSON header
+`{"members": {"additive_0/centers/c/0": [offset, length], …}}` (chunk keys
+relative to `prefix`, offsets into the data after the header), then the chunk
+bytes back to back. Every chunk object the node stores is a member, except a
+broadcast array's row, which the viewer takes from the array's `encoding.value`
+and never requests. The index needs no member list; it stays ~150 B per pack
+because it rides in the root's consolidated metadata, which every load fetches
+first. (A first design
+listed the members in the attrs: +637 KB, +7.6%, on tp50's 8.4 MB root.)
+
+A node is packed whole, rungs included, when its stored chunk bytes are at most
+`max_bytes` (64 KB, the chunk policy's target, so a pack is never a bigger
+object than an ordinary chunk) and it has at least two chunk objects. A larger
+node is not packed, but its typed children (an additive ladder's rungs) may be.
+Containers (`type: "group"`: partitions, lod groups) are never packed whole, so
+lod levels never shown together are never fetched together.
+
+The rules that keep it safe are the `environment/` sidecar's. The group carries
+neither `type` nor `kind`, so the viewer's node discovery skips it, and it is in
+`RESERVED_ROOT_GROUPS`. It is **excluded from the scene `content_hash`**
+(`HASH_EXCLUDED_ROOT_GROUPS`): packing changes no chunk, so the hash and every
+warm cache keyed on it stay valid. A reader therefore uses the packs only when
+`scene_content_hash` equals the root `content_hash`; an edit that changes the
+chunks and restamps the hash makes them stale, and they are ignored. An attrs-only
+`luxar restamp-lod` rebinds packs only when every packed copy still matches its
+plain chunk. A mismatched pack keeps its old binding and is ignored by the
+viewer. The stored root hash alone cannot prove that an earlier chunk edit left
+the pack copies current. `luxar optimize` recognises the
+sidecar by its attrs (`scene_content_hash` and `packs`, no `type`), so a
+same-named group in a generic store is copied as data; in a compiled scene the
+name is reserved.
+The viewer also checks each pack's SHA-256 and reads the plain chunks when that
+fails.
+Every plain chunk stays where it was, so zarr-python, napari and viewers that
+predate packs read the store as if the sidecar were absent (the pack files are
+plain keys in a group: a consolidated open never lists them, and an
+unconsolidated member walk skips them with zarr's usual unrecognised-object
+warning, as it does an overlay image). `luxar optimize` never copies the
+sidecar: `--pack` rebuilds it for the output, and without `--pack` the output
+has none. Only compiled scenes (root `type: "scene"`) can be packed: their hash
+is the one that excludes the sidecar.
+
 ## Layers (Viewer Panel)
 
 Any scene-graph node — `points`, `lines`, `gsplats`, `mesh`, or a container
@@ -1986,10 +2054,8 @@ ladder parent, which is the node that declares `has_labels`. A laddered
 into that union CSR's index space (issue #1439), so `{hover_index}` is the
 on-disk row under culling and compaction too — it degrades to the raw committed
 slot only when the levels' own metadata is inconsistent. A laddered **Lines**
-node publishes no mapping across its levels, so `{hover_index}` there is the raw
-committed slot, which is a per-*segment* one against the per-*vertex* union CSR
-and so wrong at the granularity whatever the slicing (see the **Labels**
-paragraph of the multi-additive-LOD section above).
+node resolves the same way, at the picked segment's start vertex (see the
+**Labels** paragraph of the multi-additive-LOD section above).
 
 ### Compound Ordering
 
@@ -2348,7 +2414,11 @@ per-array above (`linear_perchannel_u16`, `rgb_uint8`,
   string of the stored value (e.g. `uint8`, `uint16`) so readers restore the
   native integer color dtype and normalize it — rather than reading raw 0-255
   floats. Non-color arrays (radii/sharpness/amplitudes) omit it and decode as
-  float32. Readers expand on load.
+  float32. `encoding.value` (optional, additive) repeats the stored row,
+  flattened, so a reader holding the consolidated metadata can skip reading it
+  — one request per broadcast array per node or rung. Readers that ignore it
+  read the row as before; a row equal to the fill value has no chunk written
+  (zarr skips it) and reads as the fill value. Readers expand on load.
 - **`array_ref`** — content-deduplication: a byte-identical duplicate of
   another array in the same store is stored as an **empty** array (physical
   shape `(0,)` / `(0, D)`) whose `encoding` carries `target` (path of the

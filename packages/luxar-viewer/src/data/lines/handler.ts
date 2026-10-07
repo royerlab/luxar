@@ -8,6 +8,7 @@
  */
 
 import { findObjectByName } from '../../utils/scene-graph-index';
+import { withPassDirectives, type PassDirectives } from '../loaders/pass-directives';
 import * as THREE from 'three';
 import type { GeometryKind, ViewState } from '../data-loader-types';
 import type { LinesDataLoader, LinesViewState, LoadedLinesData } from '../../types/lines';
@@ -24,12 +25,15 @@ import { PARTIAL_EXTEND_TOLERANCE } from '../scene-loader/partial-extend-toleran
 export const kind: GeometryKind = 'lines';
 export const label = 'Lines' as const;
 
-export interface LinesHandlerCtx {
+export interface LinesHandlerCtx extends PassDirectives {
   rootGroup: THREE.Group | null;
   viewStateQueue: ViewStateQueue;
   clearFailure(path: string): void;
   currentVersion: number;
-  /** Forwarded to the data processor so its first-update logs are version-gated. */
+  /**
+   * Passes run so far — gates the first-update `[GEOM]` logs here and in the
+   * data processor (the view version does not move on a same-view pass).
+   */
   updateVersion: number;
   deriveNodeViewState(
     path: string,
@@ -38,18 +42,6 @@ export interface LinesHandlerCtx {
   ): { skip: false; viewState: ViewState };
   /** Per-update abort signal forwarded to `loader.updateView` (see DataLoader). */
   signal?: AbortSignal;
-  /**
-   * Per-tick LOD time budget during dimension-animation playback (see
-   * `ViewState.frameBudgetMs`). Injected into the DERIVED per-node view
-   * state below — a per-pass directive, so refinement/retry passes (which
-   * derive independently) stay budget-free.
-   */
-  frameBudgetMs?: number;
-  /**
-   * Pinned playback ladder depth (see `ViewState.ladderDepth`). Same per-pass
-   * contract as `frameBudgetMs`: injected into the DERIVED view state only.
-   */
-  ladderDepth?: number | 'auto';
 }
 
 /**
@@ -84,12 +76,9 @@ export async function loadAndStage(
   // query (see deriveNodeViewState — the full-extend tolerance is computed even
   // though lines opt out of the PARTIAL override), so it flows through the
   // standard load path below. No skip shortcut.
-  // Playback frame budget rides the derived per-node view state (per-pass
-  // directive; absent outside animation playback — see ctx.frameBudgetMs).
-  const linesViewState: LinesViewState =
-    ctx.frameBudgetMs !== undefined || ctx.ladderDepth !== undefined
-      ? { ...derived.viewState, frameBudgetMs: ctx.frameBudgetMs, ladderDepth: ctx.ladderDepth }
-      : derived.viewState;
+  // Playback directives ride the derived per-node view state (per-pass;
+  // absent outside animation playback — see `PassDirectives`).
+  const linesViewState: LinesViewState = withPassDirectives(derived.viewState, ctx);
   const data: LoadedLinesData | null = await loader.updateView(linesViewState, session, ctx.signal);
   if (!data) {
     markPathHealthy();
@@ -110,7 +99,7 @@ export async function loadAndStage(
     }
     return { path, noop: true, sourceData: data };
   }
-  if (ctx.currentVersion <= 1) {
+  if (ctx.updateVersion <= 1) {
     log.info(
       Modules.SCENE_LOADER,
       `[GEOM] v${ctx.currentVersion} lines ${path}: ${data.segmentCount} loaded`

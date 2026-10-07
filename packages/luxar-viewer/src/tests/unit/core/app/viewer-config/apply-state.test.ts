@@ -21,7 +21,10 @@ interface PortStubs {
   showHelp: ReturnType<typeof vi.fn>;
   renderingControls: { show: ReturnType<typeof vi.fn>; hide: ReturnType<typeof vi.fn> };
   performanceMonitor: { show: ReturnType<typeof vi.fn> };
-  inputHandler: { showDimensionSliders: ReturnType<typeof vi.fn> };
+  inputHandler: {
+    showDimensionSliders: ReturnType<typeof vi.fn>;
+    setSelectedDimension: ReturnType<typeof vi.fn>;
+  };
   scaleBar?: { show: ReturnType<typeof vi.fn>; hide: ReturnType<typeof vi.fn> };
   layersPanel?: { show: ReturnType<typeof vi.fn>; hide: ReturnType<typeof vi.fn> };
   overlayManager?: { show: ReturnType<typeof vi.fn>; hide: ReturnType<typeof vi.fn> };
@@ -45,7 +48,7 @@ function makePorts(
     showHelp: vi.fn(),
     renderingControls: showSlash(),
     performanceMonitor: { show: vi.fn() },
-    inputHandler: { showDimensionSliders: vi.fn() },
+    inputHandler: { showDimensionSliders: vi.fn(), setSelectedDimension: vi.fn() },
     scaleBar: overrides.scaleBar === false ? undefined : showSlash(),
     layersPanel: overrides.layersPanel === false ? undefined : showSlash(),
     overlayManager: overrides.overlayManager === false ? undefined : showSlash(),
@@ -85,6 +88,7 @@ describe('applyViewerConfigState', () => {
     expect(p.overlayManager?.hide).not.toHaveBeenCalled();
     expect(p.setTheme).not.toHaveBeenCalled();
     expect(p.setDimensionValue).not.toHaveBeenCalled();
+    expect(p.inputHandler.setSelectedDimension).not.toHaveBeenCalled();
   }
 
   it('returns silently when viewerConfig is undefined (NO port method fires)', () => {
@@ -277,6 +281,21 @@ describe('applyViewerConfigState', () => {
     it('skips setDimensionValue when dimensions is missing entirely', () => {
       applyViewerConfigState({ ui: {} }, asPorts(ports));
       expect(ports.setDimensionValue).not.toHaveBeenCalled();
+    });
+
+    it('selects the authored navigable dimension for the [ / ] keys', () => {
+      // Indexed by NAVIGABLE position (Python DimensionsConfig), not absolute.
+      applyViewerConfigState({ dimensions: { selected_dimension: 1 } }, asPorts(ports));
+      expect(ports.inputHandler.setSelectedDimension).toHaveBeenCalledExactlyOnceWith(1);
+    });
+
+    it.each([-1, 1.5, '1', null])('ignores a malformed selected_dimension (%s)', (value) => {
+      // Untyped JSON straight from the store's attributes.
+      applyViewerConfigState(
+        { dimensions: { selected_dimension: value as never } },
+        asPorts(ports)
+      );
+      expect(ports.inputHandler.setSelectedDimension).not.toHaveBeenCalled();
     });
 
     it('handles empty current_step array gracefully', () => {

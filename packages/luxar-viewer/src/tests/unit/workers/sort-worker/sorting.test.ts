@@ -17,12 +17,7 @@ vi.mock('../../../../utils/log', () => ({
 
 import { TypeScriptFallback } from '../../../../wasm/typescript';
 import type { SortWorkerCtx } from '../../../../workers/sort-worker/state';
-import {
-  registerNode,
-  sortNode,
-  releaseNode,
-  releaseAllNodes,
-} from '../../../../workers/sort-worker/sorting';
+import { registerNode, sortNode, releaseNode } from '../../../../workers/sort-worker/sorting';
 import { NOT_INITIALIZED_MSG } from '../../../../workers/sort-worker/state';
 
 const IDENTITY_MV = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -84,13 +79,6 @@ describe('sort-worker sorting tasks', () => {
     registerNode(ctx, { nodeId: 'n1', generation: 1, centers3: threeSplats(), count: 3 });
     releaseNode(ctx, 'n1');
     expect(sortNode(ctx, { nodeId: 'n1', generation: 1, modelView: IDENTITY_MV })).toBeNull();
-  });
-
-  it('releaseAllNodes drops every registration', () => {
-    registerNode(ctx, { nodeId: 'a', generation: 1, centers3: threeSplats(), count: 3 });
-    registerNode(ctx, { nodeId: 'b', generation: 1, centers3: threeSplats(), count: 3 });
-    releaseAllNodes(ctx);
-    expect(ctx.nodes.size).toBe(0);
   });
 
   it('sortNode throws the not-initialized error when wasm is missing', () => {

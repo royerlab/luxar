@@ -4,9 +4,10 @@
  * Owns two pieces of update-time state:
  *
  *   1. `_pendingViewState` — the single Partial<ViewState> queued by an
- *      `updateView()` call while a previous retry / refinement loop holds
- *      the in-progress lock. Drained when the lock releases, supersedes
- *      any in-flight refinement.
+ *      `updateView()` call while the serialization lock is held (a pass, the
+ *      frame between passes, a refinement drain or a retry). Its lifecycle —
+ *      when it is taken, drained or flushed — is `PassScheduler`'s
+ *      (`update-view/pass-scheduler.ts`).
  *
  *   2. `_prevPerNodeViewState` — per-node snapshots of the last
  *      successful view-state, used to extrapolate the next-frame view
@@ -26,11 +27,31 @@
 import { log, Modules } from '../../../utils/log';
 import { getErrorMessage } from '../../../utils/format-error';
 import type { ViewState } from '../../data-loader-types';
-import { dispatchPredictivePrefetch, type PrefetchableLoader } from './predicted-view-state';
+import {
+  dispatchPredictivePrefetch,
+  predictNextViewState,
+  type PrefetchableLoader,
+} from './predicted-view-state';
+
+/**
+ * How many predicted-view prefetches stay live per node: the newest plus its
+ * predecessor, whose in-flight fetches the newest may still be about to join.
+ */
+const LIVE_PREDICTIONS_PER_NODE = 2;
 
 export class ViewStateQueue {
   private _pendingViewState: Partial<ViewState> | null = null;
   private _prevPerNodeViewState: Map<string, ViewState> = new Map();
+  /**
+   * The live predicted-view prefetches per node, oldest first, at most
+   * `LIVE_PREDICTIONS_PER_NODE`. A new prediction aborts the oldest — the
+   * user has moved past it — but NOT its immediate predecessor: consecutive
+   * predictions overlap (one chunk spans several slices), and aborting the
+   * predecessor before the new one's reads join its in-flight fetches would
+   * cancel those fetches outright and make the new prediction refetch them.
+   * {@link clearPrev} (dispose) and {@link forgetPath} abort them all.
+   */
+  private _predictionControllers: Map<string, AbortController[]> = new Map();
 
   /** Queue a view-state for a future drain. Overwrites any previous pending state. */
   setPending(state: Partial<ViewState>): void {
@@ -56,7 +77,7 @@ export class ViewStateQueue {
    *
    * @returns True when a state was queued and a re-entry has been scheduled;
    *   false when the slot was empty and nothing will run. Callers that also
-   *   settle `_passWaiters` need this: the re-entered pass carries the parked
+   *   settle the pass waiters need this: the re-entered pass carries the parked
    *   waiters to its own commit, so resolving them as well would release them
    *   before the view they asked for has landed.
    */
@@ -105,22 +126,44 @@ export class ViewStateQueue {
     // scrub-direction delta is captured then.
     if (prev === null) return;
 
+    const predicted = predictNextViewState(prev, snapshot);
+    if (predicted.slicePosition.every((value, i) => value === snapshot.slicePosition[i])) return;
+
+    const controller = this.startPrediction(path);
     queueMicrotask(() => {
-      dispatchPredictivePrefetch(prev, snapshot, [loader as PrefetchableLoader]);
+      if (controller.signal.aborted) return;
+      dispatchPredictivePrefetch(prev, snapshot, [loader as PrefetchableLoader], controller.signal);
     });
+  }
+
+  /** Register a new prediction for `path`, aborting the ones it supersedes. */
+  private startPrediction(path: string): AbortController {
+    const live = this._predictionControllers.get(path) ?? [];
+    while (live.length >= LIVE_PREDICTIONS_PER_NODE) live.shift()?.abort();
+    const controller = new AbortController();
+    live.push(controller);
+    this._predictionControllers.set(path, live);
+    return controller;
+  }
+
+  /** Abort every live prediction for `path`. */
+  private abortPredictions(path: string): void {
+    for (const controller of this._predictionControllers.get(path) ?? []) controller.abort();
+    this._predictionControllers.delete(path);
   }
 
   /** Drop the saved per-node previous view-state for a single path. */
   forgetPath(path: string): void {
     this._prevPerNodeViewState.delete(path);
+    this.abortPredictions(path);
   }
 
   /**
-   * Clear the per-loader prefetch predictor state. Called on dataset
-   * switch + on retry-baseline failures so a reused SceneLoader doesn't
-   * extrapolate from a prior dataset.
+   * Clear the per-loader prefetch predictor state and abort every live
+   * prediction. Called on dispose.
    */
   clearPrev(): void {
     this._prevPerNodeViewState.clear();
+    for (const path of [...this._predictionControllers.keys()]) this.abortPredictions(path);
   }
 }

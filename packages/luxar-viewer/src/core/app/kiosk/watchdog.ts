@@ -1,5 +1,5 @@
 /**
- * Reload an unattended display whose WebGL context never comes back.
+ * Reload an unattended display whose GPU context never comes back.
  *
  * The last resort, and deliberately last. The viewer already recovers from
  * context loss on its own (`scene/scene-manager/render-pipeline/
@@ -13,6 +13,11 @@
  * `webglcontextlost` / `webglcontextrestored` pair needs no plumbing through
  * three layers, cannot interfere with recovery, and inherently gives recovery
  * first refusal — the grace timer is simply cancelled if the context returns.
+ *
+ * WebGPU device loss has no canvas event and no recovery in this release, so it
+ * arrives through `onUnrecoverableLoss` and always ends in the reload — after
+ * the same grace period, which also spaces out reloads of a device that is
+ * lost again at once.
  *
  * Ports-injected (timers, reload, canvas) so a test can drive it without a
  * browser, and so nothing here reaches for a singleton it was not handed.
@@ -33,6 +38,11 @@ export interface KioskWatchdogPorts {
   clearTimer?: (handle: number) => void;
   /** Called instead of reloading when the context comes back in time. */
   onRecovered?: () => void;
+  /**
+   * Subscribe to a loss nothing recovers from (WebGPU `device.lost`); returns
+   * the unsubscribe. Absent = only the WebGL canvas events are watched.
+   */
+  onUnrecoverableLoss?: (listener: () => void) => () => void;
 }
 
 export interface KioskWatchdog {
@@ -76,6 +86,7 @@ export function startKioskWatchdog(ports: KioskWatchdogPorts): KioskWatchdog {
 
   ports.canvas.addEventListener('webglcontextlost', onLost);
   ports.canvas.addEventListener('webglcontextrestored', onRestored);
+  const unsubscribeLoss = ports.onUnrecoverableLoss?.(onLost);
 
   return {
     dispose(): void {
@@ -87,6 +98,7 @@ export function startKioskWatchdog(ports: KioskWatchdogPorts): KioskWatchdog {
       }
       ports.canvas.removeEventListener('webglcontextlost', onLost);
       ports.canvas.removeEventListener('webglcontextrestored', onRestored);
+      unsubscribeLoss?.();
     },
   };
 }

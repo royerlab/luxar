@@ -21,9 +21,6 @@ const mockNoteDepthSortCommit = vi.fn();
 vi.mock('../../../../rendering/material-sync-helpers', () => ({
   syncGSplatMaterialWithGeometry: (...args: unknown[]) => mockSyncGSplatMaterial(...args),
 }));
-vi.mock('../../../../rendering/depth-sort-coordinator', () => ({
-  noteDepthSortCommit: (...args: unknown[]) => mockNoteDepthSortCommit(...args),
-}));
 vi.mock('../../../../rendering/gsplat-geometry', () => ({
   updateInstancedGSplatsMesh: (...args: unknown[]) => mockUpdateInstancedMesh(...args),
   // material-sync-helpers reaches getSplatTexture through this module;
@@ -33,12 +30,22 @@ vi.mock('../../../../rendering/gsplat-geometry', () => ({
 }));
 
 import { commitGSplatsGeometry } from '../../../../data/scene-loader/commit/commit-gsplats-geometry';
+import type { DepthSortCoordinator } from '../../../../rendering/depth-sort-coordinator';
+import type { GPUBufferPool } from '../../../../rendering/gpu-buffer-pool';
 import { SOFT_DISPOSE_FLAG } from '../../../../rendering/material-manager';
 import { configureRenderObjectEviction } from '../../../../data/scene-loader/commit/invalidate-render-object';
 import type { StagedGSplatsCommit } from '../../../../data/scene-loader/process/data-processor-gsplats';
 import { getPrefixParent, setPrefixParent } from '../../../../types/prefix-lineage';
 import { getElementIdMap, setElementIdMap } from '../../../../types/committed-data';
 import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../../config/constants';
+
+/** The commit host; its coordinator only records `noteCommit` calls. */
+function testHost(rootGroup: THREE.Group | null, gpuBufferPool: GPUBufferPool | null) {
+  const depthSort = {
+    noteCommit: (...args: unknown[]) => mockNoteDepthSortCommit(...args),
+  } as unknown as DepthSortCoordinator;
+  return { rootGroup, gpuBufferPool, depthSort };
+}
 
 function makeProcessed(splatCount = 2) {
   return {
@@ -82,12 +89,14 @@ function makeMesh(name: string): THREE.Mesh {
 
 describe('commitGSplatsGeometry', () => {
   it('no-ops when rootGroup is null', () => {
-    expect(() => commitGSplatsGeometry(makeStaged(), null, null, undefined, V)).not.toThrow();
+    expect(() =>
+      commitGSplatsGeometry(makeStaged(), testHost(null, null), undefined, V)
+    ).not.toThrow();
   });
 
   it('no-ops silently when mesh has gone missing', () => {
     expect(() =>
-      commitGSplatsGeometry(makeStaged(), new THREE.Group(), null, undefined, V)
+      commitGSplatsGeometry(makeStaged(), testHost(new THREE.Group(), null), undefined, V)
     ).not.toThrow();
   });
 
@@ -96,7 +105,7 @@ describe('commitGSplatsGeometry', () => {
     const root = new THREE.Group();
     const mesh = makeMesh('/g');
     root.add(mesh);
-    commitGSplatsGeometry(makeStaged(11), root, null, undefined, V);
+    commitGSplatsGeometry(makeStaged(11), testHost(root, null), undefined, V);
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(11);
     expect((mesh.userData as { requestedElementCount: number }).requestedElementCount).toBe(11);
     expect(mockUpdateInstancedMesh).toHaveBeenCalledTimes(1);
@@ -130,7 +139,7 @@ describe('commitGSplatsGeometry', () => {
     if (staged.noop) throw new Error('expected a geometry staged commit');
     staged.processed.centers3D.set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
     staged.processed.sharedBuffers = true;
-    commitGSplatsGeometry(staged, root, null, undefined, V);
+    commitGSplatsGeometry(staged, testHost(root, null), undefined, V);
     const provider = mockNoteDepthSortCommit.mock.calls[0][1] as () => Float32Array;
     expect(typeof provider).toBe('function');
     const copy = provider();
@@ -145,7 +154,7 @@ describe('commitGSplatsGeometry', () => {
     const root = new THREE.Group();
     const mesh = makeMesh('/g');
     root.add(mesh);
-    commitGSplatsGeometry(makeStaged(3), root, null, undefined, 7);
+    commitGSplatsGeometry(makeStaged(3), testHost(root, null), undefined, 7);
     expect((mesh.userData as { loadedViewVersion: number }).loadedViewVersion).toBe(7);
   });
 
@@ -162,7 +171,9 @@ describe('commitGSplatsGeometry', () => {
       releaseGSplatsGeometry: () => undefined,
       didLastAcquireRebuildAttributes: () => false,
     };
-    expect(() => commitGSplatsGeometry(makeStaged(7), root, mockPool, undefined, V)).not.toThrow();
+    expect(() =>
+      commitGSplatsGeometry(makeStaged(7), testHost(root, mockPool), undefined, V)
+    ).not.toThrow();
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(7);
     // Pool path must NOT fall through to the no-pool instanced-mesh update.
     expect(mockUpdateInstancedMesh).not.toHaveBeenCalled();
@@ -190,9 +201,9 @@ describe('commitGSplatsGeometry', () => {
       releaseGSplatsGeometry: vi.fn(),
       didLastAcquireRebuildAttributes: vi.fn(() => true),
     };
-    expect(() => commitGSplatsGeometry(makeStaged(3), root, pool as never, undefined, 0)).toThrow(
-      'upload failed'
-    );
+    expect(() =>
+      commitGSplatsGeometry(makeStaged(3), testHost(root, pool as never), undefined, 0)
+    ).toThrow('upload failed');
 
     expect(mesh.geometry).toBe(newGeometry);
     expect(mesh.geometry).not.toBe(oldGeometry);
@@ -221,16 +232,16 @@ describe('commitGSplatsGeometry', () => {
       didLastAcquireRebuildAttributes: vi.fn(() => false),
     };
     const first = makeStaged(2);
-    commitGSplatsGeometry(first, root, pool as never, undefined, 1);
+    commitGSplatsGeometry(first, testHost(root, pool as never), undefined, 1);
     if (first.noop) throw new Error('expected geometry staged commit');
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(2);
 
     pool.updateGSplatsGeometry.mockImplementation(() => {
       throw new Error('upload failed');
     });
-    expect(() => commitGSplatsGeometry(makeStaged(5), root, pool as never, undefined, 2)).toThrow(
-      'upload failed'
-    );
+    expect(() =>
+      commitGSplatsGeometry(makeStaged(5), testHost(root, pool as never), undefined, 2)
+    ).toThrow('upload failed');
 
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(2);
     expect((mesh.userData as { loadedViewVersion?: number }).loadedViewVersion).toBe(1);
@@ -256,15 +267,15 @@ describe('commitGSplatsGeometry', () => {
       releaseGSplatsGeometry: vi.fn(),
       didLastAcquireRebuildAttributes: vi.fn(() => false),
     };
-    commitGSplatsGeometry(makeStaged(2), root, pool as never, undefined, 1);
+    commitGSplatsGeometry(makeStaged(2), testHost(root, pool as never), undefined, 1);
     expect((mesh.userData as { gpuPrefixIntact?: boolean }).gpuPrefixIntact).toBe(true);
 
     pool.updateGSplatsGeometry.mockImplementation(() => {
       throw new Error('upload failed');
     });
-    expect(() => commitGSplatsGeometry(makeStaged(5), root, pool as never, undefined, 2)).toThrow(
-      'upload failed'
-    );
+    expect(() =>
+      commitGSplatsGeometry(makeStaged(5), testHost(root, pool as never), undefined, 2)
+    ).toThrow('upload failed');
 
     expect((mesh.userData as { gpuPrefixIntact?: boolean }).gpuPrefixIntact).toBe(false);
   });
@@ -288,7 +299,7 @@ describe('commitGSplatsGeometry', () => {
       releaseGSplatsGeometry: vi.fn(),
       didLastAcquireRebuildAttributes: vi.fn(() => true),
     };
-    commitGSplatsGeometry(makeStaged(3), root, pool as never, undefined, V);
+    commitGSplatsGeometry(makeStaged(3), testHost(root, pool as never), undefined, V);
     expect(mesh.geometry).toBe(newGeometry);
     expect(disposeSpy).toHaveBeenCalledTimes(1);
   });
@@ -309,7 +320,7 @@ describe('commitGSplatsGeometry', () => {
       releaseGSplatsGeometry: vi.fn(),
       didLastAcquireRebuildAttributes: vi.fn(() => true),
     };
-    commitGSplatsGeometry(makeStaged(3), root, pool as never, undefined, V);
+    commitGSplatsGeometry(makeStaged(3), testHost(root, pool as never), undefined, V);
     expect(mesh.geometry).toBe(newGeometry);
     expect(disposeSpy).not.toHaveBeenCalled();
   });
@@ -328,7 +339,7 @@ describe('commitGSplatsGeometry', () => {
       releaseGSplatsGeometry: vi.fn(),
       didLastAcquireRebuildAttributes: vi.fn(() => false),
     };
-    commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
+    commitGSplatsGeometry(makeStaged(7), testHost(root, pool as never), undefined, V);
 
     expect(pool.acquireGSplatsGeometry).toHaveBeenCalledTimes(1);
     expect(pool.updateGSplatsGeometry).toHaveBeenCalledTimes(1);
@@ -350,7 +361,7 @@ describe('commitGSplatsGeometry — no-op commit skip (committedData)', () => {
     const mesh = makeMesh('/g');
     root.add(mesh);
     const staged = makeStaged(5);
-    commitGSplatsGeometry(staged, root, null, undefined, 7);
+    commitGSplatsGeometry(staged, testHost(root, null), undefined, 7);
     if (staged.noop) throw new Error('expected geometry staged commit');
     expect((mesh.userData as { committedData?: unknown }).committedData).toBe(staged.sourceData);
   });
@@ -369,7 +380,7 @@ describe('commitGSplatsGeometry — no-op commit skip (committedData)', () => {
       noop: true,
       sourceData: sourceData.noop ? (undefined as never) : sourceData.sourceData,
     };
-    commitGSplatsGeometry(noop, root, null, undefined, 9);
+    commitGSplatsGeometry(noop, testHost(root, null), undefined, 9);
 
     // Freshness stamp written, geometry + GPU dispatch untouched.
     expect((mesh.userData as { loadedViewVersion?: number }).loadedViewVersion).toBe(9);
@@ -393,7 +404,7 @@ describe('commitGSplatsGeometry — elementIdMap stamp (issue #1423)', () => {
     const elementIds = new Uint32Array([2048, 4095, 6144]);
     staged.processed.elementIds = elementIds;
 
-    commitGSplatsGeometry(staged, root, null, undefined, 3);
+    commitGSplatsGeometry(staged, testHost(root, null), undefined, 3);
 
     // Written in lockstep with `committedData` — that pair is what
     // `resolveOnDiskElementId` reads at the pick site.
@@ -415,7 +426,7 @@ describe('commitGSplatsGeometry — elementIdMap stamp (issue #1423)', () => {
     if (staged.noop) throw new Error('expected geometry staged commit');
     expect(staged.processed.elementIds).toBeUndefined();
 
-    commitGSplatsGeometry(staged, root, null, undefined, 4);
+    commitGSplatsGeometry(staged, testHost(root, null), undefined, 4);
 
     // Left in place, the old map would describe geometry that is no longer on
     // the GPU — a silently wrong label rather than "no answer".
@@ -433,14 +444,13 @@ describe('commitGSplatsGeometry — elementIdMap stamp (issue #1423)', () => {
     if (staged.noop) throw new Error('expected geometry staged commit');
     const elementIds = new Uint32Array([2048, 4095, 6144]);
     staged.processed.elementIds = elementIds;
-    commitGSplatsGeometry(staged, root, null, undefined, 3);
+    commitGSplatsGeometry(staged, testHost(root, null), undefined, 3);
 
     // The noop branch uploads nothing, so the existing pair still describes
     // exactly what the GPU holds.
     commitGSplatsGeometry(
       { path: '/g', noop: true, sourceData: staged.sourceData },
-      root,
-      null,
+      testHost(root, null),
       undefined,
       4
     );
@@ -458,7 +468,7 @@ describe('commitGSplatsGeometry — committedLadderComplete stamp', () => {
     const mesh = makeMesh('/g');
     mesh.userData.loader = { hasMoreLODs: true };
     root.add(mesh);
-    commitGSplatsGeometry(makeStaged(3), root, null, undefined, V);
+    commitGSplatsGeometry(makeStaged(3), testHost(root, null), undefined, V);
     expect(ladderComplete(mesh)).toBe(false);
   });
 
@@ -467,7 +477,7 @@ describe('commitGSplatsGeometry — committedLadderComplete stamp', () => {
     const mesh = makeMesh('/g');
     mesh.userData.loader = { hasMoreLODs: false };
     root.add(mesh);
-    commitGSplatsGeometry(makeStaged(3), root, null, undefined, V);
+    commitGSplatsGeometry(makeStaged(3), testHost(root, null), undefined, V);
     expect(ladderComplete(mesh)).toBe(true);
   });
 
@@ -476,13 +486,13 @@ describe('commitGSplatsGeometry — committedLadderComplete stamp', () => {
     const plain = makeMesh('/g');
     plain.userData.loader = {}; // single-LOD spatial-index loader shape
     root.add(plain);
-    commitGSplatsGeometry(makeStaged(3), root, null, undefined, V);
+    commitGSplatsGeometry(makeStaged(3), testHost(root, null), undefined, V);
     expect(ladderComplete(plain)).toBe(true);
 
     const root2 = new THREE.Group();
     const loaderless = makeMesh('/g');
     root2.add(loaderless);
-    commitGSplatsGeometry(makeStaged(3), root2, null, undefined, V);
+    commitGSplatsGeometry(makeStaged(3), testHost(root2, null), undefined, V);
     expect(ladderComplete(loaderless)).toBe(true);
   });
 
@@ -498,7 +508,7 @@ describe('commitGSplatsGeometry — committedLadderComplete stamp', () => {
       noop: true,
       sourceData: staged.noop ? (undefined as never) : staged.sourceData,
     };
-    commitGSplatsGeometry(noop, root, null, undefined, V);
+    commitGSplatsGeometry(noop, testHost(root, null), undefined, V);
     expect(ladderComplete(mesh)).toBe(false); // refreshed from the live loader
   });
 });
@@ -512,7 +522,7 @@ describe('commitGSplatsGeometry — committedEnergyFraction stamp', () => {
     const mesh = makeMesh('/g');
     mesh.userData.loader = { hasMoreLODs: true, committedEnergyFraction: 0.42 };
     root.add(mesh);
-    commitGSplatsGeometry(makeStaged(3), root, null, undefined, V);
+    commitGSplatsGeometry(makeStaged(3), testHost(root, null), undefined, V);
     expect(energy(mesh)).toBe(0.42);
   });
 
@@ -522,7 +532,7 @@ describe('commitGSplatsGeometry — committedEnergyFraction stamp', () => {
     mesh.userData.loader = { hasMoreLODs: true, committedEnergyFraction: null };
     mesh.userData.committedEnergyFraction = 0.9; // stale value from a previous loader
     root.add(mesh);
-    commitGSplatsGeometry(makeStaged(3), root, null, undefined, V);
+    commitGSplatsGeometry(makeStaged(3), testHost(root, null), undefined, V);
     expect(energy(mesh)).toBeUndefined();
     expect('committedEnergyFraction' in mesh.userData).toBe(false);
   });
@@ -532,7 +542,7 @@ describe('commitGSplatsGeometry — committedEnergyFraction stamp', () => {
     const mesh = makeMesh('/g');
     mesh.userData.loader = {}; // single-LOD spatial-index loader shape
     root.add(mesh);
-    commitGSplatsGeometry(makeStaged(3), root, null, undefined, V);
+    commitGSplatsGeometry(makeStaged(3), testHost(root, null), undefined, V);
     expect(energy(mesh)).toBe(1);
   });
 
@@ -548,7 +558,7 @@ describe('commitGSplatsGeometry — committedEnergyFraction stamp', () => {
       noop: true,
       sourceData: staged.noop ? (undefined as never) : staged.sourceData,
     };
-    commitGSplatsGeometry(noop, root, null, undefined, V);
+    commitGSplatsGeometry(noop, testHost(root, null), undefined, V);
     expect(energy(mesh)).toBe(0.8); // refreshed from the live loader
   });
 });
@@ -571,7 +581,7 @@ describe('commitGSplatsGeometry — capacity-clamp consistency', () => {
     const root = new THREE.Group();
     const mesh = makeMesh('/g');
     root.add(mesh);
-    commitGSplatsGeometry(makeStaged(100), root, null, undefined, V);
+    commitGSplatsGeometry(makeStaged(100), testHost(root, null), undefined, V);
 
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(16);
     expect((mesh.userData as { requestedElementCount: number }).requestedElementCount).toBe(100);
@@ -610,12 +620,12 @@ describe('commitGSplatsGeometry — preserve-ordering on same-node same-count re
     const pool = makePool(new THREE.BufferGeometry());
     // First commit: no committedData stamp yet → the geometry's ordering
     // is unvouched-for, identity must be written.
-    commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
+    commitGSplatsGeometry(makeStaged(7), testHost(root, pool as never), undefined, V);
     expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
     // Same-node same-count recommit on the SAME pooled geometry: the
     // previous permutation of [0,7) is still valid — keep it. Equal count is
     // NOT an append (that needs a strict extension), so fromInstance stays 0.
-    commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
+    commitGSplatsGeometry(makeStaged(7), testHost(root, pool as never), undefined, V);
     expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: true, fromInstance: 0 });
   });
 
@@ -624,7 +634,7 @@ describe('commitGSplatsGeometry — preserve-ordering on same-node same-count re
     const mesh = makeMesh('/g');
     root.add(mesh);
     const pool = makePool(new THREE.BufferGeometry());
-    commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
+    commitGSplatsGeometry(makeStaged(7), testHost(root, pool as never), undefined, V);
     // A permutation of [0,7) is not a permutation of [0,9) — true, and the
     // reason `preserveOrdering` stays false. But it is REBUILT over the new
     // population rather than given up: `repairFromCount` carries the previous
@@ -633,7 +643,7 @@ describe('commitGSplatsGeometry — preserve-ordering on same-node same-count re
     // actually takes at almost every step, and the unsorted frame it used to
     // draw is #2290's per-timepoint flash. No lineage was stamped here, so this
     // is a full rewrite (not an append) → fromInstance 0.
-    commitGSplatsGeometry(makeStaged(9), root, pool as never, undefined, V);
+    commitGSplatsGeometry(makeStaged(9), testHost(root, pool as never), undefined, V);
     expect(lastPoolPreserve(pool)).toEqual({
       preserveOrdering: false,
       repairFromCount: 7,
@@ -646,9 +656,9 @@ describe('commitGSplatsGeometry — preserve-ordering on same-node same-count re
     const mesh = makeMesh('/g');
     root.add(mesh);
     const pool = makePool(new THREE.BufferGeometry());
-    commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
+    commitGSplatsGeometry(makeStaged(7), testHost(root, pool as never), undefined, V);
     delete (mesh.userData as { committedData?: unknown }).committedData;
-    commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
+    commitGSplatsGeometry(makeStaged(7), testHost(root, pool as never), undefined, V);
     expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
   });
 
@@ -657,13 +667,13 @@ describe('commitGSplatsGeometry — preserve-ordering on same-node same-count re
     const mesh = makeMesh('/g');
     root.add(mesh);
     const pool = makePool(new THREE.BufferGeometry());
-    commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
+    commitGSplatsGeometry(makeStaged(7), testHost(root, pool as never), undefined, V);
     // Best-fit reuse handed the node a DIFFERENT geometry (holding some
     // other node's permutation over a different prior count) and reported
     // an attribute rebuild — identity must be written.
     pool.acquireGSplatsGeometry.mockReturnValue(new THREE.BufferGeometry());
     pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
-    commitGSplatsGeometry(makeStaged(7), root, pool as never, undefined, V);
+    commitGSplatsGeometry(makeStaged(7), testHost(root, pool as never), undefined, V);
     expect(lastPoolPreserve(pool)).toEqual({ preserveOrdering: false, fromInstance: 0 });
   });
 
@@ -672,9 +682,9 @@ describe('commitGSplatsGeometry — preserve-ordering on same-node same-count re
     const root = new THREE.Group();
     const mesh = makeMesh('/g');
     root.add(mesh);
-    commitGSplatsGeometry(makeStaged(11), root, null, undefined, V);
+    commitGSplatsGeometry(makeStaged(11), testHost(root, null), undefined, V);
     expect(lastNonPoolPreserve()).toEqual({ preserveOrdering: false });
-    commitGSplatsGeometry(makeStaged(11), root, null, undefined, V);
+    commitGSplatsGeometry(makeStaged(11), testHost(root, null), undefined, V);
     expect(lastNonPoolPreserve()).toEqual({ preserveOrdering: true });
     expect((mesh.userData as { visibleSplatCount: number }).visibleSplatCount).toBe(11);
   });
@@ -684,8 +694,8 @@ describe('commitGSplatsGeometry — preserve-ordering on same-node same-count re
     const root = new THREE.Group();
     const mesh = makeMesh('/g');
     root.add(mesh);
-    commitGSplatsGeometry(makeStaged(11), root, null, undefined, V);
-    commitGSplatsGeometry(makeStaged(5), root, null, undefined, V);
+    commitGSplatsGeometry(makeStaged(11), testHost(root, null), undefined, V);
+    commitGSplatsGeometry(makeStaged(5), testHost(root, null), undefined, V);
     // A count change rebuilds the non-pool geometry, so there is no existing
     // ordering buffer to repair; the fresh geometry starts from identity.
     expect(lastNonPoolPreserve()).toEqual({ preserveOrdering: false });
@@ -696,9 +706,9 @@ describe('commitGSplatsGeometry — preserve-ordering on same-node same-count re
     const root = new THREE.Group();
     const mesh = makeMesh('/g');
     root.add(mesh);
-    commitGSplatsGeometry(makeStaged(11), root, null, undefined, V);
+    commitGSplatsGeometry(makeStaged(11), testHost(root, null), undefined, V);
     delete (mesh.userData as { committedData?: unknown }).committedData;
-    commitGSplatsGeometry(makeStaged(11), root, null, undefined, V);
+    commitGSplatsGeometry(makeStaged(11), testHost(root, null), undefined, V);
     expect(lastNonPoolPreserve()).toEqual({ preserveOrdering: false });
   });
 });
@@ -726,7 +736,7 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     prevCount: number,
     newCount: number
   ): StagedGSplatsCommit => {
-    commitGSplatsGeometry(makeStaged(prevCount), root, pool as never, undefined, V);
+    commitGSplatsGeometry(makeStaged(prevCount), testHost(root, pool as never), undefined, V);
     const committed = (root.children[0].userData as { committedData: object }).committedData;
     const next = makeStaged(newCount);
     setPrefixParent(next.sourceData, committed); // forward-chain lineage
@@ -738,7 +748,7 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     root.add(makeMesh('/g'));
     const pool = makePool(new THREE.BufferGeometry());
     const next = primeAndExtend(root, pool, 4, 6);
-    commitGSplatsGeometry(next, root, pool as never, undefined, V);
+    commitGSplatsGeometry(next, testHost(root, pool as never), undefined, V);
     expect(lastOpts(pool).fromInstance).toBe(4);
     // Positive-path bookkeeping stamps re-enable the NEXT append.
     const ud = root.children[0].userData as { gpuPrefixIntact: boolean; committedTruncate: number };
@@ -749,13 +759,24 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     expect(getPrefixParent(next.sourceData)).toBeUndefined();
   });
 
+  it('consumes the lineage entry on the NON-pool path too', () => {
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+    commitGSplatsGeometry(makeStaged(4), testHost(root, null), undefined, V);
+    const committed = (root.children[0].userData as { committedData: object }).committedData;
+    const next = makeStaged(6);
+    setPrefixParent(next.sourceData, committed);
+    commitGSplatsGeometry(next, testHost(root, null), undefined, V);
+    expect(getPrefixParent(next.sourceData)).toBeUndefined();
+  });
+
   it('does NOT append (fromInstance 0) when there is no prefix lineage (unrelated reload)', () => {
     const root = new THREE.Group();
     root.add(makeMesh('/g'));
     const pool = makePool(new THREE.BufferGeometry());
-    commitGSplatsGeometry(makeStaged(4), root, pool as never, undefined, V);
+    commitGSplatsGeometry(makeStaged(4), testHost(root, pool as never), undefined, V);
     // A larger commit with NO lineage stamp: full rewrite.
-    commitGSplatsGeometry(makeStaged(6), root, pool as never, undefined, V);
+    commitGSplatsGeometry(makeStaged(6), testHost(root, pool as never), undefined, V);
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
@@ -765,7 +786,7 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     const pool = makePool(new THREE.BufferGeometry());
     const next = primeAndExtend(root, pool, 4, 6);
     (root.children[0].userData as { gpuPrefixIntact: boolean }).gpuPrefixIntact = false;
-    commitGSplatsGeometry(next, root, pool as never, undefined, V);
+    commitGSplatsGeometry(next, testHost(root, pool as never), undefined, V);
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
@@ -777,7 +798,7 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     // Grow handed back a different geometry with rebuilt attributes.
     pool.acquireGSplatsGeometry.mockReturnValue(new THREE.BufferGeometry());
     pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
-    commitGSplatsGeometry(next, root, pool as never, undefined, V);
+    commitGSplatsGeometry(next, testHost(root, pool as never), undefined, V);
     expect(lastOpts(pool).fromInstance).toBe(0);
   });
 
@@ -813,7 +834,7 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     const next = primeAndExtend(root, pool, 4, 6);
     pool.acquireGSplatsGeometry.mockReturnValue(new THREE.InstancedBufferGeometry());
     pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
-    commitGSplatsGeometry(next, root, pool as never, undefined, V);
+    commitGSplatsGeometry(next, testHost(root, pool as never), undefined, V);
     expect(lastOpts(pool).fromInstance).toBe(0);
     expect(seedOf(pool)).toEqual([3, 2, 1, 0]);
   });
@@ -831,7 +852,7 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     });
     pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
 
-    commitGSplatsGeometry(next, root, pool as never, undefined, V);
+    commitGSplatsGeometry(next, testHost(root, pool as never), undefined, V);
 
     expect(seedOf(pool)).toEqual([3, 2, 1, 0]);
   });
@@ -840,10 +861,10 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     const root = new THREE.Group();
     root.add(makeMesh('/g'));
     const pool = makePool(sortedGeometry([3, 2, 1, 0]));
-    commitGSplatsGeometry(makeStaged(4), root, pool as never, undefined, V);
+    commitGSplatsGeometry(makeStaged(4), testHost(root, pool as never), undefined, V);
     pool.acquireGSplatsGeometry.mockReturnValue(new THREE.InstancedBufferGeometry());
     pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
-    commitGSplatsGeometry(makeStaged(6), root, pool as never, undefined, V);
+    commitGSplatsGeometry(makeStaged(6), testHost(root, pool as never), undefined, V);
     expect(seedOf(pool)).toBeUndefined();
   });
 
@@ -852,7 +873,7 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     root.add(makeMesh('/g'));
     const pool = makePool(new THREE.BufferGeometry());
     const next = primeAndExtend(root, pool, 5, 5); // same count, lineage set
-    commitGSplatsGeometry(next, root, pool as never, undefined, V);
+    commitGSplatsGeometry(next, testHost(root, pool as never), undefined, V);
     const opts = lastOpts(pool);
     expect(opts.fromInstance).toBe(0);
     expect(opts.preserveOrdering).toBe(true);
@@ -868,8 +889,26 @@ describe('commitGSplatsGeometry — append fast path (Phase 4 Stage 2, fromInsta
     (root.children[0] as THREE.Mesh).material = {
       uniforms: { uTruncate: { value: 5.0 } },
     } as never;
-    commitGSplatsGeometry(next, root, pool as never, undefined, V);
+    commitGSplatsGeometry(next, testHost(root, pool as never), undefined, V);
     expect(lastOpts(pool).fromInstance).toBe(0);
+  });
+
+  it('still seeds a lineage-proven GROW when the truncate uniform changed', () => {
+    // Truncate only sizes the splat quad: it gates reusing the uploaded prefix
+    // (the append), not whether the prefix holds the same splats, and a grow
+    // rewrites every texel anyway. So the drawn order still seeds the new geometry.
+    const root = new THREE.Group();
+    root.add(makeMesh('/g'));
+    const pool = makePool(sortedGeometry([3, 2, 1, 0]));
+    const next = primeAndExtend(root, pool, 4, 6);
+    (root.children[0] as THREE.Mesh).material = {
+      uniforms: { uTruncate: { value: 5.0 } },
+    } as never;
+    pool.acquireGSplatsGeometry.mockReturnValue(new THREE.InstancedBufferGeometry());
+    pool.didLastAcquireRebuildAttributes.mockReturnValue(true);
+    commitGSplatsGeometry(next, testHost(root, pool as never), undefined, V);
+    expect(lastOpts(pool).fromInstance).toBe(0);
+    expect(seedOf(pool)).toEqual([3, 2, 1, 0]);
   });
 });
 
@@ -901,7 +940,7 @@ describe('commitGSplatsGeometry — RenderObject invalidation on non-pool rebuil
     const mesh = makeMesh('/g');
     root.add(mesh);
     const saw = softDisposeSeen(mesh);
-    commitGSplatsGeometry(makeStaged(3), root, null, undefined, V);
+    commitGSplatsGeometry(makeStaged(3), testHost(root, null), undefined, V);
     expect(saw()).toBe(true);
   });
 
@@ -912,7 +951,7 @@ describe('commitGSplatsGeometry — RenderObject invalidation on non-pool rebuil
     const mesh = makeMesh('/g');
     root.add(mesh);
     const saw = softDisposeSeen(mesh);
-    commitGSplatsGeometry(makeStaged(3), root, null, undefined, V);
+    commitGSplatsGeometry(makeStaged(3), testHost(root, null), undefined, V);
     expect(saw()).toBe(false);
   });
 });

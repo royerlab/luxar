@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import { applyEffectiveAttrs } from '../../../../../data/scene-loader/view-state/effective-attrs';
 import type { SceneNode } from '../../../../../data/data-loader-types';
+import { SceneNodeIndex } from '../../../../../data/scene-loader/view-state/scene-node-index';
 
 function makeNode(path: string, attrs: SceneNode['attrs'] = {}): SceneNode {
   return { path, type: 'points', attrs, hasSpatialIndex: false };
@@ -41,7 +42,7 @@ describe('applyEffectiveAttrs', () => {
     } as unknown as SceneNode;
 
     const child = makeNode('/cloud', { opacity: 1, intensity: 3, n_points: 99 });
-    const result = applyEffectiveAttrs(root, child);
+    const result = applyEffectiveAttrs(new SceneNodeIndex(root), child);
 
     // Effective opacity composes (multiplies): 0.5 × 1 = 0.5.
     expect(result.opacity).toBe(0.5);
@@ -59,8 +60,40 @@ describe('applyEffectiveAttrs', () => {
       children: [{ path: '/cloud', type: 'points', attrs: { opacity: 1 } }],
     } as unknown as SceneNode;
     const node = makeNode('/cloud', { opacity: 1, n_points: 7 });
-    const result = applyEffectiveAttrs(root, node);
+    const result = applyEffectiveAttrs(new SceneNodeIndex(root), node);
     expect(result).not.toBe(node.attrs);
     expect(node.attrs.opacity).toBe(1); // original untouched
+  });
+
+  it("composes from the loader's scene-node index without walking the graph", () => {
+    // A P-part partition: resolving each part by descending from the root is a
+    // linear `children.find` per step, so composing every part was O(P²).
+    const parts = Array.from({ length: 64 }, (_, i) => ({
+      path: `/layer/part_${i}`,
+      type: 'points',
+      attrs: { opacity: 1 },
+    }));
+    const layer = {
+      path: '/layer',
+      type: 'group',
+      attrs: { opacity: 0.5, layer: true, intensity: 2 },
+      children: parts,
+    };
+    const root = { path: '/', type: 'scene', attrs: {}, children: [layer] } as unknown as SceneNode;
+    const index = new SceneNodeIndex(root);
+    let walks = 0;
+    for (const n of [root, layer] as Array<{ children?: unknown }>) {
+      const children = n.children;
+      Object.defineProperty(n, 'children', {
+        get() {
+          walks++;
+          return children;
+        },
+      });
+    }
+    const result = applyEffectiveAttrs(index, parts[63] as unknown as SceneNode);
+    expect(result.opacity).toBe(0.5);
+    expect(result.windowOwnerGain).toEqual({ intensity: 2, offset: 0 });
+    expect(walks).toBe(0);
   });
 });

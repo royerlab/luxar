@@ -20,26 +20,54 @@ import { uniform, texture } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
 import { linePickWebGPUFactory, type LinePickTSLConfig } from './pick.tsl';
 import { capsuleLinePickWebGPUFactory } from './pick-capsule.tsl';
-import type { LineJoinStyle } from '../../../types/line-join';
+import { resolveLineJoin, type LineJoinStyle } from '../../../types/line-join';
 import { resolveLinePrimitive, type LinePrimitive } from '../../../types/line-primitive';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
-import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import {
+  createPickVisibilityTSLNodes,
+  proxyPickVisibilityUniforms,
+} from '../_shared/visibility-tsl';
+import { copyPickVisibilityUniforms } from '../_shared/visibility-uniforms';
+import type { SurfacePickAwareMaterial } from '../_shared/surface-pick';
+import {
+  getPlaceholderElementTexture,
+  LINE_TEXTURE_LAYOUT,
+  resolveElementTextureWidth,
+} from '../../element-texture-layout';
+import { applySharedPickGraph } from '../_shared/shared-pick-graph-tsl';
+import {
+  isOrthographicProjection,
+  type ProjectionVariantMaterial,
+} from '../../materials/_shared/projection-variant';
 import type { LinePickingMaterialConfig } from './material';
 
-export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareMaterial {
+/** A camera whose projection reads orthographic (for `clone()`'s variant carry-over). */
+const ORTHO_PROBE = new THREE.OrthographicCamera();
+
+export class LinePickingTSLMaterial
+  extends NodeMaterial
+  implements CameraAwareMaterial, SurfacePickAwareMaterial, ProjectionVariantMaterial
+{
   uniforms: Record<string, THREE.IUniform>;
+
+  /** The projection kind of the camera last drawn with (quad variant only). */
+  private _orthoVariant = false;
 
   private tslNodes: {
     uLineTex: TSLNode;
     uResolution: TSLNode;
     uPixelRatio: TSLNode;
-    uIsOrtho: TSLNode;
     uNearCull: TSLNode;
     uMaxLinePixelWidth: TSLNode;
     uNodeId: TSLNode;
     uSortedIndexSlot: TSLNode;
     uDensityDrop: TSLNode;
+    uIntensity: TSLNode;
+    uOpacity: TSLNode;
+    uHasElementAlpha: TSLNode;
+    uVolumetric: TSLNode;
+    uSurfaceDepth: TSLNode;
   };
 
   constructor(config: LinePickingMaterialConfig) {
@@ -53,7 +81,6 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       uLineTex: texture(getPlaceholderElementTexture()),
       uResolution: uniform(new THREE.Vector2(1, 1)),
       uPixelRatio: uniform(1),
-      uIsOrtho: uniform(0),
       // 0.1 matches the visual line material ctor default (pre-first-broadcast only).
       uNearCull: uniform(0.1),
       uMaxLinePixelWidth: uniform(540),
@@ -66,6 +93,12 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       // `uniforms` below.
       uSortedIndexSlot: uniform(0),
       uDensityDrop: uniform(0),
+      // Visual-pass weight inputs, neutral until the first pick render
+      // syncs the node's own (picking-system/visibility-sync.ts).
+      ...createPickVisibilityTSLNodes(),
+      // 0 = brightness-as-depth, 1 = real fragment depth (front-most wins;
+      // opaque/normal) — mirrors the GLSL wrapper.
+      uSurfaceDepth: uniform(0),
     };
 
     // Join style — a BUILD-time graph variant (see pick.tsl.ts), so it is
@@ -87,12 +120,13 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
       uLineTex: proxyIUniform(this.tslNodes.uLineTex),
       uResolution: proxyIUniform(this.tslNodes.uResolution),
       uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
-      uIsOrtho: proxyIUniform(this.tslNodes.uIsOrtho),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
       uMaxLinePixelWidth: proxyIUniform(this.tslNodes.uMaxLinePixelWidth),
       uNodeId: proxyIUniform(this.tslNodes.uNodeId),
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
+      ...proxyPickVisibilityUniforms(this.tslNodes),
+      uSurfaceDepth: proxyIUniform(this.tslNodes.uSurfaceDepth),
     };
 
     this.toneMapped = false;
@@ -109,26 +143,64 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
    * Build the per-rebuild factory config from current uniforms.
    */
   private _currentConfig(): LinePickTSLConfig {
+    const quad =
+      resolveLinePrimitive(this.userData.linePrimitive as LinePrimitive | undefined) !== 'capsule';
     return {
-      isOrtho: (this.tslNodes.uIsOrtho.value as number) === 1,
       join: this.userData.lineJoin as LineJoinStyle | undefined,
+      // The quad's compile-time projection variant (see selectProjectionVariant).
+      ...(quad ? { projection: this._orthoVariant ? 'ortho' : 'perspective' } : {}),
     };
   }
 
   /**
+   * Select the screen-space quad's projection variant for the camera this pick
+   * draw uses — the visual twin's rule (`LineTSLMaterial.selectProjectionVariant`):
+   * a re-point at the other kind's cached shared graph, only on a kind change,
+   * never driven by a CPU push. The capsule ignores it.
+   */
+  selectProjectionVariant(camera: THREE.Camera): void {
+    const ortho = isOrthographicProjection(camera);
+    if (ortho === this._orthoVariant) return;
+    this._orthoVariant = ortho;
+    if (
+      resolveLinePrimitive(this.userData.linePrimitive as LinePrimitive | undefined) === 'capsule'
+    ) {
+      return;
+    }
+    this._rebuild();
+    this.needsUpdate = true;
+  }
+
+  /**
    * (Re)build the pick graph, dispatching on the line primitive (#1352).
-   * Every build site — constructor, clone, projection-mode flip, texture
-   * rebind — funnels through here so the two factories can never drift.
+   * Every build site — constructor, texture rebind — funnels through here so the two factories can never drift.
    */
   private _rebuild(): void {
     const primitive = resolveLinePrimitive(
       this.userData.linePrimitive as LinePrimitive | undefined
     );
-    if (primitive === 'capsule') {
-      capsuleLinePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
-    } else {
-      linePickWebGPUFactory(this.tslNodes, this._currentConfig(), this);
-    }
+    // ONE graph per configuration (`../_shared/shared-pick-graph-tsl.ts`):
+    // the primitive, the build-time join and projection variants and the baked
+    // line-texture width are what select code. The BOUND texture's width is
+    // handed to the factory explicitly: the shared graph's own leaf
+    // is a forwarding twin over a stand-in texture.
+    const config = {
+      ...this._currentConfig(),
+      elementTextureWidth: resolveElementTextureWidth(
+        LINE_TEXTURE_LAYOUT,
+        this.tslNodes.uLineTex.value as { image?: { width?: number } } | null
+      ),
+    };
+    // The RESOLVED join too, as the visual twin's key: the factory resolves the
+    // session `?lineJoin=` override at build time, so it selects code.
+    const key = { primitive, ...config, resolvedJoin: resolveLineJoin(config.join) };
+    applySharedPickGraph(this, 'line-pick', key, this.tslNodes, (inputs, scratch) => {
+      if (primitive === 'capsule') {
+        capsuleLinePickWebGPUFactory(inputs, config, scratch);
+      } else {
+        linePickWebGPUFactory(inputs, config, scratch);
+      }
+    });
   }
 
   /**
@@ -136,10 +208,6 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
    * clone (the inherited `Material.clone()` calls the constructor with
    * no config and would throw; `NodeMaterial.copy` would alias the
    * source's node graph instead of this instance's own uniform nodes).
-   * The pick graph is JS-specialized on the projection mode (see
-   * `updateCameraParams`), so after copying `uIsOrtho` the clone's
-   * graph is rebuilt when the mode differs from the constructor
-   * default (perspective) — same rebuild-on-flip rule as the source.
    */
   clone(): this {
     const cloned = new LinePickingTSLMaterial({
@@ -154,7 +222,6 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
       this.uniforms.uResolution.value as THREE.Vector2
     );
-    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
@@ -163,22 +230,32 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     // until the coordinator's next per-frame re-assert.
     cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
-    if (cloned._currentConfig().isOrtho) {
-      cloned._rebuild();
-      cloned.needsUpdate = true;
-    }
+    copyPickVisibilityUniforms(this.uniforms, cloned.uniforms);
+    cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
+    // Carry the last-drawn projection variant (no switch on the clone's first draw).
+    if (this._orthoVariant) cloned.selectProjectionVariant(ORTHO_PROBE);
     return cloned as this;
   }
 
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
-    const prevIsOrtho = (this.tslNodes.uIsOrtho.value as number) === 1;
+  /**
+   * Select the pick depth convention (`SurfacePickAwareMaterial`): `true`
+   * under the depth-ordered surface modes (`opaque` / `normal`) writes the
+   * real projected depth so the FRONT-MOST element wins, as the user sees
+   * it; `false` (default) keeps brightness-as-depth so the BRIGHTEST wins,
+   * right for the commutative modes. Synced per pick render by
+   * `PickingSystem.renderPickBuffer()`.
+   */
+  setSurfacePickDepth(on: boolean): void {
+    this.uniforms.uSurfaceDepth.value = on ? 1 : 0;
+  }
+
+  /**
+   * Camera-dependent uniforms. The ortho branch is read in the graph from the
+   * projection matrix of the draw (`isOrthoProjectionTSL()`, the GLSL twin's
+   * `luxarLineIsOrtho`), so none is pushed.
+   */
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
-    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     // Accept ANY defined value, including 0 — matching the point/gsplat
     // wrappers (the shader floors at 1e-20). The old `> 0` gate silently
     // KEPT a stale value on zero-diagonal scenes (or, with LRU-cached
@@ -189,11 +266,6 @@ export class LinePickingTSLMaterial extends NodeMaterial implements CameraAwareM
     }
     this.uniforms.uMaxLinePixelWidth.value = Math.max(2, resolution.y * 0.5);
     this.uniforms.uPixelRatio.value = pixelRatio;
-    // Rebuild on projection-mode flip so the unused branch drops.
-    if (isOrtho !== prevIsOrtho) {
-      this._rebuild();
-      this.needsUpdate = true;
-    }
   }
 
   /**

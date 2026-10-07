@@ -39,7 +39,7 @@ import * as THREE from 'three';
 import type { ZarrCameraConfig, ZarrWaypoint, ZarrWaypointCondition } from '../../../types/zarr';
 import type { SimpleDims } from '../../../types/dims';
 import type { CameraSnapshot } from '../snapshot/viewer-snapshot';
-import type { FlightResult, FlyToOptions } from './camera-flight';
+import type { FlightResult, FlightTrajectorySpec, FlyToOptions } from './camera-flight';
 import { log, Modules } from '../../../utils/log';
 
 /** Tolerance for an exact-value clause — the overlay manager's rule. */
@@ -150,6 +150,14 @@ function resolveFov(camera: ZarrCameraConfig, deps: ResolvePoseDeps): number | u
   return typeof preset === 'number' && preset > 0 ? preset : undefined;
 }
 
+/** Whether a flight along `t` falls back to the scene centre (a pivot-less swing). */
+function needsSceneCentre(t: FlightTrajectorySpec): boolean {
+  if (t === 'swing') return true;
+  if (typeof t !== 'object') return false;
+  if (t.kind === 'swing') return t.pivot === undefined;
+  return t.kind === 'via' && t.leg === 'swing';
+}
+
 export interface WaypointPorts {
   getDims: () => WaypointDims | null;
   getLivePose: () => CameraSnapshot;
@@ -165,6 +173,8 @@ export interface WaypointPorts {
    * point of interest.
    */
   autoRotateActive: () => boolean;
+  /** World centre of the scene's data, the default pivot of a `swing` flight. */
+  sceneCentre?: () => readonly [number, number, number] | null;
   /** Snake_case rendering overrides — the authored `viewer_config` path. */
   applyRendering: (rendering: Record<string, unknown>) => void;
   /**
@@ -318,8 +328,53 @@ export class WaypointDriver {
     const opts: FlyToOptions = {};
     if (typeof wp.duration_ms === 'number') opts.durationMs = wp.duration_ms;
     if (wp.easing) opts.easing = wp.easing;
+    this.applyTrajectory(wp, opts);
+    if (typeof wp.speed === 'number') opts.speed = wp.speed;
+    if (wp.duration_range_ms) opts.durationRangeMs = wp.duration_range_ms;
     if (this.ports.autoRotateActive()) opts.keepOrientation = true;
     return opts;
+  }
+
+  /**
+   * Set the flight's trajectory, and the scene centre when it needs one: only a
+   * swing with no pivot of its own does, and asking on every flight would walk
+   * the scene for nothing.
+   */
+  private applyTrajectory(wp: ZarrWaypoint, opts: FlyToOptions): void {
+    const trajectory = this.trajectory(wp);
+    if (!trajectory) return;
+    opts.trajectory = trajectory;
+    if (!needsSceneCentre(trajectory)) return;
+    const centre = this.ports.sceneCentre?.();
+    if (centre) opts.sceneCentre = centre;
+  }
+
+  /**
+   * The authored trajectory in viewer form: a name passes through; an object's
+   * snake_case parameters are renamed, and a `via` camera is resolved against the
+   * live pose exactly like a waypoint's own camera block.
+   */
+  private trajectory(wp: ZarrWaypoint): FlightTrajectorySpec | undefined {
+    const t = wp.trajectory;
+    if (t === undefined || typeof t === 'string') return t;
+    switch (t.kind) {
+      case 'zoom-pan':
+        return { kind: 'zoom-pan', rho: t.rho };
+      case 'arc':
+        return { kind: 'arc', lift: t.lift };
+      case 'swing':
+        return { kind: 'swing', pivot: t.pivot };
+      case 'fly-through':
+        return { kind: 'fly-through', lookAhead: t.look_ahead, turn: t.turn };
+      case 'via':
+        return {
+          kind: 'via',
+          via: this.ports.resolvePose(t.camera, this.ports.getLivePose()),
+          leg: t.leg,
+        };
+      default:
+        return { kind: t.kind };
+    }
   }
 
   /** Forget the current match so the next `evaluate` re-applies it. */

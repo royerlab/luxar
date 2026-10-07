@@ -178,15 +178,16 @@ export const GSPLAT_FOOTPRINT_PIXEL_MARGIN = 1.0;
  *
  * ONE definition for the visual AND pick vertex shaders (GLSL twin in
  * {@link GLSL_GSPLAT_VISIBLE_FOOTPRINT}, TSL twin `gsplatQuadFootprintTSL` in
- * `shader-tsl.ts`). The pick fragment's test carries neither an alpha factor
- * nor a gain, so picking passes the neutral `1, 1` — at a neutral appearance
- * (opaque splat, gain <= 1) the drawn and the pickable quads therefore reach
- * the SAME radius, and cannot drift apart without changing this function.
+ * `shader-tsl.ts`). The pick fragment's test carries the same alpha factor
+ * and gain, with the node opacity folded into the alpha factor (an invisible
+ * node must not be pickable) — at a neutral appearance (opaque splat and
+ * node, gain <= 1) the drawn and the pickable quads therefore reach the SAME
+ * radius, and cannot drift apart without changing this function.
  *
  * @param amplitude2D - The splat's `vAmplitude2D`.
  * @param invOneMinusC - `1 / (1 − C)` (the `uInvOneMinusC` uniform).
- * @param alphaFactor - Draw only: the fragment's alpha factor (1 for picking).
- * @param gain - Draw only: the layer gain `uIntensity` (1 for picking).
+ * @param alphaFactor - The fragment's alpha factor (picking: times uOpacity).
+ * @param gain - The layer gain `uIntensity`.
  */
 export function gsplatFootprintPeakScale(
   amplitude2D: number,
@@ -244,8 +245,8 @@ export function gsplatVisibleMahalSq(
  */
 export const GLSL_GSPLAT_VISIBLE_FOOTPRINT = /* glsl */ `
     // The peak scale the quad is sized from (CPU mirror gsplatFootprintPeakScale):
-    // the pick shader passes alphaFactor = gain = 1.0, so draw and pick share
-    // one reach-radius rule.
+    // draw and pick pass the same alpha factor (the pick's also carries the node
+    // opacity) and gain, so they share one reach-radius rule.
     float gsplatFootprintPeakScale(float amplitude2D, float invOneMinusC, float alphaFactor, float gain) {
         return amplitude2D * invOneMinusC * alphaFactor * max(gain, 1.0);
     }

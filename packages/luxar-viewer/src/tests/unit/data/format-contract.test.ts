@@ -11,14 +11,12 @@ import {
   BLENDING_MODES as CONTRACT_BLENDING_MODES,
   BUILTIN_COLORMAP_NAMES as CONTRACT_COLORMAP_NAMES,
   LINE_JOIN_STYLES as CONTRACT_LINE_JOIN_STYLES,
-  LINE_TYPES,
   LOD_SELECTORS,
   ND_TRANSFORM_PERMUTATION_KEY,
   TONE_MAPPINGS,
 } from '../../../types/format-contract';
 import { BLENDING_MODES } from '../../../types/blending';
 import { LINE_JOIN_STYLES, DEFAULT_LINE_JOIN } from '../../../types/line-join';
-import { isValidLineType } from '../../../types/lines';
 import { isPermutation } from '../../../types/zarr';
 import { BUILTIN_COLORMAPS } from '../../../rendering/colormap-data';
 import { TONE_MAPPING_NAMES } from '../../../rendering/post-processing/tone-mapping';
@@ -85,12 +83,11 @@ describe('format contract (vocabularies single-sourced)', () => {
     expect(Object.keys(BUILTIN_COLORMAPS)).toEqual([...CONTRACT_COLORMAP_NAMES]);
   });
 
-  it('B7: line join styles and line types come from the contract', () => {
+  it('B7: line join styles come from the contract', () => {
+    // `LINE_TYPES` has no runtime consumer to check: the viewer never reads a
+    // node's `line_type`, and `LineType` is a type alias of the contract union.
     expect(LINE_JOIN_STYLES).toBe(CONTRACT_LINE_JOIN_STYLES);
     expect(LINE_JOIN_STYLES).toContain(DEFAULT_LINE_JOIN);
-    for (const t of LINE_TYPES) expect(isValidLineType(t)).toBe(true);
-    expect(isValidLineType('bogus')).toBe(false);
-    expect(isValidLineType(undefined)).toBe(false);
   });
 
   it('B8: the permutation guard keys on the contract permutation key', () => {

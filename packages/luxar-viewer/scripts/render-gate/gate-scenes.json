@@ -6,7 +6,7 @@
       "height": 540
     },
     "dsf": [1, 2],
-    "backends": ["webgl", "webgpu"],
+    "backends": ["webgl", "webgpu", "webgpu-gl"],
     "projections": ["perspective", "ortho"],
     "urlParams": "lodFinest&noLodFade&noPrefetch&noBlendWarmup"
   },
@@ -64,6 +64,18 @@
         "turnAngle": 0.3
       },
       "urlParams": "linePrimitive=capsule"
+    },
+    {
+      "id": "lines-quad",
+      "synthetic": {
+        "type": "lines",
+        "count": 100000,
+        "seed": 5,
+        "blending": "additive",
+        "width": 3.0,
+        "turnAngle": 0.3
+      },
+      "urlParams": "linePrimitive=screen-space"
     },
     {
       "id": "splats-additive",
@@ -169,6 +181,26 @@
       ]
     },
     {
+      "id": "mixed-quad",
+      "store": "gate/mixed.luxar.zarr",
+      "pick": true,
+      "urlParams": "linePrimitive=screen-space",
+      "poses": [
+        {
+          "position": [14, 9, 16],
+          "target": [0, 0, 0],
+          "up": [0, 1, 0]
+        },
+        {
+          "position": [3, 2, 7],
+          "target": [0.5, 0, 0],
+          "up": [0, 1, 0],
+          "fov": 40,
+          "zoom": 3
+        }
+      ]
+    },
+    {
       "id": "env_splats",
       "store": "gate/env_splats.luxar.zarr",
       "waitEnvironment": true,
@@ -183,6 +215,25 @@
           "position": [0, 0.2, 2.6],
           "target": [0, 0, 0],
           "up": [0, 1, 0]
+        }
+      ]
+    },
+    {
+      "id": "surface_pick",
+      "store": "gate/surface_pick.luxar.zarr",
+      "pick": true,
+      "poses": [
+        {
+          "position": [12, 8, 14],
+          "target": [0, 0, 0],
+          "up": [0, 1, 0]
+        },
+        {
+          "position": [2, 1.5, 6],
+          "target": [0.5, 0, 0],
+          "up": [0, 1, 0],
+          "fov": 40,
+          "zoom": 2
         }
       ]
     },
@@ -288,6 +339,29 @@
         "turnAngle": 0.3
       },
       "urlParams": "linePrimitive=capsule"
+    },
+    {
+      "id": "perf-lines-10m-ortho",
+      "synthetic": {
+        "type": "lines",
+        "count": 10000000,
+        "seed": 3,
+        "blending": "additive"
+      },
+      "projection": "ortho"
+    },
+    {
+      "id": "perf-capsule-2m-ortho",
+      "synthetic": {
+        "type": "lines",
+        "count": 2000000,
+        "seed": 4,
+        "blending": "additive",
+        "width": 3.0,
+        "turnAngle": 0.3
+      },
+      "urlParams": "linePrimitive=capsule",
+      "projection": "ortho"
     },
     {
       "id": "perf-splats-1m-normal",
@@ -601,6 +675,7 @@
           "workload": { "kind": "scrub", "mode": "drag", "steps": 20, "intervalMs": 50 },
           "metrics": [
             { "name": "commitsDuringDrag", "better": "higher", "kind": "counter", "relTol": 0.05 },
+            { "name": "dragFrames", "better": "higher", "kind": "counter", "relTol": 0.05 },
             { "name": "render.count", "better": "lower", "kind": "counter", "relTol": 0.05 },
             { "name": "decode.count", "better": "lower", "kind": "counter", "relTol": 0.05 }
           ]
@@ -632,6 +707,16 @@
           "id": "cold_sp64_closeup",
           "store": "gate/sp64.luxar.zarr",
           "pose": { "position": [3, 3, 8], "target": [3, 3, 0], "up": [0, 1, 0], "fov": 40 },
+          "workload": { "kind": "coldLoad" },
+          "metrics": [
+            { "name": "partition.partsInitialised", "better": "lower", "kind": "counter" },
+            { "name": "requestsToFirstFrame", "better": "lower", "kind": "counter" },
+            { "name": "firstFrameMs", "better": "lower", "kind": "timing" }
+          ]
+        },
+        {
+          "id": "cold_sp64_closeup_authored",
+          "store": "gate/sp64_closeup_authored.luxar.zarr",
           "workload": { "kind": "coldLoad" },
           "metrics": [
             { "name": "partition.partsInitialised", "better": "lower", "kind": "counter" },

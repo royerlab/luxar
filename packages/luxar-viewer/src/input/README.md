@@ -236,6 +236,8 @@ Lifecycle:
   animation manager + scene-dims listener.
 - `clearDimensionUI()` — call before loading a new scene.
 - `showDimensionSliders()` — applied by `viewer_config`.
+- `setSelectedDimension(n)` — the navigable dimension the `[` / `]` keys target
+  (`viewer_config.dimensions.selected_dimension`; captured by Ctrl+Shift+S).
 - `getAnimationManager()` — used to restore per-dimension playback state.
 - `dispose()` — clean up listeners and disposable refs.
 

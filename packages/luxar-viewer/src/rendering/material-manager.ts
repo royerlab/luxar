@@ -1,9 +1,11 @@
 /**
  * Material Manager for Luxar
  *
- * This module manages all materials in the scene, providing caching,
- * global uniform updates, and support for multiple material types.
- * Supports point, line, and GSplat materials.
+ * This module creates every node material — per node, never cached: the
+ * visual and picking materials of points, lines, gsplats and mesh, and the
+ * opt-in `physical` mesh material — and keeps them in one registry for the
+ * global uniform updates and disposal. It also creates the post-processing
+ * mega-shader material, which `PostProcessingManager` owns.
  */
 
 import * as THREE from 'three';
@@ -210,7 +212,6 @@ export class MaterialManager {
    */
   private staticMaterials = new Set<THREE.Material>();
   private currentResolution = new THREE.Vector2(1920, 1080); // Use reasonable default
-  private currentIsOrtho = false;
   private currentNearCull: number | undefined = undefined;
   private currentPixelRatio = 1;
 
@@ -297,7 +298,6 @@ export class MaterialManager {
     subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(
       this.currentResolution,
-      this.currentIsOrtho,
       this.currentNearCull,
       this.currentPixelRatio
     );
@@ -345,7 +345,6 @@ export class MaterialManager {
     subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(
       this.currentResolution,
-      this.currentIsOrtho,
       this.currentNearCull,
       this.currentPixelRatio
     );
@@ -390,7 +389,6 @@ export class MaterialManager {
     subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(
       this.currentResolution,
-      this.currentIsOrtho,
       this.currentNearCull,
       this.currentPixelRatio
     );
@@ -449,7 +447,6 @@ export class MaterialManager {
     subscribeToDispose(material, this.lifecycleCtx);
     material.updateCameraParams(
       this.currentResolution,
-      this.currentIsOrtho,
       this.currentNearCull,
       this.currentPixelRatio
     );
@@ -539,23 +536,21 @@ export class MaterialManager {
 
   /**
    * Update camera parameters for all registered materials: viewport size,
-   * projection kind, near cull and pixel ratio. The projection terms
-   * themselves (FOV, ortho zoom, off-axis frustum) are read in shader from
-   * the projection matrix, so they need no push.
+   * near cull and pixel ratio. The projection itself (FOV, ortho zoom,
+   * off-axis frustum and the ortho/perspective kind) is read in shader from
+   * the projection matrix of the draw, so it needs no push.
    */
   updateCameraParams(
     resolution: THREE.Vector2,
-    isOrtho: boolean,
     nearCull: number | undefined,
     pixelRatio: number
   ): void {
     this.currentResolution.copy(resolution);
-    this.currentIsOrtho = isOrtho;
     this.currentNearCull = nearCull;
     this.currentPixelRatio = pixelRatio;
 
     for (const material of this.registeredMaterials) {
-      material.updateCameraParams(resolution, isOrtho, nearCull, pixelRatio);
+      material.updateCameraParams(resolution, nearCull, pixelRatio);
     }
   }
 
@@ -591,7 +586,6 @@ export class MaterialManager {
     this.ownedMaterials.add(material);
     material.updateCameraParams(
       this.currentResolution,
-      this.currentIsOrtho,
       this.currentNearCull,
       this.currentPixelRatio
     );
@@ -674,27 +668,69 @@ export class MaterialManager {
 }
 
 /**
- * Page-level singleton instance of the material manager.
+ * The LuxarApp's material manager (one LuxarApp per page), built lazily. Every
+ * `LuxarLayer` constructs its own `MaterialManager`, so its materials take its
+ * own capabilities and camera parameters and are disposed by its own teardown.
+ */
+let _materialManagerInstance: MaterialManager | undefined;
+
+/**
+ * The manager installed by {@link runWithMaterialManager} for the synchronous
+ * call in progress, or undefined outside one.
+ */
+let _scopedMaterialManager: MaterialManager | undefined;
+
+/** The LuxarApp's manager instance (never the scoped one). */
+export function getPageMaterialManager(): MaterialManager {
+  _materialManagerInstance ??= new MaterialManager();
+  return _materialManagerInstance;
+}
+
+/**
+ * Run `fn` with {@link materialManager} resolving to `manager`.
+ *
+ * The node-factory and commit paths are shared by every host but reach the
+ * materials through the module export, so the host that owns a loader brackets
+ * its synchronous node-creation and commit calls with its own manager: a
+ * LuxarLayer's nodes then get the layer's capabilities, camera broadcast and
+ * disposal, never the app's. Synchronous by contract — node creation and the
+ * commit stage never await — and re-entrant (the previous scope is restored).
+ */
+export function runWithMaterialManager<T>(manager: MaterialManager, fn: () => T): T {
+  const previous = _scopedMaterialManager;
+  _scopedMaterialManager = manager;
+  try {
+    return fn();
+  } finally {
+    _scopedMaterialManager = previous;
+  }
+}
+
+/** The manager a `materialManager` access resolves to right now. */
+function activeMaterialManager(): MaterialManager {
+  return _scopedMaterialManager ?? getPageMaterialManager();
+}
+
+/**
+ * The material manager for the code running now: the host manager a
+ * {@link runWithMaterialManager} bracket installed, else the LuxarApp's.
  *
  * Construction is **deferred until first access** via a Proxy. Tests can
  * call {@link __resetMaterialManagerForTests} to start fresh between
  * cases. Call-site syntax is unchanged from a directly-exported instance.
  */
-let _materialManagerInstance: MaterialManager | undefined;
-
 export const materialManager: MaterialManager = new Proxy({} as MaterialManager, {
   get(_target, prop, _receiver) {
-    _materialManagerInstance ??= new MaterialManager();
-    const value = Reflect.get(_materialManagerInstance, prop, _materialManagerInstance);
-    return typeof value === 'function' ? value.bind(_materialManagerInstance) : value;
+    const active = activeMaterialManager();
+    const value = Reflect.get(active, prop, active);
+    return typeof value === 'function' ? value.bind(active) : value;
   },
   set(_target, prop, value, _receiver) {
-    _materialManagerInstance ??= new MaterialManager();
-    return Reflect.set(_materialManagerInstance, prop, value, _materialManagerInstance);
+    const active = activeMaterialManager();
+    return Reflect.set(active, prop, value, active);
   },
   has(_target, prop) {
-    _materialManagerInstance ??= new MaterialManager();
-    return prop in _materialManagerInstance;
+    return prop in activeMaterialManager();
   },
 });
 

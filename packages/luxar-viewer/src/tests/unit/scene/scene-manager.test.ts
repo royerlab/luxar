@@ -432,6 +432,8 @@ vi.mock('../../../scene/scene-manager/render-pipeline/renderer-setup', async () 
 // Import after mocks are set up
 import { SceneManager } from '../../../scene/scene-manager';
 import { loadScene as mockLoadScene } from '../../../data';
+import { SceneLoaderManager } from '../../../data/scene-loader-manager';
+import { attachSceneGraphIndex, sceneGraphIndexOf } from '../../../utils/scene-graph-index';
 import { materialManager } from '../../../rendering/material-manager';
 import { log } from '../../../utils/log';
 import { createWebGPURenderer as mockedCreateWebGPURenderer } from '../../../scene/scene-manager/render-pipeline/renderer-setup';
@@ -552,11 +554,6 @@ describe('SceneManager', () => {
           maxTextureSize: 2048,
           maxRenderbufferSize: 2048,
           pointSizeRange: [1, 1024],
-          readBackbufferPixels: async () => ({
-            pixels: new Uint8Array(0),
-            width: 0,
-            height: 0,
-          }),
         },
       });
 
@@ -702,8 +699,10 @@ describe('SceneManager', () => {
       await sceneManager.loadSceneData(testUrl);
 
       expect(mockShowLoadingIndicator).toHaveBeenCalled();
-      // The loader config carries the pre-node-load framing hook.
+      // The loader config carries the pre-node-load framing hook, and the
+      // loader's commits report to THIS scene manager's depth-sort coordinator.
       expect(mockLoadScene).toHaveBeenCalledWith(
+        SceneLoaderManager.getInstance(),
         testUrl,
         expect.objectContaining({ onSceneMetadata: expect.any(Function) })
       );
@@ -716,6 +715,23 @@ describe('SceneManager', () => {
 
       expect(sceneManager.warmBlendModePrograms()).toBe(completion);
       expect(blendWarmupMocks.warmScene).toHaveBeenCalledExactlyOnceWith(sceneManager.scene);
+    });
+
+    it("detaches the outgoing scene's path index when the next load clears it", async () => {
+      // The loader indexes its root; a dataset switch must stop maintaining
+      // the old tree (listeners on every node) rather than leave it to GC.
+      const oldRoot = new THREE.Group();
+      oldRoot.name = 'LuxarScene';
+      oldRoot.add(new THREE.Mesh());
+      attachSceneGraphIndex(oldRoot);
+      sceneManager.scene.add(oldRoot);
+      expect(sceneGraphIndexOf(oldRoot)).toBeDefined();
+
+      await sceneManager.loadSceneData('http://example.com/next.zarr');
+
+      expect(oldRoot.parent).toBeNull();
+      expect(sceneGraphIndexOf(oldRoot)).toBeUndefined();
+      expect(sceneGraphIndexOf(oldRoot.children[0])).toBeUndefined();
     });
 
     it('should clear existing scene before loading new one', async () => {
@@ -951,7 +967,11 @@ describe('SceneManager', () => {
     } {
       const atNodeLoad = { position: null as number[] | null, rootInScene: null as boolean | null };
       (mockLoadScene as any).mockImplementationOnce(
-        async (_src: string, cfg?: { onSceneMetadata?: (root: THREE.Group) => void }) => {
+        async (
+          _manager: unknown,
+          _src: string,
+          cfg?: { onSceneMetadata?: (root: THREE.Group) => void }
+        ) => {
           const T = await import('three');
           const group = new T.Group();
           group.name = 'LuxarScene';
@@ -964,6 +984,50 @@ describe('SceneManager', () => {
       );
       return { atNodeLoad };
     }
+
+    it("chains an embedder's onSceneMetadata after its own pre-node framing", async () => {
+      loadSceneRecordingNodeLoad({ positionBounds: { min: [0, 0, 0], max: [40, 40, 40] } });
+      const positionAtHook: number[][] = [];
+      const embedderHook = vi.fn((_root: THREE.Group) => {
+        positionAtHook.push(sceneManager.camera.position.toArray());
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr', {
+        onSceneMetadata: embedderHook,
+      });
+
+      expect(embedderHook).toHaveBeenCalledTimes(1);
+      expect((embedderHook.mock.calls[0][0] as THREE.Group).name).toBe('LuxarScene');
+      // The embedder sees the opening pose, as load-time decisions do.
+      expect(positionAtHook[0]).toEqual(sceneManager.camera.position.toArray());
+    });
+
+    it('resolves scene settings before metadata framing and node loading', async () => {
+      const { atNodeLoad } = loadSceneRecordingNodeLoad({
+        viewerConfig: { camera: { fov: 47 } },
+        positionBounds: { min: [0, 0, 0], max: [40, 40, 40] },
+      });
+      sceneManager.setFov(20);
+      const autoFrameCamera = vi.spyOn(
+        sceneManager as unknown as { autoFrameCamera: () => void },
+        'autoFrameCamera'
+      );
+      const beforeFrame = vi.fn((_root: THREE.Group) => {
+        sceneManager.setFov(47);
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr', undefined, {
+        applyViewerConfigFov: true,
+        beforeFrame,
+      });
+
+      expect(beforeFrame).toHaveBeenCalledOnce();
+      expect(beforeFrame.mock.invocationCallOrder[0]).toBeLessThan(
+        autoFrameCamera.mock.invocationCallOrder[0]
+      );
+      expect(atNodeLoad.position).toEqual(sceneManager.camera.position.toArray());
+      expect((sceneManager.camera as THREE.PerspectiveCamera).fov).toBe(47);
+    });
 
     it('places the AUTHORED opening camera before the scene nodes load', async () => {
       const { atNodeLoad } = loadSceneRecordingNodeLoad({
@@ -2038,9 +2102,11 @@ describe('SceneManager', () => {
       // via the sphere formula — not arbitrary positive values. Compute the
       // expectation from the same [-5,5] bounds and the camera's actual pose.
       const cam = sceneManager.camera.position;
+      const direction = sceneManager.camera.getWorldDirection(new THREE.Vector3());
       const expected = calculateClippingPlanesFromSphere(
         boundingBoxToSphere({ min: { x: -5, y: -5, z: -5 }, max: { x: 5, y: 5, z: 5 } }),
-        { x: cam.x, y: cam.y, z: cam.z }
+        { x: cam.x, y: cam.y, z: cam.z },
+        direction
       );
       expect(result.near).toBeCloseTo(expected.near, 4);
       expect(result.far).toBeCloseTo(expected.far, 4);

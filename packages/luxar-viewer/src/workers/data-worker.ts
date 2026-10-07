@@ -36,12 +36,6 @@ import { decodeLUT as decodeLUTImpl } from './data-worker/decode/lut';
 import { decodeBroadcasted as decodeBroadcastedImpl } from './data-worker/decode/broadcasted';
 import { decodeBloscBatch, warmCodecs } from './data-worker/decode/blosc';
 
-// Re-export the projection/effective-radius types that the loader needs.
-// Points projection runs on the main thread (WASM-accelerated, see
-// data/points/projection.ts), so the worker no longer exposes a Points
-// projection task — only Lines and GSplats (worker-offloaded for large data).
-import type { EffectiveRadiusConfig, ProjectionViewState } from './data-worker/types';
-export type { EffectiveRadiusConfig, ProjectionViewState };
 export type { WorkerInitResult };
 
 /**

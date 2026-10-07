@@ -16,6 +16,7 @@ import * as THREE from 'three';
 
 import { LODGroupRegistry, type LODGroupRegistryDeps } from '../../../scene/lod-group-registry';
 import type { ViewState } from '../../../data/data-loader-types';
+import { perfCounters } from '../../../profiling/perf-counters';
 
 const DIMENSIONS = [
   { name: 'X', unit: 'um', scale: 1 },
@@ -35,7 +36,10 @@ function viewAt(t: number): ViewState {
 
 type RequestReprocess = (paths: readonly string[]) => void;
 
-function makeRegistry(requestReprocess: RequestReprocess): LODGroupRegistry {
+function makeRegistry(
+  requestReprocess: RequestReprocess,
+  requestTick?: () => void
+): LODGroupRegistry {
   const camera = new THREE.Camera();
   camera.matrixWorldInverse.identity();
   camera.projectionMatrix.identity();
@@ -45,6 +49,7 @@ function makeRegistry(requestReprocess: RequestReprocess): LODGroupRegistry {
     getDisplayDims: () => [0, 1, 2],
     getCommittedViewState: () => viewAt(0),
     requestReprocess,
+    requestTick,
     isUpdateInProgress: () => false,
   };
   return new LODGroupRegistry(deps);
@@ -71,6 +76,32 @@ function registerLazyPart(reg: LODGroupRegistry, activate: () => Promise<void>) 
 }
 
 describe('LODGroupRegistry — partition part activation (B4)', () => {
+  it('idles between unanswered requests and backs off the next wake', () => {
+    vi.useFakeTimers();
+    try {
+      const requestReprocess = vi.fn<RequestReprocess>();
+      const requestTick = vi.fn();
+      const reg = makeRegistry(requestReprocess, requestTick);
+      registerLazyPart(reg, () => Promise.resolve());
+      reg.evaluatePerFrame();
+      expect(requestReprocess).toHaveBeenCalledOnce();
+      vi.advanceTimersByTime(1999);
+      expect(requestTick).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(requestTick).toHaveBeenCalledOnce();
+      reg.evaluatePerFrame();
+      expect(requestReprocess).toHaveBeenCalledTimes(2);
+      requestTick.mockClear();
+      vi.advanceTimersByTime(3999);
+      expect(requestTick).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(requestTick).toHaveBeenCalledOnce();
+      reg.clear();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('resyncs a part whose claiming pass was aborted while its activation ran', async () => {
     const requestReprocess = vi.fn<RequestReprocess>();
     const reg = makeRegistry(requestReprocess);
@@ -132,9 +163,12 @@ describe('LODGroupRegistry — partition part activation (B4)', () => {
     registerLazyPart(reg, activate);
     reg.evaluatePerFrame();
     requestReprocess.mockClear();
+    perfCounters.reset();
 
     await reg.activatePartitionParts(viewAt(0), new Set(['/p/part_0']));
     expect(activate).toHaveBeenCalledOnce();
+    // A failed activation activated nothing.
+    expect(perfCounters.get('partition.partsActivated')).toBe(0);
     // No per-frame retry loop against a failing store.
     for (let i = 0; i < 3; i++) reg.evaluatePerFrame();
     expect(requestReprocess).not.toHaveBeenCalled();
@@ -145,6 +179,7 @@ describe('LODGroupRegistry — partition part activation (B4)', () => {
     expect(requestReprocess).toHaveBeenCalledWith(['/p/part_0']);
     await reg.activatePartitionParts(viewAt(0), new Set(['/p/part_0']));
     expect(activate).toHaveBeenCalledTimes(2);
+    expect(perfCounters.get('partition.partsActivated')).toBe(1);
   });
 
   it('an activation settling after the registry was cleared asks for nothing', async () => {
@@ -175,5 +210,71 @@ describe('LODGroupRegistry — partition part activation (B4)', () => {
 
     // The old dataset's part must not resync a path of the new one.
     expect(requestReprocess).not.toHaveBeenCalled();
+  });
+
+  it('a pass before the first frame activates no deferred part (frustum unknown yet)', async () => {
+    // Deferred at load = outside the padded frustum (or the slice). A view pass
+    // reaching `activatePartitionParts` before any `evaluatePerFrame` (the
+    // post-commit sweep, playback's next-slice warm) must not read a part's
+    // never-evaluated frustum state as "in view" and activate every one of them.
+    const activate = vi.fn(() => Promise.resolve());
+    const reg = makeRegistry(vi.fn<RequestReprocess>());
+    registerLazyPart(reg, activate);
+
+    await expect(reg.activatePartitionParts(viewAt(0))).resolves.toEqual([]);
+    expect(activate).not.toHaveBeenCalled();
+
+    // Once a frame has evaluated it in view, the same pass activates it.
+    reg.evaluatePerFrame();
+    await expect(reg.activatePartitionParts(viewAt(0))).resolves.toEqual(['/p/part_0']);
+    expect(activate).toHaveBeenCalledOnce();
+  });
+
+  it('unregisterSubtree drops every lod group and partition at or under a path', () => {
+    const reg = makeRegistry(vi.fn<RequestReprocess>());
+    registerLazyPart(reg, () => Promise.resolve());
+    const lodEntry = (path: string) => ({
+      path,
+      groupObject: new THREE.Group(),
+      children: [
+        {
+          object: new THREE.Group(),
+          coverageFraction: 0,
+          positionBounds: { min: [0, 0, 0, 0], max: [1, 1, 1, 0] },
+        },
+      ],
+      selectorMode: 'auto' as const,
+      defaultLevel: 0,
+      activeChildIndex: 0,
+    });
+    reg.register(lodEntry('/p/part_0/lod'));
+    reg.register(lodEntry('/p/part_00'));
+    reg.register(lodEntry('/q'));
+
+    reg.unregisterSubtree('/p/part_0');
+    expect(reg.list().map((entry) => entry.path)).toEqual(['/p/part_00', '/q']);
+
+    reg.unregisterSubtree('/p');
+    expect(reg.list().map((entry) => entry.path)).toEqual(['/q']);
+    // The partition at '/p' went too: nothing is left to activate.
+    return expect(reg.activatePartitionParts(viewAt(0))).resolves.toEqual([]);
+  });
+
+  it('does not keep the loop ticking for a resync nobody can run (no requestReprocess)', () => {
+    const requestTick = vi.fn();
+    const camera = new THREE.Camera();
+    const reg = new LODGroupRegistry({
+      getCamera: () => camera,
+      getViewportSize: () => ({ width: 800, height: 600 }),
+      getDisplayDims: () => [0, 1, 2],
+      getCommittedViewState: () => viewAt(0),
+      isUpdateInProgress: () => false,
+      requestTick,
+    } as LODGroupRegistryDeps);
+    registerLazyPart(reg, () => Promise.resolve());
+    for (let frame = 0; frame < 5; frame++) reg.evaluatePerFrame();
+    requestTick.mockClear();
+    for (let frame = 0; frame < 5; frame++) reg.evaluatePerFrame();
+    expect(requestTick).not.toHaveBeenCalled();
   });
 });

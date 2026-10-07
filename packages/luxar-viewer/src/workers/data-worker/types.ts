@@ -1,13 +1,6 @@
 /**
  * Worker-side types passed across the Comlink RPC boundary.
- *
- * `EffectiveRadiusConfig` is sourced from the canonical definition
- * in `types/points.ts` so worker and main-thread paths can't drift.
  */
-
-import type { EffectiveRadiusConfig } from '../../types/points';
-
-export type { EffectiveRadiusConfig };
 
 /**
  * View state for projection (subset of main thread ViewState).

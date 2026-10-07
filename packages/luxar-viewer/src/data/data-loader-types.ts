@@ -39,7 +39,9 @@ export interface LoaderConfig {
    * metadata (`viewer_config`, `position_bounds`, scene dimensions) is on
    * `userData` — BEFORE any node loads, and before the root is in the scene.
    * The scene manager frames the opening camera here, so load-time decisions
-   * that read the view (partition part gating) see the pose the scene opens on.
+   * that read the view (partition part gating) see the pose the scene opens on;
+   * an embedder's own hook passed through `LuxarAppOptions.loaderConfig` runs
+   * right after that framing.
    */
   onSceneMetadata?: (root: Group) => void;
 

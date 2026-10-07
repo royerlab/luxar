@@ -19,7 +19,9 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import * as zarr from '../../../data/zarr';
 import { setWorkerCodecsEnabled } from '../../../data/codecs/worker-blosc';
 import { hasUrlFlag, URL_PARAM_KEYS } from '../../../config/url-params';
-import { disposeWorkerPool, getWorkerPool, warmWorkerCodecs } from '../../../workers/worker-pool';
+import { disposeWorkerPool, getWorkerPool } from '../../../workers/worker-pool';
+import { fakeWorkerInstance, poolWithWorkers } from '../../helpers/fake-worker';
+import { perfCounters } from '../../../profiling/perf-counters';
 import {
   BloscDecodeDispatcher,
   MAX_BATCH_BYTES,
@@ -68,22 +70,19 @@ function makeFakeWorker() {
       return out;
     }),
   };
-  return { instance: { worker: { terminate: vi.fn() }, api, activeQueries: 0 }, calls, api };
+  return { instance: fakeWorkerInstance(api), calls, api };
 }
 
-function injectWorkers(instances: unknown[]): void {
-  const pool = getWorkerPool() as unknown as {
-    workers: unknown[];
-    initPromise: Promise<void>;
-  };
-  pool.workers = instances;
-  pool.initPromise = Promise.resolve();
+function injectWorkers(instances: Array<{ activeQueries: number }>): void {
+  poolWithWorkers(instances, getWorkerPool());
 }
 
 /** Inject workers and let their codec warm-up finish (offload needs a warm worker). */
-async function injectWarmWorkers(instances: { api: { warmCodecs: () => Promise<unknown> } }[]) {
+async function injectWarmWorkers(
+  instances: Array<{ api: { warmCodecs: () => Promise<unknown> }; activeQueries: number }>
+) {
   injectWorkers(instances);
-  warmWorkerCodecs();
+  getWorkerPool().ensureCodecsWarm();
   await vi.waitFor(() => {
     for (const w of instances) expect(w.api.warmCodecs).toHaveBeenCalled();
   });
@@ -174,16 +173,24 @@ describe('blosc decode offload to the data-worker pool', () => {
     expect(data.length).toBe(5120 * 3);
   });
 
-  it('a pool-wide abort does not abandon an in-flight decode', async () => {
+  it('counts worker, main-thread and fallback decodes, and the fused delta', async () => {
     const fake = makeFakeWorker();
     await injectWarmWorkers([fake.instance]);
-    const controller = new AbortController();
-    getWorkerPool().setAbortSignal(controller.signal);
-    const pending = readGolden('v3_u16_zstd_shuffle');
-    controller.abort();
-    await pending;
-    expect(mainThreadDecodes).toBe(0);
-    expect(fake.api.decodeBloscBatch).toHaveBeenCalledTimes(1);
+    perfCounters.reset();
+
+    await readGolden('v3_u16_zstd_shuffle'); // one chunk, offloaded
+    // One chunk whose luxar_delta sits right under the blosc: the worker undoes both.
+    await readGolden('v3_u16_delta_zstd_shuffle');
+    fake.api.decodeBloscBatch.mockRejectedValueOnce(new Error('worker crashed'));
+    await readGolden('v3_u16_zstd_shuffle'); // the worker fails: decoded on the main thread
+    await readGolden('v2_u16_zstd_bitshuffle'); // below the offload floor: main thread
+
+    expect(perfCounters.get('codec.blosc.worker')).toBe(2);
+    expect(perfCounters.get('codec.delta.fused')).toBe(1);
+    expect(perfCounters.get('codec.blosc.fallback')).toBe(1);
+    // The fallback is a main-thread decode too.
+    expect(perfCounters.get('codec.blosc.main')).toBe(2);
+    expect(mainThreadDecodes).toBe(2);
   });
 
   it('the first big read decodes on the main thread while ONE worker warms', async () => {
@@ -203,7 +210,7 @@ describe('blosc decode offload to the data-worker pool', () => {
     expect(other.api.warmCodecs).not.toHaveBeenCalled();
     // A warm-up is not a query: the warming worker still reads as idle.
     expect(fake.instance.activeQueries).toBe(0);
-    expect(getWorkerPool().getIdleWorkerCount()).toBe(2);
+    expect(getWorkerPool().getQueueDepth()).toBe(0);
 
     finishWarm();
     await vi.waitFor(() => expect(other.api.warmCodecs).toHaveBeenCalledTimes(1));

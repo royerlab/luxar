@@ -27,6 +27,7 @@ import { materialManager } from '../../../../rendering/material-manager';
 import { MESH_DEFAULTS } from '../../../../rendering/materials/mesh/appearance';
 import type { MeshDataLoader, MeshMetadata } from '../../../../types/mesh';
 import { applyEffectiveAttrs } from '../../../../data/scene-loader/view-state/effective-attrs';
+import { SceneNodeIndex } from '../../../../data/scene-loader/view-state/scene-node-index';
 import type { SceneNode } from '../../../../data/data-loader-types';
 import { log } from '../../../../utils/log';
 import type { PickingSystem } from '../../../../rendering/picking/picking-system';
@@ -368,7 +369,10 @@ describe('createMeshMaterial — the §6.3 opaque default survives the composed 
       hasSpatialIndex: false,
       children: [meshLeaf],
     };
-    const composed = applyEffectiveAttrs(root, meshLeaf) as unknown as MeshMetadata;
+    const composed = applyEffectiveAttrs(
+      new SceneNodeIndex(root),
+      meshLeaf
+    ) as unknown as MeshMetadata;
     expect(createMeshMaterial(composed, 'smooth').userData.blendingMode).toBe('opaque');
   });
 
@@ -393,7 +397,10 @@ describe('createMeshMaterial — the §6.3 opaque default survives the composed 
       hasSpatialIndex: false,
       children: [group],
     };
-    const composed = applyEffectiveAttrs(root, meshLeaf) as unknown as MeshMetadata;
+    const composed = applyEffectiveAttrs(
+      new SceneNodeIndex(root),
+      meshLeaf
+    ) as unknown as MeshMetadata;
     expect(createMeshMaterial(composed, 'smooth').userData.blendingMode).toBe('additive');
   });
 });

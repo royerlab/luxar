@@ -16,8 +16,15 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from luxar.cli import _control_contract as contract
 from luxar.control import ControlError, Viewer
-from luxar.control.viewer import MAX_BUFFERED_EVENTS, _connect, _with_query
+from luxar.control import viewer as controller
+from luxar.control.viewer import (
+    MAX_BUFFERED_EVENTS,
+    VIEWER_NOT_READY_CODE,
+    _connect,
+    _with_query,
+)
 
 
 class FakeSocket:
@@ -218,6 +225,21 @@ class TestErrors:
         with pytest.raises(ControlError) as caught:
             viewer.call("getLayers")
         assert caught.value.no_viewer_attached is True
+        assert caught.value.viewer_not_ready is False
+
+    def test_viewer_not_ready_is_distinguishable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert VIEWER_NOT_READY_CODE == contract.VIEWER_NOT_READY
+        socket = FakeSocket(
+            [{"error": {"code": contract.VIEWER_NOT_READY, "message": "initializing"}}]
+        )
+        viewer = make_viewer(monkeypatch, socket)
+        with pytest.raises(ControlError) as caught:
+            viewer.get_dimensions()
+        assert caught.value.code == contract.VIEWER_NOT_READY
+        assert caught.value.viewer_not_ready is True
+        assert caught.value.no_viewer_attached is False
 
     def test_an_ordinary_failure_is_not_flagged_as_no_viewer(
         self, monkeypatch: pytest.MonkeyPatch
@@ -227,6 +249,7 @@ class TestErrors:
         with pytest.raises(ControlError) as caught:
             viewer.call("getLayers")
         assert caught.value.no_viewer_attached is False
+        assert caught.value.viewer_not_ready is False
 
 
 class TestConnection:
@@ -314,6 +337,75 @@ class TestNamedMethods:
 
 
 class TestEvents:
+    def test_attachment_event_name_matches_hub_contract(self) -> None:
+        assert controller._VIEWER_ATTACHED_EVENT == contract.VIEWER_ATTACHED_EVENT
+
+    def test_attachment_during_a_call_renews_and_remains_readable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        socket = FakeSocket(
+            [
+                {"result": True, "id": 1},
+                {"method": "event", "params": ["viewer-attached", None], "id": None},
+                {"result": "layers", "id": 2},
+            ]
+        )
+        socket.echo_id = False
+        viewer = make_viewer(monkeypatch, socket)
+        viewer.subscribe("dimensions-changed")
+
+        assert viewer.call("getLayers") == "layers"
+        assert socket.last() == {
+            "jsonrpc": "2.0",
+            "method": "subscribe",
+            "params": ["dimensions-changed"],
+        }
+        assert viewer.recv_event() == ("viewer-attached", None)
+        assert len(socket.sent) == 3
+
+    def test_attachment_renews_only_current_subscriptions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        socket = FakeSocket([{"result": True}, {"result": True}, {"result": True}])
+        viewer = make_viewer(monkeypatch, socket)
+        viewer.subscribe("camera-changed")
+        viewer.subscribe("dimensions-changed")
+        viewer.unsubscribe("camera-changed")
+        socket.replies.append(
+            {"method": "event", "params": ["viewer-attached", None], "id": None}
+        )
+        assert viewer.recv_event() == ("viewer-attached", None)
+        assert socket.last() == {
+            "jsonrpc": "2.0",
+            "method": "subscribe",
+            "params": ["dimensions-changed"],
+        }
+
+    def test_failed_unsubscribe_is_not_renewed_on_attachment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        socket = FakeSocket(
+            [
+                {"result": True},
+                {"error": {"code": -32001, "message": "no viewer"}},
+            ]
+        )
+        viewer = make_viewer(monkeypatch, socket)
+        viewer.subscribe("camera-changed")
+
+        with pytest.raises(ControlError) as caught:
+            viewer.unsubscribe("camera-changed")
+        assert caught.value.no_viewer_attached
+
+        socket.replies.append(
+            {"method": "event", "params": ["viewer-attached", None], "id": None}
+        )
+        assert viewer.recv_event() == ("viewer-attached", None)
+        assert [frame["method"] for frame in socket.sent] == [
+            "subscribe",
+            "unsubscribe",
+        ]
+
     def test_recv_event_returns_a_notification(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -462,7 +462,7 @@ export const TRANSMISSION_ALPHA_PIN_LINE = 'material.transmissionAlpha = 1.0;';
 const TRANSMISSION_INCLUDE = '#include <transmission_fragment>';
 
 /** Fixed program-cache key for the WebGL wrapper (three's default is `onBeforeCompile.toString()`). */
-export const PHYSICAL_PROGRAM_CACHE_KEY = 'luxar-physical:transmitted-alpha-pinned';
+export const PHYSICAL_PROGRAM_CACHE_KEY = 'luxar-physical:transmitted-alpha-pinned:edge-apodized';
 
 let warnedChunkDrift = false;
 
@@ -507,11 +507,6 @@ export function pinTransmittedAlphaGlsl(fragmentShader: string, transmissionChun
  */
 export function physicalUpdateRefractData(host: PhysicalMeshHost, refractData: boolean): void {
   applyPhysicalCompositing(host, { ...readInputs(host), refractData: refractData === true });
-}
-
-/** The material's current `refract_data` decision input. */
-export function physicalGetRefractData(host: PhysicalMeshHost): boolean {
-  return readInputs(host).refractData;
 }
 
 /**

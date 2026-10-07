@@ -85,6 +85,7 @@ The public entry point is :func:`restamp_lod_store`; the CLI wrapper is
 
 from __future__ import annotations
 
+import hashlib
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -108,6 +109,7 @@ from ..core.group.lod.group import (
     partitioned_coverage_fractions,
 )
 from ..typing_utils.constants import (
+    CHUNK_PACKS_GROUP,
     DERIVED_LOD_SELECTOR,
     ENVIRONMENT_GROUP,
     LOD_SELECTORS,
@@ -124,6 +126,7 @@ from ..typing_utils.constants import (
 # named `pipeline` would go uncounted. Negligible, and not worth forking the
 # helper; a dropped child that carries a `coverage_fraction` is refused below.)
 from ._compiler.finalize.amplitude_window import _child_nodes, _lod_children
+from .chunk_pack import _small_node, is_chunk_packs_sidecar, pack_bytes
 from .optimize import _is_luxar_store, _restamp_content_hash
 
 __all__ = [
@@ -952,6 +955,26 @@ def _roll_back(
             )
 
 
+def _packs_match_chunks(root: "zarr.Group", sidecar: "zarr.Group") -> bool:
+    """Check every indexed copy against the chunks it would pack today."""
+    max_bytes = sidecar.attrs.get("max_bytes")
+    if not isinstance(max_bytes, int) or max_bytes <= 0:
+        return False
+    for pack in sidecar.attrs["packs"]:
+        if not isinstance(pack, dict):
+            return False
+        prefix, digest = pack.get("prefix"), pack.get("sha256")
+        if not isinstance(prefix, str) or not isinstance(digest, str):
+            return False
+        try:
+            objects = _small_node(root[prefix.rstrip("/")], max_bytes)
+        except KeyError:
+            return False
+        if objects is None or hashlib.sha256(pack_bytes(objects)).hexdigest() != digest:
+            return False
+    return True
+
+
 def _apply(
     root: "zarr.Group",
     plans: List[_PlannedRestamp],
@@ -994,6 +1017,7 @@ def _apply(
             )
         # One attr read per group, before the stamp overwrites them, so a
         # failure restores the store's OWN digests instead of recomputing them.
+        old_content_hash = root.attrs.get("content_hash")
         _snapshot_content_hashes(root, undo, deep=is_scene)
         report.content_hash = _restamp_content_hash(root)
         environment = _baked_environment_group(root, cache)
@@ -1005,6 +1029,26 @@ def _apply(
                 report.content_hash,
                 undo,
             )
+        if report.content_hash is not None and CHUNK_PACKS_GROUP in root:
+            sidecar = _handle(root, CHUNK_PACKS_GROUP, cache)
+            if is_chunk_packs_sidecar(sidecar):
+                packs = sidecar.attrs["packs"]
+                if (
+                    old_content_hash is not None
+                    and sidecar.attrs["scene_content_hash"] == old_content_hash
+                    and _packs_match_chunks(root, sidecar)
+                ):
+                    _write_attr(
+                        sidecar,
+                        CHUNK_PACKS_GROUP,
+                        "scene_content_hash",
+                        report.content_hash,
+                        undo,
+                    )
+                else:
+                    aprint(
+                        f"  ℹ️  {len(packs)} chunk packs left unbound: binding or copies do not match the chunks."
+                    )
         report.content_hash_status = (
             HASH_RESTAMPED if report.content_hash is not None else HASH_UNSTAMPABLE
         )
@@ -1181,7 +1225,9 @@ def restamp_lod_store(
     move: the ladders are still written, but the report comes back
     :data:`HASH_UNSTAMPABLE` and therefore NOT :attr:`~RestampReport.clean`, since
     a warm viewer cache would keep serving the old ladder until the store is
-    republished under a new URL prefix.
+    republished under a new URL prefix. Existing chunk packs are rebound only
+    when every packed copy still matches its plain chunk; stale packs keep
+    their old binding and are ignored by the viewer.
 
     All-or-nothing on the write side. Every group is classified in a read-only
     planning walk first; if any write then fails, every attr already written is

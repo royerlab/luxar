@@ -47,9 +47,13 @@ uniform selects the buffer the shaders read. Consequences (mirroring the gsplat 
 - **Texture lifetime = geometry lifetime.** `attachPointStorage` registers a
   geometry-`dispose` listener; every pool/fallback dispose site frees the
   texture with its geometry.
-- **TSL texture-node lifecycle.** The TSL `texture()` node is factory-time
-  bound, so `updatePointTexture` rebuilds the graph on an identity change
-  (exact mirror of the colormap-texture lifecycle) and no-ops otherwise.
+- **TSL texture-node lifecycle.** `updatePointTexture` swaps in a fresh
+  `texture()` leaf and re-runs `rebuildGraph` on an identity change (exact
+  mirror of the colormap-texture lifecycle) and no-ops otherwise. The graph
+  itself is SHARED by every point material of one configuration
+  (`../_shared/shared-graph-tsl.ts`), so a same-width texture only changes the
+  value the draw forwards; a different width (baked into the addressing) picks
+  another shared graph.
 - **Baked texture width (no per-vertex `textureSize`).** The element-texture
   width is a per-layout session constant (`getElementTextureWidth`, capped at
   4096 on every device), so the GLSL material stamps it as the
@@ -122,7 +126,7 @@ only the viewport-derived ones.
   (mesh joined with #1431; it evaluates the same helper per FRAGMENT, since a
   triangle spans depth — see the stage table in `../_shared/README.md`).
 
-`MaterialManager.updateCameraParams(resolution, isOrtho, nearCull, pixelRatio)`
+`MaterialManager.updateCameraParams(resolution, nearCull, pixelRatio)`
 broadcasts to every registered material via the `CameraAwareMaterial`
 interface, so a single resize call updates every Point material in the scene.
 

@@ -8,6 +8,7 @@ import {
 } from '../../../cache/multi-level-caching-store/opfs-read-gate';
 import { OPFS_NAMESPACE_DIR } from '../../../cache/multi-level-caching-store/opfs-store/opfs-root';
 import { createFakeOpfsRoot } from '../../mocks/opfs.mock';
+import { OPFS_ENCODING_VERSION } from '../../../cache/types';
 import { perfCounters } from '../../../profiling/perf-counters';
 
 describe('OPFSStore', () => {
@@ -155,7 +156,7 @@ describe('OPFSStore', () => {
           totalSize: 1000,
           orderCounter: 2,
           contentHash: 'abc123',
-          encodingVersion: 2,
+          encodingVersion: OPFS_ENCODING_VERSION,
         })
       );
 
@@ -331,6 +332,50 @@ describe('OPFSStore', () => {
         releaseSlots();
         await Promise.all(blockers);
         warnSpy.mockRestore();
+      }
+    });
+
+    it('bounds a hung file read lease and removes an aborted queued read', async () => {
+      await store.set('slow-file', new Uint8Array([1]));
+      const originalLimit = config.cache.opfsReadConcurrency;
+      const originalTimeout = config.cache.opfsOperationTimeoutMs;
+      config.cache.opfsReadConcurrency = 1;
+      config.cache.opfsOperationTimeoutMs = 200;
+      let releaseFile!: () => void;
+      const fileBlocked = new Promise<void>((resolve) => {
+        releaseFile = resolve;
+      });
+      const originalGetFileHandle = mockFS.datasetDir.getFileHandle.bind(mockFS.datasetDir);
+      mockFS.datasetDir.getFileHandle = async (...args: unknown[]) => {
+        const handle = await originalGetFileHandle(...args);
+        const originalGetFile = handle.getFile.bind(handle);
+        return {
+          ...handle,
+          async getFile() {
+            await fileBlocked;
+            return originalGetFile();
+          },
+        };
+      };
+      try {
+        const timedOut = store.get('slow-file');
+        await vi.waitFor(() => expect(getOpfsReadGateStats().active).toBe(1));
+        const controller = new AbortController();
+        const queued = store.get('slow-file', { signal: controller.signal });
+        await vi.waitFor(() => expect(getOpfsReadGateStats().queued).toBe(1));
+        controller.abort();
+        expect(await queued).toBeUndefined();
+        expect(getOpfsReadGateStats()).toEqual({ active: 1, queued: 0 });
+
+        expect(await timedOut).toBeUndefined();
+        expect(getOpfsReadGateStats()).toEqual({ active: 1, queued: 0 });
+        await vi.waitFor(() => expect(getOpfsReadGateStats().active).toBe(0));
+        releaseFile();
+        await vi.waitFor(() => expect(getOpfsReadGateStats().active).toBe(0));
+      } finally {
+        releaseFile();
+        config.cache.opfsReadConcurrency = originalLimit;
+        config.cache.opfsOperationTimeoutMs = originalTimeout;
       }
     });
 
@@ -1038,8 +1083,10 @@ describe('OPFSStore', () => {
       // the field-shape assertions behind `if (metaStr)` — meaning a
       // regression that produced an empty/falsy string would silently skip
       // the inner asserts. Drop the if and force unconditional shape checks.
-      await store.set('key1', new Uint8Array(1000));
+      // Hash first, as validation does: an entry written while no hash was known
+      // is named under no hash tag, so adopting a hash retires it.
       store.setContentHash('test-hash');
+      await store.set('key1', new Uint8Array(1000));
 
       await store.dispose();
 
@@ -1437,7 +1484,7 @@ describe('OPFSStore', () => {
           totalSize: -999,
           orderCounter: 1,
           contentHash: 'abc',
-          encodingVersion: 2,
+          encodingVersion: OPFS_ENCODING_VERSION,
         })
       );
       const recoveredStore = new OPFSStore(

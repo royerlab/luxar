@@ -38,10 +38,9 @@ import type {
   WebGLConfig,
   WebGLContextAttributes,
   WebGLRendererConfig,
-  WebGLRenderTargetConfig,
 } from './sections/webgl/types';
-/** WebGL renderer, context-attributes, and render-target configuration types. */
-export type { WebGLConfig, WebGLContextAttributes, WebGLRendererConfig, WebGLRenderTargetConfig };
+/** WebGL renderer and context-attributes configuration types. */
+export type { WebGLConfig, WebGLContextAttributes, WebGLRendererConfig };
 
 import type { InputConfig } from './sections/input/types';
 /** Input (keyboard/mouse) configuration type. */
@@ -70,9 +69,9 @@ import type {
 /** Rendering-controls configuration and per-scene rendering-settings types. */
 export type { RenderingControlsConfig, RenderingSettings };
 
-import type { DebugConsoleConfig, UIComponentsConfig, UIConfig } from './sections/ui/types';
+import type { DebugConsoleConfig, UIConfig } from './sections/ui/types';
 /** UI, UI-components, and debug-console configuration types. */
-export type { DebugConsoleConfig, UIComponentsConfig, UIConfig };
+export type { DebugConsoleConfig, UIConfig };
 
 import type {
   DataLoadingConfig,

@@ -14,7 +14,7 @@
 import type * as THREE from 'three';
 import * as zarr from '../../zarr';
 import { log, LogEmoji, Modules } from '../../../utils/log';
-import { LoaderError, classifyLoaderError } from './load-leaf-error-dispatch';
+import { LoaderError, classifyLoaderError, recordFailedPass } from './load-leaf-error-dispatch';
 import {
   createGSplatsLoader as createGSplatsLoaderHelper,
   createProgressiveGSplatsLoader as createProgressiveGSplatsLoaderHelper,
@@ -201,7 +201,7 @@ export async function loadGSplatsNodeExpensive(
   } catch (error) {
     // Expected dispose-crossing — see the load-points-node.ts twin.
     if (!ctx.isDatasetLive()) return;
-    ctx.registry.recordFailure(node.path, error as Error);
+    recordFailedPass(ctx.registry, node.path, loader, error);
     throw new LoaderError(classifyLoaderError(error), node.path, error);
   }
 }
@@ -239,7 +239,7 @@ export async function loadGSplatsNode(
     // Registering before the await let a concurrent updateView sweep call
     // loader.updateView while the initial load was mid-flight on the same
     // instance — interleaving the shared accumulator buffers and clobbering
-    // the per-update _activeSignal slot (routine during deferred-group
+    // the per-update signal slot (routine during deferred-group
     // activation, where zoom-triggered loads overlap slice scrubs). Nothing
     // during the load resolves the loader through the registry maps (commit
     // helpers use rootGroup.getObjectByName), and load-scene's post-load
@@ -247,7 +247,10 @@ export async function loadGSplatsNode(
     // is invisible to them. Registering on FAILURE too is deliberate:
     // retryFailedLoader resolves eager loaders through these maps, so a
     // failed initial load must stay retryable.
-    ctx.registry.registerGSplatsLoader(node.path, loader);
+    // A dataset switched away during the load gets nothing registered, as in
+    // the register-only branch above: the registry outlives the dataset.
+    if (ctx.isDatasetLive()) ctx.registry.registerGSplatsLoader(node.path, loader);
+    else loader.dispose();
   }
   return placeholder;
 }

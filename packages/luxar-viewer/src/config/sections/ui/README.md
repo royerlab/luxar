@@ -1,6 +1,6 @@
 # ui
 
-UI configuration slice. Owns z-index layering for overlays, timing constants for transient UI (error auto-dismiss, help-close debounce), loading-spinner geometry, the debug-console panel/style settings, the scale-bar overlay, and per-component border-radius/padding tokens for the dataset browser, debug console, rendering-controls panel, and data monitor.
+UI configuration slice. Owns the inline z-index of the panels that set one, timing constants for transient UI (error auto-dismiss, help-close debounce), the debug console's drag-resize limits, and the scale-bar overlay.
 
 Conforms to the section-trio pattern documented in [../../README.md](../../README.md): `data.ts` exports the literal and `types.ts` defines the interface. This section has no `validate.ts` — its values are unconstrained UI tokens and are not invoked by the central dispatcher.
 
@@ -8,10 +8,10 @@ Styling beyond these numeric tokens lives in CSS variables and classes under `sr
 
 ## Contents
 
-- `data.ts` — `uiConfig: UIConfig`. Groups: `zIndex` (base 100–199, mid 1000–1999, top 2000+), `timings` (`errorAutoDismissMs`, `helpClickDelayMs`), `spinner` (`size`, `borderWidth`), `debugConsole` (panel size/limits, resize border width, style colors/blur/shadow), `scaleBar` (`targetWidthPx`, `position`), and `components` (per-component `borderRadius`/`padding` tokens for `datasetBrowser`, `debugConsole`, `renderingControls`, `dataMonitor`).
-- `types.ts` — `UIConfig` interface plus the nested `DebugConsoleConfig` and `UIComponentsConfig` interfaces. `scaleBar.position` is a `'bottom-left' | 'bottom-right'` union.
+- `data.ts` — `uiConfig: UIConfig`. Groups: `zIndex` (`renderingControls`, `recordingPanel`, `layersPanel` — the left-docked panels, below the control rail — and `statsMonitor`; every other layer is stacked by CSS through the theme's `--luxar-z-*` scale), `timings` (`errorAutoDismissMs`, `helpClickDelayMs`), `debugConsole` (`panel` min/max width and height for drag-resizing, `resize.borderWidth`; its default size, position and look live in `debug-console.css`), and `scaleBar` (`targetWidthPx`, `position`).
+- `types.ts` — `UIConfig` interface plus the nested `DebugConsoleConfig` interface. `scaleBar.position` is a `'bottom-left' | 'bottom-right'` union.
 
 ## Public API
 
 - `uiConfig` — re-exported through `../../index.ts` into `AppConfig.ui`.
-- `UIConfig`, `DebugConsoleConfig`, `UIComponentsConfig` — re-exported through `../../types.ts`.
+- `UIConfig`, `DebugConsoleConfig` — re-exported through `../../types.ts`.

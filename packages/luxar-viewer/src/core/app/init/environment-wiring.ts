@@ -8,7 +8,9 @@
  * - a geometry commit (`eventBus 'geometry-committed'`, the same moment the pick buffer
  *   is invalidated),
  * - a slice change (`sceneDimsManager` listener),
- * - an appearance change (`window 'luxar-layers-changed'`),
+ * - a Layers-panel appearance edit (`wireEnvironmentToLayers`: the panel's
+ *   `LayerStateManager.onChange`, appearance changes only — wired by the
+ *   init pipeline once the panel exists),
  *
  * and re-captured on the next frame after a short debounce, once the loader has settled
  * (same predicate the adaptive-DPR manager reads). Camera motion is deliberately NOT a
@@ -24,6 +26,7 @@
 
 import type { SceneManager } from '../../../scene/scene-manager';
 import type { AnimationController } from '../../../scene/animation/animation-controller';
+import type { LayerStateManager } from '../../../ui/layers/layer-state';
 import { sceneDimsManager } from '../../../scene/scene-dims-manager';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import { eventBus } from '../../../utils/cross-layer/event-bus';
@@ -34,6 +37,7 @@ import { parseProbeSpec } from '../../../rendering/environment/probe';
 import { downloadBlob } from '../../../ui/recording-panel/screenshot-exporter';
 import type { LuxarAppOptions } from '../options';
 import { buildInfo } from '../../../config/build-info';
+import { isDataWorkerPoolInitializationPending } from '../../../workers/worker-pool';
 
 /** What the wiring needs from the app. */
 export interface EnvironmentWiringDeps {
@@ -54,7 +58,11 @@ export const BAKE_SETTLED_FRAMES = 30;
 
 export function wireSceneEnvironment(deps: EnvironmentWiringDeps): void {
   const { sceneManager, animationController, events, options, isSettled } = deps;
-  sceneManager.attachEnvironmentRuntime(isSettled);
+
+  // Keep the runtime available for store-relative HDRI URLs and redraws from
+  // init. Only a live scene capture waits for the worker pool (#3021).
+  const captureReady = (): boolean => !isDataWorkerPoolInitializationPending();
+  sceneManager.attachEnvironmentRuntime(isSettled, captureReady);
 
   // `pre-render`: a capture this frame sees the frame's final view state
   // (camera writers and view callbacks, including a dimension step, have run).
@@ -67,21 +75,58 @@ export function wireSceneEnvironment(deps: EnvironmentWiringDeps): void {
   events.add(() => animationController.removePerFrameCallback('environment-capture'));
 
   const markStale = (): void => sceneManager.environment?.markStale();
-  events.add(eventBus.on('geometry-committed', markStale));
+  const readyId = 'environment-capture-ready';
+  const onCommit = (): void => {
+    markStale();
+    if (captureReady() && isSettled()) return;
+    // A commit means a load is in progress. Keep ticking until the pool and
+    // loader settle so the room can be replaced even if the viewer idled.
+    animationController.addPerFrameCallback(
+      readyId,
+      () => {
+        if (!captureReady() || !isSettled()) return false;
+        animationController.removePerFrameCallback(readyId);
+        return sceneManager.environment?.tick() ?? false;
+      },
+      { continuous: true, phase: 'pre-render' }
+    );
+  };
+  events.add(eventBus.on('geometry-committed', onCommit));
+  events.add(() => animationController.removePerFrameCallback(readyId));
   const markStaleOnSliceChange = (changed: boolean): void => {
     if (changed) markStale();
   };
   sceneDimsManager.addListener(markStaleOnSliceChange);
   events.add(() => sceneDimsManager.removeListener(markStaleOnSliceChange));
-  window.addEventListener('luxar-layers-changed', markStale);
-  events.add(() => window.removeEventListener('luxar-layers-changed', markStale));
 
-  if (options.bakeEnvironment) scheduleBake(deps, options.bakeEnvironment);
+  if (options.bakeEnvironment) scheduleBake(deps, options.bakeEnvironment, captureReady);
+}
+
+/**
+ * Mark the scene environment stale on every Layers-panel edit that changes how a
+ * layer looks (colour, window, opacity, visibility, mesh knobs, a reset), skipping
+ * changes that render nothing (the selection, a sound row's gain). The panel's own
+ * state is the one place every edit passes through; the window `luxar-layers-changed` event fires once per load and
+ * also re-learns the adaptive DPR, so it is the wrong signal for a slider drag.
+ * `markStale` debounces, so a drag costs one capture once it settles.
+ */
+export function wireEnvironmentToLayers(
+  sceneManager: Pick<SceneManager, 'environment'>,
+  layerState: Pick<LayerStateManager, 'onChange'>,
+  events: EventGroup
+): void {
+  const unsubscribe = layerState.onChange(({ appearance }) => {
+    if (appearance) sceneManager.environment?.markStale();
+  });
+  events.add(() => {
+    unsubscribe();
+  });
 }
 
 function scheduleBake(
   deps: EnvironmentWiringDeps,
-  request: NonNullable<LuxarAppOptions['bakeEnvironment']>
+  request: NonNullable<LuxarAppOptions['bakeEnvironment']>,
+  captureReady: () => boolean
 ): void {
   const { sceneManager, animationController, events, isSettled } = deps;
   let settledFrames = 0;
@@ -94,7 +139,7 @@ function scheduleBake(
       // Not before a dataset load has begun and produced a scene root.
       const hasScene = sceneManager.scene.children.some((c) => c.name === 'LuxarScene');
       if (!getSceneLoader('default') || !hasScene) return false;
-      settledFrames = isSettled() ? settledFrames + 1 : 0;
+      settledFrames = captureReady() && isSettled() ? settledFrames + 1 : 0;
       if (settledFrames < BAKE_SETTLED_FRAMES) return false;
       started = true;
       animationController.removePerFrameCallback(id);
@@ -127,7 +172,9 @@ async function runBake(
 ): Promise<void> {
   const slot = debugEnvironmentSlot();
   try {
-    const result = await bakeEnvironment(resolveBakeRequest(sceneManager, request));
+    const result = await sceneManager.postProcessing.suspendFrameRendersDuring(() =>
+      bakeEnvironment(resolveBakeRequest(sceneManager, request))
+    );
     slot.lastBake = {
       header: result.header,
       base64: containerToBase64(result.bytes),

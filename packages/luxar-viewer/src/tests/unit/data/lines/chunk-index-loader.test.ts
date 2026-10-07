@@ -10,12 +10,67 @@
  *     the same ranges as the equivalent `number[]`.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+
+vi.mock('../../../../data/loaders/chunk-bounds-loader', () => ({
+  fetchChunkBoundsArray: vi.fn(),
+}));
+
+import { fetchChunkBoundsArray } from '../../../../data/loaders';
 import {
+  loadLinesDualChunkIndex,
   sortedUniqueVertexIndices,
   computeVertexRangesFromIndices,
   remapSegmentIndices,
 } from '../../../../data/lines/chunk-index-loader';
+import type { LinesMetadata } from '../../../../types/lines';
+
+const mockFetchChunkBounds = vi.mocked(fetchChunkBoundsArray);
+
+function linesAttrs(nVertices: number, nSegments: number, chunkSize: number): LinesMetadata {
+  const ordering = {
+    ordering: 'hilbert',
+    slice_dims: [],
+    ordering_dims: [0, 1, 2],
+    ordering_min: [0, 0, 0],
+    ordering_max: [1, 1, 1],
+    ordering_bits_per_dim: 21,
+    chunk_size: chunkSize,
+  };
+  return {
+    type: 'lines',
+    n_vertices: nVertices,
+    n_segments: nSegments,
+    ndim: 3,
+    ordering: 'hilbert',
+    vertex_ordering: ordering,
+    segment_ordering: ordering,
+  } as unknown as LinesMetadata;
+}
+
+const location = { resolve: vi.fn() } as unknown as Parameters<typeof loadLinesDualChunkIndex>[0];
+
+describe('loadLinesDualChunkIndex', () => {
+  beforeEach(() => {
+    mockFetchChunkBounds.mockReset();
+    mockFetchChunkBounds.mockImplementation((_loc, name) =>
+      Promise.resolve({ data: new Float32Array(12), shape: [2, 3, 2], name } as never)
+    );
+  });
+
+  it('skips both chunk_bounds requests when vertices and segments each fit one chunk', async () => {
+    const result = await loadLinesDualChunkIndex(location, linesAttrs(16, 8, 16));
+    expect(result).toBeNull();
+    expect(mockFetchChunkBounds).not.toHaveBeenCalled();
+  });
+
+  it('still probes both indexes when either array spans more than one chunk', async () => {
+    const result = await loadLinesDualChunkIndex(location, linesAttrs(32, 8, 16));
+    expect(mockFetchChunkBounds).toHaveBeenCalledTimes(2);
+    expect(result!.vertexChunkCount).toBe(2);
+    expect(result!.segmentIndex.chunkCount).toBe(1);
+  });
+});
 
 /**
  * Independent reference remap, identical in behaviour to the old Map-based

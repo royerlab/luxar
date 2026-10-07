@@ -1,9 +1,10 @@
 /**
- * Shared vertex shader for Gaussian splat rendering.
+ * GLSL3 vertex + fragment shaders for Gaussian splat rendering (GSplatMaterial).
  *
- * Used by both GSplatMaterial (main rendering) and GSplatPickingMaterial (GPU picking).
  * Contains 3D-to-2D covariance projection, perspective Jacobian, amplitude calculation,
- * oriented quad expansion, near-plane fade, and screen-coverage safety.
+ * oriented quad expansion, near-plane fade, and screen-coverage safety. The GPU pick
+ * pass has its own shader pair (picking/gsplat/shaders.ts) that shares the
+ * visible-footprint helpers (GLSL_GSPLAT_VISIBLE_FOOTPRINT, ./math.ts) with this one.
  */
 import {
   GLSL_SANITIZE_FUNCTIONS,
@@ -26,6 +27,7 @@ import {
 } from '../_shared/volumetric';
 import { requireTslMaterials } from '../../tsl/slot';
 import { GLSL_GSPLAT_VISIBLE_FOOTPRINT, GSPLAT_VISIBILITY_FLOOR } from './math';
+import { GLSL_GSPLAT_PROJECTION } from './projection-glsl';
 
 export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     precision highp float;
@@ -87,24 +89,14 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
     flat out highp vec3 vL2D;                // 2D Cholesky packed as [invL00, L10, invL11]
     flat out highp vec2 vCenterScreen;       // Splat center in screen pixels
 
-    // Unpack 3D Cholesky to matrix (column-major order for GLSL mat3)
-    // Packed order: [L00, L10, L11, L20, L21, L22]
-    // c01 = [L00, L10], c23 = [L11, L20], c45 = [L21, L22]
-    mat3 unpackCholesky3D(vec2 c01, vec2 c23, vec2 c45) {
-        return mat3(
-            c01.x, c01.y, c23.y,  // Column 0: [L00, L10, L20]
-            0.0,   c23.x, c45.x,  // Column 1: [0, L11, L21]
-            0.0,   0.0,   c45.y   // Column 2: [0, 0, L22]
-        );
-    }
+    // Covariance projection shared with the pick stage (unpackCholesky3D,
+    // gsplatSigmaCam, invalidCov2D, coverage fade, Jacobian, ray sigma, eigen
+    // axes, clamped extents).
+    ${GLSL_GSPLAT_PROJECTION}
 
     // invalidFloat is an alias for the shared isInvalidFloat helper in glsl-lib.
     bool invalidFloat(float v) {
         return isInvalidFloat(v);
-    }
-
-    bool invalidCov2D(mat2 S) {
-        return invalidFloat(S[0][0]) || invalidFloat(S[0][1]) || invalidFloat(S[1][0]) || invalidFloat(S[1][1]);
     }
 
     // Compute 2D Cholesky from 2D covariance (symmetric positive definite)
@@ -195,80 +187,28 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
             return;
         }
 
-        // Transform Cholesky to camera space (rotation only)
-        mat3 R = mat3(modelViewMatrix);
-        mat3 L3D = unpackCholesky3D(aCholesky01, aCholesky23, aCholesky45);
-        mat3 L_cam = R * L3D;
-        mat3 Sigma_cam = L_cam * transpose(L_cam);
+        // Camera-space covariance (rotation only; projection-glsl.ts).
+        mat3 Sigma_cam = gsplatSigmaCam(aCholesky01, aCholesky23, aCholesky45);
 
         // Positive depth (camera looks down -Z); reused by fades, Jacobian, and projection
         float zDepth = -centerCam.z;
 
         // === Screen-coverage safety guard (independent of depth fade) ===
-        // Prevents GPU overload from splats whose projected quad is too large.
-        // Fade starts at 50% of the limit and reaches ~0% AT the limit, so the
-        // amplitude is negligible before the extent clamp (below) kicks in.
-        // This avoids visible hard edges from clamped quads. Applies in BOTH
-        // projections (ortho projected size is depth-independent, divisor 1)
-        // and is computed UNCONDITIONALLY: below maxExtent*0.5 the smoothstep
-        // is 0 and the fade is a no-op, so no size gate is needed. (The former
-        // absolute maxLateralVar > 0.01 gate — a perf leftover from the
-        // pre-#51 two-stage near cull — skipped the fade for splats with
-        // spatial sigma < 0.1 world units while the extent clamp still
-        // applied, leaving hard-edged clamped rectangles on deep-zoomed
-        // tiny-sigma / nm-unit-scale scenes.) The 1e-20 floors match
-        // the TSL twin's expressions exactly and are pure
-        // div-by-zero/sqrt guards, NOT scale floors: maxLateralVar is a
-        // WORLD-unit² variance, so the old absolute 1e-8 floor inflated
-        // valid tiny-unit variances (sigma ~ 1e-7 => var ~ 1e-14) up to
-        // sqrt(1e-8) = 1e-4 world units — projectedExtent exploded and
-        // coverageFade culled EVERY splat in the scene. zDepth is
-        // likewise bounded below by the scene-relative near fade.
-        float halfResY = 0.5 * uResolution.y;
-        float coverageFade;
-        {
-            float maxLateralVar = max(Sigma_cam[0][0], max(Sigma_cam[1][1], Sigma_cam[2][2]));
-            float extentDivisor = (isOrtho == 1) ? 1.0 : max(zDepth, 1e-20);
-            float projectedExtent = (halfResY * luxarProjectionSizeScale()) * sqrt(max(maxLateralVar, 1e-20)) * uTruncate / extentDivisor;
-            float maxExtent = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
-            coverageFade = 1.0 - smoothstep(maxExtent * 0.5, maxExtent, projectedExtent);
-            if (coverageFade < 0.01) {
-                gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
-                return;
-            }
+        // Rationale and the tiny-unit history: gsplatCoverageFade in
+        // projection-glsl.ts (shared with the pick stage, which passes the
+        // same node T as uCoverageTruncate).
+        float coverageFade = gsplatCoverageFade(Sigma_cam, zDepth, isOrtho, uTruncate);
+        if (coverageFade < 0.01) {
+            gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+            return;
         }
 
         // Combined fade: most restrictive wins (both use smoothstep → no popping)
         float nearFade = min(depthFade, coverageFade);
 
-        // Projection Jacobian at the splat centre, general form (valid for any
-        // P): J[k] = res/2 * (P[k].xy / w - clip.xy * P[k].w / w^2). For
-        // three's symmetric perspective P it is the classic
-        // [[fx/z, 0], [0, fy/z], [fx*x/z^2, fy*y/z^2]]; for ortho (w = 1,
-        // P[k].w = 0) it is [[fx, 0], [0, fy], [0, 0]]. The x terms use P00
-        // (not a shared fx = fy), so a camera aspect that differs from the
-        // buffer aspect is honoured instead of assumed away.
-        vec2 halfRes = 0.5 * uResolution;
-        vec2 clipTerm = centerClip.xy * (invW * invW);
-        mat3x2 J;
-        J[0] = halfRes * (projectionMatrix[0].xy * invW - clipTerm * projectionMatrix[0].w);
-        J[1] = halfRes * (projectionMatrix[1].xy * invW - clipTerm * projectionMatrix[1].w);
-        J[2] = halfRes * (projectionMatrix[2].xy * invW - clipTerm * projectionMatrix[2].w);
-
-        // Project covariance to 2D: Σ_2D = J · Σ_cam · Jᵀ
-        // Compute J * Sigma_cam first
-        vec2 JS0 = J[0] * Sigma_cam[0][0] + J[1] * Sigma_cam[0][1] + J[2] * Sigma_cam[0][2];
-        vec2 JS1 = J[0] * Sigma_cam[1][0] + J[1] * Sigma_cam[1][1] + J[2] * Sigma_cam[1][2];
-        vec2 JS2 = J[0] * Sigma_cam[2][0] + J[1] * Sigma_cam[2][1] + J[2] * Sigma_cam[2][2];
-
-        // Sigma2D = (J * Sigma_cam) * J^T
-        // For M = J*Sigma (cols JS0, JS1, JS2), compute M * J^T:
-        // (M*J^T)[i,j] = sum_k M[i,k] * J[j,k] = sum_k JS_k[i] * J[k][j]
-        mat2 Sigma2D;
-        Sigma2D[0][0] = JS0.x * J[0].x + JS1.x * J[1].x + JS2.x * J[2].x;
-        Sigma2D[1][0] = JS0.x * J[0].y + JS1.x * J[1].y + JS2.x * J[2].y;
-        Sigma2D[0][1] = Sigma2D[1][0];  // Symmetric (J*S*J^T preserves symmetry)
-        Sigma2D[1][1] = JS0.y * J[0].y + JS1.y * J[1].y + JS2.y * J[2].y;
+        // Project covariance to 2D: Σ_2D = J · Σ_cam · Jᵀ with the general
+        // projection Jacobian (projection-glsl.ts).
+        mat2 Sigma2D = gsplatProjectedCovariance(Sigma_cam, centerClip, invW);
 
         // 2D low-pass dilation (standard 3DGS anti-aliasing): widen the diagonal
         // so every splat covers at least ~1px. Guarantees near-degenerate
@@ -310,60 +250,12 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // (normalize, sqrt, exp) when in max mode. Warps are typically coherent on this uniform.
         float sigmaRay = 1.0;  // Default for max mode (no ray integration)
         if (uProjectionMode == 0) {
-            // Sum projection: compute ray-integral standard deviation.
-            //
-            // The line-integral of an anisotropic Gaussian along ray
-            // direction r has 1D std-dev sigma_line = 1 / sqrt(rᵀ Σ⁻¹ r),
-            // not sqrt(rᵀ Σ r). The two only agree when r is aligned with
-            // a covariance eigenvector or Σ is isotropic.
-            //
-            // Implementation: compute Σ_cam⁻¹ via the closed-form 3×3
-            // inverse and clamp to a minimum determinant. The shader is
-            // already paying for a covariance matrix-vector product, so
-            // a one-off explicit inverse is a small constant factor.
+            // Sum projection: the ray-integral standard deviation
+            // sigma_line = 1 / sqrt(rᵀ Σ⁻¹ r), from a scale-free Σ_cam
+            // inversion (gsplatRaySigma in projection-glsl.ts carries the
+            // derivation).
             vec3 rayDir = (isOrtho == 1) ? vec3(0.0, 0.0, -1.0) : normalize(centerCam);
-            // Cofactor expansion for 3x3 inverse. Σ_cam is symmetric SPD,
-            // so the inverse is symmetric SPD too.
-            // SCALE-FREE inversion: normalize Σ_cam by its mean diagonal
-            // variance s = trace/3 first. det(Σ) is world-units⁶ — on a
-            // tiny-unit scene (sigma ~ 1e-7 => det ~ 1e-42) it
-            // underflows float32 (GPUs flush denormals to zero) and the
-            // absolute 1e-12 clamp turned Σ⁻¹ into garbage (sum-mode
-            // brightness off by many orders of magnitude); huge-unit
-            // scenes overflow the same way. With Σn = Σ/s the
-            // determinant and ray quadratic are O(1) at ANY scene
-            // scale, so the 1e-12 / 1e-8 floors below act as pure
-            // scale-free CONDITION-NUMBER guards. Σ⁻¹ = Σn⁻¹ / s, so
-            // sigmaRay = sqrt(s / quadN) restores the world-unit
-            // result exactly. The 1e-30 floor on s only guards an
-            // all-zero (degenerate) covariance.
-            float sTrace = max((Sigma_cam[0][0] + Sigma_cam[1][1] + Sigma_cam[2][2]) * (1.0 / 3.0), 1e-30);
-            float invS = 1.0 / sTrace;
-            float a = Sigma_cam[0][0] * invS;
-            float b = Sigma_cam[0][1] * invS;
-            float c = Sigma_cam[0][2] * invS;
-            float d = Sigma_cam[1][1] * invS;
-            float e = Sigma_cam[1][2] * invS;
-            float f = Sigma_cam[2][2] * invS;
-            // det(Σn) for 3x3 symmetric — clamped against numerical singularity.
-            float detSigma = a * (d * f - e * e) - b * (b * f - c * e) + c * (b * e - c * d);
-            float invDet = 1.0 / max(detSigma, 1e-12);
-            // Cofactors of the inverse (symmetric).
-            float i00 = (d * f - e * e) * invDet;
-            float i11 = (a * f - c * c) * invDet;
-            float i22 = (a * d - b * b) * invDet;
-            float i01 = -(b * f - c * e) * invDet;
-            float i02 = (b * e - c * d) * invDet;
-            float i12 = -(a * e - b * c) * invDet;
-            // r' = Σ⁻¹ r ; precision quadratic = rᵀ Σ⁻¹ r
-            float prx = i00 * rayDir.x + i01 * rayDir.y + i02 * rayDir.z;
-            float pry = i01 * rayDir.x + i11 * rayDir.y + i12 * rayDir.z;
-            float prz = i02 * rayDir.x + i12 * rayDir.y + i22 * rayDir.z;
-            // quad is rᵀ Σn⁻¹ r (normalized space, O(1) for a
-            // well-conditioned splat at any scale); un-normalize via
-            // sqrt(sTrace): sigmaRay = 1/sqrt(rᵀ Σ⁻¹ r) = sqrt(s/quadN).
-            float quad = max(rayDir.x * prx + rayDir.y * pry + rayDir.z * prz, 1e-8);
-            sigmaRay = inversesqrt(quad) * sqrt(sTrace);
+            sigmaRay = gsplatRaySigma(Sigma_cam, rayDir);
             // Shifted Gaussian ray integral: sqrt(2π)·erf(T/√2) - 2·T·exp(-0.5·T²)
             // Precomputed in TypeScript as uRayIntegralFactor (≈2.433 for T=3)
             float rayIntegrationBoost = sigmaRay * uRayIntegralFactor;  // voxelSpacing = 1.0
@@ -381,39 +273,16 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
         // Compute 2D Cholesky for fragment shader
         vL2D = cholesky2x2(Sigma2D);
 
-        // Eigenvalues of Σ_2D for quad extents (oriented quad)
-        float trace = Sigma2D[0][0] + Sigma2D[1][1];
-        float det = Sigma2D[0][0] * Sigma2D[1][1] - Sigma2D[0][1] * Sigma2D[1][0];
-        float disc = max(trace * trace - 4.0 * det, 0.0);  // Clamp for numerical stability
-        float sqrtDisc = sqrt(disc);
-        float lambda1 = max(0.5 * (trace + sqrtDisc), 1e-6);
-        float lambda2 = max(0.5 * (trace - sqrtDisc), 1e-6);
-
-        // Eigenvector for major axis (for oriented quad)
-        vec2 majorAxis;
-        if (abs(Sigma2D[0][1]) > 1e-6) {
-            majorAxis = normalize(vec2(lambda1 - Sigma2D[1][1], Sigma2D[0][1]));
-        } else {
-            // Near-diagonal covariance: pick axis with larger variance
-            majorAxis = (Sigma2D[0][0] >= Sigma2D[1][1]) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
-        }
+        // Eigen-axes of Σ_2D and the max-extent-clamped quad half extents
+        // (projection-glsl.ts — shared with the pick stage).
+        vec2 lambdas = gsplatEigenvalues(Sigma2D);
+        float lambda1 = lambdas.x;
+        float lambda2 = lambdas.y;
+        vec2 majorAxis = gsplatMajorAxis(Sigma2D, lambda1);
         vec2 minorAxis = vec2(-majorAxis.y, majorAxis.x);
-
-        // Quad extents: truncation radius × sqrt(eigenvalue)
-        // Shifted Gaussian: effectiveTruncate = uTruncate
-        float extent1 = uTruncate * sqrt(lambda1);
-        float extent2 = uTruncate * sqrt(lambda2);
-
-        // Clamp quad extents so no splat exceeds uMaxExtentFactor × viewport.
-        // The amplitude fade (nearFade) handles the visual transition smoothly;
-        // this clamp prevents the rasterizer from shading oversized quads.
-        float maxExtentPx = max(uResolution.x, uResolution.y) * uMaxExtentFactor;
-        float largestExtent = max(extent1, extent2);
-        if (largestExtent > maxExtentPx) {
-            float clampScale = maxExtentPx / largestExtent;
-            extent1 *= clampScale;
-            extent2 *= clampScale;
-        }
+        vec2 extents = gsplatClampedExtents(uTruncate, lambdas);
+        float extent1 = extents.x;
+        float extent2 = extents.y;
 
         // === Visible-footprint tightening (#2944 B10) ===
         // The quad above circumscribes the T-sigma ellipse, but the fragment
@@ -497,7 +366,7 @@ export const GSPLAT_VERTEX_SHADER = /* glsl */ `
  *
  * Uses the 2D Cholesky factor passed from vertex shader to compute
  * Mahalanobis distance, then applies shifted Gaussian falloff.
- * The picking system uses a different fragment shader (see picking/gsplat-picking-material.ts).
+ * The picking system uses a different fragment shader (see picking/gsplat/shaders.ts).
  */
 export const GSPLAT_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;

@@ -19,14 +19,13 @@ encoding means lives in `packages/luxar/src/luxar/encoding/README.md`.
 ```
 array-decoder/
 ├── decoder.ts            # ArrayDecoder class — priority-dispatch body
+├── broadcast-row.ts      # readBroadcastRow — a broadcast array's row (encoding.value, else one read)
 ├── ref-registry.ts       # ArrayRefRegistry — hash → Float32Array cache for array_ref
-├── load-and-decode.ts    # loadAndDecodeOptionalArray helper for sibling attribute arrays
 └── types.ts              # ArrayMetadata + EncodingMetadata schema (.zattrs shape)
 ```
 
-`decoder.ts` re-exports `ArrayRefRegistry`, the metadata types, and the
-`loadAndDecodeOptionalArray` helper so consumers can import everything
-from one entry point.
+`decoder.ts` re-exports `ArrayRefRegistry` and the metadata types so
+consumers can import everything from one entry point.
 
 ## Priority-Dispatch Order
 
@@ -37,9 +36,11 @@ decoded bits. Per-channel routes use separately tested bit-exact implementations
 `ArrayDecoder.decode()` checks encoding modes in a fixed order — the
 order MUST match the Python spec or behavior diverges:
 
-1. **broadcasted** — single value replicated to `n_elements` × `k`. Reads
-   one row from zarr, replicates in place, registers under `enc.hash` for
-   later `array_ref` reuse.
+1. **broadcasted** — single value replicated to `n_elements` × `k`. Takes
+   the row from `enc.value` (no request) or, on a store written before that
+   field, reads it from zarr; replicates in place, registers under
+   `enc.hash` for later `array_ref` reuse. `RangeLoader`'s broadcast path
+   shares the same `readBroadcastRow`.
 2. **array_ref** — delegates to `decodeArrayRef()`: hash-cache lookup
    first, otherwise resolves `enc.target` against `zarrRootLoc`, opens
    the target zarr array, and recursively decodes it (the target may
@@ -83,6 +84,7 @@ zarr shape is also empty.
 | ----------------------------------- | ----------------- | ------------------------------------------------------------------------ |
 | `name`                              | dispatch          | One of the encoding modes above; missing → direct.                       |
 | `n_elements`                        | broadcasted       | Logical broadcast count. Required for `broadcasted`.                     |
+| `value`                             | broadcasted       | The stored row, flattened. Optional; present → the row is not read.      |
 | `lut`, `lut_mode`, `original_shape` | LUT               | `lut_mode` defaults to `'row'`. `k` from `original_shape[1]`.            |
 | `original_dtype`                    | LUT + quantized   | Required by validation; consumers restore native dtype after decode.     |
 | `bounds` / `min` / `max`            | quantized         | Linear quantization range.                                               |
@@ -127,15 +129,6 @@ Classification helpers (`isEncoded`, `isLUTEncoded`, `isBroadcasted`,
 `isPerChannelQuantEncodingName`, `isKnownEncodingName`, `getEncodingMode`)
 let callers choose the right loading strategy without parsing `enc.name`
 themselves.
-
-## Optional-Array Helper
-
-`loadAndDecodeOptionalArray(location, arrayName, decoder, expected?)`
-opens a sibling zarr array (e.g. `colors`, `radii`, `sharpness`), reads
-its attrs, runs `decoder.decode()`, and returns the float buffer.
-Missing arrays surface as `null` — the open error is swallowed so
-optional attributes are truly optional. Used by loader internals; not
-part of the public `data/` API.
 
 ## See Also
 

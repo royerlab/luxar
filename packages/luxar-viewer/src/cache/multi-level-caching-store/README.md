@@ -46,12 +46,18 @@ multi-level-caching-store/
 
 ### `opfs-read-gate.ts` — bounded read fan-out
 
-- **`withOpfsReadGate(run)`** — page-wide FIFO gate for chunk reads. Deep
+- **`withOpfsReadGate(run, signal?)`** — page-wide FIFO gate for chunk reads,
+  built on the shared `AsyncGate` (`../../utils/async-gate.ts`). Deep
   progressive passes can fan out several hundred L2 hits at once, and reads
   were the last unbounded browser-filesystem path after writes gained their own
   cap. The reported multi-second L2 stall remains unattributed. Queue wait is
   outside each operation's timeout, so healthy backpressure is never
-  misclassified as hung I/O.
+  misclassified as hung I/O. `run` receives `hold(io)`: a lease lasts until
+  every held file-I/O promise settles or reaches a deadline three times the
+  configured operation timeout. A read whose caller timed out still occupies
+  its slot until the browser finishes it or that longer deadline expires. The
+  optional `signal` lets a queued read leave the queue on abort (rejecting with
+  the signal's reason).
 - **`getOpfsReadGateStats()`** — exposes active and queued reads to the cache
   monitor so a live stall distinguishes backend work from gate backpressure.
 - **`resetOpfsReadGate()`** — clears module-global gate state for test isolation;
@@ -62,7 +68,8 @@ multi-level-caching-store/
 `SegmentedLRUCache` wraps two `LRUCache<Uint8Array>` instances and routes
 incoming keys by filename pattern. Zarr metadata keys (`.zmetadata`,
 `.zarray`, `.zattrs`, `zarr.json`) go to a dedicated **metadata
-segment** sized at 20% of the total budget with a 10MB floor; everything
+segment** sized at 20% of the total budget with a 10MB floor (capped at half
+the total on a small budget); everything
 else goes to the **chunks segment** sized at the remaining 80%. This
 protects small, high-traffic metadata files from being evicted when a
 single navigation pulls in many large chunks.
@@ -104,10 +111,17 @@ Key behaviours:
   `getStats()` and the cache monitor's "Errors" card (plus
   `orphansReindexed`).
 - **Index persistence** — the index save is a 1 s debounce with a 2 s
-  ceiling, flushed on `pagehide` / hidden (`flushAllMetadata`) and on
-  `dispose()`; an open-time, per-session-budgeted orphan reconcile re-indexes
-  or deletes chunk files the index never recorded (see `../README.md`,
-  "L2 index persistence").
+  ceiling and a 150 ms leading edge (the first write after a quiet second is
+  indexed within 150 ms), flushed on `pagehide` / hidden (`flushAllMetadata`)
+  and on `dispose()`. Neither unload-time write survives a navigation: measured
+  on Chromium, a reload stops the save after `getFileHandle(create)`, leaving a
+  zero-byte index that is read as a cold start, not as corruption. No chunk is
+  lost to that: the validated content hash is persisted in
+  `_cache_identity.json` before any chunk is written under it, an L2 lookup of
+  a key the index does not list reads the key's (deterministic) file path while
+  the reconcile below runs, and an open-time, per-session-budgeted orphan
+  reconcile re-indexes or deletes the files the index never recorded (see
+  `../README.md`, "L2 index persistence").
 - **Quota estimate cache** — `navigator.storage.estimate()` is re-run at most
   every 30 s / 64 MB written, or when the debited cached headroom cannot cover
   a write.
@@ -120,12 +134,12 @@ Key behaviours:
 
 ### `fetch-retry.ts` — network primitives
 
-- **`mergeAbortSignals(primary, caller?)`** — produces a scoped signal that
-  fires when either source aborts. Uses native `AbortSignal.any` when
-  available (Node 22+, modern browsers) and falls back to a relay
-  controller otherwise. The fallback scope removes both source listeners
-  immediately on abort or when its idempotent `dispose()` is called, so a
-  long-lived dataset signal does not retain one closure per completed fetch.
+- Each attempt's timeout signal is merged with the caller's by the shared
+  `combineAbortSignals` (`../../utils/abort-signals.ts`, also used by the
+  store for its dispose signal): native `AbortSignal.any` when available,
+  else a relay whose idempotent `dispose()` removes both source listeners,
+  so a long-lived dataset signal does not retain one closure per completed
+  fetch.
 - **`buildUrl(baseUrl, key)`** — joins a base URL and a zarr key while
   stripping trailing slashes on the base and leading slashes on the key
   (defends against the triple-slash bug when a base URL ends in `/`
@@ -145,10 +159,10 @@ Key behaviours:
   at a 16 KiB/s aggregate floor shared across at most eight active leases, or
   eight stall windows shared across at most four leases when the length is
   unavailable. Metadata probes use a separate lane from data bodies: the caps
-  are 24 data + 4 metadata in TLS-only sessions, with the data lane widened to 96
-  for an origin whose resource timing shows it negotiated h2/h3, and both lanes
-  shrink to 4 data + 2 metadata once an `http:` URL is seen (HTTP/1.1's six
-  sockets). `priority` (`demand` > `refinement` > `speculative`, or a
+  are 24 data + 4 metadata, with the data lane widened to 96 for an origin
+  whose resource timing shows it negotiated h2/h3, and an origin seen over a
+  plain `http:` URL held to 4 data + 2 metadata of its own (HTTP/1.1's six
+  sockets) while other origins keep their width. `priority` (`demand` > `refinement` > `speculative`, or a
   `FetchPriorityCell` a coalescing caller may raise) orders the gate's queue;
   speculative requests never hold more than a quarter of a lane. The store
   passes `speculative` for prefetcher reads and raises a pending read to
@@ -169,7 +183,9 @@ average bytes/sec over the trailing `windowMs`. The implementation
 avoids `Array.shift()` (O(n) per pop, O(n²) under sustained high fetch
 rates) by advancing a `start` index past expired entries and only
 slicing off the dead prefix when it exceeds half the buffer — keeping
-both `record()` and `rate()` amortized O(1). Feeds the
+both `record()` and `rate()` amortized O(1). Both expire aged-out
+entries, so the buffer stays bounded by the live tail even when `rate()`
+is never read (it is read only while the monitor is visible). Feeds the
 `network.bandwidth` field of `MultiLevelCacheStats`.
 
 ### `validation-queue.ts` — cross-instance validation serializer
@@ -214,9 +230,11 @@ than the full data-fetch timeout.
   exhausted retry budgets log a warning and return `undefined`; a consumer's
   own error propagates unchanged so status and archive validation failures
   keep their domain-specific type.
-- **Metadata segment never starves.** `SegmentedLRUCache` enforces a
-  10MB floor on the metadata segment regardless of `totalSize` — small
-  L1 budgets only shrink the chunks segment.
+- **Metadata segment never starves.** `SegmentedLRUCache` gives the
+  metadata segment a 10MB floor, capped at half of `totalSize`: a heap- or
+  `?cacheBudgetMB`-scaled L1 below 20MB splits evenly rather than leaving
+  the chunks segment at zero (every L1 chunk rejected) and the two segments
+  over budget.
 - **URL hash is part of the on-disk format.** `hashUrl` is a SHA-256
   prefix; changing the prefix length or hash function orphans every
   existing OPFS dataset directory.

@@ -1,8 +1,8 @@
 /**
  * Pick the least-loaded worker in a {@link WorkerInstance} list, and
  * return tracking callbacks the caller uses to mark a query in flight.
- * Lifted from `WorkerPool.getWorkerWithTracking` (the body after the
- * initialize/empty-pool guard).
+ * The pool's `acquireTrackedWorker` calls it after its usable-worker /
+ * empty-pool guard.
  *
  * A stalled worker stops being selected once its `activeQueries` grows
  * past the others — without this, round-robin selection would queue

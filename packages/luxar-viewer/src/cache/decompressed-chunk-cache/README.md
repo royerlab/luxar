@@ -8,7 +8,7 @@ splices it onto a real zarr array without touching zarrita's source.
 ## Overview
 
 `wrapWithCache(array, cache, arrayPath, hooks?)` (hooks = `{ getProbe?,
-getSignal?, getOrigin?, aliasOnMiss? }`) returns a
+getSignal?, getOrigin? }`) returns a
 `Proxy<zarr.Array>` that intercepts `getChunk()` (and adds `warmChunk()`):
 
 0. **Per-update abort chokepoint** — when an optional `getSignal` accessor is
@@ -17,14 +17,14 @@ getSignal?, getOrigin?, aliasOnMiss? }`) returns a
    bails on the hit, coalesced-pending, and miss paths alike — zarrita's own
    `throwIfAborted` only fires between chunks of a multi-chunk selection, so
    this is what makes warm-cache scrubs cancel. The accessor reads the owning
-   loader's transient `_activeSignal`, so it is per-caller and never aborts a
+   loader's per-call `ActiveLoadContext` signal, so it never aborts a
    coalesced chunk another live caller awaits.
 1. Build a key via `DecompressedChunkCache.makeKey(arrayPath, coords)`.
 2. On L0 hit, return the cached `{ data, shape, stride }` immediately
    (~1μs, no Blosc decode).
-3. On miss, run the original `getChunk()`, clone the result's
-   `ArrayBufferView` (unless `aliasOnMiss`, below), store it in the cache, and
-   return the original.
+3. On miss, run the original `getChunk()`, store the result's
+   `ArrayBufferView` in the cache as is (copied only when it does not span its
+   whole `ArrayBuffer`), and return it.
 4. **Same-chunk decode coalescing, cache-wide** — the in-flight map lives on
    the `DecompressedChunkCache` (`getInflight`/`setInflight`/`deleteInflight`,
    keyed by the full L0 key), NOT on the proxy, so every proxy over one cache —
@@ -33,10 +33,13 @@ getSignal?, getOrigin?, aliasOnMiss? }`) returns a
    **Abort isolation:** the shared decode runs under the entry's OWN
    `AbortController`; each waiter races it against its own signal (the call's
    `options.signal`, else `getSignal()`), rejecting only itself on abort. The
-   decode is cancelled only once EVERY waiter has aborted (and is then
-   deregistered, so a later caller starts afresh); a decode that is not fully
-   abandoned completes and is cached. Only a still-registered entry commits, so
-   `cache.clear()` also orphans in-flight decodes.
+   decode is cancelled only once EVERY waiter has aborted; it stays registered
+   until it settles, so a caller arriving meanwhile takes its result if the
+   cancellation came too late to stop it, and starts afresh if it was really
+   cancelled (rejected with the abort reason, or an `AbortError`). A decode
+   that is not fully abandoned completes and is cached. Only a
+   still-registered entry commits, so `cache.clear()` also orphans in-flight
+   decodes.
 5. **Residency reporting** — when an optional `getProbe` accessor is
    supplied, every `getChunk()` calls `getProbe()?.record(hit)` against
    the currently-active `ResidencyProbe` (see `../residency-probe`). L0
@@ -56,20 +59,23 @@ getSignal?, getOrigin?, aliasOnMiss? }`) returns a
    cache-warming entry point `prefetchRangesIntoCache` uses: L0 lookup + the
    same shared decode, but with the caller's own signal only (never
    `getSignal`), no residency-probe record, no output assembly, and origin
-   `'prefetch'` by default. The standalone `warmChunk(array, …)` helper falls
-   back to a bare `getChunk` for an unwrapped array.
-8. **`aliasOnMiss`** (opt-in; default clones) — store the decoded buffer without
-   the defensive clone. Safe ONLY for arrays read exclusively through zarrita
-   `get()` (which copies every chunk into its own output) or `warmChunk`; a view
-   that does not span its whole `ArrayBuffer` is still cloned so L0 never
-   retains bytes it does not account for. The Points/Lines/GSplats
-   spatial-index loaders enable it, with the per-file proof in a comment
-   (`L0_ALIAS_ON_MISS`).
+   `'prefetch'` by default. It is prefetch traffic: its lookup moves no L0
+   hit/miss statistic (`getStats()`; the `l0.*` perf counters still count it),
+   and a miss reads the store with `suppressPrefetch`, so the multi-level
+   store neither counts it as demand nor prefetches from it. The standalone
+   `warmChunk(array, …)` helper falls back to a bare `getChunk` for an
+   unwrapped array.
+8. **One read-only buffer per chunk** — the miss that decoded a chunk, the
+   waiters that joined its decode and every later hit all receive the SAME
+   buffer L0 holds; there is no defensive clone on any path (a miss-only
+   clone protected one caller while every other shared the buffer anyway).
+   zarrita `get()` keeps the contract by copying every chunk into its own
+   output; a direct `getChunk()` caller must copy before writing.
 
 All other property access passes through unchanged. See
 [`../README.md`](../README.md) (the "L0 Decompressed Chunk Cache" section)
 for how L0 fits into the L0 → L1 → L2 → Remote hierarchy and the
-read-only chunk contract that this wrapper upholds via cloning.
+read-only chunk contract every consumer of this wrapper must keep.
 
 ## File Structure
 
@@ -102,11 +108,11 @@ decompressed-chunk-cache/
 - **`Reflect.get(target, prop, target)` for everything else.** The
   receiver MUST be `target`, not the proxy; otherwise zarrita methods
   hit `Cannot read private member #e` on `#store`/`#e` access.
-- **Clone on cache insert (unless `aliasOnMiss`).** The wrapper clones
-  `chunk.data` via `cloneArrayBufferView` before storing so a caller mutating
-  their view cannot corrupt the cached copy. Subsequent L0 hits return the cached
-  view by reference — downstream loaders must treat L0 chunks as
-  read-only (see "L0 read-only chunk contract" in `../README.md`).
+- **Shared, read-only chunks.** The decoded `chunk.data` is stored as is —
+  `cloneArrayBufferView` runs only for a view into a larger buffer — and every
+  caller (miss, coalesced waiter, hit) gets that one view by reference, so
+  downstream loaders must treat L0 chunks as read-only (see "L0 read-only
+  chunk contract" in `../README.md`).
 - **No double-wrap.** `wrapWithCache` checks `isCachedArray` first and
   returns the input unchanged when already wrapped.
 

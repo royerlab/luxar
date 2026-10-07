@@ -9,9 +9,11 @@
  * keeps Luxar's streaming, LOD selection, and depth sorting correct.
  *
  * The seam this rests on is already in the architecture: `SceneLoader.loadScene`
- * returns a plain `THREE.Group`, and `LODGroupRegistryDeps` / `configureDepthSort`
- * are defined purely in terms of injectable getters. Nothing in the data, cache,
- * LOD, or material path needs `SceneManager`.
+ * returns a plain `THREE.Group`, and `LODGroupRegistryDeps` /
+ * `DepthSortCoordinator.configure` take injectable getters. The layer owns
+ * its own coordinator and shares `buildLodRegistryDeps` / `wireDensityGuard`
+ * wiring with the app. Nothing in the data, cache, LOD, or material path
+ * needs `SceneManager`.
  *
  * The minimal embed shape:
  *
@@ -81,11 +83,15 @@
  * {@link LuxarLayer.setExposure}, and `max` blending is the one mode that
  * cannot saturate at all.
  *
- * ## Limits (same as `LuxarApp`, and for the same reasons)
+ * ## Several hosts on one page
  *
- * One layer per page, and never alongside a `LuxarApp`. The scene-loader
- * manager, dimension manager, material manager, and worker pool are process
- * singletons; two owners would share and then corrupt each other's state.
+ * A layer may share the page with a `LuxarApp` and with other layers: it owns
+ * its own loader manager, dimension state, material manager, depth-sort
+ * coordinator and blend warm-up, and holds a lease on the page's shared worker
+ * pools. Two layers in ONE THREE.Scene draw as whole layers in `renderOrder`
+ * order rather than interleaving by depth (the second one warns). Every host on
+ * the page must render through the same backend. See the module README.
+ *
  * The layer has no notifier UI; archive failures are exposed through
  * {@link LuxarLayer.onDatasetFault} and {@link LuxarLayer.getDatasetFault} so
  * the host can surface them.
@@ -101,11 +107,14 @@ import {
   prefetchSceneForDimensions,
 } from '../../data/zarr-loader';
 import type { SceneLoader } from '../../data/scene-loader';
-import { SceneLoaderManager, getSceneLoader } from '../../data/scene-loader-manager';
+import { SceneLoaderManager } from '../../data/scene-loader-manager';
 import { LODGroupRegistry } from '../../scene/lod-group-registry';
-import { sceneDimsManager, snapDiscreteValue } from '../../scene/scene-dims-manager';
+import { ViewContextProvider } from '../../scene/view-context';
+import { ProjectedDensityTracker } from '../../scene/projected-density';
+import { DensityGuard } from '../../scene/density-guard';
+import { SceneDimsManager, snapDiscreteValue } from '../../scene/scene-dims-manager';
 import { rebaseLodFade, type FadeableMaterial } from '../../scene/lod-fade';
-import { materialManager } from '../../rendering/material-manager';
+import { MaterialManager } from '../../rendering/material-manager';
 import { resolveMaterialBackend } from '../../rendering/material-manager/factories';
 import {
   createSceneEnvironment,
@@ -118,34 +127,29 @@ import {
   type RendererCapabilities,
 } from '../../rendering/renderer-capabilities';
 import {
-  getGpuByteBudget,
   initializeGpuByteBudget,
   reduceGpuByteBudgetForContextLoss,
 } from '../../rendering/gpu-byte-budget';
 import {
-  clearBlendModeProgramWarmup,
-  configureBlendModeProgramWarmup,
-  warmSceneBlendModePrograms,
+  WebGLBlendWarmupManager,
+  registerBlendWarmupManager,
+  unregisterBlendWarmupManager,
 } from '../../rendering/webgl-blend-warmup';
-import {
-  configureDepthSort,
-  setDepthSortEnabled,
-  evaluateDepthSortPerFrame,
-  warmUpDepthSortWorker,
-  releaseDepthSortNode,
-  disposeDepthSort,
-} from '../../rendering/depth-sort-coordinator';
-import { disposeWorkerPool } from '../../workers/worker-pool';
+import { DepthSortCoordinator, releaseDepthSortNode } from '../../rendering/depth-sort-coordinator';
+import { releaseWorkerPool, retainWorkerPool } from '../../workers/worker-pool';
 import type { DatasetFaultPayload } from '../app/embedder/events';
 import { applyModuleOverrides } from '../app/init/module-overrides';
-import { isOrthographicCamera, type LuxarCamera } from '../../utils/camera-utils';
+import { buildLodRegistryDeps } from '../app/init/lod-registry-deps';
+import { wireDensityGuard, type DensityGuardWiring } from '../app/init/density-guard-wiring';
 import { getInputProfile } from '../../utils/input-capabilities';
 import { config } from '../../config';
 import { isLuxarMaterial } from '../../ui/layers/luxar-material';
 import { clamp } from '../../utils/clamp';
 import { log, Modules } from '../../utils/log';
 import { markSceneResourcesDirtyForContextRestore } from '../../scene/scene-manager/render-pipeline/webgl-context-recovery';
+import { configureRendererBackend } from '../../scene/scene-manager/render-pipeline/renderer-setup';
 import type { Renderer } from '../../rendering/renderer-capabilities';
+import { detachSceneGraphIndex } from '../../utils/scene-graph-index';
 import type { LoaderConfig } from '../../data/data-loader-types';
 import type { EmbedderDimensions } from '../app/embedder/events';
 
@@ -176,9 +180,11 @@ export interface LuxarLayerOptions {
   scene: THREE.Scene;
   /**
    * Called when new geometry commits outside the host's own interaction —
-   * progressive refinement, lazy LOD loads, retries. Hosts with an on-demand
-   * render loop must wire this or late commits will not repaint. Hosts that
-   * render continuously can omit it.
+   * progressive refinement, lazy LOD loads, retries — and from
+   * {@link LuxarLayer.update} when a frame's sort / LOD evaluation changed what
+   * is drawn (a fade advances one step per frame). Hosts with an on-demand
+   * render loop must wire this or late commits will not repaint and fades
+   * freeze. Hosts that render continuously can omit it.
    */
   requestRender?: () => void;
   /** Cache and prefetch flags forwarded to the data loader. */
@@ -187,7 +193,10 @@ export interface LuxarLayerOptions {
    * Session-wide GPU geometry budget in bytes. `null` auto-sizes from device
    * memory, measured heap, and device class; `0` disables byte-budget eviction,
    * and a positive value pins the budget. Defaults to
-   * `config.dataLoading.performance.gpuPoolMaxBytes`.
+   * `config.dataLoading.performance.gpuPoolMaxBytes`. Page-wide: the first
+   * Luxar host to configure it wins (a later value is ignored with a warning),
+   * and each host evicts against it separately (see the README's multi-host
+   * notes).
    */
   gpuPoolMaxBytes?: number | null;
   /** Override for bundlers that can't resolve `import.meta.url` asset URLs. */
@@ -205,7 +214,30 @@ export interface LuxarLayerOptions {
    * values are treated as the neutral `1`. Default 1.
    */
   lodBias?: number;
-  /** Worker-based back-to-front sorting for order-dependent geometry. Default true. */
+  /**
+   * Projected-density guard: thin blendable nodes that pack more elements per
+   * drawing-buffer pixel than `config.densityGuard` allows (brightness
+   * compensated), and hold back refinement rungs that would push a node past
+   * it. Default true (and only while `config.densityGuard.enabled`).
+   */
+  densityGuard?: boolean;
+  /**
+   * Session-only override of the density guard's blendable cap (elements per
+   * drawing-buffer pixel), as `LuxarAppOptions.densityCap`. Undefined ⇒
+   * `config.densityGuard.capElementsPerPixel`.
+   */
+  densityCap?: number;
+  /**
+   * WebGL blend-program warm-up, as `LuxarAppOptions.blendWarmup`. Default
+   * true on laptops/desktops; always off on phones/tablets and under WebGPU.
+   */
+  blendWarmup?: boolean;
+  /**
+   * Worker-based back-to-front sorting for order-dependent geometry. Default
+   * true. `false` also skips the per-frame cross-node order pass (authored
+   * cross-layer bands, physical glass drawn first), which needs the
+   * coordinator's camera: the layer's nodes draw in plain three.js order.
+   */
   depthSort?: boolean;
   /**
    * `renderOrder` stamped onto every Group in the layer subtree. Three.js uses
@@ -231,6 +263,45 @@ const LOADER_ID = 'default';
 const DEFAULT_RENDER_ORDER = 10;
 
 /**
+ * The live layers drawing into each host scene. Two layers in ONE scene is a
+ * supported but limited configuration (see {@link warnIfSceneShared}).
+ */
+const layersByScene = new WeakMap<THREE.Scene, Set<LuxarLayer>>();
+
+/**
+ * Say, once per extra layer, what two layers in one scene do and do not get.
+ *
+ * Each layer owns its depth-sort coordinator, so each assigns cross-node
+ * `renderOrder` ranks over its OWN nodes only; and the layer stamps its
+ * `renderOrder` option onto every Group it owns, which three compares BEFORE any
+ * per-mesh rank. So the two layers' transparent geometry never interleaves by
+ * depth: the whole layer with the lower `renderOrder` draws first, and with
+ * equal values the order between them is whatever three's group sort yields.
+ * Interleaving two independently streamed, independently sorted datasets would
+ * need one ordering domain spanning both hosts — deliberately not built. A
+ * second layer is not refused, because a distinct `renderOrder` is a coherent,
+ * stated order (e.g. an annotation layer always over a volume).
+ */
+function warnIfSceneShared(scene: THREE.Scene, layer: LuxarLayer, renderOrder: number): void {
+  let layers = layersByScene.get(scene);
+  if (!layers) {
+    layers = new Set();
+    layersByScene.set(scene, layers);
+  }
+  if (layers.size > 0) {
+    log.warning(
+      Modules.LUXAR,
+      `${layers.size + 1} LuxarLayers share one THREE.Scene. Each depth-sorts only its own ` +
+        'nodes, so their transparent geometry does not interleave by depth: the layer with the ' +
+        'lower `renderOrder` option draws first as a whole, and with equal values (this one ' +
+        `uses ${renderOrder}) the order between them is undefined. Give each layer a distinct ` +
+        '`renderOrder`, or render them in separate scenes.'
+    );
+  }
+  layers.add(layer);
+}
+
+/**
  * A Luxar scene rendered inside a host-owned Three.js pipeline.
  *
  * See the module docstring for the embed shape and the host's per-frame
@@ -242,6 +313,33 @@ export class LuxarLayer {
   private readonly bufferSize = new THREE.Vector2();
 
   private rootGroup: THREE.Group | null = null;
+  /**
+   * This layer's own depth-sort coordinator: it tracks only this layer's
+   * nodes, sorts them against `options.getCamera()` and wakes only
+   * `options.requestRender` — so a layer sharing a page with a LuxarApp or
+   * another layer never sorts against, or wakes, someone else's view. The
+   * SortWorker itself is shared page-wide.
+   */
+  private readonly depthSort = new DepthSortCoordinator();
+  /**
+   * This layer's OWN material manager, loader manager and dimension state.
+   * Never the LuxarApp's (`materialManager` / `SceneLoaderManager.getInstance()`
+   * / `sceneDimsManager`): a layer sharing the page with an app or another
+   * layer builds its materials against its own renderer capabilities, pushes
+   * camera parameters only to them, registers its loader, resolves its
+   * dimensions, and tears all of it down without touching theirs.
+   */
+  private readonly materials = new MaterialManager();
+  private readonly sceneLoaders = new SceneLoaderManager({ materials: this.materials });
+  private readonly dims = new SceneDimsManager();
+  private readonly densityTracker = new ProjectedDensityTracker();
+  private readonly densityGuardInstance = new DensityGuard();
+  /**
+   * This layer's blend-program warm-up, against the HOST renderer and scene.
+   * Registered so node commits in the host scene are routed here rather than
+   * to the LuxarApp's warm-up (which targets the app's own renderer).
+   */
+  private readonly blendWarmup = new WebGLBlendWarmupManager();
   private disposed = false;
   /** Guards against overlapping `load()` calls — see {@link LuxarLayer.load}. */
   private inFlightLoad: Promise<THREE.Group> | null = null;
@@ -269,6 +367,9 @@ export class LuxarLayer {
   private dimDirty = false;
   private environment: SceneEnvironment | null = null;
   private unsubscribeEnvironment: (() => void) | null = null;
+  /** The frame's shared camera snapshot (LOD selector + density tracker). */
+  private readonly viewContext: ViewContextProvider;
+  private readonly densityGuard: DensityGuardWiring;
 
   constructor(options: LuxarLayerOptions) {
     if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -283,11 +384,33 @@ export class LuxarLayer {
     // built — the GLSL vs. TSL dispatch in the material factories branches on
     // them, and a node created first would get the wrong backend.
     this.capabilities = createRendererCapabilities(options.renderer);
-    materialManager.setCaps(this.capabilities);
+    this.materials.setCaps(this.capabilities);
+    // The same per-backend switches the app sets for its own renderer: left at
+    // their classic-WebGL defaults, a host WebGPU renderer stalls large sorts
+    // after their first slice and never evicts stale RenderObjects.
+    configureRendererBackend(options.renderer, this.capabilities);
     this.resize();
 
+    this.viewContext = new ViewContextProvider({
+      getCamera: () => this.options.getCamera(),
+      getViewportCss: () => this.options.getViewportSize(),
+      getDrawingBuffer: () => {
+        this.options.renderer.getDrawingBufferSize(this.bufferSize);
+        return { width: this.bufferSize.x, height: this.bufferSize.y };
+      },
+    });
     this.installLodRegistryFactory();
+    this.densityGuard = this.installDensityGuard();
+    // The layer's loaders' commits report to the layer's coordinator.
+    this.sceneLoaders.setDepthSortCoordinator(this.depthSort);
     this.installDepthSort();
+    // The page-wide holds come LAST, once nothing above can throw: a
+    // constructor that throws returns no layer to dispose(), so a hold taken
+    // earlier (the worker-pool lease, the blend warm-up registration, the
+    // shared-scene count) would leak for the life of the page.
+    retainWorkerPool(this);
+    registerBlendWarmupManager(this.blendWarmup);
+    warnIfSceneShared(options.scene, this, options.renderOrder ?? DEFAULT_RENDER_ORDER);
   }
 
   /** The loaded scene root, or null before {@link load} resolves. */
@@ -355,7 +478,7 @@ export class LuxarLayer {
     this.clearDatasetFaultLoader();
     let root: THREE.Group;
     try {
-      root = await loadScene(src, this.options.loaderConfig, LOADER_ID);
+      root = await loadScene(this.sceneLoaders, src, this.options.loaderConfig, LOADER_ID);
     } catch (error) {
       // A dataset switch destroys the previous loader before fetching the new
       // scene. If that fetch fails, its old root is backed by dead resources.
@@ -369,7 +492,7 @@ export class LuxarLayer {
     // loader alive. dispose() waits for this cleanup before dropping globals.
     if (this.disposed) {
       this.detachRoot(root);
-      await SceneLoaderManager.getInstance().destroyLoaderAsync(LOADER_ID);
+      await this.sceneLoaders.destroyLoaderAsync(LOADER_ID);
       return root;
     }
 
@@ -389,14 +512,15 @@ export class LuxarLayer {
     // unrelated to this fetch, so either order is legitimate.
     if (this.pendingMatrix) this.applyMatrix(this.pendingMatrix);
 
-    // Dimension metadata has to resolve AFTER the group is attached (the
-    // manager walks the scene) and BEFORE the first slice query, which reads
-    // the displayed-dims set.
-    sceneDimsManager.initFromScene(this.options.scene);
+    // Dimension metadata has to resolve BEFORE the first slice query, which
+    // reads the displayed-dims set. Resolved from THIS layer's root, not the
+    // host scene: a host scene holding two layers would otherwise hand the
+    // second one the first one's dimension set.
+    this.dims.initFromScene(root);
 
-    const dims = sceneDimsManager.getDims();
+    const dims = this.dims.getDims();
     try {
-      if (dims) await updateSceneForDimensions(dims, root, LOADER_ID);
+      if (dims) await updateSceneForDimensions(this.sceneLoaders, dims, root, LOADER_ID);
     } catch (error) {
       this.detachRoot(root);
       this.rootGroup = null;
@@ -405,7 +529,7 @@ export class LuxarLayer {
     if (this.disposed) return root;
     this.applyRenderOrder();
     this.configureBlendWarmup();
-    await warmSceneBlendModePrograms(root);
+    await this.blendWarmup.warmScene(root);
 
     log.info(Modules.LUXAR, `Layer loaded: ${src}`);
     return root;
@@ -416,13 +540,24 @@ export class LuxarLayer {
    *
    * Cheap and self-gating: it early-outs before a scene is loaded, and both
    * inner evaluations early-out when nothing needs re-sorting or swapping.
+   *
+   * Returns whether this frame's evaluation changed what is drawn — a
+   * cross-node render order or ordering-buffer slot, a LOD level shown or
+   * hidden, a cross-fade / energy-compensation opacity step, a partition part
+   * culled or restored. Those are multi-frame motions (a fade advances one step
+   * per evaluation), so on a change the layer also calls `requestRender`: a
+   * host that renders on demand then keeps ticking until the motion settles,
+   * and a host that renders continuously can ignore both.
    */
-  update(): void {
-    if (!this.rootGroup || this.disposed) return;
+  update(): boolean {
+    if (!this.rootGroup || this.disposed) return false;
+    // One camera snapshot per frame, shared by the selector and the tracker.
+    this.viewContext.invalidate();
     // Order matters: depth sorting assigns the cross-node render order that a
-    // LOD swap may then invalidate, so sorting runs first.
-    evaluateDepthSortPerFrame();
-    getSceneLoader(LOADER_ID)?.lodGroupRegistry?.evaluatePerFrame();
+    // LOD swaps may invalidate sorting; density measures the levels now shown.
+    const sortChanged = this.depthSort.evaluatePerFrame();
+    const lodChanged = this.evaluateLodFrame();
+    const densityChanged = this.densityGuard.perFrame();
     // Scene / LOD / partition groups may attach lazily after load(). Three.js
     // replaces the transparent group-order key at every Group boundary, so a
     // newly attached default-zero group would otherwise nullify the option.
@@ -431,14 +566,29 @@ export class LuxarLayer {
     // so a non-default exposure has to be re-asserted. Skipped entirely at the
     // authored exposure, which is the common case.
     if (this.exposure !== 1) this.applyExposure();
+    const changed = sortChanged || lodChanged || densityChanged;
+    if (changed) this.options.requestRender?.();
+    return changed;
   }
 
   /**
-   * Push the host's drawing-buffer size, pixel ratio and projection kind
-   * (orthographic or not) into the material manager. Call after a viewport
-   * resize, a DPR change, or a swap between a perspective and an orthographic
-   * camera. An FOV / ortho-zoom change needs no call: every shader reads its
-   * projection terms from the camera's projection matrix per draw, which also
+   * Run the LOD selector for this frame and report whether the drawn state
+   * changed. `takeDrawnStateChanged()` is taken every frame (as the app's
+   * `'lod-group-selector'` callback does) so the flag never carries over.
+   */
+  private evaluateLodFrame(): boolean {
+    const registry = this.sceneLoaders.getLoader(LOADER_ID)?.lodGroupRegistry;
+    if (!registry) return false;
+    const { levelChanged, cullChanged } = registry.evaluatePerFrame();
+    return registry.takeDrawnStateChanged() || levelChanged || cullChanged;
+  }
+
+  /**
+   * Push the host's drawing-buffer size and pixel ratio into the material
+   * manager. Call after a viewport resize or a DPR change. An FOV / ortho-zoom
+   * change or a perspective/orthographic swap needs no call: every shader reads
+   * its projection terms — the ortho test included — from the camera's
+   * projection matrix per draw, which also
    * makes a camera that is neither perspective nor orthographic (a plain
    * `THREE.Camera` with its own matrix) render at the right size.
    *
@@ -452,41 +602,33 @@ export class LuxarLayer {
    */
   resize(): void {
     if (this.disposed) return;
-    // The public option is the broad `THREE.Camera` so any host camera is
-    // accepted; the ortho test wants the narrower perspective/ortho union, and
-    // a camera that is neither is treated as perspective (its fragment-stage
-    // near fade; its sizes come from its own projection matrix).
-    const camera = this.options.getCamera() as LuxarCamera;
+    // Any host camera works: every projection term — the ortho test
+    // included — is read in shader from the camera's own projection matrix.
     this.options.renderer.getDrawingBufferSize(this.bufferSize);
     const viewportHeight = this.options.getViewportSize().height;
     const pixelRatio =
       viewportHeight > 0
         ? this.bufferSize.y / viewportHeight
         : this.options.renderer.getPixelRatio();
-    materialManager.updateCameraParams(
-      this.bufferSize,
-      isOrthographicCamera(camera),
-      undefined,
-      pixelRatio
-    );
+    this.materials.updateCameraParams(this.bufferSize, undefined, pixelRatio);
   }
 
   /** Dimension metadata for the loaded scene (cloned), or null if none. */
   getDimensions(): EmbedderDimensions | null {
-    const dims = sceneDimsManager.getDims();
+    const dims = this.dims.getDims();
     if (!dims) return null;
     return {
       ndim: dims.ndim,
       displayed: [...dims.displayed],
       currentStep: [...dims.currentStep],
-      metadata: sceneDimsManager.getDimensionMetadata().map((metadata) => ({
+      metadata: this.dims.getDimensionMetadata().map((metadata) => ({
         ...metadata,
         ...(metadata.range
           ? { range: [metadata.range[0], metadata.range[1]] as [number, number] }
           : {}),
         ...(metadata.categories ? { categories: [...metadata.categories] } : {}),
       })),
-      ranges: (sceneDimsManager.getDimensionRanges() ?? []).map(
+      ranges: (this.dims.getDimensionRanges() ?? []).map(
         (range) => [range[0], range[1]] as [number, number]
       ),
     };
@@ -499,7 +641,7 @@ export class LuxarLayer {
    * whichever axis the scene calls "time".
    */
   findDimension(name: string): number | null {
-    const names = sceneDimsManager.getDimensionNames();
+    const names = this.dims.getDimensionNames();
     const index = names.findIndex((n) => n.toLowerCase() === name.toLowerCase());
     return index >= 0 ? index : null;
   }
@@ -515,7 +657,7 @@ export class LuxarLayer {
    * assume a column order.
    */
   getDimensionNames(): string[] {
-    return sceneDimsManager.getDimensionNames();
+    return this.dims.getDimensionNames();
   }
 
   /**
@@ -540,7 +682,7 @@ export class LuxarLayer {
 
     // The dims manager always takes the new value, so the final position is
     // correct even when the intermediate slices are coalesced away.
-    sceneDimsManager.setDimensionValue(index, value);
+    this.dims.setDimensionValue(index, value);
 
     const settled = new Promise<void>((resolve) => this.dimWaiters.push(resolve));
     this.dimDirty = true;
@@ -576,8 +718,9 @@ export class LuxarLayer {
         this.dimWaiters = [];
 
         try {
-          const dims = sceneDimsManager.getDims();
-          if (dims) await updateSceneForDimensions(dims, this.rootGroup, LOADER_ID);
+          const dims = this.dims.getDims();
+          if (dims)
+            await updateSceneForDimensions(this.sceneLoaders, dims, this.rootGroup, LOADER_ID);
         } finally {
           for (const resolve of claimed) resolve();
         }
@@ -602,12 +745,12 @@ export class LuxarLayer {
    */
   prefetchDimensionValue(index: number, value: number, budgetMs = 16): void {
     if (this.disposed || !this.rootGroup) return;
-    const dims = sceneDimsManager.getDims();
+    const dims = this.dims.getDims();
     if (!dims || index < 0 || index >= dims.ndim || !Number.isFinite(value)) return;
     let predictedValue = value;
     let min = -Infinity;
     let max = Infinity;
-    const range = sceneDimsManager.getDimensionRanges()?.[index];
+    const range = this.dims.getDimensionRanges()?.[index];
     if (range) {
       [min, max] = range;
       predictedValue = clamp(predictedValue, min, max);
@@ -622,7 +765,9 @@ export class LuxarLayer {
         currentIndex === index ? predictedValue : current
       ),
     };
-    prefetchSceneForDimensions(predicted, this.rootGroup, LOADER_ID, { budgetMs });
+    prefetchSceneForDimensions(this.sceneLoaders, predicted, this.rootGroup, LOADER_ID, {
+      budgetMs,
+    });
   }
 
   /** Resolve once no slice update is in flight. */
@@ -766,6 +911,9 @@ export class LuxarLayer {
   }
 
   private detachRoot(root: THREE.Group): void {
+    // The loader's path index (every member node holds its add/remove
+    // listeners) — the same release `SceneManager.clearSceneContent` does.
+    detachSceneGraphIndex(root);
     root.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return;
       releaseDepthSortNode(object);
@@ -776,8 +924,11 @@ export class LuxarLayer {
 
   private configureBlendWarmup(): void {
     const renderer = isWebGLRenderer(this.options.renderer) ? this.options.renderer : null;
-    configureBlendModeProgramWarmup({
-      enabled: renderer !== null && getInputProfile().deviceClass !== 'mobile',
+    this.blendWarmup.configure({
+      enabled:
+        renderer !== null &&
+        this.options.blendWarmup !== false &&
+        getInputProfile().deviceClass !== 'mobile',
       renderer,
       camera: this.options.getCamera(),
       targetScene: this.options.scene,
@@ -787,7 +938,7 @@ export class LuxarLayer {
   /** Back off Luxar's GPU budget after a host WebGL context-loss event. */
   handleContextLost(): void {
     if (this.disposed) return;
-    clearBlendModeProgramWarmup();
+    this.blendWarmup.clear();
     reduceGpuByteBudgetForContextLoss();
   }
 
@@ -798,7 +949,7 @@ export class LuxarLayer {
    */
   handleContextRestored(): void {
     if (this.disposed || !this.rootGroup) return;
-    materialManager.rebuildAfterContextRestore();
+    this.materials.rebuildAfterContextRestore();
     try {
       if (this.environment?.isReady()) this.environment.rebuild();
     } catch (error) {
@@ -806,19 +957,22 @@ export class LuxarLayer {
     }
     markSceneResourcesDirtyForContextRestore(this.rootGroup);
     this.resize();
-    getSceneLoader(LOADER_ID)?.nodeFactory.rebuildAfterContextRestore(this.rootGroup);
+    this.sceneLoaders.getLoader(LOADER_ID)?.nodeFactory.rebuildAfterContextRestore(this.rootGroup);
     this.configureBlendWarmup();
-    void warmSceneBlendModePrograms(this.rootGroup);
+    void this.blendWarmup.warmScene(this.rootGroup);
     this.options.requestRender?.();
   }
 
   /**
-   * Tear down everything the layer owns: the scene group, the loader and its
-   * caches, the data-worker pool, and the depth-sort worker.
+   * Tear down everything the layer owns: the scene group, its loader manager
+   * and the loader's caches, its materials and dimension state, its depth-sort
+   * coordinator and blend warm-up — and release its lease on the page-wide
+   * data-worker pool and SortWorker, which terminate only when no other host
+   * (a LuxarApp, another layer) still uses them.
    *
    * Awaits loader teardown for real, via `destroyAllAsync()`: every
    * prefetcher, caching store, and L0 cache is drained before the pools that
-   * serve them are torn down. `disposeInstance()` alone is explicitly
+   * serve them are torn down. The manager's `dispose()` alone is explicitly
    * fire-and-forget, so a host that awaits this would otherwise get a promise
    * that guarantees nothing and a subsequent `load()` could race the drain.
    * This is stronger than what `LuxarApp` does at shutdown, and deliberately
@@ -837,7 +991,7 @@ export class LuxarLayer {
     this.clearDatasetFaultLoader();
     this.datasetFaultListeners.clear();
 
-    // Keep the process singletons alive until loadScene has either failed or
+    // Keep the layer's loader manager and pool lease alive until loadScene has either failed or
     // disposed the loader it just registered. React unmounts commonly land
     // here while load() is pending (and StrictMode does so deliberately).
     if (this.inFlightLoad) {
@@ -855,27 +1009,29 @@ export class LuxarLayer {
       this.rootGroup = null;
     }
     this.pendingMatrix = null;
-    configureBlendModeProgramWarmup({
+    this.blendWarmup.configure({
       enabled: false,
       renderer: null,
       camera: null,
       targetScene: null,
     });
+    unregisterBlendWarmupManager(this.blendWarmup);
+    layersByScene.get(this.options.scene)?.delete(this);
 
     // Same three-tier ordering LuxarApp uses: dimension state and the loader
     // (which holds worker references) before the pools that serve them, so no
     // in-flight call outlives its owner.
     const steps: Array<[string, () => void | Promise<void>]> = [
-      ['sceneDims', () => sceneDimsManager.reset()],
+      ['sceneDims', () => this.dims.reset()],
       [
         'sceneLoaderManager',
         async () => {
-          // Await the drain, THEN drop the singleton. `disposeInstance()` runs
+          // Await the drain, THEN release the manager. `dispose()` runs
           // `destroyAll()`, which fires disposes without awaiting them; by the
-          // time it runs here the loaders map is already empty, so it is a
-          // cheap no-op that just clears the instance.
-          await SceneLoaderManager.getInstance().destroyAllAsync();
-          SceneLoaderManager.disposeInstance();
+          // time it runs here the loaders map is already empty, so it only
+          // releases the KTX2 decoder. The LuxarApp's manager is untouched.
+          await this.sceneLoaders.destroyAllAsync();
+          this.sceneLoaders.dispose();
         },
       ],
       [
@@ -887,9 +1043,11 @@ export class LuxarLayer {
           this.environment = null;
         },
       ],
-      ['materialManager', () => materialManager.dispose()],
-      ['workerPool', () => disposeWorkerPool()],
-      ['depthSort', () => disposeDepthSort()],
+      ['densityGuard', () => this.densityTracker.reset()],
+      ['materialManager', () => this.materials.dispose()],
+      // Terminates the shared pool only when no other host still uses it.
+      ['workerPool', () => releaseWorkerPool(this)],
+      ['depthSort', () => this.depthSort.dispose()],
     ];
     for (const [label, step] of steps) {
       try {
@@ -907,7 +1065,7 @@ export class LuxarLayer {
       resolveMaterialBackend(this.capabilities),
       this.options.scene
     );
-    this.unsubscribeEnvironment = materialManager.onPhysicalMaterialCreated(() => {
+    this.unsubscribeEnvironment = this.materials.onPhysicalMaterialCreated(() => {
       try {
         this.environment?.ensure();
       } catch (error) {
@@ -917,43 +1075,67 @@ export class LuxarLayer {
   }
 
   private installLodRegistryFactory(): void {
-    const { lodFade = true, lodEnergyComp = true, lodFinest = false, lodBias = 1 } = this.options;
-    SceneLoaderManager.getInstance().setLODGroupRegistryFactory(
+    const { lodFade, lodEnergyComp, lodFinest, lodBias } = this.options;
+    // The same deps the app pipeline builds; a layer has no playback driver
+    // or tick-only wake, so those stay omitted.
+    this.sceneLoaders.setLODGroupRegistryFactory(
       (owner) =>
-        new LODGroupRegistry({
-          getCamera: () => this.options.getCamera(),
-          getViewportSize: () => this.options.getViewportSize(),
-          // Empty, not [0, 1, 2], before dims resolve: the registry's
-          // `displayDims.length < 2` early-return then skips evaluation, whereas
-          // the plausible-looking default projects a 2D scene onto a phantom Z.
-          // Matches `core/app/init/pipeline.ts`.
-          getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? [],
-          hasArchiveFault: () => owner.archiveFault !== null,
-          hasNetworkFailureUnder: (path) => owner.hasNetworkFailureUnder(path),
-          requestReprocess: (paths) => owner.requestReprocess(paths),
-          // A view PASS in flight or queued — not a refinement hold (see the
-          // app pipeline's identical wiring).
-          isUpdateInProgress: () => owner.isLoadPassInProgress(),
-          getCommittedViewState: () => owner.committedViewState,
-          getResidentByteBudget: () => getGpuByteBudget(),
-          // Both halves of the budget are required: `lod-eviction` bails on
-          // `!getResidentBytes`, so supplying only the budget makes it
-          // decorative and no cold level is ever demoted — an unbounded VRAM
-          // climb over a long host session, with nothing to see until it fails.
-          getResidentBytes: () => owner.gpuBufferPool?.getResidentBytes() ?? 0,
-          getViewVersion: () => owner.currentViewVersion,
-          getCrossFadeEnabled: () => lodFade,
-          getEnergyCompEnabled: () => lodEnergyComp,
-          getForceFinestLOD: () => lodFinest,
-          getLodBias: () => lodBias,
-          registerMaterial: (material) => materialManager.register(material),
-          requestRender: () => this.handleGeometryCommit(),
-        })
+        new LODGroupRegistry(
+          buildLodRegistryDeps(owner, {
+            getCamera: () => this.options.getCamera(),
+            getViewportSize: () => this.options.getViewportSize(),
+            getViewContext: () => this.viewContext.get(),
+            getDisplayDims: () => this.dims.getDims()?.displayed ?? [],
+            registerMaterial: (material) => this.materials.register(material),
+            requestRender: () => this.handleGeometryCommit(),
+            lodFade,
+            lodEnergyComp,
+            lodFinest,
+            lodBias,
+          })
+        )
     );
-    SceneLoaderManager.getInstance().setRequestRender(() => this.handleGeometryCommit());
-    SceneLoaderManager.getInstance().setKTX2TextureDecoder(
-      createKTX2TextureDecoder(this.options.renderer)
-    );
+    this.sceneLoaders.setRequestRender(() => this.handleGeometryCommit());
+    this.sceneLoaders.setKTX2TextureDecoder(createKTX2TextureDecoder(this.options.renderer));
+  }
+
+  /**
+   * The projected-density guard, wired exactly as the app wires it
+   * (density-guard-wiring.ts): the tracker walks the layer's own root once per
+   * {@link update}, thins blendable nodes packing more elements per pixel than
+   * the cap, and gates refinement rungs through the same records.
+   */
+  private installDensityGuard(): DensityGuardWiring {
+    const layer = this;
+    const buffer = new THREE.Vector2();
+    return wireDensityGuard({
+      configEnabled: config.densityGuard.enabled,
+      option: this.options.densityGuard,
+      config: config.densityGuard,
+      capOverride: this.options.densityCap,
+      energyComp: this.options.lodEnergyComp ?? true,
+      getViewContext: () => this.viewContext.get(),
+      sceneManager: {
+        get scene() {
+          return layer.rootGroup;
+        },
+        get camera() {
+          return layer.options.getCamera();
+        },
+        get renderer() {
+          layer.options.renderer.getDrawingBufferSize(buffer);
+          return { domElement: { width: buffer.x, height: buffer.y } };
+        },
+      },
+      registerMaterial: (material) => this.materials.register(material),
+      setRefinementDensityProvider: (provider, caps) =>
+        this.sceneLoaders.setRefinementDensityProvider(provider, caps),
+      getDefaultLoader: () => this.sceneLoaders.getLoader(LOADER_ID),
+      tracker: this.densityTracker,
+      guard: this.densityGuardInstance,
+      getAdaptiveDpr: () => null,
+      requestRender: () => this.options.requestRender?.(),
+    });
   }
 
   private clearDatasetFaultLoader(): void {
@@ -966,7 +1148,7 @@ export class LuxarLayer {
   private installDatasetFaultLoader(src: string): void {
     this.clearDatasetFaultLoader();
     if (this.disposed) return;
-    const sceneLoader = getSceneLoader(LOADER_ID);
+    const sceneLoader = this.sceneLoaders.getLoader(LOADER_ID);
     this.datasetFaultLoader = sceneLoader;
     this.datasetFaultSrc = sceneLoader ? src : null;
     if (sceneLoader) {
@@ -998,29 +1180,29 @@ export class LuxarLayer {
   }
 
   private installDepthSort(): void {
-    // The module-level flag is what actually gates registration, the per-frame
+    // The coordinator's flag is what actually gates registration, the per-frame
     // cross-node renderOrder pass, and worker spawn. Returning early without
     // clearing it leaves `depthSort: false` doing nothing at all.
     // AND with the build config the same way the app does, so a config that
     // ships depth sorting off is honoured in layer mode too. No behavioural
     // difference while the config default is true — it bites only if that flips.
     const enabled = config.depthSort.enabled && this.options.depthSort !== false;
-    setDepthSortEnabled(enabled);
+    this.depthSort.setEnabled(enabled);
     if (!enabled) return;
-    configureDepthSort({
+    this.depthSort.configure({
       getCamera: () => this.options.getCamera(),
       requestRender: () => this.options.requestRender?.(),
       requestReprocess: () => {
-        void getSceneLoader(LOADER_ID)?.updateView({});
+        void this.sceneLoaders.getLoader(LOADER_ID)?.updateView({});
       },
-      isLoadInProgress: () => getSceneLoader(LOADER_ID)?.isUpdateInProgress() ?? false,
-      getProfiler: () => SceneLoaderManager.getInstance().getProfiler(),
-      getDisplayDims: () => sceneDimsManager.getDims()?.displayed ?? null,
+      isLoadInProgress: () => this.sceneLoaders.getLoader(LOADER_ID)?.isUpdateInProgress() ?? false,
+      getProfiler: () => this.sceneLoaders.getProfiler(),
+      getDisplayDims: () => this.dims.getDims()?.displayed ?? null,
     });
     // Spawn the sort worker while the page is idle. Deferring it to the first
     // order-dependent commit puts its initialize() reply on a main thread that
     // is saturated decoding the scene, where it can miss its deadline.
-    warmUpDepthSortWorker();
+    this.depthSort.warmUp();
   }
 
   private assertLive(): void {

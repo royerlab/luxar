@@ -12,6 +12,7 @@
 import type { SceneNode } from '../../data-loader-types';
 import type { SceneGraphNode } from '../../../types/data-monitor-types';
 import { supportsLod, supportsPartition } from '../../../types/geometry-capabilities';
+import { GEOMETRY_TYPES } from '../../../types/format-contract';
 
 /** Valid scene-graph-node display types. */
 type GraphNodeType = SceneGraphNode['type'];
@@ -20,10 +21,7 @@ type GraphNodeType = SceneGraphNode['type'];
 const VALID_TYPES: ReadonlySet<GraphNodeType> = new Set<GraphNodeType>([
   'scene',
   'group',
-  'points',
-  'lines',
-  'gsplats',
-  'mesh',
+  ...GEOMETRY_TYPES,
   'sound',
 ]);
 

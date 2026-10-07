@@ -312,7 +312,9 @@ export function computeOpfsWriteQueueBudgetBytes(
  *   slice   = clamp(pool − L0 − L1, sliceMin, SLICE_CAP)  // residual → scales UP
  *
  * @param heapLimitBytes - Override for the device heap limit (tests). When
- *   omitted, {@link readHeapLimitBytes} is consulted.
+ *   omitted, {@link readHeapLimitBytes} is consulted; an explicitly passed
+ *   non-positive or non-finite value skips the heap path WITHOUT probing
+ *   browser state.
  * @param poolOverrideBytes - Explicit total cache pool (L0+L1+S-cache) in bytes,
  *   from `?cacheBudgetMB=` or the native launcher. Takes precedence over the
  *   heap: this is how the WKWebView app / Safari (no `performance.memory`) still
@@ -358,8 +360,8 @@ export function computeCacheBudgets(
     pool = poolOverrideBytes;
     source = 'explicit';
   } else {
-    const heap = heapLimitBytes ?? readHeapLimitBytes();
-    if (heap !== undefined) {
+    const heap = heapLimitBytes === undefined ? readHeapLimitBytes() : heapLimitBytes;
+    if (positive(heap)) {
       pool = heap * config.dataLoading.memory.targetHeapUsage * CACHE_SHARE_OF_TARGET;
       source = 'heap';
     } else if (positive(fallbackPoolBytes)) {

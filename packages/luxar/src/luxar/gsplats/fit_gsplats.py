@@ -210,7 +210,7 @@ def fit_gaussian_splats(
     use_metal: bool = True,
     use_cuda: bool = True,
     # Post-processing
-    cull_retention: float | None = 0.95,
+    cull_retention: float | None = 0.999,
     voxel_footprint_correction: bool | float = False,
     # Boundary containment
     boundary_penalty: Optional[float] = None,
@@ -446,11 +446,11 @@ def fit_gaussian_splats(
         Enable custom CUDA kernels on NVIDIA GPUs.
         Provides substantial speedup for 2D-8D volumes (often orders of
         magnitude, GPU-dependent). Automatically disabled if not available.
-    cull_retention : float or None, default=0.95
+    cull_retention : float or None, default=0.999
         Post-fit cumulative culling.  Keeps the top splats that account for
-        this fraction of the total amplitude (0--1).  At 0.95, roughly 5% of
-        splats are removed — those that collectively contribute only 5% of
-        the total signal.  Set to ``None`` to disable.
+        this fraction of the total amplitude (0--1).  At 0.999, the discarded
+        splats collectively contribute at most 0.1% of total amplitude.
+        Set to ``None`` to disable.
     voxel_footprint_correction : bool | float, default=False
         Post-fit correction to inflate splat covariances by the voxel footprint.
         This ensures that upsampling doesn't invent detail beyond what the original
@@ -635,7 +635,7 @@ def fit_gaussian_splats(
             from arbol import aprint
 
             aprint(
-                f"Post-fit culling (cumulative, retention={cull_retention:.0%}): "
+                f"Post-fit culling (cumulative, retention={cull_retention:.1%}): "
                 f"{n_before} -> {result.n_splats} splats "
                 f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%; "
                 f"amplitude retained: {amp_retained_pct:.1f}%)"

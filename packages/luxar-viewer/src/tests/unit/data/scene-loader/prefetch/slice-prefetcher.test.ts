@@ -74,6 +74,7 @@ vi.mock('../../../../../data/zarr', () => ({
 }));
 
 import { SlicePrefetcher } from '../../../../../data/scene-loader/prefetch/slice-prefetcher';
+import { SceneNodeIndex } from '../../../../../data/scene-loader/view-state/scene-node-index';
 
 function makeNode(path: string, attrs: SceneNode['attrs'] = {}): SceneNode {
   return { path, type: 'gsplats', attrs, hasSpatialIndex: true, children: [] };
@@ -123,6 +124,7 @@ describe('SlicePrefetcher', () => {
     resolveObject = vi.fn((path) => objects.get(path));
     prefetcher = new SlicePrefetcher({
       getSceneGraph: () => graph,
+      getSceneNodeIndex: () => new SceneNodeIndex(graph),
       factoryDeps: () => ({ zarrStore: {} }) as never,
       registry: registry as never,
       applyEffectiveAttrs: (node) => node.attrs,
@@ -167,6 +169,7 @@ describe('SlicePrefetcher', () => {
     objects.get('/pts')!.userData.partitionFrustumVisible = false;
     prefetcher = new SlicePrefetcher({
       getSceneGraph: () => graph,
+      getSceneNodeIndex: () => new SceneNodeIndex(graph),
       factoryDeps: () => ({ zarrStore: {} }) as never,
       registry: registry as never,
       applyEffectiveAttrs: (node) => node.attrs,

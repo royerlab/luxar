@@ -18,37 +18,12 @@
 
 import * as THREE from 'three';
 import { config } from '../../../config';
-import { resolveToneMappingDefault } from '../tone-mapping';
+import {
+  luxarToneMappingMode,
+  resolveToneMappingDefault,
+  toneMappingFromLuxarMode,
+} from '../tone-mapping';
 import { MEGA_VERTEX_SHADER, MEGA_FRAGMENT_SHADER } from './shader.glsl';
-
-/**
- * Map THREE.ToneMapping → the `LUXAR_TONE_MAPPING_MODE` shader-define
- * value. These are Luxar-internal compressed IDs (1..6), NOT THREE's
- * enum values (which split 0,1,2,3,4,5=Custom,6=AgX,7=Neutral).
- *
- * `NoToneMapping` deliberately routes to mode 1 (Linear) so its
- * shader behavior is clamp/saturate to [0,1].
- */
-function toneMappingModeDefine(mode: THREE.ToneMapping): string {
-  switch (mode) {
-    case THREE.NoToneMapping:
-      return '1'; // alias to Linear — clamps to [0,1]
-    case THREE.LinearToneMapping:
-      return '1';
-    case THREE.ReinhardToneMapping:
-      return '2';
-    case THREE.CineonToneMapping:
-      return '3';
-    case THREE.ACESFilmicToneMapping:
-      return '4';
-    case THREE.AgXToneMapping:
-      return '5';
-    case THREE.NeutralToneMapping:
-      return '6';
-    default:
-      return '6'; // Neutral — a gentle, hue-preserving rolloff
-  }
-}
 
 /** Constructor config for {@link MegaShaderMaterial}. All fields optional. */
 export interface MegaShaderConfig {
@@ -157,8 +132,8 @@ export class MegaShaderMaterial extends THREE.ShaderMaterial {
       },
 
       defines: {
-        LUXAR_TONE_MAPPING_MODE: toneMappingModeDefine(
-          cfg.toneMapping ?? resolveToneMappingDefault()
+        LUXAR_TONE_MAPPING_MODE: String(
+          luxarToneMappingMode(cfg.toneMapping ?? resolveToneMappingDefault())
         ),
       },
     });
@@ -209,7 +184,7 @@ export class MegaShaderMaterial extends THREE.ShaderMaterial {
   // ----------------------------------------------------------------
 
   setToneMapping(mode: THREE.ToneMapping): void {
-    const next = toneMappingModeDefine(mode);
+    const next = String(luxarToneMappingMode(mode));
     if (this.defines.LUXAR_TONE_MAPPING_MODE === next) return;
     this.defines.LUXAR_TONE_MAPPING_MODE = next;
     this.needsUpdate = true;
@@ -222,21 +197,7 @@ export class MegaShaderMaterial extends THREE.ShaderMaterial {
    * returns `LinearToneMapping` for either input.
    */
   getToneMapping(): THREE.ToneMapping {
-    switch (this.defines.LUXAR_TONE_MAPPING_MODE) {
-      case '1':
-        return THREE.LinearToneMapping;
-      case '2':
-        return THREE.ReinhardToneMapping;
-      case '3':
-        return THREE.CineonToneMapping;
-      case '4':
-        return THREE.ACESFilmicToneMapping;
-      case '5':
-        return THREE.AgXToneMapping;
-      case '6':
-      default:
-        return THREE.NeutralToneMapping;
-    }
+    return toneMappingFromLuxarMode(Number(this.defines.LUXAR_TONE_MAPPING_MODE));
   }
 
   // ----------------------------------------------------------------
@@ -321,7 +282,10 @@ export class MegaShaderMaterial extends THREE.ShaderMaterial {
     return 'USE_BLOOM' in this.defines;
   }
 
-  /** Set the bloom intensity. Disables the bloom branch if texture is null. */
+  /**
+   * Set the bloom intensity and the bloom chain's output texture. Uniforms only:
+   * the bloom branch itself is the `USE_BLOOM` define ({@link toggleBloom}).
+   */
   setBloom(intensity: number, texture: THREE.Texture | null): void {
     this.uniforms.uBloomIntensity.value = intensity;
     this.uniforms.uBloomTexture.value = texture;

@@ -17,12 +17,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-function deferred<T = void>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((res) => (resolve = res));
-  return { promise, resolve };
-}
+import { deferred } from '../../../helpers/deferred';
 
 /** A blosc-framed stand-in: only the header's decoded size (bytes 4..7) matters. */
 function frame(decodedBytes: number): Uint8Array {
@@ -175,7 +170,7 @@ describe('WorkerPool — lazy, one-worker-first codec warm-up', () => {
     const { WorkerPool, warmGates, warmCalls, decodeCalls } = await loadPool(3);
     const pool = new WorkerPool();
     await pool.initialize();
-    pool.warmCodecs();
+    pool.ensureCodecsWarm();
     await flush();
     const first = warmCalls[0];
     warmGates[first].resolve(undefined);
@@ -199,7 +194,7 @@ describe('WorkerPool — lazy, one-worker-first codec warm-up', () => {
     try {
       const pool = new WorkerPool();
       await pool.initialize();
-      pool.warmCodecs();
+      pool.ensureCodecsWarm();
       expect(
         new BloscDecodeDispatcher(pool).decode({
           bytes: frame(MIN_OFFLOAD_DECODED_BYTES),
@@ -218,10 +213,9 @@ describe('WorkerPool — lazy, one-worker-first codec warm-up', () => {
     const { WorkerPool, warmCalls } = await loadPool(2);
     const pool = new WorkerPool();
     await pool.initialize();
-    pool.warmCodecs();
+    pool.ensureCodecsWarm();
     await flush();
     expect(warmCalls.length).toBeGreaterThan(0);
-    expect(pool.getIdleWorkerCount()).toBe(2);
     expect(pool.getQueueDepth()).toBe(0);
     pool.dispose();
   });

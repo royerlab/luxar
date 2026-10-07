@@ -27,7 +27,7 @@ import {
   writePointTexels,
   type PointTexelSource,
 } from '../point-geometry';
-import { writeSortedIndexIdentity } from '../element-storage';
+import { writeFreshElementStorage, writeSortedIndexIdentity } from '../element-storage';
 import { clampPointCapacity } from '../element-texture-layout';
 import { widenToFloat32 } from '../widen-to-float32';
 import type { LoadedPointsData, DataLoader } from '../../data/data-loader-types';
@@ -145,17 +145,10 @@ export function createPointsGeometry(
     sharpness: sharpnessF32,
     scalars: scalarsF32,
   };
-  try {
+  writeFreshElementStorage(geometry, () => {
     writePointTexels(texture, texelSrc, pointCount);
     writeSortedIndexIdentity(geometry, pointCount);
-  } catch (err) {
-    // The texture was attached above; a guard-throwing write would
-    // otherwise leak the fresh geometry+texture pair (nobody owns it
-    // yet — the commit's create-then-swap keeps the mesh on its OLD
-    // geometry when this throws).
-    geometry.dispose();
-    throw err;
-  }
+  });
 
   // WebGLRenderer only issues an instanced draw when instanceCount is set.
   geometry.instanceCount = pointCount;

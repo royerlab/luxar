@@ -92,8 +92,8 @@ export interface SceneEnvironmentDeps {
 }
 
 /**
- * What a live capture needs from the running app — attached by the init pipeline once
- * those pieces exist. Without it, `scene` falls back to the room.
+ * What a live capture and HDRI URL resolution need from the running app — attached
+ * by the init pipeline once those pieces exist. Without it, `scene` falls back to the room.
  */
 export interface CaptureRuntime {
   /** The scene root (`LuxarScene`), for probe resolution and physical-mesh hiding. */
@@ -104,6 +104,8 @@ export interface CaptureRuntime {
   restoreCameraParams: () => void;
   /** Whether the loader has settled (no update sweep, load pass or LOD load in flight). */
   isSettled: () => boolean;
+  /** Whether a live capture can run without delaying worker-pool initialization. */
+  captureReady?: () => boolean;
   /** Base URL of the store, for a store-relative `hdri` url. */
   baseUrl: () => string | undefined;
   /**
@@ -127,8 +129,12 @@ export class SceneEnvironment {
   private roomTarget: { texture: THREE.Texture; dispose(): void } | null = null;
   private captureTarget: CubeTargetLike | null = null;
   private bakedTexture: THREE.CubeTexture | null = null;
-  private hdriTexture: THREE.Texture | null = null;
-  private hdriLoading: string | null = null;
+  /**
+   * The one HDRI request for the configured URL — loading (`texture` null), loaded, or
+   * failed (null forever). Keyed by URL so a new URL starts over, and compared by
+   * identity so a superseded load can neither adopt its texture nor clear this one.
+   */
+  private hdri: { url: string; texture: THREE.Texture | null } | null = null;
 
   private config: EnvironmentConfig = DEFAULT_ENVIRONMENT_CONFIG;
   private baked: BakedEnvironment | null = null;
@@ -174,7 +180,11 @@ export class SceneEnvironment {
     if (this.wanted) this.apply();
   }
 
-  /** Clear dataset-owned state while preserving runtime wiring and the reusable room PMREM. */
+  /**
+   * Clear dataset-owned state while preserving runtime wiring and the reusable room PMREM.
+   * The config goes back to the default too: the next scene's physical materials ask for
+   * light while it loads, before its own config is applied.
+   */
   resetForDataset(): void {
     if (this.roomTarget && this.deps.scene.environment === this.roomTarget.texture) {
       this.deps.scene.environment = null;
@@ -182,33 +192,22 @@ export class SceneEnvironment {
     this.wanted = false;
     this.baked = null;
     this.staleSince = null;
-    this.hdriLoading = null;
+    this.config = DEFAULT_ENVIRONMENT_CONFIG;
+    this.deps.scene.environmentIntensity = this.config.intensity;
     this.releaseCaptureTarget();
-    if (this.bakedTexture) {
-      if (this.deps.scene.environment === this.bakedTexture) this.deps.scene.environment = null;
-      this.bakedTexture.dispose();
-      this.bakedTexture = null;
-    }
-    if (this.hdriTexture) {
-      if (this.deps.scene.environment === this.hdriTexture) this.deps.scene.environment = null;
-      this.hdriTexture.dispose();
-      this.hdriTexture = null;
-    }
+    this.releaseHdri();
+    this.releaseBakedTexture();
     this.active = 'none';
   }
 
   /** Attach (or clear) a baked map. A valid map takes precedence over any source. */
   setBaked(map: BakedEnvironment | null): void {
     this.baked = map;
-    if (this.bakedTexture) {
-      if (this.deps.scene.environment === this.bakedTexture) this.deps.scene.environment = null;
-      this.bakedTexture.dispose();
-      this.bakedTexture = null;
-    }
+    this.releaseBakedTexture();
     if (this.wanted) this.apply();
   }
 
-  /** Give the environment what a live capture needs (the init pipeline does this once). */
+  /** Give the environment its app runtime (the init pipeline does this once). */
   attachRuntime(runtime: CaptureRuntime | null): void {
     this.runtime = runtime;
     if (this.wanted && this.active === 'room' && this.config.source === 'scene') this.apply();
@@ -239,14 +238,16 @@ export class SceneEnvironment {
   }
 
   /**
-   * Per-frame hook (the init pipeline registers it). Re-captures a stale live
-   * environment once the debounce has passed and the loader is settled. Returns
-   * whether a capture ran.
+   * Per-frame hook (the init pipeline registers it). Captures the first settled
+   * scene after any pool startup finishes, or re-captures a stale live environment after
+   * the debounce. Returns whether a capture ran.
    */
   tick(now: number = performance.now()): boolean {
-    if (this.staleSince === null || this.active !== 'scene' || !this.runtime) return false;
+    if (!this.canCapture()) return false;
+    if (this.pendingSceneCapture()) return this.apply();
+    if (this.staleSince === null || this.active !== 'scene') return false;
     if (now - this.staleSince < CAPTURE_DEBOUNCE_MS) return false;
-    if (!this.runtime.isSettled()) return false;
+    if (!this.runtime?.isSettled()) return false;
     this.staleSince = null;
     return this.captureScene() !== null;
   }
@@ -310,25 +311,7 @@ export class SceneEnvironment {
   /** Rebuild previously-created GPU resources after the renderer context is restored. */
   rebuild(): boolean {
     if (!this.isReady()) return false;
-    const scene = this.deps.scene;
-    const ours = [
-      this.roomTarget?.texture,
-      this.captureTarget?.texture,
-      this.bakedTexture,
-      this.hdriTexture,
-    ];
-    if (scene.environment && ours.includes(scene.environment)) scene.environment = null;
-    this.roomTarget?.dispose();
-    this.captureTarget?.dispose();
-    this.bakedTexture?.dispose();
-    this.hdriTexture?.dispose();
-    this.roomTarget = null;
-    this.captureTarget = null;
-    this.captureProbeSpec = null;
-    this.bakedTexture = null;
-    this.hdriTexture = null;
-    this.active = 'none';
-    this.staleSince = null;
+    this.releaseResources();
     const rebuilt = this.apply();
     this.markStale();
     return rebuilt;
@@ -336,47 +319,42 @@ export class SceneEnvironment {
 
   /** Release everything and clear `scene.environment` if it is ours. */
   dispose(): void {
-    const scene = this.deps.scene;
-    const ours = [
-      this.roomTarget?.texture,
-      this.captureTarget?.texture,
-      this.bakedTexture,
-      this.hdriTexture,
-    ];
-    if (scene.environment && ours.includes(scene.environment)) scene.environment = null;
-    this.roomTarget?.dispose();
-    this.captureTarget?.dispose();
-    this.bakedTexture?.dispose();
-    this.hdriTexture?.dispose();
-    this.roomTarget = null;
-    this.captureTarget = null;
-    this.captureProbeSpec = null;
-    this.bakedTexture = null;
-    this.hdriTexture = null;
+    this.releaseResources();
     this.runtime = null;
-    this.active = 'none';
     this.wanted = false;
-    this.staleSince = null;
   }
 
   // ---------------------------------------------------------------------------
+
+  private canCapture(): boolean {
+    const runtime = this.runtime;
+    return (
+      runtime !== null &&
+      runtime.captureReady?.() !== false &&
+      (runtime.captureReady === undefined || runtime.isSettled())
+    );
+  }
+
+  private pendingSceneCapture(): boolean {
+    return this.wanted && this.active === 'room' && this.config.source === 'scene';
+  }
 
   /** Apply the precedence rule for the current state. Returns whether anything changed. */
   private apply(): boolean {
     if (this.baked) return this.applyBaked(this.baked);
     switch (this.config.source) {
       case 'scene':
-        if (this.runtime) {
+        if (this.canCapture()) {
           if (this.captureMatchesConfig()) return false;
-          // First light is an immediate capture — of whatever is resident now — and
-          // every later commit re-captures through `markStale` / `tick`.
+          // First live capture sees the settled scene; later commits re-capture
+          // through `markStale` / `tick`.
           return this.captureScene() !== null;
         }
         return this.applyRoom();
       case 'hdri':
         this.startHdri();
         // The room stands in until the image arrives (or fails).
-        return this.hdriTexture ? this.applyHdri() : this.applyRoom();
+        return this.hdri?.texture ? this.applyHdri() : this.applyRoom();
       default:
         return this.applyRoom();
     }
@@ -432,38 +410,81 @@ export class SceneEnvironment {
     return true;
   }
 
+  /** Request the configured HDRI once per URL; a failure keeps the room until the URL changes. */
   private startHdri(): void {
     const url = this.config.url;
-    if (!url || this.hdriTexture || this.hdriLoading === url) return;
-    this.hdriLoading = url;
-    const resolved = resolveEnvironmentUrl(url, this.runtime?.baseUrl());
+    if (!url || this.hdri?.url === url) return;
+    this.releaseHdri();
+    const request: { url: string; texture: THREE.Texture | null } = { url, texture: null };
+    this.hdri = request;
+    const fail = (target: string, error: unknown): void => {
+      log.warning(
+        Modules.RENDERER,
+        `Scene environment: could not load HDRI '${target}' (${String(error)}); keeping the room`
+      );
+    };
+    let resolved: string;
+    try {
+      resolved = resolveEnvironmentUrl(url, this.runtime?.baseUrl());
+    } catch (error) {
+      fail(url, error);
+      return;
+    }
     void loadEquirectangularTexture(resolved).then(
       (texture) => {
-        if (this.hdriLoading !== url) {
+        if (this.hdri !== request) {
           texture.dispose();
           return;
         }
-        this.hdriLoading = null;
-        this.hdriTexture = texture;
+        request.texture = texture;
         if (this.wanted && !this.baked && this.config.source === 'hdri' && this.applyHdri()) {
           this.runtime?.requestRender?.();
         }
       },
       (error: unknown) => {
-        this.hdriLoading = null;
-        log.warning(
-          Modules.RENDERER,
-          `Scene environment: could not load HDRI '${resolved}' (${String(error)}); keeping the room`
-        );
+        if (this.hdri === request) fail(resolved, error);
       }
     );
   }
 
+  /** Release every GPU resource (room included), clearing `scene.environment` if it is ours. */
+  private releaseResources(): void {
+    if (this.roomTarget) {
+      if (this.deps.scene.environment === this.roomTarget.texture)
+        this.deps.scene.environment = null;
+      this.roomTarget.dispose();
+      this.roomTarget = null;
+    }
+    this.releaseCaptureTarget();
+    this.releaseHdri();
+    this.releaseBakedTexture();
+    this.active = 'none';
+    this.staleSince = null;
+  }
+
+  private releaseBakedTexture(): void {
+    if (!this.bakedTexture) return;
+    if (this.deps.scene.environment === this.bakedTexture) this.deps.scene.environment = null;
+    this.bakedTexture.dispose();
+    this.bakedTexture = null;
+  }
+
+  /** Drop the HDRI request and dispose its texture, clearing `scene.environment` if it is ours. */
+  private releaseHdri(): void {
+    const texture = this.hdri?.texture;
+    this.hdri = null;
+    if (!texture) return;
+    if (this.deps.scene.environment === texture) this.deps.scene.environment = null;
+    if (this.active === 'hdri') this.active = 'none';
+    texture.dispose();
+  }
+
   private applyHdri(): boolean {
-    if (!this.hdriTexture) return false;
+    const texture = this.hdri?.texture;
+    if (!texture) return false;
     if (this.active === 'hdri') return false;
     this.releaseCaptureTarget();
-    this.deps.scene.environment = this.hdriTexture;
+    this.deps.scene.environment = texture;
     this.active = 'hdri';
     this.staleSince = null;
     log.info(Modules.RENDERER, `Scene environment: HDRI '${this.config.url}' applied`);

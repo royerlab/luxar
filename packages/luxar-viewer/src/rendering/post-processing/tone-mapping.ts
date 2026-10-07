@@ -10,7 +10,8 @@
  * plus two hardcoded `?? THREE.ACESFilmicToneMapping` fallbacks inside
  * the mega-shader materials — five copies to keep in step with the
  * `renderingControls.defaults.toneMapping` default. They now all route
- * through this module.
+ * through this module, as does the mega-shader's own compact mode id
+ * ({@link luxarToneMappingMode}), shared by the GLSL and TSL materials.
  *
  * @module rendering/post-processing/tone-mapping
  */
@@ -66,4 +67,43 @@ export function toneMappingFromName(name: string): THREE.ToneMapping {
   return Object.hasOwn(TONE_MAPPING_BY_NAME, name)
     ? TONE_MAPPING_BY_NAME[name as ToneMappingName]
     : resolveToneMappingDefault();
+}
+
+/**
+ * The mega-shader's compact tone-mapping mode: the `LUXAR_TONE_MAPPING_MODE`
+ * define of the GLSL material and the `toneMappingMode` of the TSL factory.
+ * Luxar-internal IDs (1=Linear, 2=Reinhard, 3=Cineon, 4=ACES, 5=AgX,
+ * 6=Neutral), NOT THREE's enum values.
+ */
+export type LuxarToneMappingMode = 1 | 2 | 3 | 4 | 5 | 6;
+
+/** The THREE enum of each mega-shader mode, in mode order (mode = index + 1). */
+const TONE_MAPPING_BY_LUXAR_MODE: readonly THREE.ToneMapping[] = [
+  THREE.LinearToneMapping,
+  THREE.ReinhardToneMapping,
+  THREE.CineonToneMapping,
+  THREE.ACESFilmicToneMapping,
+  THREE.AgXToneMapping,
+  THREE.NeutralToneMapping,
+];
+
+/**
+ * THREE enum → mega-shader mode, for both backends' materials.
+ * `NoToneMapping` aliases to Linear, so the shader still clamps to [0, 1];
+ * an enum with no mode (`CustomToneMapping`) gets Neutral, a gentle
+ * hue-preserving rolloff.
+ */
+export function luxarToneMappingMode(mapping: THREE.ToneMapping): LuxarToneMappingMode {
+  if (mapping === THREE.NoToneMapping) return 1;
+  const index = TONE_MAPPING_BY_LUXAR_MODE.indexOf(mapping);
+  return (index < 0 ? 6 : index + 1) as LuxarToneMappingMode;
+}
+
+/**
+ * Mega-shader mode → THREE enum: the inverse of {@link luxarToneMappingMode},
+ * so `NoToneMapping` reads back as `LinearToneMapping`. An out-of-range mode
+ * reads back as Neutral.
+ */
+export function toneMappingFromLuxarMode(mode: number): THREE.ToneMapping {
+  return TONE_MAPPING_BY_LUXAR_MODE[mode - 1] ?? THREE.NeutralToneMapping;
 }

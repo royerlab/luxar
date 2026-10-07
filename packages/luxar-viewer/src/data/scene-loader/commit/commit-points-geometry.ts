@@ -30,7 +30,7 @@
 import { findObjectByName } from '../../../utils/scene-graph-index';
 import * as THREE from 'three';
 import type { LoadedPointsData } from '../../data-loader-types';
-import { noteDepthSortCommit } from '../../../rendering/depth-sort-coordinator';
+import type { GeometryCommitHost } from './commit-host';
 import { isPointsUserData } from '../../../types/points';
 import { stampLadderComplete, stampLoadedViewVersion } from './stamp-view-version';
 import { markFirstCommit } from '../../../profiling/load-timeline';
@@ -45,15 +45,11 @@ import { getPrefixParent, setPrefixParent } from '../../../types/prefix-lineage'
 import { clampPointCapacity } from '../../../rendering/element-texture-layout';
 import { log, LogEmoji, Modules } from '../../../utils/log';
 import type { UpdateSession } from '../../../profiling/update-profiler';
-import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
 import type { NodeFactory } from '../../../rendering/node-factory';
 import { syncPointMaterialWithGeometry } from '../../../rendering/material-sync-helpers';
 import { invalidateRenderObjectFor } from './invalidate-render-object';
+import { planInstancedOrdering } from './plan-instanced-ordering';
 import { DEFAULT_POINT_RADIUS } from '../../../config/constants';
-
-// Re-export so callers can import this name from the commit module while
-// the implementation lives in the rendering layer.
-export { syncPointMaterialWithGeometry };
 
 /** Per-part detail line (hot on time-partitioned stores): `?verboseLog` only. */
 function logClearedPoints(path: string): void {
@@ -61,6 +57,20 @@ function logClearedPoints(path: string): void {
     LogEmoji.INFO,
     Modules.SCENE_LOADER,
     `Clearing points for ${path} (no visible points at current slice)`
+  );
+}
+
+/**
+ * True when every optional field a points append would leave un-rewritten in
+ * the prefix agrees with the committed parent (see the append gate).
+ */
+function sameOptionalPointFields(data: LoadedPointsData, committed: LoadedPointsData): boolean {
+  return (
+    !!data.colors === !!committed.colors &&
+    (data.colorComponents ?? 3) === (committed.colorComponents ?? 3) &&
+    !!data.radii === !!committed.radii &&
+    !!data.sharpness === !!committed.sharpness &&
+    !!data.scalars === !!committed.scalars
   );
 }
 
@@ -77,12 +87,11 @@ function logClearedPoints(path: string): void {
 export function commitPointsGeometry(
   path: string,
   data: LoadedPointsData,
-  rootGroup: THREE.Group | null,
-  gpuBufferPool: GPUBufferPool | null,
-  nodeFactory: NodeFactory,
+  host: GeometryCommitHost & { nodeFactory: NodeFactory },
   session: UpdateSession | undefined,
   loadedViewVersion: number
 ): void {
+  const { rootGroup, gpuBufferPool, nodeFactory, depthSort } = host;
   if (!rootGroup) return;
 
   const points = findObjectByName(rootGroup, path) as THREE.Mesh;
@@ -123,6 +132,9 @@ export function commitPointsGeometry(
   // with a count that never landed, or the LOD freshness registry would
   // trust it until the next user interaction.)
   const prevGeometry = points.geometry;
+  // A pool grow releases the old geometry without ending its held draw.
+  // Preserve the count that was actually on screen.
+  const prevDrawnCount = (prevGeometry as THREE.InstancedBufferGeometry).instanceCount;
   const hadCommittedData = hasCommittedData(points);
   const prevCount = points.userData.visiblePointCount;
 
@@ -170,78 +182,39 @@ export function commitPointsGeometry(
       // dispatches a `dispose` event on the material to evict that
       // cache. No-op under WebGL2 / pre-init / no cached entry.
       const attributesRebuilt = gpuBufferPool.didLastAcquireRebuildAttributes();
-      // Keep the previous depth-sort permutation on a same-node same-count
-      // in-place recommit (timepoint scrub): a permutation of [0,count) is
-      // a strictly-no-worse prior than storage order for the ≥1 frame
-      // until the re-sort dispatched by noteDepthSortCommit below lands.
-      // Guards mirror the gsplats twin (commit-gsplats-geometry.ts) — the
-      // full rationale lives there.
-      // The same-buffer prior splits in two on the count.
-      //
-      // Equal count: keep the permutation verbatim (`preserveOrdering`).
-      //
-      // CHANGED count: hand the adapter the previous count so it can REBUILD
-      // the permutation over the new population (`repairSortedIndexForCount`)
-      // instead of falling back to storage order. This is the branch a
-      // timelapse actually takes — an nD re-slice changes the resident count
-      // at almost every step, so the equal-count guard alone never fired and
-      // every timepoint drew at least one unsorted frame. Under an
-      // order-dependent blending mode that reads as a flash per timepoint
-      // (#2290). Measured on the `cloud` demo at a frozen camera pose, as the
-      // fraction of sampled element pairs composited in correct back-to-front
-      // order: storage order 0.617, repaired 0.858, a real sort 1.000.
-      //
-      // The other three conjuncts are what make the buffer's contents
-      // meaningful at all, and are unchanged.
-      const sameBuffers = hadCommittedData && !attributesRebuilt && geometry === prevGeometry;
-      const preserveOrdering = sameBuffers && prevCount === pointCount;
-      const repairFromCount =
-        sameBuffers && prevCount !== undefined && prevCount !== pointCount ? prevCount : undefined;
-      // Append fast path (depth-sorting Phase 4 Stage 2): when this commit
-      // merely EXTENDS the prefix already on the GPU, write & upload only the
-      // new `[prevCount, pointCount)` suffix. Correctness rests on the
-      // buffer's prefix being byte-identical to what a full write would
-      // produce, which every conjunct establishes (see the gsplats twin in
-      // commit-gsplats-geometry.ts for the full rationale):
-      // - !attributesRebuilt && geometry === prevGeometry: the pool reused
-      //   THIS node's buffer in place (grow/best-fit/fresh acquire sets
-      //   attributesRebuilt and may hand back another node's data). Also
-      //   bounds pointCount ≤ the existing capacity.
-      // - gpuPrefixIntact: a WebGL context restore zeroed the GPU buffers;
-      //   the restore hook clears this so the next commit does a full rewrite.
-      // - pointCount > prevCount: a genuine append (equal → the no-op
-      //   identity path above; shrink/first-commit → full write).
-      // - prefix lineage === committedData: the new concat result forward-
-      //   chains to the exact object last committed here — proving same
-      //   generation (view unchanged), a genuine extension, and that the GPU
-      //   still holds that parent's projection. This conjunct also covers
-      //   dtype: the concat's arrays carry one dtype per field, so the
-      //   prefix widens to bit-identical floats on both commits.
-      // - optional-field presence must MATCH the committed parent: the concat
-      //   is all-or-nothing per field (concatOptionalField), so a new level
-      //   WITHOUT e.g. Float32 colors drops the merged field entirely and the
-      //   adapter's constant fill would differ from the prefix's committed
-      //   values. (The fixed texel layout means the pool no longer rebuilds
-      //   on dtype/scalar-presence changes — these presence conjuncts are
-      //   now the SOLE guard for every optional field, scalars included.)
+      // Ordering + append gate, shared with lines/gsplats
+      // (plan-instanced-ordering.ts, which states the prior/lineage rules).
+      // The suffix-only upload additionally needs the GPU prefix intact (a
+      // WebGL context restore clears the flag) and every optional field's
+      // PRESENCE to match the committed parent. Radii, sharpness and scalars
+      // concat all-or-nothing (concatOptionalField), so a new level WITHOUT
+      // one drops the merged field and the adapter's constant fill would
+      // differ from the prefix's committed values. Colours white-fill a
+      // colourless rung instead (concatColorsWhiteFilled), but the first
+      // coloured level joining a colourless prefix still flips presence ON,
+      // rewriting the prefix's colours from the default to white. The colour
+      // LAYOUT (RGB vs RGBA) must match too: an append writes only the suffix,
+      // so a flip would leave the prefix's texel2.y alphas stale. (The fixed
+      // texel layout means the pool no longer rebuilds on dtype or presence
+      // changes, so these conjuncts are the SOLE guard for every optional
+      // field.) Dtype needs no conjunct: the concat's arrays carry one dtype
+      // per field, so a proven lineage widens the prefix to identical floats.
       const committed = getCommittedData(points) as LoadedPointsData | undefined;
-      const canAppend =
-        hadCommittedData &&
-        !attributesRebuilt &&
-        geometry === prevGeometry &&
-        points.userData.gpuPrefixIntact === true &&
-        pointCount > (prevCount ?? 0) &&
-        committed !== undefined &&
-        getPrefixParent(data) !== undefined &&
-        getPrefixParent(data) === committed &&
-        !!data.colors === !!committed.colors &&
-        // Color LAYOUT parity (RGB vs RGBA): an append writes only the
-        // suffix, so a layout flip would leave the prefix's texel2.y
-        // alphas stale against the new interpretation.
-        (data.colorComponents ?? 3) === (committed.colorComponents ?? 3) &&
-        !!data.radii === !!committed.radii &&
-        !!data.sharpness === !!committed.sharpness &&
-        !!data.scalars === !!committed.scalars;
+      const orderingOptions = planInstancedOrdering({
+        geometry,
+        prevGeometry,
+        prevDrawnCount,
+        hadCommittedData,
+        prevCount,
+        count: pointCount,
+        attributesRebuilt,
+        prefixParent: getPrefixParent(data),
+        committedData: committed,
+        prefixReusable:
+          points.userData.gpuPrefixIntact === true &&
+          committed !== undefined &&
+          sameOptionalPointFields(data, committed),
+      });
       // Consume-and-clear (see prefix-lineage.ts retention contract): the
       // lineage entry existed solely for the gate check above — clearing it
       // unpins the parent concat's CPU arrays. A retry after a throwing
@@ -257,11 +230,7 @@ export function commitPointsGeometry(
       }
       geometry.userData.radiusScale = data.radii instanceof Uint8Array ? maxRadius : 1.0;
       try {
-        gpuBufferPool.updatePointsGeometry(geometry, data, pointCount, {
-          preserveOrdering,
-          repairFromCount,
-          fromInstance: canAppend ? (prevCount ?? 0) : 0,
-        });
+        gpuBufferPool.updatePointsGeometry(geometry, data, pointCount, orderingOptions);
 
         if (data.metadata.bounds) {
           geometry.boundingBox = data.metadata.bounds.clone();
@@ -311,6 +280,10 @@ export function commitPointsGeometry(
         }
       }
     } else {
+      // Consume-and-clear on this path too (prefix-lineage.ts retention
+      // contract): no append gate reads the lineage here, and leaving it set
+      // would keep the parent concat's CPU arrays pinned for the payload's life.
+      setPrefixParent(data, null);
       // Pool disabled: recreate unconditionally. Recreation handles all
       // the dtype logic (divisor-based widenToFloat32 for Uint8/Uint16,
       // Float16 widening, bounds/footprint, radiusScale userData) via
@@ -378,7 +351,7 @@ export function commitPointsGeometry(
     // gsplats twin, success-only, with the CLAMPED count so permutation
     // values stay inside [0, textureCapacity). The lazy provider defers
     // the O(N) positions copy to the sorted path.
-    noteDepthSortCommit(points, sortCenters3, pointCount);
+    depthSort?.noteCommit(points, sortCenters3, pointCount);
   } finally {
     bufferSession?.end();
   }

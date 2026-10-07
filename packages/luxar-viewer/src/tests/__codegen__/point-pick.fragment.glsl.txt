@@ -38,11 +38,18 @@ layout( location = 0 ) out vec4 fragColor;
 
 // uniforms
 
+layout( std140 ) uniform render {
+	float cameraNear;
+	float cameraFar;
+	mat4 cameraProjectionMatrix;
+	mat4 cameraViewMatrix;
+	mat4 cameraProjectionMatrixInverse;
+};
+
 layout( std140 ) uniform object {
-	float nodeUniform0;
 	float nodeUniform1;
-	float nodeUniform2;
-	float nodeUniform3;
+	mat3 nodeUniform3;
+	uint nodeUniform4;
 	mat3 nodeUniform5;
 	uint nodeUniform6;
 	mat3 nodeUniform7;
@@ -54,6 +61,14 @@ layout( std140 ) uniform object {
 	float nodeUniform15;
 	float nodeUniform16;
 	float nodeUniform17;
+	float nodeUniform18;
+	float nodeUniform19;
+	float nodeUniform20;
+	float nodeUniform21;
+	float nodeUniform22;
+	float nodeUniform26;
+	float nodeUniform27;
+	float nodeUniform28;
 };
 
 
@@ -64,15 +79,23 @@ in float nodeVarying2;
 in float nodeVarying3;
 in float nodeVarying4;
 in float nodeVarying5;
-in vec2 nodeVarying6;
+in vec4 v_clipSpace;
+in float nodeVarying7;
+in vec2 nodeVarying8;
 
 
 // vars
-float nodeVar1;
-float nodeVar2;
+vec4 nodeVar44;
+vec3 positionView;
+float nodeVar45;
+float nodeVar46;
+float nodeVar47;
+float nodeVar48;
+float nodeVar49;
+int nodeVar50;
 vec4 DiffuseColor;
 vec4 Output;
-vec4 nodeVar6;
+vec4 nodeVar53;
 
 // codes
 
@@ -82,9 +105,45 @@ void main() {
 	// flow
 	// code
 
-	nodeVar1 = dot( ( nodeVarying0 - vec2( 0.5 ) ), ( nodeVarying0 - vec2( 0.5 ) ) );
-	nodeVar2 = ( ( ( max( ( exp( ( pow( sqrt( ( nodeVar1 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeVarying3 ) * pow( min( ( nodeVarying4 / ( max( nodeUniform0, 1.0 ) * 1.5 ) ), 1.0 ), 2.0 ) );
-	gl_FragDepth = ( 1.0 - clamp( nodeVar2, 0.0, 1.0 ) );
+	nodeVar44 = ( cameraProjectionMatrixInverse * v_clipSpace );
+	positionView = ( nodeVar44.xyz / vec3( nodeVar44.w ) );
+	nodeVar45 = positionView.z;
+	nodeVar46 = dot( ( nodeVarying0 - vec2( 0.5 ) ), ( nodeVarying0 - vec2( 0.5 ) ) );
+
+	if ( ( int( nodeUniform19 ) == 1 ) ) {
+
+		nodeVar47 = mix( 1.0, ( - log( ( 1.0 - min( nodeVarying5, 0.998046875 ) ) ) ), nodeUniform20 );
+
+	} else {
+
+		nodeVar47 = nodeVarying5;
+
+	}
+
+	nodeVar48 = ( ( ( ( max( ( exp( ( pow( sqrt( ( nodeVar46 * 4.0 ) ), nodeVarying2 ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) * nodeVarying3 ) * pow( min( ( nodeVarying4 / ( max( nodeUniform18, 1.0 ) * 1.5 ) ), 1.0 ), 2.0 ) ) * ( ( nodeVar47 * nodeUniform21 ) * max( nodeUniform22, 1.0 ) ) );
+
+	if ( ( cameraProjectionMatrix[ 3 ].w > 0.5 ) ) {
+
+		nodeVar50 = 1;
+
+	} else {
+
+		nodeVar50 = 0;
+
+	}
+
+
+	if ( ( nodeVar50 == 1 ) ) {
+
+		nodeVar49 = ( ( nodeVar45 + cameraNear ) / ( cameraNear - cameraFar ) );
+
+	} else {
+
+		nodeVar49 = ( ( ( cameraNear + nodeVar45 ) * cameraFar ) / ( ( cameraFar - cameraNear ) * nodeVar45 ) );
+
+	}
+
+	gl_FragDepth = mix( ( 1.0 / ( 1.0 + nodeVar48 ) ), nodeVar49, nodeUniform26 );
 
 	if ( ( nodeVarying1 <= 0.0 ) ) {
 
@@ -94,7 +153,7 @@ void main() {
 	}
 
 
-	if ( ( nodeVar1 > 0.25 ) ) {
+	if ( ( nodeVar46 > 0.25 ) ) {
 
 		discard;
 
@@ -102,19 +161,19 @@ void main() {
 	}
 
 
-	if ( ( nodeVar2 < 0.0001 ) ) {
+	if ( ( nodeVar48 < 0.0001 ) ) {
 
 		discard;
 
 
 	}
 
-	DiffuseColor = vec4( nodeVarying5, nodeVarying6.x, nodeVar2, nodeVarying6.y );
-	DiffuseColor.w = ( DiffuseColor.w * nodeUniform3 );
-	nodeVar6 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
-	Output = nodeVar6;
+	DiffuseColor = vec4( nodeVarying7, nodeVarying8.x, nodeVar48, nodeVarying8.y );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform28 );
+	nodeVar53 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar53;
 
 	// result
-	fragColor = nodeVar6;
+	fragColor = nodeVar53;
 
 }

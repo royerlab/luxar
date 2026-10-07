@@ -237,6 +237,9 @@ Append parameters to the viewer URL to control startup behavior.
 | `renderAudit` | flag | Debug only (needs `debug`): render every tick and count, in the perf counter `render.missedDirty`, ticks the render-on-change scheduler would have skipped whose pixels nonetheless changed. |
 | `gpuBudgetMB` | number | Pin the GPU-geometry byte budget in MB, bypassing auto-sizing. `0` disables the budget (unbounded resident geometry). |
 | `cacheBudgetMB` | number | Total in-memory cache pool (L0 + L1 + S-cache) in MB, for environments without `performance.memory` (Safari, WKWebView). Also supplies the implied non-cache remainder as a GPU-geometry/LOD residency signal; without `deviceMemory`, it replaces the 512 MB fallback and may raise or lower it, capped at 2 GB. |
+| `workers` | number | Worker pool size for this session (`0` = auto, max 16). Beats the stored Settings value without rewriting it. |
+| `prefetch` | number | Concurrent chunk fetches for this session (the Settings "Prefetch Limit", 1-12). Beats the stored value without rewriting it. |
+| `textScale` | number | Multiplier on every overlay's type (e.g. `0.8`), beating the scene's `viewer_config.text_scale`. Positions, widths and anchors stay as authored. Clamped to [0.25, 4]. |
 | `dpr` | number | Pin a fixed device pixel ratio and disable adaptive DPR (clamped to [0.25, native DPR]). Overrides the high-DPR ceiling, so `?dpr=2` renders at 2 even with **Allow High DPR** off. For deterministic E2E/visual runs. |
 | `input` | `touch` \| `mouse` | Force the session's JS input profile: pointer flags, hover capability, touch points, and device tier. This changes device-class fallback budgets (`touch` only — `mouse` keeps the detected tier), primary-tip pen routing, the Safari gesture-canceller gate, and whether the help overlay lists its Touch section; `touch` additionally applies the mobile rendering budgets (adaptive-DPR floor and refresh ceiling, high-DPR cap, GPU-byte and element-texture ceilings, data-worker count) and skips the blend-variant program warm-up. Stylesheets and non-pen gesture routing still follow the real media features and `PointerEvent.pointerType`, so a faithful check needs device emulation or a real device. Detected by default, including an iPad whose Safari reports a macOS user agent. |
 | `lineJoin` | `none` \| `miter` | Force the line join style for the session — **applies only to `linePrimitive=screen-space`**. The default capsule primitive partitions every interior joint along its bisector unconditionally, so this parameter (and each node's authored `join` attribute) is a no-op there. |
@@ -687,7 +690,9 @@ with luxar.LuxarZarrCompiler("output.luxar.zarr") as compiler:
 Settings are resolved with the following priority (highest first):
 
 1. **localStorage overrides** -- per-scene user changes made in the browser,
-   except that an authored camera position is restored with its resolved scene FOV
+   except that an authored camera position is restored with its resolved scene FOV.
+   They are kept per URL and remember the scene's `content_hash`: a store rebuilt
+   and served at the same address sets them aside and loads with its own defaults
 2. **viewer_config** -- defaults stored in the Zarr file
 3. **Built-in defaults** -- the viewer's own defaults
 
@@ -714,7 +719,9 @@ at — which is what keeps a reloaded or shared post-switch link named.
 | Cinematic | `cinematic_mode`, `vignette_enabled`, `chromatic_lens_distortion_enabled` |
 | Detector noise | `detector_noise_enabled`, `detector_noise_readout_sigma`, `detector_noise_photon_gain` |
 | Anti-aliasing | `fxaa_enabled`, `msaa_enabled`, `ssaa_enabled` |
-| Performance | `adaptive_dpr_enabled`, `allow_high_dpr` |
+| Performance | `adaptive_dpr_enabled`, `allow_high_dpr`, `density_guard_enabled` |
+| Overlay text | `text_scale` (multiplier on overlay type; `?textScale=` wins; a text overlay opts out with `add_text(..., scale_text=False)`, authored HTML opts in with `calc(1.3vh * var(--luxar-text-scale, 1))`) |
+| Exported launch | `launch` (`LaunchConfig`: `renderer`, `workers`, `prefetch`): machine settings `luxar export` bakes into the URL its `serve.py` opens, for a package built for known hardware. Ignored on load |
 | Fly controls | `fly_movement_speed`, `fly_rotation_speed`, `fly_inertial_mode`, `fly_damping` |
 | UI visibility | `ui.show_help`, `ui.show_rendering_controls`, `ui.show_dimensions`, `ui.show_performance_monitor`, `ui.show_scale_bar`, `ui.show_layers` |
 | Dimensions | `dimensions.current_step`, `dimensions.selected_dimension` |
@@ -788,8 +795,10 @@ The viewer acts on a change of *matched waypoint*, not on every slider tick. At
 load it snaps to whichever waypoint matches the opening dimension state (ahead
 of the plain `camera` block). Afterwards stepping the story dimension — the
 `[` / `]` keys, the slider, or an external controller — flies to the new
-waypoint with its own `duration_ms` (default 1500; `0` snaps) and `easing`
-(`"ease-in-out"` or `"linear"`); moves that stay inside the same waypoint's
+waypoint, along its `trajectory`, timed by its `duration_ms` (default 1500; `0`
+snaps) or paced by its `speed`, and shaped by its `easing` — see
+[Waypoint trajectories](#waypoint-trajectories) below. Moves that stay inside the
+same waypoint's
 ranges do nothing, and leaving every waypoint leaves the camera where it is.
 Any mouse, touch or key input during a flight cancels it where it is. The
 optional `reveal="on_arrival"` holds newly matching dimension-bound overlays
@@ -801,7 +810,9 @@ itself and is applied on arrival through the same validated path.
 Waypoints compose with the orbit turntable: while auto-rotate is on, a story
 step keeps the current viewing direction and only moves the point the camera
 spins around (and how far away it sits), so the spin never pauses and the
-authored orientation is ignored. In ortho mode camera distance changes nothing,
+authored orientation is ignored — except for the trajectories that decide where
+the camera looks (`Straight`, `Swing`, `FlyThrough`), which take the view over
+for the flight and hand it back on arrival. In ortho mode camera distance changes nothing,
 so author `CameraConfig(zoom=...)` to frame a cluster tighter. In fly mode a
 waypoint moves and aims the camera just the same; flying with the keyboard
 during a flight cancels it.
@@ -809,6 +820,86 @@ during a flight cancels it.
 For a complete worked example — story dimension, dimmed backdrop, per-story
 highlight layers, fact panels and waypoints — run
 `luxar demo run esm3_protein_stories` (it reads the ESM3 landscape demo's cache).
+
+### Waypoint trajectories
+
+A waypoint flight has three independent parts, each its own argument:
+
+- **`trajectory`** — the PATH the camera takes.
+- **`speed`** or **`duration_ms`** — how LONG the flight lasts.
+- **`easing`** — how the speed varies along the way.
+
+```python
+from luxar import CameraConfig, Waypoint
+from luxar import trajectories as T
+
+Waypoint(
+    when={"story": 3},
+    camera=CameraConfig(position=(12, 3, 8), target=(10, 2, 6)),
+    trajectory=T.ZoomPan(rho=1.6),     # or a name for the defaults: "zoom-pan"
+    speed=0.35,                        # paced by perceived distance (below)
+    duration_range_ms=(5000, 16000),   # bounds on the paced duration
+    easing="cruise",
+)
+```
+
+#### Paths
+
+| Trajectory | What the camera does | Parameters | Reach for it when |
+|---|---|---|---|
+| `Orbit()` (default) | The focus target slides in a straight line; the camera's view direction turns (slerp) and its distance changes geometrically. Never passes through the target. | — | A short re-aim. On a long jump at close range it stays close, so the data races across the screen mid-flight. |
+| `ZoomPan(rho=√2)` | Van Wijk & Nuij's *smooth and efficient zooming and panning* (InfoVis 2003): the path that minimises perceived motion. It pulls back while it travels and dives in at the end, moving at a constant perceived speed. A short hop barely zooms; a long jump rises high enough to keep both ends in view. | `rho`: how much it zooms out for a given jump (√2 is the value their user study preferred; larger rises higher, smaller stays lower) | Long jumps across a dataset. The smoothest of the set. |
+| `Arc(lift=0.5)` | `Orbit` plus an explicit pull-back: the distance rises by `lift` times the target's travel at mid-flight, a sine bump. | `lift`: the bump as a fraction of the travel (`0` is `Orbit`) | A predictable hop of a chosen proportion. Unlike `ZoomPan`, the height does not depend on how far in or out the two ends are. |
+| `Straight()` | The camera position and the target each move in a straight line: a dolly. | — | A deliberate pass through the data, or the simplest possible move. It may cut through the scene; `Swing` or `ZoomPan` stay outside. |
+| `Swing(pivot=None)` | The camera and the target each follow a great circle about a pivot, their distances from it changing geometrically. The camera goes *around* the cloud, not through or over it. | `pivot`: world point to swing about (default: the centre of the scene's data) | Touring an object or a map from the outside, a UMAP included. |
+| `FlyThrough(look_ahead=0.2, turn=0.3)` | First-person: the camera flies in a straight line looking *ahead* along its path, turning from the start target over the first `turn` of the flight and onto the destination over the last. | `look_ahead`: how far ahead it looks (fraction of the trip); `turn`: fraction of the flight spent turning at each end (≤ 0.5) | A journey *into* the data, where facing the direction of travel matters more than keeping the target centred. |
+| `Via(camera=..., leg="zoom-pan")` | Two legs through an intermediate pose, each following `leg` and each eased on its own, so the camera comes to rest at the intermediate pose and sets off again. Time is split between the legs by their perceived lengths. | `camera`: the intermediate pose (unset fields keep the live camera's, as for a waypoint); `leg`: the trajectory of each leg | Stepping back out (to an overview, say) between two close-up stops, so the visitor sees where they are going. |
+
+Every trajectory but `Orbit` needs a perspective camera; in ortho mode a flight
+follows `Orbit`.
+
+**The turntable.** With auto-rotate on, `Orbit`, `ZoomPan` and `Arc` keep the
+turntable's live viewing direction and move only the target and the distance,
+so the spin never pauses. `Straight`, `Swing` and `FlyThrough` *decide where the
+camera looks* along the way, so they take the view direction over for the flight
+and land on the authored pose; the spin resumes from there. `Via` follows its
+chosen leg's turntable behaviour.
+
+#### Timing: `speed` or `duration_ms`
+
+`duration_ms` gives every flight the same time whatever its length, so a long
+jump moves fast and a short hop crawls. `speed` instead **paces** the flight by
+its *perceived* length: the flight lasts that length divided by `speed`, clamped
+to `duration_range_ms` (default 1.5–8 s), and every flight then moves at the same
+cruising pace. The perceived length is measured along the actual path, the same
+way for every trajectory:
+
+- **pan** in view heights — one screen's worth of travel costs the same close up
+  or far away;
+- **zoom** in log scale — a 10× zoom costs the same at any scale, and a 100× zoom
+  twice as much;
+- **turn** in radians — a quarter turn costs about as much as panning a screen.
+
+So travel time follows what the visitor sees, zoom included. As a guide, the
+steps of the ESM protein tours measure 0.05–5.4 units (median about 3.4); their
+`speed=0.35` with `duration_range_ms=(5000, 16000)` gives typical flights of
+about 10 s and the longest about 15 s. When `speed` is set it takes precedence
+over `duration_ms`.
+
+#### Easing
+
+`easing` maps time onto the path, for any trajectory:
+
+| Easing | Speed profile | Character |
+|---|---|---|
+| `"ease-in-out"` (default) | smoothstep: zero speed at both ends | The familiar ease. Its acceleration jumps at take-off and landing, a slight kick. |
+| `"smooth"` | smootherstep: zero speed *and* zero acceleration at both ends | No kick, but the motion bunches into the middle of the flight. |
+| `"cruise"` | smooth ramps over the first and last fifth, constant speed between | **Paced travel.** The camera visibly moves for nearly the whole flight, so the felt duration matches the real one. The natural partner of `speed`. |
+| `"linear"` | constant speed throughout | Mechanical; starts and stops abruptly. |
+
+For a tour, `ZoomPan` or `Swing` with `easing="cruise"` and a `speed` is the
+combination that reads as a journey rather than a cut: distance sets the time,
+the path stays readable, and the camera keeps moving the whole way.
 
 ### Sound
 

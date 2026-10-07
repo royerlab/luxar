@@ -89,10 +89,10 @@
  *    varying, so exactly one can be reported: by convention it is the **START**
  *    vertex. Gated on `has_labels` / `has_image_labels` / `has_keys` like the
  *    others, and it fails closed to the raw slot on any inconsistency.
- *  - **Lines additive ladders** — still out. The per-node indirection above
- *    exists now, but nothing composes the LEVELS: `lines-progressive-loader.ts`
- *    has no counterpart to the Points ladder offsetting above, and a level's
- *    `vertexRangeBounds` are in that level's own vertex space.
+ *  - **Lines additive ladders** — composed like Points, at vertex granularity:
+ *    `lines-progressive-loader.ts` shifts each level's `vertexRangeBounds` by
+ *    the preceding levels' on-disk `n_vertices` into the parent's union space,
+ *    and the per-node chain above resolves the picked segment against them.
  *  - **GSplat additive ladders** — nothing to compose: the authoring path has
  *    no labels/keys channels for a gsplat ladder, so no level of one carries
  *    either at all.
@@ -116,9 +116,8 @@
  *    spanning its `additive_<i>` levels and declares `has_labels` or
  *    `has_keys`. For POINTS it is MAPPED as well, by exactly the ladder
  *    composition above — that composition reads the parent flags off the part
- *    group, so a partitioned ladder needs no separate path. A LINES part stays
- *    readable-but-unmapped, like any lines ladder, and resolves at the raw
- *    committed slot.
+ *    group, so a partitioned ladder needs no separate path — for a LINES part
+ *    too, by the lines ladder composition.
  *
  * **Identity fallback is not always a safe answer**, so the map's lifetime is
  * decoupled from the no-op stamp's. `rendering/depth-sort-coordinator.ts::
@@ -128,7 +127,7 @@
  * (drawn as instanced quads on a `THREE.Mesh`), GSPLATS — the geometry most
  * likely to be switched to `normal` / `volumetric` in the first place — and
  * LINES, which is depth-sortable too (`types/geometry-capabilities.ts`) and
- * whose commit calls `noteDepthSortCommit` (`commit-lines-geometry.ts`). There
+ * whose commit calls `depthSort.noteCommit` (`commit-lines-geometry.ts`). There
  * the object stays drawn and pickable: the stamp is cleared purely to defeat
  * the commit no-op gate, and the `requestReprocess?.()` that re-stamps it is
  * async, so a pick in that window would resolve through the raw slot — a

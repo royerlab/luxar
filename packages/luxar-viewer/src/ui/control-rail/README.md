@@ -164,7 +164,7 @@ const rail = new ControlRail(items: ControlRailItem[], footer?: HTMLElement);
 ### Collapse/Expand
 
 - Toggled via the chevron handle at the bottom
-- Persisted to localStorage (`COLLAPSED_STORAGE_KEY`)
+- Persisted to localStorage (`StorageKeys.controlRailCollapsed`)
 - Closes any open overlay on collapse
 - Dismisses the first-run hint on collapse
 

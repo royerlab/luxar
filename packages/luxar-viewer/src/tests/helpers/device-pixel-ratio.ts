@@ -63,13 +63,3 @@ export function allowHighDPR(): () => void {
   setMaxPixelRatioCap(Infinity);
   return () => setMaxPixelRatioCap(original);
 }
-
-/** Run `fn` with high DPR allowed, then restore the previous cap. */
-export function withHighDPRAllowed<T>(fn: () => T): T {
-  const restore = allowHighDPR();
-  try {
-    return fn();
-  } finally {
-    restore();
-  }
-}

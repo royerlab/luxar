@@ -11,13 +11,19 @@ import * as THREE from 'three';
 import { AudioEngine, type AudioEngineDeps } from '../../../audio/audio-engine';
 import type { SoundSourceDescriptor } from '../../../types/audio';
 import type { SceneNode } from '../../../data/data-loader-types';
+import { SceneNodeIndex } from '../../../data/scene-loader/view-state/scene-node-index';
 import type { SimpleDims } from '../../../types/dims';
 import { StorageKeys } from '../../../utils/storage-keys';
 import {
+  FakeAudioBuffer,
   FakeAudioContext,
   FakeGainNode,
   installFakeAudioContext,
 } from '../../mocks/fake-audio-context.mock';
+import { SoundNode } from '../../../audio/sound-node';
+import { log } from '../../../utils/log';
+import { deferred } from '../../helpers/deferred';
+import { defineLifecycleContract } from '../_shared/lifecycle-contract';
 
 function storyDims(step: number): SimpleDims {
   return {
@@ -89,7 +95,7 @@ function makeHarness(state: 'running' | 'suspended' = 'running'): Harness {
       dimsListeners.add(cb);
       return () => dimsListeners.delete(cb);
     },
-    getSceneGraph: () => null,
+    getSceneNodeIndex: () => null,
     getSceneScale: () => 100,
     resolveNodeCenter: (name) => (name === 'blob' ? new THREE.Vector3(4, 5, 6) : null),
     container: () => document.body,
@@ -159,6 +165,30 @@ describe('AudioEngine — graph and lifecycle', () => {
     expect(h.engine.hasSoundNodes()).toBe(false);
     expect(h.engine.getState().playing).toEqual([]);
   });
+
+  it('reports sound-ended for a playing or fading sound when the scene detaches', async () => {
+    // Every sound-started an embedder saw gets its sound-ended, even when a
+    // dataset switch (not the clip or a fade) is what stops it.
+    const h = makeHarness();
+    h.root.add(soundPlaceholder('/bed', { trigger: 'continuous' }));
+    h.root.add(soundPlaceholder('/pad', { trigger: 'continuous', fade_out_ms: 500 }));
+    h.engine.attachScene(h.root);
+    await flush();
+    vi.advanceTimersByTime(1);
+    h.engine.stop('pad'); // mid-fade at detach: its end is still pending
+    h.events.length = 0;
+
+    h.engine.detachScene();
+    vi.runAllTimers();
+
+    expect(h.events).toEqual(
+      expect.arrayContaining([
+        { event: 'sound-ended', name: 'bed' },
+        { event: 'sound-ended', name: 'pad' },
+      ])
+    );
+    expect(h.events).toHaveLength(2);
+  });
 });
 
 describe('AudioEngine — decode order', () => {
@@ -183,6 +213,40 @@ describe('AudioEngine — decode order', () => {
     await flush();
     expect(reads.slice(0, 2).sort()).toEqual(['bed', 'narr_story1']);
     expect(reads[2]).toBe('narr_story2');
+  });
+});
+
+describe('AudioEngine — a re-attach during a pending decode', () => {
+  it('stops the superseded decode loop even though the new scene reuses its paths', async () => {
+    // detachScene + attachScene of the same store builds NEW nodes under the
+    // SAME paths: a path check alone let the old loop run on, decoding every
+    // remaining clip a second time alongside the new loop.
+    const h = makeHarness();
+    const reads: string[] = [];
+    let releaseFirst!: () => void;
+    const gate = new Promise<void>((resolve) => (releaseFirst = resolve));
+    for (const name of ['a', 'b']) {
+      const g = soundPlaceholder(`/${name}`, { trigger: 'continuous' });
+      const desc = g.userData.sound as SoundSourceDescriptor;
+      desc.readClip = async () => {
+        reads.push(name);
+        if (reads.length === 1) await gate;
+        return new Uint8Array([1]);
+      };
+      h.root.add(g);
+    }
+    h.engine.attachScene(h.root);
+    await flush();
+    expect(reads).toEqual(['a']);
+
+    h.engine.detachScene();
+    h.engine.attachScene(h.root);
+    await flush();
+    releaseFirst();
+    await flush();
+    await flush();
+
+    expect(reads.filter((name) => name === 'b')).toHaveLength(1);
   });
 });
 
@@ -341,7 +405,8 @@ describe('AudioEngine — slab, ducking and buses', () => {
         },
       ],
     } as unknown as SceneNode;
-    (h.engine as unknown as { deps: AudioEngineDeps }).deps.getSceneGraph = () => graph;
+    (h.engine as unknown as { deps: AudioEngineDeps }).deps.getSceneNodeIndex = () =>
+      new SceneNodeIndex(graph);
     h.root.add(soundPlaceholder('/hum', { trigger: 'continuous', attach_to: 'Story 1: Hb' }));
     h.engine.attachScene(h.root);
     await flush();
@@ -715,5 +780,107 @@ describe('AudioEngine — a context the browser has not released', () => {
     expect(h.engine.isBlocked()).toBe(false);
     vi.advanceTimersByTime(1);
     expect(h.engine.getState().playing).toEqual(['bed']);
+  });
+});
+
+describe('AudioEngine — scene-node index', () => {
+  it("reads a sound's world nd_transform from the loader's scene-node index, never walking the graph", async () => {
+    const h = makeHarness();
+    // `/sounds` shifts the story axis by +1, so a row authored at local story 1
+    // sits at world story 2.
+    const leaf = { path: '/sounds/hum', type: 'sound', attrs: {}, children: [] };
+    const group = {
+      path: '/sounds',
+      type: 'group',
+      attrs: { nd_transform: { story: { scale: 1, offset: 1 } } },
+      children: [leaf],
+    };
+    const graph = { path: '', type: 'scene', attrs: {}, children: [group] } as unknown as SceneNode;
+    const index = new SceneNodeIndex(graph);
+    // After the index is built, any walk from the root is a failure: the
+    // derivation must be O(1) through the index, not a DFS per evaluation.
+    let walks = 0;
+    Object.defineProperty(graph, 'children', {
+      get() {
+        walks++;
+        throw new Error('scene graph walked from the root');
+      },
+    });
+    (h.engine as unknown as { deps: AudioEngineDeps }).deps.getSceneNodeIndex = () => index;
+    h.root.add(soundPlaceholder('/sounds/hum', { trigger: 'continuous' }, [[1, 0, 0, 0]]));
+    h.dims = storyDims(1);
+    h.engine.attachScene(h.root);
+    await flush();
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual([]);
+
+    h.setStep(2);
+    vi.advanceTimersByTime(1);
+    expect(h.engine.getState().playing).toEqual(['hum']);
+    expect(walks).toBe(0);
+  });
+});
+
+describe('AudioEngine — clip decode lifecycle', () => {
+  let subjects = 0;
+  defineLifecycleContract('AudioEngine clip decode', {
+    create: () => {
+      // Node paths are unique per subject: the setBuffer / warning spies are
+      // shared by every subject a contract case builds.
+      const prefix = `/subject${subjects++}`;
+      const h = makeHarness();
+      // Inner work in request order: each clip read, then its decode.
+      const inner: Array<{ ok(): void; fail(): void }> = [];
+      h.ctx.decodeAudioData = (_data: ArrayBuffer) => {
+        const decode = deferred<FakeAudioBuffer>();
+        inner.push({
+          ok: () => decode.resolve(new FakeAudioBuffer(2)),
+          fail: () => decode.reject(new Error('EncodingError')),
+        });
+        return decode.promise;
+      };
+      const setBuffer = vi.spyOn(SoundNode.prototype, 'setBuffer');
+      const warning = vi.spyOn(log, 'warning').mockImplementation(() => {});
+      const mine = (path: unknown): boolean => String(path).startsWith(`${prefix}-`);
+      return {
+        start: (n) => {
+          // A dataset switch: the app detaches the outgoing scene's sounds first.
+          h.engine.detachScene();
+          const root = new THREE.Group();
+          const placeholder = soundPlaceholder(`${prefix}-clip${n}`, { trigger: 'continuous' });
+          (placeholder.userData.sound as SoundSourceDescriptor).readClip = () => {
+            const read = deferred<Uint8Array>();
+            inner.push({
+              ok: () => read.resolve(new Uint8Array([1, 2, 3, 4])),
+              fail: () => read.reject(new Error('404')),
+            });
+            return read.promise;
+          };
+          root.add(placeholder);
+          h.engine.attachScene(root);
+        },
+        pending: () => inner.length,
+        settle: (index, outcome) => (outcome === 'ok' ? inner[index].ok() : inner[index].fail()),
+        observe: () =>
+          setBuffer.mock.contexts
+            .map((node) => (node as SoundNode).desc.path)
+            .filter(mine)
+            .map((path) => path.slice(prefix.length)),
+        failures: () => warning.mock.calls.filter((call) => call.some(mine)).length,
+        dispose: () => h.engine.dispose(),
+        reset: () => h.engine.detachScene(),
+      };
+    },
+    cases: {
+      abort: {
+        na: 'clip decoding takes no signal: a detach (dataset switch) or a dispose makes the loop yield at its next await (decodeAll checks node identity)',
+      },
+      dispose: true,
+      failure: true,
+      retry: true,
+      supersede: true,
+      doubleDispose: true,
+    },
+    resets: true,
   });
 });

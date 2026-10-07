@@ -45,6 +45,11 @@ export interface DensityGuardWiringDeps {
   energyComp: boolean;
   /** The frame's shared camera snapshot (the tracker builds its own without it). */
   getViewContext?: () => ViewContext;
+  /**
+   * The walk's live sources, read on every frame (the app passes its
+   * SceneManager; layer mode a getter-backed view over its own root, the host
+   * camera and the host drawing buffer).
+   */
   sceneManager: {
     readonly scene: THREE.Object3D | null;
     readonly camera: THREE.Camera | null;
@@ -61,7 +66,13 @@ export interface DensityGuardWiringDeps {
   /** The adaptive-DPR controller, read per frame (constructed after this wiring). */
   getAdaptiveDpr(): { notifyContentChanged(): void } | null | undefined;
   requestRender(): void;
-  /** Injection points for tests; production uses the module singletons. */
+  /**
+   * Invalidate the cached pick buffer (`PickingSystem.markDirty` of the
+   * current dataset's picking system, when there is one). A keep step changes
+   * which elements are pickable, and a still camera dirties nothing else.
+   */
+  invalidatePickBuffer?(): void;
+  /** The app uses module singletons; layers pass their own instances. */
   tracker?: ProjectedDensityTracker;
   guard?: DensityGuard;
 }
@@ -228,6 +239,7 @@ export function wireDensityGuard(deps: DensityGuardWiringDeps): DensityGuardWiri
       const changed = guard.takeChanged();
       if (changed) {
         deps.getAdaptiveDpr()?.notifyContentChanged();
+        deps.invalidatePickBuffer?.();
         deps.requestRender();
       }
       // Deferred rungs resume once the camera has moved in.

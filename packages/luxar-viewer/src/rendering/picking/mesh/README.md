@@ -25,11 +25,13 @@ Three differences from the point/line/gsplat pick materials, all from
   the index buffer is rewritten; a vertex ordinal is invariant, and it indexes the per-vertex
   label CSR directly.
 - **Camera-aware for half the usual reason.** A mesh has no screen-space footprint to size, so
-  there is no resolution/FOV uniform, and the near fade's ortho test reads three's
-  `isOrthographic` — but `uNearCull` is bound and the material
+  there is no resolution/FOV uniform, and the near fade's ortho test reads the
+  projection matrix (`luxarIsOrthoProjection()`) — but `uNearCull` is bound and the material
   joins the camera broadcast, because the pick pass has to reproduce the visual near fade or a
   surface fading out of view would stay fully pickable. Matching the visual mesh material, which
-  is camera-aware for exactly the same half.
+  is camera-aware for exactly the same half. The fade is a runtime switch (`uNearFade`) that the
+  pick render turns off for a `material="physical"` node: three's PBR material has no near fade,
+  so a physical surface right in front of the camera is fully visible and must stay pickable.
 - **`side` is synced from the visual material** rather than pinned to `DoubleSide`. The siblings'
   quads are view-facing; a mesh's back faces may be culled on screen, and a pick pass that
   rasterized them anyway would make an invisible interior face both pickable and
@@ -54,7 +56,9 @@ recompile — and it is why `mesh-pick` is ONE codegen snapshot variant covering
   `WEBGL_provoking_vertex` exists; where it does not, the contract stands as "_a_ corner vertex of
   the front-most triangle under the cursor" — the cursor is over the face, so every corner is an
   equally valid answer and no consumer may assume one.
-- **The surface-depth VALUE.** GLSL writes `gl_FragCoord.z`; the TSL twin's `depth` node expands
-  to a linear view-space depth. Both are monotone in distance over `[near, far] → [0, 1]`, and the
+- **The surface-depth VALUE.** GLSL writes `gl_FragCoord.z`; the TSL twin writes
+  `pickFragmentDepthTSL()` (three's perspective or orthographic depth of the reconstructed
+  view-space z, chosen per draw from the projection matrix — the same choice for every pick
+  graph, so depths from graphs built under different cameras stay comparable). Both are monotone in distance over `[near, far] → [0, 1]`, and the
   pick buffer's depth is only ever used to ORDER fragments within one render, so "front-most wins"
   resolves identically. See the module doc in `shaders.ts` for when this would stop being benign.

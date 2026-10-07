@@ -26,13 +26,15 @@ const (
 
 // JSON-RPC.
 const (
-	JSONRPCVersion     = "2.0"
-	EventMethod        = "event"
-	CodeParseError     = -32700
-	CodeInvalidRequest = -32600
-	CodeMethodNotFound = -32601
-	CodeInternalError  = -32603
-	CodeNoViewer       = -32001
+	JSONRPCVersion      = "2.0"
+	EventMethod         = "event"
+	ViewerAttachedEvent = "viewer-attached"
+	CodeParseError      = -32700
+	CodeInvalidRequest  = -32600
+	CodeMethodNotFound  = -32601
+	CodeInternalError   = -32603
+	CodeNoViewer        = -32001
+	CodeViewerNotReady  = -32002
 )
 
 // Limits bounding what an untrusted peer can make us hold.

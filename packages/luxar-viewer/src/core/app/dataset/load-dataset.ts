@@ -19,6 +19,10 @@ import { extractEnvironmentConfig } from '../../../config/zarr-bridge/viewer-con
  * Each per-overlay / per-system init step is supplied as a callback so
  * the helper composes the orchestrator's other delegate methods without
  * the helper needing to know how they're implemented internally.
+ *
+ * `isStale` is checked after every await: a load whose app was disposed (or
+ * disposed and re-initialized) meanwhile stops there instead of running its
+ * tail against a torn-down — or a newer — lifetime.
  */
 export interface LoadDatasetPorts {
   inputHandler: InputHandler;
@@ -36,6 +40,7 @@ export interface LoadDatasetPorts {
   initPicking: () => Promise<void>;
   applyViewerConfigState: (config: ZarrViewerConfig | undefined) => void;
   openCacheStatsView: () => void;
+  isStale: () => boolean;
 }
 
 export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise<void> {
@@ -63,12 +68,31 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
   // Set scene ID for rendering controls persistence BEFORE loading scene
   // This ensures saved settings (like HDR intensity) are applied before materials are created
   ports.renderingControls.setSceneId(src);
-  const applyViewerConfigDefaults = !ports.renderingControls.hasStoredSettings();
+  const hadStoredSettings = ports.renderingControls.hasStoredSettings();
+  let applyViewerConfigDefaults = !hadStoredSettings;
+  let staleStoredSettings = false;
+  let metadataAdopted = false;
+  const sceneLoadOptions = {
+    applyViewerConfigFov: applyViewerConfigDefaults,
+    beforeFrame: (root: THREE.Group) => {
+      if (ports.isStale()) return;
+      metadataAdopted = true;
+      const hash = root.userData.contentHash;
+      ports.renderingControls.setZarrViewerConfig(
+        root.userData.viewerConfig as ZarrViewerConfig | undefined
+      );
+      staleStoredSettings = ports.renderingControls.adoptSceneContentHash(
+        typeof hash === 'string' ? hash : undefined
+      );
+      if (staleStoredSettings) ports.renderingControls.resetToDefaults();
+      applyViewerConfigDefaults = staleStoredSettings || !hadStoredSettings;
+      sceneLoadOptions.applyViewerConfigFov = applyViewerConfigDefaults;
+    },
+  };
 
   // Load scene data (animation loop will continue even if this fails)
-  await ports.sceneManager.loadSceneData(src, ports.loaderConfig, {
-    applyViewerConfigFov: applyViewerConfigDefaults,
-  });
+  await ports.sceneManager.loadSceneData(src, ports.loaderConfig, sceneLoadOptions);
+  if (ports.isStale()) return;
 
   // Pass zarr viewer_config to rendering controls (available after scene loads).
   // If no localStorage settings exist for this scene, apply zarr defaults. An
@@ -81,9 +105,29 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
     viewerConfig ? (extractEnvironmentConfig(viewerConfig) ?? null) : null
   );
   ports.sceneManager.environment?.setBaked(ports.sceneManager.getSceneBakedEnvironment());
-  if (applyViewerConfigDefaults && viewerConfig) {
+  // Edits saved against another build of this scene (same URL, new
+  // content_hash) give way to the new build's authored defaults.
+  if (!metadataAdopted) {
+    staleStoredSettings = ports.renderingControls.adoptSceneContentHash(
+      ports.sceneManager.getSceneContentHash()
+    );
+  }
+  if (staleStoredSettings) {
+    if (!metadataAdopted) ports.renderingControls.resetToDefaults();
+    // Metadata framing computes automatic planes even in manual mode. A
+    // fresh load applies authored planes afterwards; do the same here.
+    const settings = ports.renderingControls.getSettingsSnapshot();
+    if (!settings.dynamicClippingEnabled) {
+      ports.sceneManager.updateClippingPlanes(settings.near, settings.far);
+    }
+  } else if (applyViewerConfigDefaults && viewerConfig) {
     ports.renderingControls.applyZarrDefaults();
-  } else if (!applyViewerConfigDefaults) {
+    // A first-load edit was saved before the authored defaults were available.
+    // Persist their combined state so a later visit keeps both.
+    if (!hadStoredSettings && ports.renderingControls.hasStoredSettings()) {
+      ports.renderingControls.saveSettings();
+    }
+  } else if (!applyViewerConfigDefaults || ports.renderingControls.hasStoredSettings()) {
     // The scene may have replaced the stored FOV to keep an authored position
     // paired with its lens. Keep panel state and Ctrl+Shift+S export aligned
     // with the live camera before any later settings application can reuse it.
@@ -105,7 +149,11 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
   if (sceneLoader?.sceneGraph && layersPanel) {
     const root = ports.sceneManager.scene.children.find((c) => c.name === 'LuxarScene');
     if (root) {
-      layersPanel.initFromScene(root as THREE.Group, sceneLoader.sceneGraph);
+      layersPanel.initFromScene(
+        root as THREE.Group,
+        sceneLoader.sceneGraph,
+        sceneLoader.sceneNodeIndex
+      );
       // Leaves built from now on (partition parts the LOD registry activates,
       // lazily built levels) must start from the panel's LIVE layer state, not
       // their authored attrs — before they are first drawn. After initFromScene,
@@ -140,9 +188,11 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
 
   // Initialize overlays (screen-space annotations from zarr)
   await ports.initOverlays();
+  if (ports.isStale()) return;
 
   // Initialize GPU picking system (if any node has labels)
   await ports.initPicking();
+  if (ports.isStale()) return;
 
   // Apply zarr viewer_config: UI visibility, theme, dimension state, animation
   ports.applyViewerConfigState(viewerConfig);

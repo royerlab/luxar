@@ -1,21 +1,18 @@
 /**
  * Loader-factory concern extracted from `scene-loader.ts`.
  *
- * Four constructor helpers, one per geometry kind:
- *   - `createPointsLoader` → `PointsSpatialIndexLoader`
- *   - `createLinesLoader` → `LinesSpatialIndexLoader`
- *   - `createGSplatsLoader` → `GSplatsSpatialIndexLoader`
- *   - `createProgressiveGSplatsLoader` → `GSplatsProgressiveLoader`
- *     wrapping N `GSplatsSpatialIndexLoader`s (one per LOD)
+ * Eight constructor helpers, two per geometry kind:
+ *   - single-LOD: `createPointsLoader` / `createLinesLoader` /
+ *     `createGSplatsLoader` → the matching `*SpatialIndexLoader`, and
+ *     `createMeshLoader` → `MeshWholeNodeLoader`;
+ *   - progressive (additive ladder): `createProgressivePointsLoader` /
+ *     `createProgressiveLinesLoader` / `createProgressiveGSplatsLoader` wrap one
+ *     per-level loader per `additive_<i>` subgroup in the matching
+ *     `*ProgressiveLoader`, and `createProgressiveMeshLoader` builds the mesh
+ *     reveal ladder (`MeshProgressiveLoader`).
  *
- * All four follow the same path-resolution pattern: a leaf at `/` uses
- * the supplied `loc`; otherwise we resolve from the store root so
- * absolute paths in the scene graph map to zarr group locations
- * correctly.
- *
- * Behavior matches the inline original — same constructor argument
- * order, same logging, same null-coalescing of optional cache /
- * prefetcher dependencies.
+ * A leaf at `/` uses the supplied `loc`; any other path is resolved from the
+ * store root, so absolute scene-graph paths map to zarr group locations.
  *
  * @module data/scene-loader/loaders/loader-factory
  */
@@ -75,6 +72,85 @@ function energyFractionFromAttrs(lodAttrs: Record<string, unknown>): number | nu
   const stats = lodAttrs.lod_stats as Record<string, unknown> | undefined;
   const e = stats?.energy_fraction_cum;
   return typeof e === 'number' ? e : null;
+}
+
+/** One `additive_<i>` subgroup of a laddered node: its location and stored attrs. */
+interface AdditiveLevel {
+  readonly loc: zarr.Location<zarr.Readable>;
+  readonly attrs: Record<string, unknown>;
+}
+
+/**
+ * Open a laddered node's `additive_<i>` subgroups in ladder order (one
+ * metadata open each, sequentially — the order the ladder is read in).
+ */
+async function openAdditiveLevels(
+  node: SceneNode,
+  nAdditive: number,
+  deps: LoaderFactoryDeps
+): Promise<AdditiveLevel[]> {
+  const parentLoc = zarr.root(deps.zarrStore).resolve(node.path === '/' ? '' : node.path.slice(1));
+  const levels: AdditiveLevel[] = [];
+  for (let i = 0; i < nAdditive; i++) {
+    const loc = parentLoc.resolve(`additive_${i}`);
+    const group = await zarr.open(loc, { kind: 'group' });
+    levels.push({ loc, attrs: group.attrs as Record<string, unknown> });
+  }
+  return levels;
+}
+
+/** Which per-element metadata channels a sub-LOD may publish (see the callers). */
+interface LevelLabelFlags {
+  readonly has_labels: boolean;
+  readonly has_image_labels: boolean;
+  readonly has_keys: boolean;
+}
+
+/** No per-level label channel: a sub-LOD carries no CSR any reader can key by. */
+const NO_LEVEL_LABELS: LevelLabelFlags = {
+  has_labels: false,
+  has_image_labels: false,
+  has_keys: false,
+};
+
+/**
+ * A sub-LOD's attrs: its own stored attrs, with the parent's rendering attrs as
+ * composed through the scene-graph ancestry (`parentEffectiveAttrs`), the
+ * parent's `extend_to_all`, and the label flags the caller decided.
+ */
+function composeLevelAttrs(
+  level: AdditiveLevel,
+  node: SceneNode,
+  parentEffectiveAttrs: SceneNode['attrs'],
+  labels: LevelLabelFlags
+): Record<string, unknown> {
+  return {
+    ...level.attrs,
+    opacity: parentEffectiveAttrs.opacity,
+    absorption: parentEffectiveAttrs.absorption,
+    gamma: parentEffectiveAttrs.gamma,
+    intensity: parentEffectiveAttrs.intensity,
+    offset: parentEffectiveAttrs.offset,
+    blending_mode: parentEffectiveAttrs.blending_mode,
+    extend_to_all: node.attrs.extend_to_all,
+    ...labels,
+  };
+}
+
+/** The synthetic scene node a progressive loader's sub-LOD loader is built over. */
+function buildAdditiveLevelNode(
+  node: SceneNode,
+  index: number,
+  type: SceneNode['type'],
+  attrs: Record<string, unknown>
+): SceneNode {
+  return {
+    path: `${node.path === '/' ? '' : node.path}/additive_${index}`,
+    type,
+    attrs: attrs as SceneNode['attrs'],
+    hasSpatialIndex: false,
+    children: [],
+  };
 }
 
 /**
@@ -184,69 +260,43 @@ export async function createProgressiveGSplatsLoader(
   parentEffectiveAttrs: SceneNode['attrs'],
   deps: LoaderFactoryDeps
 ): Promise<GSplatsDataLoader> {
-  const parentLoc = zarr.root(deps.zarrStore).resolve(node.path === '/' ? '' : node.path.slice(1));
-
   log.verbose(
     LogEmoji.QUERY,
     Modules.SCENE_LOADER,
     `Creating progressive GSplats loader for ${node.path} (${nAdditive} additive sub-LODs)`
   );
 
-  const lodLoaders: GSplatsSpatialIndexLoader[] = [];
-  const energyTable: Array<number | null> = [];
-
-  for (let i = 0; i < nAdditive; i++) {
-    const lodLoc = parentLoc.resolve(`additive_${i}`);
-
-    const lodGroup = await zarr.open(lodLoc, { kind: 'group' });
-    const lodAttrs = lodGroup.attrs as Record<string, unknown>;
-    energyTable.push(energyFractionFromAttrs(lodAttrs));
-
-    const lodNode: SceneNode = {
-      path: `${node.path === '/' ? '' : node.path}/additive_${i}`,
-      type: 'gsplats',
-      attrs: {
-        ...lodAttrs,
-        opacity: parentEffectiveAttrs.opacity,
-        absorption: parentEffectiveAttrs.absorption,
-        gamma: parentEffectiveAttrs.gamma,
-        intensity: parentEffectiveAttrs.intensity,
-        offset: parentEffectiveAttrs.offset,
-        blending_mode: parentEffectiveAttrs.blending_mode,
-        extend_to_all: node.attrs.extend_to_all,
-        // No sub-LOD carries a label CSR of its own, and the pick path only
-        // ever resolves labels against the PARENT node's path, so no reader can
-        // key by a sub-LOD's on-disk index. Clearing the flags here keeps the
-        // spatial-index loader from publishing per-level `ranges` — and the
-        // projection from composing a per-level slot → on-disk map — that the
-        // ladder concat then has to discard. (A gsplat ladder carries no labels
-        // at any level: the authoring path has no `labels` channel. The Points
-        // and Lines ladders write one parent-level union CSR instead — #1422.)
-        has_labels: false,
-        has_image_labels: false,
-        has_keys: false,
-      },
-      hasSpatialIndex: false,
-      children: [],
-    };
-
-    lodLoaders.push(
+  const levels = await openAdditiveLevels(node, nAdditive, deps);
+  // No sub-LOD carries a label CSR of its own, and the pick path only ever
+  // resolves labels against the PARENT node's path, so no reader can key by a
+  // sub-LOD's on-disk index. Clearing the flags keeps the spatial-index loader
+  // from publishing per-level `ranges` — and the projection from composing a
+  // per-level slot → on-disk map — that the ladder concat then has to discard.
+  // (A gsplat ladder carries no labels at any level: the authoring path has no
+  // `labels` channel. The Points and Lines ladders write one parent-level union
+  // CSR instead — #1422.)
+  const lodLoaders = levels.map(
+    (level, i) =>
       new GSplatsSpatialIndexLoader(
-        lodLoc,
-        lodNode,
+        level.loc,
+        buildAdditiveLevelNode(
+          node,
+          i,
+          'gsplats',
+          composeLevelAttrs(level, node, parentEffectiveAttrs, NO_LEVEL_LABELS)
+        ),
         deps.arrayRefRegistry,
         deps.zarrStore,
         deps.l0Cache ?? undefined,
         deps.cachingStore?.getPrefetcher() ?? undefined
       )
-    );
-  }
+  );
 
   return new GSplatsProgressiveLoader(
     lodLoaders,
     nAdditive,
     node.path,
-    energyTable,
+    levels.map((level) => energyFractionFromAttrs(level.attrs)),
     deps.sliceCache ?? undefined
   );
 }
@@ -305,8 +355,6 @@ export async function createProgressiveMeshLoader(
   parentEffectiveAttrs: SceneNode['attrs'],
   deps: LoaderFactoryDeps
 ): Promise<MeshDataLoader> {
-  const parentLoc = zarr.root(deps.zarrStore).resolve(node.path === '/' ? '' : node.path.slice(1));
-
   // The vertex cap has to be charged against the LADDER, not each level.
   //
   // `MAX_MESH_VERTICES` (2^27) exists because above it the pick vote key aliases
@@ -344,58 +392,39 @@ export async function createProgressiveMeshLoader(
     `Creating progressive Mesh loader for ${node.path} (${nAdditive} additive sub-LODs)`
   );
 
-  const lodLoaders: MeshWholeNodeLoader[] = [];
+  const levels = await openAdditiveLevels(node, nAdditive, deps);
+  assertLevelsUntextured(node, levels);
   // Per-level DECLARED counts, for the parent-total cross-check below.
-  const levelVertices: Array<number | undefined> = [];
-  const levelFaces: Array<number | undefined> = [];
-
-  for (let i = 0; i < nAdditive; i++) {
-    const lodLoc = parentLoc.resolve(`additive_${i}`);
-    const lodGroup = await zarr.open(lodLoc, { kind: 'group' });
-    const lodAttrs = lodGroup.attrs as Record<string, unknown>;
-    levelVertices.push(typeof lodAttrs.n_vertices === 'number' ? lodAttrs.n_vertices : undefined);
-    levelFaces.push(typeof lodAttrs.n_faces === 'number' ? lodAttrs.n_faces : undefined);
-
-    const lodAttrsComposed = {
-      ...lodAttrs,
-      opacity: parentEffectiveAttrs.opacity,
-      absorption: parentEffectiveAttrs.absorption,
-      gamma: parentEffectiveAttrs.gamma,
-      intensity: parentEffectiveAttrs.intensity,
-      offset: parentEffectiveAttrs.offset,
-      blending_mode: parentEffectiveAttrs.blending_mode,
-      extend_to_all: node.attrs.extend_to_all,
-      // A laddered mesh has NO labels — `write_mesh_multi_lod` refuses a level
-      // that carries them, because the three sibling ladders put one union CSR
-      // on the parent and a face-partition duplicates boundary vertices, so one
-      // source vertex maps to two slots and that index space is ill-defined.
-      // Cleared here as well so a hand-written store cannot make a level publish
-      // per-level label ranges the concat would then have to discard.
-      has_labels: false,
-      has_image_labels: false,
-      has_keys: false,
-    } as unknown as MeshMetadata;
-
-    lodLoaders.push(
+  const levelVertices = levels.map((level) =>
+    typeof level.attrs.n_vertices === 'number' ? level.attrs.n_vertices : undefined
+  );
+  const levelFaces = levels.map((level) =>
+    typeof level.attrs.n_faces === 'number' ? level.attrs.n_faces : undefined
+  );
+  // A laddered mesh has NO labels — `write_mesh_multi_lod` refuses a level that
+  // carries them, because the three sibling ladders put one union CSR on the
+  // parent and a face-partition duplicates boundary vertices, so one source
+  // vertex maps to two slots and that index space is ill-defined. Cleared here
+  // as well so a hand-written store cannot make a level publish per-level label
+  // ranges the concat would then have to discard.
+  const lodLoaders = levels.map(
+    (level, i) =>
       new MeshWholeNodeLoader(
         `${node.path === '/' ? '' : node.path}/additive_${i}`,
-        lodAttrsComposed,
-        lodLoc,
+        composeLevelAttrs(
+          level,
+          node,
+          parentEffectiveAttrs,
+          NO_LEVEL_LABELS
+        ) as unknown as MeshMetadata,
+        level.loc,
         {
           zarrStore: deps.zarrStore,
           arrayRefRegistry: deps.arrayRefRegistry,
-          // Forwarded for the same reason the leaf path forwards it. A
-          // Luxar-written ladder cannot carry a texture at all (the writer
-          // refuses `texture=` alongside every structural route), but a
-          // hand-written store can declare one, and without this the level
-          // fails with "no renderer-owned decoder configured" — blaming the
-          // viewer's init order for a decoder that exists and was simply not
-          // handed over.
-          decodeKTX2: deps.decodeKTX2 ?? undefined,
+          // No `decodeKTX2`: a level is refused above if it declares a texture.
         }
       )
-    );
-  }
+  );
 
   assertLadderTotalsBackedByLevels(node, declaredVertices, node.attrs.n_faces, {
     levelVertices,
@@ -403,6 +432,30 @@ export async function createProgressiveMeshLoader(
   });
 
   return new MeshProgressiveLoader(lodLoaders, nAdditive, node.path);
+}
+
+/**
+ * Refuse a mesh reveal ladder whose levels declare a texture or UVs.
+ *
+ * The writer never authors one (`add_mesh` refuses `texture=` with
+ * `additive_lod=`: the image would be stored once per shell), and the level
+ * concat carries neither — so a hand-written textured ladder would render
+ * untextured, and level 0's release would close the bitmap its material
+ * samples. Refused before any level is fetched, like the totals check below.
+ */
+function assertLevelsUntextured(node: SceneNode, levels: AdditiveLevel[]): void {
+  for (const [i, level] of levels.entries()) {
+    if (level.attrs.has_texture !== true && level.attrs.has_uvs !== true) continue;
+    throw new LoaderError(
+      'Validation',
+      node.path,
+      new Error(
+        `Mesh reveal ladder level additive_${i} declares a texture or UVs. A reveal ` +
+          'ladder carries no texture (the writer refuses texture= with additive_lod=); ' +
+          'write the textured surface as a plain mesh leaf.'
+      )
+    );
+  }
 }
 
 /**
@@ -487,46 +540,26 @@ function assertLadderTotalsBackedByLevels(
 }
 
 /**
- * Create a progressive points loader for a multi-additive-LOD scene
- * node. Mirrors :func:`createProgressiveGSplatsLoader` for Points.
+ * Decide a Points or Lines ladder's per-level label flags and its picking-map
+ * level offsets over the PARENT's union string/image CSR (#1422, #1439).
  *
- * Walks ``additive_<i>/`` zarr subgroups directly under the node path
- * and builds one `PointsSpatialIndexLoader` per subgroup. Wraps all
- * of them in a `PointsProgressiveLoader`.
+ * `countKey` names each level's on-disk element count in that CSR's index
+ * space: `n_points` for Points, `n_vertices` for Lines (whose CSR is
+ * per-VERTEX). `levelOffsets` is CSR-style (`levels.length + 1` entries) or
+ * `null` when the composition cannot run; the label flags are on only when it
+ * can, so no level builds a map the concat would discard.
  */
-export async function createProgressivePointsLoader(
+function ladderPickingLayout(
   node: SceneNode,
-  nAdditive: number,
-  parentEffectiveAttrs: SceneNode['attrs'],
-  deps: LoaderFactoryDeps
-): Promise<PointsDataLoader> {
-  const parentLoc = zarr.root(deps.zarrStore).resolve(node.path === '/' ? '' : node.path.slice(1));
-
-  log.verbose(
-    LogEmoji.QUERY,
-    Modules.SCENE_LOADER,
-    `Creating progressive Points loader for ${node.path} (${nAdditive} additive sub-LODs)`
-  );
-
-  // PASS 1 — open every `additive_<i>` group (one open per level, in order)
-  // and collect what the level offsets are decided from. The synthesized nodes
-  // are built in pass 2, AFTER `levelOffsets` is known: their label flags
-  // depend on it, and stamping them first would make every level build a
-  // per-level picking map that the concat is going to discard.
-  const levels: Array<{ loc: zarr.Location<zarr.Readable>; attrs: Record<string, unknown> }> = [];
-  const energyTable: Array<number | null> = [];
-  // Per-level ON-DISK row counts (`n_points` on each `additive_<i>` group, NOT
+  levels: AdditiveLevel[],
+  countKey: 'n_points' | 'n_vertices',
+  label: 'Points' | 'Lines'
+): { levelOffsets: number[] | null; labels: LevelLabelFlags } {
+  // Per-level ON-DISK row counts (`countKey` on each `additive_<i>` group, NOT
   // the loaded count) — the offsets into the parent CSR's index space.
-  const onDiskCounts: Array<number | undefined> = [];
-
-  for (let i = 0; i < nAdditive; i++) {
-    const lodLoc = parentLoc.resolve(`additive_${i}`);
-    const lodGroup = await zarr.open(lodLoc, { kind: 'group' });
-    const lodAttrs = lodGroup.attrs as Record<string, unknown>;
-    levels.push({ loc: lodLoc, attrs: lodAttrs });
-    energyTable.push(energyFractionFromAttrs(lodAttrs));
-    onDiskCounts.push(typeof lodAttrs.n_points === 'number' ? lodAttrs.n_points : undefined);
-  }
+  const onDiskCounts = levels.map((level) =>
+    typeof level.attrs[countKey] === 'number' ? (level.attrs[countKey] as number) : undefined
+  );
 
   // Does the PARENT node carry a UNION string/image CSR? Each CSR is keyed
   // by the concatenation `additive_0 || additive_1 || …`, each level in its own
@@ -550,22 +583,22 @@ export async function createProgressivePointsLoader(
     if (!usable) {
       log.warning(
         Modules.SCENE_LOADER,
-        `Progressive Points ${node.path} declares a string/image channel but a sub-LOD is missing a valid ` +
-          '`n_points`; per-level picking maps are disabled (hover falls back to the ' +
+        `Progressive ${label} ${node.path} declares a string/image channel but a sub-LOD is missing a valid ` +
+          `\`${countKey}\`; per-level picking maps are disabled (hover falls back to the ` +
           'visible-buffer slot).'
       );
     } else {
       const total = (onDiskCounts as number[]).reduce((s, n) => s + n, 0);
-      // Free cross-check: the writer's parent `n_points` IS the sum of the
-      // levels' row counts (`n_points_total`), so a mismatch means the CSR and
+      // Free cross-check: the writer's parent count IS the sum of the
+      // levels' row counts, so a mismatch means the CSR and
       // the levels come from different builds — composing would land in
       // someone else's row. Only checked when the parent actually carries the
       // attr; its absence is not evidence of anything.
-      if (typeof node.attrs.n_points === 'number' && node.attrs.n_points !== total) {
+      if (typeof node.attrs[countKey] === 'number' && node.attrs[countKey] !== total) {
         log.warning(
           Modules.SCENE_LOADER,
-          `Progressive Points ${node.path}: sub-LOD row counts sum to ${total} but the parent ` +
-            `declares n_points=${node.attrs.n_points}; the parent CSR and the levels disagree, ` +
+          `Progressive ${label} ${node.path}: sub-LOD row counts sum to ${total} but the parent ` +
+            `declares ${countKey}=${String(node.attrs[countKey])}; the parent CSR and the levels disagree, ` +
             'so per-level picking maps are disabled (hover falls back to the visible-buffer slot).'
         );
       } else if (total > 0xffffffff) {
@@ -576,7 +609,7 @@ export async function createProgressivePointsLoader(
         // what has to be checked.
         log.warning(
           Modules.SCENE_LOADER,
-          `Progressive Points ${node.path}: sub-LOD row counts sum to ${total}, past the ` +
+          `Progressive ${label} ${node.path}: sub-LOD row counts sum to ${total}, past the ` +
             '2^32 index range the picking map is stored in; per-level picking maps are ' +
             'disabled (hover falls back to the visible-buffer slot).'
         );
@@ -596,51 +629,71 @@ export async function createProgressivePointsLoader(
   // Per-level maps are only ever USED when the offsets exist to place them.
   const levelsBuildMaps = parentDeclaresStringChannel && levelOffsets !== null;
 
-  // PASS 2 — synthesize each sub-LOD node and its loader.
-  const lodLoaders: PointsSpatialIndexLoader[] = levels.map(
-    ({ loc: lodLoc, attrs: lodAttrs }, i) => {
-      const lodNode: SceneNode = {
-        path: `${node.path === '/' ? '' : node.path}/additive_${i}`,
-        type: 'points',
-        attrs: {
-          ...lodAttrs,
-          opacity: parentEffectiveAttrs.opacity,
-          absorption: parentEffectiveAttrs.absorption,
-          gamma: parentEffectiveAttrs.gamma,
-          intensity: parentEffectiveAttrs.intensity,
-          offset: parentEffectiveAttrs.offset,
-          blending_mode: parentEffectiveAttrs.blending_mode,
-          extend_to_all: node.attrs.extend_to_all,
-          // A ladder's string/image CSR lives on the PARENT node, spanning the levels in
-          // `additive_<i>` order (#1422), and that is also the only path the pick
-          // path ever resolves per-element metadata against — a sub-LOD carries no CSR of ITS
-          // OWN that any reader can key by, so a sub-LOD's stored flags are never
-          // trusted and are always overridden here. They are overridden with the
-          // parent's declaration, AND only
-          // when the composition can actually run: with `levelOffsets` each level
-          // builds its own level-space slot → on-disk map and
-          // `concatenatePointsData` offsets it into the parent's index space by
-          // the preceding levels' on-disk counts (#1439). Without them (no parent
-          // CSR, or a failed cross-check) all stay false, so no per-level map is
-          // built only to be discarded, and picking stays allocation-free exactly
-          // as before.
-          has_labels: levelsBuildMaps && node.attrs.has_labels === true,
-          has_image_labels: levelsBuildMaps && node.attrs.has_image_labels === true,
-          has_keys: levelsBuildMaps && node.attrs.has_keys === true,
-        },
-        hasSpatialIndex: false,
-        children: [],
-      };
+  // A ladder's string/image CSR lives on the PARENT node, spanning the levels in
+  // `additive_<i>` order (#1422), and that is also the only path the pick path
+  // ever resolves per-element metadata against — a sub-LOD carries no CSR of ITS
+  // OWN that any reader can key by, so a sub-LOD's stored flags are never trusted
+  // and are always overridden here. They are overridden with the parent's
+  // declaration, AND only when the composition can actually run: with
+  // `levelOffsets` each level publishes its own level-space map (Points: slot →
+  // on-disk; Lines: its loaded on-disk vertex ranges) and the ladder concat
+  // offsets it into the parent's index space by the preceding levels' on-disk
+  // counts (#1439). Without them (no parent CSR, or a
+  // failed cross-check) all stay false, so no per-level map is built only to be
+  // discarded, and picking stays allocation-free exactly as before.
+  const labels: LevelLabelFlags = {
+    has_labels: levelsBuildMaps && node.attrs.has_labels === true,
+    has_image_labels: levelsBuildMaps && node.attrs.has_image_labels === true,
+    has_keys: levelsBuildMaps && node.attrs.has_keys === true,
+  };
+  return { levelOffsets, labels };
+}
 
-      return new PointsSpatialIndexLoader(
-        lodLoc,
-        lodNode,
+/**
+ * Create a progressive points loader for a multi-additive-LOD scene
+ * node. Mirrors :func:`createProgressiveGSplatsLoader` for Points.
+ *
+ * Walks ``additive_<i>/`` zarr subgroups directly under the node path
+ * and builds one `PointsSpatialIndexLoader` per subgroup. Wraps all
+ * of them in a `PointsProgressiveLoader`.
+ */
+export async function createProgressivePointsLoader(
+  node: SceneNode,
+  nAdditive: number,
+  parentEffectiveAttrs: SceneNode['attrs'],
+  deps: LoaderFactoryDeps
+): Promise<PointsDataLoader> {
+  log.verbose(
+    LogEmoji.QUERY,
+    Modules.SCENE_LOADER,
+    `Creating progressive Points loader for ${node.path} (${nAdditive} additive sub-LODs)`
+  );
+
+  // PASS 1 — open every `additive_<i>` group (one open per level, in order)
+  // and collect what the level offsets are decided from. The synthesized nodes
+  // are built in pass 2, AFTER `levelOffsets` is known: their label flags
+  // depend on it, and stamping them first would make every level build a
+  // per-level picking map that the concat is going to discard.
+  const levels = await openAdditiveLevels(node, nAdditive, deps);
+  const energyTable = levels.map((level) => energyFractionFromAttrs(level.attrs));
+  const { levelOffsets, labels } = ladderPickingLayout(node, levels, 'n_points', 'Points');
+
+  // PASS 2 — synthesize each sub-LOD node and its loader.
+  const lodLoaders = levels.map(
+    (level, i) =>
+      new PointsSpatialIndexLoader(
+        level.loc,
+        buildAdditiveLevelNode(
+          node,
+          i,
+          'points',
+          composeLevelAttrs(level, node, parentEffectiveAttrs, labels)
+        ),
         deps.arrayRefRegistry,
         deps.zarrStore,
         deps.l0Cache ?? undefined,
         deps.cachingStore?.getPrefetcher() ?? undefined
-      );
-    }
+      )
   );
 
   return new PointsProgressiveLoader(
@@ -663,73 +716,42 @@ export async function createProgressiveLinesLoader(
   parentEffectiveAttrs: SceneNode['attrs'],
   deps: LoaderFactoryDeps
 ): Promise<LinesDataLoader> {
-  const parentLoc = zarr.root(deps.zarrStore).resolve(node.path === '/' ? '' : node.path.slice(1));
-
   log.verbose(
     LogEmoji.QUERY,
     Modules.SCENE_LOADER,
     `Creating progressive Lines loader for ${node.path} (${nAdditive} additive sub-LODs)`
   );
 
-  const lodLoaders: LinesSpatialIndexLoader[] = [];
-  const energyTable: Array<number | null> = [];
-
-  for (let i = 0; i < nAdditive; i++) {
-    const lodLoc = parentLoc.resolve(`additive_${i}`);
-    const lodGroup = await zarr.open(lodLoc, { kind: 'group' });
-    const lodAttrs = lodGroup.attrs as Record<string, unknown>;
-    energyTable.push(energyFractionFromAttrs(lodAttrs));
-
-    const lodNode: SceneNode = {
-      path: `${node.path === '/' ? '' : node.path}/additive_${i}`,
-      type: 'lines',
-      attrs: {
-        ...lodAttrs,
-        opacity: parentEffectiveAttrs.opacity,
-        absorption: parentEffectiveAttrs.absorption,
-        gamma: parentEffectiveAttrs.gamma,
-        intensity: parentEffectiveAttrs.intensity,
-        offset: parentEffectiveAttrs.offset,
-        blending_mode: parentEffectiveAttrs.blending_mode,
-        extend_to_all: node.attrs.extend_to_all,
-        // A ladder's string/image CSR lives on the PARENT node, per-VERTEX and spanning
-        // the levels in `additive_<i>` order (#1422), and that is also the only
-        // path the pick path ever resolves per-element metadata against — a sub-LOD carries no
-        // CSR of its own, so no reader can key by a sub-LOD's on-disk index.
-        // Clearing the flags here keeps the spatial-index loader from publishing
-        // per-level `vertexRangeBounds` — and the projection from composing a
-        // per-level segment-slot → on-disk start-vertex map (#1424's chain) —
-        // that the ladder concat then has to discard. Extending that map ACROSS
-        // the ladder (offsetting each level by the preceding levels' on-disk
-        // VERTEX counts, which is exactly the parent CSR's index space) is what
-        // would let a sliced ladder hover correctly — #1439 did exactly that for
-        // POINTS (`levelOffsets` in `createProgressivePointsLoader`); a lines
-        // ladder still needs it, and at the per-VERTEX granularity above.
-        has_labels: false,
-        has_image_labels: false,
-        has_keys: false,
-      },
-      hasSpatialIndex: false,
-      children: [],
-    };
-
-    lodLoaders.push(
+  const levels = await openAdditiveLevels(node, nAdditive, deps);
+  // The ladder's string/image CSR lives on the PARENT, per-VERTEX and spanning
+  // the levels in `additive_<i>` order (#1422), so the offsets are over each
+  // level's on-disk VERTEX count. With them each level publishes its loaded
+  // on-disk vertex ranges and `concatenateLinesData` shifts them into the
+  // parent's index space — the lines twin of the Points composition (#1439).
+  const { levelOffsets, labels } = ladderPickingLayout(node, levels, 'n_vertices', 'Lines');
+  const lodLoaders = levels.map(
+    (level, i) =>
       new LinesSpatialIndexLoader(
-        lodLoc,
-        lodNode,
+        level.loc,
+        buildAdditiveLevelNode(
+          node,
+          i,
+          'lines',
+          composeLevelAttrs(level, node, parentEffectiveAttrs, labels)
+        ),
         deps.arrayRefRegistry,
         deps.zarrStore,
         deps.l0Cache ?? undefined,
         deps.cachingStore?.getPrefetcher() ?? undefined
       )
-    );
-  }
+  );
 
   return new LinesProgressiveLoader(
     lodLoaders,
     nAdditive,
     node.path,
-    energyTable,
-    deps.sliceCache ?? undefined
+    levels.map((level) => energyFractionFromAttrs(level.attrs)),
+    deps.sliceCache ?? undefined,
+    levelOffsets
   );
 }

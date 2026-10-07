@@ -286,6 +286,7 @@ export async function readArray<D extends DataType, Store extends Readable>(
   return selection === undefined ? zarrita.get(array) : zarrita.get(array, selection);
 }
 
+// lifecycle-exempt: wraps a signal into read options; starts and owns no work
 /**
  * Build a `GetOptions` carrying an `AbortSignal`, or `undefined` when there is
  * no signal. Lets read sites forward a per-update abort signal into `get()`

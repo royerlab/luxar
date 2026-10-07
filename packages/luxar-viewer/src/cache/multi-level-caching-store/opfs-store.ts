@@ -2,9 +2,16 @@ import type { CacheValidationMode } from '../types';
 import { log, Modules } from '../../utils/log';
 import { getErrorMessage } from '../../utils/format-error';
 import { config } from '../../config';
-import { OPFSBucketCache, getBucket, keyToFileName } from './opfs-store/buckets';
+import { OPFSBucketCache, getBucket, hashTag, keyToFileName } from './opfs-store/buckets';
 import { getLuxarOpfsRoot } from './opfs-store/opfs-root';
-import { OPFSMetadataManager, type MetadataSnapshot } from './opfs-store/metadata';
+import {
+  IDENTITY_FILE,
+  OPFSMetadataManager,
+  loadIdentity,
+  writeIdentity,
+  type LoadOutcome,
+  type MetadataSnapshot,
+} from './opfs-store/metadata';
 import { crawlOrphans, type OrphanFile } from './opfs-store/orphan-reconcile';
 import { withTimeout } from './opfs-store/opfs-timeout';
 import { getOpfsReadGateStats, withOpfsReadGate } from './opfs-read-gate';
@@ -43,7 +50,7 @@ export interface CachedDatasetSummary {
  * OPFS persistence layer (L2 cache) with LRU eviction and shallow bucketing.
  *
  * Uses 256 bucket directories to distribute files and avoid filesystem limits.
- * Files are stored as: `{bucket}/{base64-encoded-key}`
+ * Files are stored as: `{bucket}/{hash tag}.{base64-encoded-key}` (see `hashTag`)
  *
  * Structure (everything under the viewer's `luxar/` OPFS namespace dir, see
  * `opfs-store/opfs-root.ts`):
@@ -55,8 +62,17 @@ export interface CachedDatasetSummary {
  * ├── 01/
  * ├── ...
  * ├── ff/
+ * ├── _cache_identity.json
  * └── _cache_meta.json
  * ```
+ *
+ * Persistence contract (see the cache README, "L2 index persistence"): a chunk
+ * file whose write completed is served by the next session of the same dataset
+ * even if no index save recorded it. `_cache_identity.json` holds the content
+ * hash and is written before any chunk under that hash; a lookup of a key the
+ * index does not list reads the key's deterministic path while the open-time
+ * reconcile, which re-indexes or deletes the files the index never recorded,
+ * runs.
  *
  * Benefits:
  * - Max ~250-500 files per directory instead of 65,000+
@@ -73,6 +89,11 @@ export class OPFSStore {
   private datasetId: string;
   private baseUrl: string;
   private contentHash: string | null = null;
+  // `hashTag(contentHash)`, which names every chunk file this store reads or
+  // writes (`keyToFileName`), so all index entries share it. Another tab still
+  // at an older hash writes differently named files into a shared directory,
+  // which this store therefore never reads nor recovers. See adoptContentHash.
+  private fileTag = '';
   // External-dataset validation mode + last-validated timestamp.
   // Persisted to OPFSMetadata so the next session can apply a TTL
   // window across page loads.
@@ -128,6 +149,11 @@ export class OPFSStore {
   // index, so this is the persistence-vs-main-thread trade: 2 s bounds what an
   // interruption can lose without re-serializing the index per write.
   private static readonly METADATA_SAVE_MAX_WAIT = 2000;
+  // Leading edge: the first write after a quiet second is indexed within this
+  // delay. Measured on the reload spec, the reload came ~1.1 s after the first
+  // L2 write and ~0.4 s after the last, so the trailing debounce never fired
+  // before it. 150 ms still batches a load's first burst into one save.
+  private static readonly METADATA_SAVE_LEADING_DELAY = 150;
 
   // Live (initialized, not yet disposed) stores, for the page-lifecycle flush
   // (`flushAllMetadata`, wired to pagehide / visibilitychange in
@@ -147,11 +173,29 @@ export class OPFSStore {
 
   // Background orphan reconcile started by init(); dispose() awaits it.
   private pendingReconcile: Promise<void> | null = null;
-  // Whether the loaded index is trustworthy enough to RE-INDEX orphans (it
-  // parsed and carries a content hash, so the files share its provenance);
-  // otherwise every orphan is deleted.
-  private orphanReindexAllowed = false;
+  // The content hash under which files the index does NOT list may be
+  // recovered, or null when none may (every such file is then deleted). Set at
+  // open from the persisted identity and index (`recoveryHashFor`), and dropped
+  // the moment the store is told any other hash or is cleared: a file is only
+  // ever recovered under the same hash that makes indexed entries trustworthy.
+  private recoveryHash: string | null = null;
+  // While true, a get() of a key the index does not list reads its file from
+  // the deterministic `{bucket}/{name}` path (and indexes it on a hit), so a
+  // reload's FIRST reads are served before the background reconcile has
+  // re-indexed them. Armed with `recoveryHash`; disarmed once a complete crawl
+  // has accounted for every file, so a long session pays no probe per miss.
+  private probeUnindexed = false;
   private orphansReindexed = 0;
+  // The running crawl's recorded recoveries (key → size), merged when it ends.
+  private reconcileRecovered: Map<string, number> | null = null;
+
+  // The dataset identity file (`_cache_identity.json`, see metadata.ts): the
+  // hash last requested on disk, and the chained write putting it there. Every
+  // chunk write waits for `identityWrite`, so no chunk file can land before the
+  // identity it was written under — which is what lets the next session trust
+  // files whose index save never completed.
+  private identityOnDisk: string | null = null;
+  private identityWrite: Promise<void> | null = null;
 
   // Quota estimate cache. `navigator.storage.estimate()` cost 2-5 ms per call
   // and ran on EVERY write, which throttled the background write queue until
@@ -459,24 +503,34 @@ export class OPFSStore {
     // Capture the root once — dispose() nulls this.opfsRoot mid-await.
     const root = this.opfsRoot;
     const outcome = await this.metadata.load(root);
+    // Bounded: a hung handle must not stall init (no identity = no recovery).
+    const identity = await withTimeout(
+      loadIdentity(root),
+      config.cache.opfsOperationTimeoutMs,
+      'identity-load'
+    ).catch(() => null);
     // dispose() may land during load(). Bail before applying the snapshot and
     // ESPECIALLY before orphan cleanup: a disposed store's index is stale, so
     // its cleanup would classify a newer same-URL store's freshly written
     // files as orphans and delete them.
     if (this.disposed) return;
-    if (!outcome) {
-      // Cold start (file missing). Defaults already match the constructor.
-      return;
+    this.identityOnDisk = identity;
+    if (outcome) {
+      this.index = outcome.index;
+      this.totalSize = outcome.totalSize;
+      this.orderCounter = outcome.orderCounter;
+      this.contentHash = outcome.contentHash;
+      this.fileTag = hashTag(outcome.contentHash);
+      this.validationMode = outcome.validationMode;
+      this.lastValidatedAt = outcome.lastValidatedAt;
     }
-    this.index = outcome.index;
-    this.totalSize = outcome.totalSize;
-    this.orderCounter = outcome.orderCounter;
-    this.contentHash = outcome.contentHash;
-    this.validationMode = outcome.validationMode;
-    this.lastValidatedAt = outcome.lastValidatedAt;
-    // A corrupt index yields a fresh outcome with no hash: its orphans (every
-    // file) are deleted by the reconcile, as the old parse-failure cleanup did.
-    this.orphanReindexAllowed = !outcome.needsOrphanCleanup && outcome.contentHash !== null;
+    // An index that never landed (missing, zero-byte, corrupt) leaves the
+    // identity as the only record of what the files were written under. It
+    // becomes the cached hash, so validation compares the remote hash against
+    // it exactly as against an indexed one — and clears on a mismatch.
+    if (this.contentHash === null) this.adoptContentHash(identity);
+    this.recoveryHash = recoveryHashFor(outcome, identity);
+    this.probeUnindexed = this.recoveryHash !== null;
   }
 
   /** A key some in-flight or completed operation of THIS store owns. */
@@ -487,10 +541,12 @@ export class OPFSStore {
   /**
    * Reconcile chunk files the persisted index does not list (see
    * `opfs-store/orphan-reconcile.ts`). Each orphan is RE-INDEXED when its name
-   * decodes to a key that hashes to the bucket it sits in, the loaded index is
-   * trusted (`orphanReindexAllowed`), and it fits under `maxSize`; otherwise it
-   * is DELETED. Recovered entries join the LRU head (oldest), so they are the
-   * first evicted. Bounded per session by ORPHAN_RECONCILE_MAX_ACTIONS.
+   * decodes to a key that hashes to the bucket it sits in, a recovery hash is
+   * set (`recoveryHash`), the file is non-empty, and it fits under `maxSize`;
+   * otherwise it is DELETED. Recovered entries join the LRU head (oldest), so
+   * they are the first evicted. Bounded per session by
+   * ORPHAN_RECONCILE_MAX_ACTIONS. The end of the crawl disarms the
+   * unindexed-read probe (`probeUnindexed`).
    *
    * Runs concurrently with normal traffic, so every action re-checks against
    * the live state: a key this store is writing or has indexed is never
@@ -502,18 +558,23 @@ export class OPFSStore {
     const root = this.opfsRoot;
     if (!root) return;
     const generation = this.generation;
+    const tag = this.fileTag;
     const expected = new Set<string>();
-    for (const key of this.index.keys()) expected.add(keyToFileName(key));
+    for (const key of this.index.keys()) expected.add(keyToFileName(key, tag));
     const recovered = new Map<string, number>();
     let recoveredBytes = 0;
     const stale = (): boolean =>
       this.disposed || this.generation !== generation || this.opfsRoot !== root;
 
     const onOrphan = async (orphan: OrphanFile): Promise<void> => {
+      // A file of another hash tag is never one of this store's chunks: delete.
+      const parsed = orphan.parsed;
       const key =
-        orphan.key !== null && getBucket(orphan.key) === orphan.bucketName ? orphan.key : null;
+        parsed !== null && parsed.tag === tag && getBucket(parsed.key) === orphan.bucketName
+          ? parsed.key
+          : null;
       if (key !== null && (this.isKeyLive(key) || recovered.has(key))) return;
-      if (key !== null && this.orphanReindexAllowed) {
+      if (key !== null && this.recoveryHash !== null) {
         const size = await this.orphanSize(orphan);
         if (stale() || this.isKeyLive(key)) return;
         if (size !== null && this.totalSize + recoveredBytes + size <= this.maxSize) {
@@ -525,6 +586,10 @@ export class OPFSStore {
       await this.removeOrphanFile(orphan, key);
     };
 
+    // A write or adoption of a recorded key supersedes its record (doSet,
+    // adoptUnindexed): merging it later would resurrect an entry that a
+    // subsequent eviction had already deleted from disk.
+    this.reconcileRecovered = recovered;
     try {
       await crawlOrphans(root, {
         expectedFileNames: expected,
@@ -536,7 +601,13 @@ export class OPFSStore {
     } catch {
       // Best-effort: a failed crawl leaves the orphans for the next session.
     }
-    if (!stale()) this.mergeRecovered(recovered);
+    if (this.reconcileRecovered === recovered) this.reconcileRecovered = null;
+    if (stale()) return;
+    this.mergeRecovered(recovered);
+    // The probe served the first reads while the crawl ran. Past it, a probe
+    // hit needs a file a budget-capped (or failed) crawl did not reach, while
+    // every L2 miss would pay a lookup; such files wait for the next session.
+    this.probeUnindexed = false;
   }
 
   /** Byte size of an orphan file, or null when it cannot be read in time. */
@@ -547,7 +618,9 @@ export class OPFSStore {
         config.cache.opfsOperationTimeoutMs,
         `orphan-size(${orphan.fileName})`
       );
-      return Number.isFinite(file.size) && file.size >= 0 ? file.size : null;
+      // Zero bytes is a chunk write cut off between create and close, never a
+      // chunk: recovering it would serve an empty buffer as data.
+      return Number.isFinite(file.size) && file.size > 0 ? file.size : null;
     } catch {
       return null;
     }
@@ -584,13 +657,15 @@ export class OPFSStore {
   /**
    * Fold recovered orphans into the index as its LRU head. Synchronous, so it
    * is atomic against every other index mutation; a key indexed meanwhile
-   * (a concurrent write) keeps its live entry.
+   * (a concurrent write) keeps its live entry. Writes during the crawl may
+   * have used the room it budgeted, so a recovery that no longer fits under
+   * `maxSize` is skipped (its file waits, unindexed, for the next reconcile).
    */
   private mergeRecovered(recovered: Map<string, number>): void {
     const merged = new Map<string, { size: number; order: number }>();
     let added = 0;
     for (const [key, size] of recovered) {
-      if (this.isKeyLive(key)) continue;
+      if (this.isKeyLive(key) || this.totalSize + added + size > this.maxSize) continue;
       merged.set(key, { size, order: 0 });
       added += size;
     }
@@ -630,27 +705,37 @@ export class OPFSStore {
    * Get a file from OPFS and update LRU order.
    */
   async get(key: string, options?: { signal?: AbortSignal }): Promise<Uint8Array | undefined> {
-    if (!this.readableRoot(key, options?.signal)) {
-      this.countUnavailableRead(options?.signal);
+    const signal = options?.signal;
+    return !this.index.has(key) && this.canProbeUnindexed(key, signal)
+      ? this.getUnindexed(key, signal)
+      : this.getIndexed(key, signal);
+  }
+
+  /** get() of a key the index lists (anything else is a miss here). */
+  private async getIndexed(key: string, signal?: AbortSignal): Promise<Uint8Array | undefined> {
+    if (!this.readableRoot(key, signal)) {
+      this.countUnavailableRead(signal);
       return undefined;
     }
 
     try {
-      const data = await withOpfsReadGate(async () => {
-        const root = this.readableRoot(key, options?.signal);
+      const data = await withOpfsReadGate(async (hold) => {
+        const root = this.readableRoot(key, signal);
         if (!root) return undefined;
         return this.timed(
-          (async () => {
-            const fileHandle = await this.buckets.navigateToFile(root, key, false);
-            const file = await fileHandle.getFile();
-            return new Uint8Array(await file.arrayBuffer());
-          })(),
+          hold(
+            (async () => {
+              const fileHandle = await this.buckets.navigateToFile(root, key, this.fileTag, false);
+              const file = await fileHandle.getFile();
+              return new Uint8Array(await file.arrayBuffer());
+            })()
+          ),
           `get(${key})`
         );
-      });
+      }, signal);
 
       if (!data) {
-        this.countUnavailableRead(options?.signal);
+        this.countUnavailableRead(signal);
         return undefined;
       }
 
@@ -676,9 +761,93 @@ export class OPFSStore {
       if (msg.startsWith('OPFS timeout')) {
         log.warning(Modules.CACHE, msg);
       }
-      this.missCount++;
+      this.countUnavailableRead(signal);
       return undefined;
     }
+  }
+
+  /**
+   * Whether a key the index does not list may be read from its file: recovery
+   * is armed (`probeUnindexed`) and nothing of this store is writing or
+   * deleting that file right now.
+   */
+  private canProbeUnindexed(key: string, signal?: AbortSignal): boolean {
+    return (
+      this.probeUnindexed &&
+      !this.disposed &&
+      !signal?.aborted &&
+      this.opfsRoot !== null &&
+      !this.pendingWrites.has(key) &&
+      !OPFSStore.pendingDeletesByDataset.get(this.datasetId)?.has(key)
+    );
+  }
+
+  /**
+   * get() for a key the index does not list, while unindexed files may still
+   * be on disk (see `probeUnindexed`). A key's file path is a pure function of
+   * the key, so the file is read where a write would have put it; a hit is
+   * indexed (the index never recorded it: a reload landed before the save) and
+   * served, a NotFound is an ordinary miss. Gated on the same validated hash as
+   * every indexed entry, and discarded if a clear() ran meanwhile.
+   */
+  private async getUnindexed(key: string, signal?: AbortSignal): Promise<Uint8Array | undefined> {
+    const generation = this.generation;
+    const data = await this.readUnindexed(key, signal);
+    if (this.index.has(key) && this.generation === generation) {
+      // Indexed meanwhile (the reconcile or a write): read it the normal way.
+      return this.getIndexed(key, signal);
+    }
+    if (
+      data === undefined ||
+      data.byteLength === 0 ||
+      this.generation !== generation ||
+      !this.canProbeUnindexed(key, signal)
+    ) {
+      this.countUnavailableRead(signal);
+      return undefined;
+    }
+    this.adoptUnindexed(key, data.byteLength);
+    this.readCount++;
+    return data;
+  }
+
+  /** The bytes at `key`'s file path, or undefined (absent, unreadable, timed out). */
+  private async readUnindexed(key: string, signal?: AbortSignal): Promise<Uint8Array | undefined> {
+    try {
+      return await withOpfsReadGate(async (hold) => {
+        const root = this.opfsRoot;
+        if (!root || !this.canProbeUnindexed(key, signal)) return undefined;
+        return this.timed(
+          hold(
+            (async () => {
+              const fileHandle = await this.buckets.navigateToFile(root, key, this.fileTag, false);
+              const file = await fileHandle.getFile();
+              return new Uint8Array(await file.arrayBuffer());
+            })()
+          ),
+          `get(${key})`
+        );
+      }, signal);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.startsWith('OPFS timeout')) log.warning(Modules.CACHE, msg);
+      return undefined;
+    }
+  }
+
+  /**
+   * Index a file found by an unindexed read, as the MRU entry. One that would
+   * push the index past `maxSize` is served but left unindexed, for the
+   * reconcile to decide (it deletes what does not fit).
+   */
+  private adoptUnindexed(key: string, size: number): void {
+    if (this.totalSize + size > this.maxSize) return;
+    this.index.set(key, { size, order: this.orderCounter++ });
+    this.reconcileRecovered?.delete(key);
+    this.totalSize += size;
+    this.orphansReindexed++;
+    if (this.orderCounter > 1e12) this.compactOrderCounter();
+    this.scheduleMetadataSave();
   }
 
   private readableRoot(key: string, signal?: AbortSignal): FileSystemDirectoryHandle | null {
@@ -779,6 +948,9 @@ export class OPFSStore {
     // mutation must be skipped — otherwise a slow set() that began
     // before clear() will repopulate the just-cleared cache.
     const startGeneration = this.generation;
+    // The file is named under the tag current at entry; a tag change while it
+    // is written bumps the generation, so it is then removed, never indexed.
+    const tag = this.fileTag;
 
     const size = data.byteLength;
 
@@ -790,6 +962,11 @@ export class OPFSStore {
       this.oversizedWriteSkipped++;
       return;
     }
+
+    // The directory's identity must be on disk before any chunk written under
+    // it, or a reload before the next index save leaves files of unknown
+    // provenance (see `identityWrite`). Never rejects; usually already settled.
+    if (this.identityWrite) await this.identityWrite;
 
     // LRU eviction until we have space — O(1) per eviction via Map
     // insertion order. Run BEFORE the quota check so the browser sees
@@ -885,7 +1062,7 @@ export class OPFSStore {
       try {
         await this.timed(
           (async () => {
-            const fileHandle = await this.buckets.navigateToFile(this.opfsRoot!, key, true);
+            const fileHandle = await this.buckets.navigateToFile(this.opfsRoot!, key, tag, true);
             const writable = await fileHandle.createWritable();
             // Write the VIEW itself: `write()` takes any BufferSource and writes
             // exactly the view's bytes, so a sub-view of a larger buffer is safe
@@ -910,7 +1087,7 @@ export class OPFSStore {
             const bucket = getBucket(key);
             const bucketHandle = await this.buckets.getHandle(this.opfsRoot!, bucket, false);
             if (bucketHandle) {
-              await bucketHandle.removeEntry(keyToFileName(key));
+              await bucketHandle.removeEntry(keyToFileName(key, tag));
             }
           } catch {
             // Best-effort; orphaned file is harmless and will be reclaimed
@@ -927,6 +1104,7 @@ export class OPFSStore {
           this.index.delete(key);
         }
         this.index.set(key, { size, order: this.orderCounter++ });
+        this.reconcileRecovered?.delete(key);
         this.totalSize += size;
         this.debitQuota(size - (existingEntry?.size ?? 0), size);
         this.writeCount++;
@@ -1069,7 +1247,7 @@ export class OPFSStore {
       const bucket = getBucket(key);
       const bucketHandle = await this.buckets.getHandle(this.opfsRoot!, bucket, false);
       if (bucketHandle) {
-        await bucketHandle.removeEntry(keyToFileName(key));
+        await bucketHandle.removeEntry(keyToFileName(key, this.fileTag));
       }
     } catch (error) {
       // NotFound means the desired disk state already holds. Reconcile the
@@ -1145,6 +1323,9 @@ export class OPFSStore {
     if (this.pendingWrites.size > 0) {
       await Promise.allSettled([...this.pendingWrites.values()]);
     }
+    // An identity write landing after the wipe would vouch for the old hash in
+    // the fresh directory.
+    if (this.identityWrite) await this.identityWrite;
 
     // dispose() may have landed during the drain above. Bail BEFORE the
     // in-memory reset and the directory wipe: dispose() awaits this clear,
@@ -1159,6 +1340,9 @@ export class OPFSStore {
     this.totalSize = 0;
     this.orderCounter = 0;
     this.contentHash = null;
+    this.fileTag = '';
+    this.identityOnDisk = null;
+    this.stopRecovery();
     this.validationMode = 'none';
     this.lastValidatedAt = null;
     this.readCount = 0;
@@ -1292,7 +1476,7 @@ export class OPFSStore {
     clobberBarrierWriteSkipped: number;
     metadataParseFailures: number;
     orphanedFilesRemoved: number;
-    /** Unindexed files recovered into the index by the open-time reconcile. */
+    /** Unindexed files recovered into the index (open-time reconcile or a first read). */
     orphansReindexed: number;
     /**
      * S2: `true` when OPFS was reachable on init and the store is
@@ -1365,8 +1549,72 @@ export class OPFSStore {
    */
   setContentHash(hash: string | null): void {
     if (this.disposed) return;
-    this.contentHash = hash;
+    // Unindexed files were written under `recoveryHash`; under any other hash
+    // they are not this dataset's chunks, so stop recovering them.
+    if (hash !== this.recoveryHash) this.stopRecovery();
+    this.adoptContentHash(hash);
+    this.persistIdentity(hash);
     this.scheduleMetadataSave();
+  }
+
+  /**
+   * Make `hash` the content hash. Index entries were written under the old
+   * hash's file tag, so a different tag retires them: the index empties (their
+   * files become orphans the next reconcile deletes) and the generation bump
+   * discards any write still in flight under the old tag. In practice the index
+   * is already empty here — a hash change goes through clear() — except for
+   * entries written while no hash was known.
+   */
+  private adoptContentHash(hash: string | null): void {
+    this.contentHash = hash;
+    const tag = hashTag(hash);
+    if (tag === this.fileTag) return;
+    this.fileTag = tag;
+    this.generation++;
+    this.index = new Map();
+    this.totalSize = 0;
+    this.orderCounter = 0;
+  }
+
+  /** Recover no unindexed file from here on (the reconcile deletes them). */
+  private stopRecovery(): void {
+    this.recoveryHash = null;
+    this.probeUnindexed = false;
+  }
+
+  /**
+   * Put `hash` in the identity file, chained behind any earlier identity write.
+   * Chunk writes wait for it (doSet). A failed write removes the file instead,
+   * so a stale identity can never vouch for chunks written under a new hash.
+   */
+  private persistIdentity(hash: string | null): void {
+    const root = this.opfsRoot;
+    if (!root || hash === this.identityOnDisk) return;
+    this.identityOnDisk = hash;
+    const write = (this.identityWrite ?? Promise.resolve()).then(async () => {
+      try {
+        await withTimeout(
+          writeIdentity(root, hash),
+          config.cache.opfsOperationTimeoutMs,
+          'identity-write'
+        );
+      } catch (error) {
+        if (this.identityOnDisk === hash) this.identityOnDisk = null;
+        log.warning(
+          Modules.CACHE,
+          `OPFSStore failed to write the dataset identity: ${getErrorMessage(error)}`
+        );
+        await withTimeout(
+          root.removeEntry(IDENTITY_FILE),
+          config.cache.opfsOperationTimeoutMs,
+          'identity-remove'
+        ).catch(() => {});
+      }
+    });
+    this.identityWrite = write;
+    void write.finally(() => {
+      if (this.identityWrite === write) this.identityWrite = null;
+    });
   }
 
   /**
@@ -1500,6 +1748,9 @@ export class OPFSStore {
     if (this.pendingWrites.size > 0) {
       await Promise.allSettled([...this.pendingWrites.values()]);
     }
+    // Bounded inside (its own write timeout): it must not land after a newer
+    // same-URL store took the directory over.
+    if (this.identityWrite) await this.identityWrite;
 
     // Drain in-flight REAL deletes (#1073). doDelete now chains behind
     // pendingWrites, so a delete whose caller returned on a timeout can still
@@ -1608,6 +1859,7 @@ export class OPFSStore {
       getSnapshot: () => this.metadataSnapshot(),
       delayMs: OPFSStore.METADATA_SAVE_DELAY,
       maxWaitMs: OPFSStore.METADATA_SAVE_MAX_WAIT,
+      leadingDelayMs: OPFSStore.METADATA_SAVE_LEADING_DELAY,
       onError: (error) => {
         this.writeFailures++;
         log.warning(
@@ -1618,4 +1870,19 @@ export class OPFSStore {
       },
     });
   }
+}
+
+/**
+ * The hash under which files the index does not list may be recovered, from
+ * what the directory holds at open (null = none may):
+ *
+ * - an identity file: its hash, unless an index that did land names a
+ *   DIFFERENT one (one of the two writes failed; trust neither);
+ * - no identity (a directory written before the identity file existed): the
+ *   hash of an index that parsed, as before.
+ */
+function recoveryHashFor(outcome: LoadOutcome | null, identity: string | null): string | null {
+  const indexHash = outcome?.contentHash ?? null;
+  if (identity !== null) return indexHash === null || indexHash === identity ? identity : null;
+  return outcome && !outcome.needsOrphanCleanup ? indexHash : null;
 }

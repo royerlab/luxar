@@ -46,7 +46,7 @@ const viewState3D: ViewState = {
 const viewState4D: ViewState = {
   displayDims: [0, 1, 2],
   slicePosition: [0, 0, 0, 0],
-  tolerance: [0, 0, 0, 1],
+  tolerance: [0, 0, 0, 1e10],
 };
 
 describe('projectPointsTo3D — ndim is computed from positions array length', () => {
@@ -102,7 +102,7 @@ describe('projectPointsTo3D — ndim is computed from positions array length', (
     const viewState5D: ViewState = {
       displayDims: [0, 2, 4],
       slicePosition: [0, 0, 0, 0, 0],
-      tolerance: [0, 1, 0, 1, 0],
+      tolerance: [0, 1e10, 0, 1e10, 0],
     };
     const result = projectPointsTo3D(
       wasm,
@@ -163,7 +163,7 @@ describe('projectPointsTo3D — corner cases', () => {
     const viewState: ViewState = {
       displayDims: [1, 3, 0],
       slicePosition: [0, 0, 0, 0, 0],
-      tolerance: [0, 0, 0, 0, 0],
+      tolerance: [0, 0, 1e10, 0, 1e10],
     };
     const result = projectPointsTo3D(
       wasm,
@@ -206,7 +206,7 @@ describe('projectPointsTo3D — corner cases', () => {
     const viewState: ViewState = {
       displayDims: [2],
       slicePosition: [0, 0, 0, 0],
-      tolerance: [0, 0, 0, 0],
+      tolerance: [1e10, 1e10, 0, 1e10],
     };
     const result = projectPointsTo3D(
       wasm,

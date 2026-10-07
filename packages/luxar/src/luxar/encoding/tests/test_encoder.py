@@ -180,6 +180,50 @@ class TestBroadcasting:
             # Non-uniform — encoder picks LUT or full storage, NOT broadcasted.
             assert enc["name"] != "broadcasted"
 
+    # A broadcast row is a few bytes, but reading it is a whole request — and an
+    # all-zero row is never written at all (zarr skips a chunk equal to the
+    # fill value), so the read is a 404. The writer records the row in the
+    # encoding attrs, which a reader already holds from consolidated metadata.
+    @pytest.mark.parametrize(
+        ("data", "semantic", "kwargs"),
+        [
+            (np.full(64, 2.5, dtype=np.float32), SemanticType.POSITIVE_SCALAR, {}),
+            (
+                np.full((64, 3), [255, 128, 0], dtype=np.uint8),
+                SemanticType.COLOR,
+                {"color_mode": "sdr"},
+            ),
+            (np.zeros((64, 6), dtype=np.float32), SemanticType.CHOLESKY_OFFDIAG, {}),
+            (
+                np.full(64, np.float32(0.1), dtype=np.float32),
+                SemanticType.POSITIVE_SCALAR,
+                {},
+            ),
+        ],
+    )
+    def test_broadcast_records_its_stored_row(self, data, semantic, kwargs):
+        """``encoding.value`` is the stored row, exactly, as a flat list."""
+        group = memory_group()
+        ArrayEncoder().encode(data, group, "test", semantic, **kwargs)
+        arr = group["test"]
+        enc = arr.attrs["encoding"]
+        assert enc["name"] == "broadcasted"
+        stored = np.asarray(arr[:]).ravel()
+        assert enc["value"] == stored.tolist()
+        # Exact at the stored dtype: a float32 row survives the JSON round trip.
+        np.testing.assert_array_equal(
+            np.asarray(enc["value"], dtype=stored.dtype), stored
+        )
+
+    def test_scalar_broadcast_records_its_value(self):
+        """The scalar entry point records the value too."""
+        group = memory_group()
+        ArrayEncoder().encode(
+            0.3, group, "test", SemanticType.POSITIVE_SCALAR, n_elements=10
+        )
+        enc = group["test"].attrs["encoding"]
+        assert enc["value"] == [float(np.float32(0.3))]
+
 
 class TestLUTEncoding:
     """Test LUT encoding for arrays with limited unique values."""

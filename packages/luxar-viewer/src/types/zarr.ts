@@ -133,6 +133,24 @@ export interface ZarrCameraConfig {
  */
 export type ZarrWaypointCondition = Record<string, number | [number, number]>;
 
+/** Trajectory names (Python `luxar.core.trajectories`). */
+export type ZarrTrajectoryKind =
+  'orbit' | 'zoom-pan' | 'arc' | 'straight' | 'swing' | 'fly-through';
+
+/** A parameterised waypoint trajectory, as serialised by Python. */
+export type ZarrTrajectory =
+  | { kind: 'orbit' }
+  | { kind: 'zoom-pan'; rho?: number }
+  | { kind: 'arc'; lift?: number }
+  | { kind: 'straight' }
+  | { kind: 'swing'; pivot?: [number, number, number] }
+  | { kind: 'fly-through'; look_ahead?: number; turn?: number }
+  | {
+      kind: 'via';
+      camera: ZarrCameraConfig;
+      leg?: ZarrTrajectoryKind;
+    };
+
 /**
  * A camera pose bound to a hidden-dimension position (Python `Waypoint`).
  * First match in list order wins; see `core/app/camera/waypoint-driver.ts`.
@@ -142,7 +160,18 @@ export interface ZarrWaypoint {
   camera: ZarrCameraConfig;
   /** Flight duration in ms; absent = viewer default, 0 = snap. */
   duration_ms?: number;
-  easing?: 'linear' | 'ease-in-out';
+  /** `ease-in-out` (smoothstep, default), `smooth` (smootherstep), `cruise` or `linear`. */
+  easing?: 'linear' | 'ease-in-out' | 'smooth' | 'cruise';
+  /**
+   * The flight path (Python `luxar.core.trajectories`): a name for a trajectory's
+   * defaults, or an object carrying its parameters. See
+   * `core/app/camera/flight-trajectories.ts` for what each does.
+   */
+  trajectory?: ZarrTrajectoryKind | ZarrTrajectory;
+  /** Pace the flight: duration = path length / speed (units per second). */
+  speed?: number;
+  /** `[min, max]` duration of a paced flight, ms. */
+  duration_range_ms?: [number, number];
   /** Rendering overrides (snake_case ViewerConfig keys) applied on arrival. */
   rendering?: Record<string, unknown>;
   /**
@@ -286,6 +315,13 @@ export interface ZarrViewerConfig {
   // Adaptive resolution
   adaptive_dpr_enabled?: boolean;
   allow_high_dpr?: boolean;
+
+  // Projected-density guard
+  density_guard_enabled?: boolean;
+
+  // Multiplier on every overlay's type (`ui/overlay-text-scale.ts`);
+  // `?textScale=` wins over it.
+  text_scale?: number;
 
   // UI panel visibility
   ui?: {
@@ -569,13 +605,6 @@ export function hasNdTransform(
     typeof attrs.nd_transform === 'object' &&
     !Array.isArray(attrs.nd_transform)
   );
-}
-
-/**
- * Type guard to check if attributes are for a points node
- */
-export function isPointsNode(attrs: ZarrNodeAttrs): boolean {
-  return attrs.type === 'points';
 }
 
 /**

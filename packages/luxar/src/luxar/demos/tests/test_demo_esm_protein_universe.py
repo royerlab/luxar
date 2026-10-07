@@ -9,6 +9,7 @@ well-formedness of the twenty shipped stories.
 from __future__ import annotations
 
 from dataclasses import replace
+from html import escape as html_escape
 from pathlib import Path
 
 import numpy as np
@@ -374,6 +375,13 @@ def test_overview_panel_carries_the_count_and_the_credit() -> None:
     assert "Twenty stories" in panel
 
 
+def test_a_private_showing_drops_the_permission_note_but_keeps_the_citation() -> None:
+    """`--no-permission-note` (the VIP kiosk) keeps the credit, not the licence line."""
+    panel = overview_panel_html(7_714_508, permission_note=False)
+    assert demo.DEMO_META["citation"]["ref"] in panel
+    assert demo.DEMO_META["citation"]["license"] not in panel
+
+
 # --------------------------------------------------------------------------- #
 # The shipped stories
 # --------------------------------------------------------------------------- #
@@ -464,13 +472,34 @@ def test_shipped_stories_author_valid_waypoints() -> None:
 
 
 def test_default_viewer_config_is_the_laptop_build() -> None:
-    """The hosted default avoids kiosk-only render and dolly costs."""
+    """The hosted default avoids kiosk-only supersampling and the 95% swing."""
     from luxar.demos import demo_esm_protein_universe as demo
 
     vc = demo._viewer_config([], (0.0, 0.0, 100.0), auto_rotate=True, audio=False)
     assert vc.ssaa_enabled is False
-    assert vc.allow_high_dpr is False
-    assert vc.auto_dolly_amplitude_percent == 20.0
+    assert vc.auto_dolly_amplitude_percent == 60.0
+    # Pinned on every platform: the viewer's own default is Mac-only.
+    assert vc.natural_drag is True
+
+
+def test_resolution_is_full_and_fixed_in_every_build() -> None:
+    """The map renders at the display's own pixel ratio, never adapted down.
+
+    A resolution that drops while the camera travels and recovers on arrival
+    reads as the map going soft in flight, so both builds pin it.
+    """
+    from luxar.demos import demo_esm_protein_universe as demo
+
+    for high_quality in (False, True):
+        vc = demo._viewer_config(
+            [],
+            (0.0, 0.0, 100.0),
+            auto_rotate=True,
+            audio=False,
+            high_quality=high_quality,
+        )
+        assert vc.allow_high_dpr is True
+        assert vc.adaptive_dpr_enabled is False
 
 
 def test_auto_dolly_rides_with_the_turntable() -> None:
@@ -483,8 +512,8 @@ def test_auto_dolly_rides_with_the_turntable() -> None:
 
     spinning = demo._viewer_config([], (0.0, 0.0, 100.0), auto_rotate=True, audio=False)
     assert spinning.auto_dolly is True
-    assert spinning.auto_dolly_amplitude_percent == 20.0
-    assert spinning.auto_dolly_period == 58.5
+    assert spinning.auto_dolly_amplitude_percent == 60.0
+    assert spinning.auto_dolly_period == 50.5
 
     still = demo._viewer_config([], (0.0, 0.0, 100.0), auto_rotate=False, audio=False)
     assert still.auto_dolly is False
@@ -629,7 +658,11 @@ def test_the_scatter_story_is_the_one_family_that_is_not_a_family() -> None:
     assert story.pattern and story.pfam  # name match UNION the dedicated Pfam
     assert story.region is None  # not a map-wide predicate: a family selector
     assert story.frame_fraction >= 1.0  # pulled back to hold the whole scatter
-    assert any("never form a family of their own" in f for f in story.facts)
+    # The panel must say so in words, once: in the subtitle or a fact.
+    assert any(
+        "never a family of its own" in t or "never form a family of their own" in t
+        for t in (story.subtitle, *story.facts)
+    )
     assert not story.constellation
 
 
@@ -752,7 +785,9 @@ def test_only_one_story_claims_the_tour_is_tightest_knot() -> None:
     assert unscoped == ["Reverse gyrase"], unscoped
     assert scoped == ["Worm chemoreceptors"], scoped
     # And the one that claims it is the smallest knot is the same story.
-    smallest = [s.key for s in STORIES if "smallest" in " ".join(s.facts).lower()]
+    smallest = [
+        s.key for s in STORIES if "smallest" in " ".join((s.subtitle, *s.facts)).lower()
+    ]
     assert smallest == ["Reverse gyrase"], smallest
 
 
@@ -1102,3 +1137,117 @@ def test_the_cross_story_reference_still_points_at_story_one() -> None:
     assert referrers, "if the phrase is gone, delete this test with it"
     assert STORIES[0].key == "Hemoglobin"
     assert "sickle-cell" in _story_text(STORIES[0])
+
+
+# --------------------------------------------------------------------------- #
+# The exhibit display (`--kiosk`)
+# --------------------------------------------------------------------------- #
+
+
+def test_kiosk_build_carries_the_exhibit_display_settings() -> None:
+    """Text at 0.8x, no Density Guard, and the machine settings for the export."""
+    kiosk = demo._viewer_config(
+        [], (0.0, 0.0, 100.0), auto_rotate=True, audio=False, kiosk=True
+    )
+    assert kiosk.text_scale == demo.KIOSK_TEXT_SCALE == 0.8
+    assert kiosk.density_guard_enabled is False
+    assert kiosk.launch == demo.KIOSK_LAUNCH
+    assert kiosk.launch.query() == "&renderer=webgpu&workers=16&prefetch=12"
+    # The rest of the look is the default build's.
+    assert kiosk.adaptive_dpr_enabled is False
+    assert kiosk.auto_dolly_amplitude_percent == 60.0
+
+    default = demo._viewer_config([], (0.0, 0.0, 100.0), auto_rotate=True, audio=False)
+    assert default.text_scale is None
+    assert default.density_guard_enabled is None
+    assert default.launch is None
+
+
+def test_detector_noise_is_shot_noise_only_in_every_build() -> None:
+    for kiosk in (False, True):
+        vc = demo._viewer_config(
+            [], (0.0, 0.0, 100.0), auto_rotate=True, audio=False, kiosk=kiosk
+        )
+        assert vc.detector_noise_enabled is True
+        assert vc.detector_noise_readout_sigma == 0.0
+        assert vc.detector_noise_fpn_sigma == 0.0
+        assert vc.detector_noise_photon_gain == demo.NOISE_PHOTON_GAIN
+
+
+def test_every_story_has_kiosk_text_and_a_kiosk_caption() -> None:
+    keys = {s.key for s in STORIES}
+    assert set(demo.KIOSK_TEXT) == keys
+    assert {s.key for s in STORIES if s.pdb_id} <= set(demo.KIOSK_PDB_CAPTIONS)
+    for s in STORIES:
+        text = demo.KIOSK_TEXT[s.key]
+        assert 1 <= len(text.facts) <= 3, s.key
+        # Shorter than the default panel, which the kiosk text is cut from.
+        assert sum(map(len, text.facts)) < sum(map(len, s.facts)), s.key
+
+
+def test_kiosk_text_has_no_spaced_dashes() -> None:
+    blobs = [demo.KIOSK_OVERVIEW_HTML, *demo.KIOSK_PDB_CAPTIONS.values()]
+    for t in demo.KIOSK_TEXT.values():
+        blobs += [*t.facts, t.mystery, t.subtitle or ""]
+    assert not [b for b in blobs if " — " in b or " – " in b]
+
+
+def test_kiosk_panels_swap_the_text_and_keep_the_title() -> None:
+    s = STORIES[0]
+    full = demo.story_panel_for(s, 100, 1, len(STORIES), unit="clusters")
+    short = demo.story_panel_for(s, 100, 1, len(STORIES), unit="clusters", kiosk=True)
+    assert s.facts[0] in full.replace("&#x27;", "'").replace("&quot;", '"')
+    assert len(short) < len(full)
+    assert html_escape(s.title) in short
+
+
+def test_the_kiosk_overview_points_at_the_touch_screen() -> None:
+    kiosk = overview_panel_html(7_714_508, permission_note=False, kiosk=True)
+    assert "Touch a story" in kiosk
+    assert "dimension" not in kiosk
+    assert "Step the <b>story</b> dimension" in overview_panel_html(7_714_508)
+
+
+def test_panel_type_follows_the_viewer_text_scale() -> None:
+    """The panels are authored HTML: their sizes must read the custom property."""
+    panel = demo.story_panel_for(STORIES[0], 100, 1, len(STORIES), unit="clusters")
+    assert "var(--luxar-text-scale, 1)" in panel
+    assert "var(--luxar-text-scale, 1)" in overview_panel_html(7_714_508)
+
+
+@pytest.mark.parametrize(("aspect", "expected"), [(1.0, 0.652), (16 / 9, 0.753)])
+def test_the_caption_sits_just_under_the_turntable(
+    aspect: float, expected: float
+) -> None:
+    """The clip is sized in viewport WIDTH, so its bottom edge moves with the aspect."""
+    x, y = demo.turntable_caption_position(aspect)
+    assert y == pytest.approx(expected, abs=1e-3)
+    # Perspective rotation can lower the silhouette ~0.01 viewport height
+    # beyond the poster on a square display; leave visible room after that.
+    assert demo.CAPTION_GAP >= 0.02
+    assert x == pytest.approx(0.06 + 0.26 / 2)
+
+
+def test_a_squat_molecule_gets_its_caption_tucked_under_it(tmp_path: Path) -> None:
+    """The caption follows the molecule's own lowest point, read from the poster."""
+    from PIL import Image
+
+    rgba = np.zeros((100, 100, 4), dtype=np.uint8)
+    rgba[20:70, 30:70] = (200, 180, 120, 255)  # the molecule ends 70% down
+    poster = tmp_path / "poster.png"
+    Image.fromarray(rgba, "RGBA").save(poster)
+    assert demo.poster_content_bottom(poster) == pytest.approx(0.70)
+    Image.fromarray(rgba[..., :3], "RGB").save(tmp_path / "flat.png")
+    assert demo.poster_content_bottom(tmp_path / "flat.png") == 1.0
+    assert demo.poster_content_bottom(tmp_path / "missing.png") == 1.0
+
+
+def test_the_kiosk_caption_hangs_from_the_clip_in_its_own_units() -> None:
+    """Offset in vw from the clip centre, so it lands under the molecule on any aspect."""
+    html_ = demo.kiosk_caption_html("PDB 1ABC · A <b>thing</b>", 0.70)
+    expected = 100 * (demo.TURNTABLE_WIDTH * 0.20 + demo.CAPTION_GAP)
+    assert f"padding-top:{expected:.2f}vw" in html_
+    assert "&lt;b&gt;" in html_  # the caption is text, not markup
+    assert "var(--luxar-text-scale, 1)" in html_
+    x, y = demo.kiosk_caption_anchor()
+    assert (x, y) == (pytest.approx(0.06 + 0.26 / 2), demo.TURNTABLE_POSITION[1])

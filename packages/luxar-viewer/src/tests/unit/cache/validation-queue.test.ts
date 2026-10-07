@@ -5,6 +5,8 @@ import {
   getRemoteContentHash,
   type QueueEntry,
 } from '../../../cache/multi-level-caching-store/validation-queue';
+import { deferred } from '../../helpers/deferred';
+import { forceAbortSignalAnyFallback } from '../../helpers/abort-signal-any';
 
 /**
  * The static `queues` map is global state — every test cancels the
@@ -19,25 +21,6 @@ function mockResponse(status: number, body: ArrayBuffer | string = ''): Response
       return typeof body === 'string' ? new TextEncoder().encode(body).buffer : body;
     },
   } as unknown as Response;
-}
-
-function forceAbortSignalAnyFallback(): () => void {
-  const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
-  Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
-  return () => {
-    if (descriptor) Object.defineProperty(AbortSignal, 'any', descriptor);
-    else delete (AbortSignal as unknown as { any?: unknown }).any;
-  };
-}
-
-function deferred<T>() {
-  let resolve!: (v: T) => void;
-  let reject!: (e: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
 }
 
 /**

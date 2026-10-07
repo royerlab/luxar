@@ -57,6 +57,27 @@ describe('loadPointsChunkIndex', () => {
     expect(mockFetchChunkBounds).not.toHaveBeenCalled();
   });
 
+  it('skips chunk_bounds for a single chunk without radii', async () => {
+    const result = await loadPointsChunkIndex(makeLocation(), {
+      ordering: 'hilbert',
+      n_points: 64,
+      chunk_size: 64,
+    });
+    expect(result).toBeNull();
+    expect(mockFetchChunkBounds).not.toHaveBeenCalled();
+  });
+
+  it('still probes chunk_bounds when the node spans more than one chunk', async () => {
+    mockFetchChunkBounds.mockResolvedValueOnce({ data: new Float32Array(12), shape: [2, 3, 2] });
+    const result = await loadPointsChunkIndex(makeLocation(), {
+      ordering: 'hilbert',
+      n_points: 65,
+      chunk_size: 64,
+    });
+    expect(mockFetchChunkBounds).toHaveBeenCalledTimes(1);
+    expect(result!.chunkCount).toBe(2);
+  });
+
   it('returns null when fetchChunkBoundsArray returns null (array missing)', async () => {
     mockFetchChunkBounds.mockResolvedValueOnce(null);
     const result = await loadPointsChunkIndex(makeLocation(), { ordering: 'morton' });

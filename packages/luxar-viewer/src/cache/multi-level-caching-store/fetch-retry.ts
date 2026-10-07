@@ -12,6 +12,7 @@ import {
   withFetchGate,
 } from '../../utils/fetch-concurrency';
 import { getErrorMessage } from '../../utils/format-error';
+import { combineAbortSignals } from '../../utils/abort-signals';
 import { sha256Hex } from './sha256';
 import { perfCounters } from '../../profiling/perf-counters';
 
@@ -25,13 +26,6 @@ const BODY_DEADLINE_FALLBACK_MULTIPLIER = 8;
 const MAX_BODY_DEADLINE_FALLBACK_CONCURRENCY_SCALE = 4;
 const MAX_BODY_DEADLINE_CONCURRENCY_SCALE = 8;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
-const NOOP_DISPOSE = (): void => {};
-
-/** A merged abort signal plus the cleanup for fallback source listeners. */
-export interface AbortSignalScope {
-  signal: AbortSignal;
-  dispose: () => void;
-}
 
 /** A response whose body must be consumed inside the fetch-gate lease. */
 export interface FetchAttempt {
@@ -42,6 +36,8 @@ export interface FetchAttempt {
 export interface FetchRetryOptions {
   timeoutMsOverride?: number;
   signal?: AbortSignal;
+  /** HTTP method (default `GET`); the zip reader's length fallback sends `HEAD`. */
+  method?: string;
   headers?: HeadersInit;
   onExhausted?: (error: unknown) => void;
   lane?: FetchLane;
@@ -215,45 +211,6 @@ async function readBodyWithStallWatchdog(
   }
 }
 
-/**
- * Merge two AbortSignals into one that fires when either source aborts.
- *
- * Uses native `AbortSignal.any` when available (Node 22+, modern browsers).
- * The fallback registers listeners on both sources, so callers must invoke
- * `dispose()` when the operation using `signal` settles. An abort disposes
- * both source listeners immediately before relaying the cancellation.
- */
-export function mergeAbortSignals(primary: AbortSignal, caller?: AbortSignal): AbortSignalScope {
-  if (!caller) return { signal: primary, dispose: NOOP_DISPOSE };
-  type StaticAny = { any?: (signals: AbortSignal[]) => AbortSignal };
-  const anyImpl = (AbortSignal as unknown as StaticAny).any;
-  if (typeof anyImpl === 'function') {
-    return { signal: anyImpl([primary, caller]), dispose: NOOP_DISPOSE };
-  }
-
-  const relay = new AbortController();
-  let listening = false;
-  const dispose = (): void => {
-    if (!listening) return;
-    listening = false;
-    primary.removeEventListener('abort', onAbort);
-    caller.removeEventListener('abort', onAbort);
-  };
-  const onAbort = (): void => {
-    dispose();
-    relay.abort(primary.aborted ? primary.reason : caller.reason);
-  };
-
-  if (primary.aborted || caller.aborted) {
-    relay.abort(primary.aborted ? primary.reason : caller.reason);
-  } else {
-    listening = true;
-    primary.addEventListener('abort', onAbort, { once: true });
-    caller.addEventListener('abort', onAbort, { once: true });
-  }
-  return { signal: relay.signal, dispose };
-}
-
 function sleep(delayMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
@@ -328,11 +285,12 @@ async function runFetchAttempt<T>(
           ),
         timeoutPerAttemptMs
       );
-      const abortScope = mergeAbortSignals(timeoutController.signal, options?.signal);
+      const abortScope = combineAbortSignals(timeoutController.signal, options?.signal);
       let response: Response | undefined;
       try {
         response = await fetch(url, {
           signal: abortScope.signal,
+          ...(options?.method ? { method: options.method } : {}),
           ...(options?.headers ? { headers: options.headers } : {}),
           ...(options?.cache ? { cache: options.cache } : {}),
         });

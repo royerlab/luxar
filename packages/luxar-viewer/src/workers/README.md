@@ -63,11 +63,6 @@ const result = await pool.runWithTimeout('projectLinesTo3D', 'projection', (api)
 disposeWorkerPool();
 ```
 
-**Note**: `pool.getWorker()` and `pool.getWorkerWithTracking()`
-also exist for advanced scenarios but bypass the per-call
-timeout guard. Production hot paths should use `runWithTimeout`
-unless they have their own timeout strategy.
-
 ## Worker Pool
 
 ### Configuration
@@ -78,13 +73,17 @@ unless they have their own timeout strategy.
 
 ### Load Balancing
 
-The pool tracks `activeQueries` per worker and selects the worker with the fewest active tasks. Callers using `getWorkerWithTracking()` receive `markQueryStart`/`markQueryEnd` callbacks to keep the counters accurate.
+The pool tracks `activeQueries` per worker and selects the worker with the fewest active tasks. `runWithTimeout` (and `runDecode`) mark the selected worker busy in the same synchronous step, and free it when the worker's own call settles.
+
+### Failed workers
+
+A worker that crashes or times out is evicted and terminated. The call that timed out rejects with `WorkerTimeoutError` and is never re-run, not on another worker and not in-process: a hung or slow kernel would only hang or block again. The other calls in flight on that worker were never answered, so `runWithTimeout` re-dispatches each of them once onto a surviving worker, under a fresh timeout. A call rejects with `WorkerUnavailableError` (which lets the Lines/GSplats processors fall back to in-process projection) only when no worker is left, or when its second worker is evicted too. `runDecode` does not re-dispatch: its payload was transferred to the dead worker, and the blosc codec decodes the chunk on the main thread instead.
 
 ### Initialization
 
-- Warmed: scene loading calls `warmUpDataWorkerPool()` so startup overlaps metadata fetch; otherwise workers remain lazy until `initialize()`, `getWorker`, `getWorkerWithTracking`, or `runWithTimeout`
+- Warmed: scene loading calls `warmUpDataWorkerPool()` so startup overlaps metadata fetch; otherwise workers remain lazy until `initialize()` or `runWithTimeout`
 - Safe: promise deduplication ensures concurrent callers share a single initialization
-- Incremental: `getWorker` / `getWorkerWithTracking` proceed after the first usable worker publishes, while `initialize()` retains its all-spawns-settled contract
+- Incremental: `runWithTimeout` proceeds after the first usable worker publishes, while `initialize()` retains its all-spawns-settled contract
 - Resilient: partial worker failures do not block usable workers from publishing
 - Generation-guarded: `dispose()` mid-init bumps a generation token and terminates pending workers, preventing a stale init from re-populating a disposed pool
 
@@ -92,16 +91,19 @@ The pool tracks `activeQueries` per worker and selects the worker with the fewes
 
 Each worker loads a WASM module on `initialize()` and exposes these operations:
 
-| Category       | Methods                                                                                                                      |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| **Decoding**   | `decodeQuantized()`, `decodeLogScalar()`, `decodeGeologScalar()`, `decodePerChannel()`, `decodeLUT()`, `decodeBroadcasted()` |
-| **Projection** | `projectLinesTo3D()`, `projectGSplatsTo3D()` (Points project on the main thread)                                             |
+| Category         | Methods                                                                                                                      |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **Decoding**     | `decodeQuantized()`, `decodeLogScalar()`, `decodeGeologScalar()`, `decodePerChannel()`, `decodeLUT()`, `decodeBroadcasted()` |
+| **Chunk codecs** | `decodeBloscBatch()` (zarr blosc + fused `luxar_delta_v1`, batched), `warmCodecs()` (load the numcodecs blosc WASM)          |
+| **Projection**   | `projectLinesTo3D()`, `projectGSplatsTo3D()` (Points project on the main thread)                                             |
 
 ### What workers handle
 
 - nD→3D projection with built-in per-element visibility/culling
   (Lines clip mask, GSplats attenuation)
 - Array decoding (LUT, quantization, log-space)
+- Zarr chunk decompression (blosc), for chunks above the codec dispatcher's
+  offload floor (`worker-pool/codec-dispatch.ts`)
 
 ### What stays on main thread
 
@@ -138,12 +140,10 @@ workers/
 │   │   └── spawn-worker.ts                     — per-worker factory +
 │   │                                            terminateAttemptWorkers
 │   ├── selection/
-│   │   ├── least-busy.ts                       — runWithTimeout selection
-│   │   └── round-robin.ts                      — direct getWorker() rotation
+│   │   └── least-busy.ts                       — runWithTimeout selection
 │   └── timeout/
-│       ├── with-timeout.ts                     — Promise.race + timer
-│       ├── pick-timeout-ms.ts                  — kind → config knob
-│       └── combine-signals.ts                  — AbortSignal.any + fallback
+│       ├── with-timeout.ts                     — utils/race-timeout + evict
+│       └── pick-timeout-ms.ts                  — kind → config knob
 ├── data-worker.ts                              — Worker entry (Vite ?worker
 │                                                 target). Imports task helpers
 │                                                 from data-worker/ and exposes
@@ -155,8 +155,6 @@ workers/
     │                                            to the TS backend)
     ├── initialize.ts                           — WASM bootstrap
     ├── types.ts                                — ProjectionViewState
-    │                                            (re-exports EffectiveRadiusConfig
-    │                                            from types/points.ts)
     ├── validation.ts                           — JS→WASM boundary checks
     │                                            (worker-internal)
     ├── projection/
@@ -221,8 +219,8 @@ more widely a file is imported, the shallower it lives.
 
 Task functions under `data-worker/` take a shared `state: WasmCtx`
 (defined in `data-worker/state.ts`) so they can read the WASM module
-and grow the pooled visibility-mask scratch buffer without referencing
-module-level globals.
+(and the uncapped TypeScript backend for `ndim > 16`) without
+referencing module-level globals.
 
 ## Public API
 
@@ -230,7 +228,7 @@ From `worker-pool.ts`:
 
 - `getWorkerPool()` / `disposeWorkerPool()` — singleton accessor and teardown
 - `warmUpDataWorkerPool()` — fire-and-forget early initialization when Web Workers are enabled and available
-- `class WorkerPool` — pool manager (see `runWithTimeout`, `getWorkerWithTracking`, `setAbortSignal`, `reinitialize`, `getStats`, `getQueueDepth`)
+- `class WorkerPool` — pool manager (see `runWithTimeout`, `runDecode`, `getStats`, `getQueueDepth`). It holds no dataset abort signal: each `SceneLoader` threads its own into the calls it makes, so one host's dispose never aborts another host's work
 - `setDataWorkerUrl(url)` — override the worker module URL (for embedders whose bundlers can't resolve Vite's `?worker` import)
 - `class WorkerTimeoutError` / `class WorkerAbortError` — distinguish hung-worker eviction from caller-initiated cancellation
 - `type TimeoutKind = 'projection' | 'decode'` — selects the per-call timeout from `config.dataLoading.performance`
@@ -238,12 +236,11 @@ From `worker-pool.ts`:
 From `data-worker.ts`:
 
 - `type DataWorkerAPI` — Comlink-proxied surface (`workerAPI`)
-- `type EffectiveRadiusConfig`, `type ProjectionViewState` — projection input shapes
-  (`EffectiveRadiusConfig` is canonically defined in `types/points.ts`; re-exported here for worker-API self-documentation)
+- `type WorkerInitResult` — what `initialize()` answers (e.g. `wasmFallback`)
 
 From `color-utils.ts`:
 
-- `coerceColorsToFloat32` (also imported by `data/lines/projection.ts`)
+- `coerceColorsToFloat32` (imported by the Lines and GSplats projection tasks)
 - `coerceScalarsToFloat32`, `fillColorsWhite`
 
 ## Dependencies

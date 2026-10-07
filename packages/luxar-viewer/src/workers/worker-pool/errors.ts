@@ -83,10 +83,12 @@ export class WorkerAbortError extends Error {
 }
 
 /**
- * Thrown when the pool has no usable worker to dispatch to — either
- * initialization produced none at all, or every worker was disposed. Unlike
- * {@link WorkerTimeoutError} this says nothing about the task; the work was
- * never handed to a worker in the first place.
+ * Thrown when the pool has no usable worker for a call: initialization produced
+ * none, the pool was disposed, or the call's worker was evicted (a crash, or
+ * another call's timeout) before replying and the call could not be
+ * re-dispatched — no worker was left, or it had already been moved once.
+ * Unlike {@link WorkerTimeoutError} this says nothing about the task: no
+ * kernel ever answered it.
  */
 export class WorkerUnavailableError extends Error {
   constructor(message: string) {
@@ -97,9 +99,11 @@ export class WorkerUnavailableError extends Error {
 
 /**
  * True only for an ESTABLISHED failure of the worker infrastructure — the pool
- * could not spawn a worker, or had none left. The work never reached a kernel,
- * so re-running it on the main thread is the only executor left and cannot
- * reproduce a kernel fault.
+ * could not spawn a worker, had none left to run the call, or lost the call's
+ * second worker too. (A call whose first worker is evicted while others survive
+ * is re-dispatched once onto one of them, not rejected — see
+ * `WorkerPool.runWithTimeout`.) No kernel answered, so re-running the work on
+ * the main thread is the executor left.
  *
  * Everything else fails closed and propagates:
  *

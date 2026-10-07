@@ -176,6 +176,10 @@ declare global {
        * are lines-only walk knobs (default 1.0 / 0.01 / unset = the
        * historical fully-random walk).
        *
+       * No mesh: the injector covers the three instanced emissive
+       * geometries (see `scene/synthetic-scene.ts`); bench a mesh from a
+       * real store.
+       *
        * Not present in production bundles when `?debug` is unset.
        */
       injectSyntheticScene?: (spec: {
@@ -212,17 +216,22 @@ declare global {
       /**
        * Performance snapshot for probes: load-timeline marks and derived
        * durations, last-frame `renderer.info`, adaptive-DPR diagnostics,
-       * worker stats and the wide `isSettled` predicate. Seeded by
-       * bootstrap BEFORE `init()` (timeline only, `runtimeReady: false`)
-       * and enriched by `installDebugInterface`. Concrete shape:
-       * `PerfSnapshot` in `core/app/debug/perf-snapshot.ts`.
+       * worker stats and the wide `isSettled` predicate. Seeded by the
+       * standalone bootstrap under `?debug` BEFORE `init()` (the load
+       * timeline and perf counters, `runtimeReady: false`; the debug perf
+       * instruments are already counting) and replaced by
+       * `installDebugInterface` with the runtime-aware snapshot. Concrete shape: `PerfSnapshot` in
+       * `core/app/debug/perf-snapshot.ts`.
        */
       getPerf?: () => unknown;
       /** True as soon as `getPerf` exists (bootstrap), before `runtimeReady`. */
       perfReady?: boolean;
       /** Structured perf records of one kind (`profiling/perf-counters.ts`), oldest first. */
       getPerfRecords?: (kind: string) => unknown[];
-      /** Zero every perf counter and drop every perf record. */
+      /**
+       * Start a new perf window: zero every counter and high-water mark and
+       * drop every record. Gauges keep their current value.
+       */
       resetPerfCounters?: () => void;
       /**
        * The scene environment (`rendering/environment/`): what lights

@@ -1,4 +1,6 @@
 import { config } from '../../config';
+import { AsyncGate } from '../../utils/async-gate';
+import { withTimeout } from './opfs-store/opfs-timeout';
 
 /**
  * Maximum OPFS chunk reads running concurrently across the page.
@@ -7,48 +9,63 @@ import { config } from '../../config';
  * Reads were the last unbounded path to the browser filesystem after writes
  * gained their own concurrency cap. The reported multi-second L2 stall remains
  * unattributed; this gate provides a bounded, observable point for diagnosis.
+ *
+ * A lease lasts until the read's file I/O settles, not merely until `run()`
+ * does. Held I/O has a deadline three times the caller's operation timeout:
+ * slow reads stay counted after their caller gives up, but a browser read that
+ * never settles cannot permanently occupy the gate. A queued read whose signal
+ * aborts leaves the queue at once (the shared {@link AsyncGate}'s contract).
  */
-let active = 0;
-let epoch = 0;
-const queue: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
+const gate = new AsyncGate(() => config.cache.opfsReadConcurrency);
 
 /** Return the page-wide OPFS read gate occupancy. */
 export function getOpfsReadGateStats(): { active: number; queued: number } {
-  return { active, queued: queue.length };
+  return gate.stats();
 }
 
 /** Reset gate state and reject queued readers. Intended for test isolation. */
 export function resetOpfsReadGate(): void {
-  epoch += 1;
-  active = 0;
-  const error = new Error('OPFS read gate reset');
-  for (const waiter of queue.splice(0)) waiter.reject(error);
+  gate.reset(new Error('OPFS read gate reset'));
 }
 
-/** Run one OPFS read under the page-wide FIFO concurrency cap. */
-export function withOpfsReadGate<T>(run: () => Promise<T>): Promise<T> {
-  const acquiredEpoch = epoch;
-  const acquire =
-    active < config.cache.opfsReadConcurrency
-      ? ((active += 1), Promise.resolve())
-      : new Promise<void>((resolve, reject) =>
-          queue.push({
-            resolve: () => {
-              active += 1;
-              resolve();
-            },
-            reject,
-          })
-        );
-
-  return acquire.then(async () => {
+/**
+ * Run one OPFS read under the page-wide FIFO concurrency cap.
+ *
+ * @param run - The read. Pass the real file I/O through `hold` (it returns the
+ *   same promise): the slot is held until `run()` and every held promise has
+ *   settled or reached the longer held-I/O deadline.
+ * @param signal - Aborting it while the read still waits for a slot rejects
+ *   with the signal's reason (or an `AbortError`) and frees its queue place.
+ *   Once started, `run` owns the signal.
+ */
+export function withOpfsReadGate<T>(
+  run: (hold: <R>(io: Promise<R>) => Promise<R>) => Promise<T>,
+  signal?: AbortSignal
+): Promise<T> {
+  return gate.acquire(signal).then(async (release) => {
+    let pending = 1;
+    let released = false;
+    const settle = (): void => {
+      pending -= 1;
+      // The lease ends once: a hold arriving after it ended passes its I/O
+      // straight through instead of re-opening the count.
+      if (pending > 0 || released) return;
+      released = true;
+      release();
+    };
+    const hold = <R>(io: Promise<R>): Promise<R> => {
+      if (released) return io;
+      pending += 1;
+      void withTimeout(io, 3 * config.cache.opfsOperationTimeoutMs, 'read gate I/O').then(
+        settle,
+        settle
+      );
+      return io;
+    };
     try {
-      return await run();
+      return await run(hold);
     } finally {
-      if (acquiredEpoch === epoch) {
-        active -= 1;
-        queue.shift()?.resolve();
-      }
+      settle();
     }
   });
 }

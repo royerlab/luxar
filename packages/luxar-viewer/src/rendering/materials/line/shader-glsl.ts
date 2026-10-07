@@ -102,13 +102,12 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     // Uniforms
     uniform vec2 uResolution;
     uniform float uPixelRatio;
-    uniform int uIsOrtho;  // 0 = perspective, 1 = orthographic
     uniform float uNearCull;          // near-plane safety distance (view-space, +z toward camera)
     uniform float uMaxLinePixelWidth; // clamp for screen-space width
 
     // Screen-space miter join (#790) — declares uLineJoin and defines
     // luxarLinePixelPos + luxarLineJoin. MUST follow the uniforms above:
-    // it reads uLineTex, uResolution and uIsOrtho.
+    // it reads uLineTex, uResolution and luxarLineIsOrtho.
     ${GLSL_LINE_JOIN}
 
     // Colormap uniforms (only active when USE_COLORMAP is defined)
@@ -136,6 +135,8 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
     void main() {
       // Line pixel-width scale for this draw: resY * |P11| (glsl-lib GLSL_LINE_SCALE).
       luxarLineScale = uResolution.y * luxarProjectionSizeScale();
+      // Ortho branch from the projection this draw uses (glsl-lib GLSL_LINE_SCALE).
+      luxarLineIsOrtho = luxarIsOrthoProjection();
       // === Line-texture fetch prologue ===
       // texelFetch reads reconstruct the per-segment values into the exact
       // local names the math below has always used — zero changes
@@ -226,7 +227,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // as the both-behind case so the varyings are zeroed identically.
       bool bothBehind =
         luxarDensityDropped() ||
-        ((uIsOrtho == 0) && (startDepth < nearCull) && (endDepth < nearCull));
+        ((luxarLineIsOrtho == 0) && (startDepth < nearCull) && (endDepth < nearCull));
       if (bothBehind) {
         gl_Position = vec4(0.0, 0.0, -2.0, 1.0); // off-screen → no fragments
         // Defensive: zero the remaining varyings the fragment-stage
@@ -262,7 +263,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // the ORIGINAL vSegmentLength) keep their original parameterization.
       float tA = 0.0;
       float tB = 1.0;
-      if (uIsOrtho == 0) {
+      if (luxarLineIsOrtho == 0) {
         if (startDepth < nearCull && endDepth >= nearCull) {
           tA = (nearCull - startDepth) / (endDepth - startDepth);
         } else if (endDepth < nearCull && startDepth >= nearCull) {
@@ -367,7 +368,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // still get a bounded NDC (clip.xy scales with the scene too, keeping the
       // ratio finite — a raw 1e-20 floor could overflow float32 in the
       // pixel-length math below). Ortho: w == 1 exactly, guard 1.0 is inert.
-      float wGuard = (uIsOrtho == 1) ? 1.0 : nearCull;
+      float wGuard = (luxarLineIsOrtho == 1) ? 1.0 : nearCull;
       float wStart = max(clipStart.w, wGuard);
       float wEnd = max(clipEnd.w, wGuard);
       vec2 ndcStart = clipStart.xy / wStart;
@@ -386,7 +387,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
       // precomputed on the CPU once per camera/resolution change so
       // the shader avoids per-vertex tan() and FOV divisions.
       float rawPixelWidth;
-      if (uIsOrtho == 1) {
+      if (luxarLineIsOrtho == 1) {
         // Orthographic: constant screen size regardless of distance.
         rawPixelWidth = width * luxarLineScale;
       } else {
@@ -436,7 +437,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
         mix(startW, endW, tB) * luxarLineScale / max(-mvEnd.z, nearCull);
       float segMaxPixelWidth = max(startPixelWidth, endPixelWidth);
       if (
-        uIsOrtho == 0 &&
+        luxarLineIsOrtho == 0 &&
         startDepth < nearCull * 2.0 &&
         endDepth < nearCull * 2.0 &&
         segMaxPixelWidth > maxPW * 2.0
@@ -535,7 +536,7 @@ export const LINE_VERTEX_SHADER = /* glsl */ `
  * full intensity. Under `LUXAR_VOLUMETRIC` the output switches to the
  * emission–absorption branch (τ = κ × the same ray mass every other mode
  * emits). The picking system uses a
- * different fragment shader (see picking/line-picking-material.ts).
+ * different fragment shader (see picking/line/shaders.ts).
  */
 export const LINE_FRAGMENT_SHADER = /* glsl */ `
     precision highp float;
@@ -543,7 +544,12 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
     ${GLSL_DENSITY_ALPHA}
     ${GLSL_NEAR_FADE_FUNCTIONS}
 
-    uniform int uIsOrtho;   // shared with the vertex stage
+    // The fragment stage re-derives the draw's ortho branch from the same
+    // projection uniform the vertex stage reads (three declares it only for
+    // the vertex stage), instead of carrying it in a flat varying: one more
+    // per-vertex output cost the 10M-segment line draw ~1.4% GPU time.
+    uniform mat4 projectionMatrix;
+    ${GLSL_PROJECTION_FUNCTIONS}
     uniform float uNearCull;
     uniform float uPixelRatio;
     uniform float uOpacity;
@@ -657,7 +663,7 @@ export const LINE_FRAGMENT_SHADER = /* glsl */ `
       // varying).
       // 1e-20 floor = degenerate-smoothstep guard only; uNearCull is
       // scene-relative (see the vertex-stage nearCull note).
-      float nearFade = perspectiveNearFade(uIsOrtho, vViewZ, max(uNearCull, 1e-20));
+      float nearFade = perspectiveNearFade(luxarIsOrthoProjection(), vViewZ, max(uNearCull, 1e-20));
       float intensity = capFactor * perpFalloff * edgeAA * widthScale * vWidthFade * nearFade;
 
       // Per-node GOG (Gain-Offset-Gamma) color adjustment. uIntensity (gain)
@@ -764,19 +770,14 @@ export const LINE_SOURCE: ShaderSource = {
   webgl: { vertex: LINE_VERTEX_SHADER, fragment: LINE_FRAGMENT_SHADER },
   webgpu: (uniforms: Record<string, unknown>) => {
     const u = uniforms as Record<string, import('three').IUniform>;
-    // Read "uIsOrtho" from the uniform record at build time so the
-    // projection-mode graph variant matches the camera the caller set
-    // up. Live ortho/perspective flips on a long-lived material go
-    // through "LineTSLMaterial.updateCameraParams", which calls
-    // "rebuildGraph()" itself — this short-lived ShaderSource path
-    // just needs the right variant at construction.
-    // Default config otherwise — no toggles: colormap uniforms in the
+    // The projection (ortho test included) is read per draw from the
+    // camera's matrix, as in the GLSL twin, so nothing about the camera
+    // selects a variant here. Default config — no toggles: colormap uniforms in the
     // record are IGNORED here (matching POINT_SOURCE). Consumers
     // needing USE_COLORMAP / LUXAR_MAX_RGB_CONTRIBUTION call
     // `lineWebGPUFactory(buildLineTSLNodesFromUniforms(u, { useColormap }),
     // { ...flags })` directly, as the parity harness does.
-    const isOrtho = ((u.uIsOrtho?.value as number) ?? 0) === 1;
-    // Same at build time for the join style. The GLSL twin carries it as the
+    // The join style IS selected at build time. The GLSL twin carries it as the
     // runtime "uLineJoin" uniform, so a harness that pins one backend's
     // uniform record gets the matching graph variant out of the other —
     // without this the WebGPU build would silently ignore a pinned
@@ -784,6 +785,6 @@ export const LINE_SOURCE: ShaderSource = {
     const join = lineJoinStyleFromUniform(u.uLineJoin?.value as number | undefined);
     const { lineWebGPUFactory, buildLineTSLNodesFromUniforms } =
       requireTslMaterials().factories.line;
-    return lineWebGPUFactory(buildLineTSLNodesFromUniforms(u, {}), { isOrtho, join });
+    return lineWebGPUFactory(buildLineTSLNodesFromUniforms(u, {}), { join });
   },
 };

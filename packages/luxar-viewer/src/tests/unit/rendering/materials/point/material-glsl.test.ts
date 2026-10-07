@@ -220,7 +220,7 @@ describe('PointMaterial', () => {
       // broadcast. Lines clones are the reference implementation. (The
       // ortho test is read in shader, so there is no ortho flag to carry.)
       const original = new PointMaterial();
-      original.updateCameraParams(new THREE.Vector2(640, 480), /*isOrtho=*/ true, 0.42);
+      original.updateCameraParams(new THREE.Vector2(640, 480), 0.42);
 
       const cloned = original.clone();
 
@@ -233,7 +233,7 @@ describe('PointMaterial', () => {
       const material = new PointMaterial();
       const resolution = new THREE.Vector2(1920, 1080);
 
-      material.updateCameraParams(resolution, false, undefined, 2);
+      material.updateCameraParams(resolution, undefined, 2);
 
       // The viewport reaches the shader (it converts the projected size to
       // pixels as 2 * uResolution.y * |P11|).

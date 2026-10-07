@@ -1,11 +1,17 @@
 /**
- * SceneLoaderManager - Manages SceneLoader instances without global state
+ * SceneLoaderManager - one HOST's SceneLoader instances and the host wiring they
+ * inherit.
  *
- * This manager provides a clean way to access SceneLoader instances without
- * polluting the global window object. It uses a singleton pattern with
- * explicit instance management.
+ * A manager belongs to exactly one Luxar host. The LuxarApp's is
+ * {@link SceneLoaderManager.getInstance} (one LuxarApp per page — it also owns
+ * page-global UI: `document.title`, `__luxarDebug`, the DOM panels and keyboard).
+ * Every `LuxarLayer` constructs its own with `new SceneLoaderManager()`. Loader
+ * ids are therefore per host: an app and any number of layers can all register
+ * under `'default'` without one host's dataset switch disposing another's loader.
  *
- * Also owns the UpdateProfiler singleton for timing scene updates.
+ * Also owns the host's UpdateProfiler for timing scene updates, and the host
+ * wiring every created loader inherits (monitor and LOD-registry factories,
+ * render wake-up, depth-sort coordinator, KTX2 decoder, refinement density).
  */
 
 import { SceneLoader, type SceneLoaderLODGroupRegistryFactory } from './scene-loader';
@@ -22,6 +28,8 @@ import {
   type RefinementResidencyStop,
 } from './scene-loader/progressive/residency-budget';
 import type { PoolStats } from '../rendering/gpu-buffer-pool/pool-stats';
+import type { DepthSortCoordinator } from '../rendering/depth-sort-coordinator';
+import type { MaterialManager } from '../rendering/material-manager';
 
 /**
  * Manager for SceneLoader instances.
@@ -77,12 +85,35 @@ export class SceneLoaderManager {
     caps: DensityGateCaps;
   } | null = null;
   private decodeKTX2: KTX2TextureDecoder | null = null;
+  /**
+   * The host's depth-sort coordinator, forwarded to every created loader
+   * (→ `SceneLoader.setDepthSortCoordinator`), whose commits report to it.
+   */
+  private depthSort: DepthSortCoordinator | null = null;
 
   /**
-   * Private constructor to enforce singleton pattern
+   * The host's material manager, installed on every created loader (null: the
+   * LuxarApp's page manager).
    */
-  private constructor() {
+  private readonly materials: MaterialManager | null;
+
+  /**
+   * A fresh manager for one host. A `LuxarLayer` constructs its own and passes
+   * its own `MaterialManager`; the LuxarApp's is the lazily built
+   * {@link getInstance}, whose loaders use the app's page material manager.
+   */
+  constructor(options: { materials?: MaterialManager } = {}) {
     this.profiler = new UpdateProfiler();
+    this.materials = options.materials ?? null;
+  }
+
+  /**
+   * Provide the host's depth-sort coordinator. Forwarded to every existing and
+   * subsequently created loader.
+   */
+  setDepthSortCoordinator(coordinator: DepthSortCoordinator | null): void {
+    this.depthSort = coordinator;
+    for (const loader of this.loaders.values()) loader.setDepthSortCoordinator(coordinator);
   }
 
   /**
@@ -150,7 +181,9 @@ export class SceneLoaderManager {
   }
 
   /**
-   * Get the singleton instance of SceneLoaderManager
+   * The LuxarApp's manager (lazily built). Only the app reaches for this — a
+   * `LuxarLayer` owns its own manager and must never touch it, which is what
+   * keeps a layer's loader, dataset state and teardown off the app's.
    */
   static getInstance(): SceneLoaderManager {
     if (!SceneLoaderManager.instance) {
@@ -190,6 +223,8 @@ export class SceneLoaderManager {
       this.decodeKTX2
     );
     loader.setRequestRender(this.requestRender);
+    loader.setDepthSortCoordinator(this.depthSort);
+    loader.setMaterialManager(this.materials);
     loader.setAutoRetryableFailureCallback(this.autoRetryableFailureCallback);
     if (this.refinementDensity) {
       loader.setRefinementDensityProvider(
@@ -241,6 +276,8 @@ export class SceneLoaderManager {
       this.decodeKTX2
     );
     loader.setRequestRender(this.requestRender);
+    loader.setDepthSortCoordinator(this.depthSort);
+    loader.setMaterialManager(this.materials);
     loader.setAutoRetryableFailureCallback(this.autoRetryableFailureCallback);
     if (this.refinementDensity) {
       loader.setRefinementDensityProvider(
@@ -510,15 +547,27 @@ export class SceneLoaderManager {
    */
   static disposeInstance(): void {
     if (SceneLoaderManager.instance) {
-      SceneLoaderManager.instance.destroyAll();
-      SceneLoaderManager.instance.setKTX2TextureDecoder(null);
+      SceneLoaderManager.instance.dispose();
       SceneLoaderManager.instance = null;
     }
+  }
+
+  /**
+   * Tear this manager down (best-effort, non-awaiting): destroy every loader
+   * and release the KTX2 decoder. A host that must await the loaders' drain
+   * calls {@link destroyAllAsync} first.
+   */
+  dispose(): void {
+    this.destroyAll();
+    this.setKTX2TextureDecoder(null);
+    this.depthSort = null;
   }
 }
 
 /**
- * Convenience accessor for a managed {@link SceneLoader}.
+ * Convenience accessor for one of the LUXARAPP's managed {@link SceneLoader}s
+ * (it reads {@link SceneLoaderManager.getInstance}). App code only: a
+ * `LuxarLayer` looks its loaders up in its own manager.
  *
  * @param id - Loader id to look up; omit to return the manager's default loader.
  * @returns The matching loader, or null when no loader is registered under

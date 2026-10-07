@@ -5,7 +5,7 @@
  * node's attrs with `opacity`, `absorption`, `gamma`, `intensity`,
  * `offset`, `blending_mode`, `join`, `layer_order`, and `colormap` (with its
  * `customLutBytes`) replaced by the values from
- * {@link getEffectiveAttrs}. Falls back to the raw attrs when the
+ * {@link getEffectiveAttrsOfChain}. Falls back to the raw attrs when the
  * scene graph is unavailable.
  *
  * Centralized here so the scene loader's class method becomes a
@@ -15,8 +15,9 @@
  * @module data/scene-loader/view-state/effective-attrs
  */
 
-import { getEffectiveAttrs, windowOwnerGain } from '../../attrs-composer';
+import { getEffectiveAttrsOfChain, windowOwnerGainOfChain } from '../../attrs-composer';
 import type { SceneNode } from '../../data-loader-types';
+import type { SceneNodeIndex } from './scene-node-index';
 
 /**
  * Return a node-attrs record with rendering attributes replaced by
@@ -24,11 +25,14 @@ import type { SceneNode } from '../../data-loader-types';
  * (root → leaf).
  */
 export function applyEffectiveAttrs(
-  sceneGraph: SceneNode | null | undefined,
+  sceneIndex: SceneNodeIndex | null | undefined,
   node: SceneNode
 ): SceneNode['attrs'] {
-  if (!sceneGraph) return node.attrs;
-  const eff = getEffectiveAttrs(sceneGraph, node.path);
+  if (!sceneIndex) return node.attrs;
+  // O(1) through the index; see `SceneNodeIndex.ancestorChain` for the
+  // fallback that keeps an unindexed path's exact answer.
+  const chain = sceneIndex.ancestorChain(node.path);
+  const eff = getEffectiveAttrsOfChain(chain);
   return {
     ...node.attrs,
     opacity: eff.opacity,
@@ -52,6 +56,6 @@ export function applyEffectiveAttrs(
     // Not an authored attr: the raw gain of the layer that owns this node's
     // display window, so a colormapped factory windows the node exactly as the
     // Layers panel will (`resolveColormapWindow`'s `owner`).
-    windowOwnerGain: windowOwnerGain(sceneGraph, node.path),
+    windowOwnerGain: windowOwnerGainOfChain(chain),
   };
 }

@@ -4,7 +4,7 @@
  * Exposes lock-free helpers (`retryFailedLoaderUnlocked`,
  * `retryAllFailedLoadersUnlocked`) that re-trigger the data fetch +
  * commit for paths that recorded a failure. The orchestrator (SceneLoader)
- * wraps each call in its `_updateInProgress` lock dance — these helpers
+ * wraps each call in the serialization lock (`PassScheduler.acquireForRetry`) — these helpers
  * never touch that lock so retry-from-inside-retry doesn't deadlock.
  *
  * Each retry repeats the same query-shape logic the main update path
@@ -21,7 +21,7 @@ import type { LinesDataLoader, LinesViewState } from '../../../types/lines';
 import type { GSplatsDataLoader, GSplatsViewState } from '../../../types/gsplats';
 import type { MeshDataLoader, MeshMetadata, MeshViewState } from '../../../types/mesh';
 import { log, Modules } from '../../../utils/log';
-import type { LoaderRegistry } from '../loaders/loader-registry';
+import type { AnyDataLoader, LoaderRegistry } from '../loaders/loader-registry';
 import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
 import { GEOMETRY_DESCRIPTORS } from '../geometry-descriptors';
 import type { StagedLinesCommit } from '../process/data-processor-lines';
@@ -29,6 +29,7 @@ import type { StagedPointsCommit } from '../process/data-processor-points';
 import type { StagedGSplatsCommit } from '../process/data-processor-gsplats';
 import type { StagedMeshCommit } from '../process/data-processor-mesh';
 import { EAGER_CHILD_LOAD_CONCURRENCY } from '../nodes/load-children-concurrently';
+import { recordFailedPass } from '../nodes/load-leaf-error-dispatch';
 import type { LineWorkingSetGate, LineWorkingSetNode } from '../nodes/build-ctx';
 
 /**
@@ -103,6 +104,7 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
   log.info(Modules.SCENE_LOADER, `Retrying failed loader: ${path}`);
 
   let releaseWorkingSet = (): void => undefined;
+  let loader: AnyDataLoader | undefined;
   try {
     // Look up the per-node attrs so retry applies the same
     // extend_to_all / nd_transform adjustments as the main update path.
@@ -151,7 +153,8 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
       // slice-invariant query (extend-to-all tolerance + pinned slice), so the
       // retry loads with `derived.viewState` exactly like any other node.
       const viewState = derived.viewState;
-      await descriptor.retryCommit(ctx, path, registry.loadersOf(kind).get(path)!, viewState);
+      loader = registry.loadersOf(kind).get(path)!;
+      await descriptor.retryCommit(ctx, path, loader, viewState);
       return verifyAndClear(kind);
     } else {
       // Not in the sweep maps. Lazy substitutive LOD levels are never
@@ -180,11 +183,12 @@ export async function retryFailedLoaderUnlocked(path: string, ctx: RetryCtx): Pr
       return false;
     }
   } catch (error) {
-    // Update error tracking with the new attempt. Routed through
-    // `recordFailure` (rather than an inline `.set`) so the classified `kind` is
-    // refreshed and the counter has one owner — this call site used to baseline
-    // `retryCount` at 1 while the update sweep baselined it at 0.
-    registry.recordFailure(path, error as Error);
+    // Unwind the ladder pass the retry started, then update error tracking with
+    // the new attempt. Routed through `recordFailure` (rather than an inline
+    // `.set`) so the classified `kind` is refreshed and the counter has one
+    // owner — this call site used to baseline `retryCount` at 1 while the update
+    // sweep baselined it at 0.
+    recordFailedPass(registry, path, loader, error);
     const retryCount = registry.failedLoaders.get(path)?.retryCount ?? 0;
     log.error(
       Modules.SCENE_LOADER,

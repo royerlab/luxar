@@ -5,52 +5,64 @@
  * one, every frame:
  *
  *   1. Fold each child's raw nD ``positionBounds`` into a cached per-entry
- *      **local-space** :type:`BoundingBox`, using the current ``displayDims``
- *      to map nD axes onto X/Y/Z, then transform it to world space for the
- *      frustum gate. Eviction uses the same full-geometry box.
- *   2. When any child publishes optional robust ``lodBounds``, fold them the
- *      same way (falling back per child to ``positionBounds``) for metric
- *      sizing only, so excluded outliers remain visible and resident.
- *   3. Transform the metric box into world space via
- *      :func:`transformBoundingBox` and the lod_group's ``matrixWorld``.
- *   4. Project the 8 corners through the camera and reduce them to the
- *      dimensionless **coverage metric**, on whichever scale the entry's
- *      ``selector`` names — the two branches of ``evaluateEntry``:
- *      - ``'screen-area'`` (what every derived ladder stamps): the fraction of
- *        the viewport the projected AABB covers by AREA, via
- *        {@link projectBoxAreaFraction}. Aspect-free, tops out at 1.0.
- *      - ``'coverage'`` (legacy): back to pixel coordinates, then the diagonal
- *        of the screen-space AABB divided by ``FILL_FACTOR × fittedAxisPx``
- *        (``fittedAxisPx`` is ``min(viewport.width, viewport.height)`` — the
- *        extent ``calculateCameraDistance`` actually fits; see the
- *        ``FILL_FACTOR`` doc), so 1.0 == the object's projected diagonal has
- *        reached ``FILL_FACTOR`` of the fitted axis.
- *   5. Pick the **finest** child whose ``coverage_fraction`` threshold is
- *      satisfied by that coverage metric, with 10% asymmetric hysteresis on
- *      the downgrade direction to suppress threshold-edge flicker.
+ *      **local-space** :type:`BoundingBox`, mapping nD axes onto X/Y/Z through
+ *      the current ``displayDims``; when any child publishes robust
+ *      ``lodBounds``, fold a second (metric) box the same way, falling back per
+ *      child to ``positionBounds`` (outliers stay visible and resident).
+ *   2. Lift the complete-geometry box to world space through the group's
+ *      ``matrixWorld`` (:func:`transformBoundingBox`). **Off-screen gate**: a
+ *      world box entirely outside the camera frustum holds the group at its
+ *      coarsest READY level. Eviction uses the same box.
+ *   3. Otherwise measure the metric box ON SCREEN: its LOCAL corners go
+ *      through projView × ``matrixWorld`` (so a rotated group is sized by its
+ *      own box, not by its inflated world AABB), in the units the entry's
+ *      ``selector`` names:
+ *      - ``'screen-area'`` (what every derived ladder stamps): the viewport
+ *        fraction covered by the box's INSCRIBED ellipsoid, projected exactly
+ *        and sized at its near depth ({@link projectBoxAreaFraction}).
+ *        Viewport-clipped, tops out at 1.0;
+ *      - ``'coverage'`` (legacy): the pixel diagonal of the projected corners'
+ *        AABB ÷ ``FILL_FACTOR × fittedAxisPx`` (``min(viewport.width,
+ *        viewport.height)``, the extent ``calculateCameraDistance`` fits).
+ *      Both saturate to ``+Infinity`` (finest) with the camera INSIDE the box.
+ *      The session ``lodBias`` then scales the metric in area units.
+ *   4. For a ``screen-area`` ladder whose every level carries a
+ *      ``median_footprint`` stamp, the projected-FOOTPRINT pick decides
+ *      instead: the coarsest level whose median splat stays under
+ *      ``config.lod.maxMedianFootprintPx`` — except while the metric is
+ *      saturated, where the finest level stands.
+ *   5. Otherwise pick the **finest** child whose ``coverage_fraction``
+ *      threshold the metric satisfies, with 10% asymmetric hysteresis on the
+ *      downgrade direction (and, during playback, capped at the finest level
+ *      whose measured load time fits the period).
  *   6. If the desired child differs from the current active one, swap
- *      visibility atomically — gated by the **never-downgrade display
- *      gate**: a fresh aspiration whose additive ladder is still streaming
- *      is not shown while the previously-displayed level looks strictly
- *      better (see ``shouldHoldPreviousDisplay`` in ``lod-display-gate.ts``).
+ *      visibility — a dissolve for blendable groups — gated by the
+ *      **never-downgrade display gate**: a fresh aspiration whose additive
+ *      ladder is still streaming is not shown while the previously-displayed
+ *      level looks strictly better (``shouldHoldPreviousDisplay`` in
+ *      ``lod-display-gate.ts``).
  *
  * The atomic-swap invariant on initial load is realized by
  * ``loadLodGroupNode`` (sequential awaits + ``visible=false`` after
  * attach + a single ``register()`` call at the end) — no per-child
  * ``ready`` gate is needed in the registry.
  *
- * **Partition frustum gating** (``registerPartition`` / ``evaluatePartitionEntry``):
- * a ``kind=partition`` group's parts are tested every frame against a frustum
- * padded by ``PARTITION_FRUSTUM_MARGIN``; a part outside it is hidden and
- * stamped ``userData.partitionFrustumVisible = false``, which the scene
- * loader's sweep and refinement read to skip its loaders. Because a culled part
- * misses slice updates, its RE-ENTRY requests a resync of exactly that part's
- * loaders (``deps.requestReprocess(partPaths)``, coalesced per wrapper across
- * frames and gated on ``isUpdateInProgress``) — unless every leaf of the part is
- * already committed for the current view with a complete ladder, in which case
- * nothing was missed and the re-entry only re-shows it. The resync re-sweeps under the
- * UNCHANGED view version — bumping it here would read every lazy fine level
- * scene-wide as stale and drop all groups to coarse on camera motion.
+ * **Partition frustum gating** (``registerPartition``): a ``kind=partition``
+ * group's parts are frustum- and slice-culled every frame, and a part that
+ * re-enters the frustum is resynced — see ``partition-gate.ts``, which the
+ * registry drives before and after its LOD pass.
+ *
+ * **Collaborators.** The registry is the orchestrator; the stateful pieces
+ * live in their own modules, each stating until when it needs the loop to keep
+ * ticking (``tick-demand.ts``), which ``evaluatePerFrame`` folds into one
+ * ``requestTick``:
+ *   - ``lod-dissolve.ts`` — the time-driven level dissolve (state machine);
+ *   - ``playback-aspiration.ts`` — reload timing and the playback level cap;
+ *   - ``partition-gate.ts`` — partition culling, resync and lazy activation;
+ *   - ``capture-quiescence.ts`` — the offline-capture "frame is final" test;
+ *   - ``lod-selector-math.ts`` / ``lod-display-gate.ts`` / ``lod-fade.ts`` /
+ *     ``lod-eviction.ts`` — the pure metric, display, opacity and eviction
+ *     policies.
  *
  * The bbox infrastructure is shared with the scene-bounds cache and
  * camera framing — ``projectBoundsToDisplayDims`` /
@@ -73,29 +85,16 @@ import * as THREE from 'three';
 import type { BoundingBox } from './scene-manager/clipping/bounds-math';
 import { ViewContextProvider, type ViewContext } from './view-context';
 import { log, Modules } from '../utils/log';
-import { isEffectivelyVisible, isPartitionFrustumCulled } from '../utils/object-visibility';
+import { isEffectivelyVisible } from '../utils/object-visibility';
 import type { LODGroupSelectorMode } from '../types/lod-group';
 import type { LodSelectorName } from '../types/format-contract';
-import {
-  isFresh,
-  isReady,
-  isTrackedLeaf,
-  SettleTracker,
-  subtreeSweepSettled,
-  visibleElementCount,
-  type SweepNode,
-} from './lod-freshness';
-import {
-  shouldHoldPreviousDisplay,
-  subtreeDisplayProgress,
-  type ProgressNode,
-} from './lod-display-gate';
+import { isReady, SettleTracker } from './lod-freshness';
+import { childFreshAndCount, shouldHoldPreviousDisplay } from './lod-display-gate';
 import { smoothstep } from './lod-blend';
 import { config } from '../config';
-import { applyLodFade, FADE_EPSILON, isBlendableSubtree } from './lod-fade';
+import { applyLodFade, isBlendableSubtree } from './lod-fade';
 import {
   computeEntryWorldBox,
-  MAX_MEDIAN_FOOTPRINT_PX,
   pickChildByFootprintWithHysteresis,
   pickChildWithHysteresis,
   preloadNeighbourIndex,
@@ -105,14 +104,24 @@ import {
   type WorldBoxOptions,
 } from './lod-selector-math';
 import { enforceResidentByteBudget } from './lod-eviction';
+import { foldLoadTime, PlaybackAspiration } from './playback-aspiration';
+import { LodDissolves, type DissolveHost, type LevelFade } from './lod-dissolve';
+import { PartitionGate, type PartitionGroupEntry } from './partition-gate';
+import { isCaptureQuiescent, type CaptureQuiescenceSource } from './capture-quiescence';
+import { NO_TICK, UNTIL_RESOLVED } from './tick-demand';
+import { RetryWakes } from './retry-wakes';
 import { perfCounters } from '../profiling/perf-counters';
-import {
-  partBoundsIntersectSlice,
-  type PartitionSliceView,
-} from '../data/scene-loader/view-state/partition-slice-gate';
+import type { PartitionSliceView } from '../data/scene-loader/view-state/partition-slice-gate';
 
-/** Perf counter: deferred partition parts initialised on activation (B4). */
-const S_PARTS_ACTIVATED = perfCounters.slot('partition.partsActivated');
+// Partition gating lives in `partition-gate.ts`; its types are re-exported here
+// so the loader-side importers keep their import site.
+export type {
+  LazyPartState,
+  PartitionChildCache,
+  PartitionGroupChild,
+  PartitionGroupEntry,
+  PartitionPartRef,
+} from './partition-gate';
 
 // The selector math (box projection + hysteresis pick) lives in
 // `lod-selector-math.ts`; re-exported here so existing importers (the
@@ -122,53 +131,6 @@ export {
   projectBoxAreaFraction,
   projectBoxDiagonalPx,
 } from './lod-selector-math';
-
-/**
- * An in-flight dissolve between two levels of one group (see
- * ``LODGroupRegistry.levelFade``). ``progress`` ∈ [0, 1) is the INCOMING level's
- * share of the dissolve; its opacity is ``smoothstep(progress)`` and the
- * outgoing level's the complement. It advances at ``1 / config.lod.fadeMs`` per
- * millisecond from ``startProgress`` at ``startMs``.
- */
-export interface LevelFade {
-  /** The outgoing level (drawn at the complement weight). */
-  fromIdx: number;
-  /** The incoming level — the one displayed. */
-  toIdx: number;
-  startMs: number;
-  startProgress: number;
-  progress: number;
-}
-
-/**
- * The dissolve that starts when the displayed level becomes ``toIdx`` (the
- * previous frame displayed ``prevIdx``), given the dissolve in flight, if any.
- * It starts from what is on screen. With nothing in flight, from ``prevIdx`` at
- * progress 0. Reversing an in-flight dissolve (back to its outgoing level)
- * starts at ``1 − progress``, so each level keeps exactly its current opacity
- * and the reversal only undoes what happened. Retargeting to a THIRD level
- * keeps the more opaque of the two as the outgoing level, at its current
- * opacity (the other one, at most half-weight, drops out).
- */
-function retargetedFade(
-  inFlight: LevelFade | null,
-  prevIdx: number,
-  toIdx: number,
-  startMs: number
-): LevelFade {
-  let fromIdx = prevIdx;
-  let start = 0;
-  if (inFlight !== null && inFlight.toIdx === prevIdx) {
-    const p = inFlight.progress;
-    if (toIdx !== inFlight.fromIdx && p < 0.5) {
-      fromIdx = inFlight.fromIdx; // still the more opaque one, at 1 − w(p) = w(1 − p)
-      start = p;
-    } else {
-      start = 1 - p; // the incoming-so-far becomes outgoing, at w(p) = 1 − w(1 − p)
-    }
-  }
-  return { fromIdx, toIdx, startMs, startProgress: start, progress: start };
-}
 
 /**
  * Band preload (see ``LODGroupRegistry.preloadNeighbour``): the level a group is
@@ -182,24 +144,15 @@ export interface PreloadVisit {
   sawReady: boolean;
 }
 
-/**
- * Exit half-width of the preload band, as a fraction of the smaller adjacent
- * inter-threshold gap: a visit ends only once the metric leaves this band, which
- * is wider than the entry band (``config.lod.preloadBandFraction``) so a camera
- * hovering at the entry edge does not start a new visit (and a reload) per
- * wobble. 0.5 is the widest band that cannot reach a neighbouring threshold's.
- */
-const PRELOAD_EXIT_BAND_FRACTION = 0.5;
-
 /** Perf counter: displayed-level changes of a lod group (one per group per frame). */
 const S_LOD_LEVEL_SWAPS = perfCounters.slot('lod.levelSwaps');
-/** Perf counter: group-frames drawing two levels cross-faded (one per group per frame). */
+/** Perf counter: group-frames drawing two levels dissolving (one per group per frame). */
 const S_LOD_BLEND_FRAMES = perfCounters.slot('lod.blendFrames');
 
 /**
  * Tally this frame's display outcome for one group (perf counters only): a
  * level swap when the shown level differs from the last one displayed, and a
- * blend frame when the primary and its cross-fade partner are both drawn.
+ * blend frame when the primary and its dissolve partner are both drawn.
  * Must run BEFORE ``displayedChildIndex`` is updated.
  */
 function countLodDisplay(
@@ -216,97 +169,6 @@ function countLodDisplay(
     perfCounters.add(S_LOD_BLEND_FRAMES);
   }
 }
-
-/**
- * Milliseconds the view-update version must hold steady before the registry
- * reloads a stale fine level (the settle debounce — see `maybeKickReload`).
- * While the user is actively scrubbing (version changes every frame) only the
- * cheap coarse level shows; the fine level reloads once they pause this long.
- * In milliseconds, like `STALE_HOLD_MS`, so it means the same on any display
- * (it was 8 frames: 130 ms at 60 Hz, 48 ms at 165 Hz).
- *
- * Playback does not wait for it (see {@link PLAYBACK_LOAD_BUDGET_FRACTION}): a
- * playing timelapse bumps the version every period, so it never settles.
- */
-const FINE_RELOAD_SETTLE_MS = 130;
-
-/**
- * During playback the registry aspires to the finest level whose measured
- * load+commit time (``LODGroupChild.loadEwmaMs``) is at most this fraction of
- * the playback period, and reloads it on every timepoint without waiting for
- * the settle debounce. A level the period cannot carry would be stale on
- * every frame and drop the display to the coarsest fresh level; the finest
- * one that CAN keep up is what a video player's "auto quality" would pick.
- * An unmeasured lazy level counts as fitting, so it gets measured.
- */
-const PLAYBACK_LOAD_BUDGET_FRACTION = 0.8;
-
-/**
- * Hysteresis for {@link PLAYBACK_LOAD_BUDGET_FRACTION}: the current aspiration,
- * and any coarser level a demotion steps down to, only needs a reload average
- * within this fraction of the period (a finer level is still admitted at 0.8).
- * Without it a level whose reloads straddle the admission budget flipped with
- * each sample (lod_timelapse at 20 fps on obsidian: an average of 40.6 ms
- * against a 40 ms budget sent the mid level to the coarsest for a second), and
- * a demoted finest level skipped a mid level averaging 45 ms of a 50 ms period.
- */
-const PLAYBACK_KEEP_BUDGET_FRACTION = 1.0;
-
-/** Weight of a new sample in ``LODGroupChild.loadEwmaMs``. */
-const LOAD_EWMA_ALPHA = 0.3;
-
-/**
- * Retry the next capped playback level once per second to measure warm loads.
- * The probe's reload REPLACES the level's average rather than moving it 30%:
- * on lod_timelapse at 20 fps (obsidian) the first loop's cache-miss reloads
- * (80-200 ms) capped the mid level, and blending each warm 5-10 ms probe into
- * that stale average took four to six probes, i.e. seconds at the coarsest level.
- */
-const PLAYBACK_PROBE_INTERVAL_MS = 1000;
-
-/**
- * Milliseconds the registry will keep a STALE previously-displayed level on screen,
- * rather than dropping to a much coarser fresh one, while the aspiration
- * re-commits for a new slice (see ``staleHoldDisplayIndex``).
- *
- * The slice-aware fallback below shows the coarsest FRESH level the instant a
- * scrub invalidates the aspiration. That is right when the aspiration is
- * seconds away, and wrong when it is milliseconds away from a warm cache: on a
- * 151-timepoint gsplat timelapse the coarse level re-commits in ~10 ms and the
- * finest in ~70 ms, so every single step of the Time slider flashed 6,900
- * splats down to 108 and back — 1.6% of the detail, for four frames. A video
- * player holds the previous frame until the next one decodes; so does this.
- *
- * Bounded, because holding is only better while the wait is short. The budget
- * is spent from when the hold STARTS and is not refreshed by further version
- * bumps, so a continuous drag (a new version every frame, the aspiration never
- * committing) exhausts it once and then shows live coarse geometry exactly as
- * before.
- *
- * In MILLISECONDS, deliberately, like the settle debounce above: this is a
- * tolerance for how long a viewer may show the previous slice, which is a
- * wall-clock judgement. Sizing it in frames makes it display-dependent — the
- * first version of this fix used 8 frames and worked on a 60 Hz panel while
- * still flashing on a 165 Hz one, where 8 frames is 48 ms and the re-commit
- * needs ~70.
- *
- * 250 ms is comfortably above the ~70 ms a warm re-slice takes on a 1.6 M-splat
- * timelapse and well below the point where a frozen frame reads as a hang.
- */
-const STALE_HOLD_MS = 250;
-
-/**
- * How much worse the coarse fresh fallback must be, as a fraction of the held
- * level's committed element count, before holding a STALE finer level is worth
- * it (see ``staleHoldDisplayIndex``).
- *
- * Freshness normally wins: showing the right slice matters more than showing
- * more geometry. The exception this ratio carves out is the case where the
- * fallback is not a slightly coarser view of the new slice but a token of it —
- * the 108-of-6,900-splat drop that made a timelapse step read as a flash. At
- * half the detail or better the fallback is taken immediately, as before.
- */
-const STALE_HOLD_MIN_RATIO = 0.5;
 
 /**
  * Unit anchor for the LEGACY ``selector: 'coverage'`` thresholds (older
@@ -466,15 +328,6 @@ export const FILL_FACTOR = 0.5;
  */
 export const SCREEN_FILL_DIAGONAL_RATIO = 2;
 
-/**
- * Frames a lazy level stays in the ``failed`` state before the registry
- * retries its deferred load. ~2 s at 60 fps — long enough to avoid
- * per-frame retry storms after a hard failure, short enough that a
- * transient (network blip) failure self-heals once the camera revisits
- * the level. See ``LODGroupRegistry.maybeKickLoad``.
- */
-const FAILED_RETRY_FRAMES = 120;
-
 /** One LOD-group child as tracked by the registry. */
 export interface LODGroupChild {
   /**
@@ -564,11 +417,16 @@ export interface LODGroupChild {
   /** Last playback probe of a level whose measured reload exceeded the budget. */
   lastPlaybackProbeMs?: number;
   /**
-   * Set when a playback probe fires; the next timed load then REPLACES
-   * ``loadEwmaMs`` instead of blending into it. Registry-owned.
+   * Set when a playback probe's reload STARTS (a refused kick sets nothing);
+   * that timed load then REPLACES ``loadEwmaMs`` instead of blending into it.
+   * Cleared when it is folded and when playback stops. Registry-owned.
    */
   playbackProbePending?: boolean;
-  /** A probe may move the aspiration, but cannot grant the 1.0 keep budget. */
+  /**
+   * A probe may move the aspiration, but cannot grant the 1.0 keep budget.
+   * Set on the probe frame, cleared once the level is admitted or playback
+   * stops. Registry-owned.
+   */
   playbackProbeAdmissionPending?: boolean;
   /** Set by the thunk on load failure to stop per-frame retry storms. */
   failed?: boolean;
@@ -582,13 +440,14 @@ export interface LODGroupChild {
   /** Human-readable reason retained for monitor rows after the loader latch clears. */
   failureReason?: string;
   /**
-   * Registry tick when ``failed`` was first observed. Drives the
-   * transient-failure retry cooldown (``FAILED_RETRY_FRAMES``): once it
+   * Registry clock (``frame.nowMs``) when ``failed`` was first observed. Drives
+   * the transient-failure retry cooldown (starting at ``config.lod.failedRetryMs``,
+   * backed off per consecutive failure — ``retry-wakes.ts``): once it
    * elapses the registry clears ``failed`` and retries the load, so a
    * level that fails on *reload* (after a successful load + byte-eviction)
    * is not stuck on its placeholder forever. Cleared alongside ``failed``.
    */
-  failedTick?: number;
+  failedAtMs?: number;
   /**
    * Idempotent fire-and-forget loader for a lazy child. Kicks the
    * deferred geometry load; on success sets ``ready=true`` and clears
@@ -716,7 +575,7 @@ export interface LODGroupEntry {
    */
   staleHoldSinceMs?: number;
   /**
-   * True once a stale hold has exhausted `STALE_HOLD_MS` without the
+   * True once a stale hold has exhausted `config.lod.staleHoldMs` without the
    * aspiration recommitting. Latches the coarse fallback for the rest of this
    * scrub; cleared when the aspiration finally lands fresh.
    */
@@ -733,8 +592,9 @@ export interface LODGroupEntry {
   /**
    * The level index the selector WANTED this frame, recorded BEFORE the
    * ready/freshness gates below it get a say. Written by ``evaluateEntry``
-   * once a ``desired`` has been computed — the explicit lock and all three
-   * auto branches (off-screen hold, screen-area pick, legacy coverage pick).
+   * once a ``desired`` has been computed — the explicit lock and every auto
+   * branch (off-screen hold, footprint pick, screen-area or legacy coverage
+   * threshold pick).
    * ``undefined`` (never evaluated) ⇒ read it as ``activeChildIndex``.
    *
    * It is NOT rewritten on every frame: ``evaluateEntry`` returns before
@@ -761,33 +621,6 @@ export interface LODGroupEntry {
    * swap, which is exactly the LOD pop this field exists to close.
    */
   desiredChildIndex?: number;
-}
-
-export interface PartitionGroupChild {
-  /** Stable node path for a part that may emit more than one scene object. */
-  path: string;
-  objects: THREE.Object3D[];
-  positionBounds: { min: readonly number[]; max: readonly number[] };
-  /**
-   * Deferred part (B4): the part's subtree has NOT been loaded — `objects` is
-   * the empty slot it will load into. The registry runs this once, inside a
-   * loader pass ({@link LODGroupRegistry.activatePartitionParts}), when the
-   * part is in the padded frustum and in the pass's slice. Absent ⇒ loaded.
-   */
-  activate?: () => Promise<void>;
-  /**
-   * `true` ⇒ never slice-gate this part (its bounds are not in the space of the
-   * world slice, e.g. an `nd_transform` on its path). See `partition-slice-gate.ts`.
-   */
-  sliceExempt?: boolean;
-  /** Names of the dimensions the part extends across (`extend_to_all`): never gated. */
-  extendDims?: readonly string[];
-}
-
-export interface PartitionGroupEntry {
-  path: string;
-  groupObject: THREE.Object3D;
-  children: PartitionGroupChild[];
 }
 
 /**
@@ -888,215 +721,57 @@ function pickStampedFootprintChild(
   return pickChildByFootprintWithHysteresis(
     cache.footprintPx,
     entry.activeChildIndex,
-    MAX_MEDIAN_FOOTPRINT_PX / Math.sqrt(options.lodBias)
+    config.lod.maxMedianFootprintPx / Math.sqrt(options.lodBias)
   );
 }
-const PARTITION_FRUSTUM_SCRATCH = new THREE.Frustum();
-const PARTITION_FRUSTUM_MATRIX_SCRATCH = new THREE.Matrix4();
-// Cold parts have no loaded footprint to union, so pad x/y symmetrically to
-// preload them before entry and keep entry/exit behavior from becoming asymmetric.
-const PARTITION_FRUSTUM_MARGIN = 0.1;
-const PARTITION_FRUSTUM_SCALE = new THREE.Matrix4().makeScale(
-  1 / (1 + PARTITION_FRUSTUM_MARGIN),
-  1 / (1 + PARTITION_FRUSTUM_MARGIN),
-  1
-);
 const WORLD_BOX3_SCRATCH = new THREE.Box3();
 /** projection × view × a group's matrixWorld: local box corners → clip space. */
 const LOCAL_PROJ_SCRATCH = new THREE.Matrix4();
-const FOOTPRINT_BOX3_SCRATCH = new THREE.Box3();
-// Bit flags returned by evaluatePartitionEntry so one child scan reports both effects.
-const PARTITION_VISIBILITY_CHANGED = 1;
-const PARTITION_BECAME_VISIBLE = 2;
-// Part paths that re-entered the frustum THIS frame, collected by
-// ``evaluatePartitionEntry`` and merged into ``partitionResyncPending`` only
-// on a rising edge (rare), so the steady-state per-frame path allocates nothing.
-const RISING_PARTS_SCRATCH = new Set<string>();
-/** Scratch for {@link LODGroupRegistry.rankPartitionPartsForLoad} (load time, not per frame). */
-const LOAD_RANK_LOCAL_BOX: BoundingBox = { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } };
-const LOAD_RANK_OPTIONS: WorldBoxOptions = {
-  worldBoxScratch: { min: { x: 0, y: 0, z: 0 }, max: { x: 0, y: 0, z: 0 } },
+
+/** The per-frame inputs every entry's evaluation shares (``evaluatePerFrame``). */
+export interface EntryFrame {
+  view: ViewContext;
+  viewport: { width: number; height: number };
+  displayDims: readonly number[];
+  frustum: THREE.Frustum;
+  /** The view version has held steady for ``config.lod.fineReloadSettleMs``. */
+  settled: boolean;
+}
+
+/** ``LODGroupRegistry.pickDesired`` outcomes. */
+const PICK_OK = 0;
+/** No registration cache: evaluate nothing (shouldn't happen). */
+const PICK_SKIP = 1;
+/** No world box: drop the dissolve, change nothing. */
+const PICK_DROP = 2;
+
+/**
+ * The stages of one entry's evaluation hand their results on through these
+ * module scratches (``evaluatePerFrame`` is the single, non-reentrant entry
+ * point), so the per-frame path allocates nothing.
+ */
+const PICK = {
+  desired: 0,
+  /** The metric the threshold pick used, for the band preload; null on every
+   * other path (lock, off-screen, force-finest, footprint pick). */
+  preloadMetric: null as number | null,
+  /** The projected-footprint pick decided (no dissolve, no band preload). */
+  usedFootprint: false,
 };
-
-/**
- * Whether a resync naming `targets` covers the part keyed `partKey` of the
- * partition at `wrapperPath`: the wrapper itself, the part, or an ancestor of
- * the part (a nested partition's outer part). Node paths are `/`-separated.
- */
-function isPartTargeted(
-  partKey: string,
-  wrapperPath: string,
-  targets: ReadonlySet<string>
-): boolean {
-  if (targets.has(wrapperPath) || targets.has(partKey)) return true;
-  for (const target of targets) {
-    if (partKey.startsWith(target.endsWith('/') ? target : `${target}/`)) return true;
-  }
-  return false;
-}
-
-/**
- * Record a part that just re-entered the frustum, by its registered node path
- * (``PartitionGroupChild.path`` — the loader-registry key for a leaf part and
- * the prefix of a nested ``kind=lod`` part's level loaders). A part with no
- * path cannot be targeted, so it is recorded as the WRAPPER path: resync the
- * whole partition rather than silently miss it.
- */
-function noteRisingPart(sink: Set<string>, partPath: string, wrapperPath: string): void {
-  sink.add(partPath || wrapperPath);
-}
-
-function unionPartitionFootprints(objects: readonly THREE.Object3D[], target: THREE.Box3): void {
-  for (const object of objects) {
-    FOOTPRINT_BOX3_SCRATCH.setFromObject(object);
-    if (!FOOTPRINT_BOX3_SCRATCH.isEmpty()) target.union(FOOTPRINT_BOX3_SCRATCH);
-  }
-}
-
-/**
- * Whether any object of a part has moved since its footprint box was captured.
- * ``cached`` holds one 16-element world-matrix block per object, in
- * ``objects`` order, sized by ``registerPartition``. A part that later gained an
- * object reads ``undefined`` past the end and so counts as moved, which
- * recaptures and grows the array; one that lost an object simply stops
- * comparing the trailing blocks.
- *
- * Only the part's own objects are compared. A transform on a DESCENDANT of one
- * of them is not detected — descendant transforms are applied at node-creation
- * time and never animated, and every geometry commit dirties the part
- * explicitly. Anything that starts moving a descendant later has to call
- * ``invalidatePartitionFootprint``.
- */
-function partitionFootprintMatricesDiffer(
-  objects: readonly THREE.Object3D[],
-  cached: readonly number[]
-): boolean {
-  for (let index = 0; index < objects.length; index++) {
-    const elements = objects[index].matrixWorld.elements;
-    const offset = index * 16;
-    for (let element = 0; element < 16; element++) {
-      if (cached[offset + element] !== elements[element]) return true;
-    }
-  }
-  return false;
-}
-
-/** Rebuild a part's cached footprint box and the world matrices it was taken at. */
-function capturePartitionFootprint(
-  objects: readonly THREE.Object3D[],
-  target: THREE.Box3,
-  cached: number[]
-): void {
-  target.makeEmpty();
-  unionPartitionFootprints(objects, target);
-  // Snapshot AFTER the union: ``Box3.expandByObject`` refreshes each object's
-  // world matrix, so a snapshot taken first would lag by one recompute and make
-  // every following frame look like a move.
-  for (let index = 0; index < objects.length; index++) {
-    objects[index].matrixWorld.toArray(cached, index * 16);
-  }
-}
-
-/** `'/'` — the path segment separator {@link LODGroupRegistry.invalidatePartitionFootprint} splits on. */
-const SLASH = 0x2f;
-
-/**
- * One registered part, as the footprint-invalidation path index stores it: the
- * partition it belongs to and its index in that partition's children. A part's
- * path may be shared (duplicates) or empty (a pathless part, keyed by `''`, which
- * is a segment prefix of every absolute path — the same match the linear rule
- * `nodePath.startsWith(childPath + '/')` gave it).
- */
-export interface PartitionPartRef {
-  entryPath: string;
-  index: number;
-}
-
-/**
- * A deferred part's activation state (B4). `requested` is set when the
- * per-frame gate asked the loader for a pass to activate it (a pending
- * resync), `running` while that pass's activation is in flight; both clear
- * when the pass declines it, so a part still wanted is asked for again.
- */
-export interface LazyPartState {
-  requested: boolean;
-  /** The in-flight activation, if one is running. */
-  running: Promise<void> | null;
-  /**
-   * The loader passes awaiting the running activation, each of which sweeps
-   * the part's loaders itself once it settles (see
-   * {@link LODGroupRegistry.activatePartitionParts}); `true` is a claim that
-   * cannot be withdrawn. A claim only counts while its pass is alive: a
-   * superseded pass commits nothing, so an activation settling with no live
-   * claim resyncs the part itself. Empty ⇒ started ahead of any pass
-   * (`prefetchSlice`).
-   */
-  claims: Array<AbortSignal | true>;
-  /**
-   * The last activation rejected (its leaves recorded a retryable failure):
-   * the per-frame gate does not ask again until a Retry re-arms it
-   * ({@link LODGroupRegistry.retryLazyChildByNodePath}).
-   */
-  failed: boolean;
-}
-
-/** Per-part per-frame state of a registered partition (parallel to its children). */
-export interface PartitionChildCache {
-  source: PartitionGroupEntry;
-  localBoxScratch: BoundingBox;
-  worldBoxOptions: WorldBoxOptions;
-  footprintBox: THREE.Box3;
-  /**
-   * World transforms ``footprintBox`` was captured at — one flattened
-   * 16-element block per object of the part, in ``children[i].objects`` order.
-   */
-  footprintMatrixWorld: number[];
-  footprintDirty: boolean;
-  /** Last frustum test (`true` until the first evaluation). */
-  inFrustum: boolean;
-  /** Deferred part state (B4): see {@link PartitionGroupChild.activate}. */
-  lazy: LazyPartState | null;
-}
-
-/** Whether a part can draw anything for `view` (always, when there is no view). */
-function partitionChildInSlice(
-  child: PartitionGroupChild,
-  view: PartitionSliceView | undefined
-): boolean {
-  if (!view || child.sliceExempt === true) return true;
-  return partBoundsIntersectSlice(child.positionBounds, view, child.extendDims);
-}
-
-/**
- * Stamp one part's objects. `partitionFrustumVisible` (what draws, and what
- * refinement / capture read) is `inFrustum && inSlice`; `partitionInFrustum`
- * is the frustum test alone, which a view pass reads with its OWN slice.
- * Returns the ``PARTITION_*`` flags; a rising edge is a FRUSTUM re-entry only —
- * a slice entry is committed by the pass that moved the slice, which swept it.
- */
-function updatePartitionObjectVisibility(
-  objects: readonly THREE.Object3D[],
-  inFrustum: boolean,
-  inSlice: boolean
-): number {
-  const visible = inFrustum && inSlice;
-  // Any previously culled object makes the whole part a rising edge.
-  let wasInFrustum = true;
-  let changed = false;
-  for (const object of objects) {
-    if (isPartitionFrustumCulled(object)) wasInFrustum = false;
-    object.userData.partitionInFrustum = inFrustum;
-    object.userData.partitionFrustumVisible = visible;
-    if (object.visible !== visible) {
-      object.visible = visible;
-      changed = true;
-    }
-  }
-  return (
-    (changed ? PARTITION_VISIBILITY_CHANGED : 0) |
-    (inFrustum && !wasInFrustum ? PARTITION_BECAME_VISIBLE : 0)
-  );
-}
+/** ``applyVisibility``'s opacity mode this frame (see ``applyChildOpacity``). */
+const FADE_MODE = { manage: false, energyComp: false, restoreResidual: false };
+/** ``aspirationState``: the aspiration's readiness and freshness this frame. */
+const ASPIRATION = { ready: false, fresh: false };
+const BLEND = {
+  /** The dissolve's outgoing level drawn with the displayed one, if any. */
+  partner: null as number | null,
+  /** The displayed (incoming) level's opacity; the partner gets the complement. */
+  primaryWeight: 1,
+  /** Last frame's outgoing level of an in-flight dissolve, or -1. */
+  fadingFromIdx: -1,
+  /** The outgoing level of a dissolve dropped since the last visibility pass, or -1. */
+  droppedFromIdx: -1,
+};
 
 /**
  * What one ``evaluatePerFrame`` call changed, split by kind because the two
@@ -1180,7 +855,7 @@ export interface LODGroupRegistryDeps {
   getViewVersion?: () => number;
   /**
    * Monotonic wall clock in milliseconds, for the stale-hold budget (see
-   * `STALE_HOLD_MS`). Injectable so tests can advance it deterministically;
+   * `config.lod.staleHoldMs`). Injectable so tests can advance it deterministically;
    * omitted ⇒ ``performance.now()``.
    */
   now?: () => number;
@@ -1236,8 +911,8 @@ export interface LODGroupRegistryDeps {
    */
   isUpdateInProgress?: () => boolean;
   /**
-   * Whether the LOD cross-fade is enabled (ON by default; `?noLodFade`
-   * disables). When true and a blendable (additive/luminous/volumetric — see
+   * Whether the LOD level dissolve is enabled (ON by default; `?noLodFade`
+   * disables; the name predates the time-driven dissolve). When true and a blendable (additive/luminous/volumetric — see
    * `BLENDABLE_MODES` in `scene/lod-fade.ts`) group changes its displayed
    * level, the registry dissolves from the outgoing level to the incoming one
    * over `config.lod.fadeMs` — the incoming at `smoothstep(elapsed / fadeMs)`,
@@ -1254,7 +929,7 @@ export interface LODGroupRegistryDeps {
    * when nothing plays (`DimensionAnimationManager.getPlaybackPeriodMs`).
    * While non-null, lazy levels reload on every timepoint without the settle
    * debounce and the aspiration is capped at the finest level whose measured
-   * load time fits (see `PLAYBACK_LOAD_BUDGET_FRACTION`). Omitted ⇒ never
+   * load time fits (see `config.lod.playbackLoadBudgetFraction`). Omitted ⇒ never
    * playing — identical to the pre-feature behaviour.
    */
   getPlaybackPeriodMs?: () => number | null;
@@ -1262,8 +937,9 @@ export interface LODGroupRegistryDeps {
    * Whether streaming brightness compensation is enabled: as a blendable
    * (additive/luminous/volumetric)
    * leaf's ladder streams in, scale its opacity by `1/e(k)` so the partial prefix
-   * renders at the full-level energy (no brightening pop). Distinct axis from the
-   * cross-fade (time, not distance) and independently gated; either flag on
+   * renders at the full-level energy (no brightening pop). Distinct from the
+   * level dissolve (within one level's stream, not between levels) and
+   * independently gated; either flag on
    * enables the registry's per-frame opacity management. Omitted / false ⇒
    * byte-identical (no material writes). Read live so the flag applies without a
    * reload. The default for unit tests (off).
@@ -1298,6 +974,32 @@ export interface LODGroupRegistryDeps {
   registerMaterial?: (material: THREE.Material) => void;
 }
 
+/**
+ * Whether the fresh ``fallback`` holds less than ``config.lod.staleHoldMinRatio``
+ * of the ``held`` level's committed elements. An unknown count on either side
+ * means the comparison cannot be made, so there is no evidence the fallback is
+ * severe — take it.
+ */
+function fallbackIsSevere(
+  held: LODGroupChild,
+  fallback: LODGroupChild | undefined,
+  version: number
+): boolean {
+  const heldCount = childFreshAndCount(held, version).count;
+  const fallbackCount = fallback ? childFreshAndCount(fallback, version).count : null;
+  if (heldCount == null || fallbackCount == null || heldCount <= 0) return false;
+  return fallbackCount < heldCount * config.lod.staleHoldMinRatio;
+}
+
+/**
+ * The never-downgrade gate judges only the aspiration itself being displayed,
+ * auto-selected and on screen (an explicit lock and an off-screen hold bypass
+ * it).
+ */
+function neverDowngradeApplies(entry: LODGroupEntry, displayIdx: number): boolean {
+  return displayIdx === entry.activeChildIndex && entry.selectorMode === 'auto' && !entry.offScreen;
+}
+
 function bumpForFailedEntryReplacement(
   previous: LODGroupEntry | undefined,
   next: LODGroupEntry
@@ -1316,17 +1018,8 @@ function bumpForFailedEntryReplacement(
  */
 export class LODGroupRegistry {
   private entries: Map<string, LODGroupEntry> = new Map();
-  private partitionEntries: Map<string, PartitionGroupEntry> = new Map();
-  private partitionCaches: Map<string, { children: PartitionChildCache[] }> = new Map();
-  /**
-   * Part path → every registered part carrying it (B9c): the index that makes
-   * {@link invalidatePartitionFootprint} O(path depth) instead of a scan over
-   * every part of every partition. Maintained by ``registerPartition`` /
-   * ``unregister`` / ``clear``; ``partitionPartKeys`` remembers which keys each
-   * partition added so it can take exactly those back out.
-   */
-  private readonly partitionPartsByPath = new Map<string, PartitionPartRef[]>();
-  private readonly partitionPartKeys = new Map<string, string[]>();
+  /** The ``kind=partition`` groups and their per-part gating (``partition-gate.ts``). */
+  private readonly partitions: PartitionGate;
   /**
    * Per-entry register-time cache (parallel to ``entries`` by path).
    * Populated by :meth:`register`. Stored on the side so the public
@@ -1367,7 +1060,7 @@ export class LODGroupRegistry {
   private settleTracker = new SettleTracker();
 
   /**
-   * Whether fade management (cross-fade and/or energy compensation) was ON
+   * Whether fade management (level dissolve and/or energy compensation) was ON
    * during the previous ``evaluatePerFrame``. Falling-edge detector for the
    * one-shot residual-opacity restore in ``evaluateEntry``: toggling BOTH
    * anti-popping flags off MID-fade would otherwise strand a half-faded
@@ -1382,15 +1075,22 @@ export class LODGroupRegistry {
    * level shown OR hidden, a fade opacity written with a new value. Broader
    * than {@link evaluatePerFrame}'s return (which reports only a newly shown
    * level, for the monitor tally): hiding a level, a time-driven stale-hold
-   * expiry, or a cross-fade weight step all change pixels too. Read and
+   * expiry, or a dissolve weight step all change pixels too. Read and
    * cleared by {@link takeDrawnStateChanged} — the render-on-change loop's
    * signal to redraw.
    */
   private drawnStateChanged = false;
-  /** In-flight level dissolves, by group path (see {@link levelFade}). */
-  private readonly fades = new Map<string, LevelFade>();
-  /** Outgoing levels whose dissolve was dropped before its visibility pass. */
-  private readonly droppedFadeFrom = new Map<string, number>();
+  /** In-flight level dissolves, by group path (``lod-dissolve.ts``). */
+  private readonly dissolves = new LodDissolves<LODGroupEntry>();
+  /** Asks this registry whether a pair of levels can dissolve (no per-frame closure). */
+  private readonly dissolveHost: DissolveHost<LODGroupEntry> = {
+    canDissolve: (entry, fromIdx, toIdx, version) =>
+      this.canDissolve(entry, fromIdx, toIdx, version),
+  };
+  /** The per-frame inputs of ``evaluateEntry``, refilled by ``beginFrame``. */
+  private readonly entryFrame = {} as EntryFrame;
+  /** Reused argument of {@link LodDissolves.advance}. */
+  private readonly dissolveFrame = { nowMs: 0, fadeMs: 0, version: null as number | null };
   /** Band preloads in progress, by group path (see {@link preloadNeighbour}). */
   private readonly preloads = new Map<string, PreloadVisit>();
   /** This frame's clock reading and playback period (see ``evaluatePerFrame``). */
@@ -1398,19 +1098,42 @@ export class LODGroupRegistry {
     nowMs: 0,
     playbackPeriodMs: null,
   };
-  /**
-   * Partition rising edges waiting for their wrapper to be visible and the
-   * loader to be idle: wrapper path → the re-entering PART paths. A set that
-   * contains the wrapper path itself means "resync the whole partition" (a
-   * pathless part). Coalesced across frames; flushed as ONE
-   * ``requestReprocess(paths)`` call.
-   */
-  private readonly partitionResyncPending = new Map<string, Set<string>>();
+  /** Playback aspiration: reload timing, admission, probes (``playback-aspiration.ts``). */
+  private readonly playback = new PlaybackAspiration();
+  /** One-shot wakes for failure cooldowns and unanswered part requests (``retry-wakes.ts``). */
+  private readonly retryWakes = new RetryWakes(
+    () => this.deps.requestTick !== undefined || this.deps.requestRender !== undefined,
+    () => this.keepTicking()
+  );
+  /** The registry clock, bound once (``foldLoadTime`` reads it lazily). */
+  private readonly clock = (): number => this.nowMs();
+
+  /** What ``isCaptureQuiescent`` reads (``capture-quiescence.ts``); built once. */
+  private readonly captureSource: CaptureQuiescenceSource = {
+    isAnimating: () => this.isAnimating(),
+    anyVisiblePartitionPart: () => this.partitions.anyVisiblePartitionPart(),
+    isUpdateInProgress: () => this.deps.isUpdateInProgress?.() === true,
+    hasArchiveFault: () => this.deps.hasArchiveFault?.() === true,
+    anyChildLoading: () => this.anyChildLoading(),
+    viewVersion: () => this.deps.getViewVersion?.() ?? null,
+    partitionsCaptureQuiescent: (version) => this.partitions.partitionsCaptureQuiescent(version),
+    entries: () => this.entries.values(),
+    preloadIdx: (path) => this.preloads.get(path)?.idx,
+  };
 
   /** Snapshot source when no shared ``getViewContext`` is injected. */
   private readonly ownViews: ViewContextProvider | null;
 
   constructor(private deps: LODGroupRegistryDeps) {
+    this.partitions = new PartitionGate(deps, {
+      view: () => this.view(),
+      keepTicking: () => this.keepTicking(),
+      markDrawn: () => {
+        this.drawnStateChanged = true;
+      },
+      frame: this.frame,
+      retryWakes: this.retryWakes,
+    });
     this.ownViews = deps.getViewContext
       ? null
       : new ViewContextProvider({
@@ -1427,8 +1150,14 @@ export class LODGroupRegistry {
     return own.get();
   }
 
-  /** Register a newly-loaded lod_group (called by the scene loader). */
+  /**
+   * Register a newly-loaded lod_group (called by the scene loader). A
+   * re-registration of a path (a re-activated partition part) starts the new
+   * entry's per-path state — dissolve, band preload, one-shot warnings — fresh.
+   */
   register(entry: LODGroupEntry): void {
+    this.cancelEntryRetryWakes(entry.path);
+    this.forgetEntryState(entry.path);
     const footprintDims = entry.children[0]?.footprintDims;
     bumpForFailedEntryReplacement(this.entries.get(entry.path), entry);
     this.entries.set(entry.path, entry);
@@ -1497,362 +1226,81 @@ export class LODGroupRegistry {
 
   /** Register a partition whose children are independently frustum-gated. */
   registerPartition(entry: PartitionGroupEntry): void {
-    this.forgetPartitionParts(entry.path);
-    this.partitionEntries.set(entry.path, entry);
-    this.indexPartitionParts(entry);
-    this.partitionCaches.set(entry.path, {
-      children: entry.children.map((child) => ({
-        source: { path: entry.path, groupObject: entry.groupObject, children: [child] },
-        localBoxScratch: {
-          min: { x: 0, y: 0, z: 0 },
-          max: { x: 0, y: 0, z: 0 },
-        },
-        worldBoxOptions: {
-          worldBoxScratch: {
-            min: { x: 0, y: 0, z: 0 },
-            max: { x: 0, y: 0, z: 0 },
-          },
-        },
-        footprintBox: new THREE.Box3(),
-        footprintMatrixWorld: new Array<number>(child.objects.length * 16).fill(0),
-        footprintDirty: true,
-        inFrustum: true,
-        lazy: child.activate
-          ? { requested: false, running: null, claims: [], failed: false }
-          : null,
-      })),
-    });
-    for (const child of entry.children) {
-      // Each loader path resolves to its emitted object, so stamping them all
-      // lets the loader gate use its normal ancestor walk for multi-object parts.
-      for (const object of child.objects) object.userData.partitionFrustumVisible = true;
-    }
+    this.partitions.registerPartition(entry);
   }
 
-  /**
-   * Mark the owning partition part's rendered footprint stale after a geometry commit.
-   *
-   * ``SceneLoader.updatePointsGeometry`` and the three ``commit*Geometry`` methods
-   * are the complete geometry-attach funnels, including lazy LOD children and
-   * additive rungs. They dirty the part before writing, so a commit that hands off
-   * geometry and then throws cannot leave the previous footprint cached.
-   * ``registerPartition`` starts every part dirty, which also covers a commit that
-   * races registration. A path under a partition that matches no registered child
-   * dirties the whole partition conservatively rather than allowing an
-   * under-covering stale box. Footprints are cached in world space; the per-frame
-   * gate separately detects transform changes.
-   */
+  /** See {@link PartitionGate.invalidatePartitionFootprint}. */
   invalidatePartitionFootprint(nodePath: string): void {
-    if (this.partitionCaches.size === 0) return;
-    // A partition or part is affected exactly when its path is ``nodePath`` or a
-    // segment prefix of it, so enumerate those prefixes (O(depth)) and look them
-    // up, instead of scanning every registered part — a commit per part on a
-    // 2000-part partition made the scan O(parts²) per pass (B9c).
-    const touched: string[] = [];
-    const hits: PartitionPartRef[] = [];
-    for (let end = nodePath.length; end >= 0; end--) {
-      if (end !== nodePath.length && nodePath.charCodeAt(end) !== SLASH) continue;
-      const prefix = nodePath.slice(0, end);
-      if (this.partitionEntries.has(prefix)) touched.push(prefix);
-      const parts = this.partitionPartsByPath.get(prefix);
-      if (parts) hits.push(...parts);
-    }
-    for (const entryPath of touched) this.dirtyPartitionParts(entryPath, hits);
+    this.partitions.invalidatePartitionFootprint(nodePath);
   }
 
-  /**
-   * Dirty the ``hits`` belonging to partition ``entryPath`` — or, when none
-   * does (a commit under the partition matching no registered part), every part
-   * of it, conservatively, rather than keep an under-covering stale box.
-   */
-  private dirtyPartitionParts(entryPath: string, hits: readonly PartitionPartRef[]): void {
-    const cache = this.partitionCaches.get(entryPath);
-    if (!cache) return;
-    let matched = false;
-    for (const hit of hits) {
-      if (hit.entryPath !== entryPath) continue;
-      cache.children[hit.index].footprintDirty = true;
-      matched = true;
-    }
-    if (matched) return;
-    for (const childCache of cache.children) childCache.footprintDirty = true;
-  }
-
-  /** Index a registered partition's parts by path for {@link invalidatePartitionFootprint}. */
-  private indexPartitionParts(entry: PartitionGroupEntry): void {
-    const keys = entry.children.map((child) => child.path);
-    keys.forEach((key, index) => {
-      let refs = this.partitionPartsByPath.get(key);
-      if (!refs) {
-        refs = [];
-        this.partitionPartsByPath.set(key, refs);
-      }
-      refs.push({ entryPath: entry.path, index });
-    });
-    this.partitionPartKeys.set(entry.path, keys);
-  }
-
-  /** Drop a partition's parts from the path index. */
-  private forgetPartitionParts(entryPath: string): void {
-    const keys = this.partitionPartKeys.get(entryPath);
-    if (!keys) return;
-    this.partitionPartKeys.delete(entryPath);
-    for (const key of new Set(keys)) {
-      const refs = this.partitionPartsByPath.get(key);
-      if (!refs) continue;
-      const kept = refs.filter((ref) => ref.entryPath !== entryPath);
-      if (kept.length > 0) this.partitionPartsByPath.set(key, kept);
-      else this.partitionPartsByPath.delete(key);
-    }
-  }
-
-  /**
-   * Re-stamp every partition part against the committed view NOW (B4). The
-   * owning loader calls this right after a pass commits, so a part that left
-   * the slice is hidden, and one that entered it is shown and refinable, in
-   * the same frame as the commit — not one evaluation later (refinement,
-   * scheduled at the pass tail, reads these stamps before the next frame).
-   * The frustum half is the last evaluation's; nothing here is a rising edge.
-   */
+  /** See {@link PartitionGate.applyCommittedSlice}. */
   applyCommittedSlice(): void {
-    const committed = this.deps.getCommittedViewState?.();
-    for (const entry of this.partitionEntries.values()) {
-      const cache = this.partitionCaches.get(entry.path);
-      if (!cache) continue;
-      for (let index = 0; index < entry.children.length; index++) {
-        const child = entry.children[index];
-        const inSlice = partitionChildInSlice(child, committed);
-        const flags = updatePartitionObjectVisibility(
-          child.objects,
-          cache.children[index].inFrustum,
-          inSlice
-        );
-        if ((flags & PARTITION_VISIBILITY_CHANGED) !== 0) this.drawnStateChanged = true;
-      }
-    }
+    this.partitions.applyCommittedSlice();
   }
 
-  /**
-   * Whether the loader at `path` can draw anything for `view` — `false` when
-   * any partition part enclosing it is provably empty on a discrete hidden
-   * dimension (see `partition-slice-gate.ts`). A view pass skips such loaders:
-   * the part is hidden from the commit on ({@link applyCommittedSlice}), so its
-   * previous geometry is never drawn for `view`. O(path depth).
-   */
+  /** See {@link PartitionGate.isPathInPartitionSlice}. */
   isPathInPartitionSlice(path: string, view: PartitionSliceView): boolean {
-    if (this.partitionPartsByPath.size === 0) return true;
-    for (let end = path.length; end >= 0; end--) {
-      if (end !== path.length && path.charCodeAt(end) !== SLASH) continue;
-      const refs = this.partitionPartsByPath.get(path.slice(0, end));
-      if (refs && !refs.every((ref) => this.partRefInSlice(ref, view))) return false;
-    }
-    return true;
+    return this.partitions.isPathInPartitionSlice(path, view);
   }
 
-  private partRefInSlice(ref: PartitionPartRef, view: PartitionSliceView): boolean {
-    const child = this.partitionEntries.get(ref.entryPath)?.children[ref.index];
-    return child === undefined || partitionChildInSlice(child, view);
-  }
-
-  /**
-   * Activate the deferred parts a loader pass for `view` needs (B4): every
-   * deferred part in the padded frustum (last evaluation), under an effectively
-   * visible wrapper and in `view`'s slice — restricted to `targets` (a targeted
-   * resync) when given. An activation attaches and REGISTERS the part's
-   * loaders without loading their data: resolves, once every activation it
-   * started (or joined) has settled, with the keys of those parts, whose new
-   * loaders the pass then sweeps itself and commits with everything else.
-   * `claim` is the pass's abort signal (`true`: a claim that is never
-   * withdrawn); `false` (`prefetchSlice`, activating ahead of the next slice)
-   * claims nothing: that slice's pass finds the loaders registered. A deferred
-   * part under `targets` that does not qualify has its request cleared, so the
-   * per-frame gate asks again while it is still wanted.
-   */
+  /** See {@link PartitionGate.activatePartitionParts}. */
   activatePartitionParts(
     view: PartitionSliceView,
     targets?: ReadonlySet<string>,
     claim: AbortSignal | boolean = true
   ): Promise<string[]> {
-    const runs: Promise<void>[] = [];
-    const keys: string[] = [];
-    for (const entry of this.partitionEntries.values()) {
-      const cache = this.partitionCaches.get(entry.path);
-      if (!cache) continue;
-      for (let index = 0; index < entry.children.length; index++) {
-        const run = this.activatePart(entry, index, cache.children[index], view, targets);
-        if (!run) continue;
-        runs.push(run.promise);
-        keys.push(run.key);
-        if (claim !== false) run.lazy.claims.push(claim);
-      }
-    }
-    return runs.length === 0 ? Promise.resolve(keys) : Promise.all(runs).then(() => keys);
+    return this.partitions.activatePartitionParts(view, targets, claim);
   }
 
-  private activatePart(
-    entry: PartitionGroupEntry,
-    index: number,
-    childCache: PartitionChildCache,
-    view: PartitionSliceView,
-    targets: ReadonlySet<string> | undefined
-  ): { promise: Promise<void>; key: string; lazy: LazyPartState } | null {
-    const child = entry.children[index];
-    const lazy = childCache.lazy;
-    if (!lazy || !child.activate || lazy.failed) return null;
-    const partKey = child.path || entry.path;
-    if (targets && !isPartTargeted(partKey, entry.path, targets)) return null;
-    if (!lazy.running) lazy.requested = false;
-    if (!this.partActivationWanted(entry, child, childCache, view)) return null;
-    // Already loading (activated ahead of this view): the caller still waits for it.
-    lazy.running ??= this.runActivation(entry, partKey, child, childCache, lazy);
-    return { promise: lazy.running, key: partKey, lazy };
-  }
-
-  /** In the padded frustum (last evaluation), in `view`'s slice, under a visible wrapper. */
-  private partActivationWanted(
-    entry: PartitionGroupEntry,
-    child: PartitionGroupChild,
-    childCache: PartitionChildCache,
-    view: PartitionSliceView
-  ): boolean {
-    return (
-      childCache.inFrustum &&
-      partitionChildInSlice(child, view) &&
-      isEffectivelyVisible(entry.groupObject)
-    );
-  }
-
-  private runActivation(
-    entry: PartitionGroupEntry,
-    partKey: string,
-    child: PartitionGroupChild,
-    childCache: PartitionChildCache,
-    lazy: LazyPartState
-  ): Promise<void> {
-    const activate = child.activate as () => Promise<void>;
-    return activate().then(
-      () => {
-        perfCounters.add(S_PARTS_ACTIVATED);
-        this.settleActivation(entry, partKey, child, childCache, lazy);
-      },
-      (error: unknown) => {
-        log.warning(
-          Modules.SCENE_LOADER,
-          `partition part ${child.path} failed to activate: ${String(error)}`
-        );
-        // Re-armable: its loaders recorded a retryable failure, and a Retry
-        // clears `failed` (see `retryLazyChildByNodePath`).
-        lazy.running = null;
-        lazy.requested = false;
-        lazy.claims = [];
-        lazy.failed = true;
-      }
-    );
-  }
-
-  /**
-   * A part's activation registered its loaders: never activate the slot again.
-   * Nothing drawn changed — its placeholders are empty until a pass commits
-   * them. With no LIVE claim (started ahead of any pass, or every pass that
-   * awaited it was superseded) and the COMMITTED view showing it, nothing else
-   * will sweep the new loaders for that view: resync it. A part of a
-   * registration that has since been cleared or replaced (dataset switch) is
-   * left alone.
-   */
-  private settleActivation(
-    entry: PartitionGroupEntry,
-    partKey: string,
-    child: PartitionGroupChild,
-    childCache: PartitionChildCache,
-    lazy: LazyPartState
-  ): void {
-    child.activate = undefined;
-    if (childCache.lazy === lazy) childCache.lazy = null;
-    childCache.footprintDirty = true;
-    if (this.partitionEntries.get(entry.path) !== entry) return;
-    const claimLive = lazy.claims.some((claim) => claim === true || !claim.aborted);
-    const committed = this.deps.getCommittedViewState?.();
-    if (
-      !claimLive &&
-      childCache.inFrustum &&
-      partitionChildInSlice(child, committed) &&
-      isEffectivelyVisible(entry.groupObject)
-    ) {
-      this.notePartitionRisingEdge(entry.path, new Set([partKey]));
-      this.keepTicking();
-    }
-  }
-
-  /**
-   * Load-time ranking of a partition's parts against the CURRENT camera (B4):
-   * which intersect the padded partition frustum, and a nearest-first load
-   * order. The scene manager frames the opening camera from the root metadata
-   * before any node loads (`LoaderConfig.onSceneMetadata`), so this is the pose
-   * the scene opens on. `null` when there is no usable view (no displayed dims
-   * yet, an empty viewport), or when no part is in the frustum at all: a scene
-   * framed after its load (an authored `target_node` names a node not built
-   * yet) would otherwise defer everything its opening view is about to show.
-   */
+  /** See {@link PartitionGate.rankPartitionPartsForLoad}. */
   rankPartitionPartsForLoad(
     groupObject: THREE.Object3D,
     bounds: readonly { min: readonly number[]; max: readonly number[] }[]
   ): { inFrustum: boolean[]; order: number[] } | null {
-    const displayDims = this.deps.getDisplayDims();
-    const view = this.view();
-    if (displayDims.length < 2 || view.viewportCss === null) return null;
-    PARTITION_FRUSTUM_MATRIX_SCRATCH.copy(view.projView).premultiply(PARTITION_FRUSTUM_SCALE);
-    PARTITION_FRUSTUM_SCRATCH.setFromProjectionMatrix(PARTITION_FRUSTUM_MATRIX_SCRATCH);
-    groupObject.updateWorldMatrix(true, false);
-    const inFrustum: boolean[] = [];
-    const distance: number[] = [];
-    for (const positionBounds of bounds) {
-      const box = computeEntryWorldBox(
-        { groupObject, children: [{ positionBounds }] },
-        displayDims,
-        LOAD_RANK_LOCAL_BOX,
-        this.matrixScratch,
-        LOAD_RANK_OPTIONS
-      );
-      if (!box) {
-        inFrustum.push(true);
-        distance.push(0);
-        continue;
-      }
-      WORLD_BOX3_SCRATCH.min.set(box.min.x, box.min.y, box.min.z);
-      WORLD_BOX3_SCRATCH.max.set(box.max.x, box.max.y, box.max.z);
-      inFrustum.push(PARTITION_FRUSTUM_SCRATCH.intersectsBox(WORLD_BOX3_SCRATCH));
-      distance.push(WORLD_BOX3_SCRATCH.distanceToPoint(view.cameraWorldPosition));
-    }
-    if (!inFrustum.some(Boolean)) return null;
-    const order = bounds.map((_, i) => i).sort((a, b) => distance[a] - distance[b] || a - b);
-    return { inFrustum, order };
+    return this.partitions.rankPartitionPartsForLoad(groupObject, bounds);
+  }
+
+  /** See {@link PartitionGate.hasVisiblePendingPartitionResync}. */
+  hasVisiblePendingPartitionResync(): boolean {
+    return this.partitions.hasVisiblePendingPartitionResync();
   }
 
   /** Drop an lod_group from the registry (called on scene teardown). */
   unregister(path: string): void {
-    const partition = this.partitionEntries.get(path);
-    if (partition) this.restorePartitionChildren(partition);
-    this.partitionResyncPending.delete(path);
+    this.cancelEntryRetryWakes(path);
+    this.partitions.unregister(path);
     if (this.entries.get(path)?.children.some((child) => child.permanentlyFailed)) {
       bumpFailedLoadsVersion();
     }
     this.entries.delete(path);
     this.caches.delete(path);
-    this.partitionEntries.delete(path);
-    this.partitionCaches.delete(path);
-    this.forgetPartitionParts(path);
+    this.forgetEntryState(path);
+  }
+
+  /**
+   * Drop every lod_group and partition at or under ``path`` — a subtree that
+   * was discarded (a failed partition part activation), whose entries would
+   * otherwise keep being evaluated against detached objects.
+   */
+  unregisterSubtree(path: string): void {
+    const under = (p: string): boolean => p === path || p.startsWith(`${path}/`);
+    const paths = [...this.entries.keys(), ...this.partitions.paths()].filter(under);
+    for (const p of new Set(paths)) this.unregister(p);
+  }
+
+  /** Per-path state an entry accumulates beyond its registration. */
+  private forgetEntryState(path: string): void {
     this.warnedNoReadyChild.delete(path);
     this.warnedEmptyLevel.delete(path);
-    this.fades.delete(path);
-    this.droppedFadeFrom.delete(path);
+    this.dissolves.forget(path);
     this.preloads.delete(path);
   }
 
   /** Clear all entries (called on full scene tear-down). */
   clear(): void {
-    for (const partition of this.partitionEntries.values()) {
-      this.restorePartitionChildren(partition);
-    }
+    this.retryWakes.cancelAll();
+    this.partitions.clear();
     if (
       [...this.entries.values()].some((entry) =>
         entry.children.some((child) => child.permanentlyFailed)
@@ -1862,13 +1310,9 @@ export class LODGroupRegistry {
     }
     this.entries.clear();
     this.caches.clear();
-    this.fades.clear();
-    this.droppedFadeFrom.clear();
+    this.dissolves.clear();
     this.preloads.clear();
-    this.partitionEntries.clear();
-    this.partitionCaches.clear();
-    this.partitionPartsByPath.clear();
-    this.partitionPartKeys.clear();
+    this.playback.endEntry();
     // Reset the monotonic tick so a reused registry (shared-registry
     // refactor) starts cold rather than inheriting stale LRU ordering — and
     // the settle clock with it, so the new scene's first observed version
@@ -1878,18 +1322,6 @@ export class LODGroupRegistry {
     this.warnedNoReadyChild.clear();
     this.warnedEmptyLevel.clear();
     this.fadeWasManaged = false;
-    this.partitionResyncPending.clear();
-  }
-
-  private restorePartitionChildren(entry: PartitionGroupEntry): void {
-    this.drawnStateChanged = true;
-    for (const child of entry.children) {
-      for (const object of child.objects) {
-        object.visible = true;
-        delete object.userData.partitionFrustumVisible;
-        delete object.userData.partitionInFrustum;
-      }
-    }
   }
 
   /** Number of registered lod_groups (mainly for tests / diagnostics). */
@@ -1899,7 +1331,7 @@ export class LODGroupRegistry {
 
   /** Number of registered groups that can require an offline-capture drain. */
   captureSize(): number {
-    return this.entries.size + this.partitionEntries.size;
+    return this.entries.size + this.partitions.size();
   }
 
   /** Lookup an entry by path (mainly for tests / UI). */
@@ -1934,256 +1366,11 @@ export class LODGroupRegistry {
 
   /**
    * Whether every lod_group and partition part that contributes pixels to the
-   * CURRENT view is already at final committed quality — i.e. one more frame
-   * of waiting would not improve what is on screen.
-   *
-   * **Why this exists.** An offline turntable capture (``OfflineCaptureStrategy``)
-   * takes exactly one ``requestAnimationFrame`` per exported frame. Since the
-   * rAF loop runs for the whole sweep, the auto-selector is live and
-   * frustum-aware, so a tile that leaves the frustum mid-orbit is demoted to
-   * its coarsest ready level and the resident-byte budget may release its fine
-   * one. When it swings back into view the fine level reloads ASYNCHRONOUSLY —
-   * and without a wait those frames go into the ZIP/MP4 at the coarse level and
-   * pop back a few frames later. The capture loop therefore drains on this
-   * predicate (bounded) before grabbing each frame. Forcing finest instead was
-   * deliberately rejected: a capture visits the whole scene, so peak residency
-   * would be the entire dataset.
-   *
-   * Partition parts block while a visible rising edge is pending, while any load
-   * pass is queued or committing and any part is visible, or while a visible
-   * stamped leaf is stale / still climbing its additive ladder. Hidden or
-   * re-culled parts are excluded because they contribute no pixels. Unstamped
-   * leaves carry no freshness or ladder signal and remain non-blocking, matching
-   * the lod-group subtree fold below.
-   *
-   * - **A latched archive fault skips all work that could start or wait for new
-   *   loads, but still waits for loads already in flight to finish committing.**
-   *   The latch prevents any further automatic kick, so every other unmet
-   *   condition would be permanently false until an explicit or connectivity
-   *   retry clears it. An already-started load still clears ``loading`` in its
-   *   ``finally`` block and may commit geometry, so releasing the capture frame
-   *   before that transition would allow a one-frame pop.
-   * - **A partition leaf load failure that does not latch an archive fault has no
-   *   success commit to refresh its stale stamp.** The predicate remains false;
-   *   the capture drain's bounded timeout and consecutive-timeout latch are the
-   *   escape hatch for that failed part.
-   *
-   * Per entry, in order:
-   *
-   * - **Off-screen entries are skipped entirely.** ``offScreen`` means the
-   *   selector is deliberately holding the group coarse *because it draws
-   *   nothing this frame* — blocking on it would wait for a level that will
-   *   never be selected while it is culled.
-   * - **Entries that are not EFFECTIVELY VISIBLE are skipped too** (a layer
-   *   toggled off in the panel, or authored ``visible=false``, anywhere up the
-   *   ancestor chain). They draw nothing, and — decisively —
-   *   {@link kickDeferredLoadIfVisible} refuses to START a deferred load while
-   *   the group is hidden, whereas the selector's frustum test is purely
-   *   geometric and still records a fine ``desiredChildIndex`` for it. Without
-   *   this skip such an entry has ``desired !== active`` with nothing ever
-   *   loading, failing or becoming ready, so the predicate would be
-   *   PERMANENTLY false and every capture frame would burn the full drain
-   *   budget before giving up.
-   * - **An entry with no child at the aspiration index is skipped** —
-   *   ``children`` can legitimately be EMPTY (every level failed its
-   *   ``getObjectByName`` attach in ``load-lod-group-node``, which warns and
-   *   carries on). Nothing at a non-existent index can ever become ready, so
-   *   blocking on it is the permanently-false trap again: the drain would burn
-   *   its whole budget on every frame and then report a degraded-LOD verdict
-   *   the scene never earned. An out-of-range ``desiredChildIndex`` is the same
-   *   shape but is NOT skipped — the rest of the entry is still checked and
-   *   only the missing ``desired`` is let through (see its bullet below).
-   * - ``displayed !== activeChildIndex`` ⇒ not quiescent. A stale slice
-   *   fallback or a never-downgrade hold is on screen instead of the
-   *   aspiration, so what renders is not what the selector settled on.
-   * - ``desired !== activeChildIndex`` ⇒ not quiescent — UNLESS that desired
-   *   child is ``failed``, or absent (an out-of-range ``desired``, handled
-   *   right here rather than by skipping the entry). The aspiration only
-   *   advances onto a READY level, so this is the one-frame window after a lazy
-   *   load lands but before the next selector pass swaps (see
-   *   ``LODGroupEntry.desiredChildIndex``); it is also the whole in-flight
-   *   load. A ``failed`` level can never become ready this frame, so blocking
-   *   on it only buys a timeout — treat it as the best available and keep
-   *   checking the rest.
-   * - The aspiration must be ``isReady``.
-   * - When freshness is tracked (``getViewVersion`` wired), the aspiration must
-   *   be FRESH for the current view version — via the group-aware
-   *   {@link childFreshAndCount}, not the leaf-only ``isFresh``, so a deferred
-   *   ``kind=partition`` subtree stamped for an older slice counts as stale.
-   * - The aspiration's additive ladder must be complete, on BOTH available
-   *   signals. A lazy child's live ``hasMoreLODs()`` thunk answers first:
-   *   still true means only a prefix of the level has committed. Then
-   *   {@link childFreshAndCount}'s ``subtreeLadderComplete`` — the
-   *   commit-time ``committedLadderComplete`` stamp, taken from the child
-   *   itself for a tracked LEAF and folded over the visible stamped leaves of
-   *   a deferred GROUP child (a nested ``kind=partition`` / ``kind=lod``
-   *   subtree — the ``overview`` recipe's fine branch). Neither alone is
-   *   enough: a group child carries no thunk, so without the fold the drain
-   *   released the frame the moment such a branch became ready, with its part
-   *   leaves at chunk-1 by construction; and only the DEFERRED path gets a
-   *   thunk, so without the stamp the eagerly-loaded default level — still
-   *   climbing its ladder under the sweep-driven refinement loop — read as
-   *   complete. Anything with no stamp at all (never committed, or a
-   *   non-progressive loader) carries no signal and counts as complete.
-   * - No child that can affect the frame may be ``loading`` — an in-flight
-   *   commit can change what renders later. A hidden band preload is exempt
-   *   until it becomes the selected level.
-   * - No level dissolve may be in flight ({@link isAnimating}). The dissolve
-   *   is driven by WALL time, which an offline capture does not follow, so
-   *   filming one mid-way would make each exported frame depend on how long
-   *   the previous one took to render. Waiting turns it into a clean cut.
-   *
-   * An empty registry (and an entry-free scene) is quiescent: there is nothing
-   * to wait for.
-   *
-   * Called from the capture drain — once per drain rAF, so up to the drain's
-   * own frame cap (``LOD_SETTLE_MAX_FRAMES``, which is itself INCLUSIVE of the
-   * mandatory catch-up tick) plus one for the strategy's opening tri-state
-   * probe, per exported frame in the worst case; twice on a scene that is
-   * already settled (probe + one poll), and once on a latched frame (the
-   * re-arm probe alone). Either way NOT the rAF hot path, so unlike the rest of this file
-   * it does not avoid allocation: it walks the entry Map with ``for…of`` and
-   * resolves freshness through ``childFreshAndCount``, which returns a fresh
-   * object per entry. That cost is genuinely irrelevant here.
+   * CURRENT view is already at final committed quality, so an offline capture
+   * may grab the frame — see ``capture-quiescence.ts`` for the rules and why.
    */
   isCaptureQuiescent(): boolean {
-    if (this.isAnimating()) return false;
-    // Wired to SceneLoader.isLoadPassInProgress: any pass can still change a
-    // visible partition part before this fixed-pose capture frame is exported.
-    if (this.anyVisiblePartitionPart() && this.deps.isUpdateInProgress?.() === true) return false;
-    if (this.deps.hasArchiveFault?.()) return !this.anyChildLoading();
-    const version = this.deps.getViewVersion?.();
-    if (!this.partitionsCaptureQuiescent(version ?? null)) return false;
-    for (const entry of this.entries.values()) {
-      // Deliberately excluded: an off-screen group is held coarse on purpose
-      // and contributes no pixels to the frame being captured.
-      if (entry.offScreen === true) continue;
-      // Likewise excluded, and this one is load-bearing rather than merely an
-      // optimisation: a hidden group draws nothing AND cannot start a deferred
-      // load (``kickDeferredLoadIfVisible``), while the selector — whose
-      // frustum test is pure geometry — happily records a fine
-      // ``desiredChildIndex`` for it. Blocking on that combination never
-      // resolves.
-      if (!isEffectivelyVisible(entry.groupObject)) continue;
-
-      const active = entry.activeChildIndex;
-      const desired = entry.desiredChildIndex ?? active;
-      const displayed = entry.displayedChildIndex ?? active;
-
-      const aspiration = entry.children[active];
-      // Degenerate entry — skipped, not blocked on. ``children`` is empty when
-      // every level failed its ``getObjectByName`` attach at load (the loader
-      // warns and continues), and an aspiration index can otherwise point past
-      // the end. There is no child to become ready, so returning false here
-      // would make the predicate PERMANENTLY false: every capture frame would
-      // spend the full drain budget and the run would end claiming frames were
-      // filmed at a coarse LOD, on a scene that has no level to wait for.
-      if (!aspiration) continue;
-
-      if (displayed !== active) return false;
-      if (desired !== active) {
-        const target = entry.children[desired];
-        // A failed level never becomes ready, so waiting on it only times out.
-        // An out-of-range ``desired`` (no child there at all) is the same trap
-        // as the missing aspiration above and likewise must not block.
-        if (target && target.failed !== true) return false;
-      }
-
-      if (!isReady(aspiration)) return false;
-      // One fold for both group-aware answers: per-slice freshness AND — for a
-      // deferred GROUP child, which has no ``hasMoreLODs`` thunk — whether its
-      // subtree's committed additive ladders are complete.
-      const progress = this.childFreshAndCount(aspiration, version ?? null);
-      if (version != null && !progress.fresh) return false;
-      if (aspiration.hasMoreLODs?.() === true) return false;
-      if (!progress.subtreeLadderComplete) return false;
-
-      const preloadIdx = this.preloads.get(entry.path)?.idx;
-      for (let i = 0; i < entry.children.length; i++) {
-        // The neighbour is loaded only to make a future threshold crossing
-        // immediate; it cannot change this frame while it stays unselected.
-        if (i === preloadIdx && i !== active && i !== desired && !entry.children[i].object.visible)
-          continue;
-        if (entry.children[i].loading) return false;
-      }
-    }
-    return true;
-  }
-
-  /**
-   * Whether visible partition parts have no pending resync or incomplete commit.
-   * Unlike {@link hasVisiblePendingPartitionResync}, pending resyncs count here
-   * only while their specific parts contribute pixels to the capture frame.
-   */
-  private partitionsCaptureQuiescent(version: number | null): boolean {
-    if (!this.pendingPartitionResyncsQuiescent()) return false;
-    for (const entry of this.partitionEntries.values()) {
-      if (!this.partitionEntryCaptureQuiescent(entry, version)) return false;
-    }
-    return true;
-  }
-
-  private pendingPartitionResyncsQuiescent(): boolean {
-    if (!this.deps.requestReprocess) return true;
-    for (const [path, parts] of this.partitionResyncPending) {
-      const entry = this.partitionEntries.get(path);
-      if (!entry) {
-        continue;
-      }
-      if (this.pendingPartitionResyncContributes(entry, parts)) return false;
-    }
-    return true;
-  }
-
-  private pendingPartitionResyncContributes(
-    entry: PartitionGroupEntry,
-    parts: ReadonlySet<string>
-  ): boolean {
-    if (!isEffectivelyVisible(entry.groupObject)) return false;
-    if (parts.has(entry.path)) return this.partitionHasVisiblePart(entry);
-    return entry.children.some(
-      (child) => parts.has(child.path) && this.partitionChildIsVisible(child)
-    );
-  }
-
-  private partitionEntryCaptureQuiescent(
-    entry: PartitionGroupEntry,
-    version: number | null
-  ): boolean {
-    if (!isEffectivelyVisible(entry.groupObject)) return true;
-    for (const child of entry.children) {
-      if (!this.partitionChildCaptureQuiescent(child, version)) return false;
-    }
-    return true;
-  }
-
-  private partitionChildCaptureQuiescent(
-    child: PartitionGroupChild,
-    version: number | null
-  ): boolean {
-    if (!this.partitionChildIsVisible(child)) return true;
-    for (const object of child.objects) {
-      const progress = subtreeDisplayProgress(object as unknown as ProgressNode, version);
-      if (progress && (!progress.fresh || !progress.complete)) return false;
-    }
-    return true;
-  }
-
-  /** Whether any registered partition part contributes pixels to this frame. */
-  private anyVisiblePartitionPart(): boolean {
-    for (const entry of this.partitionEntries.values()) {
-      if (!isEffectivelyVisible(entry.groupObject)) continue;
-      if (this.partitionHasVisiblePart(entry)) return true;
-    }
-    return false;
-  }
-
-  private partitionHasVisiblePart(entry: PartitionGroupEntry): boolean {
-    return entry.children.some((child) => this.partitionChildIsVisible(child));
-  }
-
-  private partitionChildIsVisible(child: PartitionGroupChild): boolean {
-    return child.objects.some((object) => object.userData.partitionFrustumVisible !== false);
+    return isCaptureQuiescent(this.captureSource);
   }
 
   /**
@@ -2195,25 +1382,6 @@ export class LODGroupRegistry {
    */
   isAnyLevelLoading(): boolean {
     return this.anyChildLoading();
-  }
-
-  /**
-   * Whether a visible partition has a rising-edge resync waiting for the
-   * owning loader to become idle. Unlike
-   * {@link pendingPartitionResyncsQuiescent}, this deliberately mirrors
-   * {@link flushPartitionResyncs}'s wrapper-level visibility gate: every queued
-   * part under a visible wrapper is dispatched, even if that part re-exits
-   * before the flush. Pending work retained under a hidden wrapper is not
-   * actionable and must not keep wide settledness false indefinitely; neither
-   * can work when no resync dispatcher is wired.
-   */
-  hasVisiblePendingPartitionResync(): boolean {
-    if (!this.deps.requestReprocess) return false;
-    for (const path of this.partitionResyncPending.keys()) {
-      const entry = this.partitionEntries.get(path);
-      if (entry && isEffectivelyVisible(entry.groupObject)) return true;
-    }
-    return false;
   }
 
   private anyChildLoading(): boolean {
@@ -2231,7 +1399,7 @@ export class LODGroupRegistry {
    * GROUP placeholders remain addressable without duplicating scene identity
    * onto the THREE object.
    *
-   * Clears the failure cooldown (``failed``/``failedTick``) through the shared
+   * Clears the failure cooldown (``failed``/``failedAtMs``) through the shared
    * ``kickDeferredLoad`` gate, which owns setting ``loading`` before firing
    * ``ensureLoaded`` (the thunk itself never sets ``loading`` — only the
    * registry does; keep that invariant here).
@@ -2255,27 +1423,10 @@ export class LODGroupRegistry {
       for (const child of entry.children) {
         if (child.nodePath !== path || !child.ensureLoaded) continue;
         if (child.loading) return true; // retry already in flight
-        return this.kickDeferredLoad(child, true);
+        return this.kickDeferredLoad(child, true, true);
       }
     }
-    return this.rearmFailedPartitionPart(path);
-  }
-
-  /**
-   * Re-arm a deferred partition part whose activation failed (B4): the
-   * per-frame gate asks for a pass to activate it again while it is wanted.
-   */
-  private rearmFailedPartitionPart(path: string): boolean {
-    for (const [entryPath, entry] of this.partitionEntries) {
-      const cache = this.partitionCaches.get(entryPath);
-      const index = entry.children.findIndex((child) => child.path === path);
-      const lazy = index < 0 ? null : cache?.children[index]?.lazy;
-      if (!lazy?.failed) continue;
-      lazy.failed = false;
-      this.keepTicking();
-      return true;
-    }
-    return false;
+    return this.partitions.rearmFailedPartitionPart(path);
   }
 
   /**
@@ -2327,7 +1478,7 @@ export class LODGroupRegistry {
    * per-frame cost to the projection math alone.
    */
   evaluatePerFrame(): LODFrameChanges {
-    if (this.entries.size === 0 && this.partitionEntries.size === 0) return LOD_FRAME_UNCHANGED;
+    if (this.entries.size === 0 && this.partitions.size() === 0) return LOD_FRAME_UNCHANGED;
     const displayDims = this.deps.getDisplayDims();
     if (displayDims.length < 2) return this.skipFrame();
     // The frame's view snapshot: the camera matrices as this frame renders
@@ -2337,92 +1488,100 @@ export class LODGroupRegistry {
     const view = this.view();
     const viewport = view.viewportCss;
     if (viewport === null) return this.skipFrame();
-    const camera = view.camera;
-
-    this.tick++;
-    // ``view.projView`` (projection×view, default WebGL coordinate system, the
-    // NDC convention of the manual divide inside ``projectBoxDiagonalPx``) is
-    // shared three ways: its frustum gates off-screen groups and ranks
-    // eviction, and the per-group projections reuse the matrix.
-    FRUSTUM_MATRIX_SCRATCH.copy(view.projView);
-    FRUSTUM_SCRATCH.copy(view.frustum);
-    PARTITION_FRUSTUM_MATRIX_SCRATCH.copy(FRUSTUM_MATRIX_SCRATCH).premultiply(
-      PARTITION_FRUSTUM_SCALE
-    );
-    PARTITION_FRUSTUM_SCRATCH.setFromProjectionMatrix(PARTITION_FRUSTUM_MATRIX_SCRATCH);
-
-    // Track whether the (global) view version has settled, to gate deferred
-    // fine-level reloads (see ``evaluateEntry``). ``undefined`` view version
-    // (no wiring / tests) ⇒ treat as settled so the trigger is inert.
-    this.frame.nowMs = this.nowMs();
-    this.frame.playbackPeriodMs = this.deps.getPlaybackPeriodMs?.() ?? null;
-    const version = this.deps.getViewVersion?.();
-    if (version != null) this.settleTracker.observe(version, this.frame.nowMs);
-    const settled =
-      version == null || this.settleTracker.isSettled(this.frame.nowMs, FINE_RELOAD_SETTLE_MS);
+    const frame = this.beginFrame(view, viewport, displayDims);
 
     let levelChanged = false;
-    let cullChanged = false;
-    let anyLoading = false;
-    let hasVisiblePendingResync = false;
-    for (const entry of this.partitionEntries.values()) {
-      if (!isEffectivelyVisible(entry.groupObject)) continue;
-      RISING_PARTS_SCRATCH.clear();
-      const result = this.evaluatePartitionEntry(
-        entry,
-        displayDims,
-        PARTITION_FRUSTUM_SCRATCH,
-        RISING_PARTS_SCRATCH
-      );
-      if ((result & PARTITION_VISIBILITY_CHANGED) !== 0) {
-        cullChanged = true;
-        this.drawnStateChanged = true;
-      }
-      // Only parts with something stale to resync are recorded (a settled
-      // re-entry just re-shows), so an empty set means no resync at all — never
-      // an empty-path request, which the loader would read as a FULL re-sweep.
-      if (RISING_PARTS_SCRATCH.size > 0) {
-        this.notePartitionRisingEdge(entry.path, RISING_PARTS_SCRATCH);
-      }
-      if (this.partitionResyncPending.has(entry.path)) hasVisiblePendingResync = true;
-    }
-    RISING_PARTS_SCRATCH.clear();
-    if (this.partitionResyncPending.size > 0 && this.deps.isUpdateInProgress?.() !== true) {
-      this.flushPartitionResyncs();
-    }
-    if (hasVisiblePendingResync && this.partitionResyncPending.size > 0) {
-      this.keepTicking();
-    }
+    // Partitions first, so a lod_group nested in a part sees this frame's cull;
+    // the wrappers the LOD pass reveals are gated after it (``endFrame``).
+    let cullChanged = this.partitions.beginFrame(displayDims, FRUSTUM_MATRIX_SCRATCH, view.camera);
+    let loadsTickUntil = NO_TICK;
     for (const entry of this.entries.values()) {
-      if (this.evaluateEntry(entry, view, viewport, displayDims, FRUSTUM_SCRATCH, settled)) {
-        levelChanged = true;
-      }
+      if (this.evaluateEntry(entry, frame)) levelChanged = true;
       // A lazy level loading (initial or a settled fine reload) commits
       // asynchronously OUTSIDE the per-slice sweep. Keep the on-demand render
       // loop alive so the per-frame swap-up to the fresh level fires when the
       // load lands, rather than waiting for the next user interaction. Plain
       // loop (not ``.some``) to preserve this file's no-per-frame-allocation
       // hot-path invariant. The same walk times the loads that just landed.
-      if (this.observeLoads(entry)) anyLoading = true;
+      loadsTickUntil = Math.max(loadsTickUntil, this.observeLoads(entry));
     }
-    if (anyLoading) this.keepTicking();
-    // A dissolve is a function of TIME, so the loop must keep drawing until it
-    // lands even when nothing else moves (each step writes a new opacity,
-    // which marks the frame dirty through ``takeDrawnStateChanged``).
-    if (this.isAnimating()) this.keepTicking();
-    // Record whether fade management was ON this frame — the falling-edge
-    // detector behind ``evaluateEntry``'s one-shot residual-opacity restore
-    // (see ``fadeWasManaged``). Written AFTER the entry loop so every entry in
-    // one frame sees the same previous-frame value.
+    this.playback.endEntry();
+    if (this.partitions.endFrame(displayDims)) cullChanged = true;
+    this.endFrame(loadsTickUntil, view.camera, displayDims);
+    return lodFrameChanges(levelChanged, cullChanged);
+  }
+
+  /**
+   * Start an evaluated frame: advance the tick, take the frame's clock reading
+   * and playback period, and fill the shared {@link EntryFrame}.
+   *
+   * ``view.projView`` (projection×view, default WebGL coordinate system, the
+   * NDC convention of the manual divide inside ``projectBoxDiagonalPx``) is
+   * shared three ways: its frustum gates off-screen groups and ranks eviction,
+   * and the per-group projections reuse the matrix. The settle tracker records
+   * whether the (global) view version has settled, to gate deferred fine-level
+   * reloads; an ``undefined`` view version (no wiring / tests) ⇒ settled, so
+   * the trigger is inert.
+   */
+  private beginFrame(
+    view: ViewContext,
+    viewport: { width: number; height: number },
+    displayDims: readonly number[]
+  ): EntryFrame {
+    this.tick++;
+    FRUSTUM_MATRIX_SCRATCH.copy(view.projView);
+    FRUSTUM_SCRATCH.copy(view.frustum);
+    this.frame.nowMs = this.nowMs();
+    this.frame.playbackPeriodMs = this.deps.getPlaybackPeriodMs?.() ?? null;
+    this.playback.beginFrame(this.frame.playbackPeriodMs, this.entries.values());
+    const version = this.deps.getViewVersion?.();
+    if (version != null) this.settleTracker.observe(version, this.frame.nowMs);
+    const frame = this.entryFrame;
+    frame.view = view;
+    frame.viewport = viewport;
+    frame.displayDims = displayDims;
+    frame.frustum = FRUSTUM_SCRATCH;
+    frame.settled =
+      version == null ||
+      this.settleTracker.isSettled(this.frame.nowMs, config.lod.fineReloadSettleMs);
+    return frame;
+  }
+
+  /**
+   * End an evaluated frame.
+   *
+   * Liveness (``tick-demand.ts``): keep the on-demand loop ticking while any
+   * component still has work only a later frame can do — a load landing (the
+   * swap fires on that frame), a dissolve advancing (a function of TIME: each
+   * step writes a new opacity, which marks the frame dirty through
+   * ``takeDrawnStateChanged``), a partition resync waiting for the loader. A
+   * failed level's cooldown and an unanswered part activation request need no
+   * ticks: each wakes the loop once at its expiry (``retry-wakes.ts``).
+   *
+   * Record whether fade management was ON this frame — the falling-edge
+   * detector behind the one-shot residual-opacity restore (see
+   * ``fadeWasManaged``), written AFTER the entry loop so every entry in one
+   * frame sees the same previous-frame value. Then bound resident LOD geometry
+   * against the shared GPU-pool byte budget (one VRAM authority): retention
+   * keeps loaded levels resident so re-shows are free; this LRU-evicts only
+   * hidden levels when over budget — hidden-layer (undrawable) first, then
+   * off-screen / furthest-from-camera — so no per-swap release, hence no reload
+   * churn.
+   */
+  private endFrame(
+    loadsTickUntil: number,
+    camera: THREE.Camera,
+    displayDims: readonly number[]
+  ): void {
+    const tickUntil = Math.max(
+      loadsTickUntil,
+      this.dissolves.tickUntilMs(),
+      this.partitions.tickUntilMs()
+    );
+    if (tickUntil > this.frame.nowMs) this.keepTicking();
     this.fadeWasManaged =
       this.deps.getCrossFadeEnabled?.() === true || this.deps.getEnergyCompEnabled?.() === true;
-    // Bound resident LOD geometry against the shared GPU-pool byte budget
-    // (one VRAM authority). Retention keeps loaded levels resident so
-    // re-shows are free; this LRU-evicts only hidden levels when over budget —
-    // hidden-layer (undrawable) first, then off-screen / furthest-from-camera —
-    // so no per-swap release, hence no reload churn.
     this.enforceByteBudget(camera, FRUSTUM_SCRATCH, displayDims);
-    return lodFrameChanges(levelChanged, cullChanged);
   }
 
   /**
@@ -2432,8 +1591,7 @@ export class LODGroupRegistry {
    * (the next evaluated frame then draws each group's level alone).
    */
   private skipFrame(): LODFrameChanges {
-    for (const [path, fade] of this.fades) this.droppedFadeFrom.set(path, fade.fromIdx);
-    this.fades.clear();
+    this.dissolves.dropAll();
     return LOD_FRAME_UNCHANGED;
   }
 
@@ -2452,111 +1610,48 @@ export class LODGroupRegistry {
    * holds this true.
    */
   isAnimating(): boolean {
-    return this.fades.size > 0;
+    return this.dissolves.isAnimating();
   }
 
   /**
-   * Whether any child of ``entry`` is loading, and — for each child whose
-   * ``ensureLoaded`` has finished since it was fired — fold the measured
-   * load+commit time into its ``loadEwmaMs`` (a failure is not a timing).
+   * Until when ``entry``'s children need the loop ticking: while one is loading
+   * (its swap fires on the frame it lands). A child cooling down after a
+   * failure needs no ticks — one wake at the cooldown's end lets a parked
+   * camera retry it (#2944 A6) — and a child neither failed nor loading drops
+   * its retry backoff. For each child whose ``ensureLoaded`` has finished since
+   * it was fired, fold the measured load+commit time into its ``loadEwmaMs`` (a
+   * failure is not a timing).
    */
-  private observeLoads(entry: LODGroupEntry): boolean {
-    let anyLoading = false;
+  private observeLoads(entry: LODGroupEntry): number {
+    let until = NO_TICK;
     for (const c of entry.children) {
-      if (c.loading) anyLoading = true;
-      else this.foldLoadTime(c);
+      if (c.loading) until = UNTIL_RESOLVED;
+      else foldLoadTime(c, this.clock);
+      if (c.failed === true && c.failedAtMs !== undefined) {
+        const retryAtMs = c.failedAtMs + this.retryWakes.delay(c, config.lod.failedRetryMs);
+        if (retryAtMs > this.frame.nowMs) this.retryWakes.schedule(c, retryAtMs - this.frame.nowMs);
+      } else if (c.failed !== true && !c.loading) {
+        this.retryWakes.reset(c);
+      }
     }
-    return anyLoading;
+    return until;
+  }
+
+  /** Cancel the retry wakes of the lod_group registered at ``path``. */
+  private cancelEntryRetryWakes(path: string): void {
+    for (const child of this.entries.get(path)?.children ?? []) this.retryWakes.cancel(child);
   }
 
   /**
-   * Fold a finished (``loading`` cleared) timed load of ``c`` into
-   * ``loadEwmaMs``: start to its stamped end, on the registry clock that
-   * stamped the start. Without an end stamp (a thunk that never calls
-   * ``onLoadSettled``) the load is timed to now — the first moment it was
-   * observed finished.
-   */
-  private foldLoadTime(c: LODGroupChild): void {
-    if (c.loadStartMs === undefined || c.loading === true) return;
-    if (c.failed !== true) {
-      const ms = Math.max(0, (c.loadEndMs ?? this.nowMs()) - c.loadStartMs);
-      const samples = c.loadSamples ?? 0;
-      // The cold first sample seeds nothing: the second replaces it outright.
-      // A playback probe replaces it too: the level has not been reloaded for
-      // a second or more, so its average describes a cache state that is gone
-      // (cold loads the first loop paid, while the cache has warmed since).
-      c.loadEwmaMs =
-        c.loadEwmaMs === undefined || samples < 2 || c.playbackProbePending === true
-          ? ms
-          : c.loadEwmaMs + LOAD_EWMA_ALPHA * (ms - c.loadEwmaMs);
-      c.loadSamples = samples + 1;
-    }
-    c.playbackProbePending = undefined;
-    c.loadStartMs = undefined;
-    c.loadEndMs = undefined;
-  }
-
-  /**
-   * During playback, the finest level at or below ``desired`` that can reload
-   * within ``PLAYBACK_LOAD_BUDGET_FRACTION`` of the period: an eager level
-   * (no ``ensureLoaded`` — the per-slice sweep carries it), an unmeasured one,
-   * or one whose ``loadEwmaMs`` fits. Once per second, the next finer capped
-   * level is probed for a warm-load sample. ``desired`` is unchanged when not
-   * playing, locked, or forced finest.
+   * During playback, the finest level at or below ``desired`` whose reload fits
+   * the period (see ``playback-aspiration.ts``). ``desired`` is unchanged when
+   * not playing, locked, or forced finest.
    */
   private playbackAspiration(entry: LODGroupEntry, desired: number): number {
-    const period = this.frame.playbackPeriodMs;
-    if (period === null || entry.selectorMode !== 'auto') return desired;
+    this.playback.endEntry();
+    if (entry.selectorMode !== 'auto') return desired;
     if (this.deps.getForceFinestLOD?.() === true) return desired;
-    const affordable = this.affordablePlaybackLevel(entry, desired, period);
-    return this.probedPlaybackLevel(entry, desired, affordable);
-  }
-
-  /**
-   * Finest level whose measured reload fits this playback period. A level
-   * with only its cold first load measured (``loadSamples`` < 2) counts as
-   * unmeasured, so one cold sample cannot demote it; a level whose warm
-   * reloads are too slow is demoted after its second load. A level finer than
-   * the aspiration must fit ``PLAYBACK_LOAD_BUDGET_FRACTION`` of the period to
-   * be admitted; the aspiration and the levels below it only need
-   * ``PLAYBACK_KEEP_BUDGET_FRACTION`` (hysteresis).
-   */
-  private affordablePlaybackLevel(entry: LODGroupEntry, desired: number, periodMs: number): number {
-    for (let i = desired; i > 0; i--) {
-      const c = entry.children[i];
-      const ewma = (c.loadSamples ?? 0) >= 2 ? c.loadEwmaMs : undefined;
-      const fraction =
-        i <= entry.activeChildIndex && c.playbackProbeAdmissionPending !== true
-          ? PLAYBACK_KEEP_BUDGET_FRACTION
-          : PLAYBACK_LOAD_BUDGET_FRACTION;
-      if (!c.ensureLoaded || ewma === undefined || ewma <= fraction * periodMs) {
-        if (ewma !== undefined) c.playbackProbeAdmissionPending = undefined;
-        return i;
-      }
-    }
-    return 0;
-  }
-
-  /**
-   * Periodically re-measure the next finer capped level after a cold load. The
-   * probe's reload replaces the level's average (``playbackProbePending``): the
-   * samples it holds are at least a probe interval old.
-   */
-  private probedPlaybackLevel(entry: LODGroupEntry, desired: number, affordable: number): number {
-    const next = entry.children[affordable + 1];
-    if (affordable < desired && next?.loadEwmaMs !== undefined) {
-      const now = this.frame.nowMs;
-      if (
-        now - (next.lastPlaybackProbeMs ?? Number.NEGATIVE_INFINITY) >=
-        PLAYBACK_PROBE_INTERVAL_MS
-      ) {
-        next.lastPlaybackProbeMs = now;
-        next.playbackProbePending = true;
-        next.playbackProbeAdmissionPending = true;
-        return affordable + 1;
-      }
-    }
-    return affordable;
+    return this.playback.aspire(entry, desired, this.frame.playbackPeriodMs, this.frame.nowMs);
   }
 
   /** Keep the loop ticking (see {@link LODGroupRegistryDeps.requestTick}). */
@@ -2578,287 +1673,42 @@ export class LODGroupRegistry {
   }
 
   /**
-   * Rising edge (rare): remember WHICH parts of ``wrapperPath`` came back so
-   * the resync can be targeted at their loaders instead of re-sweeping the
-   * whole scene. Coalesces with parts already pending for the same wrapper.
+   * One group's frame, in stages: pick the level the selector wants and
+   * advance the aspiration toward it (``selectAspiration``), resolve what can
+   * be DISPLAYED (``resolveDisplay``), advance the dissolve, drive the
+   * aspiration's reload / refinement and the band preload, then apply
+   * visibility and opacity (the single owner of ``object.visible``). Returns
+   * ``true`` if this entry's displayed child changed.
    */
-  private notePartitionRisingEdge(wrapperPath: string, parts: ReadonlySet<string>): void {
-    let pending = this.partitionResyncPending.get(wrapperPath);
-    if (!pending) {
-      pending = new Set<string>();
-      this.partitionResyncPending.set(wrapperPath, pending);
-    }
-    for (const partPath of parts) pending.add(partPath);
-  }
-
-  /**
-   * Hand every pending rising edge whose wrapper is visible to the loader as
-   * ONE ``requestReprocess(paths)`` call; hidden wrappers stay pending, dropped
-   * wrappers are forgotten. A set that contains its own wrapper path (a
-   * pathless part) collapses to the wrapper path alone — it already covers
-   * every part.
-   */
-  private flushPartitionResyncs(): void {
-    const requestReprocess = this.deps.requestReprocess;
-    if (!requestReprocess) return;
-    let resyncPaths: string[] | null = null;
-    for (const [path, parts] of this.partitionResyncPending) {
-      const entry = this.partitionEntries.get(path);
-      if (!entry) {
-        this.partitionResyncPending.delete(path);
-        continue;
-      }
-      if (!isEffectivelyVisible(entry.groupObject)) continue;
-      this.partitionResyncPending.delete(path);
-      resyncPaths ??= [];
-      if (parts.has(path)) resyncPaths.push(path);
-      else resyncPaths.push(...parts);
-    }
-    if (resyncPaths) requestReprocess(resyncPaths);
-  }
-
-  /**
-   * Whether a part that just re-entered the frustum has nothing to resync
-   * (B9c): every tracked leaf under it already holds a commit for the CURRENT
-   * view version with a complete ladder, so the view did not move while it was
-   * culled and a targeted re-sweep would only re-derive what is on screen.
-   * Unknown (no view-version wiring, or a leaf never committed) is NOT settled,
-   * so such a part resyncs exactly as before.
-   */
-  private partitionPartSettled(child: PartitionGroupChild): boolean {
+  private evaluateEntry(entry: LODGroupEntry, frame: EntryFrame): boolean {
+    const desired = this.selectAspiration(entry, frame);
+    if (desired === null) return false;
     const version = this.deps.getViewVersion?.();
-    if (version == null) return false;
-    return child.objects.every((object) =>
-      subtreeSweepSettled(object as unknown as SweepNode, version)
-    );
+    const displayIdx = this.resolveDisplay(entry, version);
+    this.dissolveStep(entry, displayIdx, ASPIRATION.fresh, version ?? null);
+    if (ASPIRATION.ready) {
+      const aspiration = entry.children[entry.activeChildIndex];
+      this.refreshAspiration(entry, aspiration, ASPIRATION.fresh, frame.settled);
+    }
+    this.preloadNeighbour(entry, desired, PICK.preloadMetric, version ?? null, frame.settled);
+    const changed = this.applyVisibility(entry, displayIdx);
+    this.recordDisplay(entry, displayIdx);
+    return changed;
   }
 
   /**
-   * Frustum- and slice-gate one partition's parts. Returns the ``PARTITION_*``
-   * bit flags; parts that re-entered the frustum this frame are added to
-   * ``risingParts`` by node path (``child.path``), or as the WRAPPER path when a
-   * part has none so the caller resyncs the whole partition rather than missing
-   * it — unless the part is already settled for the current view
-   * ({@link partitionPartSettled}). A deferred part that is in the frustum and
-   * the committed slice is added too: the resync pass is what activates it.
+   * Pick the desired level (``pickDesired``), cap it during playback, record
+   * it, and advance the aspiration toward it. Returns the desired index, or
+   * ``null`` when the entry cannot be evaluated this frame (its dissolve, if
+   * any, is dropped where that applies).
    */
-  private evaluatePartitionEntry(
-    entry: PartitionGroupEntry,
-    displayDims: readonly number[],
-    frustum: THREE.Frustum,
-    risingParts: Set<string>
-  ): number {
-    const cache = this.partitionCaches.get(entry.path);
-    if (!cache) return 0;
-    const committed = this.deps.getCommittedViewState?.();
-    let result = 0;
-    for (let index = 0; index < entry.children.length; index++) {
-      const child = entry.children[index];
-      const childCache = cache.children[index];
-      childCache.inFrustum = this.partitionPartInFrustum(child, childCache, displayDims, frustum);
-      const inSlice = partitionChildInSlice(child, committed);
-      const flags = updatePartitionObjectVisibility(child.objects, childCache.inFrustum, inSlice);
-      result |= flags;
-      if (childCache.lazy) {
-        const wanted = childCache.inFrustum && inSlice;
-        this.requestLazyActivation(risingParts, entry.path, child, childCache.lazy, wanted);
-      } else if ((flags & PARTITION_BECAME_VISIBLE) !== 0 && !this.partitionPartSettled(child)) {
-        noteRisingPart(risingParts, child.path, entry.path);
-      }
-    }
-    return result;
-  }
-
-  /** Frustum test of one part: its stored bounds united with its rendered footprint. */
-  private partitionPartInFrustum(
-    child: PartitionGroupChild,
-    childCache: PartitionChildCache,
-    displayDims: readonly number[],
-    frustum: THREE.Frustum
-  ): boolean {
-    const worldBox = computeEntryWorldBox(
-      childCache.source,
-      displayDims,
-      childCache.localBoxScratch,
-      this.matrixScratch,
-      childCache.worldBoxOptions
-    );
-    if (!worldBox) return true;
-    WORLD_BOX3_SCRATCH.min.set(worldBox.min.x, worldBox.min.y, worldBox.min.z);
-    WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
-    for (const object of child.objects) object.updateWorldMatrix(false, false);
-    if (
-      childCache.footprintDirty ||
-      partitionFootprintMatricesDiffer(child.objects, childCache.footprintMatrixWorld)
-    ) {
-      capturePartitionFootprint(
-        child.objects,
-        childCache.footprintBox,
-        childCache.footprintMatrixWorld
-      );
-      childCache.footprintDirty = false;
-    }
-    if (!childCache.footprintBox.isEmpty()) {
-      WORLD_BOX3_SCRATCH.union(childCache.footprintBox);
-    }
-    return frustum.intersectsBox(WORLD_BOX3_SCRATCH);
-  }
-
-  /**
-   * Ask for a pass that activates a deferred part — once, while it is `wanted`
-   * (in the frustum and the committed slice) and no activation is requested or
-   * running. The request rides the rising-edge resync: the targeted pass it
-   * triggers calls {@link activatePartitionParts} for the part.
-   */
-  private requestLazyActivation(
-    risingParts: Set<string>,
-    entryPath: string,
-    child: PartitionGroupChild,
-    lazy: LazyPartState,
-    wanted: boolean
-  ): void {
-    if (!wanted || lazy.requested || lazy.running || lazy.failed) return;
-    lazy.requested = true;
-    noteRisingPart(risingParts, child.path, entryPath);
-  }
-
-  /** Returns ``true`` if this entry's displayed child changed. */
-  private evaluateEntry(
-    entry: LODGroupEntry,
-    view: ViewContext,
-    viewport: { width: number; height: number },
-    displayDims: readonly number[],
-    frustum: THREE.Frustum,
-    settled: boolean
-  ): boolean {
-    // Pick the desired child index.
-    let desired: number;
-    // The dimensionless coverage metric for this frame (projected diagonal ÷
-    // FILL_FACTOR·fittedAxisPx, or the screen-area fraction). Only computed
-    // on the auto path.
-    let coverageMetric: number;
-    let usedFootprintSelection = false;
-    // The metric the threshold pick used, for the band preload; stays null on
-    // every other path (lock, off-screen, force-finest, footprint pick).
-    let preloadMetric: number | null = null;
-    if (entry.selectorMode !== 'auto') {
-      // Explicit lock bypasses the off-screen gate: a user who pins a level
-      // keeps it whether or not the group is on screen.
-      desired = entry.selectorMode.lockLevel;
-      entry.offScreen = false;
-    } else {
-      const cache = this.caches.get(entry.path);
-      if (!cache) return false; // shouldn't happen — register() populates this.
-
-      const worldBox = this.computeWorldBox(entry, displayDims);
-      if (!worldBox) return this.dropFade(entry);
-
-      // Off-screen gate: if the group's world bounds are entirely outside the
-      // camera frustum, hold it at the coarsest *ready* level instead of
-      // selecting — and lazily loading — a fine level the renderer will
-      // frustum-cull anyway. This turns frustum culling into a LOD/loading
-      // input, not just a draw-time skip. ``coarsestReadyIndex`` never targets
-      // a not-ready lazy child, so no load is kicked while off-screen, and the
-      // outgoing fine levels fall out of the visible tally and become eviction
-      // candidates. On re-entry, retention usually makes the upgrade a free
-      // visibility toggle rather than a reload.
-      WORLD_BOX3_SCRATCH.min.set(worldBox.min.x, worldBox.min.y, worldBox.min.z);
-      WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
-      const forceFinest = this.deps.getForceFinestLOD?.() === true;
-      if (!forceFinest && !frustum.intersectsBox(WORLD_BOX3_SCRATCH)) {
-        desired = this.coarsestReadyIndex(entry);
-        entry.offScreen = true;
-      } else {
-        if (forceFinest) {
-          coverageMetric = Infinity;
-        } else {
-          // The screen metrics project the group's LOCAL box through
-          // projView × matrixWorld, i.e. the 8 corners of the box as oriented
-          // on screen. Projecting the corners of its world AABB instead (the
-          // frustum gate's box) inflated a rotated group twice and picked too
-          // fine a level. computeWorldBox refreshed matrixWorld above.
-          const rawLocal = cache.localBoxScratch;
-          const metricLocal =
-            cache.hasLodBounds && this.computeWorldBox(entry, displayDims, true)
-              ? cache.metricLocalBoxScratch
-              : rawLocal;
-          LOCAL_PROJ_SCRATCH.multiplyMatrices(
-            FRUSTUM_MATRIX_SCRATCH,
-            entry.groupObject.matrixWorld
-          );
-          if (entry.selector === 'screen-area') {
-            // Screen-area selector: the metric IS the fraction of the viewport
-            // area the group's projected inscribed ellipsoid (sized by its
-            // view-axis half-chord) covers, in rect units (orientation-stable,
-            // viewport-size independent by construction — see projectBoxAreaFraction). The
-            // thresholds are literal area fractions ([0, …, 1/4, 1/2] whole-object;
-            // a partition tile anchors at 1.0), so no FILL_FACTOR normalisation.
-            // Camera inside the box → +Infinity → finest, same as the diagonal path.
-            coverageMetric = projectBoxAreaFraction(metricLocal, view.camera, LOCAL_PROJ_SCRATCH);
-            if (cache.hasLodBounds) {
-              // The thin-rectangle ramp is not monotone under box containment:
-              // trimming the thin axis can increase the robust metric. Robust
-              // bounds may only keep or reduce the raw-bounds selection.
-              coverageMetric = Math.min(
-                coverageMetric,
-                projectBoxAreaFraction(rawLocal, view.camera, LOCAL_PROJ_SCRATCH)
-              );
-            }
-          } else {
-            // Legacy 'coverage' selector (the default for older stores).
-            const diagonalPx = projectBoxDiagonalPx(
-              metricLocal,
-              view.camera,
-              viewport,
-              LOCAL_PROJ_SCRATCH
-            );
-            // Normalise the projected pixel diagonal to a dimensionless **coverage
-            // metric** (1.0 == the projected diagonal has reached FILL_FACTOR of the
-            // FITTED AXIS) so the viewport-relative coverage_fraction thresholds
-            // anchor the finest at half the fitted screen axis — any normal
-            // full-frame view — on any monitor OR aspect ratio (see the
-            // ``FILL_FACTOR`` doc for why this denominator, unlike the viewport
-            // diagonal it replaces, stays invariant across aspect ratio).
-            // diagonalPx == +Infinity (camera inside the box) → Infinity →
-            // finest, unchanged. fittedAxisPx is > 0 here (evaluatePerFrame guards
-            // width/height == 0).
-            //
-            // fittedAxisPx mirrors calculateCameraDistance's own fit selection
-            // (bounds-math.ts): that function fits the VERTICAL fov for aspect >= 1
-            // (distance independent of width) and the HORIZONTAL fov for aspect < 1
-            // (distance ∝ 1/aspect) — i.e. ``min(width, height)`` in pixel space is
-            // exactly the extent the opening framing fits, on both sides of aspect 1.
-            const fittedAxisPx = Math.min(viewport.width, viewport.height);
-            coverageMetric = diagonalPx / (FILL_FACTOR * fittedAxisPx);
-          }
-        }
-        const lodBias = resolveLodBias(this.deps.getLodBias?.());
-        coverageMetric *= entry.selector === 'screen-area' ? lodBias : Math.sqrt(lodBias);
-        const footprintDesired =
-          forceFinest || entry.selector !== 'screen-area'
-            ? null
-            : pickStampedFootprintChild(entry, cache, worldBox, view, {
-                viewportHeight: viewport.height,
-                lodBias,
-                displayDims,
-              });
-        if (footprintDesired == null) {
-          desired = pickChildWithHysteresis(
-            cache.thresholds,
-            entry.activeChildIndex,
-            coverageMetric
-          );
-          if (!forceFinest) preloadMetric = coverageMetric;
-        } else {
-          desired = footprintDesired;
-          usedFootprintSelection = true;
-        }
-        entry.offScreen = false;
-      }
-    }
+  private selectAspiration(entry: LODGroupEntry, frame: EntryFrame): number | null {
+    const pick = this.pickDesired(entry, frame);
+    if (pick === PICK_SKIP) return null; // no registration cache — shouldn't happen.
+    if (pick === PICK_DROP) return this.dropFadeNull(entry);
 
     // During playback, no finer than what can reload within the period.
-    desired = this.playbackAspiration(entry, desired);
+    const desired = this.playbackAspiration(entry, PICK.desired);
 
     // Record what the selector WANTS this frame, before any of the ready /
     // freshness gates below can veto it. Read by ``isCaptureQuiescent`` only —
@@ -2866,23 +1716,7 @@ export class LODGroupRegistry {
     // cannot answer the same question.
     entry.desiredChildIndex = desired;
 
-    // ── Advance the aspiration (``activeChildIndex``) toward ``desired`` ──
-    // The aspiration is the hysteresis anchor and only moves onto a READY level;
-    // a not-ready desired kicks its deferred loader and we keep aspiring to the
-    // current level until it commits. Visibility is NOT touched here — the
-    // display-resolution pass below is the single owner of ``object.visible``.
-    if (desired !== entry.activeChildIndex) {
-      const target = entry.children[desired];
-      // `undefined` when a lock index outlives its children (an empty entry is
-      // registered on purpose and `setSelectorMode` skips clamping for it):
-      // nothing to aspire to, nothing to kick — never throw per frame.
-      if (!target) return this.dropFade(entry);
-      if (isReady(target)) {
-        entry.activeChildIndex = desired;
-      } else {
-        this.maybeKickLoad(entry, target);
-      }
-    }
+    if (!this.advanceAspiration(entry, desired)) return this.dropFadeNull(entry);
     // Self-heal a NOT-ready aspiration (eager default failed to attach, or a
     // fallback pinned a not-ready lazy level) so the group can never be stuck.
     // A ready-but-STALE aspiration is deliberately NOT kicked here:
@@ -2892,275 +1726,529 @@ export class LODGroupRegistry {
     // — we just wait for that commit to re-stamp it fresh.
     const aspiration = entry.children[entry.activeChildIndex];
     if (aspiration && !isReady(aspiration)) this.maybeKickLoad(entry, aspiration);
+    return desired;
+  }
 
-    // ── Slice-aware DISPLAY resolution ──
-    // Show the aspiration when its committed geometry is fresh for the current
-    // view version; while it is stale (a time/displayDims scrub reloaded it in
-    // place without flipping ``ready``) show the coarsest FRESH level so the new
-    // slice appears immediately at low detail, then swap up once the aspiration
-    // recommits. ``getViewVersion`` undefined ⇒ freshness untracked ⇒
-    // display == aspiration (identical to the pre-feature behaviour).
-    const version = this.deps.getViewVersion?.();
-    const aspirationReady = !!aspiration && isReady(aspiration);
-    // Freshness resolves a GROUP-typed aspiration (deferred kind=partition /
-    // nested lod subtree — the overview recipe) through the subtree aggregate,
-    // not the leaf-only stamp: a bare THREE.Group has no leaf nodeType, so
-    // ``isFresh`` would call it unconditionally fresh and a re-slice would show
-    // the stale subtree with no coarse fallback. Leaf aspirations are unchanged.
-    const aspirationFresh =
-      version == null || (!!aspiration && this.childFreshAndCount(aspiration, version).fresh);
-    // Preserve this across the fresh-aspiration branch below, which re-arms
-    // the hold state before the never-downgrade gate evaluates the handoff.
-    const staleHoldEnded = aspirationReady && aspirationFresh && entry.staleHoldSinceMs != null;
-    let displayIdx: number;
-    if (aspirationReady && aspirationFresh) {
-      // Aspiration is committed and fresh (or freshness untracked) → show it.
+  /** {@link dropFade}, for a stage that answers ``null`` (no evaluation). */
+  private dropFadeNull(entry: LODGroupEntry): null {
+    this.dropFade(entry);
+    return null;
+  }
+
+  /**
+   * What the group displays this frame: the slice-aware fallback / stale hold,
+   * then the fresh-but-empty guard, then the never-downgrade gate. Fills
+   * ``ASPIRATION`` for the later stages.
+   */
+  private resolveDisplay(entry: LODGroupEntry, version: number | undefined): number {
+    const { ready, fresh } = this.aspirationState(entry, version);
+    // Preserve this across the fresh-aspiration branch of ``slicedDisplayIndex``,
+    // which re-arms the hold state before the never-downgrade gate evaluates the
+    // handoff.
+    const staleHoldEnded = ready && fresh && entry.staleHoldSinceMs != null;
+    let displayIdx = this.slicedDisplayIndex(entry, ready && fresh, version);
+    if (version != null && displayIdx >= 0) {
+      displayIdx = this.nonEmptyDisplayIndex(entry, displayIdx, version);
+    }
+    return this.neverDowngradeIndex(entry, displayIdx, staleHoldEnded, version);
+  }
+
+  /**
+   * Whether the aspiration is ready and fresh for ``version`` (always fresh
+   * when freshness is untracked), into ``ASPIRATION``. Freshness resolves a
+   * GROUP-typed aspiration (deferred kind=partition / nested lod subtree — the
+   * overview recipe) through the subtree aggregate, not the leaf-only stamp: a
+   * bare THREE.Group has no leaf nodeType, so ``isFresh`` would call it
+   * unconditionally fresh and a re-slice would show the stale subtree with no
+   * coarse fallback. Leaf aspirations are unchanged.
+   */
+  private aspirationState(entry: LODGroupEntry, version: number | undefined): typeof ASPIRATION {
+    const aspiration = entry.children[entry.activeChildIndex];
+    ASPIRATION.ready = !!aspiration && isReady(aspiration);
+    ASPIRATION.fresh =
+      version == null || (!!aspiration && childFreshAndCount(aspiration, version).fresh);
+    return ASPIRATION;
+  }
+
+  /**
+   * Pick the desired child index into ``PICK`` (``desired``, the band-preload
+   * metric, whether the footprint pick decided). An explicit lock bypasses the
+   * off-screen gate: a user who pins a level keeps it whether or not the group
+   * is on screen.
+   *
+   * Off-screen gate: if the group's world bounds are entirely outside the
+   * camera frustum, hold it at the coarsest *ready* level instead of selecting
+   * — and lazily loading — a fine level the renderer will frustum-cull anyway.
+   * This turns frustum culling into a LOD/loading input, not just a draw-time
+   * skip. ``coarsestReadyIndex`` never targets a not-ready lazy child, so no
+   * load is kicked while off-screen, and the outgoing fine levels fall out of
+   * the visible tally and become eviction candidates. On re-entry, retention
+   * usually makes the upgrade a free visibility toggle rather than a reload.
+   *
+   * @returns ``PICK_OK``; ``PICK_SKIP`` when the entry has no registration
+   *   cache; ``PICK_DROP`` when its bounds fold to no world box.
+   */
+  private pickDesired(entry: LODGroupEntry, frame: EntryFrame): number {
+    PICK.preloadMetric = null;
+    PICK.usedFootprint = false;
+    if (entry.selectorMode !== 'auto') {
+      PICK.desired = entry.selectorMode.lockLevel;
+      entry.offScreen = false;
+      return PICK_OK;
+    }
+    const cache = this.caches.get(entry.path);
+    if (!cache) return PICK_SKIP;
+    const worldBox = this.computeWorldBox(entry, frame.displayDims);
+    if (!worldBox) return PICK_DROP;
+    WORLD_BOX3_SCRATCH.min.set(worldBox.min.x, worldBox.min.y, worldBox.min.z);
+    WORLD_BOX3_SCRATCH.max.set(worldBox.max.x, worldBox.max.y, worldBox.max.z);
+    const forceFinest = this.deps.getForceFinestLOD?.() === true;
+    if (!forceFinest && !frame.frustum.intersectsBox(WORLD_BOX3_SCRATCH)) {
+      PICK.desired = this.coarsestReadyIndex(entry);
+      entry.offScreen = true;
+      return PICK_OK;
+    }
+    this.pickOnScreen(entry, cache, worldBox, frame, forceFinest);
+    entry.offScreen = false;
+    return PICK_OK;
+  }
+
+  /**
+   * The on-screen pick: the threshold pick on the (biased) coverage metric, or
+   * — for a ``screen-area`` group whose levels carry complete footprint stamps —
+   * the projected-footprint pick, which then decides alone (and leaves the band
+   * preload and the dissolve out, see ``dissolveStep``). Not when the metric
+   * saturated (the camera is inside the box, or ``forceFinest``): the footprint
+   * is sized at the box-centre depth and says nothing about the splats at the
+   * eye, so the finest level stands.
+   */
+  private pickOnScreen(
+    entry: LODGroupEntry,
+    cache: LODGroupEntryCache,
+    worldBox: BoundingBox,
+    frame: EntryFrame,
+    forceFinest: boolean
+  ): void {
+    let coverageMetric = forceFinest ? Infinity : this.coverageMetric(entry, cache, frame);
+    const lodBias = resolveLodBias(this.deps.getLodBias?.());
+    coverageMetric *= entry.selector === 'screen-area' ? lodBias : Math.sqrt(lodBias);
+    const footprintDesired =
+      entry.selector !== 'screen-area' || !Number.isFinite(coverageMetric)
+        ? null
+        : pickStampedFootprintChild(entry, cache, worldBox, frame.view, {
+            viewportHeight: frame.viewport.height,
+            lodBias,
+            displayDims: frame.displayDims,
+          });
+    if (footprintDesired == null) {
+      PICK.desired = pickChildWithHysteresis(
+        cache.thresholds,
+        entry.activeChildIndex,
+        coverageMetric
+      );
+      if (!forceFinest) PICK.preloadMetric = coverageMetric;
+    } else {
+      PICK.desired = footprintDesired;
+      PICK.usedFootprint = true;
+    }
+  }
+
+  /**
+   * The dimensionless coverage metric for this frame, in the units the
+   * entry's ``selector`` names: the screen-area fraction, or the projected
+   * diagonal ÷ ``FILL_FACTOR``·fittedAxisPx (legacy ``coverage``).
+   *
+   * The screen metrics project the group's LOCAL box through
+   * projView × matrixWorld, i.e. the 8 corners of the box as oriented on
+   * screen. Projecting the corners of its world AABB instead (the frustum
+   * gate's box) inflated a rotated group twice and picked too fine a level.
+   * ``computeWorldBox`` refreshed matrixWorld in ``pickDesired``.
+   */
+  private coverageMetric(
+    entry: LODGroupEntry,
+    cache: LODGroupEntryCache,
+    frame: EntryFrame
+  ): number {
+    const rawLocal = cache.localBoxScratch;
+    const metricLocal =
+      cache.hasLodBounds && this.computeWorldBox(entry, frame.displayDims, true)
+        ? cache.metricLocalBoxScratch
+        : rawLocal;
+    LOCAL_PROJ_SCRATCH.multiplyMatrices(FRUSTUM_MATRIX_SCRATCH, entry.groupObject.matrixWorld);
+    const camera = frame.view.camera;
+    if (entry.selector !== 'screen-area') {
+      // Legacy 'coverage' selector (the default for older stores).
+      const diagonalPx = projectBoxDiagonalPx(
+        metricLocal,
+        camera,
+        frame.viewport,
+        LOCAL_PROJ_SCRATCH
+      );
+      // Normalise the projected pixel diagonal to a dimensionless **coverage
+      // metric** (1.0 == the projected diagonal has reached FILL_FACTOR of the
+      // FITTED AXIS) so the viewport-relative coverage_fraction thresholds
+      // anchor the finest at half the fitted screen axis — any normal
+      // full-frame view — on any monitor OR aspect ratio (see the
+      // ``FILL_FACTOR`` doc for why this denominator, unlike the viewport
+      // diagonal it replaces, stays invariant across aspect ratio).
+      // diagonalPx == +Infinity (camera inside the box) → Infinity →
+      // finest, unchanged. fittedAxisPx is > 0 here (evaluatePerFrame guards
+      // width/height == 0).
+      //
+      // fittedAxisPx mirrors calculateCameraDistance's own fit selection
+      // (bounds-math.ts): that function fits the VERTICAL fov for aspect >= 1
+      // (distance independent of width) and the HORIZONTAL fov for aspect < 1
+      // (distance ∝ 1/aspect) — i.e. ``min(width, height)`` in pixel space is
+      // exactly the extent the opening framing fits, on both sides of aspect 1.
+      const fittedAxisPx = Math.min(frame.viewport.width, frame.viewport.height);
+      return diagonalPx / (FILL_FACTOR * fittedAxisPx);
+    }
+    // Screen-area selector: the metric IS the fraction of the viewport area the
+    // group's projected inscribed ellipsoid (sized by its view-axis half-chord)
+    // covers, in rect units (orientation-stable, viewport-size independent by
+    // construction — see projectBoxAreaFraction). The thresholds are literal
+    // area fractions ([0, …, 1/4, 1/2] whole-object; a partition tile anchors
+    // at 1.0), so no FILL_FACTOR normalisation. Camera inside the box →
+    // +Infinity → finest, same as the diagonal path.
+    const metric = projectBoxAreaFraction(metricLocal, camera, LOCAL_PROJ_SCRATCH);
+    // The thin-rectangle ramp is not monotone under box containment: trimming
+    // the thin axis can increase the robust metric. Robust bounds may only keep
+    // or reduce the raw-bounds selection.
+    return cache.hasLodBounds
+      ? Math.min(metric, projectBoxAreaFraction(rawLocal, camera, LOCAL_PROJ_SCRATCH))
+      : metric;
+  }
+
+  /**
+   * Advance the aspiration (``activeChildIndex``) toward ``desired``. The
+   * aspiration is the hysteresis anchor and only moves onto a READY level; a
+   * not-ready desired kicks its deferred loader and we keep aspiring to the
+   * current level until it commits. Visibility is NOT touched here — the
+   * display-resolution pass is the single owner of ``object.visible``.
+   *
+   * @returns ``false`` when a lock index outlives its children (an empty entry
+   *   is registered on purpose and ``setSelectorMode`` skips clamping for it):
+   *   nothing to aspire to, nothing to kick — never throw per frame.
+   */
+  private advanceAspiration(entry: LODGroupEntry, desired: number): boolean {
+    if (desired === entry.activeChildIndex) return true;
+    const target = entry.children[desired];
+    if (!target) return false;
+    if (isReady(target)) entry.activeChildIndex = desired;
+    else this.maybeKickLoad(entry, target);
+    return true;
+  }
+
+  /**
+   * **Slice-aware display resolution.** Show the aspiration when its committed
+   * geometry is fresh for the current view version (``showable``); while it is
+   * stale (a time/displayDims scrub reloaded it in place without flipping
+   * ``ready``) show the coarsest FRESH level so the new slice appears
+   * immediately at low detail — falling back to the coarsest ready level if
+   * none is fresh yet, so it never goes blank — unless what is already on
+   * screen is far better and the aspiration is about to land
+   * (``staleHoldDisplayIndex``). ``getViewVersion`` undefined ⇒ freshness
+   * untracked: a not-ready aspiration (a lazy level still loading) keeps the
+   * previously-displayed level if it is still ready, otherwise nothing until
+   * the load commits — the legacy behaviour.
+   */
+  private slicedDisplayIndex(
+    entry: LODGroupEntry,
+    showable: boolean,
+    version: number | undefined
+  ): number {
+    if (showable) {
       // The wait is over, so a spent stale-hold budget is re-armed for the
       // NEXT slice change (see ``staleHoldExhausted``).
       entry.staleHoldSinceMs = undefined;
       entry.staleHoldExhausted = false;
-      displayIdx = entry.activeChildIndex;
-    } else if (version != null) {
-      // Stale or not-yet-ready aspiration, freshness tracked → display the
-      // coarsest fresh level (the slice-aware fallback; falls back to the
-      // coarsest ready level if none is fresh yet, so it never goes blank)...
+      return entry.activeChildIndex;
+    }
+    if (version != null) {
       const fallbackIdx = this.coarsestFreshOrReadyIndex(entry, version);
-      // ...unless what is already on screen is far better and the aspiration
-      // is about to land, in which case hold it for a few frames instead of
-      // flashing down and back up (``staleHoldDisplayIndex``).
-      const held = this.staleHoldDisplayIndex(entry, fallbackIdx, version);
-      displayIdx = held ?? fallbackIdx;
-    } else {
-      // Freshness untracked and the aspiration isn't ready (a lazy level still
-      // loading): keep the previously-displayed level if it's still ready,
-      // otherwise show nothing until the load commits — the legacy behaviour.
-      const prev = entry.displayedChildIndex ?? -1;
-      displayIdx = prev >= 0 && isReady(entry.children[prev]) ? prev : -1;
+      return this.staleHoldDisplayIndex(entry, fallbackIdx, version) ?? fallbackIdx;
     }
+    const prev = entry.displayedChildIndex ?? -1;
+    return prev >= 0 && isReady(entry.children[prev]) ? prev : -1;
+  }
 
-    // ── Fresh-but-EMPTY display guard ──
-    // If the chosen display level committed 0 elements, prefer the coarsest
-    // fresh NON-empty level no finer than the chosen display or the selector's
-    // aspiration, whichever is finer. An intermediate level can legitimately
-    // fill a stale fallback gap; only redirecting to a level coarser than the
-    // chosen display signals inconsistent/corrupt data and warrants the warning
-    // below. Finer levels must not override the selector, even when a coarse
-    // slice is legitimately empty (see #1600).
-    if (version != null && displayIdx >= 0) {
-      const chosen = entry.children[displayIdx];
-      // Group-aware: a deferred kind=partition / nested lod subtree whose visible
-      // stamped leaves are all fresh-but-empty (poisoned/stale cache serving an
-      // old layout) would otherwise slip past the leaf-only ``visibleElementCount
-      // === 0`` check and blank the group. ``childFreshAndCount`` folds the
-      // subtree so the guard fires for a group chosen too; the redirect target
-      // stays the coarsest fresh non-empty leaf level.
-      const chosenProgress = chosen ? this.childFreshAndCount(chosen, version) : undefined;
-      if (chosen && chosenProgress?.fresh && chosenProgress.count === 0) {
-        const fallbackLimit = Math.max(displayIdx, entry.activeChildIndex);
-        const fallback = this.coarsestFreshNonEmptyIndex(entry, version, fallbackLimit);
-        if (fallback >= 0 && fallback !== displayIdx) {
-          if (fallback < displayIdx && !this.warnedEmptyLevel.has(entry.path)) {
-            this.warnedEmptyLevel.add(entry.path);
-            const recovery = this.deps.hasNetworkFailureUnder?.(entry.path)
-              ? 'A network load failed under this group; use the monitor Retry action.'
-              : 'This usually means inconsistent/stale data (e.g. a dataset regenerated at ' +
-                'the same URL with a poisoned cache); try reloading with ?clearCache.';
-            log.warning(
-              Modules.SCENE_LOADER,
-              `lod_group ${entry.path}: level ${displayIdx} is fresh but committed 0 ` +
-                `elements while level ${fallback} has visible geometry — showing level ` +
-                `${fallback} instead. ${recovery}`
-            );
-          }
-          displayIdx = fallback;
-        }
-      }
+  /**
+   * **Fresh-but-EMPTY display guard.** If the chosen display level committed 0
+   * elements, prefer the coarsest fresh NON-empty level no finer than the
+   * chosen display or the selector's aspiration, whichever is finer. An
+   * intermediate level can legitimately fill a stale fallback gap; only
+   * redirecting to a level coarser than the chosen display signals
+   * inconsistent/corrupt data and warrants a warning. Finer levels must not
+   * override the selector, even when a coarse slice is legitimately empty (see
+   * #1600). Group-aware: a deferred kind=partition / nested lod subtree whose
+   * visible stamped leaves are all fresh-but-empty (poisoned/stale cache
+   * serving an old layout) would otherwise slip past a leaf-only count check
+   * and blank the group; the redirect target stays the coarsest fresh
+   * non-empty leaf level.
+   */
+  private nonEmptyDisplayIndex(entry: LODGroupEntry, displayIdx: number, version: number): number {
+    const chosen = entry.children[displayIdx];
+    const chosenProgress = chosen ? childFreshAndCount(chosen, version) : undefined;
+    if (!chosen || !chosenProgress?.fresh || chosenProgress.count !== 0) return displayIdx;
+    const fallbackLimit = Math.max(displayIdx, entry.activeChildIndex);
+    const fallback = this.coarsestFreshNonEmptyIndex(entry, version, fallbackLimit);
+    if (fallback < 0 || fallback === displayIdx) return displayIdx;
+    if (fallback < displayIdx) this.warnEmptyLevel(entry, displayIdx, fallback);
+    return fallback;
+  }
+
+  /** Warn (once per group) that a fresh level committed nothing while a coarser one has geometry. */
+  private warnEmptyLevel(entry: LODGroupEntry, displayIdx: number, fallback: number): void {
+    if (this.warnedEmptyLevel.has(entry.path)) return;
+    this.warnedEmptyLevel.add(entry.path);
+    const recovery = this.deps.hasNetworkFailureUnder?.(entry.path)
+      ? 'A network load failed under this group; use the monitor Retry action.'
+      : 'This usually means inconsistent/stale data (e.g. a dataset regenerated at ' +
+        'the same URL with a poisoned cache); try reloading with ?clearCache.';
+    log.warning(
+      Modules.SCENE_LOADER,
+      `lod_group ${entry.path}: level ${displayIdx} is fresh but committed 0 ` +
+        `elements while level ${fallback} has visible geometry — showing level ` +
+        `${fallback} instead. ${recovery}`
+    );
+  }
+
+  /**
+   * **Never-downgrade display gate.** A lazy level flips ``ready`` after its
+   * FIRST additive chunk commits, so an ungated swap to a fresh-but-still-
+   * streaming aspiration pops displayed quality down to chunk-1 and climbs
+   * back. Hold the previously-displayed level while the streaming aspiration
+   * is strictly worse than what is on screen; release on ladder completion,
+   * committed-count crossover, ladder failure, or the previous level losing
+   * freshness. Bypassed for an explicit lock and while off-screen. This is a
+   * STREAMING/loading concern (WHEN a just-loaded level is good enough to
+   * show) — orthogonal to the time-driven level dissolve, and stays a hard
+   * hold.
+   */
+  private neverDowngradeIndex(
+    entry: LODGroupEntry,
+    displayIdx: number,
+    staleHoldEnded: boolean,
+    version: number | undefined
+  ): number {
+    if (!neverDowngradeApplies(entry, displayIdx)) return displayIdx;
+    // Read the gate's memory (last ON-SCREEN displayed level), NOT
+    // ``displayedChildIndex`` — the latter is clobbered to the coarse level
+    // during an off-screen excursion, which would defeat the hold on return.
+    let prevIdx = entry.heldDisplayChildIndex;
+    // A stale hold keeps the aspiration itself in the display memory. When
+    // its first fresh prefix lands, compare that prefix against the fresh
+    // fallback the hold displaced; otherwise prevIdx === displayIdx skips
+    // the never-downgrade gate and can reveal less geometry than fallback.
+    if (prevIdx === displayIdx && staleHoldEnded && version != null) {
+      prevIdx = this.coarsestFreshOrReadyIndex(entry, version);
     }
-
-    // ── Never-downgrade display gate ──
-    // A lazy level flips ``ready`` after its FIRST additive chunk commits, so
-    // an ungated swap to a fresh-but-still-streaming aspiration pops displayed
-    // quality down to chunk-1 and climbs back. Hold the previously-displayed
-    // level while the streaming aspiration is strictly worse than what is on
-    // screen; release on ladder completion, committed-count crossover, ladder
-    // failure, or the previous level losing freshness. Bypassed for an explicit
-    // lock and while off-screen. This is a STREAMING/loading concern (WHEN a
-    // just-loaded level is good enough to show) — orthogonal to the
-    // time-driven level dissolve below, and stays a hard hold.
-    if (
-      displayIdx === entry.activeChildIndex &&
-      entry.selectorMode === 'auto' &&
-      !entry.offScreen
-    ) {
-      // Read the gate's memory (last ON-SCREEN displayed level), NOT
-      // ``displayedChildIndex`` — the latter is clobbered to the coarse level
-      // during an off-screen excursion, which would defeat the hold on return.
-      let prevIdx = entry.heldDisplayChildIndex;
-      // A stale hold keeps the aspiration itself in the display memory. When
-      // its first fresh prefix lands, compare that prefix against the fresh
-      // fallback the hold displaced; otherwise prevIdx === displayIdx skips
-      // the never-downgrade gate and can reveal less geometry than fallback.
-      if (prevIdx === displayIdx && staleHoldEnded && version != null) {
-        prevIdx = this.coarsestFreshOrReadyIndex(entry, version);
-      }
-      if (prevIdx != null && prevIdx !== displayIdx) {
-        const prev = entry.children[prevIdx];
-        // Children are coarsest→finest, so displayIdx (== activeChildIndex) being
-        // FINER than the held prev means an upgrade (zoom-in); the gate's early
-        // energy-release is sound only then (downgrade would pop below the held).
-        const isUpgrade = displayIdx > prevIdx;
-        if (shouldHoldPreviousDisplay(aspiration!, prev, version ?? null, isUpgrade)) {
-          displayIdx = prevIdx;
-          aspiration!.lastVisibleTick = this.tick;
-        }
-      }
+    if (prevIdx == null || prevIdx === displayIdx) return displayIdx;
+    const aspiration = entry.children[displayIdx];
+    // Children are coarsest→finest, so displayIdx (== activeChildIndex) being
+    // FINER than the held prev means an upgrade (zoom-in); the gate's early
+    // energy-release is sound only then (downgrade would pop below the held).
+    const isUpgrade = displayIdx > prevIdx;
+    const prev = entry.children[prevIdx];
+    if (!shouldHoldPreviousDisplay(aspiration, prev, version ?? null, isUpgrade)) {
+      return displayIdx;
     }
+    aspiration.lastVisibleTick = this.tick;
+    return prevIdx;
+  }
 
-    // ── Level dissolve (time-driven) ──
-    // When the DISPLAYED level changes, dissolve from the outgoing level to the
-    // incoming one over ``config.lod.fadeMs`` — incoming at w = smoothstep of
-    // the elapsed fraction, outgoing at (1−w) — so the substitutive switch
-    // dissolves instead of popping. A function of TIME since the change, never
-    // of the camera's distance to a threshold: a parked camera always settles
-    // on ONE level at full weight (#2925 — a distance band drew two levels for
-    // as long as the camera stayed inside it). Brightness is preserved by the
-    // levels' build-time mass conservation (both integrate to the same DC).
-    // Blendable modes only (BLENDABLE_MODES = additive/luminous/volumetric —
-    // energy sums linearly, or opacity linearly scales optical depth τ so the
-    // pair interpolates monotonically between the two levels' absorptions; see
-    // that set's doc for what volumetric does NOT guarantee). For two mid-fade
-    // volumetric siblings the mesh draw order may come from the render-order
-    // containment rule (near-identical bounds); acceptable because combined
-    // TRANSMITTANCE is order-independent (transmittances multiply), so
-    // occlusion of content behind the pair is exact at every weight. The
-    // emission ordering residual stays bounded by the local inter-level
-    // radiance difference, not by the rendered hard-swap pop.
-    // Off / non-blendable / off-screen / locked / a held-stale display ⇒ no
-    // dissolve (byte-identical hard swap).
-    let blendPartnerIdx: number | null = null;
-    let primaryWeight = 1;
+  /**
+   * **Level dissolve (time-driven)** into ``BLEND``. When the DISPLAYED level
+   * changes, dissolve from the outgoing level to the incoming one over
+   * ``config.lod.fadeMs`` — incoming at w = smoothstep of the elapsed fraction,
+   * outgoing at (1−w) — so the substitutive switch dissolves instead of
+   * popping. A function of TIME since the change, never of the camera's
+   * distance to a threshold: a parked camera always settles on ONE level at
+   * full weight (#2925 — a distance band drew two levels for as long as the
+   * camera stayed inside it). Brightness is preserved by the levels'
+   * build-time mass conservation (both integrate to the same DC). Blendable
+   * modes only (BLENDABLE_MODES = additive/luminous/volumetric — energy sums
+   * linearly, or opacity linearly scales optical depth τ so the pair
+   * interpolates monotonically between the two levels' absorptions; see that
+   * set's doc for what volumetric does NOT guarantee). For two mid-fade
+   * volumetric siblings the mesh draw order may come from the render-order
+   * containment rule (near-identical bounds); acceptable because combined
+   * TRANSMITTANCE is order-independent (transmittances multiply), so
+   * occlusion of content behind the pair is exact at every weight. The
+   * emission ordering residual stays bounded by the local inter-level radiance
+   * difference, not by the rendered hard-swap pop.
+   *
+   * Off / non-blendable / off-screen / locked / a held-stale display ⇒ no
+   * dissolve (byte-identical hard swap). Nor for a level picked by the
+   * projected-FOOTPRINT rule (``PICK.usedFootprint``; only GSplat levels carry
+   * the stamps, see scene/README step 5). That rule picks the
+   * coarsest level whose median splat stays under
+   * ``config.lod.maxMedianFootprintPx``, so its swaps happen where splats are
+   * about a pixel across and the two levels are expected to read alike — the
+   * case the dissolve exists for (a visible pop) should not arise, and drawing
+   * both levels for ``fadeMs`` would add a second level's overdraw. The
+   * footprint path leaves ``preloadMetric`` null too, so it gets no band
+   * preload: the band is measured against coverage thresholds, and its switch
+   * point is a pixel-size threshold. (A design reading, not a measured
+   * guarantee: if footprint swaps are seen to pop, this is the gate to open.)
+   */
+  private dissolveStep(
+    entry: LODGroupEntry,
+    displayIdx: number,
+    aspirationFresh: boolean,
+    version: number | null
+  ): void {
+    BLEND.partner = null;
+    BLEND.primaryWeight = 1;
     const fadeEligible =
       this.deps.getCrossFadeEnabled?.() === true &&
       entry.selectorMode === 'auto' &&
       !entry.offScreen &&
       aspirationFresh &&
       displayIdx === entry.activeChildIndex &&
-      !usedFootprintSelection;
+      !PICK.usedFootprint;
     // Last frame's outgoing level, if a dissolve was in flight (see the hide
-    // edge in the visibility pass below).
-    const fadingFromIdx = this.fades.get(entry.path)?.fromIdx ?? -1;
-    const droppedFromIdx = this.droppedFadeFrom.get(entry.path) ?? -1;
-    const fade = fadeEligible ? this.levelFade(entry, displayIdx, version ?? null) : null;
-    if (fade) {
-      blendPartnerIdx = fade.fromIdx;
-      // primaryWeight is the OPACITY of the primary (displayIdx = the incoming
-      // level); the outgoing level gets the complement.
-      primaryWeight = smoothstep(0, 1, fade.progress);
-      // Keep both warm in the eviction LRU (both are on screen).
-      entry.children[fade.fromIdx].lastVisibleTick = this.tick;
-      aspiration!.lastVisibleTick = this.tick;
-    } else {
-      this.fades.delete(entry.path);
-    }
+    // edge in the visibility pass).
+    BLEND.fadingFromIdx = this.dissolves.fadingFrom(entry.path);
+    BLEND.droppedFromIdx = this.dissolves.droppedFromIdx(entry.path);
+    const fade = fadeEligible
+      ? this.levelFade(entry, displayIdx, version)
+      : this.dissolves.end(entry.path);
+    if (!fade) return;
+    BLEND.partner = fade.fromIdx;
+    // primaryWeight is the OPACITY of the primary (displayIdx = the incoming
+    // level); the outgoing level gets the complement.
+    BLEND.primaryWeight = smoothstep(0, 1, fade.progress);
+    // Keep both warm in the eviction LRU (both are on screen).
+    entry.children[fade.fromIdx].lastVisibleTick = this.tick;
+    entry.children[entry.activeChildIndex].lastVisibleTick = this.tick;
+  }
 
-    // ── Settle-gated reload / progressive refinement of the lazy aspiration ──
-    // A lazy level no longer joins the per-slice sweep (see load-lod-group-node.ts),
-    // so the registry drives its (re)loading HERE, settle-gated: during active
-    // scrubbing (version changing every frame) nothing fires, so only the cheap
-    // coarse level (still sweep-driven) shows the new slice; once the user pauses
-    // we (a) reload a STALE level for the new slice, and (b) advance a PROGRESSIVE
-    // level that is fresh but still has additive LODs to stream — both by
-    // re-firing the same ``ensureLoaded``, until the level is ready, fresh, AND
-    // complete. Eager (coarse) levels have no ``ensureLoaded`` and stay
-    // sweep-driven, so this only ever targets lazy levels.
-    // Never for a deferred GROUP child (the overview recipe's fine partition /
-    // nested lod branch): it has an ``ensureLoaded`` too, but its expensive
-    // step is ``loadChildren`` — re-running it attaches a SECOND copy of the
-    // whole subtree under the placeholder (double-drawn geometry, duplicate
-    // names, re-registered loaders, leaked buffers). Its leaves are
-    // sweep-registered and re-stamp themselves, so staleness needs no kick.
-    // Keyed on the explicit ``deferredGroup`` flag, not on the leaf's
-    // ``nodeType`` stamp: a lazy leaf whose placeholder is not stamped yet
-    // must still drain its ladder here.
-    const needsReloadOrRefine =
-      aspirationReady &&
-      aspiration!.deferredGroup !== true &&
-      (!aspirationFresh || (aspiration!.hasMoreLODs?.() ?? false));
-    // During playback a STALE aspiration reloads on every timepoint (the
-    // version never settles there, and playbackAspiration kept it to a level
-    // that fits the period); refinement of a fresh one still waits.
+  /**
+   * **Settle-gated reload / progressive refinement of the (ready) lazy
+   * aspiration.** A lazy level no longer joins the per-slice sweep (see
+   * load-lod-group-node.ts), so the registry drives its (re)loading HERE,
+   * settle-gated: during active scrubbing (version changing every frame)
+   * nothing fires, so only the cheap coarse level (still sweep-driven) shows
+   * the new slice; once the user pauses we (a) reload a STALE level for the
+   * new slice, and (b) advance a PROGRESSIVE level that is fresh but still has
+   * additive LODs to stream — both by re-firing the same ``ensureLoaded``,
+   * until the level is ready, fresh, AND complete. Eager (coarse) levels have
+   * no ``ensureLoaded`` and stay sweep-driven, so this only ever targets lazy
+   * levels. Only (a) is a reload TIMING; a ladder refinement step is not.
+   *
+   * Never for a deferred GROUP child (the overview recipe's fine partition /
+   * nested lod branch): it has an ``ensureLoaded`` too, but its expensive step
+   * is ``loadChildren`` — re-running it attaches a SECOND copy of the whole
+   * subtree under the placeholder (double-drawn geometry, duplicate names,
+   * re-registered loaders, leaked buffers). Its leaves are sweep-registered
+   * and re-stamp themselves, so staleness needs no kick. Keyed on the explicit
+   * ``deferredGroup`` flag, not on the leaf's ``nodeType`` stamp: a lazy leaf
+   * whose placeholder is not stamped yet must still drain its ladder here.
+   *
+   * During playback a STALE aspiration reloads on every timepoint (the version
+   * never settles there, and ``playbackAspiration`` kept it to a level that
+   * fits the period); refinement of a fresh one still waits.
+   */
+  private refreshAspiration(
+    entry: LODGroupEntry,
+    aspiration: LODGroupChild,
+    aspirationFresh: boolean,
+    settled: boolean
+  ): void {
+    if (aspiration.deferredGroup === true || !aspiration.ensureLoaded) return;
+    if (aspirationFresh && !(aspiration.hasMoreLODs?.() ?? false)) return;
     const playingStale = this.frame.playbackPeriodMs !== null && !aspirationFresh;
-    if ((settled || playingStale) && needsReloadOrRefine && aspiration!.ensureLoaded) {
-      this.maybeKickReload(entry, aspiration!);
-    }
-    this.preloadNeighbour(entry, desired, preloadMetric, version ?? null, settled);
+    if (settled || playingStale) this.maybeKickReload(entry, aspiration, !aspirationFresh);
+  }
 
-    // ── Apply visibility (single owner) ──
-    // At most the display child plus its cross-fade partner is visible
-    // (``displayIdx`` / ``blendPartnerIdx``, each only if READY — never
-    // force-show a not-ready placeholder; outside a cross-fade band it's the
-    // classic single visible level). ``changed`` flips when a SHOWN level
-    // changes so ``evaluatePerFrame`` refreshes the monitor's visible
-    // tally, which counts the displayed level, not the aspiration.
+  /**
+   * **Apply visibility (single owner).** At most the display child plus its
+   * dissolve partner is visible (``displayIdx`` / ``BLEND.partner``, each only
+   * if READY — never force-show a not-ready placeholder). Returns whether a
+   * SHOWN level changed, so ``evaluatePerFrame`` refreshes the monitor's
+   * visible tally, which counts the displayed level, not the aspiration.
+   *
+   * Opacity is managed only while at least one anti-popping feature is on: the
+   * level dissolve and/or the streaming energy compensation (per-leaf
+   * `1/e(k)` on the displayed streaming level). When BOTH are off this reduces
+   * to the original single-level visibility swap with no material writes —
+   * byte-identical. On the falling edge of fade management (both flags just
+   * toggled OFF, possibly MID-fade) every child's authored opacity is restored
+   * ONCE so a half-faded level does not stay dim forever (``fadeWasManaged`` is
+   * updated per frame after all entries run, so the edge fires exactly one
+   * frame for each entry).
+   */
+  private applyVisibility(entry: LODGroupEntry, displayIdx: number): boolean {
+    FADE_MODE.energyComp = this.deps.getEnergyCompEnabled?.() === true;
+    FADE_MODE.manage = this.deps.getCrossFadeEnabled?.() === true || FADE_MODE.energyComp;
+    FADE_MODE.restoreResidual = !FADE_MODE.manage && this.fadeWasManaged;
     let changed = false;
-    // Opacity is managed only while at least one anti-popping feature is on: the
-    // level dissolve (blends the outgoing and incoming level after a change)
-    // and/or the streaming energy compensation (per-leaf `1/e(k)` on the displayed
-    // streaming level). When BOTH are off, `manageFade` is false and this reduces
-    // to the original single-level visibility swap with no material writes —
-    // byte-identical to before.
-    const energyComp = this.deps.getEnergyCompEnabled?.() === true;
-    const manageFade = this.deps.getCrossFadeEnabled?.() === true || energyComp;
-    // Falling edge of fade management (both flags just toggled OFF, possibly
-    // MID-fade): restore every child's authored opacity ONCE so a half-faded
-    // level (e.g. opacity 0.5 from an in-flight cross-fade) doesn't stay dim
-    // forever. ``fadeWasManaged`` is updated per-frame in ``evaluatePerFrame``
-    // after all entries run, so the edge fires exactly one frame for each
-    // entry; afterwards the both-flags-off path is byte-identical again.
-    const restoreResidualFade = !manageFade && this.fadeWasManaged;
     for (let i = 0; i < entry.children.length; i++) {
       const child = entry.children[i];
       const isPrimary = i === displayIdx;
-      const shouldShow = (isPrimary || i === blendPartnerIdx) && isReady(child);
-      if (child.object.visible !== shouldShow) {
-        child.object.visible = shouldShow;
-        this.drawnStateChanged = true;
-        if (shouldShow) {
-          changed = true; // a new level became visible
-        } else {
-          // A dissolve's outgoing level leaving on its own (its partner has
-          // been on screen since the dissolve started) changes the visible
-          // tally, so the monitor must recount — like the swap it completes.
-          if (i === fadingFromIdx || i === droppedFromIdx) changed = true;
-        }
-      }
-      if (manageFade) {
-        if (shouldShow) {
-          // Cross-fade weight only when a partner is in flight (primary at α,
-          // partner at 1−α); otherwise no coverage weight (null ⇒ 1). Energy
-          // compensation is folded in PER-LEAF inside applyChildFade, so it also
-          // covers a plainly-displayed streaming level with no cross-fade partner.
-          const coverageWeight =
-            blendPartnerIdx != null ? (isPrimary ? primaryWeight : 1 - primaryWeight) : null;
-          this.applyChildFade(child, coverageWeight, energyComp);
-        } else {
-          // Hidden / left the plan: restore authored opacity if we faded it
-          // (idempotent — a no-op on any never-faded child).
-          this.applyChildFade(child, null, false);
-        }
-      } else if (restoreResidualFade) {
-        // One-shot restore on the fade-management falling edge (see above):
-        // idempotent no-op on never-faded children, so the pass writes only
-        // where a residual fade opacity actually lingers.
-        this.applyChildFade(child, null, false);
-      }
+      const shouldShow = (isPrimary || i === BLEND.partner) && isReady(child);
+      if (this.setChildVisible(child, i, shouldShow)) changed = true;
+      this.applyChildOpacity(child, isPrimary, shouldShow);
     }
-    this.droppedFadeFrom.delete(entry.path);
-    // Mark the on-screen level most-recently-used and record it for the eviction
-    // pass, which must never release the level currently displayed. Only update
-    // when a ready level is actually shown — otherwise keep the last shown index
-    // so eviction still protects whatever the user last saw.
-    countLodDisplay(entry, displayIdx, blendPartnerIdx);
+    this.dissolves.settled(entry.path);
+    return changed;
+  }
+
+  /**
+   * One child's opacity under ``FADE_MODE``. Dissolve weight only when a
+   * partner is in flight (primary at α, partner at 1−α); otherwise no coverage
+   * weight (null ⇒ 1). Energy compensation is folded in PER-LEAF inside
+   * applyChildFade, so it also covers a plainly-displayed streaming level with
+   * no cross-fade partner. A hidden child gets its authored opacity back
+   * (idempotent), as does every child once on the fade-management falling edge.
+   */
+  private applyChildOpacity(child: LODGroupChild, isPrimary: boolean, shown: boolean): void {
+    if (FADE_MODE.manage) {
+      const weight = shown ? this.blendWeight(isPrimary) : null;
+      this.applyChildFade(child, weight, shown && FADE_MODE.energyComp);
+    } else if (FADE_MODE.restoreResidual) {
+      this.applyChildFade(child, null, false);
+    }
+  }
+
+  /**
+   * Show or hide one child. Returns whether that changes the visible tally: a
+   * new level became visible, or a dissolve's outgoing level left on its own
+   * (its partner has been on screen since the dissolve started) — the monitor
+   * must recount then too, like the swap it completes.
+   */
+  private setChildVisible(child: LODGroupChild, index: number, shouldShow: boolean): boolean {
+    if (child.object.visible === shouldShow) return false;
+    child.object.visible = shouldShow;
+    this.drawnStateChanged = true;
+    return shouldShow || index === BLEND.fadingFromIdx || index === BLEND.droppedFromIdx;
+  }
+
+  /** A shown child's dissolve weight: ``null`` (⇒ 1) unless a partner is in flight. */
+  private blendWeight(isPrimary: boolean): number | null {
+    if (BLEND.partner == null) return null;
+    return isPrimary ? BLEND.primaryWeight : 1 - BLEND.primaryWeight;
+  }
+
+  /**
+   * Mark the on-screen level most-recently-used and record it for the eviction
+   * pass, which must never release the level currently displayed. Only update
+   * when a ready level is actually shown — otherwise keep the last shown index
+   * so eviction still protects whatever the user last saw.
+   *
+   * Then stamp any already-ready child that has never been shown so it ages
+   * into the eviction LRU. Without this, a lazy level that finished loading but
+   * was never displayed (camera/slice moved away mid-load) keeps
+   * ``lastVisibleTick == null`` and is permanently exempt from eviction,
+   * leaking VRAM. A SENTINEL, not the current tick: the eviction LRU's final
+   * tiebreak is coldest-first on this field, so stamping "now" would make the
+   * one level the user never saw the HOTTEST in its group and evict levels they
+   * looked at moments ago before it. 0 is older than any real tick (ticks start
+   * at 1).
+   */
+  private recordDisplay(entry: LODGroupEntry, displayIdx: number): void {
+    countLodDisplay(entry, displayIdx, BLEND.partner);
     const shown = displayIdx >= 0 ? entry.children[displayIdx] : undefined;
     if (shown && isReady(shown)) {
       shown.lastVisibleTick = this.tick;
@@ -3170,23 +2258,9 @@ export class LODGroupRegistry {
       // clobber a held finer level and re-pop it on camera return.
       if (!entry.offScreen) entry.heldDisplayChildIndex = displayIdx;
     }
-
-    // Stamp any already-ready child that has never been shown so it ages into
-    // the eviction LRU. Without this, a lazy level that finished loading but was
-    // never displayed (camera/slice moved away mid-load) keeps
-    // ``lastVisibleTick == null`` and is permanently exempt from eviction,
-    // leaking VRAM.
-    // A SENTINEL, not the current tick: the eviction LRU's final tiebreak is
-    // coldest-first on this field, so stamping "now" would make the one level
-    // the user never saw the HOTTEST in its group and evict levels they looked
-    // at moments ago before it. 0 is older than any real tick (ticks start at 1).
     for (const child of entry.children) {
-      if (isReady(child) && child.lastVisibleTick == null) {
-        child.lastVisibleTick = 0;
-      }
+      if (isReady(child) && child.lastVisibleTick == null) child.lastVisibleTick = 0;
     }
-
-    return changed;
   }
 
   /**
@@ -3221,7 +2295,7 @@ export class LODGroupRegistry {
    * Residency is otherwise left to the byte budget: a preloaded level is an
    * ordinary hidden eviction candidate. Once it has landed, a release is not
    * followed by a reload until the metric leaves the wider exit band
-   * (``PRELOAD_EXIT_BAND_FRACTION``) and comes back, so VRAM pressure cannot
+   * (``config.lod.preloadExitBandFraction``) and comes back, so VRAM pressure cannot
    * turn a parked camera into a load/evict loop.
    */
   private preloadNeighbour(
@@ -3282,7 +2356,7 @@ export class LODGroupRegistry {
         thresholds,
         desired,
         metric,
-        PRELOAD_EXIT_BAND_FRACTION
+        config.lod.preloadExitBandFraction
       );
       return visit !== undefined && exitIdx === visit.idx ? null : this.endPreload(path);
     }
@@ -3311,8 +2385,8 @@ export class LODGroupRegistry {
     }
     visit.sawReady = true;
     if (!settled) return;
-    const stale = version !== null && !this.childFreshAndCount(child, version).fresh;
-    if (stale || child.hasMoreLODs?.() === true) this.maybeKickReload(entry, child);
+    const stale = version !== null && !childFreshAndCount(child, version).fresh;
+    if (stale || child.hasMoreLODs?.() === true) this.maybeKickReload(entry, child, stale);
   }
 
   /**
@@ -3342,89 +2416,6 @@ export class LODGroupRegistry {
   }
 
   /**
-   * Freshness + committed element count of a child, resolving a GROUP-typed LOD
-   * child (a deferred ``kind=partition`` / nested ``lod`` subtree — the
-   * ``overview`` recipe) through {@link subtreeDisplayProgress} rather than the
-   * leaf-only stamps. A bare ``THREE.Group`` carries no leaf ``nodeType``, so
-   * ``isFresh`` would report it unconditionally fresh and ``visibleElementCount``
-   * would return ``null`` — hiding a stale re-slice and defeating the empty
-   * guard. Mirrors the never-downgrade gate's ``sideProgress`` so both paths
-   * agree on what "fresh" means for a group. Leaf children (a direct count
-   * stamp) keep the exact pre-existing behaviour.
-   *
-   * **``fresh`` implies ``ready``** for every child shape: the leaf branch's
-   * ``isFresh`` is ready-gated, and a NOT-ready group child (a deferred
-   * placeholder whose subtree never committed, or a released level awaiting
-   * reload) reports ``fresh: false`` regardless of any stamps its subtree may
-   * retain — it cannot draw, so no display path (slice-aware fallback,
-   * empty-guard redirect, blend pairing) may ever elect it. A READY group with
-   * no stamped leaf (nested group with no slice-dependent geometry) carries no
-   * per-slice staleness signal and reports ``fresh: true, count: null``.
-   *
-   * ``subtreeLadderComplete`` is the third answer, folded from the same walk
-   * (``SubtreeDisplayProgress.complete``): false when any visible stamped leaf
-   * under the subtree has committed only a prefix of its additive ladder. A
-   * tracked LEAF has no subtree to fold, so it answers with its OWN
-   * ``committedLadderComplete`` stamp.
-   *
-   * That stamp rather than the child's ``hasMoreLODs()`` thunk, because the
-   * thunk does not exist on every leaf: ``load-lod-group-node`` attaches it
-   * only on the DEFERRED path, so the eagerly-loaded default level — whose
-   * ladder is advanced by the sweep-driven background refinement loop — has
-   * none, and reporting an unconditional ``true`` here declared a still-
-   * streaming coarse level complete. The stamp is also the safer of the two
-   * where both exist (see ``lod-display-gate``'s "committed state only" note:
-   * a live getter flips when the last fetch resolves, frames before the commit
-   * lands). Callers still read ``hasMoreLODs()`` directly on top of this, since
-   * it is what re-fires ``ensureLoaded`` to advance a lazy ladder. Only
-   * {@link isCaptureQuiescent} consults this field; the display paths ignore
-   * it.
-   *
-   * ``version === null`` means no view-version tracking is wired: the per-slice
-   * staleness test is skipped and every READY child reads fresh — which is
-   * exactly what the ``version != null`` guards at the display call sites
-   * already assume, so those are unaffected.
-   */
-  private childFreshAndCount(
-    child: LODGroupChild,
-    version: number | null
-  ): { fresh: boolean; count: number | null; subtreeLadderComplete: boolean } {
-    // Leaf detection is by tracked nodeType, NOT by "has a count stamp": a leaf
-    // that has not committed a count yet is still a leaf whose freshness is its
-    // own ``loadedViewVersion`` stamp. Only a genuine group subtree folds.
-    if (isTrackedLeaf(child)) {
-      return {
-        fresh: version == null ? isReady(child) : isFresh(child, version),
-        count: visibleElementCount(child),
-        // The leaf's own commit stamp — absent (never committed, or a
-        // non-progressive loader) reads as complete, so an unstamped leaf
-        // never blocks. See the doc above for why not ``hasMoreLODs()``.
-        subtreeLadderComplete: child.object.userData?.committedLadderComplete !== false,
-      };
-    }
-    // Ready gate for group children (the leaf branch gets it from ``isFresh``).
-    // Without it, a not-ready deferred-group placeholder (no stamped leaves →
-    // ``!aggregate`` below) would read fresh-with-unknown-count and the
-    // empty-level guard could redirect display onto a level that CANNOT draw,
-    // blanking the group permanently. Nothing has committed, so no completeness
-    // can be claimed either.
-    if (!isReady(child)) return { fresh: false, count: null, subtreeLadderComplete: false };
-    const aggregate = subtreeDisplayProgress(child.object as unknown as ProgressNode, version);
-    // Ready, but no stamped leaf under the subtree (nested group with no
-    // slice-dependent geometry): no per-slice staleness signal, so treat as
-    // fresh — exactly the pre-existing ``isFresh`` behaviour for a ready
-    // non-leaf. Only a subtree that DOES carry stamped-but-stale leaves (a
-    // non-null aggregate with ``fresh === false``) triggers the coarse fallback.
-    // No stamped leaf likewise means no ladder to be waiting on: complete.
-    if (!aggregate) return { fresh: true, count: null, subtreeLadderComplete: true };
-    return {
-      fresh: aggregate.fresh,
-      count: aggregate.count,
-      subtreeLadderComplete: aggregate.complete,
-    };
-  }
-
-  /**
    * Index of the coarsest child strictly before ``beforeIndex`` that is fresh
    * for ``version`` AND has a non-zero committed element count — or ``-1`` when
    * none qualifies. The group-aware counterpart of the empty-level display
@@ -3448,7 +2439,7 @@ export class LODGroupRegistry {
     beforeIndex: number
   ): number {
     for (let i = 0; i < entry.children.length && i < beforeIndex; i++) {
-      const p = this.childFreshAndCount(entry.children[i], version);
+      const p = childFreshAndCount(entry.children[i], version);
       if (!p.fresh) continue;
       if (p.count === 0) continue;
       return i;
@@ -3466,43 +2457,20 @@ export class LODGroupRegistry {
   }
 
   /**
-   * Advance (or start) the dissolve of ``entry`` toward ``displayIdx`` and
-   * return it, or ``null`` when the group should draw ``displayIdx`` alone.
-   *
-   * A dissolve STARTS when the displayed level differs from the one displayed
-   * last frame. It starts from what is on screen: when the previous level was
-   * itself still dissolving in (a retarget mid-dissolve), the new one begins at
-   * ``1 − progress``, which keeps the previous level at exactly the opacity it
-   * had, so reversing a change only has to undo the part that happened. It
-   * ENDS once ``progress`` reaches 1, or as soon as the outgoing level can no
-   * longer be drawn against the incoming one (released, stale for the current
-   * slice, or not blendable).
+   * Advance (or start) the dissolve of ``entry`` toward ``displayIdx`` on this
+   * frame's clock (``LodDissolves.advance``), or ``null`` when the group should
+   * draw ``displayIdx`` alone.
    */
   private levelFade(
     entry: LODGroupEntry,
     displayIdx: number,
     version: number | null
   ): LevelFade | null {
-    const fadeMs = config.lod.fadeMs;
-    const now = this.nowMs();
-    let fade = this.fades.get(entry.path) ?? null;
-    const prev = entry.displayedChildIndex;
-    if (prev !== undefined && prev !== displayIdx && fadeMs > 0) {
-      fade = retargetedFade(fade, prev, displayIdx, now);
-      this.fades.set(entry.path, fade);
-    }
-    if (fade === null || fade.toIdx !== displayIdx) return null;
-    fade.progress = Math.min(1, fade.startProgress + (now - fade.startMs) / fadeMs);
-    // The last few percent end the dissolve: applyLodFade treats a weight within
-    // FADE_EPSILON of 1 as the authored opacity, so the complement would be drawn
-    // on top of a full-weight level.
-    if (
-      smoothstep(0, 1, fade.progress) >= 1 - FADE_EPSILON ||
-      !this.canDissolve(entry, fade.fromIdx, displayIdx, version)
-    ) {
-      return null;
-    }
-    return fade;
+    const frame = this.dissolveFrame;
+    frame.nowMs = this.frame.nowMs;
+    frame.fadeMs = config.lod.fadeMs;
+    frame.version = version;
+    return this.dissolves.advance(entry, displayIdx, frame, this.dissolveHost);
   }
 
   /**
@@ -3511,9 +2479,7 @@ export class LODGroupRegistry {
    * longer dissolving). Returns ``false``: no level change this frame.
    */
   private dropFade(entry: LODGroupEntry): false {
-    const fade = this.fades.get(entry.path);
-    if (fade) this.droppedFadeFrom.set(entry.path, fade.fromIdx);
-    this.fades.delete(entry.path);
+    this.dissolves.drop(entry.path);
     return false;
   }
 
@@ -3532,12 +2498,12 @@ export class LODGroupRegistry {
     const from = entry.children[fromIdx];
     const to = entry.children[toIdx];
     if (!from || !to || !isReady(from)) return false;
-    if (version != null && !this.childFreshAndCount(from, version).fresh) return false;
+    if (version != null && !childFreshAndCount(from, version).fresh) return false;
     return this.isBlendable(from) && this.isBlendable(to);
   }
 
   /**
-   * Apply the per-leaf LOD anti-popping opacity (cross-fade weight ×
+   * Apply the per-leaf LOD anti-popping opacity (dissolve weight ×
    * streaming `1/e(k)` energy compensation) to a child's leaf materials, or
    * restore the authored opacity — see {@link applyLodFade}
    * (``lod-fade.ts``) for the full mechanics. This wrapper supplies the
@@ -3564,7 +2530,7 @@ export class LODGroupRegistry {
    */
   private coarsestFreshOrReadyIndex(entry: LODGroupEntry, version: number): number {
     for (let i = 0; i < entry.children.length; i++) {
-      if (this.childFreshAndCount(entry.children[i], version).fresh) return i;
+      if (childFreshAndCount(entry.children[i], version).fresh) return i;
     }
     return this.coarsestReadyIndex(entry);
   }
@@ -3589,20 +2555,55 @@ export class LODGroupRegistry {
    *   - the previous display is still ready and is FINER than the fallback
    *     (holding something coarser than the fallback would be a downgrade),
    *   - the fallback is a SEVERE downgrade — below
-   *     `STALE_HOLD_MIN_RATIO` of the held level's committed count —
+   *     `config.lod.staleHoldMinRatio` of the held level's committed count —
    *     so a fallback that is nearly as good is taken immediately (it is
    *     fresh, and freshness wins whenever quality is comparable),
-   *   - the hold has not exhausted its `STALE_HOLD_MS` budget.
+   *   - the hold has not exhausted its `config.lod.staleHoldMs` budget.
    *
    * The budget is deliberately spent from when the hold STARTS and is not
    * refreshed by later version bumps, and once exhausted it latches until the
    * aspiration commits fresh. So a continuous drag degrades to exactly the
-   * pre-existing behaviour after `STALE_HOLD_MS`, rather than freezing on
+   * pre-existing behaviour after `config.lod.staleHoldMs`, rather than freezing on
    * one frame for as long as the user keeps dragging. The one exception is
    * playback with the held level's own reload in flight: that hold lasts
    * until the reload lands, and its budget restarts on each such frame.
    */
   private staleHoldDisplayIndex(
+    entry: LODGroupEntry,
+    fallbackIdx: number,
+    version: number
+  ): number | undefined {
+    const prevIdx = this.staleHoldCandidate(entry, fallbackIdx, version);
+    if (prevIdx === undefined) return undefined;
+    const prev = entry.children[prevIdx];
+    const now = this.frame.nowMs;
+    if (entry.staleHoldSinceMs == null) entry.staleHoldSinceMs = now;
+    // During playback the held level's own reload for the new timepoint is in
+    // flight: keep it until that replacement lands rather than dropping to a
+    // token of the new frame for the rest of the wait.
+    // The budget counts from the last frame of that exemption, so pausing
+    // mid-reload keeps the hold for a full config.lod.staleHoldMs instead of dropping
+    // to the coarse level on the first paused frame.
+    const replacementInFlight = this.frame.playbackPeriodMs !== null && prev.loading === true;
+    if (replacementInFlight) {
+      entry.staleHoldSinceMs = now;
+    } else if (now - entry.staleHoldSinceMs >= config.lod.staleHoldMs) {
+      entry.staleHoldExhausted = true;
+      entry.staleHoldSinceMs = undefined;
+      return undefined;
+    }
+    // Keep the held level warm so eviction does not reclaim it mid-hold.
+    prev.lastVisibleTick = this.tick;
+    return prevIdx;
+  }
+
+  /**
+   * The previously-displayed level a stale hold could keep, or ``undefined``:
+   * the group is auto-selected, on screen and has budget left; the level is
+   * ready and FINER than the fallback; and the fallback is a SEVERE downgrade
+   * (see ``staleHoldDisplayIndex``).
+   */
+  private staleHoldCandidate(
     entry: LODGroupEntry,
     fallbackIdx: number,
     version: number
@@ -3617,35 +2618,7 @@ export class LODGroupRegistry {
     if (prevIdx == null || prevIdx <= fallbackIdx) return undefined;
     const prev = entry.children[prevIdx];
     if (!prev || !isReady(prev)) return undefined;
-
-    // Compare committed counts.
-    const prevCount = this.childFreshAndCount(prev, version).count;
-    const fallback = entry.children[fallbackIdx];
-    const fallbackCount = fallback ? this.childFreshAndCount(fallback, version).count : null;
-    // An unknown count on either side means the comparison cannot be made, so
-    // there is no evidence the fallback is severe — take it, as before.
-    if (prevCount == null || fallbackCount == null || prevCount <= 0) return undefined;
-    if (fallbackCount >= prevCount * STALE_HOLD_MIN_RATIO) return undefined;
-
-    const now = this.deps.now?.() ?? performance.now();
-    if (entry.staleHoldSinceMs == null) entry.staleHoldSinceMs = now;
-    // During playback the held level's own reload for the new timepoint is in
-    // flight: keep it until that replacement lands rather than dropping to a
-    // token of the new frame for the rest of the wait.
-    // The budget counts from the last frame of that exemption, so pausing
-    // mid-reload keeps the hold for a full STALE_HOLD_MS instead of dropping
-    // to the coarse level on the first paused frame.
-    const replacementInFlight = this.frame.playbackPeriodMs !== null && prev.loading === true;
-    if (replacementInFlight) {
-      entry.staleHoldSinceMs = now;
-    } else if (now - entry.staleHoldSinceMs >= STALE_HOLD_MS) {
-      entry.staleHoldExhausted = true;
-      entry.staleHoldSinceMs = undefined;
-      return undefined;
-    }
-    // Keep the held level warm so eviction does not reclaim it mid-hold.
-    prev.lastVisibleTick = this.tick;
-    return prevIdx;
+    return fallbackIsSevere(prev, entry.children[fallbackIdx], version) ? prevIdx : undefined;
   }
 
   /**
@@ -3686,9 +2659,9 @@ export class LODGroupRegistry {
    * both the desired-target swap path and the active-child self-heal so
    * the failure/cooldown logic lives in exactly one place.
    *
-   * A freshly-failed child is stamped with the current tick; once
-   * ``FAILED_RETRY_FRAMES`` elapse the ``failed`` flag is cleared and the
-   * load retried — recovering a level that failed on *reload* (after a
+   * A freshly-failed child is stamped with the frame clock; once its cooldown
+   * (``config.lod.failedRetryMs``, backed off per consecutive failure) elapses
+   * the ``failed`` flag is cleared and the load retried — recovering a level that failed on *reload* (after a
    * successful load + byte-eviction), which the old "failed until
    * released" behaviour left permanently stuck (a failed child is never an
    * eviction candidate).
@@ -3710,10 +2683,12 @@ export class LODGroupRegistry {
    * refreshing a ready level is the whole point. The stale level stays hidden
    * behind the coarse fallback meanwhile (the display pass), so this never
    * blanks the screen, and the shared ``loading``/cooldown guards make
-   * re-calling it every settled frame safe.
+   * re-calling it every settled frame safe. ``timed`` is false for a ladder
+   * refinement step of a FRESH level: only a full reload is a reload timing
+   * for ``loadEwmaMs``.
    */
-  private maybeKickReload(entry: LODGroupEntry, child: LODGroupChild): void {
-    this.kickDeferredLoadIfVisible(entry, child);
+  private maybeKickReload(entry: LODGroupEntry, child: LODGroupChild, timed: boolean): void {
+    this.kickDeferredLoadIfVisible(entry, child, timed);
   }
 
   /**
@@ -3749,57 +2724,88 @@ export class LODGroupRegistry {
    * explicit request for a retryable child is honoured whatever the layer's
    * visibility or the current archive-fault latch.
    */
-  private kickDeferredLoadIfVisible(entry: LODGroupEntry, child: LODGroupChild): void {
+  private kickDeferredLoadIfVisible(
+    entry: LODGroupEntry,
+    child: LODGroupChild,
+    timed = true
+  ): void {
     if (this.deps.hasArchiveFault?.() || !isEffectivelyVisible(entry.groupObject)) return;
-    this.kickDeferredLoad(child);
+    this.kickDeferredLoad(child, false, timed);
   }
 
   /**
    * Shared lazy-load gate for ``maybeKickLoad`` (initial load of a not-ready
    * level) and ``maybeKickReload`` (refresh of a ready-but-stale level): fire
    * ``ensureLoaded`` unless already loading or inside the failure cooldown. A
-   * freshly-failed child is stamped with the current tick; once
-   * ``FAILED_RETRY_FRAMES`` elapse the ``failed`` flag clears and the load
-   * retries — recovering a level that failed on reload (after a successful load
+   * freshly-failed child is stamped with the frame clock; once its cooldown
+   * (``config.lod.failedRetryMs``, backed off) elapses the ``failed`` flag clears
+   * and the load retries — recovering a level that failed on reload (after a successful load
    * + byte-eviction), which the old "failed until released" behaviour left stuck.
    * The automatic caller separately gates loader-level archive faults. The
    * per-child latch keeps concurrent failed branches individually addressable
    * by Retry; an explicit retry clears that selected branch as it starts.
+   *
+   * A ``timed`` load (every full load or reload) is measured into
+   * ``loadEwmaMs``; the kick that starts this frame's playback probe marks it
+   * ``playbackProbePending``. An untimed one (a ladder refinement step) is not
+   * measured.
    */
-  private kickDeferredLoad(child: LODGroupChild, explicitRetry = false): boolean {
+  private kickDeferredLoad(child: LODGroupChild, explicitRetry: boolean, timed: boolean): boolean {
     if (!child.ensureLoaded || child.loading || (!explicitRetry && child.permanentlyFailed)) {
       return false;
     }
     if (child.failed) {
-      if (explicitRetry) {
-        child.failed = false;
-        child.failedTick = undefined;
-      } else {
-        if (child.failedTick == null) {
-          // First frame we observe the failure — start the cooldown clock.
-          child.failedTick = this.tick;
-          return false;
-        }
-        if (this.tick - child.failedTick < FAILED_RETRY_FRAMES) return false;
-        // Cooldown elapsed — clear the failure and fall through to retry.
-        child.failed = false;
-        child.failedTick = undefined;
-      }
+      // A cooldown that has not elapsed refuses an automatic retry; an explicit
+      // one clears the failure at once.
+      if (explicitRetry) this.retryWakes.reset(child);
+      else if (this.failureCooledDown(child)) this.retryWakes.backOff(child);
+      else return false;
+      child.failed = false;
+      child.failedAtMs = undefined;
     }
     if (explicitRetry) {
       clearChildFailure(child);
     }
     // A load that finished this frame, before the post-evaluation walk saw it.
-    this.foldLoadTime(child);
+    foldLoadTime(child, this.clock);
     child.loading = true;
+    this.startLoadTiming(child, timed);
+    child.ensureLoaded();
+    return true;
+  }
+
+  /**
+   * Stamp the start of a ``timed`` load (its end is stamped by
+   * ``onLoadSettled``) and let the playback probe claim it; an untimed one (a
+   * ladder refinement step) is not measured.
+   */
+  private startLoadTiming(child: LODGroupChild, timed: boolean): void {
+    if (!timed) {
+      child.onLoadSettled = undefined;
+      return;
+    }
     const startMs = this.nowMs();
     child.loadStartMs = startMs;
     child.onLoadSettled = () => {
       // Only the load this kick started (a release + re-kick restarts it).
       if (child.loadStartMs === startMs) child.loadEndMs = this.nowMs();
     };
-    child.ensureLoaded();
-    return true;
+    this.playback.noteTimedLoadStarted(child);
+  }
+
+  /**
+   * Whether a failed child's retry cooldown has elapsed. The first frame that
+   * observes the failure starts the cooldown clock (and so answers no).
+   */
+  private failureCooledDown(child: LODGroupChild): boolean {
+    const cooldownMs = this.retryWakes.delay(child, config.lod.failedRetryMs);
+    if (child.failedAtMs == null) {
+      child.failedAtMs = this.frame.nowMs;
+      // Nothing else may wake a parked camera: one wake at the cooldown's end.
+      this.retryWakes.schedule(child, cooldownMs);
+      return false;
+    }
+    return this.frame.nowMs - child.failedAtMs >= cooldownMs;
   }
 
   /**

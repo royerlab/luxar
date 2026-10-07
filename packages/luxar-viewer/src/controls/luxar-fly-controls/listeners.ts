@@ -13,6 +13,10 @@
  * pair, pointer move/up/cancel live on `window` so a drag may leave the
  * canvas.
  *
+ * Losing focus (`window` blur, or the page becoming hidden) calls
+ * `onFocusLost`: the keyup / mouseup of anything held at that moment never
+ * arrives, so held movement would otherwise stay latched.
+ *
  * Keyboard listeners are skipped when `externalInputManagement` is set:
  * the caller (InputContextManager) routes keys via the orchestrator's
  * public `handleKeyDown` / `handleKeyUp` methods instead.
@@ -33,6 +37,8 @@ export interface FlyListenersCtx {
   onPointerMove: (e: PointerEvent) => void;
   /** Also receives `pointercancel`. */
   onPointerUp: (e: PointerEvent) => void;
+  /** Window blur, or the document becoming hidden. */
+  onFocusLost: () => void;
 }
 
 /**
@@ -41,6 +47,9 @@ export interface FlyListenersCtx {
  */
 export function attachListeners(ctx: FlyListenersCtx): () => void {
   const contextmenu = (e: Event): void => e.preventDefault();
+  const visibilitychange = (): void => {
+    if (document.visibilityState === 'hidden') ctx.onFocusLost();
+  };
 
   if (!ctx.externalInputManagement) {
     window.addEventListener('keydown', ctx.onKeyDown);
@@ -58,6 +67,8 @@ export function attachListeners(ctx: FlyListenersCtx): () => void {
   window.addEventListener('pointermove', ctx.onPointerMove);
   window.addEventListener('pointerup', ctx.onPointerUp);
   window.addEventListener('pointercancel', ctx.onPointerUp);
+  window.addEventListener('blur', ctx.onFocusLost);
+  document.addEventListener('visibilitychange', visibilitychange);
 
   return () => {
     if (!ctx.externalInputManagement) {
@@ -73,5 +84,7 @@ export function attachListeners(ctx: FlyListenersCtx): () => void {
     window.removeEventListener('pointermove', ctx.onPointerMove);
     window.removeEventListener('pointerup', ctx.onPointerUp);
     window.removeEventListener('pointercancel', ctx.onPointerUp);
+    window.removeEventListener('blur', ctx.onFocusLost);
+    document.removeEventListener('visibilitychange', visibilitychange);
   };
 }

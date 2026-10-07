@@ -37,7 +37,7 @@ Defines `SetupContext` and `SetupResult` — the shared call-shape used by every
 
 ### `settings-persistence.ts`
 
-localStorage I/O and defaults building. No DOM, no manager calls — just structured merging:
+localStorage I/O and defaults building. No DOM, no manager calls — just structured merging. A saved document records the `content_hash` of the scene it was made on; `RenderingControls.adoptSceneContentHash` reports a document from another build, and the load resets to the new build's defaults instead of applying it:
 
 | Export                                     | Purpose                                                                                                                                      |
 | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -75,7 +75,7 @@ Pure utility functions extracted for testability — no external dependencies be
 - **`updateCheckbox()`** uses a majority-vote over the four signal effects (`detectorNoiseEnabled`, `vignetteEnabled`, `chromaticLensDistortionEnabled`, `toneMapping === 'ACES'`) to drive the checkbox's display state. Bloom is applied by the preset but excluded from the vote — it is commonly enabled on its own for HDR data, so counting it would flip the checkbox on non-cinematic scenes.
 - **`clearSnapshot()`** is called from `resetToDefaults`/`loadSettings` so the next toggle starts fresh.
 
-The post-processing batch goes through `postProcessing.withDeferredRebuild(...)` so the depth counter unwinds even if a sub-setter throws. `TONE_MAPPING_MAP` (string → `THREE.ToneMapping` enum) is exported and reused by `apply-settings.ts`.
+`toneMappingFromName` (`rendering/post-processing/tone-mapping.ts`, string → `THREE.ToneMapping` over `TONE_MAPPING_BY_NAME`) is shared with `apply-settings.ts`.
 
 ### `clipping-display.ts`
 

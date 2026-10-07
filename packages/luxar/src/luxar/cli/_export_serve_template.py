@@ -17,7 +17,8 @@ anything that wants to drive it.
 
 # Maintainer note (this file is shipped verbatim, so the note travels):
 # the template lives at `luxar/cli/_export_serve_template.py` and is copied by
-# `luxar export`, with DATA_DIR_NAME and TITLE_QUERY substituted. It is a real
+# `luxar export`, with DATA_DIR_NAME, TITLE_QUERY, LAUNCH_QUERY and
+# HAS_CONTROL_PANEL substituted. It is a real
 # module rather than a string inside the exporter so that ruff, mypy and the
 # test suite see it -- a 400-line WebSocket relay hidden in an f-string is
 # unreviewable. It must stay STDLIB-ONLY: this folder gets zipped and emailed
@@ -32,6 +33,7 @@ import hashlib
 import hmac
 import http.server
 import json
+import os
 import socket
 import struct
 import sys
@@ -72,6 +74,12 @@ DATA_DIR_NAME = "data"
 #: `--host 127.0.0.1` override either way.
 HAS_CONTROL_PANEL = False
 TITLE_QUERY = ""
+#: The scene's `viewer_config.launch` machine settings (renderer, workers,
+#: prefetch) as a ready-to-append query fragment. The viewer resolves them
+#: before it reads the scene, so they travel on the URL instead.
+LAUNCH_QUERY = ""
+#: Range the viewer accepts for `?textScale=`; mirrored for a clear error.
+TEXT_SCALE_RANGE = (0.25, 4.0)
 
 # ── wire contract ───────────────────────────────────────────────────────────
 # These mirror `control-contract/contract.yaml`, the single source the Python
@@ -96,6 +104,7 @@ CLOSE_POLICY_VIOLATION = 1008
 #: JSON-RPC.
 JSONRPC_VERSION = "2.0"
 EVENT_METHOD = "event"
+VIEWER_ATTACHED_EVENT = "viewer-attached"
 PARSE_ERROR = -32700
 INVALID_REQUEST = -32600
 NO_VIEWER = -32001
@@ -445,6 +454,15 @@ class Relay:
     def _serve_viewer(self, peer: _Peer) -> None:
         with self._lock:
             self._viewer = peer
+        self._broadcast(
+            json.dumps(
+                {
+                    "jsonrpc": JSONRPC_VERSION,
+                    "method": EVENT_METHOD,
+                    "params": [VIEWER_ATTACHED_EVENT, None],
+                }
+            )
+        )
         try:
             for text in peer.messages():
                 self._from_viewer(text)
@@ -573,6 +591,44 @@ def _as_int(value: Any) -> Any:
 
 # ── HTTP ────────────────────────────────────────────────────────────────────
 
+#: `parse_byte_range`'s answer for a range that starts past the end of the file.
+UNSATISFIABLE = (-1, -1)
+
+
+def parse_byte_range(spec: str, size: int) -> tuple[int, int] | None:
+    """Resolve one `Range` header against a file of `size` bytes.
+
+    Returns the inclusive `(start, end)` to serve, :data:`UNSATISFIABLE` for a
+    range that begins past the end (a 416), or ``None`` for anything to answer
+    with the whole file: a header that does not parse, a unit other than bytes,
+    or several ranges at once -- all of which RFC 9110 lets a server ignore.
+    """
+    unit, _, ranges = spec.strip().partition("=")
+    if unit.strip().lower() != "bytes" or "," in ranges:
+        return None
+    first, dash, last = ranges.strip().partition("-")
+    if not dash:
+        return None
+    try:
+        if not first:  # "-N": the final N bytes
+            suffix = int(last)
+            if suffix <= 0:
+                return UNSATISFIABLE
+            return (max(size - suffix, 0), size - 1) if size else UNSATISFIABLE
+        start = int(first)
+        end = int(last) if last else size - 1
+    except ValueError:
+        return None
+    if start < 0:
+        return None
+    # Past the end first: an open "N-" defaults its end to the last byte, which
+    # for N >= size is BEFORE N and would otherwise read as a malformed range.
+    if start >= size:
+        return UNSATISFIABLE
+    if end < start:
+        return None
+    return (start, min(end, size - 1))
+
 
 class ControlServer(http.server.ThreadingHTTPServer):
     """A threaded server, optionally hosting the control relay.
@@ -662,7 +718,77 @@ class LuxarHandler(http.server.SimpleHTTPRequestHandler):
         path = getattr(self, "path", "").split("?", 1)[0]
         if not path.startswith("/viewer/assets/"):
             self.send_header("Cache-Control", "no-cache")
+        if getattr(self, "_serving_file", False):
+            self.send_header("Accept-Ranges", "bytes")
+            # Per response: a keep-alive socket's next reply may not be a file.
+            self._serving_file = False
         super().end_headers()
+
+    # Byte ranges (RFC 9110 §14) are what a media element needs to let go of a
+    # connection. Without them a <video> cannot drop a paused download and
+    # resume it later, so the browser keeps the socket open and stops reading
+    # -- and an HTTP/1.1 origin gets six. A tour stepped through quickly left a
+    # paused turntable on each of them, and the scene's own chunk fetches then
+    # timed out waiting for a socket ("data server unreachable"). One range per
+    # request is all a media element asks for; a multi-range request gets the
+    # whole file, which RFC 9110 allows.
+
+    def send_head(self) -> Any:
+        """Serve a requested byte range as a 206; everything else as before."""
+        self._range_remaining: int | None = None
+        file_path = self.translate_path(self.path)
+        self._serving_file = os.path.isfile(file_path)
+        spec = self.headers.get("Range")
+        if (
+            spec is None
+            or not self._serving_file
+            or self.command not in ("GET", "HEAD")
+        ):
+            return super().send_head()
+        stat = Path(file_path).stat()
+        last_modified = self.date_time_string(int(stat.st_mtime))
+        if_range = self.headers.get("If-Range")
+        if if_range is not None and if_range.strip() != last_modified:
+            # The client's copy is stale: a range of the new bytes would splice
+            # two versions of the file together, so send the whole new one.
+            return super().send_head()
+        span = parse_byte_range(spec, stat.st_size)
+        if span is None:
+            return super().send_head()
+        if span == UNSATISFIABLE:
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{stat.st_size}")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return None
+        start, end = span
+        try:
+            f = open(file_path, "rb")  # noqa: SIM115 -- returned to copyfile(), closed by do_GET
+        except OSError:
+            self.send_error(404, "File not found")
+            return None
+        f.seek(start)
+        self.send_response(206)
+        self.send_header("Content-type", self.guess_type(file_path))
+        self.send_header("Content-Range", f"bytes {start}-{end}/{stat.st_size}")
+        self.send_header("Content-Length", str(end - start + 1))
+        self.send_header("Last-Modified", last_modified)
+        self.end_headers()
+        self._range_remaining = end - start + 1
+        return f
+
+    def copyfile(self, source: Any, outputfile: Any) -> None:
+        """Copy only the requested range when one is being served."""
+        remaining = getattr(self, "_range_remaining", None)
+        if remaining is None:
+            super().copyfile(source, outputfile)
+            return
+        while remaining > 0:
+            block = source.read(min(64 * 1024, remaining))
+            if not block:
+                break
+            outputfile.write(block)
+            remaining -= len(block)
 
     def log_message(self, format: str, *args: Any) -> None:
         """Suppress request logging for cleaner output."""
@@ -857,14 +983,46 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Secret every control socket must present (advise with --host)",
     )
+    parser.add_argument(
+        "--text-scale",
+        type=_text_scale,
+        default=None,
+        metavar="X",
+        help=(
+            "Scale the on-screen text by X (e.g. 0.8 for a screen read up close); "
+            "positions and widths stay put. Default: the scene's own setting"
+        ),
+    )
     return parser.parse_args(argv)
 
 
-def urls(host: str, port: int, control: bool, token: str | None) -> list[str]:
+def _text_scale(value: str) -> float:
+    """Parse ``--text-scale``: a number inside the range the viewer accepts."""
+    try:
+        scale = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {value!r}") from None
+    low, high = TEXT_SCALE_RANGE
+    if not low <= scale <= high:
+        raise argparse.ArgumentTypeError(f"must be between {low} and {high}")
+    return scale
+
+
+def urls(
+    host: str,
+    port: int,
+    control: bool,
+    token: str | None,
+    text_scale: float | None = None,
+) -> list[str]:
     """The URLs to print, and the first of them is the one to open."""
     reachable = _url_host(advertised_host(host))
     data_url = f"http://{reachable}:{port}/{DATA_DIR_NAME}"
-    viewer_url = f"http://{reachable}:{port}/viewer/?src={data_url}{TITLE_QUERY}"
+    viewer_url = (
+        f"http://{reachable}:{port}/viewer/?src={data_url}{TITLE_QUERY}{LAUNCH_QUERY}"
+    )
+    if text_scale is not None:
+        viewer_url += f"&textScale={text_scale:g}"
     if not control:
         return [viewer_url]
     suffix = f"&controlToken={quote(token, safe='')}" if token else ""
@@ -920,7 +1078,7 @@ def main(argv: list[str] | None = None) -> int:
     handler = partial(LuxarHandler, directory=str(SCRIPT_DIR))
     server = ControlServer((args.host, port), handler, relay)
 
-    addresses = urls(args.host, port, args.control, args.control_token)
+    addresses = urls(args.host, port, args.control, args.control_token, args.text_scale)
     print()
     print("  Display (open this on the big screen)")
     print(f"    {addresses[0]}")

@@ -18,6 +18,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { DimensionAnimationManager } from '../../../scene/animation/dimension-animation-manager';
 import { log } from '../../../utils/log';
+import { perfCounters } from '../../../profiling/perf-counters';
 import { SceneDimsManager } from '../../../scene/scene-dims-manager';
 import {
   AnimationController,
@@ -420,9 +421,11 @@ describe('DimensionAnimationManager', () => {
     it('bounce boundary: peeks the turnaround value WITHOUT flipping the live direction', () => {
       sceneDimsManager.setDimensionValue(3, 10);
       manager.play(3, { loopMode: 'bounce' });
-      expect(manager.peekNextValue(3)).toBe(10); // clamped at max
+      // Started ON the max: the next tick turns and steps away at once
+      // (#2944 review B — no second period on the endpoint).
+      expect(manager.peekNextValue(3)).toBe(9);
       expect(manager.getState(3)?.direction).toBe('forward'); // state unmutated
-      expect(manager.peekNextValue(3)).toBe(10); // repeatable
+      expect(manager.peekNextValue(3)).toBe(9); // repeatable
     });
 
     it("returns null for 'once' at the boundary (nothing to prefetch)", () => {
@@ -484,9 +487,13 @@ describe('DimensionAnimationManager', () => {
       expect(perFrameCallback?.()).toBe(false);
       mockTime += 200; // past it: one step
       expect(perFrameCallback?.()).toBe(true);
+      // pause() unregisters the callback (#2944 A1); a frame already in
+      // flight may still run it, and must report no step.
+      const inFlight = perFrameCallback!;
       manager.pause(3);
+      expect(perFrameCallback).toBeNull();
       mockTime += 200;
-      expect(perFrameCallback?.()).toBe(false);
+      expect(inFlight()).toBe(false);
     });
 
     it('pacing gate: does not advance while waitForUpdate is unresolved (data-bound playback)', () => {
@@ -537,6 +544,25 @@ describe('DimensionAnimationManager', () => {
       mockTime += 200;
       perFrameCallback?.();
       expect(sceneDimsManager.getDims()!.currentStep[3]).toBe(afterFirst + 1);
+    });
+
+    it('playback.ticks counts the ticks that stepped, not throttled or gated frames', async () => {
+      vi.spyOn(sceneDimsManager, 'waitForUpdate').mockResolvedValue(undefined);
+      perfCounters.reset();
+      manager.play(3, { targetFPS: 10, direction: 'forward' });
+
+      mockTime += 20; // inside the 100ms FPS window: throttled
+      perFrameCallback?.();
+      mockTime += 200;
+      perFrameCallback?.(); // step 1
+      mockTime += 200;
+      perFrameCallback?.(); // gated: step 1's update has not settled yet
+      await Promise.resolve();
+      mockTime += 200;
+      perFrameCallback?.(); // step 2
+
+      expect(perfCounters.get('playback.ticks')).toBe(2);
+      expect(perfCounters.records('playback.tick')).toHaveLength(2);
     });
 
     it('should respect FPS throttling - skip frames if too soon', () => {

@@ -1,9 +1,10 @@
 # Worker-Pool Timeout Helpers
 
 Pure helpers that back `WorkerPool.runWithTimeout`. Split out of the
-pool class so each piece — the `Promise.race` timer, the per-call kind
-→ ms lookup, and the abort-signal combinator — is independently
-testable and free of `WorkerPool` state. Nothing here is exported from
+pool class so each piece — the timeout race and the per-call kind → ms
+lookup — is independently testable and free of `WorkerPool` state. The
+caller's abort signal is raced inline in `runWithTimeout`: the pool holds
+no dataset signal of its own, so there is nothing to merge. Nothing here is exported from
 `worker-pool.ts`; consumers only see the behaviour these files
 implement.
 
@@ -11,9 +12,8 @@ implement.
 
 ```
 timeout/
-├── with-timeout.ts       # Promise.race + setTimeout, evicts on miss
-├── pick-timeout-ms.ts    # TimeoutKind → config-knob lookup
-└── combine-signals.ts    # AbortSignal.any + manual-wiring fallback
+├── with-timeout.ts       # utils/race-timeout + log, evicts on miss
+└── pick-timeout-ms.ts    # TimeoutKind → config-knob lookup
 ```
 
 ## Components
@@ -21,7 +21,8 @@ timeout/
 ### `with-timeout.ts` — Per-call timeout race
 
 - **`withTimeout(operation, call, timeoutMs, onTimeoutEvict?, worker?)`**
-  — Races `call` against a `setTimeout(timeoutMs)` timer.
+  — Races `call` against a `setTimeout(timeoutMs)` timer through the
+  shared `raceTimeout` (`../../../utils/race-timeout.ts`).
   - `timeoutMs <= 0` or non-finite is a transparent pass-through —
     returns `call` directly with no timer attached. Keeps the call
     site shape uniform for tests / configs that disable timeouts.
@@ -41,24 +42,6 @@ timeout/
     (long-running CPU-bound calls; decode shares the projection knob
     until telemetry justifies a dedicated one).
 
-### `combine-signals.ts` — AbortSignal combinator
-
-- **`combineSignals(a, b)`** — Returns a scoped `{ signal, dispose }`
-  whose signal fires when either input does, or `undefined` if both
-  inputs are `undefined`. Used by `runWithTimeout` to fold the
-  pool-level `setAbortSignal` source together with the per-call signal;
-  the caller disposes the scope when the call settles so the fallback's
-  relay listeners do not accumulate on the session-lived pool signal.
-  - Uses native `AbortSignal.any([a, b])` when available (modern
-    browsers, Node 20+); `dispose()` is a no-op there.
-  - Falls back to a `new AbortController()` plus manual
-    `addEventListener('abort', ..., { once: true })` wiring on
-    each input. An abort removes the peer listener immediately;
-    `dispose()` is idempotent and removes both.
-  - Synchronously aborts the controller if either input is already
-    aborted on entry (registering no listeners), so the caller's
-    "already cancelled" guard trips on the first read.
-
 ## Invariants
 
 - **`withTimeout` does not cancel the underlying work.** WebAssembly
@@ -66,10 +49,9 @@ timeout/
   caller from awaiting; the worker keeps running and its result is
   discarded. See `WorkerAbortError` in `../errors.ts` for the same
   caveat on the abort path.
-- **`combineSignals` returns `undefined` when both inputs are
-  `undefined`.** Callers (`worker-pool.ts::runWithTimeout`) rely on
-  this to skip the abort-tracking branch entirely when no caller has
-  registered a signal.
+- **Only the caller's signal races the call.** With no signal,
+  `worker-pool.ts::runWithTimeout` awaits the timeout-guarded call
+  directly and installs no abort listener.
 - **`pickTimeoutMs` is a pure function over `perf`.** It must not
   read `config` directly — the pool reads `config.dataLoading.
 performance` once per call and passes it in, so tests can inject

@@ -29,4 +29,7 @@ source. The matching suite lives at
 The parent dispatcher treats handlers as accepting an event unless they return
 `false` synchronously. A declined event continues through passthrough without
 calling `preventDefault`; async handlers are always accepted. Keyup routing
-likewise skips bindings without a `keyupHandler` and keeps searching.
+likewise skips bindings without a `keyupHandler` and keeps searching. A keyup
+carrying a modifier no keyup binding names (hold W, press Ctrl, release W)
+falls back to the base key's binding, so a release is never lost; keydown
+matching stays exact.

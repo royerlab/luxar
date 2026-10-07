@@ -22,7 +22,7 @@
  */
 
 import * as zarr from '../zarr';
-import { log, Modules } from '../../utils/log';
+import { log, LogEmoji, Modules } from '../../utils/log';
 import { fetchChunkBoundsArray, type ChunkSpatialIndex } from '../loaders';
 import type { ChunkPrefetcher } from '../../cache/chunk-prefetcher';
 import type { GSplatsMetadata } from '../../types/gsplats';
@@ -49,6 +49,21 @@ export async function loadGSplatsChunkIndex(
     log.info(
       Modules.GSPLATS_SPATIAL_INDEX_LOADER,
       `GSplats node has no spatial ordering (ordering=${attrs.ordering})`
+    );
+    return null;
+  }
+
+  if (attrs.n_splats <= attrs.chunk_size) {
+    // One chunk: its bounds can only decide "load chunk 0 or not", and the
+    // load-all fallback is the superset answer — splats outside the slice are
+    // still dropped per splat by the projection, whose truncation the bounds
+    // were padded by. The probe is a whole extra (serial) request for one
+    // tiny array, and coarse rungs are routinely single-chunk: playback of a
+    // 4-rung partitioned timelapse paid one per rung per timepoint.
+    log.verbose(
+      LogEmoji.QUERY,
+      Modules.GSPLATS_SPATIAL_INDEX_LOADER,
+      `GSplats node fits one chunk (${attrs.n_splats} <= ${attrs.chunk_size}) — no chunk_bounds probe`
     );
     return null;
   }

@@ -199,6 +199,13 @@ describe('extractRenderingOverrides', () => {
     expect(overrides.adaptiveDPREnabled).toBe(true);
   });
 
+  it('maps density_guard_enabled (the persisted Density Guard toggle)', () => {
+    const overrides = extractRenderingOverrides({
+      density_guard_enabled: false,
+    } as unknown as ZarrViewerConfig);
+    expect(overrides.densityGuardEnabled).toBe(false);
+  });
+
   it('should map camera.fov_preset and camera.near/far', () => {
     const overrides = extractRenderingOverrides({
       camera: {
@@ -660,6 +667,7 @@ describe('RENDERING_SETTINGS_MAP completeness', () => {
     ['dynamic_clipping_enabled', 'dynamicClippingEnabled'],
     ['adaptive_dpr_enabled', 'adaptiveDPREnabled'],
     ['allow_high_dpr', 'allowHighDPR'],
+    ['density_guard_enabled', 'densityGuardEnabled'],
   ];
 
   it.each(REQUIRED_PAIRS)('maps snake `%s` → camel `%s`', (snake, camel) => {

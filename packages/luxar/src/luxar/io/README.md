@@ -332,6 +332,21 @@ root document bytes. The scene restamp is a slab-wise reimplementation of the
 finalize-time walk — the same digest, without the whole-array materialisation
 that would peak at twice a 629 MB array's size.
 
+**Chunk packs (`chunk_pack.py`, `optimize_store(..., pack=True)` / `--pack`).**
+After the restamp, `write_chunk_packs` copies the chunk objects of every
+geometry node with at most `PACK_MAX_BYTES` (64 KB) of stored chunks into one
+plain `<n>.pack` file per node (header-indexed) under the root `chunk_packs/`
+sidecar, and lists them (key, SHA-256, node prefix) in the sidecar's attrs with
+the `scene_content_hash` they were built for. A broadcast array whose row
+rides in `encoding.value` is skipped (the viewer never requests its chunk).
+`optimize` never copies an existing sidecar, recognised by its attrs
+(`is_chunk_packs_sidecar`), so a user group that only shares the name is
+copied as data; `restamp-lod` restamps its `scene_content_hash` along with the
+root hash. The sidecar is hash-excluded like
+`environment/`, so packing leaves `content_hash` alone; the viewer adopts the
+packs only for a matching root hash. Compiled scenes only. Format:
+`docs/guides/user/LUXAR_ZARR_FORMAT.md` (Chunk Packs).
+
 ### Re-deriving LOD thresholds in an existing store (`lod_restamp.py`)
 
 `luxar.io.lod_restamp` rewrites the LOD switch thresholds of a store that is
@@ -540,8 +555,11 @@ displaying fewer than two dimensions is skipped too —
 `lod-group-registry.ts::evaluatePerFrame` bails there before it evaluates any
 group.
 Dynamic near/far clipping is deliberately NOT modelled — the near-plane hazard
-that matters is the homogeneous-`w` straddle of the box's corners, which never
-reads `camera.near`. Neither is the viewer's projected-footprint pick for GSplat
+that matters is the homogeneous-`w` straddle of the box's corners. Only a box
+the eye plane cuts with the camera OUTSIDE it reads the projection's near plane
+(the metric is the rect of its part in front of that plane, as in the viewer),
+and there a different dynamic near only matters when the clipped face lands
+inside the viewport. Neither is the viewer's projected-footprint pick for GSplat
 ladders with complete footprint stamps; the screen reports occupancy only.
 
 The `screen-area` metric is the viewer's own, ported line for line from

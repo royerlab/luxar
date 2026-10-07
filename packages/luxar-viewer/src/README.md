@@ -126,8 +126,7 @@ When a lower layer needs behavior implemented by a higher layer (DOM,
 WebGL, THREE state), the dependency is inverted via a **port
 interface + factory** rather than relaxed. See `CONVENTIONS.md` §12
 for the established pattern and examples
-(`SceneLoaderMonitorPort`, `DimensionSlidersFactory`,
-`LabelTooltipFactory`).
+(`SceneLoaderMonitorPort`, `DimensionSlidersFactory`).
 
 ## Side-effect contract
 

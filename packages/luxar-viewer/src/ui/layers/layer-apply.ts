@@ -21,6 +21,7 @@
 import { findObjectByName } from '../../utils/scene-graph-index';
 import * as THREE from 'three';
 import type { SceneNode } from '../../data/data-loader-types';
+import type { SceneNodeIndex } from '../../data/scene-loader/view-state/scene-node-index';
 import type { BlendingMode } from '../../rendering';
 import { materialManager } from '../../rendering';
 import { scheduleBlendModeProgramWarmupForObject } from '../../rendering/webgl-blend-warmup';
@@ -41,9 +42,8 @@ import {
 } from '../../types/geometry-capabilities';
 import {
   composeAttrs,
-  collectAncestorNodes,
   collectDataDescendants,
-  getEffectiveAttrs,
+  getEffectiveAttrsOfChain,
   type ComposableAttrs,
   type EffectiveAttrs,
 } from '../../data/attrs-composer';
@@ -90,20 +90,23 @@ export type PushedKind = (typeof PUSHED_KINDS)[number];
 
 /**
  * Dependencies injected by the owning {@link LayersPanel}. `getRootGroup` /
- * `getSceneGraph` are accessors because both fields are replaced on every
- * `initFromScene`; `state` is the panel's (stable) layer-state manager and
+ * `getSceneNodeIndex` are accessors because both fields are replaced on every
+ * `initFromScene`; the index (the scene loader's `SceneNodeIndex`, whose `root`
+ * is the scene graph) answers every leaf's root→leaf chain in O(1), so a slider
+ * tick over a P-part layer is O(P · depth) rather than a `children.find`
+ * descent per leaf (O(P²)); `state` is the panel's (stable) layer-state manager and
  * `requestRender` wakes the on-demand render loop after a material write, and
  * `requestReprocess` refreshes a layer that became load-eligible again.
  */
 export interface LayerApplyEngineDeps {
   getRootGroup: () => THREE.Group | null;
-  getSceneGraph: () => SceneNode | null;
+  getSceneNodeIndex: () => SceneNodeIndex | null;
   state: LayerStateManager;
   requestRender: () => void;
   requestReprocess: (paths: readonly string[]) => void;
   /**
    * Marks the cached GPU pick buffer dirty so it re-renders after a panel edit
-   * changed a mesh's pick coverage (opacity/cutoff/blending/physical knobs).
+   * changed pick coverage (opacity/gain/cutoff/blending/physical knobs).
    * No-op when picking is inactive.
    */
   invalidatePickBuffer?: () => void;
@@ -161,10 +164,10 @@ export class LayerApplyEngine {
   applyToNewLeaf(leafPath: string, obj: THREE.Object3D): void {
     const target = this.resolveNewLeaf(leafPath);
     if (!target) return;
-    const { sceneGraph, ancestors, leaf, layers } = target;
+    const { sceneIndex, ancestors, leaf, layers } = target;
     let pickDirty = false;
     for (const { layer, kind } of this.pushedReplay(layers)) {
-      pickDirty = this.replayPushedToLeaf(kind, layer, leaf, obj, sceneGraph) || pickDirty;
+      pickDirty = this.replayPushedToLeaf(kind, layer, leaf, obj, sceneIndex) || pickDirty;
     }
     const owner = layers[layers.length - 1];
     this.applyComposedToLeaf(owner, leaf, obj, ancestors, true);
@@ -193,19 +196,19 @@ export class LayerApplyEngine {
    * current graph or no layer owns it.
    */
   private resolveNewLeaf(leafPath: string): {
-    sceneGraph: SceneNode;
-    ancestors: SceneNode[];
+    sceneIndex: SceneNodeIndex;
+    ancestors: readonly SceneNode[];
     leaf: SceneNode;
     layers: LayerInfo[];
   } | null {
-    const sceneGraph = this.deps.getSceneGraph();
-    if (!sceneGraph) return null;
-    const ancestors = collectAncestorNodes(sceneGraph, leafPath);
+    const sceneIndex = this.deps.getSceneNodeIndex();
+    if (!sceneIndex) return null;
+    const ancestors = sceneIndex.ancestorChain(leafPath);
     const leaf = ancestors[ancestors.length - 1];
     if (leaf?.path !== leafPath || !isGeometryType(leaf.type)) return null;
     const layers = ancestors.flatMap((node) => this.deps.state.getLayer(node.path) ?? []);
     if (layers.length === 0) return null;
-    return { sceneGraph, ancestors, leaf, layers };
+    return { sceneIndex, ancestors, leaf, layers };
   }
 
   /** {@link applyToNewLeaf}'s replay of one pushed kind. Returns pick-dirtiness. */
@@ -214,14 +217,14 @@ export class LayerApplyEngine {
     layer: LayerInfo,
     leaf: SceneNode,
     obj: THREE.Object3D,
-    sceneGraph: SceneNode
+    sceneIndex: SceneNodeIndex
   ): boolean {
     switch (kind) {
       case 'colormap':
-        this.applyColormapToLeaf(layer, leaf, obj, sceneGraph);
+        this.applyColormapToLeaf(layer, leaf, obj, sceneIndex);
         return false;
       case 'layerOrder':
-        this.applyLayerOrderToLeaf(layer, leaf, obj, sceneGraph);
+        this.applyLayerOrderToLeaf(layer, leaf, obj, sceneIndex);
         return false;
       case 'labelStyle':
         return this.applyLabelStyleToLeaf(layer, leaf, obj).pickDirty;
@@ -262,12 +265,12 @@ export class LayerApplyEngine {
   /**
    * Resolve every data-leaf affected by changes to a layer at `path`.
    * Data-node layers map to themselves; group layers fan out to all
-   * descendant points/lines/gsplats.
+   * descendant points/lines/gsplats/mesh leaves.
    */
   private getAffectedDataLeaves(path: string): SceneNode[] {
-    const sceneGraph = this.deps.getSceneGraph();
-    if (!sceneGraph) return [];
-    const chain = collectAncestorNodes(sceneGraph, path);
+    const sceneIndex = this.deps.getSceneNodeIndex();
+    if (!sceneIndex) return [];
+    const chain = sceneIndex.ancestorChain(path);
     const target = chain[chain.length - 1];
     if (!target) return [];
     if (target.type === 'group') return collectDataDescendants(target);
@@ -310,11 +313,8 @@ export class LayerApplyEngine {
    * (a mixed group layer), so the scalar window is never applied as a colour
    * gain. Ancestor/leaf-authored windows still compose.
    *
-   * `precomputedAncestors` lets a caller that already walked the chain (both
-   * fan-out loops do) hand it over instead of paying for a second walk.
-   * `collectAncestorNodes` resolves each step with a linear `children.find`, so
-   * one fan-out over a P-part wrapper costs ~P²/2 path comparisons — and
-   * `applyComposed` runs on every slider tick.
+   * `precomputedAncestors` lets a caller that already resolved the chain (both
+   * fan-out loops do) hand it over instead of looking it up again.
    */
   private composeEffective(
     leafPath: string,
@@ -326,9 +326,9 @@ export class LayerApplyEngine {
     if (precomputedAncestors) {
       ancestors = precomputedAncestors;
     } else {
-      const sceneGraph = this.deps.getSceneGraph();
-      if (!sceneGraph) return null;
-      ancestors = collectAncestorNodes(sceneGraph, leafPath);
+      const sceneIndex = this.deps.getSceneNodeIndex();
+      if (!sceneIndex) return null;
+      ancestors = sceneIndex.ancestorChain(leafPath);
     }
     // Required, not optional: an omitted `layerPath` would silently disable the
     // subtree rule below and re-open the inert-Blend-control bug.
@@ -498,9 +498,9 @@ export class LayerApplyEngine {
     if (precomputedAncestors) {
       ancestors = precomputedAncestors;
     } else {
-      const sceneGraph = this.deps.getSceneGraph();
-      if (!sceneGraph) return false;
-      ancestors = collectAncestorNodes(sceneGraph, leafPath);
+      const sceneIndex = this.deps.getSceneNodeIndex();
+      if (!sceneIndex) return false;
+      ancestors = sceneIndex.ancestorChain(leafPath);
     }
     const layerDepth = ancestors.findIndex((n) => n.path === layerPath);
     if (layerDepth < 0) return false;
@@ -650,21 +650,18 @@ export class LayerApplyEngine {
     const leaves = this.getAffectedDataLeaves(layer.path);
     if (leaves.length === 0) return;
     // Non-null whenever `leaves` is non-empty (`getAffectedDataLeaves` returns
-    // nothing without a graph); read once so the ancestry is walked ONCE per
-    // leaf below rather than once per consumer of it.
-    const sceneGraph = this.deps.getSceneGraph();
-    if (!sceneGraph) return;
+    // nothing without an index).
+    const sceneIndex = this.deps.getSceneNodeIndex();
+    if (!sceneIndex) return;
 
     for (const leaf of leaves) {
       const obj = this.getMesh(leaf.path);
       if (!obj) continue;
-      // ONE ancestry walk per leaf, shared by the composition and the
-      // reference-basis gate. `collectAncestorNodes` resolves each step with a
-      // linear `children.find` that allocates a string per comparison, so a
-      // fan-out over a P-part wrapper is ~P²/2 comparisons — measured at 7.0 ms
-      // for 512 parts and 129 ms for 2000, per slider tick. Walking it twice
-      // doubled that.
-      this.applyComposedToLeaf(layer, leaf, obj, collectAncestorNodes(sceneGraph, leaf.path));
+      // ONE chain per leaf, shared by the composition and the reference-basis
+      // gate, and read from the index. The `collectAncestorNodes` descent this
+      // replaced resolved each step with a linear `children.find`, so a fan-out
+      // over a P-part wrapper was ~P²/2 comparisons per slider tick.
+      this.applyComposedToLeaf(layer, leaf, obj, sceneIndex.ancestorChain(leaf.path));
     }
     this.deps.requestRender();
   }
@@ -697,6 +694,13 @@ export class LayerApplyEngine {
     const identityLayerWindow = layer.scalarWindow && !isColormapActive(mat);
     const eff = this.composeEffective(leaf.path, layer.path, identityLayerWindow, ancestors);
     if (!eff) return;
+    const pickUniforms = (
+      mat as LuxarMaterial & {
+        uniforms?: { uOpacity?: { value: number }; uIntensity?: { value: number } };
+      }
+    ).uniforms;
+    const previousOpacity = pickUniforms?.uOpacity?.value;
+    const previousIntensity = pickUniforms?.uIntensity?.value;
     // A live LOD fade (cross-fade, streaming energy or density-guard
     // compensation) owns the live opacity uniform as `_lodFadeBase × product`
     // (scene/lod-fade.ts), so a direct write of the authored value would be
@@ -706,25 +710,17 @@ export class LayerApplyEngine {
     if (!rebaseLodFade(obj, mat, eff.opacity)) mat.updateOpacity(eff.opacity);
     // A mesh's PICK material reads the same coverage the visual one does — node
     // opacity times per-vertex alpha (§6.5) — so it has to move with the slider.
-    // Without this, dragging opacity below the `opaque` cutoff would dissolve the
-    // surface on screen while leaving every triangle pickable, and hover tooltips
-    // would keep naming vertices of an invisible mesh. A no-op for the other three
-    // types, whose pick materials derive coverage from their own element data.
-    //
-    // Written OUTSIDE the LOD-fade branch above on purpose: a mesh CAN be a
-    // substitutive LOD level now (§9), so the sync has to run whichever branch the
-    // node took — an unconditional sync is what keeps a faded mesh level pickable
-    // at the coverage it actually renders with.
-    //
-    // When the sync actually touched a mesh pick material, invalidate the cached
-    // pick buffer: a stationary-camera layers-panel edit invalidates nothing else,
-    // so hover would otherwise keep naming vertices of the pre-edit coverage.
-    if (syncMeshPickAppearance(obj as THREE.Mesh, { opacity: eff.opacity })) {
-      this.deps.invalidatePickBuffer?.();
-    }
-    // All three geometry-material families implement it (gsplats
-    // phase 1, points phase 3, lines phase 4); optional-chained for
-    // non-Luxar materials.
+    // The value it renders with is NOT the one pushed here: every pick render
+    // copies the visual material's LIVE opacity across
+    // (rendering/picking/picking-system/visibility-sync.ts), which also covers
+    // the writers that never come through this panel — the LOD cross-fade and
+    // the embedder exposure path. What this call adds is the pick-buffer
+    // invalidation: a stationary-camera panel edit otherwise keeps the cached
+    // pre-edit coverage. Run outside the LOD-fade branch above.
+    const meshPickDirty = syncMeshPickAppearance(obj as THREE.Mesh, { opacity: eff.opacity });
+    // The three emissive geometry-material families implement it (gsplats
+    // phase 1, points phase 3, lines phase 4); optional-chained for a mesh
+    // material, which has none (a surface resolves `volumetric` to `opaque`).
     mat.updateAbsorption?.(eff.absorption);
     // A colormap-active leaf windows a SCALAR, and (when the composed window
     // really is stated on the layer's reference range — see
@@ -736,6 +732,14 @@ export class LayerApplyEngine {
       ? this.leafScalarWindow(leaf, layer, eff, ancestors)
       : undefined;
     applyColorAdjustments(mat, eff.gamma, eff.intensity, eff.offset, scalarWindow);
+    if (
+      meshPickDirty ||
+      (obj.userData.pickNode &&
+        (previousOpacity !== pickUniforms?.uOpacity?.value ||
+          previousIntensity !== pickUniforms?.uIntensity?.value))
+    ) {
+      this.deps.invalidatePickBuffer?.();
+    }
     const prevBlendingMode = mat.userData?.blendingMode as BlendingMode | undefined;
     // An unset ancestry composes to `undefined`; apply this leaf's per-type
     // default (mesh → opaque, emissive → additive) — the same mode the
@@ -831,11 +835,11 @@ export class LayerApplyEngine {
    */
   applyLayerOrder(layer: LayerInfo): void {
     this.pushed.layerOrder.set(layer.path, ++this.pushSequence);
-    const sceneGraph = this.deps.getSceneGraph();
+    const sceneIndex = this.deps.getSceneNodeIndex();
     for (const leaf of this.getAffectedDataLeaves(layer.path)) {
       const obj = this.getMesh(leaf.path);
       if (!obj) continue;
-      this.applyLayerOrderToLeaf(layer, leaf, obj, sceneGraph);
+      this.applyLayerOrderToLeaf(layer, leaf, obj, sceneIndex);
     }
     this.deps.requestRender();
   }
@@ -844,9 +848,9 @@ export class LayerApplyEngine {
     layer: LayerInfo,
     leaf: SceneNode,
     obj: THREE.Object3D,
-    sceneGraph: SceneNode | null
+    sceneIndex: SceneNodeIndex | null
   ): void {
-    const ancestors = sceneGraph ? collectAncestorNodes(sceneGraph, leaf.path) : undefined;
+    const ancestors = sceneIndex?.ancestorChain(leaf.path);
     const eff = this.composeEffective(leaf.path, layer.path, false, ancestors);
     obj.userData.layerOrder = eff?.layer_order;
   }
@@ -993,8 +997,8 @@ export class LayerApplyEngine {
   applyColormap(layer: LayerInfo): boolean {
     const leaves = this.getAffectedDataLeaves(layer.path);
     if (leaves.length === 0) return false;
-    const sceneGraph = this.deps.getSceneGraph();
-    if (!sceneGraph) return false;
+    const sceneIndex = this.deps.getSceneNodeIndex();
+    if (!sceneIndex) return false;
     this.pushed.colormap.set(layer.path, ++this.pushSequence);
 
     let colormapInEffect = false;
@@ -1002,7 +1006,7 @@ export class LayerApplyEngine {
     for (const leaf of leaves) {
       const obj = this.getMesh(leaf.path);
       if (!obj) continue;
-      const outcome = this.applyColormapToLeaf(layer, leaf, obj, sceneGraph);
+      const outcome = this.applyColormapToLeaf(layer, leaf, obj, sceneIndex);
       anyMaterialReached ||= outcome !== 'unreached';
       colormapInEffect ||= outcome === 'colormap';
     }
@@ -1028,13 +1032,16 @@ export class LayerApplyEngine {
     layer: LayerInfo,
     leaf: SceneNode,
     obj: THREE.Object3D,
-    sceneGraph: SceneNode
+    sceneIndex: SceneNodeIndex
   ): 'unreached' | 'colormap' | 'direct' {
     const mat = this.getLeafMaterial(obj);
     if (!mat || !mat.updateColormapTexture) return 'unreached';
     let inEffect = false;
     const tex = layer.colormap
-      ? getColormapTexture(layer.colormap, getEffectiveAttrs(sceneGraph, leaf.path).customLutBytes)
+      ? getColormapTexture(
+          layer.colormap,
+          getEffectiveAttrsOfChain(sceneIndex.ancestorChain(leaf.path)).customLutBytes
+        )
       : null;
     if (layer.colormap && tex) {
       // C1 fail-closed guard: enabling USE_COLORMAP requires real
@@ -1052,7 +1059,7 @@ export class LayerApplyEngine {
       if (!nodeType || !supportsScalarColormap(nodeType, geometry)) {
         log.warning(
           Modules.UI,
-          `[LayersPanel][${leaf.path}] Scalar colormap suppressed: required attribute(s) not bound on geometry (pending C4 implementation).`
+          `[LayersPanel][${leaf.path}] Scalar colormap suppressed: the leaf carries no per-element scalars (its geometry has no hasScalars stamp), so it keeps its direct colours.`
         );
         return 'direct';
       }
@@ -1068,9 +1075,9 @@ export class LayerApplyEngine {
       // of this method immediately supersedes what is written here, so the
       // two agreeing is about not leaving a trap for the next reader (#1753).
       if (mat.updateScalarRange) {
-        // One walk, shared by the composition and the gate — see the same
+        // One chain, shared by the composition and the gate — see the same
         // note in `applyComposed`.
-        const ancestors = collectAncestorNodes(sceneGraph, leaf.path);
+        const ancestors = sceneIndex.ancestorChain(leaf.path);
         const eff = this.composeEffective(leaf.path, layer.path, false, ancestors);
         if (eff) {
           const { min, max } = this.leafScalarWindow(leaf, layer, eff, ancestors);

@@ -12,7 +12,9 @@ import * as THREE from 'three';
 import {
   TONE_MAPPING_BY_NAME,
   TONE_MAPPING_NAMES,
+  luxarToneMappingMode,
   resolveToneMappingDefault,
+  toneMappingFromLuxarMode,
   toneMappingFromName,
 } from '../../../../rendering/post-processing/tone-mapping';
 import { config } from '../../../../config';
@@ -82,5 +84,29 @@ describe('toneMappingFromName', () => {
     for (const name of ['constructor', 'toString', 'hasOwnProperty', 'valueOf']) {
       expect(toneMappingFromName(name)).toBe(resolveToneMappingDefault());
     }
+  });
+});
+
+describe('luxarToneMappingMode / toneMappingFromLuxarMode (the mega-shader modes)', () => {
+  it('maps every named mode to a stable compact id and back', () => {
+    const cases: Array<[THREE.ToneMapping, number]> = [
+      [THREE.LinearToneMapping, 1],
+      [THREE.ReinhardToneMapping, 2],
+      [THREE.CineonToneMapping, 3],
+      [THREE.ACESFilmicToneMapping, 4],
+      [THREE.AgXToneMapping, 5],
+      [THREE.NeutralToneMapping, 6],
+    ];
+    for (const [mapping, mode] of cases) {
+      expect(luxarToneMappingMode(mapping)).toBe(mode);
+      expect(toneMappingFromLuxarMode(mode)).toBe(mapping);
+    }
+  });
+
+  it('aliases None to Linear (the shader still clamps) and anything else to Neutral', () => {
+    expect(luxarToneMappingMode(THREE.NoToneMapping)).toBe(1);
+    expect(luxarToneMappingMode(THREE.CustomToneMapping)).toBe(6);
+    expect(toneMappingFromLuxarMode(0)).toBe(THREE.NeutralToneMapping);
+    expect(toneMappingFromLuxarMode(Number.NaN)).toBe(THREE.NeutralToneMapping);
   });
 });

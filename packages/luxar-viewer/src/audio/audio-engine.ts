@@ -18,6 +18,7 @@
 
 import * as THREE from 'three';
 import type { SceneNode } from '../data/data-loader-types';
+import type { SceneNodeIndex } from '../data/scene-loader/view-state/scene-node-index';
 import type { SimpleDims } from '../types/dims';
 import {
   AUDIO_BUS_NAMES,
@@ -55,7 +56,12 @@ export interface AudioEngineDeps {
   getDims(): SimpleDims | null;
   /** Fires synchronously on every dimension change. */
   onDimsChanged(cb: () => void): Unsubscribe;
-  getSceneGraph(): SceneNode | null;
+  /**
+   * The loader's path index over the scene graph (`SceneLoader.sceneNodeIndex`),
+   * or null before a scene loads. Audibility reads each sound's world
+   * `nd_transform` from it in O(1); its `root` is the graph itself.
+   */
+  getSceneNodeIndex(): SceneNodeIndex | null;
   /** Scene characteristic size — the distance defaults derive from it. */
   getSceneScale(): number;
   /** Where the autoplay gate mounts. */
@@ -285,10 +291,12 @@ export class AudioEngine {
   private resolveAttachCenter(name: string): THREE.Vector3 | null {
     const live = this.deps.resolveNodeCenter?.(name) ?? null;
     if (live) return live;
-    const graph = this.deps.getSceneGraph();
+    const index = this.deps.getSceneNodeIndex();
     const dims = this.deps.getDims();
-    if (!graph || !dims) return null;
-    const node = findSceneNode(graph, name);
+    if (!index || !dims) return null;
+    // A full path resolves through the index; a bare node NAME (the common
+    // `attach_to` spelling) has no index key, so it still needs the walk.
+    const node = index.node(name) ?? findSceneNode(index.root, name);
     return node ? boundsCenter(node.attrs?.position_bounds, dims.displayed) : null;
   }
 
@@ -310,8 +318,8 @@ export class AudioEngine {
     const dims = this.deps.getDims();
     if (!dims || this.nodes.size === 0) return;
     const base = buildSoundBaseViewState(dims);
-    const sceneGraph = this.deps.getSceneGraph();
-    for (const node of this.nodes.values()) node.setViewState(base, sceneGraph);
+    const sceneIndex = this.deps.getSceneNodeIndex();
+    for (const node of this.nodes.values()) node.setViewState(base, sceneIndex);
   }
 
   /**
@@ -323,14 +331,14 @@ export class AudioEngine {
   notifyWaypoint(kind: WaypointEventKind, when: SoundWaypointCondition): void {
     if (this.disposed || this.nodes.size === 0) return;
     const dims = this.deps.getDims();
-    const sceneGraph = this.deps.getSceneGraph();
+    const sceneIndex = this.deps.getSceneNodeIndex();
     let fired = 0;
     for (const node of this.nodes.values()) {
       if (node.attrs.trigger !== `on_${kind}`) continue;
       // A new event supersedes older deferred triggers of the SAME kind. The
       // paired arrive/depart event must not erase a clip that is still decoding.
       node.clearDeferredTrigger();
-      const rows = this.belongingRows(node, when, dims, sceneGraph);
+      const rows = this.belongingRows(node, when, dims, sceneIndex);
       if (rows === undefined) continue;
       if (node.triggerFromWaypoint(kind, rows)) fired++;
     }
@@ -348,7 +356,7 @@ export class AudioEngine {
     node: SoundNode,
     when: SoundWaypointCondition,
     dims: SimpleDims | null,
-    sceneGraph: SceneNode | null
+    sceneIndex: SceneNodeIndex | null
   ): Uint8Array | null | undefined {
     if (!node.desc.positions || node.desc.nPositions === 0) return null;
     if (!dims) return undefined;
@@ -358,7 +366,7 @@ export class AudioEngine {
       node.desc,
       node.attrs.extend_to_all,
       query,
-      sceneGraph,
+      sceneIndex,
       rows
     );
     return count === 0 ? undefined : rows;
@@ -374,7 +382,9 @@ export class AudioEngine {
       (a, b) => Number(b.isAudibleNow) - Number(a.isAudibleNow)
     );
     for (const node of ordered) {
-      if (this.disposed || !this.nodes.has(node.path)) return;
+      // Identity, not path: a detach + re-attach of the same store reuses the
+      // paths with new nodes, and this loop must then yield to theirs.
+      if (this.disposed || this.nodes.get(node.path) !== node) return;
       try {
         const bytes = await node.desc.readClip();
         if (!bytes) {
@@ -383,7 +393,7 @@ export class AudioEngine {
         }
         const copy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
         const buffer = await ctx.decodeAudioData(copy as ArrayBuffer);
-        if (this.disposed || !this.nodes.has(node.path)) return;
+        if (this.disposed || this.nodes.get(node.path) !== node) return;
         node.setBuffer(buffer);
       } catch (error) {
         log.warning(Modules.AUDIO, `${node.path}: could not decode clip`, error);

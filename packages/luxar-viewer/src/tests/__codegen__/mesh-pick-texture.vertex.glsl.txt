@@ -41,8 +41,8 @@ precision highp samplerCubeShadow;
 layout( std140 ) uniform render {
 	float cameraNear;
 	float cameraFar;
-	mat4 cameraViewMatrix;
 	mat4 cameraProjectionMatrix;
+	mat4 cameraViewMatrix;
 	mat4 cameraProjectionMatrixInverse;
 };
 
@@ -50,13 +50,14 @@ layout( std140 ) uniform object {
 	float nodeUniform0;
 	mat3 nodeUniform2;
 	uint nodeUniform3;
-	float nodeUniform5;
+	float nodeUniform4;
 	float nodeUniform6;
 	float nodeUniform7;
 	mat4 nodeUniform10;
-	float nodeUniform14;
+	float nodeUniform12;
 	float nodeUniform15;
 	float nodeUniform16;
+	float nodeUniform17;
 };
 
 
@@ -81,8 +82,8 @@ float nodeVar12;
 mat4 modelViewMatrix;
 vec4 nodeVar13;
 vec4 nodeVar14;
-int nodeVar16;
-vec2 nodeVar17;
+int nodeVar20;
+vec2 nodeVar21;
 
 // codes
 
@@ -117,10 +118,10 @@ void main() {
 	nodeVarying2 = nodeVar13.z;
 	nodeVar14 = ( cameraProjectionMatrix * nodeVar13 );
 	v_clipSpace = nodeVar14;
-	nodeVarying4 = nodeUniform15;
-	nodeVar16 = ( int( uint( gl_VertexID ) ) / 65536 );
-	nodeVar17 = vec2( float( ( int( uint( gl_VertexID ) ) - ( nodeVar16 * 65536 ) ) ), float( nodeVar16 ) );
-	nodeVarying5 = nodeVar17;
+	nodeVarying4 = nodeUniform16;
+	nodeVar20 = ( int( uint( gl_VertexID ) ) / 65536 );
+	nodeVar21 = vec2( float( ( int( uint( gl_VertexID ) ) - ( nodeVar20 * 65536 ) ) ), float( nodeVar20 ) );
+	nodeVarying5 = nodeVar21;
 
 	// result
 	gl_Position = nodeVar14;

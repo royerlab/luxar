@@ -203,8 +203,9 @@ These contracts span every tier and are enforced by the unit tests in
 - **Pending writes drain**: `clear()` awaits in-flight `pendingWrites`
   via `Promise.allSettled` before resetting state.
 - **Disposed flag**: post-`dispose()` `set/get/touch` are no-ops.
-- **In-flight metadata save tracking**: `dispose()` awaits
-  `metadataSaveInFlight` before the final flush.
+- **In-flight metadata save tracking**: `dispose()` awaits the
+  metadata manager's in-flight save (`awaitInFlight()`) before the final
+  flush.
 
 ### L0 read-only chunk contract
 
@@ -248,8 +249,10 @@ under "L0 Decompressed Chunk Cache" below.
 - `corruptedEntries`: get() detected a size mismatch and removed the
   bad entry.
 - `metadataParseFailures`: `_cache_meta.json` could not be parsed.
-- `orphanedFilesRemoved`: files reclaimed by `cleanupOrphans()` (run
-  on metadata parse failure).
+- `orphanedFilesRemoved`: unindexed files deleted by the open-time orphan
+  reconcile (unrecoverable, or no recovery hash; see "L2 index persistence").
+- `orphansReindexed`: unindexed files recovered into the index, by the
+  reconcile or by a first read of the key.
 
 ## Cache Status Badges
 
@@ -385,9 +388,10 @@ unwrapCachedArray(cached);
 
 Cached zarr chunks are **read-only** to every loader downstream of `wrapWithCache`.
 
-The L0 cache stores the same `ArrayBufferView` it returns to subsequent
-hit-path callers — no defensive clone on hit. Mutating that view in
-place would corrupt the cached entry for the next caller. Loaders MUST
+The L0 cache stores the same `ArrayBufferView` it returns to the caller
+whose miss decoded it, to waiters that joined that decode, and to every
+later hit — no defensive clone on any path. Mutating that view in place
+would corrupt the cached entry for the next caller. Loaders MUST
 treat chunk data as immutable input and copy into accumulator buffers,
 output `BufferAttribute` allocations, or fresh `TypedArray`s before
 mutating.
@@ -400,11 +404,11 @@ loader that does mutate `chunk.data`, either copy first or — if the
 mutation is unavoidable — switch the wrapped array to skip caching for
 that path.
 
-The miss-path clone in `wrapWithCache` (via `cloneArrayBufferView`)
-gives the _first caller_ a private buffer they can technically mutate
-without poisoning the cache, but this should not be relied upon: the
-contract is "read-only on every path" so future cache changes (e.g.
-removing the miss-path clone for a perf win) don't break loaders.
+There is no miss-path clone either: the first caller gets the very
+buffer L0 stores (`cloneArrayBufferView` runs only for a view into a
+larger buffer, so L0 never retains bytes it does not account for). The
+contract is "read-only on every path", and `l0-immutability.test.ts`
+pins that a miss, a coalesced waiter and a hit share one buffer.
 
 ## Intelligent Prefetching
 
@@ -711,11 +715,12 @@ the namespace dir with `create: false` and treats a cold origin's
 luxar/                       # Viewer namespace dir (OPFS_NAMESPACE_DIR)
 └── zarr-cache-{url-hash}/   # One dataset dir per base URL (SHA-256)
     ├── 00/                  # Bucket directories (256 total)
-    │   ├── cG9pbnRz...      # Base64-encoded zarr keys
+    │   ├── 3f1c….cG9pbnRz…  # {hash tag}.{base64url zarr key}
     │   └── ...
     ├── 01/
     ├── ...
     ├── ff/
+    ├── _cache_identity.json # Content hash the chunk files were written under
     └── _cache_meta.json     # Index + LRU metadata
 ```
 
@@ -727,7 +732,14 @@ again.
 
 1. **Hash the key**: `"points/positions/0.0.0"` → bucket `23`
 2. **Base64 encode**: `"points/positions/0.0.0"` → `cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA`
-3. **Store**: `23/cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA`
+3. **Tag the content hash** it is written under (`hashTag`, 16 hex chars;
+   none when the dataset has no hash): `{tag}.cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA`
+4. **Store**: `23/{tag}.cG9pbnRzL3Bvc2l0aW9ucy8wLjAuMA`
+
+The tag is what keeps two tabs on one directory apart. A tab still at the old
+hash of a republished dataset keeps writing after the new hash's tab cleared
+the directory; its files carry the old tag, so the new-hash store never reads
+them, and its reconcile deletes them rather than recovering them.
 
 ### Benefits
 
@@ -735,6 +747,45 @@ again.
 - **Only 256 bucket handles** to cache (trivial memory overhead)
 - **2 async calls** per file access (bucket + file) vs 1 - negligible overhead
 - **Efficient clear()**: Iterates 256 directories, not 65,000 files
+
+### L2 index persistence
+
+The contract: **a chunk file whose write completed is served from L2 by the
+next session of the same dataset, whenever the page was reloaded or killed**,
+and never under a different content hash.
+
+The index (`_cache_meta.json`) cannot carry that alone. It is saved on a
+debounce (150 ms leading edge, 1 s trailing, 2 s ceiling), and a save started
+during unload does not survive a navigation (measured on Chromium: the old page
+stops after `getFileHandle(create)`, leaving a zero-byte index). So a reload
+can always land after some chunk writes the index never recorded. What makes
+those files usable anyway:
+
+1. **The directory's identity is durable before its chunks.** The validated
+   content hash goes to `_cache_identity.json`, written only when the hash
+   changes, and every chunk write waits for that write. Any chunk file on disk
+   therefore has a known provenance, even when no index save ever landed. With
+   no index, the identity is the cached hash validation compares against, so a
+   changed dataset still clears every tier.
+2. **A key's file path is a function of the key and the hash**
+   (`{bucket(key)}/{tag(hash)}.{base64url(key)}`). While the open-time
+   reconcile (below) runs, an L2 lookup of a key the index does not list reads
+   that path, and a hit is indexed (size and LRU accounted) and served. This is
+   what serves a reload's first-frame reads; it stops when the reconcile ends
+   (a budget-capped crawl leaves the rest for the next session rather than
+   paying a lookup per L2 miss all session).
+3. **The open-time reconcile** (`opfs-store/orphan-reconcile.ts`, per-session
+   budgeted, in the background) re-indexes every unindexed file of the
+   recovery hash's tag that still fits under `maxSize` when it merges, and
+   deletes the rest (other tags included). A key written meanwhile keeps its
+   live entry; one written and then evicted during the crawl is not resurrected.
+
+Recovery is gated on the same hash that makes indexed entries trustworthy: the
+identity file's hash, unless an index that did land names a different one. A
+directory with neither (written before the identity file existed, or for a
+dataset that never yielded a validation token) is index-only, and its
+unindexed files are deleted. A zero-byte chunk file (a write cut off between
+create and close) is never recovered.
 
 ## Cache Behavior
 
@@ -952,6 +1003,19 @@ await window.__luxarDebug.cache.clearAll();
   has to import a concrete store to read through it.
 - `chunk-source/http-chunk-source.ts` — the directory-store source: one
   retrying HTTP request per chunk, owning the response lifetime.
+- `chunk-source/packed-chunk-source.ts` — wraps the store's source and serves a
+  packed store's small nodes (`luxar optimize --pack`) from ONE request each:
+  every member key gets its own bytes sliced from the pack, so L0/L1/L2 cache
+  exactly what plain reads would have. Adopts the `chunk_packs` index only for
+  the root `content_hash` it was built for (`adoptChunkPacks`, data layer), and
+  reads plainly when a pack is missing, fails its SHA-256, or lacks the key. Unadopted,
+  it is the inner source. Each member is handed out once; unserved members (a
+  rung the view never loads) are held least-recently-used within
+  `maxHeldBytes` (4 MB), and a member read again after the caches evicted it,
+  or one of a pack let go, refetches the pack (one request, as a plain read).
+  Each caller races its own abort signal against the shared pack fetch, a
+  joining caller raises that fetch's class, and the pack's bytes over the wire
+  are reported once.
 - `chunk-source/zip-chunk-source.ts` — the zipped-store source: members read out
   of one archive, identity from a probe on the archive, and archive-level faults
   reported as `fatal` so the store rethrows instead of rendering an empty scene.
@@ -967,7 +1031,9 @@ await window.__luxarDebug.cache.clearAll();
   `AsyncReadable` with validation, prefetcher hookup, and disposal.
 - `decompressed-chunk-cache.ts` — L0 LRU of decoded TypedArrays.
 - `chunk-prefetcher.ts` — Background prefetcher for adjacent chunks
-  with per-array bounds registration and a single FIFO queue.
+  with per-array bounds registration and one bounded (`MAX_QUEUED`, 64),
+  newest-first queue: the latest access's neighbours are served first and
+  the oldest entries dropped first.
 - `slice-cache.ts` — `SliceCache` (S-cache): per-(node, view) byte-budget
   LRU of decoded per-slice geometry, keyed by node path +
   slice/tolerance/displayDims signature; sits above the chunk caches so

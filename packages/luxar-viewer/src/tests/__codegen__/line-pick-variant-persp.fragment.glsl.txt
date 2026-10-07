@@ -1,0 +1,242 @@
+#version 300 es
+
+// Three.js r185 - Node System
+
+
+// extensions
+
+
+// precision
+
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+precision highp sampler3D;
+precision highp samplerCube;
+precision highp sampler2DArray;
+
+precision highp usampler2D;
+precision highp usampler3D;
+precision highp usamplerCube;
+precision highp usampler2DArray;
+
+precision highp isampler2D;
+precision highp isampler3D;
+precision highp isamplerCube;
+precision highp isampler2DArray;
+
+precision highp sampler2DShadow;
+precision highp sampler2DArrayShadow;
+precision highp samplerCubeShadow;
+
+
+// structs
+
+layout( location = 0 ) out vec4 fragColor;
+
+
+
+// uniforms
+
+layout( std140 ) uniform render {
+	float cameraNear;
+	float cameraFar;
+	mat4 cameraProjectionMatrix;
+	mat4 cameraViewMatrix;
+	mat4 cameraProjectionMatrixInverse;
+};
+
+layout( std140 ) uniform object {
+	mat4 nodeUniform1;
+	float nodeUniform3;
+	mat3 nodeUniform5;
+	uint nodeUniform6;
+	mat3 nodeUniform7;
+	uint nodeUniform8;
+	mat3 nodeUniform9;
+	uint nodeUniform10;
+	mat3 nodeUniform11;
+	uint nodeUniform12;
+	mat3 nodeUniform13;
+	uint nodeUniform14;
+	mat3 nodeUniform15;
+	uint nodeUniform16;
+	float nodeUniform17;
+	vec2 nodeUniform19;
+	float nodeUniform20;
+	float nodeUniform21;
+	mat3 nodeUniform22;
+	uint nodeUniform23;
+	mat3 nodeUniform24;
+	uint nodeUniform25;
+	mat3 nodeUniform26;
+	uint nodeUniform27;
+	mat3 nodeUniform28;
+	uint nodeUniform29;
+	float nodeUniform30;
+	float nodeUniform31;
+	float nodeUniform32;
+	float nodeUniform33;
+	float nodeUniform34;
+	float nodeUniform35;
+	float nodeUniform36;
+	float nodeUniform40;
+	float nodeUniform41;
+	float nodeUniform42;
+};
+
+
+// varyings
+in float nodeVarying0;
+in float nodeVarying1;
+in float nodeVarying2;
+flat  in float nodeVarying3;
+in float nodeVarying4;
+in float nodeVarying5;
+in float nodeVarying6;
+in float nodeVarying7;
+in float nodeVarying8;
+flat  in float nodeVarying9;
+flat  in float nodeVarying10;
+in vec4 v_clipSpace;
+flat  in float nodeVarying12;
+flat  in vec2 nodeVarying13;
+
+
+// vars
+vec4 nodeVar169;
+vec3 positionView;
+float nodeVar170;
+float nodeVar171;
+float nodeVar172;
+float nodeVar173;
+float nodeVar174;
+float nodeVar175;
+float nodeVar176;
+float nodeVar177;
+float nodeVar178;
+float lineBrightness;
+float nodeVar179;
+int nodeVar180;
+vec4 DiffuseColor;
+vec4 Output;
+vec4 nodeVar183;
+
+// codes
+
+
+void main() {
+
+	// flow
+	// code
+
+	nodeVar169 = ( cameraProjectionMatrixInverse * v_clipSpace );
+	positionView = ( nodeVar169.xyz / vec3( nodeVar169.w ) );
+	nodeVar170 = positionView.z;
+	nodeVar171 = clamp( ( ( nodeVarying2 * nodeVarying3 ) / nodeVarying4 ), 0.0, 1.0 );
+	nodeVar172 = clamp( ( ( ( 1.0 - nodeVarying2 ) * nodeVarying3 ) / nodeVarying4 ), 0.0, 1.0 );
+
+	if ( ( nodeVarying4 > 1e-20 ) ) {
+
+		nodeVar173 = nodeVar171;
+
+	} else {
+
+		nodeVar173 = 1.0;
+
+	}
+
+
+	if ( ( nodeVarying4 > 1e-20 ) ) {
+
+		nodeVar174 = nodeVar172;
+
+	} else {
+
+		nodeVar174 = 1.0;
+
+	}
+
+
+	if ( ( 0 == 1 ) ) {
+
+		nodeVar175 = 1.0;
+
+	} else {
+
+
+		if ( ( nodeVarying8 >= 0.0 ) ) {
+
+			nodeVar176 = 0.0;
+
+		} else {
+
+			nodeVar177 = max( nodeUniform32, 1e-20 );
+			nodeVar176 = smoothstep( nodeVar177, ( nodeVar177 * 2.0 ), ( - nodeVarying8 ) );
+
+		}
+
+		nodeVar175 = nodeVar176;
+
+	}
+
+
+	if ( ( int( nodeUniform33 ) == 1 ) ) {
+
+		nodeVar178 = mix( 1.0, ( - log( ( 1.0 - min( nodeVarying5, 0.998046875 ) ) ) ), nodeUniform34 );
+
+	} else {
+
+		nodeVar178 = nodeVarying5;
+
+	}
+
+	lineBrightness = ( ( ( ( ( min( mix( ( 0.5 + ( nodeVar173 * 0.5 ) ), 1.0, nodeVarying9 ), mix( ( 0.5 + ( nodeVar174 * 0.5 ) ), 1.0, nodeVarying10 ) ) * ( max( ( exp( ( pow( abs( nodeVarying1 ), pow( 2.0, ( ( nodeVarying0 * 6.0 ) - 2.0 ) ) ) * -4.6051702 ) ) - 0.01 ), 0.0 ) * 1.0101010101010102 ) ) * min( ( nodeVarying6 / ( max( nodeUniform31, 1.0 ) * 1.5 ) ), 1.0 ) ) * nodeVarying7 ) * nodeVar175 ) * ( ( nodeVar178 * nodeUniform35 ) * max( nodeUniform36, 1.0 ) ) );
+
+	if ( ( cameraProjectionMatrix[ 3 ].w > 0.5 ) ) {
+
+		nodeVar180 = 1;
+
+	} else {
+
+		nodeVar180 = 0;
+
+	}
+
+
+	if ( ( nodeVar180 == 1 ) ) {
+
+		nodeVar179 = ( ( nodeVar170 + cameraNear ) / ( cameraNear - cameraFar ) );
+
+	} else {
+
+		nodeVar179 = ( ( ( cameraNear + nodeVar170 ) * cameraFar ) / ( ( cameraFar - cameraNear ) * nodeVar170 ) );
+
+	}
+
+	gl_FragDepth = mix( ( 1.0 / ( 1.0 + lineBrightness ) ), nodeVar179, nodeUniform40 );
+
+	if ( ( abs( nodeVarying1 ) >= 1.0 ) ) {
+
+		discard;
+
+
+	}
+
+
+	if ( ( lineBrightness < 0.0001 ) ) {
+
+		discard;
+
+
+	}
+
+	DiffuseColor = vec4( nodeVarying12, nodeVarying13.x, lineBrightness, nodeVarying13.y );
+	DiffuseColor.w = ( DiffuseColor.w * nodeUniform42 );
+	nodeVar183 = max( vec4( DiffuseColor.xyz, DiffuseColor.w ), 0.0 );
+	Output = nodeVar183;
+
+	// result
+	fragColor = nodeVar183;
+
+}

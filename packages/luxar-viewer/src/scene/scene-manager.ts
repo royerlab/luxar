@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { ControlsManager } from '../controls/controls-manager';
 import { loadScene } from '../data';
+import { SceneLoaderManager } from '../data/scene-loader-manager';
 import type { LoaderConfig } from '../data/data-loader-types';
 import { notifier } from '../utils/cross-layer/notifier';
 import { config } from '../config';
@@ -63,6 +64,7 @@ import {
   clearLoadedSceneContent,
   disposeSceneGraphResources,
 } from './scene-manager/render-pipeline/scene-disposal';
+import { detachSceneGraphIndex } from '../utils/scene-graph-index';
 import {
   applyZarrViewerConfig as applyZarrViewerConfigHelper,
   createDefaultPerspectiveCamera,
@@ -97,6 +99,7 @@ import {
 import { type LuxarCamera, isPerspectiveCamera, isOrthographicCamera } from '../utils/camera-utils';
 import { isDocumentFullscreen } from '../utils/fullscreen';
 import type { ControlType } from '../controls/controls-manager';
+import { DepthSortCoordinator } from '../rendering/depth-sort-coordinator';
 import type { AutoRotateAxis } from '../controls/types';
 
 /** Default scene up (world +Y) — overridden per scene by `viewer_config.up`. */
@@ -108,6 +111,8 @@ const FOV_APPLY_DEADBAND_DEG = 0.5;
 export interface SceneLoadOptions {
   /** Apply scene FOV before auto-framing; authored positions carry it regardless. */
   applyViewerConfigFov?: boolean;
+  /** Resolve settings against root metadata before the opening camera is framed. */
+  beforeFrame?: (root: THREE.Group) => void;
 }
 
 /**
@@ -179,6 +184,16 @@ export class SceneManager extends THREE.EventDispatcher<{
    */
   public environment: SceneEnvironment | null = null;
   private unsubscribeEnvironment: (() => void) | null = null;
+
+  /**
+   * This app's depth-sort coordinator: the scene loader's commits report to it,
+   * the post-processing glass split reads its node registry, and the dataset
+   * switch releases its nodes. Owned here because the scene manager is the one
+   * per-app object every one of those already reaches; the init pipeline wires
+   * its camera and render loop (`configure`) and the app's dispose pipeline
+   * disposes it.
+   */
+  public readonly depthSort = new DepthSortCoordinator();
 
   /**
    * Capabilities snapshot for the active renderer. Hides raw-GL queries
@@ -794,6 +809,7 @@ export class SceneManager extends THREE.EventDispatcher<{
       capabilities: this.capabilities,
       scene: this.scene,
       camera: this.camera,
+      glassSource: this.depthSort,
       onResize: () => {
         if (this.camera) this.updateMaterialsForCurrentCamera();
       },
@@ -832,9 +848,20 @@ export class SceneManager extends THREE.EventDispatcher<{
         this.updateMaterialsForCurrentCamera();
       }
 
-      const root = await loadScene(src, {
+      const embedderOnSceneMetadata = loaderConfig?.onSceneMetadata;
+      // The LuxarApp's loader manager; its loaders' commits report to this
+      // app's depth-sort coordinator.
+      const sceneLoaders = SceneLoaderManager.getInstance();
+      sceneLoaders.setDepthSortCoordinator(this.depthSort);
+      const root = await loadScene(sceneLoaders, src, {
         ...loaderConfig,
-        onSceneMetadata: (metaRoot) => this.frameBeforeNodesLoad(metaRoot, options),
+        // Frame first, then hand the root to an embedder's own hook, which
+        // then sees the pose the scene opens on (as load-time decisions do).
+        onSceneMetadata: (metaRoot) => {
+          options.beforeFrame?.(metaRoot);
+          this.frameBeforeNodesLoad(metaRoot, options);
+          embedderOnSceneMetadata?.(metaRoot);
+        },
       });
       notifier.hideLoading();
       this.scene.add(root);
@@ -966,6 +993,13 @@ export class SceneManager extends THREE.EventDispatcher<{
     return root?.userData?.viewerConfig as ZarrViewerConfig | undefined;
   }
 
+  /** The loaded scene's `content_hash` (undefined for a store that records none). */
+  getSceneContentHash(): string | undefined {
+    const root = this.scene.children.find((c) => c.name === 'LuxarScene');
+    const hash = root?.userData?.contentHash;
+    return typeof hash === 'string' ? hash : undefined;
+  }
+
   /** The baked environment map the loader found in the store, if any (see `loadBakedEnvironment`). */
   getSceneBakedEnvironment(): BakedEnvironment | null {
     const root = this.scene.children.find((c) => c.name === 'LuxarScene');
@@ -975,26 +1009,26 @@ export class SceneManager extends THREE.EventDispatcher<{
   /**
    * Give the scene environment what a live `scene` capture needs (the init pipeline
    * calls this once the load-activity predicate exists). The capture pushes the cube
-   * camera's params (a square drawing buffer, perspective, pixel ratio 1) to the
-   * material manager so point and line footprints render at the right size in the six
-   * faces — the 90° projection itself is read in shader from the cube camera's matrix
-   * — and restores the main camera's push afterwards through the ordinary path.
+   * camera's params (a square drawing buffer, pixel ratio 1) to the material manager
+   * so point and line footprints render at the right size in the six faces, and
+   * restores the main camera's push afterwards through the ordinary path. The 90°
+   * projection itself — its ortho test included — is read from the cube camera at
+   * draw time, so the camera KIND needs no push: every GLSL program and TSL graph
+   * reads it in shader from the matrix, except the TSL screen-space line quad,
+   * whose per-draw hook re-points it at its cached perspective graph for the faces
+   * (a lookup, no build; see `selectProjectionVariant`).
    */
-  attachEnvironmentRuntime(isSettled: () => boolean): void {
+  attachEnvironmentRuntime(isSettled: () => boolean, captureReady: () => boolean): void {
     const root = (): THREE.Object3D | null =>
       this.scene.children.find((c) => c.name === 'LuxarScene') ?? null;
     this.environment?.attachRuntime({
       sceneRoot: root,
       pushCaptureCameraParams: (resolution) => {
-        materialManager.updateCameraParams(
-          new THREE.Vector2(resolution, resolution),
-          false,
-          undefined,
-          1
-        );
+        materialManager.updateCameraParams(new THREE.Vector2(resolution, resolution), undefined, 1);
       },
       restoreCameraParams: () => this.updateMaterialsForCurrentCamera(),
       isSettled,
+      captureReady,
       baseUrl: () => root()?.userData?.zarrBaseUrl as string | undefined,
       // An HDRI landing asynchronously: the 'change' event wakes the loop.
       requestRender: () => this.dispatchEvent({ type: 'change' }),
@@ -1028,7 +1062,10 @@ export class SceneManager extends THREE.EventDispatcher<{
   private clearSceneContent(): void {
     clearBlendModeProgramWarmup();
     this.invalidateBoundsCache();
-    const removed = clearLoadedSceneContent(this.scene);
+    // The outgoing scene root carries the loader's path index (every member
+    // node holds its add/remove listeners): stop maintaining it.
+    for (const child of this.scene.children) detachSceneGraphIndex(child);
+    const removed = clearLoadedSceneContent(this.scene, this.depthSort);
     log.info(Modules.SCENE_MANAGER, `Cleared ${removed} objects from scene`);
   }
 
@@ -1287,6 +1324,11 @@ export class SceneManager extends THREE.EventDispatcher<{
    * acceptable thresholds, and by the manual DPR control when adaptive
    * mode is disabled.
    *
+   * Unlike {@link resizeToCanvas} this does NOT dispatch `change`, although
+   * the resize clears the canvas: the idle restore resizes right after the
+   * loop stops and draws its own frame, and a `change` would wake the loop
+   * again. A caller outside a tick (a UI control) requests the repaint.
+   *
    * @param dpr - The new device pixel ratio to use
    */
   public setAdaptivePixelRatio(dpr: number): void {
@@ -1532,7 +1574,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     // (WebGL resources are not garbage collected). Delegated to
     // scene-manager/render-pipeline/scene-disposal so the same one-shot
     // final-dispose pass is unit-testable in isolation.
-    disposeSceneGraphResources(this.scene);
+    disposeSceneGraphResources(this.scene, this.depthSort);
   }
 
   /**

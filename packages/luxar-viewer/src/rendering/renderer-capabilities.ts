@@ -3,9 +3,11 @@
  * graphics API.
  *
  * Every other module in the codebase asks `RendererCapabilities` for
- * what the GPU can do, what bit depth the backbuffer has, or to read
- * pixels back. The implementation here speaks WebGL2. When the WebGPU
- * port lands, only this file changes.
+ * what the GPU can do, what bit depth the backbuffer has, and which
+ * framebuffer / readback Y convention the running backend uses. Both
+ * renderers are probed here: `THREE.WebGLRenderer` through its WebGL2
+ * context, `WebGPURenderer` through its device limits (or the WebGL2
+ * context of its compat backend).
  */
 import * as THREE from 'three';
 import type { WebGPURenderer } from 'three/webgpu';
@@ -116,20 +118,6 @@ export interface RendererCapabilities {
   readonly maxRenderbufferSize: number;
   /** `[min, max]` `gl_PointSize` range — used for debug logging. */
   readonly pointSizeRange: readonly [number, number];
-
-  /**
-   * Read the current canvas backbuffer into a freshly-allocated
-   * `Uint8Array` (RGBA bytes, not vertically flipped).
-   *
-   * Returns a Promise so the WebGPU port (which requires async
-   * `buffer.mapAsync`) replaces only this method's body, not the
-   * interface contract. Under WebGL2 the inner work is synchronous
-   * and the Promise resolves immediately.
-   *
-   * Implementations are responsible for binding the canvas
-   * backbuffer before reading.
-   */
-  readBackbufferPixels(): Promise<{ pixels: Uint8Array; width: number; height: number }>;
 }
 
 /**
@@ -210,8 +198,7 @@ export function createRendererCapabilities(
 
   if (isWebGLRenderer(renderer)) {
     // WebGL2 path: probe raw-GL for capabilities. Post-renderer
-    // `getContext()` calls are deliberately rare — this one, the
-    // `readBackbufferPixels` readback below, and the provoking-vertex
+    // `getContext()` calls are deliberately rare — this one and the provoking-vertex
     // probe in `rendering/picking/mesh` are the whole list (plus the
     // canvas-side pre-renderer call in `scene-manager`).
     const gl = renderer.getContext() as WebGL2RenderingContext;
@@ -276,18 +263,6 @@ export function createRendererCapabilities(
       maxTextureSize,
       maxRenderbufferSize,
       pointSizeRange,
-      readBackbufferPixels() {
-        // Bind the canvas backbuffer explicitly. `runPipeline` is
-        // defensive about restoring its prior render target, but we
-        // can't assume the caller arrived here through that path.
-        renderer.setRenderTarget(null);
-        const ctx = renderer.getContext();
-        const width = ctx.drawingBufferWidth;
-        const height = ctx.drawingBufferHeight;
-        const pixels = new Uint8Array(width * height * 4);
-        ctx.readPixels(0, 0, width, height, ctx.RGBA, ctx.UNSIGNED_BYTE, pixels);
-        return Promise.resolve({ pixels, width, height });
-      },
     };
   }
 
@@ -356,31 +331,5 @@ export function createRendererCapabilities(
     maxTextureSize,
     maxRenderbufferSize,
     pointSizeRange: [1, 1024],
-    readBackbufferPixels() {
-      // WebGPU backbuffer readback. WebGPURenderer doesn't have a
-      // `gl.readPixels(canvas, …)` equivalent — the canvas is owned
-      // by the browser compositor and not directly mappable.
-      //
-      // The canonical capture path is
-      // `PostProcessingManager.renderToImageData()`, which renders into
-      // an offscreen `WebGLRenderTarget` and reads it via the
-      // backend-agnostic `readRenderTargetPixelsAsync`. Direct backbuffer
-      // readback (this method) is retained on the interface for tests and
-      // direct readers under WebGL2.
-      //
-      // Under WebGPU we deliberately fail loud rather than fake a
-      // success: this method has no scene/render context to capture
-      // (the caller would already have rendered), and any "render
-      // an empty target" stub here would silently produce a black
-      // pixel buffer in place of the intended capture. Direct
-      // backbuffer readback is not something WebGPU supports;
-      // callers must route through renderToImageData.
-      return Promise.reject(
-        new Error(
-          'readBackbufferPixels is not supported under the WebGPU backend. ' +
-            'Use PostProcessingManager.renderToImageData() for the capture path.'
-        )
-      );
-    },
   };
 }

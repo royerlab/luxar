@@ -37,6 +37,7 @@ import {
   syncMeshShadingDefines,
   type MeshShadingMode,
 } from './appearance';
+import { copyRuntimeUniforms, MESH_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import { getGlassDepthTexture } from '../_shared/glass-partition';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
@@ -267,19 +268,14 @@ export class MeshMaterial
   /**
    * Update the camera-dependent uniforms.
    *
-   * `_resolution` and `_isOrtho` are accepted and IGNORED: the resolution exists so
-   * a material can size a screen-space sprite, and a mesh's size is its own
-   * geometry; the near fade's ortho test reads three's `isOrthographic`, i.e. the
-   * camera this draw uses. Only `nearCull` is consumed. Named with a leading
+   * `_resolution` is accepted and IGNORED: it exists so a material can size a
+   * screen-space sprite, and a mesh's size is its own geometry; the near fade's
+   * ortho test reads the projection matrix of the draw
+   * (`luxarIsOrthoProjection()`). Only `nearCull` is consumed. Named with a leading
    * underscore so the asymmetry is visible at the signature rather than buried in
    * the body.
    */
-  updateCameraParams(
-    _resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    _pixelRatio?: number
-  ): void {
+  updateCameraParams(_resolution: THREE.Vector2, nearCull?: number, _pixelRatio?: number): void {
     if (nearCull !== undefined) {
       this.uniforms.uNearCull.value = nearCull;
     }
@@ -504,11 +500,8 @@ export class MeshMaterial
     // display frame forced DoubleSide must keep drawing both faces until the next
     // commit re-applies it.
     cloned.side = this.side;
-    cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
-    // Camera state, carried live rather than left at the constructor default: a
-    // clone that reverted to 0.1 would fade against the WRONG near plane until the
-    // next broadcast reached it.
-    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    // Runtime state a fresh clone would reset (MESH_RUNTIME_UNIFORMS, ../_shared/runtime-uniforms.ts).
+    copyRuntimeUniforms(this, cloned, MESH_RUNTIME_UNIFORMS);
     return cloned as this;
   }
 

@@ -13,7 +13,7 @@
  *   - A: the same elementId's HIGH 16 bits (one f32 channel cannot carry the
  *     whole index exactly — see `luxarElementIdSplit`)
  *
- * Depth = `1 - brightness` (brightest wins), or the real fragment depth when
+ * Depth = `1 / (1 + brightness)` (brightest wins), or the real fragment depth when
  * `uSurfaceDepth == 1` (the depth-ordered `opaque`/`normal` surface modes:
  * front-most wins). Both selectors are runtime uniforms, so a layers-panel
  * blending-mode switch never rebuilds this graph.
@@ -51,7 +51,6 @@ import {
   bool,
   clamp as _clamp,
   max as _max,
-  depth,
   vertexIndex,
   modelViewMatrix,
   cameraProjectionMatrix,
@@ -59,6 +58,8 @@ import {
   Discard,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
+import { applyPickMaterialState } from '../_shared/shared-pick-graph-tsl';
+import { pickFragmentDepthTSL } from '../_shared/pick-depth-tsl';
 import {
   isOrthoProjectionTSL,
   sanitizeAlpha,
@@ -98,6 +99,8 @@ export interface MeshPickTSLNodes {
   readonly uSurfaceDepth: TSLNode;
   /** Near-fade start distance, world units (scene-relative). */
   readonly uNearCull: TSLNode;
+  /** 1 = apply the near fade; 0 = none (a physical visual has no near fade). */
+  readonly uNearFade: TSLNode;
   /**
    * The visual material's base-colour texture, when the node has one.
    *
@@ -137,6 +140,7 @@ export function meshPickWebGPUFactory(
   const uAlphaCutout = nodes.uAlphaCutout;
   const uSurfaceDepth = nodes.uSurfaceDepth;
   const uNearCull = nodes.uNearCull;
+  const uNearFade = nodes.uNearFade;
 
   // ---- Varyings ----
   // Flat for the two ids (see the module doc — mandatory, not stylistic); smooth
@@ -237,7 +241,12 @@ export function meshPickWebGPUFactory(
     // visual graph — pick coverage must keep matching visible coverage as the camera
     // flies into the surface. Per FRAGMENT, because a triangle spans depth.
     nearFade.assign(
-      perspectiveNearFadeTSL(isOrthoProjectionTSL(), vViewZ, max(uNearCull, float(1e-20)))
+      int(uNearFade)
+        .equal(int(1))
+        .select(
+          perspectiveNearFadeTSL(isOrthoProjectionTSL(), vViewZ, max(uNearCull, float(1e-20))),
+          float(1.0)
+        )
     );
     // Assigned before `brightness`, whose select reads it, and before the cutout
     // `Discard` in `colorNode` reads it.
@@ -281,7 +290,7 @@ export function meshPickWebGPUFactory(
     fragmentPrologue();
     return int(uSurfaceDepth)
       .equal(int(1))
-      .select(depth as unknown as TSLNode, float(1.0).sub(brightness));
+      .select(pickFragmentDepthTSL(), float(1.0).div(float(1.0).add(brightness)));
   });
 
   const material = outMaterial ?? new NodeMaterial();
@@ -290,24 +299,10 @@ export function meshPickWebGPUFactory(
   material.vertexNode = clipPos;
   material.colorNode = colorNode();
   material.depthNode = depthNode();
-  material.toneMapped = false;
-  material.depthTest = true;
-  material.depthWrite = true;
-  material.transparent = false;
-  // The element index's HIGH half rides in alpha, and THREE's NodeMaterial appends
-  // `DiffuseColor.w *= material.opacity` to every generated fragment. NoBlending
-  // does not suppress that shader-side multiply, so any opacity other than exactly
-  // 1 would scale the high half and decode a WRONG element id — on the TSL path
-  // only, since the GLSL twin has no such tail. Pin it so the multiply is provably
-  // identity, including when a caller injects `outMaterial`.
-  //
-  // Note this is the MATERIAL's opacity, which is a different quantity from the
-  // node opacity in `uOpacity`: the latter is a uniform this graph reads
-  // explicitly into the coverage term, exactly as the GLSL twin does.
-  material.opacity = 1;
-  // Picking output is an opaque ID buffer; any blending would smear
-  // nodeId / elementId across overlapping picks. Matches the GLSL material.
-  material.blending = THREE.NoBlending;
+  // The pick pass's fixed state: an opaque, depth-tested ID buffer with
+  // opacity pinned to exactly 1 (the element id's high half rides in alpha;
+  // see applyPickMaterialState).
+  applyPickMaterialState(material);
   return material;
 }
 
@@ -334,6 +329,7 @@ export function buildMeshPickTSLNodesFromUniforms(
     // 0.1 is the near-cull default every wrapper constructs with (overridden
     // per scene by updateCameraParams).
     uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
+    uNearFade: uniform((uniforms.uNearFade?.value as number) ?? 1),
     // PRESENCE-keyed, not defaulted: an absent uniform means the node has no
     // texture, and binding a blank one would build the sampling variant for a node
     // whose geometry has no `uv` attribute — a bound-but-unfilled attribute reads as

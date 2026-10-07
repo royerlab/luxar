@@ -389,6 +389,50 @@ def test_graft_normalisation_updates_leaf_energy_stamps(tmp_path):
         assert leaf.meta["stats"]["label"] == f"part-{index}"
 
 
+def test_graft_keeps_footprint_stamps_on_leaves(tmp_path):
+    """The viewer's footprint LOD selector needs ``median_footprint`` on every
+    grafted level; the graft leaf writer used to copy only the energy stamps."""
+    from luxar.core.group.gsplats_pipeline.from_io import graft_gsplat_node
+
+    parts = [_ladder_data(n=1000, peak=800.0, seed=index) for index in range(2)]
+    for index, part in enumerate(parts):
+        part.tree.meta["stats"] = {
+            "reference_energy": 1.0e6,
+            "median_footprint": 2.5 + index,
+            "footprint_dims": [0, 1, 2],
+        }
+    node = GSplatData.partition_from_regions(parts)
+
+    out = tmp_path / "footprint-stamps.luxar.zarr"
+    with LuxarZarrCompiler(out) as compiler:
+        scene = compiler.create_scene(dimensions=DIMS)
+        graft_gsplat_node(scene, name="g", node=node)
+
+    for index in range(2):
+        stats = read_node_attrs(out / "g" / f"part_{index}")["level_stats"]
+        assert stats["median_footprint"] == 2.5 + index
+        assert stats["footprint_dims"] == [0, 1, 2]
+
+
+def test_remap_footprint_stats_maps_data_columns_to_scene_order():
+    """``footprint_dims`` is stored in input-data column order and must be
+    remapped to scene-axis order when a ``dim_order`` is given, or the viewer
+    checks the footprint against the wrong axes."""
+    from luxar.core.group.gsplats_pipeline.lod_dispatch import (
+        _remap_footprint_stats,
+    )
+
+    # data columns [T, X, Y, Z]; footprint measured on columns [1, 2, 3] = X, Y, Z.
+    # scene stores dims as [X, Y, Z, T], so those become scene indices [0, 1, 2].
+    out = _remap_footprint_stats(
+        {"median_footprint": 2.5, "footprint_dims": [1, 2, 3]},
+        ["T", "X", "Y", "Z"],
+        ["X", "Y", "Z", "T"],
+    )
+    assert out["footprint_dims"] == [0, 1, 2]
+    assert out["median_footprint"] == 2.5
+
+
 def test_graft_reference_uses_only_the_finest_lod_level():
     """Coarse merged representatives must not darken the default finest view."""
 

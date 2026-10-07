@@ -149,6 +149,22 @@ describe('LRUCache', () => {
       expect(cache.size).toBe(100);
     });
 
+    it('an oversized set on an EXISTING key drops the stale value instead of keeping it', () => {
+      // Keeping the old value would leave `key1` answering with bytes the
+      // caller just replaced: a stale read, not a preserved one.
+      const evicted: string[] = [];
+      const c = new LRUCache<Uint8Array>(100, getSize, (key) => evicted.push(key));
+      c.set('key1', new Uint8Array(50));
+      c.set('key2', new Uint8Array(20));
+      c.set('key1', new Uint8Array(150));
+
+      expect(c.has('key1')).toBe(false);
+      expect(c.get('key1')).toBeUndefined();
+      expect(c.has('key2')).toBe(true);
+      expect(c.size).toBe(20);
+      expect(evicted).toEqual(['key1']);
+    });
+
     it('should reject oversized items without evicting existing entries', () => {
       cache.set('key1', new Uint8Array(50));
       cache.set('key2', new Uint8Array(200)); // Much larger than cache

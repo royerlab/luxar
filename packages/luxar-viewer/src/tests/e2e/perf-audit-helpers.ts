@@ -153,15 +153,6 @@ export async function readLongTasks(
   });
 }
 
-export async function resetLongTasks(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const a = (window as unknown as AuditWindow).__luxarAudit;
-    a.longTaskCount = 0;
-    a.longTaskMs = 0;
-    a.longTaskMax = 0;
-  });
-}
-
 /** `__luxarDebug.cache.getStats().l2WriteQueue.dropped`, or null when unavailable. */
 export async function readOpfsDropped(page: Page): Promise<number | null> {
   return page.evaluate(() => {

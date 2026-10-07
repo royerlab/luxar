@@ -167,6 +167,19 @@ describe('OPFSMetadataManager', () => {
       expect(mgr.parseFailures).toBe(1);
     });
 
+    it('a zero-byte index (a first save interrupted before close) is a cold start, not corruption', async () => {
+      const { root, rootFiles } = mockRoot();
+      // What an interrupted FIRST save leaves on disk: the file exists from
+      // getFileHandle({ create: true }), but its bytes only land at close().
+      // Measured on Chromium: a reload inside the save debounce leaves exactly
+      // this, and the next session read it as a corrupt index.
+      await root.getFileHandle('_cache_meta.json', { create: true });
+      expect(rootFiles.get('_cache_meta.json')).toBe('');
+
+      expect(await mgr.load(root)).toBeNull();
+      expect(mgr.parseFailures).toBe(0);
+    });
+
     it('clamps NaN/Infinity/negative totalSize to entries-derived sum or 0', async () => {
       const { root, rootFiles } = mockRoot();
       seedMetadata(rootFiles, {
@@ -357,6 +370,50 @@ describe('OPFSMetadataManager', () => {
       await mgr.awaitInFlight();
       // 5 s of continuous activity with a 2 s ceiling -> writes at ~2 s and ~4 s.
       expect(perfCounters.get('opfs.indexSaves')).toBeGreaterThanOrEqual(2);
+      expect(onError).not.toHaveBeenCalled();
+    });
+
+    // A reload that lands inside the trailing debounce loses the session's whole
+    // index: a save started at unload never completes across a navigation
+    // (measured on Chromium). The leading edge puts the first index on disk
+    // shortly after a burst begins, while a sustained burst keeps the debounce.
+    it('leading edge: the first save after a quiet period starts within leadingDelayMs', async () => {
+      perfCounters.reset();
+      const { root } = mockRoot();
+      const onError = vi.fn();
+      const params = {
+        root,
+        getSnapshot: () => snap(),
+        delayMs: 1000,
+        maxWaitMs: 2000,
+        leadingDelayMs: 150,
+        onError,
+      };
+      mgr.scheduleSave(params);
+      // A burst behind the first write must not push the leading save back.
+      for (let t = 0; t < 100; t += 50) {
+        await vi.advanceTimersByTimeAsync(50);
+        mgr.scheduleSave(params);
+      }
+      await vi.advanceTimersByTimeAsync(50);
+      await mgr.awaitInFlight();
+      expect(perfCounters.get('opfs.indexSaves')).toBe(1);
+
+      // Writes arriving right after that save are NOT a quiet period: they wait
+      // out the ordinary trailing debounce.
+      mgr.scheduleSave(params);
+      await vi.advanceTimersByTimeAsync(900);
+      expect(perfCounters.get('opfs.indexSaves')).toBe(1);
+      await vi.advanceTimersByTimeAsync(100);
+      await mgr.awaitInFlight();
+      expect(perfCounters.get('opfs.indexSaves')).toBe(2);
+
+      // After a full quiet period, the next first write takes the leading edge again.
+      await vi.advanceTimersByTimeAsync(1000);
+      mgr.scheduleSave(params);
+      await vi.advanceTimersByTimeAsync(150);
+      await mgr.awaitInFlight();
+      expect(perfCounters.get('opfs.indexSaves')).toBe(3);
       expect(onError).not.toHaveBeenCalled();
     });
 

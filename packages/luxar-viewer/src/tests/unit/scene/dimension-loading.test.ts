@@ -66,9 +66,15 @@ describe('updateAllNDNodes', () => {
 
     await updateAllNDNodes(ctx);
 
-    expect(updateSceneForDimensions).toHaveBeenCalledWith(dims, expect.anything(), undefined, {
-      frameBudgetMs: undefined,
-    });
+    expect(updateSceneForDimensions).toHaveBeenCalledWith(
+      expect.anything(),
+      dims,
+      expect.anything(),
+      undefined,
+      {
+        frameBudgetMs: undefined,
+      }
+    );
     // The pass's commits request their own render; a trailing wake would draw
     // a second identical frame per data step.
     expect(requestTick).toHaveBeenCalledTimes(1);
@@ -105,11 +111,17 @@ describe('updateAllNDNodes', () => {
 
       await updateAllNDNodes(ctx);
 
-      expect(updateSceneForDimensions).toHaveBeenCalledWith(dims, expect.anything(), undefined, {
-        frameBudgetMs: 60,
-      });
+      expect(updateSceneForDimensions).toHaveBeenCalledWith(
+        expect.anything(),
+        dims,
+        expect.anything(),
+        undefined,
+        {
+          frameBudgetMs: 60,
+        }
+      );
       expect(prefetchSceneForDimensions).toHaveBeenCalledTimes(1);
-      const [predictedDims, , loaderId, opts] = (
+      const [, predictedDims, , loaderId, opts] = (
         prefetchSceneForDimensions as ReturnType<typeof vi.fn>
       ).mock.calls[0];
       expect(predictedDims.currentStep).toEqual([0, 0, 0, 6]);
@@ -126,11 +138,17 @@ describe('updateAllNDNodes', () => {
 
       await updateAllNDNodes(ctx);
 
-      expect(updateSceneForDimensions).toHaveBeenCalledWith(dims, expect.anything(), undefined, {
-        frameBudgetMs: 60,
-        ladderDepth: 6,
-      });
-      const [, , , opts] = (prefetchSceneForDimensions as ReturnType<typeof vi.fn>).mock.calls[0];
+      expect(updateSceneForDimensions).toHaveBeenCalledWith(
+        expect.anything(),
+        dims,
+        expect.anything(),
+        undefined,
+        {
+          frameBudgetMs: 60,
+          ladderDepth: 6,
+        }
+      );
+      const [, , , , opts] = (prefetchSceneForDimensions as ReturnType<typeof vi.fn>).mock.calls[0];
       expect(opts).toEqual({ budgetMs: 60, ladderDepth: 6 });
     });
 
@@ -197,10 +215,16 @@ describe('scrub pinning (not playing)', () => {
 
     await updateAllNDNodes(ctx);
 
-    expect(updateSceneForDimensions).toHaveBeenCalledWith(dims, expect.anything(), undefined, {
-      frameBudgetMs: undefined,
-      ladderDepth: 6,
-    });
+    expect(updateSceneForDimensions).toHaveBeenCalledWith(
+      expect.anything(),
+      dims,
+      expect.anything(),
+      undefined,
+      {
+        frameBudgetMs: undefined,
+        ladderDepth: 6,
+      }
+    );
     expect(prefetchSceneForDimensions).not.toHaveBeenCalled();
     const setValue = sceneDimsManager.setDimensionValue as ReturnType<typeof vi.fn>;
     expect(setValue).not.toHaveBeenCalled();
@@ -220,13 +244,13 @@ describe('scrub pinning (not playing)', () => {
     listener = () => updateAllNDNodes(ctx);
 
     await updateAllNDNodes(ctx);
-    expect((updateSceneForDimensions as ReturnType<typeof vi.fn>).mock.calls[0][3]).toEqual({
+    expect((updateSceneForDimensions as ReturnType<typeof vi.fn>).mock.calls[0][4]).toEqual({
       frameBudgetMs: undefined,
       ladderDepth: 'auto',
     });
 
     vi.advanceTimersByTime(SCRUB_SETTLE_MS + 1);
-    expect((updateSceneForDimensions as ReturnType<typeof vi.fn>).mock.calls[1][3]).toEqual({
+    expect((updateSceneForDimensions as ReturnType<typeof vi.fn>).mock.calls[1][4]).toEqual({
       frameBudgetMs: undefined,
       ladderDepth: undefined,
     });
@@ -235,10 +259,16 @@ describe('scrub pinning (not playing)', () => {
   it('a Fast (null) scrub detail pins nothing and schedules no settle pass', async () => {
     const ctx = makeCtx({ getAnimationManager: () => makeIdleAnim(null) });
     await updateAllNDNodes(ctx);
-    expect(updateSceneForDimensions).toHaveBeenCalledWith(dims, expect.anything(), undefined, {
-      frameBudgetMs: undefined,
-      ladderDepth: undefined,
-    });
+    expect(updateSceneForDimensions).toHaveBeenCalledWith(
+      expect.anything(),
+      dims,
+      expect.anything(),
+      undefined,
+      {
+        frameBudgetMs: undefined,
+        ladderDepth: undefined,
+      }
+    );
     vi.advanceTimersByTime(SCRUB_SETTLE_MS + 1);
     expect(sceneDimsManager.setDimensionValue).not.toHaveBeenCalled();
   });

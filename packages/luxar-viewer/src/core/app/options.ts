@@ -44,7 +44,9 @@ export interface LuxarAppOptions {
   gpuPoolMaxBytes?: number | null;
   /**
    * Reflect the loaded dataset URL in the browser address bar via
-   * `history.replaceState` so the page can be reloaded or shared.
+   * `history.replaceState` so the page can be reloaded or shared. Applies to
+   * every dataset switch — a dataset-browser selection and a
+   * `LuxarApp.switchDataset` call (kiosk, remote control) alike.
    *
    * Defaults to `false` for programmatic/embedded safety. The standalone
    * bootstrap sets this to `true` explicitly.
@@ -231,6 +233,14 @@ export interface LuxarAppOptions {
    * Mirrors `UrlParams.densityCap` (`?densityCap=8`). Not persisted.
    */
   densityCap?: number;
+
+  /**
+   * Multiplier on every overlay's type for the session, beating the scene's
+   * authored `viewer_config.text_scale`. Undefined ⇒ the scene's value, else 1.
+   * Mirrors `UrlParams.textScale` (`?textScale=0.8`). See
+   * `ui/overlay-text-scale.ts`.
+   */
+  textScale?: number;
 
   /**
    * Allow a picked element's authored `link` to be opened on left-click

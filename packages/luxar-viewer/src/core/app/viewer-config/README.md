@@ -17,6 +17,8 @@ playback, and a small pure helper for snapshotting panel visibility.
 viewer-config/
 ├── apply-state.ts        # applyViewerConfigState() — dispatch zarr-blob
 │                         #   non-rendering fields onto LuxarApp subsystems
+├── install-audio.ts      # installSceneAudio() — viewer_config.audio defaults,
+│                         #   attach the scene's sound nodes, replay the opening arrival
 └── panel-visibility.ts   # get/restorePanelVisibilityStates() — pure
                           #   snapshot/restore around panel-aware ops
 ```
@@ -32,6 +34,7 @@ zarr scene -> SceneManager.loadSceneData()
                           - ui.show_*          -> panel show()/hide()
                           - theme              -> setTheme(themeId)
                           - dimensions.current_step[i] -> setDimensionValue(i, v)
+                          - dimensions.selected_dimension -> inputHandler.setSelectedDimension(n)
                           - animation[i]       -> startDimensionAnimation(i, options)
 ```
 
@@ -62,10 +65,24 @@ Key contract details:
   exists (dimension metadata / `overlay_groups` / layer arrays).
 - `dimensions.current_step` writes one value per dimension index via
   `setDimensionValue(i, v)` — no theme/UI side effects.
+- `dimensions.selected_dimension` picks the dimension the `[` / `]` keys
+  navigate, by NAVIGABLE position among the non-displayed dimensions (the
+  number-key numbering), through `inputHandler.setSelectedDimension(n)`;
+  anything but a non-negative integer is ignored.
 - `animation[i]` starts only entries with `playing: true`, after applying
   `current_step`. Persisted FPS values are clamped to the GUI range, unknown
   loop/direction strings fall back to viewer defaults, and `step_size` remains
   absent when Auto was captured.
+
+## install-audio.ts
+
+`installSceneAudio(audio, ports)` binds the sound layer to the loaded scene,
+after the story waypoints installed (the opening slice is final by then):
+detach the previous scene, apply `extractAudioConfig(viewer_config.audio)` (the
+listener's persisted mute / master gain win), attach the `LuxarScene` root so
+the engine finds its sound-node placeholders, re-push the Layers panel's sound
+mutes, and replay the opening waypoint's `on_arrive` — the waypoints snapped
+before any sound node existed, so that arrival would otherwise never fire.
 
 ## panel-visibility.ts
 

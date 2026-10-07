@@ -9,11 +9,16 @@ import {
   originOfUrl,
   resetFetchTransport,
   withFetchGate,
-  HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
-  HTTP1_MAX_CONCURRENT_METADATA_FETCHES,
-  MAX_CONCURRENT_CHUNK_FETCHES,
-  MAX_CONCURRENT_METADATA_FETCHES,
 } from '../../../utils/fetch-concurrency';
+import { config } from '../../../config';
+
+/** The gate's widths, as configured (`config.dataLoading.network.fetchGate`). */
+const {
+  http1MaxChunkFetches: HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
+  http1MaxMetadataFetches: HTTP1_MAX_CONCURRENT_METADATA_FETCHES,
+  maxChunkFetches: MAX_CONCURRENT_CHUNK_FETCHES,
+  maxMetadataFetches: MAX_CONCURRENT_METADATA_FETCHES,
+} = config.dataLoading.network.fetchGate;
 
 /**
  * The bounded-concurrency gate is what prevents net::ERR_INSUFFICIENT_RESOURCES
@@ -170,39 +175,48 @@ describe('fetch-concurrency gate', () => {
     expect(peak).toBe(MAX_CONCURRENT_METADATA_FETCHES);
   });
 
-  it('fits both lanes into the six HTTP/1.1 sockets once an http: URL is seen', () => {
+  it("fits an http: origin's lanes into its six HTTP/1.1 sockets once seen", () => {
+    const lan = 'http://10.0.0.55:8001';
+    const cdn = 'https://cdn.example.org';
     expect(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES + HTTP1_MAX_CONCURRENT_METADATA_FETCHES).toBe(6);
-    noteFetchUrl('https://cdn.example.org/scene.luxar.zarr/zarr.json');
-    expect(getFetchLaneLimit('data')).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
-    noteFetchUrl('http://10.0.0.55:8001/data/Backdrop/part_3/zarr.json');
-    expect(getFetchLaneLimit('data')).toBe(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
-    expect(getFetchLaneLimit('metadata')).toBe(HTTP1_MAX_CONCURRENT_METADATA_FETCHES);
-    // Never widens again within the session.
-    noteFetchUrl('https://cdn.example.org/other/zarr.json');
-    expect(getFetchLaneLimit('data')).toBe(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
+    noteFetchUrl(`${cdn}/scene.luxar.zarr/zarr.json`);
+    expect(getFetchLaneLimit('data', cdn)).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
+    noteFetchUrl(`${lan}/data/Backdrop/part_3/zarr.json`);
+    expect(getFetchLaneLimit('data', lan)).toBe(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
+    expect(getFetchLaneLimit('metadata', lan)).toBe(HTTP1_MAX_CONCURRENT_METADATA_FETCHES);
+    // The origin never widens again within the session; others never narrowed.
+    noteFetchUrl(`${cdn}/other/zarr.json`);
+    expect(getFetchLaneLimit('data', lan)).toBe(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
+    expect(getFetchLaneLimit('data', cdn)).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
   });
 
   it('drains in-flight leases down to a cap that shrank under them', async () => {
     let active = 0;
     let peak = 0;
     const release: Array<() => void> = [];
+    const lan = 'http://localhost:8005';
     const fire = () =>
-      withFetchGate(() => {
-        active += 1;
-        peak = Math.max(peak, active);
-        return new Promise<void>((resolve) =>
-          release.push(() => {
-            active -= 1;
-            resolve();
-          })
-        );
-      });
+      withFetchGate(
+        () => {
+          active += 1;
+          peak = Math.max(peak, active);
+          return new Promise<void>((resolve) =>
+            release.push(() => {
+              active -= 1;
+              resolve();
+            })
+          );
+        },
+        'data',
+        'demand',
+        lan
+      );
     const calls = Array.from({ length: MAX_CONCURRENT_CHUNK_FETCHES * 2 }, fire);
     await Promise.resolve();
     await Promise.resolve();
     expect(active).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
 
-    noteFetchUrl('http://localhost:8005/scene.luxar.zarr/zarr.json');
+    noteFetchUrl(`${lan}/scene.luxar.zarr/zarr.json`);
     peak = 0;
     while (release.length) {
       release.shift()!();
@@ -214,6 +228,37 @@ describe('fetch-concurrency gate', () => {
     expect(peak).toBeGreaterThan(0);
     expect(peak).toBeLessThanOrEqual(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
     expect(active).toBe(0);
+  });
+
+  it('starts a second HTTP/1.1 origin while the first origin has queued waiters', async () => {
+    const a = 'http://localhost:8011';
+    const b = 'http://localhost:8012';
+    noteFetchUrl(`${a}/zarr.json`);
+    noteFetchUrl(`${b}/zarr.json`);
+    const release: Array<() => void> = [];
+    const started: string[] = [];
+    const fire = (origin: string) =>
+      withFetchGate(
+        () => {
+          started.push(origin);
+          return new Promise<void>((resolve) => release.push(resolve));
+        },
+        'data',
+        'demand',
+        origin
+      );
+    const first = Array.from({ length: HTTP1_MAX_CONCURRENT_CHUNK_FETCHES + 1 }, () => fire(a));
+    await Promise.resolve();
+    expect(started).toEqual(Array(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES).fill(a));
+    const second = fire(b);
+    await Promise.resolve();
+    expect(started.at(-1)).toBe(b);
+    while (release.length) {
+      release.shift()!();
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+    await Promise.all([...first, second]);
   });
 });
 
@@ -244,6 +289,37 @@ describe('fetch-concurrency perf counters', () => {
       expect(perfCounters.get('fetch.metadata.queueWaitMs')).toBe(14);
       expect(perfCounters.get('fetch.metadata.highWater')).toBe(MAX_CONCURRENT_METADATA_FETCHES);
       expect(perfCounters.get('fetch.data.requests')).toBe(0);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('tallies data-lane requests, highWater and queued wait the same way', async () => {
+    perfCounters.reset();
+    let nowMs = 0;
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => nowMs);
+    try {
+      const releasers: Array<() => void> = [];
+      const fire = () =>
+        withFetchGate(() => new Promise<void>((resolve) => releasers.push(resolve)), 'data');
+      const N = MAX_CONCURRENT_CHUNK_FETCHES + 3;
+      const calls = Array.from({ length: N }, fire);
+      await Promise.resolve();
+      expect(perfCounters.get('fetch.data.requests')).toBe(N);
+      expect(perfCounters.get('fetch.data.highWater')).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
+      expect(perfCounters.get('fetch.data.queueWaitMs')).toBe(0);
+
+      // The three queued calls start 5 ms after they were enqueued.
+      nowMs = 5;
+      while (releasers.length) {
+        releasers.shift()!();
+        await Promise.resolve();
+        await Promise.resolve();
+      }
+      await Promise.all(calls);
+      expect(perfCounters.get('fetch.data.queueWaitMs')).toBe(15);
+      expect(perfCounters.get('fetch.data.highWater')).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
+      expect(perfCounters.get('fetch.metadata.requests')).toBe(0);
     } finally {
       nowSpy.mockRestore();
     }

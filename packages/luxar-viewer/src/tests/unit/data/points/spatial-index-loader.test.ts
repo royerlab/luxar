@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { PointsSpatialIndexLoader, type ViewState, type SceneNode } from '../../../../data';
 import * as zarr from 'zarrita';
 import { SliceCache } from '../../../../cache/slice-cache';
+import { LoaderLifetime } from '../../../../data/loaders/loader-lifetime';
 import type { MonitorEvent, MonitorEventListener } from '../../../../types/data-monitor-types';
 
 // Mock THREE.js using partial mock with importOriginal
@@ -178,9 +179,179 @@ describe('PointsSpatialIndexLoader', () => {
     if (loader) {
       loader.dispose();
     }
+    vi.restoreAllMocks();
   });
 
   describe('initialization', () => {
+    it('filters a one-chunk 4D node without radii and skips bounds', async () => {
+      loader.dispose();
+      loader = new PointsSpatialIndexLoader(mockZarrLocation, {
+        ...mockNode,
+        attrs: { ...mockNode.attrs, n_points: 2, chunk_size: 2, has_radii: false },
+        arrays: new Set(['positions']),
+      });
+      mockArrays.positions.shape = [2, 4];
+      vi.mocked(zarr.get).mockImplementation(((array: any) =>
+        Promise.resolve({
+          data:
+            array === mockArrays.positions
+              ? new Float32Array([1, 2, 3, 5, 4, 5, 6, 5])
+              : new Float32Array(2),
+        })) as any);
+      const view: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0.25],
+        dimensions: [
+          { name: 'x', unit: '', scale: 1, discrete: false, step: 1 },
+          { name: 'y', unit: '', scale: 1, discrete: false, step: 1 },
+          { name: 'z', unit: '', scale: 1, discrete: false, step: 1 },
+          { name: 'time', unit: '', scale: 1, discrete: true, step: 1 },
+        ],
+      };
+
+      const offSlice = await loader.loadPoints(view);
+      const onSlice = await loader.loadPoints({ ...view, slicePosition: [0, 0, 0, 5] });
+
+      expect(offSlice.pointCount).toBe(0);
+      expect(onSlice.pointCount).toBe(2);
+      expect(Array.from(onSlice.positions)).toEqual([1, 2, 3, 4, 5, 6]);
+      expect(
+        (zarr.open as any).mock.calls.some((c: any[]) => String(c[0]).includes('chunk_bounds'))
+      ).toBe(false);
+    });
+
+    it('skips bounds with radii when scene dimensions are unavailable', async () => {
+      loader.dispose();
+      const rootStore = {};
+      loader = new PointsSpatialIndexLoader(
+        mockZarrLocation,
+        {
+          ...mockNode,
+          attrs: { ...mockNode.attrs, n_points: 2, chunk_size: 2, has_radii: true },
+        },
+        undefined,
+        rootStore as any
+      );
+      const originalOpen = vi.mocked(zarr.open).getMockImplementation()!;
+      vi.mocked(zarr.open).mockImplementation(((location: any, options: any) =>
+        location === rootStore && options?.kind === 'group'
+          ? Promise.resolve({ attrs: {} })
+          : originalOpen(location, options)) as any);
+
+      await loader.ensureInitialized();
+
+      expect(
+        vi.mocked(zarr.open).mock.calls.filter((c: any[]) => String(c[0]).includes('chunk_bounds'))
+      ).toHaveLength(0);
+    });
+
+    it('skips bounds when a radii-stamped node has no radii array', async () => {
+      loader.dispose();
+      const rootStore = {};
+      loader = new PointsSpatialIndexLoader(
+        mockZarrLocation,
+        {
+          ...mockNode,
+          attrs: { ...mockNode.attrs, n_points: 2, chunk_size: 2, has_radii: true },
+          arrays: new Set(['positions']),
+        },
+        undefined,
+        rootStore as any
+      );
+      const originalOpen = vi.mocked(zarr.open).getMockImplementation()!;
+      vi.mocked(zarr.open).mockImplementation(((location: any, options: any) =>
+        location === rootStore && options?.kind === 'group'
+          ? Promise.resolve({
+              attrs: {
+                scene_dimensions: {
+                  dimensions: [
+                    { name: 'x', display: true },
+                    { name: 'y', display: true },
+                    { name: 'z', display: true },
+                    { name: 'time', display: false, spatial: false },
+                  ],
+                },
+              },
+            })
+          : originalOpen(location, options)) as any);
+
+      await loader.ensureInitialized();
+
+      expect(
+        vi.mocked(zarr.open).mock.calls.filter((c: any[]) => String(c[0]).includes('chunk_bounds'))
+      ).toHaveLength(0);
+    });
+
+    it('hides radii-bearing points off-slice without probing one-chunk bounds', async () => {
+      loader.dispose();
+      const rootStore = {};
+      loader = new PointsSpatialIndexLoader(
+        mockZarrLocation,
+        {
+          ...mockNode,
+          attrs: { ...mockNode.attrs, n_points: 2, chunk_size: 2, has_radii: true },
+        },
+        undefined,
+        rootStore as any
+      );
+      mockArrays.positions.shape = [2, 4];
+      mockArrays.radii.shape = [2];
+      const originalOpen = vi.mocked(zarr.open).getMockImplementation()!;
+      vi.mocked(zarr.open).mockImplementation(((location: any, options: any) =>
+        location === rootStore && options?.kind === 'group'
+          ? Promise.resolve({
+              attrs: {
+                scene_dimensions: {
+                  dimensions: [
+                    { name: 'x', display: true },
+                    { name: 'y', display: true },
+                    { name: 'z', display: true },
+                    { name: 'time', display: false, spatial: false },
+                  ],
+                },
+              },
+            })
+          : originalOpen(location, options)) as any);
+      vi.mocked(zarr.get).mockImplementation(((array: any) => {
+        if (array === mockArrays.positions) {
+          return Promise.resolve({ data: new Float32Array([1, 2, 3, 5, 4, 5, 6, 5]) });
+        }
+        if (array === mockArrays.radii) {
+          return Promise.resolve({ data: new Float32Array([0.5, 0.5]) });
+        }
+        return Promise.resolve({ data: new Float32Array(array === mockArrays.colors ? 6 : 2) });
+      }) as any);
+      const view: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 0],
+        tolerance: [0, 0, 0, 0.25],
+      };
+
+      const offSlice = await loader.loadPoints(view);
+      const onSlice = await loader.loadPoints({ ...view, slicePosition: [0, 0, 0, 5] });
+
+      expect(offSlice.pointCount).toBe(0);
+      expect(onSlice.pointCount).toBe(2);
+      expect(
+        vi.mocked(zarr.open).mock.calls.filter((c: any[]) => String(c[0]).includes('chunk_bounds'))
+      ).toHaveLength(0);
+    });
+
+    it('warns when a 4D node actually has no spatial ordering', async () => {
+      loader.dispose();
+      loader = new PointsSpatialIndexLoader(mockZarrLocation, {
+        ...mockNode,
+        attrs: { ...mockNode.attrs, ordering: 'none' },
+      });
+      const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await loader.ensureInitialized();
+
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining('without spatial index'));
+      warning.mockRestore();
+    });
+
     it('should load chunk-based spatial index on first load', async () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
@@ -893,6 +1064,21 @@ describe('PointsSpatialIndexLoader', () => {
   });
 
   describe('prefetchChunks (commit 8.1)', () => {
+    it('uses speculative priority for both prefetch entry points', async () => {
+      const init = vi.spyOn(LoaderLifetime.prototype, 'ensureInitialized');
+      const current: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 1],
+        tolerance: [0, 0, 0, 0.1],
+      };
+      await loader.prefetchChunks(current);
+      expect(init.mock.calls.at(-1)?.[3]).toBe('speculative');
+      await loader.prefetchChunkBoundary(current, { ...current, slicePosition: [0, 0, 0, 2] });
+      expect(init.mock.calls.length).toBeGreaterThan(1);
+      expect(init.mock.calls.every((call) => call[3] === 'speculative')).toBe(true);
+      init.mockRestore();
+    });
+
     /** Chunk warm-ups issued so far (prefetch warms via getChunk, not get). */
     const warmCalls = (): number =>
       Object.values(mockArrays).reduce(
@@ -979,6 +1165,24 @@ describe('PointsSpatialIndexLoader', () => {
       expect(warmCalls()).toBe(4);
     });
 
+    it('an aborted predicted-view signal stops every boundary warm-up', async () => {
+      const current: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 1],
+        tolerance: [0, 0, 0, 0.1],
+      };
+      const predicted = { ...current, slicePosition: [0, 0, 0, 2] };
+      await loader.loadPoints(current);
+      vi.clearAllMocks();
+      mockExecute.mockResolvedValue([{ start: 100, end: 200 }]);
+      const superseded = new AbortController();
+      superseded.abort();
+
+      await loader.prefetchChunkBoundary(current, predicted, superseded.signal);
+
+      expect(warmCalls()).toBe(0);
+    });
+
     it('skips fetches when the spatial query returns no ranges', async () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
@@ -1005,6 +1209,48 @@ describe('PointsSpatialIndexLoader', () => {
   });
 
   describe('resource cleanup', () => {
+    it('an initialize still in flight at dispose does not repopulate the loader', async () => {
+      // dispose() resets the one-shot initializer and clears the arrays, but an
+      // initialize() already awaiting its metadata opens used to finish afterwards
+      // and write chunkIndex / arrays back into the disposed loader.
+      const view: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+      const open = zarr.open as any;
+      const original = open.getMockImplementation() as (...args: unknown[]) => unknown;
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      open.mockImplementation((...args: unknown[]) => gate.then(() => original(...args)));
+      const load = loader.loadPoints(view);
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+
+      loader.dispose();
+      release();
+
+      await expect(load).rejects.toMatchObject({ name: 'AbortError' });
+      expect((loader as any).chunkIndex).toBeNull();
+      expect((loader as any).arrays).toEqual({});
+    });
+
+    it('a disposed loader refuses to re-initialize', async () => {
+      loader.dispose();
+      (zarr.open as unknown as ReturnType<typeof vi.fn>).mockClear();
+      await expect(
+        loader.loadPoints({
+          displayDims: [0, 1, 2],
+          slicePosition: [0, 0, 0, 5],
+          tolerance: [0, 0, 0, 0.1],
+        })
+      ).rejects.toMatchObject({
+        name: 'AbortError',
+      });
+      expect(zarr.open).not.toHaveBeenCalled();
+    });
+
     it('dispose clears the active-query map (mid-flight leak guard)', async () => {
       // Regression (×3 symmetric): points dispose() historically omitted
       // activeQueries.clear(), so a dispose mid-flight leaked the tracked
@@ -1041,6 +1287,38 @@ describe('PointsSpatialIndexLoader', () => {
       release();
       await loadPromise;
     });
+
+    it('a load disposed mid-flight settles as a cancellation, not as data', async () => {
+      // The Lines/GSplats siblings bail with an AbortError when the loader was
+      // torn down while the chunk reads were in flight (run-loader-updates then
+      // stages null quietly). Points used to carry on and project a payload for
+      // a loader that no longer exists.
+      const baseViewState: ViewState = {
+        displayDims: [0, 1, 2],
+        slicePosition: [0, 0, 0, 5],
+        tolerance: [0, 0, 0, 0.1],
+      };
+      await loader.loadPoints(baseViewState);
+
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      (zarr.get as any).mockImplementation(() =>
+        gate.then(() => ({ data: new Float32Array(400) }))
+      );
+      const loadPromise = loader.loadPoints({
+        ...baseViewState,
+        slicePosition: [0.5, 0.5, 0.5, 5],
+      });
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      loader.dispose();
+      release();
+
+      await expect(loadPromise).rejects.toMatchObject({ name: 'AbortError' });
+    });
+
     it('should dispose resources properly', async () => {
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
@@ -1081,7 +1359,7 @@ describe('PointsSpatialIndexLoader', () => {
   describe('plain-leaf S-cache', () => {
     const hiddenDimView: ViewState = {
       displayDims: [0, 1, 2],
-      slicePosition: [0, 0, 0, 5],
+      slicePosition: [0, 0, 0, 0],
       tolerance: [0, 0, 0, 0.25],
     };
     let sliceCache: SliceCache;
@@ -1192,7 +1470,7 @@ describe('PointsSpatialIndexLoader', () => {
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 5],
+        slicePosition: [0, 0, 0, 0],
         tolerance: [0, 0, 0, 0.1],
       };
 
@@ -1233,7 +1511,7 @@ describe('PointsSpatialIndexLoader', () => {
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 5],
+        slicePosition: [0, 0, 0, 0],
         tolerance: [0, 0, 0, 0.1],
       };
 
@@ -1263,7 +1541,7 @@ describe('PointsSpatialIndexLoader', () => {
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 5],
+        slicePosition: [0, 0, 0, 0],
         tolerance: [0, 0, 0, 0.1],
       };
 
@@ -1435,7 +1713,7 @@ describe('PointsSpatialIndexLoader', () => {
 
       const viewState: ViewState = {
         displayDims: [0, 1, 2],
-        slicePosition: [0, 0, 0, 5],
+        slicePosition: [0, 0, 0, 0],
         tolerance: [0, 0, 0, 0.1],
       };
 

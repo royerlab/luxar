@@ -97,16 +97,16 @@ describe.each(ALL_WRAPPERS)('mesh material [%s] — the camera contract', (_labe
     expect(m.uniforms.uIsOrtho).toBeUndefined();
   });
 
-  it('writes the near-cull uniform, and ignores resolution / isOrtho', () => {
+  it('writes the near-cull uniform, and ignores resolution', () => {
     const m = make() as unknown as {
       uniforms: Record<string, THREE.IUniform>;
-      updateCameraParams: (res: THREE.Vector2, isOrtho?: boolean, nearCull?: number) => void;
+      updateCameraParams: (res: THREE.Vector2, nearCull?: number) => void;
     };
-    m.updateCameraParams(new THREE.Vector2(1234, 777), true, 0.42);
+    m.updateCameraParams(new THREE.Vector2(1234, 777), 0.42);
     expect(m.uniforms.uNearCull.value).toBe(0.42);
     // A mesh has no screen-space size to recompute and reads its ortho test in
-    // shader, so the first two arguments are accepted and dropped — nothing may
-    // appear for them.
+    // shader, so the resolution is accepted and dropped and no ortho uniform
+    // exists — nothing may appear for either.
     expect(m.uniforms.uResolution).toBeUndefined();
     expect(m.uniforms.uIsOrtho).toBeUndefined();
   });
@@ -117,10 +117,10 @@ describe.each(ALL_WRAPPERS)('mesh material [%s] — the camera contract', (_labe
     // value back to the 0.1 default and fade against the wrong plane.
     const m = make() as unknown as {
       uniforms: Record<string, THREE.IUniform>;
-      updateCameraParams: (res: THREE.Vector2, isOrtho?: boolean, nearCull?: number) => void;
+      updateCameraParams: (res: THREE.Vector2, nearCull?: number) => void;
     };
-    m.updateCameraParams(new THREE.Vector2(800, 600), false, 7.5);
-    m.updateCameraParams(new THREE.Vector2(800, 600), true);
+    m.updateCameraParams(new THREE.Vector2(800, 600), 7.5);
+    m.updateCameraParams(new THREE.Vector2(800, 600));
     expect(m.uniforms.uNearCull.value).toBe(7.5);
   });
 });
@@ -131,7 +131,7 @@ describe.each(VISUAL_BACKENDS)('MeshMaterial [%s] — clone carries the camera s
     // alone would come back at 0.1 and fade against a near plane the scene never
     // had.
     const m = make();
-    m.updateCameraParams(new THREE.Vector2(800, 600), true, 0.42);
+    m.updateCameraParams(new THREE.Vector2(800, 600), 0.42);
     const c = m.clone();
     expect(c).not.toBe(m);
     expect(c.uniforms.uNearCull.value).toBeCloseTo(0.42);
@@ -143,11 +143,12 @@ describe('the mesh GLSL sources carry the fade', () => {
     // Per fragment and not per vertex: a triangle spans depth, so a per-vertex value
     // would interpolate the RAMP across the face. The varying it reads is the one
     // the shade term already carries, so no new vertex output was needed.
-    // The ortho test is three's per-draw `isOrthographic` (the camera being
-    // drawn with), not the CPU-pushed uIsOrtho.
+    // The ortho test is the projection matrix of the draw (the vertex stage's
+    // luxarIsOrthoProjection(), handed over flat), not the CPU-pushed uIsOrtho.
     expect(MESH_FRAGMENT_SHADER).toContain(
-      'perspectiveNearFade(isOrthographic ? 1 : 0, vViewPos.z, max(uNearCull, 1e-20))'
+      'perspectiveNearFade(vIsOrtho, vViewPos.z, max(uNearCull, 1e-20))'
     );
+    expect(MESH_VERTEX_SHADER).toContain('vIsOrtho = luxarIsOrthoProjection();');
     expect(MESH_FRAGMENT_SHADER).toContain('float perspectiveNearFade(');
     expect(MESH_FRAGMENT_SHADER).not.toMatch(/perspectiveNearFade\(uIsOrtho/);
     expect(MESH_FRAGMENT_SHADER).toContain('uniform float uNearCull;');
@@ -202,8 +203,9 @@ describe('the mesh-pick GLSL sources carry the same fade', () => {
     // surface the user can barely see stays fully pickable AND keeps depth-occluding
     // whatever is behind it.
     expect(MESH_PICK_FRAGMENT_SHADER).toContain(
-      'perspectiveNearFade(isOrthographic ? 1 : 0, vViewZ, max(uNearCull, 1e-20))'
+      'perspectiveNearFade(vIsOrtho, vViewZ, max(uNearCull, 1e-20))'
     );
+    expect(MESH_PICK_VERTEX_SHADER).toContain('vIsOrtho = luxarIsOrthoProjection();');
     expect(MESH_PICK_FRAGMENT_SHADER).toContain('if (nearFade < 0.01) discard;');
     expect(MESH_PICK_FRAGMENT_SHADER).not.toContain('uIsOrtho');
     expect(MESH_PICK_VERTEX_SHADER).not.toContain('uIsOrtho');

@@ -16,11 +16,19 @@
 
 import type { BlendingMode } from '../../rendering';
 import {
+  CUSTOM_COLORMAP_LABEL,
+  canTakeColormap,
   resolveLayerBlendingMode,
   type LayerInfo,
   type LayerStateManager,
   type PhysicalKnobValues,
 } from './layer-state';
+import {
+  isBroadcastPartition,
+  isControlVisible,
+  layerHasAppearance,
+  type LayerControlId,
+} from './layer-control-rules';
 import { RangeSlider } from './range-slider';
 import { LabeledSlider } from './labeled-slider';
 import { LabeledToggle } from './labeled-toggle';
@@ -36,6 +44,7 @@ import { BLENDING_MODES } from '../../rendering/blending-state';
 import { COLORMAP_CATEGORIES } from '../../rendering/colormap-data';
 import { SceneLoaderManager } from '../../data/scene-loader-manager';
 import type { LODGroupRegistry } from '../../scene/lod-group-registry';
+import type { LODGroupSelectorMode } from '../../types/lod-group';
 import {
   displayedGeometricErrorFraction,
   displayedQualityFraction,
@@ -60,6 +69,15 @@ const COLOUR_RANGE_LABEL = 'Colour range';
 const SCALAR_RANGE_TOOLTIP = 'Scalar data values in this range are mapped across the colormap.';
 const COLOUR_RANGE_TOOLTIP =
   "Input RGB values in this range are mapped to the full output range. This controls colour gain and offset, not the layer's data extents.";
+
+/** The lod_group paths the Active-level control drives for `layer`. */
+function activeLevelPaths(layer: LayerInfo): string[] {
+  if (layer.kind === 'lod') return [layer.path];
+  if (layer.kind === 'partition' && layer.nestedLodGroupPaths?.length) {
+    return layer.nestedLodGroupPaths;
+  }
+  return [];
+}
 
 /**
  * Dependencies injected by the owning {@link LayersPanel}. `state` and
@@ -128,6 +146,8 @@ export class LayerControls {
   private blendSelect: HTMLSelectElement | null = null;
   private layerOrderInput: HTMLInputElement | null = null;
   private colormapSelect: HTMLSelectElement | null = null;
+  /** The `'custom'` entry, attached only while the primary layer has an authored LUT. */
+  private customColormapOption: HTMLOptionElement | null = null;
   private labelColorSelect: HTMLSelectElement | null = null;
   private labelFilterSelect: HTMLSelectElement | null = null;
   /**
@@ -153,6 +173,12 @@ export class LayerControls {
    * frame rather than a DOM write. Reset in dispose().
    */
   private lastShownLodStatus: string | null = null;
+
+  /**
+   * Each section control's group element, keyed by its `LAYER_CONTROL_RULES` id
+   * (also stamped as `data-control`), so one pass shows exactly what the table says.
+   */
+  private controlEls = new Map<LayerControlId, HTMLElement>();
 
   // Suppresses render() during user-driven control interactions
   // to prevent programmatic .value= from fighting with the user's drag
@@ -209,7 +235,14 @@ export class LayerControls {
     this.colormapSelect = null;
     this.lodLevelSelect = null;
     this.lodLevelStatus = null;
+    this.controlEls.clear();
     this.controlsEl = null;
+  }
+
+  /** Register a section control's group element under its rule id. */
+  private registerControl(id: LayerControlId, el: HTMLElement): void {
+    el.dataset.control = id;
+    this.controlEls.set(id, el);
   }
 
   /** Build the control widgets into `container` (the panel's controls div). */
@@ -220,6 +253,7 @@ export class LayerControls {
     // Display range
     const rangeContainer = document.createElement('div');
     rangeContainer.className = 'luxar-layers-panel__control-group';
+    this.registerControl('displayRange', rangeContainer);
     this.controlsEl.appendChild(rangeContainer);
 
     this.rangeSlider = new RangeSlider({
@@ -293,7 +327,7 @@ export class LayerControls {
 
     // Absorption κ — only meaningful in volumetric mode; hidden for every
     // other mode (see syncAbsorptionVisibility). τ = κ · rayMass with the
-    // same normalised ray mass in all three geometry families, so κ ≈ 1 is
+    // same normalised ray mass in all three emissive families, so κ ≈ 1 is
     // the useful anchor everywhere and one fixed LOG track serves every
     // scene (absorption-range.ts widens it only for an out-of-range authored
     // κ). Position 0 on a log track is an exact κ=0 — the additive limit.
@@ -439,6 +473,14 @@ export class LayerControls {
       },
     });
     this.alphaCutoffSlider.setVisible(false);
+    this.registerControl('gamma', this.gammaSlider.element);
+    this.registerControl('opacity', this.opacitySlider.element);
+    this.registerControl('absorption', this.absorptionSlider.element);
+    this.registerControl('ambient', this.ambientSlider.element);
+    this.registerControl('shadeExponent', this.shadeExponentSlider.element);
+    this.registerControl('specular', this.specularSlider.element);
+    this.registerControl('shininess', this.shininessSlider.element);
+    this.registerControl('alphaCutoff', this.alphaCutoffSlider.element);
 
     // Physical material — LIVE sliders (spec §6 item 2, decided in Phase 2). Takes the
     // place of the five sliders above for a `material="physical"` layer; hidden for
@@ -462,6 +504,7 @@ export class LayerControls {
     this.physicalRowsEl = document.createElement('div');
     this.physicalRowsEl.className = 'luxar-layers-panel__physical-rows';
     this.physicalGroupEl.appendChild(this.physicalRowsEl);
+    this.registerControl('physical', this.physicalGroupEl);
     this.controlsEl.appendChild(this.physicalGroupEl);
 
     // Blending mode
@@ -499,16 +542,15 @@ export class LayerControls {
       for (const sel of this.deps.state.getSelected()) {
         this.deps.apply.applyBlendingMode(sel);
       }
-      // Switching to/from volumetric must reveal/hide the κ slider
-      // immediately, not on the next selection refresh.
-      this.syncAbsorptionVisibility();
-      // Same for the cutoff slider, whose gate includes the mode: leaving `opaque`
-      // must hide it on the click, not on the next selection change.
-      this.syncMeshAppearanceVisibility();
+      // Switching to/from volumetric must reveal/hide the κ slider immediately, not
+      // on the next selection refresh — and the cutoff slider, whose gate includes the
+      // mode: leaving `opaque` must hide it on the click.
+      this.syncControlVisibility();
       this.controlsInteracting = false;
     });
     blendGroup.appendChild(blendLabel);
     blendGroup.appendChild(this.blendSelect);
+    this.registerControl('blend', blendGroup);
     this.controlsEl.appendChild(blendGroup);
 
     // Layer order — the authored cross-layer draw order
@@ -556,6 +598,7 @@ export class LayerControls {
     });
     orderGroup.appendChild(orderLabel);
     orderGroup.appendChild(this.layerOrderInput);
+    this.registerControl('layerOrder', orderGroup);
     this.controlsEl.appendChild(orderGroup);
 
     // Colormap selector (only shown for layers that support colormap)
@@ -572,6 +615,10 @@ export class LayerControls {
     noneOpt.value = '';
     noneOpt.textContent = '(direct colors)';
     this.colormapSelect.appendChild(noneOpt);
+    // The authored non-builtin palette (stored as 'custom' + its LUT); placed by
+    // syncColormapSelect for the layers that have one.
+    this.customColormapOption = new Option(CUSTOM_COLORMAP_LABEL, 'custom');
+    this.customColormapOption.dataset.control = 'customColormap';
 
     // Add categorized options
     for (const [category, names] of Object.entries(COLORMAP_CATEGORIES)) {
@@ -601,10 +648,12 @@ export class LayerControls {
       const wasColormapped = new Map(
         this.deps.state.getSelected().map((l) => [l.path, l.scalarWindow])
       );
+      // A layer without the authored LUT keeps its palette (see canTakeColormap).
       this.deps.state.applyToSelected((l) => {
-        l.colormap = cmName;
+        if (canTakeColormap(l, cmName)) l.colormap = cmName;
       });
       for (const sel of this.deps.state.getSelected()) {
+        if (!canTakeColormap(sel, cmName)) continue;
         // The display window means a different thing on each side of the
         // off↔on toggle (scalar data range vs authored-RGB identity), so
         // re-default it BEFORE applying — `applyColormap` derives the
@@ -641,6 +690,7 @@ export class LayerControls {
     });
     cmGroup.appendChild(cmLabel);
     cmGroup.appendChild(this.colormapSelect);
+    this.registerControl('colormap', cmGroup);
     this.controlsEl.appendChild(cmGroup);
 
     const labelGroup = document.createElement('div');
@@ -669,6 +719,7 @@ export class LayerControls {
       for (const layer of this.deps.state.getSelected()) this.deps.apply.applyLabelStyle(layer);
     });
     labelGroup.append(labelTitle, this.labelColorSelect, this.labelFilterSelect);
+    this.registerControl('labels', labelGroup);
     this.controlsEl.appendChild(labelGroup);
 
     // Active-level selector — only meaningful for lod_group layers,
@@ -692,42 +743,14 @@ export class LayerControls {
       const value = this.lodLevelSelect!.value;
       const primary = this.deps.state.getPrimarySelected();
       if (primary) {
-        const registry = this.getLodGroupRegistry();
-        if (registry) {
-          const mode = value === 'auto' ? 'auto' : { lockLevel: Number(value) };
-          // Resolve the set of paths to update. A kind=lod layer updates
-          // itself; a kind=partition layer that wraps lod_groups broadcasts
-          // to every nested path (clamped per-group by setSelectorMode
-          // on ragged ladders — see lod-group-registry).
-          const paths: string[] =
-            primary.kind === 'lod'
-              ? [primary.path]
-              : primary.kind === 'partition' &&
-                  primary.nestedLodGroupPaths &&
-                  primary.nestedLodGroupPaths.length > 0
-                ? primary.nestedLodGroupPaths
-                : [];
-          let anyApplied = false;
-          for (const p of paths) {
-            try {
-              registry.setSelectorMode(p, mode);
-              anyApplied = true;
-            } catch (err) {
-              log.warning(Modules.UI, `Failed to set lod_group selector: ${err}`);
-            }
-          }
-          // The actual visibility swap happens in a per-frame callback;
-          // if the animation loop is idle (no camera/slice change),
-          // setSelectorMode alone is not enough. Wake the loop so the
-          // new active level is painted.
-          if (anyApplied) this.deps.requestRender();
-        }
+        this.applyActiveLevel(primary, value === 'auto' ? 'auto' : { lockLevel: Number(value) });
       }
       this.controlsInteracting = false;
     });
     lodGroup.appendChild(lodLabel);
     lodGroup.appendChild(this.lodLevelSelect);
     lodGroup.appendChild(this.lodLevelStatus);
+    this.registerControl('activeLevel', lodGroup);
     this.controlsEl.appendChild(lodGroup);
   }
 
@@ -743,6 +766,44 @@ export class LayerControls {
   private getLodGroupRegistry(): LODGroupRegistry | null {
     const loader = SceneLoaderManager.getInstance().getDefaultLoader();
     return loader?.lodGroupRegistry ?? null;
+  }
+
+  /**
+   * Point every lod_group the Active-level control drives for `layer` at `mode`:
+   * a kind=lod layer drives itself, a kind=partition layer every nested lod_group
+   * (clamped per group by `setSelectorMode` on ragged ladders).
+   */
+  private applyActiveLevel(layer: LayerInfo, mode: LODGroupSelectorMode): void {
+    const registry = this.getLodGroupRegistry();
+    if (!registry) return;
+    let anyApplied = false;
+    for (const path of activeLevelPaths(layer)) {
+      try {
+        registry.setSelectorMode(path, mode);
+        anyApplied = true;
+      } catch (err) {
+        log.warning(Modules.UI, `Failed to set lod_group selector: ${err}`);
+      }
+    }
+    // The actual visibility swap happens in a per-frame callback; if the animation
+    // loop is idle (no camera/slice change), setSelectorMode alone is not enough.
+    // Wake the loop so the new active level is painted.
+    if (anyApplied) this.deps.requestRender();
+  }
+
+  /**
+   * Return a locked Active level to `auto` — the authored state, since every
+   * lod_group loads in `auto`. Part of the panel's reset apply set; a no-op for a
+   * layer whose groups are already in `auto` (or not registered yet).
+   */
+  resetActiveLevel(layer: LayerInfo): void {
+    const registry = this.getLodGroupRegistry();
+    if (!registry) return;
+    const locked = activeLevelPaths(layer).some((path) => {
+      const mode = registry.get(path)?.selectorMode;
+      return mode !== undefined && mode !== 'auto';
+    });
+    if (locked) this.applyActiveLevel(layer, 'auto');
   }
 
   /** Populate the lod-level dropdown's options for the given child count. */
@@ -773,8 +834,9 @@ export class LayerControls {
     // A sound layer has no appearance: its one control (gain) lives in its
     // row, so the whole section steps aside rather than showing sliders that
     // reach no material.
-    if (this.controlsEl) this.controlsEl.style.display = primary.type === 'sound' ? 'none' : '';
-    if (primary.type === 'sound') return;
+    const appearance = layerHasAppearance(primary);
+    if (this.controlsEl) this.controlsEl.style.display = appearance ? '' : 'none';
+    if (!appearance) return;
 
     if (this.rangeSlider) {
       this.rangeSlider.setLabel(
@@ -828,23 +890,12 @@ export class LayerControls {
     if (this.blendSelect) {
       this.blendSelect.value = primary.blendingMode;
     }
-    this.syncAbsorptionVisibility();
-    this.syncMeshAppearanceVisibility();
+    this.syncControlVisibility();
 
-    if (this.colormapSelect) {
-      if (primary.supportsColormap) {
-        this.colormapSelect.parentElement!.style.display = '';
-        this.colormapSelect.value = primary.colormap ?? '';
-      } else {
-        // Hide colormap control for layers that don't support it
-        this.colormapSelect.parentElement!.style.display = 'none';
-      }
-    }
+    this.syncColormapSelect(primary);
 
     if (this.labelColorSelect && this.labelFilterSelect) {
-      const container = this.labelColorSelect.parentElement!;
       const vocabulary = primary.labelVocabulary;
-      container.style.display = vocabulary?.length ? '' : 'none';
       if (vocabulary?.length) {
         this.labelColorSelect.value = primary.colorByLabel ? 'categorical' : 'authored';
         this.labelFilterSelect.innerHTML = '';
@@ -861,18 +912,15 @@ export class LayerControls {
     // option list reflects either the layer's own child count
     // (kind=lod) or the largest nested ladder (kind=partition).
     if (this.lodLevelSelect && this.lodLevelStatus) {
-      const lodContainer = this.lodLevelSelect.parentElement!;
       const registry = this.getLodGroupRegistry();
       if (primary.kind === 'lod' && (primary.lodGroupChildCount ?? 0) > 0) {
-        lodContainer.style.display = '';
         this.renderLodLevelOptions(primary.lodGroupChildCount!);
         // Sync the dropdown to the registry's selector mode. No entry
         // yet (scene still loading) → default to "auto".
         const entry = registry?.get(primary.path);
         this.lodLevelSelect.value =
           entry && entry.selectorMode !== 'auto' ? String(entry.selectorMode.lockLevel) : 'auto';
-      } else if (this.isBroadcastPartition(primary)) {
-        lodContainer.style.display = '';
+      } else if (isBroadcastPartition(primary)) {
         this.renderLodLevelOptions(primary.nestedLodMaxChildCount!);
         // Sync widget state from the FIRST nested entry — they should
         // be lock-stepped after a broadcast change, and pre-broadcast
@@ -881,8 +929,6 @@ export class LayerControls {
         const entry = registry?.get(primary.nestedLodGroupPaths![0]);
         this.lodLevelSelect.value =
           entry && entry.selectorMode !== 'auto' ? String(entry.selectorMode.lockLevel) : 'auto';
-      } else {
-        lodContainer.style.display = 'none';
       }
       // Single source of truth for the readout text, shared with the
       // per-frame refreshLodStatus() so both always agree. null → no
@@ -892,74 +938,34 @@ export class LayerControls {
   }
 
   /**
-   * Show the Absorption (κ) slider only when it can do something: the
-   * primary selection's mode is `volumetric`. All three geometry types
-   * implement the volumetric math (gsplats phase 1, points phase 3,
-   * lines phase 4), so the mode alone decides. Called from render() and
-   * the blend-dropdown change handler (mode switches must reveal/hide
-   * it immediately).
+   * Show the colormap dropdown for layers that support one, offering the
+   * `'custom'` entry only to a layer with an authored LUT (any other layer would
+   * fall back to viridis under that name), and seat it on the layer's palette.
    */
-  private syncAbsorptionVisibility(): void {
-    if (!this.absorptionSlider) return;
-    const primary = this.deps.state.getPrimarySelected();
-    // Gate on the MESH-RESOLVED mode: a mesh resolves `volumetric` → `opaque`
-    // (it has no `updateAbsorption`), so absorption stays correctly hidden for a
-    // mesh; a real volumetric gsplat/points/lines still shows it.
-    const show =
-      !!primary && resolveLayerBlendingMode(primary.type, primary.blendingMode) === 'volumetric';
-    this.absorptionSlider.setVisible(show);
+  private syncColormapSelect(primary: LayerInfo): void {
+    if (!this.colormapSelect || !this.customColormapOption) return;
+    if (!isControlVisible('colormap', primary)) return;
+    if (isControlVisible('customColormap', primary)) {
+      this.colormapSelect.options[0].after(this.customColormapOption);
+    } else {
+      this.customColormapOption.remove();
+    }
+    this.colormapSelect.value = primary.colormap ?? '';
   }
 
   /**
-   * Show the five mesh appearance sliders only when they can do something.
-   *
-   * All five are type-gated. The four lighting controls are additionally hidden when
-   * the material resolves to `shading="none"`, where their uniforms are compiled out.
-   *
-   * `alphaCutoff` instead carries a mode gate ON TOP: the cutout only exists in
-   * `opaque`, so in any other mesh mode the threshold is read by no branch of the
-   * fragment shader.
-   * The gate is on the MESH-RESOLVED mode, so a mesh in a volumetric-inherited/selected
-   * mode (which a mesh resolves back to `opaque`) still shows its active cutout slider.
-   *
-   * A GROUP layer over meshes deliberately does NOT get these. Unlike opacity and
-   * gamma, they do not compose along the ancestry (a shade floor is not a
-   * multiplicative attr), so a group control would have to mean "set all descendants",
-   * which is a different verb from every other control in this panel.
+   * Show exactly the section controls `LAYER_CONTROL_RULES` allows for the primary
+   * selection — every gate (the κ slider's volumetric mode, the mesh appearance
+   * sliders' house/physical/shading/cutout gates, Blend, Gamma, colormap, classes,
+   * active level) is a row of that table. Called from render() and the
+   * blend-dropdown handler (a mode switch must reveal/hide κ and the cutoff at once).
    */
-  private syncMeshAppearanceVisibility(): void {
+  private syncControlVisibility(): void {
     const primary = this.deps.state.getPrimarySelected();
-    const isMesh = primary?.type === 'mesh';
-    // A `material="physical"` mesh runs none of the house shader: the four lighting
-    // sliders have no uniform to write, the cutoff is an authored attr the material
-    // maps itself, the Blend dropdown names modes it does not implement, and Gamma has
-    // no term. All of them hide, and the physical controls take their place.
-    const physical = isMesh && primary.material === 'physical';
-    const house = isMesh && !physical;
-    const cutout =
-      house && resolveLayerBlendingMode(primary.type, primary.blendingMode) === 'opaque';
-    this.setHouseShadingVisible(house && primary.shading !== 'none', cutout);
-    this.setPhysicalFamilyVisible(physical);
-  }
-
-  /** The four lighting sliders, and the cutoff on its own narrower gate. */
-  private setHouseShadingVisible(lighting: boolean, cutout: boolean): void {
-    this.ambientSlider?.setVisible(lighting);
-    this.shadeExponentSlider?.setVisible(lighting);
-    this.specularSlider?.setVisible(lighting);
-    this.shininessSlider?.setVisible(lighting);
-    this.alphaCutoffSlider?.setVisible(cutout);
-  }
-
-  /**
-   * Swap the house-only generic controls (Gamma, Blend) for the physical controls,
-   * and back.
-   */
-  private setPhysicalFamilyVisible(physical: boolean): void {
-    this.gammaSlider?.setVisible(!physical);
-    const blendGroup = this.blendSelect?.parentElement;
-    if (blendGroup) blendGroup.style.display = physical ? 'none' : '';
-    if (this.physicalGroupEl) this.physicalGroupEl.style.display = physical ? '' : 'none';
+    if (!primary) return;
+    for (const [id, el] of this.controlEls) {
+      el.style.display = isControlVisible(id, primary) ? '' : 'none';
+    }
   }
 
   /** Tear down the physical knob group (sliders own DOM + listeners). */
@@ -1091,19 +1097,6 @@ export class LayerControls {
   }
 
   /**
-   * True when ``primary`` is a kind=partition layer wrapping one or more
-   * nested lod_groups, so the "Active level" dropdown broadcasts to them.
-   */
-  private isBroadcastPartition(primary: LayerInfo): boolean {
-    return (
-      primary.kind === 'partition' &&
-      primary.nestedLodGroupPaths != null &&
-      primary.nestedLodGroupPaths.length > 0 &&
-      (primary.nestedLodMaxChildCount ?? 0) > 0
-    );
-  }
-
-  /**
    * Compute the "Active level" readout text for the primary-selected
    * layer, or ``null`` when no LOD readout applies (non-LOD layer, or the
    * lod_group registry isn't populated yet). 1-based ("L3/5") to match
@@ -1142,7 +1135,7 @@ export class LayerControls {
           : ` · ε≤${Math.round(geometricError * 100)}%`;
       return `L${shown + 1}/${entry.children.length}${qualityStr}${errorStr}${suffix}`;
     }
-    if (this.isBroadcastPartition(primary)) {
+    if (isBroadcastPartition(primary)) {
       // This readout summarizes nested level indices only; ε is scoped to the
       // direct kind=lod branch above until partition-wide error aggregation exists.
       // Aggregate across EVERY nested lod_group, not just the first: under

@@ -39,8 +39,13 @@ A killed check still stops immediately. If a failed coverage run produced no
 summary, the dependent slack check is reported as skipped instead of adding a
 misleading second failure. Local runs can request fail-fast behavior with
 `--bail`. The static checks include the `check:overrides` pnpm security-pin
-guard, dependency-cruiser layer rules, and the `check:knip:ci`
-unused-export/unused-file gate. Coverage thresholds and their last accepted
+guard, dependency-cruiser layer rules, the `check:knip:ci`
+unused-file/unused-dependency gate, and the `check:knip:ratchet` unused-export
+ratchet (`scripts/check-knip-ratchet.mjs` against `knip-baseline.json`: a new
+unused export, type or enum member fails; so does a paid-down or moved entry
+until `pnpm run check:knip:ratchet --update-baseline` refreshes it, and a
+`knip.json` or issue-type change fails closed). Delete dead code rather than
+baselining it; tag a deliberate unimported export `@internal`. Coverage thresholds and their last accepted
 measurements live together in `coverage-thresholds.mjs`; after coverage moves,
 run `pnpm check:coverage-slack -- --print`, update floors when required, and
 refresh the recorded measurements when accepting the new state. A downward
@@ -127,6 +132,78 @@ delivering). A spec that wants the in-app buffer specifically — for its
 `hover-tooltip`, `hover-overlay`, `mouse-interactions` and
 `recording-panel` do from their own `test.afterEach`.
 
+### Geometry conformance: what each type does, and draw/pick parity
+
+Per-type behaviour is written once per type, so it drifts: one type gains a
+fix the other three lack, or a new type ships without one. Two declared tables
+in `_conformance/` turn that into failing tests.
+
+**The behaviour matrix** (`_conformance/geometry-behaviours.ts`) is the one
+table to read to learn what Points, Lines, GSplats and Mesh each do. A row is a
+behaviour, such as the sorted-append hold, the L0 chunk cache, colormap support
+or pick registration. A cell is `'yes'`, or an `Absent` that gives the reason,
+how the absence is enforced (`refuse`, `hidden` or `no-op`) and the spec
+section that decides it. Every row names the test file that probes it. That
+file calls `defineBehaviourConformance(row, probe)`
+(`_conformance/define-behaviour-conformance.ts`), which emits one test per
+type: a `'yes'` cell runs the probe against real code, and an absent cell runs
+the probe's checker for its declared enforcement. A cell that claims `'yes'`
+but does nothing fails, and so does an absent cell whose type quietly started
+doing the thing. New probes live in `unit/conformance/`. Probes that need a
+file's module mocks live in that file, which is how the existing per-type tests
+were folded behind the matrix rather than copied. The shared per-type fixtures
+are `helpers/geometry-commits.ts` (one real commit per type) and
+`helpers/geometry-materials.ts` (every visual and pick material, per variant
+and backend).
+
+`unit/conformance/geometry-behaviours.test.ts` keeps the matrix honest, and
+catches the drift no single row can:
+
+- every row is probed exactly once, in the file it names. Every absent cell's
+  spec reference must resolve to a file, and to a heading for a `§` section.
+  The capability rows must equal `GEOMETRY_CAPABILITIES` cell for cell;
+- an `it.each` / `describe.each` / `test.each` over two or three geometry
+  names (plural, or the singular material-kind keys) must say why, with
+  `// geometry-subset: <reason>` directly above the call. This is the "three
+  types, mesh forgotten" shape. The TypeScript-AST scanner
+  (`_conformance/source-scans.ts`) follows named consts and `.map` chains, and
+  is tested on synthetic sources first;
+- the parallel per-type module families (`commit-<t>-geometry.ts`,
+  `load-<t>-node.ts`, `<t>-progressive-loader.ts`) must export the same names,
+  and their exported classes the same public members, once the type token is
+  normalised. Otherwise the asymmetry is declared in
+  `MODULE_FAMILY_ASYMMETRIES` with its reason. This catches "added to GSplats
+  only".
+
+Production code has the matching lint rule. ESLint `no-restricted-syntax`
+flags hand-written geometry-type subsets in `src/` (not in tests): an
+`x === 'points' || x === 'lines'` chain, a `new Set([...])` or an
+`[...].includes(x)` over two or more type literals. Ask
+`GEOMETRY_CAPABILITIES` instead, or key a `Record<GeometryTypeName, …>`. The
+existing sites are baselined in `eslint-suppressions.json` and ratchet down.
+
+**The draw/pick table** (`_conformance/pick-visibility-rules.ts`) declares,
+for every `(type, primitive variant)`, how each per-element visibility rule
+relates the draw shader to the pick shader. The rules are density drop, the
+sorted-index slot, near fade, the label filter, reach, alpha cutout and the
+glass partition. A cell is `'same'`, a `deliberate` pick ⊂ draw (with the
+evidence that it still is), `drawOnly`, or `neither`. It is held three ways:
+
+- `unit/rendering/picking/draw-pick-parity.test.ts` checks the source.
+  `'same'` needs the shared helper's call in both GLSL sources, its emitted
+  block in both TSL codegen snapshots (`__codegen__/`), and its call in both
+  TSL factory sources. Every `PICKING_FACTORIES` kind, material variant and
+  pick shader the picking tree exports must have a row, so a new pick variant
+  cannot ship unlisted;
+- `e2e/tsl-shader-parity.spec.ts` (`draw/pick coverage`) checks the pixels.
+  It renders one fixture through draw and pick, on both backends, and requires
+  pick ⊆ draw (1 px slack) and a per-type coverage floor. With `uDensityDrop`
+  set, the dropped element must be gone from both frames. The harness's
+  `renderGLSL(name, uniforms)` / `renderTSL(name, { uniforms })` take the
+  uniform overrides;
+- the render gate's `pickWithinDraw` judgement checks the same property on
+  real GPUs, for every pickable gate scene (`docs/guides/developer/RENDER_GATE.md`).
+
 ---
 
 ## Test Organization
@@ -158,7 +235,9 @@ tests/
 ├── builders/                      # Test data builders & helpers
 │   └── test-data-builders.ts      # Fluent builders for test data
 │
-├── helpers/                       # Shared test utilities (array compare, WASM artifact loader, …)
+├── helpers/                       # Shared test utilities (deferred, fake workers, source scan, …)
+│
+├── _conformance/                  # Declared tables the conformance guards check (see below)
 │
 ├── setup.ts                       # Global test setup (installs mocks)
 ├── test-config.ts                 # Vitest configuration helpers
@@ -174,6 +253,61 @@ tests/
 ├── test_gsplats_centers_array_ref.luxar.zarr  # GSplats centers/amplitudes array_ref (#2490)
 └── ... (more fixtures)
 ```
+
+---
+
+## Conformance guards
+
+Some bug kinds recur because the paths that show them rarely run. Each guard
+below is a declared table, a runner that checks the code against it, and a
+meta-check that fails when the table goes stale. A guard that goes red is
+asking for a row, a test or a reasoned exemption, not for a looser check.
+
+### Lifecycle contract (`unit/_shared/lifecycle-contract.ts`)
+
+`defineLifecycleContract(name, adapter)` emits the standard cases for one
+cancellable or disposable async operation: abort mid-flight (settles
+promptly, commits nothing), dispose mid-flight (a late settlement is ignored,
+a call after dispose is a no-op, and with `releasesWaitersOnDispose` a waiting
+caller is released), failure (surfaces once, nothing left stuck), retry
+(every attempt costs the same, the last success lands), supersede (only the
+newest result lands), double dispose, and — for an owner with a `reset` — a
+mid-flight dataset switch. The adapter wires the real code to inner work the
+harness settles itself (`helpers/deferred.ts`; `helpers/fake-worker.ts` for
+pool workers) and describes what the operation commits through `observe()`.
+A case the operation cannot express is declared `{ na: '<reason>' }`, and its
+reason shows in the run.
+
+Every operation is a row of `_conformance/async-operations.ts`, naming its
+symbols and the tests that prove its lifecycle (`contract` when one of them
+runs the shared contract). `unit/conformance/async-operations.test.ts` scans
+`src/` for exported functions and public methods taking an `AbortSignal`, and
+for exported classes defining `dispose()` beside an `async` method; each must
+be in a row or carry `// lifecycle-exempt: <reason>` (signal tagging and
+lookups are the only exemptions today). Rows naming a missing export or test
+fail too.
+
+### Counter truth (`unit/profiling/counter-truth.test.ts`)
+
+The render gate judges builds on the perf counters, so each one must count
+exactly what it claims. `profiling/perf-counters.ts` declares every counter in
+`PERF_COUNTERS` (and the two run-time-suffixed families in
+`PERF_COUNTER_FAMILIES`); the singleton only accepts declared names, so a typo
+does not compile. `_conformance/perf-counter-tests.ts` names, per counter, the
+test file holding its exact-value assertion; the test then checks that:
+
+- every name the source passes to `perfCounters.slot` / `.inc` is declared,
+  and every declared name is still written (no dead entries);
+- loading every counter-owning module registers exactly the declared names;
+- the named file asserts the counter's exact value after a known event
+  sequence — `expect(perfCounters.get('<name>')).toBe(<n>)`, or the name
+  inside an exact matcher's expected value or a local getter the expect calls.
+  A `before + 1` delta or a `toBeGreaterThan(0)` does not count.
+
+`scripts/render-gate/gate-scenes.test.mjs` adds the gate side: every counter a
+`gate-scenes.json` metric judges (a `/tick` metric by its `of` / `per`) must be
+declared, `ext.*` metrics must be installed by `ext-counters.mjs`, and the
+harness-produced metrics are listed explicitly.
 
 ---
 
@@ -271,7 +405,7 @@ Tests for Python-TypeScript data compatibility and the complete loading pipeline
 
 **Key Files**:
 
-- `array-decoder/` (directory of split tests: `decoder.test.ts`, `array-roundtrip.test.ts`, `load-and-decode.test.ts`, `ref-registry.test.ts`, ...) - **Python ↔ TypeScript encoding compatibility**
+- `array-decoder/` (directory of split tests: `decoder.test.ts`, `array-roundtrip.test.ts`, `ref-registry.test.ts`, ...) - **Python ↔ TypeScript encoding compatibility**
   - Broadcasting: `(1, 3) → (1000, 3)` color expansion
   - LUT encoding: Indexed color/radius lookup
   - Quantization: Float32 → Uint16 compression
@@ -517,6 +651,34 @@ Full browser tests using Playwright that exercise the complete pipeline.
 ```bash
 pnpm test:e2e:report  # Opens HTML report with all screenshots/videos
 ```
+
+---
+
+## Structural Guards
+
+Tests that fail on the PR introducing a whole KIND of bug, rather than one
+instance. Each is a declared table, a runner over it, and a check that keeps the
+table honest.
+
+- **Every shown Layers-panel control has an effect** —
+  `unit/ui/layers/control-effect.test.ts` over `LAYER_CONTROL_RULES`
+  (`src/ui/layers/layer-control-rules.ts`). One fixture per layer kind (points,
+  lines, gsplats, house mesh, physical mesh, sound, LOD, partition, labelled,
+  custom LUT) with real materials: the shown controls must equal both the table's
+  answer and the fixture's declared `shows` list; each shown control is driven
+  through its DOM and must move observable state (uniforms, defines, material
+  flags, render-order slot, audio gain, LOD selector); "Reset this layer" must
+  restore it; every `data-control` element needs a rule. A new control needs a
+  rule row, a `data-control` id and a `PROBES` entry (keyed by the id type).
+- **README claims are checked** — `unit/readme/readme-claims.test.ts` (extractors
+  in `helpers/readme-claims.ts`). Every code-shaped name in an inline code span of
+  a `src/**/README.md` (camelCase, PascalCase, UPPER_SNAKE; dotted or called) must still
+  be used by the viewer's sources (`src/`, `scripts/`, `tools/`; comments do not
+  count) or by three / the DOM / Playwright; the rest sit in the test's
+  allowlist with a reason (Python names, the launcher's env var, names a README cites as REMOVED).
+  A list fenced by `<!-- mirrors: <file>#exports -->` or
+  `<!-- mirrors: <file>#<Class>.getters -->` … `<!-- /mirrors -->` must list exactly
+  that code set (the loaders README's factory helpers and registry accessors).
 
 ---
 

@@ -5,7 +5,7 @@ Per-geometry picking sources for lines. Self-contained — no cross-geometry imp
 | File                  | Role                                                                                                                                                                                                           |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `material.ts`         | GLSL3 `THREE.ShaderMaterial` wrapper (`LinePickingMaterial`). Selects the screen-space or capsule shader pair from the same `?linePrimitive=` resolution the visual material uses. Recompiles on `needsUpdate` |
-| `material-tsl.ts`     | WebGPU `NodeMaterial` counterpart (`LinePickingTSLMaterial`). Same `CameraAwareMaterial` contract; every rebuild (ortho flip, texture rebind, clone) dispatches to the factory matching the resolved primitive |
+| `material-tsl.ts`     | WebGPU `NodeMaterial` counterpart (`LinePickingTSLMaterial`). Same `CameraAwareMaterial` contract; every rebuild (texture rebind, clone) dispatches to the factory matching the resolved primitive             |
 | `pick.tsl.ts`         | TSL node factory for the screen-space primitive (`linePickWebGPUFactory` + `buildLinePickTSLNodesFromUniforms`). Used by the WebGPU material above and by the GLSL/TSL parity harness                          |
 | `shaders.ts`          | Screen-space GLSL3 vertex/fragment source strings + `LINE_PICK_SOURCE: ShaderSource`. Uses full pick width (lines are already narrow); cap factor in fragment matches the visual shader                        |
 | `pick-capsule.tsl.ts` | TSL node factory for the capsule primitive (#1352, `capsuleLinePickWebGPUFactory`): the capsule stencil vertex (half-disc bisector joints) with pick IDs, quartic-profile brightness fragment                  |
@@ -25,11 +25,12 @@ and the same exception, that a cut end reserves the FULL disc rather than its
 half whenever a deficit packet exists, since the deficit term reaches as far
 as the leg's own profile does — #1488) — and the fragment shades the same quartic
 profile of the 2D point-to-segment distance, so `brightness = profile ×
-fade` tracks the visible pixels one-for-one (the capsule is peak-shaped by
-construction; there is no separate peak lane to select). Per-element alpha
-and node opacity are ignored, matching the pick contract of the
-screen-space primitive. Output contract:
+fade × weight` tracks the visible pixels one-for-one (the capsule is
+peak-shaped by construction; there is no separate peak lane to select). The
+weight is the visual one shared with the screen-space primitive — per-element
+alpha, node opacity, `max(gain, 1)` (`../_shared/visibility-glsl.ts`).
+Output contract:
 `vec4(nodeId, elementId-low16, brightness, elementId-high16)`,
-`gl_FragDepth = 1 − brightness`. Footprint
+`gl_FragDepth = 1 / (1 + brightness)`. Footprint
 agreement is pinned in `tsl-shader-parity.spec.ts` against the fat visual
 footprint (1-px quantisation ribbon).

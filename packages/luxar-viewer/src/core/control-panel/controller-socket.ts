@@ -12,7 +12,7 @@
  * implementations behind one name.
  */
 
-import { NO_VIEWER } from '../../config/control-contract';
+import { NO_VIEWER, VIEWER_NOT_READY } from '../../config/control-contract';
 import {
   decodeFrame,
   notificationFrame,
@@ -65,6 +65,11 @@ export class ControllerCallError extends Error {
     // Go relay both emit this code, and a panel that stopped recognising it
     // would show "waiting for the display" forever.
     return this.code === NO_VIEWER;
+  }
+
+  /** The attached display has not finished loading its first scene. */
+  get viewerNotReady(): boolean {
+    return this.code === VIEWER_NOT_READY;
   }
 }
 

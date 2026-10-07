@@ -126,10 +126,12 @@ export class SceneDimsManager {
    * - Set non-displayed dimensions to their minimum values
    * - Identify which dimensions should be displayed (max 3)
    *
-   * @param scene - THREE.js scene containing nD objects with metadata
+   * @param scene - THREE.js scene (or a single Luxar root group, which carries the
+   *   metadata itself — what a LuxarLayer passes so a host scene holding several
+   *   layers cannot hand one layer another's dimensions)
    * @returns True if dimensions were successfully initialized, false if no metadata found
    */
-  initFromScene(scene: THREE.Scene): boolean {
+  initFromScene(scene: THREE.Object3D): boolean {
     // Step 1: Search for scene dimensions metadata
     let sceneDimensions = scene.userData.sceneDimensions;
 
@@ -170,8 +172,7 @@ export class SceneDimsManager {
       // Drop any PREVIOUS scene's dims: this is a singleton, so leaving them
       // in place would let a 3D-only scene loaded after an nD one be read
       // through the old scene's `displayed` axes (bounds projection,
-      // auto-framing). Listeners are deliberately kept — they are owned by
-      // the input handler across scene switches, unlike `reset()`.
+      // auto-framing). Listeners keep their own lifetimes across scene switches.
       this.dims = null;
       this.dimensionRanges = null;
       return false;
@@ -304,10 +305,11 @@ export class SceneDimsManager {
    * @param dimIndex - Index of dimension to update
    * @param value - New position value in dimension units
    * @param options.force - Re-notify listeners at the current value to refine a pinned slice
+   * @returns whether the position changed (a forced re-notify at the same value is not a change)
    */
-  setDimensionValue(dimIndex: number, value: number, options: { force?: boolean } = {}): void {
+  setDimensionValue(dimIndex: number, value: number, options: { force?: boolean } = {}): boolean {
     if (!this.dims || dimIndex < 0 || dimIndex >= this.dims.ndim) {
-      return;
+      return false;
     }
 
     // Reject non-finite (NaN, ±Infinity) inputs — silently writing NaN into
@@ -317,7 +319,7 @@ export class SceneDimsManager {
         Modules.SCENE_DIMS,
         `setDimensionValue: ignoring non-finite value ${value} for dim ${dimIndex}`
       );
-      return;
+      return false;
     }
 
     value = constrainDimensionValue(
@@ -327,9 +329,10 @@ export class SceneDimsManager {
     );
 
     const changed = value !== this.dims.currentStep[dimIndex];
-    if (!changed && !options.force) return;
+    if (!changed && !options.force) return false;
     this.dims.currentStep[dimIndex] = value;
     this.notifyListeners(changed); // Trigger reactive updates throughout the system
+    return changed;
   }
 
   /**
@@ -384,6 +387,11 @@ export class SceneDimsManager {
    */
   addListener(callback: (changed: boolean) => void | Promise<void>): void {
     this.listeners.add(callback);
+  }
+
+  /** Number of registered dimension observers. */
+  get listenerCount(): number {
+    return this.listeners.size;
   }
 
   /**
@@ -463,15 +471,18 @@ export class SceneDimsManager {
     return this.dims?.metadata || [];
   }
 
-  /**
-   * Reset the dimension manager to initial state
-   */
+  /** Reset scene state while retaining listeners owned by longer-lived components. */
   reset(): void {
     this.dims = null;
     this.dimensionRanges = null;
     this.pendingUpdatePromise = null;
-    this.listeners.clear();
     // Scene dimension manager has been reset
+  }
+
+  /** Release subscribers when the owning app is torn down. */
+  dispose(): void {
+    this.reset();
+    this.listeners.clear();
   }
 
   /**

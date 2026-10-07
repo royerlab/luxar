@@ -23,6 +23,7 @@ import {
   applyElementTextureWidthDefine,
   LINE_TEXTURE_LAYOUT,
 } from '../../element-texture-layout';
+import { copyRuntimeUniforms, LINE_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import { getGlassDepthTexture } from '../_shared/glass-partition';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
@@ -163,7 +164,6 @@ export class LineMaterial
         uLineTex: { value: getPlaceholderElementTexture() },
         uResolution: { value: new THREE.Vector2(1, 1) },
         uPixelRatio: { value: 1 },
-        uIsOrtho: { value: 0 }, // 0 = perspective, 1 = orthographic
         // Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB.
         // Flipped by the depth-sort coordinator once the inactive buffer
         // holds a whole permutation (runtime uniform: never a define — a
@@ -276,20 +276,14 @@ export class LineMaterial
 
   /**
    * Update camera parameters for world-space line sizing. The pixel-width
-   * scale is read in shader from the projection matrix (luxarLineScale);
-   * `isOrtho` still drives the `uIsOrtho` uniform the vertex AND fragment
-   * stages branch on.
+   * scale AND the ortho branch are read in shader from the projection matrix
+   * of the draw (luxarLineScale / luxarLineIsOrtho), so `isOrtho` is
+   * accepted for the `CameraAwareMaterial` contract and ignored.
    *
    * @param resolution - Viewport resolution
    */
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     this.uniforms.uResolution.value.copy(resolution);
-    this.uniforms.uIsOrtho.value = isOrtho ? 1 : 0;
     // Apply the near-plane safety distance when provided.
     // Accept ANY defined value, including 0 — matching the point/gsplat
     // wrappers (the shader floors at 1e-20). The old `> 0` gate silently
@@ -475,24 +469,13 @@ export class LineMaterial
       cloned.blendDst = this.blendDst;
     }
 
-    cloned.uniforms.uResolution.value.copy(this.uniforms.uResolution.value);
+    // Runtime state a fresh clone would reset (LINE_RUNTIME_UNIFORMS, ../_shared/runtime-uniforms.ts).
+    copyRuntimeUniforms(this, cloned, LINE_RUNTIME_UNIFORMS);
     // Preserve the line data texture binding (per-node — the clone
     // serves the same node). Routed through the rebind chokepoint so
     // the clone's width define is re-stamped from that texture rather
     // than left on the constructor's session-width pre-stamp.
     cloned.updateLineTexture(this.uniforms.uLineTex.value as THREE.DataTexture | null);
-    // Preserve orthographic state and the near-plane / max-pixel-width
-    // clamp.
-    cloned.uniforms.uIsOrtho.value = this.uniforms.uIsOrtho.value;
-    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
-    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
-    cloned.uniforms.uMaxLinePixelWidth.value = this.uniforms.uMaxLinePixelWidth.value;
-    cloned.uniforms.uLineJoin.value = this.uniforms.uLineJoin.value;
-    cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
-    // The active ordering slot must ride along: a clone taken while the
-    // geometry draws from slot 1 would otherwise read the stale buffer
-    // until the coordinator's next per-frame re-assert.
-    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     return cloned as this;
   }
 

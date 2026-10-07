@@ -10,6 +10,7 @@ import {
   bootstrap,
   type ControlPanelBootstrapPorts,
 } from '../../../../core/control-panel/main';
+import { VIEWER_ATTACHED_EVENT, VIEWER_NOT_READY } from '../../../../config/control-contract';
 import {
   ControllerCallError,
   type ControllerSocket,
@@ -163,8 +164,8 @@ describe('control-panel bootstrap', () => {
       })
     );
     expect(context.panel.setActive).toHaveBeenCalledWith(1);
-    // Third: `getDimensions`, then `getViewerState` for the title, then this.
-    expect(context.socket.call).toHaveBeenNthCalledWith(3, 'subscribe', ['dimensions-changed']);
+    expect(context.socket.call).toHaveBeenNthCalledWith(1, 'subscribe', ['dataset-loaded']);
+    expect(context.socket.call).toHaveBeenNthCalledWith(4, 'subscribe', ['dimensions-changed']);
 
     await vi.advanceTimersByTimeAsync(120_000);
     expect(context.socket.notify).not.toHaveBeenCalled();
@@ -172,6 +173,113 @@ describe('control-panel bootstrap', () => {
     context.panelPorts.onInteraction?.();
     await vi.advanceTimersByTimeAsync(120_000);
     expect(context.socket.notify).toHaveBeenCalledWith('setDimensionValue', [3, 0]);
+  });
+
+  it('replaces chapters and authored presentation after a dataset switch', async () => {
+    vi.useFakeTimers();
+    const context = harness();
+    let scene = 0;
+    vi.mocked(context.socket.call).mockImplementation(async (method: string) => {
+      if (method === 'getDimensions') {
+        return scene === 0
+          ? DIMS
+          : {
+              ...DIMS,
+              metadata: [
+                ...DIMS.metadata.slice(0, 3),
+                { ...DIMS.metadata[3], name: 'phase', categories: ['Start', 'Finish'] },
+              ],
+              currentStep: [0, 0, 0, 0],
+            };
+      }
+      if (method === 'getViewerState') {
+        return {
+          controlPanel:
+            scene === 0
+              ? { title: 'Old scene', stylesheet: '.tile { color: red; }' }
+              : { title: 'New scene' },
+        };
+      }
+      return undefined;
+    });
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    expect(context.panel.render).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dimensionName: 'story' }),
+      expect.objectContaining({ title: 'Old scene' })
+    );
+    expect(document.getElementById('luxar-control-author-style')?.textContent).toBe(
+      '.tile { color: red; }'
+    );
+    context.panelPorts.onInteraction?.();
+
+    scene = 1;
+    context.socketPorts.onEvent?.('dataset-loaded', { src: 'new.zarr' });
+    expect(document.getElementById('luxar-control-author-style')?.textContent).toBe(
+      '.tile { color: red; }'
+    );
+    await settle();
+    expect(context.socket.call).toHaveBeenCalledWith('subscribe', ['dataset-loaded']);
+    expect(context.panel.render).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dimensionName: 'phase' }),
+      expect.objectContaining({ title: 'New scene' })
+    );
+    expect(context.panel.setActive).toHaveBeenLastCalledWith(0);
+    expect(document.getElementById('luxar-control-author-style')).toBeNull();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(context.socket.notify).not.toHaveBeenCalled();
+  });
+
+  it('recovers when opened while a switch has cleared the old dimensions', async () => {
+    const context = harness();
+    let switched = false;
+    vi.mocked(context.socket.call).mockImplementation(async (method: string) => {
+      if (method === 'getDimensions') {
+        return switched
+          ? DIMS
+          : { ndim: 0, displayed: [], metadata: [], ranges: [], currentStep: [] };
+      }
+      return undefined;
+    });
+
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    expect(context.panel.render).toHaveBeenCalledWith(null, expect.anything());
+
+    switched = true;
+    context.socketPorts.onEvent?.('dataset-loaded', { src: 'new.zarr' });
+    await settle();
+    expect(context.panel.render).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dimensionName: 'story' }),
+      expect.anything()
+    );
+  });
+
+  it('ignores an old scene reply that finishes after dataset-loaded', async () => {
+    const context = harness();
+    let resolveOld!: (value: unknown) => void;
+    const oldDims = new Promise<unknown>((resolve) => {
+      resolveOld = resolve;
+    });
+    let switched = false;
+    vi.mocked(context.socket.call).mockImplementation(async (method: string) => {
+      if (method === 'getDimensions') return switched ? DIMS : oldDims;
+      return undefined;
+    });
+    context.socketPorts.onStatus?.('open');
+    await settle();
+
+    switched = true;
+    context.socketPorts.onEvent?.('dataset-loaded', { src: 'new.zarr' });
+    await settle();
+    expect(context.panel.render).toHaveBeenCalledTimes(1);
+    resolveOld({ ndim: 0, displayed: [], metadata: [], ranges: [], currentStep: [] });
+    await settle();
+    expect(context.panel.render).toHaveBeenCalledTimes(1);
+    expect(context.panel.render).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dimensionName: 'story' }),
+      expect.anything()
+    );
   });
 
   it('applies authored presentation and replaces the author stylesheet', async () => {
@@ -190,7 +298,14 @@ describe('control-panel bootstrap', () => {
             subtitle: 'Authored subtitle',
             columns: 2,
             stylesheet: '.tile { color: blue; }',
-            chapters: { 1: { label: 'Blood', sublabel: 'Protein family' } },
+            chapters: {
+              1: {
+                label: 'Blood',
+                sublabel: 'Protein family',
+                shortLabel: 'Hb',
+                shortSublabel: 'Family',
+              },
+            },
           },
         };
       }
@@ -207,6 +322,8 @@ describe('control-panel bootstrap', () => {
       subtitle: 'Authored subtitle',
       columns: 2,
       sublabels: { 1: 'Protein family' },
+      shortLabels: { 1: 'Hb' },
+      shortSublabels: { 1: 'Family' },
     });
     const styles = document.querySelectorAll('#luxar-control-author-style');
     expect(styles).toHaveLength(1);
@@ -261,7 +378,8 @@ describe('control-panel bootstrap', () => {
     await settle();
 
     context.panelPorts.onInteraction?.();
-    await vi.runAllTimersAsync();
+    // An hour spans thirty default idle periods.
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
 
     expect(context.socket.notify).not.toHaveBeenCalled();
   });
@@ -303,6 +421,52 @@ describe('control-panel bootstrap', () => {
     expect(context.panel.render).toHaveBeenCalledTimes(1);
   });
 
+  it('loads chapters after an attached display finishes initializing', async () => {
+    vi.useFakeTimers();
+    const context = harness();
+    vi.mocked(context.socket.call)
+      .mockRejectedValueOnce(
+        new ControllerCallError({ code: VIEWER_NOT_READY, message: 'viewer not ready' })
+      )
+      .mockImplementation(async (method: string) =>
+        method === 'getDimensions' ? DIMS : undefined
+      );
+
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    expect(context.panel.render).not.toHaveBeenCalled();
+    expect(context.panel.showMessage).toHaveBeenLastCalledWith(
+      'Waiting for the display',
+      expect.any(String)
+    );
+
+    await vi.advanceTimersByTimeAsync(CHAPTER_RETRY_BASE_MS);
+    expect(context.panel.render).toHaveBeenCalledTimes(1);
+    expect(context.panel.setActive).toHaveBeenLastCalledWith(1);
+    expect(context.socket.call).toHaveBeenCalledTimes(5);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(context.socket.call).toHaveBeenCalledTimes(5);
+    context.teardown();
+  });
+
+  it('does not retry a genuine viewer failure', async () => {
+    vi.useFakeTimers();
+    const context = harness();
+    vi.mocked(context.socket.call).mockRejectedValue(
+      new ControllerCallError({ code: -32603, message: 'scene load failed' })
+    );
+
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    expect(context.panel.showMessage).toHaveBeenLastCalledWith(
+      'Could not read the chapters',
+      expect.any(String)
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(context.socket.call).toHaveBeenCalledTimes(1);
+    context.teardown();
+  });
+
   it('caps the missing-viewer retry interval', async () => {
     vi.useFakeTimers();
     const context = harness();
@@ -342,6 +506,218 @@ describe('control-panel bootstrap', () => {
 
     expect(context.socket.call).toHaveBeenCalledTimes(1);
     expect(context.socket.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-highlights and re-subscribes after the display reloads', async () => {
+    const context = harness();
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    expect(context.panel.setActive).toHaveBeenLastCalledWith(1);
+
+    vi.mocked(context.socket.call).mockClear();
+    vi.mocked(context.socket.call).mockImplementation(async (method: string) =>
+      method === 'getDimensions' ? { ...DIMS, currentStep: [0, 0, 0, 0] } : undefined
+    );
+    context.socketPorts.onEvent?.(VIEWER_ATTACHED_EVENT, null);
+    await settle();
+
+    expect(context.panel.setActive).toHaveBeenLastCalledWith(0);
+    expect(context.socket.call).toHaveBeenNthCalledWith(1, 'subscribe', ['dimensions-changed']);
+    expect(context.socket.call).toHaveBeenNthCalledWith(2, 'subscribe', ['dataset-loaded']);
+    expect(context.socket.call).toHaveBeenNthCalledWith(3, 'getDimensions');
+    // Recovery never drives the display: only a visitor's tap or the idle reset does.
+    expect(context.socket.notify).not.toHaveBeenCalled();
+  });
+
+  it('reloads chapters after a display reload when the previous scene had none', async () => {
+    const context = harness();
+    let dimensions: unknown = {
+      ndim: 3,
+      displayed: [0, 1, 2],
+      metadata: [],
+      ranges: [],
+      currentStep: [0, 0, 0],
+    };
+    vi.mocked(context.socket.call).mockImplementation(async (method: string) =>
+      method === 'getDimensions' ? dimensions : undefined
+    );
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    expect(context.panel.render).toHaveBeenLastCalledWith(null, expect.anything());
+
+    vi.mocked(context.socket.call).mockClear();
+    context.socketPorts.onEvent?.(VIEWER_ATTACHED_EVENT, null);
+    await settle();
+    expect(context.socket.call).toHaveBeenCalledWith('subscribe', ['dataset-loaded']);
+
+    dimensions = DIMS;
+    context.socketPorts.onEvent?.('dataset-loaded', { src: 'chaptered.zarr' });
+    await settle();
+    expect(context.panel.render).toHaveBeenLastCalledWith(
+      expect.objectContaining({ dimensionName: 'story' }),
+      expect.anything()
+    );
+  });
+
+  it('retries an attachment read until the reloaded display finishes initialization', async () => {
+    vi.useFakeTimers();
+    const context = harness();
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    vi.mocked(context.socket.call).mockClear();
+
+    let ready = false;
+    vi.mocked(context.socket.call).mockImplementation(async (method: string) => {
+      if (method !== 'getDimensions') return undefined;
+      if (!ready) {
+        throw new ControllerCallError({ code: -32603, message: 'called before init()' });
+      }
+      return { ...DIMS, currentStep: [0, 0, 0, 0] };
+    });
+    context.socketPorts.onEvent?.(VIEWER_ATTACHED_EVENT, null);
+    await settle();
+    expect(context.panel.setActive).toHaveBeenLastCalledWith(1);
+
+    ready = true;
+    await vi.advanceTimersByTimeAsync(CHAPTER_RETRY_BASE_MS);
+    expect(context.socket.call).toHaveBeenNthCalledWith(4, 'subscribe', ['dimensions-changed']);
+    expect(context.socket.call).toHaveBeenNthCalledWith(6, 'getDimensions');
+    expect(context.panel.setActive).toHaveBeenLastCalledWith(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(context.socket.call).toHaveBeenCalledTimes(6);
+    context.teardown();
+  });
+
+  it('cancels attachment retries when the panel is torn down', async () => {
+    vi.useFakeTimers();
+    const context = harness();
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    vi.mocked(context.socket.call).mockClear();
+    vi.mocked(context.socket.call).mockRejectedValue(
+      new ControllerCallError({ code: -32603, message: 'called before init()' })
+    );
+    context.socketPorts.onEvent?.(VIEWER_ATTACHED_EVENT, null);
+    await settle();
+    context.teardown();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(context.socket.call).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops attachment retries when a dimension event supplies the position', async () => {
+    vi.useFakeTimers();
+    const context = harness();
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    vi.mocked(context.socket.call).mockClear();
+    vi.mocked(context.socket.call).mockImplementation(async (method: string) => {
+      if (method === 'getDimensions') throw new Error('called before init()');
+      return undefined;
+    });
+    context.socketPorts.onEvent?.(VIEWER_ATTACHED_EVENT, null);
+    await settle();
+
+    context.socketPorts.onEvent?.('dimensions-changed', { currentStep: [0, 0, 0, 0] });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(context.panel.setActive).toHaveBeenLastCalledWith(0);
+    expect(context.socket.call).toHaveBeenCalledTimes(3);
+    context.teardown();
+  });
+
+  it('cancels attachment retries when the socket closes', async () => {
+    vi.useFakeTimers();
+    const context = harness();
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    vi.mocked(context.socket.call).mockClear();
+    vi.mocked(context.socket.call).mockRejectedValue(new Error('called before init()'));
+    context.socketPorts.onEvent?.(VIEWER_ATTACHED_EVENT, null);
+    await settle();
+
+    context.socketPorts.onStatus?.('closed');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(context.socket.call).toHaveBeenCalledTimes(1);
+    context.teardown();
+  });
+
+  it('recovers on a later attachment when the first renewal fails', async () => {
+    const context = harness();
+    context.socketPorts.onStatus?.('open');
+    await settle();
+
+    vi.mocked(context.socket.call).mockRejectedValue(
+      new ControllerCallError({ code: -32001, message: 'no viewer' })
+    );
+    context.socketPorts.onEvent?.(VIEWER_ATTACHED_EVENT, null);
+    await settle();
+    expect(context.socket.call).toHaveBeenCalledWith('subscribe', ['dimensions-changed']);
+    expect(context.panel.setActive).toHaveBeenLastCalledWith(1);
+
+    vi.mocked(context.socket.call).mockImplementation(async (method: string) =>
+      method === 'getDimensions' ? { ...DIMS, currentStep: [0, 0, 0, 0] } : undefined
+    );
+    context.socketPorts.onEvent?.(VIEWER_ATTACHED_EVENT, null);
+    await settle();
+    expect(context.panel.setActive).toHaveBeenLastCalledWith(0);
+  });
+
+  it('handles an attachment while hidden without polling afterward', async () => {
+    vi.useFakeTimers();
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    try {
+      const context = harness();
+      context.socketPorts.onStatus?.('open');
+      await settle();
+      vi.mocked(context.socket.call).mockClear();
+
+      context.socketPorts.onEvent?.(VIEWER_ATTACHED_EVENT, null);
+      await settle();
+      expect(context.socket.call).toHaveBeenCalledWith('getDimensions');
+      expect(context.socket.call).toHaveBeenCalledWith('subscribe', ['dimensions-changed']);
+      vi.mocked(context.socket.call).mockClear();
+      visibility.mockReturnValue('visible');
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(context.socket.call).not.toHaveBeenCalled();
+      context.teardown();
+    } finally {
+      visibility.mockRestore();
+    }
+  });
+
+  it('ignores attachment events before chapters load and after teardown', async () => {
+    const context = harness();
+    context.socketPorts.onEvent?.(VIEWER_ATTACHED_EVENT, null);
+    await settle();
+    expect(context.socket.call).not.toHaveBeenCalled();
+
+    context.socketPorts.onStatus?.('open');
+    await settle();
+    context.teardown();
+    vi.mocked(context.socket.call).mockClear();
+    context.socketPorts.onEvent?.(VIEWER_ATTACHED_EVENT, null);
+    await settle();
+    expect(context.socket.call).not.toHaveBeenCalled();
+  });
+
+  it('ignores an attachment after teardown even if chapter loading finishes late', async () => {
+    const context = harness();
+    let finishDimensions: ((value: unknown) => void) | undefined;
+    vi.mocked(context.socket.call).mockImplementation((method: string) =>
+      method === 'getDimensions'
+        ? new Promise((resolve) => {
+            finishDimensions = resolve;
+          })
+        : Promise.resolve(undefined)
+    );
+    context.socketPorts.onStatus?.('open');
+    context.teardown();
+    finishDimensions?.(DIMS);
+    await settle();
+
+    vi.mocked(context.socket.call).mockClear();
+    context.socketPorts.onEvent?.(VIEWER_ATTACHED_EVENT, null);
+    await settle();
+    expect(context.socket.call).not.toHaveBeenCalled();
   });
 
   it('cancels an armed idle reset during teardown', async () => {

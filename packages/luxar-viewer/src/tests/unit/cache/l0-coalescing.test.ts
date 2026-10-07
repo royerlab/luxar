@@ -20,7 +20,11 @@ import {
   wrapWithCache,
   resetDecodeHistory,
 } from '../../../cache/decompressed-chunk-cache/cached-zarr-array';
+import { warmChunk } from '../../../cache/decompressed-chunk-cache/warm-chunk';
 import { perfCounters } from '../../../profiling/perf-counters';
+import { ResidencyAccumulator } from '../../../cache/residency-probe';
+import { deferred, type Deferred } from '../../helpers/deferred';
+import { defineLifecycleContract } from '../_shared/lifecycle-contract';
 
 interface Counter {
   decodes: number;
@@ -245,34 +249,63 @@ describe('L0 coalesced waiters are abort-isolated', () => {
     expect(cache.has(key)).toBe(false);
   });
 
-  it('a fully-abandoned decode that finishes late does not overwrite its replacement', async () => {
+  it('a caller arriving while a cancelled decode settles retries once it is really cancelled', async () => {
+    // A fully-abandoned decode stays registered until it settles (it may be
+    // past its fetch and complete anyway — see the read-ahead suite below). One
+    // that the abort DID stop rejects with AbortError; the caller that waited
+    // on it then starts a fresh decode rather than inheriting the cancellation.
     const cache = new DecompressedChunkCache({ maxSize: 1 << 20 });
     const counter: Counter = { decodes: 0, starts: 0, aborted: 0 };
-    const { array, releaseFirst } = signalDeafArray(counter);
-    const a = wrapWithCache(array as never, cache, '/n/centers');
+    const a = wrapWithCache(fakeArray(counter) as never, cache, '/n/centers');
     const key = DecompressedChunkCache.makeKey('/n/centers', [0, 0]);
     const c1 = new AbortController();
     const p1 = a.getChunk([0, 0], { signal: c1.signal } as never);
     c1.abort();
+    // Before the cancelled decode has settled: the entry is still registered.
+    expect(cache.getInflight(key)?.abandoned).toBe(true);
+    const p2 = a.getChunk([0, 0]);
     expect(await outcome(p1)).toBe('AbortError');
-    expect(cache.getInflight(key)).toBeUndefined();
-
-    // The abandoned decode is still pending (only releaseFirst() can finish
-    // it), so the fresh decode lands and is cached strictly first.
-    const fresh = await a.getChunk([0, 0]);
+    expect(await outcome(p2)).toBe('ok');
     expect(counter.starts).toBe(2);
+    expect(counter.aborted).toBe(1);
     expect(counter.decodes).toBe(1);
-    const firstValue = (data: unknown) => (data as Float32Array)[0];
-    expect(firstValue(fresh.data)).toBe(2);
-    expect(firstValue(cache.get(key)?.data)).toBe(2);
+    expect(cache.has(key)).toBe(true);
+    expect(perfCounters.get('l0.coalesced')).toBe(0);
+    expect(perfCounters.get('l0.misses')).toBe(2);
+  });
 
-    // Now let the stale decode finish, and drain its settle handlers.
-    releaseFirst();
-    await new Promise((r) => setTimeout(r, 0));
-    expect(counter.decodes).toBe(2);
-    expect(firstValue(cache.get(key)?.data)).toBe(2);
-    expect(firstValue((await a.getChunk([0, 0])).data)).toBe(2);
-    expect(counter.starts).toBe(2);
+  it('the retry keys on the decode being cancelled, not on the abort reason being an AbortError', async () => {
+    // fetch() rejects with the signal's REASON, and a caller may abort with any
+    // reason (here a plain Error): the shared decode then rejects with that
+    // error, whose name is not 'AbortError'. The waiting caller must still retry.
+    const cache = new DecompressedChunkCache({ maxSize: 1 << 20 });
+    let starts = 0;
+    const array = {
+      shape: [1000, 3],
+      chunks: [100, 3],
+      async getChunk(_coords: number[], options?: { signal?: AbortSignal }) {
+        starts++;
+        await new Promise<void>((resolve, reject) => {
+          const t = setTimeout(resolve, 20);
+          options?.signal?.addEventListener('abort', () => {
+            clearTimeout(t);
+            reject(options.signal!.reason as Error);
+          });
+        });
+        return { data: new Float32Array(300), shape: [100, 3], stride: [3, 1] };
+      },
+    };
+    const a = wrapWithCache(array as never, cache, '/n/centers');
+    const key = DecompressedChunkCache.makeKey('/n/centers', [0, 0]);
+    const c1 = new AbortController();
+    const p1 = a.getChunk([0, 0], { signal: c1.signal } as never);
+    c1.abort(new Error('superseded'));
+    expect(cache.getInflight(key)?.abandoned).toBe(true);
+    const p2 = a.getChunk([0, 0]);
+    expect(await outcome(p1)).toBe('Error');
+    expect(await outcome(p2)).toBe('ok');
+    expect(starts).toBe(2);
+    expect(cache.has(key)).toBe(true);
   });
 });
 
@@ -287,5 +320,110 @@ describe('L0 in-flight map and cache.clear()', () => {
     expect(cache.inflightCount).toBe(0);
     expect(await outcome(p1)).toBe('ok');
     expect(cache.has(DecompressedChunkCache.makeKey('/n/centers', [0, 0]))).toBe(false);
+  });
+});
+
+describe('L0 — a cancelled read-ahead whose decode is already past its fetch', () => {
+  beforeEach(() => {
+    perfCounters.reset();
+    resetDecodeHistory();
+  });
+
+  // A speculative warm (B5 read-ahead, lookahead, predicted view) is aborted on
+  // the next view change. When that lands after the chunk's bytes arrived, the
+  // decode cannot stop and runs to completion anyway. It used to be
+  // DEREGISTERED at the abort and its result DISCARDED, so the foreground read
+  // of the same chunk a moment later fetched and decoded it again — counted as
+  // `decode.duplicates` (WebGPU scrub_pl_drag: 1 -> 6, decodes +28%).
+  it('the foreground read joins the cancelled warm instead of decoding again', async () => {
+    const cache = new DecompressedChunkCache({ maxSize: 1 << 20 });
+    const counter: Counter = { decodes: 0, starts: 0, aborted: 0 };
+    const { array, releaseFirst } = signalDeafArray(counter);
+    const a = wrapWithCache(array as never, cache, '/n/centers');
+    const probe = new ResidencyAccumulator();
+    const demand = wrapWithCache(array as never, cache, '/n/centers', {
+      getProbe: () => probe,
+    });
+    const warm = new AbortController();
+    const warming = warmChunk(a as never, [0, 0], { signal: warm.signal });
+    warm.abort(); // the next drag step supersedes the read-ahead
+    expect(await outcome(warming)).toBe('AbortError');
+
+    const foreground = demand.getChunk([0, 0]);
+    releaseFirst(); // the cancelled warm's decode completes regardless
+    const chunk = await foreground;
+
+    expect((chunk.data as Float32Array)[0]).toBe(1); // the warm's own bytes
+    expect(counter.starts).toBe(1);
+    expect(counter.decodes).toBe(1);
+    expect(perfCounters.get('decode.duplicates')).toBe(0);
+    expect(perfCounters.get('l0.coalesced')).toBe(1);
+    expect(probe.hits).toBe(1);
+    expect(probe.misses).toBe(0);
+  });
+
+  it('a cancelled warm that completes with no joiner still lands in L0', async () => {
+    const cache = new DecompressedChunkCache({ maxSize: 1 << 20 });
+    const counter: Counter = { decodes: 0, starts: 0, aborted: 0 };
+    const { array, releaseFirst } = signalDeafArray(counter);
+    const a = wrapWithCache(array as never, cache, '/n/centers');
+    const warm = new AbortController();
+    const warming = warmChunk(a as never, [0, 0], { signal: warm.signal });
+    warm.abort();
+    expect(await outcome(warming)).toBe('AbortError');
+    releaseFirst();
+    await new Promise((r) => setTimeout(r, 0));
+
+    await a.getChunk([0, 0]); // an L0 hit: the paid-for decode was kept
+    expect(counter.starts).toBe(1);
+    expect(perfCounters.get('l0.hits')).toBe(1);
+  });
+});
+
+describe('L0 in-flight decode — lifecycle', () => {
+  defineLifecycleContract('L0 in-flight decode', {
+    create: () => {
+      const cache = new DecompressedChunkCache({ maxSize: 1 << 20 });
+      const reads: Array<Deferred<{ data: Float32Array; shape: number[]; stride: number[] }>> = [];
+      // A store read that honours its signal the way the multi-level store does.
+      const array = {
+        shape: [1000, 3],
+        chunks: [100, 3],
+        getChunk(_coords: number[], options?: { signal?: AbortSignal }) {
+          const read = deferred<{ data: Float32Array; shape: number[]; stride: number[] }>();
+          reads.push(read);
+          options?.signal?.addEventListener('abort', () =>
+            read.reject(new DOMException('aborted', 'AbortError'))
+          );
+          return read.promise;
+        },
+      };
+      const wrapped = wrapWithCache(array as never, cache, '/p/positions');
+      const key = (n: number) => DecompressedChunkCache.makeKey('/p/positions', [n]);
+      return {
+        start: (n, signal) => wrapped.getChunk([n], { signal }),
+        pending: () => reads.length,
+        settle: (index, outcome) =>
+          outcome === 'ok'
+            ? reads[index].resolve({ data: new Float32Array(300), shape: [100, 3], stride: [3, 1] })
+            : reads[index].reject(new Error('503')),
+        observe: () => [0, 1, 2].filter((n) => cache.has(key(n))),
+        inFlight: () => cache.inflightCount,
+        dispose: () => cache.dispose(),
+      };
+    },
+    cases: {
+      abort: true,
+      dispose: true,
+      failure: true,
+      retry: true,
+      supersede: {
+        na: 'nothing supersedes an L0 read: a second caller of the same chunk joins its decode, other chunks are independent',
+      },
+      doubleDispose: true,
+    },
+    usableAfterDispose: {
+      na: 'dispose() is clear(): the cache stays usable for the next scene (DecompressedChunkCache.dispose)',
+    },
   });
 });

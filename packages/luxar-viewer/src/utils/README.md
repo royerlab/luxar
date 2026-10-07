@@ -47,15 +47,23 @@ utils/
 ├── clamp.ts                 # Generic numeric clamp (optional bounds)
 ├── console-interceptor.ts   # Ring-buffer console capture (Proxy singleton, opt-in patch)
 ├── escape-html.ts           # HTML entity escaping for safe rendering
+├── failed-loads-version.ts  # Shared failure version + FailedLoadsMap (bumps it on every change)
+├── fetch-concurrency.ts     # Global per-lane chunk-fetch gate (HTTP/1.1 vs multiplexed widths, priorities)
 ├── format-error.ts          # Unknown thrown value → message / name: message / stack
+├── fullscreen.ts            # isDocumentFullscreen() incl. the webkit-prefixed API
+├── hover-template.ts        # Hover placeholder vocabulary + substituteHoverTemplate (text / html / url)
+├── image-mime.ts            # detectMimeType() from magic bytes
 ├── input-capabilities.ts    # getInputProfile(), isTouchLikePointer(), deriveInputProfile() (import-free)
+├── json-rpc.ts              # JSON-RPC 2.0 framing for the remote-control channel (pure)
+├── keyboard-key.ts          # pressedKey(): the binding key of a KeyboardEvent (undoes macOS Option composition)
 ├── log.ts                   # log object, Modules registry, LogEmoji, createModuleLogger
 ├── long-press.ts            # attachLongPress(el, …) — touch long-press → secondary action, single opener across platforms
 ├── lod-child-failure.ts     # Lazy-child failure latch and clear with status invalidation
 ├── object-visibility.ts     # isEffectivelyVisible (ancestor-aware scene-graph visibility)
 ├── platform.ts              # isMacPlatform()
 ├── result.ts                # Result<T, E> + ok/err/isOk/isErr/match/mapOk/mapErr/unwrap/tryAsync
-├── scene-graph-index.ts     # findObjectByName / attachSceneGraphIndex — self-maintaining path→Object3D map (exact getObjectByName semantics, O(1) for unique names)
+├── schedule-frame.ts        # scheduleFrame(): rAF with a timer fallback that keeps hidden tabs moving
+├── scene-graph-index.ts     # findObjectByName / attachSceneGraphIndex / detachSceneGraphIndex — self-maintaining path→Object3D map (exact getObjectByName semantics, O(1) for unique names, epoch-invalidated miss memo)
 ├── storage-keys.ts          # luxar.* localStorage key registry
 ├── viewer-container.ts      # mount-root registry (get/set/resetViewerContainer) + containing-block promotion
 ├── wheel-delta.ts           # deltaMode normalization + opt-in Shift-axis fallback
@@ -73,7 +81,7 @@ utils/
 
 Geometry-byte accounting (`estimateGeometryBytes` / `invalidateCachedByteSize`) used to live here as `geometry-utils.ts`; it has moved to its only consumer at `rendering/gpu-buffer-pool/geometry-bytes.ts` (re-exported by `rendering/gpu-buffer-pool.ts` for the existing test import path).
 
-Each module is focused on a specific domain with minimal dependencies. The only intra-`utils/` imports are `cross-layer/event-group.ts`, `cross-layer/notifier.ts`, and `hdr/hdr-detection.ts` → `log.ts`; `hdr/hdr-color-conversion.ts` and `wheel-delta.ts` → `clamp.ts`; and `lod-child-failure.ts` → `failed-loads-version.ts`.
+Each module is focused on a specific domain with minimal dependencies. The intra-`utils/` imports are `cross-layer/event-group.ts`, `cross-layer/notifier.ts`, and `hdr/hdr-detection.ts` → `log.ts`; `hdr/hdr-color-conversion.ts` and `wheel-delta.ts` → `clamp.ts`; `lod-child-failure.ts` → `failed-loads-version.ts`; `console-interceptor.ts` → `format-error.ts`; `hover-template.ts` → `escape-html.ts`; and `long-press.ts` → `input-capabilities.ts`. Outside `utils/`, `console-interceptor.ts` and `fetch-concurrency.ts` tally into `profiling/perf-counters.ts`, `json-rpc.ts` reads `config/control-contract.ts`, and `cross-layer/notifier.ts` takes a type from `types/`.
 
 ## Modules
 
@@ -196,7 +204,7 @@ Dependency-inverted UI notification surface so lower layers can surface user-vis
 
 - `NotifierBackend` — Interface a concrete backend implements (`showError`, `showToast`, `showHelpOverlay`, `hideHelpOverlay`, `showLoadingIndicator`, `hideLoadingIndicator`, `clearError`)
 - `notifier` — Stable call surface: `error`, `toast`, `showHelp`, `hideHelp`, `showLoading`, `hideLoading`, `clearError`. Drops calls silently (with a single warn) when no backend is registered, so unit tests and early-startup paths don't crash.
-- `setNotifierBackend(b)` — Called once by the UI bootstrap to plug in the concrete `ui/` helpers; subsequent calls replace the backend (useful for tests)
+- `setNotifierBackend(b)` — Called by `LuxarApp.init()` (via `core/app/lifecycle/notifier-backend.ts`) to plug in the concrete `ui/` helpers; subsequent calls replace the backend (useful for tests)
 - `clearNotifierBackend()` — Tear down the backend; also resets the once-only missing-backend warning flag
 
 ### input-capabilities.ts - Input / Device Capability Profile
@@ -209,9 +217,46 @@ The single answer to "is this a touch-first device, is it an iPhone or an iPad, 
 - `deriveInputProfile(signals)`, `inferDeviceClass(signals)`, `readInputSignals()` — the pure derivation and its raw browser signals (`InputSignals`), injectable for tests. No-signal default (node, jsdom) is a hover-capable fine-pointer laptop, i.e. the historical desktop behaviour.
 - `resetInputProfileForTests()`.
 
+### keyboard-key.ts - The Key a Binding Names
+
+`pressedKey(event)` — the lowercased key a keyboard binding matches. macOS Option composes characters (Option+W reports `'∑'`, Option+E a dead key), so with Alt held and a reported key that is not a plain letter or digit it reads the physical `event.code` instead; otherwise the layout key wins, so non-QWERTY layouts keep their own letters. The input context manager and the fly keyboard both match through it, so `⌥ W / S` (fly up/down) works on a Mac.
+
 ### long-press.ts - Long-press → secondary action (touch)
 
 `attachLongPress(el, { onLongPress, durationMs = 500, slopPx = 12 })` arms a delegated long-press on `el` for touch-like pointers only (`isTouchLikePointer`; a mouse keeps its right button and never sees a timer). Cancels on movement past the slop, on release, on `pointercancel`/`pointerleave`, or when a second finger lands (a pinch). The callback runs after `durationMs`, or immediately when a platform `contextmenu` arrives mid-press, and returns whether it handled the press. Only a handled press becomes the SINGLE opener across platforms: it swallows that `contextmenu` (iOS never fires one) so a press cannot open two menus, and swallows the release `click` so the button's primary action does not run under the menu that just opened. Returns a disposer. Used by the control rail (context popovers), the dimension sliders' play button (animation settings) and the layers panel (row / eye / header menus); the canvas has its own long-press inside `core/app/interaction/canvas-actions.ts` because its release path is `pointerup`, not `click`.
+
+### fetch-concurrency.ts - Global Fetch Gate
+
+- `withFetchGate(fn, lane, priority, origin, signal)` — Every network read (caching store, zip range reader, no-cache `boundedConcurrencyStore`) holds a lease here. Separate `data` and `metadata` lanes; waiters served `demand` > `refinement` > `speculative` (a `FetchPriorityCell` may be raised while queued), FIFO within a class; speculative leases capped at `speculativeShare` of a lane; an abort while queued frees the place.
+- Widths come from `config.dataLoading.network.fetchGate` (read at each admission): 24 data / 4 metadata by default, 96 data for an origin resource timing shows on h2/h3 (`noteOriginProtocol`), and 4 data + 2 metadata of its own for an origin `noteFetchUrl` saw over plain `http:` (its six HTTP/1.1 sockets). `getFetchLaneLimit(lane, origin?)` reports an origin's width.
+- `tagSignalPriority` / `signalPriority` class all reads made under one abort signal; `fetchLaneForKey` routes zarr metadata keys to the metadata lane.
+
+### abort-signals.ts - Abort-Signal Combinator
+
+- `combineAbortSignals(a, b?)` — The viewer's one "abort when either aborts" merge (fetch retry, caching store, zip reader, scene-loader dataset signal). Returns a scope `{ signal, dispose }`: native `AbortSignal.any` when present, else a relay that carries the first abort's reason and whose idempotent `dispose()` removes its source listeners — call it when the work using `signal` settles. One input is returned as is; none gives `undefined`.
+
+### race-timeout.ts - Promise-vs-Timer Race
+
+- `raceTimeout(promise, timeoutMs, onTimeout)` — Settle with `promise`, or reject with `onTimeout()`'s value once `timeoutMs` elapses first; clears the timer on settle. `timeoutMs <= 0` or non-finite installs no timer and returns `promise` itself. Settles only the caller: the work keeps running. The worker pool's `withTimeout` wraps it.
+
+### async-gate.ts - Counting Gate with Abort Exit
+
+- `new AsyncGate(capacity, ranks?)` — At most `capacity()` holders (read at every admission); waiters served by rank (`0` most urgent) then FIFO.
+- `acquire(signal?, priority?)` → `Promise<release>` — An abort while queued rejects with the signal's reason (or an `AbortError`) and frees the place; the release is idempotent.
+- `stats()` → `{ active, queued }`; `reset(reason)` rejects waiters and makes earlier releases no-ops (test isolation).
+
+The OPFS read gate is built on it. **Queues and what they honour** — the one place to check which queue cancels and which orders:
+
+| Queue              | Where                                                             | Abort while queued                                                       | Priority                                                                                 | Bound                                                                   |
+| ------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Fetch gate         | `utils/fetch-concurrency.ts`                                      | exits (`withFetchGate` signal)                                           | `demand` > `refinement` > `speculative`, raisable while queued; speculative share capped | per-lane width (24/96 data, 4 metadata), 4+2 per HTTP/1.1 origin        |
+| OPFS read gate     | `cache/multi-level-caching-store/opfs-read-gate.ts` (`AsyncGate`) | exits                                                                    | FIFO                                                                                     | `cache.opfsReadConcurrency`; a lease lasts as long as its held file I/O |
+| Neighbour prefetch | `cache/chunk-prefetcher.ts`                                       | in-flight reads aborted on `dispose()`                                   | newest first                                                                             | 64 queued (oldest dropped), `maxConcurrent` in flight                   |
+| OPFS write queue   | `cache/multi-level-caching-store/opfs-write-queue.ts`             | none (a task re-checks staleness when it runs)                           | `demand` writes evict `speculative` ones                                                 | depth and bytes; overflow DROPS the arrival                             |
+| Validation queue   | `cache/multi-level-caching-store/validation-queue.ts`             | skips the task                                                           | FIFO per dataset                                                                         | one at a time per dataset                                               |
+| Worker pool        | `workers/worker-pool.ts`                                          | no queue: least-busy dispatch; the pool/caller signal settles the caller | none                                                                                     | worker count                                                            |
+
+The fetch gate is not built on `AsyncGate` on purpose: per-origin widths, width tiers, the speculative share and in-place priority raises are its whole job, and forcing them through a generic counter would hide them. The prefetcher is a bounded work queue of KEYS (deduplicated, newest first), not callers awaiting a place, so it keeps its own.
 
 ### platform.ts - Platform Detection
 
@@ -345,7 +390,7 @@ export function configureHDRRenderer(_renderer: unknown, capabilities: HDRCapabi
 
 Three utilities exist specifically to let lower layers reach the UI without violating layer order (see `CONVENTIONS.md` §10):
 
-- **`notifier`** — Single backend, fixed method dictionary. The UI bootstrap calls `setNotifierBackend(...)` once with concrete implementations from `ui/` helper modules; lower layers call `notifier.toast(...)`, `notifier.error(...)`, etc. Pre-registration calls drop silently with a single warn.
+- **`notifier`** — Single backend, fixed method dictionary. `LuxarApp.init()` calls `setNotifierBackend(...)` with concrete implementations from `ui/` helper modules (the dispose pipeline clears it); lower layers call `notifier.toast(...)`, `notifier.error(...)`, etc. Pre-registration calls drop silently with a single warn.
 - **`eventBus`** — Open subscriber sets typed against `LuxarEventMap`. Panels can subscribe late without bootstrap-order coupling. Events with no listener drop silently — that's the design.
 - **`EventGroup`** — Per-component listener-collection so a panel's entire DOM-listener set tears down in one `dispose()` call.
 

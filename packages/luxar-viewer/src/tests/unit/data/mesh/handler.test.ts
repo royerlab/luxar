@@ -22,6 +22,7 @@ import * as THREE from 'three';
 import { kind, label, loadAndStage } from '../../../../data/mesh/handler';
 import type { MeshDataLoader, LoadedMeshData, MeshMetadata } from '../../../../types/mesh';
 import type { UpdateSession } from '../../../../profiling/update-profiler';
+import { log } from '../../../../utils/log';
 
 function makeSession(): UpdateSession {
   return {
@@ -200,5 +201,28 @@ describe('mesh handler', () => {
       ctxFor(rootWithMesh('/surface', { double_sided: true, extend_to_all: ['t'] }), off)
     );
     expect(kept?.projected.visibleFaceCount).toBe(1);
+  });
+  // The first-update [GEOM] log is gated on the PASS counter (`updateVersion`),
+  // not the view version: on a static 3-D scene the view version never moves,
+  // so a version gate logged on every same-view pass.
+  it.each([
+    [1, true],
+    [7, false],
+  ])('logs [GEOM] on pass %i: %s (static view version 1)', async (updateVersion, logged) => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const loader = {
+      loadMesh: vi.fn(),
+      updateView: vi.fn().mockResolvedValue(loadedAtW(0)),
+      dispose: vi.fn(),
+    } as unknown as MeshDataLoader;
+    await loadAndStage(
+      '/surface',
+      loader,
+      makeSession(),
+      ctxFor(rootWithMesh('/surface', {}), viewWith(0), { updateVersion })
+    ).catch(() => undefined);
+    const geom = info.mock.calls.filter(([, m]) => String(m).startsWith('[GEOM]'));
+    expect(geom.length > 0).toBe(logged);
+    info.mockRestore();
   });
 });

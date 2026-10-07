@@ -15,7 +15,7 @@
  * @see docs/guides/specs/REMOTE_CONTROL_SPEC.md §3.3
  */
 
-import { CLOSE_POLICY_VIOLATION } from '../../../config/control-contract';
+import { CLOSE_POLICY_VIOLATION, VIEWER_NOT_READY } from '../../../config/control-contract';
 import { normalizeDataSourceUrl } from '../../../config/url-params';
 import type { EventGroup } from '../../../utils/cross-layer/event-group';
 import {
@@ -42,6 +42,9 @@ export const CONTROL_RECONNECT_BASE_MS = 500;
 /** Ceiling for the doubling reconnect delay. */
 export const CONTROL_RECONNECT_MAX_MS = 30_000;
 
+/** The display is attached, but its initial scene is not ready for a read. */
+export class ViewerNotReadyError extends Error {}
+
 function displayRefusalReason(reason: string | undefined): string {
   return reason || 'check the ?controlToken in its URL';
 }
@@ -52,6 +55,8 @@ function displayRefusalReason(reason: string | undefined): string {
  * That event fires at frame rate whenever the camera moves, and an
  * auto-rotating kiosk means it never stops. Unthrottled it would saturate the
  * socket with frames no controller can use, and starve the taps that matter.
+ * A pose dropped inside the interval is not lost: the latest one is sent when
+ * the interval ends, so a controller always ends on the camera's final pose.
  */
 export const CONTROL_CAMERA_EVENT_MIN_INTERVAL_MS = 50;
 
@@ -81,6 +86,7 @@ export const CONTROL_FORWARDED_EVENTS: readonly string[] = [
   'sound-started',
   'waypoint-arrived',
   'waypoint-departed',
+  'webgpu-device-lost',
 ];
 
 /**
@@ -161,6 +167,9 @@ export class ControlClient {
   /** Event names currently being pushed to controllers. */
   private readonly forwarding = new Set<string>();
   private lastCameraEventAt = 0;
+  /** The newest throttled-away pose, sent when the interval ends. */
+  private pendingCameraPayload: unknown;
+  private cameraFlushTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(ports: ControlClientPorts) {
     this.ports = ports;
@@ -226,6 +235,9 @@ export class ControlClient {
     this.forwarding.clear();
     if (this.reconnectTimer !== undefined) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
+    if (this.cameraFlushTimer !== undefined) clearTimeout(this.cameraFlushTimer);
+    this.cameraFlushTimer = undefined;
+    this.pendingCameraPayload = undefined;
     const socket = this.socket;
     this.socket = null;
     try {
@@ -298,7 +310,7 @@ export class ControlClient {
       // "unknown layer '/x'"), and a throw must never reach the socket's
       // handler, where it would look like a transport failure.
       this.reply(id, null, {
-        code: JSON_RPC_INTERNAL_ERROR,
+        code: error instanceof ViewerNotReadyError ? VIEWER_NOT_READY : JSON_RPC_INTERNAL_ERROR,
         message: error instanceof Error ? error.message : String(error),
       });
     }
@@ -347,15 +359,29 @@ export class ControlClient {
 
   private forwardEvent(name: string, payload: unknown): void {
     if (this.disposed || !this.forwarding.has(name)) return;
-    if (name === 'camera-changed' && !this.cameraEventDue()) return;
+    if (name === 'camera-changed' && !this.cameraEventDue(payload)) return;
     this.send(notificationFrame('event', [name, sanitizeForWire(payload)]));
   }
 
-  private cameraEventDue(): boolean {
+  /**
+   * Leading edge plus a trailing flush: inside the interval the pose is held
+   * (newest wins) and sent when the interval ends.
+   */
+  private cameraEventDue(payload: unknown): boolean {
     const now = (this.ports.now ?? Date.now)();
-    if (now - this.lastCameraEventAt < CONTROL_CAMERA_EVENT_MIN_INTERVAL_MS) return false;
-    this.lastCameraEventAt = now;
-    return true;
+    const wait = this.lastCameraEventAt + CONTROL_CAMERA_EVENT_MIN_INTERVAL_MS - now;
+    if (wait <= 0) {
+      this.lastCameraEventAt = now;
+      return true;
+    }
+    this.pendingCameraPayload = payload;
+    this.cameraFlushTimer ??= setTimeout(() => {
+      this.cameraFlushTimer = undefined;
+      const pending = this.pendingCameraPayload;
+      this.pendingCameraPayload = undefined;
+      this.forwardEvent('camera-changed', pending);
+    }, wait);
+    return false;
   }
 }
 

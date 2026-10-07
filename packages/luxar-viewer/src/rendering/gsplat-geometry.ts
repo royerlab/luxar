@@ -37,6 +37,7 @@ import {
   attachElementStorage,
   getElementTexture,
   registerElementTexelDirtyRange,
+  writeFreshElementStorage,
   writeSortedIndexIdentity,
   elementTexelCapacity,
 } from './element-storage';
@@ -367,9 +368,11 @@ export function createInstancedGSplatsMesh(
   // Mesh-owned splat texture + identity ordering (exact-size — the
   // non-pool fallback carries no capacity headroom).
   const texture = attachSplatStorage(geometry, count);
-  writeSplatTexels(texture, meshConfig, count);
+  writeFreshElementStorage(geometry, () => {
+    writeSplatTexels(texture, meshConfig, count);
+    writeSortedIndexIdentity(geometry, count);
+  });
   stampGSplatPresenceFlags(geometry, meshConfig);
-  writeSortedIndexIdentity(geometry, count);
 
   // Set instance count
   geometry.instanceCount = count;
@@ -453,9 +456,13 @@ export function updateInstancedGSplatsMesh(
     fresh.index = geometry.index; // shared static quad index
     fresh.setAttribute('aQuadCorner', geometry.getAttribute('aQuadCorner'));
     const texture = attachSplatStorage(fresh, count);
-    writeSplatTexels(texture, meshConfig, count);
+    // A throw frees only `fresh`: it was never rendered, so three holds no
+    // dispose hook on it that could delete the quad buffers it shares.
+    writeFreshElementStorage(fresh, () => {
+      writeSplatTexels(texture, meshConfig, count);
+      writeSortedIndexIdentity(fresh, count);
+    });
     stampGSplatPresenceFlags(fresh, meshConfig);
-    writeSortedIndexIdentity(fresh, count);
     fresh.instanceCount = count;
     mesh.geometry = fresh;
     liveGeometry = fresh;

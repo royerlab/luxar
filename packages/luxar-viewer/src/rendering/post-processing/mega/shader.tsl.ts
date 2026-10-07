@@ -61,6 +61,7 @@ import {
   neutralToneMapping,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
+import type { LuxarToneMappingMode } from '../tone-mapping';
 
 /**
  * Loosely-typed TSL node, used for internal helper signatures.
@@ -74,14 +75,6 @@ import { NodeMaterial } from 'three/webgpu';
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type TSLNode = any;
-
-/**
- * Luxar-internal tone-mapping IDs. Match the
- * `LUXAR_TONE_MAPPING_MODE` define values in `shader.glsl.ts`.
- * `NoToneMapping` aliases to `Linear` upstream so callers never need
- * to set 0.
- */
-export type LuxarToneMappingMode = 1 | 2 | 3 | 4 | 5 | 6;
 
 /**
  * Compile-time configuration for {@link megaWebGPUFactory}. Mirrors

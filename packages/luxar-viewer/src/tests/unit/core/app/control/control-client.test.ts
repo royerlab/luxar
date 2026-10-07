@@ -1,4 +1,4 @@
-import { CLOSE_POLICY_VIOLATION } from '../../../../../config/control-contract';
+import { CLOSE_POLICY_VIOLATION, VIEWER_NOT_READY } from '../../../../../config/control-contract';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -7,6 +7,7 @@ import {
   CONTROL_RECONNECT_BASE_MS,
   CONTROL_RECONNECT_MAX_MS,
   buildViewerSocketUrl,
+  ViewerNotReadyError,
   type ControlSocketLike,
 } from '../../../../../core/app/control/control-client';
 import { EventGroup } from '../../../../../utils/cross-layer/event-group';
@@ -198,6 +199,21 @@ describe('ControlClient dispatch', () => {
     expect((frame.error as { message: string }).message).toContain('called before init()');
   });
 
+  it('returns a retryable code when dimensions are requested before initialization', async () => {
+    const context = harness({
+      invoke: () => {
+        throw new ViewerNotReadyError('LuxarApp.getDimensions called before init()');
+      },
+    });
+    context.socket.receive(requestFrame(6, 'getDimensions'));
+    await settle();
+
+    expect(context.socket.lastFrame().error).toMatchObject({
+      code: VIEWER_NOT_READY,
+      message: 'LuxarApp.getDimensions called before init()',
+    });
+  });
+
   it('turns a rejected promise into an error frame too', async () => {
     const context = harness({ invoke: () => Promise.reject(new Error('switch in progress')) });
     context.socket.receive(requestFrame(7, 'switchDataset', ['http://host/data.zarr']));
@@ -351,6 +367,57 @@ describe('ControlClient event forwarding', () => {
     context.setNow(1000 + CONTROL_CAMERA_EVENT_MIN_INTERVAL_MS);
     context.emit('camera-changed', { position: [0, 0, 3] });
     expect(context.socket.sent).toHaveLength(baseline + 2);
+  });
+
+  it('delivers the final pose of a burst once the interval has passed', async () => {
+    // A leading-edge-only throttle drops the LAST pose of a gesture, leaving a
+    // remote controller showing a camera the viewer has already left.
+    const context = harness();
+    context.socket.receive(requestFrame(1, 'subscribe', ['camera-changed']));
+    await settle();
+    const baseline = context.socket.sent.length;
+    vi.useFakeTimers();
+    try {
+      context.setNow(1000);
+      context.emit('camera-changed', { position: [0, 0, 1] });
+      context.setNow(1010);
+      context.emit('camera-changed', { position: [0, 0, 2] });
+      context.emit('camera-changed', { position: [0, 0, 3] });
+      expect(context.socket.sent).toHaveLength(baseline + 1);
+
+      context.setNow(1000 + CONTROL_CAMERA_EVENT_MIN_INTERVAL_MS);
+      vi.advanceTimersByTime(CONTROL_CAMERA_EVENT_MIN_INTERVAL_MS);
+
+      expect(context.socket.sent).toHaveLength(baseline + 2);
+      expect(context.socket.lastFrame().params).toEqual([
+        'camera-changed',
+        { position: [0, 0, 3] },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops a pending trailing pose on dispose', async () => {
+    const context = harness();
+    context.socket.receive(requestFrame(1, 'subscribe', ['camera-changed']));
+    await settle();
+    vi.useFakeTimers();
+    try {
+      context.setNow(1000);
+      context.emit('camera-changed', { position: [0, 0, 1] });
+      context.setNow(1010);
+      context.emit('camera-changed', { position: [0, 0, 2] });
+      const sent = context.socket.sent.length;
+
+      context.client.dispose();
+      vi.advanceTimersByTime(CONTROL_CAMERA_EVENT_MIN_INTERVAL_MS);
+
+      expect(context.socket.sent).toHaveLength(sent);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not throttle any other event', async () => {

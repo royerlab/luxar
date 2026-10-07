@@ -153,7 +153,8 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
   /**
    * Register frame callback with animation controller
-   * Called automatically when first animation starts
+   * Called automatically when an animation starts; pause() drops it again once
+   * nothing plays (see {@link unregister})
    */
   private ensureRegistered(): void {
     if (this.isRegistered) return;
@@ -166,6 +167,13 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
 
     this.isRegistered = true;
     log.info(Modules.ANIMATION, 'Registered with AnimationController');
+  }
+
+  /** Drop the per-frame callback (only ours, not others) so the loop can idle. */
+  private unregister(): void {
+    if (!this.isRegistered) return;
+    this.animationController.removePerFrameCallback('dimension-animation');
+    this.isRegistered = false;
   }
 
   /** The tick period for a dimension, floored at the configured minimum frame time. */
@@ -229,10 +237,13 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     return this.stepCount !== stepsBefore;
   }
 
-  /** Move one playhead (listeners start the data load) and count the step for {@link onFrame}. */
+  /**
+   * Move one playhead (listeners start the data load) and count the step for
+   * {@link onFrame} — only when the value actually changed: a tick that wraps
+   * back onto the same value (a single-timepoint dim) draws no new slice.
+   */
   private stepTo(dimIndex: number, value: number): void {
-    this.sceneDimsManager.setDimensionValue(dimIndex, value);
-    this.stepCount++;
+    if (this.sceneDimsManager.setDimensionValue(dimIndex, value)) this.stepCount++;
   }
 
   /**
@@ -573,6 +584,9 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     }
 
     state.isPlaying = false;
+    // The callback is `continuous`: left registered it would hold the render
+    // loop awake forever after the first play (#2944 A1). play() re-arms it.
+    if (!this.isAnyPlaying()) this.unregister();
     this.dispatchEvent({ type: 'pause', dimIndex });
     log.info(Modules.ANIMATION, `Paused dimension ${dimIndex}`);
 
@@ -950,10 +964,7 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
     this.pendingUpdates.clear();
 
     // Unregister from animation controller (only removes our callback, not others)
-    if (this.isRegistered) {
-      this.animationController.removePerFrameCallback('dimension-animation');
-      this.isRegistered = false;
-    }
+    this.unregister();
 
     // Unsubscribe from sceneDimsManager to prevent memory leak
     if (this.removeDimsListener) {

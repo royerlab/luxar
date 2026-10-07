@@ -36,12 +36,23 @@
 import * as THREE from 'three';
 import { texture, uniform } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
-import { gsplatWebGPUFactory, type GSplatTSLNodes } from './shader-tsl';
+import {
+  applyGSplatMaterialState,
+  gsplatWebGPUFactory,
+  type GSplatTSLConfig,
+  type GSplatTSLNodes,
+} from './shader-tsl';
+import { copyRuntimeUniforms, GSPLAT_RUNTIME_UNIFORMS } from '../_shared/runtime-uniforms';
+import { applySharedTSLGraph } from '../_shared/shared-graph-tsl';
 import type { GSplatMaterialConfig } from './material-glsl';
 import type { CameraAwareMaterial } from '../_shared/camera-aware-material';
 import type { ColormapAwareMaterial } from '../_shared/colormap-aware-material';
 import { clampGamma, isGammaOne, isNoGOG } from '../_shared/uniform-helpers';
-import { getPlaceholderElementTexture } from '../../element-texture-layout';
+import {
+  getPlaceholderElementTexture,
+  resolveElementTextureWidth,
+  SPLAT_TEXTURE_LAYOUT,
+} from '../../element-texture-layout';
 import {
   computeRayIntegralFactor,
   clampTruncationRadius,
@@ -318,15 +329,26 @@ export class GSplatTSLMaterial
    * needs for max projection.)
    */
   private rebuildGraph(): void {
-    gsplatWebGPUFactory(
-      this.tslNodes as GSplatTSLNodes,
-      {
-        useColormap: !!this.defines && 'USE_COLORMAP' in this.defines,
-        gammaOne: !!this.defines && 'LUXAR_GAMMA_ONE' in this.defines,
-        noGOG: !!this.defines && 'LUXAR_NO_GOG' in this.defines,
-        blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
-      },
-      this
+    const config: GSplatTSLConfig = {
+      useColormap: !!this.defines && 'USE_COLORMAP' in this.defines,
+      gammaOne: !!this.defines && 'LUXAR_GAMMA_ONE' in this.defines,
+      noGOG: !!this.defines && 'LUXAR_NO_GOG' in this.defines,
+      blendingMode: (this.userData.blendingMode as BlendingMode | undefined) ?? 'additive',
+      elementTextureWidth: resolveElementTextureWidth(
+        SPLAT_TEXTURE_LAYOUT,
+        this.tslNodes.uSplatTex.value as { image?: { width?: number } } | null
+      ),
+    };
+    // ONE graph per configuration, shared by every gsplat material of it
+    // (see shared-graph-tsl.ts): the build cache keys on node ids, so a
+    // private graph per material cost a full NodeBuilder build per part.
+    applySharedTSLGraph(this, 'gsplat', config, this.tslNodes, (inputs, scratch) => {
+      gsplatWebGPUFactory(inputs as GSplatTSLNodes, config, scratch);
+    });
+    applyGSplatMaterialState(
+      this,
+      config.blendingMode ?? 'additive',
+      (this.tslNodes.uOpacity.value as number | undefined) ?? 1.0
     );
     // Re-apply the explicit constructor overrides over the factory
     // tail's mode-derived blending state — on EVERY rebuild, not just
@@ -342,12 +364,7 @@ export class GSplatTSLMaterial
     this.needsUpdate = true;
   }
 
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
     this.uniforms.uPixelRatio.value = pixelRatio;
 
@@ -609,25 +626,12 @@ export class GSplatTSLMaterial
 
     const splatTex = this.uniforms.uSplatTex?.value as THREE.DataTexture | null | undefined;
     if (splatTex) cloned.updateSplatTexture(splatTex);
-    (cloned.uniforms.uResolution.value as THREE.Vector2).copy(
-      this.uniforms.uResolution.value as THREE.Vector2
-    );
-    cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
-    // Camera-state uniforms ride along (mirrors LineTSLMaterial.clone /
-    // the points clone fix). The gsplat TSL graph reads the projection
-    // kind from cameraProjectionMatrix, so a plain value copy suffices —
-    // no rebuild needed.
-    cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
-    cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
-    cloned.uniforms.uInvGamma.value = this.uniforms.uInvGamma.value;
+    // Runtime state a fresh clone would reset (GSPLAT_RUNTIME_UNIFORMS, ../_shared/runtime-uniforms.ts).
+    copyRuntimeUniforms(this, cloned, GSPLAT_RUNTIME_UNIFORMS);
     cloned.updateLabelStyle(
       this.uniforms.uLabelColorMode.value === 1,
       this.uniforms.uLabelFilterIndex.value
     );
-    // The active ordering slot must ride along: a clone taken while the
-    // geometry draws from slot 1 would otherwise read the stale buffer
-    // until the coordinator's next per-frame re-assert.
-    cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
 
     return cloned as this;
   }

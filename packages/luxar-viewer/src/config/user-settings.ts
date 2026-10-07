@@ -121,6 +121,10 @@ const BUILTIN_LIVE_DEFAULTS = Object.freeze({
   networkMaxConcurrent: config.dataLoading.network.maxConcurrent,
 } as const);
 
+let urlWorkerCount: number | null = null;
+let urlPrefetch: number | null = null;
+let urlRenderer: 'webgl' | 'webgpu' | null = null;
+
 /** Defaults derived from the built-in config, via the module-load snapshot
  *  above (so later live-config mutation cannot make the defaults drift). */
 export function defaultUserSettings(): UserSettings {
@@ -273,8 +277,8 @@ export function saveUserSettings(settings: UserSettings): void {
  * Apply the LIVE-read preferences onto the mutable config object. Consumers
  * of these fields dereference `config` at use time (per wheel event, per
  * timer re-arm, per load / pool creation), so mutation is the correct and
- * immediate application mechanism. The single sanctioned config-mutation
- * site in the codebase — keep it that way.
+ * immediate application mechanism. With {@link applyUrlPerformanceOverrides}
+ * below, the only sanctioned config-mutation sites — keep it that way.
  */
 export function applyLiveConfigOverrides(settings: UserSettings): void {
   config.camera.fovSensitivity = settings.input.fovSensitivity;
@@ -285,6 +289,55 @@ export function applyLiveConfigOverrides(settings: UserSettings): void {
   // before app init is effective; after init it needs a reload.
   config.dataLoading.performance.workerCount = settings.performance.workerCount;
   config.dataLoading.network.maxConcurrent = settings.performance.networkMaxConcurrent;
+  if (urlWorkerCount !== null) config.dataLoading.performance.workerCount = urlWorkerCount;
+  if (urlPrefetch !== null) config.dataLoading.network.maxConcurrent = urlPrefetch;
+}
+
+/**
+ * Apply the URL's per-session performance overrides (`?workers=`,
+ * `?prefetch=`) on top of the stored settings, clamped to the same ranges the
+ * Settings popover offers. Null leaves the stored value in force. Nothing is
+ * persisted: the URL speaks for this page load only. Called once at boot,
+ * right after {@link initUserSettings}, before the pool or loader exists.
+ */
+export function applyUrlPerformanceOverrides(
+  workers: number | null,
+  prefetch: number | null,
+  renderer: 'webgl' | 'webgpu' | null = null
+): void {
+  // The renderer is applied by bootstrap (it picks the backend before any of
+  // this); it is only recorded here so the Settings popover can say so.
+  urlRenderer = renderer;
+  const clamp = (v: number, r: { min: number; max: number }): number =>
+    Math.round(Math.min(r.max, Math.max(r.min, v)));
+  urlWorkerCount = workers === null ? null : clamp(workers, USER_SETTINGS_RANGES.workerCount);
+  urlPrefetch =
+    prefetch === null ? null : clamp(prefetch, USER_SETTINGS_RANGES.networkMaxConcurrent);
+  if (urlWorkerCount !== null) config.dataLoading.performance.workerCount = urlWorkerCount;
+  if (urlPrefetch !== null) config.dataLoading.network.maxConcurrent = urlPrefetch;
+}
+
+/** Return the machine settings set by this page's launch URL. */
+export function urlSessionOverrides(): {
+  workers: number | null;
+  prefetch: number | null;
+  renderer: 'webgl' | 'webgpu' | null;
+} {
+  return { workers: urlWorkerCount, prefetch: urlPrefetch, renderer: urlRenderer };
+}
+
+/**
+ * One line saying which machine settings this page runs with because its URL
+ * set them (`?workers=`, `?prefetch=`, `?renderer=`), or null when none did.
+ */
+export function describeUrlSessionOverrides(): string | null {
+  const parts: string[] = [];
+  if (urlWorkerCount !== null) {
+    parts.push(urlWorkerCount === 0 ? 'auto workers' : `${urlWorkerCount} workers`);
+  }
+  if (urlPrefetch !== null) parts.push(`prefetch ${urlPrefetch}`);
+  if (urlRenderer !== null) parts.push(urlRenderer === 'webgpu' ? 'WebGPU' : 'WebGL');
+  return parts.length ? `This page: ${parts.join(', ')} (from its URL)` : null;
 }
 
 /**
@@ -331,4 +384,7 @@ export function initUserSettings(): UserSettings {
 /** Test hook: reset the boot snapshot (module state) between tests. */
 export function resetUserSettingsForTests(): void {
   bootSnapshot = null;
+  urlWorkerCount = null;
+  urlPrefetch = null;
+  urlRenderer = null;
 }

@@ -35,9 +35,12 @@ Specimen:     Human tissue section
 
 Channels (derived from RGB):
 -----------------------------
-  0: Red   — Eosin / cytoplasm / connective tissue
-  1: Green — Intermediate (both stains contribute)
-  2: Blue  — Hematoxylin / nuclei / basophilic structures
+  0: Red absorption   — painted cyan
+  1: Green absorption — painted magenta
+  2: Blue absorption  — painted yellow
+
+Eosin cytoplasm reads pink (mostly magenta); hematoxylin nuclei read
+blue-purple (cyan + magenta).
 
 License:
 --------
@@ -227,13 +230,18 @@ ORIGINAL_WIDTH = 46_000
 ORIGINAL_HEIGHT = 32_914
 MAGNIFICATION = 20  # 20x objective
 
-# Channel configuration — RGB split from brightfield H&E
+# Channel configuration — inverted RGB split from brightfield H&E
 N_CHANNELS = 3
 CHANNELS = [
-    {"index": 0, "name": "Red (Eosin/Tissue)", "color": (1.0, 0.2, 0.2)},
-    {"index": 1, "name": "Green", "color": (0.2, 1.0, 0.2)},
-    {"index": 2, "name": "Blue (Hematoxylin/Nuclei)", "color": (0.2, 0.2, 1.0)},
+    {"index": 0, "name": "Red absorption", "color": (1.0, 0.2, 0.2)},
+    {"index": 1, "name": "Green absorption", "color": (0.2, 1.0, 0.2)},
+    {"index": 2, "name": "Blue absorption", "color": (0.2, 0.2, 1.0)},
 ]
+
+# The archives are fits of inverted brightfield, so amplitudes encode absorption.
+# Painting each channel with its CMY complement makes the additive sum read as
+# H&E stain colour. The white slide background has no splats and stays dark.
+CHANNEL_COLORMAPS = ["cyan", "magenta", "yellow"]
 
 # Tiled fitting parameters
 TILE_SIZE = 4096  # Pixels per tile axis — fits comfortably in GPU memory
@@ -411,10 +419,10 @@ def resolve_data() -> list[Path]:
     """Resolve the per-channel gsplat artifacts: cache -> in-repo copy -> Zenodo.
 
     Colormaps are assigned by POSITION downstream, so an out-of-order fetch
-    would paint hematoxylin red. ``ensure_dataset`` promises exactly the
-    manifest's file list, in manifest order; this makes the demo check that
-    promise rather than depend on it silently — a rename or an added sidecar
-    trips it just as a reordering does.
+    would paint the wrong channel in each colour. ``ensure_dataset`` promises
+    exactly the manifest's file list, in manifest order; this makes the demo
+    check that promise rather than depend on it silently — a rename or an added
+    sidecar trips it just as a reordering does.
     """
     cache_paths = ensure_dataset(DATASET)
     if [p.name for p in cache_paths] != GSPLATS_FILES:
@@ -496,6 +504,9 @@ def fit_channel_tiled(
         device=DEVICE,
         verbose=True,
         enable_dynamic_ops=True,
+        # A global amplitude cull discards both weak halves of the Hann
+        # overlap, leaving a dark grid at tile boundaries in this slide.
+        cull_retention=None,
     )
 
     n_splats = len(result.amplitudes)
@@ -592,9 +603,6 @@ def create_luxar_scene(
     if output_path is None:
         output_path = get_demos_output_dir() / "gsplats_2d_cmu1_pathology.luxar.zarr"
 
-    # Channel -> colormap mapping
-    CHANNEL_COLORMAPS = ["red", "green", "blue"]
-
     with asection("Creating Luxar Scene"):
         aprint(f"Output: {output_path.name}")
 
@@ -651,10 +659,13 @@ Tiled Fitting:
   - Tile size: {TILE_SIZE} px, overlap: {OVERLAP} px
   - Seeds per tile: {SEEDS_PER_TILE:,}, iterations: {N_ITERS:,}
 
-Channels (inverted brightfield RGB, each a separate layer):
-  - Red:   Eosin / cytoplasm / connective tissue
-  - Green: Mixed contribution from both stains
-  - Blue:  Hematoxylin / nuclei / basophilic structures
+Channels (inverted-brightfield absorption, painted in subtractive
+CMY so the additive sum reconstructs the H&E stain colours):
+  - Red absorption   -> cyan
+  - Green absorption -> magenta
+  - Blue absorption  -> yellow
+Eosin cytoplasm reads pink (mostly magenta); hematoxylin nuclei read
+blue-purple (cyan + magenta).
 
 Controls:
   - Press L to open the Layers panel

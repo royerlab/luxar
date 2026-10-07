@@ -107,6 +107,8 @@ import {
   type LoaderFactoryDeps,
 } from '../../../../../data/scene-loader/loaders/loader-factory';
 import type { SceneNode } from '../../../../../data/data-loader-types';
+import type { GeometryTypeName } from '../../../../../types/format-contract';
+import { defineBehaviourConformance } from '../../../../_conformance/define-behaviour-conformance';
 
 function makeNode(path: string, type: SceneNode['type'] = 'points'): SceneNode {
   return {
@@ -621,6 +623,25 @@ describe('createProgressiveLinesLoader', () => {
     expect(lodNode.attrs.has_image_labels).toBe(false);
   });
 });
+describe('createProgressiveLinesLoader — ladder picking layout', () => {
+  afterEach(() => {
+    zarrOpenMock.mockImplementation(async () => ({ attrs: { foo: 'bar' } }));
+  });
+
+  it('publishes no offsets (flags off) when the levels disagree with the parent total', async () => {
+    zarrOpenMock.mockImplementation((async () => ({ attrs: { n_vertices: 20 } })) as never);
+    const node = makeNode('/l', 'lines');
+    node.attrs = { ...node.attrs, has_labels: true, n_vertices: 99 };
+
+    await createProgressiveLinesLoader(node, 2, {} as SceneNode['attrs'], makeDeps());
+
+    for (const args of linesCtorArgs) {
+      expect((args[1] as SceneNode).attrs.has_labels).toBe(false);
+    }
+    expect(linesProgressiveCtorArgs[0][5]).toBeNull();
+  });
+});
+
 // The energy-table (quality stamps) plumbing: each additive_<i> subgroup's
 // `lod_stats.energy_fraction_cum` is collected into a table and passed as the
 // progressive loaders' 4th constructor arg (→ committedEnergyFraction, the
@@ -707,16 +728,7 @@ describe('createProgressiveMeshLoader', () => {
   }
 
   it('builds one whole-node loader per additive subgroup', async () => {
-    const decodeKTX2 = Object.assign(vi.fn(), { dispose: vi.fn() });
-    await createProgressiveMeshLoader(
-      meshLadderNode({}),
-      3,
-      {},
-      {
-        ...makeDeps(),
-        decodeKTX2,
-      }
-    );
+    await createProgressiveMeshLoader(meshLadderNode({}), 3, {}, makeDeps());
 
     expect(meshCtorArgs).toHaveLength(3);
     expect(meshCtorArgs.map((args) => args[0])).toEqual([
@@ -727,24 +739,6 @@ describe('createProgressiveMeshLoader', () => {
     expect(meshProgressiveCtorArgs).toHaveLength(1);
     expect(meshProgressiveCtorArgs[0][1]).toBe(3);
     expect(meshProgressiveCtorArgs[0][2]).toBe('/surf');
-    for (const args of meshCtorArgs) {
-      expect(args[3]).toMatchObject({ decodeKTX2 });
-    }
-  });
-
-  it('clears the label flags on every sub-LOD', async () => {
-    // A laddered mesh has no labels — a face-partition duplicates boundary
-    // vertices, so the union index space a parent CSR would need does not
-    // exist. Cleared here as well as refused by the writer, so a hand-written
-    // store cannot make a level publish ranges the concat would discard.
-    zarrOpenMock.mockResolvedValue({ attrs: { has_labels: true, has_image_labels: true } });
-    await createProgressiveMeshLoader(meshLadderNode({}), 2, {}, makeDeps());
-
-    for (const args of meshCtorArgs) {
-      const attrs = args[1] as { has_labels?: boolean; has_image_labels?: boolean };
-      expect(attrs.has_labels).toBe(false);
-      expect(attrs.has_image_labels).toBe(false);
-    }
   });
 
   it('passes NO energy table — a reveal prefix carries no energy stamps', async () => {
@@ -840,4 +834,132 @@ describe('createProgressiveMeshLoader', () => {
     );
     expect(meshProgressiveCtorArgs).toHaveLength(1);
   });
+});
+
+// ── Geometry-behaviour matrix rows probed through the four ladder factories ──
+//
+// One adapter per type over the mocked constructors above: which factory builds
+// the ladder, where its level loaders' constructor args land, how a level's
+// synthesized attrs are read back, and where the wrapper receives its picking
+// level offsets (`undefined` for a wrapper that takes none).
+interface LadderFactoryAdapter {
+  create(node: SceneNode, nAdditive: number): Promise<unknown>;
+  levelArgs: unknown[][];
+  wrapperArgs: unknown[][];
+  levelAttrs(args: unknown[]): Record<string, unknown>;
+  levelOffsets(args: unknown[]): unknown;
+}
+
+const nodeAttrsOf = (args: unknown[]) => (args[1] as SceneNode).attrs as Record<string, unknown>;
+
+const LADDER_FACTORIES: Record<GeometryTypeName, LadderFactoryAdapter> = {
+  points: {
+    create: (node, n) => createProgressivePointsLoader(node, n, {}, makeDeps()),
+    levelArgs: pointsCtorArgs,
+    wrapperArgs: pointsProgressiveCtorArgs,
+    levelAttrs: nodeAttrsOf,
+    levelOffsets: (args) => args[5],
+  },
+  lines: {
+    create: (node, n) => createProgressiveLinesLoader(node, n, {}, makeDeps()),
+    levelArgs: linesCtorArgs,
+    wrapperArgs: linesProgressiveCtorArgs,
+    levelAttrs: nodeAttrsOf,
+    levelOffsets: (args) => args[5],
+  },
+  gsplats: {
+    create: (node, n) => createProgressiveGSplatsLoader(node, n, {}, makeDeps()),
+    levelArgs: gsplatsCtorArgs,
+    wrapperArgs: progressiveCtorArgs,
+    levelAttrs: nodeAttrsOf,
+    levelOffsets: (args) => args[5],
+  },
+  mesh: {
+    create: (node, n) => createProgressiveMeshLoader(node, n, {}, makeDeps()),
+    levelArgs: meshCtorArgs,
+    wrapperArgs: meshProgressiveCtorArgs,
+    // MeshWholeNodeLoader takes (path, attrs, …), not a synthesized node.
+    levelAttrs: (args) => args[1] as Record<string, unknown>,
+    levelOffsets: (args) => args[3],
+  },
+};
+
+/** Serve each `additive_<i>` group's attrs from `levels`, in open order. */
+function serveLevels(levels: Record<string, unknown>[]): void {
+  for (const attrs of levels) {
+    zarrOpenMock.mockImplementationOnce((async () => ({ attrs })) as never);
+  }
+}
+
+/** A two-level ladder of `type`, every element count declared consistently. */
+function ladderNode(type: GeometryTypeName, attrs: Record<string, unknown>): SceneNode {
+  return {
+    path: '/ladder',
+    type,
+    attrs: { type, n_points: 30, n_vertices: 30, n_faces: 30, ...attrs },
+    hasSpatialIndex: false,
+    children: [],
+  } as SceneNode;
+}
+
+const LEVEL_COUNTS = [
+  { n_points: 20, n_vertices: 20, n_faces: 20 },
+  { n_points: 10, n_vertices: 10, n_faces: 10 },
+];
+
+defineBehaviourConformance('ladderPickingLayout', {
+  async holds(type) {
+    const f = LADDER_FACTORIES[type];
+    serveLevels(LEVEL_COUNTS);
+    await f.create(ladderNode(type, { has_labels: true }), 2);
+
+    expect(f.levelArgs).toHaveLength(2);
+    for (const args of f.levelArgs) expect(f.levelAttrs(args).has_labels).toBe(true);
+    // CSR-style offsets over each level's on-disk count, closed by the union total.
+    expect(f.levelOffsets(f.wrapperArgs[0])).toEqual([0, 20, 30]);
+  },
+  enforced: {
+    // The same labelled parent: every level's flags are cleared, no offsets reach the wrapper.
+    'no-op': async (type) => {
+      const f = LADDER_FACTORIES[type];
+      serveLevels(LEVEL_COUNTS.map((c) => ({ ...c, has_labels: true, has_image_labels: true })));
+      await f.create(ladderNode(type, { has_labels: true }), 2);
+
+      expect(f.levelArgs).toHaveLength(2);
+      for (const args of f.levelArgs) {
+        expect(f.levelAttrs(args).has_labels).toBe(false);
+        expect(f.levelAttrs(args).has_image_labels).toBe(false);
+      }
+      expect(f.levelOffsets(f.wrapperArgs[0]) ?? null).toBeNull();
+    },
+  },
+});
+
+defineBehaviourConformance('ladderTexture', {
+  holds(type) {
+    throw new Error(`no ladder renders a level texture, yet ${type} is declared to`);
+  },
+  enforced: {
+    // A level that declares a texture builds like any other: the attr means nothing here.
+    'no-op': async (type) => {
+      const f = LADDER_FACTORIES[type];
+      serveLevels(LEVEL_COUNTS.map((c) => ({ ...c, has_texture: true, has_uvs: true })));
+      await f.create(ladderNode(type, {}), 2);
+      expect(f.levelArgs).toHaveLength(2);
+      expect(f.wrapperArgs).toHaveLength(1);
+    },
+    // Refused before any level loader is built, whether the level declares the
+    // texture or only its UVs.
+    refuse: async (type) => {
+      const f = LADDER_FACTORIES[type];
+      for (const declared of [{ has_texture: true, has_uvs: true }, { has_uvs: true }]) {
+        serveLevels(LEVEL_COUNTS.map((c) => ({ ...c, ...declared })));
+        await expect(f.create(ladderNode(type, {}), 2)).rejects.toThrow(
+          /texture.*reveal ladder|reveal ladder.*texture/
+        );
+        expect(f.levelArgs).toHaveLength(0);
+        expect(f.wrapperArgs).toHaveLength(0);
+      }
+    },
+  },
 });

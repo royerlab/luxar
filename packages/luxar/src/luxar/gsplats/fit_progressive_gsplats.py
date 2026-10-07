@@ -233,7 +233,7 @@ def fit_progressive_gaussian_splats(
         float
     ] = 10.0,  # Intentionally higher than single-pass (1.0)
     enable_dynamic_ops: bool = False,
-    cull_retention: float | None = 0.98,
+    cull_retention: float | None = 0.999,
     on_pass_complete: Optional[Callable[[int, AdditiveSubLOD, float], None]] = None,
     device: Optional[str] = None,
     verbose: bool = True,
@@ -272,7 +272,7 @@ def fit_progressive_gaussian_splats(
         default for progressive fitting: each pass seeds directly at the
         residual peaks, so relocation shows no measured quality benefit. Set
         to ``True`` to opt in.
-    cull_retention : float or None, default=0.98
+    cull_retention : float or None, default=0.999
         Post-fit cumulative culling on the final accumulated result.  Keeps the
         top splats that account for this fraction of total amplitude (0--1).
         Set to ``None`` to disable.
@@ -760,7 +760,7 @@ def fit_progressive_gaussian_splats(
         n_removed = n_before - final_result.n_splats
         if verbose:
             aprint(
-                f"Post-fit culling (cumulative, retention={cull_retention:.0%}): "
+                f"Post-fit culling (cumulative, retention={cull_retention:.1%}): "
                 f"{n_before} -> {final_result.n_splats} splats "
                 f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%)"
             )

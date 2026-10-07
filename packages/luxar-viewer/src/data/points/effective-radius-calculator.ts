@@ -59,7 +59,8 @@ export function calculateEffectiveRadii(
   // in the (quarter-step, half-step] band would pass this gate without its
   // chunks being fetched — that's the contract the compile-time warning
   // guards. Mirrors the fixed 0.5 in the WASM parity kernel
-  // (wasm/typescript/effective-radii.ts) — keep the two in 1:1 sync.
+  // (wasm/typescript/effective-radii.ts). The points-membership kernels use
+  // the same absolute 0.5; partition-slice-gate.ts bounds this rule.
   const discreteTolerance = 0.5;
 
   // Helper function to safely check if a dimension is spatial

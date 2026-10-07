@@ -91,11 +91,6 @@ export function setBloscDecodeBackend(next: BloscDecodeBackend | null): void {
   backend = next;
 }
 
-/** The installed backend, if any (tests and the pool's own dispose check). */
-export function getBloscDecodeBackend(): BloscDecodeBackend | null {
-  return backend;
-}
-
 /**
  * Kill switch: `false` keeps every blosc decode on the main thread even when
  * a backend is installed (`?mainThreadCodecs`).

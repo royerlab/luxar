@@ -13,10 +13,10 @@ The Layers panel exposes scene graph nodes marked with `layer=True` (set in the 
 - **Opacity**
 - **Blending mode** (additive, volumetric, normal, max, opaque, luminous)
 - **Layer order** — the authored cross-layer draw order (`docs/guides/specs/LAYER_ORDER_SPEC.md`). A number field rather than a slider, because the value is a signed JavaScript safe integer and must be able to be **blank**: empty (placeholder `auto`) means _unset_, while any explicit value, **0 included**, remains distinguishable as author intent for the panel and diagnostics. Both unset and authored 0 resolve to band 0; different band values are what override the inferred bounding-sphere containment order. Higher draws nearer the camera, like a CSS `z-index`. Layers on different levels never interleave whatever the camera does, which is the whole point: it converts an inferred, geometry-dependent order into a stated one. Sparse values (10/20/30) leave room to insert a layer later. Unlike every other control here the level is not a material uniform but a cross-node **sort key**, so `applyLayerOrder` writes `userData.layerOrder` on each affected leaf and wakes the render loop rather than going through `applyComposed` — there is no `mat.updateX` to call. It cannot reorder across the opaque/transparent split (an opaque layer always draws before a transparent one, and an authored opaque level at or above a transparent level warns), and it cannot make interpenetrating concave layers _correct_ — it buys stability, not correctness.
-- **Absorption** (κ) — only shown when the layer's effective blending mode is `volumetric`; all three geometry types implement the emission–absorption math, and κ = 0 is exactly the additive limit. Since the 2026-08-02 ray-mass unification τ = κ · rayMass with rayMass the same peak-alpha-normalised quantity the additive branch emits, so κ is dimensionless and comparable across points, lines, gsplats and scene scales — one fixed **logarithmic** track (nominally 0.001–10) serves every layer; the former per-layer geometry-derived bounds are gone. Both ends still move (within hard clamps) to keep an AUTHORED κ outside the nominal span on the track, so the readout always shows a value the thumb can express. Position 0 is a dedicated stop for exactly κ = 0 (the geometric span starts one step in, so the floor round-trips). On a log track the component mirrors the readout into `aria-valuetext`, since the input's native value is a position. See `absorption-range.ts`.
+- **Absorption** (κ) — only shown when the layer's effective blending mode is `volumetric`; all three emissive geometry types implement the emission–absorption math (a mesh resolves `volumetric` to `opaque`, so it never shows), and κ = 0 is exactly the additive limit. Since the 2026-08-02 ray-mass unification τ = κ · rayMass with rayMass the same peak-alpha-normalised quantity the additive branch emits, so κ is dimensionless and comparable across points, lines, gsplats and scene scales — one fixed **logarithmic** track (nominally 0.001–10) serves every layer; the former per-layer geometry-derived bounds are gone. Both ends still move (within hard clamps) to keep an AUTHORED κ outside the nominal span on the track, so the readout always shows a value the thumb can express. Position 0 is a dedicated stop for exactly κ = 0 (the geometric span starts one step in, so the floor round-trips). On a log track the component mirrors the readout into `aria-valuetext`, since the input's native value is a position. See `absorption-range.ts`.
 - **Ambient** / **Shade falloff** / **Specular** / **Shininess** — shown only for a mesh whose resolved shading mode is `smooth` or `flat`. Hidden for `shading="none"` because the unlit shader reads none of the four uniforms, and hidden for points/lines/gsplats because those types are emissive per-element sprites with no surface orientation. Ambient is the wrapped diffuse term's shade floor (what keeps a face-away silhouette readable rather than black; `1.0` removes the diffuse gradient), while shade falloff shapes that gradient from the fixed view-space light direction; specular and shininess control the additive Blinn–Phong highlight. Linear tracks, unlike κ's log one: the bounded fractions and small exponents have meaningful midpoints, rather than being scale-free coefficients spanning decades. The exponent tracks start at the material's `0.001` clamp rather than 0, avoiding undefined `pow(0, 0)` at a fragment with zero wrapped diffuse response.
 - **Alpha cutoff** — mesh only, AND only in `opaque` mode (the type gate plus a mode gate, the narrowest condition in the panel): that is the one mode whose fragment stage applies the hard cutout, so in any other mesh mode the threshold is read by no branch of the shader. The drag also reaches the mesh's PICK material, because the pick pass applies the identical cutout (§6.5) — a threshold that moved on screen but not in the pick buffer would leave a freshly-dissolved region still hoverable.
-- **Colormap** (for gsplats with scalars/amplitudes, scalar-backed points/lines/mesh, and groups that fan out to such descendants)
+- **Colormap** (for every gsplats layer — the amplitude is the scalar — scalar-backed points/lines/mesh, and groups that fan out to such descendants; a kind=lod / kind=partition wrapper answers exactly like its leaves). An authored non-builtin palette — stored by the compiler as `colormap: "custom"` plus its `colormap_lut` — is listed as **custom (authored)** in the dropdown and the row menu, for the layers carrying one (`LayerInfo.customLut`), so trying another palette is reversible; the colormap legend draws it from the same bytes
 - **Classes** (GSplats with `label_vocabulary`) — switch between authored and categorical colours, or isolate one exact class; the filter also reaches the pick material so hidden classes are not hoverable. Hidden when no vocabulary is available
 - **Active level** (LOD groups, and partitions wrapping LOD groups) — `auto` or lock to a specific level
 
@@ -27,6 +27,10 @@ The five mesh appearance values are the one control group that does **not** comp
 Rendering attributes compose along the scene graph per the Luxar composition spec: `opacity`, `absorption`, `gamma`, and `intensity` multiply through ancestors; `offset` adds; `blending_mode` takes the nearest ancestor's choice — except inside the edited layer's own subtree, where the layer's single Blend control wins (see [Blending mode inside a layer's subtree](#blending-mode-inside-a-layers-subtree)). Every panel mutation recomposes the effective attributes for each affected data-leaf (the layer itself, or every data descendant of a group layer) using live panel state for `layer=true` nodes and authoring-time zarr attrs for the rest. `colormap` composes nearest-setter-wins too (#1600), so a palette authored on a group reaches every descendant that can use one; the panel's own colormap control still fans out **imperatively** to each affected leaf material rather than going through composition, because a live dropdown change has no authored attr to compose from.
 
 Edits made in the panel are viewer-only and not persisted back to the zarr store; reload the page to return to the authored state.
+
+### Which controls are shown: `LAYER_CONTROL_RULES`
+
+Every gate described above — the sound row's empty section, κ's volumetric mode, the mesh sliders' house / physical / shading / cutout conditions, Gamma and Blend hiding for a physical mesh, the colormap and custom-LUT entries, Classes, Active level, the row's gain slider — is one row of `LAYER_CONTROL_RULES` (`layer-control-rules.ts`), keyed by a control id that the control's DOM also carries as `data-control`. The appearance section, the row and the row menu's Colormap / Blending submenus all read that table, so the dropdown and the menu cannot disagree about a layer. The rule a control follows is "shown only where it has an effect": `src/tests/unit/ui/layers/control-effect.test.ts` mounts one layer of each kind with real materials, drives every shown control through its DOM, and fails when the change is unobservable (no uniform, define, material flag, render-order slot, audio gain or LOD selector moved) or when "Reset this layer" does not put it back. A new control needs a rule row, a `data-control` id and an effect probe in that test.
 
 ### Specialized groups (LOD / partition)
 
@@ -58,6 +62,20 @@ The LOD registry is looked up lazily via
 panel doesn't import `scene/` directly (respecting the data → ui layer
 direction). Locking a level wakes the animation loop (`requestRender`) so the
 new active level paints even when the camera and slice are idle.
+
+### Ancestry lookups go through the scene-node index
+
+Every composition needs a leaf's root→leaf chain. `initFromScene(rootGroup,
+sceneGraph, sceneIndex)` takes the scene loader's `SceneNodeIndex`
+(`SceneLoader.sceneNodeIndex`, passed by `core/app/dataset/load-dataset.ts`),
+and both `LayerApplyEngine` (its `getSceneNodeIndex` port) and
+`LayerStateManager.initFromSceneGraph` read chains from it with
+`SceneNodeIndex.ancestorChain(path)` — the exact answer `collectAncestorNodes`
+gives, in O(1). Without an index (tests, an embedder calling `initFromScene`
+directly) the panel builds one over the graph, a single O(N) pass. The
+descent this replaced resolved each level with a linear `children.find`, so a
+slider tick over a P-part layer cost ~P²/2 comparisons; on a 2000-part layer
+a tick measured 99 ms before and 13 ms after (jsdom, 1 ms timer resolution).
 
 ### Leaves built after the panel initialised
 
@@ -163,6 +181,7 @@ throws. `LuxarApp.getLayers()` / `setLayer()` are thin wrappers over these (see
 layer-state.ts     Pure data model, selection logic (re-exports the min/max ↔ intensity/offset math from rendering/display-range.ts)
 layers-panel.ts    DOM panel (list + lifecycle), event handling; facade over the two below
 layer-controls.ts  LayerControls — the controls section (sliders, blend/colormap/LOD selects, LOD readout)
+layer-control-rules.ts  LAYER_CONTROL_RULES — when each control is shown (section, row and row menu)
 layer-apply.ts     LayerApplyEngine — attr composition + scene/material application
 luxar-material.ts  LuxarMaterial contract + colormap-vs-direct routing helpers
 range-slider.ts    Dual-thumb [min, max] slider (click-to-edit + scroll-adjust bounds)
@@ -369,10 +388,8 @@ window has to be re-expressed across.
 ##### …and only from a window in the reference basis
 
 `LayerApplyEngine.composedWindowIsInReferenceBasis` decides this over the same
-ancestry chain `composeEffective` walks (walked once per leaf and shared between
-them — `collectAncestorNodes` resolves each step with a linear `children.find`,
-so a fan-out over a P-part wrapper is O(P²) and `applyComposed` runs on every
-slider tick). `intensity` multiplies and `offset` sums over that whole chain with
+ancestry chain `composeEffective` reads (looked up once per leaf and shared
+between them). `intensity` multiplies and `offset` sums over that whole chain with
 live panel state substituted for `layer=true` nodes, so a window contributed at
 or below the edited layer puts the composed one in a different basis, and
 remapping it would corrupt a window that was already correct. Four arms decline:
@@ -442,6 +459,7 @@ control.
 | `layer-state.ts`                           | `LayerStateManager`, selection logic; re-exports `computeUniforms` / `computeDisplayRange` (now in `rendering/display-range.ts`) |
 | `layers-panel.ts`                          | `LayersPanel` class — panel/list DOM + lifecycle; facade over controls + apply                                                   |
 | `layer-controls.ts`                        | `LayerControls` — controls-section DOM (sliders, selects, live LOD readout)                                                      |
+| `layer-control-rules.ts`                   | `LAYER_CONTROL_RULES` — the visibility rule per control id (`data-control`), read by the section, the rows and the row menu      |
 | `layer-apply.ts`                           | `LayerApplyEngine` — attr composition + material application per data-leaf                                                       |
 | `luxar-material.ts`                        | `LuxarMaterial` interface, `isColormapActive` / `applyColorAdjustments` routing                                                  |
 | `range-slider.ts`                          | `RangeSlider` — dual-thumb input component with editable / scrollable bound labels                                               |

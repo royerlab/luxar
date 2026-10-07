@@ -77,7 +77,7 @@ input-handler/
 2. Construct `WindowEventHandler` (`window-events/`) — installs
    `resize`, `wheel`, and `fullscreenchange` listeners.
 3. Call `registerAllKeyBindings` (`key-bindings/`) with four records:
-   `deps`, `commands`, `panelGetters`, and `animationShortcuts`. This is the
+   `deps`, `commands`, `panels` (`KeyBindingsPanelGetters`), and `animationShortcuts`. This is the
    only place per-context bindings are added to the manager, including animation
    shortcuts whose handlers decline until a selected dimension and animation
    manager exist.

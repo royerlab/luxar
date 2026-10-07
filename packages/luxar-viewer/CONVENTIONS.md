@@ -310,9 +310,6 @@ Established examples in this repo:
   (`src/input/input-handler/panel-capabilities.ts`, published by
   `src/input/index.ts`) — the input layer needs to mount sliders that live in
   ui/panels. The factory is injected from `core/app.ts`.
-- `LabelTooltipFactory` (`src/rendering/picking/picking-system.ts`) —
-  the rendering layer needs a ui tooltip element; the factory lives in
-  `core/app.ts`.
 
 Do NOT add the higher-layer module to the dependency-cruiser allowlist
 to "fix" a layer violation — that defeats the layer discipline. Always

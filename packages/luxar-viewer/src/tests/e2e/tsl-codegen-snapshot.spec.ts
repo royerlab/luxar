@@ -6,7 +6,7 @@
  * brightness computations across `colorNode` and `depthNode`,
  * unnecessary varyings, etc.). This spec captures the actual shader
  * code emitted by `WebGPURenderer({ forceWebGL: true })` for each
- * pinned shader variant (points, lines, gsplats + their pick and
+ * pinned shader variant (points, lines, gsplats, mesh + their pick and
  * fast-path builds) and pins it to a checked-in snapshot file under
  * `src/tests/__codegen__/`.
  *
@@ -263,7 +263,7 @@ function assertSnapshot(shader: string, kind: 'vertex' | 'fragment', actual: str
 
 // Shaders to snapshot. Includes all geometry kinds and their picking
 // variants so attribute-packing changes (Float16 colours, etc.) have a
-// regression gate across Points, Lines, and GSplats.
+// regression gate across Points, Lines, GSplats and Mesh.
 const SHADERS = [
   'line',
   'line-pick',
@@ -285,12 +285,14 @@ const SHADERS = [
   // w(a) alpha map both read the single unconditional texel5 fetch —
   // distinct generated code neither single-flag variant pins.
   'line-volumetric-colormap',
-  // Lines are the only geometry whose ortho/perspective split is a
-  // BUILD-time TSL option (points/gsplats branch at runtime on the
-  // projection matrix's ortho test), so the perspective line shaders are distinct
-  // generated code that the four ortho variants above never pin. The
-  // `-behind` harness variants build with `isOrtho: false` — reuse
-  // them to snapshot the perspective visual + pick branches.
+  // The ortho/perspective split is a RUNTIME branch on the projection
+  // matrix's ortho test for every geometry, lines included, so these
+  // perspective-camera entries generate the SAME line graph as `line` /
+  // `line-pick`. They stay as a tripwire: `line-behind` must equal `line`
+  // byte for byte, and `line-pick-behind` may differ from `line-pick` only in
+  // three's own `depth` node (which lowers per camera class) and in node
+  // uniform numbering. A divergence beyond that means a build-time projection
+  // variant has crept back into a line graph.
   'line-behind',
   'line-pick-behind',
   'point',
@@ -381,8 +383,10 @@ const SHADERS = [
   // snapshot (49 files of spurious churn when 'erf' briefly led this list).
   'erf',
   // Capsule line primitive (#1352, ?linePrimitive=capsule) — one entry per
-  // distinct GRAPH: ortho additive (sideon; joint/fold/taper/fat share its
-  // code), perspective (near-clip + fade branches), the max and volumetric
+  // distinct GRAPH: additive (sideon; joint/fold/taper/fat share its
+  // code), the perspective-camera twin `endon-persp` (byte-identical to
+  // sideon — the projection is read per draw; kept as the same tripwire as
+  // `line-behind` above), the max and volumetric
   // mode tails, the colormap fragment, and the pick twin.
   'line-capsule-sideon',
   'line-capsule-endon-persp',
@@ -390,6 +394,20 @@ const SHADERS = [
   'line-capsule-volumetric',
   'line-capsule-colormap',
   'line-capsule-pick-sideon',
+  // The PRODUCTION screen-space quad: a compile-time projection variant per
+  // drawn camera kind (`projection-variant.ts`), visual and pick. Kept LAST so
+  // their render-group member order cannot reorder any snapshot above.
+  'line-variant-ortho',
+  'line-variant-persp',
+  'line-pick-variant-ortho',
+  'line-pick-variant-persp',
+  // The mesh gamma == 1 and no-GOG fast paths (GLSL twins: LUXAR_GAMMA_ONE /
+  // LUXAR_NO_GOG) — the mesh peers of `point-gamma-one` / `point-no-gog` & co. A
+  // default mesh renders with the no-GOG build. Appended rather than grouped with
+  // the other mesh entries so they cannot reorder the render group of any
+  // snapshot above.
+  'mesh-gamma-one',
+  'mesh-no-gog',
 ] as const;
 
 test.describe('TSL → generated-shader snapshots', () => {

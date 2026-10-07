@@ -698,7 +698,7 @@ def fit_tile(
         with _asection(f"Denoising tile {spec.index} (h={_denoise_h:.4f})"):
             tile_data = denoise_volume_array(tile_data, h=_denoise_h, **_denoise_params)
 
-    # Pop cull_retention — per-tile culling is disabled (fit_tiled culls the merged result)
+    # Pop cull_retention — fitting does not cull; the merge step applies it.
     fit_kwargs.pop("cull_retention", None)
 
     # 1c. Subtract the floor from the RAW tile, BEFORE apodization. The two
@@ -749,7 +749,7 @@ def fit_tile(
             max_passes=max_passes,
             voxel_size=voxel_size,
             output_space=output_space,
-            cull_retention=None,  # Disable per-tile; fit_tiled culls the merged result
+            cull_retention=None,  # The merge step applies retention.
             **fit_kwargs,
         )
     else:
@@ -757,7 +757,7 @@ def fit_tile(
             tile_data,
             voxel_size=voxel_size,
             output_space=output_space,
-            cull_retention=None,  # Disable per-tile; fit_tiled culls the merged result
+            cull_retention=None,  # The merge step applies retention.
             **fit_kwargs,
         )
 
@@ -1008,7 +1008,7 @@ def fit_tiled(
     max_splats_per_pass: int = 5000,
     psnr_patience: float = 0.5,
     max_passes: Optional[int] = None,
-    cull_retention: float | None = 0.95,
+    cull_retention: float | None = 0.999,
     partition: bool = False,
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
@@ -1092,11 +1092,11 @@ def fit_tiled(
         NOT fitted and contributes a 0-splat placeholder, mirroring the
         ``--allow-empty-tile`` batch worker (the inner fitter rejects a
         non-positive integer ``seeds``).
-    cull_retention : float or None, default=0.95
-        Post-fit cumulative culling on the merged result.  Keeps the top
-        splats that account for this fraction of total amplitude (0--1).
-        Per-tile culling is disabled automatically; only the merged result
-        is culled.  Set to ``None`` to disable.
+    cull_retention : float or None, default=0.999
+        Post-fit cumulative culling. Keeps the top splats that account for
+        this fraction of total amplitude (0--1). Per-tile fitting disables
+        culling; the merged result is culled once, or each tile is culled
+        separately when ``partition=True``. Set to ``None`` to disable.
     source_shape : sequence of int, optional
         Grid of the ACQUISITION, when ``volume`` is already a preprocessed copy
         of it — a caller that decimated before tiling must declare it, or the
@@ -1533,7 +1533,7 @@ def merge_tile_results(
         if verbose and merged.n_splats < n_before:
             aprint(
                 f"Post-fit culling: {n_before} -> {merged.n_splats} splats "
-                f"(retained {cull_retention * 100:.0f}% of amplitude)"
+                f"(retained {cull_retention * 100:.1f}% of amplitude)"
             )
 
     merged.stats.update(

@@ -7,7 +7,7 @@
  *   node scripts/render-gate/run-gate.mjs --base origin/main --cand HEAD \
  *     [--suite exact|perf|counters|playback|scrub|hosted|trees|cache|all] \
  *     [--class IDENTICAL|ULP] [--intended id,id] [--only id,id] \
- *     [--backends webgl,webgpu] [--rounds 7] [--heavy] [--expect <file.json>] \
+ *     [--backends webgl,webgpu,webgpu-gl] [--rounds 7] [--heavy] [--expect <file.json>] \
  *     [--server-profile local|hosted] [--out <dir>]
  *   node scripts/render-gate/run-gate.mjs --from-json <dir>/report.json
  *     (rewrite <dir>/report.md from a saved report, measuring nothing)
@@ -34,15 +34,20 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { browserKit } from './browser.mjs';
+import { browserKit, selectBackends } from './browser.mjs';
 import { ensureBuild } from './builds.mjs';
 import { classifyRow, sameCounts, scoreControlPick, strip } from './classify.mjs';
-import { scoreBlocks, scoreFloatBuffers, scorePickBuffers } from './exactness.mjs';
+import {
+  pickWithinDraw,
+  scoreBlocks,
+  scoreFloatBuffers,
+  scorePickBuffers,
+} from './exactness.mjs';
 import { writeUlpHeatmap } from './heatmap.mjs';
 import * as ops from './page-ops.mjs';
 import { judgePerf, median, noiseFloor, ROTATIONS } from './perf-stats.mjs';
 import { startServer } from './server.mjs';
-import { loadExpectations, runSuite, suiteMarkdown } from './suites.mjs';
+import { loadExpectations, runSuite, suiteMarkdown, validateMetricDirections } from './suites.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const viewerRoot = resolve(here, '../..');
@@ -100,6 +105,11 @@ const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
 const manifest = JSON.parse(readFileSync(opts.scenes, 'utf8'));
 const log = (m) => console.log(`[render-gate] ${m}`);
 const manifestSuites = manifest.suites ?? {};
+try {
+  validateMetricDirections(manifestSuites);
+} catch (e) {
+  configError(e.message);
+}
 const BUILT_IN = ['exact', 'perf'];
 if (opts.suite !== 'all' && !BUILT_IN.includes(opts.suite) && !manifestSuites[opts.suite]) {
   configError(
@@ -175,9 +185,7 @@ function decode(packed) {
 
 function exactVariants(c) {
   const d = manifest.defaults;
-  const backends = (opts.backends ?? c.backends ?? d.backends).filter((b) =>
-    (c.backends ?? d.backends).includes(b)
-  );
+  const backends = selectBackends(opts.backends, c.backends ?? d.backends);
   const dsfs = opts.dsf ?? c.dsf ?? d.dsf;
   const out = [];
   for (const backend of backends)
@@ -215,6 +223,8 @@ async function captureArm(browser, origin, c, variant) {
           hdr: decode(cap.hdr),
           ldr: decode(cap.ldr),
           pick: cap.pick ? decode({ format: 'f32', data: cap.pick.data }) : null,
+          pickWidth: cap.pick?.width ?? 0,
+          pickHeight: cap.pick?.height ?? 0,
         };
       }
     }
@@ -222,6 +232,21 @@ async function captureArm(browser, origin, c, variant) {
     await context.close();
   }
   return { shots, errors };
+}
+
+/**
+ * The candidate's own pick must stay inside its own draw (`pickWithinDraw`):
+ * an absolute property of one build, judged alongside the A/B comparison. A
+ * view that already failed or errored keeps its status; one that passed,
+ * changed or stayed unchanged fails when its pick leaves the draw.
+ */
+function applyPickWithinDraw(row, shot) {
+  if (!shot.pick || !shot.pickWidth) return;
+  const within = pickWithinDraw(shot);
+  row.pickWithinDraw = { ...within };
+  if (within.pass || !['pass', 'changed', 'unchanged'].includes(row.status)) return;
+  row.status = 'fail';
+  row.failures = [...(row.failures ?? []), ...within.failures];
 }
 
 async function runExact(session, servers, outDir) {
@@ -289,6 +314,7 @@ async function runExact(session, servers, outDir) {
           writeUlpHeatmap(join(outDir, 'heatmaps', file), aaLdr.perPixelUlp, a.width, a.height);
           row.control.ldrHeatmap = `heatmaps/${file}`;
         }
+        applyPickWithinDraw(row, b);
         if (hdr.differing > 0) {
           const file = `${c.id}-${variant.backend}-dsf${variant.dsf}-${view.replace('#', '')}.png`;
           writeUlpHeatmap(join(outDir, 'heatmaps', file), hdr.perPixelUlp, a.width, a.height);
@@ -373,7 +399,7 @@ async function runPerf(session, servers) {
   const results = [];
   const cases = manifest.perf.filter((c) => !opts.only || opts.only.includes(c.id));
   for (const c of cases) {
-    for (const backend of opts.backends ?? d.backends) {
+    for (const backend of selectBackends(opts.backends, d.backends)) {
       log(`perf: ${c.id} ${backend} (${rounds} rounds)`);
       const samples = { base: [], base2: [], cand: [] };
       try {
@@ -473,7 +499,12 @@ function markdown(meta, exact, perf, suites) {
       '|---|---|---|---|---|---|---|---|---|'
     );
     for (const r of exact) {
-      const pick = r.pick ? `node ${r.pick.nodeMismatches} / element ${r.pick.mismatches}` : '';
+      const within = r.pickWithinDraw
+        ? `; within draw: ${r.pickWithinDraw.outside} outside, coverage ${r.pickWithinDraw.coverage.toFixed(2)}`
+        : '';
+      const pick = r.pick
+        ? `node ${r.pick.nodeMismatches} / element ${r.pick.mismatches}${within}`
+        : '';
       lines.push(
         `| ${r.case} | ${r.backend} | ${r.dsf} | ${r.view} | ${r.cls ?? ''} | ${r.status}${r.failures?.length ? ` (${r.failures.join('; ')})` : ''} | ${fmtScore(r.hdr)} | ${fmtScore(r.ldr)} | ${pick} |`
       );

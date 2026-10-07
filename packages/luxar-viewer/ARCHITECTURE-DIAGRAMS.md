@@ -330,7 +330,7 @@ Point visibility:
 
 Materials registered with `MaterialManager` implement
 `CameraAwareMaterial`. On every camera change the manager fans
-`updateCameraParams(fov, resolution, isOrtho, nearCull)` out to
+`updateCameraParams(resolution, nearCull, pixelRatio)` out to
 every registered material — no scene traversal. Picking materials
 register too and unregister (without disposal) on context-restore
 so a context-loss cycle doesn't leak registrations.

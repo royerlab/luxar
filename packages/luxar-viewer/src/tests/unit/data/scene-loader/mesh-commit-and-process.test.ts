@@ -462,6 +462,25 @@ describe('commitMeshGeometry', () => {
     expect(mesh.geometry.drawRange.count).toBe(0);
     expect(mesh.userData.visibleTriangleCount).toBe(0);
   });
+
+  it('an empty commit is reported at verbose: a slice scrub commits one per tick', async () => {
+    const { root } = sceneWithMesh('/surface');
+    const staged = await processMeshData(
+      '/surface',
+      loaded(),
+      { ...VIEW, slicePosition: [0, 0, 0, 99] } as MeshViewState,
+      { normal_dims: [0, 1, 2], double_sided: false }
+    );
+    const info = vi.spyOn(log, 'info');
+    const verbose = vi.spyOn(log, 'verbose');
+    commitMeshGeometry({ rootGroup: root, currentVersion: 1 }, staged);
+    expect(info).not.toHaveBeenCalled();
+    expect(
+      verbose.mock.calls.some((call) => String(call.at(-1)).includes('No visible triangles'))
+    ).toBe(true);
+    info.mockRestore();
+    verbose.mockRestore();
+  });
 });
 
 describe('processMeshData — the continuous-hidden-dim notice (§9 evidence gate)', () => {

@@ -1,8 +1,8 @@
 /**
  * SceneLoader dispose body — releases dataset-scoped resources:
  *
- *   - the dataset abort controller (so in-flight worker tasks settle
- *     immediately and the worker pool's signal reference is cleared),
+ *   - the dataset abort controller (so this loader's in-flight worker
+ *     calls settle immediately),
  *   - every geometry loader registered with the LoaderRegistry,
  *   - the GPU buffer pool (without this, instanced buffer geometries
  *     leak hundreds of MB of GPU memory across dataset switches),
@@ -14,13 +14,12 @@
  *   - the data-loading monitor's loader-bound closures.
  *
  * Worker pool itself is NOT terminated here — it's bounded and lives
- * across dataset switches. `disposeWorkerPool()` in core/app.ts owns
- * that lifecycle at app shutdown.
+ * across dataset switches. Hosts retain it via `retainWorkerPool` and
+ * release it via `releaseWorkerPool`; the last host's release terminates it.
  */
 
 import { log, Modules } from '../../../utils/log';
-import { disposeCustomColormapTextures } from '../../../rendering/colormap-textures';
-import { getWorkerPool } from '../../../workers/worker-pool';
+import { releaseCustomColormapTextures } from '../../../rendering/colormap-textures';
 import type { LoaderRegistry } from '../loaders/loader-registry';
 import type { ViewStateQueue } from '../view-state/view-state-queue';
 import type { GPUBufferPool } from '../../../rendering/gpu-buffer-pool';
@@ -30,9 +29,9 @@ import type { SliceCache } from '../../../cache/slice-cache';
 import type { SceneLoaderMonitorPort } from '../../scene-loader-monitor-port';
 
 /**
- * Container of nullable resources the SceneLoader owns. The orchestrator
- * passes its fields in, the helper does the disposal work, then writes
- * the cleared state back via the `clear*` callbacks.
+ * The dataset-scoped resources the SceneLoader owns, passed in by reference.
+ * The helper releases them; the orchestrator nulls its own fields afterwards
+ * (`SceneLoader.dispose`), so the references stay live across the await.
  */
 export interface DisposeCtx {
   datasetAbortController: AbortController | null;
@@ -50,19 +49,14 @@ export interface DisposeCtx {
 /**
  * Async dispose path — awaits the caching-store flush so dataset
  * switches see L2 fully drained before the next caching store is
- * constructed. Returns the cleared resources so the orchestrator can
- * null-out its corresponding fields.
+ * constructed.
  */
-export async function disposeSceneLoader(ctx: DisposeCtx): Promise<{
-  rootGroupCleared: true;
-  sceneGraphCleared: true;
-}> {
-  // Abort the dataset-scoped signal first so any in-flight worker
+export async function disposeSceneLoader(ctx: DisposeCtx): Promise<void> {
+  // Abort the dataset-scoped signal first so this loader's in-flight worker
   // `runWithTimeout` callers settle immediately instead of waiting
   // for their tasks to complete (WASM tasks themselves keep running
-  // but their results are discarded). Clear the pool's reference
-  // afterwards so future workers don't get an already-aborted
-  // signal from this disposed loader.
+  // but their results are discarded). Only THIS loader's calls carry it:
+  // another host's loader on the same page is untouched.
   if (ctx.datasetAbortController) {
     ctx.datasetAbortController.abort();
   }
@@ -71,15 +65,12 @@ export async function disposeSceneLoader(ctx: DisposeCtx): Promise<{
   if (ctx.updateAbortController) {
     ctx.updateAbortController.abort();
   }
-  getWorkerPool().setAbortSignal(undefined);
-
   // Dispose all geometry loaders via registry
   ctx.registry.disposeAll();
 
-  // Also drop failure tracking. `disposeAll` clears only the loader maps, but
-  // `loadScene` supports same-instance reuse, and a stale failure record from
-  // the previous dataset would otherwise be counted by the new load's outcome
-  // report and retried against the new scene.
+  // Also drop failure tracking (`disposeAll` clears only the loader maps), so
+  // the dead dataset's failure records no longer surface through the shared
+  // failed-loads provider.
   ctx.registry.clearAllFailures();
 
   // dispose GPU buffer pool. Without this, the pool retains
@@ -117,8 +108,8 @@ export async function disposeSceneLoader(ctx: DisposeCtx): Promise<{
     ctx.l0Cache.clear();
   }
 
-  // Clear the SliceCache (S-cache) so a reused SceneLoader / dataset switch
-  // never serves decoded geometry from the previous dataset.
+  // Clear the SliceCache (S-cache) so its decoded geometry is released with
+  // the dataset.
   if (ctx.sliceCache) {
     const s = ctx.sliceCache.getStats();
     log.info(
@@ -129,17 +120,18 @@ export async function disposeSceneLoader(ctx: DisposeCtx): Promise<{
     ctx.sliceCache.clear();
   }
 
-  // S6: clear per-loader prefetch predictor state on dispose so a
-  // reused SceneLoader doesn't extrapolate from a prior dataset.
+  // S6: clear the per-loader prefetch predictor state with the dataset.
   ctx.viewStateQueue.clearPrev();
 
   // Dispose dataset-scoped custom colormap LUTs. The custom-LUT cache
   // is keyed by content hash and shared across all scenes, but entries
   // from an unloaded dataset have no value and would accumulate in a
   // long-lived app that swaps many unique LUTs. Built-ins survive
-  // because they're shared with all scenes and cheap to keep.
+  // because they're shared with all scenes and cheap to keep. Another
+  // host's live dataset may be drawing with them, so only the last
+  // holder's release disposes the cache.
   try {
-    disposeCustomColormapTextures();
+    releaseCustomColormapTextures(ctx.datasetAbortController);
   } catch (error) {
     log.warning(Modules.SCENE_LOADER, 'Custom colormap disposal failed', error);
   }
@@ -151,6 +143,4 @@ export async function disposeSceneLoader(ctx: DisposeCtx): Promise<{
   // on the next stats poll. The monitor's lifecycle itself is owned
   // by core/app.ts via DataMonitorManager.
   ctx.monitor?.disconnectAllLoaders();
-
-  return { rootGroupCleared: true, sceneGraphCleared: true } as const;
 }

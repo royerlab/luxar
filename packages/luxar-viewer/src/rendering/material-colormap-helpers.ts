@@ -1,6 +1,6 @@
 /**
  * Shared helpers for colormap LUT + scalar-range plumbing on
- * Point/Line/GSplat materials.
+ * Point/Line/GSplat/Mesh materials.
  *
  * The actual uniform / define writes live on the materials themselves
  * (see `ColormapAwareMaterial`). These helpers wrap the material's
@@ -107,6 +107,10 @@ export function applyScalarRangeToMaterial(
  *   texture — same fixed-layout situation as points, so presence rides
  *   the identical `userData.hasScalars` stamp (`stampLinePresenceFlags`
  *   in line-geometry.ts, called by every texel-write path).
+ * - Mesh binds its scalars as a real `aScalar` vertex attribute, but presence
+ *   still rides the same `userData.hasScalars` stamp, which
+ *   `createMeshGeometry` (mesh-geometry.ts) sets exactly when it binds that
+ *   attribute — `createMeshNode`'s colormap guard relies on it.
  *
  * Use this to fail-closed: if `false`, the caller should NOT enable
  * `USE_COLORMAP` and should log a warning so the user understands why
@@ -115,8 +119,8 @@ export function applyScalarRangeToMaterial(
  * @param nodeType - Any {@link GeometryTypeName}. Exhaustive: a new geometry
  *   type must state its own scalar-presence rule below rather than inheriting
  *   the fail-closed tail, which would silently suppress its colormaps.
- * @param geometry - Optional buffer geometry; required for `points` and
- *   `lines`. When `undefined` for those types, returns `false` (fail-closed).
+ * @param geometry - Optional buffer geometry; required for `points`, `lines`
+ *   and `mesh`. When `undefined` for those types, returns `false` (fail-closed).
  * @returns `true` only when the geometry carries the per-node-type
  *   scalar data.
  * @public
@@ -125,27 +129,18 @@ export function supportsScalarColormap(
   nodeType: GeometryTypeName,
   geometry?: THREE.BufferGeometry
 ): boolean {
-  if (nodeType === 'gsplats') return true;
-  if (nodeType === 'points' || nodeType === 'lines' || nodeType === 'mesh') {
-    // Scalar presence stamp — see the doc block above.
-    //
-    // `mesh` shares the stamp rather than probing for an attribute, even though a
-    // mesh binds real vertex attributes instead of packing texels: the stamp is
-    // the signal every other type already uses, so keeping one rule avoids a
-    // second way to be wrong. Until the mesh geometry builder lands
-    // (MESH_NODE_SPEC.md §11 phase 3) nothing stamps it, so this fails closed —
-    // which is the correct answer while a mesh cannot be drawn at all.
-    return geometry ? geometry.userData?.hasScalars === true : false;
+  switch (nodeType) {
+    case 'gsplats':
+      return true;
+    case 'points':
+    case 'lines':
+    case 'mesh':
+      // Scalar presence stamp — see the doc block above.
+      // `createMeshGeometry` stamps it when it binds `aScalar`.
+      return geometry ? geometry.userData?.hasScalars === true : false;
+    default:
+      // Exhaustive at compile time; fail closed for untyped JS callers.
+      void (nodeType satisfies never);
+      return false;
   }
-  // Exhaustiveness guard: with every GeometryTypeName handled above, `nodeType`
-  // is `never` here. Adding a geometry type breaks this assignment, forcing an
-  // explicit decision instead of a silent fail-closed `false`.
-  //
-  // The value is deliberately NOT returned. This function is `@public` and
-  // re-exported from the package index, so an untyped JS caller can reach it with
-  // anything; returning `unhandled` would hand back the truthy input string and
-  // ENABLE a colormap the geometry cannot feed. Fail closed at runtime, break at
-  // compile time.
-  void (nodeType satisfies never);
-  return false;
 }

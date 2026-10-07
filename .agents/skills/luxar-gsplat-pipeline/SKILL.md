@@ -50,17 +50,13 @@ blind-spot protocol, and `cal`'s default). Override any preset knob, e.g.
 `--iters 8000`. Generate a config template with
 `luxar gsplat fit --dump-config --preset hifi > config.yaml`, then `--config config.yaml`.
 
-Every preset sets `cull_retention=0.999`. The `0.95` you get without one never came
-from a preset — it is the *fitter's* own default falling through, and it drops 5% of
-amplitude after every fit. Chasing a false `signal_limited` curve out of `cal`, treat
-BOTH as suspects — that retention *and* too few iterations at high K, which is the
-reason `cal` itself defaults to the `n2s` preset (20,000 iters, retention 0.999).
-A bare `fit` (no preset) still carries that `0.95` — on the CLI path, that is; and not
-under `--tiling content`, whose boxes default to `0.999` with or without a preset.
-Content only: `--tiling uniform` is not special-cased and a bare one still culls each
-tile at `0.95`.
-A direct Python `fit_progressive_gaussian_splats` call defaults to `0.98`, which the
-CLI overrides — so **`--seeds` proposes and `cull_retention` disposes**: a post-fit
+Every preset and all three Python fitters default to `cull_retention=0.999`.
+This near-lossless trim keeps 99.9% of cumulative amplitude. The earlier 0.95
+flat default could produce a false `signal_limited` curve in `cal`, along with
+too few iterations at high K; the tiled default could remove overlap signal.
+`cal` therefore defaults to the `n2s` preset
+(20,000 iters, retention 0.999). A bare `fit` and both tiling paths now use 0.999
+without a preset. Still, **`--seeds` proposes and `cull_retention` disposes**: a post-fit
 cumulative-amplitude cull discards the tail, and on heavy-tailed sparse data that
 tail is a lot of splats — the final count is not `--seeds`. A bigger preset is not
 free either: `early_stop_patience` grows with it (200 → 500), and since the counter
@@ -657,7 +653,7 @@ result = fit_gaussian_splats(
     loss_type="l1",       # "l1" | "mse" | "poisson"
     max_eccentricity=10.0,
     device="cuda",        # "auto" | "cpu" | "cuda" | "mps"
-    cull_retention=0.95,  # post-fit cull; the function default (presets: 0.999)
+    cull_retention=0.999,  # post-fit cull; the function default
 )
 # result is a GSplatData: .centers (N,d), .amplitudes (N,), .cholesky_factors (N, d(d+1)/2), .stats
 result.save("fitted.gsplats.zarr", ordering="hilbert")

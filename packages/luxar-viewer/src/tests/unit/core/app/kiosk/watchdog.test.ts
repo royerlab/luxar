@@ -21,6 +21,7 @@ function harness(graceS = 10) {
   const canvas = new EventTarget();
   const reload = vi.fn();
   const onRecovered = vi.fn();
+  const lossListeners = new Set<() => void>();
   let nextHandle = 1;
   const timers = new Map<number, () => void>();
   const watchdog = startKioskWatchdog({
@@ -28,6 +29,10 @@ function harness(graceS = 10) {
     graceS,
     reload,
     onRecovered,
+    onUnrecoverableLoss: (listener) => {
+      lossListeners.add(listener);
+      return () => lossListeners.delete(listener);
+    },
     setTimer: (handler) => {
       const handle = nextHandle++;
       timers.set(handle, handler);
@@ -43,6 +48,10 @@ function harness(graceS = 10) {
     onRecovered,
     watchdog,
     pending: () => timers.size,
+    loseDevice: () => {
+      for (const listener of [...lossListeners]) listener();
+    },
+    lossListenerCount: () => lossListeners.size,
     fireTimers: () => {
       for (const handler of [...timers.values()]) handler();
       timers.clear();
@@ -51,6 +60,24 @@ function harness(graceS = 10) {
 }
 
 describe('startKioskWatchdog', () => {
+  it('reloads after the grace period when the GPU device is lost for good (WebGPU)', () => {
+    // WebGPU device loss has no restore event: without this the kiosk stays
+    // blank until someone walks up to it.
+    const h = harness();
+    h.loseDevice();
+    expect(h.pending()).toBe(1);
+    expect(h.reload).not.toHaveBeenCalled();
+    h.fireTimers();
+    expect(h.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops listening for device loss on dispose', () => {
+    const h = harness();
+    expect(h.lossListenerCount()).toBe(1);
+    h.watchdog.dispose();
+    expect(h.lossListenerCount()).toBe(0);
+  });
+
   it('does nothing until the context is lost', () => {
     const h = harness();
     expect(h.pending()).toBe(0);
@@ -116,9 +143,17 @@ describe('startKioskWatchdog', () => {
 
 describe('applyKioskMode', () => {
   function ports() {
+    let keyboardEnabled = true;
+    let pointerEnabled = true;
     return {
-      setKeyboardEnabled: vi.fn(),
-      setControlsEnabled: vi.fn(),
+      setKeyboardEnabled: vi.fn((enabled: boolean) => {
+        keyboardEnabled = enabled;
+      }),
+      getKeyboardEnabled: () => keyboardEnabled,
+      setPointerEnabled: vi.fn((enabled: boolean) => {
+        pointerEnabled = enabled;
+      }),
+      getPointerEnabled: () => pointerEnabled,
       hidePanels: vi.fn(),
       reload: vi.fn(),
     };
@@ -128,17 +163,18 @@ describe('applyKioskMode', () => {
     const p = ports();
     const teardown = applyKioskMode(KIOSK_MODE_OFF, p);
     expect(p.setKeyboardEnabled).not.toHaveBeenCalled();
-    expect(p.setControlsEnabled).not.toHaveBeenCalled();
+    expect(p.setPointerEnabled).not.toHaveBeenCalled();
     expect(p.hidePanels).not.toHaveBeenCalled();
     // The teardown must be safe to call unconditionally.
-    expect(() => teardown()).not.toThrow();
+    expect(() => teardown.disposeWatchdog()).not.toThrow();
+    expect(() => teardown.restoreInput()).not.toThrow();
   });
 
   it('disables input and hides panels when locked down', () => {
     const p = ports();
     applyKioskMode(resolveKioskMode({ enabled: true }, false), p);
     expect(p.setKeyboardEnabled).toHaveBeenCalledWith(false);
-    expect(p.setControlsEnabled).toHaveBeenCalledWith(false);
+    expect(p.setPointerEnabled).toHaveBeenCalledWith(false);
     expect(p.hidePanels).toHaveBeenCalledTimes(1);
   });
 
@@ -150,7 +186,7 @@ describe('applyKioskMode', () => {
       p
     );
     expect(p.setKeyboardEnabled).not.toHaveBeenCalled();
-    expect(p.setControlsEnabled).not.toHaveBeenCalled();
+    expect(p.setPointerEnabled).not.toHaveBeenCalled();
     expect(p.hidePanels).toHaveBeenCalledTimes(1);
   });
 
@@ -161,7 +197,7 @@ describe('applyKioskMode', () => {
       p
     );
     expect(p.setKeyboardEnabled).toHaveBeenCalledWith(false);
-    expect(p.setControlsEnabled).not.toHaveBeenCalled();
+    expect(p.setPointerEnabled).not.toHaveBeenCalled();
   });
 
   it('keeps keyboard input live when only pointer controls are locked', () => {
@@ -170,8 +206,43 @@ describe('applyKioskMode', () => {
       resolveKioskMode({ enabled: true, allow_pointer: false, allow_keyboard: true }, false),
       p
     );
-    expect(p.setControlsEnabled).toHaveBeenCalledWith(false);
+    expect(p.setPointerEnabled).toHaveBeenCalledWith(false);
     expect(p.setKeyboardEnabled).not.toHaveBeenCalled();
+  });
+
+  it('restores the prior input permissions when the app releases kiosk', () => {
+    const p = ports();
+    p.setPointerEnabled(false);
+    p.setKeyboardEnabled(true);
+    const teardown = applyKioskMode(resolveKioskMode({ enabled: true }, false), p);
+    expect(p.getPointerEnabled()).toBe(false);
+    expect(p.getKeyboardEnabled()).toBe(false);
+    teardown.restoreInput();
+    expect(p.getPointerEnabled()).toBe(false);
+    expect(p.getKeyboardEnabled()).toBe(true);
+    p.setKeyboardEnabled(false);
+    teardown.restoreInput();
+    expect(p.getKeyboardEnabled()).toBe(false);
+  });
+
+  it('re-enables pointer and keyboard input before a new scene is applied', () => {
+    const p = ports();
+    const teardown = applyKioskMode(resolveKioskMode({ enabled: true }, false), p);
+    expect(p.getPointerEnabled()).toBe(false);
+    expect(p.getKeyboardEnabled()).toBe(false);
+    teardown.disposeWatchdog();
+    expect(p.getPointerEnabled()).toBe(false);
+    expect(p.getKeyboardEnabled()).toBe(false);
+    teardown.restoreInput();
+    expect(p.getPointerEnabled()).toBe(true);
+    expect(p.getKeyboardEnabled()).toBe(true);
+
+    applyKioskMode(
+      resolveKioskMode({ enabled: true, allow_pointer: false, allow_keyboard: true }, false),
+      p
+    );
+    expect(p.getPointerEnabled()).toBe(false);
+    expect(p.getKeyboardEnabled()).toBe(true);
   });
 
   it('keeps panels when the author asked for them', () => {
@@ -188,7 +259,7 @@ describe('applyKioskMode', () => {
       resolveKioskMode({ enabled: true, watchdog_reload: true }, false),
       p
     );
-    expect(() => teardown()).not.toThrow();
+    expect(() => teardown.disposeWatchdog()).not.toThrow();
   });
 
   it('wires the watchdog to the canvas when asked', () => {
@@ -201,7 +272,7 @@ describe('applyKioskMode', () => {
     );
     canvas.dispatchEvent(new Event('webglcontextlost'));
     expect(vi.getTimerCount()).toBe(1);
-    teardown();
+    teardown.disposeWatchdog();
     expect(vi.getTimerCount()).toBe(0);
     expect(p.reload).not.toHaveBeenCalled();
   });

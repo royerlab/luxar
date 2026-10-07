@@ -30,14 +30,13 @@ import {
   configureSortedIndexChunkedApply,
   elementTexelCapacity,
   hasPendingSortedIndexOrderingApply,
+  holdSortedIndexDrawForAppend,
   pumpSortedIndexOrderingApply,
   registerElementTexelDirtyRange,
   releaseSortedIndexDrawHold,
   sortedIndexDrawHoldTarget,
-  setSortedIndexApplyRequestRender,
   setSortedIndexChunkElementsForTests,
   writeSortedIndexIdentity,
-  writeSortedIndexIdentityRange,
   writeSortedIndexOrdering,
   writeSortedIndexOrderingLive,
   markElementTextureFullDirty,
@@ -466,27 +465,6 @@ describe('attachSplatStorage / writeSplatTexels — fused writer round-trip', ()
     expect(Array.from(t2.image.data as Float32Array)).toEqual(
       Array.from(t1.image.data as Float32Array)
     );
-  });
-
-  it('writeSortedIndexIdentityRange appends identity for the suffix, preserving the prefix permutation', () => {
-    const geometry = new THREE.InstancedBufferGeometry();
-    attachSplatStorage(geometry, 16);
-    // Prefix carries a real depth-sort permutation over [0,4). An
-    // ordering stages into the back buffer, so drain the pump to make it
-    // the live one before appending onto it.
-    writeSortedIndexOrdering(geometry, new Uint32Array([3, 2, 1, 0]), 4);
-    while (pumpSortedIndexOrderingApply(geometry).more) {
-      /* drain */
-    }
-    const attr = getActiveSortedIndexAttribute(geometry) as THREE.InstancedBufferAttribute;
-    const arr = attr.array as Uint32Array;
-    // Append identity for [4, 8): prefix permutation stays, suffix = identity.
-    writeSortedIndexIdentityRange(geometry, 4, 8);
-    expect(Array.from(arr.subarray(0, 8))).toEqual([3, 2, 1, 0, 4, 5, 6, 7]);
-    // Collapsed to a single [0, count) range (index buffer is tiny).
-    expect(attr.updateRanges.length).toBe(1);
-    expect(attr.updateRanges[0].start).toBe(0);
-    expect(attr.updateRanges[0].count).toBe(8);
   });
 
   it('throws on source arrays shorter than the requested count (fail-loud contract)', () => {
@@ -1005,6 +983,26 @@ describe('gsplat append commit — held draw until the grown ordering lands', ()
     expect(geom.instanceCount).toBe(6);
   });
 
+  it('releasing a held geometry to the free list does no repair and no upload', () => {
+    // Every pool GROW releases the node's old geometry. Repairing its ordering
+    // over the held population there is O(target) work plus a full-range
+    // ordering upload for a geometry nobody draws; the next commit that writes
+    // it resolves the hold (a new tenant's full write discards it, a vouched
+    // recommit repairs from the drawn prefix — the test below).
+    const geom = pool.acquireGSplatsGeometry('node', 16);
+    sortedPrefix(geom);
+    pool.updateGSplatsGeometry(geom, packed(6), 6, 3.0, { fromInstance: 3 });
+    const attr = getActiveSortedIndexAttribute(geom)!;
+    attr.clearUpdateRanges();
+    const before = Array.from(attr.array as Uint32Array);
+
+    pool.releaseGSplatsGeometry('node');
+
+    expect(attr.updateRanges).toEqual([]);
+    expect(Array.from(attr.array as Uint32Array)).toEqual(before);
+    expect(geom.instanceCount).toBe(3);
+  });
+
   it('a vouched recommit while held repairs from the DRAWN prefix, never the unsorted tail', () => {
     // `preserveOrdering` vouches for the buffer over the committed count, but
     // a held draw's buffer is only a permutation over what it DRAWS.
@@ -1311,10 +1309,6 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     cancelAllSortedIndexOrderingApplies();
     setSortedIndexChunkElementsForTests(null);
     configureSortedIndexChunkedApply(true);
-    // `requestSliceRender` is module-global and this file never resets
-    // modules, so a spy left wired would fire in later tests that drain
-    // streams (issue #715 resume hook). Always clear it.
-    setSortedIndexApplyRequestRender(null);
   });
 
   function makeGeometry(capacity: number): { geometry: THREE.InstancedBufferGeometry } {
@@ -1587,16 +1581,16 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     expect(back.updateRanges[0]).toMatchObject({ start: CHUNK, count: CHUNK });
   });
 
-  it('a consumed-slice upload ack drives a continuation render while pending, and is a no-op once cleared (#715 resume hook)', () => {
+  it('a consumed-slice upload ack drives a continuation render while pending, and is a no-op without one (#715 resume hook)', () => {
     // The coordinator deliberately does NOT request a render on a stall,
     // so a stream that drains as the mesh becomes drawable would freeze
     // mid-way without this hook: a consumed slice's onUpload ack drives the
-    // next frame. Guards both the `requestSliceRender?.()` in the onUpload
-    // callback and the `setSortedIndexApplyRequestRender` wiring.
+    // next frame. Guards the `requestFrame` call in the onUpload callback,
+    // which comes from the STREAMING ordering's own callbacks (so it wakes
+    // the render loop of the host that staged it).
     const spy = vi.fn();
-    setSortedIndexApplyRequestRender(spy);
     const { geometry } = makeGeometry(16);
-    writeSortedIndexOrdering(geometry, reversed(12), 12); // 3 slices of CHUNK
+    writeSortedIndexOrdering(geometry, reversed(12), 12, { requestFrame: spy }); // 3 slices
     const back = geometry.getAttribute('aSortedIndexB') as THREE.InstancedBufferAttribute;
 
     // Writing a slice arms the flag + wires onUpload, but does NOT itself
@@ -1604,7 +1598,7 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     pumpSortedIndexOrderingApply(geometry);
     spy.mockClear();
     back.onUploadCallback();
-    expect(spy).toHaveBeenCalledTimes(1); // fails if requestSliceRender?.() is removed
+    expect(spy).toHaveBeenCalledTimes(1); // fails if the ack stops calling requestFrame
 
     // Once the stream completes and leaves chunkedApplies, a later ack must
     // NOT request a render (guards the `chunkedApplies.has(geometry)` check).
@@ -1614,10 +1608,8 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     back.onUploadCallback();
     expect(spy).not.toHaveBeenCalled();
 
-    // A cleared hook is a safe no-op (teardown hygiene: no throw, no stale
-    // closure), even with a pending stream so the ack's `has` check passes
-    // and reaches the now-null `requestSliceRender?.()`.
-    setSortedIndexApplyRequestRender(null);
+    // An ordering staged without the hook is a safe no-op (no throw), even
+    // with a pending stream so the ack finds an entry to read it from.
     writeSortedIndexOrdering(geometry, reversed(12), 12);
     pumpSortedIndexOrderingApply(geometry);
     const active = getActiveSortedIndexAttribute(geometry);
@@ -1858,18 +1850,6 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     ]);
   });
 
-  it('writeSortedIndexIdentityRange (append commit) cancels an in-flight apply', () => {
-    const { geometry } = makeGeometry(16);
-    writeSortedIndexOrdering(geometry, reversed(12), 12);
-    writeSortedIndexIdentityRange(geometry, 12, 16);
-    expect(hasPendingSortedIndexOrderingApply(geometry)).toBe(false);
-    expect(pumpSortedIndexOrderingApply(geometry)).toEqual({
-      more: false,
-      flipped: false,
-      stalled: false,
-    });
-  });
-
   it('identity writers target whichever buffer is live after a flip', () => {
     const { geometry } = makeGeometry(16);
     writeSortedIndexOrdering(geometry, reversed(12), 12);
@@ -1905,6 +1885,54 @@ describe('double-buffered ordering apply (atomic swap)', () => {
     expect(hasPendingSortedIndexOrderingApply(b.geometry)).toBe(true);
     cancelAllSortedIndexOrderingApplies();
     expect(hasPendingSortedIndexOrderingApply(b.geometry)).toBe(false);
+  });
+
+  it("an owner-scoped sweep abandons only that owner's streams and selected orderings", () => {
+    // Two depth-sort coordinators on one page share this module: one host's
+    // dataset switch must not abandon the other host's streams.
+    const ownerA = {};
+    const ownerB = {};
+    const a = makeGeometry(16);
+    const b = makeGeometry(16);
+    const abandonedA = vi.fn();
+    const abandonedB = vi.fn();
+    writeSortedIndexOrdering(a.geometry, reversed(12), 12, {
+      owner: ownerA,
+      onAbandoned: abandonedA,
+    });
+    writeSortedIndexOrdering(b.geometry, reversed(12), 12, {
+      owner: ownerB,
+      onAbandoned: abandonedB,
+    });
+
+    cancelAllSortedIndexOrderingApplies(ownerA);
+    expect(hasPendingSortedIndexOrderingApply(a.geometry)).toBe(false);
+    expect(abandonedA).toHaveBeenCalledTimes(1);
+    expect(hasPendingSortedIndexOrderingApply(b.geometry)).toBe(true);
+    expect(abandonedB).not.toHaveBeenCalled();
+
+    // B's ordering finishes streaming and waits, SELECTED, for its draw: the
+    // acknowledgement map is swept by owner too.
+    drainSortedIndexApply(b.geometry);
+    cancelAllSortedIndexOrderingApplies(ownerA);
+    expect(abandonedB).not.toHaveBeenCalled();
+    cancelAllSortedIndexOrderingApplies(ownerB);
+    expect(abandonedB).toHaveBeenCalledTimes(1);
+  });
+
+  it('a stream whose owner lifts the back-pressure advances without upload acks (offline capture)', () => {
+    // `resortForCapture` never draws, so the #715 acknowledgement that
+    // releases a stalled stream can never fire; the bypass belongs to the
+    // ordering's owner, so only the capturing host's streams fold.
+    let bypass = true;
+    const { geometry } = makeGeometry(16);
+    writeSortedIndexOrdering(geometry, reversed(12), 12, { bypassBackPressure: () => bypass });
+    expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ more: true, stalled: false });
+    // No draw consumed slice 1, yet slice 2 is written.
+    expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ more: true, stalled: false });
+    // Lifted again: the unacknowledged slice 2 stalls slice 3.
+    bypass = false;
+    expect(pumpSortedIndexOrderingApply(geometry)).toMatchObject({ more: true, stalled: true });
   });
 
   it('slicing disabled (WebGPU backends): one slice, then the same atomic flip', () => {
@@ -2036,10 +2064,12 @@ describe('ordering invariant — randomized interleavings', () => {
           n = 1 + Math.floor(r() * 24);
           writeSortedIndexIdentity(geometry, n);
         } else {
+          // An append whose hold is released at once (an order-independent
+          // commit): the drawn permutation repaired over the grown count.
           op = 'append';
-          const from = n;
           const grown = Math.min(capacityRequest, n + 1 + Math.floor(r() * 8));
-          writeSortedIndexIdentityRange(geometry, from, grown);
+          geometry.instanceCount = holdSortedIndexDrawForAppend(geometry, n, grown);
+          releaseSortedIndexDrawHold(geometry);
           n = grown;
         }
         opTally[op] = (opTally[op] ?? 0) + 1;

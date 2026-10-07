@@ -2859,12 +2859,13 @@ check-typescript:  ## Run all TypeScript checks (typecheck, lint, test)
 	cd packages/luxar-viewer && pnpm run check
 
 check-knip:  ## Report unused viewer files/exports/deps (non-gating)
-	@# Deliberately non-fatal. The ENFORCED subset is `check:knip:ci`
-	@# (--include files,dependencies), which runs inside `pnpm check:ci` and
-	@# therefore inside `make check-all`. The full run additionally reports
-	@# unused exports/types and @internal tag hints, of which the tree has a
-	@# standing backlog — so a non-zero exit here is the normal state, not a
-	@# regression. Exiting 1 would make this look like a broken gate.
+	@# Deliberately non-fatal: this is the human-readable FULL report. The
+	@# enforcement lives in `pnpm check:ci` (and so `make check-all`):
+	@# `check:knip:ci` fails on any unused file or dependency, and
+	@# `check:knip:ratchet` fails on a NEW unused export/type (or a paid-down
+	@# one) against packages/luxar-viewer/knip-baseline.json. The recorded
+	@# backlog plus the @internal tag hints still print here, so a non-zero
+	@# exit is the normal state, not a regression.
 	@#
 	@# But "knip ran and reported a backlog" and "knip never ran" must not look
 	@# the same: the `|| true` below would otherwise swallow a missing pnpm and
@@ -2888,7 +2889,7 @@ check-knip:  ## Report unused viewer files/exports/deps (non-gating)
 	fi; \
 	(cd packages/luxar-viewer && pnpm run check:knip) || true
 	@echo ""
-	@echo "ℹ️  Report only — the enforced subset (files + dependencies) runs in 'make check-all'."
+	@echo "ℹ️  Report only — files/dependencies and the unused-export ratchet are enforced in 'make check-all'."
 
 # The `&&` before the success echo is load-bearing, not style. The whole recipe
 # is ONE backslash-joined shell command, so a trailing `; echo "...passed!"`

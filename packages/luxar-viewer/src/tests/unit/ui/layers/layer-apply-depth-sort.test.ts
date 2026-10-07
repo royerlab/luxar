@@ -42,6 +42,7 @@ const { PhysicalMeshMaterial } =
   await import('../../../../rendering/materials/mesh-physical/material-glsl');
 
 import type { SceneNode } from '../../../../data/data-loader-types';
+import { SceneNodeIndex } from '../../../../data/scene-loader/view-state/scene-node-index';
 
 /** Mesh's real resolution rule: `volumetric` has no meaning for a surface. */
 function resolveMeshMode(mode: string): string {
@@ -104,7 +105,7 @@ function harness(initialMode: string, authoredMode?: string) {
   state.initFromSceneGraph(graph);
   const engine = new LayerApplyEngine({
     getRootGroup: () => rootGroup,
-    getSceneGraph: () => graph,
+    getSceneNodeIndex: () => new SceneNodeIndex(graph),
     state,
     requestRender: () => {},
     requestReprocess: () => {},
@@ -149,7 +150,7 @@ function inheritedHarness(initialMode: string, ancestorMode: string) {
   state.initFromSceneGraph(graph);
   const engine = new LayerApplyEngine({
     getRootGroup: () => rootGroup,
-    getSceneGraph: () => graph,
+    getSceneNodeIndex: () => new SceneNodeIndex(graph),
     state,
     requestRender: () => {},
     requestReprocess: () => {},
@@ -188,7 +189,7 @@ function physicalInheritedHarness(ancestorMode: string, invalidatePickBuffer?: (
   state.initFromSceneGraph(graph);
   const engine = new LayerApplyEngine({
     getRootGroup: () => rootGroup,
-    getSceneGraph: () => graph,
+    getSceneNodeIndex: () => new SceneNodeIndex(graph),
     state,
     requestRender: () => {},
     requestReprocess: () => {},

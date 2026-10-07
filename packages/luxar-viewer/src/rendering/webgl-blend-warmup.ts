@@ -22,9 +22,9 @@
 
 import * as THREE from 'three';
 import { BLENDING_MODES, type BlendingMode } from '../types/blending';
+import { isGeometryType } from '../types/geometry-capabilities';
+import type { GeometryTypeName } from '../types/format-contract';
 import { log, Modules } from '../utils/log';
-
-type WarmupNodeType = 'points' | 'lines' | 'gsplats' | 'mesh';
 
 const BLEND_VARIANT_DEFINES = new Set([
   'LUXAR_MAX_RGB_CONTRIBUTION',
@@ -189,10 +189,6 @@ function defaultCompileOne(
   compileScene.remove(compileObject);
 }
 
-function isWarmupNodeType(value: unknown): value is WarmupNodeType {
-  return value === 'points' || value === 'lines' || value === 'gsplats' || value === 'mesh';
-}
-
 function hasWarmupMaterialApi(
   material: THREE.Material | null | undefined
 ): material is WarmupMaterial {
@@ -294,7 +290,7 @@ export function buildBlendWarmupFingerprint(
   ].join('@@');
 }
 
-function hasRenderableContent(object: THREE.Object3D, nodeType: WarmupNodeType): boolean {
+function hasRenderableContent(object: THREE.Object3D, nodeType: GeometryTypeName): boolean {
   const userData = object.userData as {
     visiblePointCount?: number;
     visibleSegmentCount?: number;
@@ -471,7 +467,7 @@ export class WebGLBlendWarmupManager {
     }
 
     const nodeType = (object.userData as { nodeType?: unknown }).nodeType;
-    if (!isWarmupNodeType(nodeType) || !hasRenderableContent(object, nodeType)) return;
+    if (!isGeometryType(nodeType) || !hasRenderableContent(object, nodeType)) return;
 
     if (!(
       object instanceof THREE.Mesh ||
@@ -635,6 +631,11 @@ export class WebGLBlendWarmupManager {
     state.variants.clear();
   }
 
+  /** Whether this manager warms `root` (the scene it was configured against). */
+  targets(root: THREE.Object3D): boolean {
+    return this.targetScene !== null && this.targetScene === root;
+  }
+
   /** Snapshot of the warm-up counters (copied; safe to hand to probes). */
   getStats(): BlendWarmupStats {
     return { ...this.stats };
@@ -784,7 +785,34 @@ export class WebGLBlendWarmupManager {
   }
 }
 
+/** The LuxarApp's manager (the free functions below drive it). */
 const defaultManager = new WebGLBlendWarmupManager();
+
+/**
+ * Every live manager on the page: the app's, plus one per `LuxarLayer`
+ * ({@link registerBlendWarmupManager}). The shared node-commit paths call
+ * {@link scheduleBlendModeProgramWarmupForObject} without knowing their host, so
+ * that call is routed to the manager whose scene the node lives in — each host
+ * warms its own nodes against its own renderer.
+ */
+const managers = new Set<WebGLBlendWarmupManager>([defaultManager]);
+
+/** Add a host's own manager to the routing set (a LuxarLayer's). */
+export function registerBlendWarmupManager(manager: WebGLBlendWarmupManager): void {
+  managers.add(manager);
+}
+
+/** Drop a host's manager from the routing set (its dispose). */
+export function unregisterBlendWarmupManager(manager: WebGLBlendWarmupManager): void {
+  if (manager !== defaultManager) managers.delete(manager);
+}
+
+/** The scene graph root `object` currently hangs under. */
+function sceneRootOf(object: THREE.Object3D): THREE.Object3D {
+  let root = object;
+  while (root.parent) root = root.parent;
+  return root;
+}
 
 /**
  * Point the session's warm-up at a renderer, camera and scene, and drop
@@ -805,7 +833,17 @@ export function configureBlendModeProgramWarmup(config: WarmupConfig): void {
  * {@link warmSceneBlendModePrograms} has armed the session.
  */
 export function scheduleBlendModeProgramWarmupForObject(object: THREE.Object3D): void {
-  defaultManager.scheduleObject(object);
+  // A node whose subtree is not in any host's scene yet (a dataset's initial
+  // build commits before its root is attached) routes nowhere, and needs not:
+  // every host ends its load with `warmScene` over the attached root (the app's
+  // `warmBlendModePrograms`, the layer's `load`), which schedules it then.
+  const root = sceneRootOf(object);
+  for (const manager of managers) {
+    if (manager.targets(root)) {
+      manager.scheduleObject(object);
+      return;
+    }
+  }
 }
 
 /**

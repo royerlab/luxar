@@ -43,6 +43,7 @@ from luxar.core.group.lod.group import (
     coverage_fractions,
 )
 from luxar.io import lod_restamp
+from luxar.io.chunk_pack import write_chunk_packs
 from luxar.io.compiler import LuxarZarrCompiler
 from luxar.io.lod_restamp import (
     HASH_RESTAMPED,
@@ -54,6 +55,7 @@ from luxar.io.lod_restamp import (
     restamp_lod_store,
 )
 from luxar.typing_utils.constants import (
+    CHUNK_PACKS_GROUP,
     DERIVED_LOD_SELECTOR,
     ENVIRONMENT_GROUP,
     LEGACY_LOD_SELECTOR,
@@ -1077,6 +1079,77 @@ def test_a_real_run_keeps_the_baked_environment_current(legacy_scene: Path) -> N
         close(root)
 
 
+def test_a_real_run_keeps_matching_chunk_packs_bound(legacy_scene: Path) -> None:
+    """An attrs-only restamp preserves packs whose copies still match."""
+    root = open_group(legacy_scene, mode="r+")
+    before = root.attrs["content_hash"]
+    count = write_chunk_packs(root, before)
+    assert count > 0
+    consolidate(root)
+    close(root)
+
+    report = restamp_lod_store(legacy_scene, finest_anchor=0.25)
+
+    root = open_group(legacy_scene, mode="r")
+    try:
+        after = root.attrs["content_hash"]
+        assert report.content_hash == after != before
+        assert root[CHUNK_PACKS_GROUP].attrs["scene_content_hash"] == after
+    finally:
+        close(root)
+
+
+def test_a_real_run_does_not_revive_stale_chunk_packs(legacy_scene: Path) -> None:
+    """An earlier chunk edit must leave its old pack unusable after restamping."""
+    root = open_group(legacy_scene, mode="r+")
+    original_hash = root.attrs["content_hash"]
+    assert write_chunk_packs(root, original_hash) > 0
+    pack = root[CHUNK_PACKS_GROUP].attrs["packs"][0]
+    node = root[pack["prefix"].rstrip("/")]
+    array = node[sorted(node.array_keys())[0]]
+    values = np.asarray(array[:]).copy()
+    values.flat[0] += 1
+    array[:] = values
+    edited_hash = lod_restamp._restamp_content_hash(root)
+    assert edited_hash != original_hash
+    assert root[CHUNK_PACKS_GROUP].attrs["scene_content_hash"] == original_hash
+    consolidate(root)
+    close(root)
+
+    report = restamp_lod_store(legacy_scene, finest_anchor=0.25)
+
+    attrs = _attrs(legacy_scene)
+    assert report.content_hash == attrs["/"]["content_hash"] != edited_hash
+    assert attrs[CHUNK_PACKS_GROUP]["scene_content_hash"] == original_hash
+    assert attrs[CHUNK_PACKS_GROUP]["scene_content_hash"] != report.content_hash
+
+
+def test_restamp_does_not_rebind_packs_after_unstamped_chunk_edit(
+    legacy_scene: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A stale stored root hash cannot prove that the pack still copies its chunks."""
+    root = open_group(legacy_scene, mode="r+")
+    original_hash = root.attrs["content_hash"]
+    assert write_chunk_packs(root, original_hash) > 0
+    pack = root[CHUNK_PACKS_GROUP].attrs["packs"][0]
+    node = root[pack["prefix"].rstrip("/")]
+    array = node[sorted(node.array_keys())[0]]
+    values = np.asarray(array[:]).copy()
+    values.flat[0] += 1
+    array[:] = values
+    consolidate(root)
+    close(root)
+
+    report = restamp_lod_store(legacy_scene, finest_anchor=0.25)
+    assert "chunk packs left unbound" in capsys.readouterr().out
+
+    attrs = _attrs(legacy_scene)
+    assert report.content_hash != original_hash
+    assert attrs[CHUNK_PACKS_GROUP]["scene_content_hash"] == original_hash
+    assert attrs[CHUNK_PACKS_GROUP]["scene_content_hash"] != report.content_hash
+
+
 def test_a_real_run_does_not_stamp_an_ordinary_environment_group(
     legacy_scene: Path,
 ) -> None:
@@ -1728,11 +1801,13 @@ def test_a_failed_run_restores_a_digest_it_could_not_have_recomputed(
         compressor=None,
     )
     environment.attrs.update({"faces": faces, "scene_content_hash": "LEGACY-DIGEST"})
+    assert write_chunk_packs(root, "LEGACY-DIGEST") > 0
     consolidate(root)
     close(root)
     stale = _node_attrs(legacy_scene)
     assert stale["/"]["content_hash"] == "LEGACY-DIGEST"
     assert stale[ENVIRONMENT_GROUP]["scene_content_hash"] == "LEGACY-DIGEST"
+    assert stale[CHUNK_PACKS_GROUP]["scene_content_hash"] == "LEGACY-DIGEST"
     assert "content_hash" not in stale["pts"]
 
     real_write = lod_restamp._write_attr
@@ -1755,6 +1830,7 @@ def test_a_failed_run_restores_a_digest_it_could_not_have_recomputed(
 
     after = _node_attrs(legacy_scene)
     assert (ENVIRONMENT_GROUP, "scene_content_hash") in writes
+    assert (CHUNK_PACKS_GROUP, "scene_content_hash") in writes
     assert after["/"]["content_hash"] == "LEGACY-DIGEST"
     assert [path for path, attrs in after.items() if "content_hash" in attrs] == ["/"]
     assert after == stale, "an attrs-level rollback has to be exact everywhere"

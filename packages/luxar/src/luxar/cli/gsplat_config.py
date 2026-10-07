@@ -40,8 +40,8 @@ class FitPreset(str, Enum):
 # differ in optimiser budget (``n_iters`` + ``early_stop_patience``) plus
 # ``max_eccentricity`` (10 → 20 from ``draft`` to ``ultra``).
 #
-# Why this matters: the previous presets defaulted to the fitter's
-# ``cull_retention=0.95``, which silently dropped 5% of splats by amplitude
+# Why this matters: the previous presets defaulted to the fitter's former
+# ``cull_retention=0.95``, which silently dropped 5% of amplitude
 # after every fit. Combined with too few iterations at high K, this made
 # ``luxar gsplat cal`` report artificially rising held-out PSNR ("signal
 # limited") instead of the true plateau / overfit curve the manuscript's
@@ -126,9 +126,8 @@ def load_fit_config(
         cli_overrides: Dict of CLI-provided values (None values are ignored)
         command_defaults: Per-command defaults that displace the harvested
             function defaults but yield to preset / YAML / CLI (None values are
-            ignored, so a caller can pass a sentinel-free dict). Lets one command
-            carry a different baseline from a bare ``fit`` — e.g. the
-            content-tiling path's near-lossless ``cull_retention``.
+            ignored, so a caller can pass a sentinel-free dict). Lets a command
+            pin its baseline independently of a bare ``fit``.
 
     Returns:
         Merged config dict ready to pass as ``**kwargs`` to fit_gaussian_splats
@@ -270,7 +269,7 @@ def dump_default_config(preset: str = "standard") -> str:
         f"dynamic_ops_verbose: {_fmt(vals.get('dynamic_ops_verbose'))}  # Verbose logging for dynamic ops",
         "",
         "# --- Post-Processing ---",
-        f"cull_retention: {_fmt(vals.get('cull_retention', 0.95))}  # Post-fit cumulative culling (0-1, null=disabled)",
+        f"cull_retention: {_fmt(vals.get('cull_retention', 0.999))}  # Post-fit cumulative culling (0-1, null=disabled)",
         f"voxel_footprint_correction: {_fmt(vals.get('voxel_footprint_correction'))}  # Inflate covariances by voxel footprint",
         "",
         "# --- Boundary Containment ---",

@@ -16,6 +16,7 @@ import {
   buildPointTSLNodesFromUniforms,
 } from '../../../../rendering/materials/point/shader-tsl';
 import { POINT_PICK_SOURCE } from '../../../../rendering/picking/point/shaders';
+import { pickVisibilityUniforms } from '../../../../rendering/picking/_shared/visibility-uniforms';
 import {
   pointPickWebGPUFactory,
   buildPointPickTSLNodesFromUniforms,
@@ -769,6 +770,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
       uNodeId: { value: 42 },
+      // Synced from the visual material in production; GLSL reads 0 when absent.
+      ...pickVisibilityUniforms(),
       uResolution: { value: new THREE.Vector2(64, 64) },
     }),
     buildTSLMaterial: (uniforms) =>
@@ -817,6 +820,8 @@ export const POINT_SHADERS: Record<string, RegistryEntry> = {
       maxPointSize: { value: 32.0 },
       radiusScale: { value: 1.0 },
       uNodeId: { value: 42 },
+      // Synced from the visual material in production; GLSL reads 0 when absent.
+      ...pickVisibilityUniforms(),
       uResolution: { value: new THREE.Vector2(64, 64) },
     }),
     buildTSLMaterial: (uniforms) =>

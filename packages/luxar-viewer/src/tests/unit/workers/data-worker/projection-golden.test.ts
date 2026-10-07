@@ -321,7 +321,7 @@ describe('lines dispatcher: basic 3D projection', () => {
 });
 
 describe('lines dispatcher: hidden-dim clipping + culling', () => {
-  it('culls a segment entirely outside the slice (4D, hidden dim 3)', async () => {
+  it('culls an off-slice one-chunk segment and keeps it on-slice (4D)', async () => {
     const loaded: LoadedLinesData = {
       // both vertices at dim3=10, slice at dim3=0 ± 0.5 → invisible
       positions: new Float32Array([0, 0, 0, 10, 1, 0, 0, 10]),
@@ -340,6 +340,15 @@ describe('lines dispatcher: hidden-dim clipping + culling', () => {
       [0, 1, 2]
     );
     expect(out.segmentCount).toBe(0);
+    // The one-chunk Lines index shortcut loads this segment on either slice;
+    // clipping must make the off-slice payload invisible.
+    const onSlice = await runLinesBothBackends(
+      loaded,
+      [0, 0, 0, 10],
+      [1e10, 1e10, 1e10, 0.5],
+      [0, 1, 2]
+    );
+    expect(onSlice.segmentCount).toBe(1);
   });
 
   it('accepts the canonical empty payload and projects to an empty result (nD scrub re-cull regression)', async () => {
@@ -403,7 +412,7 @@ function runPointsBothBackends(
 describe('points dispatcher: 3D extraction', () => {
   it('extracts displayed dims (WASM == TS)', () => {
     // 2 points × 4D; display [0,1,2] drops the 4th dim.
-    const positions = new Float32Array([1, 2, 3, 99, 4, 5, 6, 88]);
+    const positions = new Float32Array([1, 2, 3, 0, 4, 5, 6, 0]);
     const out = runPointsBothBackends(
       positions,
       null,
@@ -417,6 +426,166 @@ describe('points dispatcher: 3D extraction', () => {
     );
     expect(out.pointCount).toBe(2);
     expect(Array.from(out.positions)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+});
+
+describe('points dispatcher: hidden-dimension membership without effective radii', () => {
+  const dimensions = [contDim('x'), contDim('y'), contDim('z'), discDim('time')];
+  const viewState: ViewState = {
+    displayDims: [0, 1, 2],
+    slicePosition: [0, 0, 0, 1],
+    tolerance: [1e10, 1e10, 1e10, 0.25],
+    dimensions,
+  };
+
+  it('keeps only points in the selected 4D category with no index or radii', () => {
+    const positions = new Float32Array([1, 2, 3, 0, 4, 5, 6, 1]);
+    const ranges = [{ start: 0, end: 2 }];
+    const ctx = pointsCtx();
+    const onSlice = runPointsBothBackends(positions, null, viewState, ranges, ctx);
+    expect(onSlice.pointCount).toBe(1);
+    expect(Array.from(onSlice.positions)).toEqual([4, 5, 6]);
+    const offSlice = runPointsBothBackends(
+      positions,
+      null,
+      { ...viewState, slicePosition: [0, 0, 0, 2] },
+      ranges,
+      ctx
+    );
+    expect(offSlice.pointCount).toBe(0);
+  });
+
+  it('keeps all unordered 4D points on slice and honors extend-to-all', () => {
+    const positions = new Float32Array([1, 2, 3, 1, 4, 5, 6, 1]);
+    const ranges = [{ start: 0, end: 2 }];
+    expect(runPointsBothBackends(positions, null, viewState, ranges, pointsCtx()).pointCount).toBe(
+      2
+    );
+    expect(
+      runPointsBothBackends(
+        positions,
+        null,
+        { ...viewState, slicePosition: [0, 0, 0, 5], tolerance: [1e10, 1e10, 1e10, 1e10] },
+        ranges,
+        pointsCtx()
+      ).pointCount
+    ).toBe(2);
+  });
+
+  it('uses an absolute 0.5 discrete boundary regardless of step', () => {
+    const out = runPointsBothBackends(
+      new Float32Array([1, 2, 3, 1.5, 4, 5, 6, 1.7]),
+      null,
+      viewState,
+      [{ start: 0, end: 2 }],
+      pointsCtx()
+    );
+    expect(out.pointCount).toBe(1);
+    expect(Array.from(out.positions)).toEqual([1, 2, 3]);
+    const stepTen = runPointsBothBackends(
+      new Float32Array([1, 2, 3, 10.5, 4, 5, 6, 10.7]),
+      null,
+      {
+        ...viewState,
+        slicePosition: [0, 0, 0, 10],
+        dimensions: [...dimensions.slice(0, 3), discDim('time', 10)],
+      },
+      [{ start: 0, end: 2 }],
+      pointsCtx()
+    );
+    expect(stepTen.pointCount).toBe(1);
+    expect(Array.from(stepTen.positions)).toEqual([1, 2, 3]);
+  });
+
+  it('uses configured discrete axes when radii are absent', () => {
+    const out = runPointsBothBackends(
+      new Float32Array([1, 2, 3, 0, 4, 5, 6, 1]),
+      null,
+      { ...viewState, dimensions: undefined },
+      [{ start: 0, end: 2 }],
+      pointsCtx({
+        effectiveRadiusConfig: {
+          spatialExtendDims: [true, true, true, false],
+          maxRadius: 1,
+        },
+      })
+    );
+    expect(out.pointCount).toBe(1);
+    expect(Array.from(out.positions)).toEqual([4, 5, 6]);
+  });
+
+  it('filters a 3D node viewed in 2D', () => {
+    const out = runPointsBothBackends(
+      new Float32Array([1, 2, 0, 4, 5, 3]),
+      null,
+      {
+        displayDims: [0, 1],
+        slicePosition: [0, 0, 0],
+        tolerance: [1e10, 1e10, 0.25],
+        dimensions: dimensions.slice(0, 3),
+      },
+      [{ start: 0, end: 2 }],
+      pointsCtx()
+    );
+    expect(out.pointCount).toBe(1);
+    expect(Array.from(out.positions)).toEqual([1, 2, 0]);
+  });
+
+  it('uses the node radius reach when radius configuration is missing', () => {
+    const positions = new Float32Array([1, 2, 3, 1, 4, 5, 6, 3]);
+    const radii = new Float32Array([2, 2]);
+    const ctx = pointsCtx({
+      nodeAttrs: { type: 'points', n_points: 2, max_radius: 2 } as PointsMetadata,
+    });
+    const continuousView = {
+      ...viewState,
+      slicePosition: [0, 0, 0, 0],
+      dimensions: [...dimensions.slice(0, 3), contDim('depth')],
+    };
+    for (const rideAlong of [0.1, 0.01]) {
+      const out = runPointsBothBackends(
+        positions,
+        radii,
+        { ...continuousView, tolerance: [1e10, 1e10, 1e10, rideAlong] },
+        [{ start: 0, end: 2 }],
+        ctx
+      );
+      expect(out.pointCount).toBe(1);
+      expect(Array.from(out.positions)).toEqual([1, 2, 3]);
+    }
+    const configured = runPointsBothBackends(
+      positions,
+      radii,
+      { ...continuousView, tolerance: [1e10, 1e10, 1e10, 0.1] },
+      [{ start: 0, end: 2 }],
+      pointsCtx({
+        effectiveRadiusConfig: { spatialExtendDims: [true, true, true, true], maxRadius: 2 },
+        nodeAttrs: ctx.nodeAttrs,
+      })
+    );
+    expect(configured.pointCount).toBe(1);
+    expect(Array.from(configured.positions)).toEqual([1, 2, 3]);
+  });
+
+  it('compacts color, scalar, and element IDs with the surviving point', () => {
+    const out = projectPointsTo3D(
+      tsBackend,
+      new Float32Array([1, 2, 3, 0, 4, 5, 6, 1]),
+      new Uint8Array([10, 20, 30, 40, 50, 60]),
+      null,
+      null,
+      viewState,
+      [{ start: 10, end: 12 }],
+      pointsCtx({
+        nodeAttrs: { type: 'points', n_points: 12, has_labels: true } as PointsMetadata,
+      }),
+      null,
+      new Float32Array([0.2, 0.8])
+    );
+    expect(out.pointCount).toBe(1);
+    expect(Array.from(out.colors ?? [])).toEqual([40, 50, 60]);
+    expect(Array.from(out.scalars ?? [])).toEqual([Math.fround(0.8)]);
+    expect(Array.from(out.elementIds ?? [])).toEqual([11]);
   });
 });
 

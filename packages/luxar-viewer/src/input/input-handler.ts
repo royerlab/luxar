@@ -759,6 +759,10 @@ export class InputHandler {
     this.contextManager.setEnabled(enabled);
   }
 
+  public isEnabled(): boolean {
+    return this.contextManager.isEnabled();
+  }
+
   /**
    * Toggle dimension sliders panel visibility.
    *
@@ -859,6 +863,7 @@ export class InputHandler {
       sceneManager: this.sceneManager,
       renderingControls: this.renderingControls,
       animationManager: this.animationManager,
+      selectedDimension: this.selectedDimension,
     };
   }
 
@@ -1016,6 +1021,18 @@ export class InputHandler {
       );
       notifier.toast(message);
     }
+  }
+
+  /**
+   * Select the navigable dimension the [ / ] keys target — position among the
+   * non-displayed dimensions, as the number keys count them (a scene's
+   * `viewer_config.dimensions.selected_dimension`). Unlike a number-key press
+   * this takes the value as authored: one past the navigable count resolves to
+   * "nothing selected" rather than being refused.
+   */
+  public setSelectedDimension(index: number): void {
+    this.selectedDimension = index;
+    this.dimensionSliders?.setSelectedDimension(index);
   }
 
   /**

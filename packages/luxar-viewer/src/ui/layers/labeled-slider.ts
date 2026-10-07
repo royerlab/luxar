@@ -258,6 +258,11 @@ export class LabeledSlider {
     return [this.min, this.max];
   }
 
+  /** The whole control group (label + slider + readout). */
+  get element(): HTMLElement {
+    return this.wrapper;
+  }
+
   /**
    * Show/hide the whole control group (label + slider + readout) — for
    * mode-conditional controls like the volumetric Absorption slider

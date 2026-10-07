@@ -9,12 +9,15 @@
  *   - B: brightness clamped to [0, 1]
  *   - A: the same elementId's HIGH 16 bits (one f32 channel cannot
  *     carry the whole index exactly — see `luxarElementIdParts`)
- * Depth = 1.0 - brightness (brightness-as-depth tie-breaking) — or the
+ * Depth = 1 / (1 + unclamped salience) (brightness-as-depth tie-breaking) — or the
  * real fragment depth when `uSurfaceDepth == 1` (surface/'normal' mode:
  * front-most wins, matching the depth-sorted occluding surface).
  *
- * Picking always uses max-projection mode — no ray integration boost
- * — so the Σ_cam⁻¹ cofactor expansion is omitted vs gsplat.tsl.
+ * The amplitude and visibility weight are the VISUAL ones (the node's
+ * projection — sum-projection ray-integral boost included, selected at
+ * runtime by `uProjectionMode` — per-splat alpha, node opacity and gain;
+ * `../_shared/visibility-tsl.ts`), so a splat is pickable exactly when it
+ * is visible.
  *
  * @module rendering/picking/gsplat/pick.tsl
  */
@@ -29,43 +32,53 @@ import {
   vec2 as _vec2,
   vec3 as _vec3,
   vec4 as _vec4,
-  mat3 as _mat3,
   ivec2 as _ivec2,
   float,
   int,
   max,
   min,
-  abs,
   sqrt,
   exp,
   clamp,
-  smoothstep,
-  normalize,
   Discard,
-  depth,
   modelViewMatrix,
   cameraProjectionMatrix,
   screenCoordinate,
   screenSize,
 } from 'three/tsl';
 import { NodeMaterial } from 'three/webgpu';
+import { applyPickMaterialState } from '../_shared/shared-pick-graph-tsl';
+import { pickFragmentDepthTSL } from '../_shared/pick-depth-tsl';
 import { resolveElementTextureWidth, SPLAT_TEXTURE_LAYOUT } from '../../element-texture-layout';
 import {
   isOrthoProjectionTSL,
-  projectionSizeScaleTSL,
   perspectiveNearFadeTSL,
   invalidFloatTSL,
   type TSLNode,
   sortedIndexNode,
   densityDroppedNode,
+  sanitizeAlpha,
 } from '../../materials/_shared/tsl-helpers';
-import { gsplatQuadFootprintTSL } from '../../materials/gsplat/shader-tsl';
-import { GSPLAT_VISIBILITY_FLOOR } from '../../materials/gsplat/math';
+import {
+  gsplatClampedExtentsTSL,
+  gsplatCoverageFadeTSL,
+  gsplatEigenAxesTSL,
+  gsplatProjectedCovarianceTSL,
+  gsplatQuadFootprintTSL,
+  gsplatRaySigmaTSL,
+  gsplatSigmaCamTSL,
+} from '../../materials/gsplat/shader-tsl';
+import {
+  computeRayIntegralFactor,
+  GSPLAT_COV2D_DILATION_DEFAULT,
+  GSPLAT_VISIBILITY_FLOOR,
+} from '../../materials/gsplat/math';
+import { pickAlphaFactorTSL, pickVisibilityTSLNodesFromUniforms } from '../_shared/visibility-tsl';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 
 const vec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _vec2 as TSLNode;
 const vec3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _vec3 as TSLNode;
 const vec4: (a?: TSLNode, b?: TSLNode, c?: TSLNode, d?: TSLNode) => TSLNode = _vec4 as TSLNode;
-const mat3: (a?: TSLNode, b?: TSLNode, c?: TSLNode) => TSLNode = _mat3 as TSLNode;
 const ivec2: (a?: TSLNode, b?: TSLNode) => TSLNode = _ivec2 as TSLNode;
 
 /**
@@ -85,6 +98,12 @@ export interface GSplatPickTSLNodes {
   readonly uPixelRatio: TSLNode;
   readonly uTruncate: TSLNode;
   readonly uTruncateSq: TSLNode;
+  /**
+   * The draw pass's truncation radius (the node's T), read only by the
+   * coverage fade — a cull rule that must cull exactly what the draw culls.
+   * `uTruncate` keeps sizing the tighter pick footprint.
+   */
+  readonly uCoverageTruncate: TSLNode;
   /** Active ordering buffer: 0 = aSortedIndex, 1 = aSortedIndexB. */
   readonly uSortedIndexSlot: TSLNode;
   readonly uDensityDrop: TSLNode;
@@ -101,6 +120,24 @@ export interface GSplatPickTSLNodes {
   readonly uLabelFilterIndex: TSLNode;
   readonly uShiftC: TSLNode;
   readonly uInvOneMinusC: TSLNode;
+  /** The visual node's projection: 0 = sum (ray-integral), 1 = peak. */
+  readonly uProjectionMode: TSLNode;
+  /** The visual node's ray-integral factor (its own T, not the pick's). */
+  readonly uRayIntegralFactor: TSLNode;
+  readonly uIntensity: TSLNode;
+  readonly uOpacity: TSLNode;
+  readonly uHasElementAlpha: TSLNode;
+  readonly uVolumetric: TSLNode;
+}
+
+/**
+ * Build-time options of a pick factory that has no other config. Mirrors the
+ * visual factories' `elementTextureWidth`: the baked element-texture width
+ * must come from the texture the material BINDS — under a shared graph the
+ * factory's own leaf is a forwarding twin over a stand-in texture.
+ */
+export interface PickTextureWidthConfig {
+  readonly elementTextureWidth?: number;
 }
 
 /**
@@ -112,7 +149,8 @@ export interface GSplatPickTSLNodes {
  */
 export function gsplatPickWebGPUFactory(
   nodes: GSplatPickTSLNodes,
-  outMaterial?: NodeMaterial
+  outMaterial?: NodeMaterial,
+  config: PickTextureWidthConfig = {}
 ): NodeMaterial {
   const aQuadCorner: TSLNode = attribute<'vec2'>('aQuadCorner', 'vec2');
   // Draw-slot -> storage-slot mapping; splat data comes from the splat
@@ -123,6 +161,7 @@ export function gsplatPickWebGPUFactory(
   const uSplatTex = nodes.uSplatTex;
   const uResolution = nodes.uResolution;
   const uTruncate = nodes.uTruncate;
+  const uCoverageTruncate = nodes.uCoverageTruncate;
   const uNearCull = nodes.uNearCull;
   const uMaxExtentFactor = nodes.uMaxExtentFactor;
   const uCov2DDilation = nodes.uCov2DDilation;
@@ -134,6 +173,10 @@ export function gsplatPickWebGPUFactory(
   const uShiftC = nodes.uShiftC;
   const uInvOneMinusC = nodes.uInvOneMinusC;
   const uTruncateSq = nodes.uTruncateSq;
+  const uProjectionMode = nodes.uProjectionMode;
+  const uRayIntegralFactor = nodes.uRayIntegralFactor;
+  const uOpacity = nodes.uOpacity;
+  const uIntensity = nodes.uIntensity;
 
   // ---- Vertex ----
   //
@@ -146,6 +189,9 @@ export function gsplatPickWebGPUFactory(
   // (isotropic) path. Inside Fn(), statements emit in trace order.
 
   const vAmplitude2D: TSLNode = varying(float(0.0));
+  // Visual-pass weight (alpha factor x opacity x max(gain, 1)) — the factor
+  // the fragment's visibility test multiplies its falloff by.
+  const vPickWeight: TSLNode = varying(float(0.0)).setInterpolation('flat');
   const vL2D: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
   const vCenterScreen: TSLNode = varying(vec2(float(0.0), float(0.0)));
   const vNodeId: TSLNode = varying(uNodeId);
@@ -179,10 +225,15 @@ export function gsplatPickWebGPUFactory(
     // Safe because the width is a per-layout session constant, capped
     // at 4096 on every device (element-texture-layout.ts).
     const splatTexW: TSLNode = int(
-      resolveElementTextureWidth(
-        SPLAT_TEXTURE_LAYOUT,
-        (nodes.uSplatTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
-      )
+      // From the config FIRST: under a shared graph (#2992) the leaf is a
+      // forwarding twin over a 1x1 stand-in texture, so its own width is not
+      // the bound texture's (the wrappers pass the real one; see
+      // ../_shared/shared-pick-graph-tsl.ts).
+      config.elementTextureWidth ??
+        resolveElementTextureWidth(
+          SPLAT_TEXTURE_LAYOUT,
+          (nodes.uSplatTex as unknown as { value?: { image?: { width?: number } } }).value ?? null
+        )
     ).toVar();
     const texelX: TSLNode = splatBase.mod(splatTexW).toVar();
     const texelY: TSLNode = splatBase.div(splatTexW).toVar();
@@ -195,6 +246,7 @@ export function gsplatPickWebGPUFactory(
     const aCholesky01: TSLNode = splatT1.xy.toVar();
     const aCholesky23: TSLNode = splatT1.zw.toVar();
     const aCholesky45: TSLNode = splatT2.xy.toVar();
+    const aAlpha: TSLNode = splatT3.y.toVar();
     const aLabelIndex: TSLNode = splatT3.z.toVar();
 
     const centerCam4: TSLNode = modelViewMatrix.mul(vec4(aCenter, 1.0)).toVar();
@@ -207,21 +259,8 @@ export function gsplatPickWebGPUFactory(
     const invW: TSLNode = float(1.0).div(centerClip.w).toVar();
     const zDepth: TSLNode = centerCam.z.negate().toVar();
 
-    const L00 = aCholesky01.x;
-    const L10 = aCholesky01.y;
-    const L11 = aCholesky23.x;
-    const L20 = aCholesky23.y;
-    const L21 = aCholesky45.x;
-    const L22 = aCholesky45.y;
-    const L3D: TSLNode = mat3(
-      vec3(L00, L10, L20),
-      vec3(float(0.0), L11, L21),
-      vec3(float(0.0), float(0.0), L22)
-    );
-
-    const R: TSLNode = mat3(modelViewMatrix);
-    const L_cam: TSLNode = R.mul(L3D).toVar();
-    const SigmaCam: TSLNode = L_cam.mul(L_cam.transpose()).toVar();
+    // Camera-space covariance (GLSL twin: gsplatSigmaCam).
+    const SigmaCam: TSLNode = gsplatSigmaCamTSL(aCholesky01, aCholesky23, aCholesky45);
 
     // Unified near handling (shared helper; subsumes the old
     // standalone behind-camera reject — see shader-tsl.ts).
@@ -239,25 +278,14 @@ export function gsplatPickWebGPUFactory(
     // UNCONDITIONALLY — the former absolute maxLateralVar > 0.01 gate
     // skipped the fade for splats with spatial sigma < 0.1 world units
     // while the extent clamp still applied.
-    const maxLateralVar: TSLNode = max(
-      SigmaCam.element(int(0)).element(int(0)),
-      max(SigmaCam.element(int(1)).element(int(1)), SigmaCam.element(int(2)).element(int(2)))
-    ).toVar();
-    const isOrtho: TSLNode = isOrthoInt.equal(int(1)).toVar();
-    // 1e-20 floors = pure div-by-zero/sqrt guards, matching the visual
-    // shader: maxLateralVar is world-unit² (an absolute 1e-8 floor
-    // coverage-culled every splat of a tiny-unit scene); zDepth is
-    // bounded by the scene-relative near fade.
-    const projectedExtent: TSLNode = uResolution.y
-      .mul(0.5)
-      .mul(projectionSizeScaleTSL())
-      .mul(sqrt(max(maxLateralVar, float(1e-20))))
-      .mul(uTruncate)
-      .div(isOrtho.select(float(1.0), max(zDepth, float(1e-20))));
-    const maxExtent: TSLNode = max(uResolution.x, uResolution.y).mul(uMaxExtentFactor);
-    const coverageFade: TSLNode = float(1.0)
-      .sub(smoothstep(maxExtent.mul(0.5), maxExtent, projectedExtent))
-      .toVar();
+    const { coverageFade, isOrtho } = gsplatCoverageFadeTSL({
+      sigmaCam: SigmaCam,
+      isOrthoInt,
+      zDepth,
+      uResolution,
+      truncate: uCoverageTruncate,
+      uMaxExtentFactor,
+    });
     const coverageFadeReject: TSLNode = coverageFade.lessThan(0.01);
     // Use min(depthFade, coverageFade) for amplitude so picking matches
     // GLSL picking (shaders.ts) and visual TSL/GLSL gsplat
@@ -266,41 +294,22 @@ export function gsplatPickWebGPUFactory(
     // limits harder to pick than they appear.
     const nearFade: TSLNode = min(depthFade, coverageFade).toVar();
 
-    // Projection Jacobian, general form (GLSL twin: shader-glsl.ts), as three
-    // vec2 columns (TSL has no mat3x2): J[k] = res/2 * (P[k].xy / w -
-    // clip.xy * P[k].w / w^2), P = cameraProjectionMatrix. It reduces to the
-    // classic perspective / ortho Jacobians (projection-math.ts).
-    const P: TSLNode = cameraProjectionMatrix;
-    const halfRes: TSLNode = uResolution.mul(0.5);
-    const clipTerm: TSLNode = centerClip.xy.mul(invW.mul(invW));
-    const jacobianColumn = (k: number): TSLNode => {
-      const Pk: TSLNode = P.element(int(k));
-      return halfRes.mul(Pk.xy.mul(invW).sub(clipTerm.mul(Pk.w))).toVar();
-    };
-    const J0: TSLNode = jacobianColumn(0);
-    const J1: TSLNode = jacobianColumn(1);
-    const J2: TSLNode = jacobianColumn(2);
-
-    const S00: TSLNode = SigmaCam.element(int(0)).element(int(0));
-    const S01: TSLNode = SigmaCam.element(int(0)).element(int(1));
-    const S02: TSLNode = SigmaCam.element(int(0)).element(int(2));
-    const S10: TSLNode = SigmaCam.element(int(1)).element(int(0));
-    const S11: TSLNode = SigmaCam.element(int(1)).element(int(1));
-    const S12: TSLNode = SigmaCam.element(int(1)).element(int(2));
-    const S20: TSLNode = SigmaCam.element(int(2)).element(int(0));
-    const S21: TSLNode = SigmaCam.element(int(2)).element(int(1));
-    const S22: TSLNode = SigmaCam.element(int(2)).element(int(2));
-    const JS0: TSLNode = J0.mul(S00).add(J1.mul(S01)).add(J2.mul(S02)).toVar();
-    const JS1: TSLNode = J0.mul(S10).add(J1.mul(S11)).add(J2.mul(S12)).toVar();
-    const JS2: TSLNode = J0.mul(S20).add(J1.mul(S21)).add(J2.mul(S22)).toVar();
-    const Sigma2D00: TSLNode = JS0.x.mul(J0.x).add(JS1.x.mul(J1.x)).add(JS2.x.mul(J2.x)).toVar();
-    const Sigma2D10: TSLNode = JS0.x.mul(J0.y).add(JS1.x.mul(J1.y)).add(JS2.x.mul(J2.y)).toVar();
-    const Sigma2D11: TSLNode = JS0.y.mul(J0.y).add(JS1.y.mul(J1.y)).add(JS2.y.mul(J2.y)).toVar();
+    // Σ_2D = J · Σ_cam · Jᵀ with the general projection Jacobian (GLSL twin:
+    // gsplatProjectedCovariance; reduces to the classic perspective / ortho
+    // Jacobians, projection-math.ts).
+    const { S00, S01, S02, S11, S12, S22, Sigma2D00, Sigma2D10, Sigma2D11 } =
+      gsplatProjectedCovarianceTSL({ sigmaCam: SigmaCam, centerClip, invW, uResolution });
 
     // 2D low-pass dilation — visual/GLSL-pick parity (widen the pickable
-    // footprint to match the dilated visual splat). Diagonal only.
+    // footprint to match the dilated visual splat). Diagonal only. The energy
+    // compensation is the visual one too: the sum projection below reads it.
+    const detRaw2D: TSLNode = Sigma2D00.mul(Sigma2D11).sub(Sigma2D10.mul(Sigma2D10)).toVar();
     Sigma2D00.addAssign(cov2DDilation);
     Sigma2D11.addAssign(cov2DDilation);
+    const detDilated2D: TSLNode = Sigma2D00.mul(Sigma2D11).sub(Sigma2D10.mul(Sigma2D10)).toVar();
+    const dilationCompensation: TSLNode = sqrt(
+      max(detRaw2D, float(0.0)).div(max(detDilated2D, float(1e-12)))
+    ).toVar();
 
     // 2D Cholesky for the fragment's Mahalanobis solve.
     const s00: TSLNode = max(Sigma2D00, float(1e-8));
@@ -311,47 +320,55 @@ export function gsplatPickWebGPUFactory(
     const invLf11: TSLNode = float(1.0).div(Lf11);
     const vL2DVal: TSLNode = vec3(invLf00, Lf10, invLf11);
 
-    // Eigendecomposition for oriented quad — every shared value a Var
-    // statement, emitted unconditionally before any consumer branch.
-    const trace: TSLNode = Sigma2D00.add(Sigma2D11).toVar();
-    const det2: TSLNode = Sigma2D00.mul(Sigma2D11).sub(Sigma2D10.mul(Sigma2D10));
-    const disc: TSLNode = max(trace.mul(trace).sub(det2.mul(4.0)), float(0.0));
-    const sqrtDisc: TSLNode = sqrt(disc).toVar();
-    const lambda1: TSLNode = max(trace.add(sqrtDisc).mul(0.5), float(1e-6)).toVar();
-    const lambda2: TSLNode = max(trace.sub(sqrtDisc).mul(0.5), float(1e-6)).toVar();
-
-    const offDiagSig: TSLNode = abs(Sigma2D10).greaterThan(1e-6);
-    const majorOff: TSLNode = normalize(vec2(lambda1.sub(Sigma2D11), Sigma2D10));
-    const majorDiag: TSLNode = Sigma2D00.greaterThanEqual(Sigma2D11).select(
-      vec2(1.0, 0.0),
-      vec2(0.0, 1.0)
+    // Eigen-axes of Σ_2D and the max-extent-clamped quad half extents (shared
+    // graph builders; GLSL twins gsplatEigenvalues / gsplatMajorAxis /
+    // gsplatClampedExtents).
+    const { lambda1, lambda2, majorAxis, minorAxis } = gsplatEigenAxesTSL(
+      Sigma2D00,
+      Sigma2D10,
+      Sigma2D11
     );
-    const majorAxis: TSLNode = offDiagSig.select(majorOff, majorDiag).toVar();
-    const minorAxis: TSLNode = vec2(majorAxis.y.negate(), majorAxis.x).toVar();
+    const [extent1Legacy, extent2Legacy] = gsplatClampedExtentsTSL({
+      truncate: uTruncate,
+      lambda1,
+      lambda2,
+      uResolution,
+      uMaxExtentFactor,
+    });
 
-    const extent1Raw: TSLNode = uTruncate.mul(sqrt(lambda1)).toVar();
-    const extent2Raw: TSLNode = uTruncate.mul(sqrt(lambda2)).toVar();
-    const maxExtentPx: TSLNode = max(uResolution.x, uResolution.y).mul(uMaxExtentFactor);
-    const largestExtent: TSLNode = max(extent1Raw, extent2Raw).toVar();
-    const clampScale: TSLNode = largestExtent
-      .greaterThan(maxExtentPx)
-      .select(maxExtentPx.div(largestExtent), float(1.0))
+    // The amplitude the VISUAL pass emits (GLSL twin: shaders.ts): the sum
+    // projection's ray-integral boost and dilation compensation, or the plain
+    // peak. Unlike the visual factories (a compile-time branch), the pick graph
+    // selects at RUNTIME on uProjectionMode, so a blending-mode change never
+    // rebuilds it; both arms are emitted unconditionally as statements.
+    const sigmaRay: TSLNode = gsplatRaySigmaTSL(
+      { S00, S01, S02, S11, S12, S22 },
+      isOrtho,
+      centerCam
+    );
+    const sumAmplitude: TSLNode = aAmplitude
+      .mul(sigmaRay.mul(uRayIntegralFactor))
+      .mul(nearFade)
+      .mul(dilationCompensation)
       .toVar();
-    const extent1Legacy: TSLNode = extent1Raw.mul(clampScale);
-    const extent2Legacy: TSLNode = extent2Raw.mul(clampScale);
-
+    const amplitude2D: TSLNode = int(uProjectionMode)
+      .equal(int(0))
+      .select(sumAmplitude, aAmplitude.mul(nearFade))
+      .toVar();
     // Visible-footprint tightening — visual parity (materials/gsplat/
-    // shader-tsl.ts; derivation in materials/gsplat/math.ts). The pick
-    // fragment's visibility test carries no gain or alpha factor, so it
-    // omits the draw factors — the SAME footprint graph as the visual shader.
-    // Pickability always uses max projection — amplitude = aAmplitude · nearFade.
-    const amplitude2D: TSLNode = aAmplitude.mul(nearFade).toVar();
+    // shader-tsl.ts; derivation in materials/gsplat/math.ts). The SAME
+    // footprint graph with the same draw factors the fragment test applies
+    // (vPickWeight); the alpha factor also carries the node opacity.
+    const pickAlphaFactor: TSLNode = pickAlphaFactorTSL(sanitizeAlpha(aAlpha), nodes)
+      .mul(uOpacity)
+      .toVar();
     const {
       culled: footprintCulled,
       extent1,
       extent2,
     } = gsplatQuadFootprintTSL({
       amplitude2D,
+      drawFactors: { alphaFactor: pickAlphaFactor, gain: uIntensity },
       invOneMinusC: uInvOneMinusC,
       shiftC: uShiftC,
       truncateSq: uTruncateSq,
@@ -400,6 +417,7 @@ export function gsplatPickWebGPUFactory(
       .or(footprintCulled);
 
     vAmplitude2D.assign(amplitude2D);
+    vPickWeight.assign(pickAlphaFactor.mul(uIntensity.max(float(1.0))));
     vL2D.assign(vL2DVal);
     vCenterScreen.assign(vCenterScreenVal);
 
@@ -478,8 +496,12 @@ export function gsplatPickWebGPUFactory(
     const y0: TSLNode = d.x.mul(vL2D.x).toVar();
     const y1: TSLNode = d.y.sub(vL2D.y.mul(y0)).mul(vL2D.z).toVar();
     mahalSq.assign(y0.mul(y0).add(y1.mul(y1)));
+    // Visual salience: the falloff times the visual weight (vPickWeight).
     intensity.assign(
-      vAmplitude2D.mul(uInvOneMinusC).mul(max(exp(mahalSq.mul(-0.5)).sub(uShiftC), float(0.0)))
+      vAmplitude2D
+        .mul(uInvOneMinusC)
+        .mul(max(exp(mahalSq.mul(-0.5)).sub(uShiftC), float(0.0)))
+        .mul(vPickWeight)
     );
     brightness.assign(clamp(intensity, 0.0, 1.0));
     // Returned only so `.once()` has a result to cache — a body with no
@@ -508,30 +530,17 @@ export function gsplatPickWebGPUFactory(
     fragmentPrologue();
     return int(uSurfaceDepth)
       .equal(int(1))
-      .select(depth as unknown as TSLNode, float(1.0).sub(brightness));
+      .select(pickFragmentDepthTSL(), float(1.0).div(float(1.0).add(intensity)));
   });
 
   const material = outMaterial ?? new NodeMaterial();
   material.vertexNode = clipPos;
   material.colorNode = colorNode();
   material.depthNode = depthNode();
-  material.toneMapped = false;
-  material.depthTest = true;
-  material.depthWrite = true;
-  material.transparent = false;
-  // The element index's HIGH half rides in alpha, and THREE's NodeMaterial
-  // appends `DiffuseColor.w *= material.opacity` to every generated fragment
-  // (see the codegen snapshots, and `tsl-opacity-tail.test.ts` for the same
-  // tail on the visual materials). NoBlending does not suppress that
-  // shader-side multiply, so any opacity other than exactly 1 would scale the
-  // high half and decode a WRONG element id — on the TSL path only, since the
-  // GLSL twins have no such tail. Pin it so the multiply is provably identity,
-  // including when a caller injects `outMaterial`.
-  material.opacity = 1;
-  // Picking output is an opaque ID buffer; any blending would smear
-  // nodeId / elementId across overlapping picks. Matches the GLSL
-  // picking material.
-  material.blending = THREE.NoBlending;
+  // The pick pass's fixed state: an opaque, depth-tested ID buffer with
+  // opacity pinned to exactly 1 (the element id's high half rides in alpha;
+  // see applyPickMaterialState).
+  applyPickMaterialState(material);
   return material;
 }
 
@@ -543,6 +552,11 @@ export function gsplatPickWebGPUFactory(
 export function buildGSplatPickTSLNodesFromUniforms(
   uniforms: Record<string, THREE.IUniform>
 ): GSplatPickTSLNodes {
+  // Production defaults (the GSplatPickingMaterial constructor's), with the
+  // shifted-Gaussian constants following the truncation radius in use; the
+  // parity harness states every value it compares explicitly.
+  const truncate = (uniforms.uTruncate?.value as number) ?? 1.5;
+  const shiftC = Math.exp(-0.5 * truncate * truncate);
   return {
     // Splat data texture -- bound from the caller's uniform when present,
     // else a 4x1 RGBA32F placeholder (codegen-only consumers).
@@ -554,21 +568,29 @@ export function buildGSplatPickTSLNodesFromUniforms(
       (uniforms.uResolution?.value as THREE.Vector2 | undefined) ?? new THREE.Vector2(1, 1)
     ),
     uPixelRatio: uniform((uniforms.uPixelRatio?.value as number) ?? 1),
-    uTruncate: uniform((uniforms.uTruncate?.value as number) ?? 1.5),
-    // 1.5² — keep the default PAIR consistent (9.0 was half-copied from the
-    // visual builder's 3.0/9.0 and sized the quad for 1.5σ while discarding at 3σ).
-    uTruncateSq: uniform((uniforms.uTruncateSq?.value as number) ?? 2.25),
+    uTruncate: uniform(truncate),
+    uTruncateSq: uniform((uniforms.uTruncateSq?.value as number) ?? truncate * truncate),
+    uCoverageTruncate: uniform(
+      (uniforms.uCoverageTruncate?.value as number) ?? GSPLAT_DEFAULT_TRUNCATION_RADIUS
+    ),
     uSortedIndexSlot: uniform((uniforms.uSortedIndexSlot?.value as number) ?? 0),
     uDensityDrop: uniform((uniforms.uDensityDrop?.value as number) ?? 0),
-    uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 1e-4),
-    uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 1.0),
-    // Neutral fallback 0 (harness/snapshot adapter; production sets 0.3).
-    uCov2DDilation: uniform((uniforms.uCov2DDilation?.value as number) ?? 0),
+    uNearCull: uniform((uniforms.uNearCull?.value as number) ?? 0.1),
+    uMaxExtentFactor: uniform((uniforms.uMaxExtentFactor?.value as number) ?? 0.33),
+    uCov2DDilation: uniform(
+      (uniforms.uCov2DDilation?.value as number) ?? GSPLAT_COV2D_DILATION_DEFAULT
+    ),
     // Default 0 = brightness-as-depth (the commutative-mode convention).
     uSurfaceDepth: uniform((uniforms.uSurfaceDepth?.value as number) ?? 0),
     uNodeId: uniform((uniforms.uNodeId?.value as number) ?? 0),
     uLabelFilterIndex: uniform((uniforms.uLabelFilterIndex?.value as number) ?? 0),
-    uShiftC: uniform((uniforms.uShiftC?.value as number) ?? 0.0),
-    uInvOneMinusC: uniform((uniforms.uInvOneMinusC?.value as number) ?? 1.0),
+    uShiftC: uniform((uniforms.uShiftC?.value as number) ?? shiftC),
+    uInvOneMinusC: uniform((uniforms.uInvOneMinusC?.value as number) ?? 1.0 / (1.0 - shiftC)),
+    uProjectionMode: uniform((uniforms.uProjectionMode?.value as number) ?? 1),
+    uRayIntegralFactor: uniform(
+      (uniforms.uRayIntegralFactor?.value as number) ??
+        computeRayIntegralFactor(GSPLAT_DEFAULT_TRUNCATION_RADIUS)
+    ),
+    ...pickVisibilityTSLNodesFromUniforms(uniforms),
   };
 }

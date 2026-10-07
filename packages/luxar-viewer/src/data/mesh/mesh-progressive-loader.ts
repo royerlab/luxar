@@ -109,8 +109,10 @@ function emptyMeshData(): LoadedMeshData {
 /**
  * Reject a ladder whose levels disagree about whether an optional array exists.
  *
- * The three sibling loaders are LENIENT here — a missing level's colours are
- * filled with white — and they are right to be, because their levels answer a
+ * The three sibling loaders are LENIENT about colours — a level without them is
+ * filled with white (`concatColorsWhiteFilled` in
+ * `../loaders/progressive/concat-helpers`) — and they are right to be, because
+ * their levels answer a
  * spatial range query and a level legitimately contributes zero rows to a given
  * slice. A mesh ladder has no such case: every level is whole-node resident and
  * the levels are one source mesh partitioned by face, so `has_normals` /
@@ -301,7 +303,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    * Recomputing it anyway is actively harmful: without this latch,
    * `hasMoreLODs` stays `true` forever (the loaded-level count never grows on
    * a ladder that is never allowed to fetch a single level), so
-   * `queue-next.ts` keeps scheduling `runMeshRefinement` on every slice
+   * the pass scheduler keeps scheduling `runMeshRefinement` on every slice
    * scrub, which burns `MAX_CONSECUTIVE_REFINEMENT_FAILURES` refinement
    * passes per scrub and toasts "Refinement failed … — showing a partial
    * surface" — false, since zero triangles were ever committed.
@@ -310,7 +312,7 @@ export class MeshProgressiveLoader implements MeshDataLoader {
    * rethrows the SAME `LoaderError` object with no further `runPreflight()`
    * calls. `hasMoreLODs` also reads this field directly (see above) and
    * reports `false` once it is set, which is what actually removes the dead
-   * node from `queueNext`'s refinement loop rather than merely making its
+   * node from the refinement loop rather than merely making its
    * gate cheap to re-fail.
    *
    * A level's OWN `runPreflight()` rejection stays unlatched — and NOT because
@@ -769,13 +771,15 @@ export class MeshProgressiveLoader implements MeshDataLoader {
 
     const totalFaces = this.loadedLODs.reduce((s, d) => s + d.faceCount, 0);
     if (this._loadedLODCount < this.nLods) {
-      log.info(
+      log.verbose(
+        LogEmoji.INFO,
         Modules.SCENE_LOADER,
         `Progressive Mesh: ${this._loadedLODCount}/${this.nLods} LODs ` +
           `(${totalFaces} faces) — revealing`
       );
     } else if (startLevel < this.nLods) {
-      log.info(
+      log.verbose(
+        LogEmoji.INFO,
         Modules.SCENE_LOADER,
         `Progressive Mesh: ${this.nLods}/${this.nLods} LODs (${totalFaces} faces) — complete`
       );
@@ -861,9 +865,6 @@ export class MeshProgressiveLoader implements MeshDataLoader {
 
   dispose(): void {
     this._disposed = true;
-    if (this._concatCache?.result.texture?.kind === 'bitmap') {
-      this._concatCache.result.texture.bitmap.close();
-    }
     for (const loader of this.lodLoaders) loader.dispose();
     this.lodLoaders = [];
     this.loadedLODs = [];

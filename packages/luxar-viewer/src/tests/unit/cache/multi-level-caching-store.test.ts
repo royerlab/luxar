@@ -4,15 +4,8 @@ import { computeCacheBudgets, computeOpfsWriteQueueBudgetBytes } from '../../../
 import { MultiLevelCachingStore } from '../../../cache/multi-level-caching-store';
 import { OPFSStore } from '../../../cache/multi-level-caching-store/opfs-store';
 import { createFakeOpfsRoot } from '../../mocks/opfs.mock';
-
-function forceAbortSignalAnyFallback(): () => void {
-  const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, 'any');
-  Object.defineProperty(AbortSignal, 'any', { configurable: true, value: undefined });
-  return () => {
-    if (descriptor) Object.defineProperty(AbortSignal, 'any', descriptor);
-    else delete (AbortSignal as unknown as { any?: unknown }).any;
-  };
-}
+import { perfCounters } from '../../../profiling/perf-counters';
+import { forceAbortSignalAnyFallback } from '../../helpers/abort-signal-any';
 
 // Create comprehensive mocks
 const createMocks = () => {
@@ -269,12 +262,10 @@ describe('MultiLevelCachingStore', () => {
       // fetch so the async L2 write completes, then assert the second
       // access (a) returns the exact bytes, (b) hits no network, and
       // (c) re-populates L1.
+      perfCounters.reset();
       await store.get('test.chunk');
       // Yield to let the in-mock OPFS write resolve.
       await new Promise((r) => setTimeout(r, 0));
-
-      const before = store.getStats();
-      const beforeL2Hits = before.demand.l2Hits;
 
       store.clearL1();
       mocks.fetchedUrls.length = 0;
@@ -287,8 +278,10 @@ describe('MultiLevelCachingStore', () => {
       expect(mocks.fetchedUrls.length).toBe(0);
       // Promoted back into L1.
       expect(store.getStats().l1.chunksCount).toBe(1);
-      // Demand l2Hit counter incremented (the actual promotion signal).
-      expect(store.getStats().demand.l2Hits).toBe(beforeL2Hits + 1);
+      // One network read, then one L2 hit (the actual promotion signal) —
+      // in the store's stats and in the resettable perf counter alike.
+      expect(store.getStats().demand).toEqual({ l1Hits: 0, l2Hits: 1, networkRequests: 1 });
+      expect(perfCounters.get('l2.hits')).toBe(1);
     });
   });
 
@@ -318,12 +311,9 @@ describe('MultiLevelCachingStore', () => {
 
     it('second fetch increments l1Hits (L1 served the request)', async () => {
       await store.get('test.chunk'); // Network → l1+l2 populated.
-      const beforeL1 = store.getStats().demand.l1Hits;
-
       await store.get('test.chunk');
 
-      expect(store.getStats().demand.l1Hits).toBe(beforeL1 + 1);
-      expect(store.getStats().demand.networkRequests).toBe(1); // Unchanged
+      expect(store.getStats().demand).toEqual({ l1Hits: 1, l2Hits: 0, networkRequests: 1 });
     });
 
     it('demand.networkRequests matches network.requestCount when there is no prefetch traffic', async () => {
@@ -352,13 +342,42 @@ describe('MultiLevelCachingStore', () => {
 
     it('prefetch L1 hits do NOT increment demand.l1Hits', async () => {
       await store.getResult('test.chunk'); // populates L1
-      const beforeL1 = store.getStats().demand.l1Hits;
-
       await store.getResult('test.chunk', { suppressPrefetch: true });
 
-      // Demand hit count unchanged; the prefetch-originated read
-      // hit L1 but didn't count toward user-facing hit-rate.
-      expect(store.getStats().demand.l1Hits).toBe(beforeL1);
+      // Only the demand read counts; the prefetch-originated read hit L1 but
+      // didn't count toward user-facing hit-rate.
+      expect(store.getStats().demand).toEqual({ l1Hits: 0, l2Hits: 0, networkRequests: 1 });
+    });
+
+    // An abort is neutral wherever it lands, as it already is at L2 (see
+    // 'stops at L2 when a queued OPFS read is canceled').
+    it('a caller aborted while waiting on the network counts in no tier', async () => {
+      const source = (store as any).source as {
+        get(key: string, signal: AbortSignal): Promise<unknown>;
+      };
+      vi.spyOn(source, 'get').mockImplementation(
+        (_key, signal) =>
+          new Promise((resolve) => {
+            signal.addEventListener('abort', () => resolve({ kind: 'aborted' }), { once: true });
+          })
+      );
+      const controller = new AbortController();
+      const read = store.getResult('slow.chunk', { signal: controller.signal });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      controller.abort();
+
+      expect(await read).toEqual({ ok: false, error: { kind: 'Aborted' } });
+      expect(store.getStats().demand).toEqual({ l1Hits: 0, l2Hits: 0, networkRequests: 0 });
+    });
+
+    it('a network read the source reports aborted counts in no tier', async () => {
+      vi.spyOn((store as any).source, 'get').mockResolvedValue({ kind: 'aborted' });
+
+      expect(await store.getResult('aborted.chunk')).toEqual({
+        ok: false,
+        error: { kind: 'Aborted' },
+      });
+      expect(store.getStats().demand).toEqual({ l1Hits: 0, l2Hits: 0, networkRequests: 0 });
     });
   });
 
@@ -1518,8 +1537,6 @@ describe('MultiLevelCachingStore', () => {
         });
       }) as unknown as typeof fetch;
 
-      const beforeDemand = store.getStats().demand.networkRequests;
-
       // Prefetch starts first.
       const prefetchPromise = store.getResult('shared-with-prefetch', {
         suppressPrefetch: true,
@@ -1538,8 +1555,7 @@ describe('MultiLevelCachingStore', () => {
       expect(dem.ok).toBe(true);
       // Demand counter incremented once — for the demand call only,
       // not for the prefetch (which set suppressPrefetch: true).
-      const afterDemand = store.getStats().demand.networkRequests;
-      expect(afterDemand - beforeDemand).toBe(1);
+      expect(store.getStats().demand).toEqual({ l1Hits: 0, l2Hits: 0, networkRequests: 1 });
     });
 
     it('prefetch completing first lets the subsequent demand call hit L1', async () => {
@@ -1562,18 +1578,16 @@ describe('MultiLevelCachingStore', () => {
       expect(preResult.ok).toBe(true);
       expect(fetchCount).toBe(1);
 
-      const beforeL1 = store.getStats().demand.l1Hits;
-      const beforeNet = store.getStats().demand.networkRequests;
+      // The prefetch counted in no demand tier.
+      expect(store.getStats().demand).toEqual({ l1Hits: 0, l2Hits: 0, networkRequests: 0 });
 
       // Subsequent demand call hits L1; no further fetch.
       const demand = await store.getResult('warm-by-prefetch');
       expect(demand.ok).toBe(true);
       expect(fetchCount).toBe(1); // still 1 — no new fetch
 
-      const afterL1 = store.getStats().demand.l1Hits;
-      const afterNet = store.getStats().demand.networkRequests;
-      expect(afterL1 - beforeL1).toBe(1); // demand hit L1
-      expect(afterNet - beforeNet).toBe(0); // no demand network fetch
+      // The demand read hit L1, and no demand network fetch happened.
+      expect(store.getStats().demand).toEqual({ l1Hits: 1, l2Hits: 0, networkRequests: 0 });
     });
   });
 
@@ -1974,7 +1988,7 @@ describe('MultiLevelCachingStore', () => {
 
     it('in-flight data fetch unwinds with Aborted when store is disposed mid-flight', async () => {
       // The store-level dataAbort is merged into fetchWithRetry's signal
-      // via mergeAbortSignals. Disposing the store mid-fetch must
+      // via combineAbortSignals. Disposing the store mid-fetch must
       // propagate to the underlying fetch and surface as a non-ok result.
       let observedSignal: AbortSignal | undefined;
       global.fetch = vi.fn((_url: string, init?: RequestInit) => {

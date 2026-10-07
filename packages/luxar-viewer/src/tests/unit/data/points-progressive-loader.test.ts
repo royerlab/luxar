@@ -29,10 +29,17 @@ import {
   snapshotLodLoadStats,
 } from '../../../data/scene-loader/lod-load-stats';
 
+/** A log message as logged: a string, or the thunk `log.verbose` defers. */
+function messageOf(message: unknown): string {
+  return typeof message === 'function' ? (message as () => string)() : String(message);
+}
+
 interface SubLoaderStub {
   updateView: ReturnType<typeof vi.fn>;
   updateViewWithResidency: ReturnType<typeof vi.fn>;
   prefetchChunks: ReturnType<typeof vi.fn>;
+  prefetchChunkBoundary: ReturnType<typeof vi.fn>;
+  ensureInitialized: ReturnType<typeof vi.fn>;
   releaseAccumulator: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
   getMetrics: ReturnType<typeof vi.fn>;
@@ -144,6 +151,8 @@ function makeSubLoader(
     updateView,
     updateViewWithResidency,
     prefetchChunks: vi.fn().mockResolvedValue(undefined),
+    prefetchChunkBoundary: vi.fn().mockResolvedValue(undefined),
+    ensureInitialized: vi.fn().mockResolvedValue(undefined),
     releaseAccumulator: vi.fn(),
     dispose: vi.fn(),
     getMetrics: vi.fn(() => stubMetrics(metrics)),
@@ -357,9 +366,9 @@ describe('PointsProgressiveLoader', () => {
       const result = await loader.loadPoints(baseViewState);
       const retained = (
         loader as unknown as {
-          loadedLODs: LoadedPointsData[];
+          core: { loadedLODs: LoadedPointsData[] };
         }
-      ).loadedLODs;
+      ).core.loadedLODs;
 
       expect(loader.loadedLODCount).toBe(3);
       expect(retained).toEqual([result]);
@@ -1621,13 +1630,17 @@ describe('PointsProgressiveLoader', () => {
       await expect(loader.loadPoints(baseViewState)).rejects.toThrow(/'colors' as Uint8Array/);
     });
 
-    it('drops colors entirely when at least one LOD lacks them (all-or-nothing policy)', async () => {
-      // PointsProgressiveLoader's all-or-nothing per-attr concatenation
-      // policy: any LOD missing an optional attribute → the merged result
-      // drops that attribute (no fill-with-default like gsplats).
+    it('white-fills the colors of an LOD that lacks them (the Lines/GSplats policy)', async () => {
+      // One colourless rung used to drop colours from the WHOLE merged ladder,
+      // so every coloured point turned to the node default the moment it
+      // landed; Lines and GSplats fill only that rung, with white.
       lodB.updateView.mockResolvedValue(makeLodData(50, 3)); // no colors
       const result = await loader.loadPoints(baseViewState);
-      expect(result.colors).toBeUndefined();
+      expect(result.colors).toBeInstanceOf(Uint8Array);
+      expect(result.colors!.length).toBe(175 * 3);
+      expect(result.colorComponents).toBe(3);
+      const levelB = Array.from(result.colors!.subarray(100 * 3, 150 * 3));
+      expect(levelB.every((v) => v === 255)).toBe(true);
     });
 
     it('keeps colors absent when no LOD has colors', async () => {
@@ -1708,6 +1721,25 @@ describe('PointsProgressiveLoader', () => {
       const result = await loader.loadPoints(baseViewState);
 
       expect(loader.getMetrics().memoryUsed).toBe(measureLodBytes([result]));
+    });
+
+    it('getMetrics reports visibleElements from the current ladder, not stale level counters', async () => {
+      // Each level's own counter refreshes only when THAT level queries. A pass
+      // pinned to rung 0 (or a SliceCache restore) leaves the deeper levels'
+      // counters from an earlier slice, which a plain sum would add in.
+      lodA = makeSubLoader(makeLodData(100), { visibleElements: 100 });
+      lodB = makeSubLoader(makeLodData(50), { visibleElements: 50 });
+      lodC = makeSubLoader(makeLodData(25), { visibleElements: 25 });
+      loader = new PointsProgressiveLoader(
+        [lodA, lodB, lodC] as unknown as PointsSpatialIndexLoader[],
+        3,
+        '/points'
+      );
+
+      await loader.updateView({ ...baseViewState, ladderDepth: 1 });
+
+      expect(lodB.updateViewWithResidency).not.toHaveBeenCalled();
+      expect(loader.getMetrics().visibleElements).toBe(100); // rung 0's points only
     });
 
     it('addEventListener / removeEventListener fan out to every inner loader', () => {
@@ -1889,6 +1921,24 @@ describe('PointsProgressiveLoader — RGBA color layout (per-point opacity)', ()
     );
     await expect(loader.loadPoints(baseViewState)).rejects.toThrow(
       /mixed color layouts .*level 1: 3 vs 4 components/
+    );
+  });
+
+  it('rejects an RGBA level that omits colorComponents, naming the level', async () => {
+    // Defaulted to 3, the RGBA buffer passes the cross-level layout compare
+    // (3 vs 3) and fits the allocation, so without the per-level length check
+    // it is copied at stride 3 and silently mis-strides every point after it.
+    const undeclared = makeRgbaLodData(3, 0.9);
+    delete undeclared.colorComponents;
+    const lodA = makeSubLoader(undeclared);
+    const lodB = makeSubLoader(makeLodData(3, 3, { color: 'float32' })); // RGB
+    const loader = new PointsProgressiveLoader(
+      [lodA, lodB] as unknown as PointsSpatialIndexLoader[],
+      2,
+      '/points'
+    );
+    await expect(loader.loadPoints(baseViewState)).rejects.toThrow(
+      /concatenatePointsData \(LOD level 0\): colors length 12 does not match/
     );
   });
 
@@ -2445,5 +2495,27 @@ describe('PointsProgressiveLoader — no pin after the shadow pass is torn down'
       await pending;
     });
     expect(pins).toBe(0);
+  });
+});
+
+describe('PointsProgressiveLoader — per-pass logging', () => {
+  it('a streaming pass logs its ladder summary at verbose, never at info', async () => {
+    // A pass runs on every view tick; an info line per pass floods the console
+    // the GSplats sibling keeps quiet (it uses log.verbose for the same line).
+    const info = vi.spyOn(log, 'info');
+    const verbose = vi.spyOn(log, 'verbose');
+    const lods = [makeSubLoader(makeLodData(10)), makeSubLoader(makeLodData(5))];
+    const l = new PointsProgressiveLoader(
+      lods as unknown as PointsSpatialIndexLoader[],
+      2,
+      '/points-log'
+    );
+    await l.updateView(baseViewState);
+    expect(info).not.toHaveBeenCalled();
+    expect(
+      verbose.mock.calls.some((call) => messageOf(call[2]).includes('Progressive Points'))
+    ).toBe(true);
+    info.mockRestore();
+    verbose.mockRestore();
   });
 });

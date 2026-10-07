@@ -41,6 +41,14 @@ export const RENDERING_SETTINGS_VERSION = 1 as const;
 interface RenderingSettingsEnvelope {
   version: number;
   settings: Partial<RenderingSettings>;
+  /**
+   * The `content_hash` of the scene these edits were made on. A store
+   * republished at the same URL carries a new hash, and its authored
+   * defaults must win over edits made to the previous build (see
+   * `RenderingControls.adoptSceneContentHash`). Absent on documents written
+   * before this field existed, and for a scene that records no hash.
+   */
+  contentHash?: string;
 }
 
 /** RenderingSettings with the orbit/fly feel fields narrowed to non-optional concretes. */
@@ -145,12 +153,17 @@ export function stripDynamicClippingPlanes(
  * Persist current settings under the scene id, wrapped in the
  * `{ version: RENDERING_SETTINGS_VERSION, settings }` envelope. Quota-safe.
  */
-export function saveSettingsToStorage(sceneId: string, settings: RenderingSettings): void {
+export function saveSettingsToStorage(
+  sceneId: string,
+  settings: RenderingSettings,
+  contentHash?: string
+): void {
   if (!sceneId) return;
   try {
     const envelope: RenderingSettingsEnvelope = {
       version: RENDERING_SETTINGS_VERSION,
       settings: JSON.parse(serializeSettings(stripDynamicClippingPlanes(settings))),
+      ...(contentHash ? { contentHash } : {}),
     };
     localStorage.setItem(StorageKeys.rendering(sceneId), JSON.stringify(envelope));
   } catch (err) {
@@ -172,6 +185,8 @@ export interface LoadedSettings {
   stored: boolean;
   /** Parsed loaded settings, or null when `stored` is false or the settings member is malformed. */
   loaded: Partial<RenderingSettings> | null;
+  /** The scene build the stored edits were made on (see the envelope's `contentHash`). */
+  contentHash?: string;
 }
 
 /**
@@ -225,7 +240,11 @@ export function loadSettingsFromStorage(sceneId: string): LoadedSettings {
     return { stored: false, loaded: null };
   }
 
-  return { stored: true, loaded: envelope.settings };
+  return {
+    stored: true,
+    loaded: envelope.settings,
+    contentHash: typeof envelope.contentHash === 'string' ? envelope.contentHash : undefined,
+  };
 }
 
 /** Human-readable version of a rejected document, for the one log line. */

@@ -84,8 +84,11 @@ export interface OPFSMetadata {
   lastValidatedAt?: number;
 }
 
-/** Current OPFS filename-encoding version. Bumped only when keyToFileName changes. */
-export const OPFS_ENCODING_VERSION = 2;
+/**
+ * Current OPFS filename-encoding version. Bumped only when keyToFileName
+ * changes (3: chunk file names carry the content-hash tag).
+ */
+export const OPFS_ENCODING_VERSION = 3;
 
 /**
  * Snapshot returned by `MultiLevelCachingStore.getStats()`. Aggregates
@@ -152,8 +155,10 @@ export interface MultiLevelCacheStats {
   };
   /**
    * Per-tier demand-hit counters (user demand only — prefetch traffic
-   * is excluded). Each user-demand `getResult` call increments exactly
-   * one of `l1Hits`, `l2Hits`, or `networkRequests`. Combined with the
+   * is excluded). Each user-demand `getResult` call a tier answered
+   * increments exactly one of `l1Hits`, `l2Hits`, or `networkRequests`
+   * (a network error counts as a network request); an aborted call or a
+   * missing key increments none. Combined with the
    * L0 provider's stats, this lets the monitor surface an effective
    * demand hit-rate rather than the L1-only ratio.
    */

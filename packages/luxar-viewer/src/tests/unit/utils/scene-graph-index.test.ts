@@ -189,6 +189,60 @@ describe('SceneGraphIndex — agrees with getObjectByName', () => {
     }
   });
 
+  it('walks once for a repeated miss, until the graph could make it a hit', () => {
+    // A path not built yet (a lazy LOD level, a deferred partition part) is
+    // looked up on every pass; each miss used to be a full subtree walk.
+    const root = new THREE.Group();
+    const a = new THREE.Group();
+    a.name = '/a';
+    const outside = new THREE.Mesh();
+    outside.name = '/later';
+    root.add(a);
+    attachSceneGraphIndex(root);
+
+    const walk = THREE.Object3D.prototype.getObjectByName;
+    let walks = 0;
+    THREE.Object3D.prototype.getObjectByName = function (this: THREE.Object3D, name: string) {
+      walks++;
+      return walk.call(this, name);
+    };
+    try {
+      expect(findObjectByName(root, '/later')).toBeUndefined();
+      expect(findObjectByName(root, '/later')).toBeUndefined();
+      expect(findObjectByName(root, '/later')).toBeUndefined();
+      expect(walks).toBe(1);
+
+      // An add can turn the miss into a hit: answered at once, no stale miss.
+      root.add(outside);
+      expect(findObjectByName(root, '/later')).toBe(outside);
+      outside.removeFromParent();
+      expect(findObjectByName(root, '/later')).toBeUndefined();
+
+      // A rename can too.
+      const before = walks;
+      expect(findObjectByName(a, '/renamed')).toBeUndefined();
+      expect(findObjectByName(a, '/renamed')).toBeUndefined();
+      expect(walks).toBe(before + 1);
+      a.name = '/renamed';
+      expect(findObjectByName(a, '/renamed')).toBe(a);
+
+      // And so can moving an existing member INTO the looked-up scope.
+      const inner = new THREE.Group();
+      inner.name = '/inner';
+      const elsewhere = new THREE.Group();
+      elsewhere.name = '/elsewhere';
+      root.add(inner, elsewhere);
+      const moved = new THREE.Mesh();
+      moved.name = '/moved';
+      elsewhere.add(moved);
+      expect(findObjectByName(inner, '/moved')).toBeUndefined();
+      inner.add(moved);
+      expect(findObjectByName(inner, '/moved')).toBe(moved);
+    } finally {
+      THREE.Object3D.prototype.getObjectByName = walk;
+    }
+  });
+
   it('forgets a disposed subtree and indexes a node added after attach', () => {
     const root = new THREE.Group();
     attachSceneGraphIndex(root);

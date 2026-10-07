@@ -519,6 +519,7 @@ When all elements share the same value, store only one value with metadata.
 **Storage Format:**
 - Array shape: `(1,)` or `(1, d)` instead of `(N,)` or `(N, d)`
 - Metadata: `{"encoding": {"name": "broadcasted", "n_elements": N}}`. **COLOR** arrays additionally carry `"original_dtype": "<numpy dtype>"` (e.g. `"uint8"`, `"uint16"`) so readers restore the native integer color dtype and normalize it, rather than reading raw 0-255 floats. Non-color arrays (radii/sharpness/amplitudes) omit it and decode as Float32.
+- `"value"` repeats the stored row, flattened (`row.ravel().tolist()`, exact at the stored dtype). A reader holding the consolidated metadata needs no request for the row; the viewer uses it. The row is still stored, so a reader that ignores `value` decodes exactly as before — except that an all-fill row (e.g. the zero off-diagonal of axis-aligned splats) has no chunk at all, since zarr skips a chunk equal to the fill value, and reads as the fill value through a 404.
 
 **Example:**
 ```python

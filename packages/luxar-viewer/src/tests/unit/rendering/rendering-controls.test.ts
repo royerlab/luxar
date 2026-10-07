@@ -193,8 +193,6 @@ describe('RenderingControls', () => {
       setVignetteEnabled: vi.fn(),
       setChromaticLensDistortionEnabled: vi.fn(),
       updateChromaticLensDistortion: vi.fn(),
-      startDeferRebuild: vi.fn(),
-      endDeferRebuild: vi.fn(),
     };
 
     // Setup mock animation controller
@@ -220,6 +218,65 @@ describe('RenderingControls', () => {
     const gui = (renderingControls as unknown as { gui: { domElement: HTMLElement } }).gui;
     expect(gui.domElement.style.top).toContain('20px');
     expect(gui.domElement.style.top).toContain('safe-area-inset-top');
+  });
+
+  describe('saved edits and the scene build they were made on', () => {
+    it('persists authored defaults alongside an edit saved during the first load', () => {
+      renderingControls.setSceneId('first-visit');
+      renderingControls.setZarrViewerConfig({ exposure: 1.5 });
+      expect(renderingControls.adoptSceneContentHash('hash-a')).toBe(false);
+      renderingControls.settings.bloomStrength = 0.3;
+      renderingControls.saveSettings();
+
+      renderingControls.applyZarrDefaults();
+      renderingControls.saveSettings();
+      expect(renderingControls.settings.exposure).toBe(1.5);
+      expect(renderingControls.settings.bloomStrength).toBe(0.3);
+
+      renderingControls.setSceneId('first-visit');
+      expect(renderingControls.adoptSceneContentHash('hash-a')).toBe(false);
+      expect(renderingControls.settings.exposure).toBe(1.5);
+      expect(renderingControls.settings.bloomStrength).toBe(0.3);
+    });
+
+    it('stamps edits saved before metadata arrives so they survive the next load', () => {
+      localStorage.clear();
+      renderingControls.setSceneId('loading-test');
+      renderingControls.settings.fov = 37;
+      renderingControls.saveSettings();
+      expect(renderingControls.hasStoredSettings()).toBe(true);
+      expect(renderingControls.adoptSceneContentHash('hash-a')).toBe(false);
+
+      renderingControls.setSceneId('loading-test');
+      expect(renderingControls.hasStoredSettings()).toBe(true);
+      expect(renderingControls.settings.fov).toBe(37);
+      expect(renderingControls.adoptSceneContentHash('hash-a')).toBe(false);
+    });
+
+    it('keeps edits from this build and sets aside edits from another', () => {
+      localStorage.clear();
+      renderingControls.setSceneId('build-test');
+      expect(renderingControls.adoptSceneContentHash('hash-a')).toBe(false); // nothing stored
+      renderingControls.saveSettings(); // saved on build hash-a
+
+      renderingControls.setSceneId('build-test'); // a later load at the same URL
+      expect(renderingControls.hasStoredSettings()).toBe(true);
+      expect(renderingControls.adoptSceneContentHash('hash-a')).toBe(false);
+
+      renderingControls.setSceneId('build-test');
+      expect(renderingControls.adoptSceneContentHash('hash-b')).toBe(true);
+    });
+
+    it('treats a document without a hash as another build, unless the scene has none', () => {
+      localStorage.clear();
+      renderingControls.setSceneId('legacy-test');
+      renderingControls.saveSettings(); // hash unknown: written without one
+
+      renderingControls.setSceneId('legacy-test');
+      expect(renderingControls.adoptSceneContentHash(undefined)).toBe(false);
+      renderingControls.setSceneId('legacy-test');
+      expect(renderingControls.adoptSceneContentHash('hash-a')).toBe(true);
+    });
   });
 
   describe('lifecycle cleanup', () => {
@@ -517,6 +574,24 @@ describe('RenderingControls', () => {
       );
     });
 
+    it('an authored adaptive_dpr_enabled reaches the manager, after the ceiling', () => {
+      // The panel used to read "off" while the manager kept adapting: every
+      // step reallocates the full-screen targets (a leak on WebGPU).
+      const controls = renderingControls as any;
+      const adaptiveDPRManager = { setHighDPRAllowed: vi.fn(), setEnabled: vi.fn() };
+      controls.setAdaptiveDPRManager(adaptiveDPRManager);
+
+      controls.applyOverrides({ allowHighDPR: true, adaptiveDPREnabled: false });
+
+      expect(adaptiveDPRManager.setEnabled).toHaveBeenCalledWith(false);
+      expect(adaptiveDPRManager.setHighDPRAllowed.mock.invocationCallOrder[0]).toBeLessThan(
+        adaptiveDPRManager.setEnabled.mock.invocationCallOrder[0]
+      );
+      adaptiveDPRManager.setEnabled.mockClear();
+      controls.applyOverrides({ bloomStrength: 0.5 });
+      expect(adaptiveDPRManager.setEnabled).not.toHaveBeenCalled();
+    });
+
     it('applies the stored Density Guard flag on load and reset, unless URL-disabled', () => {
       const controls = renderingControls as any;
       const control = {
@@ -766,6 +841,23 @@ describe('RenderingControls', () => {
       expect(mockSceneManager.updateExposure).toHaveBeenCalledWith(2);
       // NaN never reaches the renderer: validation clamps to the default.
       expect(controls.settings.bloomStrength).toBe(config.renderingControls.defaults.bloomStrength);
+    });
+
+    it('pushes an authored density_guard_enabled onto the live guard', () => {
+      const controls = renderingControls as any;
+      const control = {
+        isEnabled: () => true,
+        sessionDisabled: false,
+        setEnabled: vi.fn(),
+        thinning: () => ({ nodes: 0, minKeep: 1 }),
+        capElementsPerPixel: () => 4,
+      };
+      controls.setDensityGuardControl(control);
+
+      controls.applyOverrides({ densityGuardEnabled: false });
+
+      expect(controls.settings.densityGuardEnabled).toBe(false);
+      expect(control.setEnabled).toHaveBeenLastCalledWith(false);
     });
 
     it('getSettingsSnapshot returns a copy of the live settings', () => {

@@ -32,7 +32,7 @@ import {
  * location. Adding a new range to the source without adding it here will
  * NOT silently regress coverage — the `MAP_COMPLETENESS` test below
  * cross-checks our list against the validator's behaviour by asserting
- * we exercise as many ranges as the source declares (10).
+ * we exercise as many ranges as the source declares (9).
  */
 type RangeRef = {
   name: string;
@@ -43,12 +43,6 @@ const RANGE_REFS: RangeRef[] = [
     name: 'fly.movement.speed',
     set: (c, r) => {
       c.controls.fly.movement.speed = r;
-    },
-  },
-  {
-    name: 'fly.movement.acceleration',
-    set: (c, r) => {
-      c.controls.fly.movement.acceleration = r;
     },
   },
   {
@@ -237,9 +231,9 @@ describe('validateControls', () => {
       expect(hit).toBeDefined();
       errorNames.add(name);
     }
-    // 10 ranges declared in the source — keep the literal expectation
+    // 9 ranges declared in the source — keep the literal expectation
     // so a deletion from the source's ranges array is loud.
-    expect(errorNames.size).toBe(10);
+    expect(errorNames.size).toBe(9);
   });
 
   // [W3-style] After perturbing exactly one range, no OTHER range's

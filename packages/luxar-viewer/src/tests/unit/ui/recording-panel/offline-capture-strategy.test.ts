@@ -59,6 +59,10 @@ vi.mock('../../../../ui/recording-panel/drivers/video-mode-driver', () => ({
 }));
 
 vi.mock('../../../../ui/toast', () => ({ showToast: vi.fn() }));
+// The depth-sort drain is the coordinator's own unit-tested contract; here
+// only its ORDER inside the frame loop is under test (A17). The app's
+// coordinator rides the scene manager (`makeSceneManager`).
+const resortForCaptureMock = vi.hoisted(() => vi.fn(async (_maxWaitMs?: number) => {}));
 vi.mock('../../../../utils/log', () => ({
   log: { info: vi.fn(), warning: vi.fn(), error: vi.fn() },
   Modules: { RECORDING: 'Recording' },
@@ -152,6 +156,7 @@ function makeSceneManager(
   });
   const sm = {
     controls: { getControls: vi.fn(() => orbitControls) },
+    depthSort: { resortForCapture: resortForCaptureMock },
     // The strategy reads the DISPLAY size to honour the panel's "Native"
     // resolution option. `renderer.getSize()` reports the SSAA-multiplied
     // size instead, so the two disagree whenever SSAA is on — the double
@@ -1240,6 +1245,55 @@ describe('OfflineCaptureStrategy', () => {
       // …and the normal teardown still ran.
       expect(document.querySelector('.luxar-recording-overlay')).toBeNull();
       expect(strat.sessionAbort).toBeNull();
+    });
+  });
+
+  describe('depth-sort drain (A17)', () => {
+    beforeEach(() => {
+      resortForCaptureMock.mockClear();
+    });
+
+    it('awaits a pose-fresh depth re-sort AFTER the LOD settle and BEFORE every grab', async () => {
+      // An order-dependent (normal / volumetric) node is drawn with the
+      // permutation of the last sort. The per-frame scheduler only re-sorts
+      // past an angle threshold, and the loop's own render is suppressed for
+      // the whole capture, so without the drain a turntable films frames
+      // sorted for an earlier pose.
+      const events: string[] = [];
+      const { sm } = makeSceneManager();
+      const hooks = makeHooks();
+      hooks.isLODSettled = vi.fn(() => {
+        events.push('settle');
+        return true;
+      });
+      resortForCaptureMock.mockImplementation(async () => {
+        await Promise.resolve();
+        events.push('resort');
+      });
+      vi.mocked(ImageSequenceDriver).mockImplementationOnce(() => {
+        const d = mockState.makeDriver();
+        d.captureFrame = vi.fn(async () => {
+          events.push('capture');
+        });
+        return d as never;
+      });
+      const strat = new OfflineCaptureStrategy(sm, makeAnimController(), hooks);
+
+      await strat.run(makeOpts(), 'turntable', makeSession());
+
+      expect(resortForCaptureMock).toHaveBeenCalledTimes(2);
+      // Per frame: the tri-state probe + the deciding poll, then the drain,
+      // then the grab.
+      expect(events).toEqual([
+        'settle',
+        'settle',
+        'resort',
+        'capture',
+        'settle',
+        'settle',
+        'resort',
+        'capture',
+      ]);
     });
   });
 

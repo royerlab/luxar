@@ -4,9 +4,10 @@
  * An ORPHAN is a chunk file on disk that the persisted index
  * (`_cache_meta.json`) does not list: the index is saved on a debounce, so a
  * session killed (or navigated away) between a chunk write and the next index
- * save leaves files the next session cannot see. Nothing else ever reclaims
- * them, so without this crawl disk use grows across interrupted sessions while
- * every one of those chunks is re-fetched from the network.
+ * save leaves files the index cannot name. Without this crawl they would never
+ * be reclaimed (disk use grows across interrupted sessions) nor accounted in the
+ * index's size and LRU. Serving them does not wait for it: until the crawl is
+ * complete, `OPFSStore.get()` reads an unindexed key's file directly.
  *
  * This module only WALKS the bucket directories and hands each unlisted file to
  * the caller, under a hard per-session budget; the decision (re-index vs
@@ -27,8 +28,11 @@ export interface OrphanFile {
   bucket: FileSystemDirectoryHandle;
   bucketName: string;
   fileName: string;
-  /** The key the name encodes, or null for a name this store cannot produce. */
-  key: string | null;
+  /**
+   * The key the name encodes and the hash tag it was written under (see
+   * `hashTag`), or null for a name this store cannot produce.
+   */
+  parsed: { key: string; tag: string } | null;
 }
 
 export interface OrphanCrawlOptions {
@@ -95,7 +99,7 @@ async function crawlBucket(
     if (result.orphans >= options.maxOrphans) return false;
     result.orphans++;
     try {
-      await options.onOrphan({ bucket, bucketName, fileName, key: fileNameToKey(fileName) });
+      await options.onOrphan({ bucket, bucketName, fileName, parsed: fileNameToKey(fileName) });
     } catch {
       // The handler owns its errors; one bad file must not end the crawl.
     }

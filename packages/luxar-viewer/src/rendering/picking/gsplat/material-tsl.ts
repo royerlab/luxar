@@ -3,8 +3,9 @@
  *
  * Mirrors the GLSL `GSplatPickingMaterial` one-for-one — same
  * constructor signature, same `updateCameraParams` / `dispose`
- * surface, same `CameraAwareMaterial` contract. Always uses the
- * 1.5σ truncation + max-projection mode the GLSL path defaults to.
+ * surface, same `CameraAwareMaterial` contract. Same 1.5σ pick
+ * footprint, and the same visual-pass inputs (projection, ray-integral
+ * factor, alpha / opacity / gain weight) synced per pick render.
  *
  * **Uniform plumbing.** This class owns one `UniformNode` per shader
  * input. The public `uniforms` record exposes each node as an
@@ -22,9 +23,24 @@ import { NodeMaterial } from 'three/webgpu';
 import { gsplatPickWebGPUFactory } from './pick.tsl';
 import type { CameraAwareMaterial } from '../../materials/_shared/camera-aware-material';
 import { proxyIUniform, type TSLNode } from '../../materials/_shared/tsl-helpers';
-import { getPlaceholderElementTexture } from '../../element-texture-layout';
-import type { GSplatPickingMaterialConfig, SurfacePickAwareMaterial } from './material';
-import { GSPLAT_COV2D_DILATION_DEFAULT } from '../../materials/gsplat/math';
+import {
+  getPlaceholderElementTexture,
+  resolveElementTextureWidth,
+  SPLAT_TEXTURE_LAYOUT,
+} from '../../element-texture-layout';
+import { applySharedPickGraph } from '../_shared/shared-pick-graph-tsl';
+import type { GSplatPickingMaterialConfig } from './material';
+import type { SurfacePickAwareMaterial } from '../_shared/surface-pick';
+import {
+  computeRayIntegralFactor,
+  GSPLAT_COV2D_DILATION_DEFAULT,
+} from '../../materials/gsplat/math';
+import {
+  createPickVisibilityTSLNodes,
+  proxyPickVisibilityUniforms,
+} from '../_shared/visibility-tsl';
+import { copyPickVisibilityUniforms } from '../_shared/visibility-uniforms';
+import { GSPLAT_DEFAULT_TRUNCATION_RADIUS } from '../../../config/constants';
 
 export class GSplatPickingTSLMaterial
   extends NodeMaterial
@@ -38,6 +54,7 @@ export class GSplatPickingTSLMaterial
     uPixelRatio: TSLNode;
     uTruncate: TSLNode;
     uTruncateSq: TSLNode;
+    uCoverageTruncate: TSLNode;
     uShiftC: TSLNode;
     uInvOneMinusC: TSLNode;
     uNearCull: TSLNode;
@@ -48,6 +65,12 @@ export class GSplatPickingTSLMaterial
     uSortedIndexSlot: TSLNode;
     uDensityDrop: TSLNode;
     uLabelFilterIndex: TSLNode;
+    uProjectionMode: TSLNode;
+    uRayIntegralFactor: TSLNode;
+    uIntensity: TSLNode;
+    uOpacity: TSLNode;
+    uHasElementAlpha: TSLNode;
+    uVolumetric: TSLNode;
   };
 
   constructor(config: GSplatPickingMaterialConfig) {
@@ -66,6 +89,8 @@ export class GSplatPickingTSLMaterial
       uPixelRatio: uniform(1),
       uTruncate: uniform(truncate),
       uTruncateSq: uniform(truncate * truncate),
+      // The draw pass's T for the coverage fade (synced per pick render).
+      uCoverageTruncate: uniform(GSPLAT_DEFAULT_TRUNCATION_RADIUS),
       uShiftC: uniform(shiftC),
       uInvOneMinusC: uniform(invOneMinusC),
       uNearCull: uniform(0.1),
@@ -86,6 +111,12 @@ export class GSplatPickingTSLMaterial
       uSortedIndexSlot: uniform(0),
       uDensityDrop: uniform(0),
       uLabelFilterIndex: uniform(0),
+      // Visual-pass inputs, neutral until the first pick render syncs the
+      // node's own (picking-system/visibility-sync.ts); peak projection by
+      // default, the pick pass's historical convention.
+      uProjectionMode: uniform(1),
+      uRayIntegralFactor: uniform(computeRayIntegralFactor(GSPLAT_DEFAULT_TRUNCATION_RADIUS)),
+      ...createPickVisibilityTSLNodes(),
     };
 
     this.uniforms = {
@@ -94,6 +125,7 @@ export class GSplatPickingTSLMaterial
       uPixelRatio: proxyIUniform(this.tslNodes.uPixelRatio),
       uTruncate: proxyIUniform(this.tslNodes.uTruncate),
       uTruncateSq: proxyIUniform(this.tslNodes.uTruncateSq),
+      uCoverageTruncate: proxyIUniform(this.tslNodes.uCoverageTruncate),
       uShiftC: proxyIUniform(this.tslNodes.uShiftC),
       uInvOneMinusC: proxyIUniform(this.tslNodes.uInvOneMinusC),
       uNearCull: proxyIUniform(this.tslNodes.uNearCull),
@@ -104,12 +136,33 @@ export class GSplatPickingTSLMaterial
       uSortedIndexSlot: proxyIUniform(this.tslNodes.uSortedIndexSlot),
       uDensityDrop: proxyIUniform(this.tslNodes.uDensityDrop),
       uLabelFilterIndex: proxyIUniform(this.tslNodes.uLabelFilterIndex),
+      uProjectionMode: proxyIUniform(this.tslNodes.uProjectionMode),
+      uRayIntegralFactor: proxyIUniform(this.tslNodes.uRayIntegralFactor),
+      ...proxyPickVisibilityUniforms(this.tslNodes),
     };
 
     this.toneMapped = false;
     this.side = THREE.DoubleSide;
 
-    gsplatPickWebGPUFactory(this.tslNodes, this);
+    this.rebuildGraph();
+  }
+
+  /**
+   * Point this material at the SHARED graph of its configuration
+   * (`../_shared/shared-pick-graph-tsl.ts`): one node build per configuration,
+   * keyed on the baked element-texture width, instead of one per material.
+   */
+  private rebuildGraph(): void {
+    const key = {
+      elementTextureWidth: resolveElementTextureWidth(
+        SPLAT_TEXTURE_LAYOUT,
+        this.tslNodes.uSplatTex.value as { image?: { width?: number } } | null
+      ),
+    };
+    applySharedPickGraph(this, 'gsplat-pick', key, this.tslNodes, (inputs, scratch) => {
+      // The width from the key, not from the forwarding leaf (a stand-in).
+      gsplatPickWebGPUFactory(inputs, scratch, key);
+    });
   }
 
   /**
@@ -123,7 +176,7 @@ export class GSplatPickingTSLMaterial
     if (current === next) return;
     this.tslNodes.uSplatTex = texture(next);
     this.uniforms.uSplatTex = proxyIUniform(this.tslNodes.uSplatTex);
-    gsplatPickWebGPUFactory(this.tslNodes, this);
+    this.rebuildGraph();
     this.needsUpdate = true;
   }
 
@@ -161,6 +214,7 @@ export class GSplatPickingTSLMaterial
     );
     cloned.uniforms.uPixelRatio.value = this.uniforms.uPixelRatio.value;
     cloned.uniforms.uNearCull.value = this.uniforms.uNearCull.value;
+    cloned.uniforms.uCoverageTruncate.value = this.uniforms.uCoverageTruncate.value;
     cloned.uniforms.uMaxExtentFactor.value = this.uniforms.uMaxExtentFactor.value;
     cloned.uniforms.uCov2DDilation.value = this.uniforms.uCov2DDilation.value;
     cloned.uniforms.uSurfaceDepth.value = this.uniforms.uSurfaceDepth.value;
@@ -170,15 +224,13 @@ export class GSplatPickingTSLMaterial
     // until the coordinator's next per-frame re-assert.
     cloned.uniforms.uSortedIndexSlot.value = this.uniforms.uSortedIndexSlot.value;
     cloned.uniforms.uDensityDrop.value = this.uniforms.uDensityDrop.value;
+    copyPickVisibilityUniforms(this.uniforms, cloned.uniforms);
+    cloned.uniforms.uProjectionMode.value = this.uniforms.uProjectionMode.value;
+    cloned.uniforms.uRayIntegralFactor.value = this.uniforms.uRayIntegralFactor.value;
     return cloned as this;
   }
 
-  updateCameraParams(
-    resolution: THREE.Vector2,
-    _isOrtho: boolean = false,
-    nearCull?: number,
-    pixelRatio: number = 1
-  ): void {
+  updateCameraParams(resolution: THREE.Vector2, nearCull?: number, pixelRatio: number = 1): void {
     (this.uniforms.uResolution.value as THREE.Vector2).copy(resolution);
     this.uniforms.uPixelRatio.value = pixelRatio;
 

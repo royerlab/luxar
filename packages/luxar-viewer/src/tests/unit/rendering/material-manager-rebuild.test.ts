@@ -119,18 +119,17 @@ describe('MaterialManager.rebuildAfterContextRestore', () => {
       let count = 0;
       material.updateCameraParams = ((
         resolution: THREE.Vector2,
-        isOrtho?: boolean,
         nearCull?: number,
         pixelRatio?: number
       ) => {
         count++;
-        orig(resolution, isOrtho, nearCull, pixelRatio);
+        orig(resolution, nearCull, pixelRatio);
       }) as typeof material.updateCameraParams;
       return () => count;
     })();
 
     mm.rebuildAfterContextRestore();
-    mm.updateCameraParams(new THREE.Vector2(1920, 1080), false, undefined, 1);
+    mm.updateCameraParams(new THREE.Vector2(1920, 1080), undefined, 1);
 
     // The material is still in the registry, so updateCameraParams
     // reached it. Pre-fix this would be 0.

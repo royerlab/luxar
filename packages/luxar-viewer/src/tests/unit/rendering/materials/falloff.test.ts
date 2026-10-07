@@ -112,6 +112,7 @@ describe('GLSL3 shaders emit the shared falloff constants', () => {
     ['line pick', LINE_PICK_FRAGMENT_SHADER],
   ];
 
+  // geometry-subset: K and C are the point and line soft-edge profile; gsplats use their Gaussian truncation and a mesh has no soft edge
   it.each(SOURCES)('%s shader declares K and C from the shared module', (_name, source) => {
     expect(source).toMatch(new RegExp(`float K = ${k};`));
     expect(source).toMatch(new RegExp(`float C = ${c};`));
@@ -120,6 +121,7 @@ describe('GLSL3 shaders emit the shared falloff constants', () => {
     expect(source).toMatch(/float INV_ONE_MINUS_C = 1\.0 \/ \(1\.0 - C\);/);
   });
 
+  // geometry-subset: K and C are the point and line soft-edge profile; gsplats use their Gaussian truncation and a mesh has no soft edge
   it.each(SOURCES)('%s shader contains no stray hardcoded ln(100)', (_name, source) => {
     // Catches a future edit that reintroduces the literal instead of importing.
     const stray = source.match(/4\.6051702/g) ?? [];

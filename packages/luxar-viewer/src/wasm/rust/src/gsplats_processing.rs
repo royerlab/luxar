@@ -319,7 +319,7 @@ fn mahalanobis_distance_internal(diff: &[f32], packed_l: &[f32], ndim: usize) ->
 /// * `discrete_visibility` - Precomputed discrete-dim gate [splat_count] (all 1 if none)
 /// * `slice_position` - Current slice [ndim]
 /// * `continuous_hidden_dims` - Sorted continuous hidden dims [num_continuous]
-/// * `display_dims` - Display dims in requested order [2 or 3]
+/// * `display_dims` - Display dims in requested order [1 to 3]
 /// * `ndim`, `splat_count`, `min_amplitude`, `truncate`
 /// * `out_centers3d` [splat_count * 3], `out_cholesky3d` [splat_count * 6],
 ///   `out_amplitudes` [splat_count], `out_colors` [splat_count * color_components]

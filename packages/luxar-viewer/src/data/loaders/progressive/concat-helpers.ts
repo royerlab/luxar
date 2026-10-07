@@ -4,9 +4,10 @@
  * The points / lines / gsplats progressive loaders each concatenate a set of
  * per-LOD typed-array fields. The "allocate `total * perItem`, copy at a
  * running offset" loop and the "all-or-nothing optional field" gate were
- * duplicated across all three; they live here once. Geometry-specific
- * wrinkles (segment-index offsetting, colour fill-with-white) stay in the
- * individual loaders.
+ * duplicated across all three; they live here once, as does the shared colour
+ * policy ({@link concatColorsWhiteFilled}: a rung without colours is filled
+ * with white, the others keep theirs). Geometry-specific wrinkles
+ * (segment-index offsetting, Lines' sharpness default) stay in the loaders.
  *
  * The helpers are structurally generic over the concrete typed-array type
  * `A` (Float32Array, Uint8/16/32Array, Float16Array, …) so each loader keeps
@@ -15,6 +16,8 @@
  *
  * @module data/loaders/progressive/concat-helpers
  */
+
+import { assertColorLayout } from '../color-loader';
 
 /** Structural shape common to every typed array we concatenate. */
 export interface ConcatTypedArray {
@@ -116,12 +119,15 @@ export function concatRequiredField<A extends ConcatTypedArray, P>(
  * (`commit-points-geometry.ts` / `commit-lines-geometry.ts`) compare each
  * optional field's PRESENCE against the committed parent precisely because of
  * this all-or-nothing drop — a new level without the field flips the merged
- * result from real values to the adapter's constant fill. If this policy ever
- * changes (e.g. fill-with-default), revisit those presence conjuncts. Those
- * gates stay correct under the abstainer rule: a ladder whose first committed
- * level is empty publishes no optional fields, and the pass that adds a
- * non-empty level flips presence on — a difference the gates already read as
- * "not a pure append" and answer with a full rewrite.
+ * result from real values to the adapter's constant fill. Colours no longer go
+ * through this helper ({@link concatColorsWhiteFilled} fills a missing rung
+ * instead of dropping the field), but their presence conjunct is still needed:
+ * a ladder whose committed levels carry NO colours flips presence on the moment
+ * a coloured level joins, which is not a pure append either. Those gates stay
+ * correct under the abstainer rule: a ladder whose first committed level is
+ * empty publishes no optional fields, and the pass that adds a non-empty level
+ * flips presence on — a difference the gates already read as "not a pure
+ * append" and answer with a full rewrite.
  */
 export function concatOptionalField<A extends ConcatTypedArray, P>(
   parts: P[],
@@ -148,4 +154,105 @@ export function concatOptionalField<A extends ConcatTypedArray, P>(
     label,
     (index) => levels[index]
   );
+}
+
+/** A colour buffer as the ladders carry it (dtype preserved). */
+export type ConcatColorArray = Float32Array | Uint8Array | Uint16Array;
+
+/** Full-scale "white" for a colour dtype; an RGBA alpha gets it too (opaque). */
+function whiteFor(colors: ConcatColorArray): number {
+  if (colors instanceof Uint8Array) return 255;
+  if (colors instanceof Uint16Array) return 65535;
+  return 1.0;
+}
+
+function assertSameColorLayout(
+  label: string,
+  level: number,
+  part: { colors: ConcatColorArray; components: number },
+  out: ConcatColorArray,
+  colorK: number
+): void {
+  const { colors, components } = part;
+  // LADDER-DTYPE CONTRACT: `set` converts by VALUE, not semantics — a Float32
+  // (0..1) level written into a Uint8 (0..255) merge truncates to garbage, and
+  // the reverse writes 255x values. The writer emits one colour dtype per ladder.
+  if (colors.constructor !== out.constructor) {
+    throw new Error(
+      `${label}: mixed color dtypes across LOD levels (level ${level} carries ` +
+        `'colors' as ${colors.constructor.name} but the ladder uses ` +
+        `${out.constructor.name}) — ladder levels must share each field's dtype.`
+    );
+  }
+  // Same contract for the LAYOUT: `colorK` strides every copy, so an RGBA level
+  // inside an RGB ladder (same constructor, invisible to the dtype check) would
+  // land at the wrong stride and corrupt every element after it.
+  if (components !== colorK) {
+    throw new Error(
+      `${label}: mixed color layouts across LOD levels (level ${level}: ` +
+        `${components} vs ${colorK} components) — ladder levels must share the ` +
+        'color layout (RGB vs RGBA).'
+    );
+  }
+}
+
+/** Check every rung's colours against its own declared layout (see below). */
+function assertEachColorLayout<P>(
+  parts: readonly P[],
+  get: (p: P) => { colors: ConcatColorArray | null | undefined; components: number | undefined },
+  countOf: (p: P) => number,
+  label: string
+): void {
+  for (const [level, part] of parts.entries()) {
+    const { colors, components } = get(part);
+    assertColorLayout(colors, countOf(part), components ?? 3, `${label} (LOD level ${level})`);
+  }
+}
+
+/**
+ * Concatenate the per-element colours of a ladder, the policy all three
+ * emissive geometries share: when ANY rung carries colours the result carries
+ * them, and a rung that does not is filled with white (full scale for the
+ * dtype; an RGBA ladder's alpha fills opaque, the per-element-opacity
+ * identity). `null` when no rung has colours. Dtype and layout (3 = RGB,
+ * 4 = RGBA) come from the first coloured rung; a rung that disagrees is
+ * malformed data and throws, naming the level. Zero-row rungs abstain.
+ *
+ * Every coloured rung is first checked against its OWN declared layout
+ * (`assertColorLayout`): an RGBA buffer that omits `colorComponents` (default
+ * 3) agrees with an RGB ladder and fits the allocation, so the cross-rung
+ * compare alone would copy it at stride 3 and mis-stride every element after it.
+ *
+ * @param label - Caller name for the error messages.
+ */
+export function concatColorsWhiteFilled<P>(
+  parts: readonly P[],
+  get: (p: P) => { colors: ConcatColorArray | null | undefined; components: number | undefined },
+  countOf: (p: P) => number,
+  label: string
+): { colors: ConcatColorArray; colorComponents: 3 | 4 } | null {
+  // Zero-row rungs abstain (as in concatOptionalField): they copy nothing, so
+  // their (possibly absent, possibly differently typed) colours get no vote.
+  assertEachColorLayout(parts, get, countOf, label);
+  const coloured = parts.filter((p) => get(p).colors);
+  const voter = coloured.find((p) => countOf(p) > 0) ?? coloured[0];
+  const first = voter === undefined ? undefined : get(voter);
+  if (!first?.colors) return null;
+  const colorK: 3 | 4 = first.components === 4 ? 4 : 3;
+  const total = parts.reduce((sum, p) => sum + countOf(p), 0);
+  const Ctor = first.colors.constructor as new (n: number) => ConcatColorArray;
+  const out = new Ctor(total * colorK);
+  let offset = 0;
+  for (const [level, part] of parts.entries()) {
+    const { colors, components } = get(part);
+    if (countOf(part) === 0) continue;
+    if (colors) {
+      assertSameColorLayout(label, level, { colors, components: components ?? 3 }, out, colorK);
+      out.set(colors, offset * colorK);
+    } else {
+      out.fill(whiteFor(out), offset * colorK, (offset + countOf(part)) * colorK);
+    }
+    offset += countOf(part);
+  }
+  return { colors: out, colorComponents: colorK };
 }

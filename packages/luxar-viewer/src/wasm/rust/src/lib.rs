@@ -68,6 +68,7 @@ mod effective_radii;
 mod gsplats_processing;
 mod lines_clipping;
 mod mesh_culling;
+mod points_membership;
 mod projection;
 
 // Re-export all public functions for WASM binding
@@ -88,4 +89,5 @@ pub use lines_clipping::{
     JOINT_CLIPPED, JOINT_FREE_END, JOINT_HUB,
 };
 pub use mesh_culling::{compact_visible_faces, mesh_vertex_visibility_mask};
+pub use points_membership::points_slice_membership;
 pub use projection::extract_3d_positions;

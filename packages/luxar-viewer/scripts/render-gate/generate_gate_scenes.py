@@ -55,8 +55,10 @@ SCENE_NAMES = (
     "glass",
     "lod_ladder",
     "tiny_units_ortho",
+    "surface_pick",
     "tp50",
     "sp64",
+    "sp64_closeup_authored",
     "lod_timelapse",
     "pl_timelapse",
     "arrayref_4d",
@@ -270,6 +272,59 @@ def write_partition_normal(path: Path, *, small: bool = False) -> None:
             partition={"max_elements": 8_000},
             layer=True,
         )
+
+
+def write_surface_pick(path: Path, *, small: bool = False) -> None:
+    """Points and lines in the depth-ordered ``opaque`` / ``normal`` modes, all pickable.
+
+    The pick pass resolves overlaps by REAL projected depth under these modes
+    (front-most wins, as the user sees the occluding surface) and by
+    brightness elsewhere. ``mixed`` is all additive, so without this scene no
+    gate case picks points or lines under the surface convention. Four nodes —
+    points opaque, points normal, lines opaque, lines normal — share one
+    volume, so at many pixels several of them overlap at different depths.
+    Per-element alpha varies, and the opaque points carry a gain above 1, so
+    the pick weight (alpha x opacity x max(gain, 1)) is exercised too.
+    """
+    rng = np.random.default_rng(7)
+    with LuxarZarrCompiler(path, encoding_mode=EncodingMode.PRECISION) as compiler:
+        scene = compiler.create_scene(
+            dimensions=Dimensions.default_3d(),
+            viewer_config=ViewerConfig(camera=_camera((12.0, 8.0, 14.0))),
+        )
+        for name, mode, intensity in (
+            ("points_opaque", "opaque", 2.0),
+            ("points_normal", "normal", 1.0),
+        ):
+            positions = _clustered(rng, 6_000, 5.0)
+            colors = np.concatenate(
+                [
+                    rng.uniform(0.2, 1.0, size=(len(positions), 3)),
+                    rng.uniform(0.3, 1.0, size=(len(positions), 1)),
+                ],
+                axis=1,
+            ).astype(np.float32)
+            scene.add_points(
+                name,
+                positions,
+                colors=colors,
+                radii=rng.uniform(0.05, 0.2, size=len(positions)).astype(np.float32),
+                labels=_labels(len(positions)),
+                blending_mode=mode,
+                intensity=intensity,
+                layer=True,
+            )
+        for name, mode in (("lines_opaque", "opaque"), ("lines_normal", "normal")):
+            line_vertices, widths, indices = _polylines(rng, 30, 60, 5.0)
+            scene.add_lines(
+                name,
+                line_vertices,
+                widths,
+                indices=indices,
+                labels=_labels(len(line_vertices)),
+                blending_mode=mode,
+                layer=True,
+            )
 
 
 def write_glass(path: Path, *, small: bool = False) -> None:
@@ -584,14 +639,26 @@ def _time_partition(
     }
 
 
-def _spatial_partition(path: Path, name: str, tiles: int, small: bool) -> PoseEntry:
-    """Shared body of ``sp64`` / ``sp500`` / ``sp2000``: one laddered part per tile."""
+def _spatial_partition(
+    path: Path,
+    name: str,
+    tiles: int,
+    small: bool,
+    *,
+    opening: dict[str, Any] | None = None,
+) -> PoseEntry:
+    """Shared body of ``sp64`` / ``sp500`` / ``sp2000``: one laddered part per tile.
+
+    The data depends only on ``tiles`` (it seeds the generator), so a variant
+    that changes ``opening`` (the authored opening camera, default ``full``)
+    holds the same parts as its base store.
+    """
     grid = _GRIDS[tiles]
     extent = np.array(grid, dtype=np.float64) * _CELL
     per_part = 32 if small else _SPLATS_PER_PART
     parts = _tile_parts(np.random.default_rng(tiles), grid, per_part)
     full = _full_view(extent)
-    _write_partition_scene(path, parts, extent, full)
+    _write_partition_scene(path, parts, extent, opening or full)
     return {
         "store": _store_ref(name),
         "poses": {"full": full, "closeup": dict(_CLOSEUP)},
@@ -633,6 +700,21 @@ def write_sp64(path: Path, *, small: bool = False) -> PoseEntry:
     refinement as the camera moves between the two poses.
     """
     return _spatial_partition(path, "sp64", 64, small)
+
+
+def write_sp64_closeup_authored(path: Path, *, small: bool = False) -> PoseEntry:
+    """``sp64``'s data with the CLOSE-UP as its authored opening camera.
+
+    ``viewer_config.camera`` is the ``closeup`` pose (inside the corner cell
+    looking -z, fov 40). Gate case: the opening camera is framed from the
+    store BEFORE any node loads, so a cold load initialises and fetches the
+    ~1 part in the frustum instead of all 64. ``cold_sp64_closeup`` cannot
+    show that: its pose is applied by the harness after navigation, so its
+    initial load still sees the default camera.
+    """
+    return _spatial_partition(
+        path, "sp64_closeup_authored", 64, small, opening=dict(_CLOSEUP)
+    )
 
 
 def write_lod_timelapse(path: Path, *, small: bool = False) -> PoseEntry:
@@ -1030,6 +1112,7 @@ Writer = Callable[..., "PoseEntry | None"]
 
 WRITERS: dict[str, Writer] = {
     "mixed": write_mixed,
+    "surface_pick": write_surface_pick,
     "env_splats": write_env_splats,
     "partition_normal": write_partition_normal,
     "glass": write_glass,
@@ -1037,6 +1120,7 @@ WRITERS: dict[str, Writer] = {
     "tiny_units_ortho": write_tiny_units_ortho,
     "tp50": write_tp50,
     "sp64": write_sp64,
+    "sp64_closeup_authored": write_sp64_closeup_authored,
     "lod_timelapse": write_lod_timelapse,
     "pl_timelapse": write_pl_timelapse,
     "arrayref_4d": write_arrayref_4d,

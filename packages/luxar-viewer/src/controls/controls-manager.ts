@@ -190,6 +190,11 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   private storedDistanceLimits: { min: number; max: number } | null = null;
   private storedZoomLimits: { min: number; max: number } | null = null;
 
+  // Both gates persist across mode switches: a fresh control starts with
+  // pointer input enabled, which would undo a kiosk's allow_pointer: false.
+  private enabled = true;
+  private pointerEnabled = true;
+
   // Saved camera state for switching
   private savedCameraPosition = new THREE.Vector3();
   private savedCameraRotation = new THREE.Euler();
@@ -260,9 +265,17 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     }
 
     this.currentType = type;
+    if (this.currentControls) {
+      this.currentControls.enabled = this.enabled;
+      this.currentControls.pointerEnabled = this.pointerEnabled;
+    }
 
     // Restore camera state
     this.restoreCameraState();
+
+    // A newly created control may emit while restoring its pose. Publish the
+    // completed switch once, with the new control type, after that work.
+    if (this.currentControls) this.attachControlEventForwarders(this.currentControls);
 
     // Emit change event
     this.dispatchEvent({ type: 'change', controlType: type });
@@ -314,20 +327,17 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   private createOrbitControls(): void {
     // Target is set in restoreCameraState() after creation.
     this.currentControls = createOrbitControls(this.makeCreationCtx());
-    this.attachControlEventForwarders(this.currentControls);
     this.clock.update(); // Reset baseline; next getDelta() reads from now.
   }
 
   private createFlyControls(): void {
     this.currentControls = createFlyControls(this.makeCreationCtx());
-    this.attachControlEventForwarders(this.currentControls);
     this.clock.update(); // Reset baseline; next getDelta() reads from now.
   }
 
   private createOrthoControls(): void {
     // Target is set in restoreCameraState() after creation.
     this.currentControls = createOrthoControls(this.makeCreationCtx());
-    this.attachControlEventForwarders(this.currentControls);
     this.clock.update(); // Reset baseline; next getDelta() reads from now.
   }
 
@@ -419,10 +429,22 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   // Configuration setters
   // ---------------------------------------------------------------------------
 
+  /** Enable or disable user input on the active controls and every later mode. */
   public setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
     if (this.currentControls) {
       this.currentControls.enabled = enabled;
     }
+  }
+
+  /** Gate canvas gestures without stopping keyboard driven fly motion or auto rotation. */
+  public setPointerEnabled(enabled: boolean): void {
+    this.pointerEnabled = enabled;
+    if (this.currentControls) this.currentControls.pointerEnabled = enabled;
+  }
+
+  public isPointerEnabled(): boolean {
+    return this.pointerEnabled;
   }
 
   public setAutoRotate(enabled: boolean): void {
@@ -661,12 +683,13 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
   }
 
   /**
-   * Re-derive internal orbit state (distance, orientation) from the current camera
-   * position and target. Must be called after externally setting camera.position
-   * to avoid the next update() snapping the camera back to the old distance.
+   * Re-derive control state from the current camera pose. Must be called after
+   * externally changing the pose so the next update() keeps it.
    */
   public reinitialize(): void {
     if (this.currentControls instanceof LuxarOrbitControls) {
+      this.currentControls.reinitialize();
+    } else if (this.currentControls instanceof LuxarFlyControls) {
       this.currentControls.reinitialize();
     }
   }

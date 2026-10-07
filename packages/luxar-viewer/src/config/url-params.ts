@@ -1,11 +1,13 @@
 /**
  * Centralized URL parameter parsing.
  *
- * `window.location.search` is read in exactly one place — `main.ts` — and the
- * result flows through the application as a typed object. Components that need
- * a flag declare it on their options, rather than reaching back to
- * `window.location` themselves. URL writing is centralized here for the same
- * reason.
+ * The query string is parsed in one place — `readUrlParams()` here, whose
+ * standalone caller is the bootstrap (`core/bootstrap.ts`, which also re-reads
+ * it for a same-document `#view=` hash change) — and the result flows through
+ * the application as a typed object. Components that need a flag declare it on
+ * their options, rather than reaching back to `window.location` themselves.
+ * URL writing is centralized here for the same reason
+ * (`replaceBrowserDataSourceUrl`, called by `LuxarApp.switchDataset`).
  *
  * This makes consumers testable (no need to mock `window.location`), the URL
  * contract auditable (every recognized parameter is listed in `UrlParams`),
@@ -77,6 +79,9 @@ export const URL_PARAM_KEYS = {
   renderAudit: 'renderAudit',
   gpuBudgetMB: 'gpuBudgetMB',
   cacheBudgetMB: 'cacheBudgetMB',
+  workers: 'workers',
+  prefetch: 'prefetch',
+  textScale: 'textScale',
   dpr: 'dpr',
   input: 'input',
   lineJoin: 'lineJoin',
@@ -472,12 +477,13 @@ export interface UrlParams {
   /** Clear caches on init (`?clearCache`). */
   clearCache: boolean;
   /**
-   * Whether the substitutive-LOD cross-fade is enabled: blend adjacent LOD
-   * levels' opacity as the camera zooms across their boundary instead of a hard
-   * visibility swap, for blendable (additive/luminous/volumetric) layers
-   * (anti-popping). **On by
-   * default**; pass `?noLodFade` to disable it (e.g. to compare against the
-   * hard swap or isolate a rendering issue).
+   * Whether the substitutive-LOD level dissolve is enabled: when a blendable
+   * (additive/luminous/volumetric) group changes its displayed level, dissolve
+   * the outgoing level into the incoming one over `config.lod.fadeMs` instead
+   * of a hard visibility swap (anti-popping). Driven by time since the change,
+   * not by the camera's distance to a threshold, so a parked camera always
+   * settles on one level. **On by default**; pass `?noLodFade` to disable it
+   * (e.g. to compare against the hard swap or isolate a rendering issue).
    */
   lodFade: boolean;
   /**
@@ -496,8 +502,8 @@ export interface UrlParams {
    * (additive/luminous/volumetric)
    * LOD leaf's additive ladder streams in, scale its opacity by `1/e(k)` so the
    * partial prefix renders at full-level brightness instead of brightening up as
-   * chunks arrive (anti-popping on the time axis, orthogonal to `lodFade`'s
-   * distance axis). **On by default**; pass `?noLodEnergy` to disable it (e.g.
+   * chunks arrive (anti-popping WITHIN one level's stream, orthogonal to
+   * `lodFade`'s dissolve BETWEEN levels). **On by default**; pass `?noLodEnergy` to disable it (e.g.
    * to compare against the uncompensated brightening ramp).
    */
   lodEnergyComp: boolean;
@@ -627,6 +633,25 @@ export interface UrlParams {
    * `cache/heap-budget.ts`.
    */
   cacheBudgetMB: number | null;
+  /**
+   * Worker pool size for the session (`?workers=16`; `0` = auto from the core
+   * count). Beats the stored Settings value, which it otherwise mirrors: a
+   * launcher on a dedicated display machine sets it without touching that
+   * machine's saved preferences. Clamped to the Settings range at boot.
+   */
+  workers: number | null;
+  /**
+   * Concurrent chunk fetches for the session (`?prefetch=12`) — the Settings
+   * popover's "Prefetch Limit". Same precedence and clamping as `workers`.
+   */
+  prefetch: number | null;
+  /**
+   * Scale every overlay's text for the session (`?textScale=0.8`). Wins over
+   * the scene's authored `viewer_config.text_scale`. Only the type shrinks or
+   * grows: overlay positions, widths and anchors stay where they were
+   * authored. Clamped to [0.25, 4]. See `ui/overlay-manager.ts`.
+   */
+  textScale: number | null;
   /**
    * Pin a fixed device pixel ratio and disable adaptive DPR for the
    * session (`?dpr=1`). The value is clamped to [0.25, native DPR] at
@@ -766,6 +791,9 @@ export function readUrlParams(
     renderAudit: has(K.renderAudit),
     gpuBudgetMB: parseNonNegativeInt(get(K.gpuBudgetMB)),
     cacheBudgetMB: parseNonNegativeInt(get(K.cacheBudgetMB)),
+    workers: parseNonNegativeInt(get(K.workers)),
+    prefetch: parsePositiveInt(get(K.prefetch)),
+    textScale: parsePositiveFloat(get(K.textScale)),
     dpr: parsePositiveFloat(get(K.dpr)),
     input: normalizeInputParam(get(K.input)),
     lineJoin: parseLineJoinStyle(get(K.lineJoin)),

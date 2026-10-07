@@ -16,6 +16,7 @@
 
 import '../../styles/control-panel.css';
 
+import { VIEWER_ATTACHED_EVENT } from '../../config/control-contract';
 import {
   activeChapterIndex,
   deriveChapters,
@@ -53,7 +54,6 @@ const DEFAULT_IDLE_RESET_S = 120;
 export const CHAPTER_RETRY_BASE_MS = 500;
 /** Keep retry traffic bounded while a display remains offline. */
 export const CHAPTER_RETRY_MAX_MS = 5_000;
-
 /**
  * The one line of instruction the panel gives.
  *
@@ -304,7 +304,6 @@ function createPresentationCache(): PresentationCache {
         const state = await fetchState();
         title = titleFromViewerState(state);
         config = panelConfigFromViewerState(state);
-        applyAuthorStylesheet(config?.stylesheet);
         loaded = true;
       } catch {
         // Presentation is decoration. A panel that refuses to draw because one
@@ -338,21 +337,27 @@ function presentationOptions(
     // No hint when there are no tiles to touch.
     subtitle: source === null ? undefined : (config?.subtitle ?? CONTROL_PANEL_HINT),
     columns: config?.columns ?? null,
-    sublabels: chapterSublabels(config),
+    sublabels: chapterTexts(config, 'sublabel'),
+    shortLabels: chapterTexts(config, 'shortLabel'),
+    shortSublabels: chapterTexts(config, 'shortSublabel'),
   };
 }
 
 /**
- * Authored per-chapter sublabels, keyed the way the renderer wants them.
+ * One authored per-chapter text, keyed the way the renderer wants it.
  *
  * Returns `undefined` rather than an empty object so the renderer's
  * `sublabels?.[i]` lookup is skipped entirely for an unauthored scene.
  */
-function chapterSublabels(config: ControlPanelSettings | null): Record<number, string> | undefined {
+function chapterTexts(
+  config: ControlPanelSettings | null,
+  field: 'sublabel' | 'shortLabel' | 'shortSublabel'
+): Record<number, string> | undefined {
   if (config?.chapters === undefined) return undefined;
   const out: Record<number, string> = {};
   for (const [index, override] of Object.entries(config.chapters)) {
-    if (override.sublabel !== undefined) out[Number(index)] = override.sublabel;
+    const text = override[field];
+    if (text !== undefined) out[Number(index)] = text;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }
@@ -379,6 +384,178 @@ function applyChapterLabels(
   }
 }
 
+/**
+ * The attract-loop timer: `restart(seconds)` re-arms it after each tap (0
+ * disarms), and `reset` runs once the visitor has been gone that long.
+ */
+function createIdleReset(reset: () => void): { restart(seconds: number): void; cancel(): void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cancel = (): void => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+  };
+  return {
+    restart(seconds) {
+      cancel();
+      if (seconds !== 0) timer = setTimeout(reset, seconds * 1000);
+    },
+    cancel,
+  };
+}
+
+/** Renew the viewer-local subscription, then read the panel's position. */
+async function readPosition(
+  socket: ControllerSocket | undefined,
+  source: ChapterSource
+): Promise<number | undefined> {
+  try {
+    await socket?.call('subscribe', ['dimensions-changed']);
+    await socket?.call('subscribe', ['dataset-loaded']);
+    const dims = await socket?.call('getDimensions');
+    if (isWireDimensions(dims)) return dims.currentStep[source.dimensionIndex];
+  } catch {
+    // The display can attach before its scene is ready. The caller retries.
+  }
+  return undefined;
+}
+
+function createPositionRetry(context: {
+  socket: () => ControllerSocket | undefined;
+  source: () => ChapterSource | null;
+  markActive: (position: number) => void;
+  isDisposed: () => boolean;
+}): { start(): void; cancel(): void } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let delayMs = CHAPTER_RETRY_BASE_MS;
+  let generation = 0;
+
+  const cancel = (): void => {
+    generation += 1;
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+    delayMs = CHAPTER_RETRY_BASE_MS;
+  };
+
+  const refresh = async (currentGeneration: number): Promise<void> => {
+    const source = context.source();
+    if (source === null || context.isDisposed()) return;
+    const position = await readPosition(context.socket(), source);
+    if (currentGeneration !== generation || context.isDisposed()) return;
+    if (position !== undefined) {
+      context.markActive(position);
+      return;
+    }
+    const delay = delayMs;
+    timer = setTimeout(() => {
+      timer = undefined;
+      void refresh(currentGeneration);
+    }, delay);
+    delayMs = Math.min(delay * 2, CHAPTER_RETRY_MAX_MS);
+  };
+
+  return {
+    start() {
+      if (context.source() === null) return;
+      cancel();
+      void refresh(generation);
+    },
+    cancel,
+  };
+}
+
+function createChapterRetry(retry: () => void): {
+  cancel(resetDelay?: boolean): void;
+  schedule(): void;
+} {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let delayMs = CHAPTER_RETRY_BASE_MS;
+  const cancel = (resetDelay = true): void => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+    if (resetDelay) delayMs = CHAPTER_RETRY_BASE_MS;
+  };
+  return {
+    cancel,
+    schedule() {
+      if (timer !== undefined) return;
+      const delay = delayMs;
+      timer = setTimeout(() => {
+        timer = undefined;
+        retry();
+      }, delay);
+      delayMs = Math.min(delay * 2, CHAPTER_RETRY_MAX_MS);
+    },
+  };
+}
+
+async function readChapterDimensions(
+  socket: ControllerSocket | undefined,
+  panel: ControlPanelView,
+  isCurrent: () => boolean
+): Promise<Required<WireDimensions> | null> {
+  // Subscribe before the snapshot so a switch completing during the read
+  // cannot leave the panel on an empty or superseded chapter list.
+  await socket?.call('subscribe', ['dataset-loaded']);
+  if (!isCurrent()) return null;
+  const dims = await socket?.call('getDimensions');
+  if (!isCurrent()) return null;
+  if (!isWireDimensions(dims)) {
+    panel.showMessage('Unexpected reply', 'The viewer did not describe its dimensions.');
+    return null;
+  }
+  return dims;
+}
+
+async function loadChaptersForScene(context: {
+  socket: ControllerSocket | undefined;
+  presentation: PresentationCache;
+  panel: ControlPanelView;
+  isCurrent: () => boolean;
+  onSource: (source: ChapterSource | null, position: number | undefined) => void;
+}): Promise<void> {
+  const { socket, presentation, panel, isCurrent, onSource } = context;
+  const dims = await readChapterDimensions(socket, panel, isCurrent);
+  if (dims === null) return;
+  await presentation.load(() => socket?.call('getViewerState') ?? Promise.resolve(null));
+  if (!isCurrent()) return;
+  applyAuthorStylesheet(presentation.config?.stylesheet);
+  const source = deriveChapters(
+    {
+      displayed: dims.displayed,
+      metadata: dims.metadata as DimensionMetadata[],
+      ranges: dims.ranges as Array<[number, number]>,
+    },
+    { dimensionName: presentation.config?.chapterDimension ?? null }
+  );
+  applyChapterLabels(source, presentation.config);
+  panel.render(source, presentationOptions(presentation.config, presentation.title, source));
+  onSource(source, dims.currentStep[source?.dimensionIndex ?? -1]);
+  await socket?.call('subscribe', ['dimensions-changed']);
+}
+
+function renewAfterViewerAttached(
+  source: ChapterSource | null,
+  isOpen: boolean,
+  customPanelState: CustomPanelState,
+  actions: { loadChapters: () => Promise<void>; retryPosition: () => void }
+): void {
+  if (source === null && isOpen && !customPanelOwnsPage(customPanelState)) {
+    void actions.loadChapters();
+  } else {
+    actions.retryPosition();
+  }
+}
+
+function cancelPanelTimers(context: {
+  idle: { cancel(): void };
+  positionRetry: { cancel(): void };
+  chapterRetry: { cancel(): void };
+}): void {
+  context.idle.cancel();
+  context.positionRetry.cancel();
+  context.chapterRetry.cancel();
+}
+
 function startConnectedPanel(
   params: ConnectedUrlParams,
   root: HTMLElement,
@@ -386,92 +563,66 @@ function startConnectedPanel(
 ): void {
   let socket: ControllerSocket | undefined;
   let source: ChapterSource | null = null;
-  /** The display's title and authored block, fetched once. */
-  const presentation = createPresentationCache();
-  let idleTimer: ReturnType<typeof setTimeout> | undefined;
-  let chapterRetryTimer: ReturnType<typeof setTimeout> | undefined;
-  let chapterRetryDelayMs = CHAPTER_RETRY_BASE_MS;
+  let disposed = false;
+  let isOpen = false;
+  /** The display's title and authored block, fetched once per dataset. */
+  let presentation = createPresentationCache();
+  let chapterGeneration = 0;
   const customPanelState: { current: CustomPanelState } = { current: 'unmounted' };
   const connectionState = { refused: false };
+  const idle = createIdleReset(() => {
+    const first = source?.chapters[0];
+    if (first !== undefined && source !== null) {
+      socket?.notify('setDimensionValue', [source.dimensionIndex, first.value]);
+    }
+  });
 
   const panel = (ports.createPanel ?? createControlPanel)({
     root,
     call: (method, callParams) => socket?.notify(method, callParams),
-    onInteraction: () => restartIdleTimer(),
+    onInteraction: () => idle.restart(presentation.config?.idleResetS ?? DEFAULT_IDLE_RESET_S),
   });
 
-  function restartIdleTimer(): void {
-    if (idleTimer !== undefined) clearTimeout(idleTimer);
-    idleTimer = undefined;
-    const idleResetS = presentation.config?.idleResetS ?? DEFAULT_IDLE_RESET_S;
-    if (idleResetS === 0) return;
-    idleTimer = setTimeout(() => {
-      const first = source?.chapters[0];
-      if (first !== undefined && source !== null) {
-        socket?.notify('setDimensionValue', [source.dimensionIndex, first.value]);
-      }
-    }, idleResetS * 1000);
-  }
-
-  function cancelChapterRetry(resetDelay = true): void {
-    if (chapterRetryTimer !== undefined) clearTimeout(chapterRetryTimer);
-    chapterRetryTimer = undefined;
-    if (resetDelay) chapterRetryDelayMs = CHAPTER_RETRY_BASE_MS;
-  }
-
-  function scheduleChapterRetry(): void {
-    if (chapterRetryTimer !== undefined) return;
-    const delay = chapterRetryDelayMs;
-    chapterRetryTimer = setTimeout(() => {
-      chapterRetryTimer = undefined;
-      void loadChaptersWithRetry();
-    }, delay);
-    chapterRetryDelayMs = Math.min(delay * 2, CHAPTER_RETRY_MAX_MS);
-  }
+  const chapterRetry = createChapterRetry(() => void loadChaptersWithRetry());
 
   function markActive(position: number | undefined): void {
-    if (source === null || position === undefined) return;
+    if (disposed || source === null || position === undefined) return;
     panel.setActive(activeChapterIndex(source, position));
   }
 
-  async function loadChapters(): Promise<void> {
-    const dims = await socket?.call('getDimensions');
-    if (!isWireDimensions(dims)) {
-      panel.showMessage('Unexpected reply', 'The viewer did not describe its dimensions.');
-      return;
-    }
-    // AFTER the dimensions land, and once. Asking earlier would spend a call
-    // on every failed retry — and while no viewer is attached the hub answers
-    // -32001, so those calls could only fail anyway.
-    await presentation.load(() => socket?.call('getViewerState') ?? Promise.resolve(null));
-    source = deriveChapters(
-      {
-        displayed: dims.displayed,
-        metadata: dims.metadata as DimensionMetadata[],
-        ranges: dims.ranges as Array<[number, number]>,
-      },
-      // By NAME, so the authoring survives a `Dimensions([...])` reorder.
-      { dimensionName: presentation.config?.chapterDimension ?? null }
-    );
-    applyChapterLabels(source, presentation.config);
-    panel.render(source, presentationOptions(presentation.config, presentation.title, source));
-    markActive(dims.currentStep[source?.dimensionIndex ?? -1]);
-    await socket?.call('subscribe', ['dimensions-changed']);
-  }
+  const positionRetry = createPositionRetry({
+    socket: () => socket,
+    source: () => source,
+    markActive,
+    isDisposed: () => disposed,
+  });
 
   async function loadChaptersWithRetry(): Promise<void> {
+    const generation = ++chapterGeneration;
     try {
-      await loadChapters();
-      cancelChapterRetry();
+      await loadChaptersForScene({
+        socket,
+        presentation,
+        panel,
+        isCurrent: () => !disposed && generation === chapterGeneration,
+        onSource: (nextSource, position) => {
+          source = nextSource;
+          markActive(position);
+        },
+      });
+      if (generation === chapterGeneration) chapterRetry.cancel();
     } catch (error) {
+      if (disposed || generation !== chapterGeneration) return;
       log.warning(Modules.APP, 'control panel: could not load chapters:', error);
-      if (error instanceof ControllerCallError && error.noViewerAttached) {
-        // The ONLY error that licenses this message: the hub said so.
-        panel.showMessage(
-          'Waiting for the display',
-          'Connected to the hub, but no viewer has attached yet.'
-        );
-        scheduleChapterRetry();
+      if (
+        error instanceof ControllerCallError &&
+        (error.noViewerAttached || error.viewerNotReady)
+      ) {
+        const message = error.noViewerAttached
+          ? 'Connected to the hub, but no viewer has attached yet.'
+          : 'The viewer is still loading its scene.';
+        panel.showMessage('Waiting for the display', message);
+        chapterRetry.schedule();
         return;
       }
       // A refusal or a dropped socket already has a message from the status
@@ -484,7 +635,7 @@ function startConnectedPanel(
     }
   }
 
-  const onStatus = createStatusHandler({
+  const handleStatus = createStatusHandler({
     params,
     root,
     panel,
@@ -492,26 +643,46 @@ function startConnectedPanel(
     socket: () => socket,
     customPanelState,
     connectionState,
-    cancelChapterRetry,
+    cancelChapterRetry: chapterRetry.cancel,
     loadChaptersWithRetry,
   });
+  const onStatus = (status: ControllerStatus): void => {
+    isOpen = status === 'open';
+    if (status !== 'open' && status !== 'connecting') positionRetry.cancel();
+    handleStatus(status);
+  };
 
   socket = (ports.createSocket ?? ((socketPorts) => new ControllerSocket(socketPorts)))({
     url: params.control,
     token: params.controlToken,
     onStatus,
     onEvent: (name, payload) => {
+      if (disposed) return;
+      if (name === VIEWER_ATTACHED_EVENT) {
+        renewAfterViewerAttached(source, isOpen, customPanelState.current, {
+          loadChapters: loadChaptersWithRetry,
+          retryPosition: positionRetry.start,
+        });
+        return;
+      }
+      if (name === 'dataset-loaded' && !customPanelOwnsPage(customPanelState.current)) {
+        source = null;
+        cancelPanelTimers({ idle, positionRetry, chapterRetry });
+        presentation = createPresentationCache();
+        void loadChaptersWithRetry();
+      }
       if (name !== 'dimensions-changed' || source === null) return;
-      const dims = payload as WireDimensions;
-      markActive(dims.currentStep?.[source.dimensionIndex]);
+      positionRetry.cancel();
+      markActive((payload as WireDimensions).currentStep?.[source.dimensionIndex]);
     },
   });
   panel.showMessage('Connecting', 'Looking for the control hub...');
   socket.connect();
 
   const teardown = (): void => {
-    if (idleTimer !== undefined) clearTimeout(idleTimer);
-    cancelChapterRetry();
+    disposed = true;
+    source = null;
+    cancelPanelTimers({ idle, positionRetry, chapterRetry });
     socket?.dispose();
   };
   registerBeforeUnload(ports, teardown);

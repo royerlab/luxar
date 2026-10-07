@@ -14,12 +14,14 @@ import { zipSync } from 'fflate';
 import * as zarr from '../../../data/zarr';
 import { DecompressedChunkCache } from '../../../cache/decompressed-chunk-cache';
 import { wrapWithCache } from '../../../cache/decompressed-chunk-cache/cached-zarr-array';
-import {
-  getFetchLaneLimit,
-  HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
-  MAX_CONCURRENT_CHUNK_FETCHES,
-  resetFetchTransport,
-} from '../../../utils/fetch-concurrency';
+import { getFetchLaneLimit, resetFetchTransport } from '../../../utils/fetch-concurrency';
+import { config } from '../../../config';
+
+/** The gate's widths, as configured (`config.dataLoading.network.fetchGate`). */
+const {
+  http1MaxChunkFetches: HTTP1_MAX_CONCURRENT_CHUNK_FETCHES,
+  maxChunkFetches: MAX_CONCURRENT_CHUNK_FETCHES,
+} = config.dataLoading.network.fetchGate;
 
 const encoder = new TextEncoder();
 
@@ -187,10 +189,12 @@ describe('Zarr facade contract', () => {
 
   it('narrows the fetch lane when creating a plain HTTP store', () => {
     zarr.createFetchStore('https://example.test/data.zarr');
-    expect(getFetchLaneLimit('data')).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
+    expect(getFetchLaneLimit('data', 'https://example.test')).toBe(MAX_CONCURRENT_CHUNK_FETCHES);
 
     zarr.createFetchStore('http://example.test/data.zarr');
-    expect(getFetchLaneLimit('data')).toBe(HTTP1_MAX_CONCURRENT_CHUNK_FETCHES);
+    expect(getFetchLaneLimit('data', 'http://example.test')).toBe(
+      HTTP1_MAX_CONCURRENT_CHUNK_FETCHES
+    );
   });
 
   it('wires nested archive entries to slash-prefixed Zarr keys', async () => {

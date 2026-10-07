@@ -25,18 +25,11 @@ import {
   type PickResult,
 } from '../../../../rendering/picking/picking-system';
 import { MAX_PICK_NODE_ID } from '../../../../rendering/picking/picking-system/pick-render';
+import { LinePickingTSLMaterial } from '../../../../rendering/picking/line/material-tsl';
 import { buildPickResultHandler } from '../../../../core/app/picking/pick-result-handler';
 import { setElementIdMap } from '../../../../types/committed-data';
 import { log } from '../../../../utils/log';
-
-/** A promise plus its external `resolve` — lets a test gate when the readback completes. */
-function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((r) => {
-    resolve = r;
-  });
-  return { promise, resolve };
-}
+import { deferred } from '../../../helpers/deferred';
 
 function makeStubRenderer(): THREE.WebGLRenderer {
   // PickingSystem ctor + the lifecycle methods we test only need
@@ -67,7 +60,6 @@ function makeStubCapabilities(): import('../../../../rendering/renderer-capabili
     },
     maxMSAASamples: 0,
     pointSizeRange: [1, 64] as const,
-    readBackbufferPixels: vi.fn(),
   } as unknown as import('../../../../rendering/renderer-capabilities').RendererCapabilities;
 }
 
@@ -206,6 +198,24 @@ describe('PickingSystem — registration', () => {
     system.registerNode(new THREE.Object3D(), pickNode, system.allocatePickId());
     expect(pickNode.matrixAutoUpdate).toBe(false);
     expect(pickNode.matrixWorldAutoUpdate).toBe(false);
+  });
+
+  it('registerNode installs the per-draw projection-variant hook on a mesh pick node', () => {
+    // Every pick-node builder (createLinesNode, the retro-registration pass)
+    // goes through here, so the TSL pick quad cannot miss its variant hook.
+    const material = new LinePickingTSLMaterial({ nodeId: 1, primitive: 'screen-space' });
+    const pickNode = new THREE.Mesh(new THREE.BufferGeometry(), material);
+    system.registerNode(new THREE.Object3D(), pickNode, system.allocatePickId());
+    const persp = material.vertexNode;
+    pickNode.onBeforeRender(
+      {} as THREE.WebGLRenderer,
+      new THREE.Scene(),
+      new THREE.OrthographicCamera(),
+      pickNode.geometry,
+      material,
+      null as unknown as THREE.Group
+    );
+    expect(material.vertexNode).not.toBe(persp);
   });
 
   it('unregisterNode decrements registeredNodeCount', () => {
@@ -981,11 +991,10 @@ describe('PickingSystem — surface-pick depth sync', () => {
 
     renderPickBuffer();
 
-    // (resolution, isOrtho, nearCull, pixelRatio) — no FOV: every pick shader
-    // reads its projection terms from the projection matrix.
+    // (resolution, nearCull, pixelRatio) — no FOV or camera kind: every pick
+    // shader reads its projection terms from the projection matrix.
     expect(updateCameraParams).toHaveBeenCalledWith(
       expect.objectContaining({ x: 800, y: 300 }),
-      false,
       undefined,
       0.5
     );

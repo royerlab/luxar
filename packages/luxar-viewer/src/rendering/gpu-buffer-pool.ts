@@ -39,11 +39,8 @@ import { evictUntilUnderByteBudget } from './gpu-buffer-pool/byte-budget-evictor
 import { ActiveBufferMap } from './gpu-buffer-pool/byte-tracked-maps';
 import { PointsBufferAdapter } from './gpu-buffer-pool/points-adapter';
 import { LinesBufferAdapter } from './gpu-buffer-pool/lines-adapter';
-import {
-  GSplatsBufferAdapter,
-  type GSplatsUpdateOptions,
-  type PackedGSplatsData,
-} from './gpu-buffer-pool/gsplats-adapter';
+import { GSplatsBufferAdapter, type PackedGSplatsData } from './gpu-buffer-pool/gsplats-adapter';
+import type { InstancedOrderingOptions } from './gpu-buffer-pool/texture-backed-adapter';
 
 // Per-type spec arrays and helpers live in
 // ./gpu-buffer-pool/{points,lines,gsplats}-adapter.
@@ -54,7 +51,8 @@ export { estimateGeometryBytes, invalidateCachedByteSize };
 
 // Re-export the public surface so the parent rendering/gpu-buffer-pool.ts
 // stub (and existing consumers) keep working unchanged.
-export type { GSplatsUpdateOptions, PackedGSplatsData } from './gpu-buffer-pool/gsplats-adapter';
+export type { PackedGSplatsData } from './gpu-buffer-pool/gsplats-adapter';
+export type { InstancedOrderingOptions } from './gpu-buffer-pool/texture-backed-adapter';
 export type {
   PooledBuffer,
   TypePoolStats,
@@ -258,19 +256,19 @@ export class GPUBufferPool {
 
   /**
    * Update Points geometry attributes in-place (zero GPU allocations).
-   * @param options - `preserveOrdering`: keep the geometry's existing
-   *   `aSortedIndex` permutation instead of resetting it to identity
-   *   (same-node same-count recommit — the commit path decides; see
-   *   commit-points-geometry.ts). `fromInstance`: append fast path
-   *   (Phase 4 Stage 2) — write & upload only the `[fromInstance, count)`
-   *   suffix, preserving the prefix texels + permutation already on the
-   *   GPU.
+   * @param options - The commit ordering the commit path chose
+   *   (`writeInstancedCommitOrdering`, shared by all three types):
+   *   `preserveOrdering` / `repairFromCount` keep or rebuild the existing
+   *   permutation; `fromInstance` (append fast path) writes & uploads only the
+   *   `[fromInstance, count)` suffix and HOLDS the draw at the previous
+   *   population until the grown population's ordering lands; `seedOrdering`
+   *   holds a GROWN geometry on the previous geometry's drawn permutation.
    */
   updatePointsGeometry(
     geometry: THREE.InstancedBufferGeometry,
     data: LoadedPointsData,
     count: number,
-    options?: { preserveOrdering?: boolean; repairFromCount?: number; fromInstance?: number }
+    options?: InstancedOrderingOptions
   ): void {
     this.points.updateGeometry(geometry, data, count, options);
   }
@@ -295,18 +293,14 @@ export class GPUBufferPool {
 
   /**
    * Update Lines geometry in place.
-   * @param options - `preserveOrdering`: keep the existing `aSortedIndex`
-   *   permutation instead of resetting to identity (same-count recommit
-   *   of an already-sorted node — the commit path decides; see
-   *   commit-lines-geometry.ts). `fromInstance`: append fast path
-   *   (Phase 4 Stage 2) — write & upload only the `[fromInstance, count)`
-   *   segment suffix, preserving the prefix already on the GPU.
+   * @param options - The commit ordering, as for {@link updatePointsGeometry}
+   *   (counted in segments).
    */
   updateLinesGeometry(
     geometry: THREE.InstancedBufferGeometry,
     data: ProcessedLinesData,
     count: number,
-    options?: { preserveOrdering?: boolean; repairFromCount?: number; fromInstance?: number }
+    options?: InstancedOrderingOptions
   ): void {
     this.lines.updateGeometry(geometry, data, count, options);
   }
@@ -330,23 +324,14 @@ export class GPUBufferPool {
    * @param truncationRadius - Truncation radius in sigmas (defaults to
    *   `GSPLAT_DEFAULT_TRUNCATION_RADIUS`).
    *   Must match the material's truncationRadius for correct frustum culling.
-   * @param options - `preserveOrdering`: keep the geometry's existing
-   *   `aSortedIndex` permutation instead of resetting it to identity
-   *   (same-node same-count recommit — the commit path decides; see
-   *   commit-gsplats-geometry.ts). `fromInstance`: append fast path (Phase 4
-   *   Stage 2) — write & upload only the `[fromInstance, count)` suffix,
-   *   preserving the prefix texels and HOLDING the draw at the previous
-   *   population until the grown population's ordering lands.
-   *   `seedOrdering`: the previous geometry's drawn permutation when this
-   *   commit extends that population into a GROWN geometry — the draw is held
-   *   on it the same way.
+   * @param options - The commit ordering, as for {@link updatePointsGeometry}.
    */
   updateGSplatsGeometry(
     geometry: THREE.InstancedBufferGeometry,
     data: PackedGSplatsData,
     count: number,
     truncationRadius: number = GSPLAT_DEFAULT_TRUNCATION_RADIUS,
-    options?: GSplatsUpdateOptions
+    options?: InstancedOrderingOptions
   ): void {
     this.gsplats.updateGeometry(geometry, data, count, truncationRadius, options);
   }
@@ -358,7 +343,7 @@ export class GPUBufferPool {
   /**
    * Get size bucket for capacity-based pooling.
    * Buckets: 1K, 5K, 10K, 50K, 100K, 500K, 1M.
-   * @internal — called by adapters; public to satisfy PointsAdapterHost.
+   * @internal — called by adapters; public to satisfy PoolAdapterHost.
    */
   getBucket(count: number): number {
     if (count <= 1000) return 1000;
@@ -519,8 +504,10 @@ export class GPUBufferPool {
    * total incrementally (B9b) — it used to walk every active buffer.
    */
   private sumActiveBytes(): number {
-    // Active buffers keep a running total; mesh levels are few and re-measured
-    // here, since a committed mesh's geometry can be rewritten in place.
+    // Active buffers keep a running total. Committed mesh levels are summed
+    // here from their cached estimate: each commit re-registers (and so
+    // re-measures) the geometry it rewrote in place, and the estimate itself
+    // notices the WebGPU backend widening the index at upload.
     let total = this.activeBuffers.bytes;
     for (const geometry of this.meshGeometries.values()) {
       total += estimateGeometryBytes(geometry);
