@@ -1302,3 +1302,17 @@ def test_an_invalid_launch_block_fails_the_export(
     monkeypatch.setattr(export_module, "read_node_attrs", lambda _p: attrs)
     with pytest.raises(ValueError, match="launch.workers"):
         export_module.read_scene_facts(tmp_path)
+
+
+def test_a_launch_scene_gets_dedicated_display_notes() -> None:
+    """Chrome flags, the renderer check and the saved-settings reset, only with `launch`."""
+    facts = export_module.SceneFacts(launch_query="&renderer=webgpu&workers=16")
+    section = export_module._dedicated_display_section(facts, "pkg_1")
+    assert "renderer=webgpu workers=16" in section
+    assert '--user-data-dir="$HOME/.config/luxar-pkg_1"' in section
+    assert "--enable-unsafe-webgpu" in section
+    assert "Rendering API: webgpu" in section
+    assert "Reset" in section
+    assert (
+        export_module._dedicated_display_section(export_module.SceneFacts(), "x") == ""
+    )

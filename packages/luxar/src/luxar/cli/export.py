@@ -547,6 +547,66 @@ def _get_serve_script_content(
     return script
 
 
+def _dedicated_display_section(facts: "SceneFacts", folder: str) -> str:
+    """README section for a scene built for a known display machine (``launch``).
+
+    Empty for any other scene. The machine settings ride on the URL serve.py
+    opens, so the section is about the browser around it: how to launch Chrome
+    for an unattended screen, how to confirm the renderer the URL asks for is
+    the one actually running, and the saved settings that would override the
+    scene's own.
+    """
+    if not facts.launch_query:
+        return ""
+    query = facts.launch_query.lstrip("&").replace("&", " ")
+    return f"""Dedicated display
+-----------------
+This scene was built for a known display machine. serve.py opens the viewer
+with its machine settings on the URL:
+
+    {query}
+
+They apply to that page load only and never rewrite the browser's saved
+Settings.
+
+Chrome on Linux, full screen, for an unattended exhibit:
+
+    google-chrome --kiosk --noerrdialogs --disable-session-crashed-bubble \\
+      --user-data-dir="$HOME/.config/luxar-{folder}" \\
+      --enable-unsafe-webgpu --enable-features=Vulkan --ignore-gpu-blocklist \\
+      --autoplay-policy=no-user-gesture-required \\
+      --disable-background-timer-throttling --disable-renderer-backgrounding \\
+      --disable-backgrounding-occluded-windows \\
+      "<the Display URL serve.py prints>"
+
+What the flags are for:
+- --enable-unsafe-webgpu --enable-features=Vulkan: WebGPU on Linux. Without
+  them Chrome may offer no WebGPU adapter, and the viewer then runs its WebGPU
+  path on a WebGL2 fallback, which can be slower than plain WebGL.
+- --ignore-gpu-blocklist: keeps hardware acceleration on a driver Chrome has
+  not vetted.
+- --autoplay-policy=no-user-gesture-required: narration and the turntable
+  videos start without anyone touching the screen first.
+- The three --disable-background... flags: a display that loses focus to the
+  tablet page or a system dialog keeps rendering at full rate.
+- --kiosk --noerrdialogs --disable-session-crashed-bubble: full screen, and no
+  "restore pages" bar after a power cut.
+- --user-data-dir: a profile of its own for this package (see below).
+
+Check the renderer once: open chrome://gpu and look for "WebGPU: Hardware
+accelerated", or open the viewer's console (F12) and look for the line
+"Rendering API: webgpu". "webgl" there means the WebGPU flags did not take.
+
+Saved settings win over the scene. The viewer remembers Rendering Controls
+edits (noise, density guard, auto-rotate, dolly...) per URL, and a remembered
+edit replaces ALL of the scene's own rendering settings at load, for every
+package later served at the same address. Either launch with a fresh
+--user-data-dir for each new package, as above, or click Home -> Reset
+rendering once after loading it.
+
+"""
+
+
 def _generate_readme(
     output: Path, data_dir_name: str, facts: Optional["SceneFacts"] = None
 ) -> None:
@@ -641,6 +701,7 @@ password.
 
 """
 
+    display = _dedicated_display_section(facts, output.name)
     readme = f"""Luxar Exported Scene
 ====================
 
@@ -669,7 +730,7 @@ Options
 If the port is busy the script picks the next free one and prints what it
 chose. Press Ctrl+C to stop it.
 
-{kiosk}Folder Structure
+{kiosk}{display}Folder Structure
 ----------------
 {structure}
 Notes
