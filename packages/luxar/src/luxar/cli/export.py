@@ -28,6 +28,7 @@ from urllib.parse import quote
 from arbol import aprint, asection
 
 from .._zarr_compat import read_node_attrs
+from ..core.viewer_config import LaunchConfig
 from ..utils.atomic_copy import atomic_copytree
 from .utils import (
     check_viewer_built,
@@ -76,13 +77,12 @@ def export_scene(
             "Viewer not built. Run: cd packages/luxar-viewer && pnpm build"
         )
     _require_third_party_notices(get_viewer_dist_path())
+    facts = read_scene_facts(source)
 
     if output.exists():
         shutil.rmtree(output)
 
     output.mkdir(parents=True, exist_ok=True)
-
-    facts = read_scene_facts(source)
 
     with asection("Exporting standalone scene"):
         # Step 1: Copy viewer
@@ -120,6 +120,9 @@ class SceneFacts:
     """
 
     title: str | None = None
+    #: The scene's ``viewer_config.launch`` settings as a query fragment for the
+    #: viewer URL serve.py opens (``""`` when the scene sets none).
+    launch_query: str = ""
     #: A scene authored to be driven from a tablet: it carries a
     #: ``viewer_config.control_panel``. Decides the exported serve.py's
     #: defaults and what the README leads with.
@@ -174,11 +177,13 @@ def _coordinate_count(dim: dict) -> int:
 
 
 def read_scene_facts(source: Path) -> SceneFacts:
-    """Introspect ``source`` for the facts the export needs. Never raises.
+    """Introspect ``source`` for the facts the export needs.
 
     A store this cannot read is not an export failure: the folder is still
     valid, it just gets the generic README and the conservative serve.py
-    defaults. So every lookup is defensive.
+    defaults. So every lookup is defensive. The one exception is a
+    ``viewer_config.launch`` block that does not validate, which raises
+    ``ValueError`` (see :func:`_launch_query`).
     """
     try:
         attrs = read_node_attrs(source) or {}
@@ -209,6 +214,7 @@ def read_scene_facts(source: Path) -> SceneFacts:
     citation = attrs.get("citation") or {}
     return SceneFacts(
         title=viewer.get("title") or None,
+        launch_query=_launch_query(viewer.get("launch")),
         has_control_panel=bool(panel),
         chapter_dimension=panel.get("chapter_dimension") or None,
         chapter_count=len(chapters) if isinstance(chapters, dict) else 0,
@@ -219,6 +225,18 @@ def read_scene_facts(source: Path) -> SceneFacts:
         if isinstance(citation, dict)
         else None,
     )
+
+
+def _launch_query(raw: object) -> str:
+    """The ``launch`` block as a URL fragment; an invalid block is refused.
+
+    Refused rather than skipped: a kiosk package whose machine settings were
+    silently dropped would run on the visitor-default backend and nobody would
+    notice until the exhibit stuttered.
+    """
+    if not isinstance(raw, dict):
+        return ""
+    return LaunchConfig.from_dict(raw).query()
 
 
 #: Emitted into the viewer build by
@@ -368,7 +386,12 @@ SERVE_TEMPLATE = Path(__file__).with_name("_export_serve_template.py")
 
 #: Assignments substituted in the template, as ``name -> value`` at export time.
 #: Matched anchored at line start, so the constants' *uses* are untouched.
-_SUBSTITUTED = ("DATA_DIR_NAME", "TITLE_QUERY", "HAS_CONTROL_PANEL")
+_SUBSTITUTED = (
+    "DATA_DIR_NAME",
+    "TITLE_QUERY",
+    "LAUNCH_QUERY",
+    "HAS_CONTROL_PANEL",
+)
 
 
 def _substitute(script: str, name: str, value: object) -> str:
@@ -515,11 +538,72 @@ def _get_serve_script_content(
     values: dict[str, object] = {
         "DATA_DIR_NAME": data_dir_name,
         "TITLE_QUERY": f"&title={quote(title)}" if title else "",
+        "LAUNCH_QUERY": facts.launch_query if facts else "",
         "HAS_CONTROL_PANEL": bool(facts and facts.has_control_panel),
     }
     for name in _SUBSTITUTED:
         script = _substitute(script, name, values[name])
     return script
+
+
+def _dedicated_display_section(facts: "SceneFacts", folder: str) -> str:
+    """README section for a scene built for a known display machine (``launch``).
+
+    Empty for any other scene. The machine settings ride on the URL serve.py
+    opens, so the section is about the browser around it: how to launch Chrome
+    for an unattended screen, how to confirm the renderer the URL asks for is
+    the one actually running, and the saved settings that would override the
+    scene's own.
+    """
+    if not facts.launch_query:
+        return ""
+    query = facts.launch_query.lstrip("&").replace("&", " ")
+    return f"""Dedicated display
+-----------------
+This scene was built for a known display machine. serve.py opens the viewer
+with its machine settings on the URL:
+
+    {query}
+
+They apply to that page load only and never rewrite the browser's saved
+Settings.
+
+Chrome on Linux, full screen, for an unattended exhibit:
+
+    google-chrome --kiosk --noerrdialogs --disable-session-crashed-bubble \\
+      --user-data-dir="$HOME/.config/luxar-{folder}" \\
+      --enable-unsafe-webgpu --enable-features=Vulkan --ignore-gpu-blocklist \\
+      --autoplay-policy=no-user-gesture-required \\
+      --disable-background-timer-throttling --disable-renderer-backgrounding \\
+      --disable-backgrounding-occluded-windows \\
+      "<the Display URL serve.py prints>"
+
+What the flags are for:
+- --enable-unsafe-webgpu --enable-features=Vulkan: WebGPU on Linux. Without
+  them Chrome may offer no WebGPU adapter, and the viewer then runs its WebGPU
+  path on a WebGL2 fallback, which can be slower than plain WebGL.
+- --ignore-gpu-blocklist: keeps hardware acceleration on a driver Chrome has
+  not vetted.
+- --autoplay-policy=no-user-gesture-required: narration and the turntable
+  videos start without anyone touching the screen first.
+- The three --disable-background... flags: a display that loses focus to the
+  tablet page or a system dialog keeps rendering at full rate.
+- --kiosk --noerrdialogs --disable-session-crashed-bubble: full screen, and no
+  "restore pages" bar after a power cut.
+- --user-data-dir: a profile of its own for this package (see below).
+
+Check the renderer once: open chrome://gpu and look for "WebGPU: Hardware
+accelerated", or open the viewer's console (F12) and look for the line
+"Rendering API: webgpu". "webgl" there means the WebGPU flags did not take.
+
+Saved settings win over the scene. The viewer remembers Rendering Controls
+edits (noise, density guard, auto-rotate, dolly...) per URL, and a remembered
+edit replaces ALL of the scene's own rendering settings at load, for every
+package later served at the same address. Either launch with a fresh
+--user-data-dir for each new package, as above, or click Home -> Reset
+rendering once after loading it.
+
+"""
 
 
 def _generate_readme(
@@ -616,6 +700,7 @@ password.
 
 """
 
+    display = _dedicated_display_section(facts, output.name)
     readme = f"""Luxar Exported Scene
 ====================
 
@@ -639,11 +724,12 @@ Options
 -------
     python3 serve.py --port 9000    Use a custom port
     python3 serve.py --no-open      Don't open a browser automatically
+    python3 serve.py --text-scale 0.8   Smaller on-screen text, same layout
 
 If the port is busy the script picks the next free one and prints what it
 chose. Press Ctrl+C to stop it.
 
-{kiosk}Folder Structure
+{kiosk}{display}Folder Structure
 ----------------
 {structure}
 Notes

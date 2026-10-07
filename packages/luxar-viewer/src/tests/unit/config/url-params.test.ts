@@ -202,6 +202,9 @@ describe('readUrlParams', () => {
       renderAudit: false,
       gpuBudgetMB: null,
       cacheBudgetMB: null,
+      workers: null,
+      prefetch: null,
+      textScale: null,
       dpr: null,
       input: null,
       lineJoin: null,
@@ -770,5 +773,22 @@ describe('replaceBrowserDataSourceUrl', () => {
     });
 
     expect(replaceState).toHaveBeenCalledWith({}, '', '/viewer?src=http%3A%2F%2Fexample.com');
+  });
+});
+
+describe('per-session machine and text parameters', () => {
+  it('parses ?workers, ?prefetch and ?textScale', () => {
+    const p = readUrlParams('?workers=16&prefetch=12&textScale=0.8');
+    expect(p.workers).toBe(16);
+    expect(p.prefetch).toBe(12);
+    expect(p.textScale).toBe(0.8);
+  });
+
+  it('treats missing or invalid values as no override', () => {
+    const p = readUrlParams('?workers=-1&prefetch=0&textScale=big');
+    expect(p.workers).toBeNull();
+    expect(p.prefetch).toBeNull();
+    expect(p.textScale).toBeNull();
+    expect(readUrlParams('').workers).toBeNull();
   });
 });

@@ -64,6 +64,8 @@ export interface OverlayConfig {
   padding?: number;
   stroke_color?: string;
   stroke_width?: number;
+  /** On text overlays, false keeps `font_size` fixed under the session text scale. */
+  scale_text?: boolean;
 
   /** CSS mix-blend-mode (e.g. 'difference', 'screen', 'multiply') */
   blend_mode?: string;
@@ -155,6 +157,7 @@ export async function loadOverlayConfigs(
           padding: attrs.padding as number | undefined,
           stroke_color: attrs.stroke_color as string | undefined,
           stroke_width: attrs.stroke_width as number | undefined,
+          scale_text: attrs.scale_text as boolean | undefined,
           image_file: attrs.image_file as string | undefined,
           size: attrs.size as [number, number | null] | undefined,
           blend_mode: attrs.blend_mode as string | undefined,

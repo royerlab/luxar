@@ -804,3 +804,21 @@ def test_the_generated_script_hosts_the_relay(tmp_path: Path) -> None:
 
     assert "control.html?control&controlToken=s3cret" in stdout
     assert "src=http://127.0.0.1:%d/scene_data&title=My%%20Scene" % port in stdout
+
+
+def test_text_scale_rides_on_the_display_url_only() -> None:
+    viewer, panel = template.urls(
+        "127.0.0.1", 8000, control=True, token=None, text_scale=0.8
+    )
+    assert "&textScale=0.8" in viewer
+    assert "textScale" not in panel
+    (viewer,) = template.urls("127.0.0.1", 8000, control=False, token=None)
+    assert "textScale" not in viewer
+
+
+def test_text_scale_flag_is_parsed_and_range_checked() -> None:
+    assert template._parse_args(["--text-scale", "0.8"]).text_scale == 0.8
+    assert template._parse_args([]).text_scale is None
+    for bad in ("0.1", "9", "big"):
+        with pytest.raises(SystemExit):
+            template._parse_args(["--text-scale", bad])

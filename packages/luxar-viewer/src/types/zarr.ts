@@ -319,6 +319,10 @@ export interface ZarrViewerConfig {
   // Projected-density guard
   density_guard_enabled?: boolean;
 
+  // Multiplier on every overlay's type (`ui/overlay-text-scale.ts`);
+  // `?textScale=` wins over it.
+  text_scale?: number;
+
   // UI panel visibility
   ui?: {
     show_help?: boolean;

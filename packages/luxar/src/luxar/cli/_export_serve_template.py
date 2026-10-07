@@ -17,7 +17,8 @@ anything that wants to drive it.
 
 # Maintainer note (this file is shipped verbatim, so the note travels):
 # the template lives at `luxar/cli/_export_serve_template.py` and is copied by
-# `luxar export`, with DATA_DIR_NAME and TITLE_QUERY substituted. It is a real
+# `luxar export`, with DATA_DIR_NAME, TITLE_QUERY, LAUNCH_QUERY and
+# HAS_CONTROL_PANEL substituted. It is a real
 # module rather than a string inside the exporter so that ruff, mypy and the
 # test suite see it -- a 400-line WebSocket relay hidden in an f-string is
 # unreviewable. It must stay STDLIB-ONLY: this folder gets zipped and emailed
@@ -73,6 +74,12 @@ DATA_DIR_NAME = "data"
 #: `--host 127.0.0.1` override either way.
 HAS_CONTROL_PANEL = False
 TITLE_QUERY = ""
+#: The scene's `viewer_config.launch` machine settings (renderer, workers,
+#: prefetch) as a ready-to-append query fragment. The viewer resolves them
+#: before it reads the scene, so they travel on the URL instead.
+LAUNCH_QUERY = ""
+#: Range the viewer accepts for `?textScale=`; mirrored for a clear error.
+TEXT_SCALE_RANGE = (0.25, 4.0)
 
 # ── wire contract ───────────────────────────────────────────────────────────
 # These mirror `control-contract/contract.yaml`, the single source the Python
@@ -976,14 +983,46 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Secret every control socket must present (advise with --host)",
     )
+    parser.add_argument(
+        "--text-scale",
+        type=_text_scale,
+        default=None,
+        metavar="X",
+        help=(
+            "Scale the on-screen text by X (e.g. 0.8 for a screen read up close); "
+            "positions and widths stay put. Default: the scene's own setting"
+        ),
+    )
     return parser.parse_args(argv)
 
 
-def urls(host: str, port: int, control: bool, token: str | None) -> list[str]:
+def _text_scale(value: str) -> float:
+    """Parse ``--text-scale``: a number inside the range the viewer accepts."""
+    try:
+        scale = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a number: {value!r}") from None
+    low, high = TEXT_SCALE_RANGE
+    if not low <= scale <= high:
+        raise argparse.ArgumentTypeError(f"must be between {low} and {high}")
+    return scale
+
+
+def urls(
+    host: str,
+    port: int,
+    control: bool,
+    token: str | None,
+    text_scale: float | None = None,
+) -> list[str]:
     """The URLs to print, and the first of them is the one to open."""
     reachable = _url_host(advertised_host(host))
     data_url = f"http://{reachable}:{port}/{DATA_DIR_NAME}"
-    viewer_url = f"http://{reachable}:{port}/viewer/?src={data_url}{TITLE_QUERY}"
+    viewer_url = (
+        f"http://{reachable}:{port}/viewer/?src={data_url}{TITLE_QUERY}{LAUNCH_QUERY}"
+    )
+    if text_scale is not None:
+        viewer_url += f"&textScale={text_scale:g}"
     if not control:
         return [viewer_url]
     suffix = f"&controlToken={quote(token, safe='')}" if token else ""
@@ -1039,7 +1078,7 @@ def main(argv: list[str] | None = None) -> int:
     handler = partial(LuxarHandler, directory=str(SCRIPT_DIR))
     server = ControlServer((args.host, port), handler, relay)
 
-    addresses = urls(args.host, port, args.control, args.control_token)
+    addresses = urls(args.host, port, args.control, args.control_token, args.text_scale)
     print()
     print("  Display (open this on the big screen)")
     print(f"    {addresses[0]}")

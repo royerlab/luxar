@@ -235,6 +235,14 @@ export interface LuxarAppOptions {
   densityCap?: number;
 
   /**
+   * Multiplier on every overlay's type for the session, beating the scene's
+   * authored `viewer_config.text_scale`. Undefined ⇒ the scene's value, else 1.
+   * Mirrors `UrlParams.textScale` (`?textScale=0.8`). See
+   * `ui/overlay-text-scale.ts`.
+   */
+  textScale?: number;
+
+  /**
    * Allow a picked element's authored `link` to be opened on left-click
    * (issue #1917). Defaults to true.
    *
