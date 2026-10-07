@@ -63,7 +63,6 @@ function describeBudgets(loader: SceneLoader | null): string {
 /** The slice of a GUI controller the URL-aware helper needs. */
 interface UrlAwareController {
   domElement: HTMLElement;
-  $input?: HTMLInputElement | HTMLSelectElement;
   name(label: string): UrlAwareController;
   onChange(callback: () => void): UrlAwareController;
 }
@@ -88,7 +87,11 @@ function addUrlAware(
   const controller = add({ [key]: urlValue }).name(`${label.split(' (')[0]} (launch URL)`);
   controller.domElement.style.pointerEvents = 'none';
   controller.domElement.style.opacity = '0.6';
-  if (controller.$input) controller.$input.disabled = true;
+  controller.domElement
+    .querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select')
+    .forEach((input) => {
+      input.disabled = true;
+    });
   controller.domElement.title = "Set by this page's launch URL";
 }
 
@@ -205,8 +208,7 @@ export function buildSettingsPopover(host: HTMLElement, ctx: SettingsPopoverCont
       },
       commit
     );
-    // The sliders show the SAVED preferences; a launcher's URL values win for
-    // this page without touching them, so say what is actually in force.
+    // Repeat the launch URL values shown in locked controls in one place.
     const sessionLine = describeUrlSessionOverrides();
     if (sessionLine) {
       const sessionNote = document.createElement('div');

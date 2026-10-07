@@ -67,6 +67,15 @@ function makeController(boundObj: Record<string, unknown>, prop: string): Contro
       this._onChangeFn?.(value);
     },
   };
+  if (prop === 'workerCount' || prop === 'networkMaxConcurrent') {
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    const number = document.createElement('input');
+    number.type = 'number';
+    ctrl.domElement.append(slider, number);
+  } else if (prop === 'renderer') {
+    ctrl.domElement.appendChild(document.createElement('select'));
+  }
   ctrl.name.mockReturnValue(ctrl);
   ctrl.onChange.mockImplementation((fn: (v: unknown) => void) => {
     ctrl._onChangeFn = fn;
@@ -335,6 +344,11 @@ describe('machine settings the launch URL set', () => {
       expect(c.name).toHaveBeenCalledWith(label);
       expect(c.onChange).not.toHaveBeenCalled();
       expect(c.domElement.style.pointerEvents).toBe('none');
+      const inputs = c.domElement.querySelectorAll<HTMLInputElement | HTMLSelectElement>(
+        'input, select'
+      );
+      expect(inputs.length).toBe(prop === 'renderer' ? 1 : 2);
+      inputs.forEach((input) => expect(input.disabled).toBe(true));
     }
     expect(loadUserSettings().performance.workerCount).toBe(0);
     expect(loadUserSettings().performance.networkMaxConcurrent).toBe(4);
@@ -345,6 +359,9 @@ describe('machine settings the launch URL set', () => {
     const { teardown } = build();
     const c = byProp('workerCount');
     expect(c.name).toHaveBeenCalledWith('Workers (0 = auto)');
+    c.domElement
+      .querySelectorAll<HTMLInputElement>('input')
+      .forEach((input) => expect(input.disabled).toBe(false));
     c.set(8);
     expect(loadUserSettings().performance.workerCount).toBe(8);
     teardown();

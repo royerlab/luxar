@@ -317,12 +317,7 @@ export function applyUrlPerformanceOverrides(
   if (urlPrefetch !== null) config.dataLoading.network.maxConcurrent = urlPrefetch;
 }
 
-/**
- * One line saying which machine settings this page runs with because its URL
- * set them (`?workers=`, `?prefetch=`, `?renderer=`), or null when none did.
- * The Settings popover shows the SAVED preferences, which the URL deliberately
- * leaves alone, so without this line a launcher's values are invisible there.
- */
+/** Return the machine settings set by this page's launch URL. */
 export function urlSessionOverrides(): {
   workers: number | null;
   prefetch: number | null;
@@ -331,6 +326,10 @@ export function urlSessionOverrides(): {
   return { workers: urlWorkerCount, prefetch: urlPrefetch, renderer: urlRenderer };
 }
 
+/**
+ * One line saying which machine settings this page runs with because its URL
+ * set them (`?workers=`, `?prefetch=`, `?renderer=`), or null when none did.
+ */
 export function describeUrlSessionOverrides(): string | null {
   const parts: string[] = [];
   if (urlWorkerCount !== null) {
