@@ -156,20 +156,17 @@ a viewer's replies and events go to the controllers. Addressing one viewer of
 several is not supported. The hub keeps no state of its own beyond the
 attachment list; the viewer is the source of truth (`getViewerState()` on
 connect).
-Subscriptions live in the viewer, so a reloaded viewer starts with none, and
-the hub does not announce its re-attachment. Controllers that need events
-across a reload must renew their subscriptions; the touch panel does so every
-`PANEL_RESYNC_MS` (five seconds) while visible.
 
 When a viewer attaches, the hub sends every connected controller a JSON-RPC
 `event` notification with positional params `["viewer-attached", null]` and no
-`id`. This includes a viewer returning after a page reload. Controllers that
-need events across reloads renew their `subscribe` calls on this notification
-and re-read any state they mirror. A controller connecting after the viewer
-may subscribe immediately; it does not receive a retrospective attachment
-notification. The Python `Viewer` renews its recorded subscriptions when it
-reads the notification. A controller must keep reading its socket for recovery
-to happen.
+`id`. Subscriptions live in the viewer, so a viewer returning after a page
+reload starts with none. Controllers that need events across reloads renew
+their `subscribe` calls on this notification and re-read any state they mirror;
+the touch panel renews `dimensions-changed` and re-reads `getDimensions`.
+A controller connecting after the viewer may subscribe immediately; it does
+not receive a retrospective attachment notification. The Python `Viewer`
+renews its recorded subscriptions when it reads the notification. A controller
+must keep reading its socket for recovery to happen.
 
 ### 3.2 Wire format
 

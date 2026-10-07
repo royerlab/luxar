@@ -59,11 +59,12 @@ the native bundles for free — all three copy the directory whole.
 **Taps are notifications, not calls.** A tile sends `setDimensionValue` and does
 not wait: the display should move immediately, and the authoritative position
 comes back as a `dimensions-changed` event, which marks the active tile.
-`call()` is for the things that genuinely need an answer. The panel also polls
-`getDimensions` every five seconds while visible to refresh the highlight and
-renew that subscription. A reloaded display forgets its subscribers, and the
-hub sends no re-attach event; polling heals this without changing the hub or
-wire protocol. The poll never sends `notify` or moves the display.
+`call()` is for the things that genuinely need an answer. A reloaded display
+forgets its subscribers. On the hub's `viewer-attached` event, the panel renews
+its `dimensions-changed` subscription, then re-reads `getDimensions` to refresh
+the highlight. If the display is still loading, the read retries with capped
+backoff until it answers or a dimension event arrives. This read never sends
+`notify` or moves the display.
 
 **It ships without `ThemeManager`.** That singleton persists its choice to
 `localStorage`, and the panel shares an origin with the display — so setting a
