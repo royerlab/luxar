@@ -886,6 +886,9 @@ the native WKWebView launcher fall back to L1-only caching; see the
 - `?linePrimitive=<capsule|screen-space>` — Select the line rendering primitive for the session (#1352), overriding the `Settings → Advanced → Line primitive` policy; default policy `auto` builds the `capsule` (gaussian-like 2D point-to-segment profile: stable end-on discs, seamless partitioned joints) except for very large line nodes, which build the leaner `screen-space` quad. The third primitive, `volumetric`, was deleted after the capsule flip
 - `?gpuBudgetMB=<N>` — Override the shared GPU-geometry/LOD retention budget; `0` means unbounded
 - `?cacheBudgetMB=<N>` — Override the total in-memory cache pool (L0 + L1 + S-cache) in megabytes; used where `performance.memory` is unavailable (WKWebView, Safari), and also supplies the implied non-cache remainder as a GPU-geometry/LOD residency signal (replacing the 512 MB fallback in either direction when `deviceMemory` is unavailable, capped at 2 GB)
+- `?workers=<N>` — Worker pool size for this session (`0` = auto), beating the stored Settings value without rewriting it; clamped to the Settings range (0-16)
+- `?prefetch=<N>` — Concurrent chunk fetches for this session (the Settings "Prefetch Limit"), same precedence and clamping (1-12)
+- `?textScale=<X>` — Scale every overlay's type for this session (e.g. `0.8`), beating the scene's `viewer_config.text_scale`; positions, widths and anchors stay as authored. Clamped to [0.25, 4]
 
 ### Programmatic Usage
 

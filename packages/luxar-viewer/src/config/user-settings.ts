@@ -273,8 +273,8 @@ export function saveUserSettings(settings: UserSettings): void {
  * Apply the LIVE-read preferences onto the mutable config object. Consumers
  * of these fields dereference `config` at use time (per wheel event, per
  * timer re-arm, per load / pool creation), so mutation is the correct and
- * immediate application mechanism. The single sanctioned config-mutation
- * site in the codebase — keep it that way.
+ * immediate application mechanism. With {@link applyUrlPerformanceOverrides}
+ * below, the only sanctioned config-mutation sites — keep it that way.
  */
 export function applyLiveConfigOverrides(settings: UserSettings): void {
   config.camera.fovSensitivity = settings.input.fovSensitivity;
@@ -285,6 +285,30 @@ export function applyLiveConfigOverrides(settings: UserSettings): void {
   // before app init is effective; after init it needs a reload.
   config.dataLoading.performance.workerCount = settings.performance.workerCount;
   config.dataLoading.network.maxConcurrent = settings.performance.networkMaxConcurrent;
+}
+
+/**
+ * Apply the URL's per-session performance overrides (`?workers=`,
+ * `?prefetch=`) on top of the stored settings, clamped to the same ranges the
+ * Settings popover offers. Null leaves the stored value in force. Nothing is
+ * persisted: the URL speaks for this page load only. Called once at boot,
+ * right after {@link initUserSettings}, before the pool or loader exists.
+ */
+export function applyUrlPerformanceOverrides(
+  workers: number | null,
+  prefetch: number | null
+): void {
+  const clamp = (v: number, r: { min: number; max: number }): number =>
+    Math.round(Math.min(r.max, Math.max(r.min, v)));
+  if (workers !== null) {
+    config.dataLoading.performance.workerCount = clamp(workers, USER_SETTINGS_RANGES.workerCount);
+  }
+  if (prefetch !== null) {
+    config.dataLoading.network.maxConcurrent = clamp(
+      prefetch,
+      USER_SETTINGS_RANGES.networkMaxConcurrent
+    );
+  }
 }
 
 /**

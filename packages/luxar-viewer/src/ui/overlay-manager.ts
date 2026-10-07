@@ -6,6 +6,7 @@
  * CSS transitions, blend modes, and configurable interaction.
  */
 
+import { scaledFontSize } from './overlay-text-scale';
 import { isZippedStoreUrl } from '../data/zip/entries';
 import { sceneDimsManager } from '../scene/scene-dims-manager';
 import { log, Modules } from '../utils/log';
@@ -1065,9 +1066,14 @@ export class OverlayManager {
     const fontFamily = FONT_PRESETS[config.font ?? 'sans'] ?? (config.font || FONT_PRESETS.sans);
     el.style.fontFamily = fontFamily;
 
-    // Font size (viewport-relative → vh units)
+    // Font size (viewport-relative → vh units). A text overlay follows the
+    // session text scale unless it opted out (`scale_text: false`, a title
+    // that is part of the layout rather than something to read).
     if (config.font_size) {
-      el.style.fontSize = `${config.font_size * 100}vh`;
+      el.style.fontSize =
+        config.scale_text === false
+          ? `${config.font_size * 100}vh`
+          : scaledFontSize(config.font_size);
     }
 
     // Color
@@ -1211,7 +1217,7 @@ export class OverlayManager {
       el.style.fontFamily = fontFamily;
     }
     if (config.font_size) {
-      el.style.fontSize = `${config.font_size * 100}vh`;
+      el.style.fontSize = scaledFontSize(config.font_size);
     }
     if (config.color) {
       el.style.color = config.color;

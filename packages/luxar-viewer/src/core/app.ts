@@ -1,5 +1,6 @@
 // Main application class for the Luxar scene player
 
+import { applyTextScale, resolveTextScale } from '../ui/overlay-text-scale';
 import type { SceneManager } from '../scene/scene-manager';
 import {
   captureSnapshot as captureViewerSnapshot,
@@ -623,6 +624,8 @@ export class LuxarApp {
     // only job is to remember what the store said.
     session.controlPanelConfig = extractControlPanelConfig(viewerConfig?.control_panel);
     this.applyKiosk(viewerConfig, session);
+    // Re-applied on every load, so a switch to a scene without one resets it.
+    applyTextScale(resolveTextScale(this.options?.textScale, viewerConfig?.text_scale));
   }
 
   /**

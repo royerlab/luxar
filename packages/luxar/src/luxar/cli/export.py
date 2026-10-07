@@ -28,6 +28,7 @@ from urllib.parse import quote
 from arbol import aprint, asection
 
 from .._zarr_compat import read_node_attrs
+from ..core.viewer_config import LaunchConfig
 from ..utils.atomic_copy import atomic_copytree
 from .utils import (
     check_viewer_built,
@@ -120,6 +121,9 @@ class SceneFacts:
     """
 
     title: str | None = None
+    #: The scene's ``viewer_config.launch`` settings as a query fragment for the
+    #: viewer URL serve.py opens (``""`` when the scene sets none).
+    launch_query: str = ""
     #: A scene authored to be driven from a tablet: it carries a
     #: ``viewer_config.control_panel``. Decides the exported serve.py's
     #: defaults and what the README leads with.
@@ -174,11 +178,13 @@ def _coordinate_count(dim: dict) -> int:
 
 
 def read_scene_facts(source: Path) -> SceneFacts:
-    """Introspect ``source`` for the facts the export needs. Never raises.
+    """Introspect ``source`` for the facts the export needs.
 
     A store this cannot read is not an export failure: the folder is still
     valid, it just gets the generic README and the conservative serve.py
-    defaults. So every lookup is defensive.
+    defaults. So every lookup is defensive. The one exception is a
+    ``viewer_config.launch`` block that does not validate, which raises
+    ``ValueError`` (see :func:`_launch_query`).
     """
     try:
         attrs = read_node_attrs(source) or {}
@@ -209,6 +215,7 @@ def read_scene_facts(source: Path) -> SceneFacts:
     citation = attrs.get("citation") or {}
     return SceneFacts(
         title=viewer.get("title") or None,
+        launch_query=_launch_query(viewer.get("launch")),
         has_control_panel=bool(panel),
         chapter_dimension=panel.get("chapter_dimension") or None,
         chapter_count=len(chapters) if isinstance(chapters, dict) else 0,
@@ -219,6 +226,18 @@ def read_scene_facts(source: Path) -> SceneFacts:
         if isinstance(citation, dict)
         else None,
     )
+
+
+def _launch_query(raw: object) -> str:
+    """The ``launch`` block as a URL fragment; an invalid block is refused.
+
+    Refused rather than skipped: a kiosk package whose machine settings were
+    silently dropped would run on the visitor-default backend and nobody would
+    notice until the exhibit stuttered.
+    """
+    if not isinstance(raw, dict):
+        return ""
+    return LaunchConfig.from_dict(raw).query()
 
 
 #: Emitted into the viewer build by
@@ -368,7 +387,12 @@ SERVE_TEMPLATE = Path(__file__).with_name("_export_serve_template.py")
 
 #: Assignments substituted in the template, as ``name -> value`` at export time.
 #: Matched anchored at line start, so the constants' *uses* are untouched.
-_SUBSTITUTED = ("DATA_DIR_NAME", "TITLE_QUERY", "HAS_CONTROL_PANEL")
+_SUBSTITUTED = (
+    "DATA_DIR_NAME",
+    "TITLE_QUERY",
+    "LAUNCH_QUERY",
+    "HAS_CONTROL_PANEL",
+)
 
 
 def _substitute(script: str, name: str, value: object) -> str:
@@ -515,6 +539,7 @@ def _get_serve_script_content(
     values: dict[str, object] = {
         "DATA_DIR_NAME": data_dir_name,
         "TITLE_QUERY": f"&title={quote(title)}" if title else "",
+        "LAUNCH_QUERY": facts.launch_query if facts else "",
         "HAS_CONTROL_PANEL": bool(facts and facts.has_control_panel),
     }
     for name in _SUBSTITUTED:
@@ -639,6 +664,7 @@ Options
 -------
     python3 serve.py --port 9000    Use a custom port
     python3 serve.py --no-open      Don't open a browser automatically
+    python3 serve.py --text-scale 0.8   Smaller on-screen text, same layout
 
 If the port is busy the script picks the next free one and prints what it
 chose. Press Ctrl+C to stop it.

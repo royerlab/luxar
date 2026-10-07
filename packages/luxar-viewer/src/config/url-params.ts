@@ -79,6 +79,9 @@ export const URL_PARAM_KEYS = {
   renderAudit: 'renderAudit',
   gpuBudgetMB: 'gpuBudgetMB',
   cacheBudgetMB: 'cacheBudgetMB',
+  workers: 'workers',
+  prefetch: 'prefetch',
+  textScale: 'textScale',
   dpr: 'dpr',
   input: 'input',
   lineJoin: 'lineJoin',
@@ -631,6 +634,25 @@ export interface UrlParams {
    */
   cacheBudgetMB: number | null;
   /**
+   * Worker pool size for the session (`?workers=16`; `0` = auto from the core
+   * count). Beats the stored Settings value, which it otherwise mirrors: a
+   * launcher on a dedicated display machine sets it without touching that
+   * machine's saved preferences. Clamped to the Settings range at boot.
+   */
+  workers: number | null;
+  /**
+   * Concurrent chunk fetches for the session (`?prefetch=12`) — the Settings
+   * popover's "Prefetch Limit". Same precedence and clamping as `workers`.
+   */
+  prefetch: number | null;
+  /**
+   * Scale every overlay's text for the session (`?textScale=0.8`). Wins over
+   * the scene's authored `viewer_config.text_scale`. Only the type shrinks or
+   * grows: overlay positions, widths and anchors stay where they were
+   * authored. Clamped to [0.25, 4]. See `ui/overlay-manager.ts`.
+   */
+  textScale: number | null;
+  /**
    * Pin a fixed device pixel ratio and disable adaptive DPR for the
    * session (`?dpr=1`). The value is clamped to [0.25, native DPR] at
    * apply time and the adaptive-resolution toggle is locked off so
@@ -769,6 +791,9 @@ export function readUrlParams(
     renderAudit: has(K.renderAudit),
     gpuBudgetMB: parseNonNegativeInt(get(K.gpuBudgetMB)),
     cacheBudgetMB: parseNonNegativeInt(get(K.cacheBudgetMB)),
+    workers: parseNonNegativeInt(get(K.workers)),
+    prefetch: parsePositiveInt(get(K.prefetch)),
+    textScale: parsePositiveFloat(get(K.textScale)),
     dpr: parsePositiveFloat(get(K.dpr)),
     input: normalizeInputParam(get(K.input)),
     lineJoin: parseLineJoinStyle(get(K.lineJoin)),

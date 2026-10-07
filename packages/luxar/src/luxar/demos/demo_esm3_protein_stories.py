@@ -1143,6 +1143,18 @@ def story_narration(story: Story) -> str:
     return f"{story.title}. {story.mystery}"
 
 
+def text_vh(size: float) -> str:
+    """A CSS length of ``size`` vh that follows the viewer's text scale.
+
+    The panels are authored HTML, so they opt in to ``viewer_config.text_scale``
+    (and the viewer's ``?textScale=``) by multiplying by its custom property;
+    the ``1`` fallback keeps them at their authored size anywhere it is unset.
+    Used for font sizes and the gaps between lines of text, never for the
+    panel's box (padding, border, width), so a scaled panel keeps its place.
+    """
+    return f"calc({size:g}vh * var(--luxar-text-scale, 1))"
+
+
 def story_panel_html(
     story: Story, n_members: int, index: int, total: int, *, unit: str = "proteins"
 ) -> str:
@@ -1154,26 +1166,27 @@ def story_panel_html(
     r, g, b = (int(round(v * 255)) for v in story.color)
     colour = f"#{r:02x}{g:02x}{b:02x}"
     items = "".join(
-        f'<li style="margin-bottom:0.7vh">{html.escape(f)}</li>' for f in story.facts
+        f'<li style="margin-bottom:{text_vh(0.7)}">{html.escape(f)}</li>'
+        for f in story.facts
     )
     # Sized in vh so the panel scales with the display; at 1.3vh body text five
     # facts plus the question fit a 16:9 screen with room to spare and a square
     # window without spilling (checked in the browser).
     return (
-        '<div style="font-size:1.3vh;line-height:1.35;color:#e8e8e8;'
+        f'<div style="font-size:{text_vh(1.3)};line-height:1.35;color:#e8e8e8;'
         "background:rgba(0,0,0,0.62);padding:1.4vh 1.6vh;border-radius:6px;"
         f'border-left:0.5vh solid {colour}">'
-        f'<div style="font-size:1.0vh;color:#aaa;letter-spacing:0.15em;'
+        f'<div style="font-size:{text_vh(1.0)};color:#aaa;letter-spacing:0.15em;'
         f'text-transform:uppercase">Story {index} of {total}</div>'
-        f'<div style="font-size:2.2vh;font-weight:bold;color:{colour};'
-        f'margin:0.3vh 0 0.2vh">{html.escape(story.title)}</div>'
-        f'<div style="font-size:1.25vh;color:#bbb;margin-bottom:1.0vh">'
+        f'<div style="font-size:{text_vh(2.2)};font-weight:bold;color:{colour};'
+        f'margin:{text_vh(0.3)} 0 {text_vh(0.2)}">{html.escape(story.title)}</div>'
+        f'<div style="font-size:{text_vh(1.25)};color:#bbb;margin-bottom:{text_vh(1.0)}">'
         f"{html.escape(story.subtitle)}</div>"
         f'<ul style="margin:0 0 0.8vh 1.4vh;padding:0">{items}</ul>'
         f'<div style="font-style:italic;color:#ffd48a;border-top:1px solid '
-        f'rgba(255,255,255,0.15);padding-top:0.8vh">'
+        f'rgba(255,255,255,0.15);padding-top:{text_vh(0.8)}">'
         f"Open question: {html.escape(story.mystery)}</div>"
-        f'<div style="font-size:1.0vh;color:#888;margin-top:0.8vh">'
+        f'<div style="font-size:{text_vh(1.0)};color:#888;margin-top:{text_vh(0.8)}">'
         f"{n_members:,} {html.escape(unit)} highlighted</div>"
         "</div>"
     )
@@ -1182,13 +1195,13 @@ def story_panel_html(
 def overview_panel_html(n_proteins: int) -> str:
     """The overview panel shown at story 0."""
     return (
-        '<div style="font-size:1.3vh;line-height:1.35;color:#e8e8e8;'
+        f'<div style="font-size:{text_vh(1.3)};line-height:1.35;color:#e8e8e8;'
         "background:rgba(0,0,0,0.62);padding:1.4vh 1.6vh;border-radius:6px;"
         'border-left:0.5vh solid #ffffff">'
-        f'<div style="font-size:2.2vh;font-weight:bold;margin-bottom:0.6vh">'
+        f'<div style="font-size:{text_vh(2.2)};font-weight:bold;margin-bottom:{text_vh(0.6)}">'
         f"{html.escape(OVERVIEW_TITLE)}</div>"
         f"{OVERVIEW_HTML.format(n=n_proteins)}"
-        f'<div style="margin-top:1.1vh;font-size:1.05vh;color:rgba(232,232,232,0.55)">'
+        f'<div style="margin-top:{text_vh(1.1)};font-size:{text_vh(1.05)};color:rgba(232,232,232,0.55)">'
         f"{html.escape(ATTRIBUTION)}</div>"
         "</div>"
     )

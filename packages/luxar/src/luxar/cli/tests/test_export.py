@@ -1272,3 +1272,33 @@ def test_the_exported_scripts_import_on_the_oldest_python_they_promise(
             f"{name} needs Python > {'.'.join(map(str, EXPORT_PYTHON_FLOOR))}: "
             + "; ".join(problems)
         )
+
+
+def test_the_serve_script_opens_the_viewer_with_the_scene_launch_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`viewer_config.launch` reaches the URL serve.py opens, and only there."""
+    attrs = _scene_attrs(control_panel=True)
+    attrs["viewer_config"]["launch"] = {
+        "renderer": "webgpu",
+        "workers": 16,
+        "prefetch": 12,
+    }
+    monkeypatch.setattr(export_module, "read_node_attrs", lambda _p: attrs)
+    facts = export_module.read_scene_facts(tmp_path)
+    assert facts.launch_query == "&renderer=webgpu&workers=16&prefetch=12"
+    script = export_module._get_serve_script_content("data", None, facts)
+    assert "LAUNCH_QUERY = '&renderer=webgpu&workers=16&prefetch=12'" in script
+    plain = export_module._get_serve_script_content("data", None, None)
+    assert "LAUNCH_QUERY = ''" in plain
+
+
+def test_an_invalid_launch_block_fails_the_export(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Dropping it silently would ship a kiosk on the wrong backend."""
+    attrs = _scene_attrs(control_panel=True)
+    attrs["viewer_config"]["launch"] = {"workers": 99}
+    monkeypatch.setattr(export_module, "read_node_attrs", lambda _p: attrs)
+    with pytest.raises(ValueError, match="launch.workers"):
+        export_module.read_scene_facts(tmp_path)
