@@ -1215,7 +1215,7 @@ def test_panel_type_follows_the_viewer_text_scale() -> None:
     assert "var(--luxar-text-scale, 1)" in overview_panel_html(7_714_508)
 
 
-@pytest.mark.parametrize(("aspect", "expected"), [(1.0, 0.64), (16 / 9, 0.741)])
+@pytest.mark.parametrize(("aspect", "expected"), [(1.0, 0.642), (16 / 9, 0.743)])
 def test_the_caption_sits_just_under_the_turntable(
     aspect: float, expected: float
 ) -> None:
@@ -1223,3 +1223,21 @@ def test_the_caption_sits_just_under_the_turntable(
     x, y = demo.turntable_caption_position(aspect)
     assert y == pytest.approx(expected, abs=1e-3)
     assert x == pytest.approx(0.06 + 0.26 / 2)
+
+
+def test_a_squat_molecule_gets_its_caption_tucked_under_it(tmp_path: Path) -> None:
+    """The caption follows the molecule's own lowest point, read from the poster."""
+    from PIL import Image
+
+    rgba = np.zeros((100, 100, 4), dtype=np.uint8)
+    rgba[20:70, 30:70] = (200, 180, 120, 255)  # the molecule ends 70% down
+    poster = tmp_path / "poster.png"
+    Image.fromarray(rgba, "RGBA").save(poster)
+    assert demo.poster_content_bottom(poster) == pytest.approx(0.70)
+    _, low = demo.turntable_caption_position(1.0, 0.70)
+    _, edge = demo.turntable_caption_position(1.0)
+    assert low == pytest.approx(edge - 0.3 * demo.TURNTABLE_WIDTH)
+
+    Image.fromarray(rgba[..., :3], "RGB").save(tmp_path / "flat.png")
+    assert demo.poster_content_bottom(tmp_path / "flat.png") == 1.0
+    assert demo.poster_content_bottom(tmp_path / "missing.png") == 1.0

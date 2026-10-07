@@ -3336,16 +3336,51 @@ DEFAULT_ASPECT = 16 / 9
 NOISE_PHOTON_GAIN = 0.0001
 
 
-def turntable_caption_position(aspect: float) -> tuple[float, float]:
-    """Where the structure caption goes: centred just under the turntable clip.
+#: Gap between the molecule's lowest point and its caption, in viewport height.
+CAPTION_GAP = 0.012
+#: Alpha above which a poster pixel counts as molecule rather than margin.
+POSTER_ALPHA_FLOOR = 16
+
+
+def poster_content_bottom(poster: Path) -> float:
+    """The molecule's lowest point in its turntable frame, as a fraction of its height.
+
+    Read from the poster's alpha. The turntable spins about the vertical axis,
+    which moves no atom up or down, so the poster's lowest opaque row is the
+    lowest the molecule reaches in any frame. 1.0 (the frame's edge) when the
+    poster has no alpha or cannot be read.
+    """
+    from PIL import Image
+
+    try:
+        with Image.open(poster) as im:
+            if "A" not in im.getbands():
+                return 1.0
+            alpha = np.asarray(im.getchannel("A"))
+    except OSError:
+        return 1.0
+    rows = np.flatnonzero((alpha > POSTER_ALPHA_FLOOR).any(axis=1))
+    if rows.size == 0:
+        return 1.0
+    return float(rows[-1] + 1) / alpha.shape[0]
+
+
+def turntable_caption_position(
+    aspect: float, content_bottom: float = 1.0
+) -> tuple[float, float]:
+    """Where the structure caption goes: centred just under the molecule.
 
     The clip is a square ``TURNTABLE_WIDTH`` of the viewport WIDTH, centred at
     ``TURNTABLE_POSITION``'s height, so it is ``TURNTABLE_WIDTH * aspect`` of
-    the viewport HEIGHT tall. A fixed height (the Swiss-Prot tour's 0.75 was
-    laid out for 16:9) leaves a square screen's caption far below the molecule.
+    the viewport HEIGHT tall. ``content_bottom`` is how far down that clip the
+    molecule reaches (:func:`poster_content_bottom`; 1.0 = the clip's edge), so
+    a squat molecule's caption rides up under it instead of floating at the
+    bottom of an empty frame.
     """
     x, y = TURNTABLE_POSITION
-    return (x + TURNTABLE_WIDTH / 2, y + TURNTABLE_WIDTH * aspect / 2 + 0.01)
+    height = TURNTABLE_WIDTH * aspect
+    top = y - height / 2
+    return (x + TURNTABLE_WIDTH / 2, top + height * content_bottom + CAPTION_GAP)
 
 
 def _viewer_config(
@@ -3505,7 +3540,9 @@ def _add_overlays(
         )
         scene.add_text(
             f"PDB {a.pdb_id} · {pdb_caption(s, a.title, kiosk=kiosk)}",
-            position=turntable_caption_position(aspect),
+            position=turntable_caption_position(
+                aspect, poster_content_bottom(a.poster) if kiosk else 1.0
+            ),
             anchor="top-center",
             text_align="center",
             font_size=0.013,
