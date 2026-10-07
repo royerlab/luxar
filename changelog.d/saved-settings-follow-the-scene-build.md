@@ -16,3 +16,9 @@ the page.
 The protein universe kiosk places each structure caption in the turntable's
 own units (an offset in `vw` from the clip's centre), so it sits under the
 molecule on any screen shape, not only a square one.
+
+An authored `adaptive_dpr_enabled` now reaches the adaptive-resolution manager.
+The scene-config path forwarded the DPR ceiling and the Density Guard but not
+this flag, so the panel read "off" while the manager kept stepping the
+resolution, and on WebGPU each step left the previous full-screen targets
+allocated: about 300 MB per step at 3260×3260, until the device ran out.

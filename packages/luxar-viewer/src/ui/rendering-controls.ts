@@ -676,6 +676,13 @@ export class RenderingControls {
     if (zarrOverrides.allowHighDPR !== undefined) {
       this.adaptiveDPRManager?.setHighDPRAllowed(this.settings.allowHighDPR);
     }
+    // And `adaptive_dpr_enabled`, AFTER the ceiling (the order `loadSettings`
+    // uses): without it the checkbox read "off" while the manager kept
+    // stepping the resolution at its default, and every step reallocates the
+    // full-screen targets.
+    if (zarrOverrides.adaptiveDPREnabled !== undefined) {
+      this.adaptiveDPRManager?.setEnabled(this.settings.adaptiveDPREnabled);
+    }
     // An authored `density_guard_enabled` reaches the live guard the same way
     // the stored flag does (left alone while `?noDensityGuard` holds it off).
     if (zarrOverrides.densityGuardEnabled !== undefined) {

@@ -556,6 +556,24 @@ describe('RenderingControls', () => {
       );
     });
 
+    it('an authored adaptive_dpr_enabled reaches the manager, after the ceiling', () => {
+      // The panel used to read "off" while the manager kept adapting: every
+      // step reallocates the full-screen targets (a leak on WebGPU).
+      const controls = renderingControls as any;
+      const adaptiveDPRManager = { setHighDPRAllowed: vi.fn(), setEnabled: vi.fn() };
+      controls.setAdaptiveDPRManager(adaptiveDPRManager);
+
+      controls.applyOverrides({ allowHighDPR: true, adaptiveDPREnabled: false });
+
+      expect(adaptiveDPRManager.setEnabled).toHaveBeenCalledWith(false);
+      expect(adaptiveDPRManager.setHighDPRAllowed.mock.invocationCallOrder[0]).toBeLessThan(
+        adaptiveDPRManager.setEnabled.mock.invocationCallOrder[0]
+      );
+      adaptiveDPRManager.setEnabled.mockClear();
+      controls.applyOverrides({ bloomStrength: 0.5 });
+      expect(adaptiveDPRManager.setEnabled).not.toHaveBeenCalled();
+    });
+
     it('applies the stored Density Guard flag on load and reset, unless URL-disabled', () => {
       const controls = renderingControls as any;
       const control = {
