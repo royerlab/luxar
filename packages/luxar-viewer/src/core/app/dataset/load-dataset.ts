@@ -68,7 +68,8 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
   // Set scene ID for rendering controls persistence BEFORE loading scene
   // This ensures saved settings (like HDR intensity) are applied before materials are created
   ports.renderingControls.setSceneId(src);
-  let applyViewerConfigDefaults = !ports.renderingControls.hasStoredSettings();
+  const hadStoredSettings = ports.renderingControls.hasStoredSettings();
+  let applyViewerConfigDefaults = !hadStoredSettings;
   let staleStoredSettings = false;
   let metadataAdopted = false;
   const sceneLoadOptions = {
@@ -84,8 +85,7 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
         typeof hash === 'string' ? hash : undefined
       );
       if (staleStoredSettings) ports.renderingControls.resetToDefaults();
-      applyViewerConfigDefaults =
-        staleStoredSettings || !ports.renderingControls.hasStoredSettings();
+      applyViewerConfigDefaults = staleStoredSettings || !hadStoredSettings;
       sceneLoadOptions.applyViewerConfigFov = applyViewerConfigDefaults;
     },
   };
@@ -120,12 +120,13 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
     if (!settings.dynamicClippingEnabled) {
       ports.sceneManager.updateClippingPlanes(settings.near, settings.far);
     }
-  } else if (
-    applyViewerConfigDefaults &&
-    !ports.renderingControls.hasStoredSettings() &&
-    viewerConfig
-  ) {
+  } else if (applyViewerConfigDefaults && viewerConfig) {
     ports.renderingControls.applyZarrDefaults();
+    // A first-load edit was saved before the authored defaults were available.
+    // Persist their combined state so a later visit keeps both.
+    if (!hadStoredSettings && ports.renderingControls.hasStoredSettings()) {
+      ports.renderingControls.saveSettings();
+    }
   } else if (!applyViewerConfigDefaults || ports.renderingControls.hasStoredSettings()) {
     // The scene may have replaced the stored FOV to keep an authored position
     // paired with its lens. Keep panel state and Ctrl+Shift+S export aligned

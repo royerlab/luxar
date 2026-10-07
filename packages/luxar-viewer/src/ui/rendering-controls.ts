@@ -571,8 +571,8 @@ export class RenderingControls {
   }
 
   /**
-   * Apply zarr viewer_config as defaults for a first-time scene visit.
-   * Called when no localStorage exists and zarr provides scene-specific defaults.
+   * Apply zarr viewer_config as defaults for a first-time scene visit,
+   * including when an edit was saved before the scene finished loading.
    * Re-applies the full 3-tier priority chain and updates the scene.
    */
   applyZarrDefaults(): void {

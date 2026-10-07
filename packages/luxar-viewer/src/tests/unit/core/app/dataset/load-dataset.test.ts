@@ -47,6 +47,7 @@ function makePorts(trace: Trace, overrides: Partial<LoadDatasetPorts> = {}): Loa
     adoptSceneContentHash: vi.fn().mockReturnValue(false),
     resetToDefaults: vi.fn(() => trace.order.push('resetToDefaults')),
     applyZarrDefaults: vi.fn(() => trace.order.push('applyZarrDefaults')),
+    saveSettings: vi.fn(() => trace.order.push('saveSettings')),
     syncCameraFovState: vi.fn(() => trace.order.push('syncCameraFovState')),
     updateSceneScale: vi.fn(() => trace.order.push('updateSceneScale')),
   };
@@ -596,25 +597,40 @@ describe('loadDataset with saved settings from another build', () => {
     );
   });
 
-  it('keeps an edit made while scene nodes load instead of applying late defaults', async () => {
-    const trace: Trace = { order: [], recordedViewerConfig: undefined };
-    const ports = makePorts(trace);
-    let edited = false;
-    (ports.renderingControls.hasStoredSettings as ReturnType<typeof vi.fn>).mockImplementation(
-      () => edited
-    );
-    (ports.sceneManager.loadSceneData as ReturnType<typeof vi.fn>).mockImplementation(
-      (_src: string, _config: unknown, options: { beforeFrame?: (root: THREE.Group) => void }) => {
-        const root = new THREE.Group();
-        root.userData.contentHash = 'hash-b';
-        options.beforeFrame?.(root);
-        edited = true;
-      }
-    );
-    await loadDataset('scene.zarr', ports);
+  it.each(['before metadata', 'after metadata'])(
+    'applies authored defaults and saves an edit made %s on a first load',
+    async (editTiming) => {
+      const trace: Trace = { order: [], recordedViewerConfig: undefined };
+      const ports = makePorts(trace);
+      let edited = false;
+      const frame = vi.fn();
+      (ports.renderingControls.hasStoredSettings as ReturnType<typeof vi.fn>).mockImplementation(
+        () => edited
+      );
+      (ports.sceneManager.loadSceneData as ReturnType<typeof vi.fn>).mockImplementation(
+        (
+          _src: string,
+          _config: unknown,
+          options: { beforeFrame?: (root: THREE.Group) => void; applyViewerConfigFov: boolean }
+        ) => {
+          const root = new THREE.Group();
+          root.userData.contentHash = 'hash-b';
+          if (editTiming === 'before metadata') edited = true;
+          options.beforeFrame?.(root);
+          frame(options.applyViewerConfigFov);
+          if (editTiming === 'after metadata') edited = true;
+        }
+      );
+      await loadDataset('scene.zarr', ports);
 
-    expect(ports.renderingControls.applyZarrDefaults).not.toHaveBeenCalled();
-  });
+      expect(frame).toHaveBeenCalledExactlyOnceWith(true);
+      expect(ports.renderingControls.applyZarrDefaults).toHaveBeenCalledOnce();
+      expect(ports.renderingControls.saveSettings).toHaveBeenCalledOnce();
+      expect(trace.order.indexOf('saveSettings')).toBeGreaterThan(
+        trace.order.indexOf('applyZarrDefaults')
+      );
+    }
+  );
 
   it('resets to the new build defaults instead of keeping the stale edits', async () => {
     const trace: Trace = { order: [], recordedViewerConfig: undefined };

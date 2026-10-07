@@ -221,6 +221,24 @@ describe('RenderingControls', () => {
   });
 
   describe('saved edits and the scene build they were made on', () => {
+    it('persists authored defaults alongside an edit saved during the first load', () => {
+      renderingControls.setSceneId('first-visit');
+      renderingControls.setZarrViewerConfig({ exposure: 1.5 });
+      expect(renderingControls.adoptSceneContentHash('hash-a')).toBe(false);
+      renderingControls.settings.bloomStrength = 0.3;
+      renderingControls.saveSettings();
+
+      renderingControls.applyZarrDefaults();
+      renderingControls.saveSettings();
+      expect(renderingControls.settings.exposure).toBe(1.5);
+      expect(renderingControls.settings.bloomStrength).toBe(0.3);
+
+      renderingControls.setSceneId('first-visit');
+      expect(renderingControls.adoptSceneContentHash('hash-a')).toBe(false);
+      expect(renderingControls.settings.exposure).toBe(1.5);
+      expect(renderingControls.settings.bloomStrength).toBe(0.3);
+    });
+
     it('stamps edits saved before metadata arrives so they survive the next load', () => {
       localStorage.clear();
       renderingControls.setSceneId('loading-test');
