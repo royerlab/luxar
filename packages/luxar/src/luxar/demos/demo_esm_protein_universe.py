@@ -2416,14 +2416,17 @@ KIOSK_TEXT: dict[str, KioskText] = {
         subtitle="One fold in four places, animal and bacterial",
         facts=(
             (
-                "Each red blood cell carries roughly 280 million hemoglobin molecules, "
-                "each able to hold four oxygen molecules."
+                "Each red blood cell carries roughly 280 million hemoglobin "
+                "molecules, each able to hold four oxygen molecules."
             ),
             (
-                "In 1949 sickle-cell anaemia became the first “molecular disease”, "
-                "traced to a faulty hemoglobin: one amino acid swapped for another."
+                "In 1949 sickle-cell anaemia became the first “molecular disease”; "
+                "the fault was later pinned to one swapped amino acid."
             ),
-            "The lines join the four places where the model filed this fold: one of animal globins, three mostly bacterial.",
+            (
+                "The lines join the four places where the model filed this fold, one "
+                "of animal globins and three mostly bacterial."
+            ),
         ),
         mystery=(
             "Hemoglobin also turns up in dopamine neurons of the brain, nowhere "
@@ -2439,17 +2442,17 @@ KIOSK_TEXT: dict[str, KioskText] = {
                 "began filling the air with oxygen."
             ),
             (
-                "Splitting water wrecks D1 itself: a leaf replaces half its D1 every "
-                "hour or two."
+                "Splitting water wrecks D1, so in daylight a leaf replaces half its "
+                "D1 every hour or two."
             ),
             (
-                "Two in five D1 clusters here are viral: cyanophages carry their own "
-                "copy to keep the host photosynthesising."
+                "Two in five D1 clusters here are viral, from cyanophages that carry "
+                "their own copy to keep the host photosynthesising."
             ),
         ),
         mystery=(
-            "Water-splitting may have begun a billion years before oxygen rose. Why "
-            "did the planet wait so long?"
+            "Water-splitting may have begun a billion years before oxygen rose. "
+            "Why did the planet wait so long?"
         ),
     ),
     "RuBisCO": KioskText(
@@ -2463,7 +2466,7 @@ KIOSK_TEXT: dict[str, KioskText] = {
                 "losing carbon and energy each time. Plants make up for it in sheer "
                 "quantity."
             ),
-            "This knot is the large chain, half from plants and half from bacteria.",
+            ("This knot is the large chain, half from plants and half from bacteria."),
         ),
         mystery=(
             "Three billion years of evolution have not produced a fast, accurate "
@@ -2473,8 +2476,8 @@ KIOSK_TEXT: dict[str, KioskText] = {
     "ATP synthase": KioskText(
         facts=(
             (
-                "A flow of protons turns its axle, and each turn presses out three ATP "
-                "molecules. In 1997 a single motor was watched spinning under the "
+                "A flow of protons turns its axle, and each turn presses out three "
+                "ATP molecules. In 1997 a single motor was watched spinning under the "
                 "microscope."
             ),
             "You make and spend roughly your own body weight in ATP every day.",
@@ -2485,29 +2488,29 @@ KIOSK_TEXT: dict[str, KioskText] = {
         ),
         mystery=(
             "Almost all the energy going into this motor comes out as rotation, "
-            "next to none as heat. How is not yet understood."
+            "next to none as heat. How does a protein manage that?"
         ),
     ),
     "Hsp70": KioskText(
         subtitle="Nearly four thousand clusters of one chaperone, in dozens of knots",
         facts=(
             (
-                "Hsp70 (DnaK in bacteria) holds unfolded proteins, refolds damaged ones "
-                "and hands hopeless ones to the shredder. Almost every bacterium, "
-                "plant, animal and fungus carries one."
+                "Hsp70 (DnaK in bacteria) holds unfolded proteins, refolds damaged "
+                "ones and hands hopeless ones to the shredder. Almost every "
+                "bacterium, plant, animal and fungus carries one."
             ),
             (
-                "Separated for some two billion years, human Hsp70 and E. coli DnaK are "
-                "still about 47% identical."
+                "Separated for some two billion years, human Hsp70 and E. coli DnaK "
+                "are still about 47% identical."
             ),
             (
-                "It was found by accident in 1962, when a nudged incubator raised new "
-                "“puffs” on fruit-fly chromosomes."
+                "Its story began by accident in 1962, when a nudged incubator raised "
+                "new “puffs” on fruit-fly chromosomes."
             ),
         ),
         mystery=(
-            "Cancer cells over-produce Hsp70 to survive, yet no drug against it has "
-            "been approved. Why is it so hard to target?"
+            "Cancer cells over-produce Hsp70 to survive, yet no drug against it "
+            "has been approved. Why is it so hard to target?"
         ),
     ),
     "RecA and Rad51": KioskText(
@@ -2517,9 +2520,12 @@ KIOSK_TEXT: dict[str, KioskText] = {
                 "RecA coats a broken DNA strand into a filament that searches the "
                 "genome for the matching sequence and pairs the two."
             ),
-            "Our version, RAD51, is loaded onto broken DNA by BRCA2, whose inherited faults are behind many hereditary breast cancers.",
             (
-                "The densest RecA knot on this map belongs to viruses: many phages "
+                "Our version, RAD51, is loaded onto broken DNA by BRCA2, whose "
+                "inherited faults are behind many hereditary breast cancers."
+            ),
+            (
+                "The densest RecA knot on this map belongs to phages, many of which "
                 "carry a RecA of their own."
             ),
         ),
@@ -2534,45 +2540,50 @@ KIOSK_TEXT: dict[str, KioskText] = {
                 "ABC transporters pump molecules across membranes, burning ATP: "
                 "nutrients in, toxins out. Every genome has them."
             ),
-            ("Humans have 48. A broken one, CFTR, causes cystic fibrosis."),
+            "Humans have 48. A broken one, CFTR, causes cystic fibrosis.",
             (
-                "A family this large and this tightly knit has so little in common with "
-                "anything else that the map pushes it clear of the crowd."
+                "A family this large and this tightly knit has so little in common "
+                "with anything else that the map pushes it clear of the crowd."
             ),
         ),
         mystery=(
-            "For most of the family, exactly how the ATP cycle moves the cargo is "
-            "not known."
+            "How does the ATP cycle move the cargo? For most of the family, no "
+            "one knows."
         ),
     ),
     "Dark proteome": KioskText(
         facts=(
             (
-                "Two million of the 7.7 million clusters here contain no protein with a "
-                "domain of known function. They are the dim points of this map."
+                "Two million of the 7.7 million clusters here contain no protein with "
+                "a domain of known function. They are the dim points of this map."
             ),
             (
                 "Most of this atlas, 5.6 of its 6.8 billion sequences, was read "
                 "straight out of soil, seawater and guts, from organisms nobody has "
                 "grown in a lab."
             ),
-            "Dark sits next to dark: these proteins form families of their own.",
+            (
+                "Uncharacterised clusters mostly sit beside each other, in families "
+                "of their own."
+            ),
         ),
         mystery=(
-            "Are these families new chemistry, or old folds whose sequences drifted "
-            "beyond recognition?"
+            "Are these families new chemistry, or old folds whose sequences "
+            "drifted beyond recognition?"
         ),
     ),
     "Phage": KioskText(
-        subtitle="Half a million clusters of tailed phages, half of them uncharacterised",
+        subtitle=(
+            "Half a million clusters of tailed phages, half of them uncharacterised"
+        ),
         facts=(
             (
                 "Bacteriophages, the viruses of bacteria, are the most abundant "
                 "biological entities on Earth, about ten for every microbial cell."
             ),
             (
-                "In the oceans they kill around a fifth of all microbial biomass every "
-                "day, shaping the planet's carbon cycle."
+                "In the oceans they kill around a fifth of all microbial biomass "
+                "every day, and its carbon spills back into the water."
             ),
             (
                 "They were medicine before penicillin, and with antibiotic resistance "
@@ -2584,9 +2595,9 @@ KIOSK_TEXT: dict[str, KioskText] = {
     "Viral surface proteins": KioskText(
         facts=(
             (
-                "Flu haemagglutinin, the coronavirus spike, HIV's envelope and Ebola's "
-                "glycoprotein come from unrelated viruses, yet all snap into the same "
-                "six-helix bundle to fuse virus and cell."
+                "Flu haemagglutinin, the coronavirus spike, HIV's envelope and "
+                "Ebola's glycoprotein come from unrelated viruses, yet all snap into "
+                "the same six-helix bundle to fuse virus and cell."
             ),
             (
                 "The SARS-CoV-2 spike grips the ACE2 receptor on our cells to get in. "
@@ -2598,21 +2609,21 @@ KIOSK_TEXT: dict[str, KioskText] = {
             ),
         ),
         mystery=(
-            "How many more spikes hide in the dark parts of this map, invisible to "
-            "a sequence search?"
+            "How many more spikes hide in the dark parts of this map, invisible "
+            "to a sequence search?"
         ),
     ),
     "CRISPR-Cas": KioskText(
         subtitle="Hundreds of clusters of Cas9 and its kin",
         facts=(
             (
-                "CRISPR is a bacterial immune system: bacteria keep snippets of viral "
+                "CRISPR is a bacterial immune system. Bacteria keep snippets of viral "
                 "DNA, and Cas proteins use them as guides to find and cut the same "
                 "virus next time."
             ),
             (
                 "In 2012 Jennifer Doudna and Emmanuelle Charpentier turned Cas9 into "
-                "programmable scissors, winning the 2020 Nobel Prize in Chemistry."
+                "programmable scissors and shared the 2020 Nobel Prize in Chemistry."
             ),
             (
                 "Eleven years later the first CRISPR medicine was approved, for "
@@ -2627,10 +2638,13 @@ KIOSK_TEXT: dict[str, KioskText] = {
     "TnpB and Fanzor": KioskText(
         facts=(
             (
-                "TnpB, a third the size of Cas9, travels with jumping genes. Guided by "
-                "a short RNA, it cuts DNA wherever the guide matches."
+                "TnpB, a third the size of Cas9, travels with jumping genes. Guided "
+                "by a short RNA, it cuts DNA wherever the guide matches."
             ),
-            "Enzymes like it gave rise to the Cas12 gene editors, about fifty separate times.",
+            (
+                "The Cas12 family, which includes gene editors, arose from enzymes "
+                "like it about fifty separate times."
+            ),
             (
                 "One cluster here folds like the best-studied TnpB yet shares fewer "
                 "than one letter in seven with it."
@@ -2638,47 +2652,49 @@ KIOSK_TEXT: dict[str, KioskText] = {
         ),
         mystery=(
             "Three hundred and fifteen unannotated clusters look like members of "
-            "this family. How many new RNA-guided systems hide in them?"
+            "this family. Could some be new RNA-guided systems?"
         ),
     ),
     "Beta-lactamases": KioskText(
         subtitle="Nine thousand clusters share the fold; this knot is TEM-1's family",
         facts=(
             (
-                "A beta-lactamase cuts open penicillin's four-membered ring before the "
-                "drug can jam the enzymes that build the bacterial cell wall."
+                "A beta-lactamase cuts open penicillin's four-membered ring before "
+                "the drug can jam the enzymes that build the bacterial cell wall."
             ),
             (
-                "Resistance came first: an E. coli enzyme that destroyed penicillin was "
-                "described in 1940, weeks before the drug first treated a patient."
+                "An E. coli enzyme that destroyed penicillin was described in 1940, "
+                "weeks before purified penicillin first treated a patient."
             ),
-            "Resistance is now associated with nearly five million deaths a year.",
+            (
+                "Drug-resistant infections are now associated with nearly five "
+                "million deaths a year."
+            ),
         ),
         mystery=(
-            "New variants appear every year. Can new drugs keep pace with an enzyme "
-            "family that evolves in every hospital on Earth?"
+            "New variants appear every year. Can new drugs keep pace with an "
+            "enzyme family that keeps evolving in hospitals?"
         ),
     ),
     "Lanthipeptides": KioskText(
         subtitle="Eight places that together make one antibiotic assembly line",
         facts=(
             (
-                "Nisin is a short peptide stapled into five rings by sulfur bridges. It "
-                "has preserved processed cheese for seventy years."
+                "Nisin is a short peptide stapled into five rings by sulfur bridges. "
+                "It has preserved processed cheese for seventy years."
             ),
             (
                 "It grabs lipid II, the brick the bacterial cell wall is built from, "
                 "then uses it as an anchor to punch pores in the membrane."
             ),
             (
-                "The lines join the eight places of its assembly line: the enzymes that "
-                "prepare and close the rings, and the proteins that keep the producer "
-                "immune."
+                "The lines join eight places: the enzymes that prepare and close the "
+                "rings, the immunity proteins, and one ring-stitched peptide."
             ),
         ),
         mystery=(
-            "After seventy years in food, resistance to nisin has never become a "
-            "real problem. Why?"
+            "Why has resistance to nisin never become a real problem in all its "
+            "years of use?"
         ),
     ),
     "Ice-binding proteins": KioskText(
@@ -2687,18 +2703,14 @@ KIOSK_TEXT: dict[str, KioskText] = {
                 "Antifreeze proteins were found in Antarctic fish in 1969, keeping "
                 "blood liquid at minus 1.9 degrees."
             ),
+            "They sit on the face of a growing ice crystal and stop it growing.",
             (
-                "They do not work by sheer weight of dissolved material: they sit on "
-                "the face of a growing ice crystal and stop it growing."
-            ),
-            (
-                "The most widespread ice-binding domain is scattered across the tree of "
-                "life, passed sideways between species."
+                "The most widespread ice-binding domain is scattered across the tree "
+                "of life, probably passed sideways between species."
             ),
         ),
         mystery=(
-            "Ice is nothing but ordered water. How a protein recognises it at all "
-            "is still unclear."
+            "Ice is nothing but ordered water. How does a protein recognise it at all?"
         ),
     ),
     "Reverse gyrase": KioskText(
@@ -2713,13 +2725,13 @@ KIOSK_TEXT: dict[str, KioskText] = {
                 "and almost never in cooler relatives."
             ),
             (
-                "The extra twist is thought to hold the double helix shut in the heat, "
-                "though this has never been proven."
+                "The extra twist is thought to hold the double helix shut in the "
+                "heat, though this has never been proven."
             ),
         ),
         mystery=(
-            "Without the gene, an archaeon that likes a hundred degrees cannot grow "
-            "above ninety. What changes across those degrees is unknown."
+            "Without the gene, an archaeon that likes a hundred degrees cannot "
+            "grow above ninety. What changes across those degrees is unknown."
         ),
     ),
     "Olfactory receptors": KioskText(
@@ -2739,24 +2751,24 @@ KIOSK_TEXT: dict[str, KioskText] = {
             ),
         ),
         mystery=(
-            "Most human receptors have no known odour. Can we read what a receptor "
-            "detects from its sequence?"
+            "Most human receptors have no known odour. Can we read what a "
+            "receptor detects from its sequence?"
         ),
     ),
     "Insect odorant receptors": KioskText(
         facts=(
             (
-                "Insects do not smell with anything related to our receptors. An insect "
-                "odorant receptor is itself an ion channel, opening when the odorant "
-                "binds."
+                "Insects do not smell with anything related to our receptors. An "
+                "insect odorant receptor is itself an ion channel, opening when the "
+                "odorant binds."
             ),
             (
-                "Each works with a partner, Orco. Knock out Orco and a malaria mosquito "
-                "is largely no longer drawn to human odour."
+                "Each works with a partner, Orco. Knock out Orco and a malaria "
+                "mosquito is largely no longer drawn to human odour."
             ),
             (
-                "These clusters sit far from the vertebrate knot: two unrelated answers "
-                "to the same problem."
+                "These clusters sit far from the vertebrate knot, because the two "
+                "receptor families are unrelated."
             ),
         ),
         mystery=(
@@ -2772,25 +2784,28 @@ KIOSK_TEXT: dict[str, KioskText] = {
             ),
             (
                 "It has only about thirty chemosensory neurons, so each carries many "
-                "receptors: the opposite of our own nose."
+                "receptors, where a neuron in our nose carries one."
             ),
             (
-                "No nematode chemoreceptor structure has been solved. The model beside "
-                "this panel is a hormone receptor from the same worm."
+                "No nematode chemoreceptor structure has been solved. The model "
+                "beside this panel is a hormone receptor from the same worm."
             ),
         ),
-        mystery="What are the rest of those receptors for?",
+        mystery=(
+            "What do almost all of these receptors detect, and why does a worm "
+            "need so many?"
+        ),
     ),
     "Levodopa and the gut": KioskText(
         facts=(
             (
-                "Levodopa, the mainstay of Parkinson's treatment, must reach the brain. "
-                "Gut bacteria carrying this enzyme turn it into dopamine on the way, "
-                "where it is no use."
+                "Levodopa, the mainstay of Parkinson's treatment, must reach the "
+                "brain. Gut bacteria carrying this enzyme turn it into dopamine on "
+                "the way, where it is no use."
             ),
             (
-                "Carbidopa, given to block the human version of that reaction, does not "
-                "block the bacterial one."
+                "Carbidopa, given to block the human version of that reaction, does "
+                "not block the bacterial one."
             ),
             "Its specks spread across a fifth of the map.",
         ),
@@ -2827,16 +2842,15 @@ OVERVIEW_HTML = (
 #: The kiosk build's overview: shorter, and it points at the touch screen,
 #: the only control a visitor there has. See :class:`KioskText`.
 KIOSK_OVERVIEW_HTML = (
-    "Every point is one of {n:,} protein clusters from the ESM Atlas, the "
-    "largest map of protein space yet made: 6.8 billion sequences, every "
-    "unique one in eight public databases, most read straight out of soil, "
-    "seawater and guts. A protein language model grouped them so that "
-    "similar clusters sit close together. Colours are the main branches of "
-    "life; the dim points are clusters nobody has "
-    "characterised.<br><br>Touch a story to fly to it: the machines every "
-    "cell runs on, the dark proteome, the arms race between microbes and "
-    "their viruses, life at the extremes and three separate inventions of "
-    "smell."
+    "Every point is one of {n:,} protein clusters from the ESM Atlas, a "
+    "map of protein space built from 6.8 billion unique sequences in "
+    "eight public databases, most read straight out of soil, seawater and "
+    "guts. A protein language model grouped them so that similar clusters "
+    "sit close together. Colours are the main branches of life; the dim "
+    "points are clusters nobody has characterised.<br><br>Touch a story "
+    "to fly to it: the machines every cell runs on, the dark proteome, "
+    "the arms race between microbes and their viruses, life at the "
+    "extremes and three separate inventions of smell."
 )
 #: Spoken introduction at the Overview slot.
 OVERVIEW_NARRATION = (
