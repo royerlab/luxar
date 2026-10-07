@@ -552,6 +552,22 @@ describe('loadDataset — lifecycle', () => {
 });
 
 describe('loadDataset with saved settings from another build', () => {
+  it('does not adopt metadata from a superseded load', async () => {
+    const trace: Trace = { order: [], recordedViewerConfig: undefined };
+    const ports = makePorts(trace, { isStale: () => true });
+    (ports.sceneManager.loadSceneData as ReturnType<typeof vi.fn>).mockImplementation(
+      (_src: string, _config: unknown, options: { beforeFrame?: (root: THREE.Group) => void }) => {
+        const root = new THREE.Group();
+        root.userData.contentHash = 'hash-b';
+        options.beforeFrame?.(root);
+      }
+    );
+    await loadDataset('scene.zarr', ports);
+
+    expect(ports.renderingControls.adoptSceneContentHash).not.toHaveBeenCalled();
+    expect(ports.renderingControls.resetToDefaults).not.toHaveBeenCalled();
+  });
+
   it('restores authored manual clipping planes after metadata framing', async () => {
     const trace: Trace = { order: [], recordedViewerConfig: undefined };
     const ports = makePorts(trace);

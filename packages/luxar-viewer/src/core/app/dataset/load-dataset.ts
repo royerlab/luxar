@@ -74,6 +74,7 @@ export async function loadDataset(src: string, ports: LoadDatasetPorts): Promise
   const sceneLoadOptions = {
     applyViewerConfigFov: applyViewerConfigDefaults,
     beforeFrame: (root: THREE.Group) => {
+      if (ports.isStale()) return;
       metadataAdopted = true;
       const hash = root.userData.contentHash;
       ports.renderingControls.setZarrViewerConfig(
