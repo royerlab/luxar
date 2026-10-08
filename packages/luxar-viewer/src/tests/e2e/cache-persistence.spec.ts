@@ -98,67 +98,163 @@ test.describe('L2 persistence across page reload (R7)', () => {
     browserName,
   }) => {
     test.skip(browserName !== 'chromium', 'Real OPFS persistence is Chromium-only in CI');
-    // Two cold-ish loads (the staggered first load, then the post-reload one)
-    // plus the wait for the reload window: about twice a plain load test.
+    // Two cold-ish loads (the gated first load, then the post-reload one)
+    // plus the waits for the index saves: about twice a plain load test.
     test.setTimeout(90_000);
     const context = page.context();
 
-    // Spread the cold load's chunk responses ~120 ms apart, so its L2 writes keep
-    // arriving after the index's 150 ms leading-edge save and the gaps between
-    // them never reach the 1 s trailing debounce. Metadata documents are not
-    // delayed, so the scene opens at once.
+    // The window this test needs (an index on disk, plus a chunk file it does
+    // not list yet) used to be raced in real time: chunk responses were spread
+    // ~120 ms apart and the reload fired while the last write was under 300 ms
+    // old. On a busy machine the poll itself could outlast that budget, so the
+    // window could close unseen (#3085). Chunk responses are now held until
+    // the test releases them, so the writes land in the order the test needs.
+    // Metadata documents pass straight through, so the scene opens at once.
     const metadataDoc = /(^|\/)(\.zattrs|\.zarray|\.zgroup|\.zmetadata|zarr\.json)$/;
-    let delayed = 0;
-    const stagger = async (route: Route) => {
-      const path = new URL(route.request().url()).pathname;
-      if (!metadataDoc.test(path)) {
-        const wait = 120 * delayed++;
-        await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 6000)));
+    // A held request the viewer gave up on (its per-attempt network timeout,
+    // ~7.5 s, aborts it and queues a retry at the back) must not consume a
+    // release: skip it, so the allowance reaches a request still waiting.
+    const held: Array<{ route: Route; resolve: () => void }> = [];
+    let allowance = 0;
+    let chunkRequests = 0;
+    // Chunk keys as the gate saw them, normalized like `fetched` below, so the
+    // decoded OPFS keys can be checked against real request paths.
+    const gatedPaths = new Set<string>();
+    const release = (n: number) => {
+      allowance += n;
+      while (allowance > 0 && held.length > 0) {
+        const next = held.shift()!;
+        if (next.route.request().failure() === null) allowance--;
+        next.resolve();
       }
-      await route.continue();
     };
-    await context.route(`${DATASET}/**`, stagger);
+    const gate = async (route: Route) => {
+      const url = route.request().url();
+      const path = new URL(url).pathname;
+      if (!metadataDoc.test(path)) {
+        chunkRequests++;
+        gatedPaths.add(url.slice(DATASET.length + 1));
+        if (allowance > 0) allowance--;
+        else await new Promise<void>((resolve) => held.push({ route, resolve }));
+      }
+      await route.continue().catch(() => {
+        // Released only after the reload: the page that asked for it is gone.
+      });
+    };
+    await context.route(`${DATASET}/**`, gate);
 
+    // No waitForLuxarReady here: the viewer only reports `initialized` once its
+    // first chunks have loaded, which the gate now withholds. Everything below
+    // reads OPFS directly, and the stats counter only once the debug surface
+    // has it.
     await page.goto(`/?src=${DATASET}&debug`);
-    await waitForLuxarReady(page);
 
-    // Reload the moment the window this test is about is open: the leading
-    // save has landed (an index parses), chunk files exist that it does not list,
-    // and the last L2 write is under 300 ms old. Polling in the page keeps the
-    // gap between the decision and the reload to one round trip.
+    // What a failed wait reports: which condition was missing, not just that a
+    // boolean never flipped. `writes` is null until init installs the cache
+    // debug helpers; the last-write clock follows the completed files on disk.
     const writes = () =>
-      page.evaluate(() => (window as any).__luxarDebug.cache.getStats().l2?.writes ?? 0);
-    let lastWrites = await writes();
-    let lastWriteAt = Date.now();
+      page.evaluate(
+        () => (window as any).__luxarDebug?.cache?.getStats?.().l2?.writes ?? null
+      ) as Promise<number | null>;
     let onDisk: { keys: string[]; indexed: number } = { keys: [], indexed: -1 };
-    await expect
-      .poll(
-        async () => {
-          const now = await writes();
-          if (now !== lastWrites) {
-            lastWrites = now;
-            lastWriteAt = Date.now();
-          }
-          onDisk = await l2OnDisk(page);
-          return (
-            onDisk.indexed >= 0 &&
-            onDisk.keys.length > onDisk.indexed &&
-            Date.now() - lastWriteAt < 300
-          );
-        },
-        { timeout: 20000, intervals: [25] }
-      )
-      .toBe(true);
-    const beforeReload = onDisk.keys.map((k) => k.replace(/^\/+/, ''));
+    let lastWriteAt = Date.now();
+    // Stage-2 chunk releases so far (0 until stage 2 begins). Part of every
+    // observation, so a timed-out wait still reports how many retries it took.
+    let stage2Releases = 0;
+    const observe = async () => {
+      const previous = onDisk.keys.length;
+      const l2Writes = await writes();
+      onDisk = await l2OnDisk(page);
+      if (onDisk.keys.length !== previous) lastWriteAt = Date.now();
+      return {
+        indexed: onDisk.indexed,
+        onDisk: onDisk.keys.length,
+        // The root `zarr.json` passes the gate and is cached too: count chunks apart.
+        chunksOnDisk: onDisk.keys.filter((key) => !metadataDoc.test(key)).length,
+        writes: l2Writes,
+        msSinceLastWrite: Date.now() - lastWriteAt,
+        chunkRequests,
+        held: held.length,
+        stage2Releases,
+      };
+    };
+    const waitFor = (stage: string, done: (s: Awaited<ReturnType<typeof observe>>) => boolean) =>
+      expect
+        .poll(
+          async () => {
+            // A string, so a timeout prints the whole last observation as the
+            // received value (an object matcher would diff only the flag).
+            const state = await observe();
+            return done(state) ? 'ready' : JSON.stringify(state);
+          },
+          { message: stage, timeout: 20000, intervals: [25] }
+        )
+        .toBe('ready');
 
-    // Everything the reloaded page fetches from the network, unthrottled.
-    await context.unroute(`${DATASET}/**`, stagger);
+    // 1. One chunk, then wait for an index save that lists it and every other
+    //    completed file. Whether that save is the 150 ms leading edge or the
+    //    1 s trailing debounce (opening the dataset sets its content hash, which
+    //    saves the still-empty index, so a write inside the next second gets no
+    //    leading edge) does not matter:
+    //    what matters is that a save has JUST started.
+    release(1);
+    await waitFor(
+      'an index save listing the first released chunk and every other completed file',
+      (s) => s.chunksOnDisk >= 1 && s.indexed === s.onDisk
+    );
+
+    // 2. One more chunk. Usually its write follows that save by well under the
+    //    1 s METADATA_SAVE_DELAY, so it gets no leading-edge save of its own and
+    //    waits on the trailing debounce. Wait until it is on disk but unlisted:
+    //    exactly the state a reload must not lose. On a loaded machine the
+    //    round trip can outlast that second; the write then gets its own 150 ms
+    //    leading-edge save, and the poll may only ever see it already listed.
+    //    So whenever a released chunk has landed AND been indexed, release
+    //    another and keep polling, rather than betting on a single release.
+    let chunksAtRelease = onDisk.keys.filter((key) => !metadataDoc.test(key)).length;
+    stage2Releases = 1;
+    release(1);
+    await waitFor('a completed chunk file the on-disk index does not list yet', (s) => {
+      // These compare ALL completed files (`onDisk`) with the index, not chunks
+      // alone, because `l2OnDisk` does not say which indexed entries are chunks.
+      // That is safe here only because the root `zarr.json` of this consolidated
+      // format-3 store is the sole non-chunk L2 entry and is already on disk and
+      // indexed after stage 1, so any surplus file or new indexed file is a chunk.
+      if (s.indexed >= 0 && s.onDisk > s.indexed) return true;
+      if (s.chunksOnDisk > chunksAtRelease && s.indexed === s.onDisk) {
+        chunksAtRelease = s.chunksOnDisk;
+        stage2Releases++;
+        release(1);
+      }
+      return false;
+    });
+    test.info().annotations.push({
+      type: 'stage-2 releases',
+      description: String(stage2Releases),
+    });
+    const beforeReload = onDisk.keys.map((k) => k.replace(/^\/+/, ''));
+    // Positive control: a decoded OPFS chunk key must equal a path the gate
+    // actually served. A key decode that silently produced wrong strings would
+    // match nothing in `fetched`, making the final "nothing refetched" check
+    // pass vacuously; this ties the two key formats together first.
+    expect(
+      beforeReload.filter((key) => !metadataDoc.test(key) && gatedPaths.has(key)),
+      `decoded on-disk chunk keys must match gated request paths (gated: ${[...gatedPaths].join(', ')})`
+    ).not.toHaveLength(0);
+
+    // 3. Release one more and reload at once, with the trailing save pending.
+    release(1);
+
+    // Everything the reloaded page fetches from the network, ungated.
+    await context.unroute(`${DATASET}/**`, gate);
     const fetched: string[] = [];
     context.on('request', (request) => {
       const url = request.url();
       if (url.startsWith(`${DATASET}/`)) fetched.push(url.slice(DATASET.length + 1));
     });
     await page.reload();
+    // Requests the old page left behind the gate: let their handlers finish.
+    release(Infinity);
     await waitForLuxarReady(page);
     await waitForCacheStable(page);
 
