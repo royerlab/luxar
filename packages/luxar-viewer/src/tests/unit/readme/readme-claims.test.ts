@@ -110,7 +110,7 @@ describe('README symbol references', () => {
       }
     }
     expect(stale, 'README names no source declares (renamed or removed?)').toEqual([]);
-  }, 120_000);
+  }, 180_000); // Parsing the full source corpus takes ~42s even without runner contention.
 
   it('every NOT_IN_CODE entry is still mentioned and still absent from the corpus', () => {
     const corpus = getCorpus();
@@ -118,7 +118,7 @@ describe('README symbol references', () => {
       READMES.flatMap((readme) => codeSpans(readFileSync(readme, 'utf8')).flatMap(symbolMentions))
     );
     expect(Object.keys(NOT_IN_CODE).filter((n) => !mentioned.has(n) || corpus.has(n))).toEqual([]);
-  });
+  }, 180_000);
 });
 
 describe('README enumerated lists (<!-- mirrors: -->)', () => {
