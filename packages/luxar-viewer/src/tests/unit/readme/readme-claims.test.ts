@@ -97,6 +97,7 @@ function getCorpus(): Set<string> {
 const READMES = walkFiles(SRC).filter((file) => file.endsWith('README.md'));
 
 describe('README symbol references', () => {
+  // Parsing the whole source corpus can exceed the shared runner's 60s budget.
   it('every code-shaped name a README mentions is still in the code', () => {
     const corpus = getCorpus();
     const stale: string[] = [];
@@ -110,7 +111,7 @@ describe('README symbol references', () => {
       }
     }
     expect(stale, 'README names no source declares (renamed or removed?)').toEqual([]);
-  });
+  }, 120_000);
 
   it('every NOT_IN_CODE entry is still mentioned and still absent from the corpus', () => {
     const corpus = getCorpus();
