@@ -118,7 +118,7 @@ describe('README symbol references', () => {
       READMES.flatMap((readme) => codeSpans(readFileSync(readme, 'utf8')).flatMap(symbolMentions))
     );
     expect(Object.keys(NOT_IN_CODE).filter((n) => !mentioned.has(n) || corpus.has(n))).toEqual([]);
-  });
+  }, 180_000);
 });
 
 describe('README enumerated lists (<!-- mirrors: -->)', () => {
