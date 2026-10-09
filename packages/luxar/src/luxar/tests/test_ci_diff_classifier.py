@@ -2009,7 +2009,7 @@ def test_mypy_gate_targets_stay_synchronized(workflow: str) -> None:
         for dependency in pyproject["project"]["optional-dependencies"]["dev"]
         if dependency.startswith("mypy")
     )
-    assert mypy_dependency == "mypy>=2.3,<2.5"
+    assert mypy_dependency == "mypy>=2.4,<2.5"
 
     makefile = (REPO / "Makefile").read_text(encoding="utf-8")
     make_recipe = re.search(
