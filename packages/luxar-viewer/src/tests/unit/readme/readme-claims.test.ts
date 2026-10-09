@@ -94,31 +94,44 @@ function getCorpus(): Set<string> {
   return (corpus ??= buildCorpus());
 }
 
+// The first caller scans three/src and typings (~42s; over 60s under runner contention).
+const CORPUS_TIMEOUT_MS = 180_000;
+
 const READMES = walkFiles(SRC).filter((file) => file.endsWith('README.md'));
 
 describe('README symbol references', () => {
-  it('every code-shaped name a README mentions is still in the code', () => {
-    const corpus = getCorpus();
-    const stale: string[] = [];
-    for (const readme of READMES) {
-      for (const span of codeSpans(readFileSync(readme, 'utf8'))) {
-        for (const name of symbolMentions(span)) {
-          if (!corpus.has(name) && !(name in NOT_IN_CODE)) {
-            stale.push(`${relative(VIEWER, readme)}: \`${span}\``);
+  it(
+    'every code-shaped name a README mentions is still in the code',
+    () => {
+      const corpus = getCorpus();
+      const stale: string[] = [];
+      for (const readme of READMES) {
+        for (const span of codeSpans(readFileSync(readme, 'utf8'))) {
+          for (const name of symbolMentions(span)) {
+            if (!corpus.has(name) && !(name in NOT_IN_CODE)) {
+              stale.push(`${relative(VIEWER, readme)}: \`${span}\``);
+            }
           }
         }
       }
-    }
-    expect(stale, 'README names no source declares (renamed or removed?)').toEqual([]);
-  }, 180_000);
+      expect(stale, 'README names no source declares (renamed or removed?)').toEqual([]);
+    },
+    CORPUS_TIMEOUT_MS
+  );
 
-  it('every NOT_IN_CODE entry is still mentioned and still absent from the corpus', () => {
-    const corpus = getCorpus();
-    const mentioned = new Set(
-      READMES.flatMap((readme) => codeSpans(readFileSync(readme, 'utf8')).flatMap(symbolMentions))
-    );
-    expect(Object.keys(NOT_IN_CODE).filter((n) => !mentioned.has(n) || corpus.has(n))).toEqual([]);
-  }, 180_000);
+  it(
+    'every NOT_IN_CODE entry is still mentioned and still absent from the corpus',
+    () => {
+      const corpus = getCorpus();
+      const mentioned = new Set(
+        READMES.flatMap((readme) => codeSpans(readFileSync(readme, 'utf8')).flatMap(symbolMentions))
+      );
+      expect(Object.keys(NOT_IN_CODE).filter((n) => !mentioned.has(n) || corpus.has(n))).toEqual(
+        []
+      );
+    },
+    CORPUS_TIMEOUT_MS
+  );
 });
 
 describe('README enumerated lists (<!-- mirrors: -->)', () => {
