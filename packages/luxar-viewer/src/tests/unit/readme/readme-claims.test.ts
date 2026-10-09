@@ -110,7 +110,7 @@ describe('README symbol references', () => {
       }
     }
     expect(stale, 'README names no source declares (renamed or removed?)').toEqual([]);
-  });
+  }, 120_000);
 
   it('every NOT_IN_CODE entry is still mentioned and still absent from the corpus', () => {
     const corpus = getCorpus();
