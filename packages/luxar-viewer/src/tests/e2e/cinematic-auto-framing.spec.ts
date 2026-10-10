@@ -13,23 +13,33 @@ interface LoadOptions {
   cinematic: boolean;
   authoredPosition?: [number, number, number];
   storedFov?: number;
+  storedContentHash?: string;
 }
 
 const loadAndMeasure = async (
   browser: Browser,
-  { cinematic, authoredPosition, storedFov }: LoadOptions
+  { cinematic, authoredPosition, storedFov, storedContentHash }: LoadOptions
 ) => {
   const context = await browser.newContext();
   if (storedFov !== undefined) {
-    // The per-scene document is a `{ version, settings }` envelope
+    const response = await context.request.get(ROOT_METADATA);
+    expect(response.ok()).toBe(true);
+    const metadata = (await response.json()) as { attributes: { content_hash?: string } };
+    const contentHash = metadata.attributes.content_hash;
+    expect(contentHash).toEqual(expect.any(String));
+    // The per-scene document is a `{ version, contentHash, settings }` envelope
     // (settings-persistence.ts); a bare `{ fov }` would be discarded as
     // pre-envelope. `version: 1` = RENDERING_SETTINGS_VERSION, pinned by
     // rendering-controls-persistence.test.ts (not imported here: that module
     // pulls the viewer config into the Playwright Node context).
     await context.addInitScript(
-      ({ key, fov }) =>
-        localStorage.setItem(key, JSON.stringify({ version: 1, settings: { fov } })),
-      { key: StorageKeys.rendering(SCENE_ID), fov: storedFov }
+      ({ key, fov, contentHash }) =>
+        localStorage.setItem(key, JSON.stringify({ version: 1, contentHash, settings: { fov } })),
+      {
+        key: StorageKeys.rendering(SCENE_ID),
+        fov: storedFov,
+        contentHash: storedContentHash ?? contentHash,
+      }
     );
   }
   const page = await context.newPage();
@@ -105,4 +115,14 @@ test('authored position carries its cinematic FOV past stored settings', async (
   expect(storedAutoFrame.fov).toBe(47);
   expect(authoredView.fov).toBe(63);
   expect(authoredView.position).toEqual(authoredPosition);
+});
+
+test('stored FOV from a different scene build gives way to cinematic FOV', async ({ browser }) => {
+  const view = await loadAndMeasure(browser, {
+    cinematic: true,
+    storedFov: 47,
+    storedContentHash: 'different-build',
+  });
+
+  expect(view.fov).toBe(63);
 });
