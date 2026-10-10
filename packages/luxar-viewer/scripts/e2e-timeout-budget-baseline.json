@@ -5,7 +5,6 @@
     "src/tests/e2e/cache-hardening.spec.ts": 10,
     "src/tests/e2e/cache-persistence.spec.ts": 2,
     "src/tests/e2e/cache-system.spec.ts": 13,
-    "src/tests/e2e/cinematic-auto-framing.spec.ts": 2,
     "src/tests/e2e/colormap-system.spec.ts": 5,
     "src/tests/e2e/context-restore.spec.ts": 4,
     "src/tests/e2e/controls-interaction.spec.ts": 6,

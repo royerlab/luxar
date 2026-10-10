@@ -9,11 +9,13 @@ const DATASET =
 const ROOT_METADATA = `${DATASET}/zarr.json`;
 const SCENE_ID = DATASET.replace(/[^a-zA-Z0-9]/g, '_');
 
+test.describe.configure({ timeout: 60_000 });
+
 interface LoadOptions {
   cinematic: boolean;
   authoredPosition?: [number, number, number];
   storedFov?: number;
-  storedContentHash?: string;
+  storedContentHash?: string | null;
 }
 
 const loadAndMeasure = async (
@@ -22,6 +24,7 @@ const loadAndMeasure = async (
 ) => {
   const context = await browser.newContext();
   if (storedFov !== undefined) {
+    // Read the stamped hash before the page route rewrites only viewer_config.
     const response = await context.request.get(ROOT_METADATA);
     expect(response.ok()).toBe(true);
     const metadata = (await response.json()) as { attributes: { content_hash?: string } };
@@ -38,7 +41,8 @@ const loadAndMeasure = async (
       {
         key: StorageKeys.rendering(SCENE_ID),
         fov: storedFov,
-        contentHash: storedContentHash ?? contentHash,
+        contentHash:
+          storedContentHash === undefined ? contentHash : (storedContentHash ?? undefined),
       }
     );
   }
@@ -118,6 +122,7 @@ test('authored position carries its cinematic FOV past stored settings', async (
 });
 
 test('stored FOV from a different scene build gives way to cinematic FOV', async ({ browser }) => {
+  // The 47° control above proves this envelope and storage key are accepted.
   const view = await loadAndMeasure(browser, {
     cinematic: true,
     storedFov: 47,
@@ -125,4 +130,11 @@ test('stored FOV from a different scene build gives way to cinematic FOV', async
   });
 
   expect(view.fov).toBe(63);
+
+  const hashlessView = await loadAndMeasure(browser, {
+    cinematic: true,
+    storedFov: 47,
+    storedContentHash: null,
+  });
+  expect(hashlessView.fov).toBe(63);
 });
