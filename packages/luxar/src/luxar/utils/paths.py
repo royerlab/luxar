@@ -31,20 +31,53 @@ def get_project_root() -> Path:
     raise RuntimeError("Could not find project root (no pyproject.toml found)")
 
 
+def _owns_imported_luxar(root: Path) -> bool:
+    """True when ``root`` is the dev checkout that owns the imported ``luxar``.
+
+    ``get_project_root`` walks up to the first ``pyproject.toml`` ancestor, which
+    for a NON-editable install inside a user's own project venv
+    (``<proj>/.venv/.../site-packages/luxar`` — the default uv/poetry layout) is
+    the *user's* project, not Luxar's checkout. Trust a root only when it actually
+    owns the imported package: a real checkout is ``<root>/packages/luxar/src/luxar``.
+    """
+    import luxar
+
+    pkg_dir = Path(luxar.__file__).resolve().parent
+    return (root / "packages" / "luxar" / "src" / "luxar").resolve() == pkg_dir
+
+
 def get_datasets_dir(create: bool = True) -> Path:
-    """Get the datasets directory at project root.
+    """Get the directory for generated example/demo datasets.
+
+    In a Luxar dev checkout this is ``<repo>/datasets``. From an installed wheel —
+    or when the only ``pyproject.toml`` ancestor is an UNRELATED project (a
+    uv/poetry venv) — there is no repo to write into, so it falls back to the user
+    cache dir ``~/.cache/luxar/datasets``. This is what lets demos and examples run
+    from a plain ``pip install`` instead of raising "could not find project root"
+    (#3097), and keeps a non-editable install from scribbling into the user's own
+    project tree.
 
     Args:
-        create: Create the directory if it doesn't exist (default True). Pass
-            False to resolve the path read-only (e.g. when only checking
-            whether an output exists, so listing does not create dirs).
+        create: Create the directory (and parents) if it doesn't exist (default
+            True). Pass False to resolve the path read-only (e.g. when only
+            checking whether an output exists, so listing does not create dirs).
 
     Returns:
-        Path to datasets/ directory
+        Path to the datasets/ directory.
     """
-    datasets_dir = get_project_root() / "datasets"
+    try:
+        root: Path | None = get_project_root()
+    except RuntimeError:
+        root = None
+    if root is not None and _owns_imported_luxar(root):
+        datasets_dir = root / "datasets"
+    else:
+        # No owning checkout: write under the user cache dir (resolved at call
+        # time so it honours $HOME), matching the ~/.cache/luxar convention the
+        # demo downloaders already use.
+        datasets_dir = Path.home() / ".cache" / "luxar" / "datasets"
     if create:
-        datasets_dir.mkdir(exist_ok=True)
+        datasets_dir.mkdir(parents=True, exist_ok=True)
     return datasets_dir
 
 
