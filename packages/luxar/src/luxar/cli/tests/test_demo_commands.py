@@ -507,6 +507,46 @@ class TestCache:
         assert result.exit_code == 0
         assert not orphan.exists()
 
+    def test_generated_outputs_are_not_orphan_caches(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        from luxar.demos import registry
+        from luxar.utils import paths
+
+        def _no_root() -> Path:
+            raise RuntimeError("no project root")
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("LUXAR_DATASETS_DIR", raising=False)
+        monkeypatch.setattr(paths, "get_project_root", _no_root)
+        cache_root = tmp_path / ".cache" / "luxar"
+        monkeypatch.setattr(registry, "DEMO_CACHE_ROOT", cache_root)
+        demo_output = paths.get_demos_output_dir() / "lorenz.luxar.zarr"
+        example_output = paths.get_examples_output_dir() / "example.luxar.zarr"
+        demo_output.mkdir()
+        example_output.mkdir()
+        (demo_output / "data").write_bytes(b"demo")
+        (example_output / "data").write_bytes(b"example")
+        orphan = cache_root / "abandoned"
+        orphan.mkdir()
+        (orphan / "junk.bin").write_bytes(b"junk")
+
+        assert [e.path.name for e in registry.inventory_caches()] == ["abandoned"]
+        listing = runner.invoke(app, ["demo", "cache", "list"])
+        assert listing.exit_code == 0
+        assert "datasets" not in listing.stdout
+        preview = runner.invoke(
+            app, ["demo", "cache", "clear", "--orphans", "--dry-run"]
+        )
+        assert preview.exit_code == 0
+        assert "abandoned" in preview.stdout
+        assert "datasets" not in preview.stdout
+        cleared = runner.invoke(app, ["demo", "cache", "clear", "--orphans", "--yes"])
+        assert cleared.exit_code == 0
+        assert not orphan.exists()
+        assert (demo_output / "data").read_bytes() == b"demo"
+        assert (example_output / "data").read_bytes() == b"example"
+
 
 class TestProtectedInputDirs:
     """A hand-placed demo input is inventoried, but never an orphan and never cleared.
