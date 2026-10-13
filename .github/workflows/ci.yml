@@ -1294,7 +1294,7 @@ jobs:
         with:
           ref: ${{ needs.changes.outputs.dev_sha || '' }}
 
-      - name: Rerun cancelled required push jobs
+      - name: Rerun interrupted or cancelled required push jobs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1401,11 +1401,9 @@ jobs:
             # on dev forever. Recover it, but CONSERVATIVELY: a failed leg is only
             # rerunnable when its log tail carries the interrupt signature
             # (KeyboardInterrupt / Terminated / xdist controller "cannot send")
-            # AND shows NO pytest failure/error summary — a genuine test failure
-            # must never be rerun. Reruns are SINGLE-JOB only (never the blanket
-            # rerun-failed-jobs below, which would also restart a real failure in
-            # the same run). Fail-closed: an unreadable log is treated as a real
-            # failure and left alone.
+            # AND shows NO pytest failure/error marker. Inspect every failed
+            # required leg before rerunning: a genuine failure makes interrupt
+            # recovery pointless for this run. An unreadable log fails closed.
             failed_jobs=$(jq -r --argjson required "$required_json" '
               [.[] | .jobs[]]
               | group_by(.name)[]
@@ -1417,35 +1415,38 @@ jobs:
               | [.id, .name]
               | @tsv
             ' <<<"$push_jobs")
+            interrupt_jobs=""
+            genuine_failure=0
             if [ -n "$failed_jobs" ]; then
               while IFS=$'\t' read -r fjob_id fjob_name; do
                 [ -n "$fjob_id" ] || continue
-                if [ "$repair_count" -ge "$repair_limit" ]; then
-                  echo "Repair cap reached; skipping remaining interrupt reruns"
-                  break
-                fi
                 if ! flog=$(gh api "repos/${GITHUB_REPOSITORY}/actions/jobs/${fjob_id}/logs" 2>/dev/null); then
                   echo "note: no log for $fjob_name ($fjob_id); treating as a real failure, not rerunning"
+                  genuine_failure=1
                   continue
                 fi
                 ftail=$(printf '%s\n' "$flog" | tail -n 500)
-                if printf '%s' "$ftail" | grep -qE 'KeyboardInterrupt|Terminated|Terminate batch job|cannot send \(already closed' \
-                   && ! printf '%s' "$ftail" | grep -qE '[0-9]+ (failed|error)|^(FAILED|ERROR) '; then
-                  echo "Rerunning interrupt-killed push job for $candidate_sha: $fjob_name ($fjob_id)"
-                  if gh api --method POST \
-                    "repos/${GITHUB_REPOSITORY}/actions/jobs/$fjob_id/rerun" >/dev/null; then
-                    repair_count=$((repair_count + 1))
-                  else
-                    echo "::warning::rerun rejected for $fjob_name ($fjob_id; $candidate_sha)"
-                  fi
+                if grep -qE 'KeyboardInterrupt|Terminated|Terminate batch job|cannot send \(already closed' <<<"$ftail" \
+                   && ! grep -qE '[0-9]+ (failed|error)|(^|Z )(FAILED|ERROR) ' <<<"$ftail"; then
+                  interrupt_jobs+="${fjob_id}"$'\t'"${fjob_name}"$'\n'
                 else
                   echo "note: $fjob_name ($fjob_id) failed without the interrupt signature; not rerunning (real failure)"
+                  genuine_failure=1
                 fi
               done <<<"$failed_jobs"
             fi
 
-            if [ -z "$cancelled_jobs" ]; then
-              echo "No cancelled required push jobs found for $candidate_sha"
+            # A run with a real failure remains red after interrupt recovery.
+            # Preserve the existing cancelled-job repair in that case.
+            if [ "$genuine_failure" -eq 1 ]; then
+              interrupt_jobs=""
+            fi
+            rerun_jobs="${cancelled_jobs}"
+            if [ -n "$interrupt_jobs" ]; then
+              rerun_jobs="${rerun_jobs:+${rerun_jobs}$'\n'}${interrupt_jobs%$'\n'}"
+            fi
+            if [ -z "$rerun_jobs" ]; then
+              echo "No rerunnable required push jobs found for $candidate_sha"
               continue
             fi
 
@@ -1453,20 +1454,24 @@ jobs:
             # does not. CI is Linux so the padding never showed there, but it made
             # the harness test red on every macOS checkout and would have landed a
             # padded count in the warning text if this ever ran on a Mac runner.
-            cancelled_count=$(wc -l <<<"$cancelled_jobs" | tr -d ' ')
-            if [ "$cancelled_count" -gt 1 ]; then
-              echo "Rerunning unsuccessful push jobs for $candidate_sha after finding $cancelled_count cancelled required jobs"
+            rerun_count=$(wc -l <<<"$rerun_jobs" | tr -d ' ')
+            if [ "$rerun_count" -gt 1 ]; then
+              rerun_reason="rerunnable"
+              if [ -z "$interrupt_jobs" ]; then
+                rerun_reason="cancelled"
+              fi
+              echo "Rerunning unsuccessful push jobs for $candidate_sha after finding $rerun_count $rerun_reason required jobs"
               if gh api --method POST \
                 "repos/${GITHUB_REPOSITORY}/actions/runs/${push_run}/rerun-failed-jobs" >/dev/null; then
                 repair_count=$((repair_count + 1))
               else
-                echo "::warning::rerun rejected for push run $push_run ($candidate_sha; $cancelled_count cancelled required jobs)"
+                echo "::warning::rerun rejected for push run $push_run ($candidate_sha; $rerun_count $rerun_reason required jobs)"
               fi
               continue
             fi
 
-            IFS=$'\t' read -r job_id job_name <<<"$cancelled_jobs"
-            echo "Rerunning cancelled push job for $candidate_sha: $job_name ($job_id)"
+            IFS=$'\t' read -r job_id job_name <<<"$rerun_jobs"
+            echo "Rerunning push job for $candidate_sha: $job_name ($job_id)"
             if gh api --method POST \
               "repos/${GITHUB_REPOSITORY}/actions/jobs/$job_id/rerun" >/dev/null; then
               repair_count=$((repair_count + 1))

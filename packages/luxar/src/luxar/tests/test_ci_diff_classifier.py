@@ -2270,12 +2270,11 @@ def test_green_dispatch_repairs_cancelled_push_contexts(workflow: str) -> None:
     assert "actions/jobs/$job_id/rerun" in script
     assert "actions/runs/${push_run}/rerun-failed-jobs" in script
     # #2038: also recover interrupt-killed FAILURE legs (host SIGTERM), gated on
-    # the log-tail interrupt signature and rerun SINGLE-JOB only (never the
-    # blanket rerun-failed-jobs, which would also restart a genuine failure).
+    # the log-tail interrupt signature, then combine eligible legs into one
+    # rerun request per candidate.
     assert '.conclusion == "failure"' in script
     assert "actions/jobs/${fjob_id}/logs" in script
     assert "KeyboardInterrupt" in script
-    assert "actions/jobs/$fjob_id/rerun" in script
 
 
 def _run_cancelled_push_repair(
@@ -2286,6 +2285,9 @@ def _run_cancelled_push_repair(
     push_python_latest: str = "cancelled",
     push_typescript: str = "cancelled",
     push_release: str = "cancelled",
+    interrupt_typescript_log: str = "genuine",
+    interrupt_typescript_status: str = "failure",
+    interrupt_release: str = "success",
     rejected_endpoint: str = "",
     failed_get_endpoint: str = "",
     candidate_shas: tuple[str, ...] = ("deadbeef",),
@@ -2371,17 +2373,20 @@ elif "/runs/910/jobs?" in endpoint:
     # is a genuine test failure and must NOT be rerun.
     print(json.dumps([{"jobs": [
         {"id": 51, "name": "python-tests (3.12)", "conclusion": "failure"},
-        {"id": 52, "name": "typescript-tests", "conclusion": "failure"},
-        {"id": 53, "name": "release-readiness", "conclusion": "success"},
+        {"id": 52, "name": "typescript-tests", "conclusion": os.environ["INTERRUPT_TYPESCRIPT_STATUS"]},
+        {"id": 53, "name": "release-readiness", "conclusion": os.environ["INTERRUPT_RELEASE"]},
         {"id": 54, "name": "wheel-viewer", "conclusion": "success"},
         {"id": 55, "name": "docs-quality", "conclusion": "success"},
     ]}]))
 elif endpoint.endswith("/logs"):
     jid = endpoint.rsplit("/jobs/", 1)[1].split("/")[0]
     if jid == "51":
-        print("running tests...\\n!!! KeyboardInterrupt !!!\\nTerminated")
+        print("2026-10-09T15:36:20.7545429Z running tests...\\n2026-10-09T15:36:21.7545429Z !!! KeyboardInterrupt !!!\\n2026-10-09T15:36:22.7545429Z Terminated")
     elif jid == "52":
-        print("FAILED tests/test_x.py::test_y\\n=== 3 failed, 10 passed in 5.0s ===")
+        if os.environ["INTERRUPT_TYPESCRIPT_LOG"] == "interrupt":
+            print("2026-10-09T15:36:22.7545429Z !!! KeyboardInterrupt !!!")
+        else:
+            print("2026-10-09T15:36:20.7545429Z FAILED tests/test_x.py::test_y\\n2026-10-09T15:36:22.7545429Z Terminated")
     else:
         print("")
 else:
@@ -2433,6 +2438,9 @@ elif len(sys.argv) > 2 and sys.argv[1] == "merge-base" and sys.argv[2] == "--is-
             "PUSH_PYTHON_LATEST": push_python_latest,
             "PUSH_TYPESCRIPT": push_typescript,
             "PUSH_RELEASE": push_release,
+            "INTERRUPT_TYPESCRIPT_LOG": interrupt_typescript_log,
+            "INTERRUPT_TYPESCRIPT_STATUS": interrupt_typescript_status,
+            "INTERRUPT_RELEASE": interrupt_release,
             "REJECTED_ENDPOINT": rejected_endpoint,
             "FAILED_GET_ENDPOINT": failed_get_endpoint,
             "CANDIDATE_SHAS": ",".join(candidate_shas),
@@ -2504,19 +2512,101 @@ def test_single_cancelled_required_job_uses_job_rerun(
     assert calls == ["repos/royerlab/luxar/actions/jobs/25/rerun"]
 
 
-def test_interrupt_killed_failure_leg_reran_but_genuine_failure_is_not(
+def test_interrupt_killed_failure_is_not_rerun_beside_genuine_failure(
     workflow: str, tmp_path: Path
 ) -> None:
     """#2038: a required leg killed by the host SIGTERM (interrupt signature in
-    its log, no pytest failures) is rerun single-job; a genuine test failure in
-    the same run is left alone."""
+    its log, no pytest failures) is left alone when another required leg has a
+    genuine failure, even without a pytest summary line."""
     result, calls = _run_cancelled_push_repair(
         workflow, tmp_path, candidate_shas=("interrupt",)
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert calls == ["repos/royerlab/luxar/actions/jobs/51/rerun"]
+    assert calls == []
     assert "not rerunning (real failure)" in result.stdout
+
+
+def test_two_interrupt_killed_legs_use_one_run_rerun(
+    workflow: str, tmp_path: Path
+) -> None:
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        candidate_shas=("interrupt",),
+        interrupt_typescript_log="interrupt",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == ["repos/royerlab/luxar/actions/runs/910/rerun-failed-jobs"]
+
+
+def test_interrupt_and_cancelled_legs_use_one_run_rerun(
+    workflow: str, tmp_path: Path
+) -> None:
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        candidate_shas=("interrupt",),
+        interrupt_typescript_log="interrupt",
+        interrupt_release="cancelled",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == ["repos/royerlab/luxar/actions/runs/910/rerun-failed-jobs"]
+
+
+def test_one_interrupt_and_one_cancelled_leg_use_one_run_rerun(
+    workflow: str, tmp_path: Path
+) -> None:
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        candidate_shas=("interrupt",),
+        interrupt_typescript_status="success",
+        interrupt_release="cancelled",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == ["repos/royerlab/luxar/actions/runs/910/rerun-failed-jobs"]
+
+
+def test_genuine_failure_keeps_cancelled_job_repair(
+    workflow: str, tmp_path: Path
+) -> None:
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        candidate_shas=("interrupt",),
+        interrupt_release="cancelled",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == ["repos/royerlab/luxar/actions/jobs/53/rerun"]
+
+
+def test_interrupt_repair_cap_counts_candidates(workflow: str, tmp_path: Path) -> None:
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        candidate_shas=("oldest", "older", "interrupt"),
+        interrupt_typescript_log="interrupt",
+        interrupt_release="cancelled",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == [
+        "repos/royerlab/luxar/actions/runs/910/rerun-failed-jobs",
+        "repos/royerlab/luxar/actions/jobs/31/rerun",
+    ]
+
+
+def test_single_interrupt_killed_leg_uses_job_rerun(
+    workflow: str, tmp_path: Path
+) -> None:
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        candidate_shas=("interrupt",),
+        interrupt_typescript_status="success",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == ["repos/royerlab/luxar/actions/jobs/51/rerun"]
 
 
 def test_interrupt_rerun_is_fail_closed_when_log_unreadable(
@@ -2527,6 +2617,7 @@ def test_interrupt_rerun_is_fail_closed_when_log_unreadable(
         workflow,
         tmp_path,
         candidate_shas=("interrupt",),
+        interrupt_typescript_status="success",
         failed_get_endpoint="repos/royerlab/luxar/actions/jobs/51/logs",
     )
 
