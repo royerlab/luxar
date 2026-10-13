@@ -2269,6 +2269,13 @@ def test_green_dispatch_repairs_cancelled_push_contexts(workflow: str) -> None:
         assert context in script
     assert "actions/jobs/$job_id/rerun" in script
     assert "actions/runs/${push_run}/rerun-failed-jobs" in script
+    # #2038: also recover interrupt-killed FAILURE legs (host SIGTERM), gated on
+    # the log-tail interrupt signature and rerun SINGLE-JOB only (never the
+    # blanket rerun-failed-jobs, which would also restart a genuine failure).
+    assert '.conclusion == "failure"' in script
+    assert "actions/jobs/${fjob_id}/logs" in script
+    assert "KeyboardInterrupt" in script
+    assert "actions/jobs/$fjob_id/rerun" in script
 
 
 def _run_cancelled_push_repair(
@@ -2332,6 +2339,8 @@ elif "/actions/runs?" in endpoint:
         print("901")
     elif "head_sha=oldest" in endpoint:
         print("902")
+    elif "head_sha=interrupt" in endpoint:
+        print("910")
 elif "/runs/900/jobs?" in endpoint:
     print(json.dumps([{"jobs": [
         {"id": 21, "name": "python-tests (3.12)", "conclusion": "cancelled"},
@@ -2356,6 +2365,25 @@ elif "/runs/902/jobs?" in endpoint:
         {"id": 44, "name": "release-readiness", "conclusion": "success"},
         {"id": 45, "name": "docs-quality", "conclusion": "success"},
     ]}]))
+elif "/runs/910/jobs?" in endpoint:
+    # #2038: a push run whose REQUIRED legs FAILED (not cancelled). id 51 was
+    # killed by the host SIGTERM (interrupt signature, no pytest failures); id 52
+    # is a genuine test failure and must NOT be rerun.
+    print(json.dumps([{"jobs": [
+        {"id": 51, "name": "python-tests (3.12)", "conclusion": "failure"},
+        {"id": 52, "name": "typescript-tests", "conclusion": "failure"},
+        {"id": 53, "name": "release-readiness", "conclusion": "success"},
+        {"id": 54, "name": "wheel-viewer", "conclusion": "success"},
+        {"id": 55, "name": "docs-quality", "conclusion": "success"},
+    ]}]))
+elif endpoint.endswith("/logs"):
+    jid = endpoint.rsplit("/jobs/", 1)[1].split("/")[0]
+    if jid == "51":
+        print("running tests...\\n!!! KeyboardInterrupt !!!\\nTerminated")
+    elif jid == "52":
+        print("FAILED tests/test_x.py::test_y\\n=== 3 failed, 10 passed in 5.0s ===")
+    else:
+        print("")
 else:
     raise SystemExit(f"unexpected endpoint: {endpoint}")
 """,
@@ -2474,6 +2502,37 @@ def test_single_cancelled_required_job_uses_job_rerun(
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert calls == ["repos/royerlab/luxar/actions/jobs/25/rerun"]
+
+
+def test_interrupt_killed_failure_leg_reran_but_genuine_failure_is_not(
+    workflow: str, tmp_path: Path
+) -> None:
+    """#2038: a required leg killed by the host SIGTERM (interrupt signature in
+    its log, no pytest failures) is rerun single-job; a genuine test failure in
+    the same run is left alone."""
+    result, calls = _run_cancelled_push_repair(
+        workflow, tmp_path, candidate_shas=("interrupt",)
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == ["repos/royerlab/luxar/actions/jobs/51/rerun"]
+    assert "not rerunning (real failure)" in result.stdout
+
+
+def test_interrupt_rerun_is_fail_closed_when_log_unreadable(
+    workflow: str, tmp_path: Path
+) -> None:
+    """An unreadable job log is treated as a real failure and NOT rerun (#2038)."""
+    result, calls = _run_cancelled_push_repair(
+        workflow,
+        tmp_path,
+        candidate_shas=("interrupt",),
+        failed_get_endpoint="repos/royerlab/luxar/actions/jobs/51/logs",
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert calls == []
+    assert "treating as a real failure" in result.stdout
 
 
 def test_rejected_multi_job_rerun_is_reported(workflow: str, tmp_path: Path) -> None:

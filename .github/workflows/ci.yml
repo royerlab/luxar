@@ -1394,6 +1394,56 @@ jobs:
               | [.id, .name]
               | @tsv
             ' <<<"$push_jobs")
+
+            # #2038: the recurring red is NOT a cancellation. A host-level SIGTERM
+            # kills the pytest tree mid-run, which GitHub records as `failure`, so
+            # the cancelled selection above never catches it and the leg stays red
+            # on dev forever. Recover it, but CONSERVATIVELY: a failed leg is only
+            # rerunnable when its log tail carries the interrupt signature
+            # (KeyboardInterrupt / Terminated / xdist controller "cannot send")
+            # AND shows NO pytest failure/error summary — a genuine test failure
+            # must never be rerun. Reruns are SINGLE-JOB only (never the blanket
+            # rerun-failed-jobs below, which would also restart a real failure in
+            # the same run). Fail-closed: an unreadable log is treated as a real
+            # failure and left alone.
+            failed_jobs=$(jq -r --argjson required "$required_json" '
+              [.[] | .jobs[]]
+              | group_by(.name)[]
+              | max_by(.id)
+              | select(
+                  .conclusion == "failure"
+                  and (.name | IN($required[]))
+                )
+              | [.id, .name]
+              | @tsv
+            ' <<<"$push_jobs")
+            if [ -n "$failed_jobs" ]; then
+              while IFS=$'\t' read -r fjob_id fjob_name; do
+                [ -n "$fjob_id" ] || continue
+                if [ "$repair_count" -ge "$repair_limit" ]; then
+                  echo "Repair cap reached; skipping remaining interrupt reruns"
+                  break
+                fi
+                if ! flog=$(gh api "repos/${GITHUB_REPOSITORY}/actions/jobs/${fjob_id}/logs" 2>/dev/null); then
+                  echo "note: no log for $fjob_name ($fjob_id); treating as a real failure, not rerunning"
+                  continue
+                fi
+                ftail=$(printf '%s\n' "$flog" | tail -n 500)
+                if printf '%s' "$ftail" | grep -qE 'KeyboardInterrupt|Terminated|Terminate batch job|cannot send \(already closed' \
+                   && ! printf '%s' "$ftail" | grep -qE '[0-9]+ (failed|error)|^(FAILED|ERROR) '; then
+                  echo "Rerunning interrupt-killed push job for $candidate_sha: $fjob_name ($fjob_id)"
+                  if gh api --method POST \
+                    "repos/${GITHUB_REPOSITORY}/actions/jobs/$fjob_id/rerun" >/dev/null; then
+                    repair_count=$((repair_count + 1))
+                  else
+                    echo "::warning::rerun rejected for $fjob_name ($fjob_id; $candidate_sha)"
+                  fi
+                else
+                  echo "note: $fjob_name ($fjob_id) failed without the interrupt signature; not rerunning (real failure)"
+                fi
+              done <<<"$failed_jobs"
+            fi
+
             if [ -z "$cancelled_jobs" ]; then
               echo "No cancelled required push jobs found for $candidate_sha"
               continue
