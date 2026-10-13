@@ -166,9 +166,9 @@ Path utilities for Luxar dataset generation.
 
 **Key Functions:**
 - `get_project_root()`: Find the Luxar project root directory (cached)
-- `get_datasets_dir()`: Get the `datasets/` directory at project root
-- `get_examples_output_dir()`: Resolve the centralized `datasets/examples/` output directory
-- `get_demos_output_dir()`: Resolve the centralized `datasets/demos/` output directory
+- `get_datasets_dir()`: Resolve the `datasets/` directory: `LUXAR_DATASETS_DIR` if set, `<repo>/datasets` in a Luxar checkout, or `~/.cache/luxar/datasets` from an install
+- `get_examples_output_dir()`: Resolve `examples/` under that directory
+- `get_demos_output_dir()`: Resolve `demos/` under that directory
 
 ### Demo support modules
 Demo-only download, dataset, and runtime helpers moved to

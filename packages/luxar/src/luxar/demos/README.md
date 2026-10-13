@@ -42,6 +42,13 @@ luxar demo deps --only scipy       # report one import module
 luxar demo deps --only scipy --install  # install only scipy's constrained spec
 ```
 
+Generated scenes go to `<repo>/datasets/demos/` in a Luxar source checkout and
+to `~/.cache/luxar/datasets/demos/` from an installed package. Set
+`LUXAR_DATASETS_DIR` to put the datasets directory elsewhere; for example,
+`LUXAR_DATASETS_DIR=/scratch/luxar luxar demo run lorenz`. `demo cache clear
+--orphans` leaves generated scenes alone; use `demo cache clear <key> --outputs`
+to remove a demo's outputs deliberately.
+
 A cache directory holding a **hand-placed input** — bytes with no download path,
 listed in `luxar.demos.registry.PROTECTED_INPUT_DIRS` — is inventoried by `demo
 cache list` (marked `🔒 hand-placed input`) but is never reported as an orphan and
