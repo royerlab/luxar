@@ -114,3 +114,25 @@ class TestDatasetsDirResolution:
             paths.get_demos_output_dir(create=True)
             == tmp_path / ".cache" / "luxar" / "datasets" / "demos"
         )
+
+    def test_fallback_matches_demo_cache_root(self, monkeypatch):
+        from luxar.demos.registry import DEMO_CACHE_ROOT
+        from luxar.utils import paths
+
+        def _no_root() -> Path:
+            raise RuntimeError("no project root")
+
+        monkeypatch.delenv("LUXAR_DATASETS_DIR", raising=False)
+        monkeypatch.setattr(paths, "get_project_root", _no_root)
+        assert paths.get_datasets_dir(create=False) == DEMO_CACHE_ROOT / "datasets"
+
+    def test_override_wins_in_checkout_and_respects_create(self, tmp_path, monkeypatch):
+        from luxar.utils import paths
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("LUXAR_DATASETS_DIR", "~/large_disk/scenes")
+        expected = tmp_path / "large_disk" / "scenes"
+        assert paths.get_datasets_dir(create=False) == expected
+        assert not expected.exists()
+        assert paths.get_demos_output_dir() == expected / "demos"
+        assert (expected / "demos").is_dir()

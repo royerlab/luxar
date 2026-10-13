@@ -1,12 +1,13 @@
 """Path utilities for Luxar dataset generation.
 
-Provides consistent path resolution for all generated datasets,
-ensuring they go to the centralized datasets/ folder at project root.
+Provides consistent path resolution for generated datasets in a Luxar checkout
+or an installed package.
 
 This module enables examples and demos to output to a single location
 regardless of where scripts are run from.
 """
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -49,7 +50,8 @@ def _owns_imported_luxar(root: Path) -> bool:
 def get_datasets_dir(create: bool = True) -> Path:
     """Get the directory for generated example/demo datasets.
 
-    In a Luxar dev checkout this is ``<repo>/datasets``. From an installed wheel —
+    ``LUXAR_DATASETS_DIR`` overrides the location. In a Luxar dev checkout this
+    is ``<repo>/datasets``. From an installed wheel —
     or when the only ``pyproject.toml`` ancestor is an UNRELATED project (a
     uv/poetry venv) — there is no repo to write into, so it falls back to the user
     cache dir ``~/.cache/luxar/datasets``. This is what lets demos and examples run
@@ -65,17 +67,19 @@ def get_datasets_dir(create: bool = True) -> Path:
     Returns:
         Path to the datasets/ directory.
     """
-    try:
-        root: Path | None = get_project_root()
-    except RuntimeError:
-        root = None
-    if root is not None and _owns_imported_luxar(root):
-        datasets_dir = root / "datasets"
+    override = os.environ.get("LUXAR_DATASETS_DIR")
+    if override:
+        datasets_dir = Path(override).expanduser()
     else:
-        # No owning checkout: write under the user cache dir (resolved at call
-        # time so it honours $HOME), matching the ~/.cache/luxar convention the
-        # demo downloaders already use.
-        datasets_dir = Path.home() / ".cache" / "luxar" / "datasets"
+        try:
+            root: Path | None = get_project_root()
+        except RuntimeError:
+            root = None
+        if root is not None and _owns_imported_luxar(root):
+            datasets_dir = root / "datasets"
+        else:
+            # Resolve at call time so a changed $HOME is honoured.
+            datasets_dir = Path.home() / ".cache" / "luxar" / "datasets"
     if create:
         datasets_dir.mkdir(parents=True, exist_ok=True)
     return datasets_dir
@@ -88,7 +92,7 @@ def get_examples_output_dir(create: bool = True) -> Path:
         create: Create the directory (and its parent) if missing (default True).
 
     Returns:
-        Path to datasets/examples/ directory
+        Path to the examples/ directory under the resolved datasets directory.
     """
     examples_dir = get_datasets_dir(create=create) / "examples"
     if create:
@@ -105,7 +109,7 @@ def get_demos_output_dir(create: bool = True) -> Path:
             read-only command like ``luxar demo list`` never creates ``datasets/``.
 
     Returns:
-        Path to datasets/demos/ directory
+        Path to the demos/ directory under the resolved datasets directory.
     """
     demos_dir = get_datasets_dir(create=create) / "demos"
     if create:
