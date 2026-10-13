@@ -29,12 +29,11 @@ _DEMOS_DIR = Path(__file__).parent
 # unit test pins the two constants equal.
 DEMO_CACHE_ROOT = Path.home() / ".cache" / "luxar"
 
-# Sub-directories of the cache root that are NOT caches. `luxar demo stop`'s
-# pidfile registry lives in `running/` (luxar.cli.demo_runs.DEMO_RUNS_DIR):
-# its entries name LIVE demo process groups, so listing it as an unclaimed
-# cache would invite `demo cache clear --orphans` to delete the record of what
-# is still running. A unit test pins the name against DEMO_RUNS_DIR.
-NON_CACHE_DIRS = frozenset({"running"})
+# Sub-directories of the cache root that are NOT caches. `running/` holds live
+# demo process records, and `datasets/` holds generated demo/example scenes.
+# Neither belongs in the orphan cache inventory or its deletion targets.
+# Tests pin both names against their actual paths.
+NON_CACHE_DIRS = frozenset({"running", "datasets"})
 
 # Cache-root directories that hold a hand-placed demo INPUT: bytes the user (or
 # a licence) had to put there by hand, with no download path to get them back.
@@ -381,9 +380,8 @@ def demo_output_paths(info: DemoInfo, demos_dir: Optional[Path] = None) -> list[
     already carries a ``.zarr`` suffix is used verbatim.
     """
     if demos_dir is None:
-        # Deferred: get_demos_output_dir needs the project root, which `luxar
-        # demo list` should not require. create=False so merely resolving output
-        # paths (for status/inventory) never creates datasets/ dirs.
+        # Deferred so importing the registry stays light. create=False keeps
+        # status/inventory read-only, without creating datasets/ dirs.
         from luxar.utils.paths import get_demos_output_dir
 
         demos_dir = get_demos_output_dir(create=False)
@@ -413,8 +411,8 @@ def inventory_caches(cache_root: Optional[Path] = None) -> list[CacheEntry]:
     empty ``demo_keys`` tuple (orphans — e.g. leftovers from renamed demos),
     except a :data:`PROTECTED_INPUT_DIRS` directory, which is flagged
     ``protected`` and is claimed by definition however empty its ``demo_keys``.
-    :data:`NON_CACHE_DIRS` is skipped entirely: those hold live state, not
-    cached bytes.
+    :data:`NON_CACHE_DIRS` is skipped entirely: those hold live state or
+    generated outputs, not demo input caches.
     """
     root = cache_root if cache_root is not None else DEMO_CACHE_ROOT
     if not root.exists():

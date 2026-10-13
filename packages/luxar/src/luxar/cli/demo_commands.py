@@ -47,19 +47,6 @@ app_demo.add_typer(cache_app, name="cache")
 
 
 # ────────────────────────────── rendering ────────────────────────────────────
-def _safe_output_paths(info: DemoInfo) -> list[Path]:
-    """Resolve a demo's output paths, or ``[]`` when the root can't be found.
-
-    ``registry.demo_output_paths`` → ``get_demos_output_dir`` → ``get_project_root``
-    raises ``RuntimeError`` from an installed wheel (no ``pyproject.toml``). An
-    empty list is the right answer there: "no known outputs to skip/clear".
-    """
-    try:
-        return registry.demo_output_paths(info)
-    except RuntimeError:
-        return []
-
-
 def _empty_dirs(cache_dir: Path, deleted: Optional[set[Path]] = None) -> list[Path]:
     """Directories a sweep of ``cache_dir`` would remove, deepest first.
 
@@ -97,7 +84,7 @@ def _empty_dirs(cache_dir: Path, deleted: Optional[set[Path]] = None) -> list[Pa
 
 def _status(info: DemoInfo) -> str:
     """Whether this demo already has cached inputs or a generated output."""
-    if any(p.exists() for p in _safe_output_paths(info)):
+    if any(p.exists() for p in registry.demo_output_paths(info)):
         return STATUS_BUILT
     if any(d.exists() for d in registry.demo_cache_dirs(info)):
         return STATUS_CACHED
@@ -225,6 +212,10 @@ def demo_run(
 ) -> None:
     """Run a demo by key or index; extra args are forwarded to the demo.
 
+    Generated scenes go to <repo>/datasets/demos in a Luxar checkout, or
+    ~/.cache/luxar/datasets/demos from an install. LUXAR_DATASETS_DIR overrides
+    the datasets directory.
+
     Example: luxar demo run gsplats_3d_tribolium_embryo -- --recompute --no-serve
     """
     info = _resolve_or_exit(key)
@@ -293,7 +284,7 @@ def demo_run_all(
             )
             skipped += 1
             continue
-        outs = _safe_output_paths(d)
+        outs = registry.demo_output_paths(d)
         if skip_existing and outs and all(p.exists() for p in outs):
             aprint(f"⏭️  {d.key}: output exists; skipping")
             skipped += 1
@@ -447,16 +438,13 @@ def _luxar_checkout_root() -> Path | None:
     owns the imported package: a real checkout is ``<root>/packages/luxar/src/
     luxar``. Otherwise (mismatch, or no root at all) return ``None``.
     """
-    import luxar
-
     try:
-        from ..utils.paths import get_project_root
+        from ..utils import paths
 
-        root = get_project_root()
+        root = paths.get_project_root()
     except RuntimeError:
         return None
-    pkg_dir = Path(luxar.__file__).resolve().parent
-    if (root / "packages" / "luxar" / "src" / "luxar").resolve() == pkg_dir:
+    if paths._owns_imported_luxar(root):
         return root
     return None
 
@@ -737,7 +725,9 @@ def cache_clear(
         help="Clear computed artifacts (*.pkl and local/ fits).",
     ),
     outputs: bool = typer.Option(
-        False, "--outputs", help="Also delete generated datasets/demos/*.luxar.zarr."
+        False,
+        "--outputs",
+        help="Also delete generated demo scenes from the datasets directory.",
     ),
     orphans: bool = typer.Option(
         False,
@@ -808,7 +798,7 @@ def cache_clear(
             cache_dirs.append(cache_dir)
             _add_dir_files(cache_dir, d.key)
         if outputs:
-            for p in _safe_output_paths(d):
+            for p in registry.demo_output_paths(d):
                 if p.exists():
                     size = (
                         registry.dir_size_bytes(p) if p.is_dir() else p.stat().st_size

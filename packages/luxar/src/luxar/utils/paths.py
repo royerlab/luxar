@@ -1,12 +1,13 @@
 """Path utilities for Luxar dataset generation.
 
-Provides consistent path resolution for all generated datasets,
-ensuring they go to the centralized datasets/ folder at project root.
+Provides consistent path resolution for generated datasets in a Luxar checkout
+or an installed package.
 
 This module enables examples and demos to output to a single location
 regardless of where scripts are run from.
 """
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -31,20 +32,56 @@ def get_project_root() -> Path:
     raise RuntimeError("Could not find project root (no pyproject.toml found)")
 
 
+def _owns_imported_luxar(root: Path) -> bool:
+    """True when ``root`` is the dev checkout that owns the imported ``luxar``.
+
+    ``get_project_root`` walks up to the first ``pyproject.toml`` ancestor, which
+    for a NON-editable install inside a user's own project venv
+    (``<proj>/.venv/.../site-packages/luxar`` — the default uv/poetry layout) is
+    the *user's* project, not Luxar's checkout. Trust a root only when it actually
+    owns the imported package: a real checkout is ``<root>/packages/luxar/src/luxar``.
+    """
+    import luxar
+
+    pkg_dir = Path(luxar.__file__).resolve().parent
+    return (root / "packages" / "luxar" / "src" / "luxar").resolve() == pkg_dir
+
+
 def get_datasets_dir(create: bool = True) -> Path:
-    """Get the datasets directory at project root.
+    """Get the directory for generated example/demo datasets.
+
+    ``LUXAR_DATASETS_DIR`` overrides the location. In a Luxar dev checkout this
+    is ``<repo>/datasets``. From an installed wheel —
+    or when the only ``pyproject.toml`` ancestor is an UNRELATED project (a
+    uv/poetry venv) — there is no repo to write into, so it falls back to the user
+    cache dir ``~/.cache/luxar/datasets``. This is what lets demos and examples run
+    from a plain ``pip install`` instead of raising "could not find project root"
+    (#3097), and keeps a non-editable install from scribbling into the user's own
+    project tree.
 
     Args:
-        create: Create the directory if it doesn't exist (default True). Pass
-            False to resolve the path read-only (e.g. when only checking
-            whether an output exists, so listing does not create dirs).
+        create: Create the directory (and parents) if it doesn't exist (default
+            True). Pass False to resolve the path read-only (e.g. when only
+            checking whether an output exists, so listing does not create dirs).
 
     Returns:
-        Path to datasets/ directory
+        Path to the datasets/ directory.
     """
-    datasets_dir = get_project_root() / "datasets"
+    override = os.environ.get("LUXAR_DATASETS_DIR")
+    if override:
+        datasets_dir = Path(override).expanduser()
+    else:
+        try:
+            root: Path | None = get_project_root()
+        except RuntimeError:
+            root = None
+        if root is not None and _owns_imported_luxar(root):
+            datasets_dir = root / "datasets"
+        else:
+            # Resolve at call time so a changed $HOME is honoured.
+            datasets_dir = Path.home() / ".cache" / "luxar" / "datasets"
     if create:
-        datasets_dir.mkdir(exist_ok=True)
+        datasets_dir.mkdir(parents=True, exist_ok=True)
     return datasets_dir
 
 
@@ -55,7 +92,7 @@ def get_examples_output_dir(create: bool = True) -> Path:
         create: Create the directory (and its parent) if missing (default True).
 
     Returns:
-        Path to datasets/examples/ directory
+        Path to the examples/ directory under the resolved datasets directory.
     """
     examples_dir = get_datasets_dir(create=create) / "examples"
     if create:
@@ -72,7 +109,7 @@ def get_demos_output_dir(create: bool = True) -> Path:
             read-only command like ``luxar demo list`` never creates ``datasets/``.
 
     Returns:
-        Path to datasets/demos/ directory
+        Path to the demos/ directory under the resolved datasets directory.
     """
     demos_dir = get_datasets_dir(create=create) / "demos"
     if create:
