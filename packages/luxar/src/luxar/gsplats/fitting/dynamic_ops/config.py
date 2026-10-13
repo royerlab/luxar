@@ -83,3 +83,32 @@ class DynamicOpsConfig:
     min_splats_to_keep: int = (
         10  # Minimum splats - never relocate below this count (backwards compat)
     )
+
+    # ------------------------------------------------------------------
+    # Experimental A/B levers for issue #2734 (relocated splats pinned at
+    # the 0.5-voxel reseed default). EVERY field below defaults to CURRENT
+    # behavior, so an unset config is a byte-for-byte no-op.
+    # ------------------------------------------------------------------
+    relocation_stop_fraction: float = 1.0
+    """Stop relocating once ``iteration > relocation_stop_fraction * n_iters``.
+
+    ``1.0`` never stops (current behavior). Lower it (e.g. ``0.5``) to freeze
+    relocation for the second half of the fit so late-reseeded splats get time
+    to grow out of the isotropic reseed size.
+    """
+
+    reset_adam_on_relocation: bool = True
+    """Whether to zero the Adam moments (``exp_avg``/``exp_avg_sq``) of a
+    relocated splat.
+
+    ``True`` is the current behavior. ``False`` keeps the moments so a relocated
+    splat inherits momentum at its new location.
+    """
+
+    relocation_reseed_sigma_vox: float | None = None
+    """Isotropic sigma (voxels) a relocated splat is reseeded at.
+
+    ``None`` reseeds at :attr:`init_sigma_vox` (current, 0.5). A float reseeds at
+    that sigma instead, testing whether 0.5 voxels is simply too small for
+    relocated splats to recover from (issue #2734).
+    """

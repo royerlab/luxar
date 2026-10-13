@@ -469,6 +469,12 @@ class OptimizationResults:
         default_factory=_EMPTY_RELOCATION_STATISTICS.copy
     )
 
+    # Boolean mask (length n_splats, final splat order) marking splats that were
+    # relocated at least once over the WHOLE fit. None when dynamic ops were
+    # disabled. Lets the fit diagnostics split a stuck near-reseed-sigma
+    # population into ever-relocated vs never-relocated seeds (#2734).
+    relocated_mask: Optional[np.ndarray] = None
+
 
 @dataclass
 class ModelComponents:

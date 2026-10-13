@@ -957,6 +957,64 @@ def _tiled_source_grid_stats(
     return out
 
 
+#: Per-fit relocation diagnostic COUNT keys (#2734) that are summed across tiles
+#: on a merge. ``GSplatData.concatenate`` drops per-tile stats, so without this a
+#: partition/tiled merge reads them as ABSENT (#2744 drop).
+_RELOCATION_DIAGNOSTIC_SUM_KEYS = (
+    "dynamic_ops_relocation_events",
+    "dynamic_ops_unique_splats_relocated",
+    "splats_near_relocation_init_sigma_count",
+    "splats_near_relocation_init_sigma_relocated_count",
+    "splats_near_relocation_init_sigma_unrelocated_count",
+)
+
+#: Shared scalar reseed-sigma stamps (#2734): one value across all tiles, so
+#: carried verbatim rather than summed.
+_RELOCATION_DIAGNOSTIC_SHARED_KEYS = (
+    "relocation_init_sigma_vox",
+    "relocation_reseed_sigma_vox_effective",
+)
+
+
+def _aggregate_relocation_diagnostics(
+    stats: dict[str, Any],
+    results: Sequence[GSplatData],
+    delivered_splats: int,
+) -> None:
+    """Carry the per-tile relocation diagnostics (#2734) onto the merged root.
+
+    ``GSplatData.concatenate`` drops per-tile stats, so a partition/tiled merge
+    otherwise reports the relocation diagnostic keys as ABSENT (#2744). Sum the
+    count keys across every tile that recorded them, carry the shared reseed
+    sigma stamps, and recompute the near-sigma fraction against the delivered
+    splat count. A key is emitted only when at least one tile carried it; tiles
+    missing a key are skipped so the aggregation stays defensive.
+    """
+    sums: dict[str, int] = {}
+    for result in results:
+        tile_stats = getattr(result, "stats", None) or {}
+        for key in _RELOCATION_DIAGNOSTIC_SUM_KEYS:
+            value = tile_stats.get(key)
+            if value is None:
+                continue
+            sums[key] = sums.get(key, 0) + int(value)
+    stats.update(sums)
+
+    for key in _RELOCATION_DIAGNOSTIC_SHARED_KEYS:
+        for result in results:
+            tile_stats = getattr(result, "stats", None) or {}
+            value = tile_stats.get(key)
+            if value is not None:
+                stats[key] = value
+                break
+
+    near_count = sums.get("splats_near_relocation_init_sigma_count")
+    if near_count is not None and delivered_splats:
+        stats["splats_near_relocation_init_sigma_fraction"] = (
+            near_count / delivered_splats
+        )
+
+
 def _merged_fit_stats(
     results: Sequence[GSplatData],
     *,
@@ -994,6 +1052,7 @@ def _merged_fit_stats(
         )
     )
     stamp_voxels_per_splat(stats, delivered_splats)
+    _aggregate_relocation_diagnostics(stats, results, delivered_splats)
     return stats
 
 

@@ -238,6 +238,17 @@ def run_optimization_loop(
                 "Ls": Ls.detach().clone(),
                 "amps": amps.detach().clone(),
                 "iteration": it,
+                # Snapshot the ever-relocated mask IN THIS SNAPSHOT'S ORDER (#2734).
+                # A later Morton sort reorders the live tracker, so the tracker's
+                # final mask would both misalign with and mislabel these returned
+                # (best-loss) splats — a relocation after this iteration does not
+                # apply to the state captured here. Captured in lockstep with the
+                # params above, it stays correct whatever sorts follow.
+                "relocated": (
+                    (relocation_tracker.last_relocation_step >= 0).detach().clone()
+                    if relocation_tracker is not None
+                    else None
+                ),
                 "max_abs_error": current_max_abs_error,  # last known
                 "rel_l2": current_rel_l2,  # last known
                 "loss": 0.0,  # placeholder, updated on eval
@@ -247,7 +258,11 @@ def run_optimization_loop(
 
         # --- Periodic full evaluation (expensive — involves second forward pass) ---
         need_dynamic = (
-            config.enable_dynamic_ops and it % config.dynamic_config.step_every == 0
+            config.enable_dynamic_ops
+            and it % config.dynamic_config.step_every == 0
+            # Tail cutoff (#2734): stop relocating past the configured fraction
+            # of the schedule. Default 1.0 -> always true (no-op).
+            and it <= config.dynamic_config.relocation_stop_fraction * config.n_iters
         )
         need_eval = it % _EVAL_INTERVAL == 0 or it <= 5 or need_dynamic
 
@@ -462,6 +477,18 @@ def run_optimization_loop(
 
     relocation_statistics = _completed_relocation_statistics(relocation_tracker)
 
+    # Ever-relocated mask (#2734), ALIGNED WITH THE RETURNED SPLATS. The returned
+    # centers/Ls/amps are the best-loss snapshot, so use the mask captured into
+    # best_state at that iteration (correct whatever Morton sorts followed). Fall
+    # back to the live tracker only when no snapshot was ever recorded (degenerate
+    # no-improvement fit, where the returned params are the live model). None when
+    # dynamic ops were disabled.
+    relocated_mask = None
+    if best_state is not None and best_state.get("relocated") is not None:
+        relocated_mask = best_state["relocated"].cpu().numpy()
+    elif relocation_tracker is not None:
+        relocated_mask = (relocation_tracker.last_relocation_step >= 0).cpu().numpy()
+
     return OptimizationResults(
         centers=centers,
         Ls=Ls,
@@ -477,6 +504,7 @@ def run_optimization_loop(
         start_time=start_time,
         end_time=end_time,
         relocation_statistics=relocation_statistics,
+        relocated_mask=relocated_mask,
     )
 
 
