@@ -65,6 +65,10 @@ class TestNormalizeZarrPath:
 class TestDatasetsDirResolution:
     """``get_datasets_dir`` must work from an installed wheel, not only a checkout (#3097)."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_datasets_override(self, monkeypatch):
+        monkeypatch.delenv("LUXAR_DATASETS_DIR", raising=False)
+
     def test_uses_repo_datasets_when_root_owns_luxar(self):
         # In this editable checkout the discovered root owns the imported luxar,
         # so output stays in <repo>/datasets (unchanged behaviour).
@@ -122,7 +126,6 @@ class TestDatasetsDirResolution:
         def _no_root() -> Path:
             raise RuntimeError("no project root")
 
-        monkeypatch.delenv("LUXAR_DATASETS_DIR", raising=False)
         monkeypatch.setattr(paths, "get_project_root", _no_root)
         assert paths.get_datasets_dir(create=False) == DEMO_CACHE_ROOT / "datasets"
 
