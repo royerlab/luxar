@@ -547,6 +547,13 @@ class TestCache:
         assert (demo_output / "data").read_bytes() == b"demo"
         assert (example_output / "data").read_bytes() == b"example"
 
+        outputs_cleared = runner.invoke(
+            app, ["demo", "cache", "clear", "lorenz", "--outputs", "--yes"]
+        )
+        assert outputs_cleared.exit_code == 0
+        assert not demo_output.exists()
+        assert (example_output / "data").read_bytes() == b"example"
+
 
 class TestProtectedInputDirs:
     """A hand-placed demo input is inventoried, but never an orphan and never cleared.
