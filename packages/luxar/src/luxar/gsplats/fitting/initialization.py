@@ -184,41 +184,23 @@ def initialize_optimization(
     )
 
     if use_metal:
-        try:
-            from luxar.gsplats.models.gsplats.metal import (
-                GaussianSplatModelMetal,
-                is_metal_available,
-            )
-
-            metal_available = is_metal_available()
-            if config.verbose:
-                aprint(
-                    f"Metal backend: {'available' if metal_available else 'NOT available'}"
-                )
-
-            if metal_available:
-                model = GaussianSplatModelMetal(
-                    shape=opt_shape,
-                    centers0=preprocessed_data.seed_centers,
-                    L0=L0,
-                    amps0=amps0,
-                    sigma_min_diag=_sigma_min,
-                    sigma_max_diag=_sigma_max,
-                    amp_max=amp_max,
-                    max_eccentricity=config.max_eccentricity,
-                    truncate=config.truncate,
-                    intensity_floor=config.metal_intensity_floor,
-                    voxel_size=config.voxel_size,
-                    device=config.device,
-                )
-                if config.verbose:
-                    aprint(
-                        "✓ Model class: GaussianSplatModelMetal (substantially faster on Apple Silicon; speedup depends on chip)"
-                    )
-        except ImportError:
-            if config.verbose:
-                aprint("Metal backend: NOT installed")
-            pass  # Metal backend not installed
+        model = _try_metal_model(
+            config,
+            dict(
+                shape=opt_shape,
+                centers0=preprocessed_data.seed_centers,
+                L0=L0,
+                amps0=amps0,
+                sigma_min_diag=_sigma_min,
+                sigma_max_diag=_sigma_max,
+                amp_max=amp_max,
+                max_eccentricity=config.max_eccentricity,
+                truncate=config.truncate,
+                intensity_floor=config.metal_intensity_floor,
+                voxel_size=config.voxel_size,
+                device=config.device,
+            ),
+        )
 
     # Try CUDA acceleration (NVIDIA GPUs)
     use_cuda = (
@@ -367,5 +349,50 @@ def _try_cuda_model(config: FitConfig, model_kwargs: dict[str, Any]) -> Any | No
         aprint(
             f"✓ Model class: GaussianSplatModelCUDA, {backend.name} kernels "
             "(often orders of magnitude faster on NVIDIA GPUs; depends on hardware)"
+        )
+    return model
+
+
+def _warn_metal_kernels_unavailable(reason: str) -> None:
+    """Loud, actionable warning that fitting fell back to the PyTorch renderer."""
+    from arbol import aprint
+
+    message = (
+        "MPS device detected but the Metal splatting kernels are unavailable "
+        f"({reason}). Fitting will use the PyTorch fallback (orders of magnitude "
+        "slower). With torch >= 2.7 the kernels compile automatically at runtime "
+        "(no Xcode needed); set LUXAR_METAL_BACKEND=torch to silence this warning."
+    )
+    aprint(f"WARNING: {message}")
+    warnings.warn(message, UserWarning, stacklevel=3)
+
+
+def _try_metal_model(config: FitConfig, model_kwargs: dict[str, Any]) -> Any | None:
+    """Build a GaussianSplatModelMetal, or None (with a warning) when no kernels run.
+
+    Kernel backend order (see ``models/gsplats/metal/backend.py``): compiled
+    extension, then runtime compilation via ``torch.mps.compile_shader``, then
+    the PyTorch model. A forced ``LUXAR_METAL_BACKEND=aot|runtime`` that
+    cannot run raises out of :func:`get_metal_backend` rather than degrading.
+    """
+    from arbol import aprint
+
+    from luxar.gsplats.models.gsplats.metal import (
+        GaussianSplatModelMetal,
+        get_metal_backend,
+        metal_backend_unavailable_reason,
+    )
+
+    backend = get_metal_backend()
+    if backend is None:
+        reason = metal_backend_unavailable_reason() or "unknown reason"
+        if reason != "LUXAR_METAL_BACKEND=torch":
+            _warn_metal_kernels_unavailable(reason)
+        return None
+    model = GaussianSplatModelMetal(**model_kwargs)
+    if config.verbose:
+        aprint(
+            f"✓ Model class: GaussianSplatModelMetal, {backend.name} kernels "
+            "(substantially faster on Apple Silicon; speedup depends on chip)"
         )
     return model

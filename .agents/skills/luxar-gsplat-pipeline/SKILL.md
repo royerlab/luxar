@@ -21,9 +21,12 @@ All commands below are subcommands of `luxar gsplat`.
 GSplats need optional deps: `pip install "luxar[gsplats]"` (PyTorch, scipy). GPU
 (CUDA or Apple MPS) is auto-detected; pass `--device cpu` to force CPU. On Linux
 with a CUDA build of torch, the custom CUDA kernels compile automatically on first
-use (NVRTC, cached under `~/.cache/luxar/cuda`); no `make build-cuda` needed. The
-fit log says which kernels ran (`aot`, `nvrtc`, or PyTorch with the reason), and
-`LUXAR_CUDA_BACKEND=aot|nvrtc|torch` forces one.
+use (NVRTC, cached under `~/.cache/luxar/cuda`); no `make build-cuda` needed. On
+Apple MPS the 3D Metal kernels likewise compile at runtime (torch >= 2.7, no
+Xcode); a fit that logs "Metal splatting kernels: none, using PyTorch" runs orders
+of magnitude slower — upgrade torch, or see `LUXAR_METAL_BACKEND` in the metal
+README. The fit log says which kernels ran (`aot`, `nvrtc`, or PyTorch with the
+reason), and `LUXAR_CUDA_BACKEND=aot|nvrtc|torch` forces one.
 
 ## The canonical pipeline: cal -> fit -> lod
 

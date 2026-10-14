@@ -85,7 +85,8 @@ def main():
             aprint("\n💡 Note: To enable Metal acceleration:")
             aprint("   1. Use macOS with Apple Silicon (M1/M2/M3/M4)")
             aprint(
-                "   2. Install Metal backend: cd metal && python setup.py build_ext --inplace"
+                "   2. Install an MPS build of torch >= 2.7 (the Metal kernels "
+                "compile at runtime; no Xcode needed)"
             )
             aprint("   3. Use device='mps' when calling fit_gaussian_splats()")
 

@@ -351,13 +351,17 @@ GPU or on Apple silicon through MPS. On Linux with an NVIDIA GPU and a CUDA buil
 torch (the default `pip install torch`), the custom CUDA kernels need no build step:
 they are compiled for your card on first use with NVRTC, the CUDA runtime compiler
 that ships inside torch's NVIDIA wheels, and cached under `~/.cache/luxar/cuda`
-(`$XDG_CACHE_HOME` is honored), so no `nvcc` or C++ compiler is involved. A fit logs
-which kernels it used. In a checkout, `make build-cuda` still builds them ahead of
-time, and that build is preferred when present; on a cluster, `make build-cuda
-SLURM=1` builds it on a GPU node. `LUXAR_CUDA_BACKEND=aot|nvrtc|torch` forces one
-path. Seeding and the optional non-local-means denoising follow the same device
-choice. If neither kernel path can run, the fit warns and continues on the slower
-PyTorch renderer. Viewing never needs any of this.
+(`$XDG_CACHE_HOME` is honored), so no `nvcc` or C++ compiler is involved. On a Mac
+the 3D Metal kernels compile at runtime with the Metal compiler built into macOS
+(needs torch >= 2.7; no Xcode, nothing to build). A fit logs which kernels it used.
+In a checkout, `make build-cuda` still builds the CUDA extension ahead of time and
+that build is preferred when present (`make build-cuda SLURM=1` on a cluster); on a
+Mac a developer-built Metal extension (`python setup.py build_ext --inplace
+--force`) is likewise preferred when present. `LUXAR_CUDA_BACKEND=aot|nvrtc|torch`
+and `LUXAR_METAL_BACKEND=auto|aot|runtime|torch` force one path on their respective
+platforms. Seeding and the optional non-local-means denoising follow the same
+device choice. If neither kernel path can run, the fit warns and continues on the
+slower PyTorch renderer. Viewing never needs any of this.
 
 Every option, with examples, is in the
 [CLI package README](packages/luxar/src/luxar/cli/README.md); the fitting model

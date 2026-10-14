@@ -1152,14 +1152,17 @@ loss = criterion(output, target)
 loss.backward()  # Gradients computed via Metal kernels
 ```
 
-**Requirements**: macOS with Apple Silicon (M1/M2/M3/M4), full Xcode installation.
+**Requirements**: macOS with Apple Silicon (M1/M2/M3/M4) and an MPS build of
+torch >= 2.7 (2.6 works through torch's private shader API). No Xcode and no
+build step: the kernels in `metal/src/kernels.metal` are compiled on first use by
+`torch.mps.compile_shader`, i.e. by the Metal compiler that ships with macOS.
 
-**Compilation**: The Metal backend requires one-time compilation:
-
-```bash
-cd packages/luxar/src/luxar/gsplats/models/gsplats/metal
-python setup.py build_ext --inplace
-```
+**Backend selection**: an up-to-date ahead-of-time extension (built explicitly by
+a developer with `python setup.py build_ext --inplace --force` in
+`models/gsplats/metal/`, full Xcode required) is preferred when present, then the
+runtime-compiled kernels (numerically equivalent, equal or slightly faster; a pip
+install has no AOT build so it gets these), then the pure-PyTorch MPS path. `LUXAR_METAL_BACKEND=auto|aot|runtime|torch`
+forces one; a forced backend that cannot run raises, in fitting too.
 
 See [metal/README.md](models/gsplats/metal/README.md) for detailed installation and troubleshooting.
 
