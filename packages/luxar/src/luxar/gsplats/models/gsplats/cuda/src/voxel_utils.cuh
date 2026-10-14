@@ -8,8 +8,13 @@
 #ifndef CUDA_SPLATTING_VOXEL_UTILS_CUH
 #define CUDA_SPLATTING_VOXEL_UTILS_CUH
 
+// NVRTC has no toolkit/std headers: rtc_compat.cuh supplies what the kernels use.
+#ifdef __CUDACC_RTC__
+#include "rtc_compat.cuh"
+#else
 #include <cuda_runtime.h>
 #include <cstdint>
+#endif
 
 /**
  * Convert voxel coordinates to linear pixel index.

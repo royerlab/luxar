@@ -59,7 +59,7 @@ def test_cuda_render_failure_warns_once_and_falls_back(monkeypatch) -> None:
         sys.modules,
         module_name,
         SimpleNamespace(
-            CUDA_BACKEND_AVAILABLE=True,
+            get_splatting_backend=lambda: object(),
             CUDASplatFunction=RaisingCUDASplatFunction,
         ),
     )
@@ -93,7 +93,7 @@ def test_cuda_render_warning_points_to_external_caller(monkeypatch) -> None:
         sys.modules,
         module_name,
         SimpleNamespace(
-            CUDA_BACKEND_AVAILABLE=True,
+            get_splatting_backend=lambda: object(),
             CUDASplatFunction=RaisingCUDASplatFunction,
         ),
     )
@@ -145,7 +145,7 @@ def test_cuda_render_skips_unsupported_dimensions_without_warning(monkeypatch) -
         sys.modules,
         module_name,
         SimpleNamespace(
-            CUDA_BACKEND_AVAILABLE=True,
+            get_splatting_backend=lambda: object(),
             CUDASplatFunction=UnexpectedCUDASplatFunction,
         ),
     )

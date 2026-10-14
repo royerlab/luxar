@@ -305,6 +305,13 @@ MIN_NODE_MINOR := 22
 
 ### CUDA & GPU Extensions
 
+These targets build the OPTIONAL ahead-of-time extensions. Without them, on
+Linux with a CUDA build of torch, the same kernel sources are compiled at
+runtime by NVRTC on first use and cached under `~/.cache/luxar/cuda` (see
+`packages/luxar/src/luxar/gsplats/models/gsplats/cuda/README.md`); a built
+extension is preferred when it imports, and `LUXAR_CUDA_BACKEND=aot|nvrtc|torch`
+forces a path.
+
 | Command | Description |
 |---------|-------------|
 | `make setup-cuda` | Install CUDA deps + build extension |

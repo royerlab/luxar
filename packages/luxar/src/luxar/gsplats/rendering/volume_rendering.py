@@ -41,13 +41,14 @@ def _try_cuda_render(
 
     try:
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
-            CUDA_BACKEND_AVAILABLE,
             CUDASplatFunction,
+            get_splatting_backend,
         )
     except ImportError:
         return None
 
-    if not CUDA_BACKEND_AVAILABLE:
+    # The AOT extension or NVRTC runtime-compiled kernels; None = PyTorch path.
+    if get_splatting_backend() is None:
         return None
 
     try:

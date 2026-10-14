@@ -25,7 +25,7 @@ repository. There are two install stories, then per-machine additions:
 | Machine | Fitting device | CUDA extension | Notes |
 | --- | --- | --- | --- |
 | Modest laptop (macOS / Linux / WSL) | CPU, or `mps` on Apple Silicon | skip | Viewing is WebGL (browser GPU) — smooth on any laptop; only *fitting* is slow |
-| Desktop with NVIDIA GPU | `cuda` | optional but recommended | Orders-of-magnitude faster fitting (CUDA NLM denoise is a separate `make build-nlm-cuda`) |
+| Desktop with NVIDIA GPU | `cuda` | not needed on Linux (NVRTC compiles the kernels on first use); `make build-cuda` optional | Orders-of-magnitude faster fitting with the custom kernels |
 | Slurm/HPC cluster | `cuda` on compute nodes | build via `SLURM=1` | No sudo, no GPU on login node — everything has a no-sudo fallback |
 
 ## Common base (all profiles)
@@ -109,6 +109,22 @@ environment. The default Hatch env already includes `[gsplats]` (torch/scipy)
 via `features=["dev"]`, so the first `hatch run` provisions it — no manual
 install needed.
 
+**User install (no checkout): nothing to build.** On Linux, `pip install
+"luxar[gsplats]"` with the default CUDA build of torch is enough: the custom CUDA
+kernels are compiled for the card on first use by NVRTC (the runtime compiler that
+ships in torch's NVIDIA wheels) and cached under `~/.cache/luxar/cuda`
+(`$XDG_CACHE_HOME` honored). No `nvcc`, no C++ compiler. The first fit logs
+`CUDA splatting kernels: nvrtc (...)`; the one-time compile of a dimensionality
+takes well under a second. If it logs `none, using PyTorch`, the reason follows
+(CPU-only torch, macOS, a GPU older than every architecture the installed
+NVRTC can target -- sm_75 is the floor for CUDA 13's NVRTC, while CUDA 12's
+reaches older cards, untested here -- or no libnvrtc;
+`LUXAR_NVRTC_LIBRARY=/path/to/libnvrtc.so` points at one explicitly).
+`LUXAR_CUDA_BACKEND=aot|nvrtc|torch` forces a path.
+
+**Dev checkout:** the ahead-of-time extension is still supported and preferred
+when it is built:
+
 ```bash
 make setup-dev          # installs Hatch (the CUDA targets build inside it)
 hatch run python -c "import torch; print(torch.cuda.is_available())"   # must be True
@@ -118,14 +134,14 @@ make build-cuda         # or just build, if toolkit already present
 make test-cuda          # verify the extension
 ```
 
-The CUDA extension accelerates splatting internals; plain `device='cuda'`
-fitting works without it (PyTorch ops only). CUDA NLM denoise is a *separate*
-extension — build it with `make build-nlm-cuda` (→ `nlm_cuda_backend.so`);
-without it, NLM denoise silently falls back to the PyTorch path.
+The custom kernels accelerate splatting internals; without either path,
+`device='cuda'` fitting still works on PyTorch ops only (it warns). CUDA NLM
+denoise follows the same order: the separate `make build-nlm-cuda` extension
+(→ `nlm_cuda_backend.so`) if built, otherwise NVRTC, otherwise PyTorch.
 
-**ABI gotcha:** the built `.so` is compiled against a specific torch ABI —
-after ANY torch upgrade, rebuild with `make build-cuda` or imports fail with
-symbol errors. It is also compiled for your local GPU architecture. Run GPU
+**ABI gotcha (AOT extension only):** the built `.so` is compiled against a
+specific torch ABI — after ANY torch upgrade, rebuild with `make build-cuda`
+(until then it fails to import and the NVRTC path takes over). It is also compiled for your local GPU architecture. Run GPU
 fitting through the SAME env: `hatch run luxar gsplat fit ... --device cuda` —
 not from a separate `.venv`, whose independently-resolved torch importing the
 Hatch-built `.so` is the very ABI mismatch above.
@@ -182,7 +198,11 @@ see the **`luxar-hpc-batch-fit`** skill.
 - **"Viewer not available / not built"** → in a dev tree run
   `cd packages/luxar-viewer && pnpm build` (or `make build-viewer`).
 - **CUDA extension import fails after upgrading torch** → rebuild:
-  `make build-cuda` (ABI mismatch, see above).
+  `make build-cuda` (ABI mismatch, see above), or delete the stale `.so` and
+  let the NVRTC path compile the kernels.
+- **Fit logs "custom CUDA kernels are unavailable"** → the warning carries the
+  reason. A CUDA build of torch on Linux normally brings libnvrtc; check
+  `python -c "import torch; print(torch.version.cuda)"` is not `None`.
 - **hatch/pnpm "command not found" on HPC** → `~/.local/bin` missing from
   PATH (step 2 above).
 - **Ubuntu/Debian setup-dev fails early** → on PEP-668 apt systems,

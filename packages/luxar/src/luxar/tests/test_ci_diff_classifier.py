@@ -1809,6 +1809,12 @@ def test_cuda_cadence_is_dispatch_only_and_requires_two_gpus() -> None:
     assert steps["Compile-check CUDA translation units"]["timeout-minutes"] == "5"
     assert steps["Build CUDA extensions"]["timeout-minutes"] == "20"
     assert steps["Run CUDA parity suites"]["timeout-minutes"] == "20"
+    nvrtc = steps["Run CUDA parity suites on the NVRTC runtime-compiled kernels"]
+    assert nvrtc["timeout-minutes"] == "10"
+    # Forced, so a missing NVRTC fails the cadence instead of falling back.
+    assert nvrtc["env"]["LUXAR_CUDA_BACKEND"] == "nvrtc"
+    assert "gsplats/models/gsplats/cuda/tests/" in nvrtc["run"]
+    assert "preprocessing/tests/test_nlm_cuda.py" in nvrtc["run"]
     assert steps["Report cadence failure"]["timeout-minutes"] == "5"
 
     run_steps = [step["run"] for step in steps.values() if "run" in step]

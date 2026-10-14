@@ -21,9 +21,9 @@ def _resolve_backend(backend: str, device: torch.device) -> str:
 
     if device.type == "cuda":
         try:
-            from luxar.gsplats.preprocessing.cuda import NLM_CUDA_AVAILABLE
+            from luxar.gsplats.preprocessing.cuda import nlm_cuda_available
 
-            if NLM_CUDA_AVAILABLE:
+            if nlm_cuda_available():
                 return "cuda"
         except ImportError:
             pass
@@ -158,6 +158,12 @@ def denoise_nlm(
             # silently masked by the slow PyTorch path.
             msg = str(exc).lower()
             if "cuda" not in msg and "cudnn" not in msg and "driver" not in msg:
+                raise
+            from luxar.gsplats.models.gsplats.cuda.backend import requested_backend
+
+            if requested_backend() in ("aot", "nvrtc"):
+                # A kernel backend forced via LUXAR_CUDA_BACKEND fails loudly
+                # instead of silently degrading to PyTorch.
                 raise
             fall_back_reason = exc
 

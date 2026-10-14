@@ -91,13 +91,13 @@ class GaussianSplatFitter:
                 "WARNING: Gaussian splat fitting will run on CPU — "
                 "this can be orders of magnitude SLOWER than GPU (hardware-dependent)! "
                 "For serious work, use device='cuda' (NVIDIA) or device='mps' (Apple Silicon). "
-                "To install CUDA support: make setup-cuda && make build-cuda"
+                "For NVIDIA GPUs, install a CUDA build of torch (the custom kernels then compile automatically on Linux)"
             )
             warnings.warn(
                 "Gaussian splat fitting will run on CPU. "
                 "This can be orders of magnitude SLOWER than GPU (hardware-dependent). "
                 "For serious work, use device='cuda' (NVIDIA) or device='mps' (Apple Silicon). "
-                "To install CUDA support: make setup-cuda && make build-cuda",
+                "For NVIDIA GPUs, install a CUDA build of torch (the custom kernels then compile automatically on Linux)",
                 UserWarning,
                 stacklevel=2,
             )

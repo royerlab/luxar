@@ -363,7 +363,7 @@
       17
     ],
     "packages/luxar/src/luxar/gsplats/fitting/initialization.py::initialize_optimization": [
-      31
+      26
     ],
     "packages/luxar/src/luxar/gsplats/fitting/optimization.py::run_optimization_loop": [
       39
