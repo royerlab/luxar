@@ -764,20 +764,17 @@ test-all:  ## Run all tests (Python+CUDA, Rust/WASM, TypeScript, Go)
 		cd packages/luxar-viewer && pnpm test --run; \
 	fi
 	@echo ""
-	@echo "🎮 CUDA extension tests..."
+	@echo "🎮 CUDA kernel tests..."
 	@# NOT re-run here: $(CUDA_EXT_DIR)/tests/ lives under pytest's `testpaths`
 	@# (packages/luxar/src/luxar), so `hatch run test` above already collected
 	@# them. Running them a second time doubled the GPU time for nothing — and
 	@# doing it concurrently is the exact contention hazard flagged below.
-	@# This block only reports why they may have been skipped.
-	@if ! ls $(CUDA_EXT_DIR)/cuda_splatting_backend*.so 1>/dev/null 2>&1; then \
-		echo "⚠️  CUDA extension not built - CUDA tests were skipped above"; \
-		echo "   Run 'make setup-cuda' to enable CUDA testing"; \
-	elif ! $(HATCH) run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
+	@# This block reports the backend used by the suite above.
+	@if ! $(HATCH) run python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then \
 		echo "⚠️  PyTorch CUDA not available - CUDA tests were skipped above"; \
 		echo "   Run 'make check-cuda-deps' for details"; \
 	else \
-		echo "✅ Ran as part of the Python suite above"; \
+		$(HATCH) run python -c "from luxar.gsplats.models.gsplats.cuda import get_splatting_backend; backend = get_splatting_backend(); print('✅ CUDA kernel tests ran with ' + backend.name + ' as part of the Python suite above' if backend else '⚠️  No CUDA kernel backend available - kernel tests were skipped above')"; \
 	fi
 	@echo ""
 	@echo "🐹 Checking Go launcher tests..."
