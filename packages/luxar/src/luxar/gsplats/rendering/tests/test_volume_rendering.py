@@ -49,6 +49,8 @@ def test_render_to_volume_tensor_accepts_auto_device(monkeypatch) -> None:
 
 
 def test_cuda_render_failure_warns_once_and_falls_back(monkeypatch) -> None:
+    monkeypatch.setenv("LUXAR_CUDA_BACKEND", "auto")
+
     class RaisingCUDASplatFunction:
         @staticmethod
         def apply(*_args):
@@ -119,6 +121,8 @@ def test_cuda_render_failure_raises_when_backend_is_forced(monkeypatch, forced) 
 
 
 def test_cuda_render_warning_points_to_external_caller(monkeypatch) -> None:
+    monkeypatch.setenv("LUXAR_CUDA_BACKEND", "auto")
+
     class RaisingCUDASplatFunction:
         @staticmethod
         def apply(*_args):
