@@ -1460,6 +1460,64 @@ class TestMergeOrchestrator:
                     seed += 1
         return total
 
+    @pytest.mark.parametrize("n_timepoints", [1, 2])
+    @pytest.mark.parametrize("n_tiles", [1, 2])
+    def test_batch_merge_finishes_scale_populations(
+        self, tmp_path: Path, n_tiles: int, n_timepoints: int
+    ) -> None:
+        """Delivered bare leaves and partitions retain counts, never tile masks."""
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.fitting.scale_population import (
+            MASK_KEY,
+            encode_population_bits,
+        )
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True)
+        for t in range(n_timepoints):
+            for k in range(n_tiles):
+                tile = self._tile(4, 10 * t + k)
+                tile.stats.update(
+                    n_splats=4,
+                    fit_init_sigma_diag_vox=[1.0] * 3,
+                    splats_near_fit_init_sigma_count=1,
+                    splats_near_fit_init_sigma_fraction=0.25,
+                    dynamic_ops_relocation_events=2,
+                )
+                tile.stats[MASK_KEY] = encode_population_bits(
+                    np.array([1, 0, 0, 0], dtype=np.uint8)
+                )
+                tile.save(
+                    tiles_dir / output_filename(t, 0, k, n_timepoints, 1, n_tiles)
+                )
+
+        manifest = BatchManifest(
+            n_timepoints=n_timepoints,
+            n_channels=1,
+            n_tiles=n_tiles,
+            spatial_shape=(8, 8, 8),
+        )
+        final = merge_batch_results(manifest, out_dir, verbose=False)
+        root = zarr.open_group(str(final), mode="r")
+        fitting = root["fitting"].attrs
+        assert fitting["splats_near_fit_init_sigma_count"] == n_timepoints * n_tiles
+        assert fitting["splats_near_fit_init_sigma_fraction"] == 0.25
+        assert fitting["dynamic_ops_relocation_events"] == 2 * n_timepoints * n_tiles
+        assert all(
+            MASK_KEY not in path.read_text() for path in final.rglob("zarr.json")
+        )
+        if n_tiles == 1:
+            assert root.attrs["ordering"] == "hilbert"
+            assert "chunk_bounds" in root
+        else:
+            for k in range(n_tiles):
+                part = root[f"part_{k}"]
+                assert part.attrs["ordering"] == "hilbert"
+
     @staticmethod
     def _read_tree(path: Path):
         """Read a written .gsplats.zarr (any node kind) as a tree + root attrs."""
