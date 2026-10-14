@@ -18,10 +18,10 @@ Luxar uses a Makefile-based build system designed to work on fresh Linux and mac
 
 ### Minimal Requirements
 
-This is the ONE prerequisite list; the README and `CONTRIBUTING.md` repeat the
-same commands. Everything else (Node.js via nvm/Homebrew, pnpm, Hatch, the
-Python environment, the viewer's node_modules) is installed by `make setup-dev`
-without sudo.
+This is the ONE prerequisite list; the README, `CONTRIBUTING.md` and
+`CLAUDE.md` repeat the same commands. Everything else (Node.js via
+nvm/Homebrew, pnpm, Hatch, the Python environment, the viewer's node_modules)
+is installed by `make setup-dev` without sudo.
 
 | Tool | Why |
 |------|-----|
