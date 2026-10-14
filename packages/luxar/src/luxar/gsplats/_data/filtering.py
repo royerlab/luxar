@@ -182,6 +182,11 @@ _FINAL_SCALE_POPULATION_STATS_KEYS = (
     "splats_near_fit_init_sigma_fraction",
     "splats_near_relocation_init_sigma_count",
     "splats_near_relocation_init_sigma_fraction",
+    # The ever-relocated vs never-relocated split of the near-reseed-sigma
+    # population (#2734): both are counts over the delivered splat set, so a cull
+    # that changes which splats ship must scrub them with the others.
+    "splats_near_relocation_init_sigma_relocated_count",
+    "splats_near_relocation_init_sigma_unrelocated_count",
     "splats_near_sigma_min_count",
     "splats_near_sigma_min_fraction",
 )

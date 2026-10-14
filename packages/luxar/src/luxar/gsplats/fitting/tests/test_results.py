@@ -1419,3 +1419,116 @@ def test_fit_diagnostics_handle_empty_precomputed_initialization(
     assert stats["fit_init_marginal_sigma_diag_vox_min"] is None
     assert stats["fit_init_marginal_sigma_diag_vox_median"] is None
     assert stats["fit_init_marginal_sigma_diag_vox_max"] is None
+
+
+# =============================================================================
+# Relocation diagnostic split + effective reseed sigma (issue #2734)
+# =============================================================================
+
+
+def _diag_Ls(diags: list[list[float]]) -> torch.Tensor:
+    """Build (N, 2, 2) diagonal Cholesky factors from per-splat diagonals."""
+    N = len(diags)
+    Ls = torch.zeros((N, 2, 2), dtype=torch.float32)
+    for i, (a, b) in enumerate(diags):
+        Ls[i, 0, 0] = a
+        Ls[i, 1, 1] = b
+    return Ls
+
+
+def _opt_results(Ls: torch.Tensor, *, relocated_mask=None) -> OptimizationResults:
+    N = Ls.shape[0]
+    return OptimizationResults(
+        centers=torch.full((N, 2), 16.0),
+        Ls=Ls,
+        amps=torch.ones(N),
+        converged_early=False,
+        early_stopped=False,
+        actual_iters=10,
+        best_iteration=10,
+        best_loss=0.01,
+        best_max_abs_error=0.05,
+        best_rel_l2=0.1,
+        movie_frames=None,
+        start_time=0.0,
+        end_time=1.0,
+        relocated_mask=relocated_mask,
+    )
+
+
+def test_diagnostic_split_counts_sum_to_near_count(
+    basic_config, basic_preprocessed_data
+) -> None:
+    """The ever-/never-relocated split adds up to the near-reseed-sigma count."""
+    from luxar.gsplats.fitting.results import _fit_diagnostic_stats
+
+    basic_config.enable_dynamic_ops = True
+    basic_config.dynamic_config.init_sigma_vox = 0.5
+    # Splats 0,1,2 sit at the 0.5 reseed sigma; 3 and 4 do not.
+    Ls = _diag_Ls([[0.5, 0.5], [0.5, 0.5], [0.5, 0.5], [0.7, 0.7], [0.3, 0.3]])
+    # Of the three near-0.5 splats, 0 and 1 were relocated; 2 never was.
+    mask = np.array([True, True, False, False, False])
+    stats = _fit_diagnostic_stats(
+        _opt_results(Ls, relocated_mask=mask),
+        basic_config,
+        basic_preprocessed_data,
+        Ls.numpy(),
+    )
+
+    assert stats["splats_near_relocation_init_sigma_count"] == 3
+    assert stats["splats_near_relocation_init_sigma_relocated_count"] == 2
+    assert stats["splats_near_relocation_init_sigma_unrelocated_count"] == 1
+    assert (
+        stats["splats_near_relocation_init_sigma_relocated_count"]
+        + stats["splats_near_relocation_init_sigma_unrelocated_count"]
+        == stats["splats_near_relocation_init_sigma_count"]
+    )
+
+
+def test_diagnostic_split_is_none_without_a_relocation_mask(
+    basic_config, basic_preprocessed_data
+) -> None:
+    """With no mask (dynamic ops disabled) the split keys are emitted as None."""
+    from luxar.gsplats.fitting.results import _fit_diagnostic_stats
+
+    Ls = _diag_Ls([[0.5, 0.5], [0.5, 0.5]])
+    stats = _fit_diagnostic_stats(
+        _opt_results(Ls, relocated_mask=None),
+        basic_config,
+        basic_preprocessed_data,
+        Ls.numpy(),
+    )
+    assert stats["splats_near_relocation_init_sigma_count"] == 2
+    assert stats["splats_near_relocation_init_sigma_relocated_count"] is None
+    assert stats["splats_near_relocation_init_sigma_unrelocated_count"] is None
+
+
+def test_near_count_measured_against_effective_reseed_sigma(
+    basic_config, basic_preprocessed_data
+) -> None:
+    """A reseed arm must not win falsely: near-count keys off the EFFECTIVE sigma.
+
+    With ``relocation_reseed_sigma_vox=2.0`` the splats reseed at 2.0, so a
+    near-count still keyed off the 0.5 init default would read 0 stuck. It must
+    instead measure against 2.0, where those splats ARE counted.
+    """
+    from luxar.gsplats.fitting.results import _fit_diagnostic_stats
+
+    basic_config.enable_dynamic_ops = True
+    basic_config.dynamic_config.init_sigma_vox = 0.5
+    basic_config.dynamic_config.relocation_reseed_sigma_vox = 2.0
+    # All three splats are stuck at the 2.0 reseed size.
+    Ls = _diag_Ls([[2.0, 2.0], [2.0, 2.0], [2.0, 2.0], [5.0, 5.0], [0.5, 0.5]])
+    mask = np.array([True, True, True, False, False])
+    stats = _fit_diagnostic_stats(
+        _opt_results(Ls, relocated_mask=mask),
+        basic_config,
+        basic_preprocessed_data,
+        Ls.numpy(),
+    )
+    assert stats["relocation_reseed_sigma_vox_effective"] == 2.0
+    # Measured against 2.0 -> the three reseeded splats count as stuck, NOT 0.
+    assert stats["splats_near_relocation_init_sigma_count"] == 3
+    assert stats["splats_near_relocation_init_sigma_relocated_count"] == 3
+    # The lone 0.5 splat is NOT counted (it is not near the 2.0 reseed size).
+    assert stats["splats_near_relocation_init_sigma_unrelocated_count"] == 0

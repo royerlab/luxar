@@ -783,7 +783,14 @@ def _relocate_splats_batch(
     else:
         sigma_min = torch.zeros(d, device=device, dtype=torch.float32)
 
-    effective_diag = torch.clamp(cfg.init_sigma_vox - sigma_min, min=1e-6)
+    # Reseed sigma source (#2734): a float override reseeds the relocated splats
+    # at that isotropic sigma; None keeps the current `init_sigma_vox` default.
+    reseed_sigma_vox = (
+        cfg.relocation_reseed_sigma_vox
+        if cfg.relocation_reseed_sigma_vox is not None
+        else cfg.init_sigma_vox
+    )
+    effective_diag = torch.clamp(reseed_sigma_vox - sigma_min, min=1e-6)
     raw_L_diag_new = stable_inverse_softplus_torch(effective_diag).to(
         device=device, dtype=torch.float32
     )  # (d,)
@@ -807,5 +814,7 @@ def _relocate_splats_batch(
     model.raw_a.data[splat_indices_t] = raw_a_new
 
     # === OPTIMIZER STATE RESET: Zero out Adam momentum/variance for relocated splats ===
-    if optimizer is not None:
+    # Gated by `reset_adam_on_relocation` (#2734): default True = current
+    # behavior; False keeps the moments so a relocated splat carries momentum.
+    if optimizer is not None and cfg.reset_adam_on_relocation:
         _reset_optimizer_state_batch(optimizer, model, splat_indices_t)

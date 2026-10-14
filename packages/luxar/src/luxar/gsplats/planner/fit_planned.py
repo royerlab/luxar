@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Tuple
 import numpy as np
 
 from luxar.gsplats.fit_basis import fit_image_min
+from luxar.gsplats.fit_tiled_gsplats import _aggregate_relocation_diagnostics
 from luxar.gsplats.merged_quality import (
     announce_unscored_merge,
     resolve_merged_reference,
@@ -91,6 +92,7 @@ def _planned_merge_stats(
         stats["elapsed_seconds"] = float(elapsed)
     from luxar.gsplats.fitting.scale_population import sum_population_counts
 
+    _aggregate_relocation_diagnostics(stats, regions, delivered_splats, regions)
     sum_population_counts([region.stats for region in regions], stats, delivered_splats)
     return stats
 

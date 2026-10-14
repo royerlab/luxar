@@ -54,6 +54,8 @@ _METRICS: Dict[str, Any] = {
     "splats_near_fit_init_sigma_fraction": 0.3,
     "splats_near_relocation_init_sigma_count": 8,
     "splats_near_relocation_init_sigma_fraction": 0.2,
+    "splats_near_relocation_init_sigma_relocated_count": 5,
+    "splats_near_relocation_init_sigma_unrelocated_count": 3,
     "splats_near_sigma_min_count": 4,
     "splats_near_sigma_min_fraction": 0.1,
     "cumulative_psnr_db": 41.0,

@@ -223,12 +223,41 @@ def _fit_diagnostic_stats(
 ) -> dict[str, Any]:
     """Build reproducibility and candidate-scale diagnostics for one fit."""
     marginal_sigmas = np.sqrt(np.einsum("nij,nij->ni", Ls, Ls, optimize=True))
+    # Key the "stuck at the reseed size" near-count off the EFFECTIVE reseed
+    # sigma, not the hard-coded init default (#2734): an A/B arm that reseeds at
+    # e.g. 2.0 would otherwise read ~0 stuck by construction and win falsely. A
+    # splat left at the reseed size still counts as stuck whatever that size is.
+    effective_reseed_sigma_vox = (
+        config.dynamic_config.relocation_reseed_sigma_vox
+        if config.dynamic_config.relocation_reseed_sigma_vox is not None
+        else config.dynamic_config.init_sigma_vox
+    )
     relocation_sigma = np.full(
-        preprocessed_data.d, config.dynamic_config.init_sigma_vox, dtype=np.float32
+        preprocessed_data.d, effective_reseed_sigma_vox, dtype=np.float32
     )
     relocation_count, relocation_fraction = _near_sigma_statistics(
         marginal_sigmas, relocation_sigma
     )
+    # Split the near-reseed-sigma population by whether each splat was ever
+    # relocated (#2734). Settles whether a stuck population is relocations that
+    # never grew or never-grown seeds. None when no relocation mask is available
+    # (dynamic ops disabled, or a mask that does not line up with the splats).
+    relocated_mask = optimization_results.relocated_mask
+    near_relocated_count: Optional[int] = None
+    near_unrelocated_count: Optional[int] = None
+    if (
+        relocated_mask is not None
+        and len(marginal_sigmas) > 0
+        and len(relocated_mask) == len(marginal_sigmas)
+    ):
+        near_mask = np.all(
+            np.abs(marginal_sigmas - relocation_sigma)
+            <= _SCALE_DIAGNOSTIC_TOLERANCE_VOX,
+            axis=1,
+        )
+        relocated_bool = np.asarray(relocated_mask, dtype=bool)
+        near_relocated_count = int(np.count_nonzero(near_mask & relocated_bool))
+        near_unrelocated_count = int(np.count_nonzero(near_mask & ~relocated_bool))
     relocation_statistics = optimization_results.relocation_statistics
     stats: dict[str, Any] = {
         "configured_iterations": config.n_iters,
@@ -242,8 +271,13 @@ def _fit_diagnostic_stats(
             config.init_sigma_vox if preprocessed_data.init_L is None else None
         ),
         "relocation_init_sigma_vox": config.dynamic_config.init_sigma_vox,
+        # The sigma the near-count was actually measured against (#2734). Equal
+        # to relocation_init_sigma_vox unless an arm overrode the reseed sigma.
+        "relocation_reseed_sigma_vox_effective": float(effective_reseed_sigma_vox),
         "splats_near_relocation_init_sigma_count": relocation_count,
         "splats_near_relocation_init_sigma_fraction": relocation_fraction,
+        "splats_near_relocation_init_sigma_relocated_count": near_relocated_count,
+        "splats_near_relocation_init_sigma_unrelocated_count": near_unrelocated_count,
     }
 
     sigma_min = (
