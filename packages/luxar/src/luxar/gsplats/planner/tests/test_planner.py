@@ -115,6 +115,44 @@ def test_planned_fit_carries_real_relocation_history(partition: bool) -> None:
     )
 
 
+@pytest.mark.parametrize("partition", [False, True])
+def test_planned_fit_without_dynamic_ops_keeps_population(partition: bool) -> None:
+    from luxar.gsplats.planner import fit_planned
+    from luxar.gsplats.tree import total_splats
+
+    volume = _corner_blobs((16, 16, 16), n=2, corner=12)
+    plan = plan_volume(
+        volume,
+        _density(k_star_reference=80, saturation_cap=80, splats_per_feature=20.0),
+        cell=4,
+        min_leaf=8,
+        max_leaf=8,
+        overlap=2,
+    )
+    result = fit_planned(
+        volume,
+        plan,
+        partition=partition,
+        enable_dynamic_ops=False,
+        n_iters=2,
+        device="cpu",
+        use_cuda=False,
+        use_metal=False,
+        verbose=False,
+    )
+    stats = result.meta["fit_stats"] if partition else result.stats
+    delivered = total_splats(result) if partition else result.n_splats
+    assert delivered > 0
+    count = stats["splats_near_relocation_init_sigma_count"]
+    assert isinstance(count, int)
+    assert 0 <= count <= delivered
+    assert stats["splats_near_relocation_init_sigma_fraction"] == pytest.approx(
+        count / delivered
+    )
+    assert stats["splats_near_relocation_init_sigma_relocated_count"] is None
+    assert stats["splats_near_relocation_init_sigma_unrelocated_count"] is None
+
+
 def _corner_blobs(shape=(128, 128, 128), n=16, corner=64, seed=0):
     """Volume with n separated blobs packed into the [:corner]^3 corner."""
     V = np.zeros(shape, np.float32)

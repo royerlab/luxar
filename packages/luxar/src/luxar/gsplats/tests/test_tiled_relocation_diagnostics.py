@@ -105,3 +105,35 @@ def test_culled_merge_keeps_delivered_population_and_history(partition: bool) ->
         + stats["splats_near_relocation_init_sigma_unrelocated_count"]
         == count
     )
+
+
+@pytest.mark.parametrize("partition", [False, True])
+@pytest.mark.parametrize("cull_options", [{}, {"cull_retention": None}])
+def test_merge_without_dynamic_ops_keeps_population(
+    partition: bool, cull_options: dict[str, None]
+) -> None:
+    result = fit_tiled(
+        _structured_volume(),
+        tile_size=24,
+        overlap=8,
+        partition=partition,
+        enable_dynamic_ops=False,
+        seeds=120,
+        n_iters=20,
+        device="cpu",
+        floor="none",
+        verbose=False,
+        napari_movie=False,
+        **cull_options,
+    )
+    stats = result.meta["fit_stats"] if partition else result.stats
+    delivered = total_splats(result) if partition else result.n_splats
+    assert delivered > 0
+    count = stats["splats_near_relocation_init_sigma_count"]
+    assert isinstance(count, int)
+    assert 0 <= count <= delivered
+    assert stats["splats_near_relocation_init_sigma_fraction"] == pytest.approx(
+        count / delivered
+    )
+    assert stats["splats_near_relocation_init_sigma_relocated_count"] is None
+    assert stats["splats_near_relocation_init_sigma_unrelocated_count"] is None

@@ -92,7 +92,7 @@ def _planned_merge_stats(
         stats["elapsed_seconds"] = float(elapsed)
     from luxar.gsplats.fitting.scale_population import sum_population_counts
 
-    _aggregate_relocation_diagnostics(stats, regions, delivered_splats, regions)
+    _aggregate_relocation_diagnostics(stats, regions)
     sum_population_counts([region.stats for region in regions], stats, delivered_splats)
     return stats
 

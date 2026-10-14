@@ -985,12 +985,6 @@ _RELOCATION_HISTORY_KEYS = (
     "dynamic_ops_relocation_events",
     "dynamic_ops_unique_splats_relocated",
 )
-_RELOCATION_POPULATION_KEYS = (
-    "splats_near_relocation_init_sigma_count",
-    "splats_near_relocation_init_sigma_relocated_count",
-    "splats_near_relocation_init_sigma_unrelocated_count",
-)
-
 #: Shared scalar reseed-sigma stamps (#2734): one value across all tiles, so
 #: carried verbatim rather than summed.
 _RELOCATION_DIAGNOSTIC_SHARED_KEYS = (
@@ -1002,15 +996,13 @@ _RELOCATION_DIAGNOSTIC_SHARED_KEYS = (
 def _aggregate_relocation_diagnostics(
     stats: dict[str, Any],
     results: Sequence[GSplatData],
-    delivered_splats: int,
-    population_results: Optional[Sequence[GSplatData]] = None,
 ) -> None:
     """Carry the per-tile relocation diagnostics (#2734) onto the merged root.
 
     ``GSplatData.concatenate`` drops per-tile stats, so a partition/tiled merge
     otherwise reports the relocation diagnostic keys as ABSENT (#2744). History
-    describes the fitting runs. Population counts describe the delivered splats
-    and are emitted only when every delivered region retains its counts.
+    describes the fitting runs; population counts are summed separately against
+    the delivered splats.
     """
     sums: dict[str, int] = {}
     for result in results:
@@ -1022,8 +1014,6 @@ def _aggregate_relocation_diagnostics(
             sums[key] = sums.get(key, 0) + int(value)
     stats.update(sums)
 
-    _aggregate_relocation_population(stats, population_results, delivered_splats)
-
     for key in _RELOCATION_DIAGNOSTIC_SHARED_KEYS:
         for result in results:
             tile_stats = getattr(result, "stats", None) or {}
@@ -1031,26 +1021,6 @@ def _aggregate_relocation_diagnostics(
             if value is not None:
                 stats[key] = value
                 break
-
-
-def _aggregate_relocation_population(
-    stats: dict[str, Any],
-    regions: Optional[Sequence[GSplatData]],
-    delivered_splats: int,
-) -> None:
-    if not regions:
-        return
-    populated = [r for r in regions if r.n_splats > 0]
-    if sum(r.n_splats for r in populated) != delivered_splats or not all(
-        all(key in r.stats for key in _RELOCATION_POPULATION_KEYS) for r in populated
-    ):
-        return
-    for key in _RELOCATION_POPULATION_KEYS:
-        stats[key] = sum(int(r.stats[key]) for r in populated)
-    if delivered_splats:
-        stats["splats_near_relocation_init_sigma_fraction"] = (
-            stats["splats_near_relocation_init_sigma_count"] / delivered_splats
-        )
 
 
 def _merged_fit_stats(
@@ -1067,7 +1037,6 @@ def _merged_fit_stats(
     source_dtype: Optional[str],
     source_itemsize: Optional[int],
     source_stored_bytes: Optional[int],
-    population_results: Optional[Sequence[GSplatData]] = None,
 ) -> dict[str, Any]:
     """Build the common root stats for flat and partition tile merges."""
     stats = {
@@ -1091,9 +1060,7 @@ def _merged_fit_stats(
         )
     )
     stamp_voxels_per_splat(stats, delivered_splats)
-    _aggregate_relocation_diagnostics(
-        stats, results, delivered_splats, population_results
-    )
+    _aggregate_relocation_diagnostics(stats, results)
     return stats
 
 
@@ -1589,7 +1556,6 @@ def merge_tile_results(
         fit_stats = _merged_fit_stats(
             results,
             delivered_splats=int(total_splats(node)),
-            population_results=regions,
             volume_shape=volume_shape,
             tile_size=tile_size,
             overlap=overlap,
@@ -1640,7 +1606,6 @@ def merge_tile_results(
         )
 
     # Post-fit cumulative culling on merged result
-    merged_before_cull = merged.n_splats
     if cull_retention is not None and 0 < cull_retention < 1.0 and merged.n_splats > 0:
         n_before = merged.n_splats
         merged = _cull_keeping_measured_scores(merged, cull_retention)
@@ -1654,9 +1619,6 @@ def merge_tile_results(
         _merged_fit_stats(
             results,
             delivered_splats=merged.n_splats,
-            population_results=results
-            if merged.n_splats == merged_before_cull
-            else None,
             volume_shape=volume_shape,
             tile_size=tile_size,
             overlap=overlap,
