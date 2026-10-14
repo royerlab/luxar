@@ -390,8 +390,12 @@ before it is tagged:
 
 ```bash
 hatch run check-native --require cxx --require metal
-LUXAR_REQUIRE_METAL=1 hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/metal/tests -v -rs
+LUXAR_REQUIRE_METAL=1 LUXAR_METAL_BACKEND=runtime hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/metal/tests -v -rs
 ```
+
+The runtime backend (`torch.mps.compile_shader`) is what pip users run, so it is
+the required pass. If the optional AOT extension is built, repeat the parity
+command with `LUXAR_METAL_BACKEND=aot`.
 
 Without a CUDA toolkit, the compile check must report successful checks for
 `nlm/bindings.cpp`, `metal/bindings.mm`, and `metal/kernels.metal`, skip

@@ -93,7 +93,16 @@ Everything above; skip CUDA entirely. Key points:
   browser, no CUDA/PyTorch involved.
 - Fitting on CPU works but is slow: use `--preset draft`, small volumes, and
   modest `--seeds`. On **Apple Silicon**, pass `device='mps'` (Python) — the
-  CLI's device auto-detection picks MPS up automatically.
+  CLI's device auto-detection picks MPS up automatically. The 3D Metal kernels
+  need **no Xcode and no build step**: they compile at runtime from the shipped
+  `kernels.metal` via `torch.mps.compile_shader` (torch >= 2.7; 2.6 through its
+  private API). With an older torch, fitting warns and uses the much slower
+  PyTorch MPS path — upgrade torch. `LUXAR_METAL_BACKEND=auto|aot|runtime|torch`
+  forces a backend (a forced one that cannot run raises). The optional
+  ahead-of-time extension (`python setup.py build_ext --inplace --force` in
+  `gsplats/models/gsplats/metal/`, full Xcode required) is a developer tool:
+  `auto` prefers it when built and current, the runtime path is equivalent and
+  equal or slightly faster, and `LUXAR_METAL_BACKEND=runtime` selects it anyway.
 - Skip `[demos]` (heavy: torch-adjacent ML deps, astropy, ...) unless running
   the science demos.
 - Memory-constrained native exports: `LUXAR_CACHE_BUDGET_MB=<N>` lowers the

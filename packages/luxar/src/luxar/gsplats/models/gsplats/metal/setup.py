@@ -87,7 +87,11 @@ class CustomBuildExtension(BuildExtension):
         # Compile Metal shaders first
         compile_metal_shaders()
 
-        # Then build C++ extension
+        # Always rebuild the C++ extension. setuptools only compares the .so
+        # against bindings.mm, but metal/backend.py also treats a newer
+        # setup.py as stale, so a skipped rebuild would leave the extension
+        # "stale" forever (and LUXAR_METAL_BACKEND=aot refusing it).
+        self.force = True
         super().run()
 
 
@@ -106,9 +110,10 @@ ext_modules = [
                 # required`, so a `-std=c++17` here does not merely relax the
                 # standard, it makes the extension fail to compile at all --
                 # 20 errors out of torch's headers before one line of ours is
-                # read. Only noticed late because this package builds itself on
-                # FIRST USE, so the failure lands on a user rather than in a
-                # build. `make check-native` is the gate that catches it now.
+                # read. Only noticed late because this package used to build
+                # itself on first import, so the failure landed on a user rather
+                # than in a build. `make check-native` is the gate that catches
+                # it now.
                 "-std=c++20",
                 "-fno-objc-arc",  # Manual memory management for Metal objects
                 "-Wno-deprecated-declarations",

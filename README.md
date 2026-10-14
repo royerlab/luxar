@@ -348,7 +348,10 @@ MSE of a fit against its source.
 **Fitting hardware.** Fitting needs the `gsplats` extra (`pip install
 "luxar[gsplats]"`, or `pip install -e ".[gsplats]"` from a checkout). It runs on the CPU, and much faster on an NVIDIA
 GPU (`make build-cuda` compiles the CUDA kernels for your card; they cannot ship in
-the wheel) or on Apple silicon through MPS. Seeding and the optional non-local-means
+the wheel) or on Apple silicon through MPS. On a Mac the 3D Metal kernels compile
+at runtime with the Metal compiler built into macOS (needs torch >= 2.7; no Xcode,
+nothing to build). A developer-built ahead-of-time extension is preferred when
+present; `LUXAR_METAL_BACKEND=auto|aot|runtime|torch` overrides the choice. Seeding and the optional non-local-means
 denoising follow the same device choice. On a cluster, `make build-cuda SLURM=1`
 builds the extension on a GPU node; if a fit logs "GPU fitting will use slower
 PyTorch fallback", it still runs, just without the compiled kernels. Viewing never

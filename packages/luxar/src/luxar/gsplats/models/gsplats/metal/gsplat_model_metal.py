@@ -19,12 +19,21 @@ from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.models.gsplats.rendering_core import render_gaussians
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
-try:
-    import metal_splatting_backend
+from .backend import MetalKernelBackend, get_metal_backend
 
-    METAL_AVAILABLE = True
-except ImportError:
-    METAL_AVAILABLE = False
+
+def _require_metal_backend() -> MetalKernelBackend:
+    """The selected Metal kernel backend, or a RuntimeError saying why there is none."""
+    kernels = get_metal_backend()
+    if kernels is None:
+        from .backend import metal_backend_unavailable_reason
+
+        raise RuntimeError(
+            "Metal splatting kernels are not available "
+            f"({metal_backend_unavailable_reason()}). Check is_metal_available() "
+            "before constructing GaussianSplatModelMetal, or use GaussianSplatModel."
+        )
+    return kernels
 
 
 def cholesky_to_conic(L: torch.Tensor) -> torch.Tensor:
@@ -108,10 +117,11 @@ class MetalSplatFunction(torch.autograd.Function):
         truncate: float,
         intensity_floor: float = 1e-5,
         use_metal_conic: bool = False,
+        kernels: Optional[MetalKernelBackend] = None,
     ) -> torch.Tensor:
         dim = len(shape)
-        if not METAL_AVAILABLE:
-            raise RuntimeError("Metal splatting backend is not available")
+        if kernels is None:
+            kernels = _require_metal_backend()
         if dim != 3:
             raise ValueError(f"MetalSplatFunction requires 3D volumes, got {dim}D")
         if (
@@ -127,6 +137,7 @@ class MetalSplatFunction(torch.autograd.Function):
         ctx.shape = tuple(int(s) for s in shape)
         ctx.truncate = float(truncate)
         ctx.intensity_floor = float(intensity_floor)
+        ctx.kernels = kernels
 
         if (
             centers.dtype != torch.float32
@@ -145,15 +156,13 @@ class MetalSplatFunction(torch.autograd.Function):
         # per-splat-per-thread.
         Ls_for_conic = Ls.detach().clone().requires_grad_(True)
         if use_metal_conic:
-            conic_zyx = metal_splatting_backend.compute_conic_metal(
-                Ls.contiguous()
-            ).detach()
+            conic_zyx = kernels.compute_conic_metal(Ls.contiguous()).detach()
         else:
             conic_zyx = cholesky_to_conic(Ls_for_conic).detach().contiguous()
 
         output = cast(
             torch.Tensor,
-            metal_splatting_backend.forward_splat_3d(
+            kernels.forward_splat_3d(
                 centers.contiguous(),
                 conic_zyx.contiguous(),
                 amps.contiguous(),
@@ -174,7 +183,7 @@ class MetalSplatFunction(torch.autograd.Function):
     ) -> Tuple[Optional[torch.Tensor], ...]:
         centers, Ls_for_conic, conic_zyx, amps = ctx.saved_tensors
 
-        d_centers, d_conic_zyx, d_amps = metal_splatting_backend.backward_splat_3d(
+        d_centers, d_conic_zyx, d_amps = ctx.kernels.backward_splat_3d(
             grad_output.contiguous(),
             centers.contiguous(),
             conic_zyx.contiguous(),
@@ -197,7 +206,7 @@ class MetalSplatFunction(torch.autograd.Function):
             allow_unused=False,
         )
 
-        return d_centers, d_Ls, d_amps, None, None, None, None
+        return d_centers, d_Ls, d_amps, None, None, None, None, None
 
 
 class GaussianSplatModelMetal(GaussianSplatModel):
@@ -232,11 +241,7 @@ class GaussianSplatModelMetal(GaussianSplatModel):
                 f"Metal backend supports 2D-8D volumes (got {dim}D). "
                 "For higher dimensions, use GaussianSplatModel."
             )
-        if not METAL_AVAILABLE:
-            raise RuntimeError(
-                "Metal extension is not loaded. Check is_metal_available() before "
-                "constructing GaussianSplatModelMetal."
-            )
+        kernels = _require_metal_backend()
         if use_fp16:
             raise ValueError(
                 "Metal backend does not support FP16 kernels yet. "
@@ -277,10 +282,16 @@ class GaussianSplatModelMetal(GaussianSplatModel):
         self._intensity_floor = float(intensity_floor)
         self._use_metal_conic = bool(use_metal_conic)
         self._use_fp16 = False
+        self._kernels = kernels
+
+    @property
+    def kernel_backend(self) -> str:
+        """Name of the Metal kernel backend in use (``"aot"`` or ``"runtime"``)."""
+        return self._kernels.name
 
     @property
     def _uses_custom_metal(self) -> bool:
-        return METAL_AVAILABLE and self.dim == 3 and self.raw_mu.device.type == "mps"
+        return self.dim == 3 and self.raw_mu.device.type == "mps"
 
     def forward(self) -> torch.Tensor:
         centers, Ls, amps = self.current_params()
@@ -295,6 +306,7 @@ class GaussianSplatModelMetal(GaussianSplatModel):
                     self.truncate,
                     self._intensity_floor,
                     self._use_metal_conic,
+                    self._kernels,
                 ),
             )
 
@@ -460,7 +472,9 @@ class GaussianSplatModelMetal(GaussianSplatModel):
         return self._use_metal_conic
 
     def __repr__(self) -> str:
-        backend = "metal" if self._uses_custom_metal else "pytorch"
+        backend = (
+            f"metal-{self._kernels.name}" if self._uses_custom_metal else "pytorch"
+        )
         return (
             "GaussianSplatModelMetal("
             f"n_splats={self.n_splats()}, "
