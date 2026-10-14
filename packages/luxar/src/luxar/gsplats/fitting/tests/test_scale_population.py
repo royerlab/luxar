@@ -156,9 +156,10 @@ def test_real_fit_does_not_write_population_bits_as_lod_stats(tmp_path) -> None:
     assert all(MASK_KEY not in item.read_text() for item in path.rglob("zarr.json"))
     root = zarr.open_group(str(path), mode="r")
     assert root.attrs["level_stats"] == {"quality": 0.9}
-    assert root["fitting"].attrs["splats_near_fit_init_sigma_count"] == result.stats[
-        "splats_near_fit_init_sigma_count"
-    ]
+    assert (
+        root["fitting"].attrs["splats_near_fit_init_sigma_count"]
+        == result.stats["splats_near_fit_init_sigma_count"]
+    )
 
 
 @pytest.mark.parametrize(
