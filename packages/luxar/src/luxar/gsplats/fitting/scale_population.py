@@ -19,6 +19,7 @@ _EFFECTIVE_RELOCATION_KEY = "relocation_reseed_sigma_vox_effective"
 
 
 def _target(stats: dict[str, Any], key: str) -> Any:
+    """Use the effective relocation scale when the fitter records one."""
     if key == "relocation_init_sigma_vox":
         return stats.get(_EFFECTIVE_RELOCATION_KEY, stats.get(key))
     return stats.get(key)
@@ -30,6 +31,7 @@ def encode_population_bits(bits: np.ndarray) -> str:
 
 
 def decode_population_bits(value: str, n_splats: int) -> np.ndarray:
+    """Decode an intermediate mask and verify its splat count."""
     bits = np.frombuffer(zlib.decompress(base64.b64decode(value)), dtype=np.uint8)
     if len(bits) != n_splats:
         raise ValueError("Scale-population mask length does not match splat count")
@@ -113,6 +115,7 @@ def reduce_population_stats(
 def _merge_candidate_stamps(
     nonempty: Sequence[dict[str, Any]], target: dict[str, Any]
 ) -> None:
+    """Copy shared scale targets and initialize mergeable count fields."""
     for _, target_key, _ in _CANDIDATES:
         values = [source.get(target_key) for source in nonempty]
         if values and all(value == values[0] for value in values):
@@ -158,6 +161,7 @@ def merge_population_stats(
 
 
 def _sum_present(sources: Sequence[dict[str, Any]], key: str) -> int | None:
+    """Sum a count only when every source provides a non-null value."""
     values = [source.get(key) for source in sources]
     if any(value is None for value in values):
         return None
@@ -184,6 +188,7 @@ def _sum_candidate(
     name: str,
     target_key: str,
 ) -> None:
+    """Aggregate one scale population and its optional relocated split."""
     count_key = f"splats_near_{name}_count"
     count = _sum_present(sources, count_key)
     if count is None:
