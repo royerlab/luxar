@@ -70,3 +70,28 @@ def test_partition_merge_carries_relocation_diagnostics() -> None:
         fit_stats["splats_near_relocation_init_sigma_count"] / delivered
     )
     assert fit_stats["relocation_reseed_sigma_vox_effective"] == 0.5
+
+
+@pytest.mark.parametrize("partition", [False, True])
+def test_culled_merge_drops_population_but_keeps_history(partition: bool) -> None:
+    result = fit_tiled(
+        _structured_volume(),
+        tile_size=24,
+        overlap=8,
+        partition=partition,
+        cull_retention=0.9,
+        enable_dynamic_ops=True,
+        dynamic_config=DynamicOpsConfig(step_every=5),
+        seeds=120,
+        n_iters=20,
+        device="cpu",
+        floor="none",
+        verbose=False,
+        napari_movie=False,
+    )
+    stats = result.meta["fit_stats"] if partition else result.stats
+    assert stats["dynamic_ops_relocation_events"] > 0
+    assert stats["dynamic_ops_unique_splats_relocated"] > 0
+    assert stats["relocation_reseed_sigma_vox_effective"] == 0.5
+    for suffix in ("count", "relocated_count", "unrelocated_count", "fraction"):
+        assert f"splats_near_relocation_init_sigma_{suffix}" not in stats

@@ -960,9 +960,11 @@ def _tiled_source_grid_stats(
 #: Per-fit relocation diagnostic COUNT keys (#2734) that are summed across tiles
 #: on a merge. ``GSplatData.concatenate`` drops per-tile stats, so without this a
 #: partition/tiled merge reads them as ABSENT (#2744 drop).
-_RELOCATION_DIAGNOSTIC_SUM_KEYS = (
+_RELOCATION_HISTORY_KEYS = (
     "dynamic_ops_relocation_events",
     "dynamic_ops_unique_splats_relocated",
+)
+_RELOCATION_POPULATION_KEYS = (
     "splats_near_relocation_init_sigma_count",
     "splats_near_relocation_init_sigma_relocated_count",
     "splats_near_relocation_init_sigma_unrelocated_count",
@@ -980,25 +982,37 @@ def _aggregate_relocation_diagnostics(
     stats: dict[str, Any],
     results: Sequence[GSplatData],
     delivered_splats: int,
+    population_results: Optional[Sequence[GSplatData]] = None,
 ) -> None:
     """Carry the per-tile relocation diagnostics (#2734) onto the merged root.
 
     ``GSplatData.concatenate`` drops per-tile stats, so a partition/tiled merge
     otherwise reports the relocation diagnostic keys as ABSENT (#2744). Sum the
-    count keys across every tile that recorded them, carry the shared reseed
-    sigma stamps, and recompute the near-sigma fraction against the delivered
-    splat count. A key is emitted only when at least one tile carried it; tiles
-    missing a key are skipped so the aggregation stays defensive.
+    History describes the fitting runs. Population counts describe the delivered
+    splats and are emitted only when every delivered region retains its counts.
     """
     sums: dict[str, int] = {}
     for result in results:
         tile_stats = getattr(result, "stats", None) or {}
-        for key in _RELOCATION_DIAGNOSTIC_SUM_KEYS:
+        for key in _RELOCATION_HISTORY_KEYS:
             value = tile_stats.get(key)
             if value is None:
                 continue
             sums[key] = sums.get(key, 0) + int(value)
     stats.update(sums)
+
+    if population_results:
+        populated = [r for r in population_results if r.n_splats > 0]
+        if populated and all(
+            all(key in r.stats for key in _RELOCATION_POPULATION_KEYS)
+            for r in populated
+        ):
+            for key in _RELOCATION_POPULATION_KEYS:
+                stats[key] = sum(int(r.stats[key]) for r in populated)
+            if delivered_splats:
+                stats["splats_near_relocation_init_sigma_fraction"] = (
+                    stats["splats_near_relocation_init_sigma_count"] / delivered_splats
+                )
 
     for key in _RELOCATION_DIAGNOSTIC_SHARED_KEYS:
         for result in results:
@@ -1007,13 +1021,6 @@ def _aggregate_relocation_diagnostics(
             if value is not None:
                 stats[key] = value
                 break
-
-    near_count = sums.get("splats_near_relocation_init_sigma_count")
-    if near_count is not None and delivered_splats:
-        stats["splats_near_relocation_init_sigma_fraction"] = (
-            near_count / delivered_splats
-        )
-
 
 def _merged_fit_stats(
     results: Sequence[GSplatData],
@@ -1029,6 +1036,7 @@ def _merged_fit_stats(
     source_dtype: Optional[str],
     source_itemsize: Optional[int],
     source_stored_bytes: Optional[int],
+    population_results: Optional[Sequence[GSplatData]] = None,
 ) -> dict[str, Any]:
     """Build the common root stats for flat and partition tile merges."""
     stats = {
@@ -1052,7 +1060,9 @@ def _merged_fit_stats(
         )
     )
     stamp_voxels_per_splat(stats, delivered_splats)
-    _aggregate_relocation_diagnostics(stats, results, delivered_splats)
+    _aggregate_relocation_diagnostics(
+        stats, results, delivered_splats, population_results
+    )
     return stats
 
 
@@ -1541,6 +1551,7 @@ def merge_tile_results(
         fit_stats = _merged_fit_stats(
             results,
             delivered_splats=int(total_splats(node)),
+            population_results=regions,
             volume_shape=volume_shape,
             tile_size=tile_size,
             overlap=overlap,
@@ -1586,6 +1597,7 @@ def merge_tile_results(
         )
 
     # Post-fit cumulative culling on merged result
+    merged_before_cull = merged.n_splats
     if cull_retention is not None and 0 < cull_retention < 1.0 and merged.n_splats > 0:
         n_before = merged.n_splats
         merged = _cull_keeping_measured_scores(merged, cull_retention)
@@ -1599,6 +1611,7 @@ def merge_tile_results(
         _merged_fit_stats(
             results,
             delivered_splats=merged.n_splats,
+            population_results=results if merged.n_splats == merged_before_cull else None,
             volume_shape=volume_shape,
             tile_size=tile_size,
             overlap=overlap,
