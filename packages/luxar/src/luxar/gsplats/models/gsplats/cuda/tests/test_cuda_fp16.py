@@ -1238,14 +1238,22 @@ class TestDeviceMovement:
 
         with torch.cuda.device(0):
             output_before = model().clone()
+            params_before = [
+                param.detach().cpu().clone() for param in model.parameters()
+            ]
 
             # Move to second GPU
             model = model.to("cuda:1")
 
             # Verify FP16 preserved
-            for param in model.parameters():
+            for param, before in zip(model.parameters(), params_before, strict=True):
                 assert param.dtype == torch.float16
                 assert param.device == torch.device("cuda:1")
+                assert torch.equal(param.cpu(), before)
 
             output = model()
-            assert torch.allclose(output_before.cpu(), output.cpu(), atol=1e-5)
+            # torch.compile may use eager on the second GPU after its recompile
+            # limit is reached; FP16 conic arithmetic then rounds differently.
+            assert torch.allclose(
+                output_before.cpu(), output.cpu(), atol=1e-3, rtol=1e-3
+            )
