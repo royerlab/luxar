@@ -1,7 +1,7 @@
 # mypy: warn-unreachable=False
-# Reason: this module's hot path is gated by a `sys.platform != "darwin"`
-# early-return. mypy on Linux narrows sys.platform there and flags the
-# macOS-only branches as unreachable. The narrowing is platform-correct
+# Reason: this package's availability checks are gated by `sys.platform !=
+# "darwin"` early-returns. mypy on Linux narrows sys.platform there and flags
+# the macOS-only branches as unreachable. The narrowing is platform-correct
 # on Linux and platform-incorrect on macOS, so per-line ignores disagree
 # across mypy versions/platforms; disabling the warning at file scope is
 # the cleanest expression of "this file is platform-conditional".
@@ -9,390 +9,52 @@
 """
 Metal-accelerated Gaussian splatting renderer for Apple Silicon.
 
-This package provides a high-performance Metal compute backend for Gaussian splatting,
-achieving substantial speedup over CPU PyTorch on M-series chips (chip-dependent;
-see metal/README.md for per-chip observed ranges).
+The 3D splat-centric kernels in ``src/kernels.metal`` run through one of two
+interchangeable backends (see :mod:`.backend`):
 
-The Metal extension is automatically compiled on first use if not already built.
-Requirements:
-- macOS with Apple Silicon (M1/M2/M3/M4)
-- Xcode (full installation, not just Command Line Tools)
-- PyTorch with MPS support
+- ``runtime`` (the default for a pip install): compiled on first use by
+  ``torch.mps.compile_shader`` with the Metal compiler built into macOS.
+  Needs only an MPS-capable torch >= 2.7 (2.6 via its private API) -- no
+  Xcode, no compiled extension.
+- ``aot``: the optional ahead-of-time extension, built explicitly by a
+  developer with ``python setup.py build_ext --inplace --force`` (needs
+  Xcode). Preferred in ``auto`` when present and up to date;
+  ``LUXAR_METAL_BACKEND=runtime`` selects the equivalent runtime path.
+
+``LUXAR_METAL_BACKEND=auto|aot|runtime|torch`` overrides the choice. Importing
+this package never compiles or builds anything.
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
-import warnings
-from pathlib import Path
-from typing import Optional, Tuple
 
-# Package directory
-_METAL_DIR = Path(__file__).parent
-_SRC_DIR = _METAL_DIR / "src"
-# Filter compiled extensions to the running Python's ABI tag so a stale build
-# from a different interpreter (e.g. cpython-311 alongside cpython-312) is not
-# picked up; loading it would fail at import time with a confusing error.
-_PYTHON_ABI_TAG = f"cpython-{sys.version_info.major}{sys.version_info.minor}"
-_EXTENSION_PATTERN = f"metal_splatting_backend.{_PYTHON_ABI_TAG}-*.so"
-
-
-def _find_extension() -> Optional[Path]:
-    """Find the newest compiled extension matching the active Python ABI."""
-    extensions = list(_METAL_DIR.glob(_EXTENSION_PATTERN))
-    if extensions:
-        return max(extensions, key=lambda path: path.stat().st_mtime)
-    return None
-
-
-def _extension_sources() -> list[Path]:
-    """Return source files that require the Python extension to be rebuilt."""
-    return [_METAL_DIR / "setup.py", _SRC_DIR / "bindings.mm"]
-
-
-def _extension_is_stale(extension: Path) -> bool:
-    """Return True when compiled Metal artifacts are older than their sources."""
-    extension_mtime = extension.stat().st_mtime
-    if any(
-        src.exists() and src.stat().st_mtime > extension_mtime
-        for src in _extension_sources()
-    ):
-        return True
-
-    metallib = _SRC_DIR / "default.metallib"
-    kernels = _SRC_DIR / "kernels.metal"
-    return not metallib.exists() or (
-        kernels.exists() and kernels.stat().st_mtime > metallib.stat().st_mtime
-    )
-
-
-def _mark_build_outputs_fresh(extension: Path) -> None:
-    """Touch generated artifacts so distutils no-op rebuilds do not stay stale."""
-    sources = [src for src in _extension_sources() if src.exists()]
-    kernels = _SRC_DIR / "kernels.metal"
-    if kernels.exists():
-        sources.append(kernels)
-    newest_source_mtime = max((src.stat().st_mtime for src in sources), default=0.0)
-    fresh_mtime = max(newest_source_mtime + 1e-3, extension.stat().st_mtime)
-    os.utime(extension, (fresh_mtime, fresh_mtime))
-
-    metallib = _SRC_DIR / "default.metallib"
-    if metallib.exists():
-        os.utime(metallib, (fresh_mtime, fresh_mtime))
-
-
-def _check_xcode_setup() -> Tuple[bool, str]:
-    """
-    Check if Xcode is properly set up for Metal compilation.
-
-    Returns:
-        (is_valid, message) tuple
-    """
-    # Check 1: Is xcrun available?
-    try:
-        result = subprocess.run(
-            ["xcrun", "--find", "metal"], capture_output=True, text=True, timeout=10
-        )
-        if result.returncode != 0:
-            return False, _XCODE_NOT_FOUND_MESSAGE
-    except FileNotFoundError:
-        return False, _XCODE_NOT_FOUND_MESSAGE
-    except subprocess.TimeoutExpired:
-        return False, "Xcode tools check timed out. Please verify Xcode installation."
-
-    # Check 2: Is xcode-select pointing to Xcode.app (not CommandLineTools)?
-    try:
-        result = subprocess.run(
-            ["xcode-select", "-p"], capture_output=True, text=True, timeout=10
-        )
-        xcode_path = result.stdout.strip()
-        if "CommandLineTools" in xcode_path:
-            return False, _COMMAND_LINE_TOOLS_MESSAGE.format(current_path=xcode_path)
-    except Exception:
-        pass  # Non-fatal, continue
-
-    return True, "Xcode setup OK"
-
-
-_XCODE_NOT_FOUND_MESSAGE = """
-================================================================================
-METAL BACKEND: Xcode Not Found
-================================================================================
-
-The Metal backend requires Apple's Xcode to compile Metal shaders.
-
-To install Xcode:
-
-  1. Install Xcode from the Mac App Store (or developer.apple.com)
-     Note: This is a large download (~12GB)
-
-  2. After installation, open Xcode once to accept the license, or run:
-
-     sudo xcodebuild -license accept
-
-  3. Point xcode-select to Xcode.app:
-
-     sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
-
-  4. Verify the Metal compiler is available:
-
-     xcrun --find metal
-
-After completing these steps, restart Python and import again.
-
-For more details, see:
-  packages/luxar/src/luxar/gsplats/models/gsplats/metal/README.md
-================================================================================
-"""
-
-_COMMAND_LINE_TOOLS_MESSAGE = """
-================================================================================
-METAL BACKEND: Wrong Xcode Path
-================================================================================
-
-The Metal compiler requires the full Xcode.app, but xcode-select is pointing to:
-
-  {current_path}
-
-This typically means only Command Line Tools are active, not the full Xcode.
-
-To fix this:
-
-  1. Ensure Xcode.app is installed (from Mac App Store or developer.apple.com)
-
-  2. Switch xcode-select to Xcode.app:
-
-     sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
-
-  3. Verify the Metal compiler is now available:
-
-     xcrun --find metal
-
-After completing these steps, restart Python and import again.
-================================================================================
-"""
-
-_BUILD_FAILED_MESSAGE = """
-================================================================================
-METAL BACKEND: Build Failed
-================================================================================
-
-The Metal extension failed to compile. This is usually due to:
-
-  1. Missing Xcode or wrong xcode-select path (see above)
-  2. Missing PyTorch or incompatible version
-  3. Permissions issues in the package directory
-
-Build output:
-{build_output}
-
-To manually build:
-
-  cd {metal_dir}
-  python setup.py build_ext --inplace
-
-For troubleshooting, see:
-  packages/luxar/src/luxar/gsplats/models/gsplats/metal/README.md
-================================================================================
-"""
-
-_BUILD_SUCCESS_MESSAGE = """
-Metal backend compiled successfully!
-  Extension: {extension_path}
-
-The extension will be used automatically for future imports.
-"""
-
-
-def _auto_build_extension() -> Tuple[bool, str]:
-    """
-    Automatically build the Metal extension if not present.
-
-    Returns:
-        (success, message) tuple
-    """
-    from arbol import aprint, asection
-
-    # Check if already built and up to date
-    existing = _find_extension()
-    if existing and existing.exists() and not _extension_is_stale(existing):
-        return True, f"Using existing extension: {existing.name}"
-
-    with asection("Metal Backend: Auto-compiling (first-time setup)"):
-        aprint("This only happens once. Future imports will be instant.")
-        aprint("")
-
-        # Check Xcode setup first
-        xcode_ok, xcode_msg = _check_xcode_setup()
-        if not xcode_ok:
-            aprint(xcode_msg)
-            return False, xcode_msg
-
-        aprint("Xcode setup verified")
-        aprint(f"Building in: {_METAL_DIR}")
-        aprint("")
-
-        # Run setup.py build_ext --inplace
-        try:
-            result = subprocess.run(
-                [sys.executable, "setup.py", "build_ext", "--inplace"],
-                cwd=str(_METAL_DIR),
-                capture_output=True,
-                text=True,
-                timeout=120,  # 2 minute timeout
-            )
-
-            if result.returncode != 0:
-                error_output = result.stderr or result.stdout or "No output"
-                msg = _BUILD_FAILED_MESSAGE.format(
-                    build_output=error_output[:2000],  # Truncate if very long
-                    metal_dir=_METAL_DIR,
-                )
-                aprint(msg)
-                return False, msg
-
-            # Verify build succeeded
-            built_extension = _find_extension()
-            if built_extension and built_extension.exists():
-                _mark_build_outputs_fresh(built_extension)
-                msg = _BUILD_SUCCESS_MESSAGE.format(extension_path=built_extension)
-                aprint(msg)
-                return True, msg
-            else:
-                msg = (
-                    f"Build appeared to succeed but extension not found in {_METAL_DIR}"
-                )
-                aprint(msg)
-                return False, msg
-
-        except subprocess.TimeoutExpired:
-            msg = "Build timed out after 2 minutes. Try building manually."
-            aprint(msg)
-            return False, msg
-        except Exception as e:
-            msg = f"Build failed with exception: {e}"
-            aprint(msg)
-            return False, msg
-
-
-def _validate_mps_interop() -> bool:
-    """
-    MANDATORY: Validate MPS-Metal buffer interop works correctly.
-
-    Tests that PyTorch MPS tensors can be accessed as Metal buffers.
-    This uses PyTorch internal APIs that may change between versions.
-
-    Returns:
-        True if interop validated, False otherwise
-    """
-    try:
-        import torch
-
-        if not torch.backends.mps.is_available():
-            return False  # MPS not available, Metal won't work
-
-        # Test 1: Basic buffer extraction
-        t = torch.randn(10, device="mps")
-        # Use untyped_storage() to avoid deprecation warning
-        storage_ptr = t.untyped_storage().data_ptr()
-        if not storage_ptr:
-            raise RuntimeError("untyped_storage().data_ptr() returned null")
-
-        # Test 2: Storage offset handling (critical for tensor views)
-        t_full = torch.randn(100, device="mps")
-        t_slice = t_full[25:75]  # View with storage_offset=25
-        if t_slice.storage_offset() != 25:
-            raise RuntimeError("storage_offset not working correctly")
-
-        # Test 3: Contiguous check
-        t_contig = t_full.contiguous()
-        if not t_contig.is_contiguous():
-            raise RuntimeError("contiguous() failed")
-
-        return True
-
-    except Exception as e:
-        warnings.warn(
-            f"MPS-Metal interop validation failed: {e}. "
-            "Metal backend disabled; use GaussianSplatModel instead.",
-            RuntimeWarning,
-        )
-        return False
-
-
-def _try_import_extension() -> bool:
-    """Try to import the Metal extension."""
-    try:
-        # Import torch first to load PyTorch libraries (needed for rpath)
-        import torch
-
-        # Add current directory to path for import
-        if str(_METAL_DIR) not in sys.path:
-            sys.path.insert(0, str(_METAL_DIR))
-
-        import metal_splatting_backend
-
-        metallib = _SRC_DIR / "default.metallib"
-        if metallib.exists() and hasattr(metal_splatting_backend, "set_library_path"):
-            metal_splatting_backend.set_library_path(str(metallib))
-
-        return True
-
-    except (ImportError, OSError):
-        # Don't warn here - caller will handle
-        return False
-
-
-# Check if Metal extension is available
-_metal_available = False
-_mps_interop_valid = False
-_init_message = ""
-
-if sys.platform == "darwin":
-    # First validate MPS interop works
-    _mps_interop_valid = _validate_mps_interop()
-
-    if _mps_interop_valid:
-        existing_extension = _find_extension()
-        needs_build = existing_extension is None or _extension_is_stale(
-            existing_extension
-        )
-
-        if needs_build:
-            build_success, build_msg = _auto_build_extension()
-            if not build_success:
-                _init_message = build_msg
-                # Don't warn here - the build function already printed detailed help
-
-        if not _init_message:
-            if _try_import_extension():
-                _metal_available = True
-                _init_message = (
-                    "Metal backend compiled and loaded"
-                    if needs_build
-                    else "Metal backend loaded successfully"
-                )
-            else:
-                _init_message = (
-                    "Metal extension import failed. Check Python version compatibility."
-                )
-                warnings.warn(_init_message, RuntimeWarning)
+from .backend import (
+    BACKEND_ENV,
+    MetalKernelBackend,
+    get_metal_backend,
+    metal_backend_unavailable_reason,
+    requested_backend,
+)
+from .gsplat_model_metal import GaussianSplatModelMetal
 
 
 def is_metal_available() -> bool:
     """
-    Check if Metal splatting backend is available and working.
+    Check if a Metal splatting kernel backend (AOT or runtime) is usable.
 
-    Returns True only if:
-    1. Running on macOS
-    2. MPS-Metal interop validated
-    3. Metal extension successfully imported
+    Off macOS this returns False without consulting ``LUXAR_METAL_BACKEND``.
+    On macOS it returns True only with an MPS device where either the compiled
+    extension imports or the runtime compiler built ``kernels.metal``, and
+    False when ``LUXAR_METAL_BACKEND=torch``. There, a forced backend that
+    cannot run (``LUXAR_METAL_BACKEND=aot|runtime``) raises ``RuntimeError``
+    and an unknown value raises ``ValueError``.
 
     If False, callers should use the reference PyTorch `GaussianSplatModel`.
     """
-    return _metal_available and _mps_interop_valid
+    if sys.platform != "darwin":
+        return False
+    return get_metal_backend() is not None
 
 
 def get_metal_status() -> str:
@@ -404,17 +66,22 @@ def get_metal_status() -> str:
     """
     if sys.platform != "darwin":
         return "Metal backend only available on macOS"
-    if not _mps_interop_valid:
-        return "MPS-Metal interop validation failed. PyTorch MPS may not be available."
-    if _metal_available:
-        return "Metal backend available and loaded"
-    return _init_message or "Metal backend not available"
+    try:
+        backend = get_metal_backend()
+    except (RuntimeError, ValueError) as exc:  # forced backend fails / bad value
+        return f"Metal backend not available: {exc}"
+    if backend is not None:
+        return f"Metal backend available ({backend.name} kernels)"
+    return f"Metal backend not available: {metal_backend_unavailable_reason()}"
 
 
-# Only expose GaussianSplatModelMetal if Metal is available
-__all__ = ["is_metal_available", "get_metal_status"]
-
-if _metal_available:
-    from .gsplat_model_metal import GaussianSplatModelMetal
-
-    __all__.append("GaussianSplatModelMetal")
+__all__ = [
+    "BACKEND_ENV",
+    "GaussianSplatModelMetal",
+    "MetalKernelBackend",
+    "get_metal_backend",
+    "get_metal_status",
+    "is_metal_available",
+    "metal_backend_unavailable_reason",
+    "requested_backend",
+]

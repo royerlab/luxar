@@ -1,4 +1,9 @@
-"""Release-gate requirements for the Metal parity suite."""
+"""Release-gate requirements for the Metal parity suite.
+
+The whole suite runs against whichever kernel backend is selected; pin it with
+``LUXAR_METAL_BACKEND=aot`` or ``LUXAR_METAL_BACKEND=runtime`` to run it once
+per backend (a forced backend that cannot run fails collection loudly).
+"""
 
 from __future__ import annotations
 

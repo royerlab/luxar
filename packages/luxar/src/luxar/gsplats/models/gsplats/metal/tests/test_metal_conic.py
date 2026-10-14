@@ -24,13 +24,13 @@ else:
     cholesky_to_conic = None  # type: ignore[assignment]
 
 
-# Import the extension module after the skip check
-# This avoids import errors when Metal is not available
 def _get_metal_backend():
-    """Get the Metal extension module (already loaded by is_metal_available)."""
-    import metal_splatting_backend
+    """The selected kernel backend (AOT or runtime; pin with LUXAR_METAL_BACKEND)."""
+    from luxar.gsplats.models.gsplats.metal import get_metal_backend
 
-    return metal_splatting_backend
+    kernels = get_metal_backend()
+    assert kernels is not None
+    return kernels
 
 
 class TestMetalConicAccuracy:

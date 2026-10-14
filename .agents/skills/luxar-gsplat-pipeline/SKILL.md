@@ -19,7 +19,10 @@ older v3.x files are still read transparently).
 All commands below are subcommands of `luxar gsplat`.
 
 GSplats need optional deps: `pip install "luxar[gsplats]"` (PyTorch, scipy). GPU
-(CUDA or Apple MPS) is auto-detected; pass `--device cpu` to force CPU.
+(CUDA or Apple MPS) is auto-detected; pass `--device cpu` to force CPU. On Apple
+MPS the 3D Metal kernels compile at runtime (torch >= 2.7, no Xcode); a fit that
+logs "Metal splatting kernels: none, using PyTorch" runs orders of magnitude
+slower — upgrade torch, or see `LUXAR_METAL_BACKEND` in the metal README.
 
 ## The canonical pipeline: cal -> fit -> lod
 
