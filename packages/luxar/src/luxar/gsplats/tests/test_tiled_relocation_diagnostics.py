@@ -30,7 +30,7 @@ def test_partition_merge_carries_relocation_diagnostics() -> None:
         tile_size=24,
         overlap=8,
         partition=True,
-        cull_retention=None,  # keep the population keys (no scrub)
+        cull_retention=None,  # baseline without a closing cull
         enable_dynamic_ops=True,
         dynamic_config=cfg,
         seeds=120,
@@ -73,7 +73,7 @@ def test_partition_merge_carries_relocation_diagnostics() -> None:
 
 
 @pytest.mark.parametrize("partition", [False, True])
-def test_culled_merge_drops_population_but_keeps_history(partition: bool) -> None:
+def test_culled_merge_keeps_delivered_population_and_history(partition: bool) -> None:
     result = fit_tiled(
         _structured_volume(),
         tile_size=24,
@@ -93,5 +93,47 @@ def test_culled_merge_drops_population_but_keeps_history(partition: bool) -> Non
     assert stats["dynamic_ops_relocation_events"] > 0
     assert stats["dynamic_ops_unique_splats_relocated"] > 0
     assert stats["relocation_reseed_sigma_vox_effective"] == 0.5
-    for suffix in ("count", "relocated_count", "unrelocated_count", "fraction"):
-        assert f"splats_near_relocation_init_sigma_{suffix}" not in stats
+    delivered = total_splats(result) if partition else result.n_splats
+    assert delivered > 0
+    count = stats["splats_near_relocation_init_sigma_count"]
+    assert 0 <= count <= delivered
+    assert stats["splats_near_relocation_init_sigma_fraction"] == pytest.approx(
+        count / delivered
+    )
+    assert (
+        stats["splats_near_relocation_init_sigma_relocated_count"]
+        + stats["splats_near_relocation_init_sigma_unrelocated_count"]
+        == count
+    )
+
+
+@pytest.mark.parametrize("partition", [False, True])
+@pytest.mark.parametrize("cull_options", [{}, {"cull_retention": None}])
+def test_merge_without_dynamic_ops_keeps_population(
+    partition: bool, cull_options: dict[str, None]
+) -> None:
+    result = fit_tiled(
+        _structured_volume(),
+        tile_size=24,
+        overlap=8,
+        partition=partition,
+        enable_dynamic_ops=False,
+        seeds=120,
+        n_iters=20,
+        device="cpu",
+        floor="none",
+        verbose=False,
+        napari_movie=False,
+        **cull_options,
+    )
+    stats = result.meta["fit_stats"] if partition else result.stats
+    delivered = total_splats(result) if partition else result.n_splats
+    assert delivered > 0
+    count = stats["splats_near_relocation_init_sigma_count"]
+    assert isinstance(count, int)
+    assert 0 <= count <= delivered
+    assert stats["splats_near_relocation_init_sigma_fraction"] == pytest.approx(
+        count / delivered
+    )
+    assert stats["splats_near_relocation_init_sigma_relocated_count"] is None
+    assert stats["splats_near_relocation_init_sigma_unrelocated_count"] is None

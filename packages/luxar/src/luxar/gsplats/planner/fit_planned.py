@@ -90,7 +90,10 @@ def _planned_merge_stats(
     if parallel_jobs is not None:
         stats["parallel_jobs"] = int(parallel_jobs)
         stats["elapsed_seconds"] = float(elapsed)
-    _aggregate_relocation_diagnostics(stats, regions, delivered_splats, regions)
+    from luxar.gsplats.fitting.scale_population import sum_population_counts
+
+    _aggregate_relocation_diagnostics(stats, regions)
+    sum_population_counts([region.stats for region in regions], stats, delivered_splats)
     return stats
 
 
@@ -350,7 +353,9 @@ def _fit_one_box(
         )
 
     sub = V[pz0:pz1, py0:py1, px0:px1]
-    gd = fit_gaussian_splats(sub, seeds=budget, **fit_kwargs)
+    gd = fit_gaussian_splats(
+        sub, seeds=budget, _carry_scale_population=True, **fit_kwargs
+    )
     origin = np.array([pz0, py0, px0], np.float32)
     core_lo = np.array([z0, y0, x0], np.float32)
     core_hi = np.array([z1, y1, x1], np.float32)
@@ -406,6 +411,13 @@ def _fit_one_box(
         # can land in the core and the crop still be 18³ for a 12³ part — which is
         # why this rides the region predicate rather than `_is_crop`.
         drop_content_scoped_stats(box_stats)
+    from luxar.gsplats.fitting.scale_population import (
+        finish_population_stats,
+        reduce_population_stats,
+    )
+
+    reduce_population_stats(gd.stats, box_stats, keep)
+    finish_population_stats(box_stats)
     box_stats["n_splats"] = n_kept
     # ...and the same RAW `lod_stats` write is why non-finite values cannot ride
     # along either: zarr emits them as bare `Infinity`/`NaN` tokens that a strict

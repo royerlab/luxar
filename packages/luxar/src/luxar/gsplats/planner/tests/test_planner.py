@@ -41,7 +41,7 @@ def test_planned_merge_keeps_relocation_history_without_stale_population(
                 "dynamic_ops_relocation_events": i + 2,
                 "dynamic_ops_unique_splats_relocated": i + 1,
                 "relocation_reseed_sigma_vox_effective": 0.5,
-                # A planned box already dropped this after keeping its core.
+                # Model a pre-#3106 box missing this diagnostic.
                 **({"splats_near_relocation_init_sigma_count": 1} if i == 0 else {}),
             },
         )
@@ -99,7 +99,58 @@ def test_planned_fit_carries_real_relocation_history(partition: bool) -> None:
     stats = result.meta["fit_stats"] if partition else result.stats
     assert stats["dynamic_ops_relocation_events"] >= 0
     assert stats["dynamic_ops_unique_splats_relocated"] >= 0
-    assert "splats_near_relocation_init_sigma_count" not in stats
+    from luxar.gsplats.tree import total_splats
+
+    delivered = total_splats(result) if partition else result.n_splats
+    assert delivered > 0
+    count = stats["splats_near_relocation_init_sigma_count"]
+    assert 0 <= count <= delivered
+    assert stats["splats_near_relocation_init_sigma_fraction"] == pytest.approx(
+        count / delivered
+    )
+    assert (
+        stats["splats_near_relocation_init_sigma_relocated_count"]
+        + stats["splats_near_relocation_init_sigma_unrelocated_count"]
+        == count
+    )
+
+
+@pytest.mark.parametrize("partition", [False, True])
+def test_planned_fit_without_dynamic_ops_keeps_population(partition: bool) -> None:
+    from luxar.gsplats.planner import fit_planned
+    from luxar.gsplats.tree import total_splats
+
+    volume = _corner_blobs((16, 16, 16), n=2, corner=12)
+    plan = plan_volume(
+        volume,
+        _density(k_star_reference=80, saturation_cap=80, splats_per_feature=20.0),
+        cell=4,
+        min_leaf=8,
+        max_leaf=8,
+        overlap=2,
+    )
+    result = fit_planned(
+        volume,
+        plan,
+        partition=partition,
+        enable_dynamic_ops=False,
+        n_iters=2,
+        device="cpu",
+        use_cuda=False,
+        use_metal=False,
+        verbose=False,
+    )
+    stats = result.meta["fit_stats"] if partition else result.stats
+    delivered = total_splats(result) if partition else result.n_splats
+    assert delivered > 0
+    count = stats["splats_near_relocation_init_sigma_count"]
+    assert isinstance(count, int)
+    assert 0 <= count <= delivered
+    assert stats["splats_near_relocation_init_sigma_fraction"] == pytest.approx(
+        count / delivered
+    )
+    assert stats["splats_near_relocation_init_sigma_relocated_count"] is None
+    assert stats["splats_near_relocation_init_sigma_unrelocated_count"] is None
 
 
 def _corner_blobs(shape=(128, 128, 128), n=16, corner=64, seed=0):
@@ -1784,6 +1835,17 @@ class TestPlannedFitTruncationRadius:
         assert merged.stats["n_boxes_fit"] >= 1
         assert merged.stats["overlap"] == plan.overlap
         assert list(merged.stats["volume_shape"]) == list(V.shape)
+        assert "_fit_scale_population_bits" not in merged.stats
+        assert (
+            0
+            <= merged.stats["splats_near_relocation_init_sigma_count"]
+            <= merged.n_splats
+        )
+        assert merged.stats[
+            "splats_near_relocation_init_sigma_fraction"
+        ] == pytest.approx(
+            merged.stats["splats_near_relocation_init_sigma_count"] / merged.n_splats
+        )
         quality_keys = {
             "mse",
             "psnr_db",
@@ -1868,6 +1930,12 @@ class TestPlannedFitTruncationRadius:
         assert node.meta["fit_stats"]["mse"] == pytest.approx(flat.stats["mse"])
         assert node.meta["fit_stats"]["planned_fit"] is True
         assert node.meta["fit_stats"]["n_splats"] == node.n_splats
+        count_key = "splats_near_relocation_init_sigma_count"
+        fraction_key = "splats_near_relocation_init_sigma_fraction"
+        assert node.meta["fit_stats"][count_key] == flat.stats[count_key]
+        assert node.meta["fit_stats"][fraction_key] == pytest.approx(
+            node.meta["fit_stats"][count_key] / node.n_splats
+        )
         assert "concatenated_from" not in node.meta["fit_stats"]
         assert node.meta["fit_stats"]["splats_per_tile"]
         assert "image_max" not in node.meta["fit_stats"]
@@ -2013,6 +2081,11 @@ class TestPlannedFitTruncationRadius:
         # Descriptive run metadata legitimately describes this box's own fit and
         # must survive.
         assert "iterations" in out.stats
+        assert "_fit_scale_population_bits" not in out.stats
+        assert 0 <= out.stats["splats_near_relocation_init_sigma_count"] <= out.n_splats
+        assert out.stats["splats_near_relocation_init_sigma_fraction"] == pytest.approx(
+            out.stats["splats_near_relocation_init_sigma_count"] / out.n_splats
+        )
 
         # Negative control: the padded crop EQUALS the core box (no halo, box
         # covering the whole volume) and nothing is dropped, so the crop's grid

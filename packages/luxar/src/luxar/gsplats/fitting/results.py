@@ -22,6 +22,11 @@ from luxar.gsplats.fitting.initialization import (
     apply_sigma_min_diag_floor,
     resolve_fit_initial_sigma_diag,
 )
+from luxar.gsplats.fitting.scale_population import (
+    MASK_KEY,
+    classify_scales,
+    encode_population_bits,
+)
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.utils.trils import pack_tril
 
@@ -608,6 +613,13 @@ def finalize_results(
     amps_np = amps_dev.cpu().numpy()
     diagnostic_stats = _fit_diagnostic_stats(
         optimization_results, config, preprocessed_data, Ls_np
+    )
+    diagnostic_stats[MASK_KEY] = encode_population_bits(
+        classify_scales(
+            Ls_np,
+            diagnostic_stats,
+            getattr(optimization_results, "relocated_mask", None),
+        )
     )
 
     # Rescale amplitudes to original intensity range.

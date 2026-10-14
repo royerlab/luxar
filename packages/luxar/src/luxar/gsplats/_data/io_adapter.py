@@ -96,6 +96,13 @@ class IOAdapterMixin(_GSplatDataOps):
         if compressor is _USE_DEFAULT_COMPRESSOR:
             compressor = DEFAULT_COMP
 
+        # Intermediate fit tiles carry per-splat voxel-scale classifications in
+        # their metadata. Spatially reordering the arrays without reordering
+        # those bits would attach each classification to a different splat when
+        # the parallel merge reloads the tile.
+        if "_fit_scale_population_bits" in self.stats:
+            ordering = "none"
+
         # Extract fitting/provenance/pipeline groups from stats (single-sourced).
         fitting_info, fitting_config, provenance_info, pipeline_info = (
             split_fitting_info(

@@ -384,10 +384,32 @@ def _cull_keeping_measured_scores(data: GSplatData, retention: float) -> GSplatD
         measured_stats_snapshot,
         restore_measured_stats,
     )
+    from luxar.gsplats.fitting.scale_population import reduce_population_stats
 
     measured = measured_stats_snapshot(data)
-    out = data.cull(method="cumulative", retention=retention)
-    return restore_measured_stats(out, measured)
+    kept: list[np.ndarray] = []
+    out = data.cull(method="cumulative", retention=retention, keep_mask_out=kept)
+    restore_measured_stats(out, measured)
+    reduce_population_stats(data.stats, out.stats, kept[0])
+    out.stats["n_splats"] = out.n_splats
+    return out
+
+
+def _merge_flat_population_stats(
+    results: Sequence[GSplatData], merged: GSplatData, has_lods: bool
+) -> None:
+    """The default flat merge preserves tile order; additive LODs reorder it."""
+    if not has_lods:
+        from luxar.gsplats.fitting.scale_population import merge_population_stats
+
+        merge_population_stats([result.stats for result in results], merged.stats)
+
+
+def _finish_region_population_stats(regions: Sequence[GSplatData]) -> None:
+    from luxar.gsplats.fitting.scale_population import finish_population_stats
+
+    for region in regions:
+        finish_population_stats(region.stats)
 
 
 def _tile_norm_range(
@@ -758,6 +780,7 @@ def fit_tile(
             voxel_size=voxel_size,
             output_space=output_space,
             cull_retention=None,  # The merge step applies retention.
+            _carry_scale_population=True,
             **fit_kwargs,
         )
 
@@ -962,12 +985,6 @@ _RELOCATION_HISTORY_KEYS = (
     "dynamic_ops_relocation_events",
     "dynamic_ops_unique_splats_relocated",
 )
-_RELOCATION_POPULATION_KEYS = (
-    "splats_near_relocation_init_sigma_count",
-    "splats_near_relocation_init_sigma_relocated_count",
-    "splats_near_relocation_init_sigma_unrelocated_count",
-)
-
 #: Shared scalar reseed-sigma stamps (#2734): one value across all tiles, so
 #: carried verbatim rather than summed.
 _RELOCATION_DIAGNOSTIC_SHARED_KEYS = (
@@ -979,15 +996,13 @@ _RELOCATION_DIAGNOSTIC_SHARED_KEYS = (
 def _aggregate_relocation_diagnostics(
     stats: dict[str, Any],
     results: Sequence[GSplatData],
-    delivered_splats: int,
-    population_results: Optional[Sequence[GSplatData]] = None,
 ) -> None:
     """Carry the per-tile relocation diagnostics (#2734) onto the merged root.
 
     ``GSplatData.concatenate`` drops per-tile stats, so a partition/tiled merge
     otherwise reports the relocation diagnostic keys as ABSENT (#2744). History
-    describes the fitting runs. Population counts describe the delivered splats
-    and are emitted only when every delivered region retains its counts.
+    describes the fitting runs; population counts are summed separately against
+    the delivered splats.
     """
     sums: dict[str, int] = {}
     for result in results:
@@ -999,8 +1014,6 @@ def _aggregate_relocation_diagnostics(
             sums[key] = sums.get(key, 0) + int(value)
     stats.update(sums)
 
-    _aggregate_relocation_population(stats, population_results, delivered_splats)
-
     for key in _RELOCATION_DIAGNOSTIC_SHARED_KEYS:
         for result in results:
             tile_stats = getattr(result, "stats", None) or {}
@@ -1008,26 +1021,6 @@ def _aggregate_relocation_diagnostics(
             if value is not None:
                 stats[key] = value
                 break
-
-
-def _aggregate_relocation_population(
-    stats: dict[str, Any],
-    regions: Optional[Sequence[GSplatData]],
-    delivered_splats: int,
-) -> None:
-    if not regions:
-        return
-    populated = [r for r in regions if r.n_splats > 0]
-    if sum(r.n_splats for r in populated) != delivered_splats or not all(
-        all(key in r.stats for key in _RELOCATION_POPULATION_KEYS) for r in populated
-    ):
-        return
-    for key in _RELOCATION_POPULATION_KEYS:
-        stats[key] = sum(int(r.stats[key]) for r in populated)
-    if delivered_splats:
-        stats["splats_near_relocation_init_sigma_fraction"] = (
-            stats["splats_near_relocation_init_sigma_count"] / delivered_splats
-        )
 
 
 def _merged_fit_stats(
@@ -1044,7 +1037,6 @@ def _merged_fit_stats(
     source_dtype: Optional[str],
     source_itemsize: Optional[int],
     source_stored_bytes: Optional[int],
-    population_results: Optional[Sequence[GSplatData]] = None,
 ) -> dict[str, Any]:
     """Build the common root stats for flat and partition tile merges."""
     stats = {
@@ -1068,9 +1060,7 @@ def _merged_fit_stats(
         )
     )
     stamp_voxels_per_splat(stats, delivered_splats)
-    _aggregate_relocation_diagnostics(
-        stats, results, delivered_splats, population_results
-    )
+    _aggregate_relocation_diagnostics(stats, results)
     return stats
 
 
@@ -1495,6 +1485,12 @@ def merge_tile_results(
     if len(results) == 0:
         return _empty_merge(volume_shape, results, applied_floor)
 
+    from luxar.gsplats.fitting.scale_population import (
+        finish_population_stats,
+        sum_population_counts,
+        sum_run_history,
+    )
+
     # Partition: keep one part per tile (frustum culling). Apodized tiles sum
     # correctly as additive parts; cull each tile independently (the flat path's
     # single global cull has no meaning once tiles stay separate parts). Each
@@ -1515,6 +1511,7 @@ def merge_tile_results(
         regions = [r for _, r in indexed]
         if not regions:
             return _empty_merge(volume_shape, results, applied_floor)
+        _finish_region_population_stats(regions)
         # The grid this merge re-derives has to be the one the tiles were fitted
         # on, and `fold_tile_slivers` is the only thing that can make it differ.
         # An external caller that built an UNFOLDED grid itself and did not say
@@ -1559,7 +1556,6 @@ def merge_tile_results(
         fit_stats = _merged_fit_stats(
             results,
             delivered_splats=int(total_splats(node)),
-            population_results=regions,
             volume_shape=volume_shape,
             tile_size=tile_size,
             overlap=overlap,
@@ -1571,6 +1567,10 @@ def merge_tile_results(
             source_itemsize=source_itemsize,
             source_stored_bytes=source_stored_bytes,
         )
+        sum_population_counts(
+            [region.stats for region in regions], fit_stats, int(total_splats(node))
+        )
+        sum_run_history([result.stats for result in results], fit_stats)
         _score_merged_if_reference(
             regions,
             volume,
@@ -1596,6 +1596,7 @@ def merge_tile_results(
         merged = _merge_lods_across_tiles(results)
     else:
         merged = GSplatData.concatenate(results)
+    _merge_flat_population_stats(results, merged, has_lods)
 
     if verbose:
         lod_info = f", {merged.n_additive_sublods} LODs" if has_lods else ""
@@ -1605,7 +1606,6 @@ def merge_tile_results(
         )
 
     # Post-fit cumulative culling on merged result
-    merged_before_cull = merged.n_splats
     if cull_retention is not None and 0 < cull_retention < 1.0 and merged.n_splats > 0:
         n_before = merged.n_splats
         merged = _cull_keeping_measured_scores(merged, cull_retention)
@@ -1619,9 +1619,6 @@ def merge_tile_results(
         _merged_fit_stats(
             results,
             delivered_splats=merged.n_splats,
-            population_results=results
-            if merged.n_splats == merged_before_cull
-            else None,
             volume_shape=volume_shape,
             tile_size=tile_size,
             overlap=overlap,
@@ -1634,6 +1631,7 @@ def merge_tile_results(
             source_stored_bytes=source_stored_bytes,
         )
     )
+    finish_population_stats(merged.stats)
     _stamp_merge_normalization(
         merged.stats, results, applied_floor, floor_strategy=floor_strategy
     )

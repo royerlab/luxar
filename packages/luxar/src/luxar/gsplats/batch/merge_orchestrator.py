@@ -226,12 +226,21 @@ def _source_dtype_for_tiles(
 
 
 def _merge_fitting_info(
-    part_provenance: List[Dict[str, Any]], source_dtype: Optional[str]
+    part_provenance: List[Dict[str, Any]],
+    source_dtype: Optional[str],
+    part_stats: Sequence[Dict[str, Any]] = (),
 ) -> Dict[str, Any]:
     """Build root fitting metadata shared by batch merge writers."""
+    from luxar.gsplats.fitting.scale_population import sum_population_counts
+
     fitting_info: Dict[str, Any] = {"part_provenance": part_provenance}
     if source_dtype is not None:
         fitting_info["source_dtype"] = source_dtype
+    sum_population_counts(
+        part_stats,
+        fitting_info,
+        sum(int(stats["n_splats"]) for stats in part_stats),
+    )
     return fitting_info
 
 
@@ -313,6 +322,10 @@ def _build_part_for_tile(
     one tile-region's splats are loaded — never the whole volume. Returns
     ``None`` for an empty/zero-splat tile (the caller skips it).
     """
+    from luxar.gsplats.fitting.scale_population import (
+        finish_population_stats,
+        sum_population_counts,
+    )
     from luxar.gsplats.gsplat_data import GSplatData
     from luxar.gsplats.merged_quality import collect_part_provenance
 
@@ -326,6 +339,7 @@ def _build_part_for_tile(
     # than mismatching the fixed-length list.
     per_channel: List[GSplatData] = []
     kept_positions: List[int] = []
+    tile_stats: List[Dict[str, Any]] = []
     for c_pos, c_real in enumerate(c_indices):
         # Build the timepoint stack, skipping slots that are legitimately empty
         # (`_tile_path` returns None) so a box absent at some timepoints still
@@ -338,7 +352,10 @@ def _build_part_for_tile(
             )
             if tile_path is None:
                 continue
-            tc_data.append(GSplatData.load(tile_path, include_stats=True))
+            tile = GSplatData.load(tile_path, include_stats=True)
+            finish_population_stats(tile.stats)
+            tc_data.append(tile)
+            tile_stats.append(dict(tile.stats, n_splats=tile.n_splats))
             tc_values.append(float(t_real))
         if not tc_data:
             continue  # this (channel, slot) is empty at every timepoint
@@ -392,6 +409,8 @@ def _build_part_for_tile(
 
     if part.n_splats == 0:
         return None
+    sum_population_counts(tile_stats, part.stats, part.n_splats)
+    finish_population_stats(part.stats)
     return part
 
 
@@ -404,10 +423,14 @@ def _single_part_provenance(part: "GSplatData") -> List[Dict[str, Any]]:
 
 def _drop_root_quality(part: "GSplatData") -> None:
     """Keep component quality out of a bare merged root's scalar fields."""
-    from luxar.gsplats._data.filtering import _CONTENT_SCOPED_STATS_KEYS
+    from luxar.gsplats._data.filtering import (
+        _CONTENT_SCOPED_STATS_KEYS,
+        _FINAL_SCALE_POPULATION_STATS_KEYS,
+    )
 
     for key in _CONTENT_SCOPED_STATS_KEYS:
-        part.stats.pop(key, None)
+        if key not in _FINAL_SCALE_POPULATION_STATS_KEYS:
+            part.stats.pop(key, None)
 
 
 def volume_refit_source_error(
@@ -1151,7 +1174,9 @@ def _merge_partition(
                     final_path,
                     node,
                     fitting_info=_merge_fitting_info(
-                        single_part_provenance, source_dtype
+                        single_part_provenance,
+                        source_dtype,
+                        [dict(part.stats, n_splats=part.n_splats)],
                     ),
                     amplitude_bits=amplitude_bits,
                     source_dtype=source_dtype,
@@ -1179,6 +1204,7 @@ def _merge_partition(
     slot_tree = _slot_bsp_tree(manifest, output_dir, verbose)
     kept_slots: List[int] = []
     part_provenance: List[Dict[str, Any]] = []
+    part_stats: List[Dict[str, Any]] = []
     # A per-part volume re-fit crops the source to each tile. The split planes
     # above ARE those tiles, keyed by the same slot index the loop walks, so the
     # cells come from the tree already reconstructed for ordering.
@@ -1191,6 +1217,7 @@ def _merge_partition(
         kept = 0
         kept_slots.clear()
         part_provenance.clear()
+        part_stats.clear()
         for k in range(n_k):
             part = _build_part_for_tile(
                 tiles_dir, k, t_indices, c_indices, n_k, channel_colors, label
@@ -1204,6 +1231,7 @@ def _merge_partition(
                     0
                 ]
             )
+            part_stats.append(dict(part.stats, n_splats=part.n_splats))
             part.stats.pop("part_provenance", None)
             _drop_mismatched_partition_dimension_attrs(
                 root_attrs, manifest.dimension_metadata, part.ndim
@@ -1243,7 +1271,7 @@ def _merge_partition(
             amplitude_bits=amplitude_bits,
             source_dtype=source_dtype,
             fitting_info=lambda: _merge_fitting_info(
-                list(part_provenance), source_dtype
+                list(part_provenance), source_dtype, part_stats
             ),
             pipeline_info=pipeline_info,
             barrier_dims=barrier_dims,

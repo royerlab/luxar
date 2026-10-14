@@ -493,8 +493,16 @@ def _safe_lod_stats(stats: Dict[str, Any]) -> Dict[str, Any]:
     because the root document carries the consolidated index for the whole tree
     ONE such value costs a strict reader the ENTIRE store rather than that one
     number. :func:`json_safe_value` drops them per key and keeps the rest.
+    The per-splat scale mask belongs only in a tile's root fitting attrs,
+    where the merger reads it before spatial ordering changes splat positions.
     """
-    ok, safe = json_safe_value(dict(stats))
+    ok, safe = json_safe_value(
+        {
+            key: value
+            for key, value in stats.items()
+            if key != "_fit_scale_population_bits"
+        }
+    )
     return safe if ok and isinstance(safe, dict) else {}
 
 
@@ -519,8 +527,8 @@ def _meta_to_node_attrs(meta: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     # — the old scalar-only filter silently dropped them (lossy round-trip).
     stats = meta.get("stats")
     if isinstance(stats, dict) and stats:
-        ok, safe = json_safe_value(stats)
-        if ok and safe:
+        safe = _safe_lod_stats(stats)
+        if safe:
             out["level_stats"] = safe
     return out
 

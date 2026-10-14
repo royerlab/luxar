@@ -1460,6 +1460,125 @@ class TestMergeOrchestrator:
                     seed += 1
         return total
 
+    @pytest.mark.parametrize("n_timepoints", [1, 2])
+    @pytest.mark.parametrize("n_tiles", [1, 2])
+    def test_batch_merge_finishes_scale_populations(
+        self, tmp_path: Path, n_tiles: int, n_timepoints: int
+    ) -> None:
+        """Delivered bare leaves and partitions retain counts, never tile masks."""
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.fitting.scale_population import (
+            MASK_KEY,
+            encode_population_bits,
+        )
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True)
+        for t in range(n_timepoints):
+            for k in range(n_tiles):
+                tile = self._tile(4, 10 * t + k)
+                tile.stats.update(
+                    n_splats=4,
+                    fit_init_sigma_diag_vox=[1.0] * 3,
+                    splats_near_fit_init_sigma_count=1,
+                    splats_near_fit_init_sigma_fraction=0.25,
+                    dynamic_ops_relocation_events=2,
+                )
+                tile.stats[MASK_KEY] = encode_population_bits(
+                    np.array([1, 0, 0, 0], dtype=np.uint8)
+                )
+                tile.additive_sublods[0].stats[MASK_KEY] = tile.stats[MASK_KEY]
+                tile.save(
+                    tiles_dir / output_filename(t, 0, k, n_timepoints, 1, n_tiles)
+                )
+
+        manifest = BatchManifest(
+            n_timepoints=n_timepoints,
+            n_channels=1,
+            n_tiles=n_tiles,
+            spatial_shape=(8, 8, 8),
+        )
+        final = merge_batch_results(manifest, out_dir, verbose=False)
+        root = zarr.open_group(str(final), mode="r")
+        fitting = root["fitting"].attrs
+        assert fitting["splats_near_fit_init_sigma_count"] == n_timepoints * n_tiles
+        assert fitting["splats_near_fit_init_sigma_fraction"] == 0.25
+        assert fitting["dynamic_ops_relocation_events"] == 2 * n_timepoints * n_tiles
+        assert all(
+            MASK_KEY not in path.read_text() for path in final.rglob("zarr.json")
+        )
+        if n_tiles == 1:
+            assert root.attrs["ordering"] == "hilbert"
+            assert "chunk_bounds" in root
+        else:
+            for k in range(n_tiles):
+                part = root[f"part_{k}"]
+                assert part.attrs["ordering"] == "hilbert"
+
+    def test_real_tiles_stream_without_population_mask_in_lod_stats(
+        self, tmp_path: Path
+    ) -> None:
+        """A real fit's sub-LOD mask must stay out of streamed part metadata."""
+        import zarr
+
+        from luxar.gsplats.batch.manifest import BatchManifest, output_filename
+        from luxar.gsplats.batch.merge_orchestrator import merge_batch_results
+        from luxar.gsplats.fit_tiled_gsplats import (
+            _cull_keeping_measured_scores,
+            fit_tile,
+        )
+        from luxar.gsplats.fitting.scale_population import MASK_KEY
+        from luxar.gsplats.tiling import compute_tile_specs
+
+        yy, xx = np.mgrid[:16, :48]
+        signal = sum(np.exp(-((yy - 8) ** 2 + (xx - x) ** 2) / 12) for x in (8, 24, 40))
+        volume = np.broadcast_to(signal, (16, 16, 48)).astype(np.float32).copy()
+        specs = compute_tile_specs(volume.shape, 16, 0)
+        assert len(specs) == 3
+
+        out_dir = tmp_path / "batch"
+        tiles_dir = out_dir / "tiles"
+        tiles_dir.mkdir(parents=True)
+        expected_splats = 0
+        for spec in specs:
+            tile = fit_tile(
+                volume,
+                spec,
+                seeds=40,
+                n_iters=20,
+                device="cpu",
+                verbose=False,
+                enable_dynamic_ops=False,
+                floor="none",
+            )
+            tile = _cull_keeping_measured_scores(tile, 0.9)
+            assert tile.n_splats > 0
+            assert MASK_KEY in tile.stats
+            assert MASK_KEY in tile.additive_sublods[0].stats
+            expected_splats += tile.n_splats
+            tile.save(tiles_dir / output_filename(0, 0, spec.index, 1, 1, 3))
+
+        final = merge_batch_results(
+            BatchManifest(
+                n_timepoints=1, n_channels=1, n_tiles=3, spatial_shape=volume.shape
+            ),
+            out_dir,
+            verbose=False,
+        )
+        root = zarr.open_group(str(final), mode="r")
+        assert root.attrs["kind"] == "partition"
+        assert (
+            sum(root[f"part_{k}"].attrs["n_splats"] for k in range(3))
+            == expected_splats
+        )
+        assert all(
+            MASK_KEY not in path.read_text() for path in final.rglob("zarr.json")
+        )
+
     @staticmethod
     def _read_tree(path: Path):
         """Read a written .gsplats.zarr (any node kind) as a tree + root attrs."""
