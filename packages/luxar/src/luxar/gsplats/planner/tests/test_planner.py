@@ -1707,6 +1707,17 @@ class TestPlannedFitTruncationRadius:
         assert merged.stats["n_boxes_fit"] >= 1
         assert merged.stats["overlap"] == plan.overlap
         assert list(merged.stats["volume_shape"]) == list(V.shape)
+        assert "_fit_scale_population_bits" not in merged.stats
+        assert (
+            0
+            <= merged.stats["splats_near_relocation_init_sigma_count"]
+            <= merged.n_splats
+        )
+        assert merged.stats[
+            "splats_near_relocation_init_sigma_fraction"
+        ] == pytest.approx(
+            merged.stats["splats_near_relocation_init_sigma_count"] / merged.n_splats
+        )
         quality_keys = {
             "mse",
             "psnr_db",
@@ -1936,6 +1947,11 @@ class TestPlannedFitTruncationRadius:
         # Descriptive run metadata legitimately describes this box's own fit and
         # must survive.
         assert "iterations" in out.stats
+        assert "_fit_scale_population_bits" not in out.stats
+        assert 0 <= out.stats["splats_near_relocation_init_sigma_count"] <= out.n_splats
+        assert out.stats["splats_near_relocation_init_sigma_fraction"] == pytest.approx(
+            out.stats["splats_near_relocation_init_sigma_count"] / out.n_splats
+        )
 
         # Negative control: the padded crop EQUALS the core box (no halo, box
         # covering the whole volume) and nothing is dropped, so the crop's grid

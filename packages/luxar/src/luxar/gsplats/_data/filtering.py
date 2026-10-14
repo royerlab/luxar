@@ -509,7 +509,9 @@ def content_scoped_stats(stats: "MutableMapping[str, Any]") -> "Dict[str, Any]":
     Covers the measured SCORES only, not final scale populations or
     :data:`_CONTENT_SCOPED_OP_RECORD_KEYS`: restoring populations would attach
     pre-trim counts to a different splat set, and the op that scrubbed the record
-    re-stamps its own right after. Restoring an older cull's ``n_original`` /
+    re-stamps its own right after. The fitters re-reduce the original-space
+    classifications by the kept mask and stamp fresh population counts.
+    Restoring an older cull's ``n_original`` /
     ``amplitude_retention`` over it would publish the wrong reduction (a tiled
     fit culls either each partition part or the flat merge).
 

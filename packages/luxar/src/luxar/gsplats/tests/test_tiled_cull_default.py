@@ -26,6 +26,14 @@ def test_default_cull_preserves_tiled_overlap(
     )
 
     default = fit_tiled(image, **options)
+    stats = default.meta["fit_stats"] if partition else default.stats
+    for name in ("fit_init_sigma", "relocation_init_sigma", "sigma_min"):
+        count = stats[f"splats_near_{name}_count"]
+        fraction = stats[f"splats_near_{name}_fraction"]
+        if count is not None:
+            assert 0 <= count <= default.n_splats
+            assert fraction == pytest.approx(count / default.n_splats)
+    assert "_fit_scale_population_bits" not in stats
     if not partition:
         assert "retained 99.9% of amplitude" in capsys.readouterr().out
     unculled = fit_tiled(image, cull_retention=None, **options)

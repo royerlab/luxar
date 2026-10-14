@@ -582,7 +582,9 @@ def finalize_results(
     )
     diagnostic_stats[MASK_KEY] = encode_population_bits(
         classify_scales(
-            Ls_np, diagnostic_stats, getattr(optimization_results, "relocated_mask", None)
+            Ls_np,
+            diagnostic_stats,
+            getattr(optimization_results, "relocated_mask", None),
         )
     )
 

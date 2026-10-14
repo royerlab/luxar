@@ -1360,6 +1360,7 @@ def test_a_real_fit_still_publishes_its_psnr() -> None:
     assert result.stats["n_original"] > result.n_splats, (
         "the closing trim removed no splats — the population scrub proves nothing"
     )
+    assert result.stats["n_splats"] == result.n_splats
     assert "psnr_db" in result.stats, "a default fit lost its own measured PSNR"
     assert "final_max_abs_error" in result.stats
     assert set(_FINAL_SCALE_POPULATION_STATS_KEYS) <= result.stats.keys(), (

@@ -229,7 +229,6 @@ def fit_gaussian_splats(
     source_dtype: Optional[str] = None,
     source_shape: Optional[Sequence[int]] = None,
     source_stored_bytes: Optional[int] = None,
-    _carry_scale_population: bool = False,
     **seed_kwargs: Any,
 ) -> GSplatData:
     """
@@ -554,6 +553,9 @@ def fit_gaussian_splats(
     - Early stopping and adaptive learning-rate scheduling
     """
 
+    # Internal tile/box handoff; never forward it to seed generation or expose it
+    # as a fit-config field.
+    carry_scale_population = bool(seed_kwargs.pop("_carry_scale_population", False))
     # Keep this first: the bundle must capture the public arguments before rebinding.
     parameters = _collect_fit_parameters(locals())
 
@@ -635,6 +637,7 @@ def fit_gaussian_splats(
         )
         restore_measured_stats(result, measured)
         reduce_population_stats(before_stats, result.stats, kept[0])
+        result.stats["n_splats"] = result.n_splats
         n_removed = n_before - result.n_splats
         amp_after = float(np.sum(result.amplitudes))
         amp_retained_pct = 100.0 * amp_after / amp_before if amp_before > 0 else 100.0
@@ -648,7 +651,7 @@ def fit_gaussian_splats(
                 f"amplitude retained: {amp_retained_pct:.1f}%)"
             )
 
-    if not _carry_scale_population:
+    if not carry_scale_population:
         from luxar.gsplats.fitting.scale_population import finish_population_stats
 
         finish_population_stats(result.stats)

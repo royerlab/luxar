@@ -13,6 +13,13 @@ if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
 
 
+def _validate_keep_mask_request(
+    keep_mask_out: list[np.ndarray] | None, method: str, n_substitutive: int
+) -> None:
+    if keep_mask_out is not None and (method != "cumulative" or n_substitutive > 1):
+        raise ValueError("keep_mask_out requires single-level cumulative culling")
+
+
 class CullingMixin(_GSplatDataOps):
     """``cull`` and its heuristic helper — remove negligible splats."""
 
@@ -118,6 +125,8 @@ class CullingMixin(_GSplatDataOps):
             volume_percentile: *combined only.*  Remove splats above this
                 volume percentile (0--100).
             verbose: Print progress information.
+            keep_mask_out: Optional list receiving the input-order boolean mask
+                for single-level cumulative culling. Used by fit diagnostics.
 
         Returns:
             New GSplatData with culled splats removed.  Stats include
@@ -135,10 +144,7 @@ class CullingMixin(_GSplatDataOps):
             else:
                 method = "cumulative"
 
-        if keep_mask_out is not None and (
-            method != "cumulative" or self.n_substitutive > 1
-        ):
-            raise ValueError("keep_mask_out requires single-level cumulative culling")
+        _validate_keep_mask_request(keep_mask_out, method, self.n_substitutive)
 
         # Multi-substitutive: cull EVERY substitutive level and rebuild the
         # pyramid (decision 6) rather than collapsing to the default level via
