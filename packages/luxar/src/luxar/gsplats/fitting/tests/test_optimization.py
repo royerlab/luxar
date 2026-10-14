@@ -144,6 +144,64 @@ def test_run_optimization_loop_preserves_relocation_counts(simple_2d_setup) -> N
     )
 
 
+def test_best_state_relocation_mask_excludes_later_sorted_relocations(
+    simple_2d_setup,
+) -> None:
+    config, data = simple_2d_setup
+    config.enable_dynamic_ops = True
+    config.sort_splats_enabled = True
+    config.sort_splats_interval = 1
+    config.n_iters = 3
+    config.max_abs_error = 1e-10
+    data.max_abs_error = 1e-10
+    config.dynamic_config.step_every = 1
+    config.dynamic_config.k_max_residuals = 1
+    config.dynamic_config.enable_tiled_seeding = False
+    config.dynamic_config.relocation_percentile = 100.0
+    config.dynamic_config.max_relocations_per_step = 1
+    config.dynamic_config.min_splats_to_keep = 0
+
+    components = initialize_optimization(config, data)
+    # Equal loss selects the first snapshot; dynamic ops run after that snapshot.
+    results = run_optimization_loop(
+        components, lambda pred: pred.sum() * 0, config, data
+    )
+    assert results.best_iteration == 1
+    assert results.relocation_statistics["total_relocations"] > 0
+    assert results.relocated_mask is not None
+    assert not results.relocated_mask.any()
+
+
+def test_best_state_relocation_mask_tracks_returned_sorted_splats(
+    simple_2d_setup,
+) -> None:
+    config, data = simple_2d_setup
+    config.enable_dynamic_ops = True
+    config.sort_splats_enabled = True
+    config.sort_splats_interval = 1
+    config.n_iters = 2
+    config.max_abs_error = 1e-10
+    data.max_abs_error = 1e-10
+    config.dynamic_config.step_every = 1
+    config.dynamic_config.k_max_residuals = 1
+    config.dynamic_config.enable_tiled_seeding = False
+    config.dynamic_config.relocation_percentile = 100.0
+    config.dynamic_config.max_relocations_per_step = 1
+    config.dynamic_config.min_splats_to_keep = 0
+
+    components = initialize_optimization(config, data)
+    loss_fn = create_loss_function(config, data, components.model)
+    results = run_optimization_loop(components, loss_fn, config, data)
+
+    assert results.best_iteration == 2
+    assert results.relocated_mask is not None
+    assert results.relocated_mask.sum() == 1
+    Ls = results.Ls.detach().cpu().numpy()
+    sigma = np.sqrt(np.sum(Ls**2, axis=2))
+    near_reseed = np.all(np.abs(sigma - 0.5) <= 0.01, axis=1)
+    assert np.count_nonzero(near_reseed & results.relocated_mask) == 1
+
+
 def test_convergence_early_stopping(simple_2d_setup) -> None:
     """Test early stopping when convergence criterion is met."""
     config, preprocessed_data = simple_2d_setup
