@@ -83,6 +83,7 @@ config = DynamicOpsConfig()
 
 # Scheduling
 config.step_every = 50                    # Run every N iterations
+config.relocation_stop_fraction = 1.0     # Stop after this fraction of the fit (1.0 = no cutoff)
 
 # Peak finding
 config.k_max_residuals = 40               # Max peaks to analyze
@@ -98,6 +99,8 @@ config.max_relocations_per_step = 64      # Cap relocations per step (None = no 
 
 # Relocation parameters
 config.init_sigma_vox = 0.5               # Initial sigma for relocated splats
+config.relocation_reseed_sigma_vox = None # Override the reseed sigma (None = init_sigma_vox)
+config.reset_adam_on_relocation = True    # Clear Adam moments on relocated splats
 config.min_contribution_threshold = 0.01  # Min influence to consider peak "covered"
 config.enable_coverage_check = False      # If True, skip peaks already covered
 
@@ -190,8 +193,8 @@ by existing non-weak splats:
 For each matched (splat_idx, peak_coords) pair:
 1. **CENTER**: Convert coords to raw (logit) space
 2. **AMPLITUDE**: Set to residual value at new location
-3. **COVARIANCE**: Reset to isotropic (`init_sigma_vox`)
-4. **OPTIMIZER STATE**: Reset Adam momentum/variance for relocated parameters
+3. **COVARIANCE**: Reset to isotropic (`relocation_reseed_sigma_vox`, or `init_sigma_vox` when unset)
+4. **OPTIMIZER STATE**: Reset Adam momentum/variance for relocated parameters when `reset_adam_on_relocation=True`
 
 ## Package Structure
 
