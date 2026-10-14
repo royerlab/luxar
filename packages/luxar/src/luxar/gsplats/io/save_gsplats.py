@@ -256,6 +256,8 @@ _FITTING_INFO_KEYS = (
     "splats_near_relocation_init_sigma_fraction",
     "splats_near_sigma_min_count",
     "splats_near_sigma_min_fraction",
+    # Internal packed classifications carried only by intermediate tile stores.
+    "_fit_scale_population_bits",
     # What the splats represent. These describe the fit's INPUT, so they belong
     # beside the fit's other statistics rather than in the pipeline bucket that
     # catches everything else. Without them a stored dataset cannot say how much

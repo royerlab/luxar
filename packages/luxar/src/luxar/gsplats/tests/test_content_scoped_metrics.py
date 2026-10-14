@@ -1362,9 +1362,15 @@ def test_a_real_fit_still_publishes_its_psnr() -> None:
     )
     assert "psnr_db" in result.stats, "a default fit lost its own measured PSNR"
     assert "final_max_abs_error" in result.stats
-    assert not _FINAL_SCALE_POPULATION_STATS_KEYS & result.stats.keys(), (
-        "a default fit published pre-trim scale populations for its trimmed splat set"
+    assert set(_FINAL_SCALE_POPULATION_STATS_KEYS) <= result.stats.keys(), (
+        "the closing trim dropped the fit's final scale populations"
     )
+    for name in ("fit_init_sigma", "relocation_init_sigma", "sigma_min"):
+        count = result.stats[f"splats_near_{name}_count"]
+        fraction = result.stats[f"splats_near_{name}_fraction"]
+        if count is not None:
+            assert 0 <= count <= result.n_splats
+            assert fraction == pytest.approx(count / result.n_splats)
 
 
 @pytest.mark.slow

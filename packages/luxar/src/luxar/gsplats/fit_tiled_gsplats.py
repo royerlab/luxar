@@ -384,10 +384,14 @@ def _cull_keeping_measured_scores(data: GSplatData, retention: float) -> GSplatD
         measured_stats_snapshot,
         restore_measured_stats,
     )
+    from luxar.gsplats.fitting.scale_population import reduce_population_stats
 
     measured = measured_stats_snapshot(data)
-    out = data.cull(method="cumulative", retention=retention)
-    return restore_measured_stats(out, measured)
+    kept: list[np.ndarray] = []
+    out = data.cull(method="cumulative", retention=retention, keep_mask_out=kept)
+    restore_measured_stats(out, measured)
+    reduce_population_stats(data.stats, out.stats, kept[0])
+    return out
 
 
 def _tile_norm_range(
@@ -758,6 +762,7 @@ def fit_tile(
             voxel_size=voxel_size,
             output_space=output_space,
             cull_retention=None,  # The merge step applies retention.
+            _carry_scale_population=True,
             **fit_kwargs,
         )
 
@@ -1418,6 +1423,12 @@ def merge_tile_results(
     if len(results) == 0:
         return _empty_merge(volume_shape, results, applied_floor)
 
+    from luxar.gsplats.fitting.scale_population import (
+        finish_population_stats,
+        merge_population_stats,
+        sum_population_counts,
+    )
+
     # Partition: keep one part per tile (frustum culling). Apodized tiles sum
     # correctly as additive parts; cull each tile independently (the flat path's
     # single global cull has no meaning once tiles stay separate parts). Each
@@ -1438,6 +1449,8 @@ def merge_tile_results(
         regions = [r for _, r in indexed]
         if not regions:
             return _empty_merge(volume_shape, results, applied_floor)
+        for region in regions:
+            finish_population_stats(region.stats)
         # The grid this merge re-derives has to be the one the tiles were fitted
         # on, and `fold_tile_slivers` is the only thing that can make it differ.
         # An external caller that built an UNFOLDED grid itself and did not say
@@ -1493,6 +1506,9 @@ def merge_tile_results(
             source_itemsize=source_itemsize,
             source_stored_bytes=source_stored_bytes,
         )
+        sum_population_counts(
+            [region.stats for region in regions], fit_stats, int(total_splats(node))
+        )
         _score_merged_if_reference(
             regions,
             volume,
@@ -1518,6 +1534,8 @@ def merge_tile_results(
         merged = _merge_lods_across_tiles(results)
     else:
         merged = GSplatData.concatenate(results)
+    if not has_lods:
+        merge_population_stats([result.stats for result in results], merged.stats)
 
     if verbose:
         lod_info = f", {merged.n_additive_sublods} LODs" if has_lods else ""
@@ -1552,6 +1570,7 @@ def merge_tile_results(
             source_stored_bytes=source_stored_bytes,
         )
     )
+    finish_population_stats(merged.stats)
     _stamp_merge_normalization(
         merged.stats, results, applied_floor, floor_strategy=floor_strategy
     )

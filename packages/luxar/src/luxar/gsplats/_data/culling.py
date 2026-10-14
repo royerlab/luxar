@@ -35,6 +35,7 @@ class CullingMixin(_GSplatDataOps):
         amplitude_percentile: float = 5.0,
         volume_percentile: float = 95.0,
         verbose: bool = False,
+        keep_mask_out: list[np.ndarray] | None = None,
     ) -> "GSplatData":
         """Cull splats that contribute negligibly to the reconstruction.
 
@@ -134,6 +135,11 @@ class CullingMixin(_GSplatDataOps):
             else:
                 method = "cumulative"
 
+        if keep_mask_out is not None and (
+            method != "cumulative" or self.n_substitutive > 1
+        ):
+            raise ValueError("keep_mask_out requires single-level cumulative culling")
+
         # Multi-substitutive: cull EVERY substitutive level and rebuild the
         # pyramid (decision 6) rather than collapsing to the default level via
         # the single-level mask that the strategies below feed to self.filter().
@@ -185,6 +191,7 @@ class CullingMixin(_GSplatDataOps):
                 retention=retention,
                 amplitude_percentile=amplitude_percentile,
                 volume_percentile=volume_percentile,
+                keep_mask_out=keep_mask_out,
             )
 
         # =================================================================
@@ -289,6 +296,7 @@ class CullingMixin(_GSplatDataOps):
         retention: float = 0.95,
         amplitude_percentile: float = 5.0,
         volume_percentile: float = 95.0,
+        keep_mask_out: list[np.ndarray] | None = None,
     ) -> "GSplatData":
         """Heuristic culling methods (no rendering needed)."""
         N_original = self.n_splats
@@ -362,6 +370,8 @@ class CullingMixin(_GSplatDataOps):
         else:
             raise ValueError(f"Unknown heuristic method: {method!r}")
 
+        if keep_mask_out is not None:
+            keep_mask_out.append(mask.copy())
         result = self.filter(mask)
 
         # float64 for the same reason as the cumsum above: a float32 reduction

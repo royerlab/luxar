@@ -229,6 +229,7 @@ def fit_gaussian_splats(
     source_dtype: Optional[str] = None,
     source_shape: Optional[Sequence[int]] = None,
     source_stored_bytes: Optional[int] = None,
+    _carry_scale_population: bool = False,
     **seed_kwargs: Any,
 ) -> GSplatData:
     """
@@ -618,6 +619,7 @@ def fit_gaussian_splats(
             measured_stats_snapshot,
             restore_measured_stats,
         )
+        from luxar.gsplats.fitting.scale_population import reduce_population_stats
 
         n_before = result.n_splats
         amp_before = float(np.sum(result.amplitudes))
@@ -626,8 +628,13 @@ def fit_gaussian_splats(
         # the FIT: the alternative to carrying the measurement over is a fit that
         # publishes no PSNR at all, and re-scoring costs a second full render.
         measured = measured_stats_snapshot(result)
-        result = result.cull(method="cumulative", retention=cull_retention)
+        before_stats = result.stats
+        kept: list[np.ndarray] = []
+        result = result.cull(
+            method="cumulative", retention=cull_retention, keep_mask_out=kept
+        )
         restore_measured_stats(result, measured)
+        reduce_population_stats(before_stats, result.stats, kept[0])
         n_removed = n_before - result.n_splats
         amp_after = float(np.sum(result.amplitudes))
         amp_retained_pct = 100.0 * amp_after / amp_before if amp_before > 0 else 100.0
@@ -641,4 +648,8 @@ def fit_gaussian_splats(
                 f"amplitude retained: {amp_retained_pct:.1f}%)"
             )
 
+    if not _carry_scale_population:
+        from luxar.gsplats.fitting.scale_population import finish_population_stats
+
+        finish_population_stats(result.stats)
     return result
