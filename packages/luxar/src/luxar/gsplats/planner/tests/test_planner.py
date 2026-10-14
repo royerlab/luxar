@@ -25,6 +25,44 @@ from luxar.gsplats.planner import (
 from luxar.gsplats.planner.fit_planned_parallel import max_padded_box_voxels
 
 
+@pytest.mark.parametrize("partition", [False, True])
+def test_planned_merge_keeps_relocation_history_without_stale_population(
+    partition: bool,
+) -> None:
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.planner.fit_planned import _planned_merge_stats
+
+    regions = [
+        GSplatData(
+            centers=np.array([[float(i), 0.0]], np.float32),
+            amplitudes=np.ones(1, np.float32),
+            cholesky_factors=np.array([[1.0, 0.0, 1.0]], np.float32),
+            stats={
+                "dynamic_ops_relocation_events": i + 2,
+                "dynamic_ops_unique_splats_relocated": i + 1,
+                "relocation_reseed_sigma_vox_effective": 0.5,
+                # A planned box already dropped this after keeping its core.
+                **({"splats_near_relocation_init_sigma_count": 1} if i == 0 else {}),
+            },
+        )
+        for i in range(2)
+    ]
+    stats = _planned_merge_stats(
+        regions,
+        n_boxes=2,
+        n_boxes_fit=2,
+        overlap=1,
+        volume_shape=(4, 4),
+        elapsed=1.0,
+        delivered_splats=2,
+        partition=partition,
+    )
+    assert stats["dynamic_ops_relocation_events"] == 5
+    assert stats["dynamic_ops_unique_splats_relocated"] == 3
+    assert stats["relocation_reseed_sigma_vox_effective"] == 0.5
+    assert "splats_near_relocation_init_sigma_count" not in stats
+
+
 def _corner_blobs(shape=(128, 128, 128), n=16, corner=64, seed=0):
     """Volume with n separated blobs packed into the [:corner]^3 corner."""
     V = np.zeros(shape, np.float32)
