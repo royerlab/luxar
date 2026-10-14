@@ -16,6 +16,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
+import numpy as np
 import torch
 from arbol import aprint
 
@@ -66,6 +67,25 @@ def _completed_relocation_statistics(
         "total_relocations": tracker_statistics["total_relocations"],
         "unique_splats": tracker_statistics["unique_splats"],
     }
+
+
+def _relocated_snapshot(
+    tracker: Optional[RecentlyRelocatedTracker],
+) -> Optional[torch.Tensor]:
+    if tracker is None:
+        return None
+    return (tracker.last_relocation_step >= 0).detach().clone()
+
+
+def _returned_relocated_mask(
+    best_state: Optional[dict[str, Any]],
+    tracker: Optional[RecentlyRelocatedTracker],
+) -> Optional[np.ndarray]:
+    if best_state is not None and best_state.get("relocated") is not None:
+        return np.asarray(best_state["relocated"].cpu().numpy())
+    if tracker is not None:
+        return (tracker.last_relocation_step >= 0).cpu().numpy()
+    return None
 
 
 def _compute_eval_metrics(
@@ -238,6 +258,13 @@ def run_optimization_loop(
                 "Ls": Ls.detach().clone(),
                 "amps": amps.detach().clone(),
                 "iteration": it,
+                # Snapshot the ever-relocated mask IN THIS SNAPSHOT'S ORDER (#2734).
+                # A later Morton sort reorders the live tracker, so the tracker's
+                # final mask would both misalign with and mislabel these returned
+                # (best-loss) splats — a relocation after this iteration does not
+                # apply to the state captured here. Captured in lockstep with the
+                # params above, it stays correct whatever sorts follow.
+                "relocated": _relocated_snapshot(relocation_tracker),
                 "max_abs_error": current_max_abs_error,  # last known
                 "rel_l2": current_rel_l2,  # last known
                 "loss": 0.0,  # placeholder, updated on eval
@@ -247,7 +274,11 @@ def run_optimization_loop(
 
         # --- Periodic full evaluation (expensive — involves second forward pass) ---
         need_dynamic = (
-            config.enable_dynamic_ops and it % config.dynamic_config.step_every == 0
+            config.enable_dynamic_ops
+            and it % config.dynamic_config.step_every == 0
+            # Tail cutoff (#2734): stop relocating past the configured fraction
+            # of the schedule. Default 1.0 -> always true (no-op).
+            and it <= config.dynamic_config.relocation_stop_fraction * config.n_iters
         )
         need_eval = it % _EVAL_INTERVAL == 0 or it <= 5 or need_dynamic
 
@@ -462,6 +493,14 @@ def run_optimization_loop(
 
     relocation_statistics = _completed_relocation_statistics(relocation_tracker)
 
+    # Ever-relocated mask (#2734), ALIGNED WITH THE RETURNED SPLATS. The returned
+    # centers/Ls/amps are the best-loss snapshot, so use the mask captured into
+    # best_state at that iteration (correct whatever Morton sorts followed). Fall
+    # back to the live tracker only when no snapshot was ever recorded (degenerate
+    # no-improvement fit, where the returned params are the live model). None when
+    # dynamic ops were disabled.
+    relocated_mask = _returned_relocated_mask(best_state, relocation_tracker)
+
     return OptimizationResults(
         centers=centers,
         Ls=Ls,
@@ -477,6 +516,7 @@ def run_optimization_loop(
         start_time=start_time,
         end_time=end_time,
         relocation_statistics=relocation_statistics,
+        relocated_mask=relocated_mask,
     )
 
 

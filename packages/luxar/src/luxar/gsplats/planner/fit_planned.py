@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Tuple
 import numpy as np
 
 from luxar.gsplats.fit_basis import fit_image_min
+from luxar.gsplats.fit_tiled_gsplats import _aggregate_relocation_diagnostics
 from luxar.gsplats.merged_quality import (
     announce_unscored_merge,
     resolve_merged_reference,
@@ -89,6 +90,7 @@ def _planned_merge_stats(
     if parallel_jobs is not None:
         stats["parallel_jobs"] = int(parallel_jobs)
         stats["elapsed_seconds"] = float(elapsed)
+    _aggregate_relocation_diagnostics(stats, regions, delivered_splats, regions)
     return stats
 
 
