@@ -129,6 +129,38 @@ def test_intermediate_tile_store_round_trips_classifications(tmp_path) -> None:
     )
 
 
+def test_real_fit_does_not_write_population_bits_as_lod_stats(tmp_path) -> None:
+    import zarr
+
+    from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+
+    yy, xx = np.mgrid[:12, :12]
+    volume = np.exp(-((yy - 6) ** 2 + (xx - 6) ** 2) / 8).astype(np.float32)
+    result = fit_gaussian_splats(
+        volume,
+        seeds=8,
+        n_iters=3,
+        device="cpu",
+        verbose=False,
+        enable_dynamic_ops=False,
+    )
+    assert MASK_KEY not in result.stats
+    assert MASK_KEY in result.additive_sublods[0].stats
+    result.tree.meta["stats"] = {
+        "quality": 0.9,
+        MASK_KEY: result.additive_sublods[0].stats[MASK_KEY],
+    }
+
+    path = tmp_path / "fit.gsplats.zarr"
+    result.save(path)
+    assert all(MASK_KEY not in item.read_text() for item in path.rglob("zarr.json"))
+    root = zarr.open_group(str(path), mode="r")
+    assert root.attrs["level_stats"] == {"quality": 0.9}
+    assert root["fitting"].attrs["splats_near_fit_init_sigma_count"] == result.stats[
+        "splats_near_fit_init_sigma_count"
+    ]
+
+
 @pytest.mark.parametrize(
     "partition,expected_count,expected_splats", [(False, 1, 2), (True, 2, 3)]
 )

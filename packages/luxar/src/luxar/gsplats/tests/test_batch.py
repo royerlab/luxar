@@ -1491,6 +1491,7 @@ class TestMergeOrchestrator:
                 tile.stats[MASK_KEY] = encode_population_bits(
                     np.array([1, 0, 0, 0], dtype=np.uint8)
                 )
+                tile.additive_sublods[0].stats[MASK_KEY] = tile.stats[MASK_KEY]
                 tile.save(
                     tiles_dir / output_filename(t, 0, k, n_timepoints, 1, n_tiles)
                 )
