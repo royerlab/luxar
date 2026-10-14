@@ -16,6 +16,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
+import numpy as np
 import torch
 from arbol import aprint
 
@@ -66,6 +67,25 @@ def _completed_relocation_statistics(
         "total_relocations": tracker_statistics["total_relocations"],
         "unique_splats": tracker_statistics["unique_splats"],
     }
+
+
+def _relocated_snapshot(
+    tracker: Optional[RecentlyRelocatedTracker],
+) -> Optional[torch.Tensor]:
+    if tracker is None:
+        return None
+    return (tracker.last_relocation_step >= 0).detach().clone()
+
+
+def _returned_relocated_mask(
+    best_state: Optional[dict[str, Any]],
+    tracker: Optional[RecentlyRelocatedTracker],
+) -> Optional[np.ndarray]:
+    if best_state is not None and best_state.get("relocated") is not None:
+        return best_state["relocated"].cpu().numpy()
+    if tracker is not None:
+        return (tracker.last_relocation_step >= 0).cpu().numpy()
+    return None
 
 
 def _compute_eval_metrics(
@@ -244,11 +264,7 @@ def run_optimization_loop(
                 # (best-loss) splats — a relocation after this iteration does not
                 # apply to the state captured here. Captured in lockstep with the
                 # params above, it stays correct whatever sorts follow.
-                "relocated": (
-                    (relocation_tracker.last_relocation_step >= 0).detach().clone()
-                    if relocation_tracker is not None
-                    else None
-                ),
+                "relocated": _relocated_snapshot(relocation_tracker),
                 "max_abs_error": current_max_abs_error,  # last known
                 "rel_l2": current_rel_l2,  # last known
                 "loss": 0.0,  # placeholder, updated on eval
@@ -483,11 +499,7 @@ def run_optimization_loop(
     # back to the live tracker only when no snapshot was ever recorded (degenerate
     # no-improvement fit, where the returned params are the live model). None when
     # dynamic ops were disabled.
-    relocated_mask = None
-    if best_state is not None and best_state.get("relocated") is not None:
-        relocated_mask = best_state["relocated"].cpu().numpy()
-    elif relocation_tracker is not None:
-        relocated_mask = (relocation_tracker.last_relocation_step >= 0).cpu().numpy()
+    relocated_mask = _returned_relocated_mask(best_state, relocation_tracker)
 
     return OptimizationResults(
         centers=centers,
