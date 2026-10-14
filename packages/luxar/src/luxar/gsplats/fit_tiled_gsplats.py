@@ -957,9 +957,7 @@ def _tiled_source_grid_stats(
     return out
 
 
-#: Per-fit relocation diagnostic COUNT keys (#2734) that are summed across tiles
-#: on a merge. ``GSplatData.concatenate`` drops per-tile stats, so without this a
-#: partition/tiled merge reads them as ABSENT (#2744 drop).
+#: Run history and final-population counts need different merge scopes (#2734).
 _RELOCATION_HISTORY_KEYS = (
     "dynamic_ops_relocation_events",
     "dynamic_ops_unique_splats_relocated",
@@ -987,9 +985,9 @@ def _aggregate_relocation_diagnostics(
     """Carry the per-tile relocation diagnostics (#2734) onto the merged root.
 
     ``GSplatData.concatenate`` drops per-tile stats, so a partition/tiled merge
-    otherwise reports the relocation diagnostic keys as ABSENT (#2744). Sum the
-    History describes the fitting runs. Population counts describe the delivered
-    splats and are emitted only when every delivered region retains its counts.
+    otherwise reports the relocation diagnostic keys as ABSENT (#2744). History
+    describes the fitting runs. Population counts describe the delivered splats
+    and are emitted only when every delivered region retains its counts.
     """
     sums: dict[str, int] = {}
     for result in results:
@@ -1001,18 +999,7 @@ def _aggregate_relocation_diagnostics(
             sums[key] = sums.get(key, 0) + int(value)
     stats.update(sums)
 
-    if population_results:
-        populated = [r for r in population_results if r.n_splats > 0]
-        if populated and all(
-            all(key in r.stats for key in _RELOCATION_POPULATION_KEYS)
-            for r in populated
-        ):
-            for key in _RELOCATION_POPULATION_KEYS:
-                stats[key] = sum(int(r.stats[key]) for r in populated)
-            if delivered_splats:
-                stats["splats_near_relocation_init_sigma_fraction"] = (
-                    stats["splats_near_relocation_init_sigma_count"] / delivered_splats
-                )
+    _aggregate_relocation_population(stats, population_results, delivered_splats)
 
     for key in _RELOCATION_DIAGNOSTIC_SHARED_KEYS:
         for result in results:
@@ -1021,6 +1008,27 @@ def _aggregate_relocation_diagnostics(
             if value is not None:
                 stats[key] = value
                 break
+
+
+def _aggregate_relocation_population(
+    stats: dict[str, Any],
+    regions: Optional[Sequence[GSplatData]],
+    delivered_splats: int,
+) -> None:
+    if not regions:
+        return
+    populated = [r for r in regions if r.n_splats > 0]
+    if sum(r.n_splats for r in populated) != delivered_splats or not all(
+        all(key in r.stats for key in _RELOCATION_POPULATION_KEYS) for r in populated
+    ):
+        return
+    for key in _RELOCATION_POPULATION_KEYS:
+        stats[key] = sum(int(r.stats[key]) for r in populated)
+    if delivered_splats:
+        stats["splats_near_relocation_init_sigma_fraction"] = (
+            stats["splats_near_relocation_init_sigma_count"] / delivered_splats
+        )
+
 
 def _merged_fit_stats(
     results: Sequence[GSplatData],
@@ -1611,7 +1619,9 @@ def merge_tile_results(
         _merged_fit_stats(
             results,
             delivered_splats=merged.n_splats,
-            population_results=results if merged.n_splats == merged_before_cull else None,
+            population_results=results
+            if merged.n_splats == merged_before_cull
+            else None,
             volume_shape=volume_shape,
             tile_size=tile_size,
             overlap=overlap,

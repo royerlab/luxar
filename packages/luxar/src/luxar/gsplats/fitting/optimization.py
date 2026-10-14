@@ -82,7 +82,7 @@ def _returned_relocated_mask(
     tracker: Optional[RecentlyRelocatedTracker],
 ) -> Optional[np.ndarray]:
     if best_state is not None and best_state.get("relocated") is not None:
-        return best_state["relocated"].cpu().numpy()
+        return np.asarray(best_state["relocated"].cpu().numpy())
     if tracker is not None:
         return (tracker.last_relocation_step >= 0).cpu().numpy()
     return None
