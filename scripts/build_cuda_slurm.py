@@ -469,7 +469,10 @@ def main() -> None:
         die(
             "Could not determine PyTorch CUDA version.\n\n"
             "  Make sure PyTorch with CUDA support is installed in the hatch env:\n"
-            "    hatch run pip install torch --index-url https://download.pytorch.org/whl/cu128\n\n"
+            "    hatch run pip install torch --index-url https://download.pytorch.org/whl/cu130\n"
+            "  (cu130 for a CUDA 13.x module / Blackwell; cu128 or cu126 for CUDA 12.x —\n"
+            "  the wheel's CUDA major must match the cuda/ module you load; cu130\n"
+            "  needs NVIDIA driver >= 580, use cu128 on an older driver)\n\n"
             "  Then run again: make build-cuda SLURM=1"
         )
     print(f"PyTorch was built for CUDA {torch_cuda}")

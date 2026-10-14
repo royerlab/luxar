@@ -30,7 +30,12 @@ repository. There are two install stories, then per-machine additions:
 
 ## Common base (all profiles)
 
-Prerequisites: **Python 3.12+**, git, curl, `make`. Then:
+Prerequisites: **Python 3.12+** (with headers and `venv`), git, curl, `make`, a
+C compiler and `jq`; on Linux also the GL/EGL runtime libraries. The one list,
+identical in the README, CONTRIBUTING.md and BUILD_SYSTEM_SPEC.md:
+`sudo apt-get install -y make build-essential git curl jq python3-dev python3-venv pipx libegl1 libgl1-mesa-dri libegl-mesa0 libgbm1 libgles2`
+on Ubuntu/Debian; `xcode-select --install` plus `brew install python@3.12 pipx jq`
+on macOS. Then:
 
 ```bash
 git clone https://github.com/royerlab/luxar

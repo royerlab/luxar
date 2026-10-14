@@ -833,11 +833,34 @@ macOS or Linux app.
 
 ## Development and contributing
 
+`make setup-dev` installs everything else without sudo, but a fresh machine
+needs these system packages first:
+
+```bash
+# Ubuntu/Debian (24.04+ / Debian 13+ ship Python 3.12+)
+sudo apt-get update
+sudo apt-get install -y make build-essential git curl jq \
+    python3-dev python3-venv pipx \
+    libegl1 libgl1-mesa-dri libegl-mesa0 libgbm1 libgles2
+pipx ensurepath && source ~/.bashrc
+
+# macOS
+xcode-select --install             # make, git, curl, a C compiler (clang)
+brew install python@3.12 pipx jq   # or Python 3.12+ from python.org
+```
+
+Playwright E2E runs additionally need the browser and its system libraries:
+`cd packages/luxar-viewer && npx playwright install --with-deps chromium`
+(`npx playwright install-deps` installs just the system libraries).
+
+The first `make setup-dev` builds a Hatch environment with torch and napari:
+expect 10-25 minutes and ~8 GB. Then:
+
 ```bash
 make setup-dev     # Node.js, pnpm, Hatch, pre-commit hooks (no sudo)
 make check-deps    # Verify the toolchain
 make test-fast     # Inner loop: Python (not slow) + TypeScript units
-make test-all      # Everything: Python incl. CUDA, Rust/WASM, TypeScript, Go
+make test-all      # Before pushing: Python incl. slow + CUDA, Rust/WASM, TypeScript, Go
 make check-all     # Lint, format, type-check (reformats the tree)
 make viewer        # Viewer dev server on port 5173
 make build-viewer  # Production build (needed by luxar export from a checkout)

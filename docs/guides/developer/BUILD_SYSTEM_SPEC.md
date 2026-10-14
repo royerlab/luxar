@@ -18,41 +18,65 @@ Luxar uses a Makefile-based build system designed to work on fresh Linux and mac
 
 ### Minimal Requirements
 
-Before running `make setup-dev`, you need:
+This is the ONE prerequisite list; the README and `CONTRIBUTING.md` repeat the
+same commands. Everything else (Node.js via nvm/Homebrew, pnpm, Hatch, the
+Python environment, the viewer's node_modules) is installed by `make setup-dev`
+without sudo.
 
-| Tool | Required Version | Notes |
-|------|-----------------|-------|
-| Python | 3.12+ | Usually pre-installed on Linux/macOS |
-| Git | Any | For cloning the repository |
-| curl | Any | For downloading installers |
+| Tool | Why |
+|------|-----|
+| `make`, `git`, `curl` | Drive the setup, clone, download installers (nvm, rustup) |
+| Python 3.12+ with headers and `venv` | Project floor; headers for any source-built wheel; `venv` for the Hatch fallback |
+| `pipx` | Installs Hatch on PEP 668 distros (Ubuntu 23.04+, Debian 12+) |
+| C/C++ compiler (`build-essential` / Xcode CLT) | Source-built wheels, and Rust links through `cc` (`make install-rust`, `make build-viewer`) |
+| `jq` | The CI-workflow tests execute jq scripts (they skip locally without it, and fail under CI) |
+| GL/EGL runtime libraries (Linux) | napari/Qt/vispy imports in the default env, and Playwright's headless WebGL |
 
 ### System-Specific Prerequisites
 
-**Ubuntu/Debian:**
+**Ubuntu/Debian** (Ubuntu 24.04+ / Debian 13+ ship Python 3.12+; on older
+releases install a 3.12 interpreter first):
 ```bash
-# Usually pre-installed, but if missing:
 sudo apt-get update
-sudo apt-get install -y python3 python3-venv git curl
-
-# Required for Hatch (pipx is needed on modern Ubuntu due to PEP 668)
-sudo apt-get install -y pipx
-pipx ensurepath
-source ~/.bashrc  # or restart terminal
+sudo apt-get install -y make build-essential git curl jq \
+    python3-dev python3-venv pipx \
+    libegl1 libgl1-mesa-dri libegl-mesa0 libgbm1 libgles2
+pipx ensurepath && source ~/.bashrc
 ```
+`pipx ensurepath` puts `~/.local/bin` (where Hatch lands) on PATH. The GL
+packages are the set CI installs for headless WebGL, plus `libgles2` (vispy's GL
+ES backend, imported through napari). Optional: `git-lfs` (only the Dip-C demo
+payload is LFS-backed).
 
 **Fedora/RHEL:**
 ```bash
-sudo dnf install -y python3 python3-pip git curl pipx
+sudo dnf install -y make gcc gcc-c++ git curl jq python3 python3-devel pipx \
+    mesa-libEGL mesa-libGL mesa-dri-drivers mesa-libgbm
 pipx ensurepath
 ```
 
 **macOS:**
 ```bash
-# Python 3 comes with macOS or install via:
-xcode-select --install  # Command line tools
-# or
-brew install python@3.12
+xcode-select --install             # make, git, curl, a C compiler (clang)
+brew install python@3.12 pipx jq   # or Python 3.12+ from python.org
 ```
+macOS needs no GL packages. Homebrew is not strictly required for these, but
+`make setup-dev` installs Node.js through it (and installs Homebrew if absent).
+Optional: `brew install git-lfs`.
+
+Playwright E2E runs additionally need the browser and its system libraries:
+`cd packages/luxar-viewer && npx playwright install --with-deps chromium`
+(`npx playwright install-deps` installs just the system libraries).
+
+**What `make setup-dev` takes:** the first run creates the Hatch default
+environment, which downloads torch (CUDA wheels on Linux), napari with Qt,
+sentence-transformers and friends — typically 10-25 minutes and ~8 GB on a cold
+cache. The installer output streams (`hatch -v env create`), and a failure stops
+the setup with a pointer rather than being swallowed. Every run then checks the
+environment with a verbose `hatch -v run python -c "import luxar"`: on a complete
+env that is a quick no-op, and after an interrupted first run (Ctrl-C, dropped
+network) it visibly installs whatever is missing — or fails with the
+`hatch env remove default` hint — instead of the sync happening silently later.
 
 ## Quick Start
 
@@ -253,7 +277,7 @@ MIN_NODE_MINOR := 22
 | `make check-typescript` | Run all TypeScript checks (typecheck, lint, test) |
 | `make check-rust` | Run Rust type/lint checks (cargo check + clippy) |
 | `make check-knip` | **Report only, non-gating** — full knip (unused files/exports/types + `@internal` tag hints). Two gates run inside `make check-all`: `check:knip:ci` (`files,dependencies`, zero tolerance) and `check:knip:ratchet` (unused exports/types/enum members ratcheted against `packages/luxar-viewer/knip-baseline.json`: a new entry fails, a paid-down or moved one fails until `pnpm run check:knip:ratchet --update-baseline`, and a `knip.json` or issue-type change fails closed). |
-| `make test-fast` | Inner loop, **not a gate**: Python under xdist with `-m 'not slow'` plus the TypeScript units, no coverage. Scope it with `PYTEST_ARGS` — which *replaces* the default paths (`make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'`); options-only args fall through to pytest's `testpaths`. `LUXAR_PYTEST_JOBS` sets the worker count. |
+| `make test-fast` | Inner loop, **not a gate**: Python under xdist with `-m 'not slow'` plus the TypeScript units, no coverage. Scope it with `PYTEST_ARGS` — which *replaces* the default paths (`make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'`); options-only args fall through to pytest's `testpaths`. `LUXAR_PYTEST_JOBS` sets the worker count. Both halves always run and the exit status aggregates them; Ctrl-C during the Python half stops there. `--max-worker-restart=0` (also in the local `hatch run test` / `test-cov-all` scripts) aborts the run at the first worker crash instead of respawning workers and hanging at 99%. |
 | `make test-all` | Run all tests (Python + Rust/WASM + TypeScript, plus Go launcher tests when that toolchain is available). CUDA extension tests are part of the Python suite — they live under pytest's `testpaths` and skip themselves without a GPU. |
 | `make test-cov-all` | Run all tests with coverage (Python, minus `-m slow`, + TypeScript) |
 | `make test-python` | Run Python tests only |
