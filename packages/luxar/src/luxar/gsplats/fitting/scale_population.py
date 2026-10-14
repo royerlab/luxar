@@ -46,7 +46,10 @@ def classify_scales(
     for _, target_key, flag in _CANDIDATES:
         target = _target(stats, target_key)
         if target is not None:
-            near = np.all(np.abs(marginal - np.asarray(target)) <= tolerance, axis=1)
+            near = np.all(
+                np.abs(marginal - np.asarray(target, dtype=np.float32)) <= tolerance,
+                axis=1,
+            )
             bits[near] |= flag
     if relocated is not None and relocated.shape == (len(bits),):
         bits[np.asarray(relocated, dtype=bool)] |= _RELOCATED

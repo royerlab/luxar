@@ -1802,6 +1802,12 @@ class TestPlannedFitTruncationRadius:
         assert node.meta["fit_stats"]["mse"] == pytest.approx(flat.stats["mse"])
         assert node.meta["fit_stats"]["planned_fit"] is True
         assert node.meta["fit_stats"]["n_splats"] == node.n_splats
+        count_key = "splats_near_relocation_init_sigma_count"
+        fraction_key = "splats_near_relocation_init_sigma_fraction"
+        assert node.meta["fit_stats"][count_key] == flat.stats[count_key]
+        assert node.meta["fit_stats"][fraction_key] == pytest.approx(
+            node.meta["fit_stats"][count_key] / node.n_splats
+        )
         assert "concatenated_from" not in node.meta["fit_stats"]
         assert node.meta["fit_stats"]["splats_per_tile"]
         assert "image_max" not in node.meta["fit_stats"]
