@@ -84,6 +84,15 @@ def _anchors(path: Path) -> set[str]:
     return {_slug(h) for h in _HEADING.findall(path.read_text(encoding="utf-8"))}
 
 
+def _orphan_references(skill: Path, seen: set[Path]) -> list[str]:
+    return [
+        f"references/{ref.name} is not reachable from SKILL.md through "
+        "markdown links, so no agent will ever load it"
+        for ref in sorted((skill / "references").glob("*.md"))
+        if ref.resolve() not in seen
+    ]
+
+
 def skill_link_problems(skill: Path) -> list[str]:
     """Dead links, dead anchors, and references unreachable from SKILL.md.
 
@@ -116,12 +125,7 @@ def skill_link_problems(skill: Path) -> list[str]:
                 problems.append(f"{rel_current} links to {target}: no such heading")
             if dest.is_relative_to(skill.resolve()):
                 queue.append(dest)
-    for ref in sorted((skill / "references").glob("*.md")):
-        if ref.resolve() not in seen:
-            problems.append(
-                f"references/{ref.name} is not reachable from SKILL.md through "
-                "markdown links, so no agent will ever load it"
-            )
+    problems.extend(_orphan_references(skill, seen))
     return problems
 
 
