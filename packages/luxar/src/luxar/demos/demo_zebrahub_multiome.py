@@ -34,8 +34,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
-from pathlib import Path
 
 import fsspec
 import numpy as np
@@ -134,7 +132,7 @@ def main() -> None:
 
     coords, attrs, category_maps = load_cells_data()
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output = get_demos_output_dir() / "zebrahub_multiome.luxar.zarr"
         with asection("Building Scene"):
@@ -249,126 +247,124 @@ def main() -> None:
         aprint(f"Dataset generated at {output}")
         return
 
-    # Use temporary directory for serving (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_zebrahub_multiome_") as tmpdir:
-        output = Path(tmpdir) / "cells.luxar.zarr"
+    output = get_demos_output_dir() / "zebrahub_multiome.luxar.zarr"
 
-        with asection("Building Scene"):
-            # Create 2 views (celltype, timepoint)
-            all_pos, all_col = [], []
+    with asection("Building Scene"):
+        # Create 2 views (celltype, timepoint)
+        all_pos, all_col = [], []
 
-            for idx, (name, data) in enumerate(attrs.items()):
-                pos_4d = np.column_stack([np.full(len(coords), idx), coords])
-                all_pos.append(pos_4d)
-                all_col.append(attr_to_colors(data))
-                aprint(f"  View {idx}: {name}")
+        for idx, (name, data) in enumerate(attrs.items()):
+            pos_4d = np.column_stack([np.full(len(coords), idx), coords])
+            all_pos.append(pos_4d)
+            all_col.append(attr_to_colors(data))
+            aprint(f"  View {idx}: {name}")
 
-            positions = np.vstack(all_pos)
-            colors = np.vstack(all_col)
+        positions = np.vstack(all_pos)
+        colors = np.vstack(all_col)
 
-            # Hover labels: resolve integer codes to human-readable names
-            ct_map = category_maps.get("celltype", [])
-            tp_map = category_maps.get("timepoint", [])
-            per_cell_labels = [
-                f"{_category_label(ct_map, attrs['celltype'][i])}"
-                f" @ {_category_label(tp_map, attrs['timepoint'][i])}"
-                for i in range(len(coords))
+        # Hover labels: resolve integer codes to human-readable names
+        ct_map = category_maps.get("celltype", [])
+        tp_map = category_maps.get("timepoint", [])
+        per_cell_labels = [
+            f"{_category_label(ct_map, attrs['celltype'][i])}"
+            f" @ {_category_label(tp_map, attrs['timepoint'][i])}"
+            for i in range(len(coords))
+        ]
+        labels = per_cell_labels * len(attrs)
+
+        # Click a cell to look its type up in the EBI Ontology Lookup
+        # Service, right-click to copy the term (#1917). The label appends
+        # the timepoint, so the query needs the bare cell type from `keys=`.
+        # A cell whose code falls outside the map gets an empty key and its
+        # link suppresses, rather than searching for an integer.
+        per_cell_keys = [
+            str(ct_map[attrs["celltype"][i]])
+            if 0 <= attrs["celltype"][i] < len(ct_map)
+            else ""
+            for i in range(len(coords))
+        ]
+        celltype_keys = per_cell_keys * len(attrs)
+
+        dims = Dimensions(
+            [
+                Dimension(
+                    "view",
+                    unit="",
+                    categories=["Cell Type", "Timepoint"],
+                    display=False,
+                    description="Categorical view: color by cell type or developmental timepoint",
+                ),
+                Dimension("x", unit="UMAP", display=True),
+                Dimension("y", unit="UMAP", display=True),
+                Dimension("z", unit="UMAP", display=True),
             ]
-            labels = per_cell_labels * len(attrs)
+        )
 
-            # Click a cell to look its type up in the EBI Ontology Lookup
-            # Service, right-click to copy the term (#1917). The label appends
-            # the timepoint, so the query needs the bare cell type from `keys=`.
-            # A cell whose code falls outside the map gets an empty key and its
-            # link suppresses, rather than searching for an integer.
-            per_cell_keys = [
-                str(ct_map[attrs["celltype"][i]])
-                if 0 <= attrs["celltype"][i] < len(ct_map)
-                else ""
-                for i in range(len(coords))
-            ]
-            celltype_keys = per_cell_keys * len(attrs)
-
-            dims = Dimensions(
-                [
-                    Dimension(
-                        "view",
-                        unit="",
-                        categories=["Cell Type", "Timepoint"],
-                        display=False,
-                        description="Categorical view: color by cell type or developmental timepoint",
-                    ),
-                    Dimension("x", unit="UMAP", display=True),
-                    Dimension("y", unit="UMAP", display=True),
-                    Dimension("z", unit="UMAP", display=True),
-                ]
+        with LuxarZarrCompiler(output) as compiler:
+            scene = compiler.create_scene(
+                dimensions=dims,
+                citation=DEMO_META["citation"],
+                viewer_config=ViewerConfig(cinematic_mode=True),
+            )
+            scene.add_points(
+                "Cells",
+                positions,
+                colors=colors,
+                radii=np.full(len(positions), 0.02, dtype=np.float32),
+                sharpness=np.full(len(positions), 0.6, dtype=np.float32),
+                opacity=0.8,
+                intensity=0.25,
+                labels=labels,
+                keys=celltype_keys,
+                link="https://www.ebi.ac.uk/ols4/search?q={hover_key}",
+                copy="{hover_key}",
+                layer=True,
+                additive_lod=stream_ladder(
+                    len(positions),
+                    slices=hidden_axis_stops(positions, dims.non_displayed),
+                ),
             )
 
-            with LuxarZarrCompiler(output) as compiler:
-                scene = compiler.create_scene(
-                    dimensions=dims,
-                    citation=DEMO_META["citation"],
-                    viewer_config=ViewerConfig(cinematic_mode=True),
-                )
-                scene.add_points(
-                    "Cells",
-                    positions,
-                    colors=colors,
-                    radii=np.full(len(positions), 0.02, dtype=np.float32),
-                    sharpness=np.full(len(positions), 0.6, dtype=np.float32),
-                    opacity=0.8,
-                    intensity=0.25,
-                    labels=labels,
-                    keys=celltype_keys,
-                    link="https://www.ebi.ac.uk/ols4/search?q={hover_key}",
-                    copy="{hover_key}",
-                    layer=True,
-                    additive_lod=stream_ladder(
-                        len(positions),
-                        slices=hidden_axis_stops(positions, dims.non_displayed),
-                    ),
-                )
+            # --- Overlays ---
+            # Title
+            scene.add_text(
+                "Zebrahub Multiome — Integrated 3D UMAP",
+                position=(0.02, 0.02),
+                font_size=0.055,
+                anchor="top-left",
+                color="rgba(255,255,255,0.6)",
+                blend_mode="difference",
+            )
 
-                # --- Overlays ---
-                # Title
+            # Dimension-aware labels for view
+            for i, label in enumerate(["Cell Type", "Timepoint"]):
                 scene.add_text(
-                    "Zebrahub Multiome — Integrated 3D UMAP",
-                    position=(0.02, 0.02),
-                    font_size=0.055,
-                    anchor="top-left",
-                    color="rgba(255,255,255,0.6)",
-                    blend_mode="difference",
+                    label,
+                    position=(0.02, 0.97),
+                    font_size=0.015,
+                    anchor="bottom-left",
+                    color="#ffcc44",
+                    visible_range={"view": float(i)},
+                    transition="fade",
+                    transition_duration=0.15,
                 )
 
-                # Dimension-aware labels for view
-                for i, label in enumerate(["Cell Type", "Timepoint"]):
-                    scene.add_text(
-                        label,
-                        position=(0.02, 0.97),
-                        font_size=0.015,
-                        anchor="bottom-left",
-                        color="#ffcc44",
-                        visible_range={"view": float(i)},
-                        transition="fade",
-                        transition_duration=0.15,
-                    )
+            # Info + citation
+            add_demo_caption(
+                scene,
+                "95K cells • 32 cell types • Kim et al. 2024",
+                DEMO_META.get("citation"),
+            )
 
-                # Info + citation
-                add_demo_caption(
-                    scene,
-                    "95K cells • 32 cell types • Kim et al. 2024",
-                    DEMO_META.get("citation"),
-                )
+        aprint(f"{len(positions):,} total points ({len(coords):,} per view)")
 
-            aprint(f"{len(positions):,} total points ({len(coords):,} per view)")
+    aprint("")
+    aprint("NAVIGATION: Press '1' then [/] to switch:")
+    aprint("   0: Cell Type (32 types)")
+    aprint("   1: Timepoint (6 stages)")
+    aprint("")
 
-        aprint("")
-        aprint("NAVIGATION: Press '1' then [/] to switch:")
-        aprint("   0: Cell Type (32 types)")
-        aprint("   1: Timepoint (6 stages)")
-        aprint("")
-
-        launch_viewer(output)
+    launch_viewer(output)
 
     aprint("Done")
 

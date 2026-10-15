@@ -416,7 +416,7 @@ Luxar provides a CLI for common operations:
 luxar serve dataset.luxar.zarr
 
 # Create a demo dataset without serving
-luxar demo run lorenz -- --no-serve --points=100000
+luxar demo run lorenz --canonical -- --no-serve --points=100000
 
 # Get information about a dataset
 luxar info dataset.luxar.zarr

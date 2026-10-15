@@ -55,7 +55,6 @@ DEMO_META = {
 import argparse
 import hashlib
 import sys
-import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final
@@ -73,6 +72,7 @@ from luxar.demos import (
     FlowField,
     add_demo_caption,
     add_reference_cube_to_scene,
+    add_serve_arguments,
     cubic_bounds,
     launch_viewer,
     require_module,
@@ -1239,6 +1239,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "away from the nearest cell (default: preset value, 2.5–3.0)."
         ),
     )
+    add_serve_arguments(parser)
     return parser.parse_args(argv)
 
 
@@ -1352,37 +1353,34 @@ def main() -> None:
         )
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_zebrahub_velocity_") as tmpdir:
-        output_path = (
-            Path(tmpdir)
-            / f"zebrahub_velocity_streamlines_{preset.name}{lod_suffix}.luxar.zarr"
-        )
-        data, _flow, streamlines = generate_zebrahub_scene(
-            output_path,
-            cache_dir,
-            preset,
-            args.h5ad,
-            recompute_field,
-            recompute_streamlines,
-            streamline_lod=streamline_lod,
-        )
+    output_path = (
+        get_demos_output_dir()
+        / f"zebrahub_velocity_streamlines_{preset.name}{lod_suffix}.luxar.zarr"
+    )
+    data, _flow, streamlines = generate_zebrahub_scene(
+        output_path,
+        cache_dir,
+        preset,
+        args.h5ad,
+        recompute_field,
+        recompute_streamlines,
+        streamline_lod=streamline_lod,
+    )
 
-        aprint("")
-        aprint("=" * 72)
-        aprint("NAVIGATION")
-        aprint("=" * 72)
-        aprint("  Cells: colored by zebrafish_anatomy_ontology_class")
-        aprint("  Streamlines: forward RK4 advection through the velocity field")
-        aprint("  Hover cells for anatomy / developmental stage labels")
-        aprint(
-            f"  {len(data.positions):,} cells · "
-            f"{streamlines.streamline_count:,} streamlines · "
-            f"{len(data.anatomy_categories)} anatomy classes"
-        )
-        aprint("")
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete")
+    aprint("")
+    aprint("=" * 72)
+    aprint("NAVIGATION")
+    aprint("=" * 72)
+    aprint("  Cells: colored by zebrafish_anatomy_ontology_class")
+    aprint("  Streamlines: forward RK4 advection through the velocity field")
+    aprint("  Hover cells for anatomy / developmental stage labels")
+    aprint(
+        f"  {len(data.positions):,} cells · "
+        f"{streamlines.streamline_count:,} streamlines · "
+        f"{len(data.anatomy_categories)} anatomy classes"
+    )
+    aprint("")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

@@ -44,7 +44,6 @@ DEMO_META = {
 
 import json
 import sys
-import tempfile
 import zipfile
 from pathlib import Path
 
@@ -506,27 +505,22 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path} ({n:,} cells)")
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_chromatrace_") as tmpdir:
-        output_path = Path(tmpdir) / "chromatrace_choir_umap.luxar.zarr"
-        n = build_scene(
-            output_path, coords, attributes, category_maps, term_colors, groups
-        )
+    output_path = get_demos_output_dir() / "chromatrace_choir_umap.luxar.zarr"
+    n = build_scene(output_path, coords, attributes, category_maps, term_colors, groups)
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("NAVIGATION")
-        aprint("=" * 70)
-        aprint("  Press '1' then '[' / ']' to switch color views:")
-        aprint("     0: Cell Type (88 CHOIR bio-terms, curated palette)")
-        aprint("     1: Bio Group (8 broad lineages)")
-        aprint("  Hover any cell for its term + group")
-        aprint("")
-        aprint(f"  Total cells: {n:,}")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("NAVIGATION")
+    aprint("=" * 70)
+    aprint("  Press '1' then '[' / ']' to switch color views:")
+    aprint("     0: Cell Type (88 CHOIR bio-terms, curated palette)")
+    aprint("     1: Bio Group (8 broad lineages)")
+    aprint("  Hover any cell for its term + group")
+    aprint("")
+    aprint(f"  Total cells: {n:,}")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

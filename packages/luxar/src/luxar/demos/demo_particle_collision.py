@@ -100,7 +100,7 @@ Usage:
     python demo_particle_collision.py [--events=N] [--jets=N]
 
 Controls:
-    - Ctrl+C to stop and cleanup
+    - Ctrl+C to stop
     - Browser opens automatically
 """
 
@@ -126,7 +126,6 @@ DEMO_META = {
 
 import math
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -1296,7 +1295,7 @@ def main() -> None:
     aprint(f"Events: {n_events} | Jets per event: {n_jets}")
     aprint("")
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "collision.luxar.zarr"
         with asection("Generating detector scene"):
@@ -1307,41 +1306,35 @@ def main() -> None:
         aprint(f"Total: {total_segments:,} line segments, {total_points:,} points")
         return
 
-    # Use temporary directory for serving (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_collision_") as tmpdir:
-        output_path = Path(tmpdir) / "collision.luxar.zarr"
+    output_path = get_demos_output_dir() / "collision.luxar.zarr"
 
-        with asection("Generating detector scene"):
-            total_segments, total_points = generate_detector_scene(
-                output_path, n_events=n_events, n_jets_per_event=n_jets
-            )
-
-        aprint("")
-        aprint("=" * 70)
-        aprint(
-            f"SCENE COMPLETE: {total_segments:,} line segments, {total_points:,} points"
+    with asection("Generating detector scene"):
+        total_segments, total_points = generate_detector_scene(
+            output_path, n_events=n_events, n_jets_per_event=n_jets
         )
-        aprint("=" * 70)
-        aprint("")
-        aprint("Particle colors:")
-        aprint("  - Blue: electrons")
-        aprint("  - Red: positrons")
-        aprint("  - Green: muons (negative)")
-        aprint("  - Yellow: muons (positive)")
-        aprint("  - Orange/Brown: pions")
-        aprint("  - Pink: kaons")
-        aprint("  - Purple: protons")
-        aprint("  - White/cream: photons")
-        aprint("")
-        aprint("=" * 70)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 70)
-        aprint("Browser will open automatically. Press Ctrl+C when done.")
-        aprint("")
 
-        launch_viewer(output_path)
+    aprint("")
+    aprint("=" * 70)
+    aprint(f"SCENE COMPLETE: {total_segments:,} line segments, {total_points:,} points")
+    aprint("=" * 70)
+    aprint("")
+    aprint("Particle colors:")
+    aprint("  - Blue: electrons")
+    aprint("  - Red: positrons")
+    aprint("  - Green: muons (negative)")
+    aprint("  - Yellow: muons (positive)")
+    aprint("  - Orange/Brown: pions")
+    aprint("  - Pink: kaons")
+    aprint("  - Purple: protons")
+    aprint("  - White/cream: photons")
+    aprint("")
+    aprint("=" * 70)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 70)
+    aprint("Browser will open automatically. Press Ctrl+C when done.")
+    aprint("")
 
-    aprint("Cleanup complete - temporary files removed")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

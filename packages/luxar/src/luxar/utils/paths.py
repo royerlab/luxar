@@ -8,8 +8,14 @@ regardless of where scripts are run from.
 """
 
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
+
+#: Environment variable naming a custom-argument demo build (see
+#: :func:`get_demos_output_dir`), and the subdirectory such builds live under.
+DEMO_VARIANT_ENV = "LUXAR_DEMO_VARIANT"
+DEMO_VARIANTS_DIRNAME = "variants"
 
 
 @lru_cache(maxsize=1)
@@ -45,6 +51,21 @@ def _owns_imported_luxar(root: Path) -> bool:
 
     pkg_dir = Path(luxar.__file__).resolve().parent
     return (root / "packages" / "luxar" / "src" / "luxar").resolve() == pkg_dir
+
+
+def get_luxar_checkout_root() -> Path | None:
+    """The Luxar source-checkout root that owns the imported ``luxar``, or None.
+
+    ``None`` means this ``luxar`` is an installed wheel (or a non-editable install
+    inside an unrelated project), so advice that only works from a clone — ``make
+    build-launchers``, ``pnpm build`` in ``packages/luxar-viewer`` — must not be
+    given as if it could be followed.
+    """
+    try:
+        root = get_project_root()
+    except RuntimeError:
+        return None
+    return root if _owns_imported_luxar(root) else None
 
 
 def get_datasets_dir(create: bool = True) -> Path:
@@ -108,12 +129,22 @@ def get_demos_output_dir(create: bool = True) -> Path:
             Pass False for read-only path resolution (status/inventory), so a
             read-only command like ``luxar demo list`` never creates ``datasets/``.
 
+    ``LUXAR_DEMO_VARIANT`` (set by ``luxar demo run`` when a demo is given
+    non-default arguments) redirects to ``demos/variants/<variant>/``, so a
+    custom build never replaces the canonical scene that ``luxar demo`` marks
+    built and ``run-all`` skips.
+
     Returns:
         Path to the demos/ directory under the resolved datasets directory.
     """
     demos_dir = get_datasets_dir(create=create) / "demos"
+    variant = os.environ.get(DEMO_VARIANT_ENV, "").strip()
+    if variant:
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", variant) or variant in (".", ".."):
+            raise ValueError(f"{DEMO_VARIANT_ENV} must be a plain name: {variant!r}")
+        demos_dir = demos_dir / DEMO_VARIANTS_DIRNAME / variant
     if create:
-        demos_dir.mkdir(exist_ok=True)
+        demos_dir.mkdir(parents=True, exist_ok=True)
     return demos_dir
 
 

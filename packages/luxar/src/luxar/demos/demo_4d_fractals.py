@@ -7,7 +7,7 @@ This demo demonstrates:
 - 4th spatial dimension (W) navigation showing fractal slices
 - Millions of points with spatial indexing; each (fractal, w) slice
   shows its own subset, and every w slider stop shows structure
-- Complete workflow: generate → serve → view → cleanup
+- Complete workflow: generate → serve → view
 
 Mathematical Background:
     Geometric fractals use simple rules applied to 4D grids. All rules are
@@ -59,7 +59,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -834,55 +833,51 @@ def main() -> None:
     aprint("   Peak memory: ~24 GB; use a smaller --grid to reduce time and memory.")
     aprint("")
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "fractals_4d.luxar.zarr"
         generate_4d_fractal_dataset(output_path, grid_size=grid_size)
         aprint(f"Dataset generated at {output_path}")
         return
 
-    # Use temporary directory for serving (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_4d_fractals_") as tmpdir:
-        output_path = Path(tmpdir) / "fractals_4d.luxar.zarr"
+    output_path = get_demos_output_dir() / "fractals_4d.luxar.zarr"
 
-        # Generate all fractals
-        generate_4d_fractal_dataset(output_path, grid_size=grid_size)
+    # Generate all fractals
+    generate_4d_fractal_dataset(output_path, grid_size=grid_size)
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("NAVIGATION - EXPLORE 4D FRACTAL SPACE!")
-        aprint("=" * 70)
-        aprint("Once viewer opens:")
-        aprint("")
-        aprint("  1. Press '1' → Select FRACTAL TYPE")
-        aprint("     Press ']' to cycle through 6 different fractals")
-        aprint("     Each has unique 4D structure!")
-        aprint("")
-        aprint("  2. Press '2' → Select W dimension")
-        aprint("     Press '['/']' to navigate through 4D slices")
-        aprint("     Every stop shows structure - watch it evolve!")
-        aprint("")
-        aprint("What you're seeing:")
-        aprint("  • 3D slices through 4D fractals")
-        aprint("  • Colors show local structure (depth, shell, cell index)")
-        aprint("  • Navigate W to see how structure evolves")
-        aprint("  • Switch fractal type to compare geometries")
-        aprint("")
-        aprint("Try this:")
-        aprint("  1. Start with XOR fractal (fractal=0)")
-        aprint("  2. Navigate W dimension with [/]")
-        aprint("  3. Switch to other fractals (1=Menger, 2=Sierpinski, etc.)")
-        aprint("  4. Notice how each fractal has unique 4D structure")
-        aprint("")
-        aprint("=" * 70)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 70)
-        aprint("Browser will open automatically. Press Ctrl+C when done.")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("NAVIGATION - EXPLORE 4D FRACTAL SPACE!")
+    aprint("=" * 70)
+    aprint("Once viewer opens:")
+    aprint("")
+    aprint("  1. Press '1' → Select FRACTAL TYPE")
+    aprint("     Press ']' to cycle through 6 different fractals")
+    aprint("     Each has unique 4D structure!")
+    aprint("")
+    aprint("  2. Press '2' → Select W dimension")
+    aprint("     Press '['/']' to navigate through 4D slices")
+    aprint("     Every stop shows structure - watch it evolve!")
+    aprint("")
+    aprint("What you're seeing:")
+    aprint("  • 3D slices through 4D fractals")
+    aprint("  • Colors show local structure (depth, shell, cell index)")
+    aprint("  • Navigate W to see how structure evolves")
+    aprint("  • Switch fractal type to compare geometries")
+    aprint("")
+    aprint("Try this:")
+    aprint("  1. Start with XOR fractal (fractal=0)")
+    aprint("  2. Navigate W dimension with [/]")
+    aprint("  3. Switch to other fractals (1=Menger, 2=Sierpinski, etc.)")
+    aprint("  4. Notice how each fractal has unique 4D structure")
+    aprint("")
+    aprint("=" * 70)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 70)
+    aprint("Browser will open automatically. Press Ctrl+C when done.")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete - temporary files removed")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

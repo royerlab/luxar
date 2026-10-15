@@ -7,7 +7,7 @@ This demo demonstrates:
 - Color-coded by cell type (30 cell types)
 - Navigation through timepoints (6 developmental stages)
 - Real scientific dataset from Zebrahub project
-- Complete workflow: download → build scene → serve → cleanup
+- Complete workflow: download → build scene → serve
 
 Data Source:
     CZ Biohub - Zebrahub Multiome Project
@@ -58,7 +58,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 from pathlib import Path
 
 import fsspec
@@ -426,7 +425,7 @@ def main() -> None:
     # Generate legend images for all attributes
     generate_all_legends(attributes, category_maps)
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "zebrahub_multiome_peak_umap.luxar.zarr"
         _n_points = create_zebrahub_scene(
@@ -435,44 +434,40 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path}")
         return
 
-    # Use temporary directory for serving (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_zebrahub_") as tmpdir:
-        output_path = Path(tmpdir) / "zebrahub_umap.luxar.zarr"
+    output_path = get_demos_output_dir() / "zebrahub_multiome_peak_umap.luxar.zarr"
 
-        # Create scene
-        _n_points = create_zebrahub_scene(
-            output_path, coordinates, attributes, category_maps
-        )
+    # Create scene
+    _n_points = create_zebrahub_scene(
+        output_path, coordinates, attributes, category_maps
+    )
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("NAVIGATION")
-        aprint("=" * 70)
-        aprint("Once viewer opens:")
-        aprint("")
-        aprint("  - Rotate to explore UMAP structure")
-        aprint("  - Zoom in to see individual cells")
-        aprint("")
-        aprint("  Press '1' to select ATTRIBUTE VIEW, then use [/]:")
-        aprint("     0: Cell Type (30 types)")
-        aprint("     1: Chromosome (genomic location)")
-        aprint("     2: Leiden Coarse (broad clusters)")
-        aprint("     3: Leiden Fine (detailed clusters)")
-        aprint("     4: Lineage (6 lineages)")
-        aprint("     5: Peak Type (4 types)")
-        aprint("     6: Timepoint (6 developmental stages)")
-        aprint("")
-        aprint("  Same structure, different colors reveal different biology!")
-        aprint("")
-        aprint("=" * 70)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 70)
-        aprint("Browser will open automatically. Press Ctrl+C when done.")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("NAVIGATION")
+    aprint("=" * 70)
+    aprint("Once viewer opens:")
+    aprint("")
+    aprint("  - Rotate to explore UMAP structure")
+    aprint("  - Zoom in to see individual cells")
+    aprint("")
+    aprint("  Press '1' to select ATTRIBUTE VIEW, then use [/]:")
+    aprint("     0: Cell Type (30 types)")
+    aprint("     1: Chromosome (genomic location)")
+    aprint("     2: Leiden Coarse (broad clusters)")
+    aprint("     3: Leiden Fine (detailed clusters)")
+    aprint("     4: Lineage (6 lineages)")
+    aprint("     5: Peak Type (4 types)")
+    aprint("     6: Timepoint (6 developmental stages)")
+    aprint("")
+    aprint("  Same structure, different colors reveal different biology!")
+    aprint("")
+    aprint("=" * 70)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 70)
+    aprint("Browser will open automatically. Press Ctrl+C when done.")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

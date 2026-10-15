@@ -161,3 +161,30 @@ class TestControlServeArgs:
         assert flag_utils.control_serve_args() == ["--control"]
         monkeypatch.setattr(sys, "argv", ["prog"])
         assert flag_utils.control_serve_args() == []
+
+
+def test_add_serve_arguments_lets_argparse_demos_accept_host_and_no_open() -> None:
+    """argparse would reject the flags `launch_viewer` forwards from sys.argv."""
+    import argparse
+
+    from luxar.demos import add_serve_arguments
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no-serve", action="store_true")
+    add_serve_arguments(parser)
+    args = parser.parse_args(["--host", "0.0.0.0", "--no-open"])
+    assert args.host == "0.0.0.0" and args.no_open is True
+    assert parser.parse_args([]).host is None
+
+
+def test_argparse_demos_accept_the_forwarded_serve_flags() -> None:
+    import importlib
+
+    for name in (
+        "demo_cosmicflows_laniakea",
+        "demo_ppi_flow_field",
+        "demo_zebrahub_velocity_streamlines",
+    ):
+        module = importlib.import_module(f"luxar.demos.{name}")
+        args = module.parse_args(["--no-serve", "--host", "0.0.0.0", "--no-open"])
+        assert args.host == "0.0.0.0" and args.no_open, name
