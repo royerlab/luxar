@@ -186,6 +186,13 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
    no provenance, so the caller declares it with
    `config.seed_amps_background_relative` (default `False` = raw); declaring it
    wrong subtracts the floor twice and zeroes every sub-floor seed (#1172).
+   The background-relative branch has no upper clip: the model clamps at its
+   own `amp_max`, which can exceed 1.0 under a supplied `norm_range`.
+   A physical-unit seed (`config.seed_space`, default: a declared fit output is
+   in `output_space`, anything else is voxel) is divided back by `voxel_size`
+   first, the exact inverse of the conversion in `finalize_results`. With the
+   same volume and normalization, a declared warm start's iteration-0 model
+   reproduces the seed's render (`tests/test_warm_start_round_trip.py`).
 5. **L1 Regularization Defaults**: Sets proportional defaults based on base learning rate and parameter type multipliers
 6. **Convergence Threshold**: Sets sensible default if not specified
 

@@ -19,7 +19,9 @@ from luxar.gsplats.fitting.config import (
     PreprocessedData,
 )
 from luxar.gsplats.fitting.initialization import (
+    _is_declared_warm_start,
     apply_sigma_min_diag_floor,
+    apply_supplied_sigma_min_diag_floor,
     resolve_fit_initial_sigma_diag,
 )
 from luxar.gsplats.fitting.scale_population import (
@@ -296,7 +298,12 @@ def _fit_diagnostic_stats(
         else:
             initial_Ls = preprocessed_data.init_L.astype(np.float32, copy=True)
             if sigma_min is not None:
-                clamped_diagonal = apply_sigma_min_diag_floor(
+                floor_fn = (
+                    apply_supplied_sigma_min_diag_floor
+                    if _is_declared_warm_start(config, preprocessed_data)
+                    else apply_sigma_min_diag_floor
+                )
+                clamped_diagonal = floor_fn(
                     np.diagonal(initial_Ls, axis1=1, axis2=2), sigma_min
                 )
                 for axis in range(preprocessed_data.d):

@@ -1342,6 +1342,40 @@ def test_finalize_applies_sigma_floor_to_precomputed_fit_initialization(
     assert stats["splats_near_fit_init_sigma_fraction"] == 1.0
 
 
+def test_warm_start_diagnostics_select_declared_sigma_floor(
+    basic_config, basic_preprocessed_data, basic_optimization_results
+) -> None:
+    """Reported initial scales must match the selected initialization floor."""
+    from luxar.gsplats.fitting.results import _fit_diagnostic_stats
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.utils.trils import pack_tril
+
+    initial_L = np.tile(np.diag([0.32, 0.32]).astype(np.float32), (5, 1, 1))
+    basic_preprocessed_data.init_L = initial_L
+    basic_config.sigma_min_diag = [0.3, 0.3]
+    basic_config.seeds = GSplatData(
+        centers=basic_preprocessed_data.seed_centers,
+        amplitudes=np.ones(5, dtype=np.float32),
+        cholesky_factors=pack_tril(initial_L),
+    )
+    basic_config.seed_amps_background_relative = True
+
+    stats = _fit_diagnostic_stats(
+        basic_optimization_results, basic_config, basic_preprocessed_data, initial_L
+    )
+
+    assert stats["fit_init_sigma_diag_vox"] == pytest.approx([0.32, 0.32])
+    assert stats["splats_near_fit_init_sigma_count"] == 5
+
+    basic_config.seed_amps_background_relative = False
+    stats = _fit_diagnostic_stats(
+        basic_optimization_results, basic_config, basic_preprocessed_data, initial_L
+    )
+
+    assert stats["fit_init_sigma_diag_vox"] == pytest.approx([0.4, 0.4])
+    assert stats["splats_near_fit_init_sigma_count"] == 0
+
+
 def test_finalize_summarizes_per_splat_fit_initialization(
     basic_config, basic_preprocessed_data
 ) -> None:
