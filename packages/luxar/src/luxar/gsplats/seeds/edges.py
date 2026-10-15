@@ -288,7 +288,7 @@ def _poisson_disk_sample_weighted(
     min_distance: float,
 ) -> np.ndarray:
     """
-    Weighted Poisson disk sampling using spatial hash grid.
+    Weighted Poisson disk sampling with KD-tree based greedy selection.
 
     Candidates are sorted by density (highest first) and accepted if they
     satisfy the min_distance constraint, resolved block-wise by
