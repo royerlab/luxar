@@ -194,12 +194,14 @@ def test_best_state_relocation_mask_tracks_returned_sorted_splats(
     results = run_optimization_loop(components, loss_fn, config, data)
 
     # The post-final-step parameters are a candidate too (they are scored once
-    # after the loop) and win here; the mask must follow the returned splats
-    # through every sort, even when one splat is relocated twice.
+    # after the loop); the mask must follow the returned splats through every
+    # sort, even when one splat is relocated twice.
     assert results.best_iteration == 2
     assert results.relocated_mask is not None
     assert results.relocation_statistics["total_relocations"] > 0
-    assert results.relocated_mask.sum() == results.relocation_statistics["unique_splats"]
+    assert (
+        results.relocated_mask.sum() == results.relocation_statistics["unique_splats"]
+    )
     Ls = results.Ls.detach().cpu().numpy()
     sigma = np.sqrt(np.sum(Ls**2, axis=2))
     near_reseed = np.all(np.abs(sigma - 0.5) <= 0.01, axis=1)
@@ -851,6 +853,27 @@ def test_best_state_is_the_iterate_its_loss_was_computed_from() -> None:
     assert results.best_loss == pytest.approx(0.01)
 
 
+def test_last_pre_step_state_is_not_reported_as_final_step(capsys) -> None:
+    components, loss_fn, config, preprocessed = _scalar_setup(
+        n_iters=1, lr=1.5, start=0.1
+    )
+    config.verbose = True
+    results = run_optimization_loop(components, loss_fn, config, preprocessed)
+    assert results.best_iteration == results.actual_iters == 1
+    assert results.best_from_final_step is False
+    assert float(results.centers.reshape(-1)[0]) == pytest.approx(0.1)
+    assert "Restored best state from iteration 1" in capsys.readouterr().out
+
+
+def test_zero_iterations_has_no_final_step() -> None:
+    components, loss_fn, config, preprocessed = _scalar_setup(
+        n_iters=0, lr=0.25, start=1.0
+    )
+    results = run_optimization_loop(components, loss_fn, config, preprocessed)
+    assert results.actual_iters == 0
+    assert results.best_from_final_step is False
+
+
 def test_convergence_break_returns_the_iterate_that_converged() -> None:
     """``converged=True`` must mean the RETURNED splats meet the threshold.
 
@@ -867,12 +890,15 @@ def test_convergence_break_returns_the_iterate_that_converged() -> None:
     assert abs(float(results.centers.reshape(-1)[0])) < 0.03
 
 
-def test_last_step_is_a_candidate_at_the_iteration_limit() -> None:
+def test_last_step_is_a_candidate_at_the_iteration_limit(capsys) -> None:
     """The parameters after the final step are scored, not silently dropped."""
     components, loss_fn, config, preprocessed = _scalar_setup(
         n_iters=3, lr=0.25, start=1.0
     )
+    config.verbose = True
     results = run_optimization_loop(components, loss_fn, config, preprocessed)
+    assert results.best_from_final_step is True
+    assert "Best state is from final iteration" in capsys.readouterr().out
     # p: 1 -> 0.5 -> 0.25 -> 0.125; only the post-step-3 iterate scores 0.0156.
     assert float(results.centers.reshape(-1)[0]) == pytest.approx(0.125)
     assert results.best_loss == pytest.approx(0.125**2)

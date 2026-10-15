@@ -702,6 +702,7 @@ def finalize_results(
         "time_seconds": optimization_results.end_time - optimization_results.start_time,
         "iterations": optimization_results.actual_iters,
         "best_iteration": optimization_results.best_iteration,  # Iteration that achieved best quality
+        "best_from_final_step": optimization_results.best_from_final_step,
         "final_loss": optimization_results.best_loss,
         "final_max_abs_error": optimization_results.best_max_abs_error,
         "final_rel_l2": optimization_results.best_rel_l2,

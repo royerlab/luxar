@@ -211,6 +211,9 @@ are scored once (`_rank_final_iterate`). On a convergence break they are what
 met the threshold and are returned outright; otherwise they compete with the
 snapshot.
 
+`best_from_final_step` in the result stats distinguishes that post-step
+candidate from the pre-step snapshot with the same `best_iteration`.
+
 **No per-iteration host sync (`optimization.py`).** The best loss and the
 best-state snapshot are kept on the device (`_DeviceBestState`, `torch.where`
 on a 0-d condition) and read back only on eval iterations. `ReduceLROnPlateau`

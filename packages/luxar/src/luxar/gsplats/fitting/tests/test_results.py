@@ -171,6 +171,7 @@ def test_stats_dictionary_structure(
         "time_seconds",
         "iterations",
         "best_iteration",
+        "best_from_final_step",
         "final_loss",
         "final_max_abs_error",
         "final_rel_l2",
@@ -186,8 +187,24 @@ def test_stats_dictionary_structure(
     assert result.stats["time_seconds"] > 0
     assert result.stats["iterations"] == basic_optimization_results.actual_iters
     assert result.stats["best_iteration"] == basic_optimization_results.best_iteration
+    assert result.stats["best_from_final_step"] is False
     assert result.stats["final_loss"] == basic_optimization_results.best_loss
     assert result.stats["n_splats"] == len(result.amplitudes)
+
+
+def test_final_step_marker_reaches_fitting_info(
+    basic_optimization_results, basic_config, basic_preprocessed_data
+) -> None:
+    from luxar.gsplats.io.save_gsplats import split_fitting_info
+
+    basic_optimization_results.best_from_final_step = True
+    result = finalize_results(
+        basic_optimization_results, basic_config, basic_preprocessed_data
+    )
+    fitting_info, _, _, _ = split_fitting_info(result.stats)
+    assert result.stats["best_from_final_step"] is True
+    assert fitting_info is not None
+    assert fitting_info["best_from_final_step"] is True
 
 
 def test_convergence_flag(

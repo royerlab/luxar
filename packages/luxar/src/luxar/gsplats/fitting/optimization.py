@@ -138,6 +138,7 @@ class _DeviceBestState:
         self.device = device
         self.loss = torch.tensor(float("inf"), device=device)
         self.iteration = torch.tensor(0, device=device, dtype=torch.long)
+        self.from_final_step = torch.tensor(False, device=device)
         self.metrics = torch.full((2,), float("inf"), device=device)
         self.tensors: Optional[Dict[str, Optional[torch.Tensor]]] = None
 
@@ -147,6 +148,8 @@ class _DeviceBestState:
         loss: torch.Tensor,
         current: Dict[str, Optional[torch.Tensor]],
         current_metrics: torch.Tensor,
+        *,
+        final_step: bool = False,
     ) -> None:
         """Fold iteration ``it`` into the running best without a host sync.
 
@@ -158,6 +161,11 @@ class _DeviceBestState:
         self.loss = torch.where(improved, loss, self.loss)
         self.iteration = torch.where(
             improved, torch.full_like(self.iteration, it), self.iteration
+        )
+        self.from_final_step = torch.where(
+            improved,
+            torch.full_like(self.from_final_step, final_step),
+            self.from_final_step,
         )
         self.metrics = torch.where(improved, current_metrics, self.metrics)
         if self.tensors is None or not self._same_layout(current):
@@ -189,6 +197,7 @@ class _DeviceBestState:
         """
         self.loss = loss.detach().clone()
         self.iteration = torch.full_like(self.iteration, it)
+        self.from_final_step = torch.tensor(True, device=self.device)
         self.metrics = current_metrics.clone()
         self.tensors = {
             k: (v.detach().clone() if v is not None else None)
@@ -301,7 +310,9 @@ def _rank_final_iterate(
         if converged_metrics is not None:
             tracker.force(actual_iters, final_loss, candidate, converged_metrics)
         else:
-            tracker.update(actual_iters, final_loss, candidate, current_metrics)
+            tracker.update(
+                actual_iters, final_loss, candidate, current_metrics, final_step=True
+            )
 
 
 def run_optimization_loop(
@@ -624,6 +635,9 @@ def run_optimization_loop(
     end_time = time.time()
     best_state = tracker.as_best_state()
     best_loss, best_iteration = tracker.sync()
+    best_from_final_step = best_state is not None and bool(
+        tracker.from_final_step.cpu()
+    )
 
     # Log termination reason
     if config.verbose:
@@ -687,7 +701,7 @@ def run_optimization_loop(
         del pred_best
 
         if config.verbose:
-            if best_iteration != actual_iters:
+            if not best_from_final_step:
                 aprint(
                     f"★ Restored best state from iteration {best_iteration} "
                     f"(loss={best_loss:.6f}  max_abs_error={best_max_abs_error:.6f})"
@@ -719,6 +733,7 @@ def run_optimization_loop(
         early_stopped=early_stopped,
         actual_iters=actual_iters,
         best_iteration=best_iteration,
+        best_from_final_step=best_from_final_step,
         best_loss=best_loss,
         best_max_abs_error=best_max_abs_error,
         best_rel_l2=best_rel_l2,
