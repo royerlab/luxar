@@ -135,6 +135,8 @@ class TestProgressiveFitting:
         splat counts.
         """
         result = shared_progressive_fit.result
+        assert "psnr_robust_db" in result.stats
+        assert "foreground_psnr_robust_db" in result.stats
         assert result.stats["fitter_name"] == "progressive"
         assert result.stats["n_passes"] >= 1
         assert result.stats["n_splats"] == result.n_splats
@@ -143,6 +145,26 @@ class TestProgressiveFitting:
         assert "stop_reason" in result.stats
         assert "pass_psnrs" in result.stats
         assert "pass_splats" in result.stats
+
+        from luxar.gsplats.metrics import compute_quality_metrics
+        from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+
+        volume = _make_synthetic_volume(shape=(32, 32))
+        rendered = render_to_volume_tensor(result, shape=volume.shape, device="cpu")
+        import torch
+
+        floor = result.stats.get("floor")
+        target = np.clip(volume - floor, 0.0, None) if floor is not None else volume
+        expected = compute_quality_metrics(rendered, torch.from_numpy(target))
+        for key in (
+            "psnr_db",
+            "psnr_robust_db",
+            "foreground_psnr_db",
+            "foreground_psnr_robust_db",
+            "foreground_threshold",
+            "foreground_fraction",
+        ):
+            assert result.stats[key] == pytest.approx(expected[key], rel=1e-4, abs=1e-5)
 
     def test_save_load_roundtrip(self, shared_progressive_fit):
         """Verify the (single-LOD) result can be saved and loaded.

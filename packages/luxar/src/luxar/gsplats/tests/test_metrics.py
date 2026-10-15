@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
 import torch
 
@@ -932,3 +933,23 @@ class TestSharedForegroundDefinition:
         m = compute_quality_metrics(pred, target)
         assert m["mse"] == pytest.approx(0.25)
         assert m["max_abs_error"] == pytest.approx(0.5)
+
+
+def test_progressive_foreground_matches_shared_hot_pixel_rule() -> None:
+    from luxar.gsplats.fit_progressive_gsplats import _compute_foreground_psnr_chunked
+    from luxar.gsplats.metrics import compute_quality_metrics
+
+    rng = np.random.default_rng(5)
+    target = rng.normal(0.0, 0.02, (24, 32, 32)).astype(np.float32)
+    target[4:12, 4:12, 4:12] += 0.8
+    target[0, 0, 0] = 1000.0
+    rendered = torch.from_numpy(target * 0.95)
+    expected = compute_quality_metrics(rendered, torch.from_numpy(target))
+    actual = _compute_foreground_psnr_chunked(rendered, target, chunk_voxels=1000)
+
+    assert actual[0] == pytest.approx(expected["foreground_psnr_db"], rel=1e-5)
+    assert actual[1] == pytest.approx(expected["foreground_psnr_robust_db"], rel=1e-5)
+    assert actual[2] == pytest.approx(expected["foreground_threshold"], rel=1e-5)
+    assert actual[3] == pytest.approx(
+        expected["foreground_fraction"], abs=1 / target.size
+    )
