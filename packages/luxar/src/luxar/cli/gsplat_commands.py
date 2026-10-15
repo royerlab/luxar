@@ -29,7 +29,7 @@ app_gsplat = typer.Typer(
         "oriented Gaussians and view them.\n\n"
         "Getting started:\n"
         "  luxar demo                                   # browse the demo gallery\n"
-        "  luxar gsplat fit stack.tiff out.gsplats.zarr # fit a volume (auto settings)\n"
+        "  luxar gsplat fit stack.tiff out.gsplats.zarr # fit a volume (standard preset)\n"
         "  luxar gsplat view out.gsplats.zarr           # open it in the web viewer\n\n"
         "Non-canonical axis order? pass --axes (e.g. 'z,c,y,x') to fit/cal. "
         "Whole timelapse / large data? see `batch-fit` (`run` = local multi-GPU, "

@@ -241,6 +241,11 @@ def _inspect_store(path: Path, zarr_path: Path) -> Dict[str, Any]:
             + (4 if info.get("has_label_ids") else 0)  # label ids (upper bound)
         )
 
+        # NOT the compression ratio `fit`/`info`/`compare`/`cull` quote (decoded
+        # SOURCE bytes / stored bytes, `luxar.gsplats.fitting.visualization.
+        # compression_ratio`). This one is the store's ENCODING gain: the splat
+        # parameters as float32 over the bytes on disk. The key name is kept
+        # for API compatibility.
         # A ratio against an unmeasurable size is not a measurement — report it
         # as absent rather than publishing an invented 1.0.
         info["compression_ratio"] = (
