@@ -20,6 +20,31 @@
   left: auto;
 }
 
+/* Scene/demo overlays anchored at the LEFT edge must clear the control rail,
+   or a title at x = 0.02 paints under the rail's icons. Only edge-anchored
+   overlays are clamped: right anchors position from `right:` (left is auto)
+   and centre anchors paint half their width left of their origin via
+   translate(-50%), so shifting either would move authored geometry the rail
+   never covered. Same `--luxar-rail-gutter` as the docked panels (UI design
+   guide §7.5); coarse-pointer.css restates it with the safe-area inset. */
+.luxar-has-control-rail
+  .luxar-overlay:not(.luxar-overlay--right-anchored, .luxar-overlay--center-anchored) {
+  left: max(var(--luxar-overlay-x), var(--luxar-rail-gutter));
+}
+
+/* An explicit-width text overlay (inline `width: Nvw`) shifted by the gutter
+   would push its right edge off-screen by up to the gutter: cap it to the room
+   right of its (clamped) left edge, as coarse-pointer.css does. `100%` rather
+   than `100vw` so it measures the same box `--luxar-overlay-x` is a share of
+   (an embedder container, when one is the containing block). */
+.luxar-has-control-rail
+  .luxar-overlay--text.luxar-overlay--explicit-width:not(
+    .luxar-overlay--right-anchored,
+    .luxar-overlay--center-anchored
+  ) {
+  max-width: calc(100% - max(var(--luxar-overlay-x), var(--luxar-rail-gutter)) - 12px);
+}
+
 /* Interactive overlays capture pointer events */
 .luxar-overlay--interactive,
 .luxar-overlay--interactive * {
