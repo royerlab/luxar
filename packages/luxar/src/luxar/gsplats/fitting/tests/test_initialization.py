@@ -448,3 +448,60 @@ def test_explicit_amp_max_is_not_raised_by_the_peak(basic_config) -> None:
     components = initialize_optimization(config, _with_normalized(config, 1.4))
     assert components.model is not None
     assert components.model.amp_max == pytest.approx(0.5)
+
+
+def test_quiet_fit_still_names_its_backend_once(
+    basic_config, basic_preprocessed_data, capsys, monkeypatch
+) -> None:
+    """`--quiet` keeps the one-line backend summary, and states it once.
+
+    A quiet run used to hide a fall back to the slow PyTorch renderer; a
+    calibration sweep or content-tiled fit runs many quiet inner fits, so the
+    line is deduplicated per process rather than repeated per fit.
+    """
+    from luxar.gsplats.fitting import initialization
+
+    monkeypatch.setattr(initialization, "_ANNOUNCED_BACKENDS", set())
+    basic_config.verbose = False
+
+    initialize_optimization(basic_config, basic_preprocessed_data)
+    initialize_optimization(basic_config, basic_preprocessed_data)
+
+    output = capsys.readouterr().out
+    expected = (
+        "Fitting backend: GaussianSplatModel "
+        "(PyTorch renderer, no custom kernels, device=cpu)"
+    )
+    assert output.count(expected) == 1
+
+
+def test_verbose_fit_keeps_its_detailed_backend_lines_only(
+    basic_config, basic_preprocessed_data, capsys, monkeypatch
+) -> None:
+    from luxar.gsplats.fitting import initialization
+
+    monkeypatch.setattr(initialization, "_ANNOUNCED_BACKENDS", set())
+    basic_config.verbose = True
+
+    initialize_optimization(basic_config, basic_preprocessed_data)
+
+    output = capsys.readouterr().out
+    assert "Model class: GaussianSplatModel (PyTorch, device=cpu)" in output
+    assert "Fitting backend:" not in output
+
+
+def test_backend_summary_names_accelerated_kernels() -> None:
+    from luxar.gsplats.fitting.initialization import model_backend_summary
+
+    class GaussianSplatModelMetal:  # stand-in: only the class name + attribute
+        kernel_backend = "runtime"
+
+    class GaussianSplatModelCUDA:
+        pass
+
+    assert model_backend_summary(GaussianSplatModelMetal(), "mps") == (
+        "Fitting backend: GaussianSplatModelMetal (runtime kernels, device=mps)"
+    )
+    assert model_backend_summary(GaussianSplatModelCUDA(), "cuda") == (
+        "Fitting backend: GaussianSplatModelCUDA (custom kernels, device=cuda)"
+    )
