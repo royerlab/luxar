@@ -651,11 +651,8 @@ def run_content_fit(
         fk = box_fit_kwargs  # already carries the one resolved floor level
         fk.pop("verbose", None)
         with _section(f"Fitting {fitplan.n_boxes} boxes"):
-
-            def _prog(i: int, n: int, msg: str) -> None:
-                if verbose:
-                    aprint(f"  [{i + 1}/{n}] {msg}")
-
+            # No progress_callback: with `verbose` the library prints its own
+            # single per-box progress stream (start / iteration / done lines).
             result = fit_planned(
                 vol,
                 fitplan,
@@ -663,7 +660,6 @@ def run_content_fit(
                 partition=partition,
                 recipe=recipe,
                 recipe_params=recipe_params,
-                progress_callback=_prog,
                 verbose=verbose,
                 **fk,
             )

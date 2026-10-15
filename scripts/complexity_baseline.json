@@ -45,7 +45,7 @@
       13
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/planner.py::run_content_fit": [
-      30
+      28
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/recipe_shared.py::detect_store_encoding": [
       13
@@ -450,7 +450,7 @@
       19
     ],
     "packages/luxar/src/luxar/gsplats/planner/fit_planned_parallel.py::fit_planned_parallel": [
-      22
+      21
     ],
     "packages/luxar/src/luxar/gsplats/seeds/generate.py::_auto_combine": [
       12

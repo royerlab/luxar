@@ -35,9 +35,11 @@ from luxar.gsplats.fit_basis import fit_image_min
 from luxar.gsplats.fit_tiled_parallel import luxar_argv0
 from luxar.gsplats.gsplat_data import scrub_measured_stats, scrub_region_scoped_stats
 
+from .box_progress import BoxProgress
 from .fit_planned import (
     _padded_bounds,
     _planned_merge_stats,
+    _scaled_plan_budgets,
     _score_planned_merge,
     _stamp_planned_normalization,
 )
@@ -256,21 +258,20 @@ def fit_planned_parallel(
         if verbose
         else contextlib.nullcontext()
     )
+    progress = BoxProgress(_scaled_plan_budgets(plan, budgeted)) if verbose else None
     with section:
         with ThreadPoolExecutor(max_workers=max(1, jobs)) as ex:
-            done = 0
             try:
                 futures = [ex.submit(_run, i) for i in budgeted]
                 for fut in as_completed(futures):
                     i, rc, stream = fut.result()
-                    done += 1
                     if rc != 0:
                         tail = "\n".join(stream.strip().splitlines()[-20:])
                         failures.append((i, tail))
-                        if verbose:
-                            aprint(f"Box {i} FAILED (exit {rc}) [{done}/{n}]")
-                    elif verbose:
-                        aprint(f"Box {i} done [{done}/{n}]")
+                    if progress is not None:
+                        progress.box_done(
+                            i, failed=rc != 0, detail=f"exit {rc}" if rc else None
+                        )
             except KeyboardInterrupt:
                 # Cancel queued boxes (and signal in-flight workers) BEFORE the
                 # ``with`` block's __exit__ would otherwise drain them, then

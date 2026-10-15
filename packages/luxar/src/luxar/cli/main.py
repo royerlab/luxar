@@ -9,6 +9,7 @@ IMPORTANT: URL Construction
 
 from __future__ import annotations
 
+import sys
 import threading
 from pathlib import Path
 from typing import Optional, cast
@@ -96,6 +97,28 @@ def _version_callback(value: bool) -> None:
 app = typer.Typer(help="luxar – build and serve Zarr-backed nD scenes")
 
 
+def _line_buffer_std_streams() -> None:
+    """Flush stdout/stderr at every newline, even when redirected to a file.
+
+    Python block-buffers stdout when it is not a TTY, so a long command run
+    under ``nohup``, ``> log`` or ``| tee`` showed NOTHING until a buffer
+    filled or the process exited — a ``gsplat cal`` log stayed empty for half
+    an hour. arbol resolves ``sys.stdout`` on every print, so reconfiguring the
+    stream once here covers every ``aprint`` of the run. Guarded because a test
+    runner (Typer's ``CliRunner``) swaps in streams without ``reconfigure``.
+    Worker subprocesses (``fit --tile``, ``--plan-box``, batch-fit tasks) are
+    ``luxar`` invocations themselves, so they pass through here too.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(line_buffering=True)
+        except (ValueError, OSError):  # detached/closed stream: leave it alone
+            pass
+
+
 @app.callback(invoke_without_command=True)
 def main_callback(
     ctx: typer.Context,
@@ -113,6 +136,7 @@ def main_callback(
     # cannot. Display-only: filters / -W / pytest.warns are unaffected, and the
     # install is skipped when a recorder is active.
     install_arbol_warnings()
+    _line_buffer_std_streams()
     if not ctx.invoked_subcommand:
         aprint(ctx.get_help())
         raise typer.Exit(0)
