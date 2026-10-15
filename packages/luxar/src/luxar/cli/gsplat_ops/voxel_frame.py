@@ -559,6 +559,8 @@ def resolve_fit_frame(
     source_info: Mapping[str, Any],
     volume_shape: Sequence[int],
     explicit: Optional[Sequence[float]],
+    handed_unit: Optional[str] = None,
+    handed_source: Optional[str] = None,
     physical: bool,
     physical_coordinates: bool,
     preset: Optional[str],
@@ -594,6 +596,8 @@ def resolve_fit_frame(
         axes=axes,
         hint=not worker,
     )
+    if handed_source is not None and spacing is not None:
+        spacing = replace(spacing, unit=handed_unit, source=handed_source)
     requested = spacing is not None and spacing.source != SOURCE_CONFIG
     content_physical = physical_coordinates or (content and requested)
     # A content fit without physical geometry drops voxel_size entirely

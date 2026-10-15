@@ -905,7 +905,7 @@ The `fitting/` group is **optional** and designed to be **fitter-agnostic**. Dif
 | --- | --- |
 | `physical_coordinates` | `true`: centers and Cholesky factors are `voxel_size × voxel index` (physical units); `false` or absent: voxel indices. Every CLI fit writes it. |
 | `voxel_size` | Per-axis spacing the fit used, array axis order. Present whenever a spacing shaped the fit, even with `physical_coordinates: false` (`cal`'s fits, an `output_space: voxel` config). |
-| `voxel_unit` | Unit of `voxel_size` (`"um"` for TIFF metadata and `--voxel-size`; an NGFF unit verbatim). Absent when unknown (a config `voxel_size`). |
+| `voxel_unit` | Unit of `voxel_size` (`"um"` for TIFF metadata and `--voxel-size`; a recognized NGFF unit normalized to its Luxar spelling, otherwise the original unit). Absent when unknown (a config `voxel_size`). |
 | `voxel_size_source` | Where the spacing came from: `--voxel-size`, `fit config`, `OME-TIFF metadata`, `ImageJ metadata`, `OME-Zarr NGFF scale`. |
 | `source_region` | A `fit --region` crop, `[[start, stop], ...]` in the source volume's voxel indices. The start is ALREADY added to the centers (× `voxel_size` when physical), so the splats sit in full-volume coordinates; `source_shape` / `fitted_shape` describe the crop. To render onto the crop's own grid, subtract the start first. |
 

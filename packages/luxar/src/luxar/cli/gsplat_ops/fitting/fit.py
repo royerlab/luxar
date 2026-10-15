@@ -317,6 +317,10 @@ def run_fit_volume(
         "precedence over --physical metadata and a config voxel_size.",
         rich_help_panel="Input selection",
     ),
+    voxel_unit: Optional[str] = typer.Option(None, "--voxel-unit", hidden=True),
+    voxel_size_source: Optional[str] = typer.Option(
+        None, "--voxel-size-source", hidden=True
+    ),
     physical: bool = typer.Option(
         False,
         "--physical",
@@ -848,6 +852,8 @@ def run_fit_volume(
                 source_info=source_info,
                 volume_shape=volume.shape,
                 explicit=parsed_voxel_size,
+                handed_unit=voxel_unit,
+                handed_source=voxel_size_source,
                 physical=physical,
                 physical_coordinates=physical_coordinates,
                 preset=preset,
@@ -857,6 +863,20 @@ def run_fit_volume(
                 worker=tile is not None or plan_box is not None,
                 array_key=array_key,
                 axes=axes,
+            )
+
+            axis_unit = (
+                frame.frame.spacing.unit
+                if frame.frame.physical and frame.frame.spacing is not None
+                else None
+            )
+            dimension_metadata = (
+                [
+                    {"name": name, **({"unit": axis_unit} if axis_unit else {})}
+                    for name in source_info["axes"]
+                ]
+                if axes is not None
+                else None
             )
 
             # Pipeline ctx: the parameter state the extracted helpers consume.
@@ -921,11 +941,7 @@ def run_fit_volume(
                 denoise_backend=denoise_backend,
                 fit_frame=frame.frame,
                 region=region,
-                dimension_metadata=(
-                    [{"name": name} for name in source_info["axes"]]
-                    if axes is not None
-                    else None
-                ),
+                dimension_metadata=dimension_metadata,
             )
 
             warn_ignored_density_flags(ctx)

@@ -1749,7 +1749,13 @@ def _configure_physical_fit_args(
     voxel_size, uses_ngff_spacing = _physical_voxel_size(fit, ome_info, axes_list, ndim)
     if uses_ngff_spacing:
         assert voxel_size is not None
+        from luxar.cli.gsplat_ops.voxel_frame import SOURCE_NGFF, _normalized_ngff_unit
+
         fit_args["voxel-size"] = ",".join(str(value) for value in voxel_size)
+        fit_args["voxel-size-source"] = SOURCE_NGFF
+        unit = _normalized_ngff_unit(ome_info.unit)
+        if unit is not None:
+            fit_args["voxel-unit"] = unit
     return voxel_size, uses_ngff_spacing
 
 

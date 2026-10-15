@@ -844,6 +844,67 @@ def _plan(
     )
 
 
+@pytest.mark.parametrize(
+    ("ngff_unit", "expected_unit"),
+    [("nanometer", "nm"), (None, None)],
+)
+def test_batch_tile_preserves_ngff_unit_and_source(
+    tmp_path: Path, ngff_unit: str | None, expected_unit: str | None
+) -> None:
+    import zarr
+
+    from luxar.gsplats.batch.fit_command import build_task_fit_argv
+
+    src = tmp_path / "nm.zarr"
+    root = zarr.open_group(str(src), mode="w", zarr_format=2)
+    zz, yy, xx = np.mgrid[:12, :16, :16]
+    volume = np.exp(-((zz - 6) ** 2 + (yy - 8) ** 2 + (xx - 8) ** 2) / 12)
+    root.create_array("0", data=volume.astype(np.float32), chunks=volume.shape)
+    root.attrs["multiscales"] = [
+        {
+            "axes": [
+                {
+                    "name": name,
+                    "type": "space",
+                    **({"unit": ngff_unit} if ngff_unit else {}),
+                }
+                for name in "zyx"
+            ],
+            "datasets": [
+                {
+                    "path": "0",
+                    "coordinateTransformations": [
+                        {"type": "scale", "scale": [200, 50, 50]}
+                    ],
+                }
+            ],
+        }
+    ]
+    manifest = _plan(
+        src,
+        tmp_path / "out",
+        axes_list=["z", "y", "x"],
+        floor="none",
+        physical=True,
+        seeds="12",
+        iters=20,
+    ).manifest
+    tile = tmp_path / "tile.gsplats.zarr"
+    argv = build_task_fit_argv(manifest, manifest.jobs[0], tile, argv0=[])
+    result = runner.invoke(app_gsplat, argv[1:] + ["--device", "cpu"])
+    assert result.exit_code == 0, normalized_cli_output(result)
+    attrs = dict(zarr.open_group(str(tile), mode="r")["fitting"].attrs)
+    assert attrs["voxel_size"] == [200.0, 50.0, 50.0]
+    assert attrs.get("voxel_unit") == expected_unit
+    assert attrs["voxel_size_source"] == "OME-Zarr NGFF scale"
+    if expected_unit is not None:
+        scene = tmp_path / "tile.luxar.zarr"
+        converted = runner.invoke(app_gsplat, ["convert", str(tile), str(scene)])
+        assert converted.exit_code == 0, normalized_cli_output(converted)
+        scene_dims = zarr.open_group(str(scene), mode="r").attrs["scene_dimensions"]
+        assert [dim["unit"] for dim in scene_dims["dimensions"]] == ["nm"] * 3
+
+
 def test_batch_plan_records_ngff_dimension_metadata_with_axes_override(
     tmp_path: Path,
 ) -> None:

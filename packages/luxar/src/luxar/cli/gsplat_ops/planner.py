@@ -753,7 +753,10 @@ def run_content_fit(
 
         output.parent.mkdir(parents=True, exist_ok=True)
         _save_fit_result(
-            result, output, compress=compress, frame=frame,
+            result,
+            output,
+            compress=compress,
+            frame=frame,
             dimension_metadata=dimension_metadata,
         )
         if keep_boxes:

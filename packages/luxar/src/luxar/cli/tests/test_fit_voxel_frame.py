@@ -367,6 +367,41 @@ class TestFitFrame:
 
 
 class TestFitCli:
+    def test_physical_ngff_with_axes_converts_with_unit(self, tmp_path: Path) -> None:
+        import zarr
+
+        src = tmp_path / "vol.zarr"
+        root = zarr.open_group(str(src), mode="w", zarr_format=2)
+        root.create_array("0", data=_blob_volume(), chunks=_SHAPE)
+        root.attrs["multiscales"] = [
+            {
+                "axes": [
+                    {"name": name, "type": "space", "unit": "nanometer"}
+                    for name in "zyx"
+                ],
+                "datasets": [
+                    {
+                        "path": "0",
+                        "coordinateTransformations": [
+                            {"type": "scale", "scale": [290, 108, 108]}
+                        ],
+                    }
+                ],
+            }
+        ]
+        fitted = tmp_path / "physical.gsplats.zarr"
+        _fit(src, fitted, "--axes", "z,y,x", "--physical")
+        assert _fitting_attrs(fitted)["voxel_unit"] == "nm"
+        assert _root_attrs(fitted)["dimension_metadata"] == [
+            {"name": name, "unit": "nm"} for name in "zyx"
+        ]
+        scene = tmp_path / "scene.luxar.zarr"
+        result = runner.invoke(app, ["gsplat", "convert", str(fitted), str(scene)])
+        assert result.exit_code == 0, result.output
+        assert [
+            d["unit"] for d in _root_attrs(scene)["scene_dimensions"]["dimensions"]
+        ] == ["nm", "nm", "nm"]
+
     def test_physical_ome_tiff_stamps_and_scales(self, tmp_path: Path) -> None:
         src = _ome_tiff(tmp_path / "vol.ome.tif")
         voxel = tmp_path / "voxel.gsplats.zarr"
