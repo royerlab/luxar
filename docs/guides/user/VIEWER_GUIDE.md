@@ -137,7 +137,8 @@ default). It is subject to the same CORS rules as the scenes it lists.
 
 If you would rather not host anything, `luxar export scene.luxar.zarr -o out/`
 writes a self-contained folder with the viewer and a stdlib-only `serve.py`; the
-recipient runs `python serve.py` (`file://` cannot open the viewer directly).
+recipient runs `python3 serve.py` (`file://` cannot open the viewer directly;
+stock Ubuntu has no `python` command, only `python3`).
 
 See [Distributing scenes](../../tutorials/distributing_scenes.rst) for the wider
 picture on sharing scenes, and

@@ -91,6 +91,18 @@ coordinate frames).
 | `--denoise-patch-size` / `--denoise-search-distance` | 3 / 5 | NLM windows |
 | `--denoise-backend` | auto | `auto` / `cuda` / `pytorch` / `skimage` |
 
+### Seed methods
+
+`--seed-method` matters on structure the default misses. `auto` draws on the same
+two methods a comma list would name — `edges` (boundaries) and `grid` (uniform
+coverage) — but it is NOT `edges,grid`: `auto` splits one seed budget 60/40 between
+them and derives the grid spacing from its own share, while a comma list runs each
+method on its own defaults. Both dedup the union, so that is not the difference —
+the mix is. Either way the fit pipeline then subsamples or tops up to `--seeds`, so
+the budget is never ignored; only what reaches it changes. `auto`
+cannot itself appear inside a comma list. `peaks` (sparse point-like maxima) and
+`decomposition` (blobs, slow) have to be asked for explicitly.
+
 ### Presets (`gsplat_config.py`)
 | Preset | n_iters | early_stop_patience | max_eccentricity | cull_retention |
 | --- | --- | --- | --- | --- |
@@ -99,6 +111,21 @@ coordinate frames).
 | `hifi` | 10,000 | 400 | 15 | 0.999 |
 | `ultra` | 20,000 | 500 | 20 | 0.999 |
 | `n2s` | 20,000 | 500 | 10 | 0.999 (manuscript blind-spot protocol) |
+
+Every preset and all three Python fitters default to `cull_retention=0.999`.
+This near-lossless trim keeps 99.9% of cumulative amplitude. The earlier 0.95
+flat default could produce a false `signal_limited` curve in `cal`, along with
+too few iterations at high K; the tiled default could remove overlap signal.
+`cal` therefore defaults to the `n2s` preset
+(20,000 iters, retention 0.999). A bare `fit` and both tiling paths now use 0.999
+without a preset. Still, **`--seeds` proposes and `cull_retention` disposes**: a post-fit
+cumulative-amplitude cull discards the tail, and on heavy-tailed sparse data that
+tail is a lot of splats — the final count is not `--seeds`. A bigger preset is not
+free either: `early_stop_patience` grows with it (200 → 500), and since the counter
+resets only on an improvement and the stop is tested only on eval iterations (every
+25th), the larger one burns AT LEAST 500 iterations after the last improvement —
+somewhat more, never fewer. The preset silently moves `max_eccentricity` too
+(10 → 20 from `draft` to `ultra`; `n2s` stays at 10).
 
 **With NO `--preset`, `fit` runs 1000 iterations — below `draft`.** `--preset` has no
 default, and `load_fit_config` layers one only `if preset is not None`, so a bare

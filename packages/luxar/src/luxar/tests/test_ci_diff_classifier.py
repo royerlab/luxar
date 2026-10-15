@@ -333,6 +333,22 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "test_cholesky_documentation.py executes its documented Cholesky packing",
     ),
     (
+        ".agents/skills/luxar-install/SKILL.md",
+        "py",
+        "test_agent_skills.py enforces every skill's line budget, links, "
+        "frontmatter and README row",
+    ),
+    (
+        ".agents/skills/luxar-gsplat-pipeline/references/background-floor.md",
+        "py",
+        "test_agent_skills.py requires every skill reference to be linked",
+    ),
+    (
+        ".claude/skills/luxar-install",
+        "py",
+        "test_agent_skills.py checks each skill's Claude Code symlink",
+    ),
+    (
         ".agents/skills/luxar-visualization/SKILL.md",
         "py",
         "test_cholesky_documentation.py executes its documented Cholesky packing, "

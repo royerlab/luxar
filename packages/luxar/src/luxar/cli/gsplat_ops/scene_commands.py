@@ -139,10 +139,7 @@ def convert_to_scene(
                 try:
                     resolve_colormap(colormap)
                 except Exception as e:
-                    raise typer.BadParameter(
-                        f"--colormap '{colormap}' is not a known builtin / "
-                        f"matplotlib / colorcet colormap"
-                    ) from e
+                    raise typer.BadParameter(f"--colormap: {e}") from e
             appearance["colormap"] = colormap
         if gamma is not None:
             appearance["gamma"] = gamma

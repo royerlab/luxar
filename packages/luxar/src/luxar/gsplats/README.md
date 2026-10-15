@@ -30,6 +30,64 @@ pip install "luxar[gsplats]"
 > mismatch. The `torch>=2.2.0,<3.0` pin in `pyproject.toml` exists to prevent a
 > silent major-version jump from breaking the prebuilt extension.
 
+## Fitting on a CPU or a Mac
+
+Fast fitting needs compiled splatting kernels: CUDA on an NVIDIA GPU, or Metal on
+Apple Silicon (compiled at runtime from a plain pip install with torch >= 2.7;
+see [metal/README.md](models/gsplats/metal/README.md)). Everywhere else, including
+`--device cpu`, a Mac whose fit logs `Metal splatting kernels: none, using
+PyTorch`, and a CUDA GPU without the compiled extension, the fitter runs PyTorch
+reference ops. That path works, but plan for **seconds per iteration, not
+milliseconds**. A fit prints which path it took near the start (`Model class:
+GaussianSplatModel (PyTorch, device=cpu)` is the reference path).
+
+What to expect on the reference path (Apple M4 Max CPU, `--device cpu`, splat
+count and iterations fixed):
+
+| volume | splats | one thread | 4–8 threads |
+| --- | --- | --- | --- |
+| 64×128×128 (1 Mvoxel) | 2,000 | ≈ 0.35 s / iteration | |
+| 128×256×256 (8.4 Mvoxel) | 4,000 | ≈ 3.5–4.5 s / iteration | ≈ 2.6 s / iteration |
+
+So a 2,000-iteration `--preset draft` on the larger volume is roughly an hour or
+more, and the runtime Metal kernels on the same Mac are 50–100x faster. A
+separate run on a loaded Intel i9-9900K (load average about 27, 16 threads
+oversubscribed) took about 25 minutes for `--iters 200` on the larger volume; an
+idle machine is likely to be faster. On noisy data most of the gain arrives in
+the first few hundred iterations, so a short run is often nearly as good as a
+long one: time a short run on your own data first, then decide.
+
+A CPU recipe:
+
+```bash
+export OMP_NUM_THREADS=8 MKL_NUM_THREADS=8   # 4-8; set BOTH
+export PYTHONUNBUFFERED=1                    # progress shows up in a redirected log
+luxar gsplat fit vol.tiff quick.gsplats.zarr --device cpu --seeds 4000 --iters 200
+luxar gsplat fit vol.tiff small.gsplats.zarr --device cpu --downscale 2 --preset draft
+```
+
+- **Threads: export BOTH variables, and use 4–8.** In a source checkout `hatch
+  run` pins both to 1 (see the note in `pyproject.toml`), and torch takes its
+  intra-op count from `MKL_NUM_THREADS`, so it runs on ONE thread unless both are
+  exported. More is not better: past about 4–8 threads it got slower (16 threads
+  was slower than 4 in the measurement above).
+- **`--downscale` cuts the cost per iteration roughly by the voxel factor.**
+  `--downscale 2` (8x fewer voxels) took the 128×256×256, 4,000-splat fit from
+  4.6 to 0.53 s per iteration on one thread. Seeding, the final full-resolution
+  render and the final SSIM still run at full resolution, and the splats are
+  rescaled back to the original voxel grid. Per-axis factors work too (`1,2,2`
+  keeps z on an anisotropic stack).
+- **Seeds.** Expect iteration time to grow with the seed count; start at a few
+  thousand.
+- **Calibration.** `cal`'s default (the `n2s` preset, up to 20,000 iterations,
+  at each of 10 grid points) is not practical on a CPU. If you need it, crop or
+  downsample the volume yourself (`cal` has no `--downscale`), and pass a short
+  grid such as `--k-grid 1000,4000,16000`. A lower `--preset` speeds it up but,
+  as `cal --help` warns, undertrains at high K and biases K\* upward.
+- **A Mac with Apple Silicon** should normally not be on this path at all: with
+  torch >= 2.7 the runtime Metal kernels are picked automatically (`--device
+  mps`).
+
 ## Key Features
 
 - **N-dimensional Support**: Works seamlessly with 2D images, 3D volumes, and 4D+ hypercubes (validated to 4D) with automatic gradient dilution compensation

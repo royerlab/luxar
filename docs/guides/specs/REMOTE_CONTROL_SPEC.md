@@ -614,7 +614,7 @@ and they are three implementations of one protocol:
 |---|---|---|
 | Dev checkout / a served scene | `luxar.cli.control_hub` (asyncio) | `luxar serve <scene> --viewer --control` |
 | Native app (`luxar export --native`) | `packages/luxar-launcher/hub.go` | `LUXAR_LAUNCHER_CONTROL=1` |
-| Exported folder (`luxar export`) | `luxar/cli/_export_serve_template.py` (threads, stdlib) | `python serve.py --control` |
+| Exported folder (`luxar export`) | `luxar/cli/_export_serve_template.py` (threads, stdlib) | `python3 serve.py --control` |
 
 Three implementations of a protocol is three chances to drift, and the third
 one ships inside artifacts nobody rebuilds: a native binary, and a folder that

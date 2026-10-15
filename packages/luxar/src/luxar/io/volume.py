@@ -310,6 +310,26 @@ def _squeezed_region_spans(
     return tuple(spans)
 
 
+def _read_tiff(tifffile: Any, path: Path) -> Any:
+    """Read a TIFF, turning tifffile's missing-codec error into an install hint.
+
+    tifffile decodes only uncompressed TIFFs by itself; an LZW/deflate/zstd one
+    (most microscope and OME-TIFF exports) raises ``ValueError("<COMPRESSION.LZW:
+    5> requires the 'imagecodecs' package")`` mid-read, which names neither
+    Luxar's extra nor the pip command.
+    """
+    try:
+        return tifffile.imread(str(path))
+    except ValueError as exc:
+        if "imagecodecs" not in str(exc):
+            raise
+        raise ImportError(
+            f"'{path.name}' is a compressed TIFF and decoding it needs the "
+            f"imagecodecs package ({exc}). Install it with "
+            "`pip install 'luxar[io]'` or `pip install imagecodecs`."
+        ) from exc
+
+
 def load_volume(
     path: Path,
     channel: Optional[int] = None,
@@ -405,7 +425,7 @@ def load_volume(
                 "Loading TIFF files requires tifffile: pip install luxar[io]"
             ) from exc
         aprint(f"Loading TIFF: {path.name}")
-        volume = tifffile.imread(str(path))
+        volume = _read_tiff(tifffile, path)
 
     else:
         try:

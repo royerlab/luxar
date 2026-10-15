@@ -100,13 +100,50 @@ change is in the [changelog](CHANGELOG.md).
 ## Quick start
 
 ```bash
-pip install luxar       # viewer, compiler and CLI; add "luxar[gsplats]" to fit volumes
+python3 -m venv luxar-env && source luxar-env/bin/activate   # needs Python 3.12+
+pip install luxar       # viewer, compiler and CLI
 luxar demo              # Browse the 90 bundled demos
 luxar demo run cloud    # Run one: generates the data and opens the viewer
 ```
 
-Some demos need extra packages; `luxar demo deps --install` fetches what a demo
-reports missing. To work on Luxar itself, or to run from a source checkout:
+To fit your own image volumes, install the fitting and image-reading extras:
+`pip install 'luxar[gsplats,io]'` fits TIFF and OME-Zarr volumes (`[gsplats]`
+brings PyTorch; `[io]` reads TIFF, including compressed TIFF — on older releases
+also `pip install imagecodecs`). Some demos need extra packages; `luxar demo deps
+--install` fetches what a demo reports missing (it runs `python -m pip`, so the
+environment needs pip). `luxar demo run` needs a release newer than 2026.9.22: that
+release fails with "Could not find project root" when installed from PyPI.
+
+**Getting a Python 3.12 first.** A fresh machine often lacks one:
+
+- **Ubuntu / Debian** ships Python without `venv` or `pip`:
+  `sudo apt install python3-venv python3-pip`. Ubuntu 24.04's `python3` is 3.12;
+  older releases need a newer Python (for example through `uv`, below).
+- **macOS** ships Python 3.9, so `pip3 install luxar` fails with "No matching
+  distribution found". Install 3.12 or newer with the
+  [python.org installer](https://www.python.org/downloads/macos/) (then run
+  *Install Certificates.command* from its `/Applications/Python 3.x` folder, or
+  dataset downloads fail with certificate errors), or `brew install python@3.12`
+  (then `python3.12 -m venv luxar-env`).
+- **Anywhere**, [`uv`](https://docs.astral.sh/uv/) fetches a Python for you:
+  `uv venv --seed --python 3.12 luxar-env && source luxar-env/bin/activate`, then
+  `uv pip install luxar`. `--seed` puts pip in the environment, which
+  `luxar demo deps --install` needs; without it, use `uv pip` for every install
+  below.
+
+**Linux without an NVIDIA GPU:** the default PyTorch wheel that `[gsplats]` pulls
+on Linux bundles CUDA (several GB). Install the CPU-only wheel first and pip keeps
+it:
+
+```bash
+pip install 'torch<3' --index-url https://download.pytorch.org/whl/cpu
+pip install 'luxar[gsplats,io]'
+```
+
+(In a `uv` environment: `uv pip install 'torch<3' --index-url
+https://download.pytorch.org/whl/cpu`, then `uv pip install 'luxar[gsplats,io]'`.)
+
+To work on Luxar itself, or to run from a source checkout:
 
 ```bash
 git clone https://github.com/royerlab/luxar.git
@@ -346,8 +383,11 @@ data rather than by guesswork. Inputs can be `.zarr`, `.zarr.zip`, OME-Zarr,
 pick a slice of a larger store. `luxar gsplat compare` reports PSNR, SSIM, and
 MSE of a fit against its source.
 
-**Fitting hardware.** Fitting needs the `gsplats` extra (`pip install
-"luxar[gsplats]"`, or `pip install -e ".[gsplats]"` from a checkout). It runs on the CPU, and much faster on an NVIDIA
+**Fitting hardware.** Fitting needs the `gsplats` extra, plus `io` to read TIFF
+(`pip install "luxar[gsplats,io]"`, or `pip install -e ".[gsplats,io]"` from a
+checkout). It runs on the CPU (slowly: see
+[fitting on a CPU or a Mac](packages/luxar/src/luxar/gsplats/README.md#fitting-on-a-cpu-or-a-mac)
+for what to expect and how to keep it short), and much faster on an NVIDIA
 GPU (`make build-cuda` compiles the CUDA kernels for your card; they cannot ship in
 the wheel) or on Apple silicon through MPS. On a Mac the 3D Metal kernels compile
 at runtime with the Metal compiler built into macOS (needs torch >= 2.7; no Xcode,
@@ -902,7 +942,7 @@ committed under [`.agents/skills/`](.agents/skills/) and symlinked into
 
 | Skill | What it teaches |
 |-------|-----------------|
-| [`luxar-install`](.agents/skills/luxar-install/SKILL.md) | Install Luxar on a machine — user-install vs full dev setup, per profile: modest laptop (CPU/MPS), NVIDIA-GPU desktop (CUDA extension), and Slurm/HPC cluster (no-sudo bootstrap, `build-cuda SLURM=1`). |
+| [`luxar-install`](.agents/skills/luxar-install/SKILL.md) | Install Luxar on a machine — `pip install` into a venv first (Python 3.12 per OS, extras, CPU-only torch, runtime Metal kernels), then the source-checkout dev route: NVIDIA CUDA extension and Slurm/HPC cluster (no-sudo bootstrap, `build-cuda SLURM=1`). |
 | [`luxar-visualization`](.agents/skills/luxar-visualization/SKILL.md) | Build a `.luxar.zarr` scene from a dataset — Points/Lines/GSplats, Dimensions, transforms, hierarchy, serve/export — grounded in the demos and examples. |
 | [`luxar-gsplat-pipeline`](.agents/skills/luxar-gsplat-pipeline/SKILL.md) | Fit Gaussian splats to an nD image: the `cal → fit → lod` pipeline, the full CLI option surface, tiling, the Python fitting API, and adding a gsplat node to a scene. |
 | [`luxar-hpc-batch-fit`](.agents/skills/luxar-hpc-batch-fit/SKILL.md) | Fit a whole nD timelapse at scale — local multi-GPU (`batch-fit run`) or Slurm/Bruno (`batch-fit submit`), plus status/validate/merge/cancel and the GPU benchmark profile. |

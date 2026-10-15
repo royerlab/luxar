@@ -3,32 +3,116 @@ name: luxar-install
 description: >-
   Install Luxar on a machine — from a modest laptop to an NVIDIA-GPU desktop to a
   Slurm/HPC cluster login node. Use when a user wants to install, set up, or
-  bootstrap Luxar (or fix a broken install): choosing user-install vs full dev
-  setup, picking the right optional extras ([gsplats]/[io]/[demos]), getting the
-  web viewer built, enabling CUDA/MPS acceleration, building the CUDA extension
-  (locally or via Slurm), and the no-sudo HPC path. Covers make setup-dev /
-  check-deps / setup-cuda / build-cuda SLURM=1, Git LFS, and verification steps.
+  bootstrap Luxar (or fix a broken install): pip install into a venv (Python
+  3.12 on Ubuntu/macOS, CPU-only torch, extras [gsplats]/[io]/[demos]), GPU
+  acceleration (runtime Metal kernels, CUDA extension), and the source-checkout
+  dev route: make setup-dev / check-deps / setup-cuda / build-cuda SLURM=1, the
+  no-sudo HPC path, Git LFS, and verification steps.
 ---
 
 # Install Luxar on any machine
 
-Luxar is **not yet published to PyPI** — installation starts from a clone of the
-repository. There are two install stories, then per-machine additions:
+Luxar is on PyPI. **Most users want `pip install` into a virtual environment**; a
+source checkout (`make setup-dev`) is for contributors, for building the CUDA
+extension, and for the few things that need `make` (native app launchers).
 
-- **User install** — use Luxar (build scenes, fit splats, serve the viewer).
-  A venv + editable pip install is enough.
-- **Dev setup** — contribute to Luxar (run tests, lint, build viewer/WASM).
-  `make setup-dev` bootstraps everything, no sudo needed.
+- **User install (pip)** — view scenes, compile your own, fit splats. Below.
+- **Dev setup (clone)** — run tests, lint, build the viewer/WASM, build CUDA
+  kernels. Further down.
 
 ## Which profile am I on?
 
-| Machine | Fitting device | CUDA extension | Notes |
+| Machine | Fitting device | Fast splatting kernels | Notes |
 | --- | --- | --- | --- |
-| Modest laptop (macOS / Linux / WSL) | CPU, or `mps` on Apple Silicon | skip | Viewing is WebGL (browser GPU) — smooth on any laptop; only *fitting* is slow |
-| Desktop with NVIDIA GPU | `cuda` | optional but recommended | Orders-of-magnitude faster fitting (CUDA NLM denoise is a separate `make build-nlm-cuda`) |
-| Slurm/HPC cluster | `cuda` on compute nodes | build via `SLURM=1` | No sudo, no GPU on login node — everything has a no-sudo fallback |
+| Laptop / desktop, no GPU (Linux, WSL) | CPU | n/a | Viewing is WebGL in the browser and is fine anywhere; only *fitting* is slow — install the CPU-only torch wheel first |
+| Mac with Apple Silicon | `mps` (auto) | Metal, compiled at runtime from a pip install (torch >= 2.7, no Xcode) | |
+| Desktop with NVIDIA GPU | `cuda` (auto) | CUDA extension, built from a source checkout (`make build-cuda`) | A pip install fits on the GPU through the slower PyTorch path |
+| Slurm/HPC cluster | `cuda` on compute nodes | build via `make build-cuda SLURM=1` | No sudo, no GPU on login node — everything has a no-sudo fallback |
 
-## Common base (all profiles)
+## User install (pip)
+
+### Prerequisites per OS: Python 3.12+ with `venv`
+
+- **Ubuntu / Debian**: the stock image has Python but no `venv`/`pip` (and often no
+  `curl`): `sudo apt install python3-venv python3-pip`. Ubuntu 24.04's `python3`
+  is 3.12; older releases need a newer Python (`uv`, below, or deadsnakes).
+- **macOS**: the system `python3` is 3.9, and `pip3 install luxar` then fails with
+  "No matching distribution found for luxar" (the wheel requires 3.12). Install
+  3.12+ with the [python.org installer](https://www.python.org/downloads/macos/)
+  — then run *Install Certificates.command* in its `/Applications/Python 3.x`
+  folder, or every HTTPS dataset/record download fails with a certificate error —
+  or `brew install python@3.12` (use `python3.12 -m venv ...`).
+- **Any OS**: [`uv`](https://docs.astral.sh/uv/) fetches a Python itself:
+  `uv venv --seed --python 3.12 luxar-env`, then `uv pip install ...` in place of
+  `pip` (including the CPU-torch step below). Keep `--seed`: a plain `uv venv` has
+  no pip, and `luxar demo deps --install` runs `python -m pip`.
+
+### Install
+
+```bash
+python3 -m venv luxar-env && source luxar-env/bin/activate
+pip install luxar                    # viewer (prebuilt), compiler, CLI, serve
+pip install "luxar[gsplats,io]"      # + splat FITTING (PyTorch, scipy) and TIFF reading
+```
+
+Extras: `[gsplats]` = PyTorch + scipy (needed by `gsplat fit/cal/compare/...`);
+`[io]` = tifffile + imagecodecs + imageio (TIFF, including compressed LZW/zstd
+TIFF and OME-TIFF; other image formats — older releases, including 2026.9.22,
+lack imagecodecs in `[io]`: `pip install imagecodecs`); `[demos]` = the heavy science-demo
+stack (pandas, astropy, esm, cellxgene-census, ...) — skip it and let
+`luxar demo deps --install` add only what a chosen demo reports missing. OME-Zarr
+/ `.zarr` / `.npy` need no extra. A missing extra raises an error naming the
+`pip install` to run.
+
+**CPU-only Linux: install the CPU torch wheel FIRST.** On Linux, PyPI's default
+torch wheel bundles CUDA (~3 GB of downloads, a 5+ GB venv) even on a machine with
+no GPU. Pre-installing the CPU build keeps it out — pip will not replace a torch
+that already satisfies `[gsplats]`:
+
+```bash
+pip install 'torch<3' --index-url https://download.pytorch.org/whl/cpu
+pip install "luxar[gsplats,io]"
+# uv environment: uv pip install 'torch<3' --index-url https://download.pytorch.org/whl/cpu
+#                 uv pip install "luxar[gsplats,io]"
+```
+
+(macOS wheels have no CUDA payload; nothing to do there.)
+
+**GPU notes for a pip install.**
+- *Apple Silicon*: the Metal splatting kernels compile at runtime from the shipped
+  `kernels.metal` via `torch.mps.compile_shader` — no Xcode, no build step (torch
+  >= 2.7; 2.6 through its private API). A fit logs `Metal splatting kernels:
+  runtime (...)`; `Metal splatting kernels: none, using PyTorch` means a torch
+  too old for it (measured ~40x slower end to end, ~100x per iteration) — upgrade torch.
+  `LUXAR_METAL_BACKEND=auto|aot|runtime|torch` forces a backend.
+- *NVIDIA*: `--device cuda` works from a pip install but through the PyTorch
+  reference path; it prints "CUDA GPU detected but splatting backend is not
+  compiled ... Build with: make build-cuda". The compiled kernels are built from a
+  source checkout against the installed torch (see "Profile: desktop with NVIDIA
+  GPU"). No CUDA toolkit is needed for the PyTorch path — only an NVIDIA driver
+  and a CUDA build of torch (`python -c "import torch;
+  print(torch.cuda.is_available())"` must print `True`).
+- Which path a fit took is printed near its start: `Model class:
+  GaussianSplatModelCUDA` / `GaussianSplatModelMetal, runtime kernels` (fast) or
+  `GaussianSplatModel (PyTorch, device=...)` (reference path).
+- *CPU*: expect seconds per iteration on a few-Mvoxel volume (about 2.6 s at
+  4,000 splats on 8.4 Mvoxel with 4–8 threads on an M4 Max), so minutes per 100
+  iterations and about an hour or more for a 2,000-iteration draft. Read "Fitting
+  on a CPU or a Mac" in `packages/luxar/src/luxar/gsplats/README.md` (threads,
+  downscale, short `cal` grid).
+
+### Verify
+
+```bash
+python -c "import luxar; print(luxar.__version__)"
+luxar demo                          # lists the bundled demos
+luxar demo run lorenz               # end-to-end smoke: generate + serve + view
+```
+
+The viewer servers bind `127.0.0.1`; on a remote box tunnel the printed ports
+(`ssh -L <port>:127.0.0.1:<port> host`) to view from your laptop.
+
+## Dev setup (source checkout)
 
 Prerequisites: **Python 3.12+** (with headers and `venv`), git, curl, `make`, a
 C compiler and `jq`; on Linux also the GL/EGL runtime libraries. The one list,
@@ -40,83 +124,43 @@ on macOS. Then:
 ```bash
 git clone https://github.com/royerlab/luxar
 cd luxar
-python3 -m venv .venv && source .venv/bin/activate   # or your env manager
 ```
 
-### User install
+An editable pip install also works from the clone (`python3 -m venv .venv &&
+source .venv/bin/activate && pip install -e ".[gsplats,io]"`), but the viewer is
+NOT prebuilt in a clone: the serve commands auto-build it on first use *if* Node
++ pnpm are available, and the reliable way to get those (plus Rust/wasm-pack,
+auto-installed by the build) is `make setup-dev && make build-viewer`.
+
+### Bootstrap
 
 ```bash
-pip install -e .                    # core: scene compiler, CLI, serve
-pip install -e ".[gsplats]"         # + Gaussian-splat FITTING (PyTorch, scipy)
-pip install -e ".[gsplats,io]"      # + TIFF/imageio volume loading
-pip install -e ".[demos]"           # + heavy demo deps (pandas, astropy, esm, ...)
-```
-
-Rule of thumb: viewing/serving needs no extras; `gsplat fit/cal` needs
-`[gsplats]`; loading `.tiff` needs `[io]`. A missing extra raises an
-actionable error naming the exact `pip install` to run.
-
-**The web viewer** is not pre-built in a source clone. The serve commands
-auto-build it on first use *if* Node + pnpm are available; the reliable way to
-get those (plus Rust/wasm-pack, auto-installed by the build) is:
-
-```bash
-make setup-dev      # installs Node 22 LTS (nvm/brew), pnpm, hatch — no sudo
-make build-viewer   # builds viewer dist (auto-installs Rust/wasm-pack if needed)
-```
-
-### Dev setup (contributors)
-
-```bash
-make setup-dev      # full bootstrap: Node, pnpm, hatch, pre-commit hooks
+make setup-dev      # full bootstrap: Node, pnpm, hatch, pre-commit hooks (no sudo)
 make check-deps     # audit what's installed / missing
 git lfs install && git lfs pull    # Dip-C's .npz payload is Git-LFS
                                    # (install git-lfs first: brew/apt install git-lfs)
 hatch run test      # Python tests
 ```
 
-Hatch manages the Python env for dev work (`hatch run python ...`); the venv +
-`pip install -e .` path above is only needed for the plain user story.
+Hatch manages the Python env for dev work: prefix the Verify commands above with
+`hatch run` (e.g. `hatch run luxar demo`). The default Hatch env already includes
+`[gsplats]` (torch/scipy) via `features=["dev"]`.
 
-### Verify (any profile)
+Dev-only knobs worth knowing:
 
-```bash
-python -c "import luxar; print(luxar.__version__)"
-luxar demo                          # lists the bundled demos
-luxar demo run lorenz               # end-to-end smoke: generate + serve + view
-```
-
-On the Hatch-based profiles (dev setup / GPU / HPC) prefix these with
-`hatch run` (e.g. `hatch run luxar demo`); the plain user-install venv runs
-them directly.
-
-## Profile: modest laptop
-
-Everything above; skip CUDA entirely. Key points:
-
-- **Viewing is never the bottleneck** — the viewer renders via WebGL in the
-  browser, no CUDA/PyTorch involved.
-- Fitting on CPU works but is slow: use `--preset draft`, small volumes, and
-  modest `--seeds`. On **Apple Silicon**, pass `device='mps'` (Python) — the
-  CLI's device auto-detection picks MPS up automatically. The 3D Metal kernels
-  need **no Xcode and no build step**: they compile at runtime from the shipped
-  `kernels.metal` via `torch.mps.compile_shader` (torch >= 2.7; 2.6 through its
-  private API). With an older torch, fitting warns and uses the much slower
-  PyTorch MPS path — upgrade torch. `LUXAR_METAL_BACKEND=auto|aot|runtime|torch`
-  forces a backend (a forced one that cannot run raises). The optional
-  ahead-of-time extension (`python setup.py build_ext --inplace --force` in
-  `gsplats/models/gsplats/metal/`, full Xcode required) is a developer tool:
-  `auto` prefers it when built and current, the runtime path is equivalent and
-  equal or slightly faster, and `LUXAR_METAL_BACKEND=runtime` selects it anyway.
-- Skip `[demos]` (heavy: torch-adjacent ML deps, astropy, ...) unless running
-  the science demos.
+- The optional ahead-of-time Metal extension (`python setup.py build_ext
+  --inplace --force` in `gsplats/models/gsplats/metal/`, full Xcode required) is a
+  developer tool: `auto` prefers it when built and current, the runtime path is
+  equivalent and equal or slightly faster, and `LUXAR_METAL_BACKEND=runtime`
+  selects the runtime path anyway (a forced backend that cannot run raises).
 - Memory-constrained native exports: `LUXAR_CACHE_BUDGET_MB=<N>` lowers the
-  launcher's viewer cache pool (default 2048).
+  launcher's viewer cache pool (default 2048). Native launchers (`luxar export
+  --native`) need `make build-launchers`, so they are a checkout-only feature.
 
 ## Profile: desktop with NVIDIA GPU
 
-On this profile Hatch owns the environment, so do NOT use the `.venv` from
-Common base — skip creating it, or `deactivate` it now before proceeding.
+On this profile Hatch owns the environment, so do NOT build into a separate
+`.venv` — skip creating one, or `deactivate` it now before proceeding.
 The CUDA make targets all run through Hatch's managed env (`hatch run ...`),
 so drive the whole GPU path through Hatch — verify and build against the *same*
 environment. The default Hatch env already includes `[gsplats]` (torch/scipy)
@@ -131,6 +175,11 @@ make setup-cuda         # install CUDA deps + build extension (may need sudo)
 make build-cuda         # or just build, if toolkit already present
 make test-cuda          # verify the extension
 ```
+
+The CUDA toolkit (`nvcc`) must match the CUDA version torch was built for
+(`hatch run python -c "import torch; print(torch.version.cuda)"`). Install it from
+NVIDIA's repository: Ubuntu's own `nvidia-cuda-toolkit` package is CUDA 12.0,
+too old for a CUDA 13 torch or for Blackwell GPUs (sm_120/121).
 
 The CUDA extension accelerates splatting internals; plain `device='cuda'`
 fitting works without it (PyTorch ops only). CUDA NLM denoise is a *separate*
@@ -151,7 +200,7 @@ Multiple GPUs? Whole-timelapse fitting across them is
 
 The Makefile auto-detects HPC and falls back to venv-based installs of hatch
 and `pnpm --prefix ~/.local` — no sudo anywhere. As on the GPU profile, Hatch
-owns the Python env here, so skip the Common-base `.venv` (or `deactivate` it
+owns the Python env here, so skip any separate `.venv` (or `deactivate` it
 now) — the build/verify steps below all route through `hatch run`.
 
 ```bash
@@ -189,6 +238,20 @@ Cluster-scale fitting (array jobs over T×C, the CZ Biohub **Bruno** cluster):
 see the **`luxar-hpc-batch-fit`** skill.
 
 ## Common pitfalls
+
+- **`pip install luxar` → "No matching distribution found"** → the interpreter is
+  older than 3.12 (stock macOS is 3.9); see "Prerequisites per OS".
+- **`python3 -m venv` → "ensurepip is not available"** (Ubuntu/Debian) →
+  `sudo apt install python3-venv`.
+- **A multi-GB torch download on a GPU-less Linux box** → you skipped the CPU
+  wheel step; `pip uninstall torch` then install it from the CPU index.
+- **Dataset downloads fail with `CERTIFICATE_VERIFY_FAILED` on macOS** → run the
+  python.org *Install Certificates.command*.
+- **"requires the 'imagecodecs' package"** reading a TIFF →
+  `pip install "luxar[io]"` (or `pip install imagecodecs`).
+- **`luxar demo run` fails with "Could not find project root"** → that installed
+  release predates the pip-install demo-path fix; upgrade
+  (`pip install -U luxar`) once a newer release is out, or run from a checkout.
 
 - **Dip-C has a tiny/broken payload** → run `git lfs install && git lfs pull`
   (the pointer file is ~130 bytes). Other hosted demos fetch from their records;

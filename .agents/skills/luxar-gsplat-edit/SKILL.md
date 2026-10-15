@@ -264,7 +264,7 @@ the pedestal is gone by design.
 
 - **Full flag tables** for every command (cull methods, filter criteria, transform
   order, merge modes, partition/flatten rules, inspect options) are in
-  `references/edit-commands.md`.
+  [references/edit-commands.md](references/edit-commands.md).
 - The old `split` command is gone — use `partition`.
 - `transform` applies operations in a fixed order: scale → rotate → translate → center
   → scale-intensity → normalize-intensity. It composes to `p → R·S·p + (t − c)`, so **a
