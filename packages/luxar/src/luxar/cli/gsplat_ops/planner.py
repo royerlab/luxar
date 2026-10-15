@@ -178,9 +178,16 @@ def _save_fit_result(
     output: Path,
     *,
     compress: "Optional[Literal['zip', 'tar.gz']]" = None,
+    dimension_metadata: "Optional[list[dict[str, str]]]" = None,
 ) -> None:
     """Save either a flat ``GSplatData`` leaf or a ``kind=partition`` tree node."""
-    save_fit_output(result, output, compress=compress, verbose=False)
+    save_fit_output(
+        result,
+        output,
+        compress=compress,
+        verbose=False,
+        dimension_metadata=dimension_metadata,
+    )
 
 
 def _stamp_content_floor(
@@ -242,6 +249,7 @@ def run_content_fit(
     output: Optional[Path],
     *,
     volume: Any = None,
+    dimension_metadata: "Optional[list[dict[str, str]]]" = None,
     # transferable density (cal.json or explicit reference)
     cal: Optional[Path] = None,
     k_star_ref: Optional[int] = None,
@@ -431,7 +439,15 @@ def run_content_fit(
                     else None
                 ),
             )
-            box_result.save(output, amplitude_bits="auto")
+            box_result.save(
+                output,
+                amplitude_bits="auto",
+                root_attrs=(
+                    {"dimension_metadata": dimension_metadata}
+                    if dimension_metadata is not None
+                    else None
+                ),
+            )
         return
 
     # ── resolve density ──
@@ -671,7 +687,9 @@ def run_content_fit(
     _stamp_content_floor(result, floor_level, floor_forward, floor_strategy)
 
     output.parent.mkdir(parents=True, exist_ok=True)
-    _save_fit_result(result, output, compress=compress)
+    _save_fit_result(
+        result, output, compress=compress, dimension_metadata=dimension_metadata
+    )
     kind = "partition" if partition else "leaf"
     if verbose:
         aprint(
