@@ -110,6 +110,20 @@ def _source_identity(source: Path) -> str:
     return "|".join(parts)
 
 
+def _luxar_version() -> str:
+    """Installed luxar version, read from package metadata.
+
+    Importing ``luxar`` itself would pull in ``luxar.core``/``luxar.io``, which
+    the ``gsplats`` layer must not depend on (import-linter contract).
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("luxar")
+    except PackageNotFoundError:
+        return "unknown"
+
+
 def plan_fingerprint(
     plan: "FitPlan",
     *,
@@ -129,10 +143,8 @@ def plan_fingerprint(
     """
     from dataclasses import asdict
 
-    from luxar import __version__
-
     h = hashlib.sha256()
-    h.update(f"v{_CHECKPOINT_VERSION} luxar {__version__}".encode())
+    h.update(f"v{_CHECKPOINT_VERSION} luxar {_luxar_version()}".encode())
     h.update(json.dumps(asdict(plan), sort_keys=True, default=str).encode())
     if fit_kwargs is not None:
         items = sorted(

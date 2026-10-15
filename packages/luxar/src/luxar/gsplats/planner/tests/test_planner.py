@@ -2906,7 +2906,6 @@ class TestPlanFingerprint:
     ):
         import os
 
-        import luxar
         from luxar.gsplats.planner import box_checkpoint as bc
 
         plan = _toy_plan(n_boxes=1)
@@ -2914,7 +2913,7 @@ class TestPlanFingerprint:
         src.write_bytes(b"x" * 10)
         base = bc.plan_fingerprint(plan, source=src)
         assert base == bc.plan_fingerprint(plan, source=src)
-        monkeypatch.setattr(luxar, "__version__", "0.0.0-other")
+        monkeypatch.setattr(bc, "_luxar_version", lambda: "0.0.0-other")
         assert base != bc.plan_fingerprint(plan, source=src)
         monkeypatch.undo()
         os.utime(src, ns=(1, 1))
