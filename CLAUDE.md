@@ -200,10 +200,21 @@ make help         # Show all available commands
 The build system is designed to work on **fresh Linux/macOS machines** with minimal pre-installed tools, including **HPC/Slurm login nodes** (no sudo, no GPU on login node).
 
 **Prerequisites:**
-- Python 3.12+ (usually pre-installed; `python3.12` is the usual HPC module)
-- Git and curl
+- Python 3.12+ with headers and `venv` (`python3.12` is the usual HPC module)
+- **Ubuntu/Debian** (Ubuntu 24.04+ / Debian 13+ ship Python 3.12+; on older releases install a 3.12 interpreter first):
+  ```bash
+  sudo apt-get update
+  sudo apt-get install -y make build-essential git curl jq \
+      python3-dev python3-venv pipx \
+      libegl1 libgl1-mesa-dri libegl-mesa0 libgbm1 libgles2
+  pipx ensurepath && source ~/.bashrc
+  ```
+- **macOS**:
+  ```bash
+  xcode-select --install             # make, git, curl, a C compiler (clang)
+  brew install python@3.12 pipx jq   # or Python 3.12+ from python.org
+  ```
 - **Git LFS** (optional, required for the Dip-C demo payload): `brew install git-lfs` (macOS) or `sudo apt-get install git-lfs` (Ubuntu)
-- **Ubuntu/Debian only**: `sudo apt-get install -y pipx && pipx ensurepath`
 - **HPC/no-sudo**: no extra prerequisites — the Makefile auto-detects and uses venv fallback
 
 **What `make setup-dev` installs (no sudo needed):**

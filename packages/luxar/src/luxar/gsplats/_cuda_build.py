@@ -177,7 +177,11 @@ def build_cuda_extension(
     except ImportError:
         print("ERROR: PyTorch not found. Install with:")
         print(
-            "  hatch run pip install torch --index-url https://download.pytorch.org/whl/cu128"
+            "  hatch run pip install torch --index-url https://download.pytorch.org/whl/cu130"
+        )
+        print(
+            "  (cu130 = CUDA 13.x / Blackwell, needs NVIDIA driver >= 580; cu128 or"
+            " cu126 for a CUDA 12.x toolkit or an older driver — match nvcc's major)"
         )
         sys.exit(1)
 
@@ -185,7 +189,11 @@ def build_cuda_extension(
         print("ERROR: CUDA not available in PyTorch.")
         print("Install PyTorch with CUDA support:")
         print(
-            "  hatch run pip install torch --index-url https://download.pytorch.org/whl/cu128"
+            "  hatch run pip install torch --index-url https://download.pytorch.org/whl/cu130"
+        )
+        print(
+            "  (cu130 = CUDA 13.x / Blackwell, needs NVIDIA driver >= 580; cu128 or"
+            " cu126 for a CUDA 12.x toolkit or an older driver — match nvcc's major)"
         )
         sys.exit(1)
 
