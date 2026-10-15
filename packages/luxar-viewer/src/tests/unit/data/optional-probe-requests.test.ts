@@ -307,7 +307,7 @@ describe('optional-feature probes on a consolidated store', () => {
     const env = await loadBakedEnvironment(rootLoc, HASH, 'http://h/offline.zarr/', listing, () =>
       zarr.root(source)
     );
-    expect(env?.header.faces).toBe('faces-cached');
+    expect(env?.header.scene_content_hash).toBe(HASH);
     expect(env?.faces).toHaveLength(6);
     expect(env?.faces[0]).toEqual(new Uint16Array(4).fill(0x3c00));
     expect(sourceReads).toEqual(['/environment/zarr.json']);
@@ -320,7 +320,7 @@ describe('optional-feature probes on a consolidated store', () => {
       listing,
       () => rootLoc
     );
-    expect(recovered?.header.faces).toBe('faces-cached');
+    expect(recovered?.faces[0]).toEqual(new Uint16Array(4).fill(0x3c00));
   });
 
   it('does not remember a cached miss after the source fails', async () => {

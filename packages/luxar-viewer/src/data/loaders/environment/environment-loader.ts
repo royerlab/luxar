@@ -133,6 +133,29 @@ async function openEnvironmentAttrs(
   return (group.attrs ?? {}) as Record<string, unknown>;
 }
 
+/** Read current attrs when available, retaining a cached map during a source fault. */
+async function openEnvironmentAttrsWithFallback(
+  rootLoc: zarr.Location<zarr.Readable>,
+  index: boolean | EnvironmentRootListing,
+  sourceRootLoc: (() => zarr.Location<zarr.Readable>) | undefined,
+  format: zarr.StoreFormat | null
+): Promise<Record<string, unknown> | null> {
+  const location = attrsLocation(rootLoc, index, sourceRootLoc);
+  try {
+    return await openEnvironmentAttrs(location.resolve(ENVIRONMENT_GROUP), format);
+  } catch (error) {
+    // An unreachable source cannot disprove the warm index's cached map.
+    // A 404 can: the sidecar may have been removed since that index was saved.
+    if (location === rootLoc || zarr.isNotFoundError(error)) throw error;
+    try {
+      return await openEnvironmentAttrs(rootLoc.resolve(ENVIRONMENT_GROUP), format);
+    } catch {
+      // The source is still unverified; a cached miss is not an absence.
+      return null;
+    }
+  }
+}
+
 /**
  * The environment group's attrs, or `null` when the store has none. An index that
  * does not list the group is trusted only when current (see the module doc).
@@ -151,20 +174,7 @@ async function readEnvironmentAttrs(
   try {
     // One format's document when the format is known — a guess at both cost up
     // to three 404s for the (normal) absent case.
-    const location = attrsLocation(rootLoc, index, sourceRootLoc);
-    try {
-      return await openEnvironmentAttrs(location.resolve(ENVIRONMENT_GROUP), format);
-    } catch (error) {
-      // An unreachable source cannot disprove the warm index's cached map.
-      // A 404 can: the sidecar may have been removed since that index was saved.
-      if (location === rootLoc || zarr.isNotFoundError(error)) throw error;
-      try {
-        return await openEnvironmentAttrs(rootLoc.resolve(ENVIRONMENT_GROUP), format);
-      } catch {
-        // The source is still unverified; a cached miss is not an absence.
-        return null;
-      }
-    }
+    return await openEnvironmentAttrsWithFallback(rootLoc, index, sourceRootLoc, format);
   } catch (error) {
     if (probeKey !== undefined && zarr.isNotFoundError(error)) knownAbsent.add(probeKey);
     return null; // no environment group — the normal case
