@@ -383,6 +383,10 @@ _NEUTRAL_FLAGS = frozenset(
         "--no-serve",
         "--serve-only",
         "--recompute",
+        "--build-catalog",
+        "--relist",
+        "--refit-all",
+        "--no-napari",
         "--keep-stale",
         "--no-open",
         "--control",
@@ -401,7 +405,7 @@ def _custom_build_args(extra: Sequence[str]) -> list[str]:
         if name in _NEUTRAL_VALUED_FLAGS:
             i += 1 if "=" in arg else 2
             continue
-        if arg not in _NEUTRAL_FLAGS:
+        if arg not in _NEUTRAL_FLAGS and not name.startswith("--recompute"):
             custom.append(arg)
         i += 1
     return custom

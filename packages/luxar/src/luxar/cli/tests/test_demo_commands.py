@@ -14,7 +14,7 @@ import pytest
 from typer.testing import CliRunner
 
 from luxar.cli import app
-from luxar.cli.demo_commands import _status
+from luxar.cli.demo_commands import _custom_build_args, _status
 from luxar.demos._dependencies import DependencySpec
 from luxar.demos.registry import iter_demos
 
@@ -282,6 +282,33 @@ class TestRun:
             )
         assert result.exit_code == 0
         assert "env" not in mock_run.call_args.kwargs
+
+    @pytest.mark.parametrize(
+        "flag",
+        [
+            "--recompute-layout",
+            "--recompute-field",
+            "--recompute-streamlines",
+            "--recompute-pipeline",
+            "--build-catalog",
+            "--relist",
+            "--refit-all",
+            "--no-napari",
+        ],
+    )
+    def test_input_refresh_flags_keep_the_default_build(self, flag: str) -> None:
+        assert _custom_build_args([flag]) == []
+        assert _custom_build_args([flag, "--points", "100"]) == ["--points", "100"]
+
+    def test_gaia_rebuild_advice_targets_the_default_build(self, runner) -> None:
+        from luxar.demos.demo_gaia_milky_way_3m import REBUILD_COMMAND
+
+        flag = REBUILD_COMMAND.split(" -- ", 1)[1].split()
+        assert _custom_build_args(flag) == []
+        with patch("luxar.cli.demo_commands.run_child_process", return_value=0) as run:
+            result = runner.invoke(app, ["demo", "run", "gaia_milky_way", "--", *flag])
+        assert result.exit_code == 0
+        assert "env" not in run.call_args.kwargs
 
     def test_argparse_demo_help_includes_its_own_options(self, runner) -> None:
         with patch("luxar.cli.demo_commands.run_child_process") as mock_run:
