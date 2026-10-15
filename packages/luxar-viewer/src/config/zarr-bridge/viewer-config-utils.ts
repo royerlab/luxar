@@ -35,6 +35,7 @@ import { parseViewAxis, type ViewAxis } from '../../types/view-axis';
  */
 export const _warnedUnknownRenderingKeys = new Set<string>();
 export const _warnedFovPresetConflicts = new Set<string>();
+export const _warnedInvalidViewAxes = new Set<string>();
 
 /**
  * Mapping from snake_case zarr viewer_config keys to camelCase RenderingSettings keys.
@@ -350,10 +351,14 @@ function extractViewAxis(raw: unknown): ViewAxis | undefined {
   if (raw === undefined) return undefined;
   const viewAxis = parseViewAxis(raw);
   if (!viewAxis) {
-    log.warning(
-      Modules.SCENE_LOADER,
-      `viewer_config.camera.view_axis: ${JSON.stringify(raw)} is not one of xy/xz/yz; ignoring it`
-    );
+    const key = JSON.stringify(raw);
+    if (!_warnedInvalidViewAxes.has(key)) {
+      _warnedInvalidViewAxes.add(key);
+      log.warning(
+        Modules.SCENE_LOADER,
+        `viewer_config.camera.view_axis: ${key} is not one of xy/xz/yz; ignoring it`
+      );
+    }
     return undefined;
   }
   return viewAxis;
