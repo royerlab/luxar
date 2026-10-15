@@ -61,6 +61,22 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   surviving parts in part order; it is not positionally aligned with every box in
   the plan. The score uses the same memory guard as uniform tiling
   (`LUXAR_TILED_QUALITY_MAX_GB`); every decline is announced.
+- **`BoxProgress`** (`box_progress.py`) — the single per-box progress stream both
+  drivers print when `verbose`. The sequential driver prints it only when the
+  caller passes no `progress_callback` (a caller's callback replaces it, so no
+  box is reported twice). A `box i` label is the zero-based `--plan-box i`
+  number; `(k/N)` is the one-based count of handled boxes. Verbose or not, the
+  sequential driver runs each inner box fit under
+  `luxar.utils.verbosity.quiet_narration()` (no per-fit tree) and
+  re-emits each distinct warning once per run (`OncePerRunWarnings`), so a
+  `--quiet` content fit is never noisier than a verbose one. Lines: a start line, iteration
+  lines at 25/50/75% of `n_iters` (via the fitter's `iter_callback`), and a
+  completion line (kept splats, the box PSNR measured on its PADDED crop —
+  reported only, never stored in the part's stats — elapsed, and an ETA weighted
+  by the same `_scaled_budget` the boxes are fitted with). The `-j N` driver
+  prints the completion / FAILED line per finished worker. Boxes reloaded from a
+  checkpoint are recorded as resumed (`resumed=` up front, or `box_resumed(i)`):
+  they count as done but are excluded from the timing and the remaining budget.
 - **`fit_planned_parallel`** (`fit_planned_parallel.py`) — the `-j N` path: fit
   each box in its own subprocess (`fit --plan-box`), then merge identically. A box
   that fits 0 splats writes a sibling `<output>.empty` marker (skipped at merge).

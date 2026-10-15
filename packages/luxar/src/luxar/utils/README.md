@@ -226,6 +226,15 @@ of each level.
   report the matching level or the raw depth
 - `verbosity(level)`: Context manager; restores the exact previous switch pair,
   not the level name it resolves to
+- `quiet_narration()`: Context manager muting a block's arbol output except the
+  lines sent through `aprint_heartbeat()`; used by content-tiled fits to quiet
+  each box's inner fit while keeping its progress lines
+- `aprint_heartbeat(message)`: `aprint` that an enclosing `quiet_narration()`
+  does not mute — printed under the settings (and at the tree depth) in force
+  outside the block, so global `"silent"` still silences it. A `set_verbosity()`
+  or `verbosity()` call made inside the block sets the level its heartbeats
+  print at (a nested `verbosity("silent")` silences them); its narration stays
+  muted
 
 These write arbol *class attributes*, so the setting is process-global rather
 than per-call, is not thread-safe, and affects any other arbol user in the
