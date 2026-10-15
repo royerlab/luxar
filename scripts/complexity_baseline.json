@@ -3,7 +3,7 @@
   "settings_fingerprint": "ae98f84daba436c1e4ca68ed02c5d0a3c0a1862e4616eca60f6bf9c95e51584b",
   "functions": {
     "packages/luxar/src/luxar/cli/demo_commands.py::cache_clear": [
-      29
+      27
     ],
     "packages/luxar/src/luxar/cli/demo_commands.py::demo_deps": [
       19

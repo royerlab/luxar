@@ -33,7 +33,7 @@ from .demo_render import (
     render_dependencies,
     render_detail,
 )
-from .utils import format_memory_size
+from .utils import format_memory_size, require_confirmation
 
 app_demo = typer.Typer(
     help=(
@@ -140,7 +140,9 @@ def _resolve_or_exit(key_or_index: str) -> DemoInfo:
         raise typer.Exit(1) from e
 
 
-def _run_registered_demo(key: str, cmd: list[str], label: str) -> int:
+def _run_registered_demo(
+    key: str, cmd: list[str], label: str, env: Optional[dict[str, str]] = None
+) -> int:
     """Run a demo subprocess with a `luxar demo stop` registry entry around it.
 
     The entry is written the instant the group is spawned (via ``on_spawn``,
@@ -155,7 +157,9 @@ def _run_registered_demo(key: str, cmd: list[str], label: str) -> int:
         entry[0] = demo_runs.register_run(key, pid)
 
     try:
-        return run_child_process(cmd, label=label, on_spawn=_register)
+        if env is None:
+            return run_child_process(cmd, label=label, on_spawn=_register)
+        return run_child_process(cmd, label=label, on_spawn=_register, env=env)
     finally:
         demo_runs.unregister_run(entry[0])
 
@@ -202,6 +206,88 @@ def demo_info(
 
 
 # ──────────────────────────────── run ────────────────────────────────────────
+_HELP_FLAGS = frozenset({"-h", "--help"})
+
+#: Flags shared through ``luxar.demos._support.runtime`` (``parse_demo_flags``,
+#: ``launch_viewer``, ``control_serve_args``) — what `-- --help` can promise
+#: without importing the demo, which several do expensive work at import.
+_COMMON_DEMO_FLAGS: tuple[tuple[str, str], ...] = (
+    ("--no-serve", "Build the scene into the demos output directory, then exit."),
+    ("--host HOST", "Bind the servers to HOST (default 127.0.0.1; 0.0.0.0 = LAN)."),
+    ("--no-open", "Do not open a browser (skipped anyway without a display)."),
+    ("--recompute", "Rebuild cached intermediate results (GSplat demos)."),
+    ("--serve-only", "Serve the existing output without rebuilding (GSplat demos)."),
+    ("--control", "Expose the remote-control panel (demos that offer one)."),
+)
+
+
+def _module_docstring(path: Path) -> Optional[str]:
+    """A demo's module docstring, read by parsing — never by importing it."""
+    import ast
+
+    try:
+        return ast.get_docstring(ast.parse(path.read_text(encoding="utf-8")))
+    except (OSError, SyntaxError, ValueError):
+        return None
+
+
+def _argparse_help(info: DemoInfo) -> Optional[str]:
+    """The ``--help`` of a demo that parses its argv with argparse, else None.
+
+    Only those demos are asked: argparse prints and exits before ``main`` does
+    any work (they parse first thing), whereas a demo that scans ``sys.argv``
+    would ignore ``--help`` and start for real. The module's imports still run,
+    in a child process, so a slow import costs time but nothing else.
+    """
+    import subprocess  # nosec B404 - fixed argv: this interpreter + a demo module
+
+    try:
+        if "ArgumentParser(" not in info.path.read_text(encoding="utf-8"):
+            return None
+        out = subprocess.run(  # nosec B603 - fixed argv, no shell
+            [sys.executable, "-m", info.module, "--help"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            stdin=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return f"(Its options: python -m {info.module} --help)"
+    if out.returncode != 0 or "usage:" not in out.stdout:
+        return f"(Its options: python -m {info.module} --help)"
+    return out.stdout.rstrip()
+
+
+def _print_demo_help(info: DemoInfo) -> None:
+    """``luxar demo run <key> -- --help``: describe the demo, run nothing.
+
+    Forwarding ``--help`` used to start the whole demo — most demos scan
+    ``sys.argv`` for the flags they know and ignore the rest — so asking for
+    help kicked off a download and a server. The detail card, the demo's own
+    docstring (where its specific flags are documented) and the shared flags
+    answer the question instead.
+    """
+    console = demo_console()
+    render_detail(console, info, _status(info))
+    doc = _module_docstring(info.path)
+    if doc:
+        console.print()
+        console.print(doc, markup=False, highlight=False)
+    parser_help = _argparse_help(info)
+    if parser_help:
+        console.print()
+        console.print(parser_help, markup=False, highlight=False)
+    console.print()
+    console.print("Common demo flags (pass them after `--`):")
+    for flag, text in _COMMON_DEMO_FLAGS:
+        console.print(f"  {flag:<14} {text}", markup=False, highlight=False)
+    console.print(
+        "Not every demo honours every flag; demo-specific ones are described above.",
+        markup=False,
+        highlight=False,
+    )
+
+
 @app_demo.command(
     "run",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
@@ -209,6 +295,28 @@ def demo_info(
 def demo_run(
     ctx: typer.Context,
     key: str = typer.Argument(..., help="Demo key or index (see `luxar demo list`)"),
+    host: Optional[str] = typer.Option(
+        None,
+        "--host",
+        help=(
+            "Bind the demo's data and viewer servers to HOST (default 127.0.0.1; "
+            "0.0.0.0 to view it from another machine). Forwarded to the demo."
+        ),
+    ),
+    no_open: bool = typer.Option(
+        False,
+        "--no-open",
+        help="Do not open a browser. Forwarded to the demo.",
+    ),
+    canonical: bool = typer.Option(
+        False,
+        "--canonical",
+        help=(
+            "Build into the default output path even when forwarded arguments "
+            "change the scene (replaces the default build) instead of "
+            "demos/variants/custom-<hash>/."
+        ),
+    ),
 ) -> None:
     """Run a demo by key or index; extra args are forwarded to the demo.
 
@@ -216,10 +324,26 @@ def demo_run(
     ~/.cache/luxar/datasets/demos from an install. LUXAR_DATASETS_DIR overrides
     the datasets directory.
 
+    --host and --no-open reach every serving demo; the browser is also skipped
+    automatically over SSH, without a display, or without a terminal. A
+    forwarded --no-serve only builds the scene. `luxar demo run <key> -- --help`
+    describes a demo without running it.
+
     Example: luxar demo run gsplats_3d_tribolium_embryo -- --recompute --no-serve
     """
     info = _resolve_or_exit(key)
     extra = list(ctx.args)
+    if _HELP_FLAGS.intersection(extra):
+        _print_demo_help(info)
+        raise typer.Exit(0)
+    # Declared (so `--help` lists them) but consumed by the demo script, which
+    # hands them to `luxar serve` through `launch_viewer`.
+    if host:
+        extra.extend(["--host", host])
+    if no_open:
+        extra.append("--no-open")
+    _refuse_if_running(info.key)
+    env = None if canonical else _variant_env(info, extra)
     aprint(f"🎬 {info.title}  [{info.key}]")
     aprint(f"   {info.description}")
     if extra:
@@ -230,12 +354,109 @@ def demo_run(
     # which then tears the whole subtree down deterministically (SIGINT →
     # SIGTERM → SIGKILL). Without this, a hung uvicorn is orphaned on its port.
     # run_child_process also maps signal death to 128+N (raw -N truncates).
-    code = _run_registered_demo(info.key, cmd, label=f"demo '{info.key}'")
+    code = _run_registered_demo(info.key, cmd, label=f"demo '{info.key}'", env=env)
     if code != 0:
         raise typer.Exit(code)
 
 
+def _refuse_if_running(key: str) -> None:
+    """Exit 1 when demo ``key`` is already running.
+
+    Both runs would build the same output store, and the second would replace
+    the scene the first is still serving (and contend for its ports).
+    """
+    run = _live_run_of(key)
+    if run is None:
+        return
+    who = f"PID {run.pid}" if run.pid else f"process group {run.pgid}"
+    aprint(
+        f"❌ Demo '{key}' is already running ({who}). Stop it first with "
+        f"`luxar demo stop {key}` (or `luxar stop`), or open its viewer tab."
+    )
+    raise typer.Exit(1)
+
+
+#: Forwarded flags that do not change WHAT a demo builds — only where it binds,
+#: whether it serves or opens a browser, or how it reaches its inputs.
+_NEUTRAL_FLAGS = frozenset(
+    {
+        "--no-serve",
+        "--serve-only",
+        "--recompute",
+        "--keep-stale",
+        "--no-open",
+        "--control",
+    }
+)
+_NEUTRAL_VALUED_FLAGS = frozenset({"--host", "--control-token", "--cache-dir"})
+
+
+def _custom_build_args(extra: Sequence[str]) -> list[str]:
+    """The forwarded args that may change the scene a demo builds."""
+    custom: list[str] = []
+    i = 0
+    while i < len(extra):
+        arg = extra[i]
+        name = arg.split("=", 1)[0]
+        if name in _NEUTRAL_VALUED_FLAGS:
+            i += 1 if "=" in arg else 2
+            continue
+        if arg not in _NEUTRAL_FLAGS:
+            custom.append(arg)
+        i += 1
+    return custom
+
+
+def _variant_env(info: DemoInfo, extra: Sequence[str]) -> Optional[dict[str, str]]:
+    """Child environment for a custom-argument build, or None for the default.
+
+    A run with arguments like ``--points 100`` builds a different scene. It goes
+    to ``demos/variants/custom-<hash>/`` (keyed on those arguments, so the same
+    custom run reuses its own directory) instead of replacing the canonical
+    scene — which ``luxar demo`` marks built and ``run-all`` would then skip.
+    """
+    import hashlib
+
+    from ..utils.paths import DEMO_VARIANT_ENV, DEMO_VARIANTS_DIRNAME
+
+    custom = _custom_build_args(extra)
+    if not custom:
+        return None
+    digest = hashlib.sha1(  # nosec B324 - a directory name, not security
+        "\0".join(custom).encode("utf-8"), usedforsecurity=False
+    ).hexdigest()[:8]
+    variant = f"custom-{digest}"
+    where = f"{DEMO_VARIANTS_DIRNAME}/{variant}/"
+    aprint(
+        f"ℹ️  Custom arguments ({' '.join(custom)}): building into the demos "
+        f"directory's {where}, leaving the default build of '{info.key}' untouched."
+    )
+    return {**os.environ, DEMO_VARIANT_ENV: variant}
+
+
 # ─────────────────────────────── run-all ─────────────────────────────────────
+def _run_all_skip_reason(
+    d: DemoInfo,
+    include_gpu: bool,
+    max_download_mb: int,
+    live_keys: frozenset[str],
+    skip_existing: bool,
+) -> Optional[str]:
+    """Why ``run-all`` must not build ``d`` unattended, or None to build it."""
+    if d.local_data in ("manual-file", "kaggle-auth"):
+        return f"needs {d.local_data}"
+    if d.gpu == "required" and not include_gpu:
+        return "needs GPU (pass --include-gpu)"
+    if max_download_mb and d.download_mb > max_download_mb:
+        return f"download {d.download_mb}MB > {max_download_mb}MB limit"
+    if d.key in live_keys:
+        return "running right now (its server reads it)"
+    outs = registry.demo_output_paths(d)
+    if skip_existing and outs and all(p.exists() for p in outs):
+        return "output exists"
+    return None
+
+
 @app_demo.command("run-all")
 def demo_run_all(
     skip_existing: bool = typer.Option(
@@ -267,26 +488,14 @@ def demo_run_all(
     ``--max-download-mb``). By default also skips demos whose outputs exist.
     """
     demos = _demos_or_exit()
+    live_keys = _live_demo_keys()
     ran, skipped, failed = 0, 0, []
     for d in demos:
-        if d.local_data in ("manual-file", "kaggle-auth"):
-            aprint(f"⏭️  {d.key}: needs {d.local_data}; skipping")
-            skipped += 1
-            continue
-        if d.gpu == "required" and not include_gpu:
-            aprint(f"⏭️  {d.key}: needs GPU (pass --include-gpu); skipping")
-            skipped += 1
-            continue
-        if max_download_mb and d.download_mb > max_download_mb:
-            aprint(
-                f"⏭️  {d.key}: download {d.download_mb}MB > "
-                f"{max_download_mb}MB limit; skipping"
-            )
-            skipped += 1
-            continue
-        outs = registry.demo_output_paths(d)
-        if skip_existing and outs and all(p.exists() for p in outs):
-            aprint(f"⏭️  {d.key}: output exists; skipping")
+        reason = _run_all_skip_reason(
+            d, include_gpu, max_download_mb, live_keys, skip_existing
+        )
+        if reason is not None:
+            aprint(f"⏭️  {d.key}: {reason}; skipping")
             skipped += 1
             continue
         aprint(f"▶️  {d.key}: {d.title}")
@@ -314,6 +523,92 @@ def demo_run_all(
     if failed:
         aprint(f"   failed: {', '.join(failed)}")
         raise typer.Exit(1)
+
+
+# ─────────────────────────── live-run guards ─────────────────────────────────
+def _live_demo_keys() -> frozenset[str]:
+    """Keys of demos running right now (registry + sweep), best-effort."""
+    try:
+        runs = _translate_sweep_keys(demo_runs.discover_runs())
+    except Exception:  # noqa: BLE001 - a guard must never break the command
+        return frozenset()
+    return frozenset(r.key for r in runs if r.kind == "demo")
+
+
+def _live_run_of(key: str) -> Optional["demo_runs.DemoRun"]:
+    """The running instance of demo ``key``, if any."""
+    try:
+        runs = _translate_sweep_keys(demo_runs.discover_runs())
+    except Exception:  # noqa: BLE001 - a guard must never break the command
+        return None
+    return next((r for r in runs if r.kind == "demo" and r.key == key), None)
+
+
+def _variant_output_paths(info: DemoInfo) -> list[Path]:
+    """Custom-argument builds of ``info``'s outputs under ``demos/variants/``."""
+    from ..utils.paths import DEMO_VARIANTS_DIRNAME
+
+    base = registry.demo_output_paths(info)
+    if not base:
+        return []
+    variants_root = base[0].parent / DEMO_VARIANTS_DIRNAME
+    if not variants_root.is_dir():
+        return []
+    return [v / p.name for v in sorted(variants_root.iterdir()) for p in base]
+
+
+def _add_output_targets(
+    info: DemoInfo,
+    targets: list[tuple[Path, int, str]],
+    live_keys: frozenset[str],
+) -> None:
+    """Queue ``info``'s generated scenes (canonical + variants) for deletion.
+
+    A demo that is running right now is skipped: its server is reading the very
+    store this would delete.
+    """
+    if info.key in live_keys:
+        aprint(
+            f"⏭️  Keeping {info.key}'s outputs: the demo is running "
+            f"(`luxar demo stop {info.key}` first)."
+        )
+        return
+    from ..io.compiler import find_atomic_leftovers, foreign_atomic_leftovers
+
+    for p in [*registry.demo_output_paths(info), *_variant_output_paths(info)]:
+        # Abandoned atomic-build siblings (`.<name>.compile-*` / `.old-*` of a
+        # build that was killed) belong to this output too — but only this
+        # machine's: on shared storage another host's may be a live build.
+        for foreign in foreign_atomic_leftovers(p):
+            aprint(f"⏭️  {foreign.name}: from another machine; not removed.")
+        leftovers = [path for _kind, path in find_atomic_leftovers(p)]
+        for q in [p, *leftovers]:
+            if q.exists():
+                size = registry.dir_size_bytes(q) if q.is_dir() else q.stat().st_size
+                label = (
+                    q.name if q.parent.name == "demos" else f"{q.parent.name}/{q.name}"
+                )
+                targets.append((q, size, f"{info.key} output {label}"))
+
+
+def _sweep_empty_variant_dirs() -> None:
+    """Remove ``demos/variants/<v>/`` dirs (and ``variants/``) left empty."""
+    from ..utils.paths import DEMO_VARIANTS_DIRNAME, get_demos_output_dir
+
+    try:
+        root = get_demos_output_dir(create=False) / DEMO_VARIANTS_DIRNAME
+    except ValueError:
+        return
+    try:
+        if not root.is_dir():
+            return
+        for variant in sorted(root.iterdir()):
+            if variant.is_dir() and not any(variant.iterdir()):
+                variant.rmdir()
+        if not any(root.iterdir()):
+            root.rmdir()
+    except OSError:
+        pass  # a concurrent build re-populated it, or no permission: leave it
 
 
 # ──────────────────────────────── stop ───────────────────────────────────────
@@ -357,6 +652,11 @@ def _manual_stop_hint(run: "demo_runs.DemoRun") -> str:
     ``demo_runs.stop_run``), so the hint has to be the local one — a
     `kill -9 -<pgid>` there is advice that cannot even be typed.
     """
+    if run.kind == "server":
+        # A server is stopped by PID, never by group (see demo_runs).
+        if can_kill_process_groups():
+            return f"kill -9 {run.pgid}"
+        return f"taskkill /F /PID {run.pgid}"
     if can_kill_process_groups():
         return f"kill -9 -{run.pgid}"
     return f"taskkill /F /T /PID {run.pgid}"
@@ -367,11 +667,58 @@ def _stop_all(runs: list["demo_runs.DemoRun"]) -> list["demo_runs.DemoRun"]:
     survivors: list[demo_runs.DemoRun] = []
     for r in runs:
         if demo_runs.stop_run(r):
-            aprint(f"   ✅ stopped {r.key}")
+            if r.pruned:
+                aprint(f"   ✅ {r.key} had already exited (stale entry removed)")
+            else:
+                aprint(f"   ✅ stopped {r.key}")
         else:
             survivors.append(r)
-            aprint(f"   ❌ could not stop {r.key} (pgid {r.pgid})")
+            aprint(f"   ❌ could not stop {r.key} ({_id_label(r)})")
     return survivors
+
+
+def _id_label(run: "demo_runs.DemoRun") -> str:
+    """``pgid N`` for a demo group, ``pid N`` for a server process."""
+    return f"pid {run.pgid}" if run.kind == "server" else f"pgid {run.pgid}"
+
+
+def list_confirm_stop(
+    runs: list["demo_runs.DemoRun"],
+    *,
+    dry_run: bool,
+    yes: bool,
+    noun: tuple[str, str],
+    done_message: str,
+) -> None:
+    """List ``runs``, confirm (or refuse without a TTY), stop them, report.
+
+    Shared by ``luxar demo stop`` and ``luxar stop``. Always raises
+    ``typer.Exit``: 0 when everything listed is gone (or nothing was asked),
+    1 when something survived or confirmation was impossible.
+    """
+    label = noun[0] if len(runs) == 1 else noun[1]
+    aprint(f"🛑 [Luxar] {len(runs)} running {label}:")
+    for r in runs:
+        origin = "" if r.source == "registry" else "  (found by process sweep)"
+        aprint(f"   {r.key:<32} {_id_label(r):<12} {_run_age(r.started):>11}{origin}")
+    if dry_run:
+        aprint("\n(--dry-run: nothing stopped)")
+        raise typer.Exit(0)
+    # Several agents/people may run demos on this machine concurrently, and
+    # "stop everything" would take a colleague's live server down with yours —
+    # so the listing above always gets a confirmation, like `cache clear`.
+    if not require_confirmation("\nStop these?", yes=yes):
+        aprint("Aborted.")
+        raise typer.Exit(0)
+
+    survivors = _stop_all(runs)
+    if survivors:
+        names = ", ".join(r.key for r in survivors)
+        hints = "; ".join(_manual_stop_hint(r) for r in survivors)
+        aprint(f"⚠️  {len(survivors)} still running: {names} — try `{hints}`.")
+        raise typer.Exit(1)
+    aprint(done_message)
+    raise typer.Exit(0)
 
 
 @app_demo.command("stop")
@@ -383,7 +730,10 @@ def demo_stop(
         False, "--dry-run", help="List running demos; stop nothing."
     ),
     yes: bool = typer.Option(
-        False, "--yes", "-y", help="Skip the confirmation prompt."
+        False,
+        "--yes",
+        "-y",
+        help="Skip the confirmation prompt (required when stdin is not a terminal).",
     ),
 ) -> None:
     """Stop running demos and free their ports (and memory, and GPU).
@@ -403,28 +753,13 @@ def demo_stop(
         aprint(f"✅ No running {target} found.")
         raise typer.Exit(0)
 
-    noun = "demo" if len(runs) == 1 else "demos"
-    aprint(f"🛑 [Luxar] {len(runs)} running {noun}:")
-    for r in runs:
-        origin = "" if r.source == "registry" else "  (found by process sweep)"
-        aprint(f"   {r.key:<32} pgid {r.pgid:<7} {_run_age(r.started):>11}{origin}")
-    if dry_run:
-        aprint("\n(--dry-run: nothing stopped)")
-        raise typer.Exit(0)
-    # Several agents/people may run demos on this machine concurrently, and
-    # "stop everything" would take a colleague's live server down with yours —
-    # so the listing above always gets a confirmation, like `cache clear`.
-    if not yes and not typer.confirm("\nStop these?"):
-        aprint("Aborted.")
-        raise typer.Exit(0)
-
-    survivors = _stop_all(runs)
-    if survivors:
-        names = ", ".join(r.key for r in survivors)
-        hints = "; ".join(_manual_stop_hint(r) for r in survivors)
-        aprint(f"⚠️  {len(survivors)} still running: {names} — try `{hints}`.")
-        raise typer.Exit(1)
-    aprint("✅ All demos stopped; their ports are free again.")
+    list_confirm_stop(
+        runs,
+        dry_run=dry_run,
+        yes=yes,
+        noun=("demo", "demos"),
+        done_message="✅ All demos stopped; their ports are free again.",
+    )
 
 
 # ──────────────────────────────── deps ──────────────────────────────────────
@@ -738,7 +1073,10 @@ def cache_clear(
         False, "--dry-run", help="Show what would be deleted; delete nothing."
     ),
     yes: bool = typer.Option(
-        False, "--yes", "-y", help="Skip the confirmation prompt."
+        False,
+        "--yes",
+        "-y",
+        help="Skip the confirmation prompt (required when stdin is not a terminal).",
     ),
 ) -> None:
     """Clear demo caches (and optionally generated outputs), with fine-grained scope.
@@ -792,18 +1130,14 @@ def cache_clear(
     # so the preview matches the run. See :func:`_clearable_cache_dirs`.
     protected_kept: list[str] = []
 
+    live_keys = _live_demo_keys() if outputs else frozenset()
     cache_dirs: list[Path] = []
     for d in selected:
         for cache_dir in _clearable_cache_dirs(d, protected_kept):
             cache_dirs.append(cache_dir)
             _add_dir_files(cache_dir, d.key)
         if outputs:
-            for p in registry.demo_output_paths(d):
-                if p.exists():
-                    size = (
-                        registry.dir_size_bytes(p) if p.is_dir() else p.stat().st_size
-                    )
-                    targets.append((p, size, f"{d.key} output {p.name}"))
+            _add_output_targets(d, targets, live_keys)
 
     if orphans:
         try:
@@ -860,7 +1194,7 @@ def cache_clear(
     if dry_run:
         aprint("\n(--dry-run: nothing deleted)")
         raise typer.Exit(0)
-    if not yes and not typer.confirm("\nDelete these?"):
+    if not require_confirmation("\nDelete these?", yes=yes):
         aprint("Aborted.")
         raise typer.Exit(0)
 
@@ -887,6 +1221,7 @@ def cache_clear(
                 empty.rmdir()
             except OSError:
                 not_removed.append(str(empty.relative_to(cache_dir.parent)))
+    _sweep_empty_variant_dirs()  # a variant dir emptied above goes too
     aprint(f"✅ Cleared {format_memory_size(freed)}.")
     if not_removed:
         aprint(

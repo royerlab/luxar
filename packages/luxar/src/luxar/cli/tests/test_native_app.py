@@ -104,6 +104,22 @@ class TestGetLauncherPath:
         with pytest.raises(ValueError, match="Unknown native platform"):
             get_launcher_path("solaris")
 
+    def test_installed_wheel_is_pointed_at_a_source_checkout(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`make build-launchers` is a dead end from `pip install luxar`."""
+        empty_dir = tmp_path / "empty"
+        empty_dir.mkdir()
+        monkeypatch.setattr("luxar.utils.paths.get_luxar_checkout_root", lambda: None)
+        with patch("luxar.cli.native_app.LAUNCHERS_DIR", empty_dir):
+            with pytest.raises(LauncherNotBuiltError) as exc:
+                get_launcher_path("macos")
+        message = str(exc.value)
+        assert "no launcher for macos" in message
+        assert "source checkout" in message
+        assert "git clone" in message
+        assert not message.rstrip().endswith("Run: make build-launchers")
+
     def test_raises_when_binary_missing(self, tmp_path: Path) -> None:
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()

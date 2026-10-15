@@ -5,7 +5,7 @@ This demo demonstrates:
 - Generating a beautiful Lorenz attractor trajectory
 - Time-based color gradient cycling through the color wheel
 - Progressive writing for efficient memory usage
-- Complete workflow: generate → serve → view → cleanup
+- Complete workflow: generate → serve → view
 
 The demo is self-contained - the generation code is in this file. The only
 shared helper it borrows for generation is the vectorized HSV→RGB colouring
@@ -15,7 +15,7 @@ Usage:
     python demo_lorenz.py [--points N]
 
 Controls:
-    - Ctrl+C to stop and cleanup
+    - Ctrl+C to stop
     - Browser opens automatically
 """
 
@@ -38,7 +38,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -208,32 +207,27 @@ def main() -> None:
     aprint(f"Points: {n_points:,}")
     aprint("")
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "lorenz.luxar.zarr"
         generate_lorenz_attractor(output_path, n_points=n_points)
         aprint(f"✓ Dataset generated at {output_path}")
         return
 
-    # Use temporary directory for demo data (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_lorenz_") as tmpdir:
-        output_path = Path(tmpdir) / "lorenz.luxar.zarr"
+    output_path = get_demos_output_dir() / "lorenz.luxar.zarr"
 
-        # Generate the dataset (the integrator lives in this file)
-        generate_lorenz_attractor(output_path, n_points=n_points)
+    # Generate the dataset (the integrator lives in this file)
+    generate_lorenz_attractor(output_path, n_points=n_points)
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 70)
-        aprint("The viewer will open in your browser automatically.")
-        aprint("Press Ctrl+C when done to stop and cleanup.")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 70)
+    aprint("The viewer will open in your browser automatically.")
+    aprint("Press Ctrl+C when done to stop the server.")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    # Cleanup happens automatically when tempfile context exits
-    aprint("✓ Cleanup complete - temporary files removed")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

@@ -101,7 +101,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -846,23 +845,20 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path}")
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_flywire_") as tmpdir:
-        output_path = Path(tmpdir) / "flywire_connectome.luxar.zarr"
-        n_neurons, n_edges = build_scene(output_path, neurons, edges)
+    output_path = get_demos_output_dir() / "flywire_connectome.luxar.zarr"
+    n_neurons, n_edges = build_scene(output_path, neurons, edges)
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("NAVIGATION")
-        aprint("=" * 70)
-        aprint("  Rotate: see the two optic lobes flanking the central brain")
-        aprint("  Hover a neuron: cell type · super-class · NT · side")
-        aprint("")
-        aprint(f"  Neurons: {n_neurons:,}   Edges: {n_edges:,}")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("NAVIGATION")
+    aprint("=" * 70)
+    aprint("  Rotate: see the two optic lobes flanking the central brain")
+    aprint("  Hover a neuron: cell type · super-class · NT · side")
+    aprint("")
+    aprint(f"  Neurons: {n_neurons:,}   Edges: {n_edges:,}")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

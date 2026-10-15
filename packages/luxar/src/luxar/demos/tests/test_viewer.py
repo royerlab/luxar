@@ -32,7 +32,7 @@ class TestDemoPorts:
 
         data, viewer = demo_ports("x.luxar.zarr")
         cmd = _serve_command("x.luxar.zarr", open_browser=True, serve_args=None)
-        assert cmd[-1] == "--open"
+        assert cmd[-1] == "--auto-open"
         assert ["--port", str(data)] == cmd[cmd.index("--port") :][:2]
         assert ["--viewer-port", str(viewer)] == cmd[cmd.index("--viewer-port") :][:2]
 
@@ -84,3 +84,119 @@ class TestDemoPorts:
                 pairs.setdefault(demo_ports(path), []).append(path.name)
         collisions = {k: v for k, v in pairs.items() if len(v) > 1}
         assert not collisions, f"port-pair collisions: {collisions}"
+
+
+class TestServeFlagForwarding:
+    """A demo's own --host / --no-open reach `luxar serve` for every demo."""
+
+    def test_host_is_forwarded_from_the_demo_argv(self) -> None:
+        from luxar.demos._support.runtime.viewer import _serve_command
+
+        for argv in (["demo", "--host", "0.0.0.0"], ["demo", "--host=0.0.0.0"]):
+            cmd = _serve_command("x.luxar.zarr", True, None, argv=argv)
+            assert cmd[cmd.index("--host") + 1] == "0.0.0.0"
+            assert cmd.count("--host") == 1
+
+    def test_no_host_flag_keeps_the_loopback_default(self) -> None:
+        from luxar.demos._support.runtime.viewer import _serve_command
+
+        cmd = _serve_command("x.luxar.zarr", True, None, argv=["demo"])
+        assert "--host" not in cmd
+        assert cmd[-1] == "--auto-open"
+
+    def test_no_open_suppresses_the_browser(self) -> None:
+        from luxar.demos._support.runtime.viewer import _serve_command
+
+        cmd = _serve_command("x.luxar.zarr", True, None, argv=["demo", "--no-open"])
+        assert "--auto-open" not in cmd
+
+    def test_a_host_already_in_serve_args_wins(self) -> None:
+        """control_serve_args may already carry --host; never append a second."""
+        from luxar.demos._support.runtime.viewer import _serve_command
+
+        cmd = _serve_command(
+            "x.luxar.zarr",
+            False,
+            ["--control", "--host", "10.0.0.5"],
+            argv=["demo", "--host", "0.0.0.0"],
+        )
+        assert cmd.count("--host") == 1
+        assert cmd[cmd.index("--host") + 1] == "10.0.0.5"
+
+    def test_launch_viewer_reads_sys_argv(self, monkeypatch) -> None:
+        """The ~130 `launch_viewer(path)` call sites inherit it with no edits."""
+        from luxar.demos._support.runtime import viewer
+
+        seen: list[list[str]] = []
+        monkeypatch.setattr(
+            viewer, "run_child_process", lambda cmd, **kw: seen.append(cmd) or 0
+        )
+        monkeypatch.setattr(
+            viewer.sys, "argv", ["demo_lorenz.py", "--host", "0.0.0.0", "--no-open"]
+        )
+        viewer.launch_viewer("lorenz.luxar.zarr")
+        assert "--auto-open" not in seen[0]
+        assert seen[0][seen[0].index("--host") + 1] == "0.0.0.0"
+
+
+def _launches_inside_tempdir(source: str) -> list[int]:
+    """Line numbers of `launch_viewer(...)` calls inside a `TemporaryDirectory`.
+
+    Structural (AST), so it is blind to how the path is spelled
+    (`Path(tmpdir) / …`, `tmp_dir / …`, a helper's return value): a scratch
+    directory for intermediates is fine, serving from inside one is not.
+    """
+    import ast
+
+    def _name(node: object) -> str:
+        func = getattr(node, "func", None)
+        return str(getattr(func, "attr", None) or getattr(func, "id", None) or "")
+
+    lines = []
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, (ast.With, ast.AsyncWith)):
+            continue
+        if not any(
+            isinstance(item.context_expr, ast.Call)
+            and _name(item.context_expr) == "TemporaryDirectory"
+            for item in node.items
+        ):
+            continue
+        for stmt in node.body:
+            for inner in ast.walk(stmt):
+                if isinstance(inner, ast.Call) and _name(inner) == "launch_viewer":
+                    lines.append(inner.lineno)
+    return lines
+
+
+class TestServingDemosWriteToTheDemosDir:
+    """Serving used to build into a TemporaryDirectory: no ✓, nothing to reuse."""
+
+    def test_no_demo_serves_out_of_a_temporary_directory(self) -> None:
+        demos_dir = Path(__file__).resolve().parents[1]
+        offenders = [
+            f"{path.name}:{line}"
+            for path in sorted(demos_dir.glob("demo_*.py"))
+            for line in _launches_inside_tempdir(path.read_text(encoding="utf-8"))
+        ]
+        assert offenders == []
+
+    def test_the_guard_catches_every_spelling_of_the_old_pattern(self) -> None:
+        for body in (
+            "    output_path = Path(tmpdir) / 'a.luxar.zarr'\n"
+            "    launch_viewer(output_path)\n",
+            "    zarr_path = tmp_dir / 'a.luxar.zarr'\n"
+            "    launch_viewer(zarr_path, serve_args=[])\n",
+            "    if True:\n        viewer.launch_viewer(build(tmp))\n",
+        ):
+            source = (
+                "import tempfile\n"
+                "with tempfile.TemporaryDirectory(prefix='x') as tmp_dir:\n" + body
+            )
+            assert _launches_inside_tempdir(source), body
+        clean = (
+            "with tempfile.TemporaryDirectory() as tmp:\n"
+            "    extract(tmp)\n"
+            "launch_viewer(out)\n"
+        )
+        assert _launches_inside_tempdir(clean) == []

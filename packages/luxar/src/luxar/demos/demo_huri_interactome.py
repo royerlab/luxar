@@ -940,39 +940,35 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path}")
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_huri_") as tmpdir:
-        output_path = Path(tmpdir) / "huri_interactome.luxar.zarr"
-        n_nodes, n_edges, n_comms = build_scene(
-            output_path,
-            nodes,
-            node_df,
-            edges,
-            coords,
-            communities,
-            degrees,
-            corum_lookup,
-            max_edges,
-        )
+    output_path = get_demos_output_dir() / "huri_interactome.luxar.zarr"
+    n_nodes, n_edges, n_comms = build_scene(
+        output_path,
+        nodes,
+        node_df,
+        edges,
+        coords,
+        communities,
+        degrees,
+        corum_lookup,
+        max_edges,
+    )
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("NAVIGATION")
-        aprint("=" * 70)
-        aprint("  Press '1' then '[' / ']' to switch color view:")
-        aprint("     0: Community  (Louvain — functional modules)")
-        aprint("     1: Chromosome (HGNC location)")
-        aprint("  Hover any node : symbol · chromosome · degree · community")
-        aprint("  Hover any edge : pair · intra/cross · shared CORUM complex")
-        aprint("")
-        aprint(
-            f"  Proteins: {n_nodes:,}   Interactions: {n_edges:,}   "
-            f"Communities: {n_comms}"
-        )
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("NAVIGATION")
+    aprint("=" * 70)
+    aprint("  Press '1' then '[' / ']' to switch color view:")
+    aprint("     0: Community  (Louvain — functional modules)")
+    aprint("     1: Chromosome (HGNC location)")
+    aprint("  Hover any node : symbol · chromosome · degree · community")
+    aprint("  Hover any edge : pair · intra/cross · shared CORUM complex")
+    aprint("")
+    aprint(
+        f"  Proteins: {n_nodes:,}   Interactions: {n_edges:,}   Communities: {n_comms}"
+    )
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

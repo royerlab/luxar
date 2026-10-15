@@ -6,7 +6,7 @@ This demo demonstrates:
 - Smooth rainbow color gradient flowing along the spiral
 - Automatic point spacing calculation for optimal density
 - High-quality rendering with sharp points
-- Complete workflow: generate → serve → view → cleanup
+- Complete workflow: generate → serve → view
 
 The demo is completely self-contained - all generation code is in this file.
 
@@ -19,7 +19,7 @@ Usage:
     python demo_rainbow_sphere.py [--points=N]
 
 Controls:
-    - Ctrl+C to stop and cleanup
+    - Ctrl+C to stop
     - Browser opens automatically
 """
 
@@ -42,7 +42,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -262,40 +261,33 @@ def main() -> None:
     aprint("Colors: Smooth rainbow gradient along spiral")
     aprint("")
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "rainbow_sphere.luxar.zarr"
         generate_rainbow_sphere(output_path, n_points=n_points)
         aprint(f"✓ Dataset generated at {output_path}")
         return
 
-    # Use temporary directory for demo data (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_rainbow_") as tmpdir:
-        output_path = Path(tmpdir) / "rainbow_sphere.luxar.zarr"
+    output_path = get_demos_output_dir() / "rainbow_sphere.luxar.zarr"
 
-        # Generate the dataset (all code in this file!)
-        generate_rainbow_sphere(output_path, n_points=n_points)
+    # Generate the dataset (all code in this file!)
+    generate_rainbow_sphere(output_path, n_points=n_points)
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 70)
-        aprint("The viewer will open in your browser automatically.")
-        aprint("Press Ctrl+C when done to stop and cleanup.")
-        aprint("")
-        aprint(
-            f"💡 TIP: This demo has high point density ({n_points / 1000:.0f}k points)"
-        )
-        aprint("   - Initial load may take a moment")
-        aprint("   - Zoom in to see individual points clearly")
-        aprint("   - Notice how evenly distributed the points are")
-        aprint("   - Rainbow flows smoothly along the spiral")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 70)
+    aprint("The viewer will open in your browser automatically.")
+    aprint("Press Ctrl+C when done to stop the server.")
+    aprint("")
+    aprint(f"💡 TIP: This demo has high point density ({n_points / 1000:.0f}k points)")
+    aprint("   - Initial load may take a moment")
+    aprint("   - Zoom in to see individual points clearly")
+    aprint("   - Notice how evenly distributed the points are")
+    aprint("   - Rainbow flows smoothly along the spiral")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    # Cleanup happens automatically
-    aprint("✓ Cleanup complete - temporary files removed")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

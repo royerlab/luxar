@@ -22,6 +22,7 @@ from starlette.types import ASGIApp
 from luxar import __version__
 from luxar.utils.arbol_warnings import install_arbol_warnings
 
+from . import demo_runs
 from ._traceback import exit_with_error
 from .common_options import (
     AllowSensitivePathOption,
@@ -55,6 +56,7 @@ from .serving import (
     _warn_if_lan_exposed,
     create_server_app,
 )
+from .stop_command import register_stop_command
 from .utils import (
     _DEFAULT_CORS_ORIGIN,
     advertised_host,
@@ -148,6 +150,10 @@ register_optimize_command(app)
 # restamp_lod_command.py).
 register_restamp_lod_command(app)
 
+# Register `luxar stop` (defined in stop_command.py): stops the servers below,
+# which register themselves for it, plus running demos.
+register_stop_command(app)
+
 
 def _start_data_server_thread(
     path: Path,
@@ -214,6 +220,12 @@ def serve(
     viewer: bool = typer.Option(False, "--viewer", help="Also serve the viewer"),
     viewer_port: int = typer.Option(5173, "--viewer-port", help="Port for viewer"),
     open_browser: bool = typer.Option(False, "--open", help="Open browser"),
+    auto_open: bool = typer.Option(
+        False,
+        "--auto-open",
+        hidden=True,
+        help="Like --open, but only where a browser can be seen (used by demos).",
+    ),
     viewer_only: bool = typer.Option(
         False, "--viewer-only", help="Serve only the viewer"
     ),
@@ -260,6 +272,10 @@ def serve(
         # Test packet loss
         luxar serve data.luxar.zarr --bandwidth 10mbps --packet-loss 5%
     """
+    # `--open` is an instruction and always opens; `--auto-open` (what demos
+    # pass) opens only where the no-display heuristic finds a screen.
+    explicit_open = open_browser
+    open_browser = open_browser or auto_open
     try:
         # Warn about conflicting flags
         if viewer_only and path is not None:
@@ -285,15 +301,17 @@ def serve(
             if actual_viewer_port is None:
                 raise typer.Exit(1)
 
-            _serve_viewer(
-                host,
-                actual_viewer_port,
-                None,
-                open_browser,
-                cors_origin,
-                control=control,
-                control_token=control_token,
-            )
+            with demo_runs.registered_server("serve --viewer-only", "serve"):
+                _serve_viewer(
+                    host,
+                    actual_viewer_port,
+                    None,
+                    open_browser,
+                    cors_origin,
+                    control=control,
+                    control_token=control_token,
+                    open_explicit=explicit_open,
+                )
             return
 
         # Require path for data serving
@@ -402,7 +420,7 @@ def serve(
                     control=control,
                     control_token=control_token,
                 )
-                open_browser_func(viewer_url)
+                open_browser_func(viewer_url, explicit=explicit_open)
 
         # Wrap the complete ASGI app with network simulation (if enabled)
         asgi_app: ASGIApp = api
@@ -420,9 +438,14 @@ def serve(
                 ),
             )
 
-        uvicorn.run(
-            asgi_app, host=host, port=actual_port, reload=False, log_level="warning"
-        )
+        with demo_runs.registered_server(f"serve {serve_path.name}", "serve"):
+            uvicorn.run(
+                asgi_app,
+                host=host,
+                port=actual_port,
+                reload=False,
+                log_level="warning",
+            )
     except typer.Exit:
         raise
     except KeyboardInterrupt:
@@ -438,7 +461,11 @@ def viewer(
     host: HostOption = "127.0.0.1",
     port: int = make_port_option(5173, "Port number"),
     data_port: int = typer.Option(8000, "--data-port", help="Port for data server"),
-    open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser"),
+    open_browser: Optional[bool] = typer.Option(
+        None,
+        "--open/--no-open",
+        help="Open a browser (default: yes, where one can be seen).",
+    ),
     # Network simulation parameters, data server only (see common_options.py)
     profile: ProfileOption = None,
     bandwidth: BandwidthOption = None,
@@ -535,14 +562,18 @@ def viewer(
             raise typer.Exit(1)
 
         # Serve viewer
-        _serve_viewer(
-            host,
-            actual_viewer_port,
-            data_url,
-            open_browser,
-            cors_origin,
-            title=dataset_title(data),
-        )
+        with demo_runs.registered_server(
+            f"viewer {data.name}" if data else "viewer", "viewer"
+        ):
+            _serve_viewer(
+                host,
+                actual_viewer_port,
+                data_url,
+                open_browser is not False,
+                cors_origin,
+                title=dataset_title(data),
+                open_explicit=open_browser is True,
+            )
 
     except typer.Exit:
         raise
@@ -597,8 +628,13 @@ def export(
     script. Anyone can view the scene with just Python 3 and a browser.
 
     With --native, produces double-clickable native bundles instead of the
-    Python serve.py folder. Requires `make build-launchers` to have been
-    run first.
+    Python serve.py folder. Needs a source checkout: run `make build-launchers`
+    there first (an installed wheel ships no launcher binaries).
+
+    With --open, the export is served right away (stop it with Ctrl+C or
+    `luxar stop`) and a browser is opened: --open is an explicit request, so it
+    applies even over SSH or without a terminal. LUXAR_OPEN_BROWSER=0 serves it
+    without opening one.
 
     Examples:
         luxar export my_scene.luxar.zarr -o my_export/
@@ -634,19 +670,7 @@ def export(
             aprint(f"To view: cd {result} && python3 serve.py")
 
         if open_browser:
-            import subprocess
-            import sys
-
-            serve_script = result / "serve.py"
-            aprint(f"Starting local server on port {port}...")
-            aprint("Press Ctrl+C to stop the server.")
-            try:
-                subprocess.run(
-                    [sys.executable, str(serve_script), "--port", str(port)],
-                    cwd=str(result),
-                )
-            except KeyboardInterrupt:
-                aprint("\n🛑 Server stopped.")
+            _serve_export(result, port)
     except typer.Exit:
         raise
     except FileExistsError as e:
@@ -658,6 +682,44 @@ def export(
         raise typer.Exit(1)
     except Exception as e:
         exit_with_error(f"❌ Error exporting scene: {e}", e)
+
+
+def _serve_export(result: Path, port: int) -> None:
+    """``luxar export --open``: serve the fresh export until stopped.
+
+    The exported ``serve.py`` runs as an OWNED child (``run_child_process``):
+    a SIGTERM/SIGHUP to this command — a harness timeout, a closed session,
+    ``luxar stop`` — now tears the server down instead of orphaning it on its
+    port, and its exit status is reported instead of discarded (a ``serve.py``
+    that could not bind used to end the command with status 0 and no word of
+    why). Our own buffered output is flushed first: with stdout redirected to a
+    file it was still sitting in this process's buffer while the child wrote
+    straight to the shared descriptor, so a log showed only the child's lines —
+    and lost ours outright if this process was then killed.
+    """
+    import sys
+
+    from .._process import run_child_process
+    from .utils import browser_unavailable_reason
+
+    cmd = [sys.executable, str(result / "serve.py"), "--port", str(port)]
+    # `--open` was typed, so the no-display guess does not apply; only an
+    # explicit LUXAR_OPEN_BROWSER=0 keeps serve.py from opening one.
+    reason = browser_unavailable_reason(explicit=True)
+    if reason is not None:
+        cmd.append("--no-open")
+        aprint(f"🌐 Not opening a browser ({reason}); open the URL below yourself.")
+    aprint(f"Starting local server on port {port}...")
+    aprint("Press Ctrl+C (or run `luxar stop`) to stop the server.")
+    sys.stdout.flush()
+    sys.stderr.flush()
+    with demo_runs.registered_server(f"export {result.name}", "export"):
+        code = run_child_process(cmd, label="export server", cwd=str(result))
+    if code == 130:
+        aprint("🛑 Server stopped.")
+    elif code != 0:
+        aprint(f"❌ The export server exited with status {code}.")
+        raise typer.Exit(code)
 
 
 def _run_native_export(
@@ -688,7 +750,11 @@ def _run_native_export(
         validate_bundle_name,
         zip_macos_app,
     )
-    from .utils import get_viewer_dist_path, validate_zarr_store
+    from .utils import (
+        get_viewer_dist_path,
+        validate_zarr_store,
+        viewer_not_built_message,
+    )
 
     is_valid, error = validate_zarr_store(source)
     if not is_valid:
@@ -705,9 +771,7 @@ def _run_native_export(
         raise ValueError("--native requires at least one platform")
 
     if not check_viewer_built():
-        raise FileNotFoundError(
-            "Viewer not built. Run: cd packages/luxar-viewer && pnpm build"
-        )
+        raise FileNotFoundError(viewer_not_built_message())
     viewer_dist = get_viewer_dist_path()
     _require_third_party_notices(viewer_dist)
 

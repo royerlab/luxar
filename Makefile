@@ -1548,7 +1548,7 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 # Demo and serving
 demo:  ## Generate the Lorenz demo dataset (datasets/demos/lorenz.luxar.zarr, 100k points)
 	@mkdir -p datasets/demos
-	$(HATCH) run luxar demo run lorenz -- --no-serve --points=100000
+	$(HATCH) run luxar demo run lorenz --canonical -- --no-serve --points=100000
 	@echo "✅ Demo dataset created at datasets/demos/lorenz.luxar.zarr"
 
 run-examples:  ## Run all examples to generate zarr files (output to datasets/examples/)

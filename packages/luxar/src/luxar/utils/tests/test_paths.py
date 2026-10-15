@@ -139,3 +139,27 @@ class TestDatasetsDirResolution:
         assert not expected.exists()
         assert paths.get_demos_output_dir() == expected / "demos"
         assert (expected / "demos").is_dir()
+
+
+def test_demo_variant_redirects_demo_outputs(tmp_path, monkeypatch) -> None:
+    """A custom-argument demo build lands in its own directory (#WP10)."""
+    from luxar.utils.paths import get_demos_output_dir
+
+    monkeypatch.setenv("LUXAR_DATASETS_DIR", str(tmp_path))
+    monkeypatch.delenv("LUXAR_DEMO_VARIANT", raising=False)
+    assert get_demos_output_dir() == tmp_path / "demos"
+    monkeypatch.setenv("LUXAR_DEMO_VARIANT", "custom-abc12345")
+    assert get_demos_output_dir() == tmp_path / "demos" / "variants" / "custom-abc12345"
+    assert get_demos_output_dir().is_dir()
+
+
+def test_demo_variant_must_be_a_plain_name(tmp_path, monkeypatch) -> None:
+    import pytest
+
+    from luxar.utils.paths import get_demos_output_dir
+
+    monkeypatch.setenv("LUXAR_DATASETS_DIR", str(tmp_path))
+    for bad in ("../escape", "a/b", ".."):
+        monkeypatch.setenv("LUXAR_DEMO_VARIANT", bad)
+        with pytest.raises(ValueError):
+            get_demos_output_dir(create=False)

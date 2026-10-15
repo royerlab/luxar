@@ -109,7 +109,7 @@ Controls:
     - Side view: See membrane portion (F0) and catalytic head (F1)
     - Each chain/subunit has a distinct color
     - Press L for the Layers panel (blending, opacity, absorption, display range)
-    - Ctrl+C to stop and cleanup
+    - Ctrl+C to stop
 """
 
 DEMO_META = {
@@ -750,7 +750,7 @@ def main() -> None:
     aprint(f"PDB ID: {pdb_id}")
     aprint("")
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "atp_synthase.luxar.zarr"
         try:
@@ -772,58 +772,56 @@ def main() -> None:
         return
 
     # Generate structure
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_atp_") as tmpdir:
-        output_path = Path(tmpdir) / "atp_synthase.luxar.zarr"
+    output_path = get_demos_output_dir() / "atp_synthase.luxar.zarr"
 
-        try:
-            n_atoms = generate_atp_synthase(
-                output_path,
-                pdb_id=pdb_id,
-                max_atoms=max_atoms,
-                representation=representation,
-                color_by=color_by,
-            )
-        except Exception as e:
-            aprint(f"\n❌ Error: {e}")
-            aprint("\nPossible issues:")
-            aprint("  • Network connection failed")
-            aprint("  • PDB ID not found")
-            aprint("  • File format error")
-            sys.exit(1)
+    try:
+        n_atoms = generate_atp_synthase(
+            output_path,
+            pdb_id=pdb_id,
+            max_atoms=max_atoms,
+            representation=representation,
+            color_by=color_by,
+        )
+    except Exception as e:
+        aprint(f"\n❌ Error: {e}")
+        aprint("\nPossible issues:")
+        aprint("  • Network connection failed")
+        aprint("  • PDB ID not found")
+        aprint("  • File format error")
+        sys.exit(1)
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("VIEWING TIPS")
-        aprint("=" * 70)
-        aprint("")
-        aprint("What to look for:")
-        aprint("  • F1 head: Hexagonal arrangement (α3β3)")
-        aprint("  • γ shaft: Central rotating stalk (different color)")
-        aprint("  • F0 rotor: Membrane-embedded c-ring")
-        aprint("  • Peripheral stalk: Connects to side of F1")
-        aprint("  • Each subunit type has distinct color")
-        aprint("")
-        aprint("Architecture:")
-        aprint("  • Top view: See hexagonal F1 head")
-        aprint("  • Side view: See F1 (top) and F0 (bottom)")
-        aprint("  • The γ shaft goes through the CENTER!")
-        aprint("")
-        aprint(f"Total atoms: {n_atoms:,}")
-        aprint("")
-        aprint("Nobel Prize 1997:")
-        aprint("  Paul Boyer & John Walker discovered the rotary mechanism")
-        aprint("  One of biology's most elegant molecular machines!")
-        aprint("")
-        aprint("=" * 70)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 70)
-        aprint("Tip: Rotate to see the molecular motor from all angles!")
-        aprint("Browser will open automatically. Press Ctrl+C when done.")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("VIEWING TIPS")
+    aprint("=" * 70)
+    aprint("")
+    aprint("What to look for:")
+    aprint("  • F1 head: Hexagonal arrangement (α3β3)")
+    aprint("  • γ shaft: Central rotating stalk (different color)")
+    aprint("  • F0 rotor: Membrane-embedded c-ring")
+    aprint("  • Peripheral stalk: Connects to side of F1")
+    aprint("  • Each subunit type has distinct color")
+    aprint("")
+    aprint("Architecture:")
+    aprint("  • Top view: See hexagonal F1 head")
+    aprint("  • Side view: See F1 (top) and F0 (bottom)")
+    aprint("  • The γ shaft goes through the CENTER!")
+    aprint("")
+    aprint(f"Total atoms: {n_atoms:,}")
+    aprint("")
+    aprint("Nobel Prize 1997:")
+    aprint("  Paul Boyer & John Walker discovered the rotary mechanism")
+    aprint("  One of biology's most elegant molecular machines!")
+    aprint("")
+    aprint("=" * 70)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 70)
+    aprint("Tip: Rotate to see the molecular motor from all angles!")
+    aprint("Browser will open automatically. Press Ctrl+C when done.")
+    aprint("")
 
-        launch_viewer(output_path)
+    launch_viewer(output_path)
 
-    aprint("Cleanup complete")
     aprint("")
     aprint("Try different representations:")
     aprint("  --representation=calpha    (clean backbone trace)")

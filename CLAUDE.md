@@ -308,6 +308,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 luxar demo                       # List the 90 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
+luxar stop                       # Stop serve/viewer/gsplat view/export --open servers + demos
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
 # Demos keep heavyweight packages OUT of the core install, so a fresh checkout
 # lists every demo but cannot run them all. Report-only `deps` exits 1 for an

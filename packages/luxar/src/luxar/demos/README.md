@@ -32,8 +32,12 @@ The easiest way to run any demo is the CLI (equivalent to the per-demo
 luxar demo                  # list all demos (key, index, requirements)
 luxar demo info lorenz      # metadata for one demo
 luxar demo run lorenz       # run by key or index; forwards -- args
-luxar demo run lorenz -- --no-serve --points=10000
+luxar demo run lorenz -- --no-serve --points=10000              # custom build → demos/variants/
+luxar demo run lorenz --canonical -- --no-serve --points=10000  # replace the default build
 luxar demo run-all          # generate demo datasets (--no-serve; skips GPU/large-download by default)
+luxar demo run lorenz -- --help             # describe a demo without running it
+luxar demo run lorenz -- --host 0.0.0.0     # serve on the LAN (any serving demo)
+luxar demo run lorenz -- --no-open          # don't open a browser
 luxar demo stop             # stop demos left running (frees their ports); --dry-run to list
 luxar demo cache list       # inventory demo caches under ~/.cache/luxar/
 luxar demo deps                    # which optional dependencies are missing?
@@ -233,7 +237,7 @@ registry — there is no second metadata list to keep in sync.
 #### demo_lorenz.py - Lorenz Attractor
 Beautiful chaotic attractor with rainbow color gradient.
 
-**Run**: `luxar demo run lorenz [-- --points=100000]`
+**Run**: `luxar demo run lorenz [-- --points=100000]` (a custom count builds under `demos/variants/`; add `--canonical` to replace the default build)
 
 **Demonstrates**: Differential equation integration, vectorized HSV-to-RGB color conversion, time-based color gradients, progressive writing, chaotic systems visualization.
 
@@ -242,7 +246,7 @@ Beautiful chaotic attractor with rainbow color gradient.
 #### demo_rainbow_sphere.py - Fibonacci Spiral Sphere
 Dense sphere (200k points) with perfect distribution and rainbow colors.
 
-**Run**: `luxar demo run rainbow_sphere [-- --points=100000]`
+**Run**: `luxar demo run rainbow_sphere [-- --points=100000]` (a custom count builds under `demos/variants/`; add `--canonical` to replace the default build)
 
 **Demonstrates**: Fibonacci (golden angle) spiral for optimal sphere coverage, smooth rainbow gradient using phase-shifted sine waves, automatic point spacing calculation, high density visualization.
 
@@ -1140,12 +1144,15 @@ Each demo follows this self-contained pattern:
 What this demonstrates...
 """
 
-import subprocess
-import tempfile
+import sys
 from pathlib import Path
+
 import numpy as np
-from arbol import aprint, asection
-from luxar import LuxarZarrCompiler, Dimension, Dimensions
+from arbol import asection
+
+from luxar import Dimension, Dimensions, LuxarZarrCompiler
+from luxar.demos import launch_viewer
+from luxar.utils.paths import get_demos_output_dir
 
 def generate_my_data(output_path: Path, **params) -> None:
     """Generate the dataset - THE INTERESTING CODE IS IN THIS FUNCTION.
@@ -1168,19 +1175,16 @@ def generate_my_data(output_path: Path, **params) -> None:
             scene.add_points('name', positions, colors=colors, layer=True, ...)
 
 def main():
-    """Entry point - generate and serve."""
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_") as tmpdir:
-        output_path = Path(tmpdir) / "demo.luxar.zarr"
+    """Entry point - generate, then serve unless --no-serve."""
+    output_path = get_demos_output_dir() / "demo.luxar.zarr"
 
-        # Generate
-        generate_my_data(output_path)
+    # Generate
+    generate_my_data(output_path)
+    if "--no-serve" in sys.argv:
+        return
 
-        # Serve using the launch_viewer helper
-        from luxar.demos import launch_viewer
-        launch_viewer(output_path)
-
-    # Auto-cleanup
-    aprint("✓ Cleanup complete")
+    # Serve using the launch_viewer helper
+    launch_viewer(output_path)
 
 if __name__ == "__main__":
     main()
@@ -1222,15 +1226,44 @@ def generate_my_data(output_path):
     positions = create_positions()  # ← nothing left to read here
 ```
 
-### 2. Use Temporary Directory
-Always use `tempfile.TemporaryDirectory()` to ensure cleanup:
+### 2. Write to the Demos Output Directory
+Build the scene at `get_demos_output_dir() / "<output>.luxar.zarr"` — the same
+path with or without `--no-serve` — never into a `tempfile.TemporaryDirectory()`.
+That path is what `luxar demo` checks for its `✓` built marker and what `luxar
+demo run --help` promises; a scene served out of a temporary directory vanished
+on exit, so the catalogue never showed it built. The `<output>` name must be one
+of the demo's `DEMO_META["outputs"]`.
+
+What re-running does to that store:
+
+- `LuxarZarrCompiler` builds a store in the demos directory in a hidden
+  sibling and renames it into place only when the build finishes, so a reader
+  never sees a half-written scene and a failed or interrupted build leaves the
+  previous one intact.
+- `luxar demo run <key>` refuses to start a demo that is already running (its
+  server reads that store); stop it first with `luxar demo stop <key>`.
+  `run-all` skips running demos and `demo cache clear --outputs` keeps their
+  stores.
+- Forwarded arguments that change the scene (`-- --points 100`) build into
+  `demos/variants/custom-<hash>/` instead (`LUXAR_DEMO_VARIANT`), so the
+  catalogue's `✓` keeps meaning "the default build is present" and `run-all`
+  does not mistake a custom build for it. Flags that only change how a demo is
+  served (`--host`, `--no-open`, `--no-serve`, `--serve-only`, `--recompute`,
+  `--control`) do not. `luxar demo run <key> --canonical -- …` opts out and
+  replaces the default build on purpose (what `make demo` does). `demo cache
+  clear <key> --outputs` removes the variants too. Running a demo module directly (`python -m luxar.demos.demo_x --points
+  100`) bypasses this and replaces the default build.
+
+`demos/tests/test_viewer.py` fails the build on a demo that serves from a
+temporary directory again.
 
 ```python
-with tempfile.TemporaryDirectory(prefix="luxar_demo_myname_") as tmpdir:
-    output = Path(tmpdir) / "data.luxar.zarr"
-    generate_data(output)
-    serve_and_view(output)
-# Automatic cleanup when context exits
+from luxar.utils.paths import get_demos_output_dir
+
+output = get_demos_output_dir() / "my_demo.luxar.zarr"
+generate_data(output)
+if "--no-serve" not in sys.argv:
+    launch_viewer(output)
 ```
 
 ### 3. Use launch_viewer Helper

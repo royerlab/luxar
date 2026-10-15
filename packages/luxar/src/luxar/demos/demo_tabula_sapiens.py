@@ -42,7 +42,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -804,39 +803,36 @@ def main() -> None:
         aprint(f"Total cells: {n_cells:,}")
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_tabula_sapiens_") as tmpdir:
-        output_path = Path(tmpdir) / "tabula_sapiens.luxar.zarr"
+    output_path = get_demos_output_dir() / "tabula_sapiens.luxar.zarr"
 
-        try:
-            n_cells = generate_tabula_sapiens(
-                output_path, sample_size=sample_size, cache_dir=cache_dir
-            )
-            if n_cells == 0:
-                return
-        except Exception as e:
-            aprint(f"\nError: {e}")
-            import traceback
+    try:
+        n_cells = generate_tabula_sapiens(
+            output_path, sample_size=sample_size, cache_dir=cache_dir
+        )
+        if n_cells == 0:
+            return
+    except Exception as e:
+        aprint(f"\nError: {e}")
+        import traceback
 
-            traceback.print_exc()
-            sys.exit(1)
+        traceback.print_exc()
+        sys.exit(1)
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("VIEWING TIPS")
-        aprint("=" * 70)
-        aprint("")
-        aprint("Explore the human cell atlas:")
-        aprint("  - Clusters = cell types with similar transcriptomic profiles")
-        aprint("  - Colors = organ/tissue of origin")
-        aprint("  - Hover over any cell to see its type and tissue")
-        aprint("")
-        aprint(f"Total cells: {n_cells:,}")
-        aprint("")
-        aprint("Press Ctrl+C when done.")
+    aprint("")
+    aprint("=" * 70)
+    aprint("VIEWING TIPS")
+    aprint("=" * 70)
+    aprint("")
+    aprint("Explore the human cell atlas:")
+    aprint("  - Clusters = cell types with similar transcriptomic profiles")
+    aprint("  - Colors = organ/tissue of origin")
+    aprint("  - Hover over any cell to see its type and tissue")
+    aprint("")
+    aprint(f"Total cells: {n_cells:,}")
+    aprint("")
+    aprint("Press Ctrl+C when done.")
 
-        launch_viewer(output_path)
-
-    aprint("✓ Cleanup complete")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

@@ -1239,48 +1239,45 @@ def main() -> None:
         aprint(f"Total proteins: {n:,}")
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_esm3_") as tmpdir:
-        output_path = Path(tmpdir) / "esm3_protein_landscape.luxar.zarr"
+    output_path = get_demos_output_dir() / "esm3_protein_landscape.luxar.zarr"
 
-        try:
-            n = generate_esm3_landscape(
-                output_path,
-                sample_size=sample_size,
-                model_name=model_name,
-                cache_dir=cache_dir,
-                already_reported_quarantine=frozenset(quarantined),
-            )
-            if n == 0:
-                return
-        except Exception as e:
-            aprint(f"\nError: {e}")
-            import traceback
-
-            traceback.print_exc()
-            sys.exit(1)
-
-        aprint("")
-        aprint("=" * 70)
-        aprint("VIEWING TIPS")
-        aprint("=" * 70)
-        aprint("")
-        aprint("Explore the protein universe:")
-        aprint(
-            "  - Colored by taxonomic group (12 categories: vertebrates in blues, "
-            "bacteria in greens, Archaea orange, Viruses red, ...)"
+    try:
+        n = generate_esm3_landscape(
+            output_path,
+            sample_size=sample_size,
+            model_name=model_name,
+            cache_dir=cache_dir,
+            already_reported_quarantine=frozenset(quarantined),
         )
-        aprint(
-            "  - Clusters = proteins with similar ESM-3 embeddings (shared function/fold)"
-        )
-        aprint("  - Hover over any point to see protein name and organism")
-        aprint("")
-        aprint(f"Total proteins: {n:,}")
-        aprint("")
-        aprint("Press Ctrl+C when done.")
+        if n == 0:
+            return
+    except Exception as e:
+        aprint(f"\nError: {e}")
+        import traceback
 
-        launch_viewer(output_path)
+        traceback.print_exc()
+        sys.exit(1)
 
-    aprint("✓ Cleanup complete")
+    aprint("")
+    aprint("=" * 70)
+    aprint("VIEWING TIPS")
+    aprint("=" * 70)
+    aprint("")
+    aprint("Explore the protein universe:")
+    aprint(
+        "  - Colored by taxonomic group (12 categories: vertebrates in blues, "
+        "bacteria in greens, Archaea orange, Viruses red, ...)"
+    )
+    aprint(
+        "  - Clusters = proteins with similar ESM-3 embeddings (shared function/fold)"
+    )
+    aprint("  - Hover over any point to see protein name and organism")
+    aprint("")
+    aprint(f"Total proteins: {n:,}")
+    aprint("")
+    aprint("Press Ctrl+C when done.")
+
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

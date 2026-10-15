@@ -22,7 +22,7 @@ import os
 import signal
 import subprocess
 import time
-from typing import Any, Callable, Optional, Sequence, TypeVar
+from typing import Any, Callable, Mapping, Optional, Sequence, TypeVar
 
 from arbol import aprint
 
@@ -44,6 +44,8 @@ def run_child_process(
     interrupt_timeout: float = 5.0,
     term_timeout: float = 3.0,
     on_spawn: Optional[Callable[[int], None]] = None,
+    cwd: Optional[str] = None,
+    env: Optional[Mapping[str, str]] = None,
 ) -> int:
     """Spawn ``cmd``, wait for it, and own its teardown on every exit path.
 
@@ -65,13 +67,15 @@ def run_child_process(
             isolated, that PID is also the new process-group id). Used by
             ``demo run`` to register the run for ``luxar demo stop``; failures
             are swallowed so bookkeeping can never break the launch.
+        cwd: Working directory for the child (default: inherit ours).
+        env: Environment for the child (default: inherit ours).
 
     Returns:
         The child's exit code (signal death mapped to ``128 + n``), or ``130``
         if this call was interrupted with Ctrl-C.
     """
     isolate = isolate_group and _CAN_KILLPG
-    proc = subprocess.Popen(list(cmd), start_new_session=isolate)
+    proc = subprocess.Popen(list(cmd), start_new_session=isolate, cwd=cwd, env=env)
     if on_spawn is not None:
         _safe(on_spawn, proc.pid)
     # A session leader's process-group id equals its pid; capture it so the
@@ -373,6 +377,78 @@ def terminate_process_group(
 
     _escalate(send, alive, interrupt_timeout, term_timeout)
     # Give SIGKILL a moment to land before declaring the group stuck.
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and not gone():
+        time.sleep(0.05)
+    return gone()
+
+
+def _pid_gone_probe(pid: int, recheck: float = 0.5) -> Callable[[], bool]:
+    """Single-process sibling of :func:`_group_gone_probe` (zombie-aware too).
+
+    A process we did not spawn is reaped by ITS parent (a shell, or init once
+    orphaned); until then ``kill(pid, 0)`` keeps succeeding on the corpse, so
+    the process table is consulted, at most every ``recheck`` seconds, to see
+    past a zombie.
+    """
+    last = 0.0
+    zombie = False
+
+    def is_zombie() -> bool:
+        """True when the process table lists ``pid`` as an unreaped zombie."""
+        states = [state for p, _g, state, _c in proc_table() if p == pid]
+        return bool(states) and states[0] == "Z"
+
+    def gone() -> bool:
+        """True once ``pid`` can no longer run."""
+        nonlocal last, zombie
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except OSError:
+            # EPERM: someone else's live process — or, on macOS, a zombie,
+            # which the kernel refuses to signal rather than reporting ESRCH.
+            return is_zombie()
+        now = time.monotonic()
+        if now - last >= recheck:
+            last, zombie = now, is_zombie()
+        return zombie
+
+    return gone
+
+
+def terminate_process(
+    pid: int,
+    *,
+    interrupt_timeout: float = 5.0,
+    term_timeout: float = 3.0,
+) -> bool:
+    """Kill ONE process we did not spawn; True once it is gone.
+
+    The per-PID counterpart of :func:`terminate_process_group`, for a
+    standalone ``luxar serve`` / ``luxar viewer`` / ``luxar gsplat view``: such
+    a server usually shares its process group with whatever started it (a
+    shell script, a pipeline's ``tee``), so a group kill could take innocent
+    siblings down with it. The same SIGINT → SIGTERM → SIGKILL ladder applies,
+    so uvicorn — and a ``luxar export --open`` parent's own child teardown —
+    get their graceful shutdown first. Returns False off POSIX.
+    """
+    if not _CAN_KILLPG or pid <= 1 or pid == os.getpid():
+        return False
+    gone = _pid_gone_probe(pid)
+    if gone():
+        return True
+
+    def send(sig: int) -> None:
+        """Deliver ``sig`` to the target process."""
+        _safe(os.kill, pid, sig)
+
+    def alive() -> bool:
+        """True while the target process is still running."""
+        return not gone()
+
+    _escalate(send, alive, interrupt_timeout, term_timeout)
     deadline = time.monotonic() + 2.0
     while time.monotonic() < deadline and not gone():
         time.sleep(0.05)
