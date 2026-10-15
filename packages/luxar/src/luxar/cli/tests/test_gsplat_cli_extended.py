@@ -10975,3 +10975,35 @@ class TestSingleCompressionRatio:
         assert f"compression: {format_compression_ratio(expected)} vs raw voxels" in (
             _plain(info.stdout)
         )
+
+
+def _cli_fit(tmp_path: Path) -> str:
+    rng = np.random.default_rng(1)
+    zz, yy, xx = np.mgrid[:16, :20, :24].astype(np.float32)
+    vol = np.exp(-((zz - 8) ** 2 + (yy - 9) ** 2 + (xx - 12) ** 2) / 18.0)
+    vol += 0.02 * rng.random(vol.shape)
+    src = tmp_path / "vol.npy"
+    np.save(src, vol.astype(np.float32))
+    out = tmp_path / "out.gsplats.zarr"
+    result = CliRunner().invoke(
+        app,
+        ["gsplat", "fit", str(src), str(out), "--device", "cpu", "--preset", "draft"]
+        + ["--iters", "15", "--seeds", "40"],
+    )
+    assert result.exit_code == 0, result.output
+    assert out.exists()
+    return result.output
+
+
+def test_cli_fit_on_cpu_runs_on_the_native_kernels(tmp_path: Path) -> None:
+    pytest.importorskip("numba")
+    assert "GaussianSplatModelCPUNative" in _cli_fit(tmp_path)
+
+
+def test_cli_fit_falls_back_cleanly_when_forced_to_torch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LUXAR_CPU_BACKEND", "torch")
+    output = _cli_fit(tmp_path)
+    assert "GaussianSplatModelCPUNative" not in output
+    assert "GaussianSplatModel" in output

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from typing import Iterator
 
 import numpy as np
@@ -204,42 +203,3 @@ def test_forced_torch_fit_uses_the_pytorch_model(
     with pytest.warns(UserWarning, match="running on CPU"):
         components = initialize_optimization(config, data)
     assert type(components.model) is GaussianSplatModel
-
-
-# --------------------------------------------------------------------- CLI
-
-
-def _cli_fit(tmp_path: Path) -> str:
-    from typer.testing import CliRunner
-
-    from luxar.cli import app
-
-    rng = np.random.default_rng(1)
-    zz, yy, xx = np.mgrid[:16, :20, :24].astype(np.float32)
-    vol = np.exp(-((zz - 8) ** 2 + (yy - 9) ** 2 + (xx - 12) ** 2) / 18.0)
-    vol += 0.02 * rng.random(vol.shape)
-    src = tmp_path / "vol.npy"
-    np.save(src, vol.astype(np.float32))
-    out = tmp_path / "out.gsplats.zarr"
-    result = CliRunner().invoke(
-        app,
-        ["gsplat", "fit", str(src), str(out), "--device", "cpu", "--preset", "draft"]
-        + ["--iters", "15", "--seeds", "40"],
-    )
-    assert result.exit_code == 0, result.output
-    assert out.exists()
-    return result.output
-
-
-def test_cli_fit_on_cpu_runs_on_the_native_kernels(tmp_path: Path) -> None:
-    pytest.importorskip("numba")
-    assert "GaussianSplatModelCPUNative" in _cli_fit(tmp_path)
-
-
-def test_cli_fit_falls_back_cleanly_when_forced_to_torch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv(BACKEND_ENV, "torch")
-    output = _cli_fit(tmp_path)
-    assert "GaussianSplatModelCPUNative" not in output
-    assert "GaussianSplatModel" in output
