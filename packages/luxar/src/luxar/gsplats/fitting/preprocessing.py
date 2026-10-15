@@ -15,7 +15,6 @@ from arbol import aprint, asection
 from scipy.spatial import distance
 
 from luxar.gsplats.fitting.config import FitConfig, PreprocessedData
-from luxar.gsplats.utils.device import resolve_torch_device
 
 if TYPE_CHECKING:
     from luxar.gsplats.calibration import FloorEstimate
@@ -640,84 +639,13 @@ def _subsample_seeds_spatially_diverse(
             return result, original_indices
         return result
 
-    # Farthest-first selection with intensity priority (for smaller selections)
-    # Start with highest intensity seed
+    # Farthest-first selection with intensity priority (for smaller selections),
+    # starting from the highest-intensity seed.
     first_idx: int = int(np.argmax(valid_intensities))
-    selected_indices_list: list[int] = [first_idx]
-    selected_list: list[np.ndarray] = [valid_seeds[first_idx]]
-
-    # Build remaining candidates
-    remaining_indices = list(range(len(valid_seeds)))
-    remaining_indices.remove(first_idx)
-
-    # Iteratively select farthest seed using batch distance computation
-    # For medium selections (1000-10000), use GPU if available for
-    # substantial speedup (often orders of magnitude, GPU-dependent)
-    use_gpu = target_count > 1000
-
-    if use_gpu:
-        # CUDA-only path; this routine has not been validated on MPS, so we
-        # opt out of Metal and fall back to CPU when CUDA is unavailable.
-        # (`torch` and `resolve_torch_device` are imported at module top, so
-        #  a missing-torch ImportError surfaces at module load — no inline
-        #  try/except needed here.)
-        device = resolve_torch_device(use_metal=False)
-        use_gpu = device.type == "cuda"
-
-    if use_gpu:
-        # GPU-accelerated farthest-first selection
-        valid_seeds_gpu = torch.tensor(valid_seeds, device=device, dtype=torch.float32)
-        selected_mask = torch.zeros(len(valid_seeds), dtype=torch.bool, device=device)
-        selected_mask[first_idx] = True
-
-        for _ in range(target_count - 1):
-            # Get remaining and selected coordinates
-            remaining_mask = ~selected_mask
-            remaining_coords = valid_seeds_gpu[remaining_mask]
-            selected_coords = valid_seeds_gpu[selected_mask]
-
-            # Compute pairwise distances on GPU
-            pairwise_dists = torch.cdist(remaining_coords, selected_coords)
-
-            # Find farthest point
-            min_dists = pairwise_dists.min(dim=1).values
-            farthest_in_remaining = min_dists.argmax()
-
-            # Map back to global index
-            remaining_indices_gpu = torch.where(remaining_mask)[0]
-            farthest_global = remaining_indices_gpu[farthest_in_remaining]
-
-            # Update selection
-            selected_mask[farthest_global] = True
-
-        # Extract final selection
-        selected_indices_final: np.ndarray = torch.where(selected_mask)[0].cpu().numpy()
-        selected_arr = valid_seeds[selected_indices_final]
-    else:
-        # CPU fallback: original algorithm
-        # Complexity: O(n² d) - slow for large selections
-        while len(selected_list) < target_count and remaining_indices:
-            # Compute pairwise distances between remaining and selected seeds
-            remaining_coords = valid_seeds[remaining_indices]
-            selected_coords_arr = np.array(selected_list)
-
-            # cdist computes all pairwise distances at once: (n_remaining, n_selected)
-            pairwise_dists_cpu = distance.cdist(remaining_coords, selected_coords_arr)
-
-            # For each remaining point, find distance to nearest selected point
-            min_dists_to_selected = pairwise_dists_cpu.min(axis=1)
-
-            # Select point with maximum minimum distance (farthest from any selected)
-            farthest_idx_in_remaining = int(np.argmax(min_dists_to_selected))
-            farthest_idx_global = remaining_indices[farthest_idx_in_remaining]
-
-            # Add to selection
-            selected_list.append(valid_seeds[farthest_idx_global])
-            selected_indices_list.append(farthest_idx_global)
-            remaining_indices.remove(farthest_idx_global)
-
-        selected_indices_final = np.array(selected_indices_list)
-        selected_arr = valid_seeds[selected_indices_final]
+    selected_indices_final = _farthest_first_indices(
+        valid_seeds, first_idx, target_count
+    )
+    selected_arr = valid_seeds[selected_indices_final]
 
     result = np.array(selected_arr)
     # Map selected_indices (within valid_seeds) back to original indices
@@ -748,6 +676,40 @@ def _subsample_seeds_spatially_diverse(
     if return_indices:
         return result, original_indices
     return result
+
+
+def _farthest_first_indices(
+    points: np.ndarray, first_idx: int, target_count: int
+) -> np.ndarray:
+    """Greedy farthest-point sampling, in selection order.
+
+    Each step picks the point whose distance to its NEAREST selected point is
+    largest (lowest index on ties). The running nearest-selected distance is
+    updated with one ``cdist`` column per pick, so the whole selection costs
+    O(N * target) instead of the former O(N * target^2) that recomputed the
+    full remaining-by-selected distance matrix every step (140 s for 5,000 of
+    10,000 candidates). The distances are the same ``scipy.spatial.distance``
+    values and the tie rule is unchanged, so on CPU the selection is identical;
+    the former CUDA branch (``torch.cdist``, matmul-based for large inputs)
+    could break near-ties differently and is gone — the update is a cheap
+    vector op that needs no accelerator.
+    """
+    n = len(points)
+    count = min(int(target_count), n)
+    out = np.empty(count, dtype=np.intp)
+    if count == 0:
+        return out
+    out[0] = first_idx
+    nearest = distance.cdist(points, points[first_idx : first_idx + 1])[:, 0]
+    nearest[first_idx] = -np.inf
+    for step in range(1, count):
+        pick = int(np.argmax(nearest))
+        out[step] = pick
+        np.minimum(
+            nearest, distance.cdist(points, points[pick : pick + 1])[:, 0], out=nearest
+        )
+        nearest[pick] = -np.inf  # min() keeps every selected point at -inf
+    return out
 
 
 def _ensure_minimum_seeds(
@@ -847,6 +809,40 @@ def _regular_grid_coords(ranges: list[np.ndarray], ndim: int) -> np.ndarray:
     return coords if coords.size else np.empty((0, ndim), dtype=float)
 
 
+def _has_point_within(
+    points: np.ndarray, queries: np.ndarray, radius: float
+) -> np.ndarray:
+    """``True`` for each query with a stored point at distance ``<= radius``.
+
+    A RANGE test, not a nearest-neighbour search: the KD-tree query is bounded
+    by ``radius``, so a query far from every point stops at the first pruned
+    node instead of scanning the whole set. The former kNN version
+    (``BatchedSpatialHashGrid.query_knn(k=1)``) fell back to brute force over
+    ALL stored points for every query more than three cells from any of them,
+    which is exactly the grid top-up's situation when the existing seeds sit in
+    a few clusters inside a mostly empty volume: O(Q*N), 29 s for 128k queries
+    against 3k clustered seeds, and the reported ``gsplat cal`` stall at
+    K=128000. This is O((Q + N) log N).
+
+    Same predicate as before (``distance > radius`` keeps a query), evaluated
+    in float64 instead of float32; only a query within float32 rounding of
+    exactly ``radius`` from a point could flip.
+    """
+    from scipy.spatial import cKDTree
+
+    if len(points) == 0 or len(queries) == 0:
+        return np.zeros(len(queries), dtype=bool)
+    tree = cKDTree(np.asarray(points, dtype=np.float64))
+    # distance_upper_bound is exclusive-ish across scipy versions; pad it and
+    # apply the exact comparison ourselves.
+    bound = float(np.nextafter(radius, np.inf)) * (1.0 + 1e-9) + 1e-12
+    distances, _ = tree.query(
+        np.asarray(queries, dtype=np.float64), k=1, distance_upper_bound=bound
+    )
+    hit: np.ndarray = distances <= radius
+    return hit
+
+
 def _add_grid_fallback_seeds(
     V: np.ndarray,
     target_count: int,
@@ -899,20 +895,11 @@ def _add_grid_fallback_seeds(
     # (skip entirely when there is nothing to filter — querying an empty set is
     # both wasteful and, historically, fatal).
     if len(existing_seeds) > 0 and len(grid_coords) > 0:
-        from luxar.gsplats.spatial_hash import BatchedSpatialHashGrid
-
         # Use smaller min_distance to be more permissive
         min_distance = max(1.0, spacing * 0.3)  # 30% of spacing, min 1 voxel
-        # Cell size must accommodate the query radius; pick generously so
-        # the 3^D shell finds the nearest existing seed in one pass.
-        cell_size = max(spacing, min_distance * 2.0)
-        grid = BatchedSpatialHashGrid.from_points(
-            np.asarray(existing_seeds, dtype=np.float32),
-            cell_size=cell_size,
-            device="auto",
-        )
-        distances, _ = grid.query_knn(grid_coords.astype(np.float32), k=1)
-        grid_coords = grid_coords[distances[:, 0] > min_distance]
+        grid_coords = grid_coords[
+            ~_has_point_within(existing_seeds, grid_coords, min_distance)
+        ]
 
     # Track the final spacing used (for init_L generation)
     final_spacing = float(spacing)

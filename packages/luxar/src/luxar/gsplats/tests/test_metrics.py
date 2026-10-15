@@ -344,8 +344,30 @@ class TestTiledSSIM:
 
 
 class TestShouldTile:
-    def test_cpu_never_tiles(self) -> None:
-        assert _should_tile_ssim((1000, 1000, 1000), torch.device("cpu")) is False
+    def test_cpu_tiles_only_past_host_budget(self) -> None:
+        # CPU/MPS free memory is not queryable, so a fixed budget decides: a
+        # small volume stays on the untiled path, a large one tiles (untiled,
+        # 65 Mvox costs ~1.8 GB of temporaries; tiled, ~0.37 GB).
+        cpu = torch.device("cpu")
+        assert _should_tile_ssim((64, 64, 64), cpu) is False
+        assert _should_tile_ssim((1000, 1000, 1000), cpu) is True
+
+    def test_auto_tiled_cpu_matches_untiled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The auto-selected tiled path must agree with the untiled kernel.
+        # A tiny budget forces tiling on a tiny volume (no large allocation).
+        import luxar.gsplats.metrics as metrics_mod
+
+        monkeypatch.setattr(metrics_mod, "_SSIM_HOST_PEAK_BUDGET_BYTES", 1024)
+        g = torch.Generator().manual_seed(0)
+        # One axis longer than the default 128-voxel tile so the volume splits.
+        a = torch.rand(16, 300, 24, generator=g)
+        b = (a + 0.05 * torch.rand(16, 300, 24, generator=g)).clamp(0, 1)
+        assert _should_tile_ssim(a.shape, a.device) is True
+        s_ref, n_ref = _ssim_nd(a, b, window_size=11, data_range=1.0)
+        auto = compute_ssim(a, b, data_range=1.0)
+        assert auto == pytest.approx(s_ref / n_ref, abs=1e-6)
 
     def test_small_volume_no_tile(self, device: torch.device) -> None:
         # 32^3 * 4 bytes * 8 ≈ 1 MB — should never exceed 50% GPU memory
@@ -559,3 +581,77 @@ class TestChunkedForegroundPSNRParity:
         )
         assert fraction == 0.0
         assert psnr != psnr  # nan
+
+
+class TestSeparableSSIM:
+    """`_ssim_nd` filters separably; it must equal the n-D outer-product kernel."""
+
+    @staticmethod
+    def _dense_reference(
+        a: torch.Tensor, b: torch.Tensor, window_size: int, data_range: float
+    ) -> float:
+        import torch.nn.functional as F
+
+        from luxar.gsplats.metrics import _gaussian_kernel_1d
+
+        k = _gaussian_kernel_1d(window_size, 1.5, a.device).double()
+        kernel = k
+        for _ in range(a.ndim - 1):
+            kernel = kernel.unsqueeze(-1) * k
+        kernel = kernel[None, None]
+        conv = F.conv2d if a.ndim == 2 else F.conv3d
+        p, t = a.double()[None, None], b.double()[None, None]
+        mu_p, mu_t = conv(p, kernel), conv(t, kernel)
+        s_pp = conv(p * p, kernel) - mu_p**2
+        s_tt = conv(t * t, kernel) - mu_t**2
+        s_pt = conv(p * t, kernel) - mu_p * mu_t
+        c1, c2 = (0.01 * data_range) ** 2, (0.03 * data_range) ** 2
+        ssim = ((2 * mu_p * mu_t + c1) * (2 * s_pt + c2)) / (
+            (mu_p**2 + mu_t**2 + c1) * (s_pp + s_tt + c2)
+        )
+        return float(ssim.mean())
+
+    @pytest.mark.parametrize("shape", [(48, 41), (20, 26, 23)])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    @pytest.mark.parametrize("window_size", [7, 11])
+    def test_matches_dense_kernel(
+        self, shape: tuple[int, ...], dtype: torch.dtype, window_size: int
+    ) -> None:
+        g = torch.Generator().manual_seed(1)
+        a = torch.rand(shape, generator=g, dtype=dtype)
+        b = (a + 0.1 * torch.randn(shape, generator=g, dtype=dtype)).clamp(0, 1)
+        s, n = _ssim_nd(a, b, window_size=window_size, data_range=1.0)
+        ref = self._dense_reference(a, b, window_size, 1.0)
+        assert s / n == pytest.approx(ref, abs=1e-6)
+
+    def test_4d_averages_3d_subvolumes(self) -> None:
+        g = torch.Generator().manual_seed(2)
+        a = torch.rand(3, 16, 18, 17, generator=g)
+        b = (a + 0.05 * torch.randn(3, 16, 18, 17, generator=g)).clamp(0, 1)
+        refs = [self._dense_reference(a[i], b[i], 11, 1.0) for i in range(3)]
+        assert compute_ssim(a, b, data_range=1.0) == pytest.approx(
+            sum(refs) / 3, abs=1e-6
+        )
+
+    def test_no_im2col_blowup_on_cpu(self) -> None:
+        """A 96^3 CPU SSIM stays near a few volumes of memory and is fast.
+
+        The former conv3d path lowered the 11^3 kernel to im2col (~5 KB per
+        output voxel: ~4.6 GB here, 37 GB at 200^3); the separable filter
+        holds only a handful of float32 volumes.
+        """
+        import sys
+        import time
+
+        resource = pytest.importorskip("resource")
+        # ru_maxrss is a high-water mark: KiB on Linux, bytes on macOS.
+        unit = 1 if sys.platform == "darwin" else 1024
+        a = torch.rand(96, 96, 96)
+        b = a + 0.01
+        before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit
+        t0 = time.perf_counter()
+        _ssim_nd(a, b, window_size=11, data_range=1.0)
+        elapsed = time.perf_counter() - t0
+        grown = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit - before
+        assert elapsed < 10.0
+        assert grown < 500 * 1024**2

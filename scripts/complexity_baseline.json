@@ -33,7 +33,7 @@
       21
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/fitting/calibrate.py::run_calibrate_command": [
-      32
+      30
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/fitting/fit.py::run_fit_volume": [
       16
@@ -339,7 +339,7 @@
       11
     ],
     "packages/luxar/src/luxar/gsplats/calibration/driver.py::calibrate": [
-      21
+      20
     ],
     "packages/luxar/src/luxar/gsplats/culling.py::cull_by_contribution": [
       16
@@ -370,9 +370,6 @@
     ],
     "packages/luxar/src/luxar/gsplats/fitting/preprocessing.py::_generate_seeds": [
       12
-    ],
-    "packages/luxar/src/luxar/gsplats/fitting/preprocessing.py::_subsample_seeds_spatially_diverse": [
-      14
     ],
     "packages/luxar/src/luxar/gsplats/fitting/preprocessing.py::preprocess_data": [
       23

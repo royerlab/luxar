@@ -12,18 +12,23 @@ import math
 from typing import Dict, List, Tuple
 
 import torch
-import torch.nn.functional as F
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-# Estimated peak live full-volume tensors in the optimised _ssim_nd (used by
-# the auto-tiling heuristic).  The actual peak is 6, we use 8 for safety.
+# Estimated peak live full-volume float32 tensors in _ssim_nd (used by the
+# auto-tiling heuristic). Measured: ~7 (27.5 B/voxel RSS on a 65 Mvox CPU run);
+# 8 leaves margin.
 _SSIM_PEAK_TENSOR_COUNT = 8
 
 # Default tile size (per spatial axis) for tiled SSIM.
 _SSIM_DEFAULT_TILE_SIZE = 128
+
+# Peak-temporary budget for untiled SSIM on devices whose free memory cannot be
+# queried (CPU, MPS). 256 MiB = 8 Mvox at the 8-tensor estimate. Tiling costs
+# little (65 Mvox on CPU: 2.3 s tiled vs 1.9 s untiled, 0.37 vs 1.8 GB).
+_SSIM_HOST_PEAK_BUDGET_BYTES = 256 * 1024**2
 
 
 def _gaussian_kernel_1d(
@@ -35,22 +40,6 @@ def _gaussian_kernel_1d(
     )
     g = torch.exp(-0.5 * (coords / sigma) ** 2)
     return g / g.sum()
-
-
-def _gaussian_kernel_nd(
-    window_size: int, sigma: float, ndim: int, device: torch.device
-) -> torch.Tensor:
-    """Create an n-D Gaussian kernel via iterated outer products.
-
-    Returns a tensor of shape ``(1, 1, *([window_size] * ndim))`` suitable
-    for use as a convolution weight.
-    """
-    k = _gaussian_kernel_1d(window_size, sigma, device)
-    kernel = k
-    for _ in range(ndim - 1):
-        kernel = kernel.unsqueeze(-1) * k
-    # (1, 1, W, W, ...) for conv weight
-    return kernel.unsqueeze(0).unsqueeze(0)
 
 
 def _gpu_free_memory(device: torch.device) -> int | None:
@@ -71,15 +60,20 @@ def _should_tile_ssim(
 ) -> bool:
     """Decide whether SSIM should use the tiled path.
 
-    Returns *True* if the estimated peak memory of the non-tiled path
-    exceeds *memory_fraction* of free GPU memory.  Always *False* for
-    CPU tensors.
+    On CUDA, returns *True* if the estimated peak memory of the non-tiled
+    path exceeds *memory_fraction* of free GPU memory. On every other device
+    (CPU, MPS) free memory is not queryable, so the untiled path is used only
+    while its estimated peak (``_SSIM_PEAK_TENSOR_COUNT`` float32 volumes)
+    stays under a fixed :data:`_SSIM_HOST_PEAK_BUDGET_BYTES`. Past that the
+    tiled path runs; its result equals the untiled one up to float summation
+    order. Untiled, a 65 Mvox volume needs ~1.8 GB of temporaries on top of
+    its inputs; tiled, ~0.37 GB.
     """
-    free = _gpu_free_memory(device)
-    if free is None:
-        return False
     numel = math.prod(shape)
     peak_bytes = _SSIM_PEAK_TENSOR_COUNT * numel * 4  # float32
+    free = _gpu_free_memory(device)
+    if free is None:
+        return peak_bytes > _SSIM_HOST_PEAK_BUDGET_BYTES
     return peak_bytes > memory_fraction * free
 
 
@@ -88,82 +82,99 @@ def _should_tile_ssim(
 # ---------------------------------------------------------------------------
 
 
+def _gaussian_filter_valid(
+    x: torch.Tensor, weights: List[float], out_dtype: torch.dtype
+) -> torch.Tensor:
+    """Separable Gaussian filter with VALID borders along every axis.
+
+    One 1-D pass per axis, each a sum of ``len(weights)`` shifted slices
+    accumulated in place: exactly the n-D outer-product kernel up to float
+    rounding, at ``window_size * ndim`` multiply-adds per voxel instead of
+    ``window_size ** ndim``. No convolution op is used on purpose: CPU
+    ``conv3d`` lowers an 11^3 kernel to im2col, whose column buffer costs
+    ~1331 floats (5.3 KB) per output voxel — 37 GB for a 200^3 volume.
+    Here each pass holds only its input and its output.
+    """
+    out = x
+    for axis in range(x.ndim):
+        length = out.shape[axis] - len(weights) + 1
+        acc = out.narrow(axis, 0, length).to(out_dtype, copy=True)
+        acc.mul_(weights[0])
+        for k in range(1, len(weights)):
+            acc.add_(out.narrow(axis, k, length), alpha=weights[k])
+        out = acc
+    return out
+
+
 def _ssim_nd(
     pred: torch.Tensor,
     target: torch.Tensor,
     window_size: int,
     data_range: float,
 ) -> Tuple[float, int]:
-    """Compute SSIM for a 2-D or 3-D tensor pair using convolution.
+    """Compute SSIM for a 2-D or 3-D tensor pair with a separable Gaussian.
 
-    Uses valid (no-padding) convolution so the border region — where the
+    Uses valid (no-padding) filtering so the border region — where the
     kernel would overlap with implicit zeros — is excluded from the mean.
     This matches the standard scikit-image implementation.
 
     Returns ``(ssim_sum, num_voxels)`` so callers can do voxel-weighted
     averaging across tiles.  Mean SSIM = ``ssim_sum / num_voxels``.
 
-    Memory-optimised: peak ~6 live full-volume tensors (down from ~15 in
-    the naive implementation) via in-place ops and explicit ``del``.
+    Memory: at most ~6 live full-volume float32 tensors (the five filtered
+    moments, one being built, plus one product temporary) — independent of
+    the device, see :func:`_gaussian_filter_valid`.
     """
     ndim = pred.ndim
     if ndim not in (2, 3):
         raise ValueError(f"_ssim_nd expects 2D or 3D tensors, got {ndim}D")
 
-    device = pred.device
     sigma = 1.5
     C1 = (0.01 * data_range) ** 2
     C2 = (0.03 * data_range) ** 2
 
-    kernel = _gaussian_kernel_nd(window_size, sigma, ndim, device)
+    weights = _gaussian_kernel_1d(window_size, sigma, torch.device("cpu")).tolist()
+    dtype = torch.promote_types(
+        torch.promote_types(pred.dtype, target.dtype), torch.float32
+    )
 
-    # Add batch + channel dims: (B=1, C=1, *spatial)
-    p = pred.unsqueeze(0).unsqueeze(0)
-    t = target.unsqueeze(0).unsqueeze(0)
+    def blur(x: torch.Tensor) -> torch.Tensor:
+        return _gaussian_filter_valid(x, weights, dtype)
 
-    conv_fn = F.conv2d if ndim == 2 else F.conv3d
+    # --- Step 1: means ---
+    mu_p = blur(pred)
+    mu_t = blur(target)
 
-    # --- Step 1: means (live: mu_p, mu_t = 2 tensors) ---
-    mu_p = conv_fn(p, kernel, padding=0)
-    mu_t = conv_fn(t, kernel, padding=0)
-
-    # --- Step 2: squared / cross means (live: +3 = 5 tensors) ---
+    # --- Step 2: squared / cross means ---
     mu_p_sq = mu_p.square()
     mu_t_sq = mu_t.square()
-    mu_pt = mu_p * mu_t
-    del mu_p, mu_t  # live: mu_p_sq, mu_t_sq, mu_pt = 3
+    mu_pt = mu_p.mul_(mu_t)  # mu_p -> mu_pt
+    del mu_t
 
-    # --- Step 3: sigmas (live: peak 6 tensors) ---
-    sigma_p_sq = conv_fn(p * p, kernel, padding=0)
-    sigma_p_sq.sub_(mu_p_sq)
-
-    sigma_t_sq = conv_fn(t * t, kernel, padding=0)
-    sigma_t_sq.sub_(mu_t_sq)
-
-    sigma_pt = conv_fn(p * t, kernel, padding=0)
-    sigma_pt.sub_(mu_pt)
-
-    del p, t  # free unsqueezed views
+    # --- Step 3: sigmas (the product temporary is freed after each blur) ---
+    sigma_p_sq = blur(pred.to(dtype).square()).sub_(mu_p_sq)
+    sigma_t_sq = blur(target.to(dtype).square()).sub_(mu_t_sq)
+    sigma_pt = blur(pred.to(dtype) * target).sub_(mu_pt)
 
     # --- Step 4: numerator in-place (reuse mu_pt, sigma_pt) ---
     # numerator = (2*mu_pt + C1) * (2*sigma_pt + C2)
-    mu_pt.mul_(2.0).add_(C1)  # mu_pt -> numerator_a
-    sigma_pt.mul_(2.0).add_(C2)  # sigma_pt -> numerator_b
-    mu_pt.mul_(sigma_pt)  # mu_pt -> full numerator
-    del sigma_pt  # live: mu_p_sq, mu_t_sq, sigma_p_sq, sigma_t_sq, mu_pt = 5
+    mu_pt.mul_(2.0).add_(C1)
+    sigma_pt.mul_(2.0).add_(C2)
+    mu_pt.mul_(sigma_pt)
+    del sigma_pt
 
     # --- Step 5: denominator in-place (reuse mu_p_sq, sigma_p_sq) ---
     # denominator = (mu_p_sq + mu_t_sq + C1) * (sigma_p_sq + sigma_t_sq + C2)
-    mu_p_sq.add_(mu_t_sq).add_(C1)  # mu_p_sq -> denom_a
-    del mu_t_sq  # live: 4
-    sigma_p_sq.add_(sigma_t_sq).add_(C2)  # sigma_p_sq -> denom_b
-    del sigma_t_sq  # live: 3
-    mu_p_sq.mul_(sigma_p_sq)  # mu_p_sq -> full denominator
-    del sigma_p_sq  # live: mu_pt(=num), mu_p_sq(=den) = 2
+    mu_p_sq.add_(mu_t_sq).add_(C1)
+    del mu_t_sq
+    sigma_p_sq.add_(sigma_t_sq).add_(C2)
+    del sigma_t_sq
+    mu_p_sq.mul_(sigma_p_sq)
+    del sigma_p_sq
 
     # --- Step 6: SSIM map ---
-    mu_pt.div_(mu_p_sq)  # mu_pt -> ssim_map
-    del mu_p_sq  # live: 1
+    mu_pt.div_(mu_p_sq)
+    del mu_p_sq
 
     ssim_sum = float(mu_pt.sum().item())
     num_voxels = mu_pt.numel()
@@ -270,13 +281,14 @@ def compute_ssim(
 ) -> float:
     """Compute Structural Similarity Index (SSIM) on the input device.
 
-    For 2-D and 3-D tensors a true n-D SSIM is computed via ``F.conv{2,3}d``.
+    For 2-D and 3-D tensors a true n-D SSIM uses separable Gaussian filtering.
     For higher-dimensional tensors the SSIM is averaged over all 3-D
     sub-volumes along the leading dimensions.
 
-    Large volumes are automatically split into overlapping tiles to avoid
-    GPU out-of-memory errors.  The tiling threshold is based on estimated
-    peak memory vs. available GPU memory.
+    Large volumes are automatically split into overlapping tiles. The tiling
+    threshold compares estimated peak memory with a fraction of free CUDA
+    memory when available, or with a fixed budget on CPU and MPS (and when
+    CUDA free memory cannot be queried).
 
     Parameters
     ----------

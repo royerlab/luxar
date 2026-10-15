@@ -678,7 +678,7 @@ result = calibrate(volume, k_grid=ks, fit_kwargs={"device": "cuda"})
 print(f"Recommended K* = {result.held_out_peak.k_star:,}")
 print(
     f"Curve type     = {result.held_out_peak.type}"
-)  # peak | plateau | signal_limited
+)  # peak | plateau | signal_limited | low_k_optimal
 print(f"Noise floor σ̂ = {result.noise_floor.sigma_hat:.4f}")
 print(f"PSNR ceiling   = {result.noise_floor.psnr_max_db:.1f} dB")
 

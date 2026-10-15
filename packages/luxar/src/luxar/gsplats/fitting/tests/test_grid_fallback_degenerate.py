@@ -91,3 +91,70 @@ def test_large_shortfall_still_fills() -> None:
     )
     assert len(seeds) > len(existing), "fallback should have added grid seeds"
     assert seeds.shape[1] == 3
+
+
+def test_sparse_clustered_seeds_large_target_is_fast() -> None:
+    """Regression for the ``gsplat cal`` stall at K=128000.
+
+    The top-up filters its grid against the existing seeds. When those sit in
+    a few tight clusters inside a mostly empty volume, almost every grid point
+    is far from all of them, and the former kNN filter brute-forced the WHOLE
+    seed set per such query: O(Q*N), 29 s at this size (32k target) and
+    minutes at the reported 128k. The range test is O((Q + N) log N) and runs
+    in well under a second here; the bound is generous so a slow CI runner
+    still passes while the quadratic version cannot.
+    """
+    import time
+
+    shape = (65, 312, 462)
+    rng = np.random.default_rng(0)
+    volume = rng.random(shape, dtype=np.float32)
+    centers = np.array([[s * f for s in shape] for f in (0.3, 0.5, 0.7)])
+    existing = np.concatenate(
+        [c + rng.normal(0, 6, size=(1000, 3)) for c in centers]
+    ).astype(np.float32)
+
+    target_count = 32_000
+    t0 = time.perf_counter()
+    seeds, spacing = _add_grid_fallback_seeds(
+        volume, target_count=target_count, existing_seeds=existing, verbose=False
+    )
+    elapsed = time.perf_counter() - t0
+
+    assert len(seeds) == target_count
+    np.testing.assert_array_equal(seeds[: len(existing)], existing)
+    added = seeds[len(existing) :]
+    # The min-distance guarantee the filter exists for still holds.
+    from scipy.spatial import cKDTree
+
+    nearest, _ = cKDTree(existing).query(added, k=1)
+    assert nearest.min() > max(1.0, spacing * 0.3)
+    assert elapsed < 5.0, f"grid top-up took {elapsed:.1f}s (quadratic regression?)"
+
+
+def test_range_filter_matches_former_knn_predicate() -> None:
+    """The KD-tree range test keeps exactly the grid points the kNN filter
+    kept (``distance > min_distance``), integer-coordinate ties included."""
+    from luxar.gsplats.spatial_hash import BatchedSpatialHashGrid
+
+    from ..preprocessing import _has_point_within
+
+    rng = np.random.default_rng(1)
+    for trial in range(8):
+        shape = rng.integers(20, 60, size=3)
+        spacing = int(rng.integers(2, 9))
+        n = int(rng.integers(5, 800))
+        if trial % 2:
+            pts = rng.integers(0, shape, size=(n, 3)).astype(np.float32)
+        else:
+            pts = (rng.random((n, 3)) * shape).astype(np.float32)
+        ranges = [np.arange(spacing // 2, s, spacing) for s in shape]
+        queries = np.stack(np.meshgrid(*ranges, indexing="ij"), -1).reshape(-1, 3)
+        min_distance = max(1.0, spacing * 0.3)
+        grid = BatchedSpatialHashGrid.from_points(
+            pts, cell_size=max(spacing, min_distance * 2.0), device="cpu"
+        )
+        distances, _ = grid.query_knn(queries.astype(np.float32), k=1)
+        old_keep = distances[:, 0] > min_distance
+        new_keep = ~_has_point_within(pts, queries.astype(float), min_distance)
+        np.testing.assert_array_equal(new_keep, old_keep)
