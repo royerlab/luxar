@@ -304,6 +304,50 @@ class TestWarmStartRoundTrip:
             _c, _L, amps = model.current_params()
         np.testing.assert_allclose(amps.cpu().numpy()[above], amp_max, rtol=1e-5)
 
+    def test_sigma_floor_distinguishes_declared_and_undeclared_seeds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        volume = _blob_volume()
+        fitted = fit_gaussian_splats(volume, **_FIT_KWARGS)
+        floor = 0.3
+        seed_L = unpack_tril(fitted.cholesky_factors, 3)
+        seed_L[:2, [0, 1, 2], [0, 1, 2]] = floor + 0.02
+        seed_L[1, 0, 0] = floor
+        seed = GSplatData(
+            centers=fitted.centers.copy(),
+            amplitudes=fitted.amplitudes.copy(),
+            cholesky_factors=pack_tril(seed_L),
+            truncation_radius=fitted.truncation_radius,
+        )
+
+        warm, _ = _initial_model(
+            monkeypatch,
+            volume,
+            seeds=seed,
+            seed_amps_background_relative=True,
+            sigma_min_diag=floor,
+            max_eccentricity=None,
+        )
+        fresh, _ = _initial_model(
+            monkeypatch,
+            volume,
+            seeds=seed,
+            seed_amps_background_relative=False,
+            sigma_min_diag=floor,
+            max_eccentricity=None,
+        )
+        with torch.no_grad():
+            warm_diag = np.diagonal(
+                warm.current_params()[1].cpu().numpy(), axis1=1, axis2=2
+            )
+            fresh_diag = np.diagonal(
+                fresh.current_params()[1].cpu().numpy(), axis1=1, axis2=2
+            )
+        np.testing.assert_allclose(
+            warm_diag[:2], np.diagonal(seed_L[:2], axis1=1, axis2=2), atol=1e-4
+        )
+        assert np.all(fresh_diag[:2] >= floor + 0.1 - 1e-6)
+
     def test_seed_space_warns_when_it_cannot_apply(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
