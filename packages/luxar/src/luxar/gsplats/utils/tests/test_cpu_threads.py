@@ -33,9 +33,9 @@ def test_pinned_or_unset_widens_to_capped_physical_count(env: dict[str, str]) ->
 
 
 @pytest.mark.parametrize("name", ["OMP_NUM_THREADS", "MKL_NUM_THREADS"])
-def test_explicit_blas_thread_export_is_respected(name: str) -> None:
-    assert _resolve({name: "16"}) is None
-    assert _resolve({name: "2"}) is None
+def test_ineffective_blas_thread_export_still_widens(name: str) -> None:
+    assert _resolve({name: "16"}, current=1) == AUTO_CPU_THREADS_CAP
+    assert _resolve({name: "2"}, current=4) is None
 
 
 def test_already_multithreaded_torch_is_left_alone() -> None:

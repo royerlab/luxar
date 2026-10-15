@@ -10,18 +10,15 @@ heavy system time).
 
 The CLI ``fit`` and ``cal`` commands therefore call :func:`cpu_threads_for`,
 which widens torch to ``min(physical cores, 8)`` for the duration of the
-command — but only when nobody asked for a width:
+command — but only when torch still has one thread:
 
 * ``LUXAR_CPU_THREADS=N`` (N >= 1) always wins: torch runs N threads.
 * ``LUXAR_CPU_THREADS=0`` disables the adjustment (torch is left alone). The
   test suite sets this so its single-thread pin survives CLI-level tests.
-* ``OMP_NUM_THREADS`` / ``MKL_NUM_THREADS`` set to anything other than ``"1"``
-  is an explicit choice and is respected. The value ``"1"`` is NOT treated as
-  explicit, because the hatch pin (``{env:OMP_NUM_THREADS:1}``) produces exactly
-  that string and the two cannot be told apart from inside the process; to
-  really run one thread, set ``LUXAR_CPU_THREADS=1``.
-* If torch already runs more than one thread (a plain pip install without the
-  pin), it is left alone.
+* If torch already runs more than one thread (including when an OMP/MKL export
+  took effect), it is left alone. An OMP-only export may leave torch at one
+  thread under the hatch MKL pin; in that case the CLI still widens it. To
+  explicitly run one thread, set ``LUXAR_CPU_THREADS=1``.
 * A tile/box WORKER (``fit --tile`` / ``--plan-box``) is left alone: it is one
   of N concurrent processes whose count the parent sized against the CPU count.
 
@@ -44,10 +41,6 @@ AUTO_CPU_THREADS_CAP = 8
 
 #: Environment variable that overrides the automatic choice (``0`` = disable).
 CPU_THREADS_ENV = "LUXAR_CPU_THREADS"
-
-# Values the hatch pin produces; indistinguishable from an explicit export.
-_PINNED_VALUES = frozenset({"", "1"})
-
 
 def physical_cpu_count() -> int:
     """Physical cores available to this process (logical count as fallback)."""
@@ -93,11 +86,6 @@ def resolve_cpu_threads(
     if override is not None:
         return override if override > 0 else None
     if worker or current != 1:
-        return None
-    if any(
-        env.get(name, "").strip() not in _PINNED_VALUES
-        for name in ("OMP_NUM_THREADS", "MKL_NUM_THREADS")
-    ):
         return None
     return max(1, min(physical_cores, AUTO_CPU_THREADS_CAP))
 
