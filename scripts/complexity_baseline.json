@@ -53,9 +53,6 @@
     "packages/luxar/src/luxar/cli/gsplat_ops/recipe_shared.py::parse_lod_breakpoints": [
       11
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/scene_commands.py::convert_to_scene": [
-      17
-    ],
     "packages/luxar/src/luxar/cli/gsplat_ops/scene_commands.py::reencode_command": [
       11
     ],

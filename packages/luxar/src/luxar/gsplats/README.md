@@ -1187,6 +1187,9 @@ gsplats/
 ├── calibration_report.py          # Optional matplotlib PDF report for `luxar gsplat cal --pdf`
 ├── gpu_profile.py                 # GPU benchmark profile management
 ├── spatial_hash.py                # Online and batched nD proximity-query grids
+├── exposure.py                    # Opening-view brightness: predict_projected_sum (additive
+│                                  #   per-pixel sum down the view axis) + plan_projected_exposure
+│                                  #   (the dimming factor `gsplat convert` auto exposure applies)
 │
 ├── lod/                            # Level-of-Detail post-processing (additive + substitutive)
 │   ├── additive.py                 # compute_additive_order, make_additive_lod

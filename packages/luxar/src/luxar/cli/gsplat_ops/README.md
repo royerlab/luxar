@@ -18,6 +18,8 @@ importers name the owning module directly, never a re-export root.
 ### Package root
 
 - `scene_commands.py` — Typer command signatures + registration for convert/migrate-format/reencode
+- `scene_build.py` — `build_gsplat_scene` / `SceneBuildOptions`: the one scene-building path shared by `convert` and `view` (`view` writes it to a temp dir; `--raw` skips it)
+- `scene_exposure.py` — `resolve_convert_exposure`: auto exposure (projected-sum prediction from `luxar.gsplats.exposure`, side views capped at 4x the target), `--scale-intensity` as an exact manual factor, and the Exposure narration line
 - `scene_orientation.py` — `resolve_convert_orientation`: names the fitted center columns (stored `dimension_metadata` > `--dim-order` > array order), maps them onto x, y, z-ordered scene dims via `dim_order`, and builds convert's image-convention camera (`view_axis` + `up = -y`; the flip is a camera choice, not a mirror)
 - `inspect_commands.py` — Typer command signatures + registration for inspect commands
 - `interchange_commands.py` — Typer command signatures + registration for `import` / `export`

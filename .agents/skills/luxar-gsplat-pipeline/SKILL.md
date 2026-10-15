@@ -749,7 +749,13 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
 ```
 
 The CLI shortcut `luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --center`
-does (a) for you and writes a ready-to-serve scene.
+does (a) for you and writes a ready-to-serve scene. It also auto-exposes: amplitudes
+are dimmed (never brightened) so the opening view's predicted additive p99.9 is
+`--target-brightness` (2.0; 0.9 under `--tone-mapping None|Linear`) instead of a saturated blob (side views and other timepoints capped at 4x); `--no-auto-exposure` opts
+out. The Python adders keep per-splat normalisation — for the same result call
+`luxar.gsplats.exposure.plan_projected_exposure` and pass
+`normalize_amplitudes=AmplitudeScale(factor)` (from
+`luxar.core.group.gsplats_pipeline.amplitude_norm`).
 
 ## Notes
 

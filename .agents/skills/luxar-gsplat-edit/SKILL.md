@@ -66,8 +66,16 @@ So `transform --normalize-intensity` is now for the cases the default does not
 cover: pinning an explicit target across SEVERAL archives that must share an
 exposure (multichannel, or a timelapse fitted in separate batches), or preparing
 an archive for a consumer that is not the Luxar scene compiler. **`--scale-intensity`
-on `gsplat convert` implies opting out of the automatic normalisation**, since
-normalising straight after an explicit scale would cancel it exactly.
+on `gsplat convert` implies opting out of the automatic normalisation** (and auto
+exposure), since normalising straight after an explicit scale would cancel it
+exactly; it now works on partition/LOD stores too and stamps
+`amplitude_normalization_mode="manual"`.
+
+**`gsplat convert` auto-exposes by default**: it predicts the opening view's
+additive per-pixel sum and dims amplitudes (never brightens) so its p99.9 is
+`--target-brightness` (2.0; 0.9 under a clipping `None`/`Linear` tone mapping), dimming further if a side view or another timepoint would exceed 4x that.
+Too dim/bright? Tune `--target-brightness`;
+`--no-auto-exposure` = per-splat normalisation only.
 
 ## `cull --method cumulative` ranks by PEAK, and that is not what you see
 

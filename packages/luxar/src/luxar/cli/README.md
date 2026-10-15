@@ -312,10 +312,12 @@ luxar gsplat info splats.gsplats.zarr
 ```
 
 #### `luxar gsplat view`
-Open a `.gsplats.zarr` in the web viewer. The standalone `.gsplats.zarr` is a v3.4 node subtree — exactly what the viewer renders inside a scene — so it is served **directly** via `?src=` with no scene-compile round-trip (works for a single leaf, an additive ladder, a `kind=lod` hierarchy, a `kind=partition` split, and arbitrary nestings; archives are extracted first).
+Open a `.gsplats.zarr` in the web viewer. By default it builds the scene `gsplat convert` would write — image-convention orientation and opening camera, auto exposure, the same defaults — in a temporary directory that is removed on exit, and serves that, printing the Exposure line and a "Built a temporary scene" line. The build re-writes the splats (a partition/nested store is grafted node for node, which still copies its arrays): about 1 s for a 30k-splat fit and 8-11 s for 1M splats on a laptop CPU, roughly half of it auto exposure. `--auto-exposure/--no-auto-exposure`, `--target-brightness`, `--dim-order`, `--view` and `--colormap` work as on `convert`. `--raw` serves the standalone `.gsplats.zarr` **directly** via `?src=` with no scene round-trip — a v3.4 node subtree the viewer renders as is (every tree shape; archives are extracted first) — with stored amplitudes and positional axes.
 ```bash
 luxar gsplat view splats.gsplats.zarr
-luxar gsplat view splats.gsplats.zarr --host 0.0.0.0   # reachable from the LAN
+luxar gsplat view splats.gsplats.zarr --target-brightness 3  # brighter opening view
+luxar gsplat view splats.gsplats.zarr --raw                  # node tree as stored
+luxar gsplat view splats.gsplats.zarr --host 0.0.0.0         # reachable from the LAN
 ```
 
 #### `luxar gsplat fit`
@@ -343,7 +345,36 @@ luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --center
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --scale-intensity 0.1
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --view xz        # face the XZ plane
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --dim-order x,y,z  # opt out
+luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --target-brightness 3  # brighter
+luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --no-auto-exposure     # legacy
 ```
+
+**Auto exposure (default).** Additive blending sums every splat along the view
+ray, so normalizing each splat's amplitude (p99.9 → 1) still opens a dense fit as
+a saturated white blob. Convert predicts the opening view's per-pixel sum down
+its view axis (each splat's projected footprint, LUT/colour gain and opacity
+included, through the colour window the compiler will stamp;
+`luxar.gsplats.exposure`) and dims the amplitudes so its p99.9 equals
+`--target-brightness` — default 2.0 under ACES/AgX/Neutral/Reinhard/Cineon (and
+when `--tone-mapping` is unset), 0.9 under `None`/`Linear`, which clip at 1.0 —
+printing e.g. `Exposure:
+scaled splat brightness ×0.31 so the default view isn't saturated (projected
+p99.9 6.4 → 2.0; --no-auto-exposure to disable)`. The two side views (orbit
+90°) and up to four more evenly spaced timepoints of the first hidden discrete
+axis are predicted too and capped at 4× the target (`SIDE_CAP`), so a thin slab
+seen face-on, or a timelapse that brightens later, is dimmed further and the
+line says "capped by side views" / "capped by other timepoints". Hidden axes are
+weighted where the viewer opens them (a discrete axis at its minimum — a
+timelapse at its first timepoint — a continuous one at its centre). It never
+brightens, applies only to `additive`/`luminous` blending, and works on
+partition/LOD stores; 10M splats take ~7 s and ~1 GB (the set is subsampled to
+2M before any covariance is built). The total raw→stored factor is
+stamped as `amplitude_normalization_factor` (with
+`amplitude_normalization_mode="projected"` and the prediction), so `stored /
+factor` gives back the fit's amplitudes; the `.gsplats.zarr` is untouched.
+`--no-auto-exposure` is the legacy per-splat normalization, attr for attr.
+`--scale-intensity S` replaces both with exactly `raw × S` (mode `"manual"`) on
+any tree shape, partitions included.
 
 Fitted image volumes open in the **image convention** (the Fiji/napari view: x
 right, y down, looking along +z through the stack). A fit's center columns are
