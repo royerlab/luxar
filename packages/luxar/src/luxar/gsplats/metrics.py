@@ -281,13 +281,13 @@ def compute_ssim(
 ) -> float:
     """Compute Structural Similarity Index (SSIM) on the input device.
 
-    For 2-D and 3-D tensors a true n-D SSIM is computed via ``F.conv{2,3}d``.
+    For 2-D and 3-D tensors a true n-D SSIM uses separable Gaussian filtering.
     For higher-dimensional tensors the SSIM is averaged over all 3-D
     sub-volumes along the leading dimensions.
 
-    Large volumes are automatically split into overlapping tiles to avoid
-    GPU out-of-memory errors.  The tiling threshold is based on estimated
-    peak memory vs. available GPU memory.
+    Large volumes are automatically split into overlapping tiles. The tiling
+    threshold compares estimated peak memory with free CUDA memory, or with a
+    fixed budget on CPU and MPS.
 
     Parameters
     ----------
