@@ -44,6 +44,17 @@ def test_a_changed_thread_count_is_picked_up(monkeypatch: pytest.MonkeyPatch) ->
     assert backend_mod.resolve_thread_count() == 5
 
 
+def test_zero_thread_count_uses_default_and_worker_share(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(device, "physical_core_count", lambda: 16)
+    monkeypatch.setattr(backend_mod, "physical_core_count", lambda: 16)
+    monkeypatch.setenv("LUXAR_CPU_THREADS", "0")
+    assert backend_mod.resolve_thread_count() == 16
+    assert device.cpu_worker_threads_env(4) == {"LUXAR_CPU_THREADS": "4"}
+    assert "ignoring LUXAR_CPU_THREADS" not in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(("workers", "share"), [(1, 16), (3, 5), (8, 2), (40, 1)])
 def test_worker_share_splits_the_physical_cores(
     monkeypatch: pytest.MonkeyPatch, workers: int, share: int

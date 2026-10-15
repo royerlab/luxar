@@ -78,15 +78,15 @@ plus the first-call JIT time; a quiet fit's one-line summary names
 | Variable | Values | Effect |
 |----------|--------|--------|
 | `LUXAR_CPU_BACKEND` | `auto` (default), `native`, `torch` | `auto` uses the kernels when numba imports; `native` raises if it does not; `torch` always uses the PyTorch renderer. |
-| `LUXAR_CPU_THREADS` | positive int | Kernel thread count (default: physical cores available to the process), resolved once per value. numba keeps its own pool; torch's intra-op setting is neither read nor changed here. Multi-worker CPU fits (`fit -j N`, content `-j N`, `batch-fit run --gpus cpu`, Slurm `--parallel`) give each worker its share unless you set it. |
+| `LUXAR_CPU_THREADS` | positive int or `0` | Kernel thread count (default: physical cores available to the process; `0` uses the default), resolved once per value. numba keeps its own pool; torch's intra-op setting is neither read nor changed here. Multi-worker CPU fits (`fit -j N`, content `-j N`, `batch-fit run --gpus cpu`, Slurm `--parallel`) give each worker its share unless you set a nonzero value. |
 | `NUMBA_CACHE_DIR` | path | Where compiled kernels are cached (numba's own variable). |
 
 **Torch threads still matter.** With the render off torch, what remains on
 torch per iteration -- the loss over the volume, `_build_L`, the Adam step -- is
 now a visible share of a fast iteration, and it runs on torch's intra-op
 threads. The hatch env pins those to 1 (`OMP_NUM_THREADS`/`MKL_NUM_THREADS`);
-for real work export the width you want, or use `LUXAR_CPU_THREADS`, which the
-parallel torch-threads change (#3125) also applies to torch.
+for real work export the width you want with both `OMP_NUM_THREADS` and
+`MKL_NUM_THREADS`. `LUXAR_CPU_THREADS` controls only the native kernels.
 
 **Compile and cache.** The first call in a fresh environment JIT-compiles the
 kernels (~2 s on an M4 Max); `cache=True` stores the machine code beside

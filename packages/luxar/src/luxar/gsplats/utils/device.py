@@ -244,7 +244,7 @@ def _effective_cpu_count() -> int:
     return max(1, os.cpu_count() or 1)
 
 
-#: Thread count of the native CPU splatting kernels (and, with #3125, torch).
+#: Thread count of the native CPU splatting kernels.
 CPU_THREADS_ENV = "LUXAR_CPU_THREADS"
 
 
@@ -302,10 +302,10 @@ def cpu_worker_threads_env(workers: int) -> dict[str, str]:
     """``LUXAR_CPU_THREADS`` for one of ``workers`` concurrent CPU fit processes.
 
     Each worker would otherwise default to every physical core and the
-    workers would oversubscribe the machine. Empty when the user already set
-    the variable (their choice is inherited unchanged).
+    workers would oversubscribe the machine. Empty when the user set a nonzero
+    value (their choice is inherited unchanged).
     """
-    if os.environ.get(CPU_THREADS_ENV, "").strip():
+    if os.environ.get(CPU_THREADS_ENV, "").strip() not in ("", "0"):
         return {}
     share = max(1, physical_core_count() // max(1, int(workers)))
     return {CPU_THREADS_ENV: str(share)}

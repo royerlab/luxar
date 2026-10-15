@@ -390,7 +390,7 @@ def test_sbatch_output_dir_rejects_line_terminators(separator: str) -> None:
         generate_fit_sbatch(manifest, "")
 
 
-@pytest.mark.parametrize(("preset", "expected"), [(None, "4"), ("7", "7")])
+@pytest.mark.parametrize(("preset", "expected"), [(None, "4"), ("0", "4"), ("7", "7")])
 def test_parallel_worker_cpu_kernel_threads_default_to_the_worker_share(
     preset: "str | None", expected: str
 ) -> None:

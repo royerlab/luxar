@@ -96,7 +96,7 @@ def requested_backend() -> str:
 @lru_cache(maxsize=8)
 def _thread_count_for(raw: str) -> int:
     """Thread count for one raw ``LUXAR_CPU_THREADS`` value (warns once per value)."""
-    if raw:
+    if raw and raw != "0":
         try:
             value = int(raw)
         except ValueError:
