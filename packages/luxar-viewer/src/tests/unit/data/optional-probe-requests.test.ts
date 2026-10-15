@@ -261,6 +261,68 @@ describe('optional-feature probes on a consolidated store', () => {
     expect(cached.keys).toContain('/environment/faces-new/zarr.json');
   });
 
+  it('keeps a cached baked environment when the source is unreachable', async () => {
+    const envGroup = {
+      zarr_format: 3,
+      node_type: 'group',
+      attributes: {
+        format: 'cube-faces-half',
+        sample_format: 'half-float-bits',
+        face_order: ['px', 'nx', 'py', 'ny', 'pz', 'nz'],
+        resolution: 1,
+        scene_content_hash: HASH,
+        faces: 'faces-cached',
+      },
+    };
+    const facesMeta = {
+      ...v3Array,
+      shape: [24],
+      data_type: 'uint16',
+      chunk_grid: { name: 'regular', configuration: { chunk_shape: [24] } },
+    };
+    const cached = v3Store({
+      environment: envGroup,
+      'environment/faces-cached': facesMeta,
+    });
+    const entries = (cached as unknown as { entries: Map<string, Uint8Array> }).entries;
+    entries.set(
+      '/environment/faces-cached/c/0',
+      new Uint8Array(new Uint16Array(24).fill(0x3c00).buffer)
+    );
+    const store = (await zarr.openStore(cached)) as zarr.Readable;
+    const rootLoc = zarr.root(store);
+    const listing = await resolveRootListing(
+      store,
+      false,
+      Promise.reject(new TypeError('Failed to fetch'))
+    );
+    const sourceReads: string[] = [];
+    const source = {
+      get: async (key: string) => {
+        sourceReads.push(key);
+        throw new TypeError('Failed to fetch');
+      },
+    } as zarr.AsyncReadable;
+
+    const env = await loadBakedEnvironment(rootLoc, HASH, 'http://h/offline.zarr/', listing, () =>
+      zarr.root(source)
+    );
+    expect(env?.header.faces).toBe('faces-cached');
+    expect(env?.faces).toHaveLength(6);
+    expect(env?.faces[0]).toEqual(new Uint16Array(4).fill(0x3c00));
+    expect(sourceReads).toEqual(['/environment/zarr.json']);
+    expect(cached.keys).not.toContain('/environment/zarr.json');
+    // A connection fault must not make subsequent loads skip the probe.
+    const recovered = await loadBakedEnvironment(
+      rootLoc,
+      HASH,
+      'http://h/offline.zarr/',
+      listing,
+      () => rootLoc
+    );
+    expect(recovered?.header.faces).toBe('faces-cached');
+  });
+
   it('still loads chunk packs a fresh index lists', async () => {
     const raw = v3Store({
       chunk_packs: {

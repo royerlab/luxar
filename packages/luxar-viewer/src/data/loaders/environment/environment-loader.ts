@@ -152,7 +152,14 @@ async function readEnvironmentAttrs(
     // One format's document when the format is known — a guess at both cost up
     // to three 404s for the (normal) absent case.
     const location = attrsLocation(rootLoc, index, sourceRootLoc);
-    return await openEnvironmentAttrs(location.resolve(ENVIRONMENT_GROUP), format);
+    try {
+      return await openEnvironmentAttrs(location.resolve(ENVIRONMENT_GROUP), format);
+    } catch (error) {
+      // An unreachable source cannot disprove the warm index's cached map.
+      // A 404 can: the sidecar may have been removed since that index was saved.
+      if (location === rootLoc || zarr.isNotFoundError(error)) throw error;
+      return await openEnvironmentAttrs(rootLoc.resolve(ENVIRONMENT_GROUP), format);
+    }
   } catch (error) {
     if (probeKey !== undefined && zarr.isNotFoundError(error)) knownAbsent.add(probeKey);
     return null; // no environment group — the normal case
