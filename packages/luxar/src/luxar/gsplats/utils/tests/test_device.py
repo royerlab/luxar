@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 import pytest
 import torch
 
@@ -430,10 +432,24 @@ class TestCpuFallbackHint:
         assert "install a CUDA build of torch" in hint
         assert "make" not in hint
 
-    def test_warning_uses_python_warning_channel(self, capsys) -> None:
+    def test_warning_uses_python_warning_channel_once(
+        self, monkeypatch, capsys
+    ) -> None:
+        monkeypatch.setattr(device_mod, "_CPU_WARNING_ISSUED", False)
         with pytest.warns(UserWarning, match="running on CPU"):
             device_mod.warn_cpu_fitting()
-        with pytest.warns(UserWarning, match="running on CPU"):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             device_mod.warn_cpu_fitting()
+        assert caught == []
         out = capsys.readouterr().out
         assert "running on CPU" not in out
+
+    def test_warning_as_error_does_not_silence_a_retry(self, monkeypatch) -> None:
+        monkeypatch.setattr(device_mod, "_CPU_WARNING_ISSUED", False)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            with pytest.raises(UserWarning, match="running on CPU"):
+                device_mod.warn_cpu_fitting()
+        with pytest.warns(UserWarning, match="running on CPU"):
+            device_mod.warn_cpu_fitting()

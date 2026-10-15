@@ -827,6 +827,43 @@ class TestFitCommand:
         assert result.returncode == 0, f"fit failed: {output}"
         assert output.count("Gaussian splat fitting is running on CPU") == 1
 
+    def test_tiled_cpu_fit_warns_once_in_cli_output(self, tmp_path: Path) -> None:
+        volume_path = tmp_path / "tiled-volume.npy"
+        np.save(volume_path, np.ones((40, 40, 40), dtype=np.float32))
+        out = tmp_path / "tiled-cpu.gsplats.zarr"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from luxar.cli import app; app()",
+                "gsplat",
+                "fit",
+                str(volume_path),
+                str(out),
+                "--device",
+                "cpu",
+                "--iters",
+                "2",
+                "--seeds",
+                "40",
+                "--tiling",
+                "uniform",
+                "--tile-size",
+                "24",
+                "--overlap",
+                "4",
+                "--quiet",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        output = result.stdout + result.stderr
+        assert result.returncode == 0, f"fit failed: {output}"
+        assert (out / "part_7").is_dir()
+        assert output.count("Gaussian splat fitting is running on CPU") == 1
+
     def test_fit_accepts_auto_device(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
     ) -> None:
