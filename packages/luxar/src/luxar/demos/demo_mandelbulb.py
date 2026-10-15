@@ -7,7 +7,7 @@ This demo demonstrates:
 - Orbit-trap coloring for visual structure
 - Distance-field ambient occlusion and baked key lighting
 - Adaptive point sizing based on detail level
-- Complete workflow: generate → serve → view → cleanup
+- Complete workflow: generate → serve → view
 
 The demo is completely self-contained - all Mandelbulb computation code is in this file.
 
@@ -28,7 +28,7 @@ Usage:
     python demo_mandelbulb.py [--resolution=N] [--power=8]
 
 Controls:
-    - Ctrl+C to stop and cleanup
+    - Ctrl+C to stop
     - Browser opens automatically
     - Try different powers (6, 8, 9) for different shapes!
 """
@@ -52,7 +52,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -554,7 +553,7 @@ def main() -> None:
     aprint("  5. Color by orbit traps and bake distance-field shading")
     aprint("")
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "mandelbulb.luxar.zarr"
         n_points = generate_mandelbulb_volumetric(
@@ -566,44 +565,39 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path}")
         return
 
-    # Use temporary directory for serving (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_mandelbulb_") as tmpdir:
-        output_path = Path(tmpdir) / "mandelbulb.luxar.zarr"
+    output_path = get_demos_output_dir() / "mandelbulb.luxar.zarr"
 
-        # Generate the fractal
-        n_points = generate_mandelbulb_volumetric(
-            output_path, resolution=resolution, power=power
-        )
+    # Generate the fractal
+    n_points = generate_mandelbulb_volumetric(
+        output_path, resolution=resolution, power=power
+    )
 
-        if n_points == 0:
-            aprint("\n❌ No points generated - try different parameters")
-            return
+    if n_points == 0:
+        aprint("\n❌ No points generated - try different parameters")
+        return
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("VIEWING TIPS")
-        aprint("=" * 70)
-        aprint("Once the viewer opens:")
-        aprint("  • Use mouse to rotate and explore the fractal")
-        aprint("  • Zoom in to see fine details and tendrils")
-        aprint("  • Orbit-trap colors reveal the fractal's internal structure")
-        aprint("  • The fractal has infinite detail at all scales!")
-        aprint("")
-        aprint("Try different powers:")
-        aprint("  --power=6  → Rounder, more bulbous")
-        aprint("  --power=8  → Classic Mandelbulb (default)")
-        aprint("  --power=9  → Sharper, more spiky")
-        aprint("")
-        aprint("=" * 70)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 70)
-        aprint("Browser will open automatically. Press Ctrl+C when done.")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("VIEWING TIPS")
+    aprint("=" * 70)
+    aprint("Once the viewer opens:")
+    aprint("  • Use mouse to rotate and explore the fractal")
+    aprint("  • Zoom in to see fine details and tendrils")
+    aprint("  • Orbit-trap colors reveal the fractal's internal structure")
+    aprint("  • The fractal has infinite detail at all scales!")
+    aprint("")
+    aprint("Try different powers:")
+    aprint("  --power=6  → Rounder, more bulbous")
+    aprint("  --power=8  → Classic Mandelbulb (default)")
+    aprint("  --power=9  → Sharper, more spiky")
+    aprint("")
+    aprint("=" * 70)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 70)
+    aprint("Browser will open automatically. Press Ctrl+C when done.")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    # Cleanup happens automatically when TemporaryDirectory context exits
-    aprint("Cleanup complete - temporary files removed")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

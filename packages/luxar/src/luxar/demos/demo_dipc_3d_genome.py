@@ -89,7 +89,6 @@ DEMO_META = {
     },
 }
 
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -710,14 +709,11 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path} ({n:,} beads)")
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_dipc_") as tmpdir:
-        output_path = Path(tmpdir) / "dipc_3d_genome.luxar.zarr"
-        build_scene(output_path, polylines)
-        aprint("")
-        aprint("Data credit: Tan et al. 2018, Science 361:924 (GEO GSE117876)")
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete")
+    output_path = get_demos_output_dir() / "dipc_3d_genome.luxar.zarr"
+    build_scene(output_path, polylines)
+    aprint("")
+    aprint("Data credit: Tan et al. 2018, Science 361:924 (GEO GSE117876)")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

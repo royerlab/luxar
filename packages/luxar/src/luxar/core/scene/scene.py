@@ -803,7 +803,10 @@ class Scene(Group):
             aprint(f"Finalized scene at {final_source}")
             return
 
-        if source != final_source or not source.is_dir():
+        # An archive-backed writer can only publish its archive. A directory
+        # writer may build in a staging sibling (``atomic``) that becomes
+        # ``final_source`` at finalize; the copy below reads from there.
+        if final_source.name.endswith(".zip") or not source.is_dir():
             raise ValueError(
                 "Scene backing writer only supports its final destination: "
                 f"{final_source}"
@@ -822,20 +825,23 @@ class Scene(Group):
                 "a different path."
             )
 
-        if destination.is_relative_to(source):
+        if destination.is_relative_to(source) or destination.is_relative_to(
+            final_source
+        ):
             raise ValueError(
-                f"Destination {destination} cannot be inside source Zarr store {source}"
+                f"Destination {destination} cannot be inside source Zarr store "
+                f"{final_source}"
             )
 
         writer.finalize()
         finalized_source = Path(self.get_store_path()).resolve()
-        if finalized_source != source:
+        if finalized_source != final_source:
             raise ValueError(
                 "Scene backing writer relocated the store during finalization; "
                 f"use the finalized destination instead: {finalized_source}"
             )
-        aprint(f"Exporting scene from {source} to {destination}")
+        aprint(f"Exporting scene from {finalized_source} to {destination}")
         # CL-1: atomic copy — a failure mid-copy leaves no half-written
         # zarr store at `destination`.
-        atomic_copytree(source, destination)
+        atomic_copytree(finalized_source, destination)
         aprint(f"✓ Scene exported to {destination}")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -13,7 +14,7 @@ import pytest
 from typer.testing import CliRunner
 
 from luxar.cli import app
-from luxar.cli.demo_commands import _status
+from luxar.cli.demo_commands import _custom_build_args, _status
 from luxar.demos._dependencies import DependencySpec
 from luxar.demos.registry import iter_demos
 
@@ -21,6 +22,23 @@ from luxar.demos.registry import iter_demos
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _no_live_demos(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hide demos really running on this machine from `run`/`run-all` guards.
+
+    Tests that exercise the guards override these stubs themselves.
+    """
+    from luxar.cli import demo_commands
+
+    monkeypatch.setattr(demo_commands, "_live_run_of", lambda key: None)
+    monkeypatch.setattr(demo_commands, "_live_demo_keys", lambda: frozenset())
+
+
+def _strip_ansi(text: str) -> str:
+    """Typer/rich help is colourised; compare against plain text."""
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
 class TestListAndTable:
@@ -164,6 +182,154 @@ class TestRun:
         assert result.exit_code != 0
         assert "unknown demo" in result.stdout.lower()
 
+    @pytest.mark.parametrize("flag", ["--help", "-h"])
+    def test_forwarded_help_describes_the_demo_without_running_it(
+        self, runner, flag
+    ) -> None:
+        """`demo run X -- --help` used to start the whole demo (download+serve)."""
+        with patch("luxar.cli.demo_commands.run_child_process") as mock_run:
+            result = runner.invoke(app, ["demo", "run", "lorenz", "--", flag])
+        assert result.exit_code == 0
+        mock_run.assert_not_called()
+        out = result.stdout
+        assert "lorenz" in out
+        assert "Common demo flags" in out
+        for common in ("--no-serve", "--host", "--no-open"):
+            assert common in out
+        # The demo's own docstring (where its specific flags live) is shown too.
+        assert "--points" in out
+
+    def test_run_help_documents_host_and_no_open(self, runner) -> None:
+        result = runner.invoke(app, ["demo", "run", "--help"])
+        assert result.exit_code == 0
+        out = _strip_ansi(result.stdout)
+        assert "--host" in out and "--no-open" in out
+        assert "-- --help" in out
+
+    def test_a_running_demo_is_not_started_twice(self, runner, monkeypatch) -> None:
+        """Both runs would build (and the 2nd replace) the store the 1st serves."""
+        from luxar.cli import demo_commands
+        from luxar.cli.demo_runs import DemoRun
+
+        live = DemoRun(
+            key="lorenz", pgid=4242, pid=4200, started=0.0, source="registry"
+        )
+        monkeypatch.setattr(demo_commands, "_live_run_of", lambda key: live)
+        with patch("luxar.cli.demo_commands.run_child_process") as mock_run:
+            result = runner.invoke(app, ["demo", "run", "lorenz"])
+        assert result.exit_code == 1
+        mock_run.assert_not_called()
+        out = " ".join(_strip_ansi(result.stdout).split())
+        assert "already running (PID 4200)" in out
+        assert "luxar demo stop lorenz" in out
+
+    def test_custom_args_build_a_variant_not_the_default(self, runner) -> None:
+        """`-- --points 100` must not replace the scene the catalogue marks built."""
+        with patch("luxar.cli.demo_commands.run_child_process") as mock_run:
+            mock_run.return_value = 0
+            result = runner.invoke(
+                app, ["demo", "run", "lorenz", "--", "--points", "100", "--no-serve"]
+            )
+        assert result.exit_code == 0
+        env = mock_run.call_args.kwargs["env"]
+        variant = env["LUXAR_DEMO_VARIANT"]
+        assert variant.startswith("custom-")
+        assert "variants/custom-" in " ".join(_strip_ansi(result.stdout).split())
+        # Same custom args → same variant directory (reused, not multiplied).
+        with patch("luxar.cli.demo_commands.run_child_process") as again:
+            again.return_value = 0
+            runner.invoke(app, ["demo", "run", "lorenz", "--", "--points", "100"])
+        assert again.call_args.kwargs["env"]["LUXAR_DEMO_VARIANT"] == variant
+
+    def test_canonical_opts_a_custom_build_back_into_the_default_path(
+        self, runner
+    ) -> None:
+        """`make demo` (`--points=100000`) must land where its message says."""
+        with patch("luxar.cli.demo_commands.run_child_process") as mock_run:
+            mock_run.return_value = 0
+            result = runner.invoke(
+                app,
+                ["demo", "run", "lorenz", "--canonical", "--", "--points=100000"],
+            )
+        assert result.exit_code == 0
+        assert "env" not in mock_run.call_args.kwargs
+        assert "variants/" not in result.stdout
+
+    def test_make_demo_writes_the_path_it_announces(self) -> None:
+        makefile = Path(__file__).resolve().parents[6] / "Makefile"
+        text = makefile.read_text()
+        recipe = text[text.index("\ndemo:") :].split("\n\n", 1)[0]
+        assert "--canonical" in recipe
+        assert "datasets/demos/lorenz.luxar.zarr" in recipe
+
+    def test_serving_flags_alone_keep_the_default_build(self, runner) -> None:
+        with patch("luxar.cli.demo_commands.run_child_process") as mock_run:
+            mock_run.return_value = 0
+            result = runner.invoke(
+                app,
+                [
+                    "demo",
+                    "run",
+                    "lorenz",
+                    "--host",
+                    "0.0.0.0",
+                    "--",
+                    "--no-open",
+                    "--recompute",
+                    "--control-token",
+                    "s3cret",
+                ],
+            )
+        assert result.exit_code == 0
+        assert "env" not in mock_run.call_args.kwargs
+
+    @pytest.mark.parametrize(
+        "flag",
+        [
+            "--recompute-layout",
+            "--recompute-field",
+            "--recompute-streamlines",
+            "--recompute-pipeline",
+            "--build-catalog",
+            "--relist",
+            "--refit-all",
+            "--no-napari",
+        ],
+    )
+    def test_input_refresh_flags_keep_the_default_build(self, flag: str) -> None:
+        assert _custom_build_args([flag]) == []
+        assert _custom_build_args([flag, "--points", "100"]) == ["--points", "100"]
+
+    def test_gaia_rebuild_advice_targets_the_default_build(self, runner) -> None:
+        from luxar.demos.demo_gaia_milky_way_3m import REBUILD_COMMAND
+
+        flag = REBUILD_COMMAND.split(" -- ", 1)[1].split()
+        assert _custom_build_args(flag) == []
+        with patch("luxar.cli.demo_commands.run_child_process", return_value=0) as run:
+            result = runner.invoke(app, ["demo", "run", "gaia_milky_way", "--", *flag])
+        assert result.exit_code == 0
+        assert "env" not in run.call_args.kwargs
+
+    def test_argparse_demo_help_includes_its_own_options(self, runner) -> None:
+        with patch("luxar.cli.demo_commands.run_child_process") as mock_run:
+            result = runner.invoke(
+                app, ["demo", "run", "cosmicflows_laniakea", "--", "--help"]
+            )
+        assert result.exit_code == 0
+        mock_run.assert_not_called()
+        out = _strip_ansi(result.stdout)
+        assert "usage:" in out and "--preset" in out
+
+    def test_host_is_forwarded_to_the_demo_without_a_double_dash(self, runner) -> None:
+        with patch("luxar.cli.demo_commands.run_child_process") as mock_run:
+            mock_run.return_value = 0
+            result = runner.invoke(
+                app, ["demo", "run", "lorenz", "--host", "0.0.0.0", "--no-open"]
+            )
+        assert result.exit_code == 0
+        argv = mock_run.call_args.args[0]
+        assert argv[-3:] == ["--host", "0.0.0.0", "--no-open"]
+
 
 class TestRunAll:
     """`demo run-all` batch semantics (mocked child; no demo executes)."""
@@ -203,6 +369,22 @@ class TestRunAll:
         assert m.call_count == self._runnable_count()  # ...but nothing aborted
         assert failing.key in result.stdout
         assert "failed 1" in result.stdout
+
+    def test_a_running_demo_is_skipped(self, runner, monkeypatch) -> None:
+        """Rebuilding it would replace the store its live server is reading."""
+        from luxar.cli import demo_commands
+
+        running = next(d for d in iter_demos() if self._is_runnable(d))
+        monkeypatch.setattr(
+            demo_commands, "_live_demo_keys", lambda: frozenset({running.key})
+        )
+        with patch("luxar.cli.demo_commands.run_child_process") as m:
+            m.return_value = 0
+            result = runner.invoke(app, ["demo", "run-all"])
+        assert result.exit_code == 0
+        assert m.call_count == self._runnable_count() - 1
+        assert all(c.args[0][2] != running.module for c in m.call_args_list)
+        assert f"{running.key}: running right now" in result.stdout
 
     def test_fail_fast_stops_at_first_failure(self, runner) -> None:
         with patch("luxar.cli.demo_commands.run_child_process") as m:
@@ -319,6 +501,81 @@ class TestCache:
         assert result.exit_code == 0
         assert "dry-run" in result.stdout
         assert blob.exists()  # nothing deleted
+
+    def test_cache_clear_without_a_tty_needs_yes(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path)
+        monkeypatch.setattr("luxar.cli.utils.stdin_is_interactive", lambda: False)
+        demo = next(d for d in iter_demos() if d.caches)
+        cdir = tmp_path / demo.caches[0]
+        cdir.mkdir()
+        blob = cdir / "archive.zip"
+        blob.write_bytes(b"z" * 2048)
+        result = runner.invoke(app, ["demo", "cache", "clear", demo.key])
+        assert result.exit_code == 1
+        assert "--yes" in result.stdout
+        assert blob.exists()
+
+    def test_cache_clear_outputs_spares_a_running_demo_and_clears_variants(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        from luxar.cli import demo_commands
+
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path / "c")
+        monkeypatch.setenv("LUXAR_DATASETS_DIR", str(tmp_path / "datasets"))
+        demos_dir = tmp_path / "datasets" / "demos"
+        canonical = demos_dir / "lorenz.luxar.zarr"
+        variant = demos_dir / "variants" / "custom-abc12345" / "lorenz.luxar.zarr"
+        for store in (canonical, variant):
+            store.mkdir(parents=True)
+            (store / "zarr.json").write_text("{}")
+
+        monkeypatch.setattr(
+            demo_commands, "_live_demo_keys", lambda: frozenset({"lorenz"})
+        )
+        result = runner.invoke(
+            app, ["demo", "cache", "clear", "lorenz", "--outputs", "--yes"]
+        )
+        assert result.exit_code == 0, result.stdout
+        assert "running" in result.stdout
+        assert canonical.exists() and variant.exists()
+
+        monkeypatch.setattr(demo_commands, "_live_demo_keys", lambda: frozenset())
+        result = runner.invoke(
+            app, ["demo", "cache", "clear", "lorenz", "--outputs", "--yes"]
+        )
+        assert result.exit_code == 0, result.stdout
+        assert not canonical.exists() and not variant.exists()
+
+    def test_cache_clear_outputs_sweeps_build_leftovers_and_empty_variants(
+        self, runner, tmp_path, monkeypatch
+    ) -> None:
+        import subprocess as sp
+
+        proc = sp.Popen([sys.executable, "-c", "pass"])
+        proc.wait()
+        dead = proc.pid
+        monkeypatch.setattr("luxar.demos.registry.DEMO_CACHE_ROOT", tmp_path / "c")
+        monkeypatch.setenv("LUXAR_DATASETS_DIR", str(tmp_path / "datasets"))
+        demos_dir = tmp_path / "datasets" / "demos"
+        from luxar.io.compiler import _host_tag
+
+        leftover = demos_dir / f".lorenz.luxar.zarr.compile-{_host_tag()}-{dead}-dead"
+        leftover.mkdir(parents=True)
+        foreign = demos_dir / f".lorenz.luxar.zarr.compile-0badc0de-{dead}-beef"
+        foreign.mkdir()
+        (leftover / "zarr.json").write_text("{}")
+        variant = demos_dir / "variants" / "custom-abc12345" / "lorenz.luxar.zarr"
+        variant.mkdir(parents=True)
+        result = runner.invoke(
+            app, ["demo", "cache", "clear", "lorenz", "--outputs", "--yes"]
+        )
+        assert result.exit_code == 0, result.stdout
+        assert not leftover.exists()
+        assert foreign.exists()  # another host's may be a live build
+        assert "from another machine" in result.stdout
+        assert not (demos_dir / "variants").exists()
 
     def test_cache_clear_yes_deletes_downloads(
         self, runner, tmp_path, monkeypatch
@@ -1948,10 +2205,41 @@ class TestDemoStop:
         monkeypatch.setattr(
             demo_commands.demo_runs, "stop_run", lambda r: killed.append(r.pgid) or True
         )
+        # CliRunner's stdin is not a TTY; pretend it is so the prompt is asked.
+        monkeypatch.setattr("luxar.cli.utils.stdin_is_interactive", lambda: True)
         result = runner.invoke(app, ["demo", "stop"], input="n\n")
         assert result.exit_code == 0
         assert "Aborted" in result.stdout
         assert killed == []
+
+    def test_non_tty_without_yes_refuses_instead_of_prompting(
+        self, runner, monkeypatch
+    ) -> None:
+        """A script with no terminal must fail fast, not hang on `[y/N]`."""
+        from luxar.cli import demo_commands
+
+        killed: list[int] = []
+        monkeypatch.setattr(
+            demo_commands.demo_runs, "discover_runs", lambda **kw: self._fake_runs()
+        )
+        monkeypatch.setattr(
+            demo_commands.demo_runs, "stop_run", lambda r: killed.append(r.pgid) or True
+        )
+        monkeypatch.setattr("luxar.cli.utils.stdin_is_interactive", lambda: False)
+
+        def _no_prompt(*_a, **_k):
+            raise AssertionError("typer.confirm must not be reached without a TTY")
+
+        monkeypatch.setattr("luxar.cli.utils.typer.confirm", _no_prompt)
+        result = runner.invoke(app, ["demo", "stop"])
+        assert result.exit_code == 1
+        assert "--yes" in result.stdout
+        assert killed == []
+
+        # --yes still works without a terminal.
+        result = runner.invoke(app, ["demo", "stop", "--yes"])
+        assert result.exit_code == 0
+        assert sorted(killed) == [111, 222]
 
     def test_yes_stops_all_and_key_filters(self, runner, monkeypatch) -> None:
         from luxar.cli import demo_commands

@@ -5,7 +5,7 @@ This demo demonstrates:
 - Creating a dense 100³ cubic array of points (1,000,000 points total)
 - Color gradient indicating depth for better visualization
 - Sharp disc-like points optimized for depth-of-field testing
-- Complete workflow: generate → serve → view → cleanup
+- Complete workflow: generate → serve → view
 
 The demo is completely self-contained - all generation code is in this file.
 It uses the luxar CLI for serving, which handles server lifecycle automatically.
@@ -14,7 +14,7 @@ Usage:
     python demo_cubic_array.py
 
 Controls:
-    - Ctrl+C to stop and cleanup
+    - Ctrl+C to stop
     - Browser opens automatically
 """
 
@@ -37,7 +37,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -306,31 +305,26 @@ def main() -> None:
     aprint("  - Total: 1.5M points")
     aprint("")
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "cubic_array.luxar.zarr"
         generate_cubic_array(output_path)
         aprint(f"✓ Dataset generated at {output_path}")
         return
 
-    # Create temporary directory for the demo (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_cubic_") as tmpdir:
-        output_path = Path(tmpdir) / "cubic_array.luxar.zarr"
+    output_path = get_demos_output_dir() / "cubic_array.luxar.zarr"
 
-        # Generate the dataset (all generation code above)
-        generate_cubic_array(output_path)
+    # Generate the dataset (all generation code above)
+    generate_cubic_array(output_path)
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 70)
-        aprint("Press Ctrl+C when done to stop servers and cleanup")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 70)
+    aprint("Press Ctrl+C when done to stop the servers")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    # Cleanup happens automatically when tmpdir context exits
-    aprint("✓ Cleanup complete - temporary files removed")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

@@ -18,6 +18,13 @@ sources:
   ``python -m luxar.demos.demo_*`` command lines catches runs that predate the
   registry or whose pidfile was lost.
 
+The same registry also records standalone SERVERS — ``luxar serve``,
+``luxar viewer``, ``luxar gsplat view``, ``luxar export --open`` — as
+``kind="server"`` entries (:func:`registered_server`), which ``luxar stop``
+lists and stops alongside the demos. A server is stopped by PID, never by
+process group: unlike a demo it is not the leader of a group of its own, so a
+group kill could reach whatever script or pipeline started it.
+
 The module body imports only the standard library and :mod:`luxar._process`.
 """
 
@@ -26,14 +33,23 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import subprocess  # nosec B404  # fixed argv (ps/lsof), never shell, parsed
 import sys
+import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .._process import can_kill_process_groups, proc_table, terminate_process_group
+from .._process import (
+    can_kill_process_groups,
+    proc_table,
+    terminate_process,
+    terminate_process_group,
+)
 
 # A unit test pins this path to luxar.demos.registry.DEMO_CACHE_ROOT so the
 # duplicated location cannot drift.
@@ -56,6 +72,16 @@ class DemoRun:
     started: float  # epoch seconds (0.0 when unknown)
     source: str  # "registry" | "sweep"
     path: Optional[Path] = None  # registry file, pruned after a kill
+    # "demo": `pgid` is an isolated process group, killed whole.
+    # "server": a standalone luxar server; `pgid` holds its PID, killed alone.
+    kind: str = "demo"
+    # Servers only: the luxar subcommand its argv must still carry ("serve",
+    # "gsplat view", …) — part of the PID-reuse identity check.
+    subcommand: str = ""
+    # Set by stop_run when nothing was signalled because the run was already
+    # gone (or its id now belongs to someone else) and only its entry was
+    # pruned — so the caller does not report it as "stopped".
+    pruned: bool = False
 
 
 # ────────────────────────────── registry ─────────────────────────────────────
@@ -92,6 +118,86 @@ def register_run(
         return None
 
 
+def register_server(
+    label: str,
+    subcommand: str,
+    pid: Optional[int] = None,
+    runs_dir: Optional[Path] = None,
+) -> Optional[Path]:
+    """Record a standalone luxar server process; returns the entry path.
+
+    ``subcommand`` is the luxar command the process runs (``"serve"``,
+    ``"gsplat view"``); with the registration time it lets ``luxar stop`` tell
+    this server from an unrelated luxar process that later inherits its PID.
+    ``pid`` defaults to the calling process. Like :func:`register_run` this
+    never raises: an unregistered server only means ``luxar stop`` cannot see it.
+    """
+    runs_dir = runs_dir or DEMO_RUNS_DIR
+    pid = os.getpid() if pid is None else pid
+    path = runs_dir / f"server-{pid}.json"
+    tmp = path.with_suffix(".json.tmp")
+    try:
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "kind": "server",
+            "key": label,
+            "pgid": pid,  # the kill target; for a server that is its PID
+            "pid": pid,
+            "started": time.time(),
+            "python": sys.executable,
+            "subcommand": subcommand,
+        }
+        tmp.write_text(json.dumps(entry))  # write-then-rename, see register_run
+        tmp.replace(path)
+        return path
+    except OSError:
+        unregister_run(tmp)
+        return None
+
+
+def _exit_on_hangup(signum: int, frame: object) -> None:
+    """SIGHUP handler: unwind (running ``finally`` blocks) instead of dying."""
+    raise SystemExit(128 + signum)
+
+
+def _install_hangup_exit() -> Optional[object]:
+    """Route SIGHUP to SystemExit; returns the handler to restore (or None).
+
+    A server whose terminal closes gets SIGHUP, whose default action kills the
+    process outright — skipping the ``finally`` that removes its registry
+    entry. Only the default disposition is replaced: an explicit ignore
+    (``nohup``) or a handler someone else installed is left alone.
+    """
+    sig = getattr(signal, "SIGHUP", None)
+    if sig is None or threading.current_thread() is not threading.main_thread():
+        return None
+    try:
+        if signal.getsignal(sig) is not signal.SIG_DFL:
+            return None
+        signal.signal(sig, _exit_on_hangup)
+    except (ValueError, OSError):
+        return None
+    return signal.SIG_DFL
+
+
+@contextmanager
+def registered_server(
+    label: str, subcommand: str, runs_dir: Optional[Path] = None
+) -> Iterator[None]:
+    """Keep this process registered as a server for the duration of the block."""
+    path = register_server(label, subcommand, runs_dir=runs_dir)
+    previous = _install_hangup_exit()
+    try:
+        yield
+    finally:
+        unregister_run(path)
+        if previous is not None:
+            try:
+                signal.signal(signal.SIGHUP, previous)  # type: ignore[arg-type]
+            except (ValueError, OSError):
+                pass
+
+
 def unregister_run(path: Optional[Path]) -> None:
     """Remove a registry entry written by :func:`register_run` (never raises)."""
     if path is None:
@@ -115,6 +221,9 @@ def _registry_runs(runs_dir: Path) -> list[DemoRun]:
                 # 0 / negative are kill(2) wildcards or the caller's own
                 # group; a JSON `true` also coerces to 1. Corrupt, prune.
                 raise ValueError(f"invalid pgid {pgid}")
+            kind = str(entry.get("kind", "demo"))
+            if kind not in ("demo", "server"):
+                raise ValueError(f"unknown kind {kind!r}")
             runs.append(
                 DemoRun(
                     key=str(entry["key"]),
@@ -123,6 +232,8 @@ def _registry_runs(runs_dir: Path) -> list[DemoRun]:
                     started=float(entry.get("started", 0.0)),
                     source="registry",
                     path=path,
+                    kind=kind,
+                    subcommand=str(entry.get("subcommand", "")),
                 )
             )
         except (OSError, ValueError, KeyError, TypeError):
@@ -280,6 +391,39 @@ def _is_luxar_module(module: Optional[str]) -> bool:
     return module is not None and (module == "luxar" or module.startswith("luxar."))
 
 
+# Basenames of the console-script entry point (`pip install luxar` → `luxar`).
+_LUXAR_SCRIPT_NAMES = frozenset({"luxar", "luxar.exe", "luxar-script.py"})
+
+
+def _is_luxar_command(command: str) -> bool:
+    """True for ``python -m luxar…`` AND for the ``luxar`` console script.
+
+    A server's identity check cannot use the ``-m`` fingerprint alone: a user
+    starts ``luxar serve`` through the console script, which ``ps`` renders as
+    ``<python> <venv>/bin/luxar serve …``. The script path may contain spaces
+    (a macOS hatch env lives under ``Application Support``), so — as for the
+    interpreter — the next few tokens are rejoined before taking the basename.
+    """
+    if _is_luxar_module(_python_module_token(command)):
+        return True
+    tokens = command.split()
+    if not tokens:
+        return False
+    if Path(tokens[0]).name in _LUXAR_SCRIPT_NAMES:
+        return True
+    i = _interpreter_arg_start(tokens)
+    if i is None:
+        return False
+    while i < len(tokens) and tokens[i].startswith("-"):
+        if tokens[i] in _PY_RUN_SELECTORS:
+            return False
+        i += 2 if tokens[i] in _PY_OPTS_WITH_ARG else 1
+    for end in range(i + 1, min(len(tokens), i + _MAX_EXE_TOKENS) + 1):
+        if Path(" ".join(tokens[i:end])).name in _LUXAR_SCRIPT_NAMES:
+            return True
+    return False
+
+
 def _demo_module_suffix(command: str) -> Optional[str]:
     """The ``demo_<suffix>`` a python ``-m luxar.demos.demo_*`` command runs."""
     module = _python_module_token(command)
@@ -351,6 +495,8 @@ def _entry_still_live(
     :func:`stop_run` still refuses to signal it. With no listing either, only
     an entry naming nobody is dropped.
     """
+    if run.kind == "server":
+        return _server_still_live(run, snapshot, visible_pids)
     if snapshot:
         return _group_has_luxar_process(run.pgid, snapshot)
     if can_kill_process_groups():
@@ -363,9 +509,132 @@ def _entry_still_live(
     return bool(run.pid)
 
 
+# Slack for comparing a process's start time (``ps`` reports whole seconds)
+# with the registration time the server itself recorded after starting.
+_START_TIME_SLACK_S = 2.0
+
+
+def _parse_etime(text: str) -> Optional[float]:
+    """Seconds from a ``ps -o etime=`` value (``[[DD-]HH:]MM:SS``), else None."""
+    text = text.strip()
+    days = 0
+    if "-" in text:
+        day_text, text = text.split("-", 1)
+        if not day_text.isdigit():
+            return None
+        days = int(day_text)
+    parts = text.split(":")
+    if not 2 <= len(parts) <= 3 or not all(p.isdigit() for p in parts):
+        return None
+    seconds = 0
+    for part in parts:
+        seconds = seconds * 60 + int(part)
+    return float(days * 86400 + seconds)
+
+
+def _process_started_at(pid: int) -> Optional[float]:
+    """Epoch start time of ``pid`` via ``ps -o etime=``, or None if unknown."""
+    try:
+        out = subprocess.run(  # nosec B603, B607  # fixed argv, no user input
+            ["ps", "-o", "etime=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    elapsed = _parse_etime(out)
+    return None if elapsed is None else time.time() - elapsed
+
+
+def _server_identity(
+    run: DemoRun, snapshot: list[tuple[int, int, str]]
+) -> Optional[bool]:
+    """Is ``run``'s PID still THE server that registered? None = can't tell.
+
+    Three things must hold, because a PID is recycled freely and "some luxar
+    process" is not proof: the process is a luxar invocation, its argv still
+    carries the recorded subcommand, and it started no later than the entry
+    was written (a recycled PID started after). Without a process table, or
+    without a start time, the answer is unknown — never a licence to signal.
+    """
+    if not snapshot:
+        return None
+    row = next((cmd for pid, _g, cmd in snapshot if pid == run.pgid), None)
+    if row is None or not _is_luxar_command(row):
+        return False
+    tokens = row.split()
+    if not run.subcommand or not all(t in tokens for t in run.subcommand.split()):
+        return False
+    started_at = _process_started_at(run.pgid)
+    if started_at is None:
+        return None
+    return started_at <= run.started + _START_TIME_SLACK_S
+
+
+def _server_still_live(
+    run: DemoRun,
+    snapshot: list[tuple[int, int, str]],
+    visible_pids: frozenset[int],
+) -> bool:
+    """Whether a server entry may still name its server (see above)."""
+    identity = _server_identity(run, snapshot)
+    if identity is not None:
+        return identity
+    if snapshot:
+        return True  # matches but start time unknown: list it, never signal it
+    if can_kill_process_groups():
+        try:
+            os.kill(run.pgid, 0)
+            return True
+        except (ProcessLookupError, PermissionError, OSError):
+            return False
+    if visible_pids:
+        return run.pgid in visible_pids
+    return bool(run.pid)
+
+
+def _drop_servers_inside_demos(
+    runs: list[DemoRun], snapshot: list[tuple[int, int, str]]
+) -> list[DemoRun]:
+    """Hide a demo's own ``luxar serve`` child: stopping the demo stops it.
+
+    Listing it too would show one demo as two things to stop, and stopping
+    the server alone would leave the demo script printing its cleanup banner
+    while the user expected the demo itself to go.
+    """
+    demo_groups = {r.pgid for r in runs if r.kind == "demo"}
+    pgid_of = {pid: pgid for pid, pgid, _cmd in snapshot}
+    return [
+        r
+        for r in runs
+        if r.kind != "server" or pgid_of.get(r.pgid, -1) not in demo_groups
+    ]
+
+
+def _skip_server_entry(
+    run: DemoRun, snapshot: list[tuple[int, int, str]], include_servers: bool
+) -> bool:
+    """True when ``discover_runs`` must not consider this server entry further.
+
+    This process's own entry is never a target. Without ``include_servers``
+    the entry is not listed, but a provably stale one is still pruned, so
+    ``luxar demo stop`` keeps the shared registry tidy too.
+    """
+    if run.pgid == os.getpid():
+        return True
+    if include_servers:
+        return False
+    if _server_identity(run, snapshot) is False:
+        unregister_run(run.path)
+    return True
+
+
 def discover_runs(
     runs_dir: Optional[Path] = None,
     snapshot: Optional[list[tuple[int, int, str]]] = None,
+    include_servers: bool = False,
 ) -> list[DemoRun]:
     """All live demo runs (registry first, sweep for the rest), oldest first.
 
@@ -373,6 +642,10 @@ def discover_runs(
     process's own group is excluded, so ``demo stop`` (or a ``pick_port``
     diagnosis running inside a demo being launched) never targets itself.
     ``snapshot`` lets a caller that already paid for a ps snapshot reuse it.
+
+    ``include_servers`` adds the standalone servers (``kind="server"``) that
+    ``luxar stop`` also manages, minus those that belong to a listed demo.
+    Without it, server entries are neither listed nor pruned here.
     """
     runs_dir = runs_dir or DEMO_RUNS_DIR
     if snapshot is None:
@@ -391,7 +664,9 @@ def discover_runs(
         else frozenset()
     )
     for run in entries:
-        if run.pgid == own_pgid:
+        if run.kind == "server" and _skip_server_entry(run, snapshot, include_servers):
+            continue
+        if run.kind == "demo" and run.pgid == own_pgid:
             covered.add(run.pgid)
             continue
         if not _entry_still_live(run, snapshot, visible_pids):
@@ -404,6 +679,8 @@ def discover_runs(
         if run.pgid != own_pgid and run.pgid not in covered:
             live.append(run)
 
+    if include_servers:
+        live = _drop_servers_inside_demos(live, snapshot)
     return sorted(live, key=lambda r: r.started)
 
 
@@ -443,16 +720,36 @@ def stop_run(run: DemoRun) -> bool:
     run is reported as not stopped instead (``demo stop`` then prints the
     manual command), and its entry is kept so the listing keeps naming it.
     """
+    if run.kind == "server":
+        return _stop_server(run)
     if can_kill_process_groups():
         snapshot = _ps_snapshot()
         if snapshot and not _group_has_luxar_process(run.pgid, snapshot):
             # No longer a demo group (exited, possibly recycled): nothing to
             # stop. Prune the entry and report success.
             unregister_run(run.path)
+            run.pruned = True
             return True
         gone = terminate_process_group(run.pgid)
     else:
         gone = False
+    if gone:
+        unregister_run(run.path)
+    return gone
+
+
+def _stop_server(run: DemoRun) -> bool:
+    """Stop a standalone server by PID, re-validating its identity first."""
+    if not can_kill_process_groups():
+        return False  # same no-blind-signal rule as for demos, see stop_run
+    identity = _server_identity(run, _ps_snapshot())
+    if identity is False:
+        unregister_run(run.path)  # gone, or the PID now belongs to someone else
+        run.pruned = True
+        return True
+    if identity is None:
+        return False  # cannot verify who holds the PID: refuse to signal it
+    gone = terminate_process(run.pgid)
     if gone:
         unregister_run(run.path)
     return gone
@@ -481,7 +778,9 @@ def describe_port_holder(port: int) -> Optional[str]:
 
     snapshot = _ps_snapshot()
     by_pid = {pid: (pgid, cmd) for pid, pgid, cmd in snapshot}
-    runs_by_pgid = {run.pgid: run for run in discover_runs(snapshot=snapshot)}
+    runs = discover_runs(snapshot=snapshot, include_servers=True)
+    runs_by_pgid = {run.pgid: run for run in runs if run.kind == "demo"}
+    servers_by_pid = {run.pgid: run for run in runs if run.kind == "server"}
     for pid in sorted(holder_pids):
         pgid, cmd = by_pid.get(pid, (-1, ""))
         run = runs_by_pgid.get(pgid)
@@ -489,6 +788,12 @@ def describe_port_holder(port: int) -> Optional[str]:
             return (
                 f"Port {port} is held by demo '{run.key}' (PID {pid}) — "
                 "run `luxar demo stop` to clear it."
+            )
+        server = servers_by_pid.get(pid)
+        if server is not None:
+            return (
+                f"Port {port} is held by `luxar {server.key}` (PID {pid}) — "
+                "run `luxar stop` to clear it."
             )
         if _is_luxar_module(_python_module_token(cmd)) and "serve" in cmd.split():
             return f"Port {port} is held by another `luxar serve` (PID {pid})."

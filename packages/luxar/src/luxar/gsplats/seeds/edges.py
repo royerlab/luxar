@@ -14,7 +14,7 @@ from scipy import ndimage as ndi
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.seeds.utils import (
     SEED_AMPLITUDE_SCALE,
-    SpatialHashGrid,
+    greedy_min_distance_select,
     sigmas_to_cholesky_isotropic,
 )
 
@@ -288,12 +288,12 @@ def _poisson_disk_sample_weighted(
     min_distance: float,
 ) -> np.ndarray:
     """
-    Weighted Poisson disk sampling using spatial hash grid.
+    Weighted Poisson disk sampling with KD-tree based greedy selection.
 
     Candidates are sorted by density (highest first) and accepted if they
-    satisfy the min_distance constraint. A spatial hash grid provides O(1)
-    amortized neighbor lookups, replacing the previous KD-tree approach that
-    scaled as O(n² log n) due to repeated tree rebuilds.
+    satisfy the min_distance constraint, resolved block-wise by
+    :func:`~luxar.gsplats.seeds.utils.greedy_min_distance_select` (KD-tree range
+    tests, O(n log n) — no per-candidate Python loop).
 
     Parameters
     ----------
@@ -327,19 +327,13 @@ def _poisson_disk_sample_weighted(
     n_candidates = min(len(valid_coords), n_samples * 10)
     candidates = valid_coords[order[:n_candidates]].astype(np.float32)
 
-    # Spatial hash grid for O(1) amortized distance checks with zero rebuild cost.
-    grid = SpatialHashGrid(cell_size=min_distance, ndim=ndim)
+    # Greedy acceptance in density order, vectorised block-wise: the same kept
+    # set (and order) as the former per-candidate SpatialHashGrid loop, which
+    # stopped at n_samples exactly as max_count does here.
+    kept = greedy_min_distance_select(candidates, min_distance, max_count=n_samples)
 
-    for i in range(n_candidates):
-        coord = candidates[i]
-
-        if not grid.has_neighbor_within(coord, min_distance):
-            grid.insert(coord)
-
-        if len(grid) >= n_samples:
-            break
-
-    if len(grid) == 0:
+    if len(kept) == 0:
         return np.zeros((0, ndim), dtype=float)
 
-    return grid.points.astype(float)
+    sampled: np.ndarray = candidates[kept].astype(float)
+    return sampled

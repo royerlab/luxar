@@ -89,7 +89,6 @@ DEMO_META = {
 
 import json
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -884,21 +883,16 @@ def main() -> None:
             else build_static_scene(path, cat)
         )
 
+    output_path = get_demos_output_dir() / "asteroids_solar_system.luxar.zarr"
     if no_serve:
-        name = "asteroids_solar_system.luxar.zarr"
-        output_path = get_demos_output_dir() / name
         n = _build(output_path)
         aprint(f"Dataset generated at {output_path} ({n:,} points)")
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_asteroids_") as tmpdir:
-        output_path = Path(tmpdir) / "asteroids_solar_system.luxar.zarr"
-        _build(output_path)
-        aprint("")
-        aprint("Data credit: NASA/JPL-Caltech SBDB (https://ssd.jpl.nasa.gov)")
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete")
+    _build(output_path)
+    aprint("")
+    aprint("Data credit: NASA/JPL-Caltech SBDB (https://ssd.jpl.nasa.gov)")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

@@ -88,6 +88,76 @@ def _foreground_weighted_psnr(
     return _psnr_db(mse, data_range)
 
 
+def _sum_float(t: Any) -> float:
+    """Sum a tensor in float64 where the device supports it (MPS has no float64)."""
+    import torch
+
+    acc = torch.float32 if t.device.type == "mps" else torch.float64
+    return float(t.sum(dtype=acc).item())
+
+
+def _per_k_metrics(
+    rendered: Any,
+    ref: Any,
+    held_mask: Any,
+    held_fg_sel: Any,
+    weighting: Tuple[Any, Any, int, int, float],
+    *,
+    data_range: float,
+    baseline_mse: float,
+    compute_ssim: Callable[..., float],
+) -> Dict[str, float]:
+    """Score one rendered fit against the reference, at bounded peak memory.
+
+    ``rendered`` is CONSUMED: after SSIM it is overwritten in place with the
+    squared error, so the only full-volume temporaries are SSIM's own (tiled
+    past a fixed budget on CPU/MPS — see ``metrics._should_tile_ssim``). The
+    held-out set is gathered (5 % of the volume); the train MSE is the total
+    squared error minus the held-out part rather than a boolean gather of the
+    other 95 %, which used to cost ~2x the volume in ``train_pred`` /
+    ``train_true`` copies. Sums accumulate in float64 (float32 on MPS), so the
+    values agree with the former ``torch.mean`` over the gathered sets to
+    float32 rounding, not bit for bit.
+    """
+    numel = rendered.numel()
+    full_ssim = float(compute_ssim(rendered, ref, data_range=data_range))
+    err = rendered.sub_(ref).square_()
+    total_sse = _sum_float(err)
+    held_err = err[held_mask]
+    n_held = held_err.numel()
+    held_sse = _sum_float(held_err)
+    n_train = numel - n_held
+    nan = float("nan")
+    held_mse = held_sse / n_held if n_held else nan
+    train_mse = max(total_sse - held_sse, 0.0) / n_train if n_train else nan
+
+    fg_err = held_err[held_fg_sel]
+    held_psnr_fg = (
+        _psnr_db(_sum_float(fg_err) / fg_err.numel(), data_range)
+        if fg_err.numel()
+        else nan
+    )
+    del fg_err
+    fg_sel, bg_sel, n_fg, n_bg, bg_weight = weighting
+    held_psnr_fg_weighted = _foreground_weighted_psnr(
+        held_err, fg_sel, bg_sel, n_fg, n_bg, bg_weight, data_range
+    )
+    del held_err
+    # Same convention as metrics.compute_psnr (inf at zero error), without
+    # another full-volume pass.
+    full_psnr = _psnr_db(total_sse / numel, data_range)
+    return {
+        "held_mse": held_mse,
+        "held_psnr": _psnr_db(held_mse, data_range),
+        "held_psnr_fg": held_psnr_fg,
+        "held_gain": held_out_gain_db(held_mse, baseline_mse),
+        "held_psnr_fg_weighted": held_psnr_fg_weighted,
+        "train_psnr": _psnr_db(train_mse, data_range),
+        "full_psnr": full_psnr,
+        "full_ssim": full_ssim,
+    }
+
+
 def calibrate(
     V: np.ndarray,
     k_grid: Sequence[int],
@@ -146,7 +216,7 @@ def calibrate(
     import torch
 
     from luxar.gsplats.fit_gsplats import fit_gaussian_splats
-    from luxar.gsplats.metrics import compute_psnr, compute_ssim
+    from luxar.gsplats.metrics import compute_ssim
     from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
     from luxar.gsplats.utils.device import resolve_torch_device
 
@@ -244,29 +314,24 @@ def calibrate(
 
     # Resolve the render device ONCE and hoist the loop-invariant device copies
     # (original volume + masks) out of the per-K loop — they were re-copied to the
-    # GPU and never freed every iteration (M9). The held∩foreground mask and the
-    # train (unmasked) mask are also invariant, so build them once.
+    # GPU and never freed every iteration (M9). Only the held-out mask stays a
+    # full-volume selector; the foreground strata are reduced to HELD-OUT-sized
+    # selectors (5 % of the volume) up front so the full-volume foreground masks
+    # can be released before the first fit.
     render_device = str(resolve_torch_device(fit_kwargs.get("device")))
     ref_dev = V_orig_t.to(render_device)
     mask_dev = mask_t.to(render_device)
-    fg_dev = fg_t.to(render_device)
-    fg_weighted_dev = fg_weighted_t.to(render_device)
-    train_mask_dev = ~mask_dev
-    held_fg_dev = mask_dev & fg_dev
-    (
-        held_weighted_fg_sel,
-        held_weighted_bg_sel,
-        n_weighted_fg,
-        n_weighted_bg,
-        bg_weight,
-    ) = _foreground_weighting(
+    held_fg_sel = fg_t.to(render_device)[mask_dev]
+    weighting = _foreground_weighting(
         mask_dev,
-        fg_weighted_dev,
+        fg_weighted_t.to(render_device),
         fg_bg_ratio,
     )
-    del fg_weighted_dev, fg_weighted_t
+    foreground_mask_fraction = float(np.mean(fg_weighted_mask))
+    del fg_t, fg_weighted_t, fg_mask, fg_weighted_mask
 
     # 2-3. Fit at each K
+    sweep_t0 = time.perf_counter()
     for i, K in enumerate(k_grid):
         if progress_callback is not None:
             progress_callback(i, len(k_grid), f"fit K={K}")
@@ -279,52 +344,25 @@ def calibrate(
             rendered = render_to_volume_tensor(
                 splats, shape=V.shape, device=render_device
             )
-            held_pred = rendered[mask_dev]
-            held_true = ref_dev[mask_dev]
-            train_pred = rendered[train_mask_dev]
-            train_true = ref_dev[train_mask_dev]
-
-            held_mse_val = float(torch.mean((held_pred - held_true) ** 2).item())
-            held_mse.append(held_mse_val)
-            held_psnr_val = _psnr_db(held_mse_val, data_range)
-            held_psnr.append(held_psnr_val)
-
-            # Foreground-restricted held-out PSNR (background-domination removed)
-            fg_pred = rendered[held_fg_dev]
-            fg_true = ref_dev[held_fg_dev]
-            if fg_pred.numel() == 0:
-                held_psnr_fg.append(float("nan"))
-            else:
-                fg_mse = float(torch.mean((fg_pred - fg_true) ** 2).item())
-                held_psnr_fg.append(_psnr_db(fg_mse, data_range))
-            # Gain over the predict-zero baseline (plateaus meaningfully)
-            held_gain.append(held_out_gain_db(held_mse_val, baseline_mse))
-
-            errors = (held_pred - held_true) ** 2
-            held_psnr_fg_weighted.append(
-                _foreground_weighted_psnr(
-                    errors,
-                    held_weighted_fg_sel,
-                    held_weighted_bg_sel,
-                    n_weighted_fg,
-                    n_weighted_bg,
-                    bg_weight,
-                    data_range,
-                )
+            m = _per_k_metrics(
+                rendered,
+                ref_dev,
+                mask_dev,
+                held_fg_sel,
+                weighting,
+                data_range=data_range,
+                baseline_mse=baseline_mse,
+                compute_ssim=compute_ssim,
             )
-            del errors
-
-            train_mse = float(torch.mean((train_pred - train_true) ** 2).item())
-            train_psnr_val = _psnr_db(train_mse, data_range)
-            train_psnr.append(train_psnr_val)
-
-            full_psnr_val = compute_psnr(rendered, ref_dev, data_range=data_range)
-            full_psnr.append(float(full_psnr_val))
-            full_ssim_val = compute_ssim(rendered, ref_dev, data_range=data_range)
-            full_ssim.append(float(full_ssim_val))
-
-            # free only the per-iteration tensors; the hoisted device copies persist
-            del rendered, held_pred, held_true, train_pred, train_true, fg_pred, fg_true
+            del rendered  # now the squared-error volume (reused in place)
+        held_mse.append(m["held_mse"])
+        held_psnr.append(m["held_psnr"])
+        held_psnr_fg.append(m["held_psnr_fg"])
+        held_gain.append(m["held_gain"])
+        held_psnr_fg_weighted.append(m["held_psnr_fg_weighted"])
+        train_psnr.append(m["train_psnr"])
+        full_psnr.append(m["full_psnr"])
+        full_ssim.append(m["full_ssim"])
 
         eff_k = int(splats.n_splats)
         k_values_eff.append(eff_k)
@@ -340,10 +378,15 @@ def calibrate(
             splat_paths.append(str(out_path))
 
         if progress_callback is not None:
+            # One line per grid point, emitted even though the fits run quiet:
+            # K, wall-clock for this fit and for the sweep so far, and the
+            # held-out PSNR that K* is chosen on.
             progress_callback(
                 i,
                 len(k_grid),
-                f"K={K} eff={eff_k} train={train_psnr_val:.2f}dB held={held_psnr_val:.2f}dB t={elapsed:.1f}s",
+                f"K={K} eff={eff_k} held={m['held_psnr']:.2f}dB "
+                f"train={m['train_psnr']:.2f}dB fit={elapsed:.1f}s "
+                f"total={time.perf_counter() - sweep_t0:.0f}s",
             )
 
         del splats
@@ -351,15 +394,7 @@ def calibrate(
             torch.cuda.empty_cache()
 
     # release the hoisted device copies
-    del (
-        ref_dev,
-        mask_dev,
-        fg_dev,
-        train_mask_dev,
-        held_fg_dev,
-        held_weighted_fg_sel,
-        held_weighted_bg_sel,
-    )
+    del ref_dev, mask_dev, held_fg_sel, weighting
     if str(render_device).startswith("cuda"):
         torch.cuda.empty_cache()
 
@@ -460,7 +495,7 @@ def calibrate(
         timestamp=datetime.now(timezone.utc).isoformat(),
         held_out_psnr_fg_db=held_psnr_fg,
         held_out_psnr_fg_weighted_db=held_psnr_fg_weighted,
-        foreground_mask_fraction=float(np.mean(fg_weighted_mask)),
+        foreground_mask_fraction=foreground_mask_fraction,
         foreground_otsu_threshold=float(fg_otsu_threshold),
         fg_bg_ratio=float(fg_bg_ratio),
         held_out_gain_db=held_gain,

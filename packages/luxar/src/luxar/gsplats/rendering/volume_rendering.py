@@ -1,7 +1,8 @@
 """Volume rendering for Gaussian splats.
 
 This module provides GPU-accelerated volume rendering for Gaussian splats,
-with automatic backend selection (CUDA > MPS > CPU).
+with automatic backend selection (CUDA kernels > Metal kernels on MPS >
+pure PyTorch on any device).
 """
 
 from __future__ import annotations
@@ -81,6 +82,62 @@ def _try_cuda_render(
         return None
 
 
+_metal_render_warning_emitted = False
+
+
+def _try_metal_render(
+    centers: torch.Tensor,
+    Ls: torch.Tensor,  # (N, 3, 3)
+    amplitudes: torch.Tensor,
+    shape: Tuple[int, ...],
+    truncate: float,
+    intensity_floor: float,
+) -> torch.Tensor | None:
+    """Render with the selected Metal kernel backend for a 3D MPS volume.
+
+    This is the same splat-centric kernel ``GaussianSplatModelMetal.forward``
+    trains with, so a post-fit score on MPS measures the renderer the fit was
+    optimised against -- and avoids the pure-PyTorch renderer's ``K x P``
+    temporaries, which made the quality render the slowest and most
+    memory-hungry step of an MPS fit. Honours ``LUXAR_METAL_BACKEND``
+    (``torch`` keeps the PyTorch path).
+    """
+    if len(shape) != 3 or centers.device.type != "mps":
+        return None
+    try:
+        from luxar.gsplats.models.gsplats.metal.backend import get_metal_backend
+        from luxar.gsplats.models.gsplats.metal.gsplat_model_metal import (
+            MetalSplatFunction,
+        )
+
+        kernels = get_metal_backend()
+        if kernels is None:
+            return None
+        with torch.no_grad():
+            output: torch.Tensor = MetalSplatFunction.apply(  # type: ignore[no-untyped-call, unused-ignore]
+                centers.contiguous(),
+                Ls.contiguous(),
+                amplitudes.contiguous(),
+                tuple(shape),
+                truncate,
+                intensity_floor,
+                False,  # use_metal_conic
+                kernels,
+            )
+        return output.view(shape) if output.shape != tuple(shape) else output
+    except Exception as exc:  # noqa: BLE001 - any kernel failure -> PyTorch
+        global _metal_render_warning_emitted  # noqa: PLW0603
+        if not _metal_render_warning_emitted:
+            warnings.warn(
+                "Metal volume renderer failed with "
+                f"{type(exc).__name__}: {exc}; falling back to PyTorch",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+            _metal_render_warning_emitted = True
+        return None
+
+
 def render_to_volume_tensor(
     gsplat_data: GSplatData,
     shape: Tuple[int, ...],
@@ -155,11 +212,17 @@ def render_to_volume_tensor(
                 idx += 1
     del chol_t
 
-    # Use CUDA splatting backend if available — it's tiled, memory-efficient,
-    # and much faster than the pure-PyTorch renderer (which creates massive
-    # meshgrid intermediates that can OOM on large volumes).
+    # Use the CUDA / Metal splatting kernels when available — they are tiled,
+    # memory-efficient, and much faster than the pure-PyTorch renderer (which
+    # creates massive meshgrid intermediates that can OOM on large volumes).
     if device.startswith("cuda"):
         output = _try_cuda_render(
+            centers_t, Ls_t, amps_t, shape, truncate, intensity_floor
+        )
+        if output is not None:
+            return output
+    elif device.startswith("mps"):
+        output = _try_metal_render(
             centers_t, Ls_t, amps_t, shape, truncate, intensity_floor
         )
         if output is not None:

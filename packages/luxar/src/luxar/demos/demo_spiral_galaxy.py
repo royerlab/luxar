@@ -8,7 +8,7 @@ This demo demonstrates:
 - Central galactic bulge with different stellar population
 - Stellar halo with sparse old stars
 - Realistic astronomical scales and proportions
-- Complete workflow: generate → serve → view → cleanup
+- Complete workflow: generate → serve → view
 
 The demo is completely self-contained - all galaxy generation code is in this file.
 
@@ -34,7 +34,7 @@ Controls:
     - Zoom in to see individual stars
     - Notice blue young stars in spiral arms
     - Red/yellow old stars in central bulge
-    - Ctrl+C to stop and cleanup
+    - Ctrl+C to stop
 """
 
 DEMO_META = {
@@ -56,7 +56,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -428,7 +427,7 @@ def main() -> None:
     aprint("  • Logarithmic spiral structure")
     aprint("")
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "spiral_galaxy.luxar.zarr"
         generate_spiral_galaxy(
@@ -442,51 +441,47 @@ def main() -> None:
         aprint(f"✓ Dataset generated at {output_path}")
         return
 
-    # Use temporary directory (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_galaxy_") as tmpdir:
-        output_path = Path(tmpdir) / "spiral_galaxy.luxar.zarr"
+    output_path = get_demos_output_dir() / "spiral_galaxy.luxar.zarr"
 
-        # Generate galaxy
-        generate_spiral_galaxy(
-            output_path,
-            n_stars=n_stars,
-            n_arms=n_arms,
-            arm_stars_ratio=0.70,
-            bulge_stars_ratio=0.25,
-            halo_stars_ratio=0.05,
-        )
+    # Generate galaxy
+    generate_spiral_galaxy(
+        output_path,
+        n_stars=n_stars,
+        n_arms=n_arms,
+        arm_stars_ratio=0.70,
+        bulge_stars_ratio=0.25,
+        halo_stars_ratio=0.05,
+    )
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("VIEWING TIPS")
-        aprint("=" * 70)
-        aprint("Once the viewer opens:")
-        aprint("")
-        aprint("  • Rotate to see the galaxy from different angles")
-        aprint("  • Top-down view: See the beautiful spiral structure")
-        aprint("  • Edge-on view: See the thin disk and central bulge")
-        aprint("  • Zoom in: Individual stars with realistic colors")
-        aprint("  • Zoom out: Overall galactic structure")
-        aprint("")
-        aprint("Color coding:")
-        aprint("  🔵 Blue: Young, hot stars in spiral arms")
-        aprint("  🟡 Yellow: Middle-aged stars")
-        aprint("  🔴 Red: Old, cool stars in bulge and halo")
-        aprint("")
-        aprint("Try different configurations:")
-        aprint("  --arms=2  → Barred spiral")
-        aprint("  --arms=3  → Triangular spiral")
-        aprint("  --arms=5  → Dense multi-arm spiral")
-        aprint("")
-        aprint("=" * 70)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 70)
-        aprint("Browser will open automatically. Press Ctrl+C when done.")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("VIEWING TIPS")
+    aprint("=" * 70)
+    aprint("Once the viewer opens:")
+    aprint("")
+    aprint("  • Rotate to see the galaxy from different angles")
+    aprint("  • Top-down view: See the beautiful spiral structure")
+    aprint("  • Edge-on view: See the thin disk and central bulge")
+    aprint("  • Zoom in: Individual stars with realistic colors")
+    aprint("  • Zoom out: Overall galactic structure")
+    aprint("")
+    aprint("Color coding:")
+    aprint("  🔵 Blue: Young, hot stars in spiral arms")
+    aprint("  🟡 Yellow: Middle-aged stars")
+    aprint("  🔴 Red: Old, cool stars in bulge and halo")
+    aprint("")
+    aprint("Try different configurations:")
+    aprint("  --arms=2  → Barred spiral")
+    aprint("  --arms=3  → Triangular spiral")
+    aprint("  --arms=5  → Dense multi-arm spiral")
+    aprint("")
+    aprint("=" * 70)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 70)
+    aprint("Browser will open automatically. Press Ctrl+C when done.")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("✓ Cleanup complete - temporary files removed")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

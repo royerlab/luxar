@@ -337,6 +337,7 @@ class TestServeIntegration:
             open_browser_flag=True,
             cors_origin="local",
             title=None,
+            open_explicit=False,
         ):
             captured["viewer"] = cors_origin
 

@@ -103,7 +103,7 @@ Usage:
 Controls:
     - Mouse drag: Rotate view
     - Mouse wheel: Zoom in/out
-    - Ctrl+C: Stop and cleanup
+    - Ctrl+C: Stop
 
 Viewing Tips:
     - Start zoomed out to see the overall structure
@@ -741,12 +741,15 @@ def load_and_convert_gaia_data(data_zarr_path: Path, output_path: Path) -> int:
     return n_stars
 
 
-def load_and_convert_from_zip(data_zip_path: Path, temp_dir: Path) -> Path:
+def load_and_convert_from_zip(
+    data_zip_path: Path, temp_dir: Path, output_path: Path | None = None
+) -> Path:
     """Load raw Gaia data from zip and convert to Luxar format.
 
     Args:
         data_zip_path: Path to milky_way_gaia_3m.zarr.zip
         temp_dir: Temporary directory for extraction
+        output_path: Where to write the Luxar scene (default: inside ``temp_dir``)
 
     Returns:
         Path to Luxar-formatted zarr
@@ -763,7 +766,7 @@ def load_and_convert_from_zip(data_zip_path: Path, temp_dir: Path) -> Path:
         aprint(f"✓ Extracted to: {raw_zarr_path}")
 
     # Convert to Luxar format
-    luxar_zarr_path = temp_dir / f"{DEMO_META['outputs'][0]}.luxar.zarr"
+    luxar_zarr_path = output_path or temp_dir / f"{DEMO_META['outputs'][0]}.luxar.zarr"
     load_and_convert_gaia_data(raw_zarr_path, luxar_zarr_path)
 
     return luxar_zarr_path
@@ -816,15 +819,15 @@ def main() -> None:
     except CatalogUnusable as e:
         _exit_with_advice(e)
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
+    output_path = get_demos_output_dir() / f"{DEMO_META['outputs'][0]}.luxar.zarr"
     if "--no-serve" in sys.argv:
-        output_path = get_demos_output_dir() / f"{DEMO_META['outputs'][0]}.luxar.zarr"
         # Extract the raw .zarr from the zip to a temp dir, then convert to the
         # persistent output_path (same extraction the serve path uses — reading
         # the zip in place via a zip:// store is unreliable across zarr versions).
         # A catalog built with the wrong `--output` stem fails HERE rather than at
         # resolution, so this call needs the same clean-error exit.
-        with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
+        with tempfile.TemporaryDirectory(prefix="luxar_gaia_extract_") as tmpdir:
             try:
                 raw_zarr_path = _extract_raw_zarr(data_file, Path(tmpdir))
             except CatalogUnusable as e:
@@ -833,8 +836,8 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path}")
         return
 
-    # Use temporary directory for serving (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_gaia_") as tmpdir:
+    # Extract to a scratch dir (raw zarr only); the scene goes to output_path.
+    with tempfile.TemporaryDirectory(prefix="luxar_gaia_extract_") as tmpdir:
         tmp_path = Path(tmpdir)
 
         # Load from zip and convert to Luxar format (extracts to temp_dir).
@@ -844,42 +847,40 @@ def main() -> None:
         # met while writing the scene is a bug, and swallowing its traceback into
         # "❌ Error" would report it as a catalog problem it is not.
         try:
-            zarr_path = load_and_convert_from_zip(data_file, tmp_path)
+            zarr_path = load_and_convert_from_zip(data_file, tmp_path, output_path)
         except CatalogUnusable as e:
             _exit_with_advice(e)
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("VIEWING TIPS")
-        aprint("=" * 70)
-        aprint("")
-        aprint("Navigation:")
-        aprint("  • Start zoomed OUT to see the full galactic structure")
-        aprint("  • Look for the thin disk and central bulge")
-        aprint("  • The Milky Way is a flat disk ~30 kpc across")
-        aprint("  • Zoom IN to see individual stars with colors")
-        aprint("")
-        aprint("What to Explore:")
-        aprint("  • Yellow marker: Our Sun (you are here!)")
-        aprint("  • Red marker: Betelgeuse (red supergiant, 168 pc)")
-        aprint("  • Blue marker: Rigel (blue supergiant, 265 pc)")
-        aprint("  • Origin (0,0,0): The Galactic Center (8 kpc away)")
-        aprint("  • Top-down view: See the disk structure")
-        aprint("  • Edge-on view: See how thin the disk is")
-        aprint("  • Navigate toward origin to approach Galactic Center")
-        aprint("")
-        aprint("This is Real Science:")
-        aprint("  • Every point is a real star with measured position")
-        aprint("  • Colors reflect actual stellar surface temperatures")
-        aprint("  • Distances determined from parallax measurements")
-        aprint("  • Published in: Gaia Collaboration (2022), A&A")
-        aprint("")
-
-        # Launch viewer
-        launch_viewer(zarr_path)
-
     aprint("")
-    aprint("Cleanup complete - temporary files removed")
+    aprint("=" * 70)
+    aprint("VIEWING TIPS")
+    aprint("=" * 70)
+    aprint("")
+    aprint("Navigation:")
+    aprint("  • Start zoomed OUT to see the full galactic structure")
+    aprint("  • Look for the thin disk and central bulge")
+    aprint("  • The Milky Way is a flat disk ~30 kpc across")
+    aprint("  • Zoom IN to see individual stars with colors")
+    aprint("")
+    aprint("What to Explore:")
+    aprint("  • Yellow marker: Our Sun (you are here!)")
+    aprint("  • Red marker: Betelgeuse (red supergiant, 168 pc)")
+    aprint("  • Blue marker: Rigel (blue supergiant, 265 pc)")
+    aprint("  • Origin (0,0,0): The Galactic Center (8 kpc away)")
+    aprint("  • Top-down view: See the disk structure")
+    aprint("  • Edge-on view: See how thin the disk is")
+    aprint("  • Navigate toward origin to approach Galactic Center")
+    aprint("")
+    aprint("This is Real Science:")
+    aprint("  • Every point is a real star with measured position")
+    aprint("  • Colors reflect actual stellar surface temperatures")
+    aprint("  • Distances determined from parallax measurements")
+    aprint("  • Published in: Gaia Collaboration (2022), A&A")
+    aprint("")
+
+    # Launch viewer
+    launch_viewer(zarr_path)
+
     aprint("")
     aprint("=" * 70)
     aprint("DATA ATTRIBUTION & SOURCES")

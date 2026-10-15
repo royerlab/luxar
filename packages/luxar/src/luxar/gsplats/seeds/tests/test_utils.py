@@ -656,3 +656,156 @@ class TestSpatialHashGrid:
                 f"Mismatch at {q}: grid={grid_result}, brute={brute_result}, "
                 f"min_dist_sq={brute_min:.4f}"
             )
+
+
+def _reference_greedy(
+    coords: np.ndarray, min_distance: float, max_count: int | None = None
+) -> np.ndarray:
+    """The former per-point SpatialHashGrid loop, kept as the oracle."""
+    from luxar.gsplats.spatial_hash import SpatialHashGrid
+
+    pts = coords.astype(np.float32)
+    grid = SpatialHashGrid(cell_size=min_distance, ndim=pts.shape[1])
+    kept: list[int] = []
+    for i, p in enumerate(pts):
+        if not grid.has_neighbor_within(p, min_distance):
+            grid.insert(p)
+            kept.append(i)
+            if max_count is not None and len(kept) >= max_count:
+                break
+    return np.asarray(kept, dtype=np.intp)
+
+
+class TestGreedyMinDistanceSelect:
+    """The block-vectorised greedy must keep EXACTLY what the loop kept."""
+
+    @pytest.mark.parametrize(
+        ("ndim", "integer", "min_distance"),
+        [
+            (2, False, 1.5),
+            (3, False, 2.0),
+            (3, True, 2.0),
+            (3, True, 3.0),
+            (4, False, 2.5),
+        ],
+    )
+    def test_matches_per_point_loop(
+        self,
+        ndim: int,
+        integer: bool,
+        min_distance: float,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import luxar.gsplats.seeds.utils as utils_mod
+        from luxar.gsplats.seeds.utils import greedy_min_distance_select
+
+        # Small blocks so the cross-block (kept-tree) path is exercised too.
+        monkeypatch.setattr(utils_mod, "_GREEDY_BLOCK_MIN", 97)
+        monkeypatch.setattr(utils_mod, "_GREEDY_BLOCK_MAX", 997)
+        rng = np.random.default_rng(ndim * 10 + int(integer))
+        if integer:  # lattice points: exact-distance ties at min_distance
+            coords = rng.integers(0, 25, size=(6000, ndim)).astype(float)
+        else:
+            coords = rng.random((6000, ndim)) * 40
+        got = greedy_min_distance_select(coords.astype(np.float32), min_distance)
+        np.testing.assert_array_equal(got, _reference_greedy(coords, min_distance))
+
+    def test_max_count_stops_like_the_loop(self) -> None:
+        from luxar.gsplats.seeds.utils import greedy_min_distance_select
+
+        coords = np.random.default_rng(7).random((5000, 3)).astype(np.float32) * 30
+        got = greedy_min_distance_select(coords, 2.0, max_count=321)
+        np.testing.assert_array_equal(got, _reference_greedy(coords, 2.0, 321))
+        assert len(got) == 321
+
+    def test_duplicates_and_degenerate_inputs(self) -> None:
+        from luxar.gsplats.seeds.utils import greedy_min_distance_select
+
+        dup = np.repeat(np.array([[1.0, 1.0, 1.0], [9.0, 9.0, 9.0]]), 5, axis=0)
+        np.testing.assert_array_equal(greedy_min_distance_select(dup, 2.0), [0, 5])
+        assert len(greedy_min_distance_select(np.empty((0, 3)), 2.0)) == 0
+        # min_distance <= 0 constrains nothing.
+        np.testing.assert_array_equal(
+            greedy_min_distance_select(dup, 0.0, max_count=4), [0, 1, 2, 3]
+        )
+
+    def test_dense_candidate_set_is_fast(self) -> None:
+        """~1M dense lattice candidates (the edge-seeding shape) resolve in
+        seconds; the former per-candidate Python loop took tens of seconds."""
+        import time
+
+        from luxar.gsplats.seeds.utils import greedy_min_distance_select
+
+        grid = np.stack(
+            np.meshgrid(*[np.arange(n) for n in (40, 160, 160)], indexing="ij"), -1
+        ).reshape(-1, 3)
+        order = np.random.default_rng(0).permutation(len(grid))
+        t0 = time.perf_counter()
+        kept = greedy_min_distance_select(grid[order].astype(np.float32), 2.0)
+        assert time.perf_counter() - t0 < 30.0
+        pts = grid[order][kept].astype(float)
+        from scipy.spatial import cKDTree
+
+        d, _ = cKDTree(pts).query(pts, k=2)
+        assert d[:, 1].min() >= 2.0
+
+    @pytest.mark.parametrize(
+        ("pair_budget", "loop_degree"), [(200, 1e9), (5_000, 1e9), (5_000, 20.0)]
+    )
+    def test_capped_passes_and_loop_handover_keep_the_same_set(
+        self, pair_budget: int, loop_degree: float, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Force the survivor cap (re-testing the unprocessed tail next pass)
+        and the per-point handover on an ordered lattice: still exact."""
+        import luxar.gsplats.seeds.utils as utils_mod
+        from luxar.gsplats.seeds.utils import greedy_min_distance_select
+
+        monkeypatch.setattr(utils_mod, "_GREEDY_PAIR_BUDGET", pair_budget)
+        monkeypatch.setattr(utils_mod, "_GREEDY_LOOP_DEGREE", loop_degree)
+        grid = (
+            np.stack(np.meshgrid(*[np.arange(22)] * 3, indexing="ij"), -1)
+            .reshape(-1, 3)
+            .astype(np.float32)
+        )
+        for md in (2.0, 3.0):
+            np.testing.assert_array_equal(
+                greedy_min_distance_select(grid, md), _reference_greedy(grid, md)
+            )
+            np.testing.assert_array_equal(
+                greedy_min_distance_select(grid, md, max_count=50),
+                _reference_greedy(grid, md, 50),
+            )
+
+    @pytest.mark.parametrize("order", ["lattice", "coherent"])
+    def test_large_min_distance_dense_candidates_bounded(self, order: str) -> None:
+        """md=8 on a dense 64^3 lattice, unshuffled (C order) and in a
+        coherent intensity-like order. Each survivor conflicts with ~1,000
+        others; a block sized from the PREVIOUS block's sparse survivors once
+        walked into fresh territory and built ~46M pairs (4.5 GB). The block is
+        now capped from a sampled degree estimate before any pair list exists,
+        and dense conflicts go to the per-point loop: same kept set, bounded
+        peak."""
+        import sys
+        import time
+
+        from luxar.gsplats.seeds.utils import greedy_min_distance_select
+
+        resource = pytest.importorskip("resource")
+        unit = 1 if sys.platform == "darwin" else 1024  # ru_maxrss units
+        grid = (
+            np.stack(np.meshgrid(*[np.arange(64)] * 3, indexing="ij"), -1)
+            .reshape(-1, 3)
+            .astype(np.float32)
+        )
+        if order == "coherent":
+            centre = grid.mean(axis=0)
+            value = np.exp(-((grid - centre) ** 2).sum(axis=1) / (2 * 15.0**2))
+            grid = grid[np.argsort(-value, kind="stable")]
+        before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit
+        t0 = time.perf_counter()
+        got = greedy_min_distance_select(grid, 8.0)
+        elapsed = time.perf_counter() - t0
+        grown = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit - before
+        np.testing.assert_array_equal(got, _reference_greedy(grid, 8.0))
+        assert grown < 500 * 1024**2, f"peak grew {grown / 1e6:.0f} MB"
+        assert elapsed < 60.0

@@ -7,7 +7,7 @@ This demo demonstrates:
 - Cut-and-project method from 6D to 3D
 - Color-coded by perpendicular space coordinates
 - Beautiful mathematical structure impossible in periodic crystals
-- Complete workflow: generate → serve → view → cleanup
+- Complete workflow: generate → serve → view
 
 The demo is completely self-contained - all quasicrystal math is here!
 
@@ -101,7 +101,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -420,7 +419,7 @@ def main() -> None:
     aprint("Generation time: ~30-60 seconds")
     aprint("")
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "quasicrystal.luxar.zarr"
         actual_points = generate_quasicrystal_3d(
@@ -434,49 +433,45 @@ def main() -> None:
         aprint(f"Total points: {actual_points:,}")
         return
 
-    # Use temporary directory for serving (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_quasicrystal_") as tmpdir:
-        output_path = Path(tmpdir) / "quasicrystal.luxar.zarr"
+    output_path = get_demos_output_dir() / "quasicrystal.luxar.zarr"
 
-        # Generate with scaled parameters
-        actual_points = generate_quasicrystal_3d(
-            output_path,
-            target_points=target_points,
-            # Uses defaults from function: lattice_radius=18, box_size=45
-        )
+    # Generate with scaled parameters
+    actual_points = generate_quasicrystal_3d(
+        output_path,
+        target_points=target_points,
+        # Uses defaults from function: lattice_radius=18, box_size=45
+    )
 
-        if actual_points == 0:
-            aprint("\nGeneration failed - no points created")
-            return
+    if actual_points == 0:
+        aprint("\nGeneration failed - no points created")
+        return
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("VIEWING - DISCOVER APERIODIC ORDER!")
-        aprint("=" * 70)
-        aprint("Once viewer opens:")
-        aprint("")
-        aprint("  - Rotate slowly - look for 5-fold symmetry axes")
-        aprint("  - Zoom in - patterns are self-similar at all scales")
-        aprint("  - No periodic repetition - pattern never repeats!")
-        aprint("  - Colors encode position in 'perpendicular space'")
-        aprint("")
-        aprint("Things to notice:")
-        aprint("  - Dense, ordered structure (not random)")
-        aprint("  - Local patterns repeat, but global pattern doesn't")
-        aprint("  - 5-fold rotation symmetry (rotate 72 degrees)")
-        aprint("  - Similar to real atomic quasicrystals!")
-        aprint("")
-        aprint("Real-world: Al-Mn quasicrystals have this exact structure")
-        aprint("  (discovered by Dan Shechtman, Nobel Prize 2011)")
-        aprint("")
-        aprint("=" * 70)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 70)
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("VIEWING - DISCOVER APERIODIC ORDER!")
+    aprint("=" * 70)
+    aprint("Once viewer opens:")
+    aprint("")
+    aprint("  - Rotate slowly - look for 5-fold symmetry axes")
+    aprint("  - Zoom in - patterns are self-similar at all scales")
+    aprint("  - No periodic repetition - pattern never repeats!")
+    aprint("  - Colors encode position in 'perpendicular space'")
+    aprint("")
+    aprint("Things to notice:")
+    aprint("  - Dense, ordered structure (not random)")
+    aprint("  - Local patterns repeat, but global pattern doesn't")
+    aprint("  - 5-fold rotation symmetry (rotate 72 degrees)")
+    aprint("  - Similar to real atomic quasicrystals!")
+    aprint("")
+    aprint("Real-world: Al-Mn quasicrystals have this exact structure")
+    aprint("  (discovered by Dan Shechtman, Nobel Prize 2011)")
+    aprint("")
+    aprint("=" * 70)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 70)
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

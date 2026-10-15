@@ -1252,8 +1252,9 @@ class TestDeviceMovement:
                 assert torch.equal(param.cpu(), before)
 
             output = model()
-            # torch.compile may use eager on the second GPU after its recompile
-            # limit is reached; FP16 conic arithmetic then rounds differently.
+            # Different GPU architectures (or torch.compile falling back to
+            # eager after its recompile limit on the second GPU) may round
+            # FP16 conic arithmetic differently.
             assert torch.allclose(
                 output_before.cpu(), output.cpu(), atol=1e-3, rtol=1e-3
             )

@@ -1095,3 +1095,49 @@ class TestCompressionRatio:
         # ratio=0.05 → 0.05 * 1048576 / 15 = 3495.25 → 3495
         target = _compression_ratio_to_target_count(0.05, (32, 32, 32, 32))
         assert target == 3495
+
+
+class TestFarthestFirstSubsample:
+    """The O(N*T) farthest-first selection must equal the former O(N*T^2) one."""
+
+    @staticmethod
+    def _reference(points: np.ndarray, first_idx: int, target: int) -> np.ndarray:
+        from scipy.spatial import distance
+
+        selected = [first_idx]
+        remaining = [i for i in range(len(points)) if i != first_idx]
+        while len(selected) < target and remaining:
+            d = distance.cdist(points[remaining], points[selected]).min(axis=1)
+            pick = remaining[int(np.argmax(d))]
+            selected.append(pick)
+            remaining.remove(pick)
+        return np.asarray(selected)
+
+    @pytest.mark.parametrize("snap", [False, True])
+    def test_matches_quadratic_reference(self, snap: bool) -> None:
+        from luxar.gsplats.fitting.preprocessing import _farthest_first_indices
+
+        rng = np.random.default_rng(11)
+        pts = rng.random((1500, 3)) * [30, 80, 90]
+        if snap:  # coarse lattice: duplicate points and many tied distances
+            pts = np.round(pts / 10) * 10
+        first = int(rng.integers(len(pts)))
+        got = _farthest_first_indices(pts, first, 300)
+        np.testing.assert_array_equal(got, self._reference(pts, first, 300))
+
+    def test_large_sub_threshold_target_is_fast(self) -> None:
+        """5,000 of 10,000 candidates took ~140 s with the quadratic loop."""
+        import time
+
+        from luxar.gsplats.fitting.preprocessing import (
+            _subsample_seeds_spatially_diverse,
+        )
+
+        rng = np.random.default_rng(5)
+        seeds = rng.random((20000, 3)) * [65, 300, 400]
+        t0 = time.perf_counter()
+        out = _subsample_seeds_spatially_diverse(seeds, rng.random(20000), 5000, False)
+        assert time.perf_counter() - t0 < 20.0
+        assert isinstance(out, np.ndarray)
+        assert len(out) == 5000
+        assert len(np.unique(out, axis=0)) == 5000

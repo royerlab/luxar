@@ -319,6 +319,7 @@ See `docs/guides/developer/BUILD_SYSTEM_SPEC.md` for complete documentation.
 luxar demo                       # List the 90 bundled demos (table)
 luxar demo run lorenz            # Run a demo by key/index (forwards -- args)
 luxar demo stop                  # Stop running demos and free their ports (--dry-run lists)
+luxar stop                       # Stop serve/viewer/gsplat view/export --open servers + demos
 luxar demo cache list            # Inventory / clear demo caches (cache clear …)
 # Demos keep heavyweight packages OUT of the core install, so a fresh checkout
 # lists every demo but cannot run them all. Report-only `deps` exits 1 for an
@@ -718,7 +719,10 @@ luxar gsplat cal volume.zarr cal.json --fit-exponent --exponent-scales 128,192,2
 # ONCE up front so K* is measured on floor-suppressed data (matching how you fit).
 # Pass `--floor none` to reproduce the legacy hard-min manuscript numbers.
 luxar gsplat cal volume.tiff cal.json --floor none               # legacy (no floor)
-# Output: K* + curve type {peak | plateau | signal_limited} + noise-floor σ̂ + PSNR ceiling.
+# Output: K* + curve type {peak | plateau | signal_limited | low_k_optimal} + noise-floor σ̂ + PSNR ceiling.
+# A K* on the smallest/largest grid point, or a curve moving < 1 dB over the whole grid,
+# prints a ⚠ (also under --quiet) and lands in cal.json `held_out_peak.warnings`:
+# the sweep did not bracket the optimum, so extend --k-min / --k-max / --k-grid.
 # Then re-run fit at the recommended K: luxar gsplat fit volume.zarr out.zarr --seeds <K*>
 
 # Canonical end-to-end pipeline: cal → fit (at K*) → lod (--recipe flat|stream|tiles|overview|adaptive|levels)

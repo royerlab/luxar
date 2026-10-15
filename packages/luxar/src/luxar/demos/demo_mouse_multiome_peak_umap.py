@@ -6,7 +6,7 @@ This demo demonstrates:
 - 3D UMAP embedding of ~192k single-cell ATAC-seq peaks
 - Color-coded by cell type, lineage, timepoint, and other attributes
 - Navigation through categorical attributes
-- Complete workflow: load -> build scene -> serve -> cleanup
+- Complete workflow: load -> build scene -> serve
 
 Dataset Structure:
     - ~192k points in 3D UMAP space
@@ -49,7 +49,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -387,7 +386,7 @@ def main() -> None:
     # Generate legend images for all attributes
     generate_all_legends(attributes, category_maps, prefix="mouse")
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "mouse_multiome_peak_umap.luxar.zarr"
         _n_points = create_mouse_scene(
@@ -396,43 +395,37 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path}")
         return
 
-    # Use temporary directory for serving (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_mouse_") as tmpdir:
-        output_path = Path(tmpdir) / "mouse_umap.luxar.zarr"
+    output_path = get_demos_output_dir() / "mouse_multiome_peak_umap.luxar.zarr"
 
-        # Create scene
-        _n_points = create_mouse_scene(
-            output_path, coordinates, attributes, category_maps
-        )
+    # Create scene
+    _n_points = create_mouse_scene(output_path, coordinates, attributes, category_maps)
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("NAVIGATION")
-        aprint("=" * 70)
-        aprint("Once viewer opens:")
-        aprint("")
-        aprint("  - Rotate to explore UMAP structure")
-        aprint("  - Zoom in to see individual cells")
-        aprint("")
-        aprint("  Press '1' to select ATTRIBUTE VIEW, then use [/]:")
-        aprint("     0: Cell Type")
-        aprint("     1: Chromosome")
-        aprint("     2: Leiden Coarse")
-        aprint("     3: Lineage")
-        aprint("     4: Peak Type")
-        aprint("     5: Timepoint")
-        aprint("")
-        aprint("  Same structure, different colors reveal different biology!")
-        aprint("")
-        aprint("=" * 70)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 70)
-        aprint("Browser will open automatically. Press Ctrl+C when done.")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("NAVIGATION")
+    aprint("=" * 70)
+    aprint("Once viewer opens:")
+    aprint("")
+    aprint("  - Rotate to explore UMAP structure")
+    aprint("  - Zoom in to see individual cells")
+    aprint("")
+    aprint("  Press '1' to select ATTRIBUTE VIEW, then use [/]:")
+    aprint("     0: Cell Type")
+    aprint("     1: Chromosome")
+    aprint("     2: Leiden Coarse")
+    aprint("     3: Lineage")
+    aprint("     4: Peak Type")
+    aprint("     5: Timepoint")
+    aprint("")
+    aprint("  Same structure, different colors reveal different biology!")
+    aprint("")
+    aprint("=" * 70)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 70)
+    aprint("Browser will open automatically. Press Ctrl+C when done.")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

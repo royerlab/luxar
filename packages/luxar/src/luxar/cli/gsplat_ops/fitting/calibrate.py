@@ -35,6 +35,41 @@ def _print_k_star_scope_caveat(calibration_region: Optional[dict]) -> None:
     )
 
 
+def _print_grid_warnings(
+    peak: "HeldOutPeak", prefix: str, skip_high_edge: bool = False
+) -> None:
+    """Print the K-grid adequacy warnings ``find_k_star`` attached to ``peak``
+    (K* on a grid edge, or a curve too flat to resolve K).
+
+    ``skip_high_edge`` drops the "largest grid point" one when the
+    not-converged line will say it (with the R-D-model alternative) anyway;
+    ``cal.json`` keeps it either way.
+    """
+    from luxar.gsplats.calibration.curve_analysis import HIGH_EDGE_WARNING
+
+    for warning in peak.warnings:
+        if not (skip_high_edge and warning.startswith(HIGH_EDGE_WARNING)):
+            aprint(f"{prefix}{warning}")
+
+
+def _print_regime_warnings(result: "CalibrationResult") -> None:
+    """Regime warnings — warn-by-default, no behaviour change."""
+    import math
+
+    sig = result.noise_floor.sigma_hat
+    if math.isfinite(sig) and sig < 1e-4:
+        aprint(
+            "  ⚠ σ̂≈0 (noise-free/deconvolved): the blind-spot peak may not "
+            "appear; prefer --k-star-metric psnr_fg_weighted "
+            "(and --auto-region)."
+        )
+    if result.not_converged:
+        aprint(
+            "  ⚠ held-out curve still climbing at K_max (not converged): "
+            "extend --k-max or use the R-D-model extrapolation."
+        )
+
+
 def _selected_summary(
     result: "CalibrationResult",
 ) -> tuple["HeldOutPeak", str, list[float]]:
@@ -394,6 +429,9 @@ def run_calibrate_command(
                 f"confidence: {selected_peak.confidence_db:.2f} dB)"
             )
             _print_k_star_scope_caveat(result.calibration_region)
+            _print_grid_warnings(
+                selected_peak, "    ⚠ ", skip_high_edge=result.not_converged
+            )
             # Operating point (point of diminishing returns) — equals K* for peak/
             # plateau; for a signal-limited curve it is the earlier knee (K* stays
             # the max-K budget anchor).
@@ -414,21 +452,13 @@ def run_calibrate_command(
                     f"{sd['n_features_reference']:,} {sd['feature_method']} features"
                     f"  →  K ~ features^{sd['saturation_exponent']:.2f}"
                 )
-            # Regime warnings — warn-by-default, no behaviour change
-            sig = result.noise_floor.sigma_hat
-            if math.isfinite(sig) and sig < 1e-4:
-                aprint(
-                    "  ⚠ σ̂≈0 (noise-free/deconvolved): the blind-spot peak may not "
-                    "appear; prefer --k-star-metric psnr_fg_weighted "
-                    "(and --auto-region)."
-                )
-            if result.not_converged:
-                aprint(
-                    "  ⚠ held-out curve still climbing at K_max (not converged): "
-                    "extend --k-max or use the R-D-model extrapolation."
-                )
+            _print_regime_warnings(result)
             aprint(f"  Total wall-clock: {elapsed:.1f} s")
             aprint("═" * 64)
+        else:
+            # --quiet drops the table, never the grid-adequacy warnings: a K*
+            # on the grid edge is a bound, and that must not go unsaid.
+            _print_grid_warnings(_selected_summary(result)[0], "⚠ ")
 
     except typer.Exit:
         raise

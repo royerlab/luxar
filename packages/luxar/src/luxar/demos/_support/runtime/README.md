@@ -41,6 +41,12 @@ print(device, flags["recompute"])
   falls back to its default after warning on malformed values.
 - `parse_path_arg()` parses and expands path flags, returning `None` when the
   flag is absent or has no value.
+- `launch_viewer()` forwards the demo's own `--host HOST` and `--no-open` flags
+  (read from `sys.argv`) to `luxar serve`, so every serving demo can bind the
+  LAN and skip the browser without per-demo code; a `--host` already in
+  `serve_args` (from `control_serve_args()`) wins.
+- `add_serve_arguments()` declares those two flags on an argparse parser, for
+  the demos that parse their argv with argparse and would otherwise reject them.
 - `run_luxar_cli()` runs the shipped CLI in-process and turns a failing exit
   into a `RuntimeError`.
 

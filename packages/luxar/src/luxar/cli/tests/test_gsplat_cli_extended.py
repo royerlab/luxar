@@ -2373,6 +2373,61 @@ class TestViewCommand:
                     zip_ref.write(f, arcname=str(f.relative_to(store)))
         return archive
 
+    def test_view_binds_host_and_advertises_a_dialable_url(
+        self, runner: CliRunner, sample_gsplats: Path, monkeypatch
+    ) -> None:
+        """`--host 0.0.0.0` reaches both servers; the URL names a real address."""
+        from unittest.mock import patch
+
+        from luxar.cli import demo_runs
+
+        monkeypatch.setattr(demo_runs, "DEMO_RUNS_DIR", sample_gsplats.parent / "r")
+        seen: dict = {}
+
+        def _fake_wait(_host, _port, thread=None, **_kwargs):
+            if thread is not None:
+                thread.join(timeout=30)
+            return True
+
+        def _fake_serve_data(target, host, *args, **kwargs):
+            seen["data_host"] = host
+
+        def _fake_serve_viewer(host, port, data_url, *args, **kwargs):
+            seen["viewer_host"] = host
+            seen["data_url"] = data_url
+
+        ports: list[tuple[int, str]] = []
+        with (
+            patch("luxar.cli.utils.check_viewer_built", return_value=True),
+            patch(
+                "luxar.cli.utils.pick_port",
+                side_effect=lambda p, host="127.0.0.1", label="": (
+                    ports.append((p, host)) or p
+                ),
+            ),
+            patch("luxar.cli.utils.advertised_host", return_value="192.168.1.7"),
+            patch("luxar.cli.utils.wait_for_server", side_effect=_fake_wait),
+            patch("luxar.cli.serving._serve_data", side_effect=_fake_serve_data),
+            patch("luxar.cli.serving._serve_viewer", side_effect=_fake_serve_viewer),
+        ):
+            result = runner.invoke(
+                app,
+                [
+                    "gsplat",
+                    "view",
+                    str(sample_gsplats),
+                    "--no-open",
+                    "--host",
+                    "0.0.0.0",
+                    "--port",
+                    "8123",
+                ],
+            )
+        assert result.exit_code == 0, result.stdout
+        assert seen["data_host"] == "0.0.0.0" and seen["viewer_host"] == "0.0.0.0"
+        assert seen["data_url"] == "http://192.168.1.7:8123"
+        assert all(host == "0.0.0.0" for _p, host in ports)
+
     def test_view_leaf_serves_directly(
         self, runner: CliRunner, sample_gsplats: Path
     ) -> None:
@@ -3863,7 +3918,12 @@ class TestCalibrateCommand:
 
         # K* must be one of the swept values
         assert data["held_out_peak"]["k_star"] in data["k_values_requested"]
-        assert data["held_out_peak"]["type"] in ("peak", "plateau", "signal_limited")
+        assert data["held_out_peak"]["type"] in (
+            "peak",
+            "plateau",
+            "signal_limited",
+            "low_k_optimal",
+        )
 
         # Noise floor present and finite (or sentinel)
         nf = data["noise_floor"]

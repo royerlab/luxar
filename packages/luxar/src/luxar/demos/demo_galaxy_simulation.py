@@ -147,7 +147,6 @@ DEMO_META = {
 
 import math
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -1324,10 +1323,9 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path}")
         return
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        output_path = Path(tmpdir) / "galaxy_simulation.luxar.zarr"
-        generate_galaxy(output_path, n_disc, n_frames)
-        launch_viewer(output_path)
+    output_path = get_demos_output_dir() / "galaxy_simulation.luxar.zarr"
+    generate_galaxy(output_path, n_disc, n_frames)
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

@@ -344,8 +344,30 @@ class TestTiledSSIM:
 
 
 class TestShouldTile:
-    def test_cpu_never_tiles(self) -> None:
-        assert _should_tile_ssim((1000, 1000, 1000), torch.device("cpu")) is False
+    def test_cpu_tiles_only_past_host_budget(self) -> None:
+        # CPU/MPS free memory is not queryable, so a fixed budget decides: a
+        # small volume stays on the untiled path, a large one tiles (untiled,
+        # 65 Mvox costs ~1.8 GB of temporaries; tiled, ~0.37 GB).
+        cpu = torch.device("cpu")
+        assert _should_tile_ssim((64, 64, 64), cpu) is False
+        assert _should_tile_ssim((1000, 1000, 1000), cpu) is True
+
+    def test_auto_tiled_cpu_matches_untiled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The auto-selected tiled path must agree with the untiled kernel.
+        # A tiny budget forces tiling on a tiny volume (no large allocation).
+        import luxar.gsplats.metrics as metrics_mod
+
+        monkeypatch.setattr(metrics_mod, "_SSIM_HOST_PEAK_BUDGET_BYTES", 1024)
+        g = torch.Generator().manual_seed(0)
+        # One axis longer than the default 128-voxel tile so the volume splits.
+        a = torch.rand(16, 300, 24, generator=g)
+        b = (a + 0.05 * torch.rand(16, 300, 24, generator=g)).clamp(0, 1)
+        assert _should_tile_ssim(a.shape, a.device) is True
+        s_ref, n_ref = _ssim_nd(a, b, window_size=11, data_range=1.0)
+        auto = compute_ssim(a, b, data_range=1.0)
+        assert auto == pytest.approx(s_ref / n_ref, abs=1e-6)
 
     def test_small_volume_no_tile(self, device: torch.device) -> None:
         # 32^3 * 4 bytes * 8 ≈ 1 MB — should never exceed 50% GPU memory
@@ -405,6 +427,76 @@ class TestOtsuThreshold:
             f"{name}: ours {actual} vs skimage {expected} "
             f"(should be the same bin; bin width {bin_width})"
         )
+
+    @staticmethod
+    def _histc_otsu(flat: torch.Tensor, bins: int = 256) -> float:
+        """The pre-subsampling implementation (full-volume ``torch.histc``)."""
+        lo, hi = float(flat.min()), float(flat.max())
+        counts = torch.histc(flat, bins=bins, min=lo, max=hi)
+        edges = torch.linspace(lo, hi, bins + 1)
+        centres = (edges[:-1] + edges[1:]) / 2.0
+        w1 = torch.cumsum(counts, 0)
+        w2 = torch.flip(torch.cumsum(torch.flip(counts, [0]), 0), [0])
+        cw = counts * centres
+        m1 = torch.cumsum(cw, 0) / w1.clamp(min=1e-12)
+        m2 = torch.flip(torch.cumsum(torch.flip(cw, [0]), 0), [0]) / w2.clamp(min=1e-12)
+        var = torch.nan_to_num(w1[:-1] * w2[1:] * (m1[:-1] - m2[1:]) ** 2)
+        return float(centres[int(torch.argmax(var))])
+
+    @pytest.mark.parametrize("n", [50_000, 12_000_000])
+    def test_matches_full_histc_implementation(self, n: int) -> None:
+        """Bincount counting is exact below the cap; subsampling stays in-bin."""
+        from luxar.gsplats import metrics
+
+        gen = torch.Generator().manual_seed(1)
+        background = torch.rand(n, generator=gen) * 0.2
+        signal = 0.5 + torch.rand(n // 20, generator=gen) * 0.5
+        flat = torch.cat([background, signal])
+        flat = flat[torch.randperm(flat.numel(), generator=gen)]
+        expected = self._histc_otsu(flat)
+        actual = otsu_threshold(flat)
+        bin_width = float(flat.max() - flat.min()) / 256
+        if flat.numel() <= metrics._OTSU_MAX_SAMPLES:
+            assert abs(actual - expected) <= bin_width * 1e-3
+        else:
+            assert abs(actual - expected) <= bin_width * 1.001
+
+    def test_subsample_does_not_alias_with_the_fastest_axis(self) -> None:
+        """Stride == X used to read only column 0 of every row (0.0023 vs 0.199)."""
+        from luxar.gsplats import metrics
+        from luxar.gsplats.calibration.content import _otsu_threshold
+
+        x = 4
+        rows = metrics._OTSU_MAX_SAMPLES  # numel = cap * X -> old stride == X
+        gen = torch.Generator().manual_seed(2)
+        vol = torch.zeros((rows, x))
+        signal = torch.rand((rows, x - 1), generator=gen)
+        vol[:, 1:] = torch.where(signal < 0.5, 0.1 * signal, 0.6 + 0.4 * signal)
+        expected = self._histc_otsu(vol.reshape(-1))
+        bin_width = float(vol.max() - vol.min()) / 256
+        assert abs(otsu_threshold(vol) - expected) <= bin_width * 1.001
+        assert abs(_otsu_threshold(vol.numpy()) - expected) <= bin_width * 1.001
+        assert expected > 0.04  # the old strided read collapsed to 0.0
+
+    def test_counts_are_bounded_cpu_samples(self) -> None:
+        """The histogram is counted on CPU over a bounded strided sample."""
+        from luxar.gsplats import metrics
+
+        flat = torch.rand(metrics._OTSU_MAX_SAMPLES * 3)
+        counts = metrics._otsu_bin_counts(
+            flat[::3], float(flat.min()), float(flat.max()), 256
+        )
+        assert counts.device.type == "cpu"
+        assert int(counts.sum()) == metrics._OTSU_MAX_SAMPLES
+
+    @pytest.mark.skipif(
+        not torch.backends.mps.is_available(), reason="MPS not available"
+    )
+    def test_mps_large_volume_does_not_fail(self) -> None:
+        """>16 Mvox used to raise "64-bit indexing" from MPS histc."""
+        vol = torch.zeros(20_000_000, device="mps")
+        vol[::50] = 1.0
+        assert 0.0 <= otsu_threshold(vol) < 1.0
 
     def test_constant_volume_selects_nothing(self) -> None:
         """A flat volume has no foreground; the strict ``>`` must yield none."""
@@ -559,3 +651,77 @@ class TestChunkedForegroundPSNRParity:
         )
         assert fraction == 0.0
         assert psnr != psnr  # nan
+
+
+class TestSeparableSSIM:
+    """`_ssim_nd` filters separably; it must equal the n-D outer-product kernel."""
+
+    @staticmethod
+    def _dense_reference(
+        a: torch.Tensor, b: torch.Tensor, window_size: int, data_range: float
+    ) -> float:
+        import torch.nn.functional as F
+
+        from luxar.gsplats.metrics import _gaussian_kernel_1d
+
+        k = _gaussian_kernel_1d(window_size, 1.5, a.device).double()
+        kernel = k
+        for _ in range(a.ndim - 1):
+            kernel = kernel.unsqueeze(-1) * k
+        kernel = kernel[None, None]
+        conv = F.conv2d if a.ndim == 2 else F.conv3d
+        p, t = a.double()[None, None], b.double()[None, None]
+        mu_p, mu_t = conv(p, kernel), conv(t, kernel)
+        s_pp = conv(p * p, kernel) - mu_p**2
+        s_tt = conv(t * t, kernel) - mu_t**2
+        s_pt = conv(p * t, kernel) - mu_p * mu_t
+        c1, c2 = (0.01 * data_range) ** 2, (0.03 * data_range) ** 2
+        ssim = ((2 * mu_p * mu_t + c1) * (2 * s_pt + c2)) / (
+            (mu_p**2 + mu_t**2 + c1) * (s_pp + s_tt + c2)
+        )
+        return float(ssim.mean())
+
+    @pytest.mark.parametrize("shape", [(48, 41), (20, 26, 23)])
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+    @pytest.mark.parametrize("window_size", [7, 11])
+    def test_matches_dense_kernel(
+        self, shape: tuple[int, ...], dtype: torch.dtype, window_size: int
+    ) -> None:
+        g = torch.Generator().manual_seed(1)
+        a = torch.rand(shape, generator=g, dtype=dtype)
+        b = (a + 0.1 * torch.randn(shape, generator=g, dtype=dtype)).clamp(0, 1)
+        s, n = _ssim_nd(a, b, window_size=window_size, data_range=1.0)
+        ref = self._dense_reference(a, b, window_size, 1.0)
+        assert s / n == pytest.approx(ref, abs=1e-6)
+
+    def test_4d_averages_3d_subvolumes(self) -> None:
+        g = torch.Generator().manual_seed(2)
+        a = torch.rand(3, 16, 18, 17, generator=g)
+        b = (a + 0.05 * torch.randn(3, 16, 18, 17, generator=g)).clamp(0, 1)
+        refs = [self._dense_reference(a[i], b[i], 11, 1.0) for i in range(3)]
+        assert compute_ssim(a, b, data_range=1.0) == pytest.approx(
+            sum(refs) / 3, abs=1e-6
+        )
+
+    def test_no_im2col_blowup_on_cpu(self) -> None:
+        """A 96^3 CPU SSIM stays near a few volumes of memory and is fast.
+
+        The former conv3d path lowered the 11^3 kernel to im2col (~5 KB per
+        output voxel: ~4.6 GB here, 37 GB at 200^3); the separable filter
+        holds only a handful of float32 volumes.
+        """
+        import sys
+        import time
+
+        resource = pytest.importorskip("resource")
+        # ru_maxrss is a high-water mark: KiB on Linux, bytes on macOS.
+        unit = 1 if sys.platform == "darwin" else 1024
+        a = torch.rand(96, 96, 96)
+        b = a + 0.01
+        before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit
+        t0 = time.perf_counter()
+        _ssim_nd(a, b, window_size=11, data_range=1.0)
+        elapsed = time.perf_counter() - t0
+        grown = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit - before
+        assert elapsed < 10.0
+        assert grown < 500 * 1024**2

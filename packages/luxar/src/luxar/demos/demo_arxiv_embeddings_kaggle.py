@@ -116,7 +116,6 @@ DEMO_META = {
 
 import re
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -1510,7 +1509,7 @@ def main() -> None:
         )
     aprint("")
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "arxiv_papers_kaggle.luxar.zarr"
         try:
@@ -1533,51 +1532,47 @@ def main() -> None:
         aprint(f"Total papers: {n_papers:,}")
         return
 
-    # Use temporary directory for serving (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_arxiv_kaggle_") as tmpdir:
-        output_path = Path(tmpdir) / "arxiv_papers_kaggle.luxar.zarr"
+    output_path = get_demos_output_dir() / "arxiv_papers_kaggle.luxar.zarr"
 
-        try:
-            n_papers = generate_paper_landscape(
-                output_path,
-                sample_size=sample_size,
-                pca_dim=pca_dim,
-                device=device,
-                seed=seed,
-            )
+    try:
+        n_papers = generate_paper_landscape(
+            output_path,
+            sample_size=sample_size,
+            pca_dim=pca_dim,
+            device=device,
+            seed=seed,
+        )
 
-            if n_papers == 0:
-                return
+        if n_papers == 0:
+            return
 
-        except Exception as e:
-            aprint(f"\nError: {e}")
-            import traceback
+    except Exception as e:
+        aprint(f"\nError: {e}")
+        import traceback
 
-            traceback.print_exc()
-            sys.exit(1)
+        traceback.print_exc()
+        sys.exit(1)
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("VIEWING TIPS")
-        aprint("=" * 70)
-        aprint("")
-        aprint("Explore the knowledge landscape:")
-        aprint("  - Zoom out: See overall structure of scientific fields")
-        aprint("  - Zoom in: Explore specific research topics")
-        aprint("  - Look for clusters: Papers on same topic group together")
-        aprint("  - Boundaries: Interdisciplinary research")
-        aprint("")
-        aprint(f"Total papers: {n_papers:,}")
-        aprint("")
-        aprint("=" * 70)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 70)
-        aprint("Press Ctrl+C when done.")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("VIEWING TIPS")
+    aprint("=" * 70)
+    aprint("")
+    aprint("Explore the knowledge landscape:")
+    aprint("  - Zoom out: See overall structure of scientific fields")
+    aprint("  - Zoom in: Explore specific research topics")
+    aprint("  - Look for clusters: Papers on same topic group together")
+    aprint("  - Boundaries: Interdisciplinary research")
+    aprint("")
+    aprint(f"Total papers: {n_papers:,}")
+    aprint("")
+    aprint("=" * 70)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 70)
+    aprint("Press Ctrl+C when done.")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

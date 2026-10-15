@@ -16,9 +16,9 @@ Split by phase:
 - **`metrics.py`** — Held-out reconstruction metrics (`held_out_psnr`, `held_out_gain_db`, `held_out_psnr_foreground`, `held_out_psnr_fg_weighted`, `predict_zero_baseline_mse`)
 - **`noise_floor.py`** — Ensemble noise-floor estimation (`estimate_noise_floor` → `NoiseFloor`) and DC-offset estimation (`estimate_floor`)
 - **`content.py`** — Feature content estimation (local-maxima / edges / intensity counts) for splat-density prediction; Otsu and lightly smoothed foreground masks; auto region selection
-- **`curve_analysis.py`** — K-grid construction (`build_k_grid`), peak detection (`find_k_star` → `HeldOutPeak`), transferable splat-density model (`SplatDensity`, `fit_saturation_exponent` → `ExponentFit`), parametric rate-distortion model (`fit_rd_model` → `RDModel`)
+- **`curve_analysis.py`** — K-grid construction (`build_k_grid`), peak detection (`find_k_star` → `HeldOutPeak`, with `k_star_grid_warnings` flagging a K* on a grid edge or a curve flatter than 1 dB), transferable splat-density model (`SplatDensity`, `fit_saturation_exponent` → `ExponentFit`), parametric rate-distortion model (`fit_rd_model` → `RDModel`)
 - **`result.py`** — `CalibrationResult` container with JSON serialisation (non-finite floats round-trip as `null`)
-- **`driver.py`** — Top-level `calibrate` driver (wires together mask → fit → metrics → curve analysis) and `calibrate_saturation_exponent` (multi-scale α fit)
+- **`driver.py`** — Top-level `calibrate` driver (wires together mask → fit → metrics → curve analysis; per-K scoring overwrites the render with its squared error and gathers only the 5 % held-out set, so peak memory stays near one volume plus SSIM's tiles) and `calibrate_saturation_exponent` (multi-scale α fit)
 - **`__init__.py`** — Re-exports the public surface so `luxar.gsplats.calibration.X` resolves
 
 Supporting CLI report (lazy-imported, matplotlib-free when not used):
@@ -55,7 +55,8 @@ result = calibrate(
 )
 
 print(f"Recommended K* = {result.held_out_peak.k_star:,}")
-print(f"Curve type     = {result.held_out_peak.type}")  # peak | plateau | signal_limited
+print(f"Curve type     = {result.held_out_peak.type}")  # peak | plateau | signal_limited | low_k_optimal
+print(result.held_out_peak.warnings)  # K* on a grid edge / flat curve → extend the grid
 print(f"Noise floor σ̂ = {result.noise_floor.sigma_hat:.4f}")
 print(f"PSNR ceiling   = {result.noise_floor.psnr_max_db:.1f} dB")
 

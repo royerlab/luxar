@@ -36,9 +36,11 @@ class DynamicOpsConfig:
     # If k_per_tile >= 1: deterministic (keep floor(k_per_tile) per tile)
     # If k_per_tile < 1: probabilistic (keep each peak with probability k_per_tile)
     enable_tiled_seeding: bool = True  # Use tiled seeding for spatial fairness
-    num_tiles_per_dim: Optional[int] = (
-        None  # Auto: 16 for 2D, 6 for 3D, 4 for 4D, 2 for 5D+
-    )
+    # None: the fit loop uses the auto rule (6 tiles/axis) for 3D and the
+    # historical 8 for every other dimensionality (only 3D is measured);
+    # `_find_residual_peaks` called directly applies the full auto rule
+    # (16 for 2D, 6 for 3D, 4 for 4D, 2 for 5D+).
+    num_tiles_per_dim: Optional[int] = None
     # RNG seed for the probabilistic per-tile keep decision used when
     # k_per_tile < 1 and for the weak-splat residual sample. Explicit seeds
     # advance with each dynamic-ops step, keeping a fit reproducible without

@@ -148,6 +148,7 @@ class CalibrationResult:
                 total_rise_db=float(d.get("total_rise_db", 0.0)),
                 still_climbing=bool(d.get("still_climbing", False)),
                 knee_margin_db=float(d.get("knee_margin_db", 0.3)),
+                warnings=[str(w) for w in d.get("warnings", []) or []],
             )
 
         peak = _peak_from(raw["held_out_peak"])

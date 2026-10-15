@@ -635,7 +635,7 @@ the result. `foreground_fraction` is reported alongside because a PSNR over
 
 - `compute_psnr(pred, target, data_range=None)` -- Peak Signal-to-Noise Ratio in dB. Returns `float('inf')` when MSE is zero.
 - `compute_foreground_psnr(pred, target, data_range=None, threshold=None)` -- PSNR over foreground voxels only. Returns `(psnr_db, threshold, fraction)`; `psnr_db` is `nan` when the foreground is empty.
-- `otsu_threshold(target, bins=256)` -- Otsu's threshold, on the input device. Reimplemented rather than delegating to scikit-image (a `demos` extra) so the foreground definition does not depend on which extras are installed; pinned to match `skimage.filters.threshold_otsu` exactly.
+- `otsu_threshold(target, bins=256)` -- Otsu's threshold. Reimplemented rather than delegating to scikit-image (a `demos` extra) so the foreground definition does not depend on which extras are installed; pinned to match `skimage.filters.threshold_otsu` exactly. The min/max run on the input device; the histogram is counted with `bincount` on the CPU over at most 5 M fixed-seed uniform random samples (bin edges still from the full range; random, not strided, because a stride sharing a factor with the fastest axis aliases onto a few columns), because MPS `torch.histc` allocates ~numel x bins x 4 B and fails above ~16 Mvox.
 - `compute_ssim(pred, target, window_size=11, data_range=None)` -- Structural Similarity Index using nD Gaussian-weighted convolution. Supports 2D, 3D, and higher (averages over 3D sub-volumes for >3D).
 - `compute_quality_metrics(pred, target, data_range=None, ssim_window_size=11)` -- Computes all metrics in one call. Returns a dict with keys: `mse`, `psnr_db`, `ssim`, `rel_l2`, `max_abs_error`, `foreground_psnr_db`, `foreground_threshold`, `foreground_fraction`.
 
@@ -687,7 +687,7 @@ result = calibrate(volume, k_grid=ks, fit_kwargs={"device": "cuda"})
 print(f"Recommended K* = {result.held_out_peak.k_star:,}")
 print(
     f"Curve type     = {result.held_out_peak.type}"
-)  # peak | plateau | signal_limited
+)  # peak | plateau | signal_limited | low_k_optimal
 print(f"Noise floor σ̂ = {result.noise_floor.sigma_hat:.4f}")
 print(f"PSNR ceiling   = {result.noise_floor.psnr_max_db:.1f} dB")
 
@@ -998,6 +998,7 @@ Main fitting function with automatic optimizations.
 - `V`: Input n-dimensional array to reconstruct
 - `seeds`: Initial candidate positions (N, d), int count, float compression ratio, or a `GSplatData` to warm-start from
 - `seed_amps_background_relative`: Which amplitude convention a `GSplatData` warm start carries — `False` (default) for `generate_seeds()` output (raw image intensities, background pedestal included), `True` for a previous fit's output (pedestal already removed). Getting it wrong is silent: a fit's output taken as raw has an active `floor` subtracted a second time, so every seed dimmer than the floor starts at 0
+- `seed_space`: Coordinate frame of a `GSplatData` warm start — `"voxel"`, `"real"` (physical units, divided back by `voxel_size`), or `None` (default): a seed declared a fit's output (`seed_amps_background_relative=True`) is in this call's `output_space`, so `fit_gaussian_splats(V, voxel_size=vs, seeds=fit(V, voxel_size=vs), seed_amps_background_relative=True)` round-trips; anything else is voxel indices
 - `n_iters`: Maximum iterations (default: 1000)
 - `lr`: Learning rate (default: 0.01)
 - `loss_type`: "l1" (default), "mse", or "poisson" — see Supp. Doc. 5 for the empirical comparison that motivates the L1 default
