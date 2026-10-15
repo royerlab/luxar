@@ -150,6 +150,13 @@ def _manual(scale_intensity: float) -> ConvertExposure:
 
 def _exposure_line(plan: "ExposurePlan") -> str:
     """The one narration line; names the side-view cap only when it binds."""
+    if plan.predicted_before == 0:
+        if plan.factor >= 1.0:
+            return "Exposure: nothing visible at the opening position; brightness unchanged"
+        return (
+            "Exposure: nothing visible at the opening position; "
+            f"scaled splat brightness ×{plan.factor:.2g}, capped by {plan.cap_source}"
+        )
     if plan.factor >= 1.0:
         return (
             f"Exposure: default view already within range (projected p99.9 "

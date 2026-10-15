@@ -20,8 +20,10 @@ from luxar import LuxarZarrCompiler
 from luxar._zarr_compat import open_group as zc_open_group
 from luxar._zarr_compat import read_node_attrs
 from luxar.cli import app
+from luxar.cli.gsplat_ops.scene_exposure import _exposure_line
 from luxar.cli.tests._testing import normalized_cli_output
 from luxar.core.dimension_inference import build_dimensions_from_data
+from luxar.gsplats.exposure import ExposurePlan, HiddenAxis, plan_projected_exposure
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.tree import iter_leaves
 from luxar.io._compiler.gsplat_tree import read_gsplat_node
@@ -137,6 +139,39 @@ def test_centered_hidden_axis_uses_the_written_coordinates(tmp_path: Path) -> No
     )
     assert got["amplitude_normalization_factor"] == pytest.approx(
         reference["amplitude_normalization_factor"], rel=1e-4
+    )
+
+
+def test_empty_opening_prediction_is_reported_as_empty() -> None:
+    centers = np.array([[0, 0, 0, 100]], dtype=np.float32)
+    chol = np.array([[1, 0, 1, 0, 0, 1, 0, 0, 0, 1]], dtype=np.float32)
+    plan = plan_projected_exposure(
+        centers,
+        chol,
+        np.array([1], dtype=np.float32),
+        view_axis=0,
+        display_dims=[0, 1, 2],
+        hidden=[HiddenAxis(3, 0, False, 0, (0, 100))],
+    )
+    assert plan.predicted_before == 0
+    assert _exposure_line(plan) == (
+        "Exposure: nothing visible at the opening position; brightness unchanged"
+    )
+
+
+def test_empty_opening_prediction_can_still_be_capped_elsewhere() -> None:
+    plan = ExposurePlan(
+        factor=0.25,
+        predicted_before=0.0,
+        predicted_after=0.0,
+        target=2.0,
+        side_p999=32.0,
+        side_capped=True,
+        cap_source="other timepoints",
+    )
+    assert _exposure_line(plan) == (
+        "Exposure: nothing visible at the opening position; "
+        "scaled splat brightness ×0.25, capped by other timepoints"
     )
 
 
