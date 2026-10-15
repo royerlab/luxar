@@ -91,6 +91,79 @@ def _selected_summary(
     return selected_peak, selected_metric, selected_curve
 
 
+def _resolve_cal_region(region: Optional[str], auto_region: bool) -> Optional[tuple]:
+    """Parse ``--region``; it and ``--auto-region`` both pick the crop."""
+    from luxar.cli.gsplat_ops.voxel_frame import parse_region
+
+    spans = parse_region(region)
+    if spans is not None and auto_region:
+        raise typer.BadParameter(
+            "--region and --auto-region both choose the calibration crop; use one"
+        )
+    return spans
+
+
+def _cal_input_frame(
+    *,
+    input_path: Path,
+    source_info: dict,
+    volume_shape: tuple,
+    voxel_size: Optional[str],
+    physical: bool,
+    preset: str,
+    config: Optional[Path],
+    array_key: Optional[str],
+    axes: Optional[str],
+    region: Optional[tuple],
+) -> dict:
+    """The spacing and crop a calibration ran on, as recorded in ``cal.json``.
+
+    Resolved exactly as ``gsplat fit`` resolves them (``--voxel-size`` > config
+    > ``--physical`` metadata), so ``cal`` and the ``fit`` it calibrates agree.
+    """
+    from luxar.cli.gsplat_config import load_fit_config
+    from luxar.cli.gsplat_ops.voxel_frame import (
+        FitFrame,
+        format_spans,
+        normalized_region,
+        parse_voxel_size,
+        resolve_voxel_spacing,
+    )
+
+    spans = normalized_region(region, volume_shape) if region is not None else None
+    spacing = resolve_voxel_spacing(
+        input_path=input_path,
+        source_info=source_info,
+        ndim=len(volume_shape),
+        explicit=parse_voxel_size(voxel_size),
+        physical=physical,
+        config=load_fit_config(preset=preset, config_path=config),
+        array_key=array_key,
+        axes=axes,
+    )
+    if spans is not None:
+        aprint(f"Region: {format_spans(spans)} of the input")
+    if spacing is None and spans is None:
+        return {}
+    return FitFrame(spacing=spacing, physical=False, region=spans).stamps()
+
+
+def _apply_cal_spacing(fit_kwargs: dict, input_frame: dict) -> None:
+    """Fit every K with the resolved spacing, but keep its output on the grid.
+
+    The spacing changes the fit itself (anisotropic initial sigma, physical-space
+    sigma bounds), so ``cal`` uses it to measure the K that ``fit --physical``
+    will actually run. The held-out score renders each fit on the volume's
+    VOXEL grid, so the splats must stay in voxel coordinates
+    (``output_space="voxel"``); a real-space fit would render off-grid and score
+    garbage. K* is a splat COUNT, so it is unaffected by the output units.
+    """
+    if "voxel_size" in input_frame:
+        fit_kwargs["voxel_size"] = list(input_frame["voxel_size"])
+    if fit_kwargs.get("voxel_size") is not None:
+        fit_kwargs["output_space"] = "voxel"
+
+
 def run_calibrate_command(
     *,
     input_path: Path,
@@ -124,12 +197,19 @@ def run_calibrate_command(
     pdf_report: Optional[Path],
     keep_fits: Optional[Path],
     quiet: bool,
+    voxel_size: Optional[str] = None,
+    physical: bool = False,
+    region_spec: Optional[str] = None,
 ) -> None:
     """Run calibration command implementation."""
+    # A usage error, raised before the generic handler below so Typer reports
+    # it as one (exit 2), as `fit` does.
+    region_spans = _resolve_cal_region(region_spec, auto_region)
     try:
         import math
 
         from luxar.cli.gsplat_config import load_fit_config, load_volume
+        from luxar.cli.gsplat_ops.voxel_frame import region_rank_guard
         from luxar.gsplats.calibration import (
             build_k_grid,
             calibrate,
@@ -152,12 +232,28 @@ def run_calibrate_command(
         # 2. Load volume (reuse the loader used by `compare` and `fit`)
         with asection(f"Calibration: {input_path.name}"):
             with asection("Loading volume"):
-                volume = load_volume(
-                    input_path,
-                    channel=channel,
-                    timepoint=timepoint,
+                source_info: dict = {}
+                with region_rank_guard():
+                    volume = load_volume(
+                        input_path,
+                        channel=channel,
+                        timepoint=timepoint,
+                        array_key=array_key,
+                        axes=axes,
+                        info=source_info,
+                        region=region_spans,
+                    )
+                input_frame = _cal_input_frame(
+                    input_path=input_path,
+                    source_info=source_info,
+                    volume_shape=tuple(volume.shape),
+                    voxel_size=voxel_size,
+                    physical=physical,
+                    preset=preset,
+                    config=config,
                     array_key=array_key,
                     axes=axes,
+                    region=region_spans,
                 )
 
             # Optionally calibrate on a content-rich sub-region (the manuscript
@@ -200,6 +296,7 @@ def run_calibrate_command(
             )
             # Calibration runs many fits — keep them quiet
             fit_kwargs["verbose"] = False
+            _apply_cal_spacing(fit_kwargs, input_frame)
 
             if keep_fits is not None:
                 keep_fits = Path(keep_fits)
@@ -231,6 +328,7 @@ def run_calibrate_command(
             # Record region provenance (calibrate() works on whatever array it
             # is handed; the CLI owns the crop, so it stamps the provenance).
             result.original_volume_shape = original_shape
+            result.input_frame = input_frame or None
             if region_info is not None:
                 result.calibration_region = region_info
 
@@ -460,7 +558,7 @@ def run_calibrate_command(
             # on the grid edge is a bound, and that must not go unsaid.
             _print_grid_warnings(_selected_summary(result)[0], "⚠ ")
 
-    except typer.Exit:
+    except (typer.Exit, typer.BadParameter):
         raise
     except Exception as exc:
         exit_with_error(f"Error: {exc}", exc)

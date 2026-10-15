@@ -71,6 +71,13 @@ somewhat more, never fewer. The preset silently moves `max_eccentricity` too
 Supported `fit` inputs: `.zarr`, `.zarr.zip`, `.tiff`, `.npy`, `.npz`. For a
 nested zarr group use `--array-key h2afva/fused`.
 
+Anisotropic stack → physically scaled, image-oriented scene:
+`luxar gsplat fit stack.ome.tif s.gsplats.zarr --physical` then `luxar gsplat
+convert s.gsplats.zarr s.luxar.zarr`. `--physical` reads NGFF / OME-TIFF / ImageJ
+spacing (one line says which); `--voxel-size Z,Y,X` (µm, array order) wins.
+`--region z0:z1,y0:y1,x0:x1` fits a crop placed at its full-volume position
+(`fitting/source_region`); `cal` takes the same three flags.
+
 ### Background floor suppression (`--floor`, default `auto`)
 
 A constant pedestal (camera offset, autofluorescence) is the worst case for a

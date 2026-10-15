@@ -81,6 +81,7 @@ def _default_worker_cmd_builder(
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
     axes: Optional[str] = None,
+    region: Optional[str] = None,
 ) -> WorkerCmdBuilder:
     """Build a ``luxar gsplat fit <in> <out> --tiling content --plan <plan>
     --plan-box i ...`` argv.
@@ -140,6 +141,10 @@ def _default_worker_cmd_builder(
         ("--timepoint", None if timepoint is None else str(timepoint)),
         ("--array-key", array_key or None),
         ("--axes", axes or None),
+        # The parent's `--region` crop: the plan's boxes are laid over it, so
+        # every worker must read the same crop (its offset is applied once, by
+        # the parent, at the merged save).
+        ("--worker-region", region),
     ]
     extra = [
         part for flag, value in optional if value is not None for part in (flag, value)

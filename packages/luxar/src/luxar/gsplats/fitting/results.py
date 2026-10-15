@@ -585,6 +585,23 @@ def _source_grid_stats(
     return out
 
 
+def _frame_stats(config: FitConfig) -> dict[str, Any]:
+    """The spacing a fit used and whether its output is in physical units.
+
+    Absent for a plain voxel-space fit (no ``voxel_size``). ``voxel_size`` is
+    recorded even with ``output_space="voxel"``: it still shaped the fit (the
+    anisotropic initial sigma, the physical-space sigma bounds), and the stored
+    coordinates are then voxel indices, which ``physical_coordinates: false``
+    says. The CLI adds the unit and where the spacing came from.
+    """
+    if config.voxel_size is None:
+        return {}
+    return {
+        "voxel_size": [float(v) for v in np.atleast_1d(config.voxel_size)],
+        "physical_coordinates": config.output_space == "real",
+    }
+
+
 def finalize_results(
     optimization_results: OptimizationResults,
     config: FitConfig,
@@ -737,6 +754,7 @@ def finalize_results(
         # purpose -- `source_*` is the array handed to the fitter, `fitted_*` is
         # what it actually optimised against after any downscaling.
         **_source_grid_stats(config, preprocessed_data, len(amps_np)),
+        **_frame_stats(config),
     }
 
     # Store movie frames in stats for later display (don't show here to avoid timing issues)

@@ -1702,44 +1702,39 @@ def _physical_voxel_size(
     axes_list: Optional[List[str]],
     ndim: int,
 ) -> "Tuple[Optional[List[float]], bool]":
-    """Resolve ``--physical`` spacing and whether workers need an override."""
+    """Resolve ``--physical`` spacing and whether workers need an override.
+
+    The same precedence and NGFF reading as ``gsplat fit --physical``
+    (:mod:`luxar.cli.gsplat_ops.voxel_frame`): a config ``voxel_size`` wins over
+    the store's scale. Unlike ``fit``, a batch run refuses to proceed without a
+    spacing — it would otherwise plan a whole timelapse in the wrong frame.
+    """
     if not fit.physical:
         return None, False
 
     from luxar.cli.gsplat_config import load_fit_config
-    from luxar.gsplats.tiling import resolve_grid_scale
+    from luxar.cli.gsplat_ops.voxel_frame import (
+        ngff_spatial_spacing,
+        require_real_output_space,
+        validated_spacing,
+    )
 
     config = load_fit_config(preset=fit.preset, config_path=fit.config)
-    if config.get("output_space", "real") != "real":
-        raise typer.BadParameter(
-            "--physical requires output_space: real; remove the config override "
-            "or omit --physical to keep voxel coordinates."
-        )
+    require_real_output_space(config)
 
     configured = config.get("voxel_size")
-    discovered = ome_info.voxel_size
-    if discovered is not None and axes_list is None:
-        discovered = tuple(
-            spacing
-            for size, spacing in zip(ome_info.spatial_shape, discovered, strict=True)
-            if size != 1
-        )
-    selected = configured if configured is not None else discovered
+    selected = (
+        configured
+        if configured is not None
+        else ngff_spatial_spacing(ome_info, axes_list)
+    )
     if selected is None:
         raise typer.BadParameter(
             "--physical requested physical coordinates, but the selected OME-Zarr "
             "array has no usable spatial scale in coordinateTransformations and "
             "the fit config does not define voxel_size."
         )
-    try:
-        resolve_grid_scale(ndim, voxel_size=selected, output_space="real")
-        values = (
-            [float(selected)] * ndim
-            if isinstance(selected, (int, float))
-            else [float(value) for value in selected]
-        )
-    except (TypeError, ValueError) as exc:
-        raise typer.BadParameter(f"--physical voxel size is invalid: {exc}") from exc
+    values = validated_spacing(selected, ndim, "--physical voxel size")
     return values, configured is None
 
 

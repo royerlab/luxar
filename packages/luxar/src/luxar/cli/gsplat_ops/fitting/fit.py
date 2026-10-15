@@ -10,6 +10,12 @@ from arbol import aprint, asection
 
 from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES_HELP
 
+from ..voxel_frame import (
+    parse_region,
+    parse_voxel_size,
+    region_rank_guard,
+    resolve_fit_frame,
+)
 from .fit_utils import (
     CONTENT_UNSUPPORTED_FIT_FLAGS,
     FitPipelineCtx,
@@ -58,36 +64,55 @@ def _parse_norm_range(value: Optional[str]) -> "Optional[tuple[float, float]]":
     return norm_range
 
 
-def _parse_voxel_size(value: Optional[str]) -> "Optional[tuple[float, ...]]":
-    """Parse the internal ``--voxel-size`` worker handoff."""
-    if value is None:
-        return None
-    try:
-        return tuple(float(part.strip()) for part in value.split(","))
-    except ValueError as exc:
-        raise typer.BadParameter(
-            "--voxel-size must be comma-separated numbers"
-        ) from exc
-
-
 def _parse_tile_region(value: Optional[str]) -> "Optional[tuple[slice, ...]]":
-    """Parse the internal ``--tile-region START:STOP,...`` worker handoff."""
-    if value is None:
-        return None
-    spans = []
-    try:
-        for raw in value.split(","):
-            start, stop = raw.split(":", 1)
-            spans.append(slice(int(start), int(stop)))
-    except (TypeError, ValueError) as exc:
+    """Parse the internal ``--tile-region START:STOP,...`` worker handoff.
+
+    The same grammar as the public ``--region``
+    (:func:`~luxar.cli.gsplat_ops.voxel_frame.parse_region`), with both bounds
+    required: a tile handoff always names its exact extent. The two flags are
+    deliberately NOT aliases. ``--tile-region`` IS one tile of a grid laid over
+    the full volume (``--tile-volume-shape``), so ``fit_tile`` places it by that
+    grid's origin and apodizes it like every sibling tile; ``--region`` is a user
+    crop that is fitted as a volume of its own and translated by its start.
+    """
+    region = parse_region(value, flag="--tile-region")
+    if region is not None and any(s.start is None or s.stop is None for s in region):
+        raise typer.BadParameter("--tile-region must be START:STOP[,START:STOP...]")
+    return region
+
+
+def _resolve_regions(
+    tile_region: "Optional[tuple[slice, ...]]",
+    region: Optional[str],
+    worker_region: Optional[str],
+    *,
+    tile: Optional[str],
+    plan_box: Optional[int],
+) -> "tuple[Optional[tuple[slice, ...]], Optional[tuple[slice, ...]]]":
+    """``(user_region, load_region)``: the ``--region`` crop and what to load.
+
+    ``--region`` is refused with ``--tile k/M``: a hand-run tile of a crop would
+    be placed in crop coordinates with nothing to merge it back. A ``-j N``
+    parent hands its workers the crop as the hidden ``--worker-region``, which
+    they load but never offset (the parent applies the offset once, at the
+    merged save). ``--tile-region`` also chooses what is read, so it excludes
+    both.
+    """
+    user_region = parse_region(region)
+    if user_region is not None and tile is not None:
         raise typer.BadParameter(
-            "--tile-region must be START:STOP[,START:STOP...]"
-        ) from exc
-    if any(span.start < 0 or span.stop <= span.start for span in spans):
-        raise typer.BadParameter(
-            "--tile-region spans must be non-empty and non-negative"
+            "--region cannot be combined with --tile k/M. Fit the crop whole "
+            "(--tiling uniform tiles it for you), or crop the file first."
         )
-    return tuple(spans)
+    handed = parse_region(worker_region, flag="--worker-region")
+    if handed is not None and tile is None and plan_box is None:
+        raise typer.BadParameter("--worker-region requires --tile or --plan-box")
+    chosen = [r for r in (tile_region, user_region, handed) if r is not None]
+    if len(chosen) > 1:
+        raise typer.BadParameter(
+            "--region, --worker-region and --tile-region are mutually exclusive"
+        )
+    return user_region, chosen[0] if chosen else None
 
 
 def _parse_tile_volume_shape(value: Optional[str]) -> "Optional[tuple[int, ...]]":
@@ -286,8 +311,37 @@ def run_fit_volume(
     voxel_size: Optional[str] = typer.Option(
         None,
         "--voxel-size",
+        help="Physical voxel spacing Z,Y,X in micrometres, in the array's axis "
+        "order (e.g. 0.29,0.108,0.108); a 2-D image takes Y,X. Fits in physical "
+        "coordinates (unless the config sets output_space: voxel). Takes "
+        "precedence over --physical metadata and a config voxel_size.",
+        rich_help_panel="Input selection",
+    ),
+    physical: bool = typer.Option(
+        False,
+        "--physical",
+        help="Fit in physical coordinates using the voxel size the file records "
+        "(OME-Zarr NGFF scale, OME-TIFF PhysicalSize, calibrated ImageJ spacing; "
+        "TIFF sizes are converted to micrometres). Warns and stays in voxel "
+        "units when there is none. --voxel-size takes precedence.",
+        rich_help_panel="Input selection",
+    ),
+    worker_region: Optional[str] = typer.Option(
+        None,
+        "--worker-region",
         hidden=True,
-        help="Internal worker handoff: comma-separated physical voxel spacing.",
+        help="Internal -j worker handoff: the parent's --region crop, loaded "
+        "but not offset (the parent offsets the merged result).",
+    ),
+    region: Optional[str] = typer.Option(
+        None,
+        "--region",
+        help="Fit only a crop: z0:z1,y0:y1,x0:x1 (numpy-style half-open voxel "
+        "spans in array order; an empty span or ':' keeps the axis, '100:' and "
+        "':64' leave one side open). The splats are placed at the crop's position "
+        "in the FULL volume (fitting/source_region records it). zarr crops are "
+        "read lazily; local files only.",
+        rich_help_panel="Input selection",
     ),
     physical_coordinates: bool = typer.Option(
         False,
@@ -683,6 +737,12 @@ def run_fit_volume(
 
         luxar gsplat fit data.zarr splats.gsplats.zarr --channel 1 --timepoint 0
 
+        luxar gsplat fit stack.ome.tif splats.gsplats.zarr --physical
+
+        luxar gsplat fit stack.tif splats.gsplats.zarr --voxel-size 0.29,0.108,0.108
+
+        luxar gsplat fit big.zarr crop.gsplats.zarr --region 40:120,:,1024:2048
+
         luxar gsplat fit large.zarr splats.gsplats.zarr --tiling uniform --tile-size 256 --overlap 32
 
         luxar gsplat fit large.zarr tile_3.gsplats.zarr --tile 3/16 --tile-size 256 --overlap 32
@@ -713,7 +773,7 @@ def run_fit_volume(
         aprint(f"Error: Input file not found: {input_path}")
         raise typer.Exit(1)
     parsed_norm_range = _parse_norm_range(norm_range)
-    parsed_voxel_size = _parse_voxel_size(voxel_size)
+    parsed_voxel_size = parse_voxel_size(voxel_size)
     parsed_tile_region, parsed_tile_volume_shape = _parse_tile_worker_metadata(
         tile=tile,
         tile_region=tile_region,
@@ -721,6 +781,9 @@ def run_fit_volume(
         tile_nonempty_count=tile_nonempty_count,
         tile_seed_count=tile_seed_count,
         fold_tile_slivers=fold_tile_slivers,
+    )
+    user_region, load_region = _resolve_regions(
+        parsed_tile_region, region, worker_region, tile=tile, plan_box=plan_box
     )
 
     try:
@@ -736,15 +799,16 @@ def run_fit_volume(
                 # acquisition measured as float32 would report half the real
                 # compression.
                 source_info: dict = {}
-                volume = load_volume(
-                    input_path,
-                    channel,
-                    timepoint,
-                    array_key,
-                    axes=axes,
-                    info=source_info,
-                    region=parsed_tile_region,
-                )
+                with region_rank_guard():
+                    volume = load_volume(
+                        input_path,
+                        channel,
+                        timepoint,
+                        array_key,
+                        axes=axes,
+                        info=source_info,
+                        region=load_region,
+                    )
                 aprint(f"Volume shape: {volume.shape}")
 
             # 1a. Resolve the decomposition. `--tiling auto` → none (fits one
@@ -777,6 +841,24 @@ def run_fit_volume(
                 cal, floor, config, tiling=resolved_tiling, verbose=verbose
             )
 
+            # Voxel spacing (--voxel-size > config > --physical metadata) and the
+            # --region crop's place in the full volume, applied at save time.
+            frame = resolve_fit_frame(
+                input_path=input_path,
+                source_info=source_info,
+                volume_shape=volume.shape,
+                explicit=parsed_voxel_size,
+                physical=physical,
+                physical_coordinates=physical_coordinates,
+                preset=preset,
+                config_path=config,
+                content=resolved_tiling == "content",
+                region=user_region,
+                worker=tile is not None or plan_box is not None,
+                array_key=array_key,
+                axes=axes,
+            )
+
             # Pipeline ctx: the parameter state the extracted helpers consume.
             ctx = FitPipelineCtx(
                 input_path=input_path,
@@ -795,7 +877,7 @@ def run_fit_volume(
                 lr=lr,
                 floor=floor,
                 norm_range=parsed_norm_range,
-                voxel_size=parsed_voxel_size,
+                voxel_size=frame.voxel_size,
                 seed_method=seed_method,
                 verbose=verbose,
                 downscale=downscale,
@@ -837,6 +919,8 @@ def run_fit_volume(
                 denoise_patch_size=denoise_patch_size,
                 denoise_search_distance=denoise_search_distance,
                 denoise_backend=denoise_backend,
+                fit_frame=frame.frame,
+                region=region,
             )
 
             warn_ignored_density_flags(ctx)
@@ -897,8 +981,8 @@ def run_fit_volume(
                     lr=lr,
                     floor=floor,
                     norm_range=parsed_norm_range,
-                    voxel_size=parsed_voxel_size,
-                    physical_coordinates=physical_coordinates,
+                    voxel_size=frame.voxel_size,
+                    physical_coordinates=frame.content_physical,
                     cull_retention=cull_retention,
                     device=device,
                     jobs=jobs,
@@ -916,6 +1000,8 @@ def run_fit_volume(
                     axes=axes,
                     source_dtype=source_info.get("source_dtype"),
                     verbose=verbose,
+                    region=region,
+                    frame=frame.frame,
                 )
                 raise typer.Exit(0)
             tiled = resolved_tiling == "uniform"

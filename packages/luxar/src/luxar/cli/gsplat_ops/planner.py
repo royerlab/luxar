@@ -79,8 +79,8 @@ def _validate_parallel_content_frame(
         return
     if physical_coordinates and n_jobs > 1:
         raise typer.BadParameter(
-            "--physical-coordinates is not supported with parallel content fitting "
-            "(-j/--jobs > 1); use -j 1."
+            "physical coordinates (--voxel-size / --physical) are not supported "
+            "with parallel content fitting (-j/--jobs > 1); use -j 1."
         )
 
 
@@ -264,9 +264,10 @@ def _save_fit_result(
     output: Path,
     *,
     compress: "Optional[Literal['zip', 'tar.gz']]" = None,
+    frame: Any = None,
 ) -> None:
     """Save either a flat ``GSplatData`` leaf or a ``kind=partition`` tree node."""
-    save_fit_output(result, output, compress=compress, verbose=False)
+    save_fit_output(result, output, compress=compress, verbose=False, frame=frame)
 
 
 def _stamp_content_floor(
@@ -371,8 +372,14 @@ def run_content_fit(
     axes: Optional[str] = None,
     source_dtype: Optional[str] = None,
     verbose: bool = True,
+    region: Optional[str] = None,
+    frame: Any = None,
 ) -> None:
     """Content-aware tiled fit: scan → BSP plan → budgeted fit → save.
+
+    ``region`` is the ``--region`` crop spec, forwarded to ``-j`` box workers
+    (which re-read the input); ``frame`` is the output frame applied at the
+    merged save (:class:`~luxar.cli.gsplat_ops.voxel_frame.FitFrame`).
 
     Modes (selected by the flags ``fit_volume`` forwards):
 
@@ -715,6 +722,7 @@ def run_content_fit(
                 timepoint=timepoint,
                 array_key=array_key,
                 axes=axes,
+                region=region,
             ),
             keep_boxes=keep_boxes,
             partition=partition,
@@ -727,7 +735,7 @@ def run_content_fit(
         _stamp_content_floor(result, floor_level, floor_forward, floor_strategy)
 
         output.parent.mkdir(parents=True, exist_ok=True)
-        _save_fit_result(result, output, compress=compress)
+        _save_fit_result(result, output, compress=compress, frame=frame)
         if keep_boxes:
             if verbose:
                 aprint(f"Kept boxes at {checkpoint.directory}")

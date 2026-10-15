@@ -156,6 +156,8 @@ def build_worker_cmd(
     allow_empty_tile: bool = False,
     fold_tile_slivers: bool = True,
     tile_seed_count: Optional[int] = None,
+    voxel_size: "Optional[Sequence[float]]" = None,
+    region: Optional[str] = None,
 ) -> list[str]:
     """Build the ``luxar gsplat fit --tile i/M`` argv for one worker.
 
@@ -168,7 +170,10 @@ def build_worker_cmd(
     makes a 0-splat tile
     write an ``.empty`` marker (and exit 0) instead of erroring on save.  The
     tiling driver flags ``--tiling``, ``--jobs`` and the parent's ``--compress``
-    are intentionally **never** forwarded.
+    are intentionally **never** forwarded. ``voxel_size`` (the parent's resolved
+    spacing, ``--voxel-size`` or ``--physical``) and ``region`` (the ``--region``
+    crop spec) make every worker read the same crop and fit in the same frame;
+    the parent applies the crop offset once, at the merged save.
     """
     cmd = [
         *argv0,
@@ -249,7 +254,20 @@ def build_worker_cmd(
     if allow_empty_tile:
         cmd += ["--allow-empty-tile"]
     cmd += _tile_handoff_args(fold_tile_slivers, tile_seed_count)
+    cmd += _frame_args(voxel_size, region)
     return cmd
+
+
+def _frame_args(
+    voxel_size: "Optional[Sequence[float]]", region: Optional[str]
+) -> list[str]:
+    """``--voxel-size`` / ``--worker-region`` worker argv (empty when unset)."""
+    args: list[str] = []
+    if voxel_size is not None:
+        args += ["--voxel-size", ",".join(f"{float(v):.17g}" for v in voxel_size)]
+    if region is not None:
+        args += ["--worker-region", region]
+    return args
 
 
 def resolve_jobs(
