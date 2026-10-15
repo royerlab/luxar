@@ -211,6 +211,7 @@ def fit_gaussian_splats(
     iter_callback: Optional[Any] = None,
     iter_callback_every: int = 25,
     seed_amps_background_relative: bool = False,
+    seed_space: Optional[str] = None,
     # Element type of the volume as it was ACQUIRED / stored on disk
     source_dtype: Optional[str] = None,
     source_shape: Optional[Sequence[int]] = None,
@@ -498,6 +499,24 @@ def fit_gaussian_splats(
         active ``floor`` be subtracted twice, initializing every seed dimmer than
         the floor to exactly 0; declaring True on raw amplitudes starts every
         seed too bright by ``floor / intensity_range`` (#1172).
+    seed_space : {"voxel", "real"} or None, default=None
+        Coordinate frame of a ``seeds=GSplatData``'s centers and Cholesky
+        factors. Ignored for every other kind of ``seeds`` (an ndarray of
+        centers is always voxel indices).
+
+        - ``"voxel"``: voxel indices — what ``generate_seeds()`` returns and what
+          a fit with ``output_space="voxel"`` (or no ``voxel_size``) writes.
+        - ``"real"``: physical units — what a fit with ``voxel_size`` and the
+          default ``output_space="real"`` writes. Divided back by this call's
+          ``voxel_size`` before fitting (an identity when ``voxel_size`` is None).
+        - None (default): a seed DECLARED to be a fit's output
+          (``seed_amps_background_relative=True``) is taken to be in this
+          call's ``output_space``, so a result fed straight back with the same
+          settings round-trips exactly; any other seed is ``"voxel"``.
+
+        Getting this wrong is silent and severe: physical-unit seeds read as
+        voxel indices land at the wrong positions with the wrong shapes (a
+        24^3 warm start fell from 47 dB to 18 dB).
     source_dtype : str or None, default=None
         Element type of the volume as it was ACQUIRED (e.g. ``"uint16"``), when
         that differs from ``V.dtype``. Recorded in ``stats["source_dtype"]`` /

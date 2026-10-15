@@ -435,6 +435,12 @@ def _validate_output_controls(parameters: FitParameters) -> None:
         raise ValueError("iter_callback_every must be >= 1")
 
 
+def _validate_seed_space(seed_space: Optional[str]) -> None:
+    """Reject a ``seed_space`` other than None / "voxel" / "real"."""
+    if seed_space not in (None, "real", "voxel"):
+        raise ValueError("seed_space must be 'real', 'voxel' or None")
+
+
 def prepare_fit_config(
     fitter: "GaussianSplatFitter",  # GaussianSplatFitter instance
     parameters: FitParameters,
@@ -500,6 +506,8 @@ def prepare_fit_config(
     iter_callback = parameters.iter_callback
     iter_callback_every = parameters.iter_callback_every
     seed_amps_background_relative = parameters.seed_amps_background_relative
+    seed_space = parameters.seed_space
+    _validate_seed_space(seed_space)
     source_dtype = parameters.source_dtype
     source_shape = parameters.source_shape
     source_stored_bytes = parameters.source_stored_bytes
@@ -543,6 +551,7 @@ def prepare_fit_config(
         source_stored_bytes=source_stored_bytes,
         seeds=seeds,
         seed_amps_background_relative=seed_amps_background_relative,
+        seed_space=seed_space,
         seed_method=seed_method,
         seed_kwargs=seed_kwargs,
         norm_percentile=norm_percentile,

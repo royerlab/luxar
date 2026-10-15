@@ -47,6 +47,8 @@ _METRICS: Dict[str, Any] = {
     "foreground_psnr_db": 32.8791,
     "foreground_threshold": 0.1234,
     "foreground_fraction": 0.0567,
+    # Why a score is missing (a failed post-fit render) -- scoped like the scores.
+    "quality_error": "RuntimeError: out of memory",
     "final_loss": 0.001234,
     "final_rel_l2": 0.0321,
     "final_max_abs_error": 0.0456,
