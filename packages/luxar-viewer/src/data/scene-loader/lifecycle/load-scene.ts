@@ -59,6 +59,7 @@ import type {
 import type { LODGroupRegistry } from '../../../scene/lod-group-registry';
 import { setupCaches } from '../cache/cache-setup';
 import { adoptChunkPacks } from '../cache/chunk-packs';
+import { resolveRootListing } from '../cache/root-listing';
 import { wireMonitorAfterLoad } from '../monitor/monitor-wiring';
 import { createCommittedLODCountReader } from '../monitor/committed-lod-reader';
 import { createDrawOrderProvider } from '../monitor/draw-order-provider';
@@ -241,7 +242,12 @@ function seedWatchdogFromLoad(
   if (!rootDocument) return;
   void rootDocument.then((result) => {
     const served = result.served;
-    if (!served?.etag) return;
+    if (!served) return;
+    if (!served.etag) {
+      // No validator to seed — but the probe can still ask for the right format first.
+      watchdog.preferDocument(served.doc);
+      return;
+    }
     const token = result.peekToken();
     watchdog.seedFromLoad(
       token?.mode === 'content-hash'
@@ -320,11 +326,20 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   const rootZarrGroup = await zarr.openGroupPreferV3(rootLoc);
   markLoad('metadataReady');
   const sceneAttrs = rootZarrGroup.attrs as ZarrSceneAttrs;
+  // Which hash-excluded root sidecars (chunk_packs/, environment/) the store
+  // has, from an index fetched from the network THIS load — the opened store's
+  // own, or on a warm load the root-document fetch's copy — so an absent one
+  // costs no request (each probe was up to three console 404s).
+  const rootListing = await resolveRootListing(
+    zarrStore,
+    cacheResult.rootIndexFromNetwork(),
+    cacheResult.rootDocument
+  );
   await adoptChunkPacks(
     cacheResult.chunkPacks,
     rootLoc,
     (sceneAttrs as Record<string, unknown>).content_hash,
-    cacheResult.rootIndexFromNetwork(),
+    rootListing,
     () => zarr.root(cacheResult.sidecarSourceStore())
   );
 
@@ -483,12 +498,14 @@ export async function loadScene(url: string, ctx: LoadSceneCtx): Promise<THREE.G
   // matches this scene's digest. Parked on the root; `load-dataset.ts` hands it to
   // the scene environment together with the authored `viewer_config.environment`.
   // The index's silence is trusted only when it came from the network: `env
-  // attach` keeps content_hash, so a warm L2 may still hold the pre-attach index.
+  // attach` keeps content_hash, so a warm L2 may still hold the pre-attach index
+  // (`rootListing` answers from this load's network copy, or says "probe").
   const bakedEnvironment = await loadBakedEnvironment(
     rootLoc,
     (sceneAttrs as Record<string, unknown> | undefined)?.content_hash as string | undefined,
     normalizedUrl,
-    cacheResult.rootIndexFromNetwork()
+    rootListing,
+    () => zarr.root(cacheResult.sidecarSourceStore())
   );
   if (bakedEnvironment) rootGroup.userData.bakedEnvironment = bakedEnvironment;
 

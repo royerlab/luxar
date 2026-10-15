@@ -6,6 +6,7 @@ Handles normalization, seed generation, and gradient dilution compensation.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -146,7 +147,12 @@ def _rescale_init_amps(
         return
 
     if init_ctx.init_amps_background_relative:
-        init_ctx.init_amps = np.clip(init_ctx.init_amps / intensity_range, 0.0, 1.0)
+        # No upper clip: a previous fit's amplitudes were bounded by ITS
+        # `amp_max`, which tracks the normalized peak and exceeds 1.0 under a
+        # supplied whole-volume `norm_range`. The model clamps at this fit's own
+        # `amp_max`, so a 1.0 cap here would only dim a warm start's brightest
+        # splats below the seed it was handed.
+        init_ctx.init_amps = np.maximum(init_ctx.init_amps / intensity_range, 0.0)
     else:
         init_ctx.init_amps = np.clip(
             (init_ctx.init_amps - image_min) / intensity_range, 0.0, 1.0
@@ -226,6 +232,8 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         init_amps=config.init_amps.copy() if config.init_amps is not None else None,
     )
 
+    _warn_inapplicable_seed_space(config)
+
     # Handle GSplatData seeds specially
     if isinstance(seeds, GSplatData):
         seed_centers = seeds.centers.copy()
@@ -238,6 +246,11 @@ def preprocess_data(config: FitConfig) -> PreprocessedData:
         # Overwrites whatever convention config.init_amps had — the extractor
         # replaced the array.
         init_ctx.init_amps_background_relative = config.seed_amps_background_relative
+        # A physical-unit seed (a `voxel_size` fit's default `output_space="real"`
+        # output) goes back to voxel indices first: the exact inverse of the
+        # conversion in `finalize_results`, so the model starts on the seed's
+        # own mixture instead of reading physical units as voxels.
+        seed_centers = _seed_to_voxel_frame(seed_centers, init_ctx, config)
         # Rescale seed centers to downscaled coordinates if downscaling is active
         if downscale_factors is not None:
             scale = np.array([1.0 / f for f in downscale_factors], dtype=np.float32)
@@ -2138,6 +2151,60 @@ def _extract_gsplatdata_init(init_ctx: _InitContext, gsplat_data: GSplatData) ->
 
     # Extract amplitudes
     init_ctx.init_amps = gsplat_data.amplitudes.copy()
+
+
+def _warn_inapplicable_seed_space(config: FitConfig) -> None:
+    """Warn when ``seed_space`` is given for a seed it cannot apply to."""
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    if config.seed_space is not None and not isinstance(config.seeds, GSplatData):
+        warnings.warn(
+            "seed_space only applies to a GSplatData seed (explicit seed center "
+            "arrays are always voxel indices); it is ignored here.",
+            UserWarning,
+            stacklevel=3,
+        )
+
+
+def _seed_to_voxel_frame(
+    seed_centers: np.ndarray, init_ctx: _InitContext, config: FitConfig
+) -> np.ndarray:
+    """Return a GSplatData seed's centers in voxel indices, rescaling
+    ``init_ctx.init_L`` in place to match.
+
+    Inverse of the physical conversion in ``finalize_results``
+    (``center_phys = center_vox * voxel_size``, ``L_phys[i, j] = voxel_size[i] *
+    L_vox[i, j]``). A no-op unless the seed is physical (``config.seed_space``,
+    see ``fit_gaussian_splats``) and a ``voxel_size`` is set.
+    """
+    seed_space = config.seed_space
+    if seed_space is None:
+        # Undeclared: a seed declared to be a fit's output is in the frame that
+        # fit writes (this call's output_space); anything else — notably
+        # generate_seeds() output — is voxel indices.
+        seed_space = (
+            config.output_space if config.seed_amps_background_relative else "voxel"
+        )
+    if seed_space != "real":
+        return seed_centers
+    if config.voxel_size is None:
+        if config.seed_space == "real":
+            warnings.warn(
+                "seed_space='real' was given without voxel_size; the seed is "
+                "used as-is (physical and voxel units coincide).",
+                UserWarning,
+                stacklevel=2,
+            )
+        return seed_centers
+    vs = np.asarray(config.voxel_size, dtype=np.float64)
+    if init_ctx.init_L is not None:
+        init_ctx.init_L = (init_ctx.init_L / vs[None, :, None]).astype(np.float32)
+    if config.verbose:
+        aprint(
+            f"Converted physical-unit GSplatData seeds to voxel indices "
+            f"(voxel_size={vs.tolist()})"
+        )
+    return np.asarray(seed_centers / vs, dtype=np.float32)
 
 
 def _extend_init_arrays_for_grid_seeds(

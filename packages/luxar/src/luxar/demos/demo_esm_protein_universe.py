@@ -156,7 +156,6 @@ DEMO_META = {
 
 import html
 import sys
-import tempfile
 import time
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -3314,8 +3313,7 @@ def _render_story_turntables(
 ) -> dict[str, TurntableAssets]:
     with asection("Rendering PDB turntables"):
         cache_dir = cache or (Path.home() / ".cache" / "luxar" / TURNTABLE_CACHE)
-        # Hints only for a durable store: on the serve path the output lives
-        # in a TemporaryDirectory that is gone before anyone could bake it.
+        # Hints only once the store exists: a first build has nothing to bake.
         environment = _turntable_environment(output_path)
         assets = render_turntables(
             [s.pdb_id for s in stories if s.pdb_id],
@@ -4097,17 +4095,14 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path} ({n:,} clusters)")
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_esm_universe_") as tmpdir:
-        output_path = Path(tmpdir) / "esm_protein_universe.luxar.zarr"
-        n = build_universe_scene(output_path, universe, annotations, **kwargs)
-        aprint("")
-        aprint("  Press '1' to select the STORY slider, then '[' / ']' to step.")
-        aprint(f"  Total clusters: {n:,}")
-        # Remote control is OFF unless asked for: `--control`, plus
-        # `--control-token` and `--host 0.0.0.0` for a tablet on the LAN.
-        launch_viewer(output_path, serve_args=control_serve_args())
-
-    aprint("Cleanup complete")
+    output_path = get_demos_output_dir() / "esm_protein_universe.luxar.zarr"
+    n = build_universe_scene(output_path, universe, annotations, **kwargs)
+    aprint("")
+    aprint("  Press '1' to select the STORY slider, then '[' / ']' to step.")
+    aprint(f"  Total clusters: {n:,}")
+    # Remote control is OFF unless asked for: `--control`, plus
+    # `--control-token` and `--host 0.0.0.0` for a tablet on the LAN.
+    launch_viewer(output_path, serve_args=control_serve_args())
 
 
 if __name__ == "__main__":

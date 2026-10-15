@@ -23,16 +23,81 @@ import torch
 
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
+#: Fraction of the device's free memory one render chunk may claim.
+_CHUNK_CUDA_FRACTION = 0.6
+_CHUNK_MPS_FRACTION = 0.5
+_CHUNK_CPU_FRACTION = 0.5
+#: Used when a device does not report its free memory.
+_CHUNK_FALLBACK_BYTES = {"cuda": 2 * (1024**3), "mps": 4 * (1024**3)}
+_CHUNK_CPU_FALLBACK_BYTES = 8 * (1024**3)
+#: Hard cap on (K, P) elements per chunk (~1.3 GB of temporaries in 3D). Larger
+#: chunks buy no throughput -- 16 M elements already saturate a GPU -- while a
+#: free-memory-derived budget on a big unified-memory Mac would otherwise allow
+#: tens of GB per chunk; it also keeps the int64 scatter index and the MPS
+#: kernels well clear of 32-bit indexing limits.
+_CHUNK_MAX_ELEMENTS = 1 << 24
+_MIN_P_CHUNK = 1024
+_MAX_P_CHUNK = 1024**2
+
+
+def _chunk_memory_budget_bytes(device: torch.device) -> int:
+    """Bytes one render chunk's temporaries may use on *device*.
+
+    Derived from the memory the device reports as free where it reports any
+    (``cuda.mem_get_info``; MPS's recommended working set minus what the
+    driver already holds; the host's MemAvailable), with a fixed fallback
+    otherwise.
+    """
+    if device.type == "cuda" and torch.cuda.is_available():
+        try:
+            free_mem, _ = torch.cuda.mem_get_info(device)
+            return int(free_mem * _CHUNK_CUDA_FRACTION)
+        except Exception:  # any driver error -> fallback
+            return _CHUNK_FALLBACK_BYTES["cuda"]
+    if device.type == "mps":
+        try:
+            free = int(torch.mps.recommended_max_memory()) - int(
+                torch.mps.driver_allocated_memory()
+            )
+        except (AttributeError, RuntimeError):
+            free = 0
+        if free <= 0:
+            return _CHUNK_FALLBACK_BYTES["mps"]
+        return int(free * _CHUNK_MPS_FRACTION)
+    available = _available_cpu_memory_bytes()
+    if available is None:
+        return _CHUNK_CPU_FALLBACK_BYTES
+    return int(available * _CHUNK_CPU_FRACTION)
+
+
+def chunk_bytes_per_element(d: int, dtype: torch.dtype = torch.float32) -> int:
+    """Peak temporary bytes per (splat, voxel) element in the chunked renderers.
+
+    Counted from the 3D fast path: ``d`` coordinate deltas, ``d`` solved
+    coordinates, about six scalar temporaries (``dist_sq``, ``exp``,
+    ``clamp``, the amplitude product, ``vals``, a forward-substitution
+    intermediate), plus two int64 tensors for the scatter index -- 76 B in 3D,
+    against the 48 B the old ``(2d + 2) x 4 x 1.5`` estimate assumed.
+    """
+    element = torch.tensor([], dtype=dtype).element_size()
+    return (3 * d + 6) * element + 2 * 8
+
 
 def calculate_optimal_chunk_size(
-    K: int, d: int, device: torch.device, dtype: torch.dtype
+    K: int,
+    d: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    budget_bytes: Optional[int] = None,
 ) -> int:
     """
     Calculate optimal P chunk size based on available memory and tensor dimensions.
 
-    This function determines the largest chunk size that can safely fit in memory,
-    considering the actual memory footprint of the (K, d, P_chunk) tensors used
-    in the renderer (delta, y, and intermediate results).
+    The largest P chunk whose ``(K, P_chunk)`` temporaries fit the budget from
+    :func:`_chunk_memory_budget_bytes`, at the per-element cost from
+    :func:`chunk_bytes_per_element`, clamped to ``[1024, 1024**2]``. A group so
+    large that even 1024 voxels overflow the budget gets 1024 -- callers that
+    must stay bounded then split K too (see :func:`calculate_render_chunks`).
 
     Parameters
     ----------
@@ -44,47 +109,53 @@ def calculate_optimal_chunk_size(
         Target device for computation
     dtype : torch.dtype
         Data type for tensors
+    budget_bytes : int, optional
+        A budget already queried for this render (see
+        :func:`calculate_render_chunks`); queried from the device when None.
 
     Returns
     -------
     int
         Optimal chunk size for P dimension, bounded to reasonable range
     """
-    # Get available memory with safety margin
-    if device.type == "cuda" and torch.cuda.is_available():
-        try:
-            free_mem, _ = torch.cuda.mem_get_info(device)
-            available_mem = int(free_mem * 0.6)  # 60% safety margin for CUDA
-        except Exception:
-            # Fallback if memory info unavailable
-            available_mem = 2 * (1024**3)  # 2GB conservative estimate
-    else:
-        # Conservative estimates for CPU/MPS
-        if device.type == "mps":
-            available_mem = 4 * (1024**3)  # 4GB for Apple Silicon unified memory
-        else:
-            available_mem = 8 * (1024**3)  # 8GB for CPU
+    if budget_bytes is None:
+        budget_bytes = _chunk_memory_budget_bytes(device)
+    memory_per_p = max(1, K) * chunk_bytes_per_element(d, dtype)
+    max_p_chunk = budget_bytes // memory_per_p
+    max_p_chunk = min(max_p_chunk, _CHUNK_MAX_ELEMENTS // max(1, K))
+    return int(max(_MIN_P_CHUNK, min(_MAX_P_CHUNK, max_p_chunk)))
 
-    # Calculate memory footprint per P element
-    bytes_per_element = torch.tensor([], dtype=dtype).element_size()
-    # Account for: delta (K,d,P), y (K,d,P), expo (K,P), vals (K,P), plus overhead
-    memory_per_p = K * (2 * d + 2) * bytes_per_element * 1.5  # 1.5x overhead factor
 
-    if memory_per_p <= 0:
-        return 131072  # Fallback default
+def calculate_render_chunks(
+    K: int,
+    P: int,
+    d: int,
+    device: torch.device,
+    chunk_size: Optional[int] = None,
+    budget_bytes: Optional[int] = None,
+) -> Tuple[int, int]:
+    """``(K_chunk, P_chunk)`` keeping one chunk's temporaries within budget.
 
-    # Calculate maximum P_chunk that fits in available memory
-    max_p_chunk = max(1, int(available_mem / memory_per_p))
-
-    # Clamp to reasonable range for performance
-    min_chunk = 1024  # Minimum for kernel efficiency
-    max_chunk = 1024**2  # Maximum to avoid very large kernel launches
-
-    # Use default if calculation seems unreasonable
-    if max_p_chunk < min_chunk:
-        return 131072  # Fallback to current default
-
-    return min(max_chunk, max_p_chunk)
+    An explicit *chunk_size* is honoured as the P chunk with K unsplit (the
+    caller asked for exactly that). Otherwise the P chunk comes from
+    :func:`calculate_optimal_chunk_size`, and K is split when even that P
+    chunk times all K splats would overflow the budget -- a large group of
+    same-sized splats otherwise materialises ``K x P`` temporaries in one go.
+    Pass ``budget_bytes`` (from :func:`_chunk_memory_budget_bytes`) to query
+    the device once per render rather than once per group.
+    """
+    if chunk_size:
+        return max(1, K), int(chunk_size)
+    if budget_bytes is None:
+        budget_bytes = _chunk_memory_budget_bytes(device)
+    p_chunk = calculate_optimal_chunk_size(K, d, device, torch.float32, budget_bytes)
+    p_eff = max(1, min(P, p_chunk))
+    budget_elements = min(
+        budget_bytes // chunk_bytes_per_element(d),
+        _CHUNK_MAX_ELEMENTS,
+    )
+    k_chunk = max(1, min(max(1, K), budget_elements // p_eff))
+    return k_chunk, p_chunk
 
 
 # ===== Fast-path helpers for 2D/3D ==========================================
@@ -193,7 +264,24 @@ def _device_cache_key(device: torch.device) -> DeviceCacheKey:
     return (device.type, index)
 
 
+def _meminfo_available_bytes() -> Optional[int]:
+    """Linux ``MemAvailable`` (reclaimable page cache included), if readable."""
+    try:
+        with open("/proc/meminfo", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
 def _available_cpu_memory_bytes() -> Optional[int]:
+    # SC_AVPHYS_PAGES counts only FREE pages, so on a Linux box whose page
+    # cache is full it reports a small fraction of what is actually available.
+    available = _meminfo_available_bytes()
+    if available is not None:
+        return available
     try:
         pages = os.sysconf("SC_AVPHYS_PAGES")
         page_size = os.sysconf("SC_PAGE_SIZE")
@@ -584,43 +672,44 @@ def _render_gaussians_2d(
 
     # Group on GPU
     uniq, inv = group_by_box_gpu(lo, hi)
+    # Query the device's free memory once per render, not once per group.
+    budget = None if chunk_size else _chunk_memory_budget_bytes(device)
 
     for g in range(uniq.shape[0]):
         box_shape = uniq[g].tolist()  # [h0, h1]
-        idx = torch.nonzero(inv == g, as_tuple=False).squeeze(1)
-
-        mu = centers[idx]  # (K,2)
-        L = Ls[idx]  # (K,2,2)
-        a = amps[idx]  # (K,)
-        lo_sel = lo[idx]  # (K,2)
+        group_idx = torch.nonzero(inv == g, as_tuple=False).squeeze(1)
 
         base, lin_offsets = cached_base_and_offsets(
             box_shape, strides, device, dtype=torch.float32
         )  # (2,P), (P,)
-        base_idx = (lo_sel.to(torch.long) * strides).sum(dim=1)  # (K,)
-
         P = base.shape[1]
-        # Calculate optimal chunk size for memory management (2D)
-        P_chunk = chunk_size or calculate_optimal_chunk_size(
-            K=len(idx), d=2, device=device, dtype=torch.float32
+        # Chunk P (and K, for a large group) so one chunk's temporaries fit.
+        K_chunk, P_chunk = calculate_render_chunks(
+            len(group_idx), P, 2, device, chunk_size, budget
         )
-        for p0 in range(0, P, P_chunk):
-            p1 = min(P, p0 + P_chunk)
-            d0 = base[0, p0:p1][None, :] + lo_sel[:, 0:1] - mu[:, 0:1]  # (K,Pc)
-            d1 = base[1, p0:p1][None, :] + lo_sel[:, 1:2] - mu[:, 1:2]  # (K,Pc)
+        for idx in torch.split(group_idx, K_chunk):
+            mu = centers[idx]  # (K,2)
+            L = Ls[idx]  # (K,2,2)
+            a = amps[idx]  # (K,)
+            lo_sel = lo[idx]  # (K,2)
+            base_idx = (lo_sel.to(torch.long) * strides).sum(dim=1)  # (K,)
+            for p0 in range(0, P, P_chunk):
+                p1 = min(P, p0 + P_chunk)
+                d0 = base[0, p0:p1][None, :] + lo_sel[:, 0:1] - mu[:, 0:1]  # (K,Pc)
+                d1 = base[1, p0:p1][None, :] + lo_sel[:, 1:2] - mu[:, 1:2]  # (K,Pc)
 
-            # ||y||^2 via explicit forward-substitution
-            dist_sq = fwd_norm2_2d(L, d0, d1)  # (K,Pc)
+                # ||y||^2 via explicit forward-substitution
+                dist_sq = fwd_norm2_2d(L, d0, d1)  # (K,Pc)
 
-            # Shifted Gaussian: a·scale·max(0, exp(-0.5·D²) - C)
-            vals = (
-                a[:, None]
-                * scale
-                * torch.clamp(torch.exp(-0.5 * dist_sq) - shift_C, min=0.0)
-            )
+                # Shifted Gaussian: a·scale·max(0, exp(-0.5·D²) - C)
+                vals = (
+                    a[:, None]
+                    * scale
+                    * torch.clamp(torch.exp(-0.5 * dist_sq) - shift_C, min=0.0)
+                )
 
-            idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
-            out_flat.index_add_(0, idx_flat, vals.reshape(-1))
+                idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
+                out_flat.index_add_(0, idx_flat, vals.reshape(-1))
 
     return out
 
@@ -661,43 +750,44 @@ def _render_gaussians_3d(
 
     # Group on GPU
     uniq, inv = group_by_box_gpu(lo, hi)
+    # Query the device's free memory once per render, not once per group.
+    budget = None if chunk_size else _chunk_memory_budget_bytes(device)
 
     for g in range(uniq.shape[0]):
         box_shape = uniq[g].tolist()  # [h0, h1, h2]
-        idx = torch.nonzero(inv == g, as_tuple=False).squeeze(1)
-
-        mu = centers[idx]  # (K,3)
-        L = Ls[idx]  # (K,3,3)
-        a = amps[idx]  # (K,)
-        lo_sel = lo[idx]  # (K,3)
+        group_idx = torch.nonzero(inv == g, as_tuple=False).squeeze(1)
 
         base, lin_offsets = cached_base_and_offsets(
             box_shape, strides, device, dtype=torch.float32
-        )  # (3,P),(P,)
-        base_idx = (lo_sel.to(torch.long) * strides).sum(dim=1)  # (K,)
-
+        )  # (3,P), (P,)
         P = base.shape[1]
-        # Calculate optimal chunk size for memory management (3D)
-        P_chunk = chunk_size or calculate_optimal_chunk_size(
-            K=len(idx), d=3, device=device, dtype=torch.float32
+        # Chunk P (and K, for a large group) so one chunk's temporaries fit.
+        K_chunk, P_chunk = calculate_render_chunks(
+            len(group_idx), P, 3, device, chunk_size, budget
         )
-        for p0 in range(0, P, P_chunk):
-            p1 = min(P, p0 + P_chunk)
-            d0 = base[0, p0:p1][None, :] + lo_sel[:, 0:1] - mu[:, 0:1]  # (K,Pc)
-            d1 = base[1, p0:p1][None, :] + lo_sel[:, 1:2] - mu[:, 1:2]
-            d2 = base[2, p0:p1][None, :] + lo_sel[:, 2:3] - mu[:, 2:3]
+        for idx in torch.split(group_idx, K_chunk):
+            mu = centers[idx]  # (K,3)
+            L = Ls[idx]  # (K,3,3)
+            a = amps[idx]  # (K,)
+            lo_sel = lo[idx]  # (K,3)
+            base_idx = (lo_sel.to(torch.long) * strides).sum(dim=1)  # (K,)
+            for p0 in range(0, P, P_chunk):
+                p1 = min(P, p0 + P_chunk)
+                d0 = base[0, p0:p1][None, :] + lo_sel[:, 0:1] - mu[:, 0:1]  # (K,Pc)
+                d1 = base[1, p0:p1][None, :] + lo_sel[:, 1:2] - mu[:, 1:2]
+                d2 = base[2, p0:p1][None, :] + lo_sel[:, 2:3] - mu[:, 2:3]
 
-            dist_sq = fwd_norm2_3d(L, d0, d1, d2)  # (K,Pc)
+                dist_sq = fwd_norm2_3d(L, d0, d1, d2)  # (K,Pc)
 
-            # Shifted Gaussian: a·scale·max(0, exp(-0.5·D²) - C)
-            vals = (
-                a[:, None]
-                * scale
-                * torch.clamp(torch.exp(-0.5 * dist_sq) - shift_C, min=0.0)
-            )
+                # Shifted Gaussian: a·scale·max(0, exp(-0.5·D²) - C)
+                vals = (
+                    a[:, None]
+                    * scale
+                    * torch.clamp(torch.exp(-0.5 * dist_sq) - shift_C, min=0.0)
+                )
 
-            idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
-            out_flat.index_add_(0, idx_flat, vals.reshape(-1))
+                idx_flat = (base_idx[:, None] + lin_offsets[p0:p1][None, :]).reshape(-1)
+                out_flat.index_add_(0, idx_flat, vals.reshape(-1))
 
     return out
 
@@ -784,6 +874,7 @@ def render_gaussians(
 
     # --- Group by box size for reuse of base grid ---
     groups = group_by_box(lo, hi)  # { (h1,..,hd) : idx }
+    budget = None if chunk_size else _chunk_memory_budget_bytes(device)
     for box_shape, idx in groups.items():
         # Splat subset
         mu = centers[idx]  # (K, d)
@@ -809,7 +900,7 @@ def render_gaussians(
         # *** MEMORY OPTIMIZATION: Process P dimension in chunks to prevent OOM ***
         # Calculate optimal chunk size based on available memory and tensor dimensions
         P_chunk = chunk_size or calculate_optimal_chunk_size(
-            K=len(idx), d=d, device=device, dtype=torch.float32
+            K=len(idx), d=d, device=device, dtype=torch.float32, budget_bytes=budget
         )
         for p0 in range(0, P, P_chunk):
             p1 = min(P, p0 + P_chunk)

@@ -6,7 +6,7 @@
  */
 
 import * as zarr from '../../zarr';
-import { hasContentsMethod } from '../../../types/zarr';
+import { hasContentsMethod, type ZarrStoreWithContents } from '../../../types/zarr';
 import { log, Modules } from '../../../utils/log';
 
 /**
@@ -97,6 +97,22 @@ export interface OverlayConfig {
 }
 
 /**
+ * Whether a consolidated listing holds the root `overlays` group or anything
+ * under it (fail-open on error).
+ */
+async function indexListsOverlays(store: ZarrStoreWithContents): Promise<boolean> {
+  try {
+    const contents = await store.contents();
+    return contents.some((entry) => {
+      const path = entry.path.replace(/^\/+/, '');
+      return path === 'overlays' || path.startsWith('overlays/');
+    });
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Load overlay configurations from the zarr store.
  *
  * Looks for an `overlays/` group in the root, enumerates its children,
@@ -111,6 +127,12 @@ export async function loadOverlayConfigs(
   rootLoc: zarr.Location<zarr.Readable>
 ): Promise<OverlayConfig[]> {
   const configs: OverlayConfig[] = [];
+
+  // Most scenes have no overlays. A consolidated index that does not list the
+  // group settles that without a request — probing cost one 404 per format
+  // tried, on every load. Trustworthy even when a cache tier served the index:
+  // overlays are part of the scene digest, which is what that tier validates.
+  if (hasContentsMethod(store) && !(await indexListsOverlays(store))) return configs;
 
   try {
     // Try to open the overlays group (validates it exists)

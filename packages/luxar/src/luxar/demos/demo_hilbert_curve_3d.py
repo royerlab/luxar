@@ -82,7 +82,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -405,23 +404,20 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path} ({n:,} total vertices)")
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_hilbert_") as tmpdir:
-        output_path = Path(tmpdir) / "hilbert_curve_3d.luxar.zarr"
-        n = build_scene(output_path, max_order=max_order)
+    output_path = get_demos_output_dir() / "hilbert_curve_3d.luxar.zarr"
+    n = build_scene(output_path, max_order=max_order)
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("NAVIGATION")
-        aprint("=" * 70)
-        aprint(f"  Press '1' then '[' / ']' to step through orders 1..{max_order}")
-        aprint("  Layers panel: toggle individual orders for side-by-side")
-        aprint("")
-        aprint(f"  Total vertices across all orders: {n:,}")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("NAVIGATION")
+    aprint("=" * 70)
+    aprint(f"  Press '1' then '[' / ']' to step through orders 1..{max_order}")
+    aprint("  Layers panel: toggle individual orders for side-by-side")
+    aprint("")
+    aprint(f"  Total vertices across all orders: {n:,}")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

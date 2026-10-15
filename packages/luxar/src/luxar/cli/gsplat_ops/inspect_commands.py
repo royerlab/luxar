@@ -15,7 +15,7 @@ import typer
 from arbol import aprint, asection
 
 from .._traceback import exit_with_error, report_error
-from ..common_options import CorsOriginOption, make_port_option
+from ..common_options import CorsOriginOption, HostOption, make_port_option
 from ..utils import _DEFAULT_CORS_ORIGIN, format_memory_size, store_size
 
 if TYPE_CHECKING:
@@ -765,9 +765,14 @@ def quick_view(
     path: Path = typer.Argument(
         ..., exists=True, help="Path to .gsplats.zarr dataset (or .zip/.tar.gz)"
     ),
+    host: HostOption = "127.0.0.1",
     port: int = make_port_option(8000, "Data server port"),
     viewer_port: int = typer.Option(5173, "--viewer-port", help="Viewer port"),
-    open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser"),
+    open_browser: Optional[bool] = typer.Option(
+        None,
+        "--open/--no-open",
+        help="Open a browser (default: yes, where one can be seen).",
+    ),
     cors_origin: CorsOriginOption = _DEFAULT_CORS_ORIGIN,
 ) -> None:
     """Quick view of a Gaussian splat dataset in the Luxar web viewer.
@@ -782,8 +787,13 @@ def quick_view(
     Compressed archives (``.gsplats.zarr.zip`` / ``.gsplats.zarr.tar.gz``) are
     extracted to a temporary directory before serving.
 
+    Like ``luxar serve``, both servers bind loopback unless ``--host`` says
+    otherwise (``0.0.0.0`` to view from another machine — the printed and
+    opened URLs then name this machine's LAN address).
+
     Args:
         path: Path to .gsplats.zarr (or .zip/.tar.gz) dataset
+        host: Bind address for both servers (default loopback).
         port: Port for data server
         viewer_port: Port for viewer
         open_browser: Whether to open browser automatically
@@ -796,13 +806,17 @@ def quick_view(
     try:
         import threading
 
-        from luxar.cli.serving import _serve_data, _serve_viewer
+        from luxar.cli import demo_runs
+        from luxar.cli.serving import _serve_data, _serve_viewer, _warn_if_lan_exposed
         from luxar.cli.utils import (
+            advertised_host,
             dataset_title,
             ensure_viewer_built,
             pick_port,
             wait_for_server,
         )
+
+        _warn_if_lan_exposed(host, cors_origin)
 
         # Check viewer is built
         if not ensure_viewer_built():
@@ -818,8 +832,8 @@ def quick_view(
             aprint(f"Serving node tree directly: {serve_target.name}")
 
             # Find available ports
-            actual_port = pick_port(port, label="data")
-            actual_viewer_port = pick_port(viewer_port, label="viewer")
+            actual_port = pick_port(port, host, label="data")
+            actual_viewer_port = pick_port(viewer_port, host, label="viewer")
 
             if actual_port is None or actual_viewer_port is None:
                 raise typer.Exit(1)
@@ -830,7 +844,7 @@ def quick_view(
                     target=_serve_data,
                     args=(
                         serve_target,
-                        "127.0.0.1",
+                        host,
                         actual_port,
                         None,  # bandwidth_mbps
                         None,  # latency_ms
@@ -842,23 +856,28 @@ def quick_view(
                     daemon=True,
                 )
                 data_thread.start()
-                if not wait_for_server("127.0.0.1", actual_port, data_thread):
+                if not wait_for_server(host, actual_port, data_thread):
                     aprint("⚠️  Data server did not become ready.")
 
                 # Construct data URL (no trailing slash — see CLAUDE.md gotcha).
-                # The store is mounted at the server root: no name suffix.
-                data_url = f"http://127.0.0.1:{actual_port}"
+                # The store is mounted at the server root: no name suffix. A
+                # wildcard bind is not dialable, hence `advertised_host`.
+                data_url = f"http://{advertised_host(host)}:{actual_port}"
 
                 # Serve viewer (this blocks)
                 aprint("\n🎉 Viewer ready!")
-                _serve_viewer(
-                    "127.0.0.1",
-                    actual_viewer_port,
-                    data_url,
-                    open_browser,
-                    cors_origin,
-                    title=dataset_title(path),
-                )
+                with demo_runs.registered_server(
+                    f"gsplat view {path.name}", "gsplat view"
+                ):
+                    _serve_viewer(
+                        host,
+                        actual_viewer_port,
+                        data_url,
+                        open_browser is not False,
+                        cors_origin,
+                        title=dataset_title(path),
+                        open_explicit=open_browser is True,
+                    )
 
     except KeyboardInterrupt:
         aprint("\n🛑 Shutting down viewer...")

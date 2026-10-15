@@ -84,6 +84,7 @@ with (
   A broad `warnings.simplefilter("error")` around compilation also promotes
   these diagnostics and will fail if any node exceeds the conservative cap.
 - Single-file `.zip` output with a normalized inner store name, published after successful finalization
+- `atomic=True` builds a directory store in a hidden sibling and renames it over the destination only after successful finalization (a failed build leaves the previous store intact); the default `None` turns it on for stores written into the demos output directory
 - **Scalar convenience**: Pass uniform values directly (no `np.full()` needed)
 - Morton/Hilbert spatial ordering for better compression
 - Compound ordering for nD data (discrete/barrier dims → spatial curve within)

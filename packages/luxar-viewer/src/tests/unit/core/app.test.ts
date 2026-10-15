@@ -263,6 +263,7 @@ describe('LuxarApp', () => {
       setIdleRestorePredicate: vi.fn(),
       setRenderSkipPredicate: vi.fn(),
       setPacingSuspendPredicate: vi.fn(),
+      setSelfSustainExemptPredicate: vi.fn(),
       setRenderOnChange: vi.fn(),
       setViewSignatureSource: vi.fn(),
       setRenderAudit: vi.fn(),

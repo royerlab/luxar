@@ -14,6 +14,19 @@ from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.optim import create_optimizer_and_scheduler
 
 _SIGMA_MIN_DIAG_MARGIN = 0.1
+# Smallest headroom above ``sigma_min_diag`` a SUPPLIED diagonal keeps. The model
+# stores ``diag = sigma_min + softplus(raw)``, so a diagonal sitting exactly on
+# the floor needs ``raw = -inf``; 1e-4 voxel keeps ``raw`` finite (about -9.2,
+# still trainable under Adam) while changing the rendered splat by ~1e-4 relative.
+_SUPPLIED_SIGMA_MIN_DIAG_EPS = 1e-4
+# Relative tolerance below ``sigma_min_diag`` within which a supplied diagonal
+# still counts as ON the floor (nudged by the eps above, not lifted by the full
+# margin): a float32 round trip, a physical-unit division or a quantised store
+# can land a fitted at-floor diagonal an ulp or so below it.
+_SUPPLIED_SIGMA_MIN_DIAG_RTOL = 1e-3
+# Relative margin below ``amp_max`` a warm-start amplitude is clipped to, so the
+# parameter starts where the forward clamp still passes a gradient.
+_WARM_AMP_MAX_RTOL = 1e-6
 
 
 def apply_sigma_min_diag_floor(
@@ -27,6 +40,68 @@ def apply_sigma_min_diag_floor(
         ),
         dtype=np.float32,
     )
+
+
+def apply_supplied_sigma_min_diag_floor(
+    sigma_diag: np.ndarray, sigma_min_diag: Sequence[float] | np.ndarray
+) -> np.ndarray:
+    """Floor the Cholesky diagonals of a declared warm start so the model can
+    represent them, changing as little as possible.
+
+    A diagonal the model can already hold (``>= sigma_min_diag``, within a
+    ``_SUPPLIED_SIGMA_MIN_DIAG_RTOL`` relative tolerance) is kept, up to a
+    ``_SUPPLIED_SIGMA_MIN_DIAG_EPS`` nudge off the floor: a previous fit's
+    output satisfies this by construction, so a warm start reproduces its seed.
+    Lifting those by the full ``_SIGMA_MIN_DIAG_MARGIN`` (as
+    :func:`apply_sigma_min_diag_floor` does for fresh seeds) widened every
+    near-floor splat of a warm start before its first iteration. Only a diagonal
+    clearly BELOW the floor, which the model would clamp anyway, gets the full
+    margin.
+    """
+    diag = np.asarray(sigma_diag, dtype=np.float32)
+    floor = np.asarray(sigma_min_diag, dtype=np.float32)
+    representable = np.maximum(diag, floor + _SUPPLIED_SIGMA_MIN_DIAG_EPS)
+    on_floor = diag >= floor * (1.0 - _SUPPLIED_SIGMA_MIN_DIAG_RTOL)
+    return np.asarray(
+        np.where(on_floor, representable, floor + _SIGMA_MIN_DIAG_MARGIN),
+        dtype=np.float32,
+    )
+
+
+def _is_declared_warm_start(
+    config: FitConfig, preprocessed_data: PreprocessedData
+) -> bool:
+    """True for a ``seeds=GSplatData`` declared to be a previous fit's output.
+
+    The same declaration (``seed_amps_background_relative``) that selects the
+    amplitude convention: a fit's output already satisfies the model's sigma
+    floor, so only it is exempt from the fresh-seed margin. Generated seeds that
+    carry Cholesky factors (``generate_seeds()`` output, scale-aware seeding)
+    keep the margin they were tuned with.
+    """
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    return (
+        preprocessed_data.init_L is not None
+        and isinstance(config.seeds, GSplatData)
+        and config.seed_amps_background_relative
+    )
+
+
+def _clip_supplied_amps_under_cap(
+    amps0: np.ndarray, amp_max: float, *, supplied: bool
+) -> np.ndarray:
+    """Clip SUPPLIED amplitudes just under ``amp_max``.
+
+    The forward pass clamps at ``amp_max``, which passes no gradient to a raw
+    amplitude above the cap: a supplied amplitude left there would start
+    frozen. Clipping just under the cap renders the same at iteration 0.
+    Image-sampled defaults are left alone.
+    """
+    if not supplied:
+        return amps0
+    cap = np.float32(amp_max * (1.0 - _WARM_AMP_MAX_RTOL))
+    return np.asarray(np.minimum(amps0, cap), dtype=np.float32)
 
 
 def _resolve_unfloored_fit_initial_sigma_diag(
@@ -118,8 +193,17 @@ def initialize_optimization(
 
     # Ensure diagonal values are at least sigma_min_diag to prevent gradient death
     # (inverse_softplus of values near 0 causes gradients to vanish)
+    # A DECLARED warm start (a previous fit's output, see
+    # _is_declared_warm_start) keeps every diagonal the model can already
+    # represent, so its iteration-0 model reproduces the seed. Fresh and
+    # generated seeds keep the full margin.
     if config.sigma_min_diag is not None:
-        clamped_diagonal = apply_sigma_min_diag_floor(
+        floor_fn = (
+            apply_supplied_sigma_min_diag_floor
+            if _is_declared_warm_start(config, preprocessed_data)
+            else apply_sigma_min_diag_floor
+        )
+        clamped_diagonal = floor_fn(
             np.diagonal(L0, axis1=1, axis2=2), config.sigma_min_diag
         )
         for i in range(d):
@@ -127,6 +211,11 @@ def initialize_optimization(
         if config.verbose:
             aprint(
                 f"Clamped L0 diagonal to >= sigma_min_diag + {_SIGMA_MIN_DIAG_MARGIN:g}"
+                + (
+                    " (below-floor supplied values only)"
+                    if floor_fn is apply_supplied_sigma_min_diag_floor
+                    else ""
+                )
             )
 
     if preprocessed_data.init_amps is not None:
@@ -160,6 +249,10 @@ def initialize_optimization(
         amp_max = max(1.0, peak) if np.isfinite(peak) else 1.0
         if config.verbose:
             aprint(f"Using auto amp_max={amp_max} (prevents amplitude explosion)")
+
+    amps0 = _clip_supplied_amps_under_cap(
+        amps0, amp_max, supplied=preprocessed_data.init_amps is not None
+    )
 
     # Resolve sigma constraints: pass empty list when None (model uses defaults)
     _sigma_min: Sequence[float] = (

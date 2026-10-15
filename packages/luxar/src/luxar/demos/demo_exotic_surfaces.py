@@ -81,7 +81,7 @@ USAGE:
 Controls:
     - Step the `family` dimension to swap between the two collections
     - Press L for the Layers panel
-    - Ctrl+C to stop and cleanup
+    - Ctrl+C to stop
 """
 
 DEMO_META = {
@@ -112,7 +112,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -1043,25 +1042,22 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path}")
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_exotic_surfaces_") as tmpdir:
-        output_path = Path(tmpdir) / "exotic_surfaces.luxar.zarr"
-        if generate_exotic_surfaces(output_path, resolution) == 0:
-            aprint("\n❌ No points generated")
-            return
+    output_path = get_demos_output_dir() / "exotic_surfaces.luxar.zarr"
+    if generate_exotic_surfaces(output_path, resolution) == 0:
+        aprint("\n❌ No points generated")
+        return
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("VIEWING TIPS")
-        aprint("=" * 70)
-        aprint("  • Step the `family` dimension to swap the whole wall")
-        aprint("  • The overlay text changes with it")
-        aprint("  • Zoom into a single cell — the labyrinths are worth it")
-        aprint("  • Press L for the Layers panel")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("VIEWING TIPS")
+    aprint("=" * 70)
+    aprint("  • Step the `family` dimension to swap the whole wall")
+    aprint("  • The overlay text changes with it")
+    aprint("  • Zoom into a single cell — the labyrinths are worth it")
+    aprint("  • Press L for the Layers panel")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete - temporary files removed")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

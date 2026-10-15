@@ -19,7 +19,9 @@ from luxar.gsplats.fitting.config import (
     PreprocessedData,
 )
 from luxar.gsplats.fitting.initialization import (
+    _is_declared_warm_start,
     apply_sigma_min_diag_floor,
+    apply_supplied_sigma_min_diag_floor,
     resolve_fit_initial_sigma_diag,
 )
 from luxar.gsplats.fitting.scale_population import (
@@ -296,7 +298,12 @@ def _fit_diagnostic_stats(
         else:
             initial_Ls = preprocessed_data.init_L.astype(np.float32, copy=True)
             if sigma_min is not None:
-                clamped_diagonal = apply_sigma_min_diag_floor(
+                floor_fn = (
+                    apply_supplied_sigma_min_diag_floor
+                    if _is_declared_warm_start(config, preprocessed_data)
+                    else apply_sigma_min_diag_floor
+                )
+                clamped_diagonal = floor_fn(
                     np.diagonal(initial_Ls, axis1=1, axis2=2), sigma_min
                 )
                 for axis in range(preprocessed_data.d):
@@ -702,6 +709,7 @@ def finalize_results(
         "time_seconds": optimization_results.end_time - optimization_results.start_time,
         "iterations": optimization_results.actual_iters,
         "best_iteration": optimization_results.best_iteration,  # Iteration that achieved best quality
+        "best_from_final_step": optimization_results.best_from_final_step,
         "final_loss": optimization_results.best_loss,
         "final_max_abs_error": optimization_results.best_max_abs_error,
         "final_rel_l2": optimization_results.best_rel_l2,
@@ -822,8 +830,12 @@ def finalize_results(
                 f"(over {quality['foreground_fraction'] * 100:.2f}% of voxels), "
                 f"SSIM={quality['ssim']:.4f}, MSE={quality['mse']:.2e}"
             )
-    except Exception as exc:
-        if config.verbose:
-            aprint(f"Note: post-fit quality metrics skipped ({exc})")
+    except Exception as exc:  # scoring must never fail a fit
+        # Always say so: a store without PSNR is a silent hole in the record
+        # otherwise (content tiling runs its inner fits non-verbose). The
+        # reason is kept in the stats so it survives into the archive.
+        reason = f"{type(exc).__name__}: {exc}"
+        stats["quality_error"] = reason
+        aprint(f"Warning: post-fit quality metrics skipped ({reason})")
 
     return result

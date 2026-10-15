@@ -228,6 +228,15 @@ export class AnimationController {
   private tickCount = 0;
 
   /**
+   * Active reasons the loop may not sustain ITSELF (see
+   * {@link suspendSelfSustainedAnimation}); empty = normal behaviour.
+   */
+  private readonly selfSustainSuspensions = new Set<string>();
+
+  /** Exempts the loop from a self-sustain hold while true (a capture is running). */
+  private selfSustainExempt: (() => boolean) | null = null;
+
+  /**
    * Create animation controller for rendering loop management.
    *
    * Sets up performance monitoring and prepares animation loop. Does not
@@ -506,6 +515,10 @@ export class AnimationController {
    * loading): the landing itself requests the render.
    */
   requestTick(): void {
+    // A poll for asynchronous work: while self-sustained animation is
+    // suspended (the data server is gone) the work it waits for cannot land,
+    // and honouring the poll would keep the loop ticking indefinitely.
+    if (this.isSelfSustainSuspended) return;
     this.resumeIfStopped();
     this.resetIdleTimer();
   }
@@ -593,7 +606,11 @@ export class AnimationController {
     this.recordAdaptiveDprSample(tickStart);
 
     // Update camera controls - processes mouse/touch input and applies damping
-    // This must happen before rendering to reflect user interactions
+    // This must happen before rendering to reflect user interactions. Under a
+    // self-sustain hold the turntable / auto-dolly do not drive the camera:
+    // each driven step's `change` event wakes the loop again, so auto-rotate
+    // would otherwise outlive the hold after any wake.
+    this.controls.setAutoCameraSuspended?.(this.isSelfSustainSuspended);
     this.controls.update();
 
     // Call all registered per-frame callbacks (e.g., dynamic clipping, dimension
@@ -778,6 +795,8 @@ export class AnimationController {
     // some later event happened to call startAnimation(). Reproduced with a
     // mouse (press, hold 2 s, drag → no rotation) and with a finger alike.
     const gesture = this.controls.isGestureActive();
+    // Suspended: only the user's own gesture keeps the loop alive.
+    if (this.isSelfSustainSuspended) return gesture;
 
     // Check if any post-processing effects need continuous updates
     const hasEffects = this.postProcessing.needsContinuousAnimation();
@@ -980,6 +999,82 @@ export class AnimationController {
   };
 
   /**
+   * Stop the loop from sustaining itself while `reason` holds.
+   *
+   * Wired to the data server becoming unreachable (the scene-identity
+   * watchdog's `unreachable` banner): continuous consumers — cinematic noise,
+   * auto-rotate, dimension playback — and loaders polling through
+   * {@link requestTick} would otherwise render indefinitely against a scene
+   * that can no longer stream. User input still works: {@link startAnimation}
+   * and {@link requestRender} wake the loop as usual so the already-loaded
+   * scene stays inspectable, and the loop then idles out after
+   * `config.animation.idleTimeoutMs` because nothing counts as continuous.
+   *
+   * While held, the turntable and auto-dolly do not drive the camera
+   * (`ControlsManager.setAutoCameraSuspended`) and dimension playback holds
+   * its playhead (`DimensionAnimationManager` reads
+   * {@link isSelfSustainSuspended}). Never in effect during a capture — see
+   * {@link setSelfSustainExemptPredicate}.
+   *
+   * Stops the loop at once unless a gesture is in progress (a press held
+   * through the transition keeps its frames until it ends). Reasons stack;
+   * {@link resumeSelfSustainedAnimation} releases one.
+   */
+  suspendSelfSustainedAnimation(reason: string): void {
+    if (this.selfSustainSuspensions.has(reason)) return;
+    this.selfSustainSuspensions.add(reason);
+    if (!this.isSelfSustainSuspended) return; // a capture is running: exempt
+    if (this.driver.isRunning && !this.controls.isGestureActive()) this.stopAnimation();
+  }
+
+  /**
+   * Release a {@link suspendSelfSustainedAnimation} reason. When the last one
+   * is released the loop wakes (unless the page is hidden), so a continuous
+   * consumer that was suspended (cinematic mode, playback) resumes and the
+   * next tick redraws.
+   */
+  resumeSelfSustainedAnimation(reason: string): void {
+    if (!this.selfSustainSuspensions.delete(reason)) return;
+    if (this.selfSustainSuspensions.size > 0) return;
+    // A hidden page stays paused: its `visible` transition restarts the loop
+    // (core/app/lifecycle/focus-handling.ts), and the watchdog's interval
+    // probe can report recovery while the tab is in the background.
+    if (typeof document !== 'undefined' && document.hidden) return;
+    this.startAnimation();
+  }
+
+  /**
+   * Exempt the loop from every self-sustain hold while `predicate` returns
+   * true. Wired to `RecordingPanel.isCurrentlyRecording()`: a real-time video
+   * films the canvas this loop paints and an offline turntable drives its own
+   * frames through it, so a hold would record a frozen view. A registered
+   * `renderEveryFrame` consumer is exempt on its own. A predicate that throws
+   * counts as exempt (rendering on is the safe failure). Pass `null` to clear.
+   */
+  setSelfSustainExemptPredicate(predicate: (() => boolean) | null): void {
+    this.selfSustainExempt = predicate;
+  }
+
+  /** Whether a capture currently exempts the loop from a hold. */
+  private isSelfSustainExempt(): boolean {
+    if (this.renderEveryFrameCount > 0) return true;
+    try {
+      return this.selfSustainExempt?.() === true;
+    } catch {
+      return true;
+    }
+  }
+
+  /**
+   * Whether a {@link suspendSelfSustainedAnimation} hold is in EFFECT: a
+   * reason is active and no capture exempts the loop. Re-evaluated on every
+   * read, so a capture starting under a hold lifts it and its end restores it.
+   */
+  get isSelfSustainSuspended(): boolean {
+    return this.selfSustainSuspensions.size > 0 && !this.isSelfSustainExempt();
+  }
+
+  /**
    * Get current animation loop state.
    *
    * @returns true if animation loop is running, false if paused
@@ -1005,5 +1100,6 @@ export class AnimationController {
     for (const phase of FRAME_PHASES) this.callbacksByPhase[phase].clear();
     this.phaseOf.clear();
     this.renderEveryFrameCount = 0;
+    this.selfSustainSuspensions.clear();
   }
 }

@@ -86,7 +86,7 @@ Usage:
 Controls:
     - Rotate Earth to see different earthquake zones
     - Ring of Fire should be clearly visible!
-    - Ctrl+C to stop and cleanup
+    - Ctrl+C to stop
 """
 
 from __future__ import annotations
@@ -116,7 +116,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1391,7 +1390,7 @@ def main() -> None:
     aprint("    🌋 Volcanic regions - often correlate with earthquakes")
     aprint("")
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "earthquakes.luxar.zarr"
         try:
@@ -1407,56 +1406,50 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path}")
         return
 
-    # Use temporary directory for serving (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_earthquakes_") as tmpdir:
-        output_path = Path(tmpdir) / "earthquakes.luxar.zarr"
+    output_path = get_demos_output_dir() / "earthquakes.luxar.zarr"
 
-        try:
-            total_points, total_clouds, total_lines = generate_earthquake_scene(
-                output_path, days=days, min_magnitude=min_mag
-            )
+    try:
+        total_points, total_clouds, total_lines = generate_earthquake_scene(
+            output_path, days=days, min_magnitude=min_mag
+        )
 
-            if total_points == 0:
-                aprint("\n❌ No data generated")
-                return
+        if total_points == 0:
+            aprint("\n❌ No data generated")
+            return
 
-            aprint("")
-            aprint("=" * 70)
-            aprint(
-                f"SCENE COMPLETE: {total_points:,} points, {total_lines:,} earthquakes"
-            )
-            aprint("=" * 70)
-            aprint("")
-            aprint("Earthquake Magnitude Scale:")
-            aprint("  • 4-5: Light (minor damage possible)")
-            aprint("  • 5-6: Moderate (building damage)")
-            aprint("  • 6-7: Strong (destructive)")
-            aprint("  • 7-8: Major (serious widespread damage)")
-            aprint("  • 8-9: Great (catastrophic)")
-            aprint("  • 9+: Megaquake (rare, extreme destruction)")
-            aprint("")
-            aprint("Major Earthquake Zones:")
-            aprint("  Pacific Ring of Fire (90% of world's quakes)")
-            aprint("  Himalayan belt (India-Asia collision)")
-            aprint("  Mid-Atlantic Ridge (divergent boundary)")
-            aprint("  San Andreas Fault (California transform)")
-            aprint("")
-            aprint("=" * 70)
-            aprint("LAUNCHING VIEWER")
-            aprint("=" * 70)
-            aprint("Rotate the Earth to explore seismic activity patterns!")
-            aprint("Press Ctrl+C when done.")
-            aprint("")
+        aprint("")
+        aprint("=" * 70)
+        aprint(f"SCENE COMPLETE: {total_points:,} points, {total_lines:,} earthquakes")
+        aprint("=" * 70)
+        aprint("")
+        aprint("Earthquake Magnitude Scale:")
+        aprint("  • 4-5: Light (minor damage possible)")
+        aprint("  • 5-6: Moderate (building damage)")
+        aprint("  • 6-7: Strong (destructive)")
+        aprint("  • 7-8: Major (serious widespread damage)")
+        aprint("  • 8-9: Great (catastrophic)")
+        aprint("  • 9+: Megaquake (rare, extreme destruction)")
+        aprint("")
+        aprint("Major Earthquake Zones:")
+        aprint("  Pacific Ring of Fire (90% of world's quakes)")
+        aprint("  Himalayan belt (India-Asia collision)")
+        aprint("  Mid-Atlantic Ridge (divergent boundary)")
+        aprint("  San Andreas Fault (California transform)")
+        aprint("")
+        aprint("=" * 70)
+        aprint("LAUNCHING VIEWER")
+        aprint("=" * 70)
+        aprint("Rotate the Earth to explore seismic activity patterns!")
+        aprint("Press Ctrl+C when done.")
+        aprint("")
 
-            launch_viewer(output_path)
+        launch_viewer(output_path)
 
-        except KeyboardInterrupt:
-            aprint("\n🛑 Stopping demo...")
-        except Exception as e:
-            aprint(f"\n❌ Error: {e}")
-            sys.exit(1)
-
-    aprint("\nCleanup complete - temporary files removed")
+    except KeyboardInterrupt:
+        aprint("\n🛑 Stopping demo...")
+    except Exception as e:
+        aprint(f"\n❌ Error: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

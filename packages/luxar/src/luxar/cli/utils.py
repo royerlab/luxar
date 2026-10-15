@@ -202,16 +202,80 @@ def origin_authority(origin: str) -> str:
     return f"{host}:{port}" if port else host
 
 
-def open_browser(url: str, suppress_errors: bool = False) -> bool:
-    """Open a URL in the default web browser.
+#: Environment override for :func:`browser_unavailable_reason`: ``1`` forces the
+#: auto-open on (an IDE run configuration has a screen but no terminal), ``0``
+#: forces it off.
+OPEN_BROWSER_ENV = "LUXAR_OPEN_BROWSER"
+
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+_FALSY = frozenset({"0", "false", "no", "off"})
+
+
+def _is_tty(stream: Any) -> bool:
+    """``stream.isatty()``, treating a missing or closed stream as not a TTY."""
+    try:
+        return bool(stream is not None and stream.isatty())
+    except (ValueError, OSError):
+        return False
+
+
+def browser_unavailable_reason(explicit: bool = False) -> Optional[str]:
+    """Why auto-opening a browser here would be pointless, or None when it is fine.
+
+    A headless Linux box, an SSH session (any browser would open on the REMOTE
+    machine's screen, or a text browser would grab the terminal), and a fully
+    detached run (no terminal on stdin, stdout or stderr — a CI job, an agent
+    harness, ``nohup … &``) all get the URL printed instead of a browser window
+    nobody is looking at. The guess is skipped when it cannot be right:
+
+    - ``explicit``: the user typed ``--open`` — that is an instruction;
+    - ``$BROWSER`` is set: VS Code Remote-SSH, Codespaces and dev containers
+      route URLs to the LOCAL browser through it, over SSH and without a TTY.
+
+    ``LUXAR_OPEN_BROWSER=1`` / ``=0`` overrides everything, ``--open`` included.
+    """
+    forced = os.environ.get(OPEN_BROWSER_ENV, "").strip().lower()
+    if forced in _TRUTHY:
+        return None
+    if forced in _FALSY:
+        return f"{OPEN_BROWSER_ENV}={forced}"
+    if explicit or os.environ.get("BROWSER"):
+        return None
+    if any(os.environ.get(v) for v in ("SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY")):
+        return "SSH session"
+    if sys.platform not in ("darwin", "win32") and not (
+        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+    ):
+        return "no DISPLAY or WAYLAND_DISPLAY"
+    if not any(_is_tty(s) for s in (sys.stdin, sys.stdout, sys.stderr)):
+        return "not attached to a terminal"
+    return None
+
+
+def open_browser(
+    url: str, suppress_errors: bool = False, explicit: bool = False
+) -> bool:
+    """Open a URL in the default web browser, unless there is no display.
+
+    When :func:`browser_unavailable_reason` finds no display, nothing is opened
+    and the URL is printed with the reason, so a remote or detached run still
+    tells the user where to point a browser.
 
     Args:
         url: URL to open.
         suppress_errors: If True, don't print error messages.
+        explicit: The user asked for it (``--open``): skip the display guess.
 
     Returns:
-        True if successful, False otherwise.
+        True if a browser was opened, False otherwise.
     """
+    reason = browser_unavailable_reason(explicit=explicit)
+    if reason is not None:
+        aprint(
+            f"🌐 Not opening a browser ({reason}). Open {url} yourself "
+            f"(set {OPEN_BROWSER_ENV}=1 to force)."
+        )
+        return False
     try:
         webbrowser.open(url)
         return True
@@ -219,6 +283,34 @@ def open_browser(url: str, suppress_errors: bool = False) -> bool:
         if not suppress_errors:
             aprint(f"⚠️ Could not open browser: {e}")
         return False
+
+
+def stdin_is_interactive() -> bool:
+    """True when a confirmation prompt on stdin could actually be answered."""
+    return _is_tty(sys.stdin)
+
+
+def require_confirmation(prompt: str, *, yes: bool) -> bool:
+    """Ask ``prompt`` unless ``--yes`` was passed; never hang without a terminal.
+
+    ``typer.confirm`` on a non-interactive stdin either blocks forever (an open
+    pipe nobody writes to) or reads EOF and aborts with a traceback-ish
+    message, depending on the caller's plumbing. A destructive command run from
+    a script must instead fail fast and say how to proceed, so without a TTY
+    and without ``--yes`` this exits 1 with a "pass --yes" message.
+
+    Returns:
+        True to proceed, False when the user declined at the prompt.
+    """
+    if yes:
+        return True
+    if not stdin_is_interactive():
+        aprint(
+            "❌ Not asking for confirmation: stdin is not a terminal. "
+            "Re-run with --yes to proceed (or --dry-run to only list)."
+        )
+        raise typer.Exit(1)
+    return typer.confirm(prompt)
 
 
 def check_port_available(port: int, host: str = "127.0.0.1") -> bool:
@@ -425,6 +517,26 @@ def wait_for_server(
         except OSError:
             time.sleep(poll_interval)
     return False
+
+
+def viewer_not_built_message() -> str:
+    """How to get a viewer build, phrased for THIS install.
+
+    ``cd packages/luxar-viewer && pnpm build`` only means something inside a
+    source checkout; told to an installed wheel it is a dead end, because the
+    wheel ships its viewer pre-built (``luxar/_viewer_dist``) and has no
+    ``packages/`` directory to cd into.
+    """
+    from ..utils.paths import get_luxar_checkout_root
+
+    if get_luxar_checkout_root() is not None:
+        return "Viewer not built. Run: cd packages/luxar-viewer && pnpm build"
+    return (
+        "Viewer not available: this luxar install is missing its bundled viewer "
+        "(luxar/_viewer_dist). Reinstall it (pip install --force-reinstall luxar), "
+        "or build from a source checkout (git clone the luxar repository, then "
+        "make setup-dev && make build-viewer)."
+    )
 
 
 def check_viewer_built() -> bool:

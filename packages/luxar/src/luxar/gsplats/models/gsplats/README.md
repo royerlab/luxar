@@ -38,7 +38,8 @@ Low-level rendering engine with specialized fast paths:
 | `group_by_box(aabb_lo, aabb_hi, shape)` | CPU spatial grouping for chunk processing |
 | `group_by_box_gpu(aabb_lo, aabb_hi, shape)` | GPU spatial grouping |
 | `cached_base_and_offsets(lo, hi, device)` | Cached coordinate grid generation |
-| `calculate_optimal_chunk_size(K, d, device, dtype)` | Memory-aware chunk size selection |
+| `calculate_optimal_chunk_size(K, d, device, dtype)` | Memory-aware P-chunk size: budget from the device's reported free memory (CUDA `mem_get_info`, MPS recommended working set minus driver allocation, host `MemAvailable` on Linux / available pages elsewhere), queried once per render, `chunk_bytes_per_element(d)` (76 B in 3D) per element, capped at 2^24 elements per chunk |
+| `calculate_render_chunks(K, P, d, device, chunk_size)` | `(K_chunk, P_chunk)` for the 2D/3D renderers: also splits K when a large group of same-sized splats would overflow the budget |
 | `clear_grid_cache()` | Clear byte-budgeted coordinate grid caches |
 | `get_grid_cache_stats()` | Inspect per-device grid-cache occupancy and budgets |
 | `linear_strides(shape)` | Compute linear memory strides |

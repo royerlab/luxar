@@ -85,7 +85,6 @@ import io
 import math
 import re
 import sys
-import tempfile
 import zipfile
 from pathlib import Path
 from typing import Iterator, Optional
@@ -1005,26 +1004,25 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path} ({count:,} readings)")
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_birdcolor_") as tmpdir:
-        output_path = Path(tmpdir) / "bird_plumage_colorspace.luxar.zarr"
-        count = build(output_path)
+    output_path = get_demos_output_dir() / "bird_plumage_colorspace.luxar.zarr"
+    count = build(output_path)
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("VIEWING TIPS")
-        aprint("=" * 70)
-        aprint("")
-        aprint("  - Each spike is one plumage patch, painted its own colour")
-        aprint("  - Direction = hue, length = chroma, height = lightness")
-        aprint("  - Press 1, then [ / ] to walk the UV chroma deciles")
-        aprint("  - The faint ghost is the whole corpus, shown at every stop")
-        aprint("  - Hover a spike for the species; click it for Wikipedia")
-        aprint("")
-        aprint(f"Total readings: {count:,}")
-        aprint("")
-        aprint("Press Ctrl+C when done.")
+    aprint("")
+    aprint("=" * 70)
+    aprint("VIEWING TIPS")
+    aprint("=" * 70)
+    aprint("")
+    aprint("  - Each spike is one plumage patch, painted its own colour")
+    aprint("  - Direction = hue, length = chroma, height = lightness")
+    aprint("  - Press 1, then [ / ] to walk the UV chroma deciles")
+    aprint("  - The faint ghost is the whole corpus, shown at every stop")
+    aprint("  - Hover a spike for the species; click it for Wikipedia")
+    aprint("")
+    aprint(f"Total readings: {count:,}")
+    aprint("")
+    aprint("Press Ctrl+C when done.")
 
-        launch_viewer(output_path)
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":
