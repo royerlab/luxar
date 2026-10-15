@@ -462,9 +462,8 @@ def _fit_or_resume_box(
 ) -> "Optional[GSplatData]":
     """Reload a checkpointed box, or fit it (and checkpoint it when enabled).
 
-    A resumed box is the stored, round-tripped copy (exactly what the parallel
-    path reloads); a freshly fitted one stays the in-memory result, so an
-    uninterrupted run merges exactly what it did before checkpoints existed.
+    With a checkpoint, both resumed and freshly fitted boxes are merged from
+    their stored copies. This keeps their rounded stats on the same footing.
     A box marked done whose store no longer reads is discarded and refitted.
     """
     if resumed:
@@ -474,9 +473,11 @@ def _fit_or_resume_box(
             return stored
         # Marked done but unreadable: discarded above, refit below.
     region = fit()
-    if checkpoint is not None:
-        checkpoint.save_region(i, region)
-    return region
+    if checkpoint is None:
+        return region
+    checkpoint.save_region(i, region)
+    del region
+    return checkpoint.load_region(i)
 
 
 def fit_planned(

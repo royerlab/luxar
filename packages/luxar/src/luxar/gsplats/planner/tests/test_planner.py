@@ -2964,3 +2964,51 @@ def test_fit_planned_resumes_finished_boxes_after_an_interrupt(monkeypatch, tmp_
         np.sort(np.concatenate([np.linspace(x + 1, x + 7, 4) for x in (0, 8, 16)])),
         atol=1e-3,
     )
+
+
+@pytest.mark.parametrize("partition", [False, True])
+def test_resumed_planned_fit_keeps_normalization_and_scores(partition, tmp_path):
+    """Fresh and resumed boxes must have the same stored stats at merge time."""
+    from luxar.gsplats.planner import fit_planned
+    from luxar.gsplats.planner.box_checkpoint import BoxCheckpoint
+
+    floor = 0.0123456789012345
+    blob = _corner_blobs((16, 16, 16), n=4, corner=16)
+    volume = np.concatenate((blob, blob), axis=2) + floor
+    plan = _toy_plan(n_boxes=2, budget=20)
+    checkpoint = BoxCheckpoint(tmp_path / "boxes", "fp")
+
+    def stop_after_first(i, _n, _state):
+        if i == 1:
+            raise KeyboardInterrupt
+
+    kwargs = dict(_FAST_FIT, floor=floor, norm_range=(floor, floor + 1.0))
+    with pytest.raises(KeyboardInterrupt):
+        fit_planned(
+            volume,
+            plan,
+            checkpoint=checkpoint,
+            progress_callback=stop_after_first,
+            partition=partition,
+            **kwargs,
+        )
+    assert checkpoint.is_done(0) and not checkpoint.is_done(1)
+    assert checkpoint.load_region(0).stats["image_min"] != floor
+
+    resumed = fit_planned(
+        volume, plan, checkpoint=checkpoint, partition=partition, **kwargs
+    )
+    assert checkpoint.load_region(1) is not None
+    # Both boxes are now persisted: a second run merges only stored copies.
+    all_stored = fit_planned(
+        volume, plan, checkpoint=checkpoint, partition=partition, **kwargs
+    )
+    resumed_stats = resumed.meta if partition else resumed.stats
+    stored_stats = all_stored.meta if partition else all_stored.stats
+    for key in ("floor", "image_min", "intensity_range"):
+        assert key in resumed_stats
+        assert resumed_stats[key] == stored_stats[key]
+    resumed_quality = resumed.meta["fit_stats"] if partition else resumed.stats
+    stored_quality = all_stored.meta["fit_stats"] if partition else all_stored.stats
+    for key in ("psnr_db", "ssim"):
+        assert resumed_quality[key] == pytest.approx(stored_quality[key])
