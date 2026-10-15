@@ -13,7 +13,7 @@ PyTorch renderer, as the Metal model does.
 
 from __future__ import annotations
 
-from typing import Any, Optional, Sequence, Tuple, cast
+from typing import Any, Callable, Optional, Sequence, Tuple, cast
 
 import numpy as np
 import torch
@@ -49,7 +49,8 @@ def _row_band(depth: int, height: int) -> int:
     """Rows per forward work item, so there are enough items to balance."""
     import numba
 
-    items_wanted = _ITEMS_PER_THREAD * int(numba.get_num_threads())  # type: ignore[no-untyped-call]
+    get_num_threads = cast(Callable[[], int], numba.get_num_threads)
+    items_wanted = _ITEMS_PER_THREAD * get_num_threads()
     bands_wanted = max(1, -(-items_wanted // max(1, depth)))
     return max(1, -(-height // bands_wanted))
 
