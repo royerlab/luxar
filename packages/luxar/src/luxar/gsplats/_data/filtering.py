@@ -204,10 +204,12 @@ _CONTENT_SCOPED_STATS_KEYS = (
     # fitting/results.py, fit_tiled_gsplats.py and the progressive fitter.
     "mse",
     "psnr_db",
+    "psnr_robust_db",
     "ssim",
     "rel_l2",
     "max_abs_error",
     "foreground_psnr_db",
+    "foreground_psnr_robust_db",
     # The threshold and the foreground share are measured on the TARGET, so on
     # their own they would survive a cull — but they exist only to say what
     # `foreground_psnr_db` was taken over (`info` prints them inside its

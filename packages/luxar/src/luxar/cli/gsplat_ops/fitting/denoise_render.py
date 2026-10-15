@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import typer
 from arbol import aprint, asection
@@ -15,30 +15,129 @@ if TYPE_CHECKING:
     import numpy as np
 
     from luxar.gsplats.gsplat_data import GSplatData
-    from luxar.gsplats.tree import GSplatLeaf
 
 
-def _default_output_shape(
-    default_leaves: list[GSplatLeaf], ndim: int
-) -> tuple[int, ...]:
-    """Return the auto-sized output shape for the leaves the renderer will draw."""
+def _bounding_box_grid(
+    datas: list[GSplatData], ndim: int
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """``(origin, shape)`` of the voxel grid spanning every splat center.
+
+    The origin is the floor of the lowest center, NOT index 0: a store whose
+    splats start at, say, z=40 used to be rendered on a grid sized by its extent
+    but anchored at 0, which clipped the upper part of the data and left the
+    lower part of the grid empty.
+    """
     import numpy as np
 
-    from luxar.gsplats.tree import center_bounds
-
-    leaf_bounds = [
-        bounds for leaf in default_leaves if (bounds := center_bounds(leaf)) is not None
-    ]
-    if not leaf_bounds:
+    populated = [d.centers for d in datas if d.n_splats > 0]
+    if not populated:
         raise ValueError("GSplat tree has no splat centers")
-    mins = np.min(np.stack([bounds[0] for bounds in leaf_bounds]), axis=0)
-    maxs = np.max(np.stack([bounds[1] for bounds in leaf_bounds]), axis=0)
-    return tuple(int(maxs[index] - mins[index]) + 1 for index in range(ndim))
+    mins = np.min(np.stack([c.min(axis=0) for c in populated]), axis=0)
+    maxs = np.max(np.stack([c.max(axis=0) for c in populated]), axis=0)
+    origin = tuple(int(np.floor(mins[i])) for i in range(ndim))
+    shape = tuple(int(np.floor(maxs[i])) - origin[i] + 1 for i in range(ndim))
+    return origin, shape
+
+
+def _source_grid_shape(
+    stats: dict, ndim: int, dimension_metadata: Any
+) -> Optional[tuple[int, ...]]:
+    """The fitted volume's shape, when it describes the centers' grid.
+
+    Not on a STACKED store (a batch-fit timelapse, ``merge --as-dimension``):
+    there ``source_shape`` is in source order (time first) or describes one
+    component, while the centers are spatial-first with the stacked axis last.
+    """
+    from luxar.gsplats.scoring_grid import is_stacked_store
+
+    shape = (stats or {}).get("source_shape")
+    if not isinstance(shape, (list, tuple)) or len(shape) != ndim:
+        return None
+    if is_stacked_store(stats, ndim, dimension_metadata):
+        return None
+    return tuple(int(n) for n in shape)
+
+
+def _on_source_grid(
+    datas: list[GSplatData], stats: dict, ndim: int, dimension_metadata: Any
+) -> Optional[tuple[list[GSplatData], tuple[int, ...]]]:
+    """``(leaves, shape)`` on the fit's source grid, or ``None`` if it does not fit.
+
+    A ``--region`` crop fit keeps full-volume centers with a crop-shaped source
+    grid, so the crop start is subtracted. The grid is trusted only when most
+    centers land inside it.
+    """
+    import numpy as np
+
+    from luxar.gsplats.scoring_grid import (
+        fraction_inside_grid,
+        map_to_grid,
+        source_region_start,
+    )
+
+    source = _source_grid_shape(stats, ndim, dimension_metadata)
+    if source is None:
+        return None
+    start = source_region_start(stats, ndim)
+    if start is not None:
+        datas = [map_to_grid(d, origin=start) for d in datas]
+    populated = [d.centers for d in datas if d.n_splats > 0]
+    inside = (
+        fraction_inside_grid(np.concatenate(populated), source) if populated else 0.0
+    )
+    if inside < 0.5:
+        aprint(
+            f"The fit's source grid {source} holds only {inside:.0%} of the splat "
+            "centers; using the bounding box instead"
+        )
+        return None
+    aprint(f"Auto shape from the fit's source grid: {source}")
+    if start is not None:
+        aprint(f"Crop fit: rendering the crop (start {list(start)})")
+    return datas, source
+
+
+def _resolve_output_grid(
+    datas: list[GSplatData],
+    stats: dict,
+    ndim: int,
+    shape: Optional[str],
+    dimension_metadata: Any = None,
+) -> tuple[list[GSplatData], tuple[int, ...]]:
+    """The render grid, and the leaves translated onto it.
+
+    ``--shape`` renders at index 0. Otherwise a fit renders on its own source
+    grid (``fitting/source_shape``), so the output lines up voxel-for-voxel with
+    the volume that was fitted; any other store (stacked stores included) on the
+    bounding box of its centers, with the origin reported.
+    """
+    from luxar.cli.gsplat_config import parse_shape
+    from luxar.gsplats.scoring_grid import map_to_grid
+
+    if shape is not None:
+        return datas, tuple(parse_shape(shape))
+    on_source = _on_source_grid(datas, stats, ndim, dimension_metadata)
+    if on_source is not None:
+        return on_source
+    origin, box = _bounding_box_grid(datas, ndim)
+    aprint(f"Auto shape from bounding box: {box} (origin {origin})")
+    if any(origin):
+        datas = [map_to_grid(d, origin=origin) for d in datas]
+    return datas, box
+
+
+def _warn_if_off_grid(datas: list[GSplatData], shape: tuple[int, ...]) -> None:
+    import numpy as np
+
+    from ..compare_ops import warn_if_outside_grid
+
+    populated = [d.centers for d in datas if d.n_splats > 0]
+    if populated:
+        warn_if_outside_grid(np.concatenate(populated), shape)
 
 
 def _render_default_leaves(
-    default_leaves: list[GSplatLeaf],
-    first_data: GSplatData,
+    datas: list[GSplatData],
     *,
     output_shape: tuple[int, ...],
     device: Optional[str],
@@ -47,18 +146,15 @@ def _render_default_leaves(
     """Render one leaf directly, or accumulate a multi-leaf default selection."""
     import numpy as np
 
-    from luxar.gsplats.gsplat_data import GSplatData
-
-    if len(default_leaves) == 1:
-        return first_data.render_to_volume(
+    if len(datas) == 1:
+        return datas[0].render_to_volume(
             shape=output_shape,
             device=device,
             truncate=truncate,
         )
 
     volume = np.zeros(output_shape, dtype=np.float32)
-    for index, leaf in enumerate(default_leaves):
-        leaf_data = first_data if index == 0 else GSplatData.from_tree(leaf)
+    for leaf_data in datas:
         volume += leaf_data.render_to_volume(
             shape=output_shape,
             device=device,
@@ -165,6 +261,56 @@ def run_denoise_volume_cmd(
         exit_with_error(f"Error: {e}", e)
 
 
+def _load_render_leaves(
+    input_path: Path, voxel_size: Optional[str]
+) -> tuple[list[GSplatData], dict, int, Any]:
+    """The default-rendered leaves on the voxel grid, root stats, ndim, axis names."""
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
+    from luxar.gsplats.scoring_grid import map_to_grid
+    from luxar.gsplats.tree import iter_default_leaves
+
+    from ..compare_ops import resolve_voxel_size
+
+    node, stats = load_gsplat_node(input_path, include_stats=True)
+    leaves = list(iter_default_leaves(node))
+    if not leaves:
+        raise ValueError("GSplat tree has no default-rendered leaves")
+    datas = [GSplatData.from_tree(leaf) for leaf in leaves]
+    ndim = datas[0].ndim
+    scale, source = resolve_voxel_size(stats, ndim, voxel_size)
+    if scale is not None:
+        aprint(
+            f"Physical splats mapped to voxels by voxel_size={list(scale)} "
+            f"(from {source})"
+        )
+        datas = [map_to_grid(d, scale=scale) for d in datas]
+    return datas, stats, ndim, node.meta.get("dimension_metadata")
+
+
+def _save_volume(volume: np.ndarray, output_path: Path) -> None:
+    import numpy as np
+
+    suffix = output_path.suffix.lower()
+    with asection(f"Saving to {output_path.name}"):
+        if suffix == ".npy":
+            np.save(str(output_path), volume)
+        elif suffix in (".tiff", ".tif"):
+            try:
+                import tifffile
+            except ImportError:
+                aprint("tifffile not installed.")
+                aprint("Install with: pip install luxar[io]")
+                raise typer.Exit(1)
+            tifffile.imwrite(str(output_path), volume)
+        else:
+            aprint(f"Unknown extension '{suffix}', saving as NumPy .npy")
+            np.save(str(output_path), volume)
+
+        if output_path.exists():
+            aprint(f"File size: {format_memory_size(output_path.stat().st_size)}")
+
+
 def run_render_to_file(
     *,
     input_path: Path,
@@ -172,42 +318,30 @@ def run_render_to_file(
     shape: Optional[str],
     device: Optional[str],
     truncate: Optional[float],
+    voxel_size: Optional[str] = None,
 ) -> None:
     """Run render command implementation."""
     try:
-        import numpy as np
-
-        from luxar.cli.gsplat_config import parse_shape
-        from luxar.gsplats.gsplat_data import GSplatData
-        from luxar.gsplats.io.load_gsplats import load_gsplat_node
-        from luxar.gsplats.tree import iter_default_leaves, total_splats
-
         with asection(f"Rendering: {input_path.name}"):
             with asection("Loading gsplat dataset"):
-                node, _ = load_gsplat_node(input_path, include_stats=False)
-                default_leaves = list(iter_default_leaves(node))
-                if not default_leaves:
-                    raise ValueError("GSplat tree has no default-rendered leaves")
-                first_leaf = default_leaves[0]
-                first_data = GSplatData.from_tree(first_leaf)
-                ndim = first_data.ndim
-                n_splats = sum(total_splats(leaf) for leaf in default_leaves)
+                datas, stats, ndim, dim_meta = _load_render_leaves(
+                    input_path, voxel_size
+                )
+                n_splats = sum(d.n_splats for d in datas)
                 aprint(f"Loaded {n_splats:,} splats ({ndim}D)")
 
             # Resolve truncation radius from dataset if not explicitly set
             if truncate is None:
-                truncate = first_data.truncation_radius
+                truncate = datas[0].truncation_radius
 
-            if shape is not None:
-                output_shape = parse_shape(shape)
-            else:
-                output_shape = _default_output_shape(default_leaves, ndim)
-                aprint(f"Auto shape from bounding box: {output_shape}")
+            datas, output_shape = _resolve_output_grid(
+                datas, stats, ndim, shape, dim_meta
+            )
+            _warn_if_off_grid(datas, output_shape)
 
             with asection(f"Rendering to {output_shape}"):
                 volume = _render_default_leaves(
-                    default_leaves,
-                    first_data,
+                    datas,
                     output_shape=output_shape,
                     device=device,
                     truncate=truncate,
@@ -217,26 +351,7 @@ def run_render_to_file(
                     f"range [{volume.min():.4f}, {volume.max():.4f}]"
                 )
 
-            suffix = output_path.suffix.lower()
-            with asection(f"Saving to {output_path.name}"):
-                if suffix == ".npy":
-                    np.save(str(output_path), volume)
-                elif suffix in (".tiff", ".tif"):
-                    try:
-                        import tifffile
-                    except ImportError:
-                        aprint("tifffile not installed.")
-                        aprint("Install with: pip install luxar[io]")
-                        raise typer.Exit(1)
-                    tifffile.imwrite(str(output_path), volume)
-                else:
-                    aprint(f"Unknown extension '{suffix}', saving as NumPy .npy")
-                    np.save(str(output_path), volume)
-
-                if output_path.exists():
-                    aprint(
-                        f"File size: {format_memory_size(output_path.stat().st_size)}"
-                    )
+            _save_volume(volume, output_path)
 
         aprint(f"\nSaved: {output_path}")
 

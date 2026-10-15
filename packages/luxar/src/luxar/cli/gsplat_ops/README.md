@@ -20,6 +20,7 @@ importers name the owning module directly, never a re-export root.
 - `scene_commands.py` — Typer command signatures + registration for convert/migrate-format/reencode
 - `scene_orientation.py` — `resolve_convert_orientation`: names the fitted center columns (stored `dimension_metadata` > `--dim-order` > array order), maps them onto x, y, z-ordered scene dims via `dim_order`, and builds convert's image-convention camera (`view_axis` + `up = -y`; the flip is a camera choice, not a mirror)
 - `inspect_commands.py` — Typer command signatures + registration for inspect commands
+- `compare_ops.py` — `compare` implementation: scoring grid, basis, foreground, report/JSON
 - `interchange_commands.py` — Typer command signatures + registration for `import` / `export`
 - `benchmark.py` — GPU benchmark helpers
 - `recipe_shared.py` — `--recipe` names/methods/validators shared by the CLI and `cli/lod.py`

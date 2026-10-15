@@ -41,10 +41,12 @@ from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData, SubstitutiveLe
 _METRICS: Dict[str, Any] = {
     "mse": 1.11e-4,
     "psnr_db": 44.4587,
+    "psnr_robust_db": 41.2093,
     "ssim": 0.9876,
     "rel_l2": 0.0333,
     "max_abs_error": 0.0444,
     "foreground_psnr_db": 32.8791,
+    "foreground_psnr_robust_db": 30.1234,
     "foreground_threshold": 0.1234,
     "foreground_fraction": 0.0567,
     "final_loss": 0.001234,

@@ -99,6 +99,14 @@ def render_to_file(
         "-t",
         help="Truncation radius in sigma. Defaults to dataset's stored value.",
     ),
+    voxel_size: Optional[str] = typer.Option(
+        None,
+        "--voxel-size",
+        help="Spacing the splat centers are scaled by, one value or one per axis. "
+        "Normally read from the dataset's voxel_size stamp (a physical-output "
+        "fit records it); pass it for a physical store without the stamp, or "
+        "'1' to render in the store's own units.",
+    ),
 ) -> None:
     """Render Gaussian splats back to a volume.
 
@@ -112,7 +120,12 @@ def render_to_file(
     (``clip(V - image_min, 0, None)``, where ``image_min`` is reported by
     ``luxar gsplat info``), or use ``luxar gsplat compare``, which does it for you.
 
-    If --shape is not given, it is auto-computed from the bounding box.
+    The render is on VOXEL indices: a physical-output fit (one that records
+    a voxel_size) is divided back onto the grid it was fitted on. Without
+    --shape, a fit renders on its own source grid (fitting/source_shape), so
+    the output lines up voxel-for-voxel with the fitted volume; any other store
+    renders on the bounding box of its centers, starting at the lowest center
+    (the origin is printed).
 
     Examples:
         luxar gsplat render fitted.gsplats.zarr rendered.npy
@@ -125,6 +138,7 @@ def render_to_file(
         shape=shape,
         device=device,
         truncate=truncate,
+        voxel_size=voxel_size,
     )
 
 

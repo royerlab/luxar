@@ -571,6 +571,15 @@ def fit_gaussian_splats(
         # Fit and extract results
         result = fitter.fit(parameters)
 
+    # Record the spacing the centers were multiplied by, so `compare`/`render`
+    # can put physical-unit splats back on the voxel grid they were fitted on.
+    if result.stats:
+        from luxar.gsplats.scoring_grid import physical_voxel_size_stamp
+
+        result.stats.update(
+            physical_voxel_size_stamp(voxel_size, output_space, int(V.ndim))
+        )
+
     # Explicitly release the fitter and its GPU resources (optimizer state,
     # model weights, preprocessed V_tensor) before post-fit operations.
     # Also clear the rendering grid cache which accumulates GPU tensors

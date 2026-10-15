@@ -371,7 +371,17 @@ data) keeps the positional mapping. `--view xy|xz|yz` picks the opening face (st
 #### `luxar gsplat render`
 Render gsplats back to a volume for quality comparison. Partition and nested
 trees render their default-selected leaves without first flattening the store.
+The output is on VOXEL indices: a physical-output fit (one that records
+`fitting/voxel_size`) is divided back onto the grid it was fitted on
+(`--voxel-size` overrides the stamp; `--voxel-size 1` renders in the store's own
+units). Without `--shape`, a fit renders on its own source grid
+(`fitting/source_shape`), so the output lines up voxel-for-voxel with the fitted
+volume (not a stacked timelapse, whose `source_shape` lists time first, and only
+when most centers land inside it); any other store renders on the bounding box of its centers starting at
+the lowest center (the origin is printed). The render is background-relative —
+see `compare` for scoring it.
 ```bash
+luxar gsplat render fitted.gsplats.zarr rendered.npy                      # source grid
 luxar gsplat render fitted.gsplats.zarr rendered.npy --shape 128,128,128
 luxar gsplat render fitted.gsplats.zarr rendered.tiff --device cuda
 ```
@@ -448,10 +458,23 @@ luxar gsplat slice input.gsplats.zarr output.gsplats.zarr ":50, 20:80, :"
 ```
 
 #### `luxar gsplat compare`
-Compare reconstruction quality against a reference volume (PSNR, SSIM, MSE). Partition and nested stores are scored over their default-rendered selection: all parts and each LOD group's finest level. The reported compression ratio covers the whole store, including coarse levels that are not scored.
+Compare reconstruction quality against a reference volume (PSNR, SSIM, MSE, relative L2, max error — globally and over the foreground). Partition and nested stores are scored over their default-rendered selection: all parts and each LOD group's finest level. The reported compression ratio covers the whole store, including coarse levels that are not scored.
+
+What it reconciles before scoring:
+
+- **Basis.** The render is background-relative, so the reference is shifted by the fit's `image_min` (`--image-min` for stores that predate the stamp).
+- **Grid.** A physical-output fit's centers are divided by the stored `voxel_size` so they land on the reference's voxel grid (`--voxel-size` for an unstamped physical store; `1` disables). A store stamped `physical_coordinates: false` is left alone. A `--region` crop fit (`fitting/source_region`, crop-shaped `source_shape`, full-volume centers) is scored with the crop start subtracted when the reference is the crop, and in full-volume coordinates otherwise; `render` renders the crop. A warning names the cause when most centers miss the grid. `--at-fit-resolution` scores a `--downscale` fit on the grid it was fitted on: the reference is decimated the same way (anti-aliased, strided, factors recovered from `fitted_shape`/`source_shape`).
+- **Peak.** The headline `PSNR` uses a robust peak, reference p99.99 minus the floor (the fit-basis minimum), which one hot pixel cannot move (on a volume of at least 10,000 voxels; below that the nearest-rank p99.99 is the maximum). `PSNR (full range)` is the classical `max - min` figure, the one stored fits record as `psnr_db`. Both are printed, and the JSON carries `psnr_robust_db` (headline, named by `psnr_headline`), `psnr_db` (full range), the foreground pair `foreground_psnr_robust_db` / `foreground_psnr_db`, and both peaks (`robust_data_range`, `data_range`). SSIM uses the full range.
+- **Foreground.** Foreground PSNR and SSIM are taken over a smoothed-Otsu mask by default (one tent blur, then Otsu, as calibration does, with the Otsu histogram stopped at the reference's p99.99 so a hot pixel cannot push every real structure below the threshold). It is the same definition the fit summary stamps. `--mask <file>` (a volume of the reference's shape, voxels > 0) or `--fg-threshold <value>` (in the reference's raw units) override it; JSON `foreground_method` says which applied.
+- **Input selection.** `--axes`, `--array-key`, `--channel`, `--timepoint` mirror `gsplat fit`, so the reference is the volume that was fitted. A `--channel`/`--timepoint` given for a TIFF/NumPy input without `--axes` is an error (it used to be ignored silently), here and in `fit`/`cal`.
+
+Memory: full-volume reductions are streamed and SSIM is tiled on every device, so a 256x512x512 float32 comparison on CPU peaked at 3.2 GB max RSS (1.5 GB macOS peak footprint) in our measurement on macOS. `-q` prints nothing (errors still reach stderr).
 ```bash
 luxar gsplat compare fitted.gsplats.zarr original.tiff
 luxar gsplat compare fitted.gsplats.zarr original.npy --device cuda --output-json metrics.json
+luxar gsplat compare fitted.gsplats.zarr stack.tif --axes c,z,y,x --channel 1
+luxar gsplat compare fitted.gsplats.zarr original.tiff --mask nuclei_mask.tif
+luxar gsplat compare fitted.gsplats.zarr original.tiff --at-fit-resolution
 ```
 
 #### `luxar gsplat cal`

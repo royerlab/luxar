@@ -236,12 +236,31 @@ def _merge_fitting_info(
     fitting_info: Dict[str, Any] = {"part_provenance": part_provenance}
     if source_dtype is not None:
         fitting_info["source_dtype"] = source_dtype
+    _carry_spatial_voxel_size(part_stats, fitting_info)
     sum_population_counts(
         part_stats,
         fitting_info,
         sum(int(stats["n_splats"]) for stats in part_stats),
     )
     return fitting_info
+
+
+def _carry_spatial_voxel_size(
+    stats_list: Sequence[Dict[str, Any]], dest: Dict[str, Any]
+) -> None:
+    """Carry the tiles' physical ``voxel_size`` onto a stacked part / the root.
+
+    Each tile was fitted in 3-D, so its stamp names the SPATIAL columns only;
+    the stacked time column a timelapse merge appends last has no spacing, and
+    readers pad it with 1.0 (``scoring_grid.stored_voxel_size``). Without this
+    a physical timelapse merge carried no stamp at all and ``compare``/``render``
+    could not map it back to voxels.
+    """
+    from luxar.gsplats.scoring_grid import agreed_voxel_size
+
+    agreed = agreed_voxel_size(stats_list)
+    if agreed is not None:
+        dest["voxel_size"] = agreed
 
 
 def _copy_or_resave_tile(
@@ -409,6 +428,7 @@ def _build_part_for_tile(
 
     if part.n_splats == 0:
         return None
+    _carry_spatial_voxel_size(tile_stats, part.stats)
     sum_population_counts(tile_stats, part.stats, part.n_splats)
     finish_population_stats(part.stats)
     return part
@@ -1366,6 +1386,7 @@ def _merge_flat(
                         GSplatData.load(p, include_stats=True) for p in tile_files
                     ]
                     merged = GSplatData.concatenate(datasets)
+                    _carry_spatial_voxel_size([d.stats for d in datasets], merged.stats)
                     merged.save(
                         out_path,
                         amplitude_bits="auto",
@@ -1404,6 +1425,7 @@ def _merge_flat(
                     values=[float(t) for t in t_indices],
                     sigma=0.0,
                 )
+                _carry_spatial_voxel_size([d.stats for d in datasets], stacked.stats)
                 stacked.save(
                     out_path,
                     amplitude_bits="auto",
@@ -1437,6 +1459,7 @@ def _merge_flat(
             ch_files = [channel_paths[c] for c in range(n_c)]
             datasets = [GSplatData.load(p, include_stats=True) for p in ch_files]
             final = GSplatData.merge_with_channel_colors(datasets, channel_colors)
+            _carry_spatial_voxel_size([d.stats for d in datasets], final.stats)
             final.save(
                 final_path,
                 amplitude_bits="auto",
@@ -1461,6 +1484,7 @@ def _merge_flat(
                 ch_files = [channel_paths[c] for c in range(n_c)]
                 datasets = [GSplatData.load(p, include_stats=True) for p in ch_files]
                 final = GSplatData.concatenate(datasets)
+                _carry_spatial_voxel_size([d.stats for d in datasets], final.stats)
                 final.save(
                     final_path,
                     amplitude_bits="auto",

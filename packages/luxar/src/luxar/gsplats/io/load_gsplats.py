@@ -36,7 +36,13 @@ def load_gsplats(
 
     Args:
         path: Path to .gsplats.zarr directory or compressed archive
-        include_stats: Whether to include fitting/provenance metadata in stats
+        include_stats: Whether to include fitting/provenance metadata in stats.
+            Without it, ``stats`` still carries the normalization basis
+            (``floor``, ``image_min``, ...; see :data:`NORMALIZATION_STATS_KEYS`):
+            it describes the intensity scale the amplitudes are on, not a
+            measurement of the splats, so a load → edit → save in Python keeps
+            the level ``gsplat compare`` needs to score the result on the right
+            basis. Nothing else rides along.
 
     Returns:
         GSplatData with decoded arrays and optional stats
@@ -46,8 +52,22 @@ def load_gsplats(
         ValueError: If the format is invalid/incompatible, or the file is a
             non-matrix (partition/nested) tree.
     """
-    node, stats = load_gsplat_node(path, include_stats=include_stats)
+    node, stats = load_gsplat_node(path, include_stats=True)
+    if not include_stats:
+        stats = fit_basis_stats(stats)
     return GSplatData.from_tree(node, stats=stats)
+
+
+def fit_basis_stats(stats: Mapping[str, Any]) -> Dict[str, Any]:
+    """The normalization-basis subset of a store's root ``stats``.
+
+    The keys a background-relative render needs to be compared with a raw
+    volume (``image_min`` first; see :mod:`luxar.gsplats.fit_basis`), and
+    nothing that measures the splats themselves.
+    """
+    from luxar.gsplats.io.save_gsplats import NORMALIZATION_STATS_KEYS
+
+    return {key: stats[key] for key in NORMALIZATION_STATS_KEYS if key in stats}
 
 
 def load_default_gsplats(
@@ -63,7 +83,9 @@ def load_default_gsplats(
     retained unchanged when requested because this helper is read-only; a
     writer that changes topology must scrub structure-scoped metadata itself.
     """
-    node, stats = load_gsplat_node(path, include_stats=include_stats)
+    node, stats = load_gsplat_node(path, include_stats=True)
+    if not include_stats:
+        stats = fit_basis_stats(stats)
     return GSplatData.from_default_selection(node, stats=stats)
 
 

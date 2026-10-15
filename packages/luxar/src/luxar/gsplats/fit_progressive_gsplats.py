@@ -737,6 +737,9 @@ def fit_progressive_gaussian_splats(
             aprint(
                 f"Converted output to physical coordinates (voxel_size={vs.tolist()})"
             )
+        from luxar.gsplats.scoring_grid import physical_voxel_size_stamp
+
+        final_result.stats.update(physical_voxel_size_stamp(vs, "real", d))
 
     # Post-fit cumulative culling on the full accumulated result
     if (

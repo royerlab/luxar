@@ -1023,6 +1023,22 @@ def _aggregate_relocation_diagnostics(
                 break
 
 
+def _carry_agreed_voxel_size(
+    stats: dict[str, Any], results: Sequence[GSplatData]
+) -> None:
+    """Carry the tiles' physical ``voxel_size`` stamp onto the merged root.
+
+    Every tile of one fit emits the same frame, so the stamp is carried only when
+    every tile that recorded one agrees; empty tiles (no stats) abstain. Without
+    it ``compare``/``render`` could not map a physical tiled fit back to voxels.
+    """
+    from luxar.gsplats.scoring_grid import agreed_voxel_size
+
+    agreed = agreed_voxel_size([getattr(r, "stats", None) for r in results])
+    if agreed is not None:
+        stats["voxel_size"] = agreed
+
+
 def _merged_fit_stats(
     results: Sequence[GSplatData],
     *,
@@ -1061,6 +1077,7 @@ def _merged_fit_stats(
     )
     stamp_voxels_per_splat(stats, delivered_splats)
     _aggregate_relocation_diagnostics(stats, results)
+    _carry_agreed_voxel_size(stats, results)
     return stats
 
 
