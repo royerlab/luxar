@@ -146,6 +146,18 @@ def run_batch_run(
         "--cull-retention",
         help="Per-tile amplitude retention after fitting (default per-fit; 0 keeps all).",
     ),
+    batch_min_extent: Optional[float] = typer.Option(
+        None,
+        "--min-extent",
+        help="Drop sub-voxel specks per tile: splats whose geometric-mean spatial "
+        "sigma is below this many fitted voxels (default: 0.6; 0 keeps them).",
+    ),
+    batch_reseed_sigma: Optional[float] = typer.Option(
+        None,
+        "--reseed-sigma",
+        help="Sigma (voxels) a relocated splat is reseeded at (default: 0.5).",
+        rich_help_panel="Advanced",
+    ),
     # Denoising
     batch_denoise: bool = typer.Option(
         False,
@@ -316,6 +328,8 @@ def run_batch_run(
             batch_psnr_patience=batch_psnr_patience,
             batch_max_passes=batch_max_passes,
             batch_cull_retention=batch_cull_retention,
+            batch_min_extent=batch_min_extent,
+            batch_reseed_sigma=batch_reseed_sigma,
             batch_denoise=batch_denoise,
             batch_denoise_h=batch_denoise_h,
             batch_denoise_2d=batch_denoise_2d,

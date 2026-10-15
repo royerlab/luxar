@@ -12,7 +12,7 @@
       11
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/batch/planning.py::_assemble_fit_args": [
-      16
+      14
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/batch/planning.py::plan_batch": [
       18
@@ -345,7 +345,7 @@
       16
     ],
     "packages/luxar/src/luxar/gsplats/fit_progressive_gsplats.py::fit_progressive_gaussian_splats": [
-      35
+      34
     ],
     "packages/luxar/src/luxar/gsplats/fit_tiled_gsplats.py::fit_tile": [
       12

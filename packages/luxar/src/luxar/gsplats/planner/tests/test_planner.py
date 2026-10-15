@@ -116,6 +116,59 @@ def test_planned_fit_carries_real_relocation_history(partition: bool) -> None:
 
 
 @pytest.mark.parametrize("partition", [False, True])
+def test_planned_fit_prunes_specks_per_box_and_sums_the_record(
+    partition: bool,
+) -> None:
+    """``min_extent`` rides in the per-box fit kwargs; the merge sums the record."""
+    from luxar.gsplats.fitting.splat_hygiene import spatial_extent_vox
+    from luxar.gsplats.planner import fit_planned
+    from luxar.gsplats.tree import iter_leaves
+
+    volume = _corner_blobs((16, 16, 16), n=2, corner=12)
+    plan = plan_volume(
+        volume,
+        _density(k_star_reference=80, saturation_cap=80, splats_per_feature=20.0),
+        cell=4,
+        min_leaf=8,
+        max_leaf=8,
+        overlap=2,
+    )
+    result = fit_planned(
+        volume,
+        plan,
+        partition=partition,
+        min_extent=1.4,
+        min_extent_max_mass_share=1.0,
+        n_iters=10,
+        device="cpu",
+        use_cuda=False,
+        use_metal=False,
+        verbose=False,
+    )
+    stats = result.meta["fit_stats"] if partition else result.stats
+    assert stats["min_extent_vox"] == 1.4
+    assert stats["min_extent_removed"] > 0
+    assert 0 < stats["min_extent_removed_mass_share"] <= 1
+    leaves = (
+        [
+            np.concatenate([s.cholesky_factors for s in leaf.additive_sublods])
+            for leaf in iter_leaves(result)
+        ]
+        if partition
+        else [result.cholesky_factors]
+    )
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    for chol in leaves:
+        probe = GSplatData(
+            centers=np.zeros((len(chol), 3), np.float32),
+            amplitudes=np.ones(len(chol), np.float32),
+            cholesky_factors=chol,
+        )
+        assert np.all(spatial_extent_vox(probe, np.ones(3)) >= 1.4)
+
+
+@pytest.mark.parametrize("partition", [False, True])
 def test_planned_fit_without_dynamic_ops_keeps_population(partition: bool) -> None:
     from luxar.gsplats.planner import fit_planned
     from luxar.gsplats.tree import total_splats

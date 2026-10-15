@@ -707,9 +707,12 @@ early_stop_patience: 400  # Stop after N iters without improvement
 # --- Dynamic Operations ---
 enable_dynamic_ops: true  # Enable splat relocation during optimization
 dynamic_ops_verbose: false  # Verbose logging for dynamic ops
+relocation_reseed_sigma_vox: null  # Reseed sigma of relocated splats, voxels (null=0.5; --reseed-sigma)
 
 # --- Post-Processing ---
 cull_retention: 0.999  # Post-fit cumulative culling (0-1, null=disabled)
+min_extent: 0.6         # Drop sub-voxel specks: spatial sigma < N fitted voxels (0=keep; --min-extent)
+min_extent_max_mass_share: 0.02  # Skip that pruning when it would remove more of the brightness
 voxel_footprint_correction: false  # Inflate covariances by voxel footprint
 
 # --- Boundary Containment ---
@@ -764,6 +767,112 @@ class TestFitCommand:
         assert result.exit_code == 0
         parsed = yaml.safe_load(result.stdout)
         assert parsed["floor"] == "auto"
+
+    def test_fit_help_exposes_speck_flags(self, runner: CliRunner) -> None:
+        result = runner.invoke(app, ["gsplat", "fit", "--help"])
+        assert result.exit_code == 0
+        text = _plain(result.stdout)
+        assert "--min-extent" in text
+        assert "--reseed-sigma" in text
+
+    def test_dump_config_includes_speck_keys(self, runner: CliRunner) -> None:
+        result = runner.invoke(app, ["gsplat", "fit", "--dump-config"])
+        assert result.exit_code == 0
+        parsed = yaml.safe_load(result.stdout)
+        assert parsed["min_extent"] == 0.6
+        assert parsed["min_extent_max_mass_share"] == 0.02
+        assert parsed["relocation_reseed_sigma_vox"] is None
+
+    def test_fit_forwards_min_extent_and_reseed_sigma(
+        self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
+    ) -> None:
+        """`--min-extent` / `--reseed-sigma` reach the fitter and the store."""
+        from luxar.gsplats.gsplat_data import GSplatData
+
+        out = tmp_path / "speck.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(out),
+                "--iters",
+                "5",
+                "--seeds",
+                "10",
+                "--device",
+                "cpu",
+                "--min-extent",
+                "0.7",
+                "--reseed-sigma",
+                "0.9",
+                "--quiet",
+            ],
+        )
+        assert result.exit_code == 0, f"fit failed: {result.stdout}"
+        stats = GSplatData.load(out, include_stats=True).stats
+        assert stats["relocation_reseed_sigma_vox_effective"] == pytest.approx(0.9)
+        assert stats["min_extent_vox"] == pytest.approx(0.7)
+        assert "min_extent_removed" in stats
+
+    @pytest.mark.parametrize(
+        "flag, value", [("--min-extent", "-1"), ("--reseed-sigma", "0")]
+    )
+    def test_fit_rejects_bad_speck_flags(
+        self,
+        runner: CliRunner,
+        small_volume_npy: Path,
+        tmp_path: Path,
+        flag: str,
+        value: str,
+    ) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(tmp_path / "bad.gsplats.zarr"),
+                flag,
+                value,
+            ],
+        )
+        assert result.exit_code == 2, result.output
+        assert flag in _plain(result.output)
+        assert not (tmp_path / "bad.gsplats.zarr").exists()
+
+    def test_tile_and_box_workers_forward_speck_flags(self) -> None:
+        from luxar.gsplats.fit_tiled_parallel import build_worker_cmd
+        from luxar.gsplats.planner.fit_planned_parallel import (
+            _default_worker_cmd_builder,
+        )
+
+        cmd = build_worker_cmd(
+            ["luxar"],
+            "in.npy",
+            "out.zarr",
+            0,
+            2,
+            64,
+            8,
+            min_extent=0.0,
+            reseed_sigma=0.9,
+        )
+        assert cmd[cmd.index("--min-extent") + 1] == "0.0"
+        assert cmd[cmd.index("--reseed-sigma") + 1] == "0.9"
+        bare = build_worker_cmd(["luxar"], "in.npy", "out.zarr", 0, 2, 64, 8)
+        assert "--min-extent" not in bare and "--reseed-sigma" not in bare
+
+        box = _default_worker_cmd_builder(
+            "in.npy", "plan.json", min_extent=0.8, reseed_sigma=1.0
+        )(0, Path("box.zarr"))
+        assert box[box.index("--min-extent") + 1] == "0.8"
+        assert box[box.index("--reseed-sigma") + 1] == "1.0"
+        bare_box = _default_worker_cmd_builder("in.npy", "plan.json")(
+            0, Path("box.zarr")
+        )
+        assert "--min-extent" not in bare_box
 
     def test_cal_help_exposes_floor_flag(self, runner: CliRunner) -> None:
         result = runner.invoke(app, ["gsplat", "cal", "--help"])
