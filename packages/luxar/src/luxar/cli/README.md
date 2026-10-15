@@ -343,7 +343,32 @@ Convert .gsplats.zarr to a Luxar scene for the web viewer.
 ```bash
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --center
 luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --scale-intensity 0.1
+luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --view xz        # face the XZ plane
+luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --dim-order x,y,z  # opt out
 ```
+
+Fitted image volumes open in the **image convention** (the Fiji/napari view: x
+right, y down, looking along +z through the stack). A fit's center columns are
+array order, so convert names them — `--dim-order`, else the store's
+`dimension_metadata` (stamped on every fit and re-stamped by `gsplat merge`; see
+`docs/specs/GSPLATS_ZARR_FORMAT.md`), else `z,y,x` / `y,x` for a store with
+fitting provenance — and maps them onto x, y, z-ordered scene dimensions through
+`dim_order` (Cholesky factors permuted with the centers). The y flip is a
+**camera** choice, `viewer_config.camera = {up: (0, -1, 0), view_axis: "xy"}`,
+not a negative-scale transform: a negative scale would mirror the geometry
+(handedness, every pick/scale-bar readout and the scene bounds would report
+`-y`), while the camera leaves coordinates, units, picking and bounds as fitted.
+A y column before the x column (array order) is what triggers the flip. When the
+names include x and y they also pick the displayed dims (x, y, z shown, anything
+else such as `t` hidden and discrete), wherever the columns sit (`--dim-order
+t,z,y,x`). `--dim-order` names columns without moving data, so `--dim-order
+x,y,z` on a z,y,x fit is the **legacy positional mode** (the z column labelled
+x, no flip) — for reproducing old scenes or data genuinely stored as x, y, z. A partition/nested store is grafted node-for-node
+and cannot be remapped: its scene dimensions keep column order (named `z, y, x`)
+and the same camera preset finds the XY plane by dimension name. An unnamed
+store without fitting provenance (a classical-splat import, geometric x, y, z
+data) keeps the positional mapping. `--view xy|xz|yz` picks the opening face (stored as
+`camera.view_axis`; the viewer's `?viewAxis=` overrides it per session).
 
 #### `luxar gsplat render`
 Render gsplats back to a volume for quality comparison. Partition and nested
@@ -360,7 +385,12 @@ colors). Partition/nested inputs must be flattened first with `luxar gsplat flat
 luxar gsplat merge a.zarr b.zarr -o merged.zarr
 luxar gsplat merge t0.zarr t1.zarr t2.zarr -o 4d.zarr --as-dimension --values 0,1,2
 luxar gsplat merge ch0.zarr ch1.zarr -o multi.zarr --channel-colors "#ff0080,#00ff00"
+luxar gsplat merge t0.zarr t1.zarr -o 4d.zarr --as-dimension --values 0,1 --dimension-name time
 ```
+When every input agrees on its axis names (its `dimension_metadata`, or a fit's
+array-order names), the merged root records them — plus the `--as-dimension` axis
+named by `--dimension-name` (default `t`) — so `gsplat convert` opens a merged
+timelapse of fits in the image convention instead of edge-on.
 The inputs' authored appearance (blending mode, opacity, colormap, …) is carried
 onto the merged root wherever the inputs **agree**; an input with no opinion on a
 key casts no vote, and a key they genuinely disagree on is dropped with a warning

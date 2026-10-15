@@ -229,6 +229,25 @@ recorded for provenance but is not applied by current consumers; producers
 therefore omit a unit when the stored center coordinates are not already in that
 unit. Consumers that do not know the attribute ignore it.
 
+Every writer also fills the gap a plain fit leaves: when the root carries no
+`dimension_metadata` but its `fitting/source_shape` has the same rank as the
+centers (a fit of a 2-D or 3-D image), the root is stamped with the column NAMES
+in array order — `[{"name": "z"}, {"name": "y"}, {"name": "x"}]` for a stack,
+`[{"name": "y"}, {"name": "x"}]` for a plane. Names only: a later `gsplat
+transform` moves data inside the same frame, so the axis names stay honest where
+a voxel `scale` would not (the fit's spacing is already recorded verbatim under
+`fitting/config`, `voxel_size` + `output_space`). An explicit
+`dimension_metadata` always wins, and a stacked timelapse (centers outranking the
+source grid) is left unstamped. `luxar gsplat convert` reads the names to map the
+columns onto x, y, z-ordered scene dimensions and open the scene in the image
+convention. A store without them is assumed to be in array order only when it
+carries the same fitting provenance the stamp keys on (a fit written before the
+stamp); any other unnamed store — geometric x, y, z data, a classical-splat
+import — keeps the positional mapping. `luxar gsplat merge` re-stamps the names
+when every input agrees on them, appending the `--as-dimension` axis
+(`--dimension-name`, default `t`).
+Readers must tolerate the attribute's absence; no format version change.
+
 ---
 
 ## Zarr Structure (v3.x — node tree)

@@ -134,6 +134,54 @@ def _mode_invalidated_appearance(
     return exclude
 
 
+def _input_axis_names(path: Path, dataset: "GSplatData") -> Optional[list[str]]:
+    """One input's column names: its root ``dimension_metadata``, else fit order."""
+    from luxar.gsplats.io.load_gsplats import read_root_dimension_metadata
+    from luxar.gsplats.io.save_gsplats import fit_axis_dimension_metadata
+
+    metadata = read_root_dimension_metadata(path)
+    if not isinstance(metadata, list) or len(metadata) != dataset.ndim:
+        metadata = fit_axis_dimension_metadata(dataset.stats, dataset.ndim)
+    if not metadata:
+        return None
+    names = [
+        entry.get("name") if isinstance(entry, dict) else None for entry in metadata
+    ]
+    return (
+        [str(n) for n in names]
+        if all(isinstance(n, str) and n for n in names)
+        else None
+    )
+
+
+def merged_dimension_attrs(
+    inputs: list[Path],
+    datasets: list["GSplatData"],
+    merged_ndim: int,
+    new_dimension: Optional[str],
+) -> dict[str, Any]:
+    """Name the merged columns when every input agrees on its axis names.
+
+    The merge rebuilds the store from arrays, so the inputs' ``dimension_metadata``
+    (and a fit's derivable array-order names) would otherwise be lost and a
+    merged timelapse of z-stacks would open edge-on. Names only: units and
+    scales may legitimately differ between inputs. ``new_dimension`` names the
+    column ``--as-dimension`` appends. Returns ``{"dimension_metadata": [...]}``,
+    or ``{}`` when any input is unnamed, the inputs disagree, or the count does
+    not match the merged columns.
+    """
+    names = [
+        _input_axis_names(path, ds) for path, ds in zip(inputs, datasets, strict=True)
+    ]
+    first = names[0]
+    if first is None or any(other != first for other in names[1:]):
+        return {}
+    merged = first + ([new_dimension] if new_dimension else [])
+    if len(merged) != merged_ndim or len(set(merged)) != len(merged):
+        return {}
+    return {"dimension_metadata": [{"name": name} for name in merged]}
+
+
 def run_merge_datasets(
     *,
     inputs: list[Path],
@@ -144,6 +192,7 @@ def run_merge_datasets(
     channel_colors: Optional[str],
     compress: Optional[Literal["zip", "tar.gz"]],
     encoding: Literal["auto", "precision", "memory"],
+    dimension_name: str = "t",
 ) -> None:
     """Run merge command implementation."""
     try:
@@ -234,6 +283,16 @@ def run_merge_datasets(
                 input_has_colors=[d.colors is not None for d in datasets],
                 output_has_colors=merged.colors is not None,
             )
+
+            root_attrs = {
+                **(root_attrs or {}),
+                **merged_dimension_attrs(
+                    inputs,
+                    datasets,
+                    merged.ndim,
+                    dimension_name if as_dimension else None,
+                ),
+            }
 
             with asection(f"Saving to {output_path.name}"):
                 # Color SDR/HDR is auto-detected by the writer.

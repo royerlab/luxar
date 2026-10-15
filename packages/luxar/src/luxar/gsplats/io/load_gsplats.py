@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import AbstractSet, Any, Dict, List, Mapping, Sequence, Union
+from typing import AbstractSet, Any, Dict, List, Mapping, Optional, Sequence, Union
 
 from arbol import aprint
 
@@ -108,6 +108,15 @@ def read_authored_appearance(path: str | Path) -> Dict[str, Any]:
     if has_custom_colormap:
         _warn_custom_colormap_loss()
     return carried
+
+
+def read_root_dimension_metadata(path: str | Path) -> Optional[Any]:
+    """The root ``dimension_metadata`` of a store/archive, or ``None`` (best-effort).
+
+    Attrs only, and silent: unlike :func:`read_rebuild_root_attrs` it carries no
+    appearance and so has no custom-colormap loss to warn about.
+    """
+    return _read_root_attrs(path).get("dimension_metadata")
 
 
 def read_rebuild_root_attrs(path: str | Path) -> Dict[str, Any]:

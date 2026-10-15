@@ -33,6 +33,7 @@ from typing import (
     Literal,
     Optional,
     Sequence,
+    Tuple,
     cast,
 )
 
@@ -856,6 +857,7 @@ def _finalize_gsplat_root(
         # Reduction/topology stats: everything split_fitting_info's other
         # buckets do not consume. Optional group: absent for plain fits.
         root.create_group("pipeline").attrs.update(pipeline_info)
+    _stamp_fit_axis_names(root, resolved_fitting_info)
 
     # One colormap window per gsplat structure (#1691) — before the hash so
     # the stamp covers the corrected attrs.
@@ -864,6 +866,70 @@ def _finalize_gsplat_root(
     # Stamp BEFORE consolidating so the hash lands in `.zmetadata` too.
     _stamp_content_hash(root)
     consolidate(root)
+
+
+#: Axis names of a fitted image volume, in ARRAY order (slowest axis first) —
+#: the order every fitter emits center columns in. Keyed by the fitted volume's
+#: rank; other ranks carry no conventional names and are left unstamped.
+IMAGE_ARRAY_AXIS_NAMES: Dict[int, Tuple[str, ...]] = {
+    2: ("y", "x"),
+    3: ("z", "y", "x"),
+}
+
+
+def fit_axis_dimension_metadata(
+    fitting_info: Optional[Dict[str, Any]], ndim: Optional[int]
+) -> Optional[List[Dict[str, Any]]]:
+    """``dimension_metadata`` naming a fitted volume's center columns, or ``None``.
+
+    A fit's center columns are the input array's axes in array order, so a store
+    whose ``fitting/source_shape`` has the same rank as its centers is a fit of a
+    2-D/3-D image and its columns are ``(y, x)`` / ``(z, y, x)``. Anything else —
+    no fitting provenance, a stacked timelapse whose centers outrank the source
+    grid, an unconventional rank — returns ``None`` rather than guessing.
+
+    Names only, deliberately: a later geometric ``gsplat transform`` scales or
+    rotates the data inside the same frame, so the frame's axis NAMES stay
+    honest, whereas a voxel ``scale`` would not (the fit's voxel spacing is
+    already recorded verbatim in ``fitting/config``).
+    """
+    if not fitting_info or ndim is None:
+        return None
+    shape = fitting_info.get("source_shape")
+    if not isinstance(shape, (list, tuple)) or len(shape) != ndim:
+        return None
+    names = IMAGE_ARRAY_AXIS_NAMES.get(ndim)
+    if names is None:
+        return None
+    return [{"name": name} for name in names]
+
+
+def _root_ndim(root: zarr.Group) -> Optional[int]:
+    """The center-column count a standalone root declares, if it declares one."""
+    ndim = root.attrs.get("ndim")
+    if isinstance(ndim, int) and not isinstance(ndim, bool):
+        return ndim
+    bounds = root.attrs.get("position_bounds")
+    if isinstance(bounds, dict) and isinstance(bounds.get("min"), list):
+        return len(bounds["min"])
+    return None
+
+
+def _stamp_fit_axis_names(
+    root: zarr.Group, fitting_info: Optional[Dict[str, Any]]
+) -> None:
+    """Name a fitted image's center columns on the root, unless already named.
+
+    An explicit ``dimension_metadata`` (a batch-fit merge's NGFF axes, or one a
+    rebuild carried over) always wins; this only fills the gap a plain ``fit``
+    left, so ``gsplat convert`` can map the columns onto scene axes without
+    guessing. See :func:`fit_axis_dimension_metadata`.
+    """
+    if "dimension_metadata" in root.attrs:
+        return
+    metadata = fit_axis_dimension_metadata(fitting_info, _root_ndim(root))
+    if metadata is not None:
+        root.attrs["dimension_metadata"] = metadata
 
 
 def _resolve_streaming_layout(

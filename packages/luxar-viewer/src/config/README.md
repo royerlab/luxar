@@ -568,7 +568,10 @@ From `./url-params.ts`:
   load. Empty today (the 2026-09 camelCase rename was a pre-release hard cut).
 - `readUrlParams(search?)` — typed snapshot of recognized `?param=value` pairs.
   Includes `input: 'touch' | 'mouse' | null` (`?input=`), the JS-only input-profile
-  override applied by `core/bootstrap.ts` via `utils/input-capabilities`.
+  override applied by `core/bootstrap.ts` via `utils/input-capabilities`, and
+  `viewAxis: 'xy' | 'xz' | 'yz' | null` (`?viewAxis=`), the session axis-preset
+  override threaded to `SceneManager.init` (named apart from `?view=`, the
+  bookmark parameter).
 - `normalizeDataSourceUrl(rawSrc)`, `buildDataSourceBrowserUrl(src, location)`,
   `replaceBrowserDataSourceUrl(src, target?)`.
 

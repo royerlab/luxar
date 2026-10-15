@@ -1100,6 +1100,49 @@ class TestCameraZoom:
         assert wp.to_dict()["camera"] == {"zoom": 4}
 
 
+class TestCameraViewAxis:
+    """Axis-aligned opening view (`camera.view_axis`) — gsplat convert's xy preset."""
+
+    def test_round_trips_and_is_omitted_when_unset(self) -> None:
+        cam = CameraConfig(up=(0.0, -1.0, 0.0), view_axis="xy")
+        assert cam.to_dict() == {"up": [0.0, -1.0, 0.0], "view_axis": "xy"}
+        assert CameraConfig.from_dict(cam.to_dict()) == cam
+        assert "view_axis" not in CameraConfig(up=(0, 1, 0)).to_dict()
+
+    @pytest.mark.parametrize("axis", ["yx", "XY", "z", ""])
+    def test_rejects_unknown_presets(self, axis: str) -> None:
+        with pytest.raises(ValueError, match="view_axis must be one of"):
+            CameraConfig(view_axis=axis)
+
+    def test_waypoint_view_axis_warns_that_it_is_ignored(self) -> None:
+        with pytest.warns(UserWarning, match="view_axis.*ignored"):
+            Waypoint(when={"story": 1}, camera=CameraConfig(view_axis="xy"))
+
+    def test_every_camera_key_is_parsed_by_the_viewer(self) -> None:
+        """Cross-language lock: the keys Python writes are keys TS declares."""
+        source = viewer_source("src/types/zarr.ts").read_text(encoding="utf-8")
+        body = re.search(
+            r"export interface ZarrCameraConfig \{(?P<body>.*?)^\}",
+            source,
+            re.DOTALL | re.MULTILINE,
+        )
+        assert body is not None
+        ts_keys = set(re.findall(r"^\s*(\w+)\?:", body.group("body"), re.MULTILINE))
+        full = CameraConfig(
+            position=(0, 0, 1),
+            target=(0, 0, 0),
+            up=(0, 1, 0),
+            fov=50,
+            fov_preset="50mm Normal",
+            near=0.1,
+            far=10,
+            target_node="n",
+            zoom=2,
+            view_axis="xz",
+        )
+        assert set(full.to_dict()) <= ts_keys
+
+
 class TestControlPanelConfig:
     """The authored touch-panel block.
 

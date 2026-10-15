@@ -387,6 +387,17 @@ describe('extractRenderingOverrides — cinematic_mode preset expansion', () => 
 });
 
 describe('extractCameraOverrides', () => {
+  it('reads a valid camera.view_axis as viewAxis', () => {
+    const cam = extractCameraOverrides({ camera: { view_axis: 'xz', up: [0, -1, 0] } });
+    expect(cam.viewAxis).toBe('xz');
+    expect(cam.up).toEqual({ x: 0, y: -1, z: 0 });
+  });
+
+  it('drops an unknown camera.view_axis instead of guessing', () => {
+    expect(extractCameraOverrides({ camera: { view_axis: 'diagonal' } }).viewAxis).toBeUndefined();
+    expect(extractCameraOverrides({ camera: {} }).viewAxis).toBeUndefined();
+  });
+
   it('should return empty object for empty config', () => {
     const cam = extractCameraOverrides({});
     expect(cam.position).toBeUndefined();

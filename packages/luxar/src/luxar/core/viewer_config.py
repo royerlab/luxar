@@ -15,12 +15,13 @@ from __future__ import annotations
 import json
 import math
 import re
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 from urllib.parse import urlsplit
 
-from ..typing_utils._format_contract import TONE_MAPPINGS
+from ..typing_utils._format_contract import TONE_MAPPINGS, VIEW_AXES
 from ..validation.overlays import validate_visible_range
 from .trajectories import (
     TRAJECTORY_NAMES,
@@ -55,6 +56,16 @@ VALID_AUTO_ROTATE_AXES = (
     "world-y",
     "world-z",
 )
+# Axis-aligned opening view (`CameraConfig.view_axis`). Each names the plane the
+# viewer looks at, horizontal axis first: "xy" faces the plane of the scene
+# dimensions named x and y (looking along z), "xz" along y, "yz" along x. The
+# letters are DIMENSION NAMES, resolved against the scene's displayed dims (a
+# fitted z-stack whose columns stay in z,y,x order still faces its XY plane),
+# falling back to world X/Y/Z. The SIGN of `up` along the vertical axis picks the
+# convention: a negative up (e.g. (0, -1, 0)) draws the vertical axis pointing
+# DOWN, the image convention of Fiji/napari. Single-sourced from
+# `format-contract/contract.yaml::view_axes` (TS: `types/view-axis.ts`).
+VALID_VIEW_AXES = VIEW_AXES
 VALID_FOV_PRESETS = (
     "28mm Wide",
     "35mm",
@@ -118,6 +129,15 @@ class CameraConfig:
             is in ortho mode, where camera distance changes nothing and zoom
             is what frames tighter; ignored by a perspective camera. This is
             how an ortho waypoint frames a cluster.
+        view_axis: Axis-aligned opening view, one of ``"xy"`` / ``"xz"`` /
+            ``"yz"`` (see :data:`VALID_VIEW_AXES`). Governs the AUTO-framed
+            opening view and Home/F re-framing: the camera faces the named
+            plane, horizontal axis pointing right, and the sign of ``up``
+            along the vertical axis chooses whether that axis points up or down
+            on screen. The letters are scene dimension names (falling back to
+            world X/Y/Z). An explicit ``position`` wins: it pins the pose and
+            suppresses auto-framing. Load-time only — a ``Waypoint`` camera
+            ignores it. The viewer URL ``?viewAxis=xy|xz|yz`` overrides it.
     """
 
     position: Optional[Tuple[float, float, float]] = None
@@ -129,6 +149,7 @@ class CameraConfig:
     far: Optional[float] = None
     target_node: Optional[str] = None
     zoom: Optional[float] = None
+    view_axis: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Validate camera configuration values."""
@@ -162,6 +183,13 @@ class CameraConfig:
             raise ValueError(f"far must be > 0, got {self.far}")
 
         self._validate_zoom()
+        self._validate_view_axis()
+
+    def _validate_view_axis(self) -> None:
+        if self.view_axis is not None and self.view_axis not in VALID_VIEW_AXES:
+            raise ValueError(
+                f"view_axis must be one of {VALID_VIEW_AXES}, got {self.view_axis!r}"
+            )
 
     def _validate_zoom(self) -> None:
         if self.zoom is not None and (not math.isfinite(self.zoom) or self.zoom <= 0):
@@ -170,24 +198,22 @@ class CameraConfig:
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dictionary, omitting None fields."""
         result: Dict[str, Any] = {}
-        if self.position is not None:
-            result["position"] = list(self.position)
-        if self.target is not None:
-            result["target"] = list(self.target)
-        if self.up is not None:
-            result["up"] = list(self.up)
-        if self.fov is not None:
-            result["fov"] = self.fov
-        if self.fov_preset is not None:
-            result["fov_preset"] = self.fov_preset
-        if self.near is not None:
-            result["near"] = self.near
-        if self.far is not None:
-            result["far"] = self.far
-        if self.target_node is not None:
-            result["target_node"] = self.target_node
-        if self.zoom is not None:
-            result["zoom"] = self.zoom
+        for name in ("position", "target", "up"):
+            vector = getattr(self, name)
+            if vector is not None:
+                result[name] = list(vector)
+        for name in (
+            "fov",
+            "fov_preset",
+            "near",
+            "far",
+            "target_node",
+            "zoom",
+            "view_axis",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                result[name] = value
         return result
 
     @classmethod
@@ -203,6 +229,7 @@ class CameraConfig:
             far=data.get("far"),
             target_node=data.get("target_node"),
             zoom=data.get("zoom"),
+            view_axis=data.get("view_axis"),
         )
 
 
@@ -611,6 +638,17 @@ class Waypoint:
     speed: Optional[float] = None
     duration_range_ms: Optional[Tuple[float, float]] = None
 
+    def _warn_ignored_view_axis(self) -> None:
+        """``camera.view_axis`` is load-time framing; a waypoint flight ignores it."""
+        if self.camera.view_axis is not None:
+            warnings.warn(
+                f"Waypoint camera.view_axis={self.camera.view_axis!r} is ignored: "
+                "view_axis only frames the scene's opening camera (and Home/F). "
+                "Give the waypoint a position/target/up instead.",
+                UserWarning,
+                stacklevel=3,
+            )
+
     def __post_init__(self) -> None:
         self._validate_when()
 
@@ -632,6 +670,7 @@ class Waypoint:
             )
 
         self._validate_flight()
+        self._warn_ignored_view_axis()
 
         if self.reveal is not None and self.reveal not in VALID_WAYPOINT_REVEALS:
             raise ValueError(

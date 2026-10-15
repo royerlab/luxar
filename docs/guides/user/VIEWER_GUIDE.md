@@ -240,6 +240,7 @@ Append parameters to the viewer URL to control startup behavior.
 | `workers` | number | Worker pool size for this session (`0` = auto, max 16). Beats the stored Settings value without rewriting it. |
 | `prefetch` | number | Concurrent chunk fetches for this session (the Settings "Prefetch Limit", 1-12). Beats the stored value without rewriting it. |
 | `textScale` | number | Multiplier on every overlay's type (e.g. `0.8`), beating the scene's `viewer_config.text_scale`. Positions, widths and anchors stay as authored. Clamped to [0.25, 4]. |
+| `viewAxis` | `xy` \| `xz` \| `yz` | Axis-aligned opening view for the session: face the plane of the dimensions with those names, horizontal axis to the right. Beats the scene's `viewer_config.camera.view_axis`; the scene's `up` still decides whether the vertical axis points up or down (an image-convention scene keeps y down). Applies to the auto-framed opening and to Home/F re-framing, not to a scene that pins an explicit camera `position`. Named `viewAxis` because `view` is the bookmark parameter. |
 | `dpr` | number | Pin a fixed device pixel ratio and disable adaptive DPR (clamped to [0.25, native DPR]). Overrides the high-DPR ceiling, so `?dpr=2` renders at 2 even with **Allow High DPR** off. For deterministic E2E/visual runs. |
 | `input` | `touch` \| `mouse` | Force the session's JS input profile: pointer flags, hover capability, touch points, and device tier. This changes device-class fallback budgets (`touch` only — `mouse` keeps the detected tier), primary-tip pen routing, the Safari gesture-canceller gate, and whether the help overlay lists its Touch section; `touch` additionally applies the mobile rendering budgets (adaptive-DPR floor and refresh ceiling, high-DPR cap, GPU-byte and element-texture ceilings, data-worker count) and skips the blend-variant program warm-up. Stylesheets and non-pen gesture routing still follow the real media features and `PointerEvent.pointerType`, so a faithful check needs device emulation or a real device. Detected by default, including an iPad whose Safari reports a macOS user agent. |
 | `lineJoin` | `none` \| `miter` | Force the line join style for the session — **applies only to `linePrimitive=screen-space`**. The default capsule primitive partitions every interior joint along its bisector unconditionally, so this parameter (and each node's authored `join` attribute) is a no-op there. |
@@ -706,12 +707,31 @@ switched to (both of the other two name the scene you just left). With no
 `?title=` at all, the viewer derives the name from the store `?src=` points
 at — which is what keeps a reloaded or shared post-switch link named.
 
+### Axis-aligned opening views
+
+`CameraConfig(view_axis="xy" | "xz" | "yz")` makes the auto-framed opening
+camera (and Home/F) face one coordinate plane, horizontal axis first: `xy`
+looks along z with x to the right, `xz` along y, `yz` along x. The letters are
+scene DIMENSION NAMES, resolved against the displayed dimensions, so a scene
+whose columns stay in `(z, y, x)` order still faces its XY plane; missing names
+fall back to world X/Y/Z. The SIGN of `up` along the vertical axis picks the
+convention: the default up (`+y`) draws the vertical axis pointing up, a
+negative one draws it pointing down. When `up` is orthogonal to the chosen
+vertical axis (a `?viewAxis=` override picking a face the author did not), the
+sign of `up`'s dominant component decides. Every preset is a rotation of the
+data, never a mirror.
+
+`luxar gsplat convert` writes `view_axis="xy"` with `up=(0, -1, 0)` for fitted
+image volumes: the IMAGE CONVENTION of Fiji and napari (x right, y down, looking
+along +z through the stack). An explicit `position` pins the pose and wins over
+the preset; waypoint cameras ignore it. `?viewAxis=` overrides it per session.
+
 ### Available Configuration Categories
 
 | Category | Example fields |
 |----------|---------------|
 | Scene identity | `title` (browser tab title) |
-| Camera | `position`, `target`, `up`, `fov`, `fov_preset`, `near`, `far`, `target_node`, `zoom` (ortho only) |
+| Camera | `position`, `target`, `up`, `fov`, `fov_preset`, `near`, `far`, `target_node`, `zoom` (ortho only), `view_axis` (`xy`/`xz`/`yz` opening face; see "Axis-aligned opening views" below) |
 | Theme | `theme` (`dark`, `light`, `frosted-glass`, `liquid-glass`) |
 | Tone mapping | `tone_mapping`, `exposure`, `global_offset`, `global_gamma` |
 | Bloom | `bloom_enabled`, `bloom_strength`, `bloom_radius`, `bloom_threshold` |
