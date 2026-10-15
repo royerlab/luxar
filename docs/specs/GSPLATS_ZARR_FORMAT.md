@@ -229,7 +229,9 @@ recorded for provenance but is not applied by current consumers; producers
 therefore omit a unit when the stored center coordinates are not already in that
 unit. Consumers that do not know the attribute ignore it.
 
-Every writer also fills the gap a plain fit leaves: when the root carries no
+`fit --axes` records the kept spatial labels in center-column order as explicit
+root `dimension_metadata`, including `depth`/`height`/`width` as `z`/`y`/`x`.
+Every writer also fills the gap an unlabeled fit leaves: when the root carries no
 `dimension_metadata` but its `fitting/source_shape` has the same rank as the
 centers (a fit of a 2-D or 3-D image), the root is stamped with the column NAMES
 in array order — `[{"name": "z"}, {"name": "y"}, {"name": "x"}]` for a stack,

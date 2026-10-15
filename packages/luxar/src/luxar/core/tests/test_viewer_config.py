@@ -2,6 +2,7 @@
 
 import json
 import re
+import warnings
 from pathlib import Path
 
 import pytest
@@ -1115,8 +1116,12 @@ class TestCameraViewAxis:
             CameraConfig(view_axis=axis)
 
     def test_waypoint_view_axis_warns_that_it_is_ignored(self) -> None:
-        with pytest.warns(UserWarning, match="view_axis.*ignored"):
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             Waypoint(when={"story": 1}, camera=CameraConfig(view_axis="xy"))
+        assert len(caught) == 1
+        assert "view_axis='xy' is ignored" in str(caught[0].message)
+        assert caught[0].filename == __file__
 
     def test_every_camera_key_is_parsed_by_the_viewer(self) -> None:
         """Cross-language lock: the keys Python writes are keys TS declares."""

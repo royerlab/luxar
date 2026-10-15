@@ -309,16 +309,23 @@ def _record_tiff_voxel_size(
         return
     from ._tiff_metadata import voxel_info_for_axes
 
-    labels = None
-    if axes is not None:
-        aliases = {"depth": "z", "height": "y", "width": "x"}
-        stripped = [a.strip().lower() for a in axes.split(",") if a.strip()]
-        labels = [
-            aliases.get(label, label) for label in stripped if _axis_kind(label) == "s"
-        ]
+    labels = _spatial_axis_names(axes) if axes is not None else None
     recorded = voxel_info_for_axes(meta, labels, ndim)
     if recorded is not None:
         info.update(recorded)
+
+
+def _spatial_axis_names(axes: str) -> List[str]:
+    """Kept spatial labels from a validated axis spec, in returned array order."""
+    aliases = {"depth": "z", "height": "y", "width": "x"}
+    labels = [a.strip().lower() for a in axes.split(",") if a.strip()]
+    return [aliases.get(label, label) for label in labels if _axis_kind(label) == "s"]
+
+
+def _record_explicit_axes(info: Optional[dict], axes: Optional[str]) -> None:
+    """Expose the kept column names to callers that request loader metadata."""
+    if info is not None and axes is not None:
+        info["axes"] = _spatial_axis_names(axes)
 
 
 def _slice_eager_region(
@@ -382,11 +389,12 @@ def load_volume(
             ``channel`` index is decoded across all channel-like axes. Those
             axes are dropped and spatial axes are kept in the given order.
         info: Optional dict, populated with ``source_dtype`` — the element type
-            of the array AS STORED, captured before the float32 cast below. For
-            an OME-TIFF or a calibrated ImageJ TIFF it also receives the
-            recorded voxel spacing of the RETURNED axes, in array order —
-            only when every returned axis has one: ``axes`` (e.g.
-            ``["z", "y", "x"]``), ``voxel_size`` in MICROMETRES with
+            of the array AS STORED, captured before the float32 cast below.
+            With explicit ``axes``, it also receives the kept spatial labels in
+            array order (e.g. ``["x", "y", "z"]``). For an OME-TIFF or a
+            calibrated ImageJ TIFF it also receives the recorded voxel spacing
+            of the RETURNED axes, only when every returned axis has one:
+            ``axes`` (when not already supplied), ``voxel_size`` in MICROMETRES with
             ``voxel_unit="um"`` (nm/mm/Å/... converted; omitted when a unit is
             unknown), the values and units as recorded in ``source_voxel_size``
             / ``source_voxel_units``, and ``voxel_size_source``
@@ -495,6 +503,7 @@ def load_volume(
             f"with shape {volume.shape}"
         )
     _record_tiff_voxel_size(info, tiff_meta, axes, volume.ndim)
+    _record_explicit_axes(info, axes)
 
     assert isinstance(volume, np.ndarray)
     aprint(f"  Shape: {volume.shape}, dtype: float32")
