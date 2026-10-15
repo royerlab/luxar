@@ -225,6 +225,17 @@ export class DimensionAnimationManager extends THREE.EventDispatcher<DimensionAn
    */
   private onFrame(): boolean {
     const currentTime = performance.now();
+    // Held (the data server is unreachable): the playhead waits instead of
+    // stepping. A step changes the dims, whose listeners wake the loop and
+    // request slices that cannot arrive — playback would keep the loop alive.
+    // Each tick re-arms the next step one period out, so release resumes at
+    // the normal cadence rather than catching up.
+    if (this.animationController.isSelfSustainSuspended) {
+      for (const state of this.animationStates.values()) {
+        if (state.isPlaying) state.nextDue = currentTime + this.tickPeriodMs(state);
+      }
+      return false;
+    }
     this.noteFrameInterval(currentTime);
     const stepsBefore = this.stepCount;
 
