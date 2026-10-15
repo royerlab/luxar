@@ -52,6 +52,65 @@ WorkerLimitReason = Literal[
 ]
 
 
+def cpu_fallback_hint(platform: Optional[str] = None) -> str:
+    """One actionable sentence on WHY a fit is on CPU and what to do about it.
+
+    Branches on what is actually true of this torch install, because the fixes
+    differ and a wrong one wastes an afternoon:
+
+    * macOS -> the MPS hint (CUDA does not exist there);
+    * a CUDA build of torch (``torch.version.cuda`` set) with no visible GPU ->
+      a driver / ``CUDA_VISIBLE_DEVICES`` problem, NOT a reinstall;
+    * a CUDA build WITH a visible GPU -> CPU was chosen explicitly;
+    * a CPU-only torch on Linux/Windows -> install a CUDA build of torch.
+
+    ``platform`` defaults to ``sys.platform`` (a parameter for tests).
+    """
+    import sys
+
+    platform = sys.platform if platform is None else platform
+    if platform == "darwin":
+        if is_mps_available():
+            return "An Apple GPU is available: pass device='mps' (CLI: --device mps)."
+        return (
+            "No MPS device is visible (Apple Silicon and macOS 12.3+ are "
+            "required for GPU fitting on a Mac)."
+        )
+    if getattr(torch.version, "cuda", None):
+        if torch.cuda.is_available():
+            return "A CUDA GPU is available: pass device='cuda' (CLI: --device cuda)."
+        return (
+            f"This torch is a CUDA {torch.version.cuda} build but no CUDA GPU is "
+            "visible (check the NVIDIA driver and CUDA_VISIBLE_DEVICES)."
+        )
+    return (
+        "This torch is a CPU-only build: install a CUDA build of torch for "
+        "NVIDIA GPUs (https://pytorch.org/get-started/locally/)."
+    )
+
+
+_CPU_WARNING_ISSUED = False
+
+
+def warn_cpu_fitting(stacklevel: int = 3, detail: str = "") -> None:
+    """Warn once per process that Gaussian splat fitting is running on CPU.
+
+    ``detail`` is appended verbatim (initialization passes why the native CPU
+    kernels are not in use, when that is the reason the slow path runs).
+    """
+    global _CPU_WARNING_ISSUED
+    import warnings
+
+    if _CPU_WARNING_ISSUED:
+        return
+    message = (
+        "Gaussian splat fitting is running on CPU, which can be orders of "
+        "magnitude SLOWER than a GPU. " + cpu_fallback_hint() + detail
+    )
+    warnings.warn(message, UserWarning, stacklevel=stacklevel)
+    _CPU_WARNING_ISSUED = True
+
+
 def is_mps_available() -> bool:
     """Return True when PyTorch's MPS backend is available.
 

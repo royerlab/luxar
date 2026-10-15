@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import gc
 from dataclasses import fields
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 import numpy as np
 import torch
@@ -87,8 +87,8 @@ class GaussianSplatFitter:
             from arbol import aprint
 
             # A note, not a UserWarning: whether CPU fitting is slow depends on
-            # the dimensionality and numba, which initialization knows and
-            # warns about (`_build_cpu_or_pytorch_model`).
+            # the dimensionality and numba, which initialization knows; it
+            # warns (warn_cpu_fitting) only when the PyTorch renderer runs.
             aprint(
                 "Fitting on the CPU; 3D fits use the native CPU kernels when "
                 "numba is available; a CUDA or Apple Silicon GPU is still faster "
@@ -614,10 +614,10 @@ def fit_gaussian_splats(
                         f"✓ Converged (saved {n_iters - result.stats['iterations']} iterations)"
                     )
 
-        # Calculate and display compression ratio
-        from luxar.gsplats.fitting.visualization import display_compression_analysis
-
-        display_compression_analysis(V, result)
+        # No compression figure here: the one definition Luxar quotes is the
+        # decoded source over the SAVED store's bytes on disk, which exist only
+        # once the (post-cull) result is written — the CLI reports it there,
+        # and `luxar gsplat info` reports it for any store.
 
     # Show napari movie OUTSIDE the fitting section (so it doesn't affect timing)
     if result.stats.get("movie_frames") is not None:
@@ -629,42 +629,208 @@ def fit_gaussian_splats(
 
     # Post-fit cumulative culling (keeps top cull_retention of amplitude)
     if cull_retention is not None and 0 < cull_retention < 1.0 and result.n_splats > 0:
-        from luxar.gsplats._data.filtering import (
-            measured_stats_snapshot,
-            restore_measured_stats,
+        result = _post_fit_cull(
+            result,
+            V,
+            cull_retention,
+            verbose=verbose,
+            device=device,
+            voxel_size=voxel_size,
+            output_space=output_space,
         )
-        from luxar.gsplats.fitting.scale_population import reduce_population_stats
-
-        n_before = result.n_splats
-        amp_before = float(np.sum(result.amplitudes))
-        # `cull` drops the measured scores (they describe the splat set they were
-        # taken on — see content_scoped_stats), but this trim is the last step of
-        # the FIT: the alternative to carrying the measurement over is a fit that
-        # publishes no PSNR at all, and re-scoring costs a second full render.
-        measured = measured_stats_snapshot(result)
-        before_stats = result.stats
-        kept: list[np.ndarray] = []
-        result = result.cull(
-            method="cumulative", retention=cull_retention, keep_mask_out=kept
-        )
-        restore_measured_stats(result, measured)
-        reduce_population_stats(before_stats, result.stats, kept[0])
-        result.stats["n_splats"] = result.n_splats
-        n_removed = n_before - result.n_splats
-        amp_after = float(np.sum(result.amplitudes))
-        amp_retained_pct = 100.0 * amp_after / amp_before if amp_before > 0 else 100.0
-        if verbose:
-            from arbol import aprint
-
-            aprint(
-                f"Post-fit culling (cumulative, retention={cull_retention:.1%}): "
-                f"{n_before} -> {result.n_splats} splats "
-                f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%; "
-                f"amplitude retained: {amp_retained_pct:.1f}%)"
-            )
 
     if not carry_scale_population:
         from luxar.gsplats.fitting.scale_population import finish_population_stats
 
         finish_population_stats(result.stats)
     return result
+
+
+def _post_fit_cull(
+    result: GSplatData,
+    V: np.ndarray,
+    cull_retention: float,
+    *,
+    verbose: bool,
+    device: Optional[str],
+    voxel_size: Optional[Sequence[float] | float],
+    output_space: str,
+) -> GSplatData:
+    """Cumulative post-fit cull, then re-score so the stats describe the SAVED set.
+
+    The fit's quality metrics were measured on the pre-cull splats. Carrying
+    them over (#3107) keeps a store from publishing no PSNR at all, but it
+    labels the saved model with a score for a different splat set. So when the
+    cull removed anything the culled set is rendered once more and its scores
+    replace the carried ones; only if that re-score fails do the pre-cull scores
+    stand (and the console says so). Optimizer residuals (`final_loss`, ...)
+    and the iteration counters still describe the run that produced them.
+    """
+    from luxar.gsplats._data.filtering import (
+        measured_stats_snapshot,
+        restore_measured_stats,
+    )
+    from luxar.gsplats.fitting.scale_population import reduce_population_stats
+
+    n_before = result.n_splats
+    amp_before = float(np.sum(result.amplitudes))
+    # `cull` drops the measured scores (they describe the splat set they were
+    # taken on — see content_scoped_stats), but this trim is the last step of
+    # the FIT: the alternative to carrying the measurement over is a fit that
+    # publishes no PSNR at all.
+    measured = measured_stats_snapshot(result)
+    before_stats = result.stats
+    kept: list[np.ndarray] = []
+    result = result.cull(
+        method="cumulative", retention=cull_retention, keep_mask_out=kept
+    )
+    restore_measured_stats(result, measured)
+    reduce_population_stats(before_stats, result.stats, kept[0])
+    result.stats["n_splats"] = result.n_splats
+    n_removed = n_before - result.n_splats
+    amp_after = float(np.sum(result.amplitudes))
+    amp_retained_pct = 100.0 * amp_after / amp_before if amp_before > 0 else 100.0
+    if verbose:
+        from arbol import aprint
+
+        aprint(
+            f"Post-fit culling (cumulative, retention={cull_retention:.1%}): "
+            f"{n_before} -> {result.n_splats} splats "
+            f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%; "
+            f"amplitude retained: {amp_retained_pct:.1f}%)"
+        )
+    if n_removed > 0 and "psnr_db" in result.stats and result.n_splats > 0:
+        _rescore_saved_model(
+            result,
+            V,
+            verbose=verbose,
+            device=device,
+            voxel_size=voxel_size,
+            output_space=output_space,
+        )
+    return result
+
+
+#: The ``compute_quality_metrics`` keys a post-cull re-score refreshes.
+_RESCORED_QUALITY_KEYS = (
+    "mse",
+    "psnr_db",
+    "ssim",
+    "foreground_psnr_db",
+    "foreground_threshold",
+    "foreground_fraction",
+)
+
+
+def _voxel_space_view(
+    result: GSplatData,
+    voxel_size: Optional[Sequence[float] | float],
+    output_space: str,
+) -> GSplatData:
+    """``result`` on the fitted volume's voxel grid (undo a real-space scale)."""
+    if output_space != "real" or voxel_size is None:
+        return result
+    d = result.centers.shape[1]
+    vs = np.broadcast_to(np.asarray(voxel_size, dtype=np.float64), (d,))
+    tril_scales = np.concatenate([[vs[i]] * (i + 1) for i in range(d)])
+    return GSplatData(
+        centers=(result.centers / vs).astype(np.float32),
+        amplitudes=result.amplitudes,
+        cholesky_factors=(result.cholesky_factors / tril_scales).astype(np.float32),
+        truncation_radius=result.truncation_radius,
+    )
+
+
+def _rescore_saved_model(
+    result: GSplatData,
+    V: np.ndarray,
+    *,
+    verbose: bool,
+    device: Optional[str],
+    voxel_size: Optional[Sequence[float] | float],
+    output_space: str,
+    scorer: "Optional[Callable[[torch.Tensor], dict[str, float]]]" = None,
+) -> bool:
+    """Re-measure ``result`` against ``V`` on the fit's basis, in place.
+
+    Mirrors the scoring in ``fitting/results.py::finalize_results``: render on
+    ``V``'s own voxel grid (undoing the physical-coordinate scale when the fit
+    wrote real-space output) and, by default, compare against
+    ``V - image_min`` with ``compute_quality_metrics``. A fitter with its own
+    score definition (the progressive fitter's chunked PSNR) passes ``scorer``,
+    which maps the render to the stats it refreshes.
+
+    Never raises. On failure the carried (pre-cull) scores stand, one warning
+    line is printed whatever ``verbose`` says, and the reason is recorded as
+    ``stats["quality_error"]`` — the key ``finalize_results`` uses when its own
+    scoring fails. Returns whether the re-score succeeded.
+    """
+    from arbol import aprint
+
+    from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+
+    pre_psnr = result.stats.get("psnr_db")
+    scored = _voxel_space_view(result, voxel_size, output_space)
+    try:
+        dev = str(resolve_torch_device(device))
+        with torch.no_grad():
+            rendered = render_to_volume_tensor(
+                scored,
+                shape=V.shape,
+                device=dev,
+                truncate=result.truncation_radius,
+            )
+            if scorer is None:
+                quality = _default_fit_scorer(V, result.stats.get("image_min"))(
+                    rendered
+                )
+            else:
+                quality = scorer(rendered)
+            del rendered
+    except Exception as exc:  # noqa: BLE001 - scoring must never fail a fit
+        reason = f"{type(exc).__name__}: {exc}"
+        result.stats["quality_error"] = reason
+        aprint(
+            f"Warning: post-cull quality re-score skipped ({reason}); the stored "
+            "quality is the PRE-cull measurement"
+        )
+        return False
+    result.stats.update(quality)
+    result.stats.pop("quality_error", None)
+    if verbose:
+        new_psnr = quality.get("psnr_db")
+        delta = (
+            f" ({new_psnr - pre_psnr:+.2f} dB vs fitted)"
+            if pre_psnr is not None and new_psnr is not None
+            else ""
+        )
+        extra = "".join(
+            f", {label}={quality[key]:{fmt}}"
+            for key, label, fmt in (("ssim", "SSIM", ".4f"), ("mse", "MSE", ".2e"))
+            if key in quality
+        )
+        aprint(
+            f"Quality (saved model, after post-fit cull): "
+            f"PSNR={new_psnr:.1f} dB{delta}, "
+            f"foreground PSNR={quality.get('foreground_psnr_db', float('nan')):.1f} dB"
+            f"{extra}"
+        )
+    return True
+
+
+def _default_fit_scorer(
+    V: np.ndarray, image_min: Optional[float]
+) -> "Callable[[torch.Tensor], dict[str, float]]":
+    """``finalize_results``' own scoring: ``compute_quality_metrics`` vs ``V - image_min``."""
+    from luxar.gsplats.fit_basis import reference_on_fit_basis
+    from luxar.gsplats.metrics import compute_quality_metrics
+
+    def score(rendered: torch.Tensor) -> dict[str, float]:
+        ref = torch.from_numpy(
+            reference_on_fit_basis(V, image_min).astype(np.float32, copy=False)
+        ).to(rendered.device)
+        quality = compute_quality_metrics(rendered, ref)
+        del ref
+        return {key: quality[key] for key in _RESCORED_QUALITY_KEYS}
+
+    return score

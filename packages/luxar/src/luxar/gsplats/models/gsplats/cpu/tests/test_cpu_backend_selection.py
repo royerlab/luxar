@@ -23,6 +23,7 @@ from luxar.gsplats.models.gsplats.cpu.backend import (
     resolve_thread_count,
 )
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
+from luxar.gsplats.utils import device as device_mod
 
 _KERNELS_MODULE = "luxar.gsplats.models.gsplats.cpu.kernels"
 
@@ -31,6 +32,8 @@ _KERNELS_MODULE = "luxar.gsplats.models.gsplats.cpu.kernels"
 def _fresh_selection(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv(BACKEND_ENV, raising=False)
     monkeypatch.setenv(THREADS_ENV, "2")
+    # The PyTorch-path CPU warning is once per process; re-arm it per test.
+    monkeypatch.setattr(device_mod, "_CPU_WARNING_ISSUED", False)
     backend_mod.reset_for_tests()
     yield
     backend_mod.reset_for_tests()
@@ -147,11 +150,14 @@ def test_fit_without_numba_uses_the_pytorch_model_and_hints_at_numba(
     from luxar.gsplats.fitting.initialization import initialize_optimization
 
     config, data = _config_3d(verbose=True)
-    with pytest.warns(UserWarning, match="running on CPU"):
+    with pytest.warns(UserWarning, match="running on CPU") as record:
         components = initialize_optimization(config, data)
     assert type(components.model) is GaussianSplatModel
+    message = " ".join(str(w.message) for w in record)
+    assert "native CPU kernels are unavailable" in message
+    assert "pip install numba" in message
+    assert device_mod.cpu_fallback_hint() in message  # WP2's honest reason
     out = capsys.readouterr().out
-    assert "native CPU kernels are unavailable" in out
     assert "Model class: GaussianSplatModel (PyTorch, device=cpu)" in out
 
 

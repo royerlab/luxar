@@ -374,9 +374,14 @@ def _cull_keeping_measured_scores(data: GSplatData, retention: float) -> GSplatD
 
     ``cull`` drops inherited reconstruction scores, because a score describes the
     splat set it was taken on (#1600). This trim is the last step of the FIT
-    rather than a rewrite of a published artifact, and re-scoring would cost a
-    second full render of the volume — so the measurement is carried across, the
-    way it always was. See
+    rather than a rewrite of a published artifact, so the measurement is carried
+    across. What that leaves PRE-cull is precise: on the partition path each
+    PART keeps its own tile fit's score of its (apodized) crop, measured before
+    this trim — re-rendering every tile crop again is not paid for. The
+    WHOLE-VOLUME merged score is not carried: ``stamp_merged_quality`` measures
+    it afterwards on the culled, saved set (flat merge and partition alike), and
+    when its memory budget declines there is no merged score at all rather than
+    a stale one. See
     :func:`luxar.gsplats._data.filtering.content_scoped_stats` for why a later
     ``gsplat cull`` gets no such exemption.
     """

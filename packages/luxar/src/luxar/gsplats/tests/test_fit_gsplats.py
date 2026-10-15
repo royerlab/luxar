@@ -556,14 +556,37 @@ class TestDeviceSupport:
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         monkeypatch.setattr(torch.backends, "mps", FakeMPSBackend(), raising=False)
 
-        # The CPU choice is a printed note, not a UserWarning (it used to trip
-        # `-W error` even when the fit ran on the fast native CPU kernels).
+        # Choosing the CPU is a printed note, not a UserWarning: it used to trip
+        # `-W error` even when the fit then ran on the fast native CPU kernels.
         with warnings.catch_warnings():
             warnings.simplefilter("error", UserWarning)
             fitter = GaussianSplatFitter(use_cuda=False, use_metal=True)
 
         assert fitter.device.type == "cpu"
         assert "Fitting on the CPU" in capsys.readouterr().out
+
+    def test_pytorch_cpu_fit_warns_once_with_the_honest_reason(
+        self, simple_2d_blob, simple_candidates_2d
+    ) -> None:
+        """The slow PyTorch path (here 2D) still gets WP2's warning, once."""
+        from luxar.gsplats.utils.device import cpu_fallback_hint
+
+        with pytest.warns(UserWarning, match="running on CPU") as record:
+            for _ in range(2):
+                fit_gaussian_splats(
+                    V=simple_2d_blob,
+                    seeds=simple_candidates_2d,
+                    device="cpu",
+                    n_iters=2,
+                    verbose=False,
+                    enable_dynamic_ops=False,
+                )
+        messages = [
+            str(w.message) for w in record if "running on CPU" in str(w.message)
+        ]
+        assert len(messages) == 1
+        assert cpu_fallback_hint() in messages[0]
+        assert "make setup-cuda" not in messages[0]
 
     def test_cpu_device(self, simple_2d_blob, simple_candidates_2d) -> None:
         """Test explicit CPU device."""

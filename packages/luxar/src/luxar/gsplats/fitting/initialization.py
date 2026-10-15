@@ -466,17 +466,14 @@ def _build_cpu_or_pytorch_model(
 
     model = GaussianSplatModel(**model_kwargs)
     if device_type == "cpu":
-        aprint(
-            "WARNING: Gaussian splat fitting running on CPU — "
-            "this can be orders of magnitude SLOWER than GPU (hardware-dependent)! "
-            "For serious work, use device='cuda' or device='mps'." + _cpu_native_hint(d)
-        )
-        warnings.warn(
-            "Gaussian splat fitting running on CPU — this can be orders of magnitude SLOWER than GPU (hardware-dependent). "
-            "For production use, install GPU support.",
-            UserWarning,
-            stacklevel=3,
-        )
+        from luxar.gsplats.utils.device import warn_cpu_fitting
+
+        # Only the PyTorch renderer earns the "orders of magnitude slower"
+        # warning (once per process), with the honest reason the fit is on the
+        # CPU (no GPU visible vs a CPU-only torch) and, for 3D, why the native
+        # kernels are not in use. Frames: warn_cpu_fitting -> here ->
+        # initialize_optimization -> its caller.
+        warn_cpu_fitting(stacklevel=4, detail=_cpu_native_hint(d))
     if config.verbose:
         aprint(f"Model class: GaussianSplatModel (PyTorch, device={device_type})")
     return model
