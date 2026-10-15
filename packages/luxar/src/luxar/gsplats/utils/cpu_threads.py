@@ -42,6 +42,7 @@ AUTO_CPU_THREADS_CAP = 8
 #: Environment variable that overrides the automatic choice (``0`` = disable).
 CPU_THREADS_ENV = "LUXAR_CPU_THREADS"
 
+
 def physical_cpu_count() -> int:
     """Physical cores available to this process (logical count as fallback)."""
     from .device import _effective_cpu_count
@@ -90,27 +91,39 @@ def resolve_cpu_threads(
     return max(1, min(physical_cores, AUTO_CPU_THREADS_CAP))
 
 
-def _runs_on_cpu(device: Optional[str]) -> bool:
+def _runs_on_cpu(
+    device: Optional[str], *, use_cuda: bool = True, use_metal: bool = True
+) -> bool:
     from .device import resolve_torch_device
 
     try:
-        return resolve_torch_device(device).type == "cpu"
+        return (
+            resolve_torch_device(device, use_cuda=use_cuda, use_metal=use_metal).type
+            == "cpu"
+        )
     except (RuntimeError, ValueError):
         return False
 
 
 @contextmanager
-def cpu_threads_for(device: Optional[str], *, worker: bool = False) -> Iterator[None]:
+def cpu_threads_for(
+    device: Optional[str],
+    *,
+    worker: bool = False,
+    use_cuda: bool = True,
+    use_metal: bool = True,
+) -> Iterator[None]:
     """Widen torch's intra-op threads for a CPU run; restore them on exit.
 
-    ``device`` is the CLI ``--device`` value (``None``/``"auto"`` auto-resolve).
+    ``device`` is the resolved fit config's device value (``None``/``"auto"``
+    auto-resolve); ``use_cuda`` and ``use_metal`` come from that config too.
     A no-op for GPU runs and whenever :func:`resolve_cpu_threads` says so.
     """
     import torch
 
     previous = torch.get_num_threads()
     threads = None
-    if _runs_on_cpu(device):
+    if _runs_on_cpu(device, use_cuda=use_cuda, use_metal=use_metal):
         threads = resolve_cpu_threads(
             os.environ,
             current=previous,

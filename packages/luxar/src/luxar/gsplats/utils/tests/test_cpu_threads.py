@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 import torch
 
-from luxar.gsplats.utils import cpu_threads
 from luxar.gsplats.utils.cpu_threads import (
     AUTO_CPU_THREADS_CAP,
     cpu_threads_for,
@@ -89,7 +88,6 @@ def test_context_manager_restores_on_error(monkeypatch: pytest.MonkeyPatch) -> N
 def test_context_manager_is_noop_off_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
     previous = torch.get_num_threads()
     monkeypatch.setenv("LUXAR_CPU_THREADS", str(previous + 1))
-    monkeypatch.setattr(cpu_threads, "_runs_on_cpu", lambda device: False)
     with cpu_threads_for("cuda"):
         assert torch.get_num_threads() == previous
 

@@ -23,7 +23,7 @@ Part of the `luxar.gsplats` package, but importable on a plain `pip install luxa
 
 `worker_memory.py` is also dependency-free so core CLI planning can share fit-memory policy without importing `torch`.
 
-`cpu_threads.py` holds the CLI's automatic CPU thread policy: `cpu_threads_for(device, worker=...)` widens torch's intra-op threads to `min(physical cores, 8)` for a CPU `fit`/`cal` command when torch still has one thread, then restores the previous count on exit. `resolve_cpu_threads` is the pure decision behind it (`LUXAR_CPU_THREADS=N` wins, `0` disables; a thread export that already took effect is respected; tile/box workers are left alone). It imports `torch` only inside its functions.
+`cpu_threads.py` holds the CLI's automatic CPU thread policy: `cpu_threads_for(device, use_cuda=..., use_metal=..., worker=...)` uses the fit config's device flags, widens torch's intra-op threads to `min(physical cores, 8)` for a CPU `fit`/`cal` command when torch still has one thread, then restores the previous count on exit. `resolve_cpu_threads` is the pure decision behind it (`LUXAR_CPU_THREADS=N` wins, `0` disables; a thread export that already took effect is respected; tile/box workers are left alone). It imports `torch` only inside its functions.
 
 The two `device.py` helpers — `resolve_torch_device` and `is_mps_available` — are the exception: they import `torch`, which ships only in the optional `gsplats` extra. They are therefore resolved lazily by a module `__getattr__` (PEP 562), so importing this package costs nothing on a core-only install and `from luxar.gsplats.utils import resolve_torch_device` raises `ModuleNotFoundError: No module named 'torch'` only when the name is actually touched. Install the extra to use them:
 
