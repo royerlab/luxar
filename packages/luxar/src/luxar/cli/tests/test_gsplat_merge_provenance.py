@@ -187,6 +187,29 @@ def test_merge_preserves_agreed_normalization_and_total_time(tmp_path: Path) -> 
     assert stats["time_seconds"] == 4.0
 
 
+@pytest.mark.parametrize("extra", [(), ("--as-dimension",)])
+def test_merge_keeps_physical_scoring_grid(
+    tmp_path: Path, extra: tuple[str, ...]
+) -> None:
+    stamp = {"voxel_size": [2.0, 0.5, 0.5], "physical_coordinates": True}
+    stats = _merge(tmp_path, [stamp, stamp], *extra)
+    from luxar.gsplats.scoring_grid import stored_voxel_size
+
+    assert stats["voxel_size"] == stamp["voxel_size"]
+    assert stored_voxel_size(stats, 4 if extra else 3) == (
+        (2.0, 0.5, 0.5, 1.0) if extra else (2.0, 0.5, 0.5)
+    )
+
+
+def test_merge_does_not_apply_provenance_only_spacing(tmp_path: Path) -> None:
+    from luxar.gsplats.scoring_grid import stored_voxel_size
+
+    stamp = {"voxel_size": [2.0, 0.5, 0.5], "physical_coordinates": False}
+    stats = _merge(tmp_path, [stamp, stamp])
+    assert stored_voxel_size(stats, 3) is None
+    assert stats["physical_coordinates"] is False
+
+
 def test_merge_summary_omits_partial_and_disputed_fields(tmp_path: Path) -> None:
     stats = _merge(
         tmp_path,

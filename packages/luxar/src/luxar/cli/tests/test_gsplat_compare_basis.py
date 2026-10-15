@@ -405,6 +405,22 @@ def test_a_transformed_and_saved_store_keeps_its_basis(
     assert "image_min=600" in result.output and "from dataset" in result.output
 
 
+def test_physical_load_save_keeps_scoring_grid(tmp_path, blob_reference) -> None:
+    ref, _ = blob_reference
+    source = tmp_path / "physical.gsplats.zarr"
+    saved = tmp_path / "saved.gsplats.zarr"
+    _save(_physical(_voxel_model(), (2.0, 0.5, 0.5), True), source)
+    before = _json_compare(source, ref, tmp_path / "before.json")
+
+    from luxar.encoding import EncodingMode
+
+    GSplatData.load(source).save(saved, encoding_mode=EncodingMode.PRECISION)
+    after = _json_compare(saved, ref, tmp_path / "after.json")
+
+    assert GSplatData.load(saved).stats["voxel_size"] == [2.0, 0.5, 0.5]
+    assert after["psnr_robust_db"] == pytest.approx(before["psnr_robust_db"])
+
+
 def test_a_hot_pixel_moves_neither_the_headline_peak_nor_the_foreground(
     tmp_path,
 ) -> None:

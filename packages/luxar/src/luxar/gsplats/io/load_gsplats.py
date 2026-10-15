@@ -42,7 +42,8 @@ def load_gsplats(
             it describes the intensity scale the amplitudes are on, not a
             measurement of the splats, so a load → edit → save in Python keeps
             the level ``gsplat compare`` needs to score the result on the right
-            basis. Nothing else rides along.
+            basis. The physical-coordinate frame stamp also rides along so the
+            edited splats still map to the source voxel grid.
 
     Returns:
         GSplatData with decoded arrays and optional stats
@@ -67,7 +68,13 @@ def fit_basis_stats(stats: Mapping[str, Any]) -> Dict[str, Any]:
     """
     from luxar.gsplats.io.save_gsplats import NORMALIZATION_STATS_KEYS
 
-    return {key: stats[key] for key in NORMALIZATION_STATS_KEYS if key in stats}
+    from luxar.gsplats.scoring_grid import FRAME_STAMP_KEYS
+
+    return {
+        key: stats[key]
+        for key in (*NORMALIZATION_STATS_KEYS, *FRAME_STAMP_KEYS)
+        if key in stats
+    }
 
 
 def load_default_gsplats(

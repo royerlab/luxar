@@ -1386,7 +1386,6 @@ def _merge_flat(
                         GSplatData.load(p, include_stats=True) for p in tile_files
                     ]
                     merged = GSplatData.concatenate(datasets)
-                    _carry_spatial_voxel_size([d.stats for d in datasets], merged.stats)
                     merged.save(
                         out_path,
                         amplitude_bits="auto",
@@ -1425,7 +1424,6 @@ def _merge_flat(
                     values=[float(t) for t in t_indices],
                     sigma=0.0,
                 )
-                _carry_spatial_voxel_size([d.stats for d in datasets], stacked.stats)
                 stacked.save(
                     out_path,
                     amplitude_bits="auto",
@@ -1459,7 +1457,6 @@ def _merge_flat(
             ch_files = [channel_paths[c] for c in range(n_c)]
             datasets = [GSplatData.load(p, include_stats=True) for p in ch_files]
             final = GSplatData.merge_with_channel_colors(datasets, channel_colors)
-            _carry_spatial_voxel_size([d.stats for d in datasets], final.stats)
             final.save(
                 final_path,
                 amplitude_bits="auto",
@@ -1484,7 +1481,6 @@ def _merge_flat(
                 ch_files = [channel_paths[c] for c in range(n_c)]
                 datasets = [GSplatData.load(p, include_stats=True) for p in ch_files]
                 final = GSplatData.concatenate(datasets)
-                _carry_spatial_voxel_size([d.stats for d in datasets], final.stats)
                 final.save(
                     final_path,
                     amplitude_bits="auto",
