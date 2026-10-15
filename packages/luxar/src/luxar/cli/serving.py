@@ -601,6 +601,7 @@ def _serve_viewer(
     title: Optional[str] = None,
     control: bool = False,
     control_token: Optional[str] = None,
+    open_explicit: bool = False,
 ) -> None:
     """Internal function to serve the viewer.
 
@@ -622,6 +623,8 @@ def _serve_viewer(
             hand the viewer ``&control`` so the display attaches to it.
         control_token: Shared secret every control socket must present as
             ``?token=``. ``None`` leaves the hub open to the bound interface.
+        open_explicit: The user ASKED for the browser (an explicit ``--open``),
+            so it opens even where the no-display heuristic would skip it.
     """
     viewer_dist = get_viewer_dist_path()
 
@@ -667,7 +670,7 @@ def _serve_viewer(
             from .utils import wait_for_server
 
             if wait_for_server(host, port, timeout=15.0):
-                open_browser_func(viewer_url)
+                open_browser_func(viewer_url, explicit=open_explicit)
             else:
                 aprint(
                     "⚠️  Viewer server did not become ready within 15s — "

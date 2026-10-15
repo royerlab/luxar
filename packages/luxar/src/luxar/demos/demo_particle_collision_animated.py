@@ -114,7 +114,7 @@ Usage:
 
 Controls:
     - Use TIME slider to scrub through the collision event
-    - Ctrl+C to stop and cleanup
+    - Ctrl+C to stop
     - Browser opens automatically
 """
 
@@ -139,7 +139,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -1128,7 +1127,7 @@ def main() -> None:
     aprint(f"Events: {n_events} | Jets: {n_jets} | Frames: {n_frames}")
     aprint("")
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "collision_animated.luxar.zarr"
         with asection("Generating animated detector scene"):
@@ -1144,32 +1143,28 @@ def main() -> None:
         )
         return
 
-    # Use temporary directory for serving (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_collision_anim_") as tmpdir:
-        output_path = Path(tmpdir) / "collision_animated.luxar.zarr"
+    output_path = get_demos_output_dir() / "collision_animated.luxar.zarr"
 
-        with asection("Generating animated detector scene"):
-            total_segments, total_points = generate_animated_detector_scene(
-                output_path,
-                n_events=n_events,
-                n_jets_per_event=n_jets,
-                n_frames=n_frames,
-            )
+    with asection("Generating animated detector scene"):
+        total_segments, total_points = generate_animated_detector_scene(
+            output_path,
+            n_events=n_events,
+            n_jets_per_event=n_jets,
+            n_frames=n_frames,
+        )
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("ANIMATION COMPLETE")
-        aprint(f"  {total_segments:,} line segments")
-        aprint(f"  {total_points:,} points")
-        aprint(f"  {n_frames} frames")
-        aprint("=" * 70)
-        aprint("")
-        aprint("Use the TIME slider to watch the collision unfold!")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("ANIMATION COMPLETE")
+    aprint(f"  {total_segments:,} line segments")
+    aprint(f"  {total_points:,} points")
+    aprint(f"  {n_frames} frames")
+    aprint("=" * 70)
+    aprint("")
+    aprint("Use the TIME slider to watch the collision unfold!")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

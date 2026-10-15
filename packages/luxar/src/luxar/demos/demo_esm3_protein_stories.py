@@ -97,7 +97,6 @@ import html
 import math
 import re
 import sys
-import tempfile
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1804,31 +1803,28 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path} ({n:,} proteins)")
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_esm3_stories_") as tmpdir:
-        output_path = Path(tmpdir) / "esm3_protein_stories.luxar.zarr"
-        n = build_stories_scene(
-            output_path,
-            positions,
-            meta,
-            auto_rotate=auto_rotate,
-            turntables=turntables,
-            audio=audio,
-        )
+    output_path = get_demos_output_dir() / "esm3_protein_stories.luxar.zarr"
+    n = build_stories_scene(
+        output_path,
+        positions,
+        meta,
+        auto_rotate=auto_rotate,
+        turntables=turntables,
+        audio=audio,
+    )
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("NAVIGATION")
-        aprint("=" * 70)
-        aprint("  Press '1' to select the STORY slider, then '[' / ']' to step.")
-        aprint("  Each step flies the camera to a protein family and shows its story.")
-        aprint(f"  Total proteins: {n:,}")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("NAVIGATION")
+    aprint("=" * 70)
+    aprint("  Press '1' to select the STORY slider, then '[' / ']' to step.")
+    aprint("  Each step flies the camera to a protein family and shows its story.")
+    aprint(f"  Total proteins: {n:,}")
+    aprint("")
 
-        # Remote control is OFF unless asked for: `--control`, plus
-        # `--control-token` and `--host 0.0.0.0` for a tablet on the LAN.
-        launch_viewer(output_path, serve_args=control_serve_args())
-
-    aprint("Cleanup complete")
+    # Remote control is OFF unless asked for: `--control`, plus
+    # `--control-token` and `--host 0.0.0.0` for a tablet on the LAN.
+    launch_viewer(output_path, serve_args=control_serve_args())
 
 
 if __name__ == "__main__":

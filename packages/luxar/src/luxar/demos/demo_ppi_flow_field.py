@@ -61,7 +61,6 @@ DEMO_META = {
 import argparse
 import hashlib
 import sys
-import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final
@@ -76,6 +75,7 @@ from luxar.demos import (
     FlowField,
     add_demo_caption,
     add_reference_cube_to_scene,
+    add_serve_arguments,
     cubic_bounds,
     launch_viewer,
     require_module,
@@ -1458,6 +1458,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=None,
         help="Seed at most this many proteins (default: all HuRI LCC nodes).",
     )
+    add_serve_arguments(parser)
     return parser.parse_args(argv)
 
 
@@ -1561,35 +1562,32 @@ def main() -> None:
         )
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_ppi_flow_") as tmpdir:
-        output_path = Path(tmpdir) / f"ppi_flow_field_{preset.name}.luxar.zarr"
-        stats = generate_ppi_flow_field_scene(
-            output_path,
-            args.cache_dir.expanduser(),
-            preset,
-            recompute_layout,
-            recompute_field,
-            recompute_streamlines,
-            recompute_graph,
-            args.raw_edge_vectors,
-        )
+    output_path = get_demos_output_dir() / f"ppi_flow_field_{preset.name}.luxar.zarr"
+    stats = generate_ppi_flow_field_scene(
+        output_path,
+        args.cache_dir.expanduser(),
+        preset,
+        recompute_layout,
+        recompute_field,
+        recompute_streamlines,
+        recompute_graph,
+        args.raw_edge_vectors,
+    )
 
-        aprint("")
-        aprint("=" * 72)
-        aprint("NAVIGATION")
-        aprint("=" * 72)
-        aprint("  Proteins: colored by Louvain community, sized by PageRank")
-        aprint("  Streamlines: forward advection through low→high PageRank edge field")
-        aprint("  Toggle the optional tapered PPI edge layer in the Layers panel")
-        aprint("  Hover proteins or optional edges for labels")
-        aprint(
-            f"  {stats.n_nodes:,} proteins · {stats.n_edges:,} interactions · "
-            f"{stats.n_streamlines:,} streamlines · {stats.n_communities} communities"
-        )
-        aprint("")
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete")
+    aprint("")
+    aprint("=" * 72)
+    aprint("NAVIGATION")
+    aprint("=" * 72)
+    aprint("  Proteins: colored by Louvain community, sized by PageRank")
+    aprint("  Streamlines: forward advection through low→high PageRank edge field")
+    aprint("  Toggle the optional tapered PPI edge layer in the Layers panel")
+    aprint("  Hover proteins or optional edges for labels")
+    aprint(
+        f"  {stats.n_nodes:,} proteins · {stats.n_edges:,} interactions · "
+        f"{stats.n_streamlines:,} streamlines · {stats.n_communities} communities"
+    )
+    aprint("")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

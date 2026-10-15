@@ -7,7 +7,7 @@ This demo demonstrates:
 - Temporal evolution showing pattern formation
 - Categorical navigation between different parameter sets
 - Beautiful emergent complexity from simple rules
-- Complete workflow: generate → serve → view → cleanup
+- Complete workflow: generate → serve → view
 
 The demo is completely self-contained - all simulation code is here!
 
@@ -58,7 +58,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -377,7 +376,7 @@ def main() -> None:
     aprint("⏱️  Generation: ~2-5 minutes (running 6 simulations)")
     aprint("")
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "turing_patterns.luxar.zarr"
         generate_turing_patterns(
@@ -388,50 +387,46 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path}")
         return
 
-    # Use temporary directory for serving (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_turing_") as tmpdir:
-        output_path = Path(tmpdir) / "turing_patterns.luxar.zarr"
+    output_path = get_demos_output_dir() / "turing_patterns.luxar.zarr"
 
-        # Generate patterns
-        generate_turing_patterns(
-            output_path,
-            grid_size=grid_size,
-            n_steps=n_steps,
-        )
+    # Generate patterns
+    generate_turing_patterns(
+        output_path,
+        grid_size=grid_size,
+        n_steps=n_steps,
+    )
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("NAVIGATION - WATCH PATTERNS EMERGE!")
-        aprint("=" * 70)
-        aprint("Once viewer opens:")
-        aprint("")
-        aprint("  1. Press '1' → Select PATTERN TYPE")
-        aprint("     Switch between spots, stripes, spirals, etc.")
-        aprint("")
-        aprint("  2. Press '2' → Navigate through TIME")
-        aprint("     Watch the pattern form from random noise!")
-        aprint("     Use '[' to go backward, ']' to go forward")
-        aprint("")
-        aprint("What you're seeing:")
-        aprint("  • Chemical concentration V (red=high, blue=low)")
-        aprint("  • Self-organizing patterns from local interactions")
-        aprint("  • Same equations explain animal markings in nature!")
-        aprint("")
-        aprint("Try this:")
-        aprint("  1. Start with Spots (pattern=0)")
-        aprint("  2. Navigate time from 0 → 20 to see spots form")
-        aprint("  3. Switch to Stripes (pattern=1)")
-        aprint("  4. Compare how different F,k create different patterns")
-        aprint("")
-        aprint("=" * 70)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 70)
-        aprint("Browser will open automatically. Press Ctrl+C when done.")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("NAVIGATION - WATCH PATTERNS EMERGE!")
+    aprint("=" * 70)
+    aprint("Once viewer opens:")
+    aprint("")
+    aprint("  1. Press '1' → Select PATTERN TYPE")
+    aprint("     Switch between spots, stripes, spirals, etc.")
+    aprint("")
+    aprint("  2. Press '2' → Navigate through TIME")
+    aprint("     Watch the pattern form from random noise!")
+    aprint("     Use '[' to go backward, ']' to go forward")
+    aprint("")
+    aprint("What you're seeing:")
+    aprint("  • Chemical concentration V (red=high, blue=low)")
+    aprint("  • Self-organizing patterns from local interactions")
+    aprint("  • Same equations explain animal markings in nature!")
+    aprint("")
+    aprint("Try this:")
+    aprint("  1. Start with Spots (pattern=0)")
+    aprint("  2. Navigate time from 0 → 20 to see spots form")
+    aprint("  3. Switch to Stripes (pattern=1)")
+    aprint("  4. Compare how different F,k create different patterns")
+    aprint("")
+    aprint("=" * 70)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 70)
+    aprint("Browser will open automatically. Press Ctrl+C when done.")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

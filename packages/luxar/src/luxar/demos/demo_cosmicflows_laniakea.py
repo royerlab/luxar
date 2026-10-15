@@ -22,7 +22,7 @@ Usage:
 Controls:
     - Rotate / pan / zoom in the Luxar viewer
     - Toggle individual basin streamline layers in the Layers panel
-    - Ctrl+C to stop and cleanup
+    - Ctrl+C to stop
 """
 
 from __future__ import annotations
@@ -50,7 +50,6 @@ DEMO_META = {
 
 import argparse
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -60,7 +59,12 @@ from arbol import aprint, asection
 
 from luxar import Dimension, Dimensions, LuxarZarrCompiler
 from luxar.core.viewer_config import CameraConfig, UIConfig, ViewerConfig
-from luxar.demos import add_demo_caption, cached_download, launch_viewer
+from luxar.demos import (
+    add_demo_caption,
+    add_serve_arguments,
+    cached_download,
+    launch_viewer,
+)
 from luxar.demos._cinematic_camera import pull_in
 from luxar.demos._lod_policy import stream_ladder
 from luxar.utils.paths import get_demos_output_dir
@@ -822,7 +826,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "-o",
         type=Path,
         default=None,
-        help="Output .zarr path. Defaults to datasets/demos for --no-serve.",
+        help="Output .zarr path (default: the demos output directory).",
     )
     parser.add_argument(
         "--cache-dir",
@@ -835,6 +839,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Generate the dataset without launching the viewer.",
     )
+    add_serve_arguments(parser)
     return parser.parse_args(argv)
 
 
@@ -850,33 +855,35 @@ def main(argv: list[str] | None = None) -> None:
         aprint("Full preset target: 55,486 galaxies and 29,555 streamlines")
     aprint("")
 
+    output_path = args.output or (
+        get_demos_output_dir() / f"cosmicflows_laniakea_{args.preset}.luxar.zarr"
+    )
     if args.no_serve:
-        output_path = args.output or (
-            get_demos_output_dir() / f"cosmicflows_laniakea_{args.preset}.luxar.zarr"
-        )
         generate_cosmicflows_laniakea(
             output_path, preset_name=args.preset, cache_dir=args.cache_dir
         )
         aprint(f"✓ Dataset generated at {output_path}")
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_laniakea_") as tmpdir:
-        output_path = args.output or Path(tmpdir) / "cosmicflows_laniakea.luxar.zarr"
-        generate_cosmicflows_laniakea(
-            output_path, preset_name=args.preset, cache_dir=args.cache_dir
-        )
+    generate_cosmicflows_laniakea(
+        output_path, preset_name=args.preset, cache_dir=args.cache_dir
+    )
 
-        aprint("")
-        aprint("=" * 72)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 72)
-        aprint("The viewer will open in your browser automatically.")
-        aprint("Press Ctrl+C when done to stop and cleanup.")
-        aprint("")
+    aprint("")
+    aprint("=" * 72)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 72)
+    aprint("The viewer will open in your browser automatically.")
+    aprint("Press Ctrl+C when done to stop the server.")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("✓ Cleanup complete - temporary files removed")
+    # From the parsed `argv`, not sys.argv: `main(argv)` may be called with its
+    # own arguments.
+    launch_viewer(
+        output_path,
+        open_browser=not args.no_open,
+        serve_args=["--host", args.host] if args.host else None,
+    )
 
 
 if __name__ == "__main__":

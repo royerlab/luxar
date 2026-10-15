@@ -48,6 +48,7 @@ luxar restamp-lod  # Re-derive legacy LOD switch thresholds in place (attrs only
 luxar serve     # Serve a .luxar.zarr over HTTP, optionally with the viewer (--viewer, --open)
 luxar viewer    # Serve the Luxar viewer, optionally with a dataset (--data)
 luxar export    # Export a scene + viewer as a standalone offline folder (or --native bundle)
+luxar stop      # Stop running servers (serve, viewer, gsplat view, export --open) and demos
 luxar profiles  # List the network-simulation profiles usable via --profile
 ```
 
@@ -61,6 +62,31 @@ luxar profiles  # List the network-simulation profiles usable via --profile
 Serve a scene directory directly with `luxar serve scene.luxar.zarr --viewer`,
 or serve a containing directory with `luxar serve /path/to/scenes --viewer`
 and choose a scene from the viewer's dataset browser.
+
+`--host 0.0.0.0` binds every interface so another machine can open the
+viewer (`luxar viewer` and `luxar gsplat view` take the same flag). A typed
+`--open` always launches a browser. The browser those two commands and the
+demos open by DEFAULT is skipped where nobody could see it — over SSH, on Linux
+without `DISPLAY`/`WAYLAND_DISPLAY`, or with no terminal attached — and the URL
+is printed instead, unless `$BROWSER` is set (VS Code Remote-SSH, Codespaces
+and dev containers forward through it). `LUXAR_OPEN_BROWSER=1` forces a launch
+and `=0` suppresses every launch, a typed `--open` included.
+
+## `luxar stop`
+
+Stops what the serving commands left running — `luxar serve`, `luxar viewer`,
+`luxar gsplat view` and an `luxar export` started with its open option
+register themselves while they serve — plus every demo `luxar demo stop` finds. It lists them, asks for
+confirmation, and stops each with SIGINT → SIGTERM → SIGKILL. A server is
+signalled by PID alone, so the shell or script that started it is untouched; a
+demo's whole process group goes, its own server included. `--dry-run` only
+lists. Without a terminal on stdin it exits 1 instead of prompting, so a script
+passes `--yes`.
+
+```bash
+luxar stop --dry-run   # what is running
+luxar stop --yes       # stop all of it, no prompt
+```
 
 For a `.luxar.zarr.zip`, serve its containing directory rather than passing the
 archive itself, which fails with `Data mount root must be a directory`. The
@@ -295,6 +321,23 @@ luxar demo cache list    # Inventory the ~/.cache/luxar demo caches
 luxar demo cache clear   # Clear demo caches (--dry-run to preview)
 ```
 
+`luxar demo run <key> -- --help` prints the demo's details, its own notes and
+the shared demo flags without running it. Every serving demo accepts
+`--host HOST` (bind address, e.g. `0.0.0.0` to view it from another machine)
+and `--no-open`, after `--` or directly (`luxar demo run lorenz --host 0.0.0.0`).
+A demo builds its scene under the demos output directory whether or not it
+serves, so `luxar demo` shows it as built afterwards, and a re-run rebuilds it.
+The rebuild happens in a hidden sibling that replaces the old scene only once
+complete, so an interrupted or failed run leaves the previous build intact.
+`demo run` refuses to start a demo that is already running (stop it with
+`luxar demo stop <key>` first), `run-all` skips running demos, and
+`demo cache clear --outputs` keeps their scenes. Forwarded arguments that change
+the scene (a demo's points count, say) build into `variants/custom-<hash>/` under the
+demos directory instead, so the catalogue's built mark keeps meaning "the
+default build is present"; flags that only change how it is served
+(the host, no-open and no-serve flags) do not count. `demo run <key> --canonical` opts out and replaces the default build with the
+custom one. `demo cache clear <key> --outputs` removes those variants too.
+
 Report-only `demo deps` exits 1 for any missing or outdated row. Generic
 `--install` manages Luxar extras; use `--only MODULE --install` to install one
 exact constrained requirement, including a dependency outside every extra.
@@ -305,7 +348,8 @@ scene. It finds runs via the registry `demo run` maintains (plus a
 process-table sweep for strays), lists them, asks for confirmation (`-y` to
 skip), and tears each one down with the same SIGINT → SIGTERM → SIGKILL
 escalation Ctrl-C uses. `luxar demo stop <key>` stops just one demo;
-`--dry-run` only lists. On platforms without POSIX process groups it lists the
+`--dry-run` only lists. Without a terminal on stdin, `demo stop` and
+`demo cache clear` exit 1 rather than wait at the prompt: pass `--yes`. On platforms without POSIX process groups it lists the
 recorded runs and prints the command to stop each by hand rather than signalling
 a pid it cannot first verify still belongs to the demo; once that process is
 gone the record drops itself from the next listing.

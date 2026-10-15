@@ -42,6 +42,12 @@ from luxar.cli.utils import (
 class TestOpenBrowser:
     """Tests for open_browser function."""
 
+    @pytest.fixture(autouse=True)
+    def _display_available(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # pytest captures stdio, which reads as "no terminal"; these tests are
+        # about the opening itself, so force the display check to pass.
+        monkeypatch.setenv("LUXAR_OPEN_BROWSER", "1")
+
     def test_open_browser_success(self) -> None:
         """Test open_browser returns True on success."""
         with patch("webbrowser.open") as mock_open:
@@ -65,6 +71,140 @@ class TestOpenBrowser:
                 result = open_browser("http://localhost:8000", suppress_errors=False)
                 assert result is False
                 mock_aprint.assert_called_once()
+
+
+class TestBrowserUnavailableReason:
+    """No browser is auto-opened where nobody could see it."""
+
+    @pytest.fixture
+    def env(self, monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
+        for var in (
+            "LUXAR_OPEN_BROWSER",
+            "BROWSER",
+            "SSH_CONNECTION",
+            "SSH_CLIENT",
+            "SSH_TTY",
+            "DISPLAY",
+            "WAYLAND_DISPLAY",
+        ):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setattr("luxar.cli.utils._is_tty", lambda stream: True)
+        return monkeypatch
+
+    def test_desktop_terminal_opens(self, env: pytest.MonkeyPatch) -> None:
+        from luxar.cli.utils import browser_unavailable_reason
+
+        env.setattr("luxar.cli.utils.sys.platform", "darwin")
+        assert browser_unavailable_reason() is None
+
+    def test_headless_linux_does_not(self, env: pytest.MonkeyPatch) -> None:
+        from luxar.cli.utils import browser_unavailable_reason
+
+        env.setattr("luxar.cli.utils.sys.platform", "linux")
+        assert "DISPLAY" in (browser_unavailable_reason() or "")
+        env.setenv("WAYLAND_DISPLAY", "wayland-0")
+        assert browser_unavailable_reason() is None
+
+    def test_ssh_session_does_not(self, env: pytest.MonkeyPatch) -> None:
+        from luxar.cli.utils import browser_unavailable_reason
+
+        env.setattr("luxar.cli.utils.sys.platform", "darwin")
+        env.setenv("SSH_CONNECTION", "1.2.3.4 5 6.7.8.9 22")
+        assert browser_unavailable_reason() == "SSH session"
+
+    def test_no_terminal_does_not(self, env: pytest.MonkeyPatch) -> None:
+        from luxar.cli.utils import browser_unavailable_reason
+
+        env.setattr("luxar.cli.utils.sys.platform", "darwin")
+        env.setattr("luxar.cli.utils._is_tty", lambda stream: False)
+        assert browser_unavailable_reason() == "not attached to a terminal"
+
+    def test_env_override_wins_both_ways(self, env: pytest.MonkeyPatch) -> None:
+        from luxar.cli.utils import browser_unavailable_reason
+
+        env.setattr("luxar.cli.utils.sys.platform", "linux")
+        env.setenv("LUXAR_OPEN_BROWSER", "1")
+        assert browser_unavailable_reason() is None
+        env.setattr("luxar.cli.utils.sys.platform", "darwin")
+        env.setenv("LUXAR_OPEN_BROWSER", "0")
+        assert browser_unavailable_reason() == "LUXAR_OPEN_BROWSER=0"
+
+    def test_browser_env_var_means_a_browser_is_reachable(
+        self, env: pytest.MonkeyPatch
+    ) -> None:
+        """VS Code Remote-SSH / Codespaces route URLs home through $BROWSER."""
+        from luxar.cli.utils import browser_unavailable_reason
+
+        env.setattr("luxar.cli.utils.sys.platform", "linux")
+        env.setenv("SSH_CONNECTION", "1.2.3.4 5 6.7.8.9 22")
+        env.setattr("luxar.cli.utils._is_tty", lambda stream: False)
+        assert browser_unavailable_reason() is not None
+        env.setenv("BROWSER", "/vscode/bin/helpers/browser.sh")
+        assert browser_unavailable_reason() is None
+
+    def test_an_explicit_open_beats_the_heuristic_not_the_env(
+        self, env: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.cli.utils import browser_unavailable_reason
+
+        env.setattr("luxar.cli.utils.sys.platform", "linux")
+        assert browser_unavailable_reason() is not None
+        assert browser_unavailable_reason(explicit=True) is None
+        env.setenv("LUXAR_OPEN_BROWSER", "0")
+        assert browser_unavailable_reason(explicit=True) == "LUXAR_OPEN_BROWSER=0"
+
+    def test_open_browser_prints_the_url_instead(self, env: pytest.MonkeyPatch) -> None:
+        env.setenv("SSH_TTY", "/dev/ttys001")
+        with patch("webbrowser.open") as mock_open:
+            with patch("luxar.cli.utils.aprint") as mock_aprint:
+                assert open_browser("http://h:1/x") is False
+        mock_open.assert_not_called()
+        assert "http://h:1/x" in mock_aprint.call_args.args[0]
+
+
+class TestRequireConfirmation:
+    def test_yes_skips_everything(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from luxar.cli.utils import require_confirmation
+
+        monkeypatch.setattr("luxar.cli.utils.stdin_is_interactive", lambda: False)
+        assert require_confirmation("?", yes=True) is True
+
+    def test_no_tty_exits_instead_of_hanging(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import typer
+
+        from luxar.cli.utils import require_confirmation
+
+        monkeypatch.setattr("luxar.cli.utils.stdin_is_interactive", lambda: False)
+        with pytest.raises(typer.Exit) as exc:
+            require_confirmation("?", yes=False)
+        assert exc.value.exit_code == 1
+
+    def test_tty_prompts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from luxar.cli.utils import require_confirmation
+
+        monkeypatch.setattr("luxar.cli.utils.stdin_is_interactive", lambda: True)
+        monkeypatch.setattr("luxar.cli.utils.typer.confirm", lambda prompt: False)
+        assert require_confirmation("?", yes=False) is False
+
+
+class TestViewerNotBuiltMessage:
+    def test_checkout_gets_the_pnpm_hint(self, monkeypatch) -> None:
+        from luxar.cli.utils import viewer_not_built_message
+
+        monkeypatch.setattr(
+            "luxar.utils.paths.get_luxar_checkout_root", lambda: Path("/repo")
+        )
+        assert "pnpm build" in viewer_not_built_message()
+
+    def test_wheel_is_not_told_to_cd_into_packages(self, monkeypatch) -> None:
+        from luxar.cli.utils import viewer_not_built_message
+
+        monkeypatch.setattr("luxar.utils.paths.get_luxar_checkout_root", lambda: None)
+        message = viewer_not_built_message()
+        assert "cd packages/luxar-viewer" not in message
+        assert "Reinstall" in message and "source checkout" in message
 
 
 class TestCheckPortAvailable:

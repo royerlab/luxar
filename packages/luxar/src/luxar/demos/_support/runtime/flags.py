@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Optional, overload
+from typing import Any, Optional, overload
 
 from arbol import aprint
 
@@ -124,6 +124,27 @@ def parse_str_arg(name: str, argv: Optional[list[str]] = None) -> Optional[str]:
         if raw:
             return raw
     return None
+
+
+def add_serve_arguments(parser: Any) -> None:
+    """Declare the serving flags :func:`launch_viewer` reads, on an argparse parser.
+
+    ``launch_viewer`` forwards ``--host`` and ``--no-open`` straight from
+    ``sys.argv`` for every demo, but a demo that parses its argv with argparse
+    would reject them as unrecognised before that ever happens. Declaring them
+    here keeps ``luxar demo run <key> -- --host 0.0.0.0`` working there too and
+    lists them in the demo's own ``--help``.
+    """
+    parser.add_argument(
+        "--host",
+        default=None,
+        help="Bind the data/viewer servers to HOST (default 127.0.0.1).",
+    )
+    parser.add_argument(
+        "--no-open",
+        action="store_true",
+        help="Do not open a browser when the viewer starts.",
+    )
 
 
 def control_serve_args(argv: Optional[list[str]] = None) -> list[str]:

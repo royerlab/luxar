@@ -61,7 +61,7 @@ Usage:
 
 Controls:
     - Use dimension sliders to animate through time
-    - Ctrl+C to stop and cleanup
+    - Ctrl+C to stop
 """
 
 from __future__ import annotations
@@ -85,7 +85,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -948,7 +947,7 @@ def main() -> None:
     aprint(f"Jellyfish: {n_jellyfish} | Frames: {n_frames}")
     aprint("")
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "ocean.luxar.zarr"
         with asection("Generating ocean scene"):
@@ -958,34 +957,30 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path}")
         return
 
-    # Use temporary directory for serving (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_ocean_") as tmpdir:
-        output_path = Path(tmpdir) / "ocean.luxar.zarr"
+    output_path = get_demos_output_dir() / "ocean.luxar.zarr"
 
-        with asection("Generating ocean scene"):
-            total_segments, total_points = generate_ocean_scene(
-                output_path, n_jellyfish=n_jellyfish, n_frames=n_frames
-            )
+    with asection("Generating ocean scene"):
+        total_segments, total_points = generate_ocean_scene(
+            output_path, n_jellyfish=n_jellyfish, n_frames=n_frames
+        )
 
-        aprint("")
-        aprint("=" * 70)
-        aprint(f"SCENE COMPLETE: {total_segments:,} segments, {total_points:,} points")
-        aprint("=" * 70)
-        aprint("")
-        aprint("Jellyfish color guide:")
-        for palette in JELLYFISH_PALETTES:
-            aprint(f"  - {palette['name']}")
-        aprint("")
-        aprint("=" * 70)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 70)
-        aprint("Use the TIME dimension slider to animate the jellyfish!")
-        aprint("Press Ctrl+C when done.")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint(f"SCENE COMPLETE: {total_segments:,} segments, {total_points:,} points")
+    aprint("=" * 70)
+    aprint("")
+    aprint("Jellyfish color guide:")
+    for palette in JELLYFISH_PALETTES:
+        aprint(f"  - {palette['name']}")
+    aprint("")
+    aprint("=" * 70)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 70)
+    aprint("Use the TIME dimension slider to animate the jellyfish!")
+    aprint("Press Ctrl+C when done.")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete - temporary files removed")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

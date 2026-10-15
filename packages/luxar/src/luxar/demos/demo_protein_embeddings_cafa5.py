@@ -123,7 +123,6 @@ import gzip
 import json
 import os
 import sys
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -1288,7 +1287,7 @@ def main() -> None:
     )
     aprint("")
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "protein_landscape.luxar.zarr"
         try:
@@ -1308,55 +1307,51 @@ def main() -> None:
         aprint(f"Total proteins: {n_proteins:,}")
         return
 
-    # Use temporary directory for serving (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_proteins_") as tmpdir:
-        output_path = Path(tmpdir) / "protein_landscape.luxar.zarr"
+    output_path = get_demos_output_dir() / "protein_landscape.luxar.zarr"
 
-        try:
-            n_proteins = generate_protein_landscape(
-                output_path,
-                sample_size=sample_size,
-            )
+    try:
+        n_proteins = generate_protein_landscape(
+            output_path,
+            sample_size=sample_size,
+        )
 
-            if n_proteins == 0:
-                return
+        if n_proteins == 0:
+            return
 
-        except Exception as e:
-            aprint(f"\nError: {e}")
-            import traceback
+    except Exception as e:
+        aprint(f"\nError: {e}")
+        import traceback
 
-            traceback.print_exc()
-            sys.exit(1)
+        traceback.print_exc()
+        sys.exit(1)
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("VIEWING TIPS - EXPLORE THE PROTEOME")
-        aprint("=" * 70)
-        aprint("")
-        aprint("What to look for:")
-        aprint("  - Named territories in the legend (bottom-left)")
-        aprint("  - Secreted / signal-peptide proteins vs cytoplasmic ones")
-        aprint("  - Organelle-targeted proteins as their own regions")
-        aprint("  - A signal-transducer island, away from the cytoplasmic bulk")
-        aprint("  - Functional boundaries and overlaps between regions")
-        aprint("")
-        aprint("Try this:")
-        aprint("  1. Zoom out: See overall functional organization")
-        aprint("  2. Zoom in: Explore specific protein families")
-        aprint("  3. Hover a point: UniProt accession + its cluster")
-        aprint("")
-        aprint(f"Total proteins: {n_proteins:,}")
-        aprint("")
-        aprint("=" * 70)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 70)
-        aprint("Explore the landscape of protein function!")
-        aprint("Press Ctrl+C when done.")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("VIEWING TIPS - EXPLORE THE PROTEOME")
+    aprint("=" * 70)
+    aprint("")
+    aprint("What to look for:")
+    aprint("  - Named territories in the legend (bottom-left)")
+    aprint("  - Secreted / signal-peptide proteins vs cytoplasmic ones")
+    aprint("  - Organelle-targeted proteins as their own regions")
+    aprint("  - A signal-transducer island, away from the cytoplasmic bulk")
+    aprint("  - Functional boundaries and overlaps between regions")
+    aprint("")
+    aprint("Try this:")
+    aprint("  1. Zoom out: See overall functional organization")
+    aprint("  2. Zoom in: Explore specific protein families")
+    aprint("  3. Hover a point: UniProt accession + its cluster")
+    aprint("")
+    aprint(f"Total proteins: {n_proteins:,}")
+    aprint("")
+    aprint("=" * 70)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 70)
+    aprint("Explore the landscape of protein function!")
+    aprint("Press Ctrl+C when done.")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

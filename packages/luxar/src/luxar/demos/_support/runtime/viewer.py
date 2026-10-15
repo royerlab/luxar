@@ -10,6 +10,7 @@ from typing import Optional, Union
 from arbol import aprint
 
 from ...._process import run_child_process
+from .flags import parse_str_arg
 
 # Derived demo port ranges. Deliberately DISJOINT from the bare `luxar serve`
 # defaults (8000 data / 5173 viewer): a demo must never contend with a manually
@@ -54,14 +55,29 @@ def _serve_command(
     output_path: Union[str, Path],
     open_browser: bool,
     serve_args: Optional[list[str]],
+    argv: Optional[list[str]] = None,
 ) -> list[str]:
     """Build the ``luxar serve`` argv for a demo, with derived default ports.
 
     The derived pair is appended only when ``serve_args`` doesn't already pin
     the respective option, so a demo passing an explicit ``--port`` /
     ``--viewer-port`` keeps full control.
+
+    Two of the demo's OWN command-line flags (``argv``, default ``sys.argv``)
+    are forwarded here, once, for every demo that serves through
+    :func:`launch_viewer`: ``--host HOST`` (bind address — without it no demo
+    could be viewed from another machine, e.g. ``luxar demo run lorenz --
+    --host 0.0.0.0`` on a remote box) and ``--no-open`` (never ask
+    ``luxar serve`` to open a browser). A ``--host`` the demo already put in
+    ``serve_args`` (``control_serve_args``) wins.
     """
     args = list(serve_args or [])
+    demo_argv = list(sys.argv if argv is None else argv)
+    host = parse_str_arg("host", demo_argv)
+    if host and not any(a == "--host" or a.startswith("--host=") for a in args):
+        args.extend(["--host", host])
+    if "--no-open" in demo_argv:
+        open_browser = False
     cmd = [sys.executable, "-m", "luxar", "serve", str(output_path), "--viewer"]
     cmd.extend(args)
     data_port, viewer_port = demo_ports(output_path)
@@ -81,7 +97,9 @@ def _serve_command(
     if not any(a == "--viewer-port" or a.startswith("--viewer-port=") for a in args):
         cmd.extend(["--viewer-port", str(viewer_port)])
     if open_browser:
-        cmd.append("--open")
+        # Not `--open`: that is an instruction `serve` always obeys. A demo's
+        # browser is a convenience, skipped where no one could see it.
+        cmd.append("--auto-open")
     return cmd
 
 
@@ -106,6 +124,8 @@ def launch_viewer(
             demo drive server-side behaviour (bandwidth throttling, latency,
             packet loss) that ``serve`` already supports. An explicit
             ``--port`` / ``--viewer-port`` here overrides the derived pair.
+            The demo's own ``--host`` / ``--no-open`` flags are forwarded
+            automatically (see :func:`_serve_command`).
 
     Raises:
         SystemExit: If the viewer fails to launch
@@ -127,5 +147,5 @@ def launch_viewer(
         aprint("If using hatch: run this demo with 'hatch run python <demo.py>'")
     else:
         aprint(f"\n❌ Error: luxar serve exited with code {code}.")
-        aprint("Make sure the viewer is built: cd packages/luxar-viewer && pnpm build")
+        aprint("See the luxar serve output above for the cause.")
     sys.exit(1)

@@ -184,7 +184,8 @@ Kaggle credentials, or a file you supply.
 | `luxar demo list -g gsplats` | Filter by geometry: `points`, `gsplats`, `lines`, `mesh`, `points+lines`, `mixed` |
 | `luxar demo info <key\|#>` | Requirements, caches, outputs, and how to run one demo |
 | `luxar demo run <key\|#>` | Run by key (e.g. `luxar demo run lorenz`) or by the index shown in the table — keys are stable, indices shift as demos are added |
-| `luxar demo run <key> -- ARGS` | Forward arguments to the demo script, e.g. `luxar demo run gsplats_3d_tribolium_embryo -- --recompute --no-serve` |
+| `luxar demo run <key> -- ARGS` | Forward arguments to the demo script, e.g. `luxar demo run gsplats_3d_tribolium_embryo -- --recompute --no-serve`. `-- --help` describes the demo without running it; `--host 0.0.0.0` serves it to other machines, `--no-open` skips the browser |
+| `luxar demo stop` | Stop demos left running in other terminals (`luxar stop` also stops `luxar serve` / `viewer` / `gsplat view` servers) |
 | `luxar demo run-all` | Build every eligible demo's dataset unattended. Manual/Kaggle-data demos are always skipped; GPU-required demos, downloads over 200 MB, and already-built outputs are skipped by default (`--include-gpu`, `--max-download-mb 0`, `--force` lift these) |
 | `luxar demo cache list` | Inventory the demo caches under `~/.cache/luxar/`, with sizes and orphans |
 | `luxar demo cache clear <keys>` | Reclaim space — `--all` for everything, `--outputs` to drop generated scenes too, `--dry-run` to preview |

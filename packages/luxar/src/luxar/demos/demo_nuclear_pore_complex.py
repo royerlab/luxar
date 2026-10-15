@@ -194,7 +194,6 @@ DEMO_META = {
 
 import gzip
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -1378,27 +1377,25 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path}")
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_npc_") as tmpdir:
-        output_path = Path(tmpdir) / "nuclear_pore_complex.luxar.zarr"
-        _generate_or_exit(output_path, options)
-        aprint("")
-        aprint("=" * 70)
-        aprint("VIEWING TIPS")
-        aprint("=" * 70)
-        aprint("  - Top-down: the eight-fold ring and the real central channel")
-        aprint("  - Side view: the three-ring stack, 76 nm tall")
-        aprint("  - gp210's wings reach out into the perinuclear lumen")
-        aprint("  - +z is the CYTOPLASM (RanBP2 fibrils); -z the NUCLEOPLASM (ELYS)")
-        if options["state"] == "both":
-            aprint("  - Press '1' then '[' / ']' to scrub constricted <-> dilated")
-        if options["split"] == "nucleoporin":
-            aprint("  - Press L for the Layers panel: one row per nucleoporin copy")
-        else:
-            aprint("  - Press L for the Layers panel: one BSP-partitioned NPC row")
-            aprint("    Re-run with --split=nucleoporin for per-nucleoporin rows")
-        aprint("")
-        launch_viewer(output_path)
-    aprint("Cleanup complete")
+    output_path = get_demos_output_dir() / "nuclear_pore_complex.luxar.zarr"
+    _generate_or_exit(output_path, options)
+    aprint("")
+    aprint("=" * 70)
+    aprint("VIEWING TIPS")
+    aprint("=" * 70)
+    aprint("  - Top-down: the eight-fold ring and the real central channel")
+    aprint("  - Side view: the three-ring stack, 76 nm tall")
+    aprint("  - gp210's wings reach out into the perinuclear lumen")
+    aprint("  - +z is the CYTOPLASM (RanBP2 fibrils); -z the NUCLEOPLASM (ELYS)")
+    if options["state"] == "both":
+        aprint("  - Press '1' then '[' / ']' to scrub constricted <-> dilated")
+    if options["split"] == "nucleoporin":
+        aprint("  - Press L for the Layers panel: one row per nucleoporin copy")
+    else:
+        aprint("  - Press L for the Layers panel: one BSP-partitioned NPC row")
+        aprint("    Re-run with --split=nucleoporin for per-nucleoporin rows")
+    aprint("")
+    launch_viewer(output_path)
 
 
 def _generate_or_exit(output_path: Path, options: Dict[str, str]) -> None:
