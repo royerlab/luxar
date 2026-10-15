@@ -772,9 +772,32 @@ def _require_cli_tools() -> None:
         "a POSIX `grep -E` is required to evaluate the CI patterns the way the "
         "workflow does; Python's `re` is a different dialect"
     )
-    assert shutil.which("jq"), (
-        "`jq` is required to execute the queue watchdog exactly as the workflow does"
+
+
+def _require_jq() -> None:
+    """Gate the tests that EXECUTE a jq-driven workflow script on ``jq``.
+
+    Only the queue-watchdog and cancelled-push-repair runners shell out to
+    ``jq``, so the requirement lives in those two runners rather than in a
+    module-wide autouse fixture — which turned every test in this file into an
+    error on a fresh machine without jq, including the hundreds that never touch
+    it. Calling it from the runners (not per test) means a new caller can never
+    forget it.
+
+    Locally a missing ``jq`` SKIPS, with the reason saying how to install it.
+    Under CI (GitHub Actions sets ``CI=true``) it FAILS instead: the workflow
+    under test itself needs jq, every runner ships it, and a skip there would
+    silently drop the only execution coverage these scripts have.
+    """
+    if shutil.which("jq"):
+        return
+    message = (
+        "`jq` is required to execute the queue watchdog / cancelled-push repair "
+        "exactly as the workflow does (apt-get install jq | brew install jq)"
     )
+    if os.environ.get("CI", "").lower() in ("1", "true", "yes"):
+        pytest.fail(f"{message}; CI must provide jq, refusing to skip")
+    pytest.skip(message)
 
 
 def test_all_four_domains_are_extracted(workflow: str) -> None:
@@ -2295,6 +2318,7 @@ def _run_cancelled_push_repair(
     git_is_ancestor: str = "1",
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     """Execute the repair shell against deterministic workflow/job snapshots."""
+    _require_jq()
     steps = yaml.safe_load(workflow)["jobs"]["repair-cancelled-push-checks"]["steps"]
     script = next(step for step in steps if "run" in step)["run"]
     calls_path = tmp_path / "calls"
@@ -2805,6 +2829,7 @@ def _run_queue_watchdog(
     scanner_error: str = "",
 ) -> tuple[subprocess.CompletedProcess[str], int, bool]:
     """Run the real inline watchdog against deterministic GitHub API snapshots."""
+    _require_jq()
     watchdog_steps = yaml.safe_load(workflow)["jobs"]["queue-watchdog"]["steps"]
     watchdog = next(
         step["run"]

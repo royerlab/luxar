@@ -97,8 +97,12 @@ errors propagate unchanged.
 - For the NVRTC path: Linux and the `libnvrtc` that CUDA builds of torch install.
   The oldest GPU it can compile for is whatever that NVRTC targets: sm_75 for
   CUDA 13's NVRTC; CUDA 12's reaches older cards (untested here).
-- For the AOT extension only: CUDA toolkit 11.8+ (12.x recommended) with `nvcc`,
-  and a C++20 compiler
+- For the AOT extension only: CUDA toolkit 11.8+ (12.8+ recommended; 13.x for
+  Blackwell) with `nvcc` and a C++20 compiler. On Ubuntu, install it from
+  NVIDIA's apt repository (`cuda-keyring`), not the distro `nvidia-cuda-toolkit`
+  package, which is CUDA 12.0 on 24.04 — `make check-cuda-deps` prints the exact
+  commands for your architecture (x86_64 or sbsa/aarch64). The toolkit's major
+  version must match `torch.version.cuda`.
 
 ## Installation
 
@@ -121,8 +125,11 @@ make build-cuda
 ### Manual Installation
 
 ```bash
-# Ensure PyTorch with CUDA is installed in hatch environment (from project root)
-hatch run pip install torch --index-url https://download.pytorch.org/whl/cu128
+# Ensure PyTorch with CUDA is installed in hatch environment (from project root).
+# Pick the wheel whose CUDA MAJOR matches your nvcc: cu130 for a CUDA 13.x
+# toolkit (recommended for Blackwell sm_120/sm_121; needs NVIDIA driver >= 580),
+# cu128 or cu126 for CUDA 12.x or an older driver.
+hatch run pip install torch --index-url https://download.pytorch.org/whl/cu130
 
 # Build the extension (from project root)
 hatch run python packages/luxar/src/luxar/gsplats/models/gsplats/cuda/build.py

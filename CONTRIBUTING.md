@@ -19,9 +19,10 @@ git checkout -b feature/amazing-feature origin/dev
 # 4. Make your changes
 # ... edit code ...
 
-# 5. Run quality checks (before committing)
-make check-all  # Runs all quality checks
-make test-cov-python   # Ensure tests pass with coverage
+# 5. Test while iterating, then the real gates before pushing
+make test-fast PYTEST_ARGS='packages/luxar/src/luxar/encoding'  # scoped inner loop
+make test-all     # before pushing: every suite, incl. slow tests
+make check-all    # static checks (lint, types; reformats the tree)
 
 # 6. Commit (pre-commit hooks run automatically)
 git commit -m "Add amazing feature"
@@ -35,21 +36,38 @@ gh pr create --base dev
 
 ### Prerequisites
 
-The build system works on **fresh Linux/macOS machines** with minimal pre-installed tools:
-- Python 3.12+ (usually pre-installed)
-- Git and curl
+`make setup-dev` installs Node.js, pnpm, Hatch and every project dependency
+without sudo, but it needs a few system packages first (the full rationale is in
+[BUILD_SYSTEM_SPEC.md](docs/guides/developer/BUILD_SYSTEM_SPEC.md#minimal-requirements)):
 
-**Ubuntu/Debian only** (due to PEP 668):
+**Ubuntu/Debian** (24.04+ / Debian 13+ ship Python 3.12+):
 ```bash
-sudo apt-get install -y pipx && pipx ensurepath && source ~/.bashrc
+sudo apt-get update
+sudo apt-get install -y make build-essential git curl jq \
+    python3-dev python3-venv pipx \
+    libegl1 libgl1-mesa-dri libegl-mesa0 libgbm1 libgles2
+pipx ensurepath && source ~/.bashrc
 ```
+
+**macOS:**
+```bash
+xcode-select --install             # make, git, curl, a C compiler (clang)
+brew install python@3.12 pipx jq   # or Python 3.12+ from python.org
+```
+
+Playwright E2E runs additionally need the browser and its system libraries:
+`cd packages/luxar-viewer && npx playwright install --with-deps chromium`
+(`npx playwright install-deps` installs just the system libraries).
 
 ### First-time Setup
 ```bash
 make setup-dev     # Complete development environment (auto-installs Node.js, pnpm, Hatch)
 make check-deps    # Verify what's installed
-make check-all     # Run all quality checks
+make test-fast     # Smoke-test the new environment (Python not-slow + TS units)
 ```
+
+The first `make setup-dev` downloads torch, napari/Qt and friends into the Hatch
+environment: expect 10-25 minutes and ~8 GB on a cold cache (progress streams).
 
 `make setup-dev` automatically installs (no sudo needed):
 - Node.js 22.22+ (the setup installs Node.js 22 LTS by default) via nvm (Linux) or Homebrew (macOS)
@@ -59,9 +77,11 @@ make check-all     # Run all quality checks
 
 ### Daily Development Workflow
 ```bash
-make format-all    # Format code before editing
-make check-all     # Run all quality checks
-make test-cov-python   # Run tests with coverage
+make test-fast PYTEST_ARGS='<path or -k expr>'   # inner loop, scoped (not a gate)
+make test-fast     # whole fast suite, ~6-7 min (no slow tests, no coverage)
+make test-all      # before pushing: everything, incl. slow + Rust/WASM + Go
+make check-all     # before pushing: static checks (reformats the tree)
+make check-docs    # when you touched docs/ (required CI gate)
 ```
 
 ### Troubleshooting Setup Issues
@@ -94,7 +114,8 @@ For detailed build system documentation, see [BUILD_SYSTEM_SPEC.md](docs/guides/
 | `make check-typescript` | Run all TypeScript checks |
 | `make check-rust` | Run Rust type/lint checks |
 | **Testing** | |
-| `make test-all` | Run all tests (Python + TypeScript + Rust) |
+| `make test-fast` | Inner loop: Python (not slow, parallel) + TypeScript units; not a gate |
+| `make test-all` | Run all tests (Python + TypeScript + Rust + Go); run before pushing |
 | `make test-python` | Run Python tests only |
 | `make test-cov-python` | Run Python tests with coverage report |
 | `make test-cov-typescript` | Run TypeScript tests with coverage |
@@ -158,10 +179,10 @@ def test_new_feature(tmp_path):
 
 ### Running Tests
 ```bash
-hatch run test              # Run all tests
-hatch run test-cov          # Run with coverage report
-hatch run pytest -m "not slow"  # Skip slow tests
-hatch run pytest -k test_scene  # Run specific tests
+make test-fast PYTEST_ARGS='-k test_scene'  # Inner loop: specific tests, parallel
+make test-fast              # Python (not slow) + TypeScript units, no coverage
+make test-all               # Before pushing: every suite, incl. slow tests
+hatch run test-cov          # Python with coverage report (what CI gates)
 ```
 
 ## 🔍 Code Review Process

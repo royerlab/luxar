@@ -54,6 +54,58 @@ HATCH ?= $(shell command -v hatch 2>/dev/null || echo $(HOME)/.local/bin/hatch)
 # never recurse into node_modules/.git/.venv (slow + can delete the wrong dirs).
 FIND_PRUNE := -name node_modules -prune -o -name .git -prune -o -name .venv -prune -o
 
+# nvm loading. NEVER source nvm.sh bare in a recipe: it runs an implicit
+# `nvm use`, which honours the repo's `.nvmrc` (22) and RETURNS 3 when that
+# version is not installed yet — exactly the state of a fresh Linux box right
+# after the nvm installer ran. Under `.SHELLFLAGS := -e` that either aborts the
+# recipe with a bare "Error 3" or, inside an `&&` chain, silently skips the
+# `nvm install` that follows. So: source with `--no-use`, then select Node 22
+# (or the default alias) explicitly and tolerate its absence — callers that
+# NEED node check `command -v node` themselves. An NVM_DIR already exported by
+# the user is respected (default ~/.nvm).
+NVM_LOAD = export NVM_DIR="$${NVM_DIR:-$$HOME/.nvm}"; \
+	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
+		. "$$NVM_DIR/nvm.sh" --no-use || true; \
+		nvm use --silent 22 >/dev/null 2>&1 || nvm use --silent default >/dev/null 2>&1 || true; \
+	fi
+
+# Install nvm (if absent) + Node 22 on Linux, no sudo. Each step is its own
+# checked command and `node -v` is asserted against the floor before the ✅,
+# so a failure names the step instead of surfacing as a bare make error.
+NVM_INSTALL_NODE = export NVM_DIR="$${NVM_DIR:-$$HOME/.nvm}"; \
+	if [ ! -s "$$NVM_DIR/nvm.sh" ]; then \
+		echo "📥 Installing nvm (Node Version Manager) into $$NVM_DIR ..."; \
+		mkdir -p "$$NVM_DIR"; \
+		if ! curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash; then \
+			echo "❌ The nvm installer failed (needs curl and network access to raw.githubusercontent.com)."; \
+			exit 1; \
+		fi; \
+	fi; \
+	if ! . "$$NVM_DIR/nvm.sh" --no-use; then \
+		echo "❌ Could not load nvm from $$NVM_DIR/nvm.sh — remove $$NVM_DIR and re-run."; \
+		exit 1; \
+	fi; \
+	echo "📥 Installing Node.js 22 via nvm..."; \
+	if ! nvm install 22; then \
+		echo "❌ 'nvm install 22' failed — see the nvm output above (network, disk space?)."; \
+		exit 1; \
+	fi; \
+	nvm alias default 22 >/dev/null || true; \
+	nvm use --silent 22 >/dev/null 2>&1 || true; \
+	if ! command -v node >/dev/null 2>&1; then \
+		echo "❌ nvm reported success but 'node' is still not on PATH."; \
+		exit 1; \
+	fi; \
+	NV=$$(node -v | sed 's/^v//'); \
+	NMAJ=$$(echo "$$NV" | cut -d. -f1); \
+	NMIN=$$(echo "$$NV" | cut -d. -f2); \
+	if [ "$$NMAJ" -lt $(MIN_NODE_MAJOR) ] || \
+	   { [ "$$NMAJ" -eq $(MIN_NODE_MAJOR) ] && [ "$$NMIN" -lt $(MIN_NODE_MINOR) ]; }; then \
+		echo "❌ nvm installed Node.js v$$NV, below the v$(MIN_NODE_MAJOR).$(MIN_NODE_MINOR) floor."; \
+		exit 1; \
+	fi; \
+	echo "✅ Node.js v$$NV installed via nvm ($$(command -v node))"
+
 # ============================================================================
 # OS Detection and Configuration
 # ============================================================================
@@ -207,10 +259,7 @@ check-deps:  ## Check all development dependencies and their versions
 		echo "❌ Hatch not found (run 'make install-hatch')"; \
 	fi
 	@# Source nvm if available for Node.js checks
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
+	@$(NVM_LOAD); \
 	if command -v node >/dev/null 2>&1; then \
 		NODE_VERSION=$$(node -v | sed 's/v//'); \
 		NODE_MAJOR=$$(echo $$NODE_VERSION | cut -d. -f1); \
@@ -262,6 +311,22 @@ check-deps:  ## Check all development dependencies and their versions
 		echo "⚠️  Git LFS not found - the Dip-C payload will be a pointer (run: brew install git-lfs && git lfs install)"; \
 	else \
 		echo "⚠️  Git LFS not found - the Dip-C payload will be a pointer (run: sudo apt-get install git-lfs && git lfs install)"; \
+	fi
+	@# C compiler: Rust links through `cc` (wasm-pack), and a source-built
+	@# Python wheel needs it too. jq: the CI-workflow tests execute jq scripts.
+	@if command -v cc >/dev/null 2>&1; then \
+		echo "✅ C compiler: $$(cc --version 2>/dev/null | head -1)"; \
+	elif [ "$(OS)" = "macos" ]; then \
+		echo "❌ C compiler (cc) not found (run: xcode-select --install)"; \
+	else \
+		echo "❌ C compiler (cc) not found (run: sudo apt-get install build-essential)"; \
+	fi
+	@if command -v jq >/dev/null 2>&1; then \
+		echo "✅ jq: $$(jq --version 2>/dev/null)"; \
+	elif [ "$(OS)" = "macos" ]; then \
+		echo "⚠️  jq not found - the CI-workflow tests will skip (run: brew install jq)"; \
+	else \
+		echo "⚠️  jq not found - the CI-workflow tests will skip (run: sudo apt-get install jq)"; \
 	fi
 	@echo ""
 	@echo "=== Optional Dependencies (for WASM builds) ==="
@@ -423,17 +488,7 @@ ifeq ($(OS),macos)
 	fi
 else
 	@# Linux: use nvm (no sudo needed)
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ ! -s "$$NVM_DIR/nvm.sh" ]; then \
-		echo "📥 Installing nvm (Node Version Manager)..."; \
-		curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash; \
-	fi; \
-	echo "📥 Installing Node.js 22 via nvm..."; \
-	export NVM_DIR="$$HOME/.nvm"; \
-	. "$$NVM_DIR/nvm.sh" && nvm install 22 && nvm use 22 && nvm alias default 22; \
-	echo ""; \
-	echo "✅ Node.js installed via nvm"; \
-	. "$$NVM_DIR/nvm.sh" && echo "   Version: $$(node --version)"; \
+	@$(NVM_INSTALL_NODE); \
 	echo ""; \
 	echo "⚠️  Note: nvm is a shell function. For this terminal session, run:"; \
 	echo "   source ~/.bashrc   # or source ~/.nvm/nvm.sh"; \
@@ -809,17 +864,38 @@ test-all:  ## Run all tests (Python+CUDA, Rust/WASM, TypeScript, Go)
 # falls back to `testpaths` in pyproject.toml — the same five directories.
 # Tune workers with LUXAR_PYTEST_JOBS=12 — the same variable `hatch run test`
 # reads, so one setting covers both entry points.
+#
+# BOTH halves always run and the exit status aggregates them: a Python failure
+# must not hide the TypeScript result (they were separate recipe lines, so the
+# first failure aborted the second) — except an interrupt: the INT trap makes a
+# Ctrl-C stop the recipe once pytest exits, instead of starting the TypeScript
+# half. (Not keyed on pytest's exit 2: a collection error also exits 2, and
+# that is an ordinary failure whose TypeScript result should still be seen.)
+# `--max-worker-restart=0` makes a crashed xdist worker (OOM, segfault in a
+# native lib) ABORT THE RUN at the first worker crash, instead of respawning it
+# and leaving the run hanging at 99%.
 test-fast:  ## Fast inner loop (no slow tests, no coverage, parallel)
-	@echo "🐍 Python (parallel, -m 'not slow')..."
-	$(HATCH) run pytest -n $(or $(LUXAR_PYTEST_JOBS),6) --dist loadfile -m 'not slow' -q \
-		-p no:cacheprovider \
-		$(or $(PYTEST_ARGS),packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests)
-	@echo "📘 TypeScript unit tests..."
-	@if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
+	@PY_RC=0; TS_RC=0; \
+	trap 'echo ""; echo "Interrupted."; exit 130' INT; \
+	echo "🐍 Python (parallel, -m 'not slow')..."; \
+	$(HATCH) run pytest -n $(or $(LUXAR_PYTEST_JOBS),6) --dist loadfile --max-worker-restart=0 \
+		-m 'not slow' -q -p no:cacheprovider \
+		$(or $(PYTEST_ARGS),packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests) \
+		|| PY_RC=$$?; \
+	echo "📘 TypeScript unit tests..."; \
+	$(NVM_LOAD); \
+	if ! command -v pnpm >/dev/null 2>&1; then export PATH="$$PATH:$$HOME/.local/bin"; fi; \
+	if [ ! -d "packages/luxar-viewer/node_modules" ]; then \
 		echo "📦 Installing TypeScript dependencies first..."; \
-		cd packages/luxar-viewer && pnpm install; \
-	fi
-	cd packages/luxar-viewer && pnpm test --run
+		(cd packages/luxar-viewer && pnpm install) || TS_RC=$$?; \
+	fi; \
+	if [ "$$TS_RC" = "0" ]; then \
+		(cd packages/luxar-viewer && pnpm test --run) || TS_RC=$$?; \
+	fi; \
+	echo ""; \
+	if [ "$$PY_RC" = "0" ]; then echo "✅ Python: passed"; else echo "❌ Python: FAILED (exit $$PY_RC)"; fi; \
+	if [ "$$TS_RC" = "0" ]; then echo "✅ TypeScript: passed"; else echo "❌ TypeScript: FAILED (exit $$TS_RC)"; fi; \
+	[ "$$PY_RC" = "0" ] && [ "$$TS_RC" = "0" ]
 
 test-python:  ## Run Python tests only
 	$(HATCH) run test
@@ -1192,10 +1268,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 	fi
 	@echo ""
 	@echo "🧹 [10/13] Removing pnpm (global package)..."
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
+	@$(NVM_LOAD); \
 	if command -v pnpm >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then \
 		echo "   Uninstalling pnpm..."; \
 		npm uninstall -g pnpm 2>/dev/null || true; \
@@ -1264,7 +1337,7 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 		echo "  • NVIDIA driver: $$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -1)"; \
 	fi; \
 	if command -v nvcc >/dev/null 2>&1; then \
-		echo "  • nvidia-cuda-toolkit: $$(nvcc --version | grep release | sed 's/.*release //' | sed 's/,.*//')"; \
+		echo "  • CUDA toolkit $$(nvcc --version | grep release | sed 's/.*release //' | sed 's/,.*//') ($$(command -v nvcc))"; \
 	fi; \
 	if [ "$(PKG_MANAGER)" = "apt" ]; then \
 		if dpkg -l | grep -q "^ii  build-essential"; then \
@@ -1278,7 +1351,9 @@ clean-setup:  ## Remove ALL dev tools to simulate a fresh machine (USE WITH CAUT
 	@echo "To remove these system packages manually (⚠️  only if not needed elsewhere):"
 	@if command -v nvcc >/dev/null 2>&1 || dpkg -l 2>/dev/null | grep -q "^ii  build-essential"; then \
 		if [ "$(PKG_MANAGER)" = "apt" ]; then \
-			echo "  sudo apt remove nvidia-cuda-toolkit build-essential"; \
+			echo "  sudo apt remove build-essential"; \
+			echo "  CUDA toolkit: 'sudo apt remove cuda-toolkit-<major>-<minor>' (NVIDIA repo) or"; \
+			echo "  'sudo apt remove nvidia-cuda-toolkit' (Ubuntu's package) — check: dpkg -S \"\$$(command -v nvcc)\""; \
 		fi; \
 	fi
 	@echo ""
@@ -1399,10 +1474,7 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	@# Step 2: Check Node.js (auto-install via nvm if needed - no sudo required)
 	@echo "=== Step 2: Node.js Environment ==="
 	@# Source nvm if available
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
+	@$(NVM_LOAD); \
 	NODE_OK=1; \
 	if command -v node >/dev/null 2>&1; then \
 		NODE_VERSION=$$(node -v | sed 's/v//'); \
@@ -1445,21 +1517,11 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 			fi; \
 			echo "✅ Node.js installed: $$(node --version)"; \
 		else \
-			if [ ! -s "$$NVM_DIR/nvm.sh" ]; then \
-				echo "📥 Installing nvm (Node Version Manager)..."; \
-				curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash; \
-				export NVM_DIR="$$HOME/.nvm"; \
-			fi; \
-			echo "📥 Installing Node.js 22 via nvm..."; \
-			. "$$NVM_DIR/nvm.sh" && nvm install 22 && nvm use 22 && nvm alias default 22; \
-			echo "✅ Node.js installed: $$( . $$NVM_DIR/nvm.sh && node --version)"; \
+			$(NVM_INSTALL_NODE); \
 		fi; \
 	fi
 	@# Check/install pnpm (source nvm first if needed)
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
+	@$(NVM_LOAD); \
 	if command -v pnpm >/dev/null 2>&1; then \
 		echo "✅ pnpm: $$(pnpm --version)"; \
 	elif [ -x "$$HOME/.local/bin/pnpm" ]; then \
@@ -1485,17 +1547,47 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	@# Step 3: Set up Python environment with Hatch
 	@echo "=== Step 3: Creating Python Environment ==="
 	@# Use hatch from PATH or ~/.local/bin
+	@# The FIRST create is the long pole of a fresh setup: the default env pulls
+	@# torch (CUDA wheels on Linux, ~3-5 GB with its nvidia-* deps), napari[all]
+	@# (Qt), sentence-transformers, umap... Expect 10-25 min and ~8 GB on a cold
+	@# cache. `-v` streams the installer's progress so it does not look hung, and
+	@# a failure stops setup with a pointer instead of being swallowed (a later
+	@# step would otherwise fail far from the cause).
+	@# `hatch env create` on an EXISTING venv prints "already exists", exits 0
+	@# and syncs nothing — so a first create that was Ctrl-C'd or lost the
+	@# network leaves a half-built env that would pass here. The checked `-v run`
+	@# afterwards makes hatch sync any missing dependencies VISIBLY (a no-op on a
+	@# complete env) and fail loudly, instead of the sync happening silently
+	@# inside `run pre-commit install`, whose failure is tolerated.
 	@HATCH_CMD="$$(command -v hatch 2>/dev/null || echo $$HOME/.local/bin/hatch)"; \
-	echo "Creating Hatch environment..."; \
-	$$HATCH_CMD env create || true; \
+	HATCH_FAIL_HINT() { \
+		echo ""; \
+		echo "❌ $$1 failed — see the installer output above."; \
+		echo "   Common causes: no network / proxy, disk full, a missing compiler"; \
+		echo "   or Python headers for a source build (sudo apt-get install"; \
+		echo "   build-essential python3-dev), or no Python 3.12+."; \
+		echo "   Fix it, then: $$HATCH_CMD env remove default && make setup-dev"; \
+		exit 1; \
+	}; \
+	if $$HATCH_CMD env find default >/dev/null 2>&1 && [ -d "$$($$HATCH_CMD env find default)" ]; then \
+		echo "Hatch default environment exists ($$($$HATCH_CMD env find default)); checking it is complete..."; \
+	else \
+		echo "Creating Hatch environment (first run: downloads torch, napari, Qt, ..."; \
+		echo "   typically 10-25 min and ~8 GB; installer output follows)..."; \
+		$$HATCH_CMD -v env create || HATCH_FAIL_HINT "'hatch env create'"; \
+	fi; \
+	$$HATCH_CMD -v run python -c "import luxar" || HATCH_FAIL_HINT "Syncing/importing the Hatch environment"; \
+	echo "✅ Hatch default environment ready"; \
 	echo "Installing pre-commit hooks..."; \
 	$$HATCH_CMD run pre-commit install || echo "⚠️  pre-commit install skipped"
 	@echo ""
 	@# Step 4: Install TypeScript dependencies (source nvm first if needed)
 	@echo "=== Step 4: Installing TypeScript Dependencies ==="
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
+	@$(NVM_LOAD); \
+	export PATH="$$PATH:$$HOME/.local/bin"; \
+	if ! command -v node >/dev/null 2>&1; then \
+		echo "❌ Node.js is not on PATH — run 'make install-node', then re-run 'make setup-dev'."; \
+		exit 1; \
 	fi; \
 	cd packages/luxar-viewer && pnpm install
 	@echo ""
@@ -1521,8 +1613,8 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 			echo "  ⚠️  PyTorch CUDA not available (run 'make check-cuda-deps' for details)"; \
 		fi; \
 	else \
-		echo "  ⚪ CUDA toolkit not installed"; \
-		echo "     For GPU-accelerated splatting, install CUDA toolkit and run 'make build-cuda'"; \
+		echo "  ⚪ CUDA toolkit not installed (optional — only needed to build the CUDA extension)"; \
+		echo "     'make check-cuda-deps' shows how to install a toolkit that matches your torch"; \
 	fi
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1530,7 +1622,7 @@ setup-dev:  ## Complete development setup (auto-installs missing dependencies)
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 	@echo ""
 	@echo "Next steps:"
-	@echo "  make check-all    - Verify everything works"
+	@echo "  make test-fast    - Inner-loop test run (Python + TypeScript units)"
 	@echo "  make viewer       - Start the viewer dev server"
 	@echo "  make demo         - Generate a demo dataset"
 	@echo ""
@@ -1607,10 +1699,7 @@ generate-readme-images: generate-readme-demos  ## Generate README screenshots us
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	@# Source nvm if available
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
+	@$(NVM_LOAD); \
 	cd packages/luxar-viewer && pnpm readme-images
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1658,10 +1747,7 @@ generate-doc-images: generate-readme-demos  ## Generate documentation screenshot
 		cd packages/luxar-viewer && pnpm install; \
 	fi
 	@# Source nvm if available
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
+	@$(NVM_LOAD); \
 	cd packages/luxar-viewer && pnpm doc-images
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1687,8 +1773,7 @@ generate-gallery: generate-gallery-datasets  ## Capture still + orbit video for 
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then . "$$NVM_DIR/nvm.sh"; fi; \
+	@$(NVM_LOAD); \
 	cd packages/luxar-viewer && $(if $(ONLY),GALLERY_ONLY=$(ONLY) ,)pnpm gallery
 	@echo ""
 	@echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1721,10 +1806,7 @@ install-viewer-deps:  ## Install viewer dependencies (node_modules)
 
 viewer:  ## Start the web viewer development server
 	@# Source nvm if available
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
+	@$(NVM_LOAD); \
 	if command -v node >/dev/null 2>&1; then \
 		NODE_VERSION=$$(node -v | sed 's/v//'); \
 		NODE_MAJOR=$$(echo $$NODE_VERSION | cut -d. -f1); \
@@ -1751,10 +1833,7 @@ viewer:  ## Start the web viewer development server
 
 build-viewer:  ## Build the viewer for production (auto-installs Rust/wasm-pack if needed)
 	@# Source nvm and check Node.js version first
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
+	@$(NVM_LOAD); \
 	if command -v node >/dev/null 2>&1; then \
 		NODE_VERSION=$$(node -v | sed 's/v//'); \
 		NODE_MAJOR=$$(echo $$NODE_VERSION | cut -d. -f1); \
@@ -1779,10 +1858,7 @@ build-viewer:  ## Build the viewer for production (auto-installs Rust/wasm-pack 
 		$(MAKE) install-rust; \
 	fi
 	@# Build viewer (source nvm for pnpm; build-wasm.sh sources cargo env itself)
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
+	@$(NVM_LOAD); \
 	echo "🦀 Building viewer with Rust/WASM support..."; \
 	cd packages/luxar-viewer && pnpm build
 
@@ -1796,10 +1872,7 @@ build-viewer-lib:  ## Build + verify the viewer's npm library bundle
 	@# use), the guard's `pnpm install` would run in a shell that never saw nvm
 	@# and die with `pnpm: not found` on a box where pnpm lives only under
 	@# ~/.nvm — even though the block below goes to the trouble of sourcing it.
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
+	@$(NVM_LOAD); \
 	if [ -f "$(HOME)/.cargo/env" ]; then \
 		. "$(HOME)/.cargo/env"; \
 	fi; \
@@ -1837,10 +1910,7 @@ rebuild-viewer:  ## Clean rebuild of the viewer BUNDLE (WASM only if stale; auto
 	@rm -f packages/luxar-viewer/node_modules/.cache/tsc.tsbuildinfo
 	@rm -f packages/luxar-viewer/vite.config.*.timestamp-*
 	@# Source nvm and check Node.js version
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
+	@$(NVM_LOAD); \
 	if command -v node >/dev/null 2>&1; then \
 		NODE_VERSION=$$(node -v | sed 's/v//'); \
 		NODE_MAJOR=$$(echo $$NODE_VERSION | cut -d. -f1); \
@@ -1865,10 +1935,7 @@ rebuild-viewer:  ## Clean rebuild of the viewer BUNDLE (WASM only if stale; auto
 		$(MAKE) install-rust; \
 	fi
 	@# Reinstall dependencies and build (source nvm for pnpm)
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
+	@$(NVM_LOAD); \
 	echo "📦 Reinstalling dependencies..."; \
 	cd packages/luxar-viewer && pnpm install; \
 	echo "🦀 Building viewer with Rust/WASM support..."; \
@@ -1900,6 +1967,22 @@ install-rust:  ## Install Rust and wasm-pack for WASM development
 	@# This must be a SINGLE shell command so PATH updates persist after Rust install
 	@echo "🦀 Setting up Rust/WASM development environment..."; \
 	echo ""; \
+	if ! command -v cc >/dev/null 2>&1; then \
+		echo "❌ No C compiler/linker ('cc') on PATH."; \
+		echo "   rustc links through the system 'cc', so 'cargo install wasm-pack' (and"; \
+		echo "   any crate build) fails without one. Install it, then re-run:"; \
+		if [ "$(OS)" = "macos" ]; then \
+			echo "     xcode-select --install"; \
+		elif [ "$(PKG_MANAGER)" = "apt" ]; then \
+			echo "     sudo apt-get install -y build-essential"; \
+		elif [ "$(PKG_MANAGER)" = "dnf" ] || [ "$(PKG_MANAGER)" = "yum" ]; then \
+			echo "     sudo $(PKG_MANAGER) install -y gcc gcc-c++ make"; \
+		else \
+			echo "     (install gcc or clang with your package manager)"; \
+		fi; \
+		echo "   No sudo (HPC)? Load a compiler module first, e.g. 'module load gcc'."; \
+		exit 1; \
+	fi; \
 	CARGO_ENV="$$HOME/.cargo/env"; \
 	if [ -f "$$CARGO_ENV" ]; then \
 		. "$$CARGO_ENV"; \
@@ -1956,10 +2039,7 @@ install-rust:  ## Install Rust and wasm-pack for WASM development
 
 build-wasm:  ## Build the WASM module (requires Rust + wasm-pack)
 	@# Source nvm and cargo env to ensure pnpm and wasm-pack are in PATH
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
+	@$(NVM_LOAD); \
 	if [ -f "$(HOME)/.cargo/env" ]; then \
 		. "$(HOME)/.cargo/env"; \
 	fi; \
@@ -1983,10 +2063,7 @@ build-wasm:  ## Build the WASM module (requires Rust + wasm-pack)
 
 test-wasm:  ## Run Rust unit tests for WASM module
 	@# Source nvm and cargo env to ensure pnpm and cargo are in PATH
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
+	@$(NVM_LOAD); \
 	if [ -f "$(HOME)/.cargo/env" ]; then \
 		. "$(HOME)/.cargo/env"; \
 	fi; \
@@ -2010,10 +2087,7 @@ test-wasm:  ## Run Rust unit tests for WASM module
 
 benchmark-wasm:  ## Run WASM vs TypeScript performance benchmarks
 	@# Source nvm and cargo env to ensure pnpm is in PATH
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
+	@$(NVM_LOAD); \
 	if ! command -v pnpm >/dev/null 2>&1; then \
 		echo "❌ pnpm not found."; \
 		echo ""; \
@@ -2218,6 +2292,59 @@ define CHECK_MACOS_CUDA
 	fi
 endef
 
+# How to get a CUDA toolkit on apt systems. Deliberately NOT Ubuntu's
+# `nvidia-cuda-toolkit`: Ubuntu 24.04 ships CUDA 12.0, which cannot build
+# against cu13x torch wheels nor target Blackwell (sm_120/sm_121). NVIDIA's own
+# repo has current toolkits for x86_64 and for aarch64 servers ("sbsa" — DGX
+# Spark/GH200/GB200). The toolkit MAJOR must match torch.version.cuda's major.
+CUDA_APT_HINT = case "$$(uname -m)" in \
+		x86_64) CUDA_ARCH=x86_64;; aarch64|arm64) CUDA_ARCH=sbsa;; *) CUDA_ARCH="$$(uname -m)";; \
+	esac; \
+	CUDA_DISTRO=""; \
+	if [ -r /etc/os-release ]; then \
+		OS_ID=$$( . /etc/os-release; echo "$${ID:-}"); \
+		OS_LIKE=$$( . /etc/os-release; echo "$${ID_LIKE:-}"); \
+		OS_VER=$$( . /etc/os-release; echo "$${VERSION_ID:-}"); \
+		OS_UBU=$$( . /etc/os-release; echo "$${UBUNTU_CODENAME:-}"); \
+		case "$$OS_UBU" in \
+			noble) CUDA_DISTRO=ubuntu2404;; jammy) CUDA_DISTRO=ubuntu2204;; focal) CUDA_DISTRO=ubuntu2004;; \
+		esac; \
+		if [ -z "$$CUDA_DISTRO" ] && [ "$$OS_ID" = "ubuntu" ]; then CUDA_DISTRO="ubuntu$$(echo "$$OS_VER" | tr -d .)"; fi; \
+		if [ -z "$$CUDA_DISTRO" ] && [ "$$OS_ID" = "debian" ]; then CUDA_DISTRO="debian$$OS_VER"; fi; \
+		case " $$OS_LIKE " in *" ubuntu "*) [ -n "$$CUDA_DISTRO" ] || CUDA_DISTRO=ubuntu2404;; esac; \
+	fi; \
+	TORCH_CUDA_MAJOR=$$($(HATCH) run python -c "import torch; print((torch.version.cuda or '').split('.')[0])" 2>/dev/null || true); \
+	case "$$TORCH_CUDA_MAJOR" in \
+		13) CUDA_PKG=cuda-toolkit-13-0;; 12) CUDA_PKG=cuda-toolkit-12-8;; 11) CUDA_PKG=cuda-toolkit-12-8; CUDA_OLD_TORCH=1;; *) CUDA_PKG=cuda-toolkit-13-0;; \
+	esac; \
+	echo "   Install a CUDA toolkit from NVIDIA's apt repository — NOT Ubuntu's"; \
+	echo "   'nvidia-cuda-toolkit' (Ubuntu 24.04 ships CUDA 12.0: too old for cu13x"; \
+	echo "   torch and for Blackwell sm_120/sm_121). You want CUDA >= 12.8 (13.x for"; \
+	echo "   Blackwell) with the SAME MAJOR as torch.version.cuda$${TORCH_CUDA_MAJOR:+ (here: $$TORCH_CUDA_MAJOR)}."; \
+	if [ -z "$$TORCH_CUDA_MAJOR" ]; then \
+		echo "   This env's torch is CPU-only or missing: install a CUDA torch first (the"; \
+		echo "   default Linux wheel is cu130), then match its major. Suggesting CUDA 13."; \
+	fi; \
+	if [ -n "$${CUDA_OLD_TORCH:-}" ]; then \
+		echo "   This env's torch is a cu11x build: NVIDIA's current repos no longer ship"; \
+		echo "   CUDA 11 for this distro. Upgrade torch to a cu128/cu130 wheel first."; \
+	fi; \
+	echo "   CUDA 13 / cu130 needs NVIDIA driver >= 580; on an older driver use a cu128"; \
+	echo "   torch with cuda-toolkit-12-8 instead."; \
+	if [ -n "$$CUDA_DISTRO" ]; then \
+		echo "     wget https://developer.download.nvidia.com/compute/cuda/repos/$$CUDA_DISTRO/$$CUDA_ARCH/cuda-keyring_1.1-1_all.deb"; \
+		echo "     sudo dpkg -i cuda-keyring_1.1-1_all.deb"; \
+		echo "     sudo apt-get update"; \
+		echo "     sudo apt-get install -y $$CUDA_PKG"; \
+		echo "       (cuda-toolkit-12-8 for a cu12x torch, cuda-toolkit-13-0 for cu13x)"; \
+		echo "     export PATH=/usr/local/cuda/bin:\$$PATH"; \
+		echo "   (repo arch: x86_64 for PCs/servers, sbsa for aarch64 servers such as DGX Spark)"; \
+	else \
+		echo "   This distro has no NVIDIA apt repository mapping here; pick yours"; \
+		echo "   (and x86_64 vs sbsa for aarch64) at https://developer.nvidia.com/cuda-downloads"; \
+	fi; \
+	if [ -n "$$CUDA_DISTRO" ]; then echo "   Other distros: https://developer.nvidia.com/cuda-downloads"; fi
+
 # Mirror guard: Metal/MPS exists only on Apple silicon. Same shape as
 # CHECK_MACOS_CUDA so the two accelerator families fail symmetrically.
 # Checks the ARCHITECTURE too, not just the OS: torch's MPS backend does not
@@ -2242,6 +2369,9 @@ endef
 setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 	$(CHECK_MACOS_CUDA)
 	@echo "🔧 Setting up CUDA development environment..."
+	@echo ""
+	@echo "   This is OPTIONAL: it builds the CUDA splatting extension ahead of time"
+	@echo "   (for development, benchmarking and HPC). Fitting works without it."
 	@echo ""
 	@# Step 1: Check/install system dependencies (may need sudo)
 	@echo "=== Step 1: System Dependencies ==="
@@ -2295,58 +2425,30 @@ setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 			if [ "$$NEEDS_DRIVER" = "1" ]; then \
 				echo "   NVIDIA Driver:"; \
 				echo "     sudo ubuntu-drivers autoinstall   # Recommended - auto-selects best driver"; \
-				echo "     # OR manually: sudo apt install nvidia-driver-535"; \
-			fi; \
-			if [ "$$NEEDS_PYTHONDEV" = "1" ]; then \
-				if [ "$(PKG_MANAGER)" = "apt" ]; then \
-					echo "   Python development headers (auto-installing):"; \
-					echo "     sudo apt update && sudo apt install -y python3-dev"; \
-					echo ""; \
-					echo "📥 Installing python3-dev..."; \
-					if sudo apt update && sudo apt install -y python3-dev; then \
-						echo "✅ python3-dev installed successfully"; \
-					else \
-						echo ""; \
-						echo "❌ Failed to install python3-dev. Please run manually:"; \
-						echo "   sudo apt install python3-dev"; \
-						echo ""; \
-						echo "Then re-run 'make setup-cuda'"; \
-						exit 1; \
-					fi; \
-				elif [ "$(OS)" = "macos" ]; then \
-					echo ""; \
-					echo "⚠️  On macOS, Python dev headers are typically included with Python."; \
-					echo "   If you installed Python via Homebrew:"; \
-					echo "     brew reinstall python@3.12"; \
-					echo "   Or install Xcode Command Line Tools:"; \
-					echo "     xcode-select --install"; \
-					read -p "Try reinstalling Python? [y/N] " confirm; \
-					if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
-						brew reinstall python@3.12 || true; \
-					fi; \
-				else \
-					echo ""; \
-					echo "⚠️  Unsupported package manager. Please install Python development headers manually."; \
-					exit 1; \
-				fi; \
+				echo "     # OR manually: sudo apt install nvidia-driver-580   # Blackwell needs >= 570"; \
 			fi; \
 			APT_PKGS=""; \
-			if [ "$$NEEDS_CUDA" = "1" ] || [ "$$NEEDS_BUILD" = "1" ]; then \
-				if [ "$$NEEDS_CUDA" = "1" ]; then APT_PKGS="$$APT_PKGS nvidia-cuda-toolkit"; fi; \
-				if [ "$$NEEDS_BUILD" = "1" ]; then APT_PKGS="$$APT_PKGS build-essential"; fi; \
-				echo "   Other packages:"; \
+			if [ "$$NEEDS_BUILD" = "1" ]; then APT_PKGS="$$APT_PKGS build-essential"; fi; \
+			if [ "$$NEEDS_PYTHONDEV" = "1" ]; then APT_PKGS="$$APT_PKGS python3-dev"; fi; \
+			if [ -n "$$APT_PKGS" ]; then \
+				echo "   Build prerequisites:"; \
 				echo "     sudo apt-get update && sudo apt-get install -y$$APT_PKGS"; \
 			fi; \
-			if [ "$$NEEDS_DRIVER" = "1" ] || [ "$$NEEDS_CUDA" = "1" ] || [ "$$NEEDS_BUILD" = "1" ]; then \
+			if [ "$$NEEDS_CUDA" = "1" ]; then \
 				echo ""; \
-				read -p "Run these commands now? [y/N] " confirm; \
+				echo "   CUDA toolkit (nvcc) — not installed automatically:"; \
+				$(CUDA_APT_HINT); \
+			fi; \
+			if [ "$$NEEDS_DRIVER" = "1" ] || [ -n "$$APT_PKGS" ]; then \
+				echo ""; \
+				read -p "Run the driver / build-prerequisite commands above now (sudo)? [y/N] " confirm || confirm=""; \
 				if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
 					if [ "$$NEEDS_DRIVER" = "1" ]; then \
 						echo "Installing NVIDIA driver..."; \
 						sudo ubuntu-drivers autoinstall; \
 					fi; \
 					if [ -n "$$APT_PKGS" ]; then \
-						echo "Installing other packages..."; \
+						echo "Installing$$APT_PKGS..."; \
 						sudo apt-get update && sudo apt-get install -y$$APT_PKGS; \
 					fi; \
 				else \
@@ -2354,6 +2456,11 @@ setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 					echo "Skipped. Please install manually and re-run 'make setup-cuda'."; \
 					exit 1; \
 				fi; \
+			fi; \
+			if [ "$$NEEDS_CUDA" = "1" ]; then \
+				echo ""; \
+				echo "Install the CUDA toolkit as shown above, then re-run 'make setup-cuda'."; \
+				exit 1; \
 			fi; \
 		else \
 			echo "   Please install the following packages manually:"; \
@@ -2370,11 +2477,14 @@ setup-cuda:  ## Install CUDA dependencies (may require sudo for system packages)
 		TORCH_CUDA=$$($(HATCH) run python -c "import torch; print(torch.version.cuda)" 2>/dev/null); \
 		echo "✅ PyTorch with CUDA $$TORCH_CUDA already installed"; \
 	else \
-		CUDA_VER=$$(nvcc --version 2>/dev/null | grep release | sed 's/.*release //; s/,.*//' || echo "12.8"); \
+		CUDA_VER=$$(nvcc --version 2>/dev/null | grep release | sed 's/.*release //; s/,.*//' || true); \
+		[ -n "$$CUDA_VER" ] || CUDA_VER="12.8"; \
 		CUDA_MAJOR=$$(echo $$CUDA_VER | cut -d. -f1); \
 		CUDA_MINOR=$$(echo $$CUDA_VER | cut -d. -f2); \
 		CUDA_NUM=$$(( $$CUDA_MAJOR * 10 + $$CUDA_MINOR )); \
-		if [ $$CUDA_NUM -ge 128 ]; then CUDA_TAG="cu128"; \
+		if [ $$CUDA_NUM -ge 130 ]; then CUDA_TAG="cu130"; \
+		elif [ $$CUDA_NUM -ge 128 ]; then CUDA_TAG="cu128"; \
+		elif [ $$CUDA_NUM -ge 126 ]; then CUDA_TAG="cu126"; \
 		elif [ $$CUDA_NUM -ge 124 ]; then CUDA_TAG="cu124"; \
 		elif [ $$CUDA_NUM -ge 121 ]; then CUDA_TAG="cu121"; \
 		elif [ $$CUDA_NUM -ge 118 ]; then CUDA_TAG="cu118"; \
@@ -2430,17 +2540,17 @@ check-cuda-deps:  ## Check CUDA development dependencies
 	else \
 		echo "❌ CUDA toolkit not found (nvcc not in PATH)"; \
 		echo ""; \
-		echo "   Installation options:"; \
-		if [ "$(PKG_MANAGER)" = "apt" ]; then \
-			echo "   Ubuntu/Debian (recommended):"; \
-			echo "     sudo apt install nvidia-cuda-toolkit"; \
-			echo ""; \
-			echo "   Or for latest version:"; \
-		fi; \
-		echo "     https://developer.nvidia.com/cuda-downloads"; \
+		echo "   Optional: only needed to BUILD the extension ahead of time ('make build-cuda')."; \
 		echo ""; \
-		echo "   After installing, ensure nvcc is in PATH:"; \
-		echo "     export PATH=/usr/local/cuda/bin:\$$PATH"; \
+		if [ "$(PKG_MANAGER)" = "apt" ]; then \
+			$(CUDA_APT_HINT); \
+		else \
+			echo "     https://developer.nvidia.com/cuda-downloads (CUDA >= 12.8; 13.x for Blackwell;"; \
+			echo "     same major as torch.version.cuda)"; \
+			echo ""; \
+			echo "   After installing, ensure nvcc is in PATH:"; \
+			echo "     export PATH=/usr/local/cuda/bin:\$$PATH"; \
+		fi; \
 	fi
 	@echo ""
 	@echo "=== 2. NVIDIA GPU Driver ==="
@@ -2464,7 +2574,7 @@ check-cuda-deps:  ## Check CUDA development dependencies
 		echo "   Install NVIDIA drivers:"; \
 		if [ "$(PKG_MANAGER)" = "apt" ]; then \
 			echo "     sudo ubuntu-drivers autoinstall   # Recommended - auto-selects best driver"; \
-			echo "     # OR manually: sudo apt install nvidia-driver-535"; \
+			echo "     # OR manually: sudo apt install nvidia-driver-580   # Blackwell needs >= 570"; \
 		else \
 			echo "     https://www.nvidia.com/drivers"; \
 		fi; \
@@ -2472,7 +2582,7 @@ check-cuda-deps:  ## Check CUDA development dependencies
 	@echo ""
 	@echo "=== 3. PyTorch with CUDA ==="
 	@$(HATCH) run python -c "import sys; import torch; print('✅ PyTorch:', torch.__version__); cuda_available = torch.cuda.is_available(); print('✅ PyTorch CUDA:', torch.version.cuda if cuda_available else 'not available'); (print('   GPU:', torch.cuda.get_device_name(0)) if cuda_available else None); (print('   Compute capability:', str(torch.cuda.get_device_capability()[0]) + '.' + str(torch.cuda.get_device_capability()[1])) if cuda_available else None)" 2>/dev/null || \
-	$(HATCH) run python -c "print('❌ PyTorch not installed'); print(''); print('   Install PyTorch with CUDA:'); print('     $(HATCH) run pip install torch --index-url https://download.pytorch.org/whl/cu128')" 2>/dev/null || \
+	$(HATCH) run python -c "print('❌ PyTorch not installed'); print(''); print('   Install PyTorch with CUDA:'); print('     $(HATCH) run pip install torch --index-url https://download.pytorch.org/whl/cu130'); print('   (cu130 = CUDA 13.x / Blackwell, needs NVIDIA driver >= 580; cu128 or cu126 for a CUDA 12.x toolkit or an older driver; match nvcc major)')" 2>/dev/null || \
 	echo "❌ Could not check PyTorch (hatch environment issue)"
 	@echo ""
 	@echo "=== 4. Python Development Headers ==="
@@ -2610,7 +2720,10 @@ build-cuda:  ## Build the CUDA splatting extension  [SLURM=1 to build on a GPU n
 				echo ""; \
 			fi; \
 			echo "   Or reinstall PyTorch with CUDA:"; \
-			echo "     $(HATCH) run pip install torch --index-url https://download.pytorch.org/whl/cu128"; \
+			echo "     $(HATCH) run pip install torch --index-url https://download.pytorch.org/whl/cu130"; \
+			echo "   (cu130 for a CUDA 13.x toolkit / Blackwell; cu128 or cu126 for CUDA 12.x —"; \
+			echo "    the wheel's CUDA major must match nvcc's; cu130 needs NVIDIA driver >= 580,"; \
+			echo "    use cu128 on an older driver)"; \
 			echo ""; \
 			echo "   Run 'make check-cuda-deps' for more details."; \
 			exit 1; \
@@ -2871,10 +2984,7 @@ check-knip:  ## Report unused viewer files/exports/deps (non-gating)
 	@# be sourced BEFORE the pnpm probe, or on a Linux box provisioned by
 	@# `make setup-dev` (pnpm only under ~/.nvm) the guard reports "pnpm not
 	@# found" from a non-interactive make shell even though setup-dev succeeded.
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
+	@$(NVM_LOAD); \
 	if ! command -v pnpm >/dev/null 2>&1; then \
 		echo "❌ pnpm not found — cannot run knip."; \
 		echo "   Run 'make setup-dev' to install Node.js and pnpm."; \
@@ -2955,10 +3065,7 @@ build-typedoc:  ## Generate TypeScript API documentation with TypeDoc
 		echo "📦 Installing TypeScript dependencies first..."; \
 		cd packages/luxar-viewer && pnpm install; \
 	fi
-	@export NVM_DIR="$$HOME/.nvm"; \
-	if [ -s "$$NVM_DIR/nvm.sh" ]; then \
-		. "$$NVM_DIR/nvm.sh"; \
-	fi; \
+	@$(NVM_LOAD); \
 	cd packages/luxar-viewer && pnpm typedoc
 	@# Copy TypeDoc output into Sphinx build for unified docs
 	@mkdir -p docs/_build/html/api/viewer

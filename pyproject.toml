@@ -368,6 +368,12 @@ exclude = [
 # `dev` → `test` → `gsplats`, so this pulls pytest/cov/ruff/mypy/pre-commit/
 # bandit + scipy/torch transitively.
 features = ["dev"]
+# `installer = "uv"` was evaluated (it would cut the cold first create from
+# ~20 min of pip resolution) and NOT adopted: uv-built envs ship no `pip`, and
+# the Makefile (`install-dev`, `setup-cuda`'s CUDA-torch swap, `build-cuda`'s
+# ninja), the CUDA build hints and `luxar demo deps --install` all run
+# `pip install` inside this env. Adopt it only together with moving those to
+# `uv pip` (or adding `pip` to this env's dependencies).
 dependencies = [
     # Apple Silicon optimization (not a project optional-dependency)
     "mlx>=0.29.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
@@ -455,7 +461,7 @@ NUMEXPR_NUM_THREADS = "{env:NUMEXPR_NUM_THREADS:1}"
 # `jobs_per_gpu=2`) sized at `os.cpu_count() // 2`, so `auto` would multiply
 # 16 workers by up to 8 child jobs. Pairs with the thread pin in `env-vars`
 # above — ci.yml's note is explicit that neither works without the other.
-test = "pytest -n {env:LUXAR_PYTEST_JOBS:6} --dist loadfile {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
+test = "pytest -n {env:LUXAR_PYTEST_JOBS:6} --dist loadfile --max-worker-restart=0 {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 # NOT parallelised here: this is the script CI runs, and ci.yml already injects
 # `-n 2 --dist loadfile` via PYTEST_ADDOPTS on the 16-core self-hosted box while
 # deliberately keeping the 2-core hosted runners serial (four workers importing
@@ -469,7 +475,7 @@ test-cov = "mkdir -p coverage/python && pytest -m 'not slow' --cov=luxar --cov-r
 # protected `python-tests (3.12)` context, and coverage.yml starts a per-commit
 # advisory run that newer dev pushes cannot cancel.
 test-nocov = "pytest -m 'not slow' {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
-test-cov-all = "mkdir -p coverage/python && pytest -n {env:LUXAR_PYTEST_JOBS:6} --dist loadfile --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
+test-cov-all = "mkdir -p coverage/python && pytest -n {env:LUXAR_PYTEST_JOBS:6} --dist loadfile --max-worker-restart=0 --cov=luxar --cov-report=term-missing --cov-report=html {args:packages/luxar/src/luxar packages/luxar/examples/tests stats scripts/gallery/tests scripts/tests}"
 # `scripts/benchmarks` remains explicit as a safety net if the anchored
 # `/benchmarks/` ignore rule ever regresses to matching nested directories.
 format = [
@@ -878,7 +884,13 @@ python_functions = ["test_*"]
 addopts = [
     "--strict-markers",
     "--strict-config",
-    "--verbose"
+    "--verbose",
+    # napari (pulled into the default env by `napari[all]`) registers a pytest11
+    # plugin that auto-loads at startup and drags in its Qt/GL stack. On a
+    # headless box without libGL/libEGL that crashes pytest before a single
+    # test is collected. No test here uses its fixtures (make_napari_viewer
+    # etc.); remove this if one ever needs to.
+    "-p", "no:napari",
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
