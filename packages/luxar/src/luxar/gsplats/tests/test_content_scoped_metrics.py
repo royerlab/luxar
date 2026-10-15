@@ -1376,6 +1376,130 @@ def test_a_real_fit_still_publishes_its_psnr() -> None:
             assert fraction == pytest.approx(count / result.n_splats)
 
 
+@pytest.mark.parametrize("voxel_size", [None, (2.0, 0.5)])
+def test_a_real_fit_scores_the_saved_post_cull_model(voxel_size) -> None:
+    """The published PSNR is the SAVED (post-cull) model's, not the pre-cull fit's.
+
+    Re-rendering the returned splats against the source on the fit's basis must
+    reproduce the stored score exactly — including for a physical-coordinate fit,
+    whose centers have to be mapped back onto the voxel grid first.
+    """
+    torch = pytest.importorskip("torch")
+    from luxar.gsplats.fit_basis import reference_on_fit_basis
+    from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+    from luxar.gsplats.metrics import compute_quality_metrics
+    from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+
+    V = np.zeros((16, 16), dtype=np.float32)
+    V[4:8, 4:8] = 1.0
+    V[10:13, 9:12] = 0.6
+    result = fit_gaussian_splats(
+        V,
+        seeds=40,
+        n_iters=20,
+        verbose=False,
+        device="cpu",
+        napari_movie=False,
+        cull_retention=0.8,
+        voxel_size=voxel_size,
+    )
+    assert result.stats["n_original"] > result.n_splats, "nothing was culled"
+    scored = result
+    if voxel_size is not None:
+        vs = np.asarray(voxel_size)
+        scored = GSplatData(
+            centers=(result.centers / vs).astype(np.float32),
+            amplitudes=result.amplitudes,
+            cholesky_factors=(
+                result.cholesky_factors / np.array([vs[0], vs[1], vs[1]])
+            ).astype(np.float32),
+            truncation_radius=result.truncation_radius,
+        )
+    with torch.no_grad():
+        rendered = render_to_volume_tensor(
+            scored, shape=V.shape, device="cpu", truncate=result.truncation_radius
+        )
+        ref = torch.from_numpy(
+            reference_on_fit_basis(V, result.stats.get("image_min")).astype(np.float32)
+        )
+        quality = compute_quality_metrics(rendered, ref)
+    assert result.stats["psnr_db"] == pytest.approx(quality["psnr_db"], abs=1e-6)
+    assert result.stats["ssim"] == pytest.approx(quality["ssim"], abs=1e-6)
+
+
+def test_a_failed_post_cull_rescore_keeps_the_pre_cull_score(
+    monkeypatch, capsys
+) -> None:
+    """Re-scoring must never fail a fit: the carried pre-cull score stands.
+
+    And it is never silent: one warning line even when ``verbose=False`` (the
+    content/tiled paths run their inner fits quiet), plus the reason in
+    ``stats["quality_error"]`` — the key ``finalize_results`` uses too.
+    """
+    pytest.importorskip("torch")
+    import luxar.gsplats.rendering.volume_rendering as vr
+    from luxar.gsplats.fit_gsplats import _rescore_saved_model
+
+    data = GSplatData(
+        centers=np.array([[2.0, 2.0]], dtype=np.float32),
+        amplitudes=np.array([1.0], dtype=np.float32),
+        cholesky_factors=np.array([[1.0, 0.0, 1.0]], dtype=np.float32),
+        stats={"psnr_db": 33.0},
+    )
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("no device")
+
+    monkeypatch.setattr(vr, "render_to_volume_tensor", boom)
+    _rescore_saved_model(
+        data,
+        np.zeros((4, 4), dtype=np.float32),
+        verbose=False,
+        device="cpu",
+        voxel_size=None,
+        output_space="real",
+    )
+    assert data.stats["psnr_db"] == 33.0
+    assert data.stats["quality_error"] == "RuntimeError: no device"
+    out = capsys.readouterr().out
+    assert out.count("post-cull quality re-score skipped") == 1
+    assert "PRE-cull" in out
+
+
+def test_a_progressive_fit_scores_its_saved_post_cull_model() -> None:
+    """The progressive fitter's overall PSNR is re-measured after its closing cull."""
+    torch = pytest.importorskip("torch")
+    from luxar.gsplats.fit_progressive_gsplats import (
+        _compute_psnr_chunked,
+        fit_progressive_gaussian_splats,
+    )
+    from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+
+    V = np.zeros((16, 16), dtype=np.float32)
+    V[4:8, 4:8] = 1.0
+    V[10:13, 9:12] = 0.6
+    result = fit_progressive_gaussian_splats(
+        V,
+        max_splats=60,
+        max_splats_per_pass=20,
+        iters_per_pass=20,
+        device="cpu",
+        verbose=False,
+        cull_retention=0.8,
+        psnr_patience=0.0,
+        floor="none",
+    )
+    assert result.stats["n_original"] > result.n_splats, "nothing was culled"
+    with torch.no_grad():
+        rendered = render_to_volume_tensor(
+            result, shape=V.shape, device="cpu", truncate=result.truncation_radius
+        )
+    assert result.stats["psnr_db"] == pytest.approx(
+        _compute_psnr_chunked(rendered, V), abs=1e-6
+    )
+    assert "quality_error" not in result.stats
+
+
 @pytest.mark.slow
 def test_a_real_progressive_fit_keeps_its_per_pass_ladder() -> None:
     """The exemption at the ONE call site with a per-pass ladder of scores.

@@ -314,7 +314,9 @@ luxar gsplat fit volume.tiff splats.gsplats.zarr --config params.yaml
 luxar gsplat fit --dump-config --preset hifi > config.yaml  # Generate config template
 ```
 
-**Presets:** `draft` (fast preview), `standard` (balanced), `hifi` (high quality), `ultra` (max quality)
+**Presets:** `draft` (fast preview), `standard` (balanced), `hifi` (high quality), `ultra` (max quality). With no `--preset`, `fit` uses `standard` (5000 iterations with early stopping); a `--config` without `--preset` layers on top of `standard`. The Python `fit_gaussian_splats` keeps its own signature defaults (1000 iterations). `--lr`, `--loss`, `--seed-method`, `--downscale` and `--cull-retention` are listed under **Advanced** in `fit --help`.
+
+`--cull-retention` removes, after fitting, the weakest splats that together contribute less than `(1 - value)` of the total amplitude. Every preset uses `0.999` (near-lossless), as does `--tiling content`; `0` keeps every splat. An aggressive `0.95` drops the bottom 5% of cumulative amplitude, and on a sparse, heavy-tailed volume that can be most of the splats. A `--tile k/M` worker applies the cull to its own tile, and `batch-fit` does the same before merging, so `--flat` approximates rather than exactly matches one global cull over the merged splats. The fit summary reports the compression of the SAVED (post-cull) store, and its quality: a whole-volume fit and a `--progressive` fit re-score the culled splats, so the stored `psnr_db` (and, for a whole-volume fit, SSIM/MSE/foreground PSNR) describe the saved model, with the pre-cull line printed separately and labelled. Two scores stay pre-cull by design: a progressive fit's per-pass ladder (`pass_psnrs`), and on a tiled partition each part's own tile score; the merged whole-volume score of a tiled fit is measured on the saved set. If a re-score fails, one warning is printed, the pre-cull score stands, and the reason is recorded as `quality_error`.
 
 `--floor specimen` is the opt-in specimen-in-medium mode. It first excludes the bright signal class with a full-distribution Otsu cut, then splits the remaining background band and accepts its upper mode only when both background populations are compact; otherwise it falls back to `auto`. The chosen branch is recorded as `floor_strategy` next to the applied `floor`. `batch-fit` rejects this spec because its one-level-across-time reduction cannot safely combine selected and fallback slices; calibrate a representative volume and pass the measured numeric floor instead.
 
@@ -528,13 +530,13 @@ Direct content fits warn and ignore `--denoise`, `--progressive`, and the explic
 #### `luxar gsplat transform`
 Apply spatial and intensity transforms to a Gaussian splat dataset. Multiple transforms can be combined; they are applied in fixed order: scale, rotate, translate, center, scale-intensity, normalize-intensity.
 ```bash
-luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --scale 4,1,1,1 --center
+luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --scale 4,1,1 --center
 luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --rotate-z 90
 luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --normalize-intensity 1.0
 luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --translate 0,100,0 --scale-intensity 0.5
 ```
 
-**Spatial options**: `--scale/-s` (per-axis factors), `--translate/-t` (per-axis offset), `--rotate-x/--rotate-y/--rotate-z` (degrees; rotates the three `--spatial-dims` center dims, default `0,1,2` — the first three, matching the partitioner and the stack-last time/channel convention — other dims are left unrotated), `--spatial-dims i,j,k` (which 3 center dims the rotation acts on, e.g. `1,2,3` for a direct nD fit whose leading axis is time; the listed order assigns the rotation frame's X/Y/Z roles, so `3,2,1` is a different transform from `1,2,3` — unlike `filter`'s order-insensitive `--spatial-dims`), `--center` (center at amplitude-weighted centroid).
+**Spatial options**: `--scale/-s` and `--translate/-t` (one value per center column, in array axis order — Z,Y,X for a ZYX volume), `--rotate-x/--rotate-y/--rotate-z` (degrees; rotates the three `--spatial-dims` center dims, default `0,1,2` — the first three, matching the partitioner and the stack-last time/channel convention — other dims are left unrotated), `--spatial-dims i,j,k` (which 3 center dims the rotation acts on, e.g. `1,2,3` for a direct nD fit whose leading axis is time; the listed order assigns the rotation frame's X/Y/Z roles, so `3,2,1` is a different transform from `1,2,3` — unlike `filter`'s order-insensitive `--spatial-dims`), `--center` (center at amplitude-weighted centroid).
 **Intensity options**: `--scale-intensity` (multiply amplitudes), `--normalize-intensity` (normalize max amplitude to value).
 **Output options**: `--encoding/-e` (auto/precision/memory), `--compress/-c` (zip/tar.gz).
 

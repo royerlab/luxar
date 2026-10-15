@@ -173,6 +173,94 @@ def _stamp_content_box_output(
     )
 
 
+#: Output suffixes that name a STORE rather than a JSON file. `--plan-only`
+#: writes JSON, so handing it one of these used to drop a JSON document under a
+#: `.zarr` name — which every later reader then mistakes for a broken store.
+_STORE_SUFFIXES = (".zarr", ".zip", ".gz", ".tar")
+
+
+def plan_only_json_path(output: Path) -> Path:
+    """Where ``--plan-only`` writes its plan for the requested ``output``.
+
+    A ``.json`` (or any non-store) path is used verbatim. A store-looking path
+    (``out.gsplats.zarr``, ``out.zarr.zip``, ...) is replaced by
+    ``<stem>.plan.json`` beside it, with the store suffixes stripped:
+    ``out.gsplats.zarr`` -> ``out.plan.json``.
+    """
+    name = output.name
+    lowered = name.lower()
+    if not any(lowered.endswith(sfx) for sfx in _STORE_SUFFIXES):
+        return output
+    stem = name
+    for sfx in (".gz", ".tar", ".zip", ".zarr", ".gsplats", ".luxar"):
+        if stem.lower().endswith(sfx):
+            stem = stem[: -len(sfx)]
+    return output.with_name(f"{stem or 'fit'}.plan.json")
+
+
+def _print_plan_summary(fitplan: Any, seconds: float) -> None:
+    """One line: box count, core and halo-scaled budgets, halo overhead."""
+    med, mx = fitplan.overlap_fraction()
+    fitted = sum(_scaled_box_budgets(fitplan))
+    aprint(
+        f"Plan: {fitplan.n_boxes} boxes, core budget "
+        f"{fitplan.total_budget:,} splats ({fitted:,} after halo scaling, "
+        f"what the boxes actually fit), halo overhead median "
+        f"{med:.0%} / max {mx:.0%}  ({seconds:.1f}s)"
+    )
+
+
+def _scaled_box_budgets(fitplan: Any) -> list[int]:
+    """The per-box seed counts ``fit_planned`` will actually use.
+
+    The plan's ``budget`` sizes each box's CORE; the fit runs on the
+    halo-padded crop and scales the budget up for it (capped), see
+    :func:`luxar.gsplats.planner.fit_planned._scaled_budget`.
+    """
+    from luxar.gsplats.planner.fit_planned import _scaled_budget
+
+    cap = int(fitplan.density.get("saturation_cap", 0)) if fitplan.density else 0
+    shape = tuple(int(s) for s in fitplan.volume_shape)
+    return [
+        _scaled_budget(b, int(fitplan.overlap), shape, cap)  # type: ignore[arg-type]
+        for b in fitplan.boxes
+    ]
+
+
+_MAX_LISTED_BOXES = 20
+
+
+def _write_plan_only(fitplan: Any, output: Path, *, verbose: bool) -> Path:
+    """Write the ``--plan-only`` JSON (beside a store-like ``output``) and say where."""
+    plan_out = plan_only_json_path(output)
+    if plan_out != output:
+        aprint(
+            f"--plan-only writes a plan JSON, not a store: {output.name} "
+            f"looks like a store, so the plan goes to {plan_out}"
+        )
+    if plan_out.exists():
+        aprint(f"WARNING: overwriting the existing plan {plan_out}")
+    plan_out.parent.mkdir(parents=True, exist_ok=True)
+    fitplan.to_json(plan_out)
+    if verbose:
+        _print_scaled_box_budgets(fitplan)
+    aprint(f"Wrote plan: {plan_out}")
+    return plan_out
+
+
+def _print_scaled_box_budgets(fitplan: Any) -> None:
+    """Per-box core -> fitted budgets (first ``_MAX_LISTED_BOXES``)."""
+    scaled = _scaled_box_budgets(fitplan)
+    for i, (box, fitted) in enumerate(zip(fitplan.boxes, scaled, strict=True)):
+        if i == _MAX_LISTED_BOXES:
+            aprint(f"  ... {len(scaled) - i} more boxes")
+            break
+        aprint(
+            f"  box {i}: {'x'.join(str(d) for d in box.dims)} voxels, "
+            f"core budget {box.budget:,} -> {fitted:,} fitted"
+        )
+
+
 def _save_fit_result(
     result: Any,
     output: Path,
@@ -343,8 +431,9 @@ def run_content_fit(
                 # `0.0` ("keep every splat") is not None, so it still wins here.
                 "cull_retention": cull_retention,
             },
-            # Pin content tiling's baseline if the fitter default changes.
-            # Presets, config files, and --cull-retention still win.
+            # Pin content tiling's baseline beneath the preset layer. Every
+            # preset (including the default one) sets cull_retention too, so
+            # this is a backstop; config files and --cull-retention still win.
             command_defaults={"cull_retention": CONTENT_CULL_RETENTION},
         )
         _fill_source_dtype(fk, source_dtype)
@@ -534,23 +623,14 @@ def run_content_fit(
                 max_leaf=max_leaf,
                 overlap=overlap,
             )
-            med, mx = fitplan.overlap_fraction()
             if verbose:
-                aprint(
-                    f"Plan: {fitplan.n_boxes} boxes, total budget "
-                    f"{fitplan.total_budget:,} splats, overlap median "
-                    f"{med:.0%} / max {mx:.0%}  "
-                    f"({time.perf_counter() - t0:.1f}s)"
-                )
+                _print_plan_summary(fitplan, time.perf_counter() - t0)
         if plan_only:
             if output is None:
                 raise typer.BadParameter(
                     "--plan-only requires --output/-o (plan JSON path)"
                 )
-            output.parent.mkdir(parents=True, exist_ok=True)
-            fitplan.to_json(output)
-            if verbose:
-                aprint(f"Wrote plan: {output}")
+            _write_plan_only(fitplan, output, verbose=verbose)
             return
         if output is None:
             raise typer.BadParameter("content fit requires --output/-o")
@@ -604,11 +684,10 @@ def run_content_fit(
         builder = _default_worker_cmd_builder(
             input_path,
             plan_json_path,
-            # VERBATIM, not `preset or "standard"`: the sequential path hands
-            # `load_fit_config` the CLI value as-is, and defaulting to "standard"
-            # here would layer that preset's n_iters (5000 vs 1000) and
-            # cull_retention on every box — `-j N` fitting differently from
-            # `-j 1` (#1637).
+            # VERBATIM: the sequential path hands `load_fit_config` the CLI
+            # value as-is and the worker does the same, so both resolve the one
+            # default (`DEFAULT_FIT_PRESET`) in the same place. Defaulting it
+            # here instead would let the two drift apart again (#1637).
             preset=preset,
             # The run's fit configuration, so a box worker resolves the same fit
             # config as the sequential path. `truncate:` lives only in a YAML

@@ -731,7 +731,9 @@ class TestRelocationParameters:
 
         # Test compression analysis (should not raise exceptions)
         try:
-            display_compression_analysis(V, result)
+            display_compression_analysis(
+                V.nbytes, result.n_splats * 24, n_splats=result.n_splats
+            )
             compression_test_passed = True
         except Exception:
             compression_test_passed = False

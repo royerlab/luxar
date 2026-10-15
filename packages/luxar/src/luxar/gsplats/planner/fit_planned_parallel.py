@@ -100,9 +100,9 @@ def _default_worker_cmd_builder(
     forwarded: a content box's budget comes from the plan, and ``run_content_fit``
     pops it. Each of these is omitted from the argv when ``None`` (as
     ``device``/``floor`` already are), leaving the worker to resolve its own
-    default — ``preset=None`` included, because a preset the user did not ask for
-    would layer its own ``n_iters``/``cull_retention`` on top of the config and
-    make the worker fit with different parameters than the sequential path.
+    default — ``preset=None`` included: the worker's ``load_fit_config`` then
+    resolves ``DEFAULT_FIT_PRESET`` exactly as the sequential path's does, so
+    forwarding a call-site default instead could only let the two drift apart.
 
     ``floor`` is expected to be the parent's already-RESOLVED background level (a
     number, or ``"none"`` when suppression is off) rather than a spec like

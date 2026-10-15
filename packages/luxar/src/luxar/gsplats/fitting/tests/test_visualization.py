@@ -8,10 +8,12 @@ import numpy as np
 import pytest
 
 from luxar.gsplats.fitting.visualization import (
+    compression_lines,
+    compression_ratio,
     display_compression_analysis,
+    format_compression_ratio,
     show_optimization_movie,
 )
-from luxar.gsplats.gsplat_data import GSplatData
 
 
 class _MockNapari:
@@ -35,106 +37,48 @@ def mock_napari_viewer(monkeypatch):
     return mock_napari
 
 
-def test_display_compression_analysis_2d(capsys) -> None:
-    """Test compression analysis display for 2D data."""
-    V = np.random.rand(64, 64).astype(np.float32)
+def test_compression_ratio_is_source_bytes_over_stored_bytes() -> None:
+    """One definition: decoded source bytes / bytes stored on disk."""
+    assert compression_ratio(1000, 10) == pytest.approx(100.0)
+    assert compression_ratio(10, 40) == pytest.approx(0.25)
+    # Unknown or non-positive on either side -> no ratio, never a fake one.
+    for src, stored in ((None, 10), (1000, None), (0, 10), (1000, 0), (-1, 5)):
+        assert compression_ratio(src, stored) is None
 
-    # Create GSplatData: 10 splats with 2D centers and packed L
-    N = 10
-    d = 2
-    tril_size = d * (d + 1) // 2  # 3 for 2D
 
-    result = GSplatData(
-        centers=np.random.rand(N, d).astype(np.float32),
-        amplitudes=np.random.rand(N).astype(np.float32),
-        cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
-        stats={},
+def test_format_compression_ratio() -> None:
+    assert format_compression_ratio(1234.4) == "1,234:1"
+    assert format_compression_ratio(12.6) == "13:1"
+    # A store bigger than its source must not round to a nonsensical "0:1".
+    assert format_compression_ratio(0.25) == "0.25:1"
+
+
+def test_compression_lines_name_both_bases() -> None:
+    lines = compression_lines(2_000_000, 20_000, source_stored_bytes=1_000_000)
+    assert len(lines) == 2
+    assert lines[0].startswith("100:1 vs raw voxels")
+    assert lines[1].startswith("50:1 vs the stored source")
+    assert compression_lines(2_000_000, 20_000) == lines[:1]
+    assert compression_lines(None, 20_000) == []
+
+
+def test_display_compression_analysis_reports_the_shared_ratio(capsys) -> None:
+    ratio = display_compression_analysis(
+        2_000_000, 20_000, n_splats=123, source_voxels=1_000_000
     )
-
-    # Should run without errors
-    display_compression_analysis(V, result)
-
-    # Check that output was produced
-    captured = capsys.readouterr()
-    assert "Compression Analysis" in captured.out
-    assert "Original image:" in captured.out
-    assert "Splat representation:" in captured.out
-    assert "Compression ratio:" in captured.out
+    assert ratio == pytest.approx(100.0)
+    out = capsys.readouterr().out
+    assert "Compression Analysis" in out
+    assert "Compression ratio: 100:1 vs raw voxels" in out
+    # 20,000 B * 8 bits / 1e6 voxels = 0.16; source 16 bits/voxel (uint16).
+    assert "Bits per voxel: 0.160 (source: 16.000)" in out
+    assert "Splats stored: 123" in out
 
 
-def test_display_compression_analysis_3d(capsys) -> None:
-    """Test compression analysis display for 3D data."""
-    V = np.random.rand(32, 32, 32).astype(np.float32)
-
-    # Create GSplatData: 8 splats for 3D
-    N = 8
-    d = 3
-    tril_size = d * (d + 1) // 2  # 6 for 3D
-
-    result = GSplatData(
-        centers=np.random.rand(N, d).astype(np.float32),
-        amplitudes=np.random.rand(N).astype(np.float32),
-        cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
-        stats={},
-    )
-
-    # Should run without errors
-    display_compression_analysis(V, result)
-
-    captured = capsys.readouterr()
-    assert "Compression Analysis" in captured.out
-    assert "Original image:" in captured.out
-
-
-def test_compression_ratio_calculation(capsys) -> None:
-    """Test that compression ratio is calculated correctly."""
-    # Small example where we can verify the calculation
-    V = np.random.rand(16, 16).astype(np.float32)  # 256 pixels * 4 bytes = 1024 bytes
-
-    # 2 splats: each has 2 (centers) + 3 (packed L) + 1 (amp) = 6 floats
-    # Total: 2 * 6 * 4 = 48 bytes
-    # Compression ratio: 1024 / 48 = 21.33:1
-    N = 2
-    d = 2
-    tril_size = 3
-
-    result = GSplatData(
-        centers=np.random.rand(N, d).astype(np.float32),
-        amplitudes=np.random.rand(N).astype(np.float32),
-        cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
-        stats={},
-    )
-
-    display_compression_analysis(V, result)
-
-    captured = capsys.readouterr()
-    assert "Compression ratio:" in captured.out
-    # Should see a high compression ratio (around 18:1)
-    assert "21." in captured.out or "21:" in captured.out
-
-
-def test_bits_per_pixel_calculation(capsys) -> None:
-    """Test bits per pixel calculation."""
-    V = np.random.rand(32, 32).astype(np.float32)
-
-    # Few splats = low bits per pixel
-    N = 5
-    d = 2
-    tril_size = 3
-
-    result = GSplatData(
-        centers=np.random.rand(N, d).astype(np.float32),
-        amplitudes=np.random.rand(N).astype(np.float32),
-        cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
-        stats={},
-    )
-
-    display_compression_analysis(V, result)
-
-    captured = capsys.readouterr()
-    assert "Bits per pixel:" in captured.out
-    # Original is 32 bits per pixel
-    assert "original: 32.000" in captured.out
+def test_display_compression_analysis_unknown_source(capsys) -> None:
+    assert display_compression_analysis(None, 20_000, n_splats=5) is None
+    out = capsys.readouterr().out
+    assert "unknown (source size not recorded)" in out
 
 
 def test_show_optimization_movie_no_napari(capsys) -> None:
@@ -202,76 +146,3 @@ def test_empty_movie_frames() -> None:
     except Exception as e:
         # Should not crash on empty frames
         pytest.fail(f"Empty frames caused unexpected error: {e}")
-
-
-def test_compression_analysis_zero_splats(capsys) -> None:
-    """Test compression analysis with zero splats (edge case)."""
-    V = np.random.rand(16, 16).astype(np.float32)
-
-    # Zero splats
-    d = 2
-    tril_size = 3
-
-    result = GSplatData(
-        centers=np.array([]).reshape(0, d).astype(np.float32),
-        amplitudes=np.array([]).astype(np.float32),
-        cholesky_factors=np.array([]).reshape(0, tril_size).astype(np.float32),
-        stats={},
-    )
-
-    # Should handle gracefully (infinite compression ratio)
-    display_compression_analysis(V, result)
-
-    captured = capsys.readouterr()
-    assert "Compression Analysis" in captured.out
-    # May show inf or very high ratio
-    output_lower = captured.out.lower()
-    assert "compression ratio" in output_lower
-
-
-def test_compression_analysis_many_splats(capsys) -> None:
-    """Test compression analysis with many splats (poor compression)."""
-    V = np.random.rand(16, 16).astype(np.float32)
-
-    # Many splats (worse than original)
-    N = 100
-    d = 2
-    tril_size = 3
-
-    result = GSplatData(
-        centers=np.random.rand(N, d).astype(np.float32),
-        amplitudes=np.random.rand(N).astype(np.float32),
-        cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
-        stats={},
-    )
-
-    display_compression_analysis(V, result)
-
-    captured = capsys.readouterr()
-    assert "Compression Analysis" in captured.out
-    # With 100 splats, may actually be negative "savings"
-    assert "Space savings:" in captured.out
-
-
-def test_display_compression_various_dimensions(capsys) -> None:
-    """Test compression analysis with various dimensionalities."""
-    for d in [2, 3, 4]:
-        shape = tuple([16] * d)
-        V = np.random.rand(*shape).astype(np.float32)
-
-        N = 5
-        tril_size = d * (d + 1) // 2
-
-        result = GSplatData(
-            centers=np.random.rand(N, d).astype(np.float32),
-            amplitudes=np.random.rand(N).astype(np.float32),
-            cholesky_factors=np.random.rand(N, tril_size).astype(np.float32),
-            stats={},
-        )
-
-        # Should work for all dimensionalities
-        display_compression_analysis(V, result)
-
-        captured = capsys.readouterr()
-        assert "Compression Analysis" in captured.out
-        assert "Compression ratio:" in captured.out

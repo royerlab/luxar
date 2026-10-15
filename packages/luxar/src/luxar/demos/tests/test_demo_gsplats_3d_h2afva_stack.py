@@ -154,7 +154,10 @@ class TestTheRecomputeRecipeMatchesTheShippedPartition:
         result = demo.recompute_archive(tmp_path / "work")
 
         assert result.name == "h2afva_stack.gsplats.zarr"
-        assert calls[0][-4:] == ("--recipe", "stream", "--n-lods", "6")
+        assert calls[0][-6:-2] == ("--recipe", "stream", "--n-lods", "6")
+        # Pinned: a preset-less fit is now the 5000-iteration `standard` preset,
+        # and the shipped archive was fitted at the old 1000-iteration default.
+        assert calls[0][-2:] == ("--iters", "1000")
         assert calls[1][1] == "transform"
         assert calls[1][calls[1].index("--scale") + 1] == "4.0,1.0,1.0"
         assert calls[2][1] == "transform"

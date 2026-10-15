@@ -992,7 +992,7 @@ luxar gsplat slice input.gsplats.zarr output.gsplats.zarr "0:50, :, 10:90"
 luxar gsplat slice input.gsplats.zarr output.gsplats.zarr ":50, 20:80, :"
 
 # Apply spatial and intensity transforms to a gsplat dataset
-luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --scale 4,1,1,1 --center
+luxar gsplat transform in.gsplats.zarr out.gsplats.zarr --scale 4,1,1 --center
 # --rotate-x/y/z acts on the 3 center dims given by --spatial-dims (default 0,1,2 —
 # first-3-spatial / stack-last convention; listed order assigns the X/Y/Z roles,
 # unlike filter's order-insensitive --spatial-dims); other dims stay unrotated.

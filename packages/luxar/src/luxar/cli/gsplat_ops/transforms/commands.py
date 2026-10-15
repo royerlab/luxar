@@ -796,13 +796,15 @@ def transform_dataset(
         None,
         "--scale",
         "-s",
-        help="Per-axis scale factors, comma-separated (e.g. '1,1,1,4')",
+        help="Scale factors, comma-separated: one value per center column, in "
+        "array axis order (Z,Y,X for a ZYX volume), e.g. '4,1,1' to stretch Z by 4.",
     ),
     translate_offset: Optional[str] = typer.Option(
         None,
         "--translate",
         "-t",
-        help="Per-axis translation, comma-separated (e.g. '0,0,0,100')",
+        help="Translation, comma-separated: one value per center column, in "
+        "array axis order (Z,Y,X for a ZYX volume), e.g. '0,100,0'.",
     ),
     rotate_x_deg: Optional[float] = typer.Option(
         None,
@@ -862,9 +864,9 @@ def transform_dataset(
     normalize-intensity.
 
     Examples:
-        # Fix microscopy anisotropy (Z=4x) and normalize brightness
+        # Fix microscopy anisotropy (Z=4x on a ZYX fit) and normalize brightness
         luxar gsplat transform in.gsplats.zarr out.gsplats.zarr \\
-            --scale 4,1,1,1 --normalize-intensity 1.0 --center
+            --scale 4,1,1 --normalize-intensity 1.0 --center
 
         # Translate and recenter
         luxar gsplat transform in.gsplats.zarr out.gsplats.zarr \\

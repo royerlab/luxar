@@ -2490,7 +2490,7 @@ def plan_batch(
             med, mx = content_plan.overlap_fraction()
             aprint(
                 f"Plan: {content_plan.n_boxes} boxes, total budget "
-                f"{content_plan.total_budget:,} splats, overlap median "
+                f"{content_plan.total_budget:,} splats, halo overhead median "
                 f"{med:.0%} / max {mx:.0%} → {plan_path_obj}"
             )
         n_tiles = content_plan.n_boxes

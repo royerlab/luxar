@@ -285,7 +285,8 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 **Purpose:** Optional visualization of results.
 
 **Key Functions:**
-- `display_compression_analysis()`: Shows compression statistics
+- `compression_ratio()`: THE compression ratio Luxar quotes everywhere (`fit`, `info`, `compare`, `cull`): decoded source bytes (`source_bytes` fit stat, voxels x stored itemsize) over the saved store's bytes on disk. `compression_lines()` / `format_compression_ratio()` format it with its basis named.
+- `display_compression_analysis()`: Shows that ratio for a SAVED store (the CLI calls it after the post-fit cull and the save; the fitter itself prints no pre-save estimate)
 - `show_optimization_movie()`: Displays napari convergence movie
 
 **Design Choice:** Visualization is separate from core fitting pipeline, allowing headless operation.

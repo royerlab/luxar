@@ -48,6 +48,69 @@ WorkerLimitReason = Literal[
 ]
 
 
+def cpu_fallback_hint(platform: Optional[str] = None) -> str:
+    """One actionable sentence on WHY a fit is on CPU and what to do about it.
+
+    Branches on what is actually true of this torch install, because the fixes
+    differ and a wrong one wastes an afternoon:
+
+    * macOS -> the MPS hint (CUDA does not exist there);
+    * a CUDA build of torch (``torch.version.cuda`` set) with no visible GPU ->
+      a driver / ``CUDA_VISIBLE_DEVICES`` problem, NOT a reinstall;
+    * a CUDA build WITH a visible GPU -> CPU was chosen explicitly;
+    * a CPU-only torch on Linux/Windows -> install a CUDA build of torch.
+
+    ``platform`` defaults to ``sys.platform`` (a parameter for tests).
+    """
+    import sys
+
+    platform = sys.platform if platform is None else platform
+    if platform == "darwin":
+        if is_mps_available():
+            return "An Apple GPU is available: pass device='mps' (CLI: --device mps)."
+        return (
+            "No MPS device is visible (Apple Silicon and macOS 12.3+ are "
+            "required for GPU fitting on a Mac)."
+        )
+    if getattr(torch.version, "cuda", None):
+        if torch.cuda.is_available():
+            return "A CUDA GPU is available: pass device='cuda' (CLI: --device cuda)."
+        return (
+            f"This torch is a CUDA {torch.version.cuda} build but no CUDA GPU is "
+            "visible (check the NVIDIA driver and CUDA_VISIBLE_DEVICES)."
+        )
+    return (
+        "This torch is a CPU-only build: install a CUDA build of torch for "
+        "NVIDIA GPUs (https://pytorch.org/get-started/locally/)."
+    )
+
+
+_CPU_WARNING_PRINTED = False
+
+
+def warn_cpu_fitting(stacklevel: int = 3) -> None:
+    """Warn, once per process, that Gaussian splat fitting is running on CPU.
+
+    The fitter and the model initializer both reach a CPU fallback during one
+    fit (and a tiled fit reaches it once per tile), so the console line is
+    printed only the first time. The ``UserWarning`` is always issued; Python's
+    own warning filter already shows it once per call site.
+    """
+    global _CPU_WARNING_PRINTED
+    import warnings
+
+    message = (
+        "Gaussian splat fitting is running on CPU, which can be orders of "
+        "magnitude SLOWER than a GPU. " + cpu_fallback_hint()
+    )
+    if not _CPU_WARNING_PRINTED:
+        from arbol import aprint
+
+        aprint(f"WARNING: {message}")
+        _CPU_WARNING_PRINTED = True
+    warnings.warn(message, UserWarning, stacklevel=stacklevel)
+
+
 def is_mps_available() -> bool:
     """Return True when PyTorch's MPS backend is available.
 

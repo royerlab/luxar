@@ -685,6 +685,23 @@ def format_memory_size(bytes_size: float) -> str:
     return f"{bytes_size:.1f} PB"
 
 
+def store_size(path: Path) -> int:
+    """Bytes a dataset occupies: an archive's own size, a directory store's total.
+
+    ``Path.stat().st_size`` on a `.zarr` directory reports the directory entry
+    (typically a few hundred bytes to 4 KB), not the chunks inside it — off by
+    orders of magnitude. Every CLI line that reports a store's size, and every
+    compression ratio quoted against one, goes through here. Returns 0 for a
+    missing or unreadable path.
+    """
+    try:
+        if path.is_file():
+            return path.stat().st_size
+        return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+    except OSError:
+        return 0
+
+
 def get_zarr_info(store_path: Path, detailed: bool = False) -> dict[str, Any]:
     """Get detailed information about a Zarr store.
 

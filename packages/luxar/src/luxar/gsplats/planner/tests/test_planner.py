@@ -701,9 +701,9 @@ class TestDefaultWorkerCmdBuilder:
         # A content box's budget comes from the PLAN, never from --seeds.
         assert "--seeds" not in cmd
         # Nothing supplied -> no flags (the worker resolves its own defaults).
-        # `--preset` included: a "standard" default would layer that preset's
-        # n_iters (5000) / cull_retention on a box the sequential path fits with
-        # `load_fit_config(preset=None)` (1000 iterations).
+        # `--preset` included: the worker's `load_fit_config(preset=None)`
+        # resolves the same default preset the sequential path does, so
+        # forwarding nothing keeps the two identical (#1637).
         bare = [
             str(c)
             for c in _default_worker_cmd_builder("in.zarr", "plan.json")(
@@ -959,8 +959,9 @@ class TestContentFitSharedFloor:
         ``cull_retention=`` kwargs are deleted from the ``run_content_fit`` call
         site — this is where that is caught. ``truncate:`` is YAML-only, so an
         unforwarded ``--config`` left every ``-j N`` box fitted at the 2.75 default
-        (#1637), and a ``preset or "standard"`` default made a box resolve 5000
-        iterations where ``-j 1`` resolves 1000.
+        (#1637), and a call-site preset default could make a box resolve a
+        different preset than ``-j 1`` (both now resolve ``load_fit_config``'s
+        own default).
         """
         V = _pedestal_blobs(shape=(16, 16, 32))
         cfg = tmp_path / "fit.yaml"
@@ -979,9 +980,9 @@ class TestContentFitSharedFloor:
             assert argv[argv.index("--config") + 1] == str(cfg)
             assert argv[argv.index("--iters") + 1] == "9"
             assert float(argv[argv.index("--cull-retention") + 1]) == pytest.approx(0.5)
-            # No --preset was asked for, so none is forwarded: "standard" would
-            # layer 5000 iterations / cull_retention 0.999 on a box the sequential
-            # path fits with `load_fit_config(preset=None)`.
+            # No --preset was asked for, so none is forwarded: the worker's
+            # `load_fit_config(preset=None)` resolves the same default preset
+            # the sequential path does.
             assert "--preset" not in argv
         # An explicit preset IS forwarded, verbatim.
         with_preset = self._capture_worker_argvs(
