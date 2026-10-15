@@ -38,6 +38,7 @@ from luxar.gsplats.calibration import (
 from luxar.gsplats.calibration.driver import (
     _foreground_weighted_psnr,
     _foreground_weighting,
+    _per_k_metrics,
 )
 
 # -----------------------------------------------------------------------------
@@ -548,6 +549,176 @@ class TestFindKStar:
         psnr = [40.0, 43.0, float("nan"), 43.5]
         out = find_k_star(ks, psnr)
         assert out.type != "signal_limited"
+
+
+class TestGridEdgeAndLowK:
+    """K* on the grid edge / a flat curve must be flagged, and a falling curve
+    is ``low_k_optimal``, not ``plateau``."""
+
+    def test_monotone_decreasing_is_low_k_optimal_not_plateau(self):
+        ks = [1000, 2000, 4000, 8000, 16000]
+        psnr = [38.0, 37.6, 37.1, 36.4, 35.5]
+        out = find_k_star(ks, psnr)
+        assert out.type == "low_k_optimal"
+        assert out.k_star == 1000
+        assert out.k_knee == 1000
+        assert out.confidence_db == pytest.approx(2.5)
+        assert any("smallest grid point" in w and "--k-min" in w for w in out.warnings)
+
+    def test_first_point_best_but_flat_stays_plateau_with_warnings(self):
+        # Falls by less than the 0.3 dB knee margin: still a flat top, but both
+        # the low-edge and the flat-curve warnings fire.
+        ks = [1000, 2000, 4000, 8000]
+        psnr = [40.0, 39.9, 39.85, 39.8]
+        out = find_k_star(ks, psnr)
+        assert out.type == "plateau"
+        assert out.k_star == 1000
+        assert any("smallest grid point" in w for w in out.warnings)
+        assert any("0.20 dB" in w and "--k-max" in w for w in out.warnings)
+
+    def test_signal_limited_warns_largest_grid_point(self):
+        ks = [1, 4, 16, 64, 256]
+        out = find_k_star(ks, [26.0, 30.0, 34.0, 38.0, 42.0])
+        assert out.type == "signal_limited"
+        assert len(out.warnings) == 1
+        assert "largest grid point" in out.warnings[0]
+        assert "--k-max" in out.warnings[0]
+
+    def test_interior_peak_has_no_warnings(self):
+        ks = [1, 2, 4, 8, 16, 32, 64]
+        out = find_k_star(ks, [22.0, 26.0, 30.0, 34.0, 33.5, 32.0, 30.0])
+        assert out.type == "peak"
+        assert out.warnings == []
+
+    def test_flat_interior_plateau_warns_flat(self):
+        ks = [1000, 2000, 4000, 8000, 16000]
+        out = find_k_star(ks, [40.0, 40.4, 40.5, 40.45, 40.48])
+        assert out.type == "plateau"
+        assert 0 < ks.index(out.k_star) < len(ks) - 1
+        assert len(out.warnings) == 1
+        assert "weakly determined" in out.warnings[0]
+
+    def test_edges_are_the_finite_grid_ends(self):
+        # A failed (NaN) fit at either end must not hide a K* on the edge of
+        # what was actually measured.
+        ks = [1000, 2000, 4000, 8000, 16000]
+        low = find_k_star(ks, [float("nan"), 38.0, 37.0, 36.0, 35.0])
+        assert low.k_star == 2000
+        assert any("smallest grid point (K=2,000)" in w for w in low.warnings)
+        high = find_k_star(ks, [30.0, 33.0, 36.0, 39.0, float("nan")])
+        assert high.k_star == 8000
+        assert any("largest grid point (K=8,000)" in w for w in high.warnings)
+
+    def test_warnings_round_trip_through_json(self, tmp_path: Path):
+        peak = find_k_star([1000, 2000, 4000], [38.0, 37.0, 36.0])
+        result = CalibrationResult(
+            k_values_requested=[1000, 2000, 4000],
+            k_values_effective=[1000, 2000, 4000],
+            held_out_psnr_db=[38.0, 37.0, 36.0],
+            train_psnr_db=[38.5, 38.0, 37.5],
+            held_out_mse=[1e-4, 2e-4, 3e-4],
+            full_psnr_db=[38.4, 37.9, 37.4],
+            full_ssim=[0.9, 0.9, 0.9],
+            held_out_peak=peak,
+            noise_floor=NoiseFloor(
+                sigma_hat=0.01,
+                sigma_laplacian=0.01,
+                sigma_haar=0.01,
+                sigma_background=0.01,
+                psnr_max_db=40.0,
+            ),
+            fit_times_seconds=[1.0, 1.0, 1.0],
+            splat_paths=None,
+            mask_seed=42,
+            mask_fraction=0.05,
+            donut_radius=1,
+            fit_config={},
+            volume_shape=[8, 8, 8],
+            volume_dtype="float32",
+            timestamp="2026-10-14T00:00:00+00:00",
+        )
+        path = tmp_path / "cal.json"
+        result.to_json(path)
+        raw = json.loads(path.read_text())
+        assert raw["held_out_peak"]["type"] == "low_k_optimal"
+        assert raw["held_out_peak"]["warnings"] == peak.warnings
+        loaded = CalibrationResult.from_json(path)
+        assert loaded.held_out_peak.warnings == peak.warnings
+        # A cal.json written before the field existed still loads.
+        del raw["held_out_peak"]["warnings"]
+        path.write_text(json.dumps(raw))
+        assert CalibrationResult.from_json(path).held_out_peak.warnings == []
+
+
+class TestPerKMetrics:
+    """The gather-free per-K scorer equals the former boolean-gather version."""
+
+    def test_matches_gather_reference(self):
+        from luxar.gsplats.calibration.metrics import _psnr_db
+        from luxar.gsplats.metrics import compute_psnr, compute_ssim
+
+        g = torch.Generator().manual_seed(0)
+        ref = torch.rand(20, 40, 40, generator=g)
+        rendered = ref + 0.05 * torch.randn(20, 40, 40, generator=g)
+        mask = torch.rand(20, 40, 40, generator=g) < 0.05
+        fg = ref > 0.6
+        fgw = ref > 0.5
+        weighting = _foreground_weighting(mask, fgw, 2.0)
+
+        # The pre-WP7 computation, verbatim in spirit: boolean gathers.
+        hp, ht = rendered[mask], ref[mask]
+        held_mse = float(torch.mean((hp - ht) ** 2))
+        train_mse = float(torch.mean((rendered[~mask] - ref[~mask]) ** 2))
+        fg_sel = mask & fg
+        fg_mse = float(torch.mean((rendered[fg_sel] - ref[fg_sel]) ** 2))
+        expected = {
+            "held_mse": held_mse,
+            "held_psnr": _psnr_db(held_mse, 1.0),
+            "held_psnr_fg": _psnr_db(fg_mse, 1.0),
+            "held_psnr_fg_weighted": _foreground_weighted_psnr(
+                (hp - ht) ** 2, *weighting, 1.0
+            ),
+            "train_psnr": _psnr_db(train_mse, 1.0),
+            "full_psnr": compute_psnr(rendered, ref, data_range=1.0),
+            "full_ssim": compute_ssim(rendered, ref, data_range=1.0),
+        }
+
+        got = _per_k_metrics(
+            rendered.clone(),
+            ref,
+            mask,
+            fg[mask],
+            weighting,
+            data_range=1.0,
+            baseline_mse=0.1,
+            compute_ssim=compute_ssim,
+        )
+        for key, value in expected.items():
+            assert got[key] == pytest.approx(value, rel=1e-5), key
+        assert got["held_gain"] == pytest.approx(held_out_gain_db(held_mse, 0.1))
+
+    def test_consumes_rendered_in_place(self):
+        from luxar.gsplats.metrics import compute_ssim
+
+        ref = torch.zeros(12, 12, 12)
+        rendered = torch.full((12, 12, 12), 0.5)
+        mask = torch.zeros(12, 12, 12, dtype=torch.bool)
+        mask[0] = True
+        weighting = _foreground_weighting(mask, ref > 0, 1.0)
+        out = _per_k_metrics(
+            rendered,
+            ref,
+            mask,
+            (ref > 0)[mask],
+            weighting,
+            data_range=1.0,
+            baseline_mse=1.0,
+            compute_ssim=compute_ssim,
+        )
+        # No full-volume error copy: the render buffer now holds the error.
+        assert torch.allclose(rendered, torch.full_like(rendered, 0.25))
+        assert out["train_psnr"] == pytest.approx(10 * math.log10(1 / 0.25))
+        assert math.isnan(out["held_psnr_fg"])  # empty foreground stratum
 
 
 class TestKKnee:

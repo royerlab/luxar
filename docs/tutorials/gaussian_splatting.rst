@@ -344,7 +344,7 @@ Or programmatically:
    result = calibrate(volume, k_grid=ks, fit_kwargs={"device": "cuda"})
 
    print(f"K* = {result.held_out_peak.k_star:,}")
-   print(f"type = {result.held_out_peak.type}")  # peak | plateau | signal_limited
+   print(f"type = {result.held_out_peak.type}")  # peak | plateau | signal_limited | low_k_optimal
    print(f"noise floor σ̂ = {result.noise_floor.sigma_hat:.4f}")
 
 The blind-spot trick: 5% of voxels are masked and replaced with the

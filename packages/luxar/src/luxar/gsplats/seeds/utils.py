@@ -16,7 +16,7 @@ from scipy import ndimage as ndi
 
 from luxar.gsplats.spatial_hash import SpatialHashGrid
 
-__all__ = ["SpatialHashGrid", "SEED_AMPLITUDE_SCALE"]
+__all__ = ["SpatialHashGrid", "SEED_AMPLITUDE_SCALE", "greedy_min_distance_select"]
 
 # Amplitude scaling factor for seed initialization.
 # Multiplying by 0.9 (90%) helps avoid initial over-prediction when splats overlap,
@@ -220,6 +220,180 @@ def local_maxima(
     return cast(np.ndarray, coords)
 
 
+# Block sizing for :func:`greedy_min_distance_select`. A block's survivors are
+# resolved from their candidate-candidate conflict pairs, whose count is
+# survivors x degree / 2: degree ~26 at min_distance=2 on a dense lattice, but
+# ~2,100 at min_distance=8, where a fixed 65,536 block built 70M pairs (6 GB).
+# The degree is ESTIMATED per block from a small sample of the survivors
+# (counts only) before any pair list exists, and the survivors handed to
+# query_pairs are capped so the list stays near _GREEDY_PAIR_BUDGET pairs;
+# sizing from the previous block is not enough, since an ordered lattice
+# walks from sparse survivors straight into fresh, dense territory. Past
+# _GREEDY_LOOP_DEGREE the per-point loop (which only ever checks KEPT points,
+# sparse by construction) is cheaper and takes over.
+_GREEDY_BLOCK_MIN = 1024
+_GREEDY_BLOCK_MAX = 65536
+_GREEDY_PAIR_BUDGET = 500_000
+_GREEDY_LOOP_DEGREE = 512.0
+_GREEDY_DEGREE_SAMPLE = 256
+
+
+def greedy_min_distance_select(
+    coords: np.ndarray,
+    min_distance: float,
+    max_count: Optional[int] = None,
+) -> np.ndarray:
+    """Greedy in-order selection under a strict minimum-distance constraint.
+
+    Walks ``coords`` in the given (priority) order and keeps a point iff no
+    previously KEPT point lies strictly closer than ``min_distance``, stopping
+    once ``max_count`` points are kept. Returns the kept row indices, in order.
+    ``max_count=0`` keeps nothing.
+
+    This is exactly the result of the former per-point loop over a
+    :class:`SpatialHashGrid` (``has_neighbor_within`` then ``insert``), computed
+    block-wise instead of point-wise: each block of candidates is first tested
+    against everything kept so far with one KD-tree range query, and only the
+    survivors that conflict WITH EACH OTHER are resolved in a short sequential
+    pass over their (precomputed) conflict lists. Each block's conflict degree
+    is estimated from a small sample before any pair list is built, and only
+    as many survivors as keep that list near ``_GREEDY_PAIR_BUDGET`` pairs are
+    resolved per pass; when the estimated degree exceeds
+    ``_GREEDY_LOOP_DEGREE`` (a large ``min_distance`` on dense candidates), the
+    remaining candidates go through the per-point loop instead. The candidate order — and so the
+    intensity priority callers sort by — is preserved, so the kept set is
+    identical; the vectorised part evaluates distances in float64 rather than
+    float32, which can only matter for a pair within float32 rounding of
+    exactly ``min_distance``.
+    """
+    from scipy.spatial import cKDTree
+
+    pts = np.asarray(coords, dtype=np.float64)
+    n = len(pts)
+    limit = n if max_count is None else max(0, min(int(max_count), n))
+    if n == 0 or limit == 0:
+        return np.empty(0, dtype=np.intp)
+    if not min_distance > 0:  # nothing can be "strictly closer" than <= 0
+        return np.arange(limit, dtype=np.intp)
+
+    # query_pairs keeps d <= r; the constraint is strict (d < min_distance).
+    r_pairs = float(np.nextafter(min_distance, 0.0))
+    kept: list[np.ndarray] = []
+    n_kept = 0
+    kept_tree = None
+    block_size = 2048
+    start = 0
+    while start < n and n_kept < limit:
+        end = min(start + block_size, n)
+        block = np.arange(start, end, dtype=np.intp)
+        if kept_tree is not None:
+            d, _ = kept_tree.query(pts[block], k=1, distance_upper_bound=min_distance)
+            block = block[~(d < min_distance)]
+        if len(block) == 0:
+            start = end
+            continue
+        # Estimate the survivors' conflict degree from a cheap sample BEFORE
+        # building any pair list: the previous block says nothing reliable
+        # about this one (an ordered lattice walks into fresh territory).
+        degree = _sampled_conflict_degree(pts[block], r_pairs)
+        if degree > _GREEDY_LOOP_DEGREE:
+            loop_kept = _greedy_loop(
+                coords, _concat(kept), start, min_distance, limit - n_kept
+            )
+            kept.append(loop_kept)
+            break
+        cap = max(int(2 * _GREEDY_PAIR_BUDGET / max(degree, 1.0)), 1)
+        if len(block) > cap:
+            block = block[:cap]
+            end = int(block[-1]) + 1  # later candidates are re-tested next pass
+        chosen, _ = _greedy_within_block(pts[block], r_pairs)
+        sel = block[chosen][: limit - n_kept]
+        kept.append(sel)
+        n_kept += len(sel)
+        start = end
+        kept_tree = cKDTree(pts[_concat(kept)])
+        block_size = int(
+            np.clip(
+                cap,
+                _GREEDY_BLOCK_MIN,
+                min(4 * block_size, _GREEDY_BLOCK_MAX),
+            )
+        )
+    return _concat(kept)
+
+
+def _concat(parts: list[np.ndarray]) -> np.ndarray:
+    """Concatenate index arrays (empty-safe)."""
+    return np.concatenate(parts) if parts else np.empty(0, dtype=np.intp)
+
+
+def _sampled_conflict_degree(bpts: np.ndarray, r_pairs: float) -> float:
+    """Mean number of OTHER points within ``r_pairs`` of a point of ``bpts``,
+    estimated from up to ``_GREEDY_DEGREE_SAMPLE`` evenly spaced points (counts
+    only; no neighbour lists are built)."""
+    from scipy.spatial import cKDTree
+
+    m = len(bpts)
+    if m < 2:
+        return 0.0
+    probe = np.linspace(0, m - 1, num=min(m, _GREEDY_DEGREE_SAMPLE)).astype(np.intp)
+    counts = cKDTree(bpts).query_ball_point(bpts[probe], r_pairs, return_length=True)
+    return float(np.mean(counts)) - 1.0
+
+
+def _greedy_loop(
+    coords: np.ndarray,
+    kept_so_far: np.ndarray,
+    start: int,
+    min_distance: float,
+    budget: int,
+) -> np.ndarray:
+    """The original per-point greedy over ``coords[start:]``, seeded with the
+    points kept so far; used where conflicts are too dense to vectorise."""
+    pts32 = np.asarray(coords, dtype=np.float32)
+    grid = SpatialHashGrid(cell_size=min_distance, ndim=pts32.shape[1])
+    for i in kept_so_far.tolist():
+        grid.insert(pts32[i])
+    out: list[int] = []
+    for i in range(start, len(pts32)):
+        if not grid.has_neighbor_within(pts32[i], min_distance):
+            grid.insert(pts32[i])
+            out.append(i)
+            if len(out) >= budget:
+                break
+    return np.asarray(out, dtype=np.intp)
+
+
+def _greedy_within_block(bpts: np.ndarray, r_pairs: float) -> tuple[np.ndarray, int]:
+    """Positions (in order) kept by the greedy rule among ``bpts`` alone, and
+    the number of conflict pairs found.
+
+    A point with no conflicting neighbour in the block is always kept; only the
+    conflicted ones need the sequential pass, which visits them in order and
+    discards the later neighbours of every point it keeps.
+    """
+    from scipy.spatial import cKDTree
+
+    m = len(bpts)
+    pairs = cKDTree(bpts).query_pairs(r_pairs, output_type="ndarray")
+    keep = np.ones(m, dtype=bool)
+    if len(pairs) == 0:
+        return np.flatnonzero(keep), 0
+    # Directed edges earlier -> later, as CSR over the earlier endpoint.
+    lo = np.minimum(pairs[:, 0], pairs[:, 1])
+    hi = np.maximum(pairs[:, 0], pairs[:, 1])
+    n_pairs = len(pairs)
+    del pairs
+    order = np.argsort(lo, kind="stable")
+    lo, hi = lo[order], hi[order]
+    del order
+    starts = np.searchsorted(lo, np.arange(m + 1))
+    for i in np.unique(np.concatenate([lo, hi])).tolist():
+        if keep[i]:
+            keep[hi[starts[i] : starts[i + 1]]] = False
+    return np.flatnonzero(keep), n_pairs
+
+
 def dedupe_farthest_first(
     coords: np.ndarray,
     min_distance: float,
@@ -229,7 +403,8 @@ def dedupe_farthest_first(
     """
     Remove duplicate seeds using greedy selection with min_distance constraint.
 
-    Uses a spatial hash grid for O(1) amortized distance queries.
+    Uses block-vectorised KD-tree range tests
+    (:func:`greedy_min_distance_select`).
 
     Algorithm:
     1. Sort seeds by intensity (if provided) or keep original order
@@ -267,8 +442,9 @@ def dedupe_farthest_first(
     Notes
     -----
     Implementation:
-    - Time complexity: O(N) amortized via spatial hash grid
-    - Space complexity: O(M) where M is the number of selected seeds
+    - Time complexity: O(N log N), block-vectorised KD-tree range tests
+      (:func:`greedy_min_distance_select`)
+    - Space complexity: O(N) for the per-block conflict lists
     - For small datasets (<50 seeds), uses simple O(N²) greedy fallback
 
     Examples
@@ -287,8 +463,6 @@ def dedupe_farthest_first(
     if len(coords) < 50:
         return _dedupe_simple(coords, min_distance, intensities)
 
-    ndim = coords.shape[1]
-
     # Sort by intensity if provided (highest first), otherwise keep original order
     if intensities is not None:
         sort_indices = np.argsort(intensities)[::-1]  # Descending order
@@ -297,20 +471,10 @@ def dedupe_farthest_first(
         sort_indices = None
         coords_sorted = coords.astype(np.float32)
 
-    # Spatial hash grid for O(1) amortized distance checks
-    grid = SpatialHashGrid(cell_size=min_distance, ndim=ndim)
-    selected_sorted_indices_list: list[int] = []
-
-    for idx in range(len(coords_sorted)):
-        coord = coords_sorted[idx]
-
-        if not grid.has_neighbor_within(coord, min_distance):
-            grid.insert(coord)
-            selected_sorted_indices_list.append(idx)
-
-    # Build output arrays
-    deduped_coords = grid.points.astype(float)
-    selected_sorted_indices = np.array(selected_sorted_indices_list, dtype=np.intp)
+    # Greedy in priority order, vectorised block-wise (same kept set as the
+    # former per-seed SpatialHashGrid loop; see greedy_min_distance_select).
+    selected_sorted_indices = greedy_min_distance_select(coords_sorted, min_distance)
+    deduped_coords = coords_sorted[selected_sorted_indices].astype(float)
 
     # Map back to original indices if we sorted by intensity
     if sort_indices is not None:

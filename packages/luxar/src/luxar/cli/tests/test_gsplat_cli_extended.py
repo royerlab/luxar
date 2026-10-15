@@ -3863,7 +3863,12 @@ class TestCalibrateCommand:
 
         # K* must be one of the swept values
         assert data["held_out_peak"]["k_star"] in data["k_values_requested"]
-        assert data["held_out_peak"]["type"] in ("peak", "plateau", "signal_limited")
+        assert data["held_out_peak"]["type"] in (
+            "peak",
+            "plateau",
+            "signal_limited",
+            "low_k_optimal",
+        )
 
         # Noise floor present and finite (or sentinel)
         nf = data["noise_floor"]

@@ -707,7 +707,10 @@ luxar gsplat cal volume.zarr cal.json --fit-exponent --exponent-scales 128,192,2
 # ONCE up front so K* is measured on floor-suppressed data (matching how you fit).
 # Pass `--floor none` to reproduce the legacy hard-min manuscript numbers.
 luxar gsplat cal volume.tiff cal.json --floor none               # legacy (no floor)
-# Output: K* + curve type {peak | plateau | signal_limited} + noise-floor σ̂ + PSNR ceiling.
+# Output: K* + curve type {peak | plateau | signal_limited | low_k_optimal} + noise-floor σ̂ + PSNR ceiling.
+# A K* on the smallest/largest grid point, or a curve moving < 1 dB over the whole grid,
+# prints a ⚠ (also under --quiet) and lands in cal.json `held_out_peak.warnings`:
+# the sweep did not bracket the optimum, so extend --k-min / --k-max / --k-grid.
 # Then re-run fit at the recommended K: luxar gsplat fit volume.zarr out.zarr --seeds <K*>
 
 # Canonical end-to-end pipeline: cal → fit (at K*) → lod (--recipe flat|stream|tiles|overview|adaptive|levels)

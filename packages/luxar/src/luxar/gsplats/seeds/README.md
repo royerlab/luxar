@@ -331,7 +331,7 @@ seeds = generate_seeds(volume, device='cuda:1')
 GPU acceleration is applied to:
 - **Sobel gradients**: 10-50x faster (supports arbitrary dimensions)
 - **Interpolation**: 10-30x faster (2D/3D only)
-- **Deduplication**: Always CPU (SpatialHashGrid based, `device` parameter ignored)
+- **Deduplication**: Always CPU (block-vectorised KD-tree range tests, `device` parameter ignored)
 
 ### Dimension Support
 
@@ -474,7 +474,13 @@ Uses `dedupe_farthest_first()` for spatial deduplication. The implementation use
 2. Keep first (highest energy) candidate
 3. Iterate through remaining candidates in intensity order
 4. Keep each candidate if it satisfies min_distance from all already-selected seeds
-5. Uses SpatialHashGrid for O(1) amortized nearest-neighbor queries
+5. Resolved block-wise by `greedy_min_distance_select()`: one KD-tree range test per
+   block against the seeds kept so far, then a short in-order pass over only the
+   candidates that conflict with each other — the same kept set as a per-candidate
+   loop (edge Poisson-disk sampling uses it too). Each block's conflict degree is
+   sampled before any pair list is built and caps how many candidates a pass
+   resolves; past ~512 conflicts per candidate (a large `min_distance` on dense
+   candidates) the per-point loop takes over
 
 ### Edge Seeding (Sobel + Poisson Disk)
 
@@ -507,7 +513,7 @@ hatch run pytest packages/luxar/src/luxar/gsplats/seeds/tests/test_generate_seed
 | `grid.py` | `seed_from_grid()` |
 | `edges.py` | `seed_from_edges()`, plus shared `_compute_nd_sobel_magnitude()` and `_sample_amplitudes()` helpers |
 | `peaks.py` | `seed_from_peaks()` (PyTorch, GPU-accelerated multinomial sampling) |
-| `utils.py` | `local_maxima()`, `dedupe_farthest_first()`, `combine_seeds()`, `sigmas_to_cholesky_isotropic()`, `SEED_AMPLITUDE_SCALE`; re-exports `SpatialHashGrid` from `luxar.gsplats.spatial_hash` |
+| `utils.py` | `local_maxima()`, `dedupe_farthest_first()`, `greedy_min_distance_select()`, `combine_seeds()`, `sigmas_to_cholesky_isotropic()`, `SEED_AMPLITUDE_SCALE`; re-exports `SpatialHashGrid` from `luxar.gsplats.spatial_hash` |
 | `gpu_ops.py` | PyTorch GPU kernels (`_get_device()`, `should_use_gpu()`, Sobel/grid-sample) shared by the CPU/GPU dispatch paths |
 
 ## References

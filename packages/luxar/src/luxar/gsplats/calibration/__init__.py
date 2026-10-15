@@ -48,6 +48,7 @@ from .curve_analysis import (
     find_k_star,
     fit_rd_model,
     fit_saturation_exponent,
+    k_star_grid_warnings,
 )
 from .driver import (
     ProgressCallback,
@@ -104,6 +105,7 @@ __all__ = [
     "held_out_psnr",
     "held_out_psnr_fg_weighted",
     "held_out_psnr_foreground",
+    "k_star_grid_warnings",
     "predict_zero_baseline_mse",
     "select_calibration_region",
 ]

@@ -10,7 +10,7 @@ extrapolation + convergence flagging.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Literal, Optional, Sequence, Tuple
 
 import numpy as np
@@ -104,15 +104,18 @@ class HeldOutPeak:
     k_star: int
     """The recommended splat count."""
 
-    type: Literal["peak", "plateau", "signal_limited"]
+    type: Literal["peak", "plateau", "signal_limited", "low_k_optimal"]
     """``peak`` — clear interior maximum; ``plateau`` — flat top, smallest K
     within 0.3 dB returned; ``signal_limited`` — monotone-rising through
-    the largest tested K (no peak in sampled range)."""
+    the largest tested K (no peak in sampled range); ``low_k_optimal`` — the
+    best value is the SMALLEST tested K and the curve falls by at least the
+    knee margin after it (the optimum lies at or below ``k_min``)."""
 
     confidence_db: float
     """For ``peak``: margin to the second-best K in dB.
     For ``plateau``: spread across the in-tolerance plateau.
-    For ``signal_limited``: total dB rise across the sweep."""
+    For ``signal_limited``: total dB rise across the sweep.
+    For ``low_k_optimal``: total dB drop from the first to the last K."""
 
     # --- Operating point (point of diminishing returns) + supporting metadata ---
     # These are additive and defaulted so older cal.json files hydrate cleanly.
@@ -154,6 +157,64 @@ class HeldOutPeak:
     knee_margin_db: float = 0.3
     """The dB tolerance used to locate the knee / plateau onset."""
 
+    warnings: List[str] = field(default_factory=list)
+    """Grid-adequacy warnings: K* sits on the smallest or largest grid point,
+    or the metric moves less than :data:`FLAT_CURVE_DB` across the whole grid.
+    Each one means the sweep did not bracket the optimum, so K* is a bound
+    rather than a measurement; the text names the flag to extend."""
+
+
+FLAT_CURVE_DB = 1.0
+"""A metric that spans less than this (dB) over the whole K grid is flagged:
+the sweep cannot distinguish its K values, so K* is weakly determined."""
+
+
+HIGH_EDGE_WARNING = "K* is the largest grid point"
+"""Opening words of the high-edge warning, so a caller that already says the
+same thing another way (the CLI's not-converged line) can skip it."""
+
+
+def k_star_grid_warnings(
+    k_values: Sequence[int],
+    metric_values: Sequence[float],
+    k_star_idx: int,
+) -> List[str]:
+    """Warn when a sweep did not bracket its optimum.
+
+    Three conditions, each independently: K* is the smallest finite grid point
+    (the optimum may lie below ``k_min``), K* is the largest finite grid point
+    (it may lie above ``k_max``), or the finite metric values span less than
+    :data:`FLAT_CURVE_DB` (the grid is too narrow, or the volume too
+    featureless, to resolve K). "Finite" matters: a failed (NaN) fit at an end
+    of the grid must not hide that K* sits on the edge of what was measured.
+    """
+    k_list = [int(k) for k in k_values]
+    vals = np.asarray(list(metric_values), dtype=float)
+    fin_idx = np.flatnonzero(np.isfinite(vals))
+    out: List[str] = []
+    if fin_idx.size < 2:
+        return out
+    if k_star_idx == int(fin_idx[0]):
+        out.append(
+            f"K* is the smallest grid point (K={k_list[k_star_idx]:,}): the "
+            "optimum may lie lower. Re-run with a smaller --k-min (or a --k-grid "
+            "that extends below it)."
+        )
+    elif k_star_idx == int(fin_idx[-1]):
+        out.append(
+            f"{HIGH_EDGE_WARNING} (K={k_list[k_star_idx]:,}): the optimum may "
+            "lie higher. Re-run with a larger --k-max (or a --k-grid that "
+            "extends above it)."
+        )
+    span = float(vals[fin_idx].max() - vals[fin_idx].min())
+    if span < FLAT_CURVE_DB:
+        out.append(
+            f"the metric changes only {span:.2f} dB across the whole grid "
+            f"(< {FLAT_CURVE_DB:g} dB): K* is weakly determined. Extend the "
+            "grid (--k-min / --k-max / --k-grid) to bracket the optimum."
+        )
+    return out
+
 
 def find_k_star(
     k_values: Sequence[int],
@@ -172,8 +233,14 @@ def find_k_star(
        AND the single final step ≥ 0.05 dB). Return the last K. The tail
        checks stop a flat-topped plateau (whose noisy max lands on the
        last K) from being misread as signal-limited.
-    3. **Plateau**: otherwise. Return the smallest K within 0.3 dB of the
+    3. **Low-K optimal**: the maximum is the first finite K and the curve
+       ends at least 0.3 dB below it. Return the first K. (Formerly labelled
+       ``plateau``; a falling curve has no plateau, and its optimum is at or
+       below ``k_min``.)
+    4. **Plateau**: otherwise. Return the smallest K within 0.3 dB of the
        maximum — the onset of diminishing returns.
+
+    Every result carries :func:`k_star_grid_warnings` in ``warnings``.
 
     The returned :class:`HeldOutPeak` reports both ``k_star`` (the budget
     anchor above — max K for ``signal_limited``) and ``k_knee`` (the point of
@@ -267,6 +334,7 @@ def find_k_star(
     knee_operating_idx = argmax if is_clear_peak else knee_idx
 
     def _build(k_star_idx: int, kind: str, confidence: float) -> HeldOutPeak:
+        warnings = k_star_grid_warnings(k_arr.tolist(), psnr_arr.tolist(), k_star_idx)
         return HeldOutPeak(
             k_star=int(k_arr[k_star_idx]),
             type=kind,  # type: ignore[arg-type]
@@ -279,6 +347,7 @@ def find_k_star(
             total_rise_db=float(total_rise),
             still_climbing=bool(still_climbing),
             knee_margin_db=float(knee_margin_db),
+            warnings=warnings,
         )
 
     # 1. Peak — clear interior maximum; k_star = k_knee = argmax.
@@ -297,8 +366,38 @@ def find_k_star(
     if still_climbing:
         return _build(n - 1, "signal_limited", total_rise)
 
-    # 3. Plateau — flat top; k_star = k_knee = knee.
-    return _build(knee_idx, "plateau", plateau_spread)
+    # 3./4. Low-K optimal, else plateau.
+    return _build(
+        *_low_k_or_plateau(
+            argmax,
+            int(fin_idx[0]),
+            drop_after_peak,
+            knee_idx,
+            plateau_spread,
+            knee_margin_db,
+        )
+    )
+
+
+def _low_k_or_plateau(
+    argmax: int,
+    first_finite_idx: int,
+    drop_after_peak: float,
+    knee_idx: int,
+    plateau_spread: float,
+    knee_margin_db: float,
+) -> Tuple[int, str, float]:
+    """``(k_star_idx, type, confidence)`` for a curve that is neither a clear
+    peak nor still climbing.
+
+    Low-K optimal: the best value is the first finite K and the curve FALLS
+    after it by at least the knee margin, so there is no plateau to report and
+    the optimum lies at or below ``k_min`` (the grid-edge warning says so).
+    Otherwise a plateau: a flat top whose onset (the knee) is K*.
+    """
+    if argmax == first_finite_idx and drop_after_peak <= -knee_margin_db:
+        return argmax, "low_k_optimal", -drop_after_peak
+    return knee_idx, "plateau", plateau_spread
 
 
 # =============================================================================
