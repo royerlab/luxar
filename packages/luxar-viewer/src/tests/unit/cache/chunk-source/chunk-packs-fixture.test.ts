@@ -20,6 +20,7 @@ import {
   adoptChunkPacks,
   CHUNK_PACKS_GROUP,
 } from '../../../../data/scene-loader/cache/chunk-packs';
+import { resolveRootListing } from '../../../../data/scene-loader/cache/root-listing';
 import { PackedChunkSource } from '../../../../cache/chunk-source/packed-chunk-source';
 import type { ChunkFetchOutcome, ChunkSource } from '../../../../cache/chunk-source';
 
@@ -81,7 +82,8 @@ describe('chunk packs written by luxar optimize --pack (Python-written, TS-read)
   it('serves every member byte-identical to its plain chunk, one request per pack', async () => {
     const { source, reads } = diskSource(store);
     const packs = new PackedChunkSource(source);
-    expect(await adoptChunkPacks(packs, rootLoc, contentHash, true, () => rootLoc)).toBe(
+    const listing = await resolveRootListing(rootLoc.store, true, null);
+    expect(await adoptChunkPacks(packs, rootLoc, contentHash, listing, () => rootLoc)).toBe(
       index.packs.length
     );
     expect(index.packs.length).toBeGreaterThan(1);

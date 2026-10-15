@@ -12,7 +12,6 @@
  */
 
 import * as zarr from '../../zarr';
-import { hasContentsMethod } from '../../../types/zarr';
 import { log, Modules } from '../../../utils/log';
 import type { PackedChunkSource } from '../../../cache/chunk-source/packed-chunk-source';
 import type { RootListing } from './root-listing';
@@ -23,21 +22,18 @@ export const CHUNK_PACKS_GROUP = 'chunk_packs';
 /**
  * Adopt the store's packs for `contentHash`; returns how many are in use.
  *
- * `index` is either the legacy `indexFresh` flag (the opened store's own index is
- * this load's network copy) or a {@link RootListing} — which can also answer from
- * the load-time root-document fetch on a warm load, and carries the store's
- * format so a probe asks for one format's document instead of guessing.
+ * `listing` can answer from the load-time root-document fetch on a warm load,
+ * and carries the store's format so a probe asks for one format's document.
  */
 export async function adoptChunkPacks(
   packs: PackedChunkSource | null,
   rootLoc: zarr.Location<zarr.Readable>,
   contentHash: unknown,
-  index: boolean | RootListing,
+  listing: RootListing,
   sourceRootLoc: () => zarr.Location<zarr.Readable>
 ): Promise<number> {
   if (!packs) return 0;
   try {
-    const listing = typeof index === 'boolean' ? await legacyListing(rootLoc, index) : index;
     const listed = listing.lists(CHUNK_PACKS_GROUP);
     // A current index without the group: there are no packs. No request.
     if (listed === false) return 0;
@@ -54,21 +50,4 @@ export async function adoptChunkPacks(
     log.warning(Modules.SCENE_LOADER, 'chunk packs unreadable; reading chunks plainly', error);
     return 0;
   }
-}
-
-/** A {@link RootListing} from the legacy `indexFresh` flag alone. */
-async function legacyListing(
-  rootLoc: zarr.Location<zarr.Readable>,
-  indexFresh: boolean
-): Promise<RootListing> {
-  const store = rootLoc.store;
-  const format = zarr.storeFormatOf(store);
-  if (indexFresh && hasContentsMethod(store)) {
-    const contents = await store.contents();
-    const groups = new Set(
-      contents.filter((e) => e.kind === 'group').map((e) => e.path.replace(/^\/+/, ''))
-    );
-    return { lists: (g) => groups.has(g), format, fromOpenedIndex: true };
-  }
-  return { lists: () => undefined, format, fromOpenedIndex: false };
 }
