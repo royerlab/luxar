@@ -143,6 +143,8 @@ def _parallel_worker_env_lines(
         "    local WORKER_OFFSET=$((TASK_ID - BASE_TASK))",
         f"    export OMP_NUM_THREADS={threads}",
         f"    export MKL_NUM_THREADS={threads}",
+        # Native CPU kernels: this worker's CPU share, unless the user set it.
+        f'    export LUXAR_CPU_THREADS="${{LUXAR_CPU_THREADS:-{threads}}}"',
         f"    export LUXAR_QUALITY_WORKERS_PER_HOST={tasks_per_job}",
         f"    export LUXAR_QUALITY_WORKERS_PER_DEVICE={workers_per_device}",
     ]

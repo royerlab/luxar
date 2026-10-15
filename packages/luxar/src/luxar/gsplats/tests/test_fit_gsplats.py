@@ -2,6 +2,8 @@
 Tests for fit_gaussian_splats function and optimization pipeline.
 """
 
+import warnings
+
 import numpy as np
 import pytest
 
@@ -544,7 +546,7 @@ class TestConstraints:
 class TestDeviceSupport:
     """Test device support (CPU/CUDA)."""
 
-    def test_auto_device_honors_use_cuda_false(self, monkeypatch) -> None:
+    def test_auto_device_honors_use_cuda_false(self, monkeypatch, capsys) -> None:
         """Fitter auto-selection should not pick CUDA when CUDA is disabled."""
 
         class FakeMPSBackend:
@@ -554,10 +556,14 @@ class TestDeviceSupport:
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         monkeypatch.setattr(torch.backends, "mps", FakeMPSBackend(), raising=False)
 
-        with pytest.warns(UserWarning, match="will run on CPU"):
+        # The CPU choice is a printed note, not a UserWarning (it used to trip
+        # `-W error` even when the fit ran on the fast native CPU kernels).
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
             fitter = GaussianSplatFitter(use_cuda=False, use_metal=True)
 
         assert fitter.device.type == "cpu"
+        assert "Fitting on the CPU" in capsys.readouterr().out
 
     def test_cpu_device(self, simple_2d_blob, simple_candidates_2d) -> None:
         """Test explicit CPU device."""

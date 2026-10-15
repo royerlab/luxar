@@ -1099,7 +1099,7 @@ The implementation supports multiple PyTorch devices with performance-aware auto
 |--------|---------------|-------------|-------|
 | **CUDA** (NVIDIA) | ✓ (when available) | Significant speedup | Best performance, custom kernels |
 | **MPS** (Apple Silicon) | ✓ (when available, no CUDA) | GPU-accelerated | Metal backend for 3D volumes; PyTorch renderer otherwise |
-| **CPU** | ✓ (fallback) | Baseline | Reliable; fitting warns it can be orders of magnitude slower than GPU |
+| **CPU** | ✓ (fallback) | Native numba kernels for 3D | 3D fits use fused numba kernels (below); other shapes use the PyTorch renderer, which fitting warns can be orders of magnitude slower than GPU |
 
 ### Device Selection Logic:
 ```python
@@ -1157,6 +1157,10 @@ install has no AOT build so it gets these), then the pure-PyTorch MPS path. `LUX
 forces one; a forced backend that cannot run raises, in fitting too.
 
 See [metal/README.md](models/gsplats/metal/README.md) for detailed installation and troubleshooting.
+
+### Native CPU Backend
+
+On the CPU, 3D fits run on fused numba kernels (`GaussianSplatModelCPUNative`): the same numbers as the PyTorch renderer, many times faster (see [cpu/README.md](models/gsplats/cpu/README.md) for measurements). `numba` ships in the `gsplats` extra and compiles the kernels on first use (cached afterwards); without it, CPU fits use the PyTorch renderer. `LUXAR_CPU_BACKEND=auto|native|torch` forces a choice and `LUXAR_CPU_THREADS` sets the thread count (default: physical cores).
 
 ## Package Structure
 
@@ -1233,6 +1237,7 @@ gsplats/
 │   │   ├── gsplat_model.py        # PyTorch model definition
 │   │   ├── rendering_core.py      # Core rendering kernels
 │   │   ├── rendering_wrappers.py  # NumPy/PyTorch rendering convenience wrappers
+│   │   ├── cpu/                   # Native numba kernels for 3D CPU fitting
 │   │   ├── cuda/                  # CUDA kernels for GPU-accelerated splatting
 │   │   └── metal/                 # Metal compute shaders for Apple Silicon
 │   └── utils/

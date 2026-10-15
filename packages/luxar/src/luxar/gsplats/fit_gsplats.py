@@ -10,7 +10,6 @@ constant. Runs on CPU, CUDA, or MPS.
 from __future__ import annotations
 
 import gc
-import warnings
 from dataclasses import fields
 from typing import Any, Optional, Sequence
 
@@ -87,19 +86,13 @@ class GaussianSplatFitter:
         if self.device.type == "cpu":
             from arbol import aprint
 
+            # A note, not a UserWarning: whether CPU fitting is slow depends on
+            # the dimensionality and numba, which initialization knows and
+            # warns about (`_build_cpu_or_pytorch_model`).
             aprint(
-                "WARNING: Gaussian splat fitting will run on CPU — "
-                "this can be orders of magnitude SLOWER than GPU (hardware-dependent)! "
-                "For serious work, use device='cuda' (NVIDIA) or device='mps' (Apple Silicon). "
-                "To install CUDA support: make setup-cuda && make build-cuda"
-            )
-            warnings.warn(
-                "Gaussian splat fitting will run on CPU. "
-                "This can be orders of magnitude SLOWER than GPU (hardware-dependent). "
-                "For serious work, use device='cuda' (NVIDIA) or device='mps' (Apple Silicon). "
-                "To install CUDA support: make setup-cuda && make build-cuda",
-                UserWarning,
-                stacklevel=2,
+                "Fitting on the CPU; 3D fits use the native CPU kernels when "
+                "numba is available; a CUDA or Apple Silicon GPU is still faster "
+                "for large volumes."
             )
 
         # Dynamic operations configuration

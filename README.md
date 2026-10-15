@@ -356,7 +356,9 @@ present; `LUXAR_METAL_BACKEND=auto|aot|runtime|torch` overrides the choice. Seed
 denoising follow the same device choice. On a cluster, `make build-cuda SLURM=1`
 builds the extension on a GPU node; if a fit logs "GPU fitting will use slower
 PyTorch fallback", it still runs, just without the compiled kernels. Viewing never
-needs any of this.
+needs any of this. On the CPU, 3D fits run on fused kernels that numba (in the
+`gsplats` extra) compiles on first use and caches; `LUXAR_CPU_BACKEND=auto|native|torch`
+overrides the choice and `LUXAR_CPU_THREADS` sets their thread count.
 
 Every option, with examples, is in the
 [CLI package README](packages/luxar/src/luxar/cli/README.md); the fitting model

@@ -113,10 +113,15 @@ def _worker_env(gpu: int, workers: dict[int, int], host_workers: int) -> dict[st
     quality_workers = str(max(1, workers.get(gpu, 1)))
     quality_host_workers = str(max(1, host_workers))
     if gpu < 0:
+        from luxar.gsplats.utils.device import cpu_worker_threads_env
+
+        # CPU workers share the cores: without a share each one's native CPU
+        # kernels default to every physical core.
         return {
             "CUDA_VISIBLE_DEVICES": "",
             QUALITY_WORKERS_PER_DEVICE_ENV: quality_workers,
             QUALITY_WORKERS_PER_HOST_ENV: quality_host_workers,
+            **cpu_worker_threads_env(max(1, host_workers)),
         }
     parent_visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
     parent_tokens = parent_visible.split(",") if parent_visible else []
