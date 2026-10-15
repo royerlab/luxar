@@ -134,6 +134,7 @@ def test_centered_hidden_axis_uses_the_written_coordinates(tmp_path: Path) -> No
     got = read_node_attrs(centered / "gsplats")
     reference = read_node_attrs(uncentered / "gsplats")
     assert got["projected_sum_p999"] > 0
+    assert got["amplitude_normalization_factor"] < 1 / 500
     assert got["projected_sum_p999"] == pytest.approx(
         reference["projected_sum_p999"], rel=1e-4
     )
