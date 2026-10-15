@@ -466,3 +466,112 @@ def test_recipe_short_flags_parse(tmp_path: Path) -> None:
     assert res.exit_code != 0
     output = normalized_cli_output(res)
     assert "--compression-factor" in output and "not used" in output.lower()
+
+
+# ---------------------------------------------------------------------------
+# Content-tiled fits resume from per-box checkpoints
+# ---------------------------------------------------------------------------
+
+_CONTENT_ARGS = [
+    "--tiling",
+    "content",
+    "--k-star-ref",
+    "4000",
+    "--n-features-ref",
+    "200",
+    "--feature-threshold",
+    "0.1",
+    "--feature-metric",
+    "peaks",
+    "--cell",
+    "8",
+    "--min-leaf",
+    "16",
+    "--max-leaf",
+    "32",
+    "--preset",
+    "draft",
+    "--device",
+    "cpu",
+]
+
+
+def _make_blob_volume_3d(path: Path) -> None:
+    zz, yy, xx = np.mgrid[0:48, 0:48, 0:48]
+    v = np.zeros((48, 48, 48), np.float32)
+    rng = np.random.default_rng(0)
+    for _ in range(12):
+        cz, cy, cx = rng.integers(6, 42, 3)
+        v += np.exp(-((zz - cz) ** 2 + (yy - cy) ** 2 + (xx - cx) ** 2) / 3.0)
+    np.save(path, np.clip(v, 0, 1).astype(np.float32))
+
+
+@pytest.mark.skipif(not HAS_TORCH, reason="fitting requires torch")
+def test_content_fit_resumes_finished_boxes_after_a_kill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Kill after the first box; the rerun reloads it and fits only the rest.
+
+    The per-box fit is stubbed (a real CPU fit per box is far too slow for a
+    unit test); the interrupt is the ``KeyboardInterrupt`` SIGTERM is routed
+    into for the duration of the fit.
+    """
+    import importlib
+    import signal
+
+    from luxar._process import _raise_keyboard_interrupt
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    fit_planned_mod = importlib.import_module("luxar.gsplats.planner.fit_planned")
+    vol = tmp_path / "vol.npy"
+    _make_blob_volume_3d(vol)
+    out = tmp_path / "content.gsplats.zarr"
+    fitted: list[tuple[int, ...]] = []
+    state = {"interrupt_after": 1, "sigterm": None}
+
+    def fake_fit_one_box(V, b, pad, cap, **kwargs):
+        state["sigterm"] = signal.getsignal(signal.SIGTERM)
+        if state["interrupt_after"] is not None and len(fitted) >= 1:
+            raise KeyboardInterrupt
+        fitted.append(tuple(b.box))
+        z0, z1, y0, y1, x0, x1 = b.box
+        centers = np.array(
+            [[(z0 + z1) / 2, (y0 + y1) / 2, (x0 + x1) / 2]] * 3, np.float32
+        )
+        centers[:, 2] += np.array([-1.0, 0.0, 1.0], np.float32)
+        chol = np.tile(np.array([1, 0, 1, 0, 0, 1], np.float32), (3, 1))
+        return GSplatData(
+            centers=centers,
+            amplitudes=np.full(3, 0.5, np.float32),
+            cholesky_factors=chol,
+            stats={
+                "floor": 0.0,
+                "image_min": 0.0,
+                "image_max": 1.0,
+                "intensity_range": 1.0,
+            },
+        )
+
+    monkeypatch.setattr(fit_planned_mod, "_fit_one_box", fake_fit_one_box)
+    args = ["gsplat", "fit", str(vol), str(out), *_CONTENT_ARGS]
+    try:
+        first = runner.invoke(app, args)
+        assert first.exit_code != 0
+    except KeyboardInterrupt:
+        pass
+    boxes_dir = tmp_path / "content.gsplats.zarr.boxes"
+    assert len(fitted) == 1
+    assert state["sigterm"] is _raise_keyboard_interrupt  # SIGTERM -> KI
+    assert signal.getsignal(signal.SIGTERM) is not _raise_keyboard_interrupt
+    assert len(list(boxes_dir.glob("box_*.done.json"))) == 1
+    assert not out.exists()
+
+    state["interrupt_after"] = None
+    first_box = fitted[0]
+    fitted.clear()
+    second = runner.invoke(app, args)
+    assert second.exit_code == 0, second.output
+    assert first_box not in fitted  # resumed from the checkpoint, not refit
+    assert len(fitted) >= 1
+    assert out.exists()
+    assert not boxes_dir.exists()  # removed only after the final save

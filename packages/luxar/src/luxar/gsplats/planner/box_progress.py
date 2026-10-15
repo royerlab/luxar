@@ -141,13 +141,13 @@ class BoxProgress:
         """Record box ``box`` as reloaded from a checkpoint, and say so."""
         self._record_resumed(int(box))
         aprint_heartbeat(
-            f"  box {box + 1} resumed from checkpoint ({self._n_done}/{self.total})"
+            f"  box {box} resumed from checkpoint ({self._n_done}/{self.total})"
         )
 
     def box_started(self, box: int) -> None:
         """Print box ``box``'s start line (budget and its position in the run)."""
         aprint_heartbeat(
-            f"  box {box + 1} ({self._n_done + 1}/{self.total}): fitting, "
+            f"  box {box} ({self._n_done + 1}/{self.total}): fitting, "
             f"budget {self._budgets.get(int(box), 0):,} splats"
         )
 
@@ -162,7 +162,7 @@ class BoxProgress:
         total = int(n_iters) if n_iters else 0
         marks = sorted({max(1, int(total * f)) for f in ITER_REPORT_FRACTIONS})
         started = time.perf_counter()
-        label = f"box {box + 1}"
+        label = f"box {box}"
 
         def _cb(it: int, _pred: Any, info: dict[str, Any]) -> None:
             if total <= 0 or not marks or it < marks[0]:
@@ -205,6 +205,5 @@ class BoxProgress:
         if self._n_done < self.total:
             details.append(f"ETA {format_duration(self.eta())}")
         aprint_heartbeat(
-            f"  box {box + 1} {state} ({self._n_done}/{self.total}): "
-            + ", ".join(details)
+            f"  box {box} {state} ({self._n_done}/{self.total}): " + ", ".join(details)
         )

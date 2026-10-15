@@ -18,6 +18,7 @@ padded crop, and the keep-core mask — they can never drift.
 from __future__ import annotations
 
 import contextlib
+import functools
 import gc
 import time
 from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Tuple
@@ -38,6 +39,8 @@ from .spec import FitPlan, PlanBox
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
+
+    from .box_checkpoint import BoxCheckpoint
 
 ProgressCallback = Callable[[int, int, str], None]
 
@@ -531,6 +534,68 @@ def _quiet_box(
     return scope
 
 
+def _report_box_result(
+    progress: Optional[BoxProgress],
+    box: int,
+    fitted: bool,
+    n_kept: int,
+    report: dict[str, Any],
+) -> None:
+    if progress is None:
+        return
+    if fitted:
+        progress.box_done(box, n_kept=n_kept, psnr_db=report.get("psnr_db"))
+    else:
+        progress.box_resumed(box)
+
+
+def _run_box_fit(
+    V: np.ndarray,
+    b: PlanBox,
+    pad: int,
+    cap: int,
+    *,
+    content_physical: bool,
+    fit_kwargs: dict[str, Any],
+    progress: Optional[BoxProgress],
+    run_warnings: OncePerRunWarnings,
+    box: int,
+    report: dict[str, Any],
+) -> GSplatData:
+    """Run a fresh box with its fit progress and muted inner narration."""
+    box_kwargs = _with_box_progress(fit_kwargs, progress, box, report)
+    with _quiet_box(progress, run_warnings, box):
+        return _fit_one_box(
+            V, b, pad, cap, content_physical=content_physical, **box_kwargs
+        )
+
+
+def _fit_or_resume_box(
+    checkpoint: "Optional[BoxCheckpoint]",
+    i: int,
+    resumed: bool,
+    fit: "Callable[[], GSplatData]",
+) -> "tuple[Optional[GSplatData], bool]":
+    """Reload a checkpointed box, or fit it (and checkpoint it when enabled).
+
+    With a checkpoint, both resumed and freshly fitted boxes are merged from
+    their stored copies. This keeps their rounded stats on the same footing.
+    A box marked done whose store no longer reads is discarded and refitted.
+    """
+    if resumed:
+        assert checkpoint is not None
+        ok, stored = checkpoint.load_or_discard(i)
+        if ok:
+            return stored, False
+        # Marked done but unreadable: discarded above, refit below.
+    region = fit()
+    if checkpoint is None:
+        return region, True
+    checkpoint.save_region(i, region)
+    del region
+    return checkpoint.load_region(i), True
+
+
 def fit_planned(
     volume: np.ndarray,
     plan: FitPlan,
@@ -541,6 +606,7 @@ def fit_planned(
     partition: bool = False,
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
+    checkpoint: "Optional[BoxCheckpoint]" = None,
     **fit_kwargs: Any,
 ) -> "Any":
     """Fit every box in ``plan`` and return the merged result.
@@ -570,6 +636,12 @@ def fit_planned(
     flat :class:`GSplatData` leaf (``--flat``). Both shapes are scored against
     the whole reference volume; tree-shaped results carry the merged block in
     their root ``meta["fit_stats"]`` for the CLI writer to persist.
+
+    With a ``checkpoint`` (:class:`~luxar.gsplats.planner.box_checkpoint.BoxCheckpoint`;
+    the CLI passes one at ``<output>.boxes``), each finished box is written to
+    disk as soon as it is fitted, and a box already finished under the same
+    fingerprint by an earlier (killed) run is reloaded instead of refitted.
+    Removing the directory after the final save is the caller's job.
 
     Boxes are fit **sequentially**. For concurrent fitting on one GPU use
     :func:`luxar.gsplats.planner.fit_planned_parallel.fit_planned_parallel`
@@ -612,23 +684,37 @@ def fit_planned(
         budget = budgets.get(i, 0)
         if budget <= 0:
             continue
+        resumed = checkpoint is not None and checkpoint.is_done(i)
         if progress_callback is not None:
-            progress_callback(i, n, f"box {i + 1}/{n} budget={budget}")
+            state = "resumed from checkpoint" if resumed else f"budget={budget}"
+            progress_callback(i, n, f"box {i + 1}/{n} {state}")
         report: dict[str, Any] = {}
-        box_kwargs = _with_box_progress(fit_kwargs, progress, i, report)
-        with _quiet_box(progress, run_warnings, i):
-            region = _fit_one_box(
-                V, b, pad, cap, content_physical=content_physical, **box_kwargs
-            )
+        region, fitted = _fit_or_resume_box(
+            checkpoint,
+            i,
+            resumed,
+            functools.partial(
+                _run_box_fit,
+                V,
+                b,
+                pad,
+                cap,
+                content_physical=content_physical,
+                fit_kwargs=fit_kwargs,
+                progress=progress,
+                run_warnings=run_warnings,
+                box=i,
+                report=report,
+            ),
+        )
         n_fit += 1
-        n_kept = int(region.n_splats)
-        if n_kept > 0:
+        n_kept = 0 if region is None else int(region.n_splats)
+        if region is not None and n_kept > 0:
             # The fitted dataset itself, so its truncation_radius and per-box
             # stats reach the merge instead of being rebuilt away (#1637).
             regions.append(region)
             region_boxes.append(i)
-        if progress is not None:
-            progress.box_done(i, n_kept=n_kept, psnr_db=report.get("psnr_db"))
+        _report_box_result(progress, i, fitted, n_kept, report)
 
     elapsed = time.perf_counter() - t0
     if not regions:

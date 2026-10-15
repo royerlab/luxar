@@ -210,6 +210,7 @@ _FITTING_INFO_KEYS = (
     "converged",
     "early_stopped",
     "best_iteration",
+    "best_from_final_step",
     "final_loss",
     "final_max_abs_error",
     "final_rel_l2",
@@ -236,6 +237,9 @@ _FITTING_INFO_KEYS = (
     "foreground_psnr_db",
     "foreground_threshold",
     "foreground_fraction",
+    # Why the three scores above are absent, when the post-fit render failed
+    # (fitting/results.py) -- so a store without PSNR says why.
+    "quality_error",
     "configured_iterations",
     "dynamic_ops_enabled",
     "dynamic_ops_step_every",

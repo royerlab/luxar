@@ -64,8 +64,10 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
 - **`BoxProgress`** (`box_progress.py`) — the single per-box progress stream both
   drivers print when `verbose`. The sequential driver prints it only when the
   caller passes no `progress_callback` (a caller's callback replaces it, so no
-  box is reported twice). Verbose or not, the sequential driver runs each inner
-  box fit under `luxar.utils.verbosity.quiet_narration()` (no per-fit tree) and
+  box is reported twice). A `box i` label is the zero-based `--plan-box i`
+  number; `(k/N)` is the one-based count of handled boxes. Verbose or not, the
+  sequential driver runs each inner box fit under
+  `luxar.utils.verbosity.quiet_narration()` (no per-fit tree) and
   re-emits each distinct warning once per run (`OncePerRunWarnings`), so a
   `--quiet` content fit is never noisier than a verbose one. Lines: a start line, iteration
   lines at 25/50/75% of `n_iters` (via the fitter's `iter_callback`), and a
@@ -96,6 +98,31 @@ fit_planned(volume, plan)        -> GSplatData|GSplatNode   # fit each box, merg
   before merging so parts match the sequential path. Disposable `-j N` workers
   skip that discarded scoring work; `--keep-tiles` retains the outputs and opts
   their workers back into scoring.
+- **Box checkpoints / resume** (`box_checkpoint.py`) — both drivers write every
+  finished box to `<output>.boxes/box_{i}.gsplats.zarr` (or a `.empty` marker)
+  followed by an atomic `box_{i}.done.json` marker carrying the run's
+  `plan_fingerprint` (luxar version + plan + per-box fit config + the input
+  file's resolved path/size/mtime + a strided volume digest; the device is
+  excluded). A rerun of the same command reuses every box whose marker matches
+  and refits the rest; a box with no marker (killed mid-save), another
+  fingerprint, or a marker whose store no longer reads is discarded and refit,
+  never reloaded. `fit_planned` takes it as `checkpoint=`;
+  `fit_planned_parallel` treats `tmp_dir` as the checkpoint when given a
+  `fingerprint` (without one it still clears `tmp_dir` first, so library
+  callers never reuse boxes from another volume/config). On an interrupt the
+  `-j N` pool terminates its running worker subprocesses (they are `Popen`ed)
+  and marks nothing done after the interrupt, all before the lock is released.
+  The CLI removes the directory only after the merged output is saved (kept with
+  `--keep-tiles`), routes SIGTERM into `KeyboardInterrupt` for the fit (an
+  explicit `SIG_IGN` is respected) so a `kill` leaves finished boxes on disk,
+  and holds an `flock` on `.lock` in the directory (released by the kernel if
+  the holder dies). A second live fit to the same output falls back to a
+  private per-invocation directory (#1040), removed on exit, instead of sharing
+  boxes; the busy message names the lock file, and
+  `LUXAR_CHECKPOINT_FORCE_UNLOCK=1` breaks a lock known to be dead (e.g. on a
+  network filesystem after its host went away), with a loud warning when it
+  actually breaks a held one. A filesystem without `flock` (ENOLCK/ENOSYS on
+  some Lustre/NFS mounts) proceeds without the lock and says so.
 - **`CONTENT_CULL_RETENTION = 0.999`** (`fit_planned.py`) — the near-lossless
   post-fit retention every content box is fitted at. This pins the content path
   if the fitter's default changes later.

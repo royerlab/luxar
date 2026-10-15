@@ -38,7 +38,7 @@ def test_eta_is_budget_weighted(monkeypatch: pytest.MonkeyPatch, capsys) -> None
     # 10 s for 100 of 400 budget units -> 30 s for the remaining 300.
     progress.box_done(0, n_kept=12, psnr_db=31.234)
     line = capsys.readouterr().out
-    assert "box 1 done (1/2): kept 12 splats, PSNR 31.23 dB (padded crop)" in line
+    assert "box 0 done (1/2): kept 12 splats, PSNR 31.23 dB (padded crop)" in line
     assert "10s elapsed, ETA 30s" in line
 
 
@@ -52,22 +52,22 @@ def test_resumed_boxes_count_as_done_but_not_towards_timing(
     progress.box_resumed(1)
     progress.box_done(2)
     line = capsys.readouterr().out
-    assert "box 2 resumed from checkpoint (2/4)" in line
+    assert "box 1 resumed from checkpoint (2/4)" in line
     # 10 s fitting 100 units, 100 units left (resumed boxes excluded) -> 10 s.
-    assert "box 3 done (3/4): 10s elapsed, ETA 10s" in line
+    assert "box 2 done (3/4): 10s elapsed, ETA 10s" in line
 
 
 def test_the_start_line_counts_this_runs_boxes(capsys) -> None:
     progress = BoxProgress({4: 1500, 9: 10})
     progress.box_started(9)
-    assert "box 10 (1/2): fitting, budget 10 splats" in capsys.readouterr().out
+    assert "box 9 (1/2): fitting, budget 10 splats" in capsys.readouterr().out
 
 
 def test_last_box_has_no_eta_and_a_failure_says_so(capsys) -> None:
     progress = BoxProgress({4: 10})
     progress.box_done(4, failed=True, detail="exit 3")
     line = capsys.readouterr().out
-    assert "box 5 FAILED (1/1): exit 3" in line
+    assert "box 4 FAILED (1/1): exit 3" in line
     assert "ETA" not in line
 
 
@@ -82,7 +82,7 @@ def test_iter_callback_reports_each_quarter_once(capsys) -> None:
         "50/100",
         "75/100",
     ]
-    assert "box 1:" in lines[0] and "box ETA" in lines[0]
+    assert "box 0:" in lines[0] and "box ETA" in lines[0]
 
 
 def test_each_distinct_warning_is_shown_once_per_run() -> None:
@@ -158,11 +158,11 @@ def test_verbose_fit_planned_prints_one_quiet_progress_stream(capsys) -> None:
     """End to end on CPU: start, iteration and completion lines per box only."""
     _fit()
     out = capsys.readouterr().out
-    assert "box 1 (1/2): fitting, budget" in out
-    assert "box 1: iter 25/100" in out
-    assert "box 2: iter 75/100" in out
-    assert "box 1 done (1/2): kept" in out and "dB (padded crop)" in out
-    assert "box 2 done (2/2):" in out
+    assert "box 0 (1/2): fitting, budget" in out
+    assert "box 0: iter 25/100" in out
+    assert "box 1: iter 75/100" in out
+    assert "box 0 done (1/2): kept" in out and "dB (padded crop)" in out
+    assert "box 1 done (2/2):" in out
     # ...and none of the inner fits' narration.
     assert "Fitting Gaussian Splats" not in out
     assert "Generating seeds" not in out

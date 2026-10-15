@@ -174,6 +174,191 @@ class TestTiledSeedingReproducibility:
         assert 0 < len(peaks) <= 64
 
 
+def _reference_peaks_in_tile(
+    tile: torch.Tensor, k_max: int, nms_radius_vox: float
+) -> list:
+    """The pre-batching ``_find_peaks_in_tile``, verbatim."""
+    from luxar.gsplats.fitting.dynamic_ops.peak_finding import (
+        _separable_nd_max_pool,
+    )
+
+    kernel_size = int(2 * nms_radius_vox + 1)
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+    min_tile_dim = min(tile.shape)
+    kernel_size = min(kernel_size, min_tile_dim)
+    if min_tile_dim >= 3 and kernel_size < 3:
+        kernel_size = 3
+    elif kernel_size % 2 == 0:
+        kernel_size = max(1, kernel_size - 1)
+    if tile.ndim == 2:
+        pooled = torch.nn.functional.max_pool2d(
+            tile[None, None], kernel_size, 1, kernel_size // 2
+        )[0, 0]
+    elif tile.ndim == 3:
+        pooled = torch.nn.functional.max_pool3d(
+            tile[None, None], kernel_size, 1, kernel_size // 2
+        )[0, 0]
+    else:
+        pooled = _separable_nd_max_pool(tile, kernel_size)
+    idx = torch.nonzero((tile >= pooled) & (tile > 0), as_tuple=False)
+    if len(idx) == 0:
+        return []
+    order = torch.argsort(tile[tuple(idx.T)], descending=True)
+    return [tuple(p.tolist()) for p in idx[order[:k_max]]]
+
+
+def _reference_strong_threshold(pos: torch.Tensor) -> float:
+    sample = pos.reshape(-1)[:: max(1, pos.numel() // 2**20)]
+    sample = sample[sample > 0]
+    return torch.quantile(sample.float(), 0.75).item() if len(sample) else float("inf")
+
+
+def _reference_tiled_peaks(
+    residual: torch.Tensor,
+    num_tiles_per_dim: int,
+    k_max_residuals: int,
+    nms_radius_vox: float,
+    seed: int | None,
+) -> torch.Tensor:
+    """The pre-batching per-tile loop, kept verbatim as the equivalence oracle."""
+    import itertools
+    import random
+
+    pos = torch.clamp(residual, min=0)
+    shape, d = pos.shape, pos.ndim
+    rng = random.Random(seed)
+    total = num_tiles_per_dim**d
+    kpt = k_max_residuals / total
+    prob = kpt < 1.0
+    strong = _reference_strong_threshold(pos) if prob else float("inf")
+    sizes = [max(1, s // num_tiles_per_dim) for s in shape]
+    starts = [
+        [(s * t) // num_tiles_per_dim for t in range(num_tiles_per_dim)] for s in shape
+    ]
+    found = []
+    for coords in itertools.product(*starts):
+        sl = tuple(slice(c, min(c + sizes[i], shape[i])) for i, c in enumerate(coords))
+        tile = pos[sl]
+        if tile.numel() < 4:
+            continue
+        if prob:
+            tp = _reference_peaks_in_tile(tile, 1, nms_radius_vox)
+            if tp and tile[tp[0]].item() < strong and rng.random() >= kpt:
+                tp = []
+        else:
+            tp = _reference_peaks_in_tile(tile, int(kpt), nms_radius_vox)
+        found += [[lc[i] + coords[i] for i in range(d)] for lc in tp]
+    if not found:
+        return torch.zeros((0, d), dtype=torch.long)
+    peaks = torch.tensor(found, dtype=torch.long)
+    return peaks[torch.argsort(pos[tuple(peaks.T)], descending=True)]
+
+
+class TestBatchedTiledPeaksMatchPerTileLoop:
+    """The batched tile search must select what the per-tile loop selected.
+
+    Continuous random residuals have no exact ties, so the selections compare
+    as identical ordered tensors; only exactly tied values may legitimately be
+    picked/ordered differently (``topk`` vs ``argsort``, both unstable).
+    """
+
+    @pytest.mark.parametrize(
+        ("shape", "n", "k_max", "radius"),
+        [
+            ((64, 64), 16, 40, 1.0),  # probabilistic 2D
+            ((64, 64), 16, 1000, 2.0),  # deterministic 2D, 3 per tile
+            ((40, 50, 61), 6, 40, 2.0),  # probabilistic 3D, ragged tiles
+            ((40, 50, 61), 6, 2000, 2.0),  # deterministic 3D
+            ((33, 30, 31), 8, 9000, 1.5),  # 17 per tile (topk > 16)
+            ((5, 40, 40), 8, 3000, 2.0),  # axis smaller than tile count
+            ((10, 12, 9, 11), 4, 600, 1.0),  # 4D separable path
+        ],
+    )
+    @pytest.mark.parametrize("seed", [0, 7])
+    def test_matches_reference(
+        self,
+        shape: tuple,
+        n: int,
+        k_max: int,
+        radius: float,
+        seed: int,
+    ) -> None:
+        from luxar.gsplats.fitting.dynamic_ops.peak_finding import (
+            _find_residual_peaks_tiled,
+        )
+
+        gen = torch.Generator().manual_seed(seed)
+        residual = torch.randn(shape, generator=gen)
+        expected = _reference_tiled_peaks(residual, n, k_max, radius, seed)
+        actual = _find_residual_peaks_tiled(residual, n, k_max, radius, seed=seed)
+        assert torch.equal(actual, expected)
+
+    @pytest.mark.skipif(
+        not torch.backends.mps.is_available(), reason="MPS not available"
+    )
+    def test_mps_matches_cpu(self) -> None:
+        from luxar.gsplats.fitting.dynamic_ops.peak_finding import (
+            _find_residual_peaks_tiled,
+        )
+
+        residual = torch.randn((40, 50, 61), generator=torch.Generator().manual_seed(3))
+        for k_max in (40, 2000, 9000 * 4):
+            cpu = _find_residual_peaks_tiled(residual, 6, k_max, 2.0, seed=5)
+            mps = _find_residual_peaks_tiled(residual.to("mps"), 6, k_max, 2.0, seed=5)
+            assert torch.equal(mps.cpu(), cpu)
+
+    def test_none_tiles_uses_documented_auto_rule(self) -> None:
+        """``num_tiles_per_dim=None`` → 6 tiles/axis in 3D (not a hard 8)."""
+        from luxar.gsplats.fitting.dynamic_ops.peak_finding import (
+            _find_residual_peaks_tiled,
+            auto_tiles_per_dim,
+        )
+
+        assert [auto_tiles_per_dim(d) for d in (2, 3, 4, 5)] == [16, 6, 4, 2]
+        residual = torch.randn((36, 36, 36), generator=torch.Generator().manual_seed(1))
+        auto = _find_residual_peaks_tiled(residual, None, 216, 1.0, seed=0)
+        six = _find_residual_peaks_tiled(residual, 6, 216, 1.0, seed=0)
+        assert torch.equal(auto, six)
+        assert len(auto) == 216  # exactly one per tile in deterministic mode
+
+    @pytest.mark.parametrize(("ndim", "expected"), [(2, 8), (3, 6), (4, 8)])
+    def test_operations_use_auto_rule_for_3d_only(
+        self, monkeypatch: pytest.MonkeyPatch, ndim: int, expected: int
+    ) -> None:
+        """None → 6 tiles/axis in 3D (measured); 8 kept for other dims."""
+        from luxar.gsplats.fitting.dynamic_ops import operations
+
+        seen = {}
+
+        def fake(*_args, num_tiles_per_dim=None, **_kwargs):
+            seen["n"] = num_tiles_per_dim
+            return torch.zeros((0, ndim), dtype=torch.long)
+
+        monkeypatch.setattr(operations, "_find_residual_peaks", fake)
+
+        class Model:
+            @staticmethod
+            def current_params():
+                return (
+                    torch.zeros((1, ndim)),
+                    torch.eye(ndim)[None],
+                    torch.ones(1),
+                )
+
+        target = torch.ones((4,) * ndim)
+        apply_dynamic_operations(
+            Model(),
+            target,
+            torch.zeros_like(target),
+            DynamicOpsConfig(),
+            max_abs_error_threshold=0.0,
+        )
+        assert seen["n"] == expected
+        explicit = DynamicOpsConfig(num_tiles_per_dim=3)
+        assert operations._tiles_per_dim(explicit, ndim) == 3
+
+
 class TestSimplifiedSeeding:
     """Test ultra-simple seeding approach with direct amplitude and isotropic shape."""
 
