@@ -128,6 +128,7 @@ class FitPipelineCtx:
     fit_frame: "Any" = None
     #: The ``--region`` spec verbatim, forwarded to ``-j N`` tile workers.
     region: Optional[str] = None
+    dimension_metadata: "Optional[list[dict[str, str]]]" = None
 
 
 def warn_ignored_density_flags(ctx: FitPipelineCtx) -> None:
@@ -990,6 +991,7 @@ def dispatch_parallel_tiled(
                 compress=ctx.compress,
                 verbose=ctx.verbose,
                 frame=ctx.fit_frame,
+                dimension_metadata=ctx.dimension_metadata,
             )
 
         aprint(f"\nDone: {n_splats:,} splats")
@@ -1755,6 +1757,7 @@ def rescale_and_save(
                 compress=ctx.compress,
                 verbose=ctx.verbose,
                 frame=ctx.fit_frame,
+                dimension_metadata=ctx.dimension_metadata,
             )
     return result, n_splats, is_leaf
 
@@ -1800,6 +1803,7 @@ def save_fit_output(
     compress: "Optional[Literal['zip', 'tar.gz']]",
     verbose: bool,
     frame: "Any" = None,
+    dimension_metadata: "Optional[list[dict[str, str]]]" = None,
 ) -> int:
     """Save a flat ``GSplatData`` leaf or a ``kind=partition`` tree node.
 
@@ -1813,9 +1817,15 @@ def save_fit_output(
     from luxar.gsplats.gsplat_data import GSplatData
 
     result = apply_fit_frame(result, frame)
-
+    root_attrs = (
+        {"dimension_metadata": dimension_metadata}
+        if dimension_metadata is not None
+        else None
+    )
     if isinstance(result, GSplatData):
-        result.save(output_path, compress=compress, amplitude_bits="auto")
+        result.save(
+            output_path, compress=compress, amplitude_bits="auto", root_attrs=root_attrs
+        )
         n = int(result.n_splats)
     else:  # a partition / tree node has no flat-matrix equivalent
         from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
@@ -1833,6 +1843,7 @@ def save_fit_output(
             fitting_config=config,
             provenance_info=provenance,
             pipeline_info=pipeline,
+            root_attrs=root_attrs,
         )
         n = int(getattr(result, "n_splats", 0))
     if verbose:

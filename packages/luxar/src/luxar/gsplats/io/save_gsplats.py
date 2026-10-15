@@ -894,11 +894,12 @@ def fit_axis_dimension_metadata(
 ) -> Optional[List[Dict[str, Any]]]:
     """``dimension_metadata`` naming a fitted volume's center columns, or ``None``.
 
-    A fit's center columns are the input array's axes in array order, so a store
-    whose ``fitting/source_shape`` has the same rank as its centers is a fit of a
-    2-D/3-D image and its columns are ``(y, x)`` / ``(z, y, x)``. Anything else —
-    no fitting provenance, a stacked timelapse whose centers outrank the source
-    grid, an unconventional rank — returns ``None`` rather than guessing.
+    Without explicit axis labels, a fit's center columns use the conventional
+    image array order. A store whose ``fitting/source_shape`` has the same rank
+    as its centers therefore defaults to ``(y, x)`` / ``(z, y, x)``. An explicit
+    ``dimension_metadata`` at the root, as written by ``fit --axes``, wins.
+    No fitting provenance, a stacked timelapse whose centers outrank the source
+    grid, or an unconventional rank returns ``None`` rather than guessing.
 
     Names, plus a ``unit`` only for a fit stored in physical coordinates
     (``fitting/physical_coordinates`` with a known ``voxel_unit``): its centers

@@ -646,7 +646,7 @@ class Waypoint:
                 "view_axis only frames the scene's opening camera (and Home/F). "
                 "Give the waypoint a position/target/up instead.",
                 UserWarning,
-                stacklevel=3,
+                stacklevel=4,
             )
 
     def __post_init__(self) -> None:

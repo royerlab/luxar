@@ -921,6 +921,11 @@ def run_fit_volume(
                 denoise_backend=denoise_backend,
                 fit_frame=frame.frame,
                 region=region,
+                dimension_metadata=(
+                    [{"name": name} for name in source_info["axes"]]
+                    if axes is not None
+                    else None
+                ),
             )
 
             warn_ignored_density_flags(ctx)
@@ -991,6 +996,7 @@ def run_fit_volume(
                     recipe=recipe,
                     recipe_params=recipe_params,
                     compress=compress,
+                    dimension_metadata=ctx.dimension_metadata,
                     plan=plan,
                     plan_only=plan_only,
                     plan_box=plan_box,
