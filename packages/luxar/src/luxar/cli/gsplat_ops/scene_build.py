@@ -215,7 +215,7 @@ def build_gsplat_scene(
         # preset finds the XY plane by name.
         orientation = _orientation(extent, node, stats, opts, remap=matrix)
         viewer_config = _viewer_config(orientation, opts.tone_mapping)
-        exposure = _exposure(node, orientation, opts)
+        exposure = _exposure(data.tree if data is not None else node, orientation, opts)
         attrs: Dict[str, Any] = {
             "normalize_amplitudes": exposure.normalize,
             "opacity": opts.opacity,

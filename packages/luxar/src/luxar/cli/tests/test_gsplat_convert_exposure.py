@@ -102,6 +102,44 @@ def test_default_dims_a_saturating_fit_and_stamps_the_prediction(
     assert attrs["amplitude_normalization_factor"] < per_splat
 
 
+def test_centered_hidden_axis_uses_the_written_coordinates(tmp_path: Path) -> None:
+    rng = np.random.default_rng(11)
+    n = 2000
+    centers = np.column_stack(
+        [
+            rng.normal(0, 6, n),
+            rng.normal(0, 6, n),
+            rng.normal(0, 6, n),
+            rng.normal(150, 10, n),
+        ]
+    ).astype(np.float32)
+    src = tmp_path / "four_dimensional.gsplats.zarr"
+    GSplatData(
+        centers=centers,
+        amplitudes=np.full(n, 500, dtype=np.float32),
+        cholesky_factors=np.tile(
+            np.array([1.5, 0, 1.5, 0, 0, 1.5, 0, 0, 0, 1.5], dtype=np.float32),
+            (n, 1),
+        ),
+    ).save(src)
+    runner = CliRunner()
+    centered = tmp_path / "centered.luxar.zarr"
+    uncentered = tmp_path / "uncentered.luxar.zarr"
+    result = runner.invoke(app, ["gsplat", "convert", str(src), str(centered)])
+    assert result.exit_code == 0, normalized_cli_output(result)
+    _convert(runner, src, uncentered)
+
+    got = read_node_attrs(centered / "gsplats")
+    reference = read_node_attrs(uncentered / "gsplats")
+    assert got["projected_sum_p999"] > 0
+    assert got["projected_sum_p999"] == pytest.approx(
+        reference["projected_sum_p999"], rel=1e-4
+    )
+    assert got["amplitude_normalization_factor"] == pytest.approx(
+        reference["amplitude_normalization_factor"], rel=1e-4
+    )
+
+
 def test_stored_amplitudes_divide_back_to_the_fit(tmp_path: Path) -> None:
     """Round trip: stored / amplitude_normalization_factor == raw amplitudes."""
     src = _dense(tmp_path / "dense.gsplats.zarr")
