@@ -11,6 +11,7 @@ from arbol import aprint, asection
 from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES_HELP
 
 from ..voxel_frame import (
+    FitFrame,
     parse_region,
     parse_voxel_size,
     region_rank_guard,
@@ -42,6 +43,18 @@ FIT_CLI_DOCS_URL = (
     "https://github.com/royerlab/luxar/blob/main/packages/luxar/src/luxar/"
     "cli/README.md#luxar-gsplat-fit"
 )
+
+
+def _scene_axis_unit(frame: FitFrame) -> Optional[str]:
+    """Use only scene-supported units for physical fit dimensions."""
+    if not frame.physical or frame.spacing is None or frame.spacing.unit is None:
+        return None
+    from luxar.typing_utils.enums import PhysicalUnit
+
+    try:
+        return PhysicalUnit.validate(frame.spacing.unit).value
+    except ValueError:
+        return None
 
 
 def _parse_norm_range(value: Optional[str]) -> "Optional[tuple[float, float]]":
@@ -865,11 +878,7 @@ def run_fit_volume(
                 axes=axes,
             )
 
-            axis_unit = (
-                frame.frame.spacing.unit
-                if frame.frame.physical and frame.frame.spacing is not None
-                else None
-            )
+            axis_unit = _scene_axis_unit(frame.frame)
             dimension_metadata = (
                 [
                     {"name": name, **({"unit": axis_unit} if axis_unit else {})}

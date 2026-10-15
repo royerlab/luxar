@@ -367,7 +367,13 @@ class TestFitFrame:
 
 
 class TestFitCli:
-    def test_physical_ngff_with_axes_converts_with_unit(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize(
+        ("ngff_unit", "stored_unit", "scene_unit"),
+        [("nanometer", "nm", "nm"), ("angstrom", "angstrom", "units")],
+    )
+    def test_physical_ngff_with_axes_converts_with_unit(
+        self, tmp_path: Path, ngff_unit: str, stored_unit: str, scene_unit: str
+    ) -> None:
         import zarr
 
         src = tmp_path / "vol.zarr"
@@ -376,8 +382,7 @@ class TestFitCli:
         root.attrs["multiscales"] = [
             {
                 "axes": [
-                    {"name": name, "type": "space", "unit": "nanometer"}
-                    for name in "zyx"
+                    {"name": name, "type": "space", "unit": ngff_unit} for name in "zyx"
                 ],
                 "datasets": [
                     {
@@ -391,16 +396,17 @@ class TestFitCli:
         ]
         fitted = tmp_path / "physical.gsplats.zarr"
         _fit(src, fitted, "--axes", "z,y,x", "--physical")
-        assert _fitting_attrs(fitted)["voxel_unit"] == "nm"
+        assert _fitting_attrs(fitted)["voxel_unit"] == stored_unit
         assert _root_attrs(fitted)["dimension_metadata"] == [
-            {"name": name, "unit": "nm"} for name in "zyx"
+            {"name": name, **({"unit": scene_unit} if scene_unit != "units" else {})}
+            for name in "zyx"
         ]
         scene = tmp_path / "scene.luxar.zarr"
         result = runner.invoke(app, ["gsplat", "convert", str(fitted), str(scene)])
         assert result.exit_code == 0, result.output
         assert [
             d["unit"] for d in _root_attrs(scene)["scene_dimensions"]["dimensions"]
-        ] == ["nm", "nm", "nm"]
+        ] == [scene_unit] * 3
 
     def test_physical_ome_tiff_stamps_and_scales(self, tmp_path: Path) -> None:
         src = _ome_tiff(tmp_path / "vol.ome.tif")

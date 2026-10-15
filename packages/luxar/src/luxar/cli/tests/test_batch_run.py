@@ -1024,6 +1024,18 @@ def test_batch_dimension_metadata_normalizes_unit_scale_units() -> None:
         {"name": "x", "scale": 1.0},
         {"name": "time", "scale": 1.0, "unit": "s"},
     ]
+    assert _batch_dimension_metadata(
+        info,
+        ["time", "z", "y", "x"],
+        2,
+        physical_coordinates=True,
+        ngff_spatial_units=True,
+    ) == [
+        {"name": "z", "scale": 1.0, "unit": "um"},
+        {"name": "y", "scale": 1.0},
+        {"name": "x", "scale": 1.0},
+        {"name": "time", "scale": 1.0, "unit": "s"},
+    ]
 
 
 @pytest.mark.parametrize(

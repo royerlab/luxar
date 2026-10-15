@@ -2108,8 +2108,10 @@ def _batch_dimension_metadata(
             try:
                 unit = PhysicalUnit.validate(unit).value
             except ValueError:
-                pass
-            result["unit"] = unit
+                if spatial and physical_coordinates:
+                    unit = None
+            if unit:
+                result["unit"] = unit
         return result
 
     metadata = [descriptor(index, spatial=True) for index in spatial_indices]
