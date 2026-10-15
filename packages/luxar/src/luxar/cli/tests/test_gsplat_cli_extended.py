@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
+import sys
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
@@ -792,6 +794,38 @@ class TestFitCommand:
         )
         assert result.exit_code == 0, f"fit failed: {result.stdout}"
         assert out.exists()
+
+    def test_cpu_fit_warns_once_in_cli_output(
+        self, small_volume_npy: Path, tmp_path: Path
+    ) -> None:
+        out = tmp_path / "cpu.gsplats.zarr"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from luxar.cli import app; app()",
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(out),
+                "--device",
+                "cpu",
+                "--iters",
+                "1",
+                "--seeds",
+                "2",
+                "--tiling",
+                "none",
+                "--quiet",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        output = result.stdout + result.stderr
+        assert result.returncode == 0, f"fit failed: {output}"
+        assert output.count("Gaussian splat fitting is running on CPU") == 1
 
     def test_fit_accepts_auto_device(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path

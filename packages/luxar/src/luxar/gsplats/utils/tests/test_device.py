@@ -430,12 +430,10 @@ class TestCpuFallbackHint:
         assert "install a CUDA build of torch" in hint
         assert "make" not in hint
 
-    def test_warning_prints_once_but_always_warns(self, monkeypatch, capsys) -> None:
-        monkeypatch.setattr(device_mod, "_CPU_WARNING_PRINTED", False)
+    def test_warning_uses_python_warning_channel(self, capsys) -> None:
         with pytest.warns(UserWarning, match="running on CPU"):
             device_mod.warn_cpu_fitting()
         with pytest.warns(UserWarning, match="running on CPU"):
             device_mod.warn_cpu_fitting()
         out = capsys.readouterr().out
-        assert out.count("running on CPU") == 1
-        assert "make setup-cuda" not in out
+        assert "running on CPU" not in out
