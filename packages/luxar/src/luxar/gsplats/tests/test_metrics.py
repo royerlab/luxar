@@ -433,6 +433,76 @@ class TestOtsuThreshold:
             f"(should be the same bin; bin width {bin_width})"
         )
 
+    @staticmethod
+    def _histc_otsu(flat: torch.Tensor, bins: int = 256) -> float:
+        """The pre-subsampling implementation (full-volume ``torch.histc``)."""
+        lo, hi = float(flat.min()), float(flat.max())
+        counts = torch.histc(flat, bins=bins, min=lo, max=hi)
+        edges = torch.linspace(lo, hi, bins + 1)
+        centres = (edges[:-1] + edges[1:]) / 2.0
+        w1 = torch.cumsum(counts, 0)
+        w2 = torch.flip(torch.cumsum(torch.flip(counts, [0]), 0), [0])
+        cw = counts * centres
+        m1 = torch.cumsum(cw, 0) / w1.clamp(min=1e-12)
+        m2 = torch.flip(torch.cumsum(torch.flip(cw, [0]), 0), [0]) / w2.clamp(min=1e-12)
+        var = torch.nan_to_num(w1[:-1] * w2[1:] * (m1[:-1] - m2[1:]) ** 2)
+        return float(centres[int(torch.argmax(var))])
+
+    @pytest.mark.parametrize("n", [50_000, 12_000_000])
+    def test_matches_full_histc_implementation(self, n: int) -> None:
+        """Bincount counting is exact below the cap; subsampling stays in-bin."""
+        from luxar.gsplats import metrics
+
+        gen = torch.Generator().manual_seed(1)
+        background = torch.rand(n, generator=gen) * 0.2
+        signal = 0.5 + torch.rand(n // 20, generator=gen) * 0.5
+        flat = torch.cat([background, signal])
+        flat = flat[torch.randperm(flat.numel(), generator=gen)]
+        expected = self._histc_otsu(flat)
+        actual = otsu_threshold(flat)
+        bin_width = float(flat.max() - flat.min()) / 256
+        if flat.numel() <= metrics._OTSU_MAX_SAMPLES:
+            assert abs(actual - expected) <= bin_width * 1e-3
+        else:
+            assert abs(actual - expected) <= bin_width * 1.001
+
+    def test_subsample_does_not_alias_with_the_fastest_axis(self) -> None:
+        """Stride == X used to read only column 0 of every row (0.0023 vs 0.199)."""
+        from luxar.gsplats import metrics
+        from luxar.gsplats.calibration.content import _otsu_threshold
+
+        x = 4
+        rows = metrics._OTSU_MAX_SAMPLES  # numel = cap * X -> old stride == X
+        gen = torch.Generator().manual_seed(2)
+        vol = torch.zeros((rows, x))
+        signal = torch.rand((rows, x - 1), generator=gen)
+        vol[:, 1:] = torch.where(signal < 0.5, 0.1 * signal, 0.6 + 0.4 * signal)
+        expected = self._histc_otsu(vol.reshape(-1))
+        bin_width = float(vol.max() - vol.min()) / 256
+        assert abs(otsu_threshold(vol) - expected) <= bin_width * 1.001
+        assert abs(_otsu_threshold(vol.numpy()) - expected) <= bin_width * 1.001
+        assert expected > 0.04  # the old strided read collapsed to 0.0
+
+    def test_counts_are_bounded_cpu_samples(self) -> None:
+        """The histogram is counted on CPU over a bounded strided sample."""
+        from luxar.gsplats import metrics
+
+        flat = torch.rand(metrics._OTSU_MAX_SAMPLES * 3)
+        counts = metrics._otsu_bin_counts(
+            flat[::3], float(flat.min()), float(flat.max()), 256
+        )
+        assert counts.device.type == "cpu"
+        assert int(counts.sum()) == metrics._OTSU_MAX_SAMPLES
+
+    @pytest.mark.skipif(
+        not torch.backends.mps.is_available(), reason="MPS not available"
+    )
+    def test_mps_large_volume_does_not_fail(self) -> None:
+        """>16 Mvox used to raise "64-bit indexing" from MPS histc."""
+        vol = torch.zeros(20_000_000, device="mps")
+        vol[::50] = 1.0
+        assert 0.0 <= otsu_threshold(vol) < 1.0
+
     def test_constant_volume_selects_nothing(self) -> None:
         """A flat volume has no foreground; the strict ``>`` must yield none."""
         const = torch.full((100,), 3.0)

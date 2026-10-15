@@ -217,6 +217,9 @@ _CONTENT_SCOPED_STATS_KEYS = (
     # qualifying a score that is no longer there, so they go with it.
     "foreground_threshold",
     "foreground_fraction",
+    # Why the scores are absent (a failed post-fit render). It explains the
+    # missing measurement of THIS splat set, so it goes with the scores.
+    "quality_error",
     # The optimizer's own residuals at its best iteration (fitting/results.py).
     # Same measurement against the same source volume as `rel_l2` /
     # `max_abs_error` above, just read off the fit loop rather than recomputed —

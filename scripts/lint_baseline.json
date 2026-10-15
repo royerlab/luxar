@@ -203,7 +203,6 @@
     "packages/luxar/src/luxar/gsplats/demos/demo_tiled_fitting.py::B905": 1,
     "packages/luxar/src/luxar/gsplats/doctor/checks.py::BLE001": 1,
     "packages/luxar/src/luxar/gsplats/fit_tiled_parallel.py::BLE001": 3,
-    "packages/luxar/src/luxar/gsplats/fitting/dynamic_ops/peak_finding.py::B007": 1,
     "packages/luxar/src/luxar/gsplats/fitting/dynamic_ops/tests/test_dynamic_ops.py::BLE001": 1,
     "packages/luxar/src/luxar/gsplats/fitting/losses.py::BLE001": 2,
     "packages/luxar/src/luxar/gsplats/fitting/preprocessing.py::BLE001": 1,

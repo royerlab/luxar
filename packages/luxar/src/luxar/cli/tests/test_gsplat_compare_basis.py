@@ -443,7 +443,7 @@ def test_a_hot_pixel_moves_neither_the_headline_peak_nor_the_foreground(
 @pytest.mark.parametrize(
     ("extra", "needle"),
     [
-        (("--shape", "8,8,8"), "does not match the reference shape"),
+        (("--shape", "8,8,8"), "does not match reference shape"),
         (("--axes", "c,z,y,x"), "Dimension mismatch"),
     ],
 )

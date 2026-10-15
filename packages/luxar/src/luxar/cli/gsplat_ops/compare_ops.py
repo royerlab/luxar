@@ -338,10 +338,9 @@ def _render_shape(
 
     render_shape = parse_shape(opts.shape) if opts.shape is not None else ref_shape
     if opts.shape is not None and tuple(render_shape) != tuple(ref_shape):
-        raise typer.BadParameter(
-            f"{tuple(render_shape)} does not match the reference shape "
-            f"{tuple(ref_shape)}; omit --shape to use the reference shape",
-            param_hint="--shape",
+        raise ValueError(
+            f"--shape {tuple(render_shape)} does not match reference shape "
+            f"{tuple(ref_shape)}; omit --shape to use the reference shape"
         )
     if len(render_shape) != ndim:
         raise ValueError(
