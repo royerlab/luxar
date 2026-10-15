@@ -555,15 +555,20 @@ class TestDeviceSupport:
 
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         monkeypatch.setattr(torch.backends, "mps", FakeMPSBackend(), raising=False)
+        monkeypatch.setattr(
+            "luxar.gsplats.fit_gsplats._CPU_NOTE_PRINTED", False, raising=False
+        )
 
         # Choosing the CPU is a printed note, not a UserWarning: it used to trip
         # `-W error` even when the fit then ran on the fast native CPU kernels.
         with warnings.catch_warnings():
             warnings.simplefilter("error", UserWarning)
             fitter = GaussianSplatFitter(use_cuda=False, use_metal=True)
+            second_fitter = GaussianSplatFitter(use_cuda=False, use_metal=True)
 
         assert fitter.device.type == "cpu"
-        assert "Fitting on the CPU" in capsys.readouterr().out
+        assert second_fitter.device.type == "cpu"
+        assert capsys.readouterr().out.count("Fitting on the CPU") == 1
 
     def test_pytorch_cpu_fit_warns_once_with_the_honest_reason(
         self, simple_2d_blob, simple_candidates_2d

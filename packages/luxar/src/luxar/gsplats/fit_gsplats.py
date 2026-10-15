@@ -34,6 +34,8 @@ from luxar.gsplats.utils.trils import tril_size
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 from luxar.utils.arbol_warnings import arbol_warnings
 
+_CPU_NOTE_PRINTED = False
+
 
 class GaussianSplatFitter:
     """
@@ -69,6 +71,7 @@ class GaussianSplatFitter:
         use_metal: bool = True,
         use_cuda: bool = True,
     ) -> None:
+        global _CPU_NOTE_PRINTED  # noqa: PLW0603
         # Hardware acceleration flags (stored first for device detection)
         self.use_metal = use_metal
         self.use_cuda = use_cuda
@@ -83,7 +86,7 @@ class GaussianSplatFitter:
             use_metal=use_metal,
         )
 
-        if self.device.type == "cpu":
+        if self.device.type == "cpu" and not _CPU_NOTE_PRINTED:
             from arbol import aprint
 
             # A note, not a UserWarning: whether CPU fitting is slow depends on
@@ -94,6 +97,7 @@ class GaussianSplatFitter:
                 "numba is available; a CUDA or Apple Silicon GPU is still faster "
                 "for large volumes."
             )
+            _CPU_NOTE_PRINTED = True
 
         # Dynamic operations configuration
         self.enable_dynamic_ops = enable_dynamic_ops
