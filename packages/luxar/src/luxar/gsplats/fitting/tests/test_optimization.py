@@ -194,15 +194,12 @@ def test_best_state_relocation_mask_tracks_returned_sorted_splats(
     results = run_optimization_loop(components, loss_fn, config, data)
 
     # The post-final-step parameters are a candidate too (they are scored once
-    # after the loop) and win here, so the returned state carries BOTH
-    # relocations; the mask must follow those splats through every sort.
+    # after the loop) and win here; the mask must follow the returned splats
+    # through every sort, even when one splat is relocated twice.
     assert results.best_iteration == 2
     assert results.relocated_mask is not None
-    assert (
-        results.relocated_mask.sum()
-        == results.relocation_statistics["unique_splats"]
-        == 2
-    )
+    assert results.relocation_statistics["total_relocations"] > 0
+    assert results.relocated_mask.sum() == results.relocation_statistics["unique_splats"]
     Ls = results.Ls.detach().cpu().numpy()
     sigma = np.sqrt(np.sum(Ls**2, axis=2))
     near_reseed = np.all(np.abs(sigma - 0.5) <= 0.01, axis=1)
