@@ -67,7 +67,6 @@ def fit_basis_stats(stats: Mapping[str, Any]) -> Dict[str, Any]:
     nothing that measures the splats themselves.
     """
     from luxar.gsplats.io.save_gsplats import NORMALIZATION_STATS_KEYS
-
     from luxar.gsplats.scoring_grid import FRAME_STAMP_KEYS
 
     return {

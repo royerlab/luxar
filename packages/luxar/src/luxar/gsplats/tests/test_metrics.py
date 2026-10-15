@@ -609,7 +609,7 @@ class TestForegroundPSNR:
 
 
 class TestChunkedForegroundPSNRParity:
-    """The progressive fitter has its own chunked copy; the two must agree.
+    """The progressive fitter has its own chunked copy; it must agree with quality.
 
     ``fit_progressive_gsplats`` cannot hold two copies of a large volume on the
     GPU, so it reimplements the metric chunk-wise. Two implementations of one
@@ -630,19 +630,20 @@ class TestChunkedForegroundPSNRParity:
         target[4:10, 4:10, 4:10] = rng.uniform(0.5, 1.0, (6, 6, 6)).astype(np.float32)
         pred = (target + rng.normal(0, 0.05, target.shape)).astype(np.float32)
 
-        direct, thr_d, frac_d = compute_foreground_psnr(
+        direct = compute_quality_metrics(
             torch.from_numpy(pred), torch.from_numpy(target)
         )
-        chunked, thr_c, frac_c = _compute_foreground_psnr_chunked(
+        chunked, robust, thr_c, frac_c, _ = _compute_foreground_psnr_chunked(
             torch.from_numpy(pred), target, chunk_voxels=chunk_voxels
         )
 
         # A chunk size of 7 forces many partial batches, so this also covers the
         # accumulation being over the right denominator (foreground count, not
         # total voxels) in every chunk.
-        assert chunked == pytest.approx(direct, abs=1e-4)
-        assert thr_c == pytest.approx(thr_d)
-        assert frac_c == pytest.approx(frac_d)
+        assert chunked == pytest.approx(direct["foreground_psnr_db"], abs=1e-4)
+        assert robust == pytest.approx(direct["foreground_psnr_robust_db"], abs=1e-4)
+        assert thr_c == pytest.approx(direct["foreground_threshold"])
+        assert frac_c == pytest.approx(direct["foreground_fraction"])
 
     def test_empty_foreground_is_nan_not_zero(self) -> None:
         import numpy as np
@@ -652,11 +653,12 @@ class TestChunkedForegroundPSNRParity:
         )
 
         flat = np.full((8, 8, 8), 2.0, np.float32)
-        psnr, _, fraction = _compute_foreground_psnr_chunked(
+        psnr, robust, _, fraction, _ = _compute_foreground_psnr_chunked(
             torch.from_numpy(flat), flat
         )
         assert fraction == 0.0
         assert psnr != psnr  # nan
+        assert robust != robust
 
 
 class TestSeparableSSIM:
