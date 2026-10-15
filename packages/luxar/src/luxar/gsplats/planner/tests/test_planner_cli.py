@@ -164,7 +164,10 @@ def test_content_fit_flat_is_leaf(tmp_path):
     assert res.exit_code == 0, res.output
     assert _kind(out) == "GSplatLeaf"  # --flat collapses to a single leaf
     assert "Merged quality:" in res.output
-    assert "kept" not in res.output
+    # ONE per-box progress stream: the library's own box lines, with no CLI
+    # `[i/n] box … budget=…` header duplicating them (#1822).
+    assert "budget=" not in res.output
+    assert res.output.count(" done (1/") == 1
 
 
 def test_content_missing_density_errors(tmp_path):
@@ -424,3 +427,35 @@ def test_content_fit_warns_on_ignored_seeds(tmp_path):
     )
     assert res.exit_code == 0, res.output
     assert "--seeds is ignored" in res.output
+
+
+def test_content_fit_prints_per_box_progress(tmp_path):
+    """The silent inner box fits still leave a heartbeat in the log."""
+    vol = _vol(tmp_path)
+    out = tmp_path / "progress.gsplats.zarr"
+    res = runner.invoke(
+        app_gsplat,
+        ["fit", str(vol), str(out), *_CONTENT, *_CPU, "--iters", "100"],
+    )
+    assert res.exit_code == 0, res.output
+    assert ": fitting, budget" in res.output
+    assert ": iter 25/100" in res.output
+    assert " done (1/" in res.output and "dB (padded crop)" in res.output
+    assert "elapsed" in res.output
+    # The inner fits are quiet: no per-box "Fitting Gaussian Splats" tree.
+    assert "Generating seeds" not in res.output
+
+
+def test_quiet_content_fit_has_no_per_box_sections(tmp_path):
+    """`--quiet` must never be noisier than the default: no box fit trees."""
+    vol = _vol(tmp_path)
+    out = tmp_path / "quiet.gsplats.zarr"
+    res = runner.invoke(
+        app_gsplat,
+        ["fit", str(vol), str(out), *_CONTENT, *_CPU, "--iters", "30", "--quiet"],
+    )
+    assert res.exit_code == 0, res.output
+    # Only the command's own top-level "Fitting Gaussian Splats: vol.npy".
+    assert res.output.count("Fitting Gaussian Splats") == 1
+    assert "Generating seeds" not in res.output
+    assert res.output.count("UserWarning: Gaussian splat fitting will run") <= 1
