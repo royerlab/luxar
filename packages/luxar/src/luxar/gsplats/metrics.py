@@ -415,8 +415,8 @@ def _otsu_bin_counts(
     8 Mvox volume asked for 9.4 GB; above ~16 Mvox it fails outright with a
     "64-bit indexing" error), so the counting is done with ``bincount`` on the
     CPU instead. The bin index uses histc's own formula (``(x - lo) * bins /
-    (hi - lo)``, with ``x == hi`` folded into the last bin) so the counts are
-    identical.
+    (hi - lo)``, with ``x == hi`` folded into the last bin) so the counts match
+    up to float rounding at bin edges.
     """
     host = flat.detach().to("cpu", torch.float32)
     idx = ((host - lo) * (bins / (hi - lo))).to(torch.int64).clamp_(0, bins - 1)
