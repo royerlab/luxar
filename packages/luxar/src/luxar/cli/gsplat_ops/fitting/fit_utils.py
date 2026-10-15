@@ -1807,6 +1807,10 @@ def save_fit_output(
     else:  # a partition / tree node has no flat-matrix equivalent
         from luxar.gsplats.io.save_gsplats import split_fitting_info, write_gsplats_tree
 
+        # A single content box may carry guessed axes from its checkpoint store.
+        # The fit's explicit labels must win over that reloaded node metadata.
+        if dimension_metadata is not None:
+            result.meta["dimension_metadata"] = dimension_metadata
         fitting, config, provenance, pipeline = split_fitting_info(
             result.meta.get("fit_stats", {}), include_fitting_info=True
         )

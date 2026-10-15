@@ -92,6 +92,56 @@ def runner() -> CliRunner:
 
 
 class TestFitStampsAxisNames:
+    def test_single_content_box_keeps_explicit_axes_through_checkpoint(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        source = tmp_path / "volume.npy"
+        np.save(
+            source, np.random.default_rng(42).random((8, 12, 16)).astype(np.float32)
+        )
+        store = tmp_path / "fit.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(source),
+                str(store),
+                "--axes",
+                "x,y,z",
+                "--tiling",
+                "content",
+                "--k-star-ref",
+                "200",
+                "--n-features-ref",
+                "30",
+                "--seeds",
+                "100",
+                "--iters",
+                "20",
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, normalized_cli_output(result)
+        attrs = zarr.open_group(str(store), mode="r").attrs
+        assert attrs["type"] == "gsplats"
+        assert [entry["name"] for entry in attrs["dimension_metadata"]] == [
+            "x",
+            "y",
+            "z",
+        ]
+
+        out = tmp_path / "scene.luxar.zarr"
+        _convert(runner, store, out)
+        assert _dim_names(out) == ["x", "y", "z"]
+        assert _camera(out) is None
+        np.testing.assert_allclose(
+            np.ptp(np.asarray(_leaf(out).centers), axis=0),
+            np.ptp(GSplatData.load(store).centers, axis=0),
+            rtol=0.02,
+        )
+
     @pytest.mark.parametrize(
         ("axes", "shape", "expected"),
         [
