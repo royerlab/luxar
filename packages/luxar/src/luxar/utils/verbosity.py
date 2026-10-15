@@ -60,11 +60,13 @@ import math
 from contextlib import contextmanager
 from typing import Iterator, Literal, Tuple, Union
 
-from arbol import Arbol
+from arbol import Arbol, aprint
 
 __all__ = [
     "VerbosityLevel",
+    "aprint_heartbeat",
     "get_verbosity",
+    "quiet_narration",
     "set_verbosity",
     "verbosity",
 ]
@@ -128,6 +130,12 @@ def set_verbosity(level: Union[VerbosityLevel, int]) -> None:
     writes process-global arbol state.
     """
     enable_output, max_depth = _resolve(level)
+    if _QUIET_OUTER:
+        # Inside quiet_narration(): the level governs what its heartbeats (and
+        # everything after the block) show; the block's narration stays muted.
+        _QUIET_OUTER[-1] = (enable_output, max_depth, _QUIET_OUTER[-1][2])
+        Arbol.max_depth = max_depth
+        return
     Arbol.enable_output = enable_output
     Arbol.max_depth = max_depth
 
@@ -175,8 +183,67 @@ def verbosity(level: Union[VerbosityLevel, int]) -> Iterator[None]:
     Not thread-safe — see the module docstring.
     """
     previous = (Arbol.enable_output, Arbol.max_depth)
+    quiet_top = (len(_QUIET_OUTER), _QUIET_OUTER[-1]) if _QUIET_OUTER else None
     set_verbosity(level)
     try:
         yield
     finally:
         Arbol.enable_output, Arbol.max_depth = previous
+        if quiet_top is not None and len(_QUIET_OUTER) == quiet_top[0]:
+            _QUIET_OUTER[-1] = quiet_top[1]
+
+
+#: Arbol ``(enable_output, max_depth, depth)`` outside each active
+#: :func:`quiet_narration` block, innermost last.
+_QUIET_OUTER: list[tuple[bool, float, int]] = []
+
+
+@contextmanager
+def quiet_narration() -> Iterator[None]:
+    """Silence arbol for a block, except lines sent through :func:`aprint_heartbeat`.
+
+    For a driver that runs many inner operations whose own narration would bury
+    the run (a content-tiled fit's per-box fits), but still wants a few progress
+    lines out of them. Python warnings keep surfacing through their standard
+    display. Same process-global, not-thread-safe caveats as :func:`verbosity`.
+
+    A :func:`set_verbosity` / :func:`verbosity` call made INSIDE the block sets
+    the level its heartbeats print at (so a nested ``verbosity("silent")``
+    silences them too) while the block's own narration stays muted.
+
+    Yields:
+        Nothing.
+    """
+    _QUIET_OUTER.append(
+        (Arbol.enable_output, Arbol.max_depth, int(getattr(Arbol, "_depth", 0)))
+    )
+    Arbol.enable_output = False
+    try:
+        yield
+    finally:
+        Arbol.enable_output, Arbol.max_depth, _ = _QUIET_OUTER.pop()
+
+
+def aprint_heartbeat(message: str) -> None:
+    """``aprint`` that an enclosing :func:`quiet_narration` block does not silence.
+
+    Inside such a block the line is printed under the settings in force OUTSIDE
+    it, at its tree depth — so ``luxar.set_verbosity("silent")`` still silences
+    it, and the line sits beside the driver's own lines rather than under inner
+    sections that never printed. Outside any block it is a plain ``aprint``.
+
+    Args:
+        message: The line to print.
+    """
+    if not _QUIET_OUTER:
+        aprint(message)
+        return
+    enable_output, max_depth, depth = _QUIET_OUTER[-1]
+    inner = (Arbol.enable_output, Arbol.max_depth, int(getattr(Arbol, "_depth", 0)))
+    Arbol.enable_output, Arbol.max_depth = enable_output, max_depth
+    Arbol._depth = depth  # arbol keeps counting depth while output is off
+    try:
+        aprint(message)
+    finally:
+        Arbol.enable_output, Arbol.max_depth = inner[0], inner[1]
+        Arbol._depth = inner[2]

@@ -397,8 +397,46 @@ def compute_psnr(
 _OTSU_BINS = 256
 
 
+#: Sample cap for :func:`otsu_threshold`'s histogram. Above this many voxels a
+#: fixed-seed uniform random subsample feeds the histogram, so the cost is
+#: bounded on gigavoxel stacks. Random rather than strided: a stride sharing a
+#: large factor with the fastest axis aliases onto a few columns of every row
+#: (a structured volume with stride == X read 0.0023 for an exact 0.199). The
+#: bin EDGES still come from the full volume's min/max, so a subsampled
+#: threshold stays on the exact histogram's bin grid.
+_OTSU_MAX_SAMPLES = 5_000_000
+
+
+def otsu_sample_indices(n: int, cap: int = _OTSU_MAX_SAMPLES) -> torch.Tensor:
+    """Deterministic uniform random sample of ``cap`` flat indices in ``[0, n)``.
+
+    Fixed seed, so a threshold is reproducible run to run; drawn with
+    replacement (no ``O(n)`` permutation). Shared with
+    ``calibration.content._otsu_threshold`` so both subsample alike.
+    """
+    gen = torch.Generator().manual_seed(0x0750)
+    return torch.randint(0, n, (min(n, cap),), generator=gen, dtype=torch.int64)
+
+
+def _otsu_bin_counts(
+    flat: torch.Tensor, lo: float, hi: float, bins: int
+) -> torch.Tensor:
+    """``torch.histc(flat, bins, lo, hi)`` without its per-element temporaries.
+
+    ``torch.histc`` on MPS materialises roughly ``numel x bins x 4`` bytes (an
+    8 Mvox volume asked for 9.4 GB; above ~16 Mvox it fails outright with a
+    "64-bit indexing" error), so the counting is done with ``bincount`` on the
+    CPU instead. The bin index uses histc's own formula (``(x - lo) * bins /
+    (hi - lo)``, with ``x == hi`` folded into the last bin) so the counts match
+    up to float rounding at bin edges.
+    """
+    host = flat.detach().to("cpu", torch.float32)
+    idx = ((host - lo) * (bins / (hi - lo))).to(torch.int64).clamp_(0, bins - 1)
+    return torch.bincount(idx, minlength=bins).to(torch.float64)
+
+
 def otsu_threshold(target: torch.Tensor, bins: int = _OTSU_BINS) -> float:
-    """Otsu's between-class-variance threshold, on the input device.
+    """Otsu's between-class-variance threshold.
 
     Reimplemented here rather than delegating to ``skimage.filters`` because
     scikit-image lives in the ``demos`` extra. Calibration now shares this
@@ -409,17 +447,24 @@ def otsu_threshold(target: torch.Tensor, bins: int = _OTSU_BINS) -> float:
     means over histogram bin *centres*, threshold taken at the argmax of the
     between-class variance) so the two are numerically interchangeable.
 
+    The min/max reductions run on the input device; the histogram is counted
+    on the CPU over at most :data:`_OTSU_MAX_SAMPLES` random samples, so the
+    memory cost is bounded whatever the device or volume size (see
+    :func:`_otsu_bin_counts`).
+
     Returns ``target.min()`` for a constant volume, which selects nothing under
     the strict ``>`` that :func:`compute_foreground_psnr` applies.
     """
-    flat = target.reshape(-1).to(torch.float32)
+    flat = target.reshape(-1)
     lo = float(flat.min().item())
     hi = float(flat.max().item())
     if not math.isfinite(lo) or not math.isfinite(hi) or hi <= lo:
         return lo
 
-    counts = torch.histc(flat, bins=bins, min=lo, max=hi)
-    edges = torch.linspace(lo, hi, bins + 1, device=counts.device)
+    if flat.numel() > _OTSU_MAX_SAMPLES:
+        flat = flat[otsu_sample_indices(flat.numel()).to(flat.device)]
+    counts = _otsu_bin_counts(flat, lo, hi, bins)
+    edges = torch.linspace(lo, hi, bins + 1, dtype=torch.float32).to(torch.float64)
     centres = (edges[:-1] + edges[1:]) / 2.0
 
     weight1 = torch.cumsum(counts, 0)

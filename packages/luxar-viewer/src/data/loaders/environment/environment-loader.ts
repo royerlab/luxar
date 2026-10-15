@@ -11,15 +11,18 @@
  * changed since the bake; the map is ignored with a console line and the viewer falls
  * back to its configured source or the room.
  *
- * Absence is the normal case and costs NO request when the root index was fetched from
- * the network this load: `luxar env attach` re-consolidates after writing the group, so
- * a FRESH index is authoritative and one that lists no `environment` node means there is
- * none. A CACHED index is not: the L2 tier revalidates the root only by `content_hash`,
- * which `env attach` deliberately leaves unchanged, so a warm cache can keep serving the
- * pre-attach index. That case, and a store without an index, is probed (zarrita's format
- * guess: up to three 404s), and a genuine absence is remembered per dataset for the
- * session, so a revisit does not pay it again. Every failure path degrades to "no baked
- * map" rather than failing the scene load — the environment is lighting, not data.
+ * Absence is the normal case and costs NO request when a root index fetched from the
+ * network this load is available: `luxar env attach` re-consolidates after writing the
+ * group, so a FRESH index is authoritative and one that lists no `environment` node
+ * means there is none. A CACHED index is not: the L2 tier revalidates the root only by
+ * `content_hash`, which `env attach` deliberately leaves unchanged, so a warm cache can
+ * keep serving the pre-attach index. On a warm load of a format-3 store the scene loader
+ * still has this load's network copy of the index (the load-time root-document fetch;
+ * `data/scene-loader/cache/root-listing.ts`). Only without one (format 2, a presigned
+ * or zipped source) is the group probed — one document of the store's known format —
+ * and a genuine absence is remembered per dataset for the session, so a revisit does
+ * not pay it again. When the source is unreachable, a cached map is used if
+ * available. Other failures degrade to "no baked map" without failing the scene load.
  *
  * @module data/loaders/environment/environment-loader
  */
@@ -37,6 +40,37 @@ import {
 } from '../../../types/environment';
 
 const TAG = '[🌐] [Environment]';
+
+/**
+ * A current answer about root-level groups (structurally
+ * `data/scene-loader/cache/root-listing.ts::RootListing`): `lists` is
+ * `true` / `false` from an index fetched from the network this load, `undefined`
+ * when there is none; `format` is the store's format when known.
+ */
+export interface EnvironmentRootListing {
+  lists(group: string): boolean | undefined;
+  readonly format: zarr.StoreFormat | null;
+  /** Whether the answer came from the opened store's own (network-fresh) index. */
+  readonly fromOpenedIndex?: boolean;
+}
+
+/**
+ * Where to read the environment group's attrs from. The opened store answers
+ * from its consolidated index, so when that index is not this load's network
+ * copy a warm cache can hand back the PRE-re-bake attrs (`env attach` keeps
+ * `content_hash`) — read them from the source store instead, as chunk packs do.
+ * The faces array is digest-named, so it is read through the opened store
+ * either way.
+ */
+function attrsLocation(
+  rootLoc: zarr.Location<zarr.Readable>,
+  index: boolean | EnvironmentRootListing,
+  sourceRootLoc: (() => zarr.Location<zarr.Readable>) | undefined
+): zarr.Location<zarr.Readable> {
+  if (!sourceRootLoc) return rootLoc;
+  const openedIndexFresh = typeof index === 'boolean' ? index : index.fromOpenedIndex === true;
+  return openedIndexFresh ? rootLoc : sourceRootLoc();
+}
 
 /**
  * Datasets (by the caller's store key — the normalized dataset URL) whose probe
@@ -68,22 +102,79 @@ async function indexListsEnvironment(store: unknown): Promise<boolean | undefine
 }
 
 /**
+ * What a root index says about the environment group: `listed` (`undefined` when
+ * there is no index to ask) and whether that answer is `current` enough that a
+ * `false` proves absence (see the module doc).
+ */
+async function environmentListing(
+  store: unknown,
+  index: boolean | EnvironmentRootListing
+): Promise<{ listed: boolean | undefined; current: boolean; format: zarr.StoreFormat | null }> {
+  if (typeof index !== 'boolean') {
+    const listed = index.lists(ENVIRONMENT_GROUP);
+    return { listed, current: listed !== undefined, format: index.format };
+  }
+  return {
+    listed: await indexListsEnvironment(store),
+    current: index,
+    format: zarr.storeFormatOf(store),
+  };
+}
+
+/** Open the environment group (one format's document when the format is known). */
+async function openEnvironmentAttrs(
+  location: zarr.Location<zarr.Readable>,
+  format: zarr.StoreFormat | null
+): Promise<Record<string, unknown>> {
+  const group =
+    format === null
+      ? await zarr.open(location, { kind: 'group' })
+      : await zarr.openGroupOfFormat(location, format);
+  return (group.attrs ?? {}) as Record<string, unknown>;
+}
+
+/** Read current attrs when available, retaining a cached map during a source fault. */
+async function openEnvironmentAttrsWithFallback(
+  rootLoc: zarr.Location<zarr.Readable>,
+  index: boolean | EnvironmentRootListing,
+  sourceRootLoc: (() => zarr.Location<zarr.Readable>) | undefined,
+  format: zarr.StoreFormat | null
+): Promise<Record<string, unknown> | null> {
+  const location = attrsLocation(rootLoc, index, sourceRootLoc);
+  try {
+    return await openEnvironmentAttrs(location.resolve(ENVIRONMENT_GROUP), format);
+  } catch (error) {
+    // An unreachable source cannot disprove the warm index's cached map.
+    // A 404 can: the sidecar may have been removed since that index was saved.
+    if (location === rootLoc || zarr.isNotFoundError(error)) throw error;
+    try {
+      return await openEnvironmentAttrs(rootLoc.resolve(ENVIRONMENT_GROUP), format);
+    } catch {
+      // The source is still unverified; a cached miss is not an absence.
+      return null;
+    }
+  }
+}
+
+/**
  * The environment group's attrs, or `null` when the store has none. An index that
- * does not list the group is trusted only when `indexFresh` (see the module doc).
+ * does not list the group is trusted only when current (see the module doc).
  */
 async function readEnvironmentAttrs(
   rootLoc: zarr.Location<zarr.Readable>,
   storeKey: string | undefined,
-  indexFresh: boolean
+  index: boolean | EnvironmentRootListing,
+  sourceRootLoc?: () => zarr.Location<zarr.Readable>
 ): Promise<Record<string, unknown> | null> {
-  const listed = await indexListsEnvironment(rootLoc.store);
-  if (listed === false && indexFresh) return null;
+  const { listed, current, format } = await environmentListing(rootLoc.store, index);
+  if (listed === false && current) return null;
   // Not listed by a trustworthy index: this read is a probe, whose 404 is remembered.
   const probeKey = listed === true ? undefined : storeKey;
   if (probeKey !== undefined && knownAbsent.has(probeKey)) return null;
   try {
-    const group = await zarr.open(rootLoc.resolve(ENVIRONMENT_GROUP), { kind: 'group' });
-    return (group.attrs ?? {}) as Record<string, unknown>;
+    // One format's document when the format is known — a guess at both cost up
+    // to three 404s for the (normal) absent case.
+    return await openEnvironmentAttrsWithFallback(rootLoc, index, sourceRootLoc, format);
   } catch (error) {
     if (probeKey !== undefined && zarr.isNotFoundError(error)) knownAbsent.add(probeKey);
     return null; // no environment group — the normal case
@@ -95,17 +186,22 @@ async function readEnvironmentAttrs(
  * malformed. `rootContentHash` is the root `content_hash` from the freshly fetched
  * root document (the same value the cache validation reads). `storeKey` (the
  * normalized dataset URL) scopes the session's negative cache for probed stores; omit
- * it to always probe. `indexFresh` says the store's consolidated index came from the
- * network this load (not a cache tier), so its silence about `environment` is proof of
- * absence; the default `false` probes instead.
+ * it to always probe. `index` says which root index is current: `true` when the
+ * store's consolidated index came from the network this load (not a cache tier), so
+ * its silence about `environment` is proof of absence; a {@link EnvironmentRootListing}
+ * (which can also answer from the load-time root-document fetch on a warm load); or
+ * the default `false`, which probes. `sourceRootLoc`, when given, is where the group's
+ * attrs are read whenever the opened store's own index is not network-fresh (see
+ * `attrsLocation`).
  */
 export async function loadBakedEnvironment(
   rootLoc: zarr.Location<zarr.Readable>,
   rootContentHash: string | undefined,
   storeKey?: string,
-  indexFresh = false
+  index: boolean | EnvironmentRootListing = false,
+  sourceRootLoc?: () => zarr.Location<zarr.Readable>
 ): Promise<BakedEnvironment | null> {
-  const attrs = await readEnvironmentAttrs(rootLoc, storeKey, indexFresh);
+  const attrs = await readEnvironmentAttrs(rootLoc, storeKey, index, sourceRootLoc);
   if (attrs === null) return null;
 
   const verdict = judgeEnvironmentAttrs(attrs, rootContentHash);

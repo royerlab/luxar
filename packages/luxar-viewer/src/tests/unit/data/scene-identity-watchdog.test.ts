@@ -347,6 +347,36 @@ describe('SceneIdentityWatchdog', () => {
     expect(banner.shown).toEqual([]); // a disposed watchdog raises nothing
   });
 
+  it('reports connectionLost only for a request that got no HTTP answer', async () => {
+    // The app pauses rendering only for a lost connection; an expired presigned
+    // credential, a rate limit or a 5xx keeps the banner but not the pause.
+    const details: Array<{ connectionLost: boolean } | undefined> = [];
+    setNotifierBackend({
+      showError: () => {},
+      showToast: () => {},
+      showHelpOverlay: () => {},
+      hideHelpOverlay: () => {},
+      showLoadingIndicator: () => {},
+      hideLoadingIndicator: () => {},
+      clearError: () => {},
+      showSceneIdentityBanner: (_kind, detail) => details.push(detail),
+      hideSceneIdentityBanner: () => {},
+    });
+    let mode: 'refused' | 'status' = 'refused';
+    const wd = makeWatchdog(async () => {
+      if (mode === 'refused') throw new TypeError('Failed to fetch');
+      return new Response('slow down', { status: 429 });
+    });
+    wd.start();
+    await tick(5000);
+    await tick(5000);
+    expect(details).toEqual([{ connectionLost: true }]);
+    mode = 'status';
+    await tick(5000);
+    expect(details).toEqual([{ connectionLost: true }, { connectionLost: false }]);
+    wd.dispose();
+  });
+
   it('needs two consecutive failures before unreachable, then recovers', async () => {
     let mode: 'down' | 'up' = 'down';
     const wd = makeWatchdog(async () => {
@@ -722,6 +752,48 @@ describe('SceneIdentityWatchdog', () => {
   // the store open) and saw its ETag. Without adopting it the FIRST poll was an
   // unconditional full GET of the root document even on a host that sends
   // ETags: three root downloads per cold load.
+
+  // A host that sends no ETag (Python's http.server, under `luxar serve`) has no
+  // validator to seed — but the load still knows which root document answered,
+  // so the first probe of a format-2 dataset need not 404 on `zarr.json`.
+  describe('preferDocument', () => {
+    it('asks for the document the load was served from first', async () => {
+      const urls: string[] = [];
+      const wd = makeWatchdog(async (input) => {
+        urls.push(probedUrl(input));
+        return okResponse(ATTRS);
+      });
+      wd.preferDocument('.zattrs');
+      wd.start();
+      await tick(5000);
+      expect(urls).toEqual(['http://127.0.0.1:8000/.zattrs']);
+      expect(banner.shown).toEqual([]);
+      wd.dispose();
+    });
+
+    it('still falls back to the other format on a 404', async () => {
+      const urls: string[] = [];
+      const wd = makeWatchdog(async (input) => {
+        const url = probedUrl(input);
+        urls.push(url);
+        return url.endsWith('/zarr.json')
+          ? okResponse(
+              JSON.stringify({
+                zarr_format: 3,
+                node_type: 'group',
+                attributes: { content_hash: HASH },
+              })
+            )
+          : new Response('', { status: 404 });
+      });
+      wd.preferDocument('.zattrs');
+      wd.start();
+      await tick(5000);
+      expect(urls).toEqual(['http://127.0.0.1:8000/.zattrs', 'http://127.0.0.1:8000/zarr.json']);
+      expect(banner.shown).toEqual([]);
+      wd.dispose();
+    });
+  });
 
   describe('seedFromLoad', () => {
     function seededWatchdog(fetchImpl: FetchStub, opts: { hashless?: boolean } = {}) {

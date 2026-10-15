@@ -5,7 +5,8 @@ import { log, Modules } from '../../../utils/log';
 
 /**
  * Register window-focus and document-visibility listeners that pause /
- * resume the animation loop as the page goes background and back. Both
+ * resume the animation loop as the page goes background and back. A focus
+ * event on a hidden document does not wake the loop. Both
  * listeners early-return when {@link FocusHandlingPorts.getRecordingPanel}
  * reports an active capture, so offline recording keeps a stable loop.
  *
@@ -30,6 +31,12 @@ export function installFocusHandling(ports: FocusHandlingPorts): void {
     // Suppress focus-triggered renders during recording — they can interfere
     // with the deterministic capture loop or cause resize side effects
     if (ports.getRecordingPanel()?.isCurrentlyRecording()) return;
+    // A window can take focus while its document is hidden (a minimized
+    // window activated from the dock/taskbar, a background tab of a focused
+    // window on some platforms). Waking the loop then would undo the
+    // visibilitychange pause and render frames nobody can see; the
+    // `visible` transition restarts the loop when the page is shown.
+    if (document.hidden) return;
     ports.animationController.startAnimation();
     log.info(Modules.LUXAR, 'Window focused - triggering render refresh');
   });

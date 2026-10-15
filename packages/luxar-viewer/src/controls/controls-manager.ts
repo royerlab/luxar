@@ -160,6 +160,9 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
    */
   private gestureActive = false;
 
+  /** See {@link setAutoCameraSuspended}. */
+  private autoCameraSuspended = false;
+
   // Configuration - uses defaults from config
   private config: ControlsManagerConfig = {
     autoRotate: false,
@@ -419,10 +422,45 @@ export class ControlsManager extends THREE.EventDispatcher<ControlsManagerEventM
     this.clock.update();
     const delta = this.clock.getDelta();
     if (this.currentControls instanceof LuxarOrbitControls) {
-      this.currentControls.update(delta);
+      this.updateOrbit(this.currentControls, delta);
     } else if (this.currentControls instanceof LuxarFlyControls) {
       this.currentControls.update(delta);
     }
+  }
+
+  /**
+   * One orbit step. While {@link setAutoCameraSuspended} holds, the turntable
+   * and auto-dolly are switched off for the step (and restored after), so the
+   * user's own input and damping still apply but the camera does not drive
+   * itself — each driven step emits `change`, which wakes the render loop and
+   * would otherwise keep it running forever. The dolly phase advances only
+   * inside a step, so it resumes where it paused rather than jumping.
+   */
+  private updateOrbit(controls: LuxarOrbitControls, delta: number): void {
+    if (!this.autoCameraSuspended) {
+      controls.update(delta);
+      return;
+    }
+    const { autoRotate, autoDolly } = controls;
+    controls.autoRotate = false;
+    controls.autoDolly = false;
+    try {
+      controls.update(delta);
+    } finally {
+      controls.autoRotate = autoRotate;
+      controls.autoDolly = autoDolly;
+    }
+  }
+
+  /**
+   * Hold (`true`) or release the auto-rotate turntable and auto-dolly without
+   * changing their configured state. Set every frame by
+   * `AnimationController` from its self-sustain hold (the data server is
+   * unreachable); the settings, the UI and {@link isAutoRotateActive} are
+   * unaffected.
+   */
+  public setAutoCameraSuspended(suspended: boolean): void {
+    this.autoCameraSuspended = suspended;
   }
 
   // ---------------------------------------------------------------------------

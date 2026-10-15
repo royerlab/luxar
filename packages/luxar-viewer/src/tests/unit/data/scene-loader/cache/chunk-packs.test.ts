@@ -6,6 +6,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import * as zarr from '../../../../../data/zarr';
 import { adoptChunkPacks } from '../../../../../data/scene-loader/cache/chunk-packs';
+import { resolveRootListing } from '../../../../../data/scene-loader/cache/root-listing';
 import { PackedChunkSource } from '../../../../../cache/chunk-source/packed-chunk-source';
 import type { ChunkSource } from '../../../../../cache/chunk-source';
 import { log } from '../../../../../utils/log';
@@ -43,10 +44,16 @@ describe('adoptChunkPacks', () => {
     const s = store([{ path: '/', kind: 'group' }]);
     const root = zarr.root(s as unknown as zarr.Readable);
     let sourceOpens = 0;
-    const used = await adoptChunkPacks(packs(), root, HASH, true, () => {
-      sourceOpens++;
-      return root;
-    });
+    const used = await adoptChunkPacks(
+      packs(),
+      root,
+      HASH,
+      await resolveRootListing(s, true, null),
+      () => {
+        sourceOpens++;
+        return root;
+      }
+    );
     expect(used).toBe(0);
     expect(sourceOpens).toBe(0);
     expect(s.reads).toEqual([]);
@@ -55,14 +62,26 @@ describe('adoptChunkPacks', () => {
   it('adopts the listed sidecar for the root content_hash', async () => {
     const s = store([{ path: '/chunk_packs', kind: 'group' }]);
     const root = zarr.root(s as unknown as zarr.Readable);
-    const used = await adoptChunkPacks(packs(), root, HASH, true, () => root);
+    const used = await adoptChunkPacks(
+      packs(),
+      root,
+      HASH,
+      await resolveRootListing(s, true, null),
+      () => root
+    );
     expect(used).toBe(1);
   });
 
   it('adopts nothing for another content_hash (the packs are stale)', async () => {
     const s = store([{ path: '/chunk_packs', kind: 'group' }]);
     const root = zarr.root(s as unknown as zarr.Readable);
-    const used = await adoptChunkPacks(packs(), root, 'other', true, () => root);
+    const used = await adoptChunkPacks(
+      packs(),
+      root,
+      'other',
+      await resolveRootListing(s, true, null),
+      () => root
+    );
     expect(used).toBe(0);
   });
 
@@ -73,7 +92,7 @@ describe('adoptChunkPacks', () => {
       packs(),
       zarr.root(cached as unknown as zarr.Readable),
       HASH,
-      false,
+      await resolveRootListing(cached, false, null),
       () => zarr.root(network as unknown as zarr.Readable)
     );
     expect(used).toBe(1);
@@ -89,7 +108,7 @@ describe('adoptChunkPacks', () => {
       packs(),
       zarr.root(cached as unknown as zarr.Readable),
       HASH,
-      false,
+      await resolveRootListing(cached, false, null),
       () => zarr.root(network as unknown as zarr.Readable)
     );
     expect(used).toBe(1);
@@ -106,7 +125,7 @@ describe('adoptChunkPacks', () => {
         packs(),
         zarr.root(cached as unknown as zarr.Readable),
         HASH,
-        false,
+        await resolveRootListing(cached, false, null),
         () => zarr.root(network as unknown as zarr.Readable)
       );
       expect(used).toBe(0);
@@ -130,7 +149,7 @@ describe('adoptChunkPacks', () => {
         packs(),
         zarr.root(cached as unknown as zarr.Readable),
         HASH,
-        false,
+        await resolveRootListing(cached, false, null),
         () => zarr.root(network as unknown as zarr.Readable)
       );
       expect(used).toBe(0);

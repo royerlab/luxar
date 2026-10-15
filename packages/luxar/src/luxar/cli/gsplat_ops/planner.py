@@ -19,6 +19,8 @@ import numpy as np
 import typer
 from arbol import aprint, asection
 
+from luxar._process import _install_stop_handlers, _restore_handlers
+
 from .fitting.fit_utils import (
     _invocation_token,
     resolve_shared_floor,
@@ -301,7 +303,6 @@ def run_content_fit(
     from luxar.gsplats.planner import (
         CONTENT_CULL_RETENTION,
         FitPlan,
-        fit_planned,
         plan_volume,
     )
     from luxar.gsplats.planner.fit_planned import (
@@ -595,83 +596,67 @@ def run_content_fit(
 
     partition = not flat
     t0 = time.perf_counter()
-    if n_jobs > 1:
-        from luxar.gsplats.planner.fit_planned_parallel import (
-            _default_worker_cmd_builder,
-            fit_planned_parallel,
-        )
+    # Finished boxes are checkpointed under `<output>.boxes` so a killed fit
+    # resumes (SIGTERM is routed into KeyboardInterrupt for the duration, so a
+    # `kill` unwinds like Ctrl-C and leaves every finished box on disk). The
+    # directory is removed only after the merged output is saved.
+    from luxar.gsplats.planner.box_checkpoint import plan_fingerprint
 
-        builder = _default_worker_cmd_builder(
-            input_path,
-            plan_json_path,
-            # VERBATIM, not `preset or "standard"`: the sequential path hands
-            # `load_fit_config` the CLI value as-is, and defaulting to "standard"
-            # here would layer that preset's n_iters (5000 vs 1000) and
-            # cull_retention on every box — `-j N` fitting differently from
-            # `-j 1` (#1637).
-            preset=preset,
-            # The run's fit configuration, so a box worker resolves the same fit
-            # config as the sequential path. `truncate:` lives only in a YAML
-            # --config (no preset sets it, and there is no --truncate flag), so
-            # without this the boxes silently fit at the default (#1637).
-            config=config,
-            iters=iters,
-            loss=loss,
-            lr=lr,
-            cull_retention=cull_retention,
-            device=device,
-            # The RESOLVED level, not the spec: each worker would otherwise
-            # re-estimate on its own box crop (#1174).
-            floor=floor_forward,
-            norm_range=box_fit_kwargs.get("norm_range"),
-            channel=channel,
-            timepoint=timepoint,
-            array_key=array_key,
-            axes=axes,
-        )
-        # Per-invocation staging (reusing the shared unique token): so
-        # concurrent `fit -j` runs targeting one output can't clobber each
-        # other's in-progress boxes — the helper clean-slates only its OWN dir.
-        tmp_dir = _parallel_staging_dir(output, token)
-        with _section(f"Fitting {fitplan.n_boxes} boxes ({n_jobs} concurrent)"):
-            result = fit_planned_parallel(
-                fitplan,
-                jobs=n_jobs,
-                tmp_dir=tmp_dir,
-                worker_cmd_builder=builder,
-                volume=vol,
-                device=device,
+    with contextlib.ExitStack() as stack:
+        stack.callback(_restore_handlers, _install_stop_handlers())
+        checkpoint = stack.enter_context(
+            _box_checkpoint(
+                output,
+                token,
+                plan_fingerprint(
+                    fitplan,
+                    fit_kwargs=box_fit_kwargs,
+                    volume=vol,
+                    source=input_path,
+                ),
+                verbose=verbose,
                 keep_boxes=keep_boxes,
-                partition=partition,
-                recipe=recipe,
-                recipe_params=recipe_params,
-                verbose=verbose,
             )
-    else:
-        fk = box_fit_kwargs  # already carries the one resolved floor level
-        fk.pop("verbose", None)
-        with _section(f"Fitting {fitplan.n_boxes} boxes"):
-
-            def _prog(i: int, n: int, msg: str) -> None:
-                if verbose:
-                    aprint(f"  [{i + 1}/{n}] {msg}")
-
-            result = fit_planned(
-                vol,
-                fitplan,
+        )
+        result = _fit_content_boxes(
+            fitplan,
+            checkpoint,
+            n_jobs=n_jobs,
+            input_path=input_path,
+            plan_json_path=plan_json_path,
+            vol=vol,
+            box_fit_kwargs=box_fit_kwargs,
+            floor_forward=floor_forward,
+            fit_options=dict(
+                preset=preset,
+                config=config,
+                iters=iters,
+                loss=loss,
+                lr=lr,
+                cull_retention=cull_retention,
                 device=device,
-                partition=partition,
-                recipe=recipe,
-                recipe_params=recipe_params,
-                progress_callback=_prog,
-                verbose=verbose,
-                **fk,
-            )
+                channel=channel,
+                timepoint=timepoint,
+                array_key=array_key,
+                axes=axes,
+            ),
+            keep_boxes=keep_boxes,
+            partition=partition,
+            recipe=recipe,
+            recipe_params=recipe_params,
+            verbose=verbose,
+            section=_section,
+        )
 
-    _stamp_content_floor(result, floor_level, floor_forward, floor_strategy)
+        _stamp_content_floor(result, floor_level, floor_forward, floor_strategy)
 
-    output.parent.mkdir(parents=True, exist_ok=True)
-    _save_fit_result(result, output, compress=compress)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        _save_fit_result(result, output, compress=compress)
+        if keep_boxes:
+            if verbose:
+                aprint(f"Kept boxes at {checkpoint.directory}")
+        else:
+            checkpoint.remove()
     kind = "partition" if partition else "leaf"
     if verbose:
         aprint(
@@ -684,6 +669,121 @@ def run_content_fit(
         # --keep-tiles retains the internal plan too; its token-suffixed name
         # is no longer predictable from the output path, so point at it.
         aprint(f"Kept plan at {plan_json_path}")
+
+
+@contextlib.contextmanager
+def _box_checkpoint(
+    output: Path, token: str, fingerprint: str, *, verbose: bool, keep_boxes: bool
+) -> Any:
+    """The run's box checkpoint: ``<output>.boxes``, or a private dir if busy.
+
+    The stable directory is what makes a rerun resume. When another live fit
+    holds it (two runs to the same output, #1040) this run uses its own
+    per-invocation directory instead -- no resume, but no shared boxes either;
+    nothing can resume from it, so it is removed on every exit path (success
+    or failure) unless ``keep_boxes``.
+    """
+    from luxar.gsplats.planner.box_checkpoint import (
+        BoxCheckpoint,
+        CheckpointBusy,
+        checkpoint_dir_for,
+    )
+
+    checkpoint = BoxCheckpoint(checkpoint_dir_for(output), fingerprint)
+    try:
+        checkpoint.lock()
+    except CheckpointBusy as exc:
+        aprint(f"⚠ {exc}. Fitting without resume in a private directory.")
+        private = BoxCheckpoint(_parallel_staging_dir(output, token), fingerprint)
+        try:
+            yield private
+        finally:
+            if not keep_boxes:
+                private.remove()
+        return
+    try:
+        done = len(list(checkpoint.directory.glob("box_*.done.json")))
+        if done and verbose:
+            aprint(f"Box checkpoint: {checkpoint.directory} ({done} marker(s))")
+        yield checkpoint
+    finally:
+        checkpoint.unlock()
+
+
+def _fit_content_boxes(
+    fitplan: Any,
+    checkpoint: Any,
+    *,
+    n_jobs: int,
+    input_path: Path,
+    plan_json_path: Path,
+    vol: Any,
+    box_fit_kwargs: dict,
+    floor_forward: Any,
+    fit_options: dict,
+    keep_boxes: bool,
+    partition: bool,
+    recipe: Optional[str],
+    recipe_params: Any,
+    verbose: bool,
+    section: Any,
+) -> Any:
+    """Fit the plan's boxes sequentially or with ``n_jobs`` box subprocesses."""
+    from luxar.gsplats.planner import fit_planned
+
+    device = fit_options["device"]
+    if n_jobs > 1:
+        from luxar.gsplats.planner.fit_planned_parallel import (
+            _default_worker_cmd_builder,
+            fit_planned_parallel,
+        )
+
+        # `fit_options` carries the CLI values VERBATIM (`preset` included, not
+        # `preset or "standard"`): the sequential path hands `load_fit_config`
+        # the CLI value as-is, and a defaulted preset would layer its own
+        # n_iters/cull_retention on every box (#1637). `config` likewise, since
+        # `truncate:` lives only in a YAML --config (#1637).
+        builder = _default_worker_cmd_builder(
+            input_path,
+            plan_json_path,
+            # The RESOLVED level, not the spec: each worker would otherwise
+            # re-estimate on its own box crop (#1174).
+            floor=floor_forward,
+            norm_range=box_fit_kwargs.get("norm_range"),
+            **fit_options,
+        )
+        # Staging = the run's checkpoint dir (stable `<output>.boxes`, or a
+        # private per-invocation dir when another fit holds it, #1040).
+        with section(f"Fitting {fitplan.n_boxes} boxes ({n_jobs} concurrent)"):
+            return fit_planned_parallel(
+                fitplan,
+                jobs=n_jobs,
+                tmp_dir=checkpoint.directory,
+                worker_cmd_builder=builder,
+                volume=vol,
+                device=device,
+                keep_boxes=keep_boxes,
+                partition=partition,
+                recipe=recipe,
+                recipe_params=recipe_params,
+                verbose=verbose,
+                fingerprint=checkpoint.fingerprint,
+                remove_tmp_on_success=False,
+            )
+    fk = dict(box_fit_kwargs)  # already carries the one resolved floor level
+    fk.pop("verbose", None)
+    with section(f"Fitting {fitplan.n_boxes} boxes"):
+        return fit_planned(
+            vol,
+            fitplan,
+            device=device,
+            partition=partition,
+            recipe=recipe,
+            recipe_params=recipe_params,
+            verbose=verbose,
+            checkpoint=checkpoint,
+            **fk,
+        )
 
 
 def _resolve_density(

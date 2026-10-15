@@ -189,6 +189,114 @@ export function createStoreForUrl(url: string): AsyncReadable {
   return isZippedStoreUrl(url) ? createZipStore(url) : createFetchStore(url);
 }
 
+/** A zarr on-disk format, as the store's consolidated metadata identified it. */
+export type StoreFormat = 'v2' | 'v3';
+
+/** Format of each store {@link openStore} returned with a known format. */
+const STORE_FORMATS = new WeakMap<object, StoreFormat>();
+
+/**
+ * The on-disk format of a store returned by {@link openStore}, or `null` when it
+ * is unknown (no consolidated metadata, or a store that did not come from
+ * `openStore`). Optional-sidecar probes use it to ask for ONE format's
+ * documents rather than guessing both.
+ */
+export function storeFormatOf(store: unknown): StoreFormat | null {
+  return typeof store === 'object' && store !== null ? (STORE_FORMATS.get(store) ?? null) : null;
+}
+
+/** Metadata documents of each format, by file name. */
+const FORMAT_DOCS: Record<StoreFormat, readonly string[]> = {
+  v2: ['.zattrs', '.zgroup', '.zarray', '.zmetadata'],
+  v3: ['zarr.json'],
+};
+
+/** The format a metadata key belongs to, or `null` for any other key (a chunk). */
+function formatOfMetaKey(key: string): StoreFormat | null {
+  const name = key.slice(key.lastIndexOf('/') + 1);
+  if (FORMAT_DOCS.v3.includes(name)) return 'v3';
+  if (FORMAT_DOCS.v2.includes(name)) return 'v2';
+  return null;
+}
+
+/** Parent node path of a metadata key (`/a/b/.zattrs` → `/a/b`, `/.zattrs` → `/`). */
+function nodePathOf(key: string): string {
+  const parent = key.slice(0, key.lastIndexOf('/'));
+  return parent === '' ? '/' : parent;
+}
+
+/**
+ * What {@link withMetadataGate} knows about the store above it. Empty while
+ * consolidated metadata loads — those reads (`zarr.json`, `.zmetadata`) must
+ * reach the store — and filled in once the consolidated wrapper is built.
+ */
+interface MetadataGateState {
+  format: StoreFormat | null;
+  /** Node paths the consolidated index lists (`contents()`). */
+  listed: Set<string> | null;
+  /** Consolidation reads the gate saw answered, which name the store's format. */
+  answered: { v3Root: boolean; v2Index: boolean };
+}
+
+/** The gate's verdict for one key: drop it (`true`) or forward it. */
+function gateDrops(state: MetadataGateState, key: string): boolean {
+  const { format, listed } = state;
+  if (format === null) return false;
+  const docFormat = formatOfMetaKey(key);
+  if (docFormat !== null && docFormat !== format) return true;
+  return format === 'v2' && key.endsWith('/.zattrs') && listed?.has(nodePathOf(key)) === true;
+}
+
+/**
+ * A pass-through store layer, placed UNDER zarrita's consolidated wrapper, that
+ * drops metadata reads the consolidated index has already settled.
+ *
+ * zarrita's consolidated wrapper answers the documents its index holds and
+ * forwards EVERY other key to the store beneath it — so each speculative read
+ * became a real request and a console `GET … 404`:
+ *
+ * - the other format's documents. `zarrita.open` guesses the format from a
+ *   counter keyed on the store OBJECT, so the first open on a fresh wrapper (and
+ *   every open of an absent optional node) asks for `.zattrs` / `.zgroup` on a
+ *   format-3 store, or `zarr.json` on a format-2 one. A store has one format;
+ *   those documents cannot exist.
+ * - format 2's `.zattrs` of a node the index lists without one. zarr writes
+ *   `.zattrs` only for non-empty attributes and consolidation copies every one
+ *   it finds, so a listed node whose `.zattrs` the index lacks has none — yet
+ *   `open.v2` reads it for every array and group it opens.
+ *
+ * Deliberately NOT dropped: the documents of a node the index does not list.
+ * A warm cache tier can serve a root index older than a sidecar (`luxar env
+ * attach` keeps `content_hash`), and the sidecar loaders rely on such a read
+ * still reaching the server; they consult a fresh listing first instead.
+ *
+ * Every other property (`getRange`, a caching store's own methods) is the
+ * underlying store's, bound to it.
+ */
+function withMetadataGate<Store extends AsyncReadable>(
+  store: Store,
+  state: MetadataGateState
+): Store {
+  const get = async (key: AbsolutePath, options?: GetOptions): Promise<Uint8Array | undefined> => {
+    if (gateDrops(state, key)) return undefined;
+    const bytes = await store.get(key, options);
+    if (bytes !== undefined && state.format === null) {
+      if (key === '/zarr.json') state.answered.v3Root = true;
+      if (key === '/.zmetadata') state.answered.v2Index = true;
+    }
+    return bytes;
+  };
+  return new Proxy(store, {
+    get(target, prop) {
+      if (prop === 'get') return get;
+      const value: unknown = Reflect.get(target, prop, target);
+      return typeof value === 'function'
+        ? (value as (...a: unknown[]) => unknown).bind(target)
+        : value;
+    },
+  });
+}
+
 /**
  * Open a raw store for Luxar reads, adding consolidated-metadata support when
  * the dataset provides it and falling back to the original store otherwise.
@@ -205,9 +313,36 @@ export async function openStore<Store extends AsyncReadable>(
   // The option takes an ORDER, not a pin, so format-2 stores keep loading —
   // they simply pay the extra probe instead, which is the right way round now
   // that Luxar writes format 3 and only legacy stores are format 2.
-  return (await zarrita.withMaybeConsolidatedMetadata(rawStore, {
+  //
+  // The consolidated wrapper sits on a metadata gate that watches which
+  // consolidation document answered: that names the store's format, after
+  // which the gate stops the other format's documents (and format 2's
+  // index-settled `.zattrs`) from being requested at all.
+  const state: MetadataGateState = {
+    format: null,
+    listed: null,
+    answered: { v3Root: false, v2Index: false },
+  };
+  const gated = withMetadataGate(rawStore, state);
+  const opened = (await zarrita.withMaybeConsolidatedMetadata(gated, {
     format: ['v3', 'v2'],
   })) as MaybeListableStore<Store>;
+  // No consolidated metadata: hand back the store as given — the gate has no
+  // index to answer from.
+  if (opened === gated) return rawStore as MaybeListableStore<Store>;
+  // `.zmetadata` answering means format 2 (a format-3 `zarr.json` without an
+  // index can answer first, then fail to consolidate).
+  const format: StoreFormat | null = state.answered.v2Index
+    ? 'v2'
+    : state.answered.v3Root
+      ? 'v3'
+      : null;
+  if (format !== null) {
+    state.listed = new Set((opened.contents?.() ?? []).map((entry) => entry.path));
+    state.format = format;
+    STORE_FORMATS.set(opened, format);
+  }
+  return opened;
 }
 
 /** Return a root location for resolving dataset-relative paths. */
@@ -333,6 +468,49 @@ export async function openGroupPreferV3<Store extends Readable>(
     if (!isNotFoundError(error) && !(error instanceof zarrita.InvalidMetadataError)) throw error;
     return openGroup(location);
   }
+}
+
+/**
+ * Open a location as a zarr group of a KNOWN format, or by
+ * {@link openGroupPreferV3} when `format` is `null`.
+ *
+ * For probing an optional node on a raw store (no consolidated index to answer
+ * from): a format guess costs one 404 per wrong document — up to three for an
+ * absent node — where a known format costs one. Format 2 checks `.zgroup`
+ * before `open.v2` reads `.zattrs` (which a group without attributes lacks), so
+ * an absent group is ONE request.
+ *
+ * @param location - Location to open.
+ * @param format - The store's format, from {@link storeFormatOf} or the root
+ *   document that answered.
+ * @returns The opened {@link Group}; rejects with a not-found error when absent.
+ */
+export async function openGroupOfFormat<Store extends Readable>(
+  location: Location<Store>,
+  format: StoreFormat | null
+): Promise<Group<Store>> {
+  if (format === 'v3') return zarrita.open.v3(location, { kind: 'group' });
+  if (format === 'v2') {
+    const { path } = location.resolve('.zgroup');
+    const zgroup = await location.store.get(path);
+    if (zgroup === undefined) throw new zarrita.NotFoundError('v2 group', { path });
+    // `open.v2` reads `.zgroup` again: hand it the bytes just fetched.
+    const store = location.store;
+    const replay = new Proxy(store, {
+      get(target, prop) {
+        if (prop === 'get') {
+          return (key: AbsolutePath, options?: GetOptions) =>
+            key === path ? Promise.resolve(zgroup) : target.get(key, options);
+        }
+        const value: unknown = Reflect.get(target, prop, target);
+        return typeof value === 'function'
+          ? (value as (...a: unknown[]) => unknown).bind(target)
+          : value;
+      },
+    });
+    return zarrita.open.v2(new zarrita.Location(replay, location.path), { kind: 'group' });
+  }
+  return openGroupPreferV3(location);
 }
 
 /** Normalize backend-specific missing-node errors behind a Luxar-owned helper. */
