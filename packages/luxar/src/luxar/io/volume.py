@@ -313,15 +313,17 @@ def _squeezed_region_spans(
 def _read_tiff(tifffile: Any, path: Path) -> Any:
     """Read a TIFF, turning tifffile's missing-codec error into an install hint.
 
-    tifffile decodes only uncompressed TIFFs by itself; an LZW/deflate/zstd one
-    (most microscope and OME-TIFF exports) raises ``ValueError("<COMPRESSION.LZW:
-    5> requires the 'imagecodecs' package")`` mid-read, which names neither
-    Luxar's extra nor the pip command.
+    LZW/JPEG/zstd TIFFs (common microscope and OME-TIFF exports) may need
+    imagecodecs. tifffile raises a ``ValueError`` for LZW, or an ``ImportError``
+    for its zstd fallback on Python < 3.14; neither names Luxar's extra.
     """
     try:
         return tifffile.imread(str(path))
-    except ValueError as exc:
-        if "imagecodecs" not in str(exc):
+    except (ValueError, ImportError) as exc:
+        missing_codec = "imagecodecs" in str(exc) or (
+            isinstance(exc, ImportError) and "compression" in str(exc)
+        )
+        if not missing_codec:
             raise
         raise ImportError(
             f"'{path.name}' is a compressed TIFF and decoding it needs the "

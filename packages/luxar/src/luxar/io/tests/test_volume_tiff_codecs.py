@@ -1,9 +1,8 @@
 """A compressed TIFF without imagecodecs fails with an install hint.
 
-tifffile decodes only uncompressed TIFFs itself; for LZW/deflate/zstd it raises
-``ValueError("... requires the 'imagecodecs' package")`` mid-read. ``load_volume``
-must turn that into an error naming the extra and the pip command, and leave
-every other ``ValueError`` alone.
+tifffile raises a missing-imagecodecs ``ValueError`` for LZW/JPEG or a missing
+compression ``ImportError`` for zstd on Python < 3.14. ``load_volume`` must
+name the extra and pip command, and leave unrelated errors alone.
 """
 
 from __future__ import annotations
@@ -45,6 +44,20 @@ def test_missing_imagecodecs_names_the_install(
     assert "stack.tif" in message
 
 
+def test_missing_zstd_fallback_names_the_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "zstd.tif"
+    path.write_bytes(b"")
+    _fake_tifffile(monkeypatch, ModuleNotFoundError("No module named 'compression'"))
+    with pytest.raises(ImportError) as info:
+        load_volume(path)
+    assert "pip install 'luxar[io]'" in str(info.value)
+    assert "pip install imagecodecs" in str(info.value)
+    assert "zstd.tif" in str(info.value)
+    assert isinstance(info.value.__cause__, ModuleNotFoundError)
+
+
 def test_unrelated_value_error_propagates_unchanged(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -53,6 +66,18 @@ def test_unrelated_value_error_propagates_unchanged(
     _fake_tifffile(monkeypatch, ValueError("not a TIFF file"))
     with pytest.raises(ValueError, match="not a TIFF file"):
         load_volume(path)
+
+
+def test_unrelated_import_error_propagates_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "broken.tif"
+    path.write_bytes(b"")
+    error = ImportError("some other import failed")
+    _fake_tifffile(monkeypatch, error)
+    with pytest.raises(ImportError) as info:
+        load_volume(path)
+    assert info.value is error
 
 
 def test_compressed_tiff_round_trips_when_imagecodecs_is_installed(
