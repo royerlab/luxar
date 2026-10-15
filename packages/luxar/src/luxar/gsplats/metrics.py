@@ -286,8 +286,9 @@ def compute_ssim(
     sub-volumes along the leading dimensions.
 
     Large volumes are automatically split into overlapping tiles. The tiling
-    threshold compares estimated peak memory with free CUDA memory, or with a
-    fixed budget on CPU and MPS.
+    threshold compares estimated peak memory with a fraction of free CUDA
+    memory when available, or with a fixed budget on CPU and MPS (and when
+    CUDA free memory cannot be queried).
 
     Parameters
     ----------
