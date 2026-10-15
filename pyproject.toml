@@ -180,7 +180,7 @@ dev = [
 ]
 io = [
     "tifffile>=2023.1.0",
-    # tifffile decodes only UNCOMPRESSED TIFFs by itself: an LZW/deflate/zstd
+    # tifffile decodes deflate TIFFs itself, but an LZW/JPEG/zstd
     # TIFF or OME-TIFF (most microscope exports) raises "requires the
     # 'imagecodecs' package" without it, so `luxar[io]` could not load them.
     "imagecodecs>=2023.1.0",

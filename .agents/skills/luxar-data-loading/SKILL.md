@@ -22,7 +22,7 @@ right up front avoids fitting the wrong data or blowing up RAM.
 | `.npy` | NumPy array (base dependency) |
 | `.npz` | NumPy archive — first array, or pick with `--array-key` |
 | `.zarr` / `.zarr.zip` | Zarr array or group, incl. OME-Zarr 5D (base dependency) |
-| `.tiff` / `.tif` | needs `pip install "luxar[io]"` (tifffile + imagecodecs; compressed LZW/deflate/zstd TIFF and OME-TIFF need imagecodecs) |
+| `.tiff` / `.tif` | needs `pip install "luxar[io]"` (tifffile + imagecodecs; compressed LZW/JPEG/zstd TIFF and OME-TIFF need imagecodecs) |
 | other | imageio fallback, needs `pip install "luxar[io]"` |
 
 A missing optional dependency raises an actionable error naming the `pip install`
