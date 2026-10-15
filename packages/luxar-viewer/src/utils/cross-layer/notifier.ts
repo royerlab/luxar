@@ -45,8 +45,22 @@ export interface NotifierBackend {
    * backend at all is registered (a user-visible message was dropped);
    * `hide` never does — it only ever runs during teardown.
    */
-  showSceneIdentityBanner?(kind: 'changed' | 'unreachable'): void;
+  showSceneIdentityBanner?(
+    kind: 'changed' | 'unreachable',
+    detail?: SceneIdentityBannerDetail
+  ): void;
   hideSceneIdentityBanner?(onlyKind?: 'changed' | 'unreachable'): void;
+}
+
+/** Why an `unreachable` scene-identity banner is showing. */
+export interface SceneIdentityBannerDetail {
+  /**
+   * The latest probe could not reach the server at all (connection refused,
+   * DNS failure, network error, timeout) — as opposed to an HTTP status that
+   * says "later" or "not you" (401/403/429/5xx). Only a lost connection means
+   * the data server is gone.
+   */
+  connectionLost: boolean;
 }
 
 export interface ErrorNotificationOptions {
@@ -119,10 +133,13 @@ export const notifier = {
     else warnIfMissing('clearError');
   },
   /** Show the persistent scene-identity banner (changed / unreachable). */
-  showSceneIdentityBanner(kind: 'changed' | 'unreachable'): void {
+  showSceneIdentityBanner(
+    kind: 'changed' | 'unreachable',
+    detail?: SceneIdentityBannerDetail
+  ): void {
     // A registered backend WITHOUT the optional method is a deliberate
     // minimal backend (tests, embedders) — silent no-op, not a warning.
-    if (backend) backend.showSceneIdentityBanner?.(kind);
+    if (backend) backend.showSceneIdentityBanner?.(kind, detail);
     else warnIfMissing('showSceneIdentityBanner');
   },
   /**

@@ -300,3 +300,57 @@ class TestItSilencesRealLuxarWork:
         with verbosity("silent"):
             assert self._write_a_scene(tmp_path, "scoped_quiet") == ""
         assert self._write_a_scene(tmp_path, "scoped_loud").strip()
+
+
+class TestQuietNarrationHeartbeats:
+    """`quiet_narration()` mutes a block except its `aprint_heartbeat` lines."""
+
+    def _run(self) -> str:
+        from luxar.utils.verbosity import aprint_heartbeat, quiet_narration
+
+        buffer = io.StringIO()
+        Arbol.colorful = False
+        with contextlib.redirect_stdout(buffer):
+            with asection("driver"):
+                with quiet_narration():
+                    aprint("inner narration")
+                    with asection("inner section"):
+                        aprint_heartbeat("heartbeat")
+                aprint("after")
+        return buffer.getvalue()
+
+    def test_only_the_heartbeat_escapes_at_the_drivers_depth(self) -> None:
+        out = self._run()
+        assert "inner narration" not in out and "inner section" not in out
+        lines = out.splitlines()
+        heartbeat = next(ln for ln in lines if "heartbeat" in ln)
+        after = next(ln for ln in lines if "after" in ln)
+        # Printed beside the driver's own lines, not under the muted section.
+        assert heartbeat.index("heartbeat") == after.index("after")
+        assert Arbol.enable_output is True  # restored on exit
+
+    def test_global_silence_still_silences_the_heartbeat(self) -> None:
+        set_verbosity("silent")
+        assert self._run() == ""
+
+    def test_outside_a_quiet_block_it_is_a_plain_aprint(
+        self, capsys: pytest.CaptureFixture
+    ) -> None:
+        from luxar.utils.verbosity import aprint_heartbeat
+
+        aprint_heartbeat("plain")
+        assert "plain" in capsys.readouterr().out
+
+    def test_a_nested_silent_inside_the_block_silences_the_heartbeat(self) -> None:
+        from luxar.utils.verbosity import aprint_heartbeat, quiet_narration
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            with quiet_narration():
+                with verbosity("silent"):
+                    aprint_heartbeat("muted heartbeat")
+                aprint_heartbeat("restored heartbeat")
+        out = buffer.getvalue()
+        assert "muted heartbeat" not in out
+        assert "restored heartbeat" in out
+        assert Arbol.enable_output is True

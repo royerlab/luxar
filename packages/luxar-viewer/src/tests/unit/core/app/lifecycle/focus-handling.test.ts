@@ -95,6 +95,23 @@ describe('installFocusHandling', () => {
       expect(anim.startAnimation).not.toHaveBeenCalled();
     });
 
+    it('NO startAnimation when the window gains focus while the document is hidden', () => {
+      installFocusHandling({
+        events,
+        animationController: asAnim(anim),
+        getRecordingPanel: () => asRec(rec),
+      });
+
+      setHidden(true);
+      window.dispatchEvent(new Event('focus'));
+      expect(anim.startAnimation).not.toHaveBeenCalled();
+
+      // The visible transition is what resumes the loop.
+      setHidden(false);
+      document.dispatchEvent(new Event('visibilitychange'));
+      expect(anim.startAnimation).toHaveBeenCalledOnce();
+    });
+
     it('startAnimation when recordingPanel is undefined and focus fires (optional-chain short-circuit treats as not-recording)', () => {
       installFocusHandling({
         events,

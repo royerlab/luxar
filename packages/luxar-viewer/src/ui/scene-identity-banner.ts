@@ -57,6 +57,16 @@ const ICONS: Record<SceneIdentityBannerKind, string> = {
 let shownKind: SceneIdentityBannerKind | null = null;
 
 /**
+ * Which banner is currently shown, if any. The app reads it after each
+ * show/hide to know whether the data server is standing unreachable (the
+ * render loop stops sustaining itself while it is — see
+ * `core/app/lifecycle/notifier-backend.ts`).
+ */
+export function getSceneIdentityBannerKind(): SceneIdentityBannerKind | null {
+  return shownKind;
+}
+
+/**
  * Show (or replace) the scene-identity banner.
  *
  * Re-showing the same kind is a no-op so the watchdog can call this on
