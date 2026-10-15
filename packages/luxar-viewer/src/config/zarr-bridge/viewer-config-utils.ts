@@ -26,6 +26,7 @@ import {
 } from '../cinematic-preset';
 import { cameraConfig } from '../sections/camera/data';
 import { log, Modules } from '../../utils/log';
+import { parseViewAxis, type ViewAxis } from '../../types/view-axis';
 
 /**
  * Module-local sets of values we have already warned about, so each warning
@@ -317,6 +318,8 @@ export interface CameraOverrides {
   targetNode?: string;
   /** Orthographic zoom factor (> 0); applied only to an ortho camera. */
   zoom?: number;
+  /** Axis-aligned opening view preset (`camera.view_axis`), validated. */
+  viewAxis?: ViewAxis;
 }
 
 /**
@@ -337,7 +340,23 @@ export function extractCameraOverrides(zarrConfig: ZarrViewerConfig): CameraOver
   if (up) overrides.up = up;
   if (camera.target_node) overrides.targetNode = camera.target_node;
   if (typeof camera.zoom === 'number' && camera.zoom > 0) overrides.zoom = camera.zoom;
+  const viewAxis = extractViewAxis(camera.view_axis);
+  if (viewAxis) overrides.viewAxis = viewAxis;
   return overrides;
+}
+
+/** Validate an authored `camera.view_axis`, warning once per bad value. */
+function extractViewAxis(raw: unknown): ViewAxis | undefined {
+  if (raw === undefined) return undefined;
+  const viewAxis = parseViewAxis(raw);
+  if (!viewAxis) {
+    log.warning(
+      Modules.SCENE_LOADER,
+      `viewer_config.camera.view_axis: ${JSON.stringify(raw)} is not one of xy/xz/yz; ignoring it`
+    );
+    return undefined;
+  }
+  return viewAxis;
 }
 
 /** `[x, y, z]` → `{x, y, z}`, or undefined when absent. */

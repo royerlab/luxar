@@ -889,6 +889,7 @@ the native WKWebView launcher fall back to L1-only caching; see the
 - `?workers=<N>` — Worker pool size for this session (`0` = auto), beating the stored Settings value without rewriting it; clamped to the Settings range (0-16)
 - `?prefetch=<N>` — Concurrent chunk fetches for this session (the Settings "Prefetch Limit"), same precedence and clamping (1-12)
 - `?textScale=<X>` — Scale every overlay's type for this session (e.g. `0.8`), beating the scene's `viewer_config.text_scale`; positions, widths and anchors stay as authored. Clamped to [0.25, 4]
+- `?viewAxis=<xy|xz|yz>` — Axis-aligned opening view for this session (face the plane of the dimensions with those names, horizontal axis right), beating the scene's `viewer_config.camera.view_axis`; the scene's `up` still picks whether the vertical axis points up or down. Not `?view=`, which is the bookmark parameter
 
 ### Programmatic Usage
 

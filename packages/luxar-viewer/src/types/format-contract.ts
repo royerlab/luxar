@@ -468,6 +468,16 @@ export const LINE_JOIN_STYLES: readonly LineJoinStyleName[] = ['none', 'miter'];
 export type LineJoinStyleName = 'none' | 'miter';
 
 /**
+ * `viewer_config.camera.view_axis` presets: the plane the opening camera
+ * faces, horizontal axis first (letters are scene dimension names).
+ */
+export const VIEW_AXES: readonly ViewAxisName[] = ['xy', 'xz', 'yz'];
+/**
+ * Union of the axis-aligned view preset names.
+ */
+export type ViewAxisName = 'xy' | 'xz' | 'yz';
+
+/**
  * `line_type` attr values: how a lines node's vertices + segments are read.
  */
 export const LINE_TYPES: readonly LineTypeName[] = ['segments', 'polyline', 'loop', 'indexed'];

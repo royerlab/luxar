@@ -265,6 +265,29 @@ through `scene.attrs`: the mapping accepts free-form keys at the root, so
 writing one of those by hand skips its validation and leaves the `Scene`
 object's own copy stale.
 
+### `viewer_config.camera` (optional)
+
+The authored opening camera (Python `CameraConfig`): `position`, `target`, `up`,
+`fov`, `fov_preset`, `near`, `far`, `target_node`, `zoom`, and `view_axis`:
+
+```json
+"camera": {
+  "up": [0.0, -1.0, 0.0],   // screen-up; its SIGN along the preset's vertical axis
+                            // picks up vs down (negative = image convention)
+  "view_axis": "xy"         // "xy" | "xz" | "yz": the plane the auto-framed camera
+                            // faces, horizontal axis first (letters are DIMENSION
+                            // names, falling back to world X/Y/Z)
+}
+```
+
+`view_axis` drives the auto-framed opening view and Home/F re-framing only: an
+explicit `position` pins the pose instead, and waypoint cameras ignore it. The
+viewer URL `?viewAxis=xy|xz|yz` overrides it for a session. `luxar gsplat
+convert` writes the block above for fitted image volumes so they open like
+Fiji/napari (x right, y down, looking along +z); the flip is a camera choice, so
+no coordinate is mirrored. Vocabulary single-sourced in
+`format-contract/contract.yaml::view_axes`.
+
 ### `citation` (optional root attr)
 
 `citation` credits whoever produced the data the scene shows. It is written to

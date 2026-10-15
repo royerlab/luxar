@@ -124,6 +124,14 @@ export interface ZarrCameraConfig {
   zoom?: number;
   /** Named scene graph node whose bounding box center becomes the camera target */
   target_node?: string;
+  /**
+   * Axis-aligned opening view (`xy` | `xz` | `yz`) for the auto-framed camera:
+   * face the plane of the dimensions with those names, horizontal axis right;
+   * the sign of `up` along the vertical axis picks up vs down on screen. Ignored
+   * when `position` is set and by waypoint cameras. `?viewAxis=` overrides it.
+   * See `scene/scene-manager/camera/view-axis.ts`.
+   */
+  view_axis?: string;
 }
 
 /**

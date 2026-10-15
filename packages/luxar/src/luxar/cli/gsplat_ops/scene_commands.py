@@ -7,7 +7,7 @@ the shared ``app_gsplat`` Typer.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 import typer
 from arbol import aprint, asection
@@ -17,7 +17,45 @@ from .._traceback import exit_with_error
 from .encoding import _resolve_encoding_mode
 
 if TYPE_CHECKING:
-    pass
+    from ...core.viewer_config import ViewerConfig
+    from .scene_orientation import ConvertOrientation
+
+
+def _convert_orientation(
+    extent: Any,
+    node: Any,
+    stats: dict,
+    *,
+    dim_order: Optional[str],
+    view: Optional[str],
+    remap: bool,
+) -> "ConvertOrientation":
+    """Resolve convert's scene orientation, turning a bad flag into a usage error."""
+    from .scene_orientation import resolve_convert_orientation
+
+    try:
+        return resolve_convert_orientation(
+            extent,
+            node.meta.get("dimension_metadata"),
+            dim_order=dim_order,
+            view=view,
+            fitting_info=stats,
+            remap=remap,
+        )
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
+
+
+def _scene_viewer_config(
+    orientation: "ConvertOrientation", tone_mapping: Optional[str]
+) -> "Optional[ViewerConfig]":
+    """The scene's ViewerConfig: tone mapping and/or the orientation's camera."""
+    from luxar.core.viewer_config import ViewerConfig
+
+    aprint(orientation.summary)
+    if tone_mapping is None and orientation.camera is None:
+        return None
+    return ViewerConfig(tone_mapping=tone_mapping, camera=orientation.camera)
 
 
 def convert_to_scene(
@@ -79,6 +117,23 @@ def convert_to_scene(
     encoding: Literal["auto", "precision", "memory"] = typer.Option(
         "auto", "--encoding", "-e", help="Encoding mode"
     ),
+    dim_order: Optional[str] = typer.Option(
+        None,
+        "--dim-order",
+        help="Name each center column, comma-separated (e.g. 'z,y,x' or "
+        "'t,z,y,x'). Default: the store's recorded axis names, else array order "
+        "(z,y,x / y,x) for a store with fitting provenance, else positional. "
+        "Columns are mapped onto x,y,z-ordered scene dims; a y column BEFORE the "
+        "x column (image order) opens y-down like Fiji/napari. It NAMES columns, "
+        "it does not move data: 'x,y,z' on a z,y,x fit is the legacy positional "
+        "mode (the z column is labelled x, no flip).",
+    ),
+    view: Optional[str] = typer.Option(
+        None,
+        "--view",
+        help="Opening view: xy (look down z; default for image fits), xz, or yz. "
+        "Stored as viewer_config.camera.view_axis; ?viewAxis= overrides it.",
+    ),
 ) -> None:
     """Convert a .gsplats.zarr dataset to a Luxar scene for the web viewer.
 
@@ -101,6 +156,20 @@ def convert_to_scene(
     scene back into [0, 1] with ``--intensity`` and use ``None``, or accept
     ACES's filmic rolloff (#1459).
 
+    Orientation follows the IMAGE CONVENTION for fitted volumes: the center
+    columns are array order (z, y, x), so they are mapped onto the scene's
+    x, y, z dimensions with ``dim_order`` and the opening camera faces the XY
+    plane with y pointing down (``viewer_config.camera`` ``view_axis="xy"``,
+    ``up=(0, -1, 0)``) — the default Fiji/napari view. The flip is a camera
+    choice, so coordinates, units, picking and bounds stay as fitted. A
+    partition/nested store cannot be remapped (it is grafted node-for-node), so
+    its scene dims keep column order and the same camera preset faces its XY
+    plane by dimension name. ``--view xz|yz`` picks another face.
+    ``--dim-order`` names the columns without moving data, so ``--dim-order
+    x,y,z`` on a (z, y, x) fit is the legacy positional mode (z labelled x, no
+    flip). A store without axis names or fitting provenance (geometric x, y, z
+    data) keeps the positional mapping.
+
     Examples:
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --no-center
@@ -109,13 +178,14 @@ def convert_to_scene(
             --colormap plasma --tone-mapping ACES
         luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr \\
             --colormap plasma --tone-mapping None
+        luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --view xz
+        luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --dim-order x,y,z
     """
     try:
         import numpy as np
 
         from luxar import LuxarZarrCompiler
-        from luxar.cli.gsplat_config import build_dimensions_from_data
-        from luxar.core.viewer_config import VALID_TONE_MAPPINGS, ViewerConfig
+        from luxar.core.viewer_config import VALID_TONE_MAPPINGS
         from luxar.gsplats.gsplat_data import GSplatData
         from luxar.gsplats.io.load_gsplats import load_gsplat_node
         from luxar.gsplats.io.save_gsplats import resolve_amplitude_bits
@@ -149,14 +219,16 @@ def convert_to_scene(
         if intensity is not None:
             appearance["intensity"] = intensity
 
-        viewer_config = None
-        if tone_mapping is not None:
-            if tone_mapping not in VALID_TONE_MAPPINGS:
-                raise typer.BadParameter(
-                    f"--tone-mapping must be one of {VALID_TONE_MAPPINGS}, "
-                    f"got '{tone_mapping}'"
-                )
-            viewer_config = ViewerConfig(tone_mapping=tone_mapping)
+        if tone_mapping is not None and tone_mapping not in VALID_TONE_MAPPINGS:
+            raise typer.BadParameter(
+                f"--tone-mapping must be one of {VALID_TONE_MAPPINGS}, "
+                f"got '{tone_mapping}'"
+            )
+
+        def orient(extent: Any, *, remap: bool) -> "ConvertOrientation":
+            return _convert_orientation(
+                extent, node, stats, dim_order=dim_order, view=view, remap=remap
+            )
 
         with asection(f"Converting: {input_path.name} -> {output_path.name}"):
             with asection("Loading gsplat dataset"):
@@ -182,9 +254,9 @@ def convert_to_scene(
                     data = data.scale_intensity(scale_intensity)
 
                 with asection("Creating Luxar scene"):
-                    dims = build_dimensions_from_data(
-                        data.centers, node.meta.get("dimension_metadata")
-                    )
+                    orientation = orient(data.centers, remap=True)
+                    dims = orientation.dimensions
+                    viewer_config = _scene_viewer_config(orientation, tone_mapping)
                     with LuxarZarrCompiler(
                         output_path,
                         encoding_mode=_resolve_encoding_mode(encoding),
@@ -196,6 +268,7 @@ def convert_to_scene(
                         scene.add_gsplats_from_data(
                             name="gsplats",
                             result=data,
+                            dim_order=orientation.dim_order,
                             # An explicit scale is the caller's authored amplitude
                             # transform; normalising immediately afterward would
                             # cancel it exactly for raw-unit stores.
@@ -231,9 +304,12 @@ def convert_to_scene(
                 box = np.array([bmin, bmax], dtype=np.float32)
 
                 with asection("Creating Luxar scene"):
-                    dims = build_dimensions_from_data(
-                        box, node.meta.get("dimension_metadata")
-                    )
+                    # A grafted tree cannot be remapped (`add_gsplats_from_file`
+                    # refuses dim_order there): the scene dims keep column order
+                    # and the camera preset finds the XY plane by name.
+                    orientation = orient(box, remap=False)
+                    dims = orientation.dimensions
+                    viewer_config = _scene_viewer_config(orientation, tone_mapping)
                     with LuxarZarrCompiler(
                         output_path,
                         encoding_mode=_resolve_encoding_mode(encoding),

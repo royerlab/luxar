@@ -24,6 +24,7 @@
 import { parseLineJoinStyle, type LineJoinStyle } from '../types/line-join';
 import { parseLinePrimitive, type LinePrimitive } from '../types/line-primitive';
 import { ENVIRONMENT_RESOLUTION_MAX, ENVIRONMENT_RESOLUTION_MIN } from '../types/environment';
+import { parseViewAxis, type ViewAxis } from '../types/view-axis';
 import type { InputProfileOverride } from '../utils/input-capabilities';
 import { log, Modules } from '../utils/log';
 
@@ -89,6 +90,7 @@ export const URL_PARAM_KEYS = {
   bakeEnv: 'bakeEnv',
   probe: 'probe',
   envResolution: 'envResolution',
+  viewAxis: 'viewAxis',
 } as const;
 
 /** A recognized URL query parameter, spelled as it appears on the wire. */
@@ -718,6 +720,17 @@ export interface UrlParams {
   probe: string | null;
   /** Cube face size for the bake (`?envResolution=128`). Null → the scene's config or 128. */
   envResolution: number | null;
+  /**
+   * Axis-aligned opening view for the session (`?viewAxis=xy|xz|yz`): face the
+   * plane of the dimensions with those names, horizontal axis right. Beats the
+   * scene's authored `viewer_config.camera.view_axis`; the scene's up still
+   * picks whether the vertical axis points up or down (an image-convention
+   * scene keeps y down). Named `viewAxis`, not `view`, because `?view=` /
+   * `#view=` is the bookmark parameter. `null` (missing or unrecognised) ⇒ the
+   * authored preset, else the historical look-along-−Z framing. See
+   * `scene/scene-manager/camera/view-axis.ts`.
+   */
+  viewAxis: ViewAxis | null;
 }
 
 function readBookmarkFragment(hash: string | undefined, queryView: string | null): string | null {
@@ -801,6 +814,7 @@ export function readUrlParams(
     bakeEnv: has(K.bakeEnv),
     probe: trimmedParam(params, K.probe),
     envResolution: clampEnvironmentResolution(parseNonNegativeInt(get(K.envResolution))),
+    viewAxis: parseViewAxis(get(K.viewAxis)),
   };
 }
 

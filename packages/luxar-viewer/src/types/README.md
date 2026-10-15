@@ -374,6 +374,8 @@ See `lines.ts` for complete interface definitions including `OrderingMetadata`, 
 
 ## Line Join Types
 
+`view-axis.ts` is the dependency-free vocabulary of the axis-aligned opening views (`viewer_config.camera.view_axis`, `?viewAxis=xy|xz|yz`, single-sourced from the format contract's `view_axes`): the `ViewAxis` type and `parseViewAxis(raw)`. It lives here for the same layering reason as `line-join.ts`: `config/url-params.ts` and `config/zarr-bridge/` parse it, and `config/` may not import from `scene/`, where the three.js pose resolver lives (the camera package's `resolveViewAxisPose`).
+
 `line-join.ts` owns the joint style a polyline's vertex stage uses at a degree-2 joint (issue #790): `'none'` leaves the uncovered wedge at every bend, `'miter'` closes it exactly. It lives in `types/` rather than `rendering/` because `config/url-params.ts` must both parse the `?lineJoin=` override and install it, and `config/` may not import from `rendering/`.
 
 ```typescript
