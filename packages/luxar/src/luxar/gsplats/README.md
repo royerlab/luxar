@@ -989,6 +989,7 @@ Main fitting function with automatic optimizations.
 - `V`: Input n-dimensional array to reconstruct
 - `seeds`: Initial candidate positions (N, d), int count, float compression ratio, or a `GSplatData` to warm-start from
 - `seed_amps_background_relative`: Which amplitude convention a `GSplatData` warm start carries — `False` (default) for `generate_seeds()` output (raw image intensities, background pedestal included), `True` for a previous fit's output (pedestal already removed). Getting it wrong is silent: a fit's output taken as raw has an active `floor` subtracted a second time, so every seed dimmer than the floor starts at 0
+- `seed_space`: Coordinate frame of a `GSplatData` warm start — `"voxel"`, `"real"` (physical units, divided back by `voxel_size`), or `None` (default): a seed declared a fit's output (`seed_amps_background_relative=True`) is in this call's `output_space`, so `fit_gaussian_splats(V, voxel_size=vs, seeds=fit(V, voxel_size=vs), seed_amps_background_relative=True)` round-trips; anything else is voxel indices
 - `n_iters`: Maximum iterations (default: 1000)
 - `lr`: Learning rate (default: 0.01)
 - `loss_type`: "l1" (default), "mse", or "poisson" — see Supp. Doc. 5 for the empirical comparison that motivates the L1 default
