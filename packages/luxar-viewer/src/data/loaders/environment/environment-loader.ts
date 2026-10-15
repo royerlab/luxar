@@ -158,7 +158,12 @@ async function readEnvironmentAttrs(
       // An unreachable source cannot disprove the warm index's cached map.
       // A 404 can: the sidecar may have been removed since that index was saved.
       if (location === rootLoc || zarr.isNotFoundError(error)) throw error;
-      return await openEnvironmentAttrs(rootLoc.resolve(ENVIRONMENT_GROUP), format);
+      try {
+        return await openEnvironmentAttrs(rootLoc.resolve(ENVIRONMENT_GROUP), format);
+      } catch {
+        // The source is still unverified; a cached miss is not an absence.
+        return null;
+      }
     }
   } catch (error) {
     if (probeKey !== undefined && zarr.isNotFoundError(error)) knownAbsent.add(probeKey);

@@ -323,6 +323,32 @@ describe('optional-feature probes on a consolidated store', () => {
     expect(recovered?.header.faces).toBe('faces-cached');
   });
 
+  it('does not remember a cached miss after the source fails', async () => {
+    const cached = v3Store();
+    const store = (await zarr.openStore(cached)) as zarr.Readable;
+    const rootLoc = zarr.root(store);
+    const listing = await resolveRootListing(
+      store,
+      false,
+      Promise.reject(new TypeError('Failed to fetch'))
+    );
+    const sourceReads: string[] = [];
+    const source = {
+      get: async (key: string) => {
+        sourceReads.push(key);
+        throw new TypeError('Failed to fetch');
+      },
+    } as zarr.AsyncReadable;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(
+        await loadBakedEnvironment(rootLoc, HASH, 'http://h/unreachable.zarr/', listing, () =>
+          zarr.root(source)
+        )
+      ).toBeNull();
+    }
+    expect(sourceReads).toEqual(['/environment/zarr.json', '/environment/zarr.json']);
+  });
+
   it('still loads chunk packs a fresh index lists', async () => {
     const raw = v3Store({
       chunk_packs: {
