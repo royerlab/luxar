@@ -788,6 +788,50 @@ class TestFitCommand:
         assert result.exit_code == 0, f"fit failed: {result.stdout}"
         assert out.exists()
 
+    def test_fit_on_cpu_applies_and_restores_thread_count(
+        self,
+        runner: CliRunner,
+        small_volume_npy: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """`fit --device cpu` runs at the resolved width, then restores it."""
+        import torch
+
+        previous = torch.get_num_threads()
+        target = 2 if previous != 2 else 3
+        monkeypatch.setenv("LUXAR_CPU_THREADS", str(target))
+        calls: list[int] = []
+        real_set = torch.set_num_threads
+
+        def spy(n: int) -> None:
+            calls.append(n)
+            real_set(n)
+
+        monkeypatch.setattr(torch, "set_num_threads", spy)
+        out = tmp_path / "fitted-cpu.gsplats.zarr"
+        result = runner.invoke(
+            app,
+            [
+                "gsplat",
+                "fit",
+                str(small_volume_npy),
+                str(out),
+                "--iters",
+                "1",
+                "--seeds",
+                "2",
+                "--tiling",
+                "none",
+                "--device",
+                "cpu",
+            ],
+        )
+        assert result.exit_code == 0, f"fit failed: {result.stdout}"
+        assert calls == [target, previous]
+        assert torch.get_num_threads() == previous
+        assert f"CPU: using {target} threads" in result.stdout
+
     def test_fit_output_is_loadable(
         self, runner: CliRunner, small_volume_npy: Path, tmp_path: Path
     ) -> None:

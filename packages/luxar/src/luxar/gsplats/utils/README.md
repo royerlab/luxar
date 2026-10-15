@@ -23,6 +23,8 @@ Part of the `luxar.gsplats` package, but importable on a plain `pip install luxa
 
 `worker_memory.py` is also dependency-free so core CLI planning can share fit-memory policy without importing `torch`.
 
+`cpu_threads.py` holds the CLI's automatic CPU thread policy: `cpu_threads_for(device, worker=...)` widens torch's intra-op threads to `min(physical cores, 8)` for a CPU `fit`/`cal` command and restores the previous count on exit, and `resolve_cpu_threads` is the pure decision behind it (`LUXAR_CPU_THREADS=N` wins, `0` disables; an `OMP_NUM_THREADS`/`MKL_NUM_THREADS` value other than the hatch pin's `1` is respected; tile/box workers are left alone). It imports `torch` only inside its functions.
+
 The two `device.py` helpers — `resolve_torch_device` and `is_mps_available` — are the exception: they import `torch`, which ships only in the optional `gsplats` extra. They are therefore resolved lazily by a module `__getattr__` (PEP 562), so importing this package costs nothing on a core-only install and `from luxar.gsplats.utils import resolve_torch_device` raises `ModuleNotFoundError: No module named 'torch'` only when the name is actually touched. Install the extra to use them:
 
 ```bash
@@ -307,7 +309,7 @@ except ValueError as e:
 
 ## Testing
 
-**Test Files**: `tests/test_trils.py`, `tests/test_device.py`
+**Test Files**: `tests/test_trils.py`, `tests/test_device.py`, `tests/test_cpu_threads.py`
 
 **`test_trils.py` classes**:
 - `TestCalculateGradientDilutionFactor` - Gradient dilution factor for 1D through 8D, monotonic increase, type checks
@@ -334,9 +336,11 @@ except ValueError as e:
 ```
 gsplats/utils/
 ├── __init__.py              # Public API exports
+├── cpu_threads.py           # CLI automatic CPU thread count (LUXAR_CPU_THREADS)
 ├── device.py                # PyTorch device auto-selection helpers
 ├── trils.py                 # Cholesky pack/unpack and gradient dilution
 ├── tests/
+│   ├── test_cpu_threads.py  # CPU thread-policy decision + restore tests
 │   ├── test_device.py       # Device-resolution tests
 │   └── test_trils.py        # Comprehensive trils test suite
 └── README.md                # This file

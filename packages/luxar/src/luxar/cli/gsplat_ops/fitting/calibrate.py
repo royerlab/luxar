@@ -135,6 +135,7 @@ def run_calibrate_command(
             calibrate,
             select_calibration_region,
         )
+        from luxar.gsplats.utils.cpu_threads import cpu_threads_for
 
         # 1. Resolve K grid
         explicit: Optional[list[int]] = None
@@ -150,7 +151,10 @@ def run_calibrate_command(
         )
 
         # 2. Load volume (reuse the loader used by `compare` and `fit`)
-        with asection(f"Calibration: {input_path.name}"):
+        with (
+            asection(f"Calibration: {input_path.name}"),
+            cpu_threads_for(device),
+        ):
             with asection("Loading volume"):
                 volume = load_volume(
                     input_path,

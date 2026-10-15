@@ -1112,6 +1112,10 @@ fitter = GaussianSplatFitter(device="cuda")  # Force CUDA
 fitter = GaussianSplatFitter(device="cpu")  # Force CPU
 ```
 
+### CPU threads:
+
+On CPU, `luxar gsplat fit` and `luxar gsplat cal` raise torch to `min(physical cores, 8)` threads for the command (the hatch env pins one; scaling stops near 8) unless `OMP_NUM_THREADS`/`MKL_NUM_THREADS` are set to something other than `1`; `LUXAR_CPU_THREADS=N` overrides it, `LUXAR_CPU_THREADS=0` disables it, and library calls from Python are never changed (`utils/cpu_threads.py`).
+
 ### Apple Silicon Performance Notes:
 
 **MPS auto-selection**: With no CUDA device present, fitting auto-selects MPS on Apple Silicon (`use_metal=True` by default). For 3D volumes the native Metal backend (below) accelerates rendering; other shapes fall back to the PyTorch MPS path.

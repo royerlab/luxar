@@ -723,8 +723,15 @@ def run_fit_volume(
 
     try:
         from luxar.gsplats import fit_gaussian_splats
+        from luxar.gsplats.utils.cpu_threads import cpu_threads_for
 
-        with asection(f"Fitting Gaussian Splats: {input_path.name}"):
+        # A tile/box worker is one of N processes its parent already sized
+        # against the CPU count, so it keeps the inherited thread count.
+        is_worker = (tile, plan_box) != (None, None)
+        with (
+            asection(f"Fitting Gaussian Splats: {input_path.name}"),
+            cpu_threads_for(device, worker=is_worker),
+        ):
             # 1. Load volume
             with asection("Loading volume"):
                 # `load_volume` returns float32 whatever the file holds, so the
