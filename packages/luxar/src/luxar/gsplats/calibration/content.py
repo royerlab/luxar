@@ -17,14 +17,22 @@ import numpy as np
 
 def _otsu_threshold(V: np.ndarray) -> float:
     """Dependency-free Otsu threshold, subsampled for bounded histogram cost."""
-    v = np.asarray(V)
-    flat = v.reshape(-1)
-    if flat.size > 5_000_000:  # cap histogram sample on gigavoxel volumes
-        flat = flat[:: max(1, flat.size // 5_000_000)]
     import torch
 
-    from luxar.gsplats.metrics import otsu_threshold
+    from luxar.gsplats.metrics import (
+        _OTSU_MAX_SAMPLES,
+        otsu_sample_indices,
+        otsu_threshold,
+    )
 
+    v = np.asarray(V)
+    flat = v.reshape(-1)
+    if flat.size > _OTSU_MAX_SAMPLES:  # cap histogram sample on gigavoxel volumes
+        # Random, not strided: a stride sharing a factor with the fastest axis
+        # aliases onto a few columns. Keep the true extremes so the bin edges
+        # match the full volume's, exactly as otsu_threshold does.
+        idx = otsu_sample_indices(flat.size).numpy()
+        flat = np.concatenate([flat[idx], [flat.min(), flat.max()]])
     return otsu_threshold(torch.from_numpy(flat.astype(np.float32, copy=False)))
 
 

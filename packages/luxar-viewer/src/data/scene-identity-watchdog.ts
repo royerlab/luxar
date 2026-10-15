@@ -282,6 +282,13 @@ export class SceneIdentityWatchdog {
   private disposed = false;
   /** Terminal once the address demonstrably serves something else. */
   private changed = false;
+  /**
+   * Whether the latest `unreachable` verdict came from a request that never got
+   * an HTTP answer (thrown fetch: refused, DNS, network error, timeout) rather
+   * than an inconclusive status. Reported with the banner so the app pauses
+   * rendering only when the server is actually gone.
+   */
+  private lastFailureWasConnection = false;
 
   private readonly onWake = (): void => {
     if (document.visibilityState === 'hidden') return;
@@ -369,6 +376,21 @@ export class SceneIdentityWatchdog {
   seedFromLoad(seed: LoadTimeValidator): void {
     if (this.disposed || this.resolvedETag !== null) return;
     this.loadSeed = seed;
+  }
+
+  /**
+   * Tell the first poll which root document the load was served from, when the
+   * response carried no `ETag` to {@link seedFromLoad} with (Python's
+   * `http.server`, which `luxar serve` builds on, sends none).
+   *
+   * Without it the first probe of a format-2 dataset asks for `zarr.json` first
+   * and pays a 404 the load already answered. Only the candidate ORDER changes:
+   * nothing is trusted, the probe still reads and judges the document, and a
+   * 404 on it still falls through to the other format.
+   */
+  preferDocument(doc: (typeof ROOT_ATTR_DOCS)[number]): void {
+    if (this.disposed || this.resolvedAttrsUrl !== null) return;
+    this.resolvedAttrsUrl = buildAttrsUrl(this.url, doc);
   }
 
   /** Verify and adopt {@link loadSeed}, once. */
@@ -507,10 +529,12 @@ export class SceneIdentityWatchdog {
       }
 
       if (text === null) {
+        this.lastFailureWasConnection = false;
         return isInconclusiveStatus(lastStatus) ? 'unreachable' : 'changed';
       }
       body = text;
     } catch {
+      this.lastFailureWasConnection = true;
       return 'unreachable';
     } finally {
       clearTimeout(timeout);
@@ -560,7 +584,9 @@ export class SceneIdentityWatchdog {
       case 'unreachable':
         this.consecutiveFailures += 1;
         if (this.consecutiveFailures >= UNREACHABLE_THRESHOLD) {
-          notifier.showSceneIdentityBanner('unreachable');
+          notifier.showSceneIdentityBanner('unreachable', {
+            connectionLost: this.lastFailureWasConnection,
+          });
         }
         return;
       case 'changed':

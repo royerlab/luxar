@@ -190,8 +190,28 @@ def test_fit_planned_parallel_interrupt_stops_spawning(
 
     fpp = sys.modules["luxar.gsplats.planner.fit_planned_parallel"]
 
+    # The content pool launches workers with ``Popen`` (so an interrupt can
+    # terminate the running ones); adapt the shared ``run`` spy to that seam.
     fake_run, calls, cancelled = _ki_on_first_spy()
-    monkeypatch.setattr(fpp.subprocess, "run", fake_run)
+
+    class _SpyPopen:
+        def __init__(self, cmd, *args, **kwargs):  # type: ignore[no-untyped-def]
+            self._result = fake_run(cmd)
+            self.returncode = self._result.returncode
+
+        def communicate(self):  # type: ignore[no-untyped-def]
+            return self._result.stdout, self._result.stderr
+
+        def terminate(self) -> None:
+            pass
+
+        def kill(self) -> None:
+            pass
+
+        def wait(self, timeout=None):  # type: ignore[no-untyped-def]
+            return self.returncode
+
+    monkeypatch.setattr(fpp.subprocess, "Popen", _SpyPopen)
     _release_gate_after_cancel(monkeypatch, fpp, cancelled)
 
     n = 8

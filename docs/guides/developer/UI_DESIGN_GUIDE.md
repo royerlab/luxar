@@ -631,7 +631,13 @@ The rail is the canonical interactive surface; its patterns generalize:
   those silently gets no gutter and opens under the rail. Adding its class to
   that selector pair is part of docking it, not an afterthought. (The recording
   panel is already covered: `ui/gui/gui.ts:87` builds it as a `.luxar-gui`, and
-  `recording-panel.ts:161` only adds a second class alongside.)
+  `recording-panel.ts:161` only adds a second class alongside.) Scene/demo
+  **overlays** anchored at the left edge clear the rail through the same token,
+  as a floor rather than an override — `left: max(var(--luxar-overlay-x),
+  var(--luxar-rail-gutter))` in `overlay-layer.css` — so an authored position
+  already right of the rail is untouched; right- and centre-anchored overlays
+  are excluded (`--right-anchored` / `--center-anchored`), since the rail never
+  covers them and shifting them would move authored geometry.
 - **The rail's item buttons live in `.luxar-control-rail__items`**, a
   `display: contents` wrapper on fine pointers that becomes the rail's scroll
   box under `(pointer: coarse)` (§11.5). Popovers, flyouts, the footer and the

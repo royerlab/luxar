@@ -12,7 +12,10 @@ import torch
 from arbol import aprint, asection
 
 from luxar.gsplats.fitting.dynamic_ops.config import DynamicOpsConfig
-from luxar.gsplats.fitting.dynamic_ops.peak_finding import _find_residual_peaks
+from luxar.gsplats.fitting.dynamic_ops.peak_finding import (
+    _find_residual_peaks,
+    auto_tiles_per_dim,
+)
 from luxar.gsplats.models.utils.inverse_softplus import (
     stable_inverse_softplus_torch,
 )
@@ -132,6 +135,29 @@ def _resolve_operation_seed(
     return seed + relocation_tracker.current_step
 
 
+#: Tiles per axis the fit loop uses for a non-3D residual when
+#: ``num_tiles_per_dim`` is None -- the long-standing value, kept because only
+#: the 3D auto rule has been measured in the fit loop (see
+#: :func:`_tiles_per_dim`).
+_LEGACY_TILES_PER_DIM = 8
+
+
+def _tiles_per_dim(cfg: DynamicOpsConfig, ndim: int) -> int:
+    """Tiles per axis for a relocation step.
+
+    An explicit ``cfg.num_tiles_per_dim`` wins. ``None`` follows the
+    documented auto rule (6 tiles/axis, 216 tiles) for 3D and keeps the
+    historical 8 for every other dimensionality, whose auto values are
+    unmeasured in the fit. The 3D switch was A/B'd in isolation (8 vs auto,
+    same code otherwise, MPS, 1000 iterations, f13 light-sheet centre crops):
+    128^3 / 20k seeds PSNR 35.276 vs 35.282 dB (foreground 30.247 vs 30.260);
+    224^3 / 60k seeds 36.222 vs 36.218 dB (foreground 30.399 vs 30.397).
+    """
+    if cfg.num_tiles_per_dim is not None:
+        return int(cfg.num_tiles_per_dim)
+    return auto_tiles_per_dim(ndim) if ndim == 3 else _LEGACY_TILES_PER_DIM
+
+
 def apply_dynamic_operations(
     model: Any,
     V_target: torch.Tensor,
@@ -186,9 +212,7 @@ def apply_dynamic_operations(
             cfg.k_max_residuals,
             cfg.nms_radius_vox,
             enable_tiled=cfg.enable_tiled_seeding,
-            num_tiles_per_dim=cfg.num_tiles_per_dim
-            if cfg.num_tiles_per_dim is not None
-            else 8,
+            num_tiles_per_dim=_tiles_per_dim(cfg, residual.ndim),
             seed=operation_seed,
         )
 

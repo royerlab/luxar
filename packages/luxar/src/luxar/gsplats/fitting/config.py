@@ -185,6 +185,7 @@ class FitParameters:
     iter_callback: Optional[Any] = None
     iter_callback_every: int = 25
     seed_amps_background_relative: bool = False
+    seed_space: Optional[str] = None
     source_dtype: Optional[str] = None
     source_shape: Optional[Sequence[int]] = None
     source_stored_bytes: Optional[int] = None
@@ -298,6 +299,12 @@ class FitConfig:
     #
     # Only consulted when ``seeds`` is a GSplatData.
     seed_amps_background_relative: bool = False
+
+    # Coordinate frame of a ``seeds=GSplatData``: "voxel", "real" (physical,
+    # divided back by ``voxel_size`` in preprocessing), or None — follow the
+    # declaration above: a declared fit output is in ``output_space``, anything
+    # else is voxel. Only consulted when ``seeds`` is a GSplatData.
+    seed_space: Optional[str] = None
 
     # Pre-initialized parameters (for GSplatData seeds or moment pursuit)
     # If set, these override the default initialization
@@ -463,6 +470,10 @@ class OptimizationResults:
     # Timing
     start_time: float
     end_time: float
+
+    # Distinguishes the post-final-step candidate from the pre-step snapshot
+    # carrying the same best_iteration.
+    best_from_final_step: bool = False
 
     # Dynamic-ops diagnostics from the full optimization history.
     relocation_statistics: Dict[str, int] = field(

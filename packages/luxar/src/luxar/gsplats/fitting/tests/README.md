@@ -14,6 +14,7 @@ Tests for the Gaussian splat fitting pipeline.
 - **test_visualization.py** - Compression analysis display, napari optimization movie (mocked).
 - **test_sorting.py** - Z-order Morton code sorting of splats and optimizer state.
 - **test_downscale.py** - Volume downscaling, coordinate rescaling, packed Cholesky rescaling.
+- **test_warm_start_round_trip.py** - A declared `seeds=GSplatData` warm start's iteration-0 model reproduces the seed (parameters and render) for voxel and physical-unit fits, an explicit `seed_space`, and the `lod --refine volume` basis wiring; sheared (large off-diagonal) seeds; `volume_refine_splats` called directly; the warm-start sigma floor (incl. 1 ulp below it), uncapped background-relative amplitudes, the `amp_max` clip that keeps them trainable, and the `seed_space` warnings.
 - **test_floor_denoise_basis.py** - Background-floor resolution on the denoised basis: the two probe regimes (exact whole-volume probe vs bounded crop), the percentile/`auto` regime rule, graceful degradation, probe sampling.
 
 ## Running

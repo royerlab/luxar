@@ -148,24 +148,18 @@ export async function runInitPipeline(
 ): Promise<InitPipelineResult> {
   initializeGpuByteBudget(ports.options.gpuPoolMaxBytes);
 
-  // Inform users about expected console messages. The browser logs a
-  // `GET … 404` line (with a JS stack trace) for every failed network
-  // request; these cannot be suppressed from JS — only avoided by not
-  // making the request. The loader intentionally probes for OPTIONAL
-  // arrays/groups that many datasets omit, so 404s here are normal:
-  //   • sharpnesses/  — optional per-point sharpness (falls back to default)
-  //   • overlays/     — optional scene overlays group
-  //   • */.zattrs     — optional zarr attributes on an existing array
-  // Any of these returning 404 is expected and does NOT indicate a problem.
+  // The browser logs a `GET … 404` line (with a JS stack trace) for every
+  // failed request; JS cannot suppress it, only avoid the request. A
+  // consolidated store now answers every optional-feature question from its
+  // index (`data/zarr.ts::withMetadataGate`, the overlay/array listing gates,
+  // `data/scene-loader/cache/root-listing.ts`), so a normal load logs none.
+  // What can still 404, harmlessly: a format-2 store's `zarr.json` (the root
+  // probe tries format 3 first), a format-2 or unconsolidated store's optional
+  // groups/arrays, and a sidecar probe on a warm load without a fresh index.
   log.info(
     Modules.LUXAR,
-    'Note: the browser may log "GET … 404" lines for optional dataset features ' +
-      '(sharpnesses, overlays, optional .zattrs/.zarray probes).'
-  );
-  log.info(
-    Modules.LUXAR,
-    'These 404s are expected and harmless — the loader probes for optional features ' +
-      'that many datasets omit, and falls back cleanly when they are absent.'
+    'Note: legacy (zarr format 2) or unconsolidated datasets may log a few "GET … 404" ' +
+      'lines while the loader checks for optional features; they are harmless.'
   );
 
   const sceneSrc = ports.options.src ?? config.defaultZarrPath;
@@ -687,6 +681,9 @@ export async function runInitPipeline(
   // the canvas after its own awaited frame rather than depending on the
   // loop's cadence.
   animationController.setPacingSuspendPredicate(() => recordingPanel.isCurrentlyRecording());
+  // The same breadth exempts a capture from the data-server-unreachable hold:
+  // a held loop would film a frozen canvas / turntable.
+  animationController.setSelfSustainExemptPredicate(() => recordingPanel.isCurrentlyRecording());
   // An offline turntable keeps the rAF loop running, so the auto-LOD selector
   // is live and frustum-aware for the whole sweep: a tile that left the
   // frustum mid-orbit is demoted (and may have had its fine level released by

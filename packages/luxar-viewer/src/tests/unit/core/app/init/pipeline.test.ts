@@ -67,6 +67,7 @@ function makeAnimationStub() {
     setIdleRestorePredicate: vi.fn(),
     setRenderSkipPredicate: vi.fn(),
     setPacingSuspendPredicate: vi.fn(),
+    setSelfSustainExemptPredicate: vi.fn(),
     setRenderOnChange: vi.fn(),
     setViewSignatureSource: vi.fn(),
     setRenderAudit: vi.fn(),
@@ -826,6 +827,26 @@ describe('runInitPipeline', () => {
       panel.isCurrentlyRecording.mockReturnValue(false);
       panel.isLoopRenderSuppressed.mockReturnValue(true);
       expect(predicate()).toBe(false);
+    });
+
+    it('exempts a capture from the data-server-unreachable hold (isCurrentlyRecording)', async () => {
+      const { factories } = makeFactoryOverrides();
+      const ports = makePorts();
+      ports.options.factories = factories as never;
+
+      await runInitPipeline(ports, {});
+
+      const animation = factories.animationController.mock.results[0].value as {
+        setSelfSustainExemptPredicate: ReturnType<typeof vi.fn>;
+      };
+      const panel = factories.recordingPanel.mock.results[0].value as {
+        isCurrentlyRecording: ReturnType<typeof vi.fn>;
+      };
+      expect(animation.setSelfSustainExemptPredicate).toHaveBeenCalledTimes(1);
+      const predicate = animation.setSelfSustainExemptPredicate.mock.calls[0][0] as () => boolean;
+      expect(predicate()).toBe(false);
+      panel.isCurrentlyRecording.mockReturnValue(true);
+      expect(predicate()).toBe(true);
     });
 
     it('the LOD-settle provider delegates to the registry, and answers null when there is nothing to wait for', async () => {
