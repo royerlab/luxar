@@ -886,6 +886,7 @@ def test_convergence_break_returns_the_iterate_that_converged() -> None:
     )
     results = run_optimization_loop(components, loss_fn, config, preprocessed)
     assert results.converged_early
+    assert results.best_from_final_step is True
     assert results.best_max_abs_error < 0.03
     assert abs(float(results.centers.reshape(-1)[0])) < 0.03
 
