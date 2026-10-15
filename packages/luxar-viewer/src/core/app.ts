@@ -100,6 +100,9 @@ import { initScaleBar as initScaleBarImpl } from './app/overlays/init-scale-bar'
 import type { LuxarAppOptions } from './app/options';
 export type { LuxarAppOptions } from './app/options';
 
+/** Self-sustain suspension reason while the data server is unreachable. */
+const DATA_SERVER_UNREACHABLE = 'data-server-unreachable';
+
 export class LuxarApp {
   private sceneManager!: SceneManager;
   private animationController!: AnimationController;
@@ -273,7 +276,14 @@ export class LuxarApp {
     // Toasts, the error dialog, the spinner: lower layers reach the UI through
     // the notifier, for a library embed as much as the standalone page. The
     // dispose pipeline clears it, so every lifetime installs its own.
-    installNotifierBackend((actionId) => this.shortcutForAction(actionId));
+    // The data server going away (the watchdog's `unreachable` banner) stops
+    // the render loop sustaining itself until it answers again; user input
+    // still renders. `animationController` is assigned later in init, and a
+    // banner can only appear once a dataset is loading, hence the guard.
+    installNotifierBackend(
+      (actionId) => this.shortcutForAction(actionId),
+      (reachable) => this.applyDataServerReachability(reachable)
+    );
 
     // Claim the input surface before any async initialization or dataset
     // loading leaves an embedder-supplied canvas browser-owned.
@@ -936,6 +946,18 @@ export class LuxarApp {
       showBrowser: () => this.showDatasetBrowser(),
       closeBrowser: () => this.datasetBrowser?.close(),
     });
+  }
+
+  /**
+   * Suspend (unreachable) or release (reachable) the render loop's
+   * self-sustained animation — see
+   * `AnimationController.suspendSelfSustainedAnimation`. Idempotent.
+   */
+  private applyDataServerReachability(reachable: boolean): void {
+    const controller = this.animationController as AnimationController | undefined;
+    if (!controller) return;
+    if (reachable) controller.resumeSelfSustainedAnimation(DATA_SERVER_UNREACHABLE);
+    else controller.suspendSelfSustainedAnimation(DATA_SERVER_UNREACHABLE);
   }
 
   /**

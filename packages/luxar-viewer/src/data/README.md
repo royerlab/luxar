@@ -1298,6 +1298,14 @@ which re-exports the types and helpers the rest of the viewer needs
 `Location`, `Group`, `Array`, `DataType`, `TypedArray` aliases). Future
 backend swaps or zarrita API moves stay isolated to this one file.
 
+`openStore` puts a metadata gate under zarrita's consolidated wrapper: once the
+consolidation read names the store's format (`storeFormatOf`), the other
+format's documents and a format-2 `.zattrs` the index already settled are
+answered "absent" without a request — each was a console `GET … 404`. Documents
+of a node the index does not list still reach the store (a warm cache tier can
+serve an index older than a sidecar). `openGroupOfFormat` probes an optional
+group on a raw store with one request when the format is known.
+
 ### Attribute Composition (attrs-composer.ts)
 
 | Symbol                             | Description                                                                            |
