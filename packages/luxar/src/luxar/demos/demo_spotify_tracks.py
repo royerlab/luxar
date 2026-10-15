@@ -43,7 +43,6 @@ DEMO_META = {
 }
 
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -416,37 +415,34 @@ def main() -> None:
         aprint(f"Total tracks: {n_tracks:,}")
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_spotify_") as tmpdir:
-        output_path = Path(tmpdir) / "spotify_tracks.luxar.zarr"
+    output_path = get_demos_output_dir() / "spotify_tracks.luxar.zarr"
 
-        try:
-            n_tracks = generate_spotify_landscape(output_path, sample_size=sample_size)
-            if n_tracks == 0:
-                return
-        except Exception as e:
-            aprint(f"\nError: {e}")
-            import traceback
+    try:
+        n_tracks = generate_spotify_landscape(output_path, sample_size=sample_size)
+        if n_tracks == 0:
+            return
+    except Exception as e:
+        aprint(f"\nError: {e}")
+        import traceback
 
-            traceback.print_exc()
-            sys.exit(1)
+        traceback.print_exc()
+        sys.exit(1)
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("VIEWING TIPS")
-        aprint("=" * 70)
-        aprint("")
-        aprint("Explore the music landscape:")
-        aprint("  - Clusters = genres with similar audio profiles")
-        aprint("  - Bigger points = more popular tracks")
-        aprint("  - Hover over any point to see track info")
-        aprint("")
-        aprint(f"Total tracks: {n_tracks:,}")
-        aprint("")
-        aprint("Press Ctrl+C when done.")
+    aprint("")
+    aprint("=" * 70)
+    aprint("VIEWING TIPS")
+    aprint("=" * 70)
+    aprint("")
+    aprint("Explore the music landscape:")
+    aprint("  - Clusters = genres with similar audio profiles")
+    aprint("  - Bigger points = more popular tracks")
+    aprint("  - Hover over any point to see track info")
+    aprint("")
+    aprint(f"Total tracks: {n_tracks:,}")
+    aprint("")
+    aprint("Press Ctrl+C when done.")
 
-        launch_viewer(output_path)
-
-    aprint("✓ Cleanup complete")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

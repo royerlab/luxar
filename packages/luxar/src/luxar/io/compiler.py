@@ -8,6 +8,7 @@ memory constraints.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import tempfile
 import uuid
@@ -114,6 +115,191 @@ from ._compiler.node_common import warn_if_over_element_cap
 # Ordering functions will be imported locally where needed to avoid circular imports
 
 
+def _resolve_atomic(atomic: Optional[bool], final_path: Path) -> bool:
+    """``atomic`` as given, or — for ``None`` — "is this a demo output?".
+
+    The automatic choice never fails a compile: an unresolvable demos directory
+    (a malformed ``LUXAR_DEMO_VARIANT``, say) just means "not a demo output".
+    A demo output that is a symlink is followed (see ``_stage_directory_store``).
+    """
+    if atomic is not None:
+        return atomic
+    from ..utils.paths import get_demos_output_dir
+
+    try:
+        demos_dir = get_demos_output_dir(create=False).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return final_path.parent.resolve() == demos_dir
+
+
+# `.<name>.compile-<host>-<pid>-<hex>` (an atomic build in progress) and
+# `.<name>.old-<host>-<pid>-<hex>` (the previous store, moved aside mid-swap).
+# `<host>` is a short hash of the hostname: on shared storage (NFS, an HPC
+# `/hpc` mount) another machine's PIDs mean nothing here, so a leftover is only
+# ever judged — and swept — by the host that wrote it. Hashing keeps any
+# hostname (dots, dashes) out of the parsing.
+_ATOMIC_LEFTOVER_RE = re.compile(
+    r"^\.(?P<name>.+)\.(?P<kind>compile|old)-(?P<host>[0-9a-f]{8})-"
+    r"(?P<pid>\d+)-[0-9a-f]+$"
+)
+
+
+def _host_tag() -> str:
+    """Short, parse-safe identifier of this machine for leftover names."""
+    import hashlib
+    import socket
+
+    name = socket.gethostname() or "localhost"
+    return hashlib.sha1(name.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+
+
+def _atomic_sibling(final: Path, kind: str) -> Path:
+    """A fresh ``.<name>.<kind>-<host>-<pid>-<hex>`` sibling of ``final``."""
+    return final.parent / (
+        f".{final.name}.{kind}-{_host_tag()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    )
+
+
+def _pid_is_dead(pid: int) -> bool:
+    """True only when ``pid`` provably no longer exists (POSIX)."""
+    if not hasattr(os, "killpg") or pid <= 0:
+        return False  # off POSIX `kill(pid, 0)` terminates: never probe
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
+def _scan_atomic_leftovers(final_path: Path) -> list[tuple[str, Path, str]]:
+    """``(kind, path, host_tag)`` of every atomic-build sibling of ``final_path``."""
+    parent = final_path.parent
+    try:
+        entries = sorted(parent.iterdir())
+    except OSError:
+        return []
+    found: list[tuple[str, Path, str]] = []
+    for entry in entries:
+        match = _ATOMIC_LEFTOVER_RE.match(entry.name)
+        if match is not None and match["name"] == final_path.name:
+            found.append((match["kind"], entry, match["host"]))
+    return found
+
+
+def find_atomic_leftovers(final_path: Path) -> list[tuple[str, Path]]:
+    """``(kind, path)`` of dead atomic-build leftovers beside ``final_path``.
+
+    ``kind`` is ``"compile"`` (an abandoned staging store) or ``"old"`` (a
+    previous store moved aside mid-swap). Only THIS host's leftovers whose
+    owning process is provably gone are returned, so a build in progress —
+    here or on another machine sharing the filesystem — is never listed.
+    """
+    here = _host_tag()
+    dead: list[tuple[str, Path]] = []
+    for kind, path, host in _scan_atomic_leftovers(final_path):
+        if host != here:
+            continue
+        match = _ATOMIC_LEFTOVER_RE.match(path.name)
+        if match is not None and _pid_is_dead(int(match["pid"])):
+            dead.append((kind, path))
+    return dead
+
+
+def foreign_atomic_leftovers(final_path: Path) -> list[Path]:
+    """Atomic-build siblings of ``final_path`` written by ANOTHER host.
+
+    Their liveness cannot be checked from here, so they are never swept; a
+    caller may only report them.
+    """
+    here = _host_tag()
+    return [p for _k, p, host in _scan_atomic_leftovers(final_path) if host != here]
+
+
+def sweep_atomic_leftovers(final_path: Path) -> list[Path]:
+    """Clean up after atomic builds of ``final_path`` that died mid-way.
+
+    A build killed outright (SIGKILL, power loss) leaves its staging sibling;
+    one killed between moving the old store aside and renaming the new one in
+    leaves only the ``.old-*`` sibling and NO store at ``final_path``. Only
+    leftovers whose owning process is gone are touched, so a concurrent build
+    is never disturbed. A missing final store is restored from the newest dead
+    ``.old-*`` first; every other dead leftover is deleted.
+
+    Returns:
+        The leftover paths that were removed or restored.
+    """
+    dead = find_atomic_leftovers(final_path)
+    handled: list[Path] = []
+    # Housekeeping must never fail a compile: two builds racing over the same
+    # dead leftover, or a permission problem, just leave it for next time.
+    olds: list[tuple[float, Path]] = []
+    for kind, path in dead:
+        if kind == "old":
+            try:
+                olds.append((path.stat().st_mtime, path))
+            except OSError:
+                continue
+    olds.sort()
+    if olds and not (final_path.exists() or final_path.is_symlink()):
+        newest = olds[-1][1]
+        try:
+            os.replace(newest, final_path)
+            aprint(f"♻️  Restored {final_path} from an interrupted rebuild")
+            handled.append(newest)
+        except OSError:
+            pass
+    for _kind, path in dead:
+        if path in handled:
+            continue
+        try:
+            shutil.rmtree(path)
+            handled.append(path)
+        except FileNotFoundError:
+            continue  # another build swept it first
+        except OSError:
+            continue
+    return handled
+
+
+_ZARR_ROOT_DOCS = ("zarr.json", ".zgroup", ".zattrs")
+
+
+def _symlink_target_refusal(link: Path, target: Path) -> Optional[str]:
+    """Why following ``link`` to ``target`` could destroy data, or None if safe.
+
+    The swap REPLACES the target, so it must be something a rebuild may
+    replace: nothing yet, an empty directory, or a Zarr store. Never a
+    directory that holds the demos/datasets tree (``-> .`` or ``-> ..`` would
+    delete it), the home directory or the filesystem root.
+    """
+    from ..utils.paths import get_datasets_dir, get_demos_output_dir
+
+    protected = {link.parent.resolve(), Path.home().resolve(), Path(target.anchor)}
+    for resolve_dir in (get_demos_output_dir, get_datasets_dir):
+        try:
+            protected.add(resolve_dir(create=False).resolve())
+        except (OSError, RuntimeError, ValueError):
+            pass
+    for guarded in protected:
+        if target == guarded or guarded.is_relative_to(target):
+            return f"it resolves to {target}, which holds {guarded}"
+    if not target.exists():
+        return None  # nothing there yet (a dangling link): nothing to lose
+    if not target.is_dir():
+        return f"its target {target} is a file, not a Zarr store"
+    try:
+        if not any(target.iterdir()):
+            return None
+    except OSError as exc:
+        return f"its target {target} cannot be read ({exc})"
+    if any((target / doc).is_file() for doc in _ZARR_ROOT_DOCS):
+        return None
+    return f"its target {target} is not a Zarr store (and not empty)"
+
+
 class LuxarZarrCompiler(ZarrWriterProtocol):
     """Progressive Zarr compiler with context manager support.
 
@@ -177,6 +363,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         float16_allowed: bool = False,
         auto_partition_max_elements: Optional[int] = None,
         gsplat_amplitude_bits: Optional[Literal["auto", 8, 16]] = None,
+        atomic: Optional[bool] = None,
     ) -> None:
         """Initialize the Zarr compiler.
 
@@ -203,6 +390,15 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 the historical default. ``"auto"`` resolves each GSplat node
                 from its recorded ``fitting/source_dtype``. Points radii and
                 Lines widths are unaffected.
+            atomic: Build a DIRECTORY store in a hidden sibling and rename it
+                over ``store_path`` only once finalization succeeds, so a
+                reader (a server already serving that path, a "is it built?"
+                check) never sees a half-written store and a failed build
+                leaves the previous store intact. ``None`` (default) enables it
+                exactly for stores written into the demos output directory
+                (:func:`luxar.utils.paths.get_demos_output_dir`), where a
+                rebuild routinely replaces a scene that may be in use. Archive
+                (``.zip``) outputs are always staged regardless.
 
         Note:
             Physical units should be specified per-dimension using the Dimensions
@@ -220,6 +416,9 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         from ..utils.paths import normalize_zarr_path
 
         self._tmpdir: Optional[tempfile.TemporaryDirectory[str]] = None
+        # Final directory-store path while building in a staging sibling
+        # (``atomic``); None once published or when not staging.
+        self._publish_path: Optional[Path] = None
         self._archive_path: Optional[Path] = None
         self._archive_artifact_path: Optional[Path] = None
         if store_path is None:
@@ -255,6 +454,10 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             else:
                 self._store_path = normalize_zarr_path(requested, ".luxar.zarr")
                 final_path = self._store_path
+                if _resolve_atomic(atomic, final_path):
+                    self._stage_directory_store(
+                        final_path, follow_symlink=atomic is None
+                    )
             if final_path.name != requested.name:
                 aprint(
                     f"📁 Normalized scene path to canonical extension: "
@@ -337,7 +540,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
         # Scene reference for finalize-time hover overlay auto-injection
         self._scene: Optional["Scene"] = None
 
-        output_path = self._archive_path or self._store_path
+        output_path = self._archive_path or self._publish_path or self._store_path
         aprint(f"✅ Zarr compiler initialized at {output_path}")
 
     def __enter__(self) -> LuxarZarrCompiler:
@@ -388,11 +591,16 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             if exc_type is not None and not self._is_finalized:
                 # An exception is propagating and the store is only partially
                 # written: do NOT finalize, mark it incomplete instead.
-                if self._archive_path is not None:
+                if self._archive_path is not None or self._publish_path is not None:
                     self._archive_finalize_failed = True
                 try:
                     self.store.attrs["incomplete"] = True
-                    if self._archive_path is not None:
+                    if self._publish_path is not None:
+                        aprint(
+                            "⚠️ Build errored — discarding the staged build; "
+                            f"{self._publish_path} is left as it was"
+                        )
+                    elif self._archive_path is not None:
                         aprint(
                             "⚠️ Build errored — discarding incomplete archive "
                             f"staging for {self._archive_path}"
@@ -421,9 +629,87 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                     raise
         finally:
             self._cleanup_archive_staging()
+            self._cleanup_directory_staging()
             # Clean up temporary directory if used (every path).
             if self._tmpdir is not None:
                 self._tmpdir.cleanup()
+
+    def _stage_directory_store(
+        self, final_path: Path, follow_symlink: bool = False
+    ) -> None:
+        """Redirect the build to a hidden sibling of ``final_path`` (``atomic``).
+
+        A symlinked destination is refused when ``atomic=True`` was asked for
+        explicitly. For the automatic demo-output case it is FOLLOWED instead:
+        the build is staged beside, and renamed over, the link's target, so the
+        link keeps pointing at the new scene. (Writing through a symlinked
+        store in place does not work at all: the writer's ``mode="w"`` clear
+        refuses a symlink.)
+        """
+        if follow_symlink and final_path.is_symlink():
+            target = final_path.resolve()
+            refusal = _symlink_target_refusal(final_path, target)
+            if refusal is not None:
+                raise ValueError(
+                    f"LuxarZarrCompiler refuses to write to {final_path}: it is a "
+                    f"symlink (→ {os.readlink(final_path)}) and {refusal}. An "
+                    "atomic build replaces what the link points at. Point the "
+                    "link at a Zarr store or an empty directory, or remove it."
+                )
+            aprint(f"ℹ️  {final_path} is a symlink: building at its target.")
+            final_path = target
+        sweep_atomic_leftovers(final_path)
+        if final_path.exists() and not final_path.is_dir():
+            raise ValueError(
+                f"LuxarZarrCompiler refuses to replace {final_path}: it is a "
+                "regular file, not a Zarr store directory. Remove it or choose "
+                "another output path."
+            )
+        if final_path.is_symlink():
+            raise ValueError(
+                f"LuxarZarrCompiler refuses to write to {final_path}: it is a "
+                f"symlink (→ {os.readlink(final_path)}). An atomic build is "
+                "renamed into place, which would replace the link rather than "
+                "what it points at. Give the link's target as the output path, "
+                "or pass atomic=False."
+            )
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        self._publish_path = final_path
+        self._store_path = _atomic_sibling(final_path, "compile")
+
+    def _publish_directory(self) -> None:
+        """Swap the finalized staging store over the final path.
+
+        ``rename`` cannot replace a non-empty directory, so the previous store
+        is first renamed aside, the new one renamed in, and only then is the
+        old one deleted: there is never a moment where the final path holds a
+        PARTIAL store, only a brief one where it holds none.
+        """
+        final = self._publish_path
+        if final is None:
+            return
+        aside: Optional[Path] = None
+        if final.exists() or final.is_symlink():
+            aside = _atomic_sibling(final, "old")
+            os.replace(final, aside)
+        published = False
+        try:
+            os.replace(self._store_path, final)
+            published = True
+        finally:
+            # Any failure — a second Ctrl-C included — puts the previous
+            # store back rather than leaving the final path empty.
+            if not published and aside is not None:
+                os.replace(aside, final)
+        self._store_path = final
+        self._publish_path = None
+        if aside is not None:
+            shutil.rmtree(aside, ignore_errors=True)
+
+    def _cleanup_directory_staging(self) -> None:
+        """Remove an unpublished staging store (the previous store stays)."""
+        if self._publish_path is not None:
+            shutil.rmtree(self._store_path, ignore_errors=True)
 
     def _cleanup_archive_staging(self) -> None:
         """Remove compiler-owned archive staging paths, if any."""
@@ -458,6 +744,13 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
                 "Cannot finalize archive after its staging was discarded; "
                 "create a new LuxarZarrCompiler"
             )
+
+    def _discard_failed_directory_staging(self) -> None:
+        """Poison an atomic compiler and drop its failed staging store."""
+        if self._publish_path is None:
+            return
+        self._archive_finalize_failed = True
+        self._cleanup_directory_staging()
 
     def _discard_failed_archive_staging(self) -> None:
         """Poison an archive compiler and remove its failed staging store."""
@@ -2095,6 +2388,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             zarr_close(store)
 
             self._publish_archive()
+            self._publish_directory()
 
         except BaseException as e:
             # ANY failure (marker clearing, hover injection, or a finalize
@@ -2117,6 +2411,7 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
             # Preserve the historical wrapping for ordinary Exceptions, but let
             # a KeyboardInterrupt / SystemExit propagate unchanged.
             self._discard_failed_archive_staging()
+            self._discard_failed_directory_staging()
             if isinstance(e, Exception):
                 raise ValueError(f"Could not finalize Zarr store: {e}") from e
             raise
@@ -2150,4 +2445,4 @@ class LuxarZarrCompiler(ZarrWriterProtocol):
     @property
     def final_store_path(self) -> str:
         """Get the directory store or archive path produced by finalization."""
-        return str(self._archive_path or self._store_path)
+        return str(self._archive_path or self._publish_path or self._store_path)

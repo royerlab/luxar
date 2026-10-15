@@ -36,6 +36,7 @@ from .utils import (
     format_memory_size,
     get_viewer_dist_path,
     validate_zarr_store,
+    viewer_not_built_message,
 )
 
 
@@ -73,9 +74,7 @@ def export_scene(
 
     # Preflight the viewer before an overwrite can remove the user's old export.
     if not check_viewer_built():
-        raise FileNotFoundError(
-            "Viewer not built. Run: cd packages/luxar-viewer && pnpm build"
-        )
+        raise FileNotFoundError(viewer_not_built_message())
     _require_third_party_notices(get_viewer_dist_path())
     facts = read_scene_facts(source)
 

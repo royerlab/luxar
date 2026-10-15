@@ -13,7 +13,7 @@ This demo demonstrates:
 - A cauliflower silhouette built as the union of rising thermal bubbles
 - Emission-absorption (``volumetric``) compositing, so the cloud is a body
 - Baked sun, sky and ground light from optical depths through the cloud
-- Complete workflow: generate -> serve -> view -> cleanup
+- Complete workflow: generate -> serve -> view
 
 The demo is completely self-contained - all generation code is in this file,
 including the noise, the flow and the shading.
@@ -138,7 +138,7 @@ Usage:
 
 Controls:
     - Opens already playing and rotating; K pauses, N toggles the sliders
-    - Ctrl+C to stop and cleanup
+    - Ctrl+C to stop
     - Browser opens automatically
 """
 
@@ -165,7 +165,6 @@ DEMO_META = {
 
 import math
 import sys
-import tempfile
 from pathlib import Path
 from typing import List, NamedTuple, Tuple
 
@@ -1617,43 +1616,38 @@ def main() -> None:
     aprint("  - Growth, mature sheared top, then dissipation into wisps")
     aprint("")
 
-    # If --no-serve, use persistent directory; otherwise temp for auto-cleanup
+    # Both paths write the same persistent output; --no-serve skips serving
     if "--no-serve" in sys.argv:
         output_path = get_demos_output_dir() / "cloud.luxar.zarr"
         generate_evolving_cloud(output_path, n_parcels=n_parcels, n_frames=n_frames)
         aprint(f"Dataset generated at {output_path}")
         return
 
-    # Use temporary directory for serving (auto-cleanup on exit)
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_cloud_") as tmpdir:
-        output_path = Path(tmpdir) / "cloud.luxar.zarr"
+    output_path = get_demos_output_dir() / "cloud.luxar.zarr"
 
-        # Generate the dataset (all code in this file!)
-        generate_evolving_cloud(output_path, n_parcels=n_parcels, n_frames=n_frames)
+    # Generate the dataset (all code in this file!)
+    generate_evolving_cloud(output_path, n_parcels=n_parcels, n_frames=n_frames)
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 70)
-        aprint("The viewer will open in your browser automatically.")
-        aprint("Press Ctrl+C when done to stop and cleanup.")
-        aprint("")
-        aprint("VIEWING TIPS:")
-        aprint("   - Opens already playing and rotating; K pauses, N toggles sliders")
-        aprint("   - Home/End jump to the first and last frame; Shift+Up/Down step")
-        aprint("   - The scene opens on the mature cloud, mid-life-cycle")
-        aprint("   - Watch the flat base: cumulus condense at one altitude")
-        aprint("   - The top leans downwind — that is the wind shear")
-        aprint("   - Texture stretches and folds instead of boiling: the noise")
-        aprint("     is welded to the parcels, so the flow deforms it")
-        aprint("   - Bright sunlit crown, blue-grey shadowed underside")
-        aprint("   - Late frames shred into rags as dry air is entrained")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 70)
+    aprint("The viewer will open in your browser automatically.")
+    aprint("Press Ctrl+C when done to stop the server.")
+    aprint("")
+    aprint("VIEWING TIPS:")
+    aprint("   - Opens already playing and rotating; K pauses, N toggles sliders")
+    aprint("   - Home/End jump to the first and last frame; Shift+Up/Down step")
+    aprint("   - The scene opens on the mature cloud, mid-life-cycle")
+    aprint("   - Watch the flat base: cumulus condense at one altitude")
+    aprint("   - The top leans downwind — that is the wind shear")
+    aprint("   - Texture stretches and folds instead of boiling: the noise")
+    aprint("     is welded to the parcels, so the flow deforms it")
+    aprint("   - Bright sunlit crown, blue-grey shadowed underside")
+    aprint("   - Late frames shred into rags as dry air is entrained")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    # Cleanup happens automatically
-    aprint("Cleanup complete - temporary files removed")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

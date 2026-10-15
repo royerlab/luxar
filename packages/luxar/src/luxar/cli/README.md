@@ -37,10 +37,11 @@ print(result.stdout)
 - `luxar info --stats` - Shows dataset structure, dimensions, and compression stats
 
 **Pro Tips**:
-- Browser launch: `viewer` and `gsplat view` open the browser by default (add `--no-open` to skip); `demo run` opens a viewer too but is stopped with a forwarded `--no-serve` (it has no `--no-open`); `serve` and `export` do not open by default (add `--open` to launch it)
+- Browser launch: `viewer`, `gsplat view` and `demo run` open the browser by default (add `--no-open` to skip; `demo run` forwards it to the demo); `serve` and `export` do not open by default (add `--open` to launch it). A DEFAULT launch is skipped over SSH, on Linux without a display, or with no terminal attached (unless `$BROWSER` is set) — the URL is printed instead; a typed `--open` always launches; `LUXAR_OPEN_BROWSER=1`/`0` overrides both
+- `luxar stop` stops every running `serve` / `viewer` / `gsplat view` / `export --open` server and demo (`--dry-run` lists; `--yes` without a terminal)
 - Use `luxar profiles` to list network simulation profiles
 - Use `luxar serve --help` for all serving options
-- Use `luxar export --native macos` (or `linux-amd64`/`linux-arm64`) for double-clickable native bundles backed by an embedded Go launcher (requires `make build-launchers` first)
+- Use `luxar export --native macos` (or `linux-amd64`/`linux-arm64`) for double-clickable native bundles backed by an embedded Go launcher (requires `make build-launchers` in a source checkout first; an install without launcher binaries says so rather than pointing at a Makefile it does not have)
 - For complete working scripts that generate datasets for these commands, see `packages/luxar/examples/` and repository-level `examples/` when present.
 
 ## Module Structure
@@ -60,7 +61,8 @@ print(result.stdout)
 - `lod.py` - the unified `lod --recipe {flat,stream,levels,tiles,overview,adaptive}` command (thin wrapper over `gsplats/lod/recipes.py`; registered onto the `gsplat` app)
 - `gsplat_config.py` - Config system: presets, YAML loading, volume loaders, helpers
 - `demo_commands.py` - The `luxar demo` sub-app: list/info/run/run-all/stop/deps/cache, driven entirely by the `luxar.demos` DEMO_META registry
-- `demo_runs.py` - Stdlib-only discovery and process-group teardown engine behind `luxar demo stop`; tracks live runs under `~/.cache/luxar/running/` and sweeps the process table for unregistered demos
+- `demo_runs.py` - Stdlib-only discovery and teardown engine behind `luxar demo stop` and `luxar stop`; tracks live demo runs AND standalone servers under `~/.cache/luxar/running/` and sweeps the process table for unregistered demos
+- `stop_command.py` - Top-level `luxar stop`: lists and stops registered servers plus running demos (top-level because `serve` takes a positional path)
 - `demo_render.py` - Presentation for all four `luxar demo` listings: the catalogue, one demo's detail record, the dependency report, and the cache inventory. The one place in the Python CLI that renders through `rich` and writes to plain stdout instead of `aprint` — a five-column catalogue with one row per bundled demo needs real column layout, and arbol's `├` tree prefix belongs on nested progress output, not on rows meant to be scanned and copy-pasted. The split is by what the output *is*: a standalone inventory you read renders here; anything interleaved with an action (progress, confirmations, install advice, the running-demo list `demo stop` prints before killing them) stays on arbol. Every column width is measured in terminal **cells**, not code points.
 - `../_process.py` - Shared package-root child-process lifecycle primitive; see `../README.md`
 - `utils.py` - Utility functions for CLI operations
@@ -86,9 +88,14 @@ including one forgotten in another terminal, and free its ports.
   `_process.proc_table()` when `ps` is unavailable, preserving the identity
   check that protects a recycled process-group ID. Off POSIX, `tasklist` still
   prunes records left by rebooted or hard-killed owners
-- `stop_run()`: Revalidate and terminate one run's process group; returns False
-  without signalling off POSIX, where a recorded PID cannot be safely checked
-  before a hard kill
+- `register_server()` / `registered_server()`: Record a standalone server
+  (`luxar serve`, `viewer`, `gsplat view`, `export --open`) as a
+  `kind="server"` entry while it serves; `discover_runs(include_servers=True)`
+  lists them for `luxar stop`, hiding a demo's own `luxar serve` child
+- `stop_run()`: Revalidate and terminate one run — a demo's process group, or a
+  server's single PID (a server shares its group with whatever started it);
+  returns False without signalling off POSIX, where a recorded PID cannot be
+  safely checked before a hard kill
 - `describe_port_holder()`: Best-effort `lsof` hint for `pick_port()`'s
   busy-port warning when a requested demo port looks Luxar-owned
 
@@ -103,9 +110,13 @@ luxar demo list --category astronomy   # Filter the table
 luxar demo info lorenz            # Full details for one demo
 luxar demo run lorenz             # Generate + open the viewer
 luxar demo run 3                  # Run by table index
-luxar demo run lorenz -- --no-serve --points=100000  # Forward args to the demo
+luxar demo run lorenz -- --no-serve --points=100000  # Forward args (custom build → demos/variants/)
+luxar demo run lorenz --canonical -- --points=100000  # ...or replace the default build
+luxar demo run lorenz -- --help   # Describe the demo; runs nothing
+luxar demo run lorenz -- --host 0.0.0.0 --no-open  # LAN bind, no browser
 luxar demo stop                   # Stop running demos and free their ports
 luxar demo stop lorenz --dry-run  # List one demo's live runs, stop nothing
+luxar stop --dry-run              # Every running server and demo (luxar stop --yes stops them)
 luxar demo cache list             # Inventory ~/.cache/luxar demo caches
 luxar demo cache clear lorenz --dry-run   # Preview a cache clear
 luxar demo deps                         # Which optional demo deps are missing?
@@ -307,6 +318,7 @@ luxar gsplat info splats.gsplats.zarr
 Open a `.gsplats.zarr` in the web viewer. The standalone `.gsplats.zarr` is a v3.4 node subtree — exactly what the viewer renders inside a scene — so it is served **directly** via `?src=` with no scene-compile round-trip (works for a single leaf, an additive ladder, a `kind=lod` hierarchy, a `kind=partition` split, and arbitrary nestings; archives are extracted first).
 ```bash
 luxar gsplat view splats.gsplats.zarr
+luxar gsplat view splats.gsplats.zarr --host 0.0.0.0   # reachable from the LAN
 ```
 
 #### `luxar gsplat fit`

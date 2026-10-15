@@ -28,7 +28,7 @@ per repetition) plus one warm re-load, medians of `LUXAR_PERF_AUDIT_REPEATS`
   `make run-examples` builds `dense-points`, `bench-100-nodes`, and the two
   checked-in LOD examples. Build each remaining row with its corresponding
   `luxar demo run <key> -- --no-serve` command. ZebraHub specifically needs
-  `luxar demo run zebrahub_velocity_streamlines -- --preset hifi --streamline-lod --no-serve`,
+  `luxar demo run zebrahub_velocity_streamlines --canonical -- --preset hifi --streamline-lod --no-serve`,
   which writes the `_hifi_lod` store. A missing store skips its row with the path
   in the reason; set `LUXAR_PERF_AUDIT_REQUIRE_SCENES=1` to make missing coverage
   fail the run.

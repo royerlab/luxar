@@ -165,7 +165,6 @@ import json
 import math
 import re
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -1570,42 +1569,39 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path}")
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_caida_") as tmpdir:
-        output_path = Path(tmpdir) / "caida_as_topology.luxar.zarr"
-        n_nodes, n_edges, n_comms, n_tier1 = build_scene(
-            output_path,
-            nodes,
-            node_df,
-            edges,
-            coords,
-            communities,
-            degrees,
-            tier1,
-            max_edges,
-        )
+    output_path = get_demos_output_dir() / "caida_as_topology.luxar.zarr"
+    n_nodes, n_edges, n_comms, n_tier1 = build_scene(
+        output_path,
+        nodes,
+        node_df,
+        edges,
+        coords,
+        communities,
+        degrees,
+        tier1,
+        max_edges,
+    )
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("NAVIGATION")
-        aprint("=" * 70)
-        aprint("  Press '1' then '[' / ']' to switch color view:")
-        aprint("     0: Community (Louvain modules)")
-        aprint("     1: Country   (from CAIDA as2org)")
-        aprint("  Hover any node : ASN · org · country · tier · community")
-        aprint("  Hover any edge : pair · relationship narrative")
-        aprint("")
-        aprint("  Line colors:  ▶ amber = Provider→Customer (tapered)")
-        aprint("                ⇄ cyan  = Peer (uniform)")
-        aprint("")
-        aprint(
-            f"  ASes: {n_nodes:,}   Relationships: {n_edges:,}   "
-            f"Communities: {n_comms}   Tier-1: {n_tier1}"
-        )
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("NAVIGATION")
+    aprint("=" * 70)
+    aprint("  Press '1' then '[' / ']' to switch color view:")
+    aprint("     0: Community (Louvain modules)")
+    aprint("     1: Country   (from CAIDA as2org)")
+    aprint("  Hover any node : ASN · org · country · tier · community")
+    aprint("  Hover any edge : pair · relationship narrative")
+    aprint("")
+    aprint("  Line colors:  ▶ amber = Provider→Customer (tapered)")
+    aprint("                ⇄ cyan  = Peer (uniform)")
+    aprint("")
+    aprint(
+        f"  ASes: {n_nodes:,}   Relationships: {n_edges:,}   "
+        f"Communities: {n_comms}   Tier-1: {n_tier1}"
+    )
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":

@@ -75,6 +75,7 @@ from ._support.runtime.cli import run_luxar_cli
 from ._support.runtime.device import detect_device, warn_if_no_cuda_gpu
 from ._support.runtime.environment import bake_scene_environment
 from ._support.runtime.flags import (
+    add_serve_arguments,
     control_serve_args,
     parse_demo_flags,
     parse_int_arg,
@@ -115,6 +116,7 @@ __all__ = [
     "ResolvedDataset",
     "add_demo_caption",
     "add_reference_cube_to_scene",
+    "add_serve_arguments",
     "cache_computed",
     "cached_download",
     "create_lorenz_attractor",

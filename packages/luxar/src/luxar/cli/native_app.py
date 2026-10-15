@@ -116,9 +116,30 @@ def get_launcher_path(platform_name: str) -> Path:
     binary = LAUNCHERS_DIR / PLATFORM_BINARIES[platform_name]
     if not binary.exists():
         raise LauncherNotBuiltError(
-            f"Native launcher not found at {binary}.\nRun: make build-launchers"
+            f"Native launcher not found at {binary}.\n"
+            f"{launcher_build_hint(platform_name)}"
         )
     return binary
+
+
+def launcher_build_hint(platform_name: str) -> str:
+    """How to obtain the launcher binaries, phrased for THIS install.
+
+    ``make build-launchers`` is a Makefile target of the source checkout, so an
+    installed wheel told to run it is at a dead end: it has no Makefile. There
+    the honest answer is that native export has to be run from a checkout.
+    """
+    from ..utils.paths import get_luxar_checkout_root
+
+    if get_luxar_checkout_root() is not None:
+        return "Run: make build-launchers"
+    return (
+        f"This luxar install has no launcher for {platform_name}, and native "
+        "export needs a source checkout to build it: git clone the luxar repository, run "
+        "`make install-go && make build-launchers` there, then run "
+        "`hatch run luxar export --native ...` from that checkout. "
+        "(`luxar export` without --native works from any install.)"
+    )
 
 
 @contextmanager

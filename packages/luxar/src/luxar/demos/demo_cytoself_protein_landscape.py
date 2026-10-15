@@ -90,7 +90,6 @@ import hashlib
 import json
 import os
 import sys
-import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -2239,48 +2238,45 @@ def main() -> None:
         aprint(f"Dataset generated at {output_path}")
         return
 
-    with tempfile.TemporaryDirectory(prefix="luxar_demo_cytoself_") as tmpdir:
-        output_path = Path(tmpdir) / "cytoself_landscape.luxar.zarr"
+    output_path = get_demos_output_dir() / "cytoself_protein_landscape.luxar.zarr"
 
-        _n_points = create_cytoself_scene(
-            output_path,
-            coordinates,
-            attributes,
-            category_maps,
-            image_labels=image_labels,
-            images_expected=not without_images,
-        )
+    _n_points = create_cytoself_scene(
+        output_path,
+        coordinates,
+        attributes,
+        category_maps,
+        image_labels=image_labels,
+        images_expected=not without_images,
+    )
 
-        aprint("")
-        aprint("=" * 70)
-        aprint("NAVIGATION")
-        aprint("=" * 70)
-        aprint("Once viewer opens:")
-        aprint("")
-        aprint("  - Rotate to explore UMAP structure")
-        aprint("  - Zoom in to see individual images")
-        # Mirror create_cytoself_scene's count-mismatch guard: thumbnails only
-        # made it into the scene if they were loaded AND aligned 1:1.
-        if image_labels is not None and len(image_labels) == len(coordinates):
-            aprint("  - Hover over a point to see its fluorescence image")
-        else:
-            aprint("  - Hover over a point to see its localization and protein")
-        aprint("")
-        aprint("  Press '1' to select ATTRIBUTE VIEW, then use [/]:")
-        aprint("     0: Localization (subcellular compartment)")
-        aprint("     1: Protein (~1,311 unique proteins)")
-        aprint("")
-        aprint("  Same structure, different colors reveal different biology!")
-        aprint("")
-        aprint("=" * 70)
-        aprint("LAUNCHING VIEWER")
-        aprint("=" * 70)
-        aprint("Browser will open automatically. Press Ctrl+C when done.")
-        aprint("")
+    aprint("")
+    aprint("=" * 70)
+    aprint("NAVIGATION")
+    aprint("=" * 70)
+    aprint("Once viewer opens:")
+    aprint("")
+    aprint("  - Rotate to explore UMAP structure")
+    aprint("  - Zoom in to see individual images")
+    # Mirror create_cytoself_scene's count-mismatch guard: thumbnails only
+    # made it into the scene if they were loaded AND aligned 1:1.
+    if image_labels is not None and len(image_labels) == len(coordinates):
+        aprint("  - Hover over a point to see its fluorescence image")
+    else:
+        aprint("  - Hover over a point to see its localization and protein")
+    aprint("")
+    aprint("  Press '1' to select ATTRIBUTE VIEW, then use [/]:")
+    aprint("     0: Localization (subcellular compartment)")
+    aprint("     1: Protein (~1,311 unique proteins)")
+    aprint("")
+    aprint("  Same structure, different colors reveal different biology!")
+    aprint("")
+    aprint("=" * 70)
+    aprint("LAUNCHING VIEWER")
+    aprint("=" * 70)
+    aprint("Browser will open automatically. Press Ctrl+C when done.")
+    aprint("")
 
-        launch_viewer(output_path)
-
-    aprint("Cleanup complete")
+    launch_viewer(output_path)
 
 
 if __name__ == "__main__":
