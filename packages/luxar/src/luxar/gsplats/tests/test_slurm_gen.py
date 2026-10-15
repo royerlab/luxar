@@ -47,7 +47,10 @@ def test_parallel_fit_scales_allocation_and_isolates_workers() -> None:
     assert "#SBATCH --mem=96G" in script
     assert "export OMP_NUM_THREADS=4" in script
     assert "export MKL_NUM_THREADS=4" in script
-    assert 'export LUXAR_CPU_THREADS="${LUXAR_CPU_THREADS:-4}"' in script
+    assert (
+        'if [ "${LUXAR_CPU_THREADS:-0}" = "0" ]; then export LUXAR_CPU_THREADS=4; fi'
+        in script
+    )
     assert "export LUXAR_QUALITY_WORKERS_PER_HOST=3" in script
     assert "export LUXAR_QUALITY_WORKERS_PER_DEVICE=2" in script
     assert "local WORKER_GPU_INDEX=$((WORKER_OFFSET % 2))" in script
