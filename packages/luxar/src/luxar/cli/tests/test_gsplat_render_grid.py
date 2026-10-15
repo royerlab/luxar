@@ -101,6 +101,28 @@ def test_a_geometric_transform_drops_the_voxel_size_stamp(tmp_path: Path) -> Non
     assert "voxel_size" not in stats
 
 
+def test_a_geometric_transform_drops_config_spacing_fallback(tmp_path: Path) -> None:
+    from luxar.gsplats.io.load_gsplats import load_gsplat_node
+    from luxar.gsplats.scoring_grid import stored_voxel_size
+
+    data = _model(offset=2.0)
+    data.stats["config"] = {
+        "voxel_size": [2.0, 0.5, 0.5],
+        "output_space": "real",
+        "iters": 100,
+    }
+    store = tmp_path / "config.gsplats.zarr"
+    data.save(store, encoding_mode=EncodingMode.PRECISION, include_fitting_info=True)
+    out = tmp_path / "scaled.gsplats.zarr"
+    result = CliRunner().invoke(
+        app, ["gsplat", "transform", str(store), str(out), "--scale", "2,2,2"]
+    )
+    assert result.exit_code == 0, result.output
+    _, stats = load_gsplat_node(out, include_stats=True)
+    assert stored_voxel_size(stats, 3) is None
+    assert stats["config"]["iters"] == 100
+
+
 def _crop_fit_store(tmp_path: Path, physical: bool) -> tuple[Path, GSplatData]:
     """A `--region` crop fit as WP3b CLI fits stamp it: full-volume centers,
     crop-shaped `source_shape`, `source_region`, `physical_coordinates`."""

@@ -173,9 +173,14 @@ def _drop_stale_frame_stamp(
     """
     if (scale_factors is None and not has_rotation) or not stats:
         return
-    from luxar.gsplats.scoring_grid import FRAME_STAMP_KEYS
+    from luxar.gsplats.scoring_grid import FRAME_STAMP_KEYS, drop_frame_stamp
 
-    dropped = [key for key in FRAME_STAMP_KEYS if stats.pop(key, None) is not None]
+    dropped = [key for key in FRAME_STAMP_KEYS if key in stats]
+    if isinstance(stats.get("config"), dict) and "voxel_size" in stats["config"]:
+        dropped.append("config.voxel_size")
+    retained = drop_frame_stamp(stats)
+    stats.clear()
+    stats.update(retained)
     if dropped:
         aprint(f"Dropped the fit's frame stamp ({', '.join(dropped)}): the frame moved")
 

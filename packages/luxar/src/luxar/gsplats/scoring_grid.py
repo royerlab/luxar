@@ -86,8 +86,12 @@ FRAME_STAMP_KEYS = (
 
 
 def drop_frame_stamp(stats: Mapping[str, Any]) -> dict[str, Any]:
-    """A copy of ``stats`` without :data:`FRAME_STAMP_KEYS`."""
-    return {k: v for k, v in stats.items() if k not in FRAME_STAMP_KEYS}
+    """A copy of ``stats`` without frame stamps or config spacing fallback."""
+    result = {k: v for k, v in stats.items() if k not in FRAME_STAMP_KEYS}
+    config = result.get("config")
+    if isinstance(config, Mapping) and "voxel_size" in config:
+        result["config"] = {k: v for k, v in config.items() if k != "voxel_size"}
+    return result
 
 
 def linear_part_is_identity(matrix: Any, ndim: int) -> bool:

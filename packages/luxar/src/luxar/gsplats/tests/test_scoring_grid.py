@@ -213,3 +213,14 @@ def test_python_transform_keeps_the_stamp_only_for_translations() -> None:
     for key in ("voxel_size", "voxel_unit", "physical_coordinates"):
         assert key not in scaled.stats
     assert vox.stats["voxel_size"] == [2.0, 0.5, 0.5]  # input untouched
+
+
+def test_python_transform_drops_config_spacing_fallback() -> None:
+    from luxar.gsplats.scoring_grid import stored_voxel_size
+
+    vox = _voxel_model()
+    vox.stats["config"] = {"voxel_size": [2.0, 0.5, 0.5], "output_space": "real"}
+    assert stored_voxel_size(vox.stats, 3) == (2.0, 0.5, 0.5)
+    scaled = vox.transform(np.diag([3.0, 3.0, 3.0]))
+    assert stored_voxel_size(scaled.stats, 3) is None
+    assert stored_voxel_size(vox.stats, 3) == (2.0, 0.5, 0.5)
