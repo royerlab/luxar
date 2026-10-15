@@ -117,7 +117,7 @@ def compute_boxes(  # type: ignore[no-untyped-def]
     n = centers.shape[0]
     boxes = np.zeros((n, 6), np.int64)
     nonfinite = np.zeros(n, np.uint8)
-    for k in prange(n):
+    for k in prange(n):  # type: ignore[no-untyped-call, attr-defined]
         if not _splat_is_finite(centers, Ls, amps, k):
             nonfinite[k] = 1
             continue
@@ -201,7 +201,7 @@ def forward_3d(  # type: ignore[no-untyped-def]
     shift_c = math.exp(-0.5 * t_sq)
     scale = 1.0 / (1.0 - shift_c)
     n_bands = (height + band - 1) // band
-    for item in prange(depth * n_bands):
+    for item in prange(depth * n_bands):  # type: ignore[no-untyped-call, attr-defined]
         z = item // n_bands
         row_lo = (item % n_bands) * band
         row_hi = min(height, row_lo + band)
@@ -319,7 +319,7 @@ def backward_3d(  # type: ignore[no-untyped-def]
     t_sq = truncate * truncate
     shift_c = math.exp(-0.5 * t_sq)
     scale = 1.0 / (1.0 - shift_c)
-    for k in prange(n):
+    for k in prange(n):  # type: ignore[no-untyped-call, attr-defined]
         if boxes[k, 3] <= boxes[k, 0]:
             continue
         g_value, sy, syy = _splat_sums(grad, centers, Ls, boxes, k, t_sq, shift_c)

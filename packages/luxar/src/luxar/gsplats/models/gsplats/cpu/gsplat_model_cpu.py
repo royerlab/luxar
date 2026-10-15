@@ -49,7 +49,7 @@ def _row_band(depth: int, height: int) -> int:
     """Rows per forward work item, so there are enough items to balance."""
     import numba
 
-    items_wanted = _ITEMS_PER_THREAD * int(numba.get_num_threads())
+    items_wanted = _ITEMS_PER_THREAD * int(numba.get_num_threads())  # type: ignore[no-untyped-call]
     bands_wanted = max(1, -(-items_wanted // max(1, depth)))
     return max(1, -(-height // bands_wanted))
 
