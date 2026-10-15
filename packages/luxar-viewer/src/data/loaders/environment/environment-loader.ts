@@ -21,8 +21,8 @@
  * `data/scene-loader/cache/root-listing.ts`). Only without one (format 2, a presigned
  * or zipped source) is the group probed — one document of the store's known format —
  * and a genuine absence is remembered per dataset for the session, so a revisit does
- * not pay it again. Every failure path degrades to "no baked
- * map" rather than failing the scene load — the environment is lighting, not data.
+ * not pay it again. When the source is unreachable, a cached map is used if
+ * available. Other failures degrade to "no baked map" without failing the scene load.
  *
  * @module data/loaders/environment/environment-loader
  */
