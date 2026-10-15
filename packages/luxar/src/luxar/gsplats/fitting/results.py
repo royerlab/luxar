@@ -821,8 +821,12 @@ def finalize_results(
                 f"(over {quality['foreground_fraction'] * 100:.2f}% of voxels), "
                 f"SSIM={quality['ssim']:.4f}, MSE={quality['mse']:.2e}"
             )
-    except Exception as exc:
-        if config.verbose:
-            aprint(f"Note: post-fit quality metrics skipped ({exc})")
+    except Exception as exc:  # scoring must never fail a fit
+        # Always say so: a store without PSNR is a silent hole in the record
+        # otherwise (content tiling runs its inner fits non-verbose). The
+        # reason is kept in the stats so it survives into the archive.
+        reason = f"{type(exc).__name__}: {exc}"
+        stats["quality_error"] = reason
+        aprint(f"Warning: post-fit quality metrics skipped ({reason})")
 
     return result

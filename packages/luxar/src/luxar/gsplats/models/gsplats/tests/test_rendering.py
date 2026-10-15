@@ -1002,14 +1002,16 @@ class TestMPSPeakFindingFallback:
         )
 
     def test_mps_fallback_code_path_exists_tiled(self) -> None:
-        """Verify MPS fallback exists in _find_peaks_in_tile."""
+        """Verify the batched tile pool keeps MPS off ``max_pool3d``."""
         import inspect
 
-        from luxar.gsplats.fitting.dynamic_ops.peak_finding import _find_peaks_in_tile
+        from luxar.gsplats.fitting.dynamic_ops.peak_finding import (
+            _batched_tile_max_pool,
+        )
 
-        source = inspect.getsource(_find_peaks_in_tile)
-        assert 'device.type == "mps"' in source, (
-            "_find_peaks_in_tile should have MPS fallback for max_pool3d"
+        source = inspect.getsource(_batched_tile_max_pool)
+        assert 'device.type != "mps"' in source, (
+            "_batched_tile_max_pool should have MPS fallback for max_pool3d"
         )
 
     def test_global_peak_finding_cpu_3d(self) -> None:
@@ -1051,3 +1053,164 @@ class TestMPSPeakFindingFallback:
         )
 
         assert len(peaks) == 2
+
+
+class TestRenderChunkBudget:
+    """Chunk sizing uses a realistic per-element cost and a real budget."""
+
+    def test_bytes_per_element_covers_3d_temporaries(self) -> None:
+        from luxar.gsplats.models.gsplats.rendering_core import (
+            chunk_bytes_per_element,
+        )
+
+        # 3 deltas + 3 solved coords + ~6 scalar temporaries (float32) + two
+        # int64 scatter-index tensors — the old estimate assumed 48 B.
+        assert chunk_bytes_per_element(3) == 76
+        assert chunk_bytes_per_element(2) == 64
+
+    def test_mps_budget_comes_from_the_device(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.models.gsplats import rendering_core as rc
+
+        monkeypatch.setattr(
+            torch.mps, "recommended_max_memory", lambda: 10 * 1024**3, raising=False
+        )
+        monkeypatch.setattr(
+            torch.mps, "driver_allocated_memory", lambda: 2 * 1024**3, raising=False
+        )
+        assert rc._chunk_memory_budget_bytes(torch.device("mps")) == 4 * 1024**3
+
+    def test_huge_group_splits_k_instead_of_overflowing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A group too big for the budget gets K-chunks, never a 131072 jump."""
+        from luxar.gsplats.models.gsplats import rendering_core as rc
+
+        monkeypatch.setattr(rc, "_chunk_memory_budget_bytes", lambda _d: 76 * 10_000)
+        assert (
+            rc.calculate_optimal_chunk_size(
+                1_000_000, 3, torch.device("cpu"), torch.float32
+            )
+            == 1024
+        )
+        k_chunk, p_chunk = rc.calculate_render_chunks(
+            1_000_000, 343, 3, torch.device("cpu")
+        )
+        assert k_chunk * min(343, p_chunk) <= 10_000
+        assert k_chunk >= 1
+
+    def test_explicit_chunk_size_is_honoured(self) -> None:
+        from luxar.gsplats.models.gsplats.rendering_core import (
+            calculate_render_chunks,
+        )
+
+        assert calculate_render_chunks(500, 1000, 3, torch.device("cpu"), 64) == (
+            500,
+            64,
+        )
+
+    @pytest.mark.parametrize("d", [2, 3])
+    def test_k_chunked_render_matches_unchunked(
+        self, d: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.models.gsplats import rendering_core as rc
+
+        gen = torch.Generator().manual_seed(0)
+        n = 300
+        shape = (24,) * d
+        centers = torch.rand(n, d, generator=gen) * 20 + 2
+        Ls = torch.eye(d)[None].repeat(n, 1, 1) * 1.3
+        amps = torch.rand(n, generator=gen) + 0.1
+        reference = rc.render_gaussians(shape, centers, Ls, amps)
+        # A tiny budget forces K-chunks of a few splats each.
+        monkeypatch.setattr(rc, "_chunk_memory_budget_bytes", lambda _d: 76 * 4096)
+        chunked = rc.render_gaussians(shape, centers, Ls, amps)
+        torch.testing.assert_close(chunked, reference, rtol=1e-5, atol=1e-6)
+
+
+class TestMetalVolumeRender:
+    """``render_to_volume_tensor`` on MPS uses the selected Metal kernels."""
+
+    @staticmethod
+    def _data(n: int = 200) -> "GSplatData":
+        rng = np.random.default_rng(0)
+        centers = rng.uniform(4, 28, (n, 3)).astype(np.float32)
+        L = np.zeros((n, 3, 3), np.float32)
+        L[:, [0, 1, 2], [0, 1, 2]] = rng.uniform(0.8, 2.0, (n, 3))
+        return GSplatData(
+            centers=centers,
+            amplitudes=rng.uniform(0.1, 1.0, n).astype(np.float32),
+            cholesky_factors=pack_tril(L).astype(np.float32),
+        )
+
+    def test_non_mps_never_tries_metal(self) -> None:
+        from luxar.gsplats.rendering import volume_rendering as vr
+
+        with mock.patch.object(vr, "_try_metal_render") as metal:
+            vr.render_to_volume_tensor(self._data(), (32, 32, 32), device="cpu")
+        metal.assert_not_called()
+
+    def test_metal_unavailable_falls_back_to_torch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.models.gsplats.metal import backend
+        from luxar.gsplats.rendering import volume_rendering as vr
+
+        monkeypatch.setattr(backend, "get_metal_backend", lambda: None)
+        t = torch.zeros(1, 3)
+        assert (
+            vr._try_metal_render(
+                t.to("meta"), torch.zeros(1, 3, 3), torch.zeros(1), (4, 4, 4), 3.0, 1e-5
+            )
+            is None
+        )
+
+    @pytest.mark.skipif(
+        not torch.backends.mps.is_available(), reason="MPS not available"
+    )
+    def test_metal_render_matches_torch_render(self) -> None:
+        from luxar.gsplats.models.gsplats.metal.backend import get_metal_backend
+        from luxar.gsplats.rendering import volume_rendering as vr
+
+        if get_metal_backend() is None:
+            pytest.skip("no Metal kernel backend")
+        data = self._data()
+        with mock.patch.object(
+            vr, "render_gaussians", wraps=vr.render_gaussians
+        ) as torch_path:
+            metal = vr.render_to_volume_tensor(data, (32, 32, 32), device="mps")
+        torch_path.assert_not_called()
+        reference = vr.render_to_volume_tensor(data, (32, 32, 32), device="cpu")
+        torch.testing.assert_close(metal.cpu(), reference, rtol=1e-3, atol=1e-4)
+
+
+class TestChunkBudgetQueries:
+    def test_meminfo_available_is_preferred(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.models.gsplats import rendering_core as rc
+
+        monkeypatch.setattr(rc, "_meminfo_available_bytes", lambda: 123 * 1024**2)
+        assert rc._available_cpu_memory_bytes() == 123 * 1024**2
+
+    def test_budget_is_queried_once_per_render(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from luxar.gsplats.models.gsplats import rendering_core as rc
+
+        calls = {"n": 0}
+
+        def budget(_device):
+            calls["n"] += 1
+            return 1 << 30
+
+        monkeypatch.setattr(rc, "_chunk_memory_budget_bytes", budget)
+        gen = torch.Generator().manual_seed(0)
+        n = 64
+        Ls = torch.eye(3)[None].repeat(n, 1, 1)
+        Ls *= (torch.rand(n, generator=gen) * 3 + 0.5)[:, None, None]  # many groups
+        rc.render_gaussians(
+            (24, 24, 24), torch.rand(n, 3, generator=gen) * 20 + 2, Ls, torch.ones(n)
+        )
+        assert calls["n"] == 1

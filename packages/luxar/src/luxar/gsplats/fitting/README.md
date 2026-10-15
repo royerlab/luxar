@@ -201,6 +201,26 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
 2. **Standard Adam**: PyTorch Adam optimizer with gradient dilution compensation
 3. **Scheduler**: ReduceLROnPlateau or ExponentialLR
 
+**The best state is the iterate its loss was computed from.** The snapshot is
+taken after `backward()` and BEFORE `optimizer.step()`, so each recorded loss is
+paired with the parameters that produced it. (It used to be taken after the
+step, so the restored "best" was one step past its loss; a warm start whose
+steps only make things worse restored the post-first-step parameters.) After
+the loop, the parameters left by the final step, which no in-loop loss ranked,
+are scored once (`_rank_final_iterate`). On a convergence break they are what
+met the threshold and are returned outright; otherwise they compete with the
+snapshot.
+
+**No per-iteration host sync (`optimization.py`).** The best loss and the
+best-state snapshot are kept on the device (`_DeviceBestState`, `torch.where`
+on a 0-d condition) and read back only on eval iterations. `ReduceLROnPlateau`
+is fed by `_PlateauFeeder`: every iteration's loss is buffered on the device and
+replayed into the scheduler in order every `max(1, min(eval_interval,
+patience // 3))` iterations (5 at the default patience 15) and on every eval
+iteration, so the plateau decisions see the same per-iteration loss sequence; a
+learning-rate reduction just takes effect at the replay, at most `interval - 1`
+iterations late.
+
 **Design Choice:** Standard PyTorch Adam with fixed-pool architecture enables 50x+ faster optimization compared to per-splat alternatives.
 
 ### `losses.py` - Loss Functions
@@ -254,7 +274,7 @@ The fitting pipeline orchestrates the entire process of fitting n-dimensional Ga
    - Voxel footprint correction (inflates covariances)
    - Downscale rescaling (restores original resolution coordinates)
    - Physical coordinate conversion (voxel to real space via voxel_size)
-4. Computes quality metrics (PSNR, SSIM, MSE) by rendering splats back to a volume and comparing against the original input. Only computed in voxel space (skipped when `output_space="real"`)
+4. Computes quality metrics (PSNR, SSIM, MSE) by rendering splats back to a volume (on the fit's device; CUDA / Metal kernels when available) and comparing against the original input, scored on the voxel-space copy when the output is in physical coordinates. If the render or scoring fails, the fit still returns: the reason is stored as `stats["quality_error"]` (persisted in the `fitting/` group) and one warning line is printed even when not verbose
 5. Compiles comprehensive statistics and quality metrics
 6. Stores movie frames for visualization
 7. Returns `GSplatData` dataclass containing all results

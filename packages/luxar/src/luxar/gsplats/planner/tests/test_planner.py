@@ -2579,3 +2579,389 @@ def test_fit_planned_labels_parts_by_box_not_by_position(monkeypatch):
         "left": {"part": 0},
         "right": {"part": 1},
     }
+
+
+# ---------------------------------------------------------------------------
+# Box checkpoints: finished boxes survive a kill and are reused on rerun
+# ---------------------------------------------------------------------------
+
+
+def _recording(builder, spawned: list[int], fail: tuple[int, ...] = ()):
+    def wrapped(i: int, out_path: Path) -> list[str]:
+        spawned.append(i)
+        if i in fail:
+            return [sys.executable, "-c", "import sys; sys.exit(9)"]
+        return builder(i, out_path)
+
+    return wrapped
+
+
+class TestParallelBoxResume:
+    def test_rerun_after_failure_refits_only_the_failed_box(self, tmp_path):
+        plan = _toy_plan(n_boxes=3)
+        d = tmp_path / "boxes"
+        first: list[int] = []
+        with pytest.raises(RuntimeError, match="box fits failed"):
+            fit_planned_parallel(
+                plan,
+                jobs=1,
+                tmp_dir=d,
+                worker_cmd_builder=_recording(_fake_box_builder(5), first, (1,)),
+                fingerprint="fp",
+                verbose=False,
+            )
+        assert sorted(first) == [0, 1, 2]
+        assert (d / "box_0.done.json").exists()
+        assert not (d / "box_1.done.json").exists()
+
+        second: list[int] = []
+        merged = fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=d,
+            worker_cmd_builder=_recording(_fake_box_builder(5), second),
+            fingerprint="fp",
+            verbose=False,
+        )
+        assert second == [1]  # boxes 0 and 2 resumed, not respawned
+        assert merged.n_splats == 5 * 3
+        assert not d.exists()
+
+    def test_unmarked_leftover_is_discarded_and_refit(self, tmp_path):
+        """A store without a done-marker (killed mid-save) is never reloaded."""
+        plan = _toy_plan(n_boxes=1)
+        d = tmp_path / "boxes"
+        d.mkdir()
+        (d / "box_0.gsplats.zarr").mkdir()  # torn store, no marker
+        spawned: list[int] = []
+        merged = fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=d,
+            worker_cmd_builder=_recording(_fake_box_builder(5), spawned),
+            fingerprint="fp",
+            verbose=False,
+        )
+        assert spawned == [0]
+        assert merged.n_splats == 5
+
+    def test_other_fingerprint_is_not_reused(self, tmp_path):
+        plan = _toy_plan(n_boxes=2)
+        d = tmp_path / "boxes"
+        fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=d,
+            worker_cmd_builder=_fake_box_builder(5),
+            keep_boxes=True,
+            fingerprint="run-a",
+            verbose=False,
+        )
+        spawned: list[int] = []
+        fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=d,
+            worker_cmd_builder=_recording(_fake_box_builder(5), spawned),
+            fingerprint="run-b",
+            verbose=False,
+        )
+        assert sorted(spawned) == [0, 1]
+
+    def test_without_a_fingerprint_the_dir_is_cleared(self, tmp_path):
+        """Library callers that cannot fingerprint never reuse stale boxes."""
+        plan = _toy_plan(n_boxes=2)
+        d = tmp_path / "boxes"
+        fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=d,
+            worker_cmd_builder=_fake_box_builder(5),
+            keep_boxes=True,
+            verbose=False,
+        )
+        spawned: list[int] = []
+        fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=d,
+            worker_cmd_builder=_recording(_fake_box_builder(5), spawned),
+            verbose=False,
+        )
+        assert sorted(spawned) == [0, 1]
+
+    def test_done_but_unreadable_box_is_refit(self, tmp_path):
+        plan = _toy_plan(n_boxes=2)
+        d = tmp_path / "boxes"
+        fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=d,
+            worker_cmd_builder=_fake_box_builder(5),
+            keep_boxes=True,
+            fingerprint="fp",
+            verbose=False,
+        )
+        import shutil
+
+        shutil.rmtree(d / "box_1.gsplats.zarr")
+        (d / "box_1.gsplats.zarr").mkdir()  # marked done, store now unreadable
+        spawned: list[int] = []
+        merged = fit_planned_parallel(
+            plan,
+            jobs=1,
+            tmp_dir=d,
+            worker_cmd_builder=_recording(_fake_box_builder(5), spawned),
+            fingerprint="fp",
+            verbose=False,
+        )
+        assert spawned == [1]
+        assert merged.n_splats == 10
+
+    def test_interrupt_terminates_running_workers_and_marks_nothing(self, tmp_path):
+        import os
+        import threading
+
+        from luxar.gsplats.planner.box_checkpoint import BoxCheckpoint
+        from luxar.gsplats.planner.fit_planned_parallel import _BoxWorkers
+
+        ck = BoxCheckpoint(tmp_path / "boxes", "fp")
+        ck.directory.mkdir()
+        out = ck.empty_marker(0)
+        workers = _BoxWorkers(ck, dict(os.environ))
+        cmd = [
+            sys.executable,
+            "-c",
+            f"from pathlib import Path; import time; Path(r'{out}').write_text('');"
+            " time.sleep(60)",
+        ]
+        result: dict = {}
+        thread = threading.Thread(target=lambda: result.update(r=workers.run(0, cmd)))
+        t0 = time.monotonic()
+        thread.start()
+        while not out.exists() and time.monotonic() - t0 < 30:
+            time.sleep(0.05)
+        workers.stop()
+        thread.join(timeout=20)
+        assert not thread.is_alive()
+        assert time.monotonic() - t0 < 30  # terminated, not waited out
+        assert result["r"] == (-1, "interrupted")
+        assert not ck.done_marker(0).exists()  # output present, never marked
+        assert workers.run(1, cmd) == (-1, "cancelled before launch")
+
+    def test_remove_tmp_on_success_false_leaves_the_boxes(self, tmp_path):
+        d = tmp_path / "boxes"
+        fit_planned_parallel(
+            _toy_plan(n_boxes=1),
+            jobs=1,
+            tmp_dir=d,
+            worker_cmd_builder=_fake_box_builder(5),
+            remove_tmp_on_success=False,
+            verbose=False,
+        )
+        assert (d / "box_0.done.json").exists()
+
+
+class TestPlanFingerprint:
+    def test_changes_with_plan_fit_config_and_volume(self):
+        from luxar.gsplats.planner.box_checkpoint import plan_fingerprint
+
+        plan = _toy_plan(n_boxes=2)
+        vol = np.zeros(plan.volume_shape, np.float32)
+        base = plan_fingerprint(plan, fit_kwargs={"n_iters": 10}, volume=vol)
+        assert base == plan_fingerprint(plan, fit_kwargs={"n_iters": 10}, volume=vol)
+        assert base != plan_fingerprint(plan, fit_kwargs={"n_iters": 11}, volume=vol)
+        other = vol.copy()
+        other[0, 0, 0] = 1.0
+        assert base != plan_fingerprint(plan, fit_kwargs={"n_iters": 10}, volume=other)
+        plan.boxes[0].budget += 1
+        assert base != plan_fingerprint(plan, fit_kwargs={"n_iters": 10}, volume=vol)
+        # device / verbose change how a box is computed, not what it is
+        assert plan_fingerprint(
+            _toy_plan(n_boxes=2), fit_kwargs={"n_iters": 10, "device": "mps"}
+        ) == plan_fingerprint(_toy_plan(n_boxes=2), fit_kwargs={"n_iters": 10})
+
+    def test_lock_is_exclusive_released_and_force_breakable(
+        self, tmp_path, monkeypatch
+    ):
+        from luxar.gsplats.planner.box_checkpoint import (
+            FORCE_UNLOCK_ENV,
+            BoxCheckpoint,
+            CheckpointBusy,
+        )
+
+        a = BoxCheckpoint(tmp_path / "ck", "fp")
+        b = BoxCheckpoint(tmp_path / "ck", "fp")
+        a.lock()
+        with pytest.raises(CheckpointBusy, match=FORCE_UNLOCK_ENV) as info:
+            b.lock()
+        assert str(a.lock_path) in str(info.value)  # says what to clear
+        a.unlock()
+        with b.acquire():  # released -> free again
+            pass
+        a.lock()
+        monkeypatch.setenv(FORCE_UNLOCK_ENV, "1")
+        b.lock()  # breaks a lock known to be dead
+        b.unlock()
+        a.unlock()
+
+    def test_force_unlock_warns_only_when_it_breaks_a_held_lock(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        from luxar.gsplats.planner.box_checkpoint import (
+            FORCE_UNLOCK_ENV,
+            BoxCheckpoint,
+        )
+
+        monkeypatch.setenv(FORCE_UNLOCK_ENV, "1")
+        a = BoxCheckpoint(tmp_path / "ck", "fp")
+        a.lock()  # free: nothing to break
+        assert "BREAKING" not in capsys.readouterr().out
+        b = BoxCheckpoint(tmp_path / "ck", "fp")
+        b.lock()
+        assert "BREAKING" in capsys.readouterr().out
+        b.unlock()
+        a.unlock()
+
+    def test_filesystem_without_flock_proceeds_unlocked(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        import errno
+        import fcntl
+
+        from luxar.gsplats.planner.box_checkpoint import BoxCheckpoint
+
+        def no_flock(*_a, **_k):
+            raise OSError(errno.ENOLCK, "No locks available")
+
+        monkeypatch.setattr(fcntl, "flock", no_flock)
+        ck = BoxCheckpoint(tmp_path / "ck", "fp")
+        ck.lock()  # must not raise CheckpointBusy
+        assert "does not support flock" in capsys.readouterr().out
+        ck.unlock()
+
+    def test_corrupted_chunks_are_discarded_and_refit(self, tmp_path):
+        """A marked box whose compressed chunks are garbage is refit, not fatal."""
+        from luxar.gsplats.gsplat_data import GSplatData
+        from luxar.gsplats.planner.box_checkpoint import BoxCheckpoint
+
+        ck = BoxCheckpoint(tmp_path / "ck", "fp")
+        rng = np.random.default_rng(0)
+        region = GSplatData(
+            centers=rng.random((200, 3)).astype(np.float32) * 10,
+            amplitudes=rng.random(200).astype(np.float32) + 0.1,
+            cholesky_factors=np.tile(
+                np.array([1, 0, 1, 0, 0, 1], np.float32), (200, 1)
+            ),
+        )
+        ck.save_region(0, region)
+        assert ck.is_done(0)
+        chunks = [
+            p
+            for p in ck.box_path(0).rglob("*")
+            if p.is_file()
+            and p.name
+            not in ("zarr.json", ".zarray", ".zattrs", ".zgroup", ".zmetadata")
+        ]
+        assert chunks
+        for chunk in chunks:
+            chunk.write_bytes(b"\x02\x01garbage-not-a-compressed-chunk" * 4)
+        ok, stored = ck.load_or_discard(0)
+        assert (ok, stored) == (False, None)
+        assert not ck.is_done(0) and not ck.box_path(0).exists()
+
+    def test_force_unlock_race_raises_busy_not_oserror(self, tmp_path, monkeypatch):
+        import errno
+        import fcntl
+
+        from luxar.gsplats.planner.box_checkpoint import (
+            FORCE_UNLOCK_ENV,
+            BoxCheckpoint,
+            CheckpointBusy,
+        )
+
+        monkeypatch.setenv(FORCE_UNLOCK_ENV, "1")
+
+        def always_busy(*_a, **_k):
+            raise BlockingIOError(errno.EWOULDBLOCK, "busy")
+
+        monkeypatch.setattr(fcntl, "flock", always_busy)
+        with pytest.raises(CheckpointBusy, match="re-locked"):
+            BoxCheckpoint(tmp_path / "ck", "fp").lock()
+
+    def test_load_or_discard_lets_memory_errors_through(self, tmp_path, monkeypatch):
+        from luxar.gsplats.planner.box_checkpoint import BoxCheckpoint
+
+        ck = BoxCheckpoint(tmp_path / "ck", "fp")
+
+        def oom(_i):
+            raise MemoryError
+
+        monkeypatch.setattr(ck, "load_region", oom)
+        with pytest.raises(MemoryError):
+            ck.load_or_discard(0)
+
+    def test_fingerprint_covers_version_and_source_identity(
+        self, tmp_path, monkeypatch
+    ):
+        import os
+
+        import luxar
+        from luxar.gsplats.planner import box_checkpoint as bc
+
+        plan = _toy_plan(n_boxes=1)
+        src = tmp_path / "vol.npy"
+        src.write_bytes(b"x" * 10)
+        base = bc.plan_fingerprint(plan, source=src)
+        assert base == bc.plan_fingerprint(plan, source=src)
+        monkeypatch.setattr(luxar, "__version__", "0.0.0-other")
+        assert base != bc.plan_fingerprint(plan, source=src)
+        monkeypatch.undo()
+        os.utime(src, ns=(1, 1))
+        assert base != bc.plan_fingerprint(plan, source=src)
+
+
+def test_fit_planned_resumes_finished_boxes_after_an_interrupt(monkeypatch, tmp_path):
+    """Sequential path: a kill after box 0 leaves it on disk; the rerun skips it."""
+    from luxar.gsplats.gsplat_data import GSplatData
+    from luxar.gsplats.planner.box_checkpoint import BoxCheckpoint
+
+    fit_planned_mod = importlib.import_module("luxar.gsplats.planner.fit_planned")
+    plan = _toy_plan(n_boxes=3, width=8)
+    calls: list[int] = []
+    interrupt_at = {"box": 1}
+
+    def fake_fit_one_box(V, b, pad, cap, **kwargs):
+        x0 = b.box[4]
+        if interrupt_at["box"] is not None and x0 == interrupt_at["box"] * 8:
+            raise KeyboardInterrupt  # what SIGTERM is routed into by the CLI
+        calls.append(x0 // 8)
+        centers = np.stack(
+            [np.full(4, 4.0), np.full(4, 4.0), np.linspace(x0 + 1, x0 + 7, 4)], axis=1
+        ).astype(np.float32)
+        chol = np.zeros((4, 6), np.float32)
+        chol[:, [0, 2, 5]] = 1.0
+        return GSplatData(
+            centers=centers,
+            amplitudes=np.full(4, 0.5, np.float32),
+            cholesky_factors=chol,
+        )
+
+    monkeypatch.setattr(fit_planned_mod, "_fit_one_box", fake_fit_one_box)
+    vol = np.zeros(plan.volume_shape, np.float32)
+    ck = BoxCheckpoint(tmp_path / "out.gsplats.zarr.boxes", "fp-1")
+    with pytest.raises(KeyboardInterrupt):
+        fit_planned_mod.fit_planned(vol, plan, device="cpu", checkpoint=ck)
+    assert calls == [0]
+    assert ck.is_done(0) and not ck.is_done(1)
+
+    interrupt_at["box"] = None
+    calls.clear()
+    merged = fit_planned_mod.fit_planned(vol, plan, device="cpu", checkpoint=ck)
+    assert calls == [1, 2]  # box 0 reloaded from the checkpoint, not refit
+    assert merged.n_splats == 12
+    np.testing.assert_allclose(
+        np.sort(merged.centers[:, 2]),
+        np.sort(np.concatenate([np.linspace(x + 1, x + 7, 4) for x in (0, 8, 16)])),
+        atol=1e-3,
+    )

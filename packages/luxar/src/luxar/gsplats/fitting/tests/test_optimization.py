@@ -193,13 +193,23 @@ def test_best_state_relocation_mask_tracks_returned_sorted_splats(
     loss_fn = create_loss_function(config, data, components.model)
     results = run_optimization_loop(components, loss_fn, config, data)
 
+    # The post-final-step parameters are a candidate too (they are scored once
+    # after the loop) and win here, so the returned state carries BOTH
+    # relocations; the mask must follow those splats through every sort.
     assert results.best_iteration == 2
     assert results.relocated_mask is not None
-    assert results.relocated_mask.sum() == 1
+    assert (
+        results.relocated_mask.sum()
+        == results.relocation_statistics["unique_splats"]
+        == 2
+    )
     Ls = results.Ls.detach().cpu().numpy()
     sigma = np.sqrt(np.sum(Ls**2, axis=2))
     near_reseed = np.all(np.abs(sigma - 0.5) <= 0.01, axis=1)
-    assert np.count_nonzero(near_reseed & results.relocated_mask) == 1
+    # The just-reseeded splat is flagged, and no unrelocated splat sits at the
+    # reseed sigma (a misaligned mask would flag the wrong one).
+    assert np.count_nonzero(near_reseed & results.relocated_mask) >= 1
+    assert not np.any(near_reseed & ~results.relocated_mask)
 
 
 def test_convergence_early_stopping(simple_2d_setup) -> None:
@@ -627,3 +637,269 @@ def test_different_loss_types_in_optimization(simple_2d_setup) -> None:
         # Should complete successfully for all loss types
         assert results.actual_iters == 10
         assert results.best_loss >= 0
+
+
+# ---------------------------------------------------------------------------
+# Sync-free best-state tracking and plateau scheduling
+# ---------------------------------------------------------------------------
+
+
+class TestDeviceBestState:
+    """``_DeviceBestState`` must pick exactly what ``if loss < best`` picked."""
+
+    def test_matches_host_comparison_semantics(self) -> None:
+        from luxar.gsplats.fitting.optimization import _DeviceBestState
+
+        losses = [5.0, 4.0, 4.0, 6.0, 3.5, float("nan"), 3.5, 2.0, 2.5]
+        tracker = _DeviceBestState(torch.device("cpu"))
+        metrics = torch.tensor([9.0, 9.0])
+        best, best_it = float("inf"), 0
+        for it, value in enumerate(losses, start=1):
+            params = torch.full((3, 2), float(it))
+            tracker.update(
+                it,
+                torch.tensor(value),
+                {
+                    "centers": params,
+                    "Ls": params,
+                    "amps": params[:, 0],
+                    "relocated": None,
+                },
+                metrics * it,
+            )
+            if value < best:  # the old host-side rule
+                best, best_it = value, it
+        state = tracker.as_best_state()
+        assert state is not None
+        assert state["iteration"] == best_it == 8
+        assert state["loss"] == best == 2.0
+        assert torch.equal(state["centers"], torch.full((3, 2), 8.0))
+        assert state["max_abs_error"] == 72.0  # last-known metrics AT iteration 8
+        assert state["relocated"] is None
+
+    def test_never_improving_yields_no_state(self) -> None:
+        from luxar.gsplats.fitting.optimization import _DeviceBestState
+
+        tracker = _DeviceBestState(torch.device("cpu"))
+        p = torch.zeros(2, 2)
+        for it in (1, 2):
+            tracker.update(
+                it,
+                torch.tensor(float("nan")),
+                {"centers": p, "Ls": p, "amps": p[:, 0], "relocated": None},
+                torch.zeros(2),
+            )
+        assert tracker.as_best_state() is None
+
+    def test_pool_resize_falls_back_to_host_decision(self) -> None:
+        from luxar.gsplats.fitting.optimization import _DeviceBestState
+
+        tracker = _DeviceBestState(torch.device("cpu"))
+        small, big = torch.zeros(2, 2), torch.ones(3, 2)
+        tracker.update(
+            1,
+            torch.tensor(1.0),
+            {"centers": small, "Ls": small, "amps": small[:, 0]},
+            torch.zeros(2),
+        )
+        tracker.update(
+            2,
+            torch.tensor(0.5),
+            {"centers": big, "Ls": big, "amps": big[:, 0]},
+            torch.zeros(2),
+        )
+        state = tracker.as_best_state()
+        assert state is not None and state["centers"].shape == (3, 2)
+
+
+class TestPlateauFeeder:
+    """Buffered replay makes the same plateau decisions as per-iteration steps."""
+
+    @staticmethod
+    def _scheduler(patience: int):
+        param = torch.nn.Parameter(torch.zeros(1))
+        opt = torch.optim.SGD([param], lr=1.0)
+        return opt, torch.optim.lr_scheduler.ReduceLROnPlateau(
+            opt, mode="min", patience=patience, factor=0.5
+        )
+
+    def test_replay_reaches_the_same_lr_sequence(self) -> None:
+        from luxar.gsplats.fitting.optimization import _PlateauFeeder
+
+        gen = torch.Generator().manual_seed(0)
+        losses = (1.0 + 0.3 * torch.rand(400, generator=gen)).tolist()
+        ref_opt, ref = self._scheduler(15)
+        reference = []
+        for value in losses:
+            ref.step(value)
+            reference.append(ref_opt.param_groups[0]["lr"])
+
+        opt, sched = self._scheduler(15)
+        feeder = _PlateauFeeder(sched, eval_interval=25)
+        assert feeder.interval == 5
+        seen = []
+        for i, value in enumerate(losses, start=1):
+            feeder.push(torch.tensor(value), force_flush=(i % 25 == 0))
+            if not feeder.pending:  # just flushed
+                seen.append((i, opt.param_groups[0]["lr"]))
+        # After every flush the LR equals the per-iteration reference at that
+        # iteration: the decisions are identical, only applied at the flush.
+        for i, lr in seen:
+            assert lr == reference[i - 1]
+        assert ref_opt.param_groups[0]["lr"] < 1.0  # reductions were exercised
+
+    def test_interval_is_bounded_by_eval_interval_and_patience(self) -> None:
+        from luxar.gsplats.fitting.optimization import _PlateauFeeder
+
+        assert _PlateauFeeder(self._scheduler(15)[1], 25).interval == 5
+        assert _PlateauFeeder(self._scheduler(15)[1], 1).interval == 1
+        assert _PlateauFeeder(self._scheduler(2)[1], 25).interval == 1
+        assert _PlateauFeeder(self._scheduler(300)[1], 25).interval == 25
+
+
+def test_loop_has_no_per_iteration_best_loss_sync(
+    simple_2d_setup, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Best loss is read back on eval iterations only, not every iteration."""
+    from luxar.gsplats.fitting import optimization
+
+    config, preprocessed_data = simple_2d_setup
+    config.n_iters = 200  # eval interval 25
+    components = initialize_optimization(config, preprocessed_data)
+    loss_fn = create_loss_function(config, preprocessed_data, components.model)
+
+    calls = {"sync": 0}
+    real_sync = optimization._DeviceBestState.sync
+
+    def counting_sync(self):
+        calls["sync"] += 1
+        return real_sync(self)
+
+    monkeypatch.setattr(optimization._DeviceBestState, "sync", counting_sync)
+    results = run_optimization_loop(components, loss_fn, config, preprocessed_data)
+    # 5 warm-up evals + every 25th iteration + the final read-back (x2).
+    assert calls["sync"] <= 5 + results.actual_iters // 25 + 3
+    assert 0 < results.best_iteration <= results.actual_iters
+
+
+def _scalar_setup(n_iters: int, lr: float, start: float, threshold: float = 1e-12):
+    config = FitConfig(
+        V=np.zeros((1,), dtype=np.float32),
+        seeds=None,
+        norm_percentile=0.0,
+        init_sigma_vox=1.0,
+        sigma_min_diag=[0.1],
+        sigma_max_diag=None,
+        truncate=3.0,
+        n_iters=n_iters,
+        lr=lr,
+        max_abs_error=threshold,
+        rel_l2_target=None,
+        gradient_clip=None,
+        loss_type="mse",
+        asymmetric_penalty=None,
+        l1_amp=None,
+        l1_diag=None,
+        scheduler_type="none",
+        patience=10,
+        lr_reduction_factor=0.5,
+        early_stop_patience=None,
+        enable_dynamic_ops=False,
+        dynamic_config=DynamicOpsConfig(),
+        dynamic_ops_verbose=False,
+        napari_movie=False,
+        movie_every=1,
+        movie_max_frames=None,
+        device=torch.device("cpu"),
+        verbose=False,
+    )
+    target = torch.zeros(1, dtype=torch.float32)
+    preprocessed = PreprocessedData(
+        d=1,
+        N=1,
+        seed_centers=np.array([[0.0]], dtype=np.float32),
+        V_normalized=np.zeros((1,), dtype=np.float32),
+        V_tensor=target,
+        image_min=0.0,
+        image_max=0.0,
+        intensity_range=1.0,
+        max_abs_error=threshold,
+    )
+    model = _ScalarSplatModel(value=start)
+    optimizer = torch.optim.SGD(model.parameters(), lr=lr)
+    components = ModelComponents(model=model, optimizer=optimizer, scheduler=None)
+
+    def loss_fn(pred: torch.Tensor) -> torch.Tensor:
+        return torch.sum((pred - target) ** 2)
+
+    return components, loss_fn, config, preprocessed
+
+
+def test_best_state_is_the_iterate_its_loss_was_computed_from() -> None:
+    """A warm start whose steps only make things worse must return the start.
+
+    SGD with lr=1.5 on p**2 overshoots and diverges from p=0.1: the losses are
+    0.01, 0.04, 0.16, ... so iteration 1 ranks best -- and the parameters that
+    produced that loss are the STARTING ones. Snapshotting after
+    ``optimizer.step()`` returned the post-first-step p=-0.2 (loss 0.04)
+    instead, which is how warm-started refits came back worse than their seed.
+    """
+    components, loss_fn, config, preprocessed = _scalar_setup(
+        n_iters=6, lr=1.5, start=0.1
+    )
+    results = run_optimization_loop(components, loss_fn, config, preprocessed)
+    assert results.best_iteration == 1
+    assert float(results.centers.reshape(-1)[0]) == pytest.approx(0.1)
+    # The restored state's own score equals the loss it was ranked by.
+    assert results.best_loss == pytest.approx(0.01)
+
+
+def test_convergence_break_returns_the_iterate_that_converged() -> None:
+    """``converged=True`` must mean the RETURNED splats meet the threshold.
+
+    The convergence check scores the post-step parameters; restoring the
+    pre-step best snapshot instead returned p=0.03125 > 0.03 while reporting
+    convergence.
+    """
+    components, loss_fn, config, preprocessed = _scalar_setup(
+        n_iters=50, lr=0.25, start=1.0, threshold=0.03
+    )
+    results = run_optimization_loop(components, loss_fn, config, preprocessed)
+    assert results.converged_early
+    assert results.best_max_abs_error < 0.03
+    assert abs(float(results.centers.reshape(-1)[0])) < 0.03
+
+
+def test_last_step_is_a_candidate_at_the_iteration_limit() -> None:
+    """The parameters after the final step are scored, not silently dropped."""
+    components, loss_fn, config, preprocessed = _scalar_setup(
+        n_iters=3, lr=0.25, start=1.0
+    )
+    results = run_optimization_loop(components, loss_fn, config, preprocessed)
+    # p: 1 -> 0.5 -> 0.25 -> 0.125; only the post-step-3 iterate scores 0.0156.
+    assert float(results.centers.reshape(-1)[0]) == pytest.approx(0.125)
+    assert results.best_loss == pytest.approx(0.125**2)
+
+
+@pytest.mark.slow
+def test_warm_start_from_a_good_fit_does_not_get_worse() -> None:
+    """Refitting from an existing fit (seeds=GSplatData) must not lose quality."""
+    from luxar.gsplats.fit_gsplats import fit_gaussian_splats
+
+    rng = np.random.default_rng(0)
+    zz, yy, xx = np.mgrid[0:24, 0:24, 0:24]
+    vol = np.zeros((24, 24, 24), np.float32)
+    for _ in range(6):
+        c = rng.uniform(5, 19, 3)
+        vol += np.exp(-((zz - c[0]) ** 2 + (yy - c[1]) ** 2 + (xx - c[2]) ** 2) / 6)
+    kwargs = dict(device="cpu", verbose=False, cull_retention=0.0, use_cuda=False)
+    first = fit_gaussian_splats(vol, seeds=60, n_iters=300, **kwargs)
+    # The seed's own score as the refit sees it (n_iters=1 restores the start;
+    # the GSplatData -> seed round trip itself is not what is under test).
+    start = fit_gaussian_splats(vol, seeds=first, n_iters=1, lr=0.05, **kwargs)
+    # lr=0.05 overshoots from a converged fit, so every step is worse than the
+    # start: the best state must BE the start, not the iterate after step 1
+    # (which scored 24 dB here before the fix, against ~60 dB for the seed).
+    refit = fit_gaussian_splats(vol, seeds=first, n_iters=60, lr=0.05, **kwargs)
+    assert refit.stats["psnr_db"] >= start.stats["psnr_db"] - 0.01
+    assert refit.stats["psnr_db"] > first.stats["psnr_db"] - 1.0

@@ -236,6 +236,9 @@ _FITTING_INFO_KEYS = (
     "foreground_psnr_db",
     "foreground_threshold",
     "foreground_fraction",
+    # Why the three scores above are absent, when the post-fit render failed
+    # (fitting/results.py) -- so a store without PSNR says why.
+    "quality_error",
     "configured_iterations",
     "dynamic_ops_enabled",
     "dynamic_ops_step_every",

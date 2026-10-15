@@ -7,8 +7,14 @@ Speed optimisations (empirically validated)
    and best-state metrics) runs every 25 iterations instead of every iteration.
    Training loss is used for scheduler and best-loss tracking on non-eval iters.
 
-2. **GPU sync elimination** (−1.9%): Best-loss is tracked as a GPU tensor
-   (avoids ``loss.item()`` which forces CPU↔GPU sync every iteration).
+2. **GPU sync elimination**: no per-iteration host sync. The best loss AND the
+   best-state snapshot are tracked on the device with ``torch.where``
+   (:class:`_DeviceBestState`) and read back only on eval iterations; the
+   ``ReduceLROnPlateau`` scheduler is fed from a device-side loss buffer
+   replayed every few iterations (:class:`_PlateauFeeder`). The old loop's
+   ``if loss < best`` and ``scheduler.step(loss)`` each forced a blocking
+   GPU→host sync on EVERY iteration, which drains the queue and serializes
+   CPU dispatch with GPU execution.
 """
 
 from __future__ import annotations
@@ -72,6 +78,7 @@ def _completed_relocation_statistics(
 def _relocated_snapshot(
     tracker: Optional[RecentlyRelocatedTracker],
 ) -> Optional[torch.Tensor]:
+    """Copy of the ever-relocated mask in the live splat order (None: no tracker)."""
     if tracker is None:
         return None
     return (tracker.last_relocation_step >= 0).detach().clone()
@@ -81,6 +88,7 @@ def _returned_relocated_mask(
     best_state: Optional[dict[str, Any]],
     tracker: Optional[RecentlyRelocatedTracker],
 ) -> Optional[np.ndarray]:
+    """Relocated mask aligned with the returned splats (snapshot first, else live)."""
     if best_state is not None and best_state.get("relocated") is not None:
         return np.asarray(best_state["relocated"].cpu().numpy())
     if tracker is not None:
@@ -110,6 +118,190 @@ def _compute_eval_metrics(
     )
     del diff
     return max_abs_err, rel_l2
+
+
+class _DeviceBestState:
+    """Best-loss state tracked on the device, without a host sync per iteration.
+
+    Each :meth:`update` folds the current loss and parameters into the running
+    best with ``torch.where`` on a 0-d device condition, so selecting the best
+    iterate never blocks on the GPU. The scalar bookkeeping (best loss, best
+    iteration, whether any iterate improved) is read back by :meth:`sync`, which
+    the loop calls only on eval iterations. Semantics match the old
+    ``if loss < best: snapshot`` exactly: a strict improvement replaces the
+    WHOLE snapshot (parameters, relocation mask, the last-known eval metrics
+    and the iteration), anything else keeps it.
+    """
+
+    def __init__(self, device: torch.device) -> None:
+        """Start with no best state: loss +inf, iteration 0, no snapshot."""
+        self.device = device
+        self.loss = torch.tensor(float("inf"), device=device)
+        self.iteration = torch.tensor(0, device=device, dtype=torch.long)
+        self.metrics = torch.full((2,), float("inf"), device=device)
+        self.tensors: Optional[Dict[str, Optional[torch.Tensor]]] = None
+
+    def update(
+        self,
+        it: int,
+        loss: torch.Tensor,
+        current: Dict[str, Optional[torch.Tensor]],
+        current_metrics: torch.Tensor,
+    ) -> None:
+        """Fold iteration ``it`` into the running best without a host sync.
+
+        ``loss`` must have been computed from exactly the parameters in
+        ``current`` (the loop calls this before ``optimizer.step()``); a
+        strict improvement replaces the whole snapshot, anything else keeps it.
+        """
+        improved = loss < self.loss
+        self.loss = torch.where(improved, loss, self.loss)
+        self.iteration = torch.where(
+            improved, torch.full_like(self.iteration, it), self.iteration
+        )
+        self.metrics = torch.where(improved, current_metrics, self.metrics)
+        if self.tensors is None or not self._same_layout(current):
+            # First iterate (or a pool resize): there is no snapshot of this
+            # layout to blend into, so decide on the host -- rare by design.
+            if self.tensors is None or bool(improved):
+                self.tensors = {
+                    k: (v.detach().clone() if v is not None else None)
+                    for k, v in current.items()
+                }
+            return
+        for key, value in current.items():
+            best = self.tensors[key]
+            if value is not None and best is not None:
+                self.tensors[key] = torch.where(improved, value.detach(), best)
+
+    def force(
+        self,
+        it: int,
+        loss: torch.Tensor,
+        current: Dict[str, Optional[torch.Tensor]],
+        current_metrics: torch.Tensor,
+    ) -> None:
+        """Make ``current`` the snapshot unconditionally (a convergence break).
+
+        The convergence check scored the live, post-step parameters; those
+        are the ones that met the threshold, so they -- not an earlier
+        lower-training-loss snapshot -- are what the fit must return.
+        """
+        self.loss = loss.detach().clone()
+        self.iteration = torch.full_like(self.iteration, it)
+        self.metrics = current_metrics.clone()
+        self.tensors = {
+            k: (v.detach().clone() if v is not None else None)
+            for k, v in current.items()
+        }
+
+    def _same_layout(self, current: Dict[str, Optional[torch.Tensor]]) -> bool:
+        """True when ``current`` has the snapshot's keys, presence and shapes."""
+        assert self.tensors is not None
+        for key, value in current.items():
+            best = self.tensors.get(key)
+            if (value is None) != (best is None):
+                return False
+            if value is not None and best is not None and value.shape != best.shape:
+                return False
+        return True
+
+    def sync(self) -> tuple[float, int]:
+        """``(best_loss, best_iteration)`` on the host (one transfer)."""
+        # The first copy waits for the queue; the second then has nothing to
+        # wait for (MPS has no float64, so the two dtypes are not stacked).
+        return float(self.loss.cpu()), int(self.iteration.cpu())
+
+    def as_best_state(self) -> Optional[dict[str, Any]]:
+        """The snapshot in the old ``best_state`` dict shape (None: never improved)."""
+        best_loss, best_iteration = self.sync()
+        if best_iteration == 0 or self.tensors is None:
+            return None
+        mae, rel_l2 = self.metrics.cpu().tolist()
+        return {
+            "centers": self.tensors["centers"],
+            "Ls": self.tensors["Ls"],
+            "amps": self.tensors["amps"],
+            "iteration": best_iteration,
+            "relocated": self.tensors.get("relocated"),
+            "max_abs_error": mae,
+            "rel_l2": rel_l2,
+            "loss": best_loss,
+        }
+
+
+class _PlateauFeeder:
+    """Feeds ``ReduceLROnPlateau`` every iteration's loss without a sync each.
+
+    ``ReduceLROnPlateau.step`` converts its metric to a Python float, so
+    stepping it per iteration forced a GPU→host sync per iteration. The losses
+    are instead buffered on the device and replayed into the scheduler, in
+    order and one ``step`` per iteration, every :attr:`interval` iterations
+    (and on every eval iteration, which syncs anyway). The scheduler therefore
+    sees exactly the same per-iteration loss sequence, with the same
+    patience/cooldown accounting in iterations; the only change is that a
+    learning-rate reduction takes effect when the buffer is replayed, at most
+    ``interval - 1`` iterations after the iteration that triggered it.
+    ``interval`` is a third of the patience (5 for the default 15), capped by
+    the eval interval, so the delay stays well inside the patience window.
+    """
+
+    def __init__(self, scheduler: Any, eval_interval: int) -> None:
+        """Wrap ``scheduler``; replay every ``max(1, min(eval_interval, patience // 3))``."""
+        self.scheduler = scheduler
+        patience = int(getattr(scheduler, "patience", 3))
+        self.interval = max(1, min(eval_interval, patience // 3))
+        self.pending: list[torch.Tensor] = []
+
+    def push(self, loss: torch.Tensor, force_flush: bool) -> None:
+        """Buffer one iteration's loss; replay when the buffer is full or forced."""
+        self.pending.append(loss)
+        if force_flush or len(self.pending) >= self.interval:
+            self.flush()
+
+    def flush(self) -> None:
+        """Replay the buffered losses into the scheduler, in order (one host sync)."""
+        if not self.pending:
+            return
+        values = torch.stack(self.pending).cpu().tolist()
+        self.pending = []
+        for value in values:
+            self.scheduler.step(value)
+
+
+def _rank_final_iterate(
+    tracker: _DeviceBestState,
+    model: Any,
+    loss_fn: Callable[[torch.Tensor], torch.Tensor],
+    relocation_tracker: Optional[RecentlyRelocatedTracker],
+    actual_iters: int,
+    *,
+    converged_metrics: Optional[torch.Tensor],
+    current_metrics: torch.Tensor,
+) -> None:
+    """Score the parameters left after the last step (never ranked in-loop).
+
+    Every in-loop loss is computed BEFORE its step, so the final step's result
+    would otherwise never be a candidate. On a convergence break
+    (``converged_metrics`` given) those parameters are exactly what met the
+    threshold, so they are returned outright; otherwise they compete with the
+    best snapshot.
+    """
+    with torch.no_grad():
+        final_pred = model()
+        final_loss = loss_fn(final_pred).detach()
+        del final_pred
+        centers, Ls, amps = model.current_params()
+        candidate = {
+            "centers": centers,
+            "Ls": Ls,
+            "amps": amps,
+            "relocated": _relocated_snapshot(relocation_tracker),
+        }
+        if converged_metrics is not None:
+            tracker.force(actual_iters, final_loss, candidate, converged_metrics)
+        else:
+            tracker.update(actual_iters, final_loss, candidate, current_metrics)
 
 
 def run_optimization_loop(
@@ -172,7 +364,6 @@ def run_optimization_loop(
     # Initialize best state tracking for quality guarantee
     best_max_abs_error = float("inf")
     best_rel_l2 = float("inf")
-    best_state = None
     best_iteration = 0
     iterations_since_improvement = 0  # Track patience for early stopping
     last_max_abs_error = float("inf")
@@ -216,12 +407,16 @@ def run_optimization_loop(
     current_max_abs_error = float("inf")
     current_rel_l2 = float("inf")
     pred_eval = None  # lazily computed
-    # Track best loss as a GPU tensor to avoid CPU-GPU sync on every iteration.
-    # loss.item() forces a CUDA synchronization that stalls the GPU pipeline.
-    _best_loss_t = torch.tensor(float("inf"), device=V_t.device)
+    # Best loss + best-state snapshot live on the device; read back only on
+    # eval iterations (see _DeviceBestState). No per-iteration host sync.
+    tracker = _DeviceBestState(V_t.device)
+    current_metrics_t = tracker.metrics.clone()
     # Determine scheduler type once (avoid repeated string checks)
     _is_plateau_scheduler = (
         scheduler is not None and "Plateau" in type(scheduler).__name__
+    )
+    plateau = (
+        _PlateauFeeder(scheduler, _EVAL_INTERVAL) if _is_plateau_scheduler else None
     )
     for it in range(1, config.n_iters + 1):
         actual_iters = it
@@ -236,41 +431,35 @@ def run_optimization_loop(
         if config.gradient_clip is not None:
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip)
 
-        optimizer.step()
-
-        # Learning rate scheduling (pass loss tensor, no .item() needed)
-        if _is_plateau_scheduler:
-            scheduler.step(loss.detach())
-        elif scheduler is not None:
-            scheduler.step()
-
-        # --- Best state tracking using tensor comparison (no CPU sync) ---
+        # --- Best state tracking on the device (no CPU sync) ---
+        # BEFORE optimizer.step(): `loss` was computed from the CURRENT
+        # parameters, so they are what the loss ranks. Snapshotting after the
+        # step paired every loss with the NEXT iterate; on a warm start the
+        # first (best) loss then restored the post-first-step parameters
+        # (A549 refit: foreground PSNR 22.6 -> 14.5 dB).
         loss_detached = loss.detach()
-        if loss_detached < _best_loss_t:
-            _best_loss_t = loss_detached.clone()
-            best_iteration = it
-            iterations_since_improvement = 0
-
-            # Save current best state (GPU-only operations, no sync)
+        with torch.no_grad():
             centers, Ls, amps = model.current_params()
-            best_state = {
-                "centers": centers.detach().clone(),
-                "Ls": Ls.detach().clone(),
-                "amps": amps.detach().clone(),
-                "iteration": it,
-                # Snapshot the ever-relocated mask IN THIS SNAPSHOT'S ORDER (#2734).
-                # A later Morton sort reorders the live tracker, so the tracker's
-                # final mask would both misalign with and mislabel these returned
-                # (best-loss) splats — a relocation after this iteration does not
-                # apply to the state captured here. Captured in lockstep with the
-                # params above, it stays correct whatever sorts follow.
-                "relocated": _relocated_snapshot(relocation_tracker),
-                "max_abs_error": current_max_abs_error,  # last known
-                "rel_l2": current_rel_l2,  # last known
-                "loss": 0.0,  # placeholder, updated on eval
-            }
-        else:
-            iterations_since_improvement += 1
+            tracker.update(
+                it,
+                loss_detached,
+                {
+                    "centers": centers,
+                    "Ls": Ls,
+                    "amps": amps,
+                    # Snapshot the ever-relocated mask IN THIS SNAPSHOT'S ORDER
+                    # (#2734). A later Morton sort reorders the live tracker, so
+                    # the tracker's final mask would both misalign with and
+                    # mislabel these returned (best-loss) splats. Captured in
+                    # lockstep with the params, it stays correct whatever sorts
+                    # follow.
+                    "relocated": _relocated_snapshot(relocation_tracker),
+                },
+                current_metrics_t,
+            )
+        del centers, Ls, amps
+
+        optimizer.step()
 
         # --- Periodic full evaluation (expensive — involves second forward pass) ---
         need_dynamic = (
@@ -282,11 +471,17 @@ def run_optimization_loop(
         )
         need_eval = it % _EVAL_INTERVAL == 0 or it <= 5 or need_dynamic
 
+        # Learning rate scheduling (buffered for the plateau scheduler; see
+        # _PlateauFeeder for the only semantic difference: reduction timing)
+        if plateau is not None:
+            plateau.push(loss_detached, force_flush=need_eval)
+        elif scheduler is not None:
+            scheduler.step()
+
         if need_eval:
-            # Sync best_loss to CPU (only on eval iterations, not every iter)
-            best_loss = float(_best_loss_t.item())
-            if best_state is not None:
-                best_state["loss"] = best_loss
+            # Sync best loss/iteration to CPU (only on eval iterations)
+            best_loss, best_iteration = tracker.sync()
+            iterations_since_improvement = it - best_iteration
 
             with torch.no_grad():
                 pred_eval = model()
@@ -294,14 +489,13 @@ def run_optimization_loop(
                     pred_eval, V_t
                 )
                 last_max_abs_error = current_max_abs_error
+                current_metrics_t = torch.tensor(
+                    [current_max_abs_error, current_rel_l2], device=V_t.device
+                )
 
                 # Update best_state metrics if this is at or near the best iteration
-                if (
-                    best_state is not None
-                    and it - best_state["iteration"] < _EVAL_INTERVAL
-                ):
-                    best_state["max_abs_error"] = current_max_abs_error
-                    best_state["rel_l2"] = current_rel_l2
+                if best_iteration > 0 and it - best_iteration < _EVAL_INTERVAL:
+                    tracker.metrics = current_metrics_t.clone()
                     best_max_abs_error = current_max_abs_error
                     best_rel_l2 = current_rel_l2
 
@@ -413,7 +607,23 @@ def run_optimization_loop(
                 f"relL2={current_rel_l2:.4f}  maxAbsErr={current_max_abs_error:.5g}  N={N}"
             )
 
+    _rank_final_iterate(
+        tracker,
+        model,
+        loss_fn,
+        relocation_tracker,
+        actual_iters,
+        converged_metrics=(
+            torch.tensor([current_max_abs_error, current_rel_l2], device=V_t.device)
+            if converged_early
+            else None
+        ),
+        current_metrics=current_metrics_t,
+    )
+
     end_time = time.time()
+    best_state = tracker.as_best_state()
+    best_loss, best_iteration = tracker.sync()
 
     # Log termination reason
     if config.verbose:

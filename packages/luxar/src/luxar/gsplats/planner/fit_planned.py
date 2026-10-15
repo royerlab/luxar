@@ -17,6 +17,7 @@ padded crop, and the keep-core mask — they can never drift.
 
 from __future__ import annotations
 
+import functools
 import gc
 import time
 from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Tuple
@@ -35,6 +36,8 @@ from .spec import FitPlan, PlanBox
 
 if TYPE_CHECKING:
     from luxar.gsplats.gsplat_data import GSplatData
+
+    from .box_checkpoint import BoxCheckpoint
 
 ProgressCallback = Callable[[int, int, str], None]
 
@@ -451,6 +454,31 @@ def _fit_one_box(
     return out
 
 
+def _fit_or_resume_box(
+    checkpoint: "Optional[BoxCheckpoint]",
+    i: int,
+    resumed: bool,
+    fit: "Callable[[], GSplatData]",
+) -> "Optional[GSplatData]":
+    """Reload a checkpointed box, or fit it (and checkpoint it when enabled).
+
+    A resumed box is the stored, round-tripped copy (exactly what the parallel
+    path reloads); a freshly fitted one stays the in-memory result, so an
+    uninterrupted run merges exactly what it did before checkpoints existed.
+    A box marked done whose store no longer reads is discarded and refitted.
+    """
+    if resumed:
+        assert checkpoint is not None
+        ok, stored = checkpoint.load_or_discard(i)
+        if ok:
+            return stored
+        # Marked done but unreadable: discarded above, refit below.
+    region = fit()
+    if checkpoint is not None:
+        checkpoint.save_region(i, region)
+    return region
+
+
 def fit_planned(
     volume: np.ndarray,
     plan: FitPlan,
@@ -461,6 +489,7 @@ def fit_planned(
     partition: bool = False,
     recipe: Optional[str] = None,
     recipe_params: "Optional[Any]" = None,
+    checkpoint: "Optional[BoxCheckpoint]" = None,
     **fit_kwargs: Any,
 ) -> "Any":
     """Fit every box in ``plan`` and return the merged result.
@@ -490,6 +519,12 @@ def fit_planned(
     flat :class:`GSplatData` leaf (``--flat``). Both shapes are scored against
     the whole reference volume; tree-shaped results carry the merged block in
     their root ``meta["fit_stats"]`` for the CLI writer to persist.
+
+    With a ``checkpoint`` (:class:`~luxar.gsplats.planner.box_checkpoint.BoxCheckpoint`;
+    the CLI passes one at ``<output>.boxes``), each finished box is written to
+    disk as soon as it is fitted, and a box already finished under the same
+    fingerprint by an earlier (killed) run is reloaded instead of refitted.
+    Removing the directory after the final save is the caller's job.
 
     Boxes are fit **sequentially**. For concurrent fitting on one GPU use
     :func:`luxar.gsplats.planner.fit_planned_parallel.fit_planned_parallel`
@@ -527,14 +562,27 @@ def fit_planned(
         budget = _scaled_budget(b, pad, V.shape, cap)
         if budget <= 0:
             continue
+        resumed = checkpoint is not None and checkpoint.is_done(i)
         if progress_callback is not None:
-            progress_callback(i, n, f"box {i + 1}/{n} budget={budget}")
-        region = _fit_one_box(
-            V, b, pad, cap, content_physical=content_physical, **fit_kwargs
+            state = "resumed from checkpoint" if resumed else f"budget={budget}"
+            progress_callback(i, n, f"box {i + 1}/{n} {state}")
+        region = _fit_or_resume_box(
+            checkpoint,
+            i,
+            resumed,
+            functools.partial(
+                _fit_one_box,
+                V,
+                b,
+                pad,
+                cap,
+                content_physical=content_physical,
+                **fit_kwargs,
+            ),
         )
         n_fit += 1
-        n_kept = int(region.n_splats)
-        if n_kept > 0:
+        n_kept = 0 if region is None else int(region.n_splats)
+        if region is not None and n_kept > 0:
             # The fitted dataset itself, so its truncation_radius and per-box
             # stats reach the merge instead of being rebuilt away (#1637).
             regions.append(region)
