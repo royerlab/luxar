@@ -47,7 +47,7 @@ count and iterations fixed):
 | volume | splats | one thread | 4–8 threads |
 | --- | --- | --- | --- |
 | 64×128×128 (1 Mvoxel) | 2,000 | ≈ 0.35 s / iteration | |
-| 128×256×256 (8.4 Mvoxel) | 4,000 | ≈ 3.5–4.5 s / iteration | ≈ 2.6 s / iteration |
+| 128×256×256 (8.4 Mvoxel) | 4,000 | ≈ 3.5–4.6 s / iteration | ≈ 2.6 s / iteration |
 
 So a 2,000-iteration `--preset draft` on the larger volume is roughly an hour or
 more, and the runtime Metal kernels on the same Mac are 50–100x faster. A
