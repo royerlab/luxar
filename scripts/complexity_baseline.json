@@ -45,7 +45,7 @@
       13
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/planner.py::run_content_fit": [
-      30
+      29
     ],
     "packages/luxar/src/luxar/cli/gsplat_ops/recipe_shared.py::detect_store_encoding": [
       13
@@ -359,14 +359,11 @@
     "packages/luxar/src/luxar/gsplats/fitting/dynamic_ops/operations.py::apply_dynamic_operations": [
       16
     ],
-    "packages/luxar/src/luxar/gsplats/fitting/dynamic_ops/peak_finding.py::_find_residual_peaks_tiled": [
-      17
-    ],
     "packages/luxar/src/luxar/gsplats/fitting/initialization.py::initialize_optimization": [
       26
     ],
     "packages/luxar/src/luxar/gsplats/fitting/optimization.py::run_optimization_loop": [
-      39
+      37
     ],
     "packages/luxar/src/luxar/gsplats/fitting/preprocessing.py::_generate_seeds": [
       12
@@ -375,7 +372,7 @@
       23
     ],
     "packages/luxar/src/luxar/gsplats/fitting/results.py::finalize_results": [
-      19
+      18
     ],
     "packages/luxar/src/luxar/gsplats/gpu_profile.py::get_gpu_summary": [
       11
@@ -450,7 +447,7 @@
       19
     ],
     "packages/luxar/src/luxar/gsplats/planner/fit_planned_parallel.py::fit_planned_parallel": [
-      22
+      17
     ],
     "packages/luxar/src/luxar/gsplats/seeds/generate.py::_auto_combine": [
       12

@@ -471,6 +471,10 @@ class OptimizationResults:
     start_time: float
     end_time: float
 
+    # Distinguishes the post-final-step candidate from the pre-step snapshot
+    # carrying the same best_iteration.
+    best_from_final_step: bool = False
+
     # Dynamic-ops diagnostics from the full optimization history.
     relocation_statistics: Dict[str, int] = field(
         default_factory=_EMPTY_RELOCATION_STATISTICS.copy
