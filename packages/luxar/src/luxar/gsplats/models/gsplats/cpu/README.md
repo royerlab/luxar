@@ -84,9 +84,16 @@ plus the first-call JIT time; a quiet fit's one-line summary names
 **Torch threads still matter.** With the render off torch, what remains on
 torch per iteration -- the loss over the volume, `_build_L`, the Adam step -- is
 now a visible share of a fast iteration, and it runs on torch's intra-op
-threads. The hatch env pins those to 1 (`OMP_NUM_THREADS`/`MKL_NUM_THREADS`);
-for real work export the width you want with both `OMP_NUM_THREADS` and
-`MKL_NUM_THREADS`. `LUXAR_CPU_THREADS` controls only the native kernels.
+threads. The hatch env pins those to 1 (`OMP_NUM_THREADS`/`MKL_NUM_THREADS`).
+The `luxar gsplat fit` and `cal` commands widen torch to `min(physical cores, 8)`
+for the command when it is still on one thread (not in `--tile` / `--plan-box`
+worker processes), and an explicit
+`LUXAR_CPU_THREADS=N` sets torch to N there as well
+(`luxar/gsplats/utils/cpu_threads.py`). A library call
+(`fit_gaussian_splats` from Python) leaves torch alone: set both
+`OMP_NUM_THREADS` and `MKL_NUM_THREADS` before launching Python (or call
+`torch.set_num_threads(N)`); this matters mainly under the `hatch run` pin. This
+module sets only the native kernels' pool.
 
 **Compile and cache.** The first call in a fresh environment JIT-compiles the
 kernels (~2 s on an M4 Max); `cache=True` stores the machine code beside

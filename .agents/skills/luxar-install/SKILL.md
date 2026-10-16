@@ -5,7 +5,8 @@ description: >-
   Slurm/HPC cluster login node. Use when a user wants to install, set up, or
   bootstrap Luxar (or fix a broken install): pip install into a venv (Python
   3.12 on Ubuntu/macOS, CPU-only torch, extras [gsplats]/[io]/[demos]), GPU
-  acceleration (runtime Metal kernels, CUDA extension), and the source-checkout
+  acceleration (runtime Metal kernels, NVRTC-compiled CUDA kernels, numba CPU
+  kernels), and the source-checkout
   dev route: make setup-dev / check-deps / setup-cuda / build-cuda SLURM=1, the
   no-sudo HPC path, Git LFS, and verification steps.
 ---
@@ -92,7 +93,8 @@ pip install "luxar[gsplats,io]"
   print(torch.cuda.is_available())"` must print `True`).
   `LUXAR_CUDA_BACKEND=aot|nvrtc|torch` forces a backend.
 - Which path a fit took is printed near its start: `Model class:
-  GaussianSplatModelCUDA` / `GaussianSplatModelMetal, runtime kernels` (fast) or
+  GaussianSplatModelCUDA` / `GaussianSplatModelMetal, runtime kernels` /
+  `GaussianSplatModelCPUNative (numba, ...)` (fast) or
   `GaussianSplatModel (PyTorch, device=...)` (reference path).
 - *CPU*: 3D fits run on fused numba kernels (in `[gsplats]`; compiled on first use,
   then cached), on several threads automatically (`LUXAR_CPU_THREADS` overrides;
@@ -229,7 +231,8 @@ export PATH="$HOME/.local/bin:$PATH"
 # 3. Verify the environment end to end
 python3 scripts/check_hpc_setup.py
 
-# 4. Build the CUDA extension ON A GPU NODE via Slurm
+# 4. Optional: build the CUDA extension ON A GPU NODE via Slurm
+#    (without it, NVRTC compiles the kernels on the GPU node at first use)
 make build-cuda SLURM=1                                    # auto-detect modules
 make build-cuda SLURM=1 SLURM_PARTITION=gpu                # pin partition
 make build-cuda SLURM=1 CUDA_MODULE=cuda/12.8.0_570.86.10  # pin CUDA module

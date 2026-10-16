@@ -108,7 +108,8 @@ luxar gsplat batch-fit validate out/ --fix  # clean failures, then re-submit to 
 luxar gsplat batch-fit merge out/ --recipe stream --n-lods 6
 ```
 
-Build the CUDA extension on a GPU node first if needed: `make build-cuda SLURM=1`.
+The CUDA kernels compile on the GPU node at first use (NVRTC, cached under
+`~/.cache/luxar/cuda`); `make build-cuda SLURM=1` is an optional ahead-of-time build.
 
 ## Notes
 

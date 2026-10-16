@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "FRAME_STAMP_KEYS",
+    "amplitudes_in_source_units",
     "drop_frame_stamp",
     "linear_part_is_identity",
     "agreed_voxel_size",
@@ -343,6 +344,28 @@ def map_to_grid(
         centers=centers,
         amplitudes=np.asarray(data.amplitudes, dtype=np.float32),
         cholesky_factors=cholesky,
+        truncation_radius=data.truncation_radius,
+    )
+
+
+def amplitudes_in_source_units(data: "GSplatData", scale: float) -> "GSplatData":
+    """``data`` with its amplitudes divided by a recorded ``intensity_scale``.
+
+    Undoes ``transform --scale-intensity`` for scoring and rendering, so the
+    render is back in the source's own (background-relative) units: the units
+    ``image_min``, the reference, its peak and the foreground threshold are in.
+    Returns a flat render-only copy (centers, amplitudes, Cholesky, truncation
+    radius), like :func:`map_to_grid`; with ``scale == 1.0``, ``data`` itself.
+    """
+    if scale == 1.0:
+        return data
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    amplitudes = np.asarray(data.amplitudes, dtype=np.float64) / float(scale)
+    return GSplatData(
+        centers=np.asarray(data.centers, dtype=np.float32),
+        amplitudes=amplitudes.astype(np.float32),
+        cholesky_factors=np.asarray(data.cholesky_factors, dtype=np.float32),
         truncation_radius=data.truncation_radius,
     )
 

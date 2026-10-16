@@ -29,13 +29,22 @@ A missing optional dependency raises an actionable error naming the `pip install
 to run — including a compressed TIFF read without imagecodecs (`pip install
 'luxar[io]'` or `pip install imagecodecs`).
 
-**Physical voxel size is not read from TIFF.** The TIFF branch returns the pixel
-array only (OME-TIFF `PhysicalSizeX/Y/Z` are ignored), and `fit`/`cal` work in
-voxel index space either way: an anisotropic stack fits as if its voxels were
-cubes. On this version the only `fit`-level route to physical spacing is
-`voxel_size:` in a `--config` YAML (`luxar gsplat fit --dump-config` lists it
-under "Anisotropic Voxels"); `batch-fit --physical` reads it from OME-Zarr NGFF
-metadata.
+**Physical voxel size is opt-in.** By default `fit`/`cal` work in voxel index
+space: an anisotropic stack fits as if its voxels were cubes (the fit prints a
+hint to pass `--physical` when the file records an anisotropic spacing).
+`--physical` reads the spacing the file records: the OME-Zarr NGFF
+`coordinateTransformations` scale, OME-TIFF `PhysicalSizeZ/Y/X`, or a calibrated
+ImageJ TIFF's spacing (TIFF sizes, OME and ImageJ alike, are converted to µm); one log line names the spacing and its
+source. `--voxel-size Z,Y,X` (µm, array axis order) wins over the metadata and
+over a `--config` `voxel_size:`. `batch-fit --physical` reads NGFF spacing through
+the same helper. The store records the frame under `fitting/` (`voxel_size`,
+`voxel_unit`, `voxel_size_source`, `physical_coordinates`), and `compare`/`render`
+map a physical fit back onto the source voxel grid from that stamp.
+
+**Fit a crop** with `--region z0:z1,y0:y1,x0:x1` (`fit` and `cal`; numpy-style
+half-open voxel spans, an empty span keeps the axis; zarr crops are read lazily).
+The splats keep full-volume coordinates and the store records
+`fitting/source_region`.
 
 ### Microscopy vendor containers
 
@@ -68,13 +77,12 @@ imageio path does not have.
 | --- | --- | --- |
 | `--channel` / `-c` | channel index (C in TCZYX), 0-based | fit, cal, compare (reference side), denoise |
 | `--timepoint` | timepoint index (T), 0-based | fit, cal, compare (reference side), denoise |
-| `--array-key` | array within a `.npz` or **nested zarr group**, e.g. `h2afva/fused` | fit, cal, denoise |
-| `--axes` | explicit per-dim labels overriding the heuristic, e.g. `z,c,y,x` | fit, cal (and `batch-fit`) |
+| `--array-key` | array within a `.npz` or **nested zarr group**, e.g. `h2afva/fused` | fit, cal, compare (reference side), denoise |
+| `--axes` | explicit per-dim labels overriding the heuristic, e.g. `z,c,y,x` | fit, cal, compare (reference side) (and `batch-fit`) |
 
-`compare` has **no** `--axes` and no `--array-key`: its `--channel`/`--timepoint`
-slice only the reference, through the same heuristic below, so a non-zarr nD
-reference (a 4D TIFF) cannot be sliced there. Extract the 3D reference yourself
-(e.g. save the slice as `.npy`) and compare against that.
+On `compare` these flags select the **reference** only, the same selection `fit`
+used (e.g. `compare fit.gsplats.zarr stack.tif --axes c,z,y,x -c 1`). They do not
+slice a stacked `.gsplats.zarr`.
 
 ```bash
 luxar gsplat fit data.zarr.zip out.gsplats.zarr --timepoint 0 --channel 0
@@ -100,7 +108,7 @@ the loader squeezes the decoded array and returns it as-is, so a `--channel` /
 exit 1 naming `--axes`). On any non-zarr nD input, pass `--axes` (which does the
 indexing itself).
 
-**Override with `--axes`** (on `fit` / `cal`) when the layout differs (e.g. a
+**Override with `--axes`** (on `fit` / `cal` / `compare`) when the layout differs (e.g. a
 camera axis, or `ZCYX`). Give exactly one label per array dimension; recognized
 labels are `time`/`t`, `channel`/`c`/`ch`/`camera`/`cam`, `z`/`y`/`x` (plus
 `depth`/`height`/`width`), case-insensitive. **Any other label is an error**, not a
@@ -153,7 +161,7 @@ reads only that slice, so a huge nD movie is never pulled into RAM whole.
 - **TIFF/other won't load** → `pip install "luxar[io]"`. "requires the
   'imagecodecs' package" on an older install → `pip install imagecodecs`.
 - **Anisotropic stack looks squashed** → the fit is in voxel units (see "Physical
-  voxel size" above); the scene's transform or a `--config` `voxel_size:` fixes it.
+  voxel size" above); refit with `--physical` (or `--voxel-size Z,Y,X`).
 
 ## Next step
 

@@ -2,15 +2,25 @@
 
 Loaded from the `luxar-gsplat-pipeline` skill ("Scoring a fit").
 
-`compare` reports `mse`, `psnr_db`, `ssim`, `rel_l2`, `max_abs_error` **and the
-same foreground trio**. **Read the foreground number** — and see "Traps that cost
-real time" in the skill for what to score it *against*. Three things about that trio
-worth knowing:
+`compare` reports `mse`, `psnr_db`, `psnr_robust_db`, `ssim`, `foreground_ssim`,
+`rel_l2`, `max_abs_error` **and the same foreground trio**
+(`foreground_psnr_db`/`foreground_psnr_robust_db`, `foreground_threshold`,
+`foreground_fraction`). **Read the foreground number** — and see "Traps that cost
+real time" in the skill for what to score it *against*. Four things about these
+numbers worth knowing:
 
-- The **threshold defaults to Otsu** on the target, not a fixed fraction of max.
+- The **headline PSNR uses a robust peak**: the reference's 99.99th percentile
+  minus its minimum (on the fit's basis, the floor), so one hot pixel cannot set
+  the score. The classical full-range (`max - min`) figure is reported beside it
+  and stamped as `psnr_db` (stores without `psnr_robust_db` carry only this one);
+  `--output-json` names the headline in `psnr_headline`.
+- The **foreground defaults to a smoothed Otsu mask** on the target: one light
+  blur, then Otsu over a histogram capped at the robust peak (the definition
+  `fit` stamps too; the blurred field is the one `cal` scores with). `--mask <file>` or `--fg-threshold <value>` (raw
+  reference units) override it.
 - Foreground is defined on the **target**, never on the prediction — a fit that
   hallucinates signal is scored against where the signal actually is.
-- `data_range` comes from the **whole** target, not from the foreground subset, so
+- Both peaks come from the **whole** target, not from the foreground subset, so
   the figure is not inflated by a shrunken reference. That convention is all it
   shares with `cal.json`'s `held_out_psnr_fg_db`, which scores only the held-out ∩
   foreground voxels of a fit of the *masked* volume — the two dB numbers are not

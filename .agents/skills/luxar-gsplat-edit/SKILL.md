@@ -236,7 +236,12 @@ luxar gsplat napari in.gsplats.zarr                    # napari + centers overla
 
 Before scoring a stacked or transformed archive, read "Scoring a STACKED or
 TRANSFORMED archive" in the `luxar-gsplat-pipeline` skill; `compare --timepoint`
-slices the reference, not the splat archive.
+slices the reference, not the splat archive. `transform --scale-intensity` and
+`--normalize-intensity` are safe to score: the store records the cumulative
+`intensity_scale`, `compare` / `render` divide the render by it and `cull
+--target` multiplies the target by it, so the numbers match the unedited fit. An
+offset, clamp or per-splat reweight drops the basis (`compare` warns); score
+before it.
 
 ### Physical-unit fits: `render`/`compare` map them back to voxels
 

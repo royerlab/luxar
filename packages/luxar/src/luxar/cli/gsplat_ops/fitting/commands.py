@@ -119,6 +119,8 @@ def render_to_file(
     compare, either subtract the same level from the reference
     (``clip(V - image_min, 0, None)``, where ``image_min`` is reported by
     ``luxar gsplat info``), or use ``luxar gsplat compare``, which does it for you.
+    It is also in the SOURCE's units: a ``transform --scale-intensity`` edit
+    (the store's ``intensity_scale``) is divided back out of the amplitudes.
 
     The render is on VOXEL indices: a physical-output fit (one that records
     a voxel_size) is divided back onto the grid it was fitted on. Without

@@ -130,8 +130,8 @@ luxar gsplat cal volume.tiff cal.json --floor none            # legacy (no floor
 ### Scoring a fit
 
 **`fit` already stamps the quality of the fit it just did** into `result.stats`
-(`foreground_psnr_db`, `foreground_threshold`, `foreground_fraction`) and prints
-it, so most arms need no extra run. That stamped number is already scored against
+(`foreground_psnr_robust_db` = the headline, `foreground_psnr_db`, `foreground_threshold`,
+`foreground_fraction`) and prints it, so most arms need no extra run. It is scored against
 the input in raw units but on the fit's **background-relative basis**: the level
 the fit actually subtracted (`image_min`: the resolved floor when suppression is
 on, otherwise the data minimum or percentile endpoint) is removed and clipped,
@@ -141,14 +141,14 @@ that was fitted — a denoised variant's untouched source, another arm's target:
 
 ```bash
 luxar gsplat compare fitted.gsplats.zarr original.tiff --output-json metrics.json
-#   --channel/--timepoint (reference side only), --device, --truncate
-#   (--shape is not an override: it must equal the reference shape. Omit it.)
+#   --channel/--timepoint/--axes/--array-key (reference side, as in fit), --mask,
+#   --fg-threshold, --at-fit-resolution, --device (--shape must equal the reference)
 ```
 
-`compare` reports `mse`, `psnr_db`, `ssim`, `rel_l2`, `max_abs_error` **and the
-same foreground trio**. **Read the foreground number** (Otsu threshold on the
-target; `data_range` from the whole target) and always report
-`foreground_fraction` beside the dB. It is not interchangeable with `cal.json`'s
+Headline PSNR = robust peak (reference p99.99 − floor; full-range `psnr_db` beside
+it), plus SSIM, foreground SSIM, `mse`, `rel_l2`, `max_abs_error` and the
+**foreground trio**. **Read the foreground number** (smoothed-Otsu mask on the
+target), always with `foreground_fraction`. It is not interchangeable with `cal.json`'s
 `held_out_psnr_fg_db`, and neither covers the dim band — details in
 [references/foreground-metrics.md](references/foreground-metrics.md).
 

@@ -79,12 +79,25 @@ Two things trip up nearly everyone who views their own fitted volume:
   the parts are no longer culled separately), or keep the partition with
   `luxar gsplat convert`, which grafts the tree whole in its stored column order.
 
+- **The opening view.** `luxar gsplat convert` names the columns itself (the
+  store's recorded axis names, else array order for a fit; `--dim-order t,z,y,x`
+  overrides). When the y column precedes the x column (image order, as in every
+  fit) it opens the scene the way Fiji/napari show the stack: facing XY with y
+  pointing down, stored as `viewer_config.camera` with `up=(0, -1, 0)` and
+  `view_axis="xy"`. The flip is the camera's, so coordinates stay as fitted.
+  `--view xz|yz` picks another face; `?viewAxis=xy|xz|yz` overrides it for one
+  session. From Python, set the same thing yourself:
+  `ViewerConfig(camera=CameraConfig(up=(0, -1, 0), view_axis="xy"))`.
+
 - **A dense fluorescence volume under `additive` blending saturates to a white
   blob**, because every splat along a ray adds. Pick the blending for the data:
   `blending_mode="max"` (a maximum-intensity projection), or `"volumetric"` with
   `absorption=` for emission–absorption depth; then set exposure with `opacity`
   (see "Appearance is authored" below). The modes are `normal`, `additive`, `max`,
-  `opaque`, `luminous`, `volumetric`.
+  `opaque`, `luminous`, `volumetric`. `luxar gsplat convert` keeps the
+  amplitudes in source data units and auto-exposes a separate `display_gain`
+  (dimmed, never brightened, so the opening view is not saturated;
+  `--display-gain`, `--target-brightness`, `--no-auto-exposure`).
 
 ## Dimensions = the coordinate system
 

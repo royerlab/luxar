@@ -610,14 +610,16 @@ class CompositionMixin(_GSplatDataOps):
         def _part_node(label: int, region: "GSplatData") -> "GSplatNode":
             if recipe is None:
                 return region.tree
-            from dataclasses import replace
+            from luxar.gsplats.lod.recipes import (
+                RecipeParams,
+                build_part_lod,
+                with_input_basis,
+            )
 
-            from luxar.gsplats.fit_basis import fit_image_min
-            from luxar.gsplats.lod.recipes import RecipeParams, build_part_lod
-
-            params = recipe_params if recipe_params is not None else RecipeParams()
-            if params.image_min is None:
-                params = replace(params, image_min=fit_image_min(region.stats))
+            params = with_input_basis(
+                recipe_params if recipe_params is not None else RecipeParams(),
+                region.stats,
+            )
             return build_part_lod(
                 region.tree, recipe, params, cell=cells.get(int(label))
             )

@@ -543,15 +543,15 @@ def test_no_basis_no_source_data_range(tmp_path: Path) -> None:
     ("flag", "value", "expect"),
     [
         ("--scale-intensity", "0.5", {"intensity_range": 1950.0, "image_max": 4012.0}),
-        ("--normalize-intensity", "1.0", None),
+        ("--normalize-intensity", "1.0", "normalize"),
     ],
 )
 def test_transform_intensity_keeps_the_basis_honest(
     tmp_path: Path, flag: str, value: str, expect: Any
 ) -> None:
-    """``--scale-intensity`` scales the amplitude-unit basis with the
-    amplitudes; ``--normalize-intensity`` (an arbitrary target) drops it, so a
-    converted scene says ``a.u.`` instead of claiming counts."""
+    """``--scale-intensity`` and ``--normalize-intensity`` (each one global
+    factor) scale the amplitude-unit basis with the amplitudes and record the
+    factor, so a converted scene says ``a.u.`` instead of claiming counts."""
     from luxar.gsplats.io.load_gsplats import load_gsplat_node
 
     stats = {
@@ -572,9 +572,13 @@ def test_transform_intensity_keeps_the_basis_honest(
     out = tmp_path / "scene.luxar.zarr"
     _convert(CliRunner(), dst, out)
     attrs = read_node_attrs(out / "gsplats")
-    if expect is None:
-        assert "intensity_range" not in after and "image_max" not in after
+    if expect == "normalize":
+        scale = after["intensity_scale"]
+        assert scale != pytest.approx(1.0)
+        assert after["intensity_range"] == pytest.approx(3900.0 * scale)
+        assert after["image_max"] == pytest.approx(4012.0)
         assert attrs["amplitude_unit"] == "a.u."
+        assert "amplitude_offset" not in attrs
     else:
         for key, want in expect.items():
             assert after[key] == pytest.approx(want)

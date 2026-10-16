@@ -36,6 +36,13 @@ to physical units and recentred. Comparing the transformed archive against an
 untransformed reference cost **16 dB** even for a pure diagonal scale. Score at
 fit time. If you must score later, invert the transform explicitly and prove the
 result against an independent control; do not assume a scale is harmless.
+`compare` maps a fit's own `fitting/voxel_size` stamp back to voxels, but a
+`gsplat transform` scale or rotation drops that stamp. A global intensity edit is
+different: `transform --scale-intensity` / `--normalize-intensity` record their
+cumulative factor as `intensity_scale`; `compare` and `render` divide the render
+by it and `cull --target` multiplies the target by it (the log prints
+`intensity_scale=`), so a pure rescale scores like the original. An offset, clamp
+or per-splat reweight drops the amplitude basis (`compare` warns): score before it.
 
 **4. Fixing ONE convention mismatch and getting a different wrong number is not
 progress.** One radar comparison successively exposed a mismatched grid, a −999
