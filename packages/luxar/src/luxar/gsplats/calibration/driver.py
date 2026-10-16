@@ -318,7 +318,13 @@ def calibrate(
     # full-volume selector; the foreground strata are reduced to HELD-OUT-sized
     # selectors (5 % of the volume) up front so the full-volume foreground masks
     # can be released before the first fit.
-    render_device = str(resolve_torch_device(fit_kwargs.get("device")))
+    render_device = str(
+        resolve_torch_device(
+            fit_kwargs.get("device"),
+            use_cuda=fit_kwargs.get("use_cuda", True),
+            use_metal=fit_kwargs.get("use_metal", True),
+        )
+    )
     ref_dev = V_orig_t.to(render_device)
     mask_dev = mask_t.to(render_device)
     held_fg_sel = fg_t.to(render_device)[mask_dev]
