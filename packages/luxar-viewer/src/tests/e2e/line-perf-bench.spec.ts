@@ -400,11 +400,12 @@ async function measureScenario(
   // Heavy datasets (millions of segments) can exceed the default 120s
   // navigation timeout when re-loading after a prior scenario. Raise
   // it generously — a real failure will still surface as the
-  // measureScenario try/catch upstream.
+  // measureScenario try/catch upstream. `hdr=off`: a headed run on an HDR
+  // display would otherwise measure an rgba16float HDR canvas on WebGPU.
   const navUrl =
     scn.type === 'zarr'
-      ? `/?src=${scn.url}&renderer=${backend}&debug&perfTimestamp&dpr=1${primitiveParam}`
-      : `/?src=${scn.bootstrapUrl}&renderer=${backend}&debug&perfTimestamp&dpr=1${primitiveParam}`;
+      ? `/?src=${scn.url}&renderer=${backend}&debug&perfTimestamp&dpr=1&hdr=off${primitiveParam}`
+      : `/?src=${scn.bootstrapUrl}&renderer=${backend}&debug&perfTimestamp&dpr=1&hdr=off${primitiveParam}`;
   await page.goto(navUrl, { timeout: 300_000 });
   await waitForLuxarReady(page, 120_000);
 

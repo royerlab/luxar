@@ -22,9 +22,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 // constructible-but-inert stub. The stub captures its constructor
 // args so we can assert on them per branch.
 const webgpuConstructorArgs = vi.hoisted<Array<unknown>>(() => []);
+// The backend three ends up on after init() (HDR output needs real WebGPU).
+const fakeBackend = vi.hoisted(() => ({ isWebGPUBackend: true, device: {} }));
+// What `(dynamic-range: high)` answers for the HDR-output gate.
+const displayHdr = vi.hoisted(() => ({ hdr: false }));
 vi.mock('three/webgpu', () => {
   class FakeWebGPURenderer {
     init = vi.fn(async () => {});
+    backend = fakeBackend;
     constructor(opts: unknown) {
       webgpuConstructorArgs.push(opts);
     }
@@ -40,12 +45,16 @@ vi.mock('../../../../../rendering/renderer-capabilities', () => ({
     hdr: {},
     pointSizeRange: [1, 64],
   })),
+  probeUnmaskedGpuRenderer: vi.fn(() => null),
 }));
 vi.mock('../../../../../utils/hdr/hdr-detection', () => ({
   configureHDRRenderer: vi.fn(),
   logHDRCapabilities: vi.fn(),
+  detectDisplayCapabilities: vi.fn(() => ({ hdr: displayHdr.hdr })),
+  HDR_DISPLAY_QUERY: '(dynamic-range: high)',
 }));
 
+import * as THREE from 'three';
 // Imports MUST come after vi.mock to honour the mocks.
 import {
   createWebGPURenderer,
@@ -267,5 +276,113 @@ describe('createWebGPURenderer', () => {
     expect(webgpuConstructorArgs).toHaveLength(1);
     expect((webgpuConstructorArgs[0] as { device?: unknown }).device).toBeUndefined();
     expect((webgpuConstructorArgs[0] as { forceWebGL?: boolean }).forceWebGL).toBeUndefined();
+  });
+
+  describe('HDR output (?hdr)', () => {
+    /**
+     * Every canvas's WebGPU context (the support probe configures a throwaway
+     * one) reports `toneMapping.mode` = `mode` after `configure`.
+     */
+    function hdrCanvas(mode: string | null): HTMLCanvasElement {
+      vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+        configure: vi.fn(),
+        unconfigure: vi.fn(),
+        getConfiguration: () => (mode === null ? null : { toneMapping: { mode } }),
+      } as never);
+      return makeCanvas();
+    }
+
+    beforeEach(() => {
+      displayHdr.hdr = true;
+      fakeBackend.isWebGPUBackend = true;
+      stubNavigatorGpu(vi.fn().mockResolvedValue(makeAdapter({ maxVertexBuffers: 16 })));
+    });
+    afterEach(() => {
+      displayHdr.hdr = false;
+      fakeBackend.isWebGPUBackend = true;
+      vi.restoreAllMocks();
+    });
+
+    const outputType = (): unknown =>
+      (webgpuConstructorArgs[0] as { outputType?: unknown }).outputType;
+
+    it('presents an rgba16float extended canvas when true HDR is achievable', async () => {
+      const result = await createWebGPURenderer(hdrCanvas('extended'), {
+        hdr: true,
+        hdrHeadroom: 4,
+      });
+      expect(outputType()).toBe(THREE.HalfFloatType);
+      expect(result).toMatchObject({
+        fallback: false,
+        capabilities: { hdrOutput: { headroom: 4, pinned: true } },
+      });
+    });
+
+    it('clamps a pinned headroom into the slider range', async () => {
+      const result = await createWebGPURenderer(hdrCanvas('extended'), {
+        hdr: true,
+        hdrHeadroom: 99,
+      });
+      expect(result).toMatchObject({ capabilities: { hdrOutput: { headroom: 16 } } });
+    });
+
+    it('stays SDR (no float canvas) when HDR output is off', async () => {
+      const result = await createWebGPURenderer(hdrCanvas('extended'), { hdr: false });
+      expect(outputType()).toBeUndefined();
+      expect(result).not.toHaveProperty('capabilities.hdrOutput');
+    });
+
+    it('falls back to an SDR canvas on a display that does not report HDR', async () => {
+      displayHdr.hdr = false;
+      const result = await createWebGPURenderer(hdrCanvas('extended'), { hdr: true });
+      expect(outputType()).toBeUndefined();
+      expect(result).not.toHaveProperty('capabilities.hdrOutput');
+    });
+
+    it('falls back to SDR without a native adapter (three would use WebGL2)', async () => {
+      stubNavigatorGpu(vi.fn().mockResolvedValue(null));
+      const result = await createWebGPURenderer(hdrCanvas('extended'), { hdr: true });
+      expect(outputType()).toBeUndefined();
+      expect(result).not.toHaveProperty('capabilities.hdrOutput');
+    });
+
+    it('falls back to SDR tone mapping when three ended up on its WebGL2 backend', async () => {
+      fakeBackend.isWebGPUBackend = false;
+      const result = await createWebGPURenderer(hdrCanvas('extended'), { hdr: true });
+      expect(result).not.toHaveProperty('capabilities.hdrOutput');
+    });
+
+    it('keeps the canvas SDR when the browser cannot do extended tone mapping', async () => {
+      // Probed before the renderer exists: no rgba16float canvas to pay for.
+      for (const mode of ['standard', null]) {
+        webgpuConstructorArgs.length = 0;
+        const result = await createWebGPURenderer(hdrCanvas(mode), { hdr: true });
+        expect(outputType()).toBeUndefined();
+        expect(result).not.toHaveProperty('capabilities.hdrOutput');
+      }
+    });
+
+    it('keeps the canvas SDR when the device request failed (three picks its own)', async () => {
+      stubNavigatorGpu(
+        vi.fn().mockResolvedValue(
+          makeAdapter({
+            maxVertexBuffers: 16,
+            requestDevice: vi.fn().mockRejectedValue(new Error('device exhausted')),
+          })
+        )
+      );
+      const result = await createWebGPURenderer(hdrCanvas('extended'), { hdr: true });
+      expect(outputType()).toBeUndefined();
+      expect(result).not.toHaveProperty('capabilities.hdrOutput');
+    });
+
+    it('treats a headroom pinned to 1x as SDR output', async () => {
+      const result = await createWebGPURenderer(hdrCanvas('extended'), {
+        hdr: true,
+        hdrHeadroom: 1,
+      });
+      expect(outputType()).toBeUndefined();
+      expect(result).not.toHaveProperty('capabilities.hdrOutput');
+    });
   });
 });

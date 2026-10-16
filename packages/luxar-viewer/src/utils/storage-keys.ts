@@ -40,6 +40,8 @@ export const StorageKeys = Object.freeze({
   controlRailHintDismissed: 'luxar.controlRail.hintDismissed',
   /** `'1'` / `'0'`: whether the control rail was left collapsed — see ui/control-rail.ts. */
   controlRailCollapsed: 'luxar.controlRail.collapsed',
+  /** HDR output headroom (multiple of SDR white) — see utils/hdr/hdr-headroom.ts. */
+  hdrHeadroom: 'luxar.hdrHeadroom',
   /** Per-scene rendering settings (bloom, HDR, lens, etc). */
   rendering(sceneId: string): string {
     return `luxar.rendering.${sanitizeKeySegment(sceneId)}`;

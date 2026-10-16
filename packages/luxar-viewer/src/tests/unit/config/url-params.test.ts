@@ -198,6 +198,8 @@ describe('readUrlParams', () => {
       renderer: null,
       webgpuForceWebGL: false,
       perfTimestamp: false,
+      hdr: null,
+      hdrHeadroom: null,
       renderAlways: false,
       renderAudit: false,
       gpuBudgetMB: null,
@@ -481,6 +483,25 @@ describe('readUrlParams', () => {
       expect(readUrlParams('?renderAlways').renderAlways).toBe(true);
       expect(readUrlParams('?debug&renderAudit').renderAudit).toBe(true);
       expect(readUrlParams('?renderAudit').renderAlways).toBe(false);
+    });
+  });
+
+  describe('?hdr', () => {
+    it('reads the HDR output mode: absent, off, or forced auto', () => {
+      expect(readUrlParams('').hdr).toBeNull();
+      expect(readUrlParams('?hdr').hdr).toBe('auto');
+      expect(readUrlParams('?hdr=4').hdr).toBe('auto');
+      for (const off of ['off', 'OFF', '0', 'false']) {
+        expect(readUrlParams(`?hdr=${off}`).hdr).toBe('off');
+      }
+    });
+
+    it('pins a numeric headroom, clamped to the slider range', () => {
+      expect(readUrlParams('?hdr').hdrHeadroom).toBeNull();
+      expect(readUrlParams('?hdr=off').hdrHeadroom).toBeNull();
+      expect(readUrlParams('?hdr=4').hdrHeadroom).toBe(4);
+      expect(readUrlParams('?hdr=99').hdrHeadroom).toBe(16);
+      expect(readUrlParams('?hdr=0.5').hdrHeadroom).toBe(1);
     });
   });
 
