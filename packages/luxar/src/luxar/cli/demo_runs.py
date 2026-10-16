@@ -156,7 +156,7 @@ def register_server(
 
 
 def _exit_on_hangup(signum: int, frame: object) -> None:
-    """SIGHUP handler: unwind (running ``finally`` blocks) instead of dying."""
+    """SIGHUP/SIGTERM handler: unwind (running ``finally`` blocks), not die."""
     raise SystemExit(128 + signum)
 
 
@@ -178,6 +178,40 @@ def _install_hangup_exit() -> Optional[object]:
     except (ValueError, OSError):
         return None
     return signal.SIG_DFL
+
+
+@contextmanager
+def exit_on_termination_signals() -> Iterator[None]:
+    """Route SIGTERM and SIGHUP to ``SystemExit`` for the duration of the block.
+
+    Their default action kills the process outright, skipping every ``finally``
+    — so a command that owns temporary state (``gsplat view``'s temp scene, an
+    extracted archive) leaks it on a harness timeout, ``luxar stop`` or a closed
+    terminal. Unwinding instead runs the cleanup. As with
+    :func:`_install_hangup_exit`, only a DEFAULT disposition is replaced (an
+    explicit ignore such as ``nohup``, or someone else's handler, is left), only
+    on the main thread, and the previous dispositions are restored on exit.
+    """
+    restore: list[tuple[int, object]] = []
+    if threading.current_thread() is threading.main_thread():
+        for name in ("SIGTERM", "SIGHUP"):
+            sig = getattr(signal, name, None)
+            if sig is None:
+                continue
+            try:
+                if signal.getsignal(sig) is signal.SIG_DFL:
+                    signal.signal(sig, _exit_on_hangup)
+                    restore.append((sig, signal.SIG_DFL))
+            except (ValueError, OSError):
+                continue
+    try:
+        yield
+    finally:
+        for sig, previous in restore:
+            try:
+                signal.signal(sig, previous)  # type: ignore[arg-type]
+            except (ValueError, OSError):
+                pass
 
 
 @contextmanager

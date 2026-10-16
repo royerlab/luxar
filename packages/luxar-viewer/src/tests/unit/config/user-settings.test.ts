@@ -111,7 +111,7 @@ describe('loadUserSettings', () => {
       budgetMode: 'weird', // invalid enum → default
       budgetMB: NaN, // non-finite → default
     };
-    stored.advanced = { renderer: 'vulkan' }; // invalid enum → default
+    stored.advanced = { renderer: 'vulkan', hdrOutput: 'always' }; // invalid enums → default
     localStorage.setItem(KEY, JSON.stringify(stored));
 
     const loaded = loadUserSettings();
@@ -127,6 +127,7 @@ describe('loadUserSettings', () => {
     expect(loaded.caching.budgetMode).toBe('auto');
     expect(loaded.caching.budgetMB).toBe(d.caching.budgetMB);
     expect(loaded.advanced.renderer).toBe('auto');
+    expect(loaded.advanced.hdrOutput).toBe('auto');
   });
 
   it('round-trips a saved settings object', () => {
@@ -213,6 +214,10 @@ describe('initUserSettings + reloadRequired', () => {
 
     edited.advanced.renderer = 'auto';
     expect(reloadRequired(edited)).toBe(false);
+
+    // The canvas format is fixed when the renderer is built.
+    edited.advanced.hdrOutput = 'off';
+    expect(reloadRequired(edited)).toBe(true);
   });
 
   it('live-only changes do NOT flag a reload', () => {
@@ -288,5 +293,8 @@ describe('describeUrlSessionOverrides', () => {
     );
     applyUrlPerformanceOverrides(0, null, null);
     expect(describeUrlSessionOverrides()).toBe('This page: auto workers (from its URL)');
+    applyUrlPerformanceOverrides(null, null, null, 'off');
+    expect(describeUrlSessionOverrides()).toBe('This page: HDR off (from its URL)');
+    applyUrlPerformanceOverrides(null, null, null);
   });
 });

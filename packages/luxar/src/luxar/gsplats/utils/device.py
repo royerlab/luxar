@@ -12,7 +12,11 @@ selects every CUDA device that clears the free-memory floor.
 from __future__ import annotations
 
 import os
+import re
+import subprocess  # nosec B404 # fixed argv, macOS core count only
+import sys
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -88,8 +92,12 @@ def cpu_fallback_hint(platform: Optional[str] = None) -> str:
 _CPU_WARNING_ISSUED = False
 
 
-def warn_cpu_fitting(stacklevel: int = 3) -> None:
-    """Warn once per process that Gaussian splat fitting is running on CPU."""
+def warn_cpu_fitting(stacklevel: int = 3, detail: str = "") -> None:
+    """Warn once per process that Gaussian splat fitting is running on CPU.
+
+    ``detail`` is appended verbatim (initialization passes why the native CPU
+    kernels are not in use, when that is the reason the slow path runs).
+    """
     global _CPU_WARNING_ISSUED
     import warnings
 
@@ -97,7 +105,7 @@ def warn_cpu_fitting(stacklevel: int = 3) -> None:
         return
     message = (
         "Gaussian splat fitting is running on CPU, which can be orders of "
-        "magnitude SLOWER than a GPU. " + cpu_fallback_hint()
+        "magnitude SLOWER than a GPU. " + cpu_fallback_hint() + detail
     )
     warnings.warn(message, UserWarning, stacklevel=stacklevel)
     _CPU_WARNING_ISSUED = True
@@ -234,6 +242,73 @@ def _effective_cpu_count() -> int:
         except OSError:
             pass
     return max(1, os.cpu_count() or 1)
+
+
+#: Thread count of the native CPU splatting kernels.
+CPU_THREADS_ENV = "LUXAR_CPU_THREADS"
+
+
+def _linux_physical_cores() -> Optional[int]:
+    """Distinct (physical id, core id) pairs in ``/proc/cpuinfo``."""
+    try:
+        with open("/proc/cpuinfo", encoding="ascii", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        return None
+    cores: set[tuple[str, str]] = set()
+    for block in text.split("\n\n"):
+        phys = re.search(r"^physical id\s*:\s*(\S+)", block, re.M)
+        core = re.search(r"^core id\s*:\s*(\S+)", block, re.M)
+        if phys and core:
+            cores.add((phys.group(1), core.group(1)))
+    return len(cores) or None
+
+
+def _macos_physical_cores() -> Optional[int]:
+    """``sysctl hw.physicalcpu``."""
+    try:
+        out = subprocess.run(  # nosec B603 # fixed argv, no shell
+            ["/usr/sbin/sysctl", "-n", "hw.physicalcpu"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        ).stdout
+        return int(out.strip()) or None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+@lru_cache(maxsize=1)
+def physical_core_count() -> int:
+    """Physical cores, capped by the CPUs this process may run on.
+
+    The cap is :func:`_effective_cpu_count` -- the affinity mask (and on
+    Python 3.13+ ``os.process_cpu_count``), which is what a Slurm or
+    ``taskset`` CPU binding restricts. A cgroup CPU *quota* (e.g. a container's
+    ``--cpus``) is not read.
+    """
+    usable = _effective_cpu_count()
+    if sys.platform.startswith("linux"):
+        physical = _linux_physical_cores()
+    elif sys.platform == "darwin":
+        physical = _macos_physical_cores()
+    else:
+        physical = None
+    return max(1, min(usable, physical or usable))
+
+
+def cpu_worker_threads_env(workers: int) -> dict[str, str]:
+    """``LUXAR_CPU_THREADS`` for one of ``workers`` concurrent CPU fit processes.
+
+    Each worker would otherwise default to every physical core and the
+    workers would oversubscribe the machine. Empty when the user set a nonzero
+    value (their choice is inherited unchanged).
+    """
+    if os.environ.get(CPU_THREADS_ENV, "").strip() not in ("", "0"):
+        return {}
+    share = max(1, physical_core_count() // max(1, int(workers)))
+    return {CPU_THREADS_ENV: str(share)}
 
 
 def _intraop_thread_count() -> int:

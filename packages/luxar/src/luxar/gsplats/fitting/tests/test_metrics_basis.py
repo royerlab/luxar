@@ -88,3 +88,39 @@ def test_reported_metrics_use_the_recorded_image_min() -> None:
     # pedestal: SNR ~ 20*log10(range/600) caps it near 20 dB. Clearing that bar
     # shows the reference was shifted.
     assert float(stats["psnr_db"]) > 22.0
+
+
+def test_a_physical_fit_stamps_its_spacing_and_both_psnr_peaks(tmp_path) -> None:
+    """`compare` can only undo a physical conversion the store records; and the
+    fit's own score carries the robust headline beside the full-range figure."""
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    volume = _volume_with_pedestal(600.0)
+    volume[0, 0, 0] = 60_000.0  # a hot pixel: moves the full-range peak only
+    res = fit_gaussian_splats(
+        volume,
+        seeds=200,
+        floor=600.0,
+        n_iters=40,
+        device="cpu",
+        verbose=False,
+        enable_dynamic_ops=False,
+        cull_retention=1.0,
+        voxel_size=(2.0, 0.5, 0.5),
+    )
+    stats = res.stats or {}
+    assert stats.get("voxel_size") == [2.0, 0.5, 0.5]
+    if "psnr_db" not in stats:
+        pytest.skip("this build reports no quality metrics for the fit path")
+    assert "psnr_robust_db" in stats and "foreground_psnr_robust_db" in stats
+    # The hot pixel inflates the full-range peak ~30x over the blobs' 2000.
+    assert float(stats["psnr_db"]) > float(stats["psnr_robust_db"]) + 20.0
+    # ...and must not empty the foreground (uncapped Otsu reported 0.00%): the
+    # three 5^3 blobs are ~2.7% of the 24^3 volume.
+    assert 0.015 < float(stats["foreground_fraction"]) < 0.06
+
+    store = tmp_path / "phys.gsplats.zarr"
+    res.save(store)
+    reloaded = GSplatData.load(store, include_stats=True)
+    assert reloaded.stats["voxel_size"] == [2.0, 0.5, 0.5]
+    assert "psnr_robust_db" in reloaded.stats

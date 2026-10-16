@@ -204,6 +204,10 @@ RenderAttrKey = Literal[
     "link",
     "link_target",
     "join",
+    "display_gain",
+    "amplitude_unit",
+    "amplitude_offset",
+    "source_data_range",
     "alpha_cutoff",
     "ambient",
     "material",
@@ -243,6 +247,10 @@ RENDER_ATTR_KEYS: Final[tuple[RenderAttrKey, ...]] = (
     "link",
     "link_target",
     "join",
+    "display_gain",
+    "amplitude_unit",
+    "amplitude_offset",
+    "source_data_range",
     "alpha_cutoff",
     "ambient",
     "material",
@@ -394,6 +402,10 @@ ORDERING_METHODS: Final[tuple[OrderingMethodName, ...]] = ("morton", "hilbert", 
 LineJoinStyleName = Literal["none", "miter"]
 LINE_JOIN_STYLES: Final[tuple[LineJoinStyleName, ...]] = ("none", "miter")
 
+# --- `viewer_config.camera.view_axis` presets (horizontal axis first) ---
+ViewAxisName = Literal["xy", "xz", "yz"]
+VIEW_AXES: Final[tuple[ViewAxisName, ...]] = ("xy", "xz", "yz")
+
 # --- `line_type` attr values on a lines node ---
 LineTypeName = Literal["segments", "polyline", "loop", "indexed"]
 LINE_TYPES: Final[tuple[LineTypeName, ...]] = (
@@ -477,6 +489,8 @@ __all__ = [
     "ORDERING_METHODS",
     "LineJoinStyleName",
     "LINE_JOIN_STYLES",
+    "ViewAxisName",
+    "VIEW_AXES",
     "LineTypeName",
     "LINE_TYPES",
     "NdTransformAffineKey",

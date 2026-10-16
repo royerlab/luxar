@@ -385,18 +385,27 @@ MSE of a fit against its source.
 
 **Fitting hardware.** Fitting needs the `gsplats` extra, plus `io` to read TIFF
 (`pip install "luxar[gsplats,io]"`, or `pip install -e ".[gsplats,io]"` from a
-checkout). It runs on the CPU (slowly: see
+checkout). It runs on the CPU (see
 [fitting on a CPU or a Mac](packages/luxar/src/luxar/gsplats/README.md#fitting-on-a-cpu-or-a-mac)
 for what to expect and how to keep it short), and much faster on an NVIDIA
-GPU (`make build-cuda` compiles the CUDA kernels for your card; they cannot ship in
-the wheel) or on Apple silicon through MPS. On a Mac the 3D Metal kernels compile
-at runtime with the Metal compiler built into macOS (needs torch >= 2.7; no Xcode,
-nothing to build). A developer-built ahead-of-time extension is preferred when
-present; `LUXAR_METAL_BACKEND=auto|aot|runtime|torch` overrides the choice. Seeding and the optional non-local-means
-denoising follow the same device choice. On a cluster, `make build-cuda SLURM=1`
-builds the extension on a GPU node; if a fit logs "GPU fitting will use slower
-PyTorch fallback", it still runs, just without the compiled kernels. Viewing never
-needs any of this.
+GPU or on Apple silicon through MPS. On Linux with an NVIDIA GPU and a CUDA build of
+torch (the default `pip install torch`), the custom CUDA kernels need no build step:
+they are compiled for your card on first use with NVRTC, the CUDA runtime compiler
+that ships inside torch's NVIDIA wheels, and cached under `~/.cache/luxar/cuda`
+(`$XDG_CACHE_HOME` is honored), so no `nvcc` or C++ compiler is involved. On a Mac
+the 3D Metal kernels compile at runtime with the Metal compiler built into macOS
+(needs torch >= 2.7; no Xcode, nothing to build). A fit logs which kernels it used.
+In a checkout, `make build-cuda` still builds the CUDA extension ahead of time and
+that build is preferred when present (`make build-cuda SLURM=1` on a cluster); on a
+Mac a developer-built Metal extension (`python setup.py build_ext --inplace
+--force`) is likewise preferred when present. `LUXAR_CUDA_BACKEND=aot|nvrtc|torch`
+and `LUXAR_METAL_BACKEND=auto|aot|runtime|torch` force one path on their respective
+platforms. Seeding and the optional non-local-means denoising follow the same
+device choice. If neither kernel path can run, the fit warns and continues on the
+slower PyTorch renderer. On the CPU, 3D fits run on fused kernels that numba (in
+the `gsplats` extra) compiles on first use and caches;
+`LUXAR_CPU_BACKEND=auto|native|torch` overrides the choice and `LUXAR_CPU_THREADS`
+sets their thread count. Viewing never needs any of this.
 
 Every option, with examples, is in the
 [CLI package README](packages/luxar/src/luxar/cli/README.md); the fitting model

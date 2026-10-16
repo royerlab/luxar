@@ -27,12 +27,18 @@ from luxar.gsplats.fitting import (
     run_optimization_loop,
 )
 from luxar.gsplats.fitting.dynamic_ops import DynamicOpsConfig
+from luxar.gsplats.fitting.splat_hygiene import (
+    DEFAULT_MIN_EXTENT_MAX_MASS_SHARE,
+    DEFAULT_MIN_EXTENT_VOX,
+)
 from luxar.gsplats.fitting.validation import DEFAULT_SIGMA_MIN_DIAG
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.utils import resolve_torch_device
 from luxar.gsplats.utils.trils import tril_size
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 from luxar.utils.arbol_warnings import arbol_warnings
+
+_CPU_NOTE_PRINTED = False
 
 
 class GaussianSplatFitter:
@@ -69,6 +75,7 @@ class GaussianSplatFitter:
         use_metal: bool = True,
         use_cuda: bool = True,
     ) -> None:
+        global _CPU_NOTE_PRINTED  # noqa: PLW0603
         # Hardware acceleration flags (stored first for device detection)
         self.use_metal = use_metal
         self.use_cuda = use_cuda
@@ -83,10 +90,18 @@ class GaussianSplatFitter:
             use_metal=use_metal,
         )
 
-        if self.device.type == "cpu":
-            from luxar.gsplats.utils.device import warn_cpu_fitting
+        if self.device.type == "cpu" and not _CPU_NOTE_PRINTED:
+            from arbol import aprint
 
-            warn_cpu_fitting()
+            # A note, not a UserWarning: whether CPU fitting is slow depends on
+            # the dimensionality and numba, which initialization knows; it
+            # warns (warn_cpu_fitting) only when the PyTorch renderer runs.
+            aprint(
+                "Fitting on the CPU; 3D fits use the native CPU kernels when "
+                "numba is available; a CUDA or Apple Silicon GPU is still faster "
+                "for large volumes."
+            )
+            _CPU_NOTE_PRINTED = True
 
         # Dynamic operations configuration
         self.enable_dynamic_ops = enable_dynamic_ops
@@ -189,6 +204,7 @@ def fit_gaussian_splats(
     enable_dynamic_ops: bool = True,
     dynamic_config: Optional[DynamicOpsConfig] = None,
     dynamic_ops_verbose: bool = False,
+    relocation_reseed_sigma_vox: Optional[float] = None,
     napari_movie: bool = False,
     movie_every: int = 1,
     movie_max_frames: Optional[int] = None,
@@ -197,6 +213,8 @@ def fit_gaussian_splats(
     use_cuda: bool = True,
     # Post-processing
     cull_retention: float | None = 0.999,
+    min_extent: float | None = DEFAULT_MIN_EXTENT_VOX,
+    min_extent_max_mass_share: float = DEFAULT_MIN_EXTENT_MAX_MASS_SHARE,
     voxel_footprint_correction: bool | float = False,
     # Boundary containment
     boundary_penalty: Optional[float] = None,
@@ -417,6 +435,13 @@ def fit_gaussian_splats(
     dynamic_ops_verbose : bool, default=False
         Enable detailed console logging for dynamic operations. Shows residual analysis,
         seeding attempts and pruning operations.
+    relocation_reseed_sigma_vox : float or None, default=None
+        Isotropic sigma (voxels) a relocated splat is reseeded at; overrides
+        ``dynamic_config.relocation_reseed_sigma_vox``. ``None`` keeps the 0.5
+        voxel default. Larger values (0.75-1.0) leave no sub-voxel specks and
+        finish faster, but on sparse stacks they cost up to ~0.07 dB held-out
+        and on dense ones they can gain ~0.2-0.4 dB; ``min_extent`` removes
+        the specks of the default reseed at no measurable cost.
     napari_movie : bool, default=False
         Record optimization movie for napari visualization.
         Enable this to create a time-series visualization of optimization progress.
@@ -438,6 +463,24 @@ def fit_gaussian_splats(
         this fraction of the total amplitude (0--1).  At 0.999, the discarded
         splats collectively contribute at most 0.1% of total amplitude.
         Set to ``None`` to disable.
+    min_extent : float or None, default=0.6
+        After the fit (before ``cull_retention``), drop splats whose
+        geometric-mean SPATIAL sigma is below this many FITTED-grid voxels
+        (``voxel_size`` and ``downscale`` are undone first; a zero-variance
+        stacked axis is ignored). These are relocation "specks" stuck near the
+        0.5-voxel reseed size, which render as glitter; no polish follows.
+        Measured on nine fits: -8 to -70% splats, held-out foreground PSNR
+        within -0.07 dB (+0.40 dB on a Tribolium light-sheet stack). The count
+        and mass share removed are recorded as ``stats["min_extent_removed"]``
+        / ``stats["min_extent_removed_mass_share"]``, and the stored quality is
+        re-scored on the pruned set. ``0`` or ``None`` disables. In a native
+        nD fit a fitted (non-stacked) time axis counts in the geometric mean.
+    min_extent_max_mass_share : float, default=0.02
+        Guard for ``min_extent``: when pruning would remove more than this
+        share of the fitted brightness, the splats are kept and a note is
+        printed (``stats["min_extent_skipped"] = True``). Under ``floor="auto"``
+        the specks carry 0.5-0.75%; after a high floor (``p95``) the same
+        threshold removed 4.3-15%, i.e. real structure fitted small.
     voxel_footprint_correction : bool | float, default=False
         Post-fit correction to inflate splat covariances by the voxel footprint.
         This ensures that upsampling doesn't invent detail beyond what the original
@@ -563,6 +606,13 @@ def fit_gaussian_splats(
     carry_scale_population = bool(seed_kwargs.pop("_carry_scale_population", False))
     # Keep this first: the bundle must capture the public arguments before rebinding.
     parameters = _collect_fit_parameters(locals())
+    min_extent_vox, dynamic_config = _resolve_hygiene_options(
+        min_extent, relocation_reseed_sigma_vox, dynamic_config
+    )
+    from luxar.gsplats.fitting.splat_hygiene import validate_max_mass_share
+
+    max_mass_share = validate_max_mass_share(min_extent_max_mass_share)
+    _warn_reseed_without_relocation(relocation_reseed_sigma_vox, enable_dynamic_ops)
 
     with asection("Fitting Gaussian Splats"):
         fitter = GaussianSplatFitter(
@@ -575,6 +625,15 @@ def fit_gaussian_splats(
 
         # Fit and extract results
         result = fitter.fit(parameters)
+
+    # Record the spacing the centers were multiplied by, so `compare`/`render`
+    # can put physical-unit splats back on the voxel grid they were fitted on.
+    if result.stats:
+        from luxar.gsplats.scoring_grid import physical_voxel_size_stamp
+
+        result.stats.update(
+            physical_voxel_size_stamp(voxel_size, output_space, int(V.ndim))
+        )
 
     # Explicitly release the fitter and its GPU resources (optimizer state,
     # model weights, preprocessed V_tensor) before post-fit operations.
@@ -620,17 +679,20 @@ def fit_gaussian_splats(
             result.stats["movie_frames"], result.stats["movie_shape"]
         )
 
-    # Post-fit cumulative culling (keeps top cull_retention of amplitude)
-    if cull_retention is not None and 0 < cull_retention < 1.0 and result.n_splats > 0:
-        result = _post_fit_cull(
-            result,
-            V,
-            cull_retention,
-            verbose=verbose,
-            device=device,
-            voxel_size=voxel_size,
-            output_space=output_space,
-        )
+    # Post-fit reductions: speck pruning, then the cumulative cull, then ONE
+    # re-score so the stored quality describes the saved splat set.
+    result = _post_fit_reductions(
+        result,
+        V,
+        cull_retention=cull_retention,
+        min_extent_vox=min_extent_vox,
+        max_mass_share=max_mass_share,
+        downscale=downscale,
+        verbose=verbose,
+        device=device,
+        voxel_size=voxel_size,
+        output_space=output_space,
+    )
 
     if not carry_scale_population:
         from luxar.gsplats.fitting.scale_population import finish_population_stats
@@ -639,25 +701,175 @@ def fit_gaussian_splats(
     return result
 
 
-def _post_fit_cull(
+def _warn_reseed_without_relocation(
+    relocation_reseed_sigma_vox: Optional[float], enable_dynamic_ops: bool
+) -> None:
+    """A reseed sigma only acts on relocated splats; say so when nothing relocates."""
+    if relocation_reseed_sigma_vox is not None and not enable_dynamic_ops:
+        from arbol import aprint
+
+        aprint(
+            "⚠ relocation_reseed_sigma_vox / --reseed-sigma has no effect: "
+            "relocation (dynamic ops) is off for this fit"
+        )
+
+
+def _resolve_hygiene_options(
+    min_extent: "float | None",
+    relocation_reseed_sigma_vox: Optional[float],
+    dynamic_config: Optional[DynamicOpsConfig],
+) -> "tuple[float, Optional[DynamicOpsConfig]]":
+    """Validate ``min_extent`` and fold an explicit reseed sigma into the config."""
+    from dataclasses import replace
+
+    from luxar.gsplats.fitting.splat_hygiene import (
+        validate_min_extent,
+        validate_reseed_sigma,
+    )
+
+    min_extent_vox = validate_min_extent(min_extent)
+    reseed = validate_reseed_sigma(relocation_reseed_sigma_vox)
+    if reseed is not None:
+        dynamic_config = replace(
+            dynamic_config or DynamicOpsConfig(), relocation_reseed_sigma_vox=reseed
+        )
+    return min_extent_vox, dynamic_config
+
+
+def _post_fit_reductions(
     result: GSplatData,
     V: np.ndarray,
-    cull_retention: float,
     *,
+    cull_retention: float | None,
+    min_extent_vox: float,
+    max_mass_share: float = DEFAULT_MIN_EXTENT_MAX_MASS_SHARE,
+    downscale: Optional[int | Sequence[int]],
     verbose: bool,
     device: Optional[str],
     voxel_size: Optional[Sequence[float] | float],
     output_space: str,
 ) -> GSplatData:
-    """Cumulative post-fit cull, then re-score so the stats describe the SAVED set.
+    """Speck pruning + cumulative cull, then one re-score of the saved set."""
+    if result.n_splats == 0:
+        return result
+    removed = 0
+    if min_extent_vox > 0:
+        from luxar.gsplats.fitting.splat_hygiene import fitted_voxel_unit
+
+        unit = fitted_voxel_unit(
+            result.ndim,
+            voxel_size=voxel_size,
+            output_space=output_space,
+            downscale=downscale,
+        )
+        result, n = prune_min_extent(
+            result, min_extent_vox, unit, verbose=verbose, max_mass_share=max_mass_share
+        )
+        removed += n
+    if cull_retention is not None and 0 < cull_retention < 1.0 and result.n_splats > 0:
+        result, n = _post_fit_cull(result, cull_retention, verbose=verbose)
+        removed += n
+    if removed > 0 and "psnr_db" in result.stats and result.n_splats > 0:
+        _rescore_saved_model(
+            result,
+            V,
+            verbose=verbose,
+            device=device,
+            voxel_size=voxel_size,
+            output_space=output_space,
+        )
+    return result
+
+
+def prune_min_extent(
+    result: GSplatData,
+    min_extent_vox: float,
+    unit: np.ndarray,
+    *,
+    verbose: bool = False,
+    max_mass_share: float = DEFAULT_MIN_EXTENT_MAX_MASS_SHARE,
+) -> "tuple[GSplatData, int]":
+    """Drop splats whose spatial extent is below ``min_extent_vox`` (WP9).
+
+    ``unit`` is one fitted-grid voxel in the result's output units
+    (:func:`~luxar.gsplats.fitting.splat_hygiene.fitted_voxel_unit`). Like the
+    closing cull this is part of producing the artifact, so the fit's measured
+    scores ride across it (the caller re-scores) and the scale-population
+    classification is reduced by the kept mask. Records the pruning in
+    ``stats`` even when nothing was removed. When the splats to drop carry
+    more than ``max_mass_share`` of the brightness, nothing is removed, a note
+    is printed whatever ``verbose`` says, and ``stats["min_extent_skipped"]``
+    is True. Returns ``(result, n_removed)``.
+    """
+    from arbol import aprint
+
+    from luxar.gsplats._data.filtering import (
+        measured_stats_snapshot,
+        restore_measured_stats,
+    )
+    from luxar.gsplats.fitting.scale_population import reduce_population_stats
+    from luxar.gsplats.fitting.splat_hygiene import (
+        format_min_extent_line,
+        integrated_mass,
+        min_extent_keep_mask,
+        skipped_note,
+        stamp_min_extent,
+    )
+
+    keep = min_extent_keep_mask(result, min_extent_vox, unit)
+    mass = integrated_mass(result)
+    input_mass = float(mass.sum())
+    n_removed = int(keep.size - np.count_nonzero(keep))
+    removed_mass = float(mass[~keep].sum())
+    share = removed_mass / input_mass if input_mass > 0 else 0.0
+    if n_removed > 0 and share > max_mass_share:
+        aprint(skipped_note(n_removed, share, max_mass_share))
+        stamp_min_extent(
+            result.stats,
+            min_extent_vox=min_extent_vox,
+            removed=0,
+            removed_mass=0.0,
+            input_mass=input_mass,
+            skipped=True,
+        )
+        return result, 0
+    if n_removed > 0:
+        measured = measured_stats_snapshot(result)
+        before_stats = result.stats
+        result = result.filter(keep)
+        restore_measured_stats(result, measured)
+        reduce_population_stats(before_stats, result.stats, keep)
+        result.stats["n_splats"] = result.n_splats
+    stamp_min_extent(
+        result.stats,
+        min_extent_vox=min_extent_vox,
+        removed=n_removed,
+        removed_mass=removed_mass,
+        input_mass=input_mass,
+    )
+    if verbose:
+        line = format_min_extent_line(result.stats)
+        if line:
+            aprint(line)
+    return result, n_removed
+
+
+def _post_fit_cull(
+    result: GSplatData,
+    cull_retention: float,
+    *,
+    verbose: bool,
+) -> "tuple[GSplatData, int]":
+    """Cumulative post-fit cull; the caller re-scores the saved set.
 
     The fit's quality metrics were measured on the pre-cull splats. Carrying
     them over (#3107) keeps a store from publishing no PSNR at all, but it
     labels the saved model with a score for a different splat set. So when the
-    cull removed anything the culled set is rendered once more and its scores
-    replace the carried ones; only if that re-score fails do the pre-cull scores
-    stand (and the console says so). Optimizer residuals (`final_loss`, ...)
-    and the iteration counters still describe the run that produced them.
+    closing reductions removed anything, :func:`_post_fit_reductions` renders
+    the saved set once more and its scores replace the carried ones; only if
+    that re-score fails do the pre-cull scores stand (and the console says so).
+    Optimizer residuals (`final_loss`, ...) and the iteration counters still
+    describe the run that produced them. Returns ``(result, n_removed)``.
     """
     from luxar.gsplats._data.filtering import (
         measured_stats_snapshot,
@@ -692,24 +904,17 @@ def _post_fit_cull(
             f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%; "
             f"amplitude retained: {amp_retained_pct:.1f}%)"
         )
-    if n_removed > 0 and "psnr_db" in result.stats and result.n_splats > 0:
-        _rescore_saved_model(
-            result,
-            V,
-            verbose=verbose,
-            device=device,
-            voxel_size=voxel_size,
-            output_space=output_space,
-        )
-    return result
+    return result, n_removed
 
 
 #: The ``compute_quality_metrics`` keys a post-cull re-score refreshes.
 _RESCORED_QUALITY_KEYS = (
     "mse",
     "psnr_db",
+    "psnr_robust_db",
     "ssim",
     "foreground_psnr_db",
+    "foreground_psnr_robust_db",
     "foreground_threshold",
     "foreground_fraction",
 )
@@ -762,7 +967,7 @@ def _rescore_saved_model(
 
     from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
 
-    pre_psnr = result.stats.get("psnr_db")
+    pre_stats = dict(result.stats)
     scored = _voxel_space_view(result, voxel_size, output_space)
     try:
         dev = str(resolve_torch_device(device))
@@ -785,30 +990,47 @@ def _rescore_saved_model(
         result.stats["quality_error"] = reason
         aprint(
             f"Warning: post-cull quality re-score skipped ({reason}); the stored "
-            "quality is the PRE-cull measurement"
+            "quality is the PRE-cull (pre-pruning) measurement"
         )
         return False
     result.stats.update(quality)
     result.stats.pop("quality_error", None)
     if verbose:
-        new_psnr = quality.get("psnr_db")
-        delta = (
-            f" ({new_psnr - pre_psnr:+.2f} dB vs fitted)"
-            if pre_psnr is not None and new_psnr is not None
-            else ""
-        )
-        extra = "".join(
-            f", {label}={quality[key]:{fmt}}"
-            for key, label, fmt in (("ssim", "SSIM", ".4f"), ("mse", "MSE", ".2e"))
-            if key in quality
-        )
-        aprint(
-            f"Quality (saved model, after post-fit cull): "
-            f"PSNR={new_psnr:.1f} dB{delta}, "
-            f"foreground PSNR={quality.get('foreground_psnr_db', float('nan')):.1f} dB"
-            f"{extra}"
-        )
+        aprint(_post_cull_quality_line(quality, pre_stats))
     return True
+
+
+def _post_cull_quality_line(quality: dict[str, float], pre: dict[str, Any]) -> str:
+    """The post-cull summary, headlined like the fit's own (robust peak first).
+
+    A scorer that reports no robust figure falls back to the full-range one.
+    """
+    key = "psnr_robust_db" if "psnr_robust_db" in quality else "psnr_db"
+    new_psnr = quality[key]
+    pre_psnr = pre.get(key)
+    delta = (
+        f" ({new_psnr - pre_psnr:+.2f} dB vs fitted)" if pre_psnr is not None else ""
+    )
+    fg_key = (
+        "foreground_psnr_robust_db"
+        if "foreground_psnr_robust_db" in quality
+        else "foreground_psnr_db"
+    )
+    peak = (
+        f" robust peak ({quality['psnr_db']:.1f} dB full range)"
+        if key == "psnr_robust_db"
+        else ""
+    )
+    extra = "".join(
+        f", {label}={quality[k]:{fmt}}"
+        for k, label, fmt in (("ssim", "SSIM", ".4f"), ("mse", "MSE", ".2e"))
+        if k in quality
+    )
+    return (
+        f"Quality (saved model, after post-fit pruning/cull): "
+        f"PSNR={new_psnr:.1f} dB{peak}{delta}, "
+        f"foreground PSNR={quality.get(fg_key, float('nan')):.1f} dB{extra}"
+    )
 
 
 def _default_fit_scorer(

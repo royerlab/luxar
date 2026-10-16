@@ -307,76 +307,43 @@ def initialize_optimization(
     )
 
     if use_cuda:
-        try:
-            from luxar.gsplats.models.gsplats.cuda import (
-                CUDA_BACKEND_AVAILABLE,
-                GaussianSplatModelCUDA,
-            )
-
-            if config.verbose:
-                aprint(
-                    f"CUDA custom kernels: {'compiled and available' if CUDA_BACKEND_AVAILABLE else 'NOT compiled (using PyTorch fallback)'}"
-                )
-
-            if CUDA_BACKEND_AVAILABLE:
-                model = GaussianSplatModelCUDA(
-                    shape=opt_shape,
-                    centers0=preprocessed_data.seed_centers,
-                    L0=L0,
-                    amps0=amps0,
-                    sigma_min_diag=_sigma_min,
-                    sigma_max_diag=_sigma_max,
-                    amp_max=amp_max,
-                    max_eccentricity=config.max_eccentricity,
-                    truncate=config.truncate,
-                    intensity_floor=config.cuda_intensity_floor,
-                    voxel_size=config.voxel_size,
-                    device=config.device,
-                )
-                if config.verbose:
-                    aprint(
-                        "✓ Model class: GaussianSplatModelCUDA (often orders of magnitude faster on NVIDIA GPUs; depends on hardware)"
-                    )
-            else:
-                aprint(
-                    "WARNING: CUDA device detected but custom CUDA kernels are NOT compiled! "
-                    "Fitting will use PyTorch fallback (significantly slower). "
-                    "Build CUDA kernels with: make build-cuda"
-                )
-                warnings.warn(
-                    "CUDA device detected but custom CUDA kernels are NOT compiled. "
-                    "Fitting will use PyTorch fallback (significantly slower). "
-                    "Build CUDA kernels with: make build-cuda",
-                    UserWarning,
-                    stacklevel=2,
-                )
-        except ImportError:
-            if config.verbose:
-                aprint(
-                    "CUDA backend: NOT installed (cuda_splatting_backend module missing)"
-                )
-            pass  # CUDA backend not compiled
-
-    # Fall back to standard PyTorch model
-    if model is None:
-        model = GaussianSplatModel(
-            shape=opt_shape,
-            centers0=preprocessed_data.seed_centers,
-            L0=L0,
-            amps0=amps0,
-            sigma_min_diag=_sigma_min,
-            sigma_max_diag=_sigma_max,
-            amp_max=amp_max,
-            max_eccentricity=config.max_eccentricity,
-            truncate=config.truncate,
-            voxel_size=config.voxel_size,
-            device=config.device,
+        model = _try_cuda_model(
+            config,
+            dict(
+                shape=opt_shape,
+                centers0=preprocessed_data.seed_centers,
+                L0=L0,
+                amps0=amps0,
+                sigma_min_diag=_sigma_min,
+                sigma_max_diag=_sigma_max,
+                amp_max=amp_max,
+                max_eccentricity=config.max_eccentricity,
+                truncate=config.truncate,
+                intensity_floor=config.cuda_intensity_floor,
+                voxel_size=config.voxel_size,
+                device=config.device,
+            ),
         )
-        device_type = config.device.type
-        # No CPU warning here: the device is the fitter's own, and
-        # GaussianSplatFitter.__init__ already warned (once) when it is CPU.
-        if config.verbose:
-            aprint(f"Model class: GaussianSplatModel (PyTorch, device={device_type})")
+
+    # No GPU kernels: the native CPU kernels (3D), else the PyTorch model
+    if model is None:
+        model = _build_cpu_or_pytorch_model(
+            config,
+            d,
+            dict(
+                shape=opt_shape,
+                centers0=preprocessed_data.seed_centers,
+                L0=L0,
+                amps0=amps0,
+                sigma_min_diag=_sigma_min,
+                sigma_max_diag=_sigma_max,
+                amp_max=amp_max,
+                max_eccentricity=config.max_eccentricity,
+                truncate=config.truncate,
+                voxel_size=config.voxel_size,
+                device=config.device,
+            ),
+        )
 
     _announce_model_backend(model, config)
 
@@ -406,6 +373,71 @@ def initialize_optimization(
         optimizer=optimizer,
         scheduler=scheduler,
     )
+
+
+def _warn_cuda_kernels_unavailable(reason: str) -> None:
+    """Loud, actionable warning that fitting fell back to the PyTorch renderer."""
+    from arbol import aprint
+
+    message = (
+        "CUDA device detected but the custom CUDA kernels are unavailable "
+        f"({reason}). Fitting will use the PyTorch fallback (significantly slower). "
+        "On Linux, a CUDA build of torch provides NVRTC and the kernels compile "
+        "automatically on first use; from a source checkout, `make build-cuda` "
+        "builds them ahead of time."
+    )
+    aprint(f"WARNING: {message}")
+    warnings.warn(message, UserWarning, stacklevel=3)
+
+
+def _try_cuda_model(config: FitConfig, model_kwargs: dict[str, Any]) -> Any | None:
+    """Build a GaussianSplatModelCUDA, or None (with a warning) when no kernels run.
+
+    Kernel backend order (see ``models/gsplats/cuda/backend.py``): compiled
+    extension, then NVRTC runtime compilation, then the PyTorch model. A
+    failing NVRTC compile falls back here rather than aborting the fit.
+    """
+    from arbol import aprint
+
+    try:
+        from luxar.gsplats.models.gsplats.cuda import (
+            GaussianSplatModelCUDA,
+            get_splatting_backend,
+            splatting_backend_unavailable_reason,
+        )
+    except ImportError as exc:
+        if config.verbose:
+            aprint(f"CUDA backend: NOT importable ({exc})")
+        return None
+
+    backend = get_splatting_backend()
+    if backend is None:
+        if splatting_backend_unavailable_reason() != "LUXAR_CUDA_BACKEND=torch":
+            _warn_cuda_kernels_unavailable(
+                splatting_backend_unavailable_reason() or "unknown reason"
+            )
+        return None
+
+    from luxar.gsplats._nvrtc import (
+        CudaDriverError,
+        NvrtcCompileError,
+        NvrtcUnavailableError,
+    )
+    from luxar.gsplats.models.gsplats.cuda.backend import requested_backend
+
+    try:
+        model = GaussianSplatModelCUDA(**model_kwargs)
+    except (NvrtcCompileError, NvrtcUnavailableError, CudaDriverError) as exc:
+        if requested_backend() != "auto":
+            raise  # a forced backend (LUXAR_CUDA_BACKEND) fails loudly, never degrades
+        _warn_cuda_kernels_unavailable(f"{backend.name} kernels failed to load: {exc}")
+        return None
+    if config.verbose:
+        aprint(
+            f"✓ Model class: GaussianSplatModelCUDA, {backend.name} kernels "
+            "(often orders of magnitude faster on NVIDIA GPUs; depends on hardware)"
+        )
+    return model
 
 
 def _warn_metal_kernels_unavailable(reason: str) -> None:
@@ -450,6 +482,87 @@ def _try_metal_model(config: FitConfig, model_kwargs: dict[str, Any]) -> Any | N
             f"✓ Model class: GaussianSplatModelMetal, {backend.name} kernels "
             "(substantially faster on Apple Silicon; speedup depends on chip)"
         )
+    return model
+
+
+def _build_cpu_or_pytorch_model(
+    config: FitConfig, d: int, model_kwargs: dict[str, Any]
+) -> Any:
+    """The native CPU model for a 3D CPU fit when available, else the PyTorch one."""
+    from arbol import aprint
+
+    device_type = config.device.type
+    if d == 3 and device_type == "cpu":
+        model = _try_cpu_native_model(config, model_kwargs)
+        if model is not None:
+            return model
+
+    model = GaussianSplatModel(**model_kwargs)
+    if device_type == "cpu":
+        from luxar.gsplats.utils.device import warn_cpu_fitting
+
+        # Only the PyTorch renderer earns the "orders of magnitude slower"
+        # warning (once per process), with the honest reason the fit is on the
+        # CPU (no GPU visible vs a CPU-only torch) and, for 3D, why the native
+        # kernels are not in use. Frames: warn_cpu_fitting -> here ->
+        # initialize_optimization -> its caller.
+        warn_cpu_fitting(stacklevel=4, detail=_cpu_native_hint(d))
+    if config.verbose:
+        aprint(f"Model class: GaussianSplatModel (PyTorch, device={device_type})")
+    return model
+
+
+def _cpu_native_hint(d: int) -> str:
+    """Why a 3D CPU fit is on the PyTorch renderer (empty when by choice)."""
+    if d != 3:
+        return ""
+    from luxar.gsplats.models.gsplats.cpu.backend import (
+        cpu_native_unavailable_reason,
+        numba_is_missing,
+    )
+
+    reason = cpu_native_unavailable_reason()
+    if reason is None or reason.endswith("=torch"):
+        return ""
+    if numba_is_missing():
+        return (
+            f" The native CPU kernels are unavailable ({reason}); "
+            "`pip install numba` makes 3D CPU fits many times faster."
+        )
+    return f" The native CPU kernels are unavailable: {reason}."
+
+
+def _try_cpu_native_model(
+    config: FitConfig, model_kwargs: dict[str, Any]
+) -> Any | None:
+    """Build a GaussianSplatModelCPUNative, or None to use the PyTorch model.
+
+    ``LUXAR_CPU_BACKEND`` (see ``models/gsplats/cpu/backend.py``): ``auto``
+    uses the numba kernels when numba imports, ``torch`` never does, and a
+    forced ``native`` without numba raises rather than degrading.
+    """
+    from arbol import aprint
+
+    from luxar.gsplats.models.gsplats.cpu import (
+        GaussianSplatModelCPUNative,
+        prepare_cpu_native,
+    )
+
+    status = prepare_cpu_native()
+    if status is None:
+        return None
+    model = GaussianSplatModelCPUNative(**model_kwargs)
+    if config.verbose:
+        aprint(
+            "✓ Model class: GaussianSplatModelCPUNative "
+            f"(numba, {status.threads} threads, {status.threading_layer} layer)"
+        )
+        if status.warmup_seconds > 0:
+            how = "loaded from cache" if status.from_cache else "JIT-compiled"
+            aprint(
+                f"CPU kernels {how} in {status.warmup_seconds:.2f} s"
+                + ("" if status.from_cache else " (cached for later runs)")
+            )
     return model
 
 

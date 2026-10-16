@@ -14,6 +14,7 @@ a single tile under-saturates the GPU and there is spare compute/VRAM.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -118,6 +119,16 @@ def _tile_handoff_args(
     return args
 
 
+def _optional_float_args(*pairs: "tuple[str, Optional[float]]") -> list[str]:
+    """``[flag, value, ...]`` for every pair whose value is not ``None``."""
+    return [
+        part
+        for flag, value in pairs
+        if value is not None
+        for part in (flag, str(value))
+    ]
+
+
 def build_worker_cmd(
     argv0: list[str],
     input_path: str | Path,
@@ -156,6 +167,10 @@ def build_worker_cmd(
     allow_empty_tile: bool = False,
     fold_tile_slivers: bool = True,
     tile_seed_count: Optional[int] = None,
+    voxel_size: "Optional[Sequence[float]]" = None,
+    region: Optional[str] = None,
+    min_extent: Optional[float] = None,
+    reseed_sigma: Optional[float] = None,
 ) -> list[str]:
     """Build the ``luxar gsplat fit --tile i/M`` argv for one worker.
 
@@ -168,7 +183,10 @@ def build_worker_cmd(
     makes a 0-splat tile
     write an ``.empty`` marker (and exit 0) instead of erroring on save.  The
     tiling driver flags ``--tiling``, ``--jobs`` and the parent's ``--compress``
-    are intentionally **never** forwarded.
+    are intentionally **never** forwarded. ``voxel_size`` (the parent's resolved
+    spacing, ``--voxel-size`` or ``--physical``) and ``region`` (the ``--region``
+    crop spec) make every worker read the same crop and fit in the same frame;
+    the parent applies the crop offset once, at the merged save.
     """
     cmd = [
         *argv0,
@@ -248,8 +266,26 @@ def build_worker_cmd(
             cmd += ["--denoise-2d"]
     if allow_empty_tile:
         cmd += ["--allow-empty-tile"]
+    # Speck pruning runs inside each worker (per tile); forward explicit values
+    # only, so an unset flag resolves through the same preset/config merge.
+    cmd += _optional_float_args(
+        ("--min-extent", min_extent), ("--reseed-sigma", reseed_sigma)
+    )
     cmd += _tile_handoff_args(fold_tile_slivers, tile_seed_count)
+    cmd += _frame_args(voxel_size, region)
     return cmd
+
+
+def _frame_args(
+    voxel_size: "Optional[Sequence[float]]", region: Optional[str]
+) -> list[str]:
+    """``--voxel-size`` / ``--worker-region`` worker argv (empty when unset)."""
+    args: list[str] = []
+    if voxel_size is not None:
+        args += ["--voxel-size", ",".join(f"{float(v):.17g}" for v in voxel_size)]
+    if region is not None:
+        args += ["--worker-region", region]
+    return args
 
 
 def resolve_jobs(
@@ -311,6 +347,21 @@ def report_auto_jobs(jobs: str | int, worker_limit: "WorkerLimit") -> None:
             f"Auto jobs: {worker_limit.count} worker(s), "
             f"{format_worker_limit(worker_limit.limit)}"
         )
+
+
+def _tile_worker_env(workers: int) -> dict[str, str]:
+    """The parent environment, plus a per-worker CPU-kernel thread share.
+
+    ``workers`` concurrent fits would each default the native CPU kernels to
+    every physical core; give each ``physical_cores // workers`` instead,
+    unless the user set ``LUXAR_CPU_THREADS``. Harmless for GPU workers.
+    """
+    from luxar.gsplats.utils.device import cpu_worker_threads_env
+
+    env = os.environ.copy()
+    if workers > 1:
+        env.update(cpu_worker_threads_env(workers))
+    return env
 
 
 def fit_tiled_parallel(
@@ -424,6 +475,7 @@ def fit_tiled_parallel(
 
     tile_paths = [tmp_dir / f"tile_{i}.gsplats.zarr" for i in range(num_tiles)]
     stop = threading.Event()
+    worker_env = _tile_worker_env(min(max(1, jobs), max(1, num_tiles)))
 
     def _run(i: int) -> tuple[int, int, str]:
         # A worker that dequeued this tile after a Ctrl-C must not spawn a new
@@ -432,7 +484,7 @@ def fit_tiled_parallel(
             return i, -1, "cancelled before launch"
         try:
             cmd = [str(c) for c in worker_cmd_builder(i, num_tiles, tile_paths[i])]
-            proc = subprocess.run(cmd, capture_output=True, text=True)
+            proc = subprocess.run(cmd, capture_output=True, text=True, env=worker_env)
         except Exception as exc:  # bad argv → FileNotFoundError/OSError, builder bug
             # Funnel build/launch failures into the normal per-tile failure path
             # so the caller gets the curated error + retained tmp_dir, not a raw

@@ -7,22 +7,20 @@ using custom CUDA compute kernels for the forward and backward passes.
 
 from __future__ import annotations
 
-from typing import Any, Optional, Sequence, Tuple
+# subprocess is imported only to recognise CalledProcessError (compiler failures).
+import subprocess  # nosec B404
+import warnings
+from typing import Any, Callable, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
 
+from luxar.gsplats.models.gsplats.cuda.backend import (
+    get_splatting_backend as get_splatting_backend,  # re-exported
+)
 from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 from luxar.gsplats.utils.device import resolve_torch_device
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
-
-# Import CUDA extension when available
-try:
-    import cuda_splatting_backend  # type: ignore[import-not-found]
-
-    CUDA_BACKEND_AVAILABLE = True
-except ImportError:
-    CUDA_BACKEND_AVAILABLE = False
 
 
 def cholesky_to_conic(L: torch.Tensor) -> torch.Tensor:
@@ -105,19 +103,125 @@ def cholesky_to_conic(L: torch.Tensor) -> torch.Tensor:
         return result
 
 
-try:
-    _cholesky_to_conic_compiled = torch.compile(cholesky_to_conic)
-except Exception:
-    import warnings
+#: Exception modules raised by the torch.compile stack itself (Dynamo, Inductor,
+#: Triton). Matched by module, not class, because their class names move between
+#: torch releases (InductorError, BackendCompilerFailed, ...).
+_COMPILE_STACK_MODULES = ("torch._dynamo", "torch._inductor", "triton")
 
-    warnings.warn(
-        "torch.compile unavailable (missing Triton?). "
-        "cholesky_to_conic will run ~5x slower in eager mode. "
-        "Install Triton: pip install triton",
-        RuntimeWarning,
-        stacklevel=1,
+
+def _exception_chain(exc: BaseException) -> list[BaseException]:
+    """``exc`` and every exception it wraps (``__cause__`` / ``__context__``)."""
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and current not in chain:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
+def is_compile_stack_failure(exc: BaseException) -> bool:
+    """True when ``exc`` is torch.compile failing to BUILD, not the code failing.
+
+    Compile-stack exceptions (Dynamo/Inductor/Triton) and a missing or failing
+    compiler process (FileNotFoundError / CalledProcessError, possibly wrapped)
+    qualify. Anything carrying an out-of-memory error never does: OOM is the
+    caller's problem (``cuda/benchmark.py`` sweeps into it on purpose), and
+    falling back to eager would only hide it.
+    """
+    chain = _exception_chain(exc)
+    if any(isinstance(e, torch.cuda.OutOfMemoryError) for e in chain):
+        return False
+    return any(
+        type(e).__module__.startswith(_COMPILE_STACK_MODULES)
+        or isinstance(e, (FileNotFoundError, subprocess.CalledProcessError))
+        for e in chain
     )
-    _cholesky_to_conic_compiled = cholesky_to_conic
+
+
+class _CompiledWithEagerFallback:
+    """``torch.compile(fn)`` that permanently falls back to eager ``fn`` on failure.
+
+    ``torch.compile`` only builds a lazy wrapper; Inductor compiles on the
+    FIRST CALL, and that is where it fails on a machine without a working C
+    compiler or Triton (a plain pip install on a bare GPU box). The backward
+    graph compiles even later, inside ``torch.autograd.grad``. So failures are
+    caught where they actually happen -- at the first call here, and in
+    :func:`conic_vjp` for the backward -- but only compile-stack failures
+    (:func:`is_compile_stack_failure`): warn once, remember the decision, run
+    eager from then on. Every other exception (OOM, shape errors) propagates.
+    """
+
+    def __init__(self, fn: Callable[[torch.Tensor], torch.Tensor]) -> None:
+        self._fn = fn
+        self._compiled: Callable[[torch.Tensor], torch.Tensor] | None
+        try:
+            self._compiled = torch.compile(fn)
+        except Exception as exc:  # noqa: BLE001 -- any compile setup failure
+            self._compiled = None
+            self._warn(exc)
+
+    @property
+    def fn(self) -> Callable[[torch.Tensor], torch.Tensor]:
+        """The eager function."""
+        return self._fn
+
+    @property
+    def uses_compiled(self) -> bool:
+        """False once the eager fallback has been taken."""
+        return self._compiled is not None
+
+    def _warn(self, exc: BaseException) -> None:
+        warnings.warn(
+            f"torch.compile unavailable for {self._fn.__name__} "
+            f"({type(exc).__name__}: {str(exc).splitlines()[0][:200] if str(exc) else ''}); "
+            "running it eagerly instead (correct, a few x slower for this helper). "
+            "A working C compiler and Triton enable the compiled path.",
+            RuntimeWarning,
+            stacklevel=3,
+        )
+
+    def disable_on_compile_failure(self, exc: BaseException) -> bool:
+        """Switch to eager if ``exc`` is a compile-stack failure; report whether it was."""
+        if not is_compile_stack_failure(exc):
+            return False
+        if self._compiled is not None:
+            self._compiled = None
+            self._warn(exc)
+        return True
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        compiled = self._compiled
+        if compiled is not None:
+            try:
+                return compiled(x)
+            except Exception as exc:
+                if not self.disable_on_compile_failure(exc):
+                    raise
+        return self._fn(x)
+
+
+_cholesky_to_conic_compiled = _CompiledWithEagerFallback(cholesky_to_conic)
+
+
+def conic_vjp(Ls_for_conic: torch.Tensor, d_conic: torch.Tensor) -> torch.Tensor:
+    """``d_conic -> d_Ls`` through ``cholesky_to_conic`` (compiled when possible).
+
+    AOTAutograd compiles the BACKWARD graph lazily, inside
+    ``torch.autograd.grad``; a compile-stack failure there switches the helper
+    to eager and redoes the vector-Jacobian product eagerly.
+    """
+    helper = _cholesky_to_conic_compiled
+    try:
+        with torch.enable_grad():
+            conic = helper(Ls_for_conic)
+        (d_Ls,) = torch.autograd.grad(conic, Ls_for_conic, grad_outputs=d_conic)
+    except Exception as exc:
+        if not helper.disable_on_compile_failure(exc):
+            raise
+        with torch.enable_grad():
+            conic = helper.fn(Ls_for_conic)
+        (d_Ls,) = torch.autograd.grad(conic, Ls_for_conic, grad_outputs=d_conic)
+    return d_Ls
 
 
 class CUDASplatFunction(torch.autograd.Function):
@@ -169,9 +273,10 @@ class CUDASplatFunction(torch.autograd.Function):
             conic_kernel = conic.contiguous()
             amps_kernel = amps.contiguous()
 
-        if CUDA_BACKEND_AVAILABLE:
+        backend = get_splatting_backend()
+        if backend is not None:
             # Dispatch to CUDA kernels (use FP16 kernel if autocast or explicit)
-            result = cuda_splatting_backend.forward(
+            result = backend.forward(
                 centers_kernel,
                 conic_kernel,
                 amps_kernel,
@@ -200,6 +305,7 @@ class CUDASplatFunction(torch.autograd.Function):
         ctx.truncate = truncate
         ctx.intensity_floor = intensity_floor
         ctx.shape_tensor_cached = shape_tensor_cached
+        ctx.backend = backend
         ctx.d = d
         ctx.use_fp16 = use_fp16_kernel
         ctx.explicit_fp16 = use_fp16
@@ -240,13 +346,14 @@ class CUDASplatFunction(torch.autograd.Function):
         intensity_floor = ctx.intensity_floor
         use_fp16 = ctx.use_fp16
 
-        if CUDA_BACKEND_AVAILABLE:
+        backend = ctx.backend
+        if backend is not None:
             # Build optional kwargs for cached device tensors
             cached_kwargs = {}
             if ctx.shape_tensor_cached is not None:
                 cached_kwargs["shape_tensor_cached"] = ctx.shape_tensor_cached
 
-            d_centers, d_conic, d_amps = cuda_splatting_backend.backward(
+            d_centers, d_conic, d_amps = backend.backward(
                 grad_output.contiguous(),
                 ctx.centers_kernel,
                 ctx.conic_kernel,
@@ -262,13 +369,7 @@ class CUDASplatFunction(torch.autograd.Function):
             # torch.compile fuses both forward and backward into optimized kernels,
             # giving ~0.3ms (vs ~1.6ms without compile). Autograd is correct by
             # construction — compile just fuses the kernel launches.
-            with torch.enable_grad():
-                conic_recomputed = _cholesky_to_conic_compiled(Ls_for_conic)
-            (d_Ls,) = torch.autograd.grad(
-                outputs=conic_recomputed,
-                inputs=Ls_for_conic,
-                grad_outputs=d_conic,
-            )
+            d_Ls = conic_vjp(Ls_for_conic, d_conic)
         else:
             # Fallback: recompute forward with gradient tracking and use autograd
             # This is slower than CUDA backward but ensures correctness when CUDA
@@ -409,6 +510,13 @@ class GaussianSplatModelCUDA(torch.nn.Module):
                 f"For CPU or MPS, use GaussianSplatModel or GaussianSplatModelMetal."
             )
 
+        # Pay any one-time NVRTC kernel compile now (cached on disk), so a
+        # failure surfaces here -- where the caller can fall back -- rather
+        # than inside the first training step. No-op for the AOT extension.
+        backend = get_splatting_backend()
+        if backend is not None:
+            backend.prepare(d, resolved_device)
+
         # Create base model for parameter management
         self._base = GaussianSplatModel(
             shape=shape,
@@ -433,6 +541,12 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         # Convert base params to FP16 if enabled (no conversion overhead)
         if use_fp16:
             self._convert_base_to_fp16()
+
+    @property
+    def kernel_backend(self) -> str | None:
+        """Name of the CUDA kernel backend in use, if any."""
+        backend = get_splatting_backend()
+        return backend.name if backend is not None else None
 
     def _convert_base_to_fp16(self) -> None:
         """Convert all base model parameters to FP16 for bandwidth optimization."""

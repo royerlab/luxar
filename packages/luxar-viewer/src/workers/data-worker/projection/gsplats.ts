@@ -152,6 +152,13 @@ export async function projectGSplatsTo3D(
     /** Truncation radius in sigmas for shifted Gaussian attenuation (defaults to
      *  `GSPLAT_DEFAULT_TRUNCATION_RADIUS`) */
     truncate?: number;
+    /**
+     * Visibility gate on the STORED attenuated amplitude (defaults to
+     * `MIN_AMPLITUDE`). A node with a `display_gain` passes
+     * `MIN_AMPLITUDE / gain`, so the gate stays a threshold on what the shader
+     * emits (`data-processor-gsplats.ts::readMinAmplitude`).
+     */
+    minAmplitude?: number;
     /** Components per color item: 3 (RGB, default) or 4 (RGBA — alpha = per-splat opacity) */
     colorComponents?: 3 | 4;
     /**
@@ -298,7 +305,7 @@ export async function projectGSplatsTo3D(
   const displayDimsU32 = new Uint32Array(orderedDisplayDims);
 
   // Minimum attenuated-amplitude threshold for visibility.
-  const minAmplitude = MIN_AMPLITUDE;
+  const minAmplitude = params.minAmplitude ?? MIN_AMPLITUDE;
 
   // Step 0: Pre-filter discrete dimensions (TypeScript, before WASM).
   // Splats whose center is more than half a step away in any discrete dim are invisible.

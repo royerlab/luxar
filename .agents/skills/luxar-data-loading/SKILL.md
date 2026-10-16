@@ -95,9 +95,10 @@ Without `--axes`, the loader infers axes from the number of dimensions:
 | >5D | T=first, extra leading dims folded into channel, last 3 = spatial | |
 
 **That table is the zarr path only.** For `.npy` / `.npz` / `.tiff` / imageio inputs
-the loader squeezes the decoded array and returns it as-is, so `--channel` /
-`--timepoint` are silently ignored — `fit movie.tiff --timepoint 3` fits the whole
-5D stack. On any non-zarr nD input, pass `--axes` (which does the indexing itself).
+the loader squeezes the decoded array and returns it as-is, so a `--channel` /
+`--timepoint` there has nothing to index and is REFUSED (`fit`, `cal`, `compare`
+exit 1 naming `--axes`). On any non-zarr nD input, pass `--axes` (which does the
+indexing itself).
 
 **Override with `--axes`** (on `fit` / `cal`) when the layout differs (e.g. a
 camera axis, or `ZCYX`). Give exactly one label per array dimension; recognized

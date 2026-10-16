@@ -133,7 +133,12 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // `?workers=` / `?prefetch=` beat the stored values for this session only:
   // a launcher on a dedicated display machine sets them without rewriting that
   // machine's saved preferences.
-  applyUrlPerformanceOverrides(urlParams.workers, urlParams.prefetch, urlParams.renderer);
+  applyUrlPerformanceOverrides(
+    urlParams.workers,
+    urlParams.prefetch,
+    urlParams.renderer,
+    urlParams.hdr
+  );
 
   if (urlParams.opfsReadConcurrency !== null) {
     config.cache.opfsReadConcurrency = urlParams.opfsReadConcurrency;
@@ -319,6 +324,11 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       (userSettings.advanced.renderer !== 'auto' ? userSettings.advanced.renderer : undefined),
     webgpuForceWebGL: urlParams.webgpuForceWebGL,
     perfTimestamp: urlParams.perfTimestamp,
+    // HDR output: on by default (it still needs WebGPU + an HDR display and
+    // falls back to SDR otherwise); `?hdr=off` or Settings › Advanced turns
+    // it off, and `?hdr=<n>` pins the headroom.
+    hdr: (urlParams.hdr ?? userSettings.advanced.hdrOutput) !== 'off',
+    hdrHeadroom: urlParams.hdrHeadroom ?? undefined,
     // `?renderAlways` (render every tick) and the debug-only `?renderAudit`.
     renderAlways: urlParams.renderAlways,
     renderAudit: urlParams.renderAudit,
@@ -343,6 +353,8 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
     densityCap: urlParams.densityCap ?? undefined,
     // `?textScale=` — overlay type size for this display (a launcher flag).
     textScale: urlParams.textScale ?? undefined,
+    // `?viewAxis=xy|xz|yz` — axis-aligned opening view for this session.
+    viewAxis: urlParams.viewAxis ?? undefined,
     // Opt-in capture-quality override (`?lodFinest` — the gallery harness).
     lodFinest: urlParams.lodFinest,
     // Session-wide replacement-LOD threshold bias (`?lodBias=N`).

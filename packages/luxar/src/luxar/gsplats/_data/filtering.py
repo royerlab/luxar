@@ -204,10 +204,12 @@ _CONTENT_SCOPED_STATS_KEYS = (
     # fitting/results.py, fit_tiled_gsplats.py and the progressive fitter.
     "mse",
     "psnr_db",
+    "psnr_robust_db",
     "ssim",
     "rel_l2",
     "max_abs_error",
     "foreground_psnr_db",
+    "foreground_psnr_robust_db",
     # The threshold and the foreground share are measured on the TARGET, so on
     # their own they would survive a cull — but they exist only to say what
     # `foreground_psnr_db` was taken over (`info` prints them inside its
@@ -378,11 +380,10 @@ _STRUCTURE_SCOPED_STATS_KEYS = (
 #:   have been legitimate. One layout per ladder, chosen by the producer, instead
 #:   of a heuristic answering each level on its own.
 #: * The :data:`~luxar.gsplats.io.save_gsplats.NORMALIZATION_STATS_KEYS` block
-#:   (``floor`` / ``image_min`` / ``image_max`` / ``intensity_range``) describes
-#:   the INPUT VOLUME's intensity scale. Regrouping splats cannot change what
-#:   pedestal was subtracted before fitting. Named here for the record; they are
-#:   exempt by simply not appearing above, and the completeness test asserts the
-#:   two sets stay disjoint.
+#:   records the source volume's normalization basis and any subsequent intensity
+#:   scaling. Regrouping splats cannot change that basis. Named here for the
+#:   record; they are exempt by simply not appearing above, and the completeness
+#:   test asserts the two sets stay disjoint.
 #:
 #: Nothing in production READS this tuple — the writer never consults it. It is
 #: the classification anchor for the completeness test, which requires every key

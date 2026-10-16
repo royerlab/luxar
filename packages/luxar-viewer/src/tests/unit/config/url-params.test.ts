@@ -198,6 +198,8 @@ describe('readUrlParams', () => {
       renderer: null,
       webgpuForceWebGL: false,
       perfTimestamp: false,
+      hdr: null,
+      hdrHeadroom: null,
       renderAlways: false,
       renderAudit: false,
       gpuBudgetMB: null,
@@ -212,6 +214,7 @@ describe('readUrlParams', () => {
       bakeEnv: false, // the `luxar env bake` driver's one-shot (opt-in via ?bakeEnv)
       probe: null,
       envResolution: null,
+      viewAxis: null,
     });
   });
 
@@ -311,6 +314,19 @@ describe('readUrlParams', () => {
     // Flag-only form parses as NaN → null.
     expect(readUrlParams('?dpr').dpr).toBeNull();
     expect(readUrlParams('').dpr).toBeNull();
+  });
+
+  it('parses viewAxis (the axis preset), leaving the ?view= bookmark alone', () => {
+    expect(readUrlParams('?viewAxis=xy').viewAxis).toBe('xy');
+    expect(readUrlParams('?viewAxis=XZ').viewAxis).toBe('xz');
+    expect(readUrlParams('?viewAxis=yz').viewAxis).toBe('yz');
+    expect(readUrlParams('?viewAxis=zx').viewAxis).toBeNull();
+    expect(readUrlParams('?viewAxis').viewAxis).toBeNull();
+    expect(readUrlParams('').viewAxis).toBeNull();
+    // `view` is the bookmark parameter: an axis-looking value stays a bookmark.
+    const both = readUrlParams('?view=xz&viewAxis=yz');
+    expect(both.view).toBe('xz');
+    expect(both.viewAxis).toBe('yz');
   });
 
   it('parses lineJoin, distinguishing "no override" from an explicit none', () => {
@@ -481,6 +497,25 @@ describe('readUrlParams', () => {
       expect(readUrlParams('?renderAlways').renderAlways).toBe(true);
       expect(readUrlParams('?debug&renderAudit').renderAudit).toBe(true);
       expect(readUrlParams('?renderAudit').renderAlways).toBe(false);
+    });
+  });
+
+  describe('?hdr', () => {
+    it('reads the HDR output mode: absent, off, or forced auto', () => {
+      expect(readUrlParams('').hdr).toBeNull();
+      expect(readUrlParams('?hdr').hdr).toBe('auto');
+      expect(readUrlParams('?hdr=4').hdr).toBe('auto');
+      for (const off of ['off', 'OFF', '0', 'false']) {
+        expect(readUrlParams(`?hdr=${off}`).hdr).toBe('off');
+      }
+    });
+
+    it('pins a numeric headroom, clamped to the slider range', () => {
+      expect(readUrlParams('?hdr').hdrHeadroom).toBeNull();
+      expect(readUrlParams('?hdr=off').hdrHeadroom).toBeNull();
+      expect(readUrlParams('?hdr=4').hdrHeadroom).toBe(4);
+      expect(readUrlParams('?hdr=99').hdrHeadroom).toBe(16);
+      expect(readUrlParams('?hdr=0.5').hdrHeadroom).toBe(1);
     });
   });
 

@@ -33,6 +33,7 @@ from typing import (
     Literal,
     Optional,
     Sequence,
+    Tuple,
     cast,
 )
 
@@ -263,6 +264,12 @@ _FITTING_INFO_KEYS = (
     "splats_near_relocation_init_sigma_unrelocated_count",
     "splats_near_sigma_min_count",
     "splats_near_sigma_min_fraction",
+    # Closing speck pruning (`min_extent`).
+    "min_extent_vox",
+    "min_extent_removed",
+    "min_extent_removed_mass_share",
+    "min_extent_input_mass",
+    "min_extent_skipped",
     # Internal packed classifications carried only by intermediate tile stores.
     "_fit_scale_population_bits",
     # What the splats represent. These describe the fit's INPUT, so they belong
@@ -289,6 +296,22 @@ _FITTING_INFO_KEYS = (
     "fitted_voxels",
     "occupancy",
     "voxels_per_splat",
+    # The coordinate frame of the stored splats. `physical_coordinates` says
+    # whether centers/Cholesky are voxel indices or `voxel_size` x index (in
+    # `voxel_unit`, from `voxel_size_source`); `source_region` is the
+    # `fit --region` crop, [[start, stop], ...] in source voxel indices, whose
+    # start is ALREADY added to the centers (they sit in full-volume
+    # coordinates; `source_shape` is the crop's). Rendering onto the fitted
+    # grid means undoing both first.
+    "voxel_size",
+    "voxel_unit",
+    "voxel_size_source",
+    "physical_coordinates",
+    "source_region",
+    # The robust-peak companions of `psnr_db` / `foreground_psnr_db` (see
+    # `luxar.gsplats.metrics.compute_quality_metrics`).
+    "psnr_robust_db",
+    "foreground_psnr_robust_db",
 )
 
 
@@ -306,11 +329,13 @@ _HEADER_STATS_KEYS = (
 #: ``pipeline/`` group) on every writer path — see
 #: ``docs/specs/GSPLATS_ZARR_FORMAT.md`` §"Pipeline Group Attributes" (#1175).
 #:
-#: Numeric values are in the INPUT VOLUME's own units: ``floor`` is the
+#: Fit values start in the INPUT VOLUME's own units: ``floor`` is the
 #: background level subtracted before fitting (``None``/``null`` when
 #: suppression was disabled or refused), ``floor_strategy`` is categorical
 #: estimator provenance, and ``image_min`` / ``image_max`` are the normalization
-#: bounds and ``intensity_range`` their span. A tiled/progressive path removes
+#: bounds and ``intensity_range`` their span (in amplitude units after an
+#: intensity edit); ``intensity_scale`` records that edit's cumulative factor.
+#: A tiled/progressive path removes
 #: the pedestal OUTSIDE the fitter and then fits with ``floor="none"``, so it
 #: must shift its inner bounds back into those units before recording them —
 #: otherwise ``image_min`` would mean the tile's post-subtraction minimum on one
@@ -321,11 +346,13 @@ NORMALIZATION_STATS_KEYS = (
     "image_min",
     "image_max",
     "intensity_range",
+    "intensity_scale",
 )
 
 
 def agreed_normalization_stats(
     stats_list: "Sequence[Optional[Dict[str, Any]]]",
+    counts: "Optional[Sequence[int]]" = None,
 ) -> Dict[str, Any]:
     """The :data:`NORMALIZATION_STATS_KEYS` block the inputs UNANIMOUSLY agree on.
 
@@ -337,9 +364,10 @@ def agreed_normalization_stats(
     on any disagreement it is dropped, and the merged artifact simply says
     nothing rather than something false.
 
-    An input that does not carry a key casts no vote: an empty/skipped tile
-    records no bounds at all, and vetoing on that would erase the block for the
-    whole merge. At least one input must carry the key for it to appear.
+    An empty/skipped tile casts no vote. A populated input without an amplitude
+    basis vetoes that basis; ``counts`` supplies the actual per-input sizes
+    when they are available, since imported splats need not record ``n_splats``
+    in their stats. At least one input must carry a key for it to appear.
     """
     agreed: Dict[str, Any] = {}
     for key in NORMALIZATION_STATS_KEYS:
@@ -349,7 +377,39 @@ def agreed_normalization_stats(
         first = values[0]
         if all(v == first for v in values):
             agreed[key] = first
+    # An absent scale on a fitted input means identity. Equal post-edit ranges
+    # from differently scaled inputs do not share one amplitude unit.
+    scales = [
+        s.get("intensity_scale", 1.0)
+        for s in stats_list
+        if s is not None and "intensity_range" in s
+    ]
+    if scales and any(scale != scales[0] for scale in scales[1:]):
+        agreed.pop("intensity_range", None)
+        agreed.pop("intensity_scale", None)
+    # Abstaining is for EMPTY tiles only. An input that holds splats but records
+    # no intensity basis (an import, a normalised edit) has amplitudes in some
+    # other unit, so the merge cannot claim the others' basis for all of them.
+    if counts is not None and len(counts) != len(stats_list):
+        raise ValueError("counts must match stats_list")
+    if any(
+        (count > 0 if counts is not None else _holds_splats(s or {}))
+        and (s is None or "intensity_range" not in s)
+        for count, s in zip(
+            counts if counts is not None else (0 for _ in stats_list),
+            stats_list,
+            strict=True,
+        )
+    ):
+        agreed.pop("intensity_range", None)
+        agreed.pop("intensity_scale", None)
     return agreed
+
+
+def _holds_splats(stats: Dict[str, Any]) -> bool:
+    """Whether a stats record says its input has splats (``n_splats > 0``)."""
+    n = stats.get("n_splats")
+    return bool(isinstance(n, (int, np.integer)) and not isinstance(n, bool) and n > 0)
 
 
 #: Fit-runtime scratch keys that live in ``stats`` but are NOT persistable
@@ -856,6 +916,7 @@ def _finalize_gsplat_root(
         # Reduction/topology stats: everything split_fitting_info's other
         # buckets do not consume. Optional group: absent for plain fits.
         root.create_group("pipeline").attrs.update(pipeline_info)
+    _stamp_fit_axis_names(root, resolved_fitting_info)
 
     # One colormap window per gsplat structure (#1691) — before the hash so
     # the stamp covers the corrected attrs.
@@ -864,6 +925,86 @@ def _finalize_gsplat_root(
     # Stamp BEFORE consolidating so the hash lands in `.zmetadata` too.
     _stamp_content_hash(root)
     consolidate(root)
+
+
+#: Axis names of a fitted image volume, in ARRAY order (slowest axis first) —
+#: the order every fitter emits center columns in. Keyed by the fitted volume's
+#: rank; other ranks carry no conventional names and are left unstamped.
+IMAGE_ARRAY_AXIS_NAMES: Dict[int, Tuple[str, ...]] = {
+    2: ("y", "x"),
+    3: ("z", "y", "x"),
+}
+
+
+def fit_axis_dimension_metadata(
+    fitting_info: Optional[Dict[str, Any]], ndim: Optional[int]
+) -> Optional[List[Dict[str, Any]]]:
+    """``dimension_metadata`` naming a fitted volume's center columns, or ``None``.
+
+    Without explicit axis labels, a fit's center columns use the conventional
+    image array order. A store whose ``fitting/source_shape`` has the same rank
+    as its centers therefore defaults to ``(y, x)`` / ``(z, y, x)``. An explicit
+    ``dimension_metadata`` at the root, as written by ``fit --axes``, wins.
+    No fitting provenance, a stacked timelapse whose centers outrank the source
+    grid, or an unconventional rank returns ``None`` rather than guessing.
+
+    Names, plus a ``unit`` only for a fit stored in physical coordinates
+    (``fitting/physical_coordinates`` with a known ``voxel_unit``): its centers
+    ARE in that unit, so ``gsplat convert`` can label the scene axes (and its
+    scale bar) honestly. Never a voxel ``scale``: a later geometric ``gsplat
+    transform`` moves the data inside the same frame, so names stay honest where
+    a scale would not (the spacing itself is recorded in ``fitting/voxel_size``).
+    """
+    if not fitting_info or ndim is None:
+        return None
+    shape = fitting_info.get("source_shape")
+    if not isinstance(shape, (list, tuple)) or len(shape) != ndim:
+        return None
+    names = IMAGE_ARRAY_AXIS_NAMES.get(ndim)
+    if names is None:
+        return None
+    unit = _physical_fit_unit(fitting_info)
+    return [{"name": name, **({"unit": unit} if unit else {})} for name in names]
+
+
+def _physical_fit_unit(fitting_info: Dict[str, Any]) -> Optional[str]:
+    """The unit a physical-coordinate fit's centers are in, when it is known."""
+    if fitting_info.get("physical_coordinates") is not True:
+        return None
+    from luxar.typing_utils.enums import PhysicalUnit
+
+    try:
+        return PhysicalUnit.validate(str(fitting_info.get("voxel_unit"))).value
+    except ValueError:
+        return None
+
+
+def _root_ndim(root: zarr.Group) -> Optional[int]:
+    """The center-column count a standalone root declares, if it declares one."""
+    ndim = root.attrs.get("ndim")
+    if isinstance(ndim, int) and not isinstance(ndim, bool):
+        return ndim
+    bounds = root.attrs.get("position_bounds")
+    if isinstance(bounds, dict) and isinstance(bounds.get("min"), list):
+        return len(bounds["min"])
+    return None
+
+
+def _stamp_fit_axis_names(
+    root: zarr.Group, fitting_info: Optional[Dict[str, Any]]
+) -> None:
+    """Name a fitted image's center columns on the root, unless already named.
+
+    An explicit ``dimension_metadata`` (a batch-fit merge's NGFF axes, or one a
+    rebuild carried over) always wins; this only fills the gap a plain ``fit``
+    left, so ``gsplat convert`` can map the columns onto scene axes without
+    guessing. See :func:`fit_axis_dimension_metadata`.
+    """
+    if "dimension_metadata" in root.attrs:
+        return
+    metadata = fit_axis_dimension_metadata(fitting_info, _root_ndim(root))
+    if metadata is not None:
+        root.attrs["dimension_metadata"] = metadata
 
 
 def _resolve_streaming_layout(

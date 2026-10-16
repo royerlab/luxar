@@ -18,18 +18,19 @@ viewer. The standalone artifact is a `.gsplats.zarr` (format v3.4 — a node tre
 older v3.x files are still read transparently).
 All commands below are subcommands of `luxar gsplat`.
 
-GSplats need optional deps: `pip install "luxar[gsplats,io]"` (PyTorch, scipy;
-`io` reads TIFF, including compressed TIFF). GPU
-(CUDA or Apple MPS) is auto-detected; pass `--device cpu` to force CPU. On Apple
-MPS the 3D Metal kernels compile at runtime (torch >= 2.7, no Xcode); a fit that
-logs "Metal splatting kernels: none, using PyTorch" runs orders of magnitude
-slower — upgrade torch, or see `LUXAR_METAL_BACKEND` in the metal README.
-**On a CPU (or a Mac without the Metal kernels) a fit is slow**: seconds per
-iteration on an 8-Mvoxel volume (about 2.6 s at 4,000 splats with 4–8 threads on an
-M4 Max), so a 2,000-iteration `--preset draft` is roughly an hour or more. Read
-"Fitting on a CPU or a Mac" in `packages/luxar/src/luxar/gsplats/README.md` first:
-export BOTH `OMP_NUM_THREADS` and `MKL_NUM_THREADS` (4–8), `--downscale 2` (~8x
-less per iteration), fewer `--iters`, and a short `--k-grid` for `cal`.
+GSplats need optional deps: `pip install "luxar[gsplats,io]"` (PyTorch, scipy,
+numba; `io` reads TIFF, including compressed TIFF). GPU (CUDA or Apple MPS) is
+auto-detected; pass `--device cpu` to force CPU. On Linux with a CUDA build of
+torch the CUDA kernels compile on first use (NVRTC, cached under
+`~/.cache/luxar/cuda`; no `make build-cuda`); on Apple MPS the 3D Metal kernels
+compile at runtime (torch >= 2.7, no Xcode); on the CPU, fused numba kernels
+compile on first use and run on several threads (`LUXAR_CPU_THREADS`). The fit log
+names the kernels that ran; "Metal splatting kernels: none, using PyTorch" or a
+`GaussianSplatModel (PyTorch, ...)` line means the slow reference path.
+`LUXAR_CUDA_BACKEND` / `LUXAR_METAL_BACKEND` / `LUXAR_CPU_BACKEND` force one.
+**A CPU fit is still far slower than a GPU fit**: read "Fitting on a CPU or a Mac"
+in `packages/luxar/src/luxar/gsplats/README.md` first (`--downscale 2`, fewer
+`--iters`, a short `--k-grid` for `cal`).
 
 ## The canonical pipeline: cal -> fit -> lod
 
@@ -79,6 +80,13 @@ LEAST 500 iterations after the last improvement), and it silently moves
 
 Supported `fit` inputs: `.zarr`, `.zarr.zip`, `.tiff`, `.npy`, `.npz`; nested zarr
 group: `--array-key h2afva/fused` (see the `luxar-data-loading` skill).
+
+Anisotropic stack → physically scaled, image-oriented scene:
+`luxar gsplat fit stack.ome.tif s.gsplats.zarr --physical` then `luxar gsplat
+convert s.gsplats.zarr s.luxar.zarr`. `--physical` reads NGFF / OME-TIFF / ImageJ
+spacing (one line says which); `--voxel-size Z,Y,X` (µm, array order) wins.
+`--region z0:z1,y0:y1,x0:x1` fits a crop placed at its full-volume position
+(`fitting/source_region`); `cal` takes the same three flags.
 
 ### Background floor suppression (`--floor`, default `auto`)
 
@@ -461,7 +469,17 @@ with LuxarZarrCompiler("scene.luxar.zarr") as compiler:
     scene.add_gsplats("trio", centers=c, amplitudes=a, cholesky_factors=L, colors=rgb)
 ```
 
-`luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --center` does (a) for you.
+The CLI shortcut `luxar gsplat convert fitted.gsplats.zarr scene.luxar.zarr --center`
+does (a) for you and writes a ready-to-serve scene. It keeps the amplitudes in
+source data units (labelled `amplitude_unit`, floor in `amplitude_offset`) and
+auto-exposes a separate `display_gain`: dimmed (never brightened) so the opening
+view's predicted additive p99.9 is `--target-brightness` (2.0; 0.9 under
+`--tone-mapping None|Linear`) instead of a saturated blob (side views and other
+timepoints capped at 4x); `--no-auto-exposure` = per-splat gain only. The Python
+adders keep per-splat normalisation by default; the Python equivalent is
+`luxar.gsplats.exposure.data_unit_display_attrs(stats, amplitudes=..., plan=...)`
+(plan from `plan_projected_exposure`), passed to `add_gsplats_from_file(...,
+normalize_amplitudes=False, **attrs)`.
 
 ## Notes
 

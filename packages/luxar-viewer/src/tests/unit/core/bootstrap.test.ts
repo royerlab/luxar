@@ -163,6 +163,8 @@ const EMPTY_PARAMS: UrlParams = {
   renderer: null,
   webgpuForceWebGL: false,
   perfTimestamp: false,
+  hdr: null,
+  hdrHeadroom: null,
   renderAlways: false,
   renderAudit: false,
   gpuBudgetMB: null,
@@ -177,6 +179,7 @@ const EMPTY_PARAMS: UrlParams = {
   bakeEnv: false,
   probe: null,
   envResolution: null,
+  viewAxis: null,
 };
 
 /** URLs the stubbed `fetch` was asked for (bootstrap's root-document prefetch). */

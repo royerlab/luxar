@@ -24,10 +24,10 @@ extension, and for the few things that need `make` (native app launchers).
 
 | Machine | Fitting device | Fast splatting kernels | Notes |
 | --- | --- | --- | --- |
-| Laptop / desktop, no GPU (Linux, WSL) | CPU | n/a | Viewing is WebGL in the browser and is fine anywhere; only *fitting* is slow — install the CPU-only torch wheel first |
+| Laptop / desktop, no GPU (Linux, WSL) | CPU | numba CPU kernels (in `[gsplats]`, compiled on first use) | Viewing is WebGL in the browser and is fine anywhere; install the CPU-only torch wheel first |
 | Mac with Apple Silicon | `mps` (auto) | Metal, compiled at runtime from a pip install (torch >= 2.7, no Xcode) | |
-| Desktop with NVIDIA GPU | `cuda` (auto) | CUDA extension, built from a source checkout (`make build-cuda`) | A pip install fits on the GPU through the slower PyTorch path |
-| Slurm/HPC cluster | `cuda` on compute nodes | build via `make build-cuda SLURM=1` | No sudo, no GPU on login node — everything has a no-sudo fallback |
+| Desktop with NVIDIA GPU | `cuda` (auto) | CUDA, compiled on first use with NVRTC from a pip install (no toolkit); `make build-cuda` optional | |
+| Slurm/HPC cluster | `cuda` on compute nodes | NVRTC on the node, or build via `make build-cuda SLURM=1` | No sudo, no GPU on login node — everything has a no-sudo fallback |
 
 ## User install (pip)
 
@@ -85,21 +85,19 @@ pip install "luxar[gsplats,io]"
   runtime (...)`; `Metal splatting kernels: none, using PyTorch` means a torch
   too old for it (measured ~40x slower end to end, ~100x per iteration) — upgrade torch.
   `LUXAR_METAL_BACKEND=auto|aot|runtime|torch` forces a backend.
-- *NVIDIA*: `--device cuda` works from a pip install but through the PyTorch
-  reference path; it prints "CUDA GPU detected but splatting backend is not
-  compiled ... Build with: make build-cuda". The compiled kernels are built from a
-  source checkout against the installed torch (see "Profile: desktop with NVIDIA
-  GPU"). No CUDA toolkit is needed for the PyTorch path — only an NVIDIA driver
-  and a CUDA build of torch (`python -c "import torch;
+- *NVIDIA*: the CUDA splatting kernels compile on first use with NVRTC, the CUDA
+  runtime compiler inside torch's NVIDIA wheels, and are cached under
+  `~/.cache/luxar/cuda` — no CUDA toolkit or C++ compiler. Only an NVIDIA driver
+  and a CUDA build of torch are needed (`python -c "import torch;
   print(torch.cuda.is_available())"` must print `True`).
+  `LUXAR_CUDA_BACKEND=aot|nvrtc|torch` forces a backend.
 - Which path a fit took is printed near its start: `Model class:
   GaussianSplatModelCUDA` / `GaussianSplatModelMetal, runtime kernels` (fast) or
   `GaussianSplatModel (PyTorch, device=...)` (reference path).
-- *CPU*: expect seconds per iteration on a few-Mvoxel volume (about 2.6 s at
-  4,000 splats on 8.4 Mvoxel with 4–8 threads on an M4 Max), so minutes per 100
-  iterations and about an hour or more for a 2,000-iteration draft. Read "Fitting
-  on a CPU or a Mac" in `packages/luxar/src/luxar/gsplats/README.md` (threads,
-  downscale, short `cal` grid).
+- *CPU*: 3D fits run on fused numba kernels (in `[gsplats]`; compiled on first use,
+  then cached), on several threads automatically (`LUXAR_CPU_THREADS` overrides;
+  `LUXAR_CPU_BACKEND=auto|native|torch` forces a backend). Still much slower than a
+  GPU: read "Fitting on a CPU or a Mac" in `packages/luxar/src/luxar/gsplats/README.md`.
 
 ### Verify
 
@@ -167,6 +165,22 @@ environment. The default Hatch env already includes `[gsplats]` (torch/scipy)
 via `features=["dev"]`, so the first `hatch run` provisions it — no manual
 install needed.
 
+**User install (no checkout): nothing to build.** On Linux, `pip install
+"luxar[gsplats]"` with the default CUDA build of torch is enough: the custom CUDA
+kernels are compiled for the card on first use by NVRTC (the runtime compiler that
+ships in torch's NVIDIA wheels) and cached under `~/.cache/luxar/cuda`
+(`$XDG_CACHE_HOME` honored). No `nvcc`, no C++ compiler. The first fit logs
+`CUDA splatting kernels: nvrtc (...)`; the one-time compile of a dimensionality
+takes well under a second. If it logs `none, using PyTorch`, the reason follows
+(CPU-only torch, macOS, a GPU older than every architecture the installed
+NVRTC can target -- sm_75 is the floor for CUDA 13's NVRTC, while CUDA 12's
+reaches older cards, untested here -- or no libnvrtc;
+`LUXAR_NVRTC_LIBRARY=/path/to/libnvrtc.so` points at one explicitly).
+`LUXAR_CUDA_BACKEND=aot|nvrtc|torch` forces a path.
+
+**Dev checkout:** the ahead-of-time extension is still supported and preferred
+when it is built:
+
 ```bash
 make setup-dev          # installs Hatch (the CUDA targets build inside it)
 hatch run python -c "import torch; print(torch.cuda.is_available())"   # must be True
@@ -176,19 +190,20 @@ make build-cuda         # or just build, if toolkit already present
 make test-cuda          # verify the extension
 ```
 
-The CUDA toolkit (`nvcc`) must match the CUDA version torch was built for
+The custom kernels accelerate splatting internals; without either path,
+`device='cuda'` fitting still works on PyTorch ops only (it warns). CUDA NLM
+denoise follows the same order: the separate `make build-nlm-cuda` extension
+(→ `nlm_cuda_backend.so`) if built, otherwise NVRTC, otherwise PyTorch.
+
+Only the optional ahead-of-time build needs the CUDA toolkit (`nvcc`), and it
+must match the CUDA version torch was built for
 (`hatch run python -c "import torch; print(torch.version.cuda)"`). Install it from
 NVIDIA's repository: Ubuntu's own `nvidia-cuda-toolkit` package is CUDA 12.0,
 too old for a CUDA 13 torch or for Blackwell GPUs (sm_120/121).
 
-The CUDA extension accelerates splatting internals; plain `device='cuda'`
-fitting works without it (PyTorch ops only). CUDA NLM denoise is a *separate*
-extension — build it with `make build-nlm-cuda` (→ `nlm_cuda_backend.so`);
-without it, NLM denoise silently falls back to the PyTorch path.
-
-**ABI gotcha:** the built `.so` is compiled against a specific torch ABI —
-after ANY torch upgrade, rebuild with `make build-cuda` or imports fail with
-symbol errors. It is also compiled for your local GPU architecture. Run GPU
+**ABI gotcha (AOT extension only):** the built `.so` is compiled against a
+specific torch ABI — after ANY torch upgrade, rebuild with `make build-cuda`
+(until then it fails to import and the NVRTC path takes over). It is also compiled for your local GPU architecture. Run GPU
 fitting through the SAME env: `hatch run luxar gsplat fit ... --device cuda` —
 not from a separate `.venv`, whose independently-resolved torch importing the
 Hatch-built `.so` is the very ABI mismatch above.
@@ -259,7 +274,11 @@ see the **`luxar-hpc-batch-fit`** skill.
 - **"Viewer not available / not built"** → in a dev tree run
   `cd packages/luxar-viewer && pnpm build` (or `make build-viewer`).
 - **CUDA extension import fails after upgrading torch** → rebuild:
-  `make build-cuda` (ABI mismatch, see above).
+  `make build-cuda` (ABI mismatch, see above), or delete the stale `.so` and
+  let the NVRTC path compile the kernels.
+- **Fit logs "custom CUDA kernels are unavailable"** → the warning carries the
+  reason. A CUDA build of torch on Linux normally brings libnvrtc; check
+  `python -c "import torch; print(torch.version.cuda)"` is not `None`.
 - **hatch/pnpm "command not found" on HPC** → `~/.local/bin` missing from
   PATH (step 2 above).
 - **Ubuntu/Debian setup-dev fails early** → on PEP-668 apt systems,

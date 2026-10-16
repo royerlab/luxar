@@ -63,6 +63,9 @@ export function createGSplatsNode(
     intensity: hasColormap ? 1.0 : composedIntensity,
     offset: hasColormap ? 0.0 : composedOffset,
     blendingMode: (nodeAttrs.blending_mode as string | undefined as BlendingMode) ?? 'additive',
+    // Composed along the ancestry (multiplicative, like intensity); absent = 1,
+    // so a scene without the attr renders bit-identically.
+    displayGain: (nodeAttrs.display_gain as number | undefined) ?? 1.0,
     truncationRadius: clampTruncationRadius(
       (attrs.truncation_radius as number | undefined) ?? GSPLAT_DEFAULT_TRUNCATION_RADIUS
     ),

@@ -5,6 +5,7 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 import {
   _warnedFovPresetConflicts,
+  _warnedInvalidViewAxes,
   extractRenderingOverrides,
   extractCameraOverrides,
   extractBackgroundColor,
@@ -387,6 +388,34 @@ describe('extractRenderingOverrides — cinematic_mode preset expansion', () => 
 });
 
 describe('extractCameraOverrides', () => {
+  beforeEach(() => {
+    _warnedInvalidViewAxes.clear();
+  });
+
+  it('reads a valid camera.view_axis as viewAxis', () => {
+    const cam = extractCameraOverrides({ camera: { view_axis: 'xz', up: [0, -1, 0] } });
+    expect(cam.viewAxis).toBe('xz');
+    expect(cam.up).toEqual({ x: 0, y: -1, z: 0 });
+  });
+
+  it('drops an unknown camera.view_axis instead of guessing', () => {
+    expect(extractCameraOverrides({ camera: { view_axis: 'diagonal' } }).viewAxis).toBeUndefined();
+    expect(extractCameraOverrides({ camera: {} }).viewAxis).toBeUndefined();
+  });
+
+  it('warns once per invalid view axis across repeated extraction', () => {
+    const warn = vi.spyOn(log, 'warning').mockImplementation(() => {});
+    for (const axis of ['diagonal', 'diagonal', 'tilted', 'tilted']) {
+      expect(extractCameraOverrides({ camera: { view_axis: axis } }).viewAxis).toBeUndefined();
+    }
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls.map((call) => String(call[1]))).toEqual([
+      expect.stringContaining('"diagonal"'),
+      expect.stringContaining('"tilted"'),
+    ]);
+    warn.mockRestore();
+  });
+
   it('should return empty object for empty config', () => {
     const cam = extractCameraOverrides({});
     expect(cam.position).toBeUndefined();

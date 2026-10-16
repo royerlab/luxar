@@ -57,6 +57,36 @@ def _make_synthetic_volume(shape=(32, 32), seed=42):
     return V
 
 
+def test_hot_pixel_progressive_stamp_matches_shared_foreground() -> None:
+    import torch
+
+    from luxar.gsplats.metrics import compute_quality_metrics
+    from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+
+    volume = np.zeros((128, 128), dtype=np.float32)
+    volume[40:72, 40:72] = 1.0
+    volume[0, 0] = 1000.0
+    result = fit_progressive_gaussian_splats(
+        volume,
+        max_splats=20,
+        max_splats_per_pass=20,
+        iters_per_pass=5,
+        floor="none",
+        cull_retention=None,
+        verbose=False,
+    )
+    rendered = render_to_volume_tensor(result, shape=volume.shape, device="cpu")
+    expected = compute_quality_metrics(rendered, torch.from_numpy(volume))
+    assert result.stats["foreground_fraction"] > 0.01
+    for key in (
+        "foreground_fraction",
+        "foreground_threshold",
+        "foreground_psnr_db",
+        "foreground_psnr_robust_db",
+    ):
+        assert result.stats[key] == pytest.approx(expected[key], rel=1e-4, abs=1e-5)
+
+
 class TestProgressiveFitting:
     """Tests for fit_progressive_gaussian_splats.
 
@@ -135,6 +165,8 @@ class TestProgressiveFitting:
         splat counts.
         """
         result = shared_progressive_fit.result
+        assert "psnr_robust_db" in result.stats
+        assert "foreground_psnr_robust_db" in result.stats
         assert result.stats["fitter_name"] == "progressive"
         assert result.stats["n_passes"] >= 1
         assert result.stats["n_splats"] == result.n_splats
@@ -143,6 +175,26 @@ class TestProgressiveFitting:
         assert "stop_reason" in result.stats
         assert "pass_psnrs" in result.stats
         assert "pass_splats" in result.stats
+
+        from luxar.gsplats.metrics import compute_quality_metrics
+        from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+
+        volume = _make_synthetic_volume(shape=(32, 32))
+        rendered = render_to_volume_tensor(result, shape=volume.shape, device="cpu")
+        import torch
+
+        floor = result.stats.get("floor")
+        target = np.clip(volume - floor, 0.0, None) if floor is not None else volume
+        expected = compute_quality_metrics(rendered, torch.from_numpy(target))
+        for key in (
+            "psnr_db",
+            "psnr_robust_db",
+            "foreground_psnr_db",
+            "foreground_psnr_robust_db",
+            "foreground_threshold",
+            "foreground_fraction",
+        ):
+            assert result.stats[key] == pytest.approx(expected[key], rel=1e-4, abs=1e-5)
 
     def test_save_load_roundtrip(self, shared_progressive_fit):
         """Verify the (single-LOD) result can be saved and loaded.
