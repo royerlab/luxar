@@ -8,7 +8,7 @@
  * independent control. Old scenes, which carry none of the attrs, see the
  * identity everywhere.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { composeAttrs } from '../../../../data/attrs-composer';
 import type { SceneNode } from '../../../../data/data-loader-types';
@@ -33,7 +33,7 @@ import {
 } from '../../../../ui/layers/brightness-range';
 import { LayerStateManager, computeUniforms } from '../../../../ui/layers/layer-state';
 import { isControlVisible } from '../../../../ui/layers/layer-control-rules';
-import { parseBookmark, captureBookmark } from '../../../../core/app/bookmark-state';
+import { parseBookmark, captureBookmark, restoreBookmark } from '../../../../core/app/bookmark-state';
 import type { LuxarApp } from '../../../../core/app';
 
 const node = (
@@ -330,5 +330,24 @@ describe('bookmarks', () => {
       ],
     };
     expect(parseBookmark(JSON.stringify(bad))).toBeNull();
+  });
+
+  it('restores an untouched bookmark after Brightness changes', async () => {
+    const state = layersOf(root(node('/g', 'gsplats', CONVERTED)));
+    const viewer = {
+      ...app(2.5e-4),
+      getLayers: () => [{ ...state.getLayer('/g')!, path: 'g' }],
+      restoreSnapshot: vi.fn(),
+      setRenderingSettings: vi.fn(),
+      setLayer: vi.fn((_path: string, patch: { brightness?: number }) => {
+        if (patch.brightness !== undefined) state.setBrightness('/g', patch.brightness);
+      }),
+      flyTo: vi.fn().mockResolvedValue({ completed: true }),
+    } as unknown as LuxarApp;
+    const bookmark = captureBookmark(viewer);
+    expect(bookmark.layers[0].appearance).not.toHaveProperty('brightness');
+    state.setBrightness('/g', 2.5e-3);
+    await restoreBookmark(viewer, bookmark);
+    expect(state.getLayer('/g')!.brightness).toBe(2.5e-4);
   });
 });

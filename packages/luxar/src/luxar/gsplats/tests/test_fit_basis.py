@@ -14,6 +14,8 @@ from luxar.gsplats.fit_basis import (
     MISSING_BASIS_HINT,
     fit_image_min,
     reference_on_fit_basis,
+    rescale_intensity_basis,
+    source_intensity_span,
 )
 
 
@@ -67,6 +69,27 @@ class TestFitImageMin:
         what the reader should distrust."""
         assert "image_min" in MISSING_BASIS_HINT
         assert "RAW" in MISSING_BASIS_HINT
+
+
+def test_repeated_intensity_scaling_preserves_raw_levels() -> None:
+    stats = {"image_min": 112.0, "image_max": 4012.0, "intensity_range": 3900.0}
+    rescale_intensity_basis(stats, 0.5)
+    rescale_intensity_basis(stats, 0.5)
+    assert stats == {
+        "image_min": 112.0,
+        "image_max": 4012.0,
+        "intensity_range": 975.0,
+        "intensity_scale": 0.25,
+    }
+    rescale_intensity_basis(stats, 4.0)
+    assert stats == {"image_min": 112.0, "image_max": 4012.0, "intensity_range": 3900.0}
+
+
+def test_scaled_span_never_falls_back_to_raw_bounds() -> None:
+    stats = {"image_min": 112.0, "image_max": 4012.0, "intensity_scale": 0.5}
+    assert source_intensity_span(stats) is None
+    stats["intensity_range"] = 1950.0
+    assert source_intensity_span(stats) == 1950.0
 
 
 class TestReferenceOnFitBasis:

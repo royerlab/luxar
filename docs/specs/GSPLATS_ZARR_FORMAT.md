@@ -1485,14 +1485,16 @@ table below for exactly which keys, and where the record comes from):
 `image_min` / `image_max` / `intensity_range` record how the source volume
 was normalized, `floor` is the background level subtracted before fitting
 (`null` when floor suppression was disabled or refused), and `floor_strategy`
-records the specimen estimator branch. **Semantic
+records the specimen estimator branch. An intensity transform leaves the raw
+`image_min` / `image_max` intact, scales `intensity_range` with the amplitudes,
+and records their cumulative `intensity_scale`. **Semantic
 contract:** the floor is NOT added back — stored amplitudes are
 background-relative (intensity above the subtracted pedestal), so renders
 reconstruct the floor-suppressed volume, not the raw one.
 
 Wherever it is recorded it is under one key name (`floor`) in one location
 (`pipeline/`). The full key set is `NORMALIZATION_STATS_KEYS` in
-`gsplats/io/save_gsplats.py`; which of those five a given writer can honestly
+`gsplats/io/save_gsplats.py`; which of those keys a given writer can honestly
 fill differs, and the last column says so.
 
 | Writer | How it reaches `pipeline/` | Keys |
