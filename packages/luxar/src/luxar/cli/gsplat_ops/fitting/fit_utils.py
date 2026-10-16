@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Literal, Optional
 import typer
 from arbol import aprint, asection
 
-from ...utils import format_memory_size
+from ...utils import format_memory_size, store_size
 from .recipe_args import (
     build_fit_recipe_params as _build_fit_recipe_params_impl,
 )
@@ -400,6 +400,10 @@ def assemble_fit_config(ctx: FitPipelineCtx, is_tiled: bool) -> "tuple[dict, Any
 
     if ctx.preset:
         aprint(f"Preset: {ctx.preset}")
+    else:
+        from luxar.cli.gsplat_config import DEFAULT_FIT_PRESET
+
+        aprint(f"Preset: {DEFAULT_FIT_PRESET} (default)")
     if ctx.config:
         aprint(f"Config: {ctx.config}")
     aprint(f"Iterations: {fit_config.get('n_iters')}")
@@ -1808,5 +1812,32 @@ def save_fit_output(
     if verbose:
         aprint(f"Saved {n:,} splats")
         if output_path.exists():
-            aprint(f"File size: {format_memory_size(output_path.stat().st_size)}")
+            stored = store_size(output_path)
+            aprint(f"File size: {format_memory_size(stored)}")
+            _report_saved_compression(result, stored, n)
     return n
+
+
+def _report_saved_compression(result: Any, stored_bytes: int, n_splats: int) -> None:
+    """The fit's compression line, AFTER the post-fit cull and the save.
+
+    The one definition `gsplat info` quotes (decoded source bytes over the
+    store's bytes on disk), so a fit's summary and a later `info` of the same
+    store agree. Silent when the fit recorded no source size.
+    """
+    from luxar.gsplats.fitting.visualization import display_compression_analysis
+    from luxar.gsplats.gsplat_data import GSplatData
+
+    if isinstance(result, GSplatData):
+        stats = result.stats or {}
+    else:
+        stats = (getattr(result, "meta", None) or {}).get("fit_stats", {}) or {}
+    if not stats.get("source_bytes"):
+        return
+    display_compression_analysis(
+        stats.get("source_bytes"),
+        stored_bytes,
+        n_splats=n_splats,
+        source_voxels=stats.get("source_voxels"),
+        source_stored_bytes=stats.get("source_stored_bytes"),
+    )

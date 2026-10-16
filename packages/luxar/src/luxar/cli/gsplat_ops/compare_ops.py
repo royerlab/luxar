@@ -30,6 +30,7 @@ import typer
 from arbol import aprint, asection
 
 from .._traceback import exit_with_error
+from ..utils import store_size
 
 if TYPE_CHECKING:
     import numpy as np
@@ -104,6 +105,10 @@ class _Context:
     foreground_method: str = "otsu_smoothed"
     dimension_metadata: Any = None
     foreground_threshold_raw: Optional[float] = None
+    #: The reference's decoded size in its STORED element type (the loader hands
+    #: back float32 whatever the file holds): the same ``source_bytes`` basis
+    #: ``gsplat info`` and ``fit`` quote. Taken before any decimation.
+    ref_decoded_bytes: int = 0
 
 
 def silenced_when(quiet: bool) -> contextlib.AbstractContextManager[None]:
@@ -195,27 +200,44 @@ def _resolve_grid(data: "GSplatData", opts: CompareOptions) -> _ScoringGrid:
     return grid
 
 
-def _load_reference(opts: CompareOptions, grid: _ScoringGrid) -> "np.ndarray":
+def _decoded_bytes(ref: "np.ndarray", info: dict[str, Any]) -> int:
+    """``ref``'s decoded size in the element type its file STORED it as."""
+    import numpy as np
+
+    source_dtype = info.get("source_dtype")
+    itemsize = np.dtype(source_dtype).itemsize if source_dtype else ref.dtype.itemsize
+    return int(ref.size) * int(itemsize)
+
+
+def _load_reference(
+    opts: CompareOptions, grid: _ScoringGrid
+) -> tuple["np.ndarray", int]:
     """The reference volume, decimated like the fit under ``--at-fit-resolution``.
+
+    Also returns its decoded size in the stored element type (before any
+    decimation), the source side of the compression ratio.
 
     The domain loader, not the CLI wrapper: its ImportError (missing tifffile)
     must reach ``exit_with_error`` so ``-q`` still reports it on stderr.
     """
     from luxar.io.volume import load_volume
 
+    info: dict[str, Any] = {}
     ref = load_volume(
         opts.reference_path,
         channel=opts.channel,
         timepoint=opts.timepoint,
         array_key=opts.array_key,
         axes=opts.axes,
+        info=info,
     )
+    decoded_bytes = _decoded_bytes(ref, info)
     if grid.downscale_factors is not None and len(grid.downscale_factors) == ref.ndim:
         from luxar.gsplats.fitting.downscale import downscale_volume
 
         ref = downscale_volume(ref, grid.downscale_factors)
         aprint(f"Reference decimated like the fit: {ref.shape}")
-    return ref
+    return ref, decoded_bytes
 
 
 def _check_source_grid(
@@ -426,12 +448,6 @@ def _score(
             )
 
 
-def _total_size(path: Path) -> int:
-    if path.is_file():
-        return path.stat().st_size
-    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
-
-
 def _compare(opts: CompareOptions) -> tuple[dict[str, Any], _Context]:
     """Load, map, render and score; returns the metrics and what was compared."""
     from luxar.gsplats.scoring_grid import map_to_grid
@@ -453,7 +469,7 @@ def _compare(opts: CompareOptions) -> tuple[dict[str, Any], _Context]:
     truncate = opts.truncate if opts.truncate is not None else data.truncation_radius
 
     with asection("Loading reference volume"):
-        ref = _load_reference(opts, ctx.grid)
+        ref, ctx.ref_decoded_bytes = _load_reference(opts, ctx.grid)
         ctx.ref_shape = tuple(ref.shape)
         origin = _check_source_grid(
             data.stats or {}, ctx.ref_shape, ctx.grid, ctx.dimension_metadata
@@ -468,10 +484,13 @@ def _compare(opts: CompareOptions) -> tuple[dict[str, Any], _Context]:
     metrics = _score(
         scored, ref, fg, render_shape=ctx.render_shape, opts=opts, truncate=truncate
     )
-    gsplats_size = _total_size(opts.gsplats_path)
-    ref_size = _total_size(opts.reference_path)
-    if ref_size > 0 and gsplats_size > 0:
-        metrics["compression_ratio"] = ref_size / gsplats_size
+    # Compression ratio: the one definition `gsplat info` and `fit` quote —
+    # decoded reference bytes over the store's bytes on disk.
+    from luxar.gsplats.fitting.visualization import compression_ratio
+
+    ratio = compression_ratio(ctx.ref_decoded_bytes, store_size(opts.gsplats_path))
+    if ratio is not None:
+        metrics["compression_ratio"] = ratio
     return metrics, ctx
 
 
@@ -532,7 +551,12 @@ def print_quality_comparison(
     aprint(f"  Rel L2:            {metrics['rel_l2']:.6g}")
     aprint(f"  Max Abs Error:     {metrics['max_abs_error']:.6g}")
     if "compression_ratio" in metrics:
-        aprint(f"  Compression:       {metrics['compression_ratio']:.1f}x")
+        from luxar.gsplats.fitting.visualization import format_compression_ratio
+
+        aprint(
+            "  Compression:       "
+            f"{format_compression_ratio(metrics['compression_ratio'])} vs raw voxels"
+        )
     aprint("=" * 60)
 
 

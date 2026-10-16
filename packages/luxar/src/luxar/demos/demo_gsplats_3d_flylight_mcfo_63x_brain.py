@@ -722,6 +722,12 @@ def recompute_archive() -> Path:
                 "--flat",
                 "--floor",
                 "auto",
+                # Built when a preset-less `fit` ran the fitting API's 1000
+                # iterations; a bare `fit` is now the `standard` preset (5000).
+                # Pinned so a rebuild reproduces the archive (the preset's other
+                # knobs equal what that build used).
+                "--iters",
+                "1000",
                 "--device",
                 detect_device(),
             )

@@ -90,6 +90,15 @@ PRESETS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+# The preset a CLI fit uses when none is named. ``fit_gaussian_splats`` itself
+# keeps its own (1000-iteration) signature defaults for Python callers; the CLI
+# never falls back to them, so a bare ``luxar gsplat fit`` is a real fit rather
+# than a below-``draft`` preview. Resolving it HERE, in the one config loader,
+# keeps every entry point that merges a fit config agreeing: a sequential fit, a
+# ``-j N`` box/tile worker handed no ``--preset`` (#1637), and a hand-run
+# ``fit --tile k/M`` all resolve the same baseline.
+DEFAULT_FIT_PRESET = "standard"
+
 # ---------------------------------------------------------------------------
 # Config loading
 # ---------------------------------------------------------------------------
@@ -120,14 +129,18 @@ def load_fit_config(
     Priority chain (highest wins):
         CLI flags > YAML config > preset > command defaults > function defaults
 
+    The preset layer is never empty: ``preset=None`` means
+    ``DEFAULT_FIT_PRESET`` ("standard"), with any YAML config layered on top.
+
     Args:
-        preset: Preset name ("draft", "standard", "hifi", "ultra", "n2s") or None
+        preset: Preset name ("draft", "standard", "hifi", "ultra", "n2s"), or
+            None for ``DEFAULT_FIT_PRESET``
         config_path: Path to YAML config file or None
         cli_overrides: Dict of CLI-provided values (None values are ignored)
         command_defaults: Per-command defaults that displace the harvested
             function defaults but yield to preset / YAML / CLI (None values are
             ignored, so a caller can pass a sentinel-free dict). Lets a command
-            pin its baseline independently of a bare ``fit``.
+            pin its baseline for keys no preset sets.
 
     Returns:
         Merged config dict ready to pass as ``**kwargs`` to fit_gaussian_splats
@@ -141,13 +154,14 @@ def load_fit_config(
             if value is not None:
                 config[key] = value
 
-    # Layer preset
-    if preset is not None:
-        if preset not in PRESETS:
-            raise ValueError(
-                f"Unknown preset '{preset}'. Choose from: {list(PRESETS.keys())}"
-            )
-        config.update(PRESETS[preset])
+    # Layer preset (no preset named -> the CLI default preset)
+    if preset is None:
+        preset = DEFAULT_FIT_PRESET
+    if preset not in PRESETS:
+        raise ValueError(
+            f"Unknown preset '{preset}'. Choose from: {list(PRESETS.keys())}"
+        )
+    config.update(PRESETS[preset])
 
     # Layer YAML config
     if config_path is not None:
@@ -192,7 +206,7 @@ def _load_yaml_config(path: Path) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def dump_default_config(preset: str = "standard") -> str:
+def dump_default_config(preset: str = DEFAULT_FIT_PRESET) -> str:
     """Generate a fully-commented YAML config with defaults from a preset.
 
     Args:
@@ -201,7 +215,9 @@ def dump_default_config(preset: str = "standard") -> str:
     Returns:
         YAML string with all parameters and comments
     """
-    p = PRESETS.get(preset, PRESETS["standard"])
+    if preset not in PRESETS:
+        preset = DEFAULT_FIT_PRESET
+    p = PRESETS[preset]
     d = get_fit_defaults()
     # Merge: preset overrides defaults
     vals = {**d, **p}
@@ -223,6 +239,7 @@ def dump_default_config(preset: str = "standard") -> str:
         "# Luxar Gaussian Splat Fitting Configuration",
         "# ============================================================",
         f"# Base preset: {preset}",
+        f"# (`luxar gsplat fit` with no --preset uses the {DEFAULT_FIT_PRESET} preset)",
         "# Priority: CLI flags > YAML config > preset > command defaults > function defaults",
         "#",
         "# Usage:",
@@ -318,6 +335,7 @@ __all__ = [
     "build_dimensions_from_data",
     "decode_flat_channel_index",
     "discover_ome_zarr_shape",
+    "DEFAULT_FIT_PRESET",
     "dump_default_config",
     "get_fit_defaults",
     "load_fit_config",

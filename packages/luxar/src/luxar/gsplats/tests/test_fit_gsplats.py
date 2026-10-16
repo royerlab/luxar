@@ -554,7 +554,7 @@ class TestDeviceSupport:
         monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         monkeypatch.setattr(torch.backends, "mps", FakeMPSBackend(), raising=False)
 
-        with pytest.warns(UserWarning, match="will run on CPU"):
+        with pytest.warns(UserWarning, match="running on CPU"):
             fitter = GaussianSplatFitter(use_cuda=False, use_metal=True)
 
         assert fitter.device.type == "cpu"

@@ -828,7 +828,8 @@ def finalize_results(
             # Headline = robust peak (reference p99.99 - floor), which one hot
             # pixel cannot move; the classical full-range figure rides along.
             aprint(
-                f"Quality: PSNR={quality['psnr_robust_db']:.1f} dB robust peak "
+                f"Quality (fitted, before any post-fit cull): "
+                f"PSNR={quality['psnr_robust_db']:.1f} dB robust peak "
                 f"({quality['psnr_db']:.1f} dB full range), foreground PSNR="
                 f"{quality['foreground_psnr_robust_db']:.1f} dB "
                 f"(over {quality['foreground_fraction'] * 100:.2f}% of voxels), "
