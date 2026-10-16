@@ -542,6 +542,12 @@ class GaussianSplatModelCUDA(torch.nn.Module):
         if use_fp16:
             self._convert_base_to_fp16()
 
+    @property
+    def kernel_backend(self) -> str | None:
+        """Name of the CUDA kernel backend in use, if any."""
+        backend = get_splatting_backend()
+        return backend.name if backend is not None else None
+
     def _convert_base_to_fp16(self) -> None:
         """Convert all base model parameters to FP16 for bandwidth optimization."""
         for param in self._base.parameters():
