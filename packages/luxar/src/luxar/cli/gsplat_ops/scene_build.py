@@ -65,10 +65,7 @@ def _validate_colormap(colormap: str) -> None:
     try:
         resolve_colormap(colormap)
     except Exception as e:
-        raise typer.BadParameter(
-            f"--colormap '{colormap}' is not a known builtin / "
-            f"matplotlib / colorcet colormap"
-        ) from e
+        raise typer.BadParameter(f"--colormap: {e}") from e
 
 
 def scene_appearance(opts: SceneBuildOptions) -> Dict[str, Any]:
