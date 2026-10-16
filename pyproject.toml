@@ -117,11 +117,12 @@ Repository = "https://github.com/royerlab/luxar.git"
 Changelog = "https://github.com/royerlab/luxar/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
-# Upper bounds are intentional. IMPORTANT: the prebuilt CUDA extension
-# (cuda_splatting_backend*.so) is compiled against a specific torch ABI — after
-# any torch upgrade you MUST rebuild it with `make build-cuda`, or imports will
-# fail with an ABI/symbol mismatch. The `<3.0` torch cap guards against a silent
-# major-version jump that would break the prebuilt .so.
+# Upper bounds are intentional. IMPORTANT: the optional prebuilt CUDA extension
+# (cuda_splatting_backend*.so, `make build-cuda`) is compiled against a specific
+# torch ABI — after any torch upgrade you MUST rebuild it, or it fails to import
+# (fitting then falls back to the NVRTC runtime-compiled kernels, which have no
+# ABI coupling). The `<3.0` torch cap guards against a silent major-version jump
+# that would break the prebuilt .so.
 gsplats = [
     "scipy>=1.9.0,<2.0",
     "torch>=2.2.0,<3.0",
@@ -434,6 +435,11 @@ dependencies = [
 # runs at full width while an unqualified `hatch run` stays pinned. Both
 # variables, not just OMP: this torch takes its intra-op count from MKL, so
 # overriding OMP alone still gives `torch.get_num_threads() == 1`.
+# `luxar gsplat fit`/`cal` on CPU widen torch to min(physical cores, 8) for the
+# command whenever torch still has one thread, including when an OMP-only
+# export did not raise it (LUXAR_CPU_THREADS=N overrides, 0 disables; the
+# test conftest sets 0) — see
+# luxar/gsplats/utils/cpu_threads.py.
 [tool.hatch.envs.default.env-vars]
 OMP_NUM_THREADS = "{env:OMP_NUM_THREADS:1}"
 OPENBLAS_NUM_THREADS = "{env:OPENBLAS_NUM_THREADS:1}"

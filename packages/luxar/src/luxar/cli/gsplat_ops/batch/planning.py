@@ -57,6 +57,8 @@ class FitConfig:
     psnr_patience: Optional[float] = None
     max_passes: Optional[int] = None
     cull_retention: Optional[float] = None
+    min_extent: Optional[float] = None
+    reseed_sigma: Optional[float] = None
 
 
 @dataclass
@@ -1702,44 +1704,39 @@ def _physical_voxel_size(
     axes_list: Optional[List[str]],
     ndim: int,
 ) -> "Tuple[Optional[List[float]], bool]":
-    """Resolve ``--physical`` spacing and whether workers need an override."""
+    """Resolve ``--physical`` spacing and whether workers need an override.
+
+    The same precedence and NGFF reading as ``gsplat fit --physical``
+    (:mod:`luxar.cli.gsplat_ops.voxel_frame`): a config ``voxel_size`` wins over
+    the store's scale. Unlike ``fit``, a batch run refuses to proceed without a
+    spacing — it would otherwise plan a whole timelapse in the wrong frame.
+    """
     if not fit.physical:
         return None, False
 
     from luxar.cli.gsplat_config import load_fit_config
-    from luxar.gsplats.tiling import resolve_grid_scale
+    from luxar.cli.gsplat_ops.voxel_frame import (
+        ngff_spatial_spacing,
+        require_real_output_space,
+        validated_spacing,
+    )
 
     config = load_fit_config(preset=fit.preset, config_path=fit.config)
-    if config.get("output_space", "real") != "real":
-        raise typer.BadParameter(
-            "--physical requires output_space: real; remove the config override "
-            "or omit --physical to keep voxel coordinates."
-        )
+    require_real_output_space(config)
 
     configured = config.get("voxel_size")
-    discovered = ome_info.voxel_size
-    if discovered is not None and axes_list is None:
-        discovered = tuple(
-            spacing
-            for size, spacing in zip(ome_info.spatial_shape, discovered, strict=True)
-            if size != 1
-        )
-    selected = configured if configured is not None else discovered
+    selected = (
+        configured
+        if configured is not None
+        else ngff_spatial_spacing(ome_info, axes_list)
+    )
     if selected is None:
         raise typer.BadParameter(
             "--physical requested physical coordinates, but the selected OME-Zarr "
             "array has no usable spatial scale in coordinateTransformations and "
             "the fit config does not define voxel_size."
         )
-    try:
-        resolve_grid_scale(ndim, voxel_size=selected, output_space="real")
-        values = (
-            [float(selected)] * ndim
-            if isinstance(selected, (int, float))
-            else [float(value) for value in selected]
-        )
-    except (TypeError, ValueError) as exc:
-        raise typer.BadParameter(f"--physical voxel size is invalid: {exc}") from exc
+    values = validated_spacing(selected, ndim, "--physical voxel size")
     return values, configured is None
 
 
@@ -1754,7 +1751,13 @@ def _configure_physical_fit_args(
     voxel_size, uses_ngff_spacing = _physical_voxel_size(fit, ome_info, axes_list, ndim)
     if uses_ngff_spacing:
         assert voxel_size is not None
+        from luxar.cli.gsplat_ops.voxel_frame import SOURCE_NGFF, _normalized_ngff_unit
+
         fit_args["voxel-size"] = ",".join(str(value) for value in voxel_size)
+        fit_args["voxel-size-source"] = SOURCE_NGFF
+        unit = _normalized_ngff_unit(ome_info.unit)
+        if unit is not None:
+            fit_args["voxel-unit"] = unit
     return voxel_size, uses_ngff_spacing
 
 
@@ -1972,14 +1975,17 @@ def _assemble_fit_args(
     # writer of that key (it forwards the resolved LEVEL, not the spec, #1174).
     if fit.progressive:
         fit_args["progressive"] = ""  # boolean flag, no value
-    if fit.splats_per_pass is not None:
-        fit_args["splats-per-pass"] = str(fit.splats_per_pass)
-    if fit.psnr_patience is not None:
-        fit_args["psnr-patience"] = str(fit.psnr_patience)
-    if fit.max_passes is not None:
-        fit_args["max-passes"] = str(fit.max_passes)
-    if fit.cull_retention is not None:
-        fit_args["cull-retention"] = str(fit.cull_retention)
+    # Optional valued flags: forwarded only when set (a table, not a branch each).
+    for flag, value in (
+        ("splats-per-pass", fit.splats_per_pass),
+        ("psnr-patience", fit.psnr_patience),
+        ("max-passes", fit.max_passes),
+        ("cull-retention", fit.cull_retention),
+        ("min-extent", fit.min_extent),
+        ("reseed-sigma", fit.reseed_sigma),
+    ):
+        if value is not None:
+            fit_args[flag] = str(value)
 
     denoise_mode: Optional[str] = None
     if denoise.denoise:
@@ -2107,8 +2113,10 @@ def _batch_dimension_metadata(
             try:
                 unit = PhysicalUnit.validate(unit).value
             except ValueError:
-                pass
-            result["unit"] = unit
+                if spatial and physical_coordinates:
+                    unit = None
+            if unit:
+                result["unit"] = unit
         return result
 
     metadata = [descriptor(index, spatial=True) for index in spatial_indices]

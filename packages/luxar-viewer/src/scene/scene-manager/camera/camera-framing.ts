@@ -201,6 +201,68 @@ export interface FitCameraOptions {
    * frames upright in ITS OWN frame rather than snapping to world Y.
    */
   up?: THREE.Vector3;
+  /**
+   * Unit view direction for an axis-aligned preset (`camera.view_axis` /
+   * `?viewAxis=`, resolved by `view-axis.ts` together with `up`). The camera is
+   * placed at `lookAtTarget - viewDirection * distance` and the box is fitted in
+   * that view's frame. Omitted ⇒ the historical pose: looking along -Z from +Z.
+   */
+  viewDirection?: THREE.Vector3;
+}
+
+/**
+ * Express `bounds` in the camera frame of a view along `forward` with `up`
+ * (x = screen right, y = screen up, z = toward the camera), relative to `target`
+ * — the frame `calculateCameraDistance` and the ortho fit assume. Exact for the
+ * axis-aligned presets: their bases permute and negate the box's axes.
+ */
+export function boundsInViewFrame(
+  bounds: BoundingBox,
+  target: THREE.Vector3,
+  forward: THREE.Vector3,
+  up: THREE.Vector3
+): BoundingBox {
+  const right = new THREE.Vector3().crossVectors(forward, up).normalize();
+  const back = forward.clone().negate().normalize();
+  const upUnit = up.clone().normalize();
+  const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+  const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+  const corner = new THREE.Vector3();
+  const local = new THREE.Vector3();
+  for (let i = 0; i < 8; i++) {
+    corner.set(
+      i & 1 ? bounds.max.x : bounds.min.x,
+      i & 2 ? bounds.max.y : bounds.min.y,
+      i & 4 ? bounds.max.z : bounds.min.z
+    );
+    corner.sub(target);
+    local.set(corner.dot(right), corner.dot(upUnit), corner.dot(back));
+    min.min(local);
+    max.max(local);
+  }
+  return { min: { x: min.x, y: min.y, z: min.z }, max: { x: max.x, y: max.y, z: max.z } };
+}
+
+const ORIGIN = new THREE.Vector3(0, 0, 0);
+const DEFAULT_BACK = new THREE.Vector3(0, 0, 1);
+
+/**
+ * The box/target pair the fit math reads, and the direction the camera backs
+ * away along: the raw box and +Z without a preset, else the box in the preset's
+ * view frame (target at its origin) and `-viewDirection`.
+ */
+function resolveFitFrame(
+  bounds: BoundingBox,
+  lookAtTarget: THREE.Vector3,
+  up: THREE.Vector3,
+  viewDirection: THREE.Vector3 | undefined
+): { bounds: BoundingBox; target: THREE.Vector3; back: THREE.Vector3 } {
+  if (!viewDirection) return { bounds, target: lookAtTarget, back: DEFAULT_BACK };
+  return {
+    bounds: boundsInViewFrame(bounds, lookAtTarget, viewDirection, up),
+    target: ORIGIN,
+    back: viewDirection.clone().negate().normalize(),
+  };
 }
 
 /**
@@ -235,11 +297,14 @@ export function fitCameraToBounds(
     preserveControlsTarget = false,
     logLabel = 'Fit camera',
     up = THREE.Object3D.DEFAULT_UP,
+    viewDirection,
   } = options;
 
-  const sizeX = bounds.max.x - bounds.min.x;
-  const sizeY = bounds.max.y - bounds.min.y;
-  const sizeZ = bounds.max.z - bounds.min.z;
+  const frame = resolveFitFrame(bounds, lookAtTarget, up, viewDirection);
+  const fitBounds = frame.bounds;
+  const sizeX = fitBounds.max.x - fitBounds.min.x;
+  const sizeY = fitBounds.max.y - fitBounds.min.y;
+  const sizeZ = fitBounds.max.z - fitBounds.min.z;
   const diagonal = Math.sqrt(sizeX * sizeX + sizeY * sizeY + sizeZ * sizeZ);
   if (diagonal <= 0) return 0;
 
@@ -252,8 +317,8 @@ export function fitCameraToBounds(
       near: camera.near,
       far: camera.far,
     };
-    const distance = calculateCameraDistance(bounds, cameraConfig, undefined, lookAtTarget);
-    camera.position.set(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z + distance);
+    const distance = calculateCameraDistance(fitBounds, cameraConfig, undefined, frame.target);
+    camera.position.copy(lookAtTarget).addScaledVector(frame.back, distance);
     controls.setDistanceLimits(distance / ZOOM_IN_FACTOR, distance * ZOOM_OUT_FACTOR);
   } else if (isOrthographicCamera(camera)) {
     const frustumHeight = camera.top - camera.bottom;
@@ -269,7 +334,7 @@ export function fitCameraToBounds(
       // sides relative to the perspective distance clamp above.
       controls.setZoomLimits(camera.zoom / ZOOM_OUT_FACTOR, camera.zoom * ZOOM_IN_FACTOR);
     }
-    camera.position.set(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z + diagonal);
+    camera.position.copy(lookAtTarget).addScaledVector(frame.back, diagonal);
   }
 
   // Reset the up vector before lookAt: orbiting overwrites `camera.up` every
@@ -327,7 +392,8 @@ export function centerCameraOnScene(
   scene: THREE.Scene,
   camera: LuxarCamera,
   controls: ControlsManager,
-  up?: THREE.Vector3
+  up?: THREE.Vector3,
+  viewDirection?: THREE.Vector3
 ): CenterResult {
   // Ensure world matrices are up to date before computing bounds.
   scene.updateMatrixWorld(true);
@@ -347,7 +413,7 @@ export function centerCameraOnScene(
       min: { x: box.min.x, y: box.min.y, z: box.min.z },
       max: { x: box.max.x, y: box.max.y, z: box.max.z },
     },
-    { lookAtTarget: center, logLabel: 'Camera centered on scene', up }
+    { lookAtTarget: center, logLabel: 'Camera centered on scene', up, viewDirection }
   );
   log.success(Modules.CONTROLS, 'Controls target updated and state saved');
 
@@ -364,7 +430,8 @@ export function frameCameraOnObject(
   root: THREE.Object3D,
   camera: LuxarCamera,
   controls: ControlsManager,
-  up?: THREE.Vector3
+  up?: THREE.Vector3,
+  viewDirection?: THREE.Vector3
 ): CenterResult {
   root.updateMatrixWorld(true);
   const { box, primitiveCount } = computeSceneBoundingBox(root);
@@ -380,7 +447,7 @@ export function frameCameraOnObject(
       min: { x: box.min.x, y: box.min.y, z: box.min.z },
       max: { x: box.max.x, y: box.max.y, z: box.max.z },
     },
-    { lookAtTarget: center, logLabel: `Camera framed on "${root.name}"`, up }
+    { lookAtTarget: center, logLabel: `Camera framed on "${root.name}"`, up, viewDirection }
   );
   return center;
 }
@@ -394,7 +461,8 @@ export function frameCameraOnObject(
 export function centerOnOrigin(
   camera: LuxarCamera,
   controls: ControlsManager,
-  up: THREE.Vector3 = THREE.Object3D.DEFAULT_UP
+  up: THREE.Vector3 = THREE.Object3D.DEFAULT_UP,
+  viewDirection?: THREE.Vector3
 ): void {
   // Get current camera distance from target. getFocusTarget() returns a
   // clone, so it is safe to use as a one-shot read.
@@ -402,7 +470,9 @@ export function centerOnOrigin(
 
   const origin = new THREE.Vector3(0, 0, 0);
 
-  camera.position.set(0, 0, currentDistance);
+  // Back away along the preset's -viewDirection (+Z without one).
+  const back = viewDirection ? viewDirection.clone().negate().normalize() : DEFAULT_BACK;
+  camera.position.copy(back).multiplyScalar(currentDistance);
   // Same up-reset as fitCameraToBounds (scene-authored up, world +Y by
   // default): without it, lookAt keeps the roll accumulated by orbiting and
   // the "centered" view comes out tilted.
@@ -418,6 +488,14 @@ export function centerOnOrigin(
   controls.saveState();
 
   log.success(Modules.SCENE_MANAGER, 'Centered on origin');
+}
+
+/** The up vector and optional axis-preset view direction a framing squares to. */
+export interface FramingOrientation {
+  /** Screen-up the fitted view is squared to (world +Y when omitted). */
+  up?: THREE.Vector3;
+  /** Axis-preset view direction; omitted ⇒ looking along -Z. */
+  viewDirection?: THREE.Vector3;
 }
 
 /**
@@ -442,14 +520,16 @@ export interface AutoFrameResult {
  * @param preserveTarget If true, keep the current controls target
  *   (set by zarr viewer_config) instead of overwriting it with the
  *   bounding box center.
+ * @param orientation Scene up and the optional axis-preset view direction.
  */
 export function autoFrameCamera(
   camera: LuxarCamera,
   controls: ControlsManager,
   bounds: BoundingBox | null,
   preserveTarget: boolean = false,
-  up?: THREE.Vector3
+  orientation: FramingOrientation = {}
 ): AutoFrameResult {
+  const { up, viewDirection } = orientation;
   if (!bounds) {
     log.warning(Modules.SCENE_MANAGER, 'No metadata bounds available for auto-framing');
     return { framed: false, center: null };
@@ -465,6 +545,7 @@ export function autoFrameCamera(
     preserveControlsTarget: preserveTarget,
     logLabel: 'Auto-framed camera on scene',
     up,
+    viewDirection,
   });
   if (diagonal === 0) {
     log.warning(Modules.SCENE_MANAGER, 'Scene bounds have zero extent, skipping auto-frame');

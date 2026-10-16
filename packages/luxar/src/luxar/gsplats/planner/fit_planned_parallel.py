@@ -32,6 +32,7 @@ from arbol import aprint, asection
 
 from luxar.gsplats.batch.task_pool import cancel_pool_on_interrupt
 from luxar.gsplats.fit_basis import fit_image_min
+from luxar.gsplats.fit_tiled_gsplats import _report_merged_min_extent
 from luxar.gsplats.fit_tiled_parallel import luxar_argv0
 from luxar.gsplats.gsplat_data import scrub_measured_stats, scrub_region_scoped_stats
 
@@ -82,6 +83,8 @@ def _default_worker_cmd_builder(
     loss: Optional[str] = None,
     lr: Optional[float] = None,
     cull_retention: Optional[float] = None,
+    min_extent: Optional[float] = None,
+    reseed_sigma: Optional[float] = None,
     device: Optional[str] = None,
     floor: "Optional[str | float]" = None,
     norm_range: "Optional[tuple[float, float]]" = None,
@@ -89,6 +92,7 @@ def _default_worker_cmd_builder(
     timepoint: Optional[int] = None,
     array_key: Optional[str] = None,
     axes: Optional[str] = None,
+    region: Optional[str] = None,
 ) -> WorkerCmdBuilder:
     """Build a ``luxar gsplat fit <in> <out> --tiling content --plan <plan>
     --plan-box i ...`` argv.
@@ -136,6 +140,8 @@ def _default_worker_cmd_builder(
         ("--loss", None if loss is None else str(loss)),
         ("--lr", None if lr is None else str(lr)),
         ("--cull-retention", None if cull_retention is None else str(cull_retention)),
+        ("--min-extent", None if min_extent is None else str(min_extent)),
+        ("--reseed-sigma", None if reseed_sigma is None else str(reseed_sigma)),
         ("--device", device or None),
         ("--floor", None if floor is None else str(floor)),
         (
@@ -148,6 +154,10 @@ def _default_worker_cmd_builder(
         ("--timepoint", None if timepoint is None else str(timepoint)),
         ("--array-key", array_key or None),
         ("--axes", axes or None),
+        # The parent's `--region` crop: the plan's boxes are laid over it, so
+        # every worker must read the same crop (its offset is applied once, by
+        # the parent, at the merged save).
+        ("--worker-region", region),
     ]
     extra = [
         part for flag, value in optional if value is not None for part in (flag, value)
@@ -537,6 +547,7 @@ def fit_planned_parallel(
             image_min=fit_image_min(result.meta),
             stats=fit_stats,
         )
+        _report_merged_min_extent(fit_stats, verbose=verbose)
         result.meta["fit_stats"] = fit_stats
     else:
         # `concatenate` keeps the reloaded boxes' shared truncation_radius; a
@@ -564,6 +575,7 @@ def fit_planned_parallel(
             verbose=verbose,
             image_min=fit_image_min(result.stats),
         )
+        _report_merged_min_extent(result.stats, verbose=verbose)
 
     if keep_boxes and verbose:
         aprint(f"Kept boxes at {tmp_dir}")

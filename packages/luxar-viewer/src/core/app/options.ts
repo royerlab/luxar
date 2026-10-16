@@ -1,5 +1,6 @@
 import type { LoaderConfig } from '../../data/data-loader-types';
 import type { AppFactories } from './factories';
+import type { ViewAxis } from '../../types/view-axis';
 
 /**
  * Init-time options for {@link LuxarApp.init}.
@@ -133,6 +134,23 @@ export interface LuxarAppOptions {
   perfTimestamp?: boolean;
 
   /**
+   * PROTOTYPE, WebGPU only: extended-range (HDR) canvas output. Default
+   * `true`: used whenever the WebGPU renderer runs natively on a display
+   * that reports `(dynamic-range: high)`, with an SDR canvas otherwise (a
+   * WebGL session, the forceWebGL backend, an SDR display, or a browser that
+   * ignores the extended tone-mapping mode). `false` = always SDR. The
+   * standalone viewer derives it from `?hdr=off` and Settings › Advanced.
+   */
+  hdr?: boolean;
+
+  /**
+   * Pin the HDR headroom (multiple of SDR white) for the session; mirrors
+   * `?hdr=<n>`. Omitted, the headroom is resolved per display. Only read
+   * when `hdr` is set.
+   */
+  hdrHeadroom?: number;
+
+  /**
    * Render every loop tick, as the loop did before render-on-change (the
    * `?renderAlways` kill switch). Default false: a tick re-renders only when
    * something changed (`config.animation.renderOnChange`). Pixels are the
@@ -241,6 +259,14 @@ export interface LuxarAppOptions {
    * `ui/overlay-text-scale.ts`.
    */
   textScale?: number;
+
+  /**
+   * Axis-aligned opening view for the session (`'xy'` | `'xz'` | `'yz'`),
+   * beating the scene's authored `viewer_config.camera.view_axis`. Undefined ⇒
+   * the authored preset. Mirrors `UrlParams.viewAxis` (`?viewAxis=xz`). See
+   * `scene/scene-manager/camera/view-axis.ts`.
+   */
+  viewAxis?: ViewAxis;
 
   /**
    * Allow a picked element's authored `link` to be opened on left-click

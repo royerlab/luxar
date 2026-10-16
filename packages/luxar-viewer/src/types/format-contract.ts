@@ -262,6 +262,10 @@ export const RENDER_ATTR_KEYS: readonly RenderAttrKey[] = [
   'link',
   'link_target',
   'join',
+  'display_gain',
+  'amplitude_unit',
+  'amplitude_offset',
+  'source_data_range',
   'alpha_cutoff',
   'ambient',
   'material',
@@ -304,6 +308,10 @@ export type RenderAttrKey =
   | 'link'
   | 'link_target'
   | 'join'
+  | 'display_gain'
+  | 'amplitude_unit'
+  | 'amplitude_offset'
+  | 'source_data_range'
   | 'alpha_cutoff'
   | 'ambient'
   | 'material'
@@ -466,6 +474,16 @@ export const LINE_JOIN_STYLES: readonly LineJoinStyleName[] = ['none', 'miter'];
  * Union of the line join style names.
  */
 export type LineJoinStyleName = 'none' | 'miter';
+
+/**
+ * `viewer_config.camera.view_axis` presets: the plane the opening camera
+ * faces, horizontal axis first (letters are scene dimension names).
+ */
+export const VIEW_AXES: readonly ViewAxisName[] = ['xy', 'xz', 'yz'];
+/**
+ * Union of the axis-aligned view preset names.
+ */
+export type ViewAxisName = 'xy' | 'xz' | 'yz';
 
 /**
  * `line_type` attr values: how a lines node's vertices + segments are read.

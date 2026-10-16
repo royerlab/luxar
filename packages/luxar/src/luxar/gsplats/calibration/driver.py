@@ -273,6 +273,11 @@ def calibrate(
         V = np.clip(V.astype(np.float32, copy=False) - applied_floor, 0.0, None)
     # V is already floor-subtracted; the per-K fits must not subtract again.
     fit_kwargs["floor"] = "none"
+    # Measure the UNPRUNED K: speck pruning (`min_extent`, default on in the fit
+    # config cal inherits) would make K* / `k_values_effective` /
+    # `saturation_cap` post-prune counts, and a content fit sized from them
+    # would then prune again (~K*(1-p)^2).
+    fit_kwargs["min_extent"] = 0.0
 
     if keep_fits is not None:
         keep_fits = Path(keep_fits)
@@ -318,7 +323,13 @@ def calibrate(
     # full-volume selector; the foreground strata are reduced to HELD-OUT-sized
     # selectors (5 % of the volume) up front so the full-volume foreground masks
     # can be released before the first fit.
-    render_device = str(resolve_torch_device(fit_kwargs.get("device")))
+    render_device = str(
+        resolve_torch_device(
+            fit_kwargs.get("device"),
+            use_cuda=fit_kwargs.get("use_cuda", True),
+            use_metal=fit_kwargs.get("use_metal", True),
+        )
+    )
     ref_dev = V_orig_t.to(render_device)
     mask_dev = mask_t.to(render_device)
     held_fg_sel = fg_t.to(render_device)[mask_dev]

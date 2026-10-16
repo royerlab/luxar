@@ -579,6 +579,20 @@ VOCABULARIES: tuple[Vocabulary, ...] = (
         validate=_unique_nonempty("line_join_styles"),
     ),
     Vocabulary(
+        yaml_key="view_axes",
+        py_type="ViewAxisName",
+        py_const="VIEW_AXES",
+        py_comment="`viewer_config.camera.view_axis` presets (horizontal axis first)",
+        ts_const="VIEW_AXES",
+        ts_type="ViewAxisName",
+        ts_const_doc=(
+            "`viewer_config.camera.view_axis` presets: the plane the opening camera\n"
+            "faces, horizontal axis first (letters are scene dimension names)."
+        ),
+        ts_type_doc="Union of the axis-aligned view preset names.",
+        validate=_unique_nonempty("view_axes"),
+    ),
+    Vocabulary(
         yaml_key="line_types",
         py_type="LineTypeName",
         py_const="LINE_TYPES",

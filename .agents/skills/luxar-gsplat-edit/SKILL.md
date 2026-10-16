@@ -47,15 +47,16 @@ PLACE (no `-e`).
 | Upgrade an old-format file | `migrate-format` |
 | Look at stats / quality | `info` / `render` / `compare` / `view` / `napari` |
 
-## Amplitudes: normalisation now happens on INSERTION, not here
+## Amplitudes: brightness is a display gain or an insertion-time factor, not an edit here
 
-A fitted `.gsplats.zarr` stores amplitudes in **raw source units** — the fitter
+A fitted `.gsplats.zarr` stores amplitudes in **source data units** — the fitter
 multiplies its `[0,1]` working copy back out by the volume's intensity range, so
-a fit from a uint16 detector stack carries detector counts, in the hundreds or
-thousands. Those units cannot be corrected at display time: the colormap window
-only feeds the LUT index (`t = clamp((A-min)*scale, 0, 1)`, clamped, so it picks
-a *colour*), while emitted radiance and volumetric optical depth are both LINEAR
-in the raw stored amplitude and nothing windows them.
+a fit from a uint16 detector stack carries detector counts. The colormap window
+cannot correct that (it only feeds the clamped LUT index, so it picks a
+*colour*); emitted radiance and volumetric optical depth are LINEAR in the stored
+amplitude. What does correct it: the per-node `display_gain` (unbounded, unlike
+`opacity`), which `gsplat convert` sets while keeping the data units, or the
+Python adders' default insertion-time normalisation.
 
 **Since #2211 the scene adders normalise by default** — `add_gsplats_from_data`,
 `add_gsplats_from_file` and the graft path scale a robust p99.9 to 1.0, with ONE
@@ -66,8 +67,16 @@ So `transform --normalize-intensity` is now for the cases the default does not
 cover: pinning an explicit target across SEVERAL archives that must share an
 exposure (multichannel, or a timelapse fitted in separate batches), or preparing
 an archive for a consumer that is not the Luxar scene compiler. **`--scale-intensity`
-on `gsplat convert` implies opting out of the automatic normalisation**, since
-normalising straight after an explicit scale would cancel it exactly.
+on `gsplat convert` is a display gain, not a data edit**: the scene keeps the
+fit's amplitudes in data units and stamps `display_gain=S` (mode `"manual"`,
+replacing auto exposure), on partition/LOD stores too.
+
+**`gsplat convert` keeps data units and auto-exposes the `display_gain`**: it
+predicts the opening view's additive per-pixel sum and dims the gain (never
+brightens; the Layers panel reads splat amplitudes in data units, the data's own range, and a Brightness control) so its p99.9 is
+`--target-brightness` (2.0; 0.9 under a clipping `None`/`Linear` tone mapping), dimming further if a side view or another timepoint would exceed 4x that.
+Too dim/bright? Tune `--target-brightness`;
+`--no-auto-exposure` = gain from per-splat normalisation only.
 
 ## `cull --method cumulative` ranks by PEAK, and that is not what you see
 
@@ -229,22 +238,33 @@ Before scoring a stacked or transformed archive, read "Scoring a STACKED or
 TRANSFORMED archive" in the `luxar-gsplat-pipeline` skill; `compare --timepoint`
 slices the reference, not the splat archive.
 
-### `render --shape` is in the SPLATS' coordinate space, not the volume's
+### Physical-unit fits: `render`/`compare` map them back to voxels
 
 If the fit was run with a physical `voxel_size`, the centres are in **microns**, not
-voxel indices. Rendering into the source volume's voxel shape then packs the whole
-reconstruction into a corner (a 0.44 um/voxel stack renders into the first ~44% of
-each axis) — and it fails *silently*: you get a plausible-looking array, and metrics
-that read as catastrophic reconstruction failure rather than as a units bug.
+voxel indices. Rendered into the source volume's voxel shape as-is, the whole
+reconstruction packs into a corner (a 0.44 um/voxel stack fills the first ~44% of
+each axis), and the metrics read as a catastrophic fit rather than a units bug.
 
-Check first — `centers.max(0)` against the shape — and convert with `transform`,
-which rescales the centres and the covariance together:
+A fit records the spacing it applied as `fitting/voxel_size`, and `render` /
+`compare` divide it back out automatically (they print `voxel_size=[...]`). A
+physical store without the stamp (fitted before it existed, or authored
+elsewhere) triggers a warning that most centres miss the grid: pass
+`--voxel-size Z,Y,X`. A scale or rotation (CLI `gsplat transform`, or a
+non-translation `GSplatData.transform`) drops the stamp, since it no longer
+describes the new coordinates; a translation keeps it. A stale stamp: pass
+`--voxel-size 1`.
+
+To convert in Python instead, use `transform`, which rescales the centres and
+the covariance together; `transform` drops the stamp itself (it is only
+present with `include_stats=True`):
 
 ```python
 # Sigma = L L^T scales as the SQUARE of the length unit, so the Cholesky factor
 # rescales along with the centres. transform() does both, per axis, and keeps
 # amplitudes, colours and any LOD structure. vox is microns per voxel (Z, Y, X).
+g = GSplatData.load("fit.gsplats.zarr")  # keeps image_min (the scoring basis)
 g_vox = g.transform(np.diag(1.0 / np.asarray(vox, dtype=np.float64)))
+g_vox.save("fit_vox.gsplats.zarr")  # `compare` still scores on the fit's basis
 ```
 
 Do not hand-roll it as `cholesky_factors / vox`: the factors are packed

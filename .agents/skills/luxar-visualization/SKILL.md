@@ -170,26 +170,27 @@ the `add_*` call or it is lost. Five things about that round-trip surprise peopl
   universe demo keeps full, fixed DPR in both builds so its fine structure stays
   sharp during flights, but enables SSAA only with `--high-quality`
   (`demo_esm_protein_universe.py`). Check the cost on the machines visitors use.
-- **Amplitudes MUST be normalised into `[0, ~1]` before the node enters the
-  scene, and no viewer control can substitute for it.** A fitted
-  `.gsplats.zarr` stores amplitudes in RAW SOURCE UNITS — the fitter multiplies
-  its `[0,1]` working copy back out by the volume's intensity range, so a fit
-  from a uint16 detector stack carries detector counts, in the hundreds or
-  thousands. In the shader the stored amplitude does two jobs and the display
-  window only reaches one of them: it picks the colormap LUT index
-  (`t = clamp((A - min) * scale, 0, 1)` — clamped, so it selects a *colour* and
-  can never scale brightness), and it sets **emitted radiance and, under
-  `volumetric`, optical depth** (`tau = absorption * opacity * intensity` with
-  `intensity ∝ A`), which nothing windows. An amplitude of 800 therefore emits
-  1000x the radiance of 0.8 and saturates `1 - exp(-tau)` to an opaque shell.
-  `add_gsplats_from_data` / `add_gsplats_from_file` /
-  `add_gsplats_from_volume` / a graft now normalise by default (robust p99.9 →
-  1.0, one factor for the whole structure, a no-op on data already in range).
-  A child inserted directly into a `kind=lod` or `kind=partition` group instead
-  defaults to no normalisation so its exposure stays shared with its siblings;
-  pass `normalize_amplitudes=True` to override that rule or `False` to preserve
-  raw units elsewhere. Note this is the *opposite* of what this bullet used to
-  claim — the viewer does **not** normalise by the stored maximum.
+- **Raw fitted amplitudes need a brightness factor — and the colormap window is
+  not it.** A fitted `.gsplats.zarr` stores amplitudes in SOURCE DATA UNITS (the
+  fitter multiplies its `[0,1]` working copy back out by the volume's intensity
+  range, so a uint16 fit carries detector counts). In the shader the stored
+  amplitude picks the colormap LUT index (`t = clamp((A - min) * scale, 0, 1)` —
+  clamped, so the window selects a *colour* and can never scale brightness), and
+  it sets **emitted radiance and, under `volumetric`, optical depth** (`tau =
+  absorption * opacity * gain * intensity`, `intensity ∝ A`). Two ways to
+  supply the factor:
+  - **`display_gain`** (what `luxar gsplat convert` / `view` do): keep the data
+    units and set a per-node gain the viewer multiplies into every
+    amplitude-linear term — unbounded, unlike `opacity` — so the Layers panel
+    reads real splat amplitudes plus a Brightness control. From Python:
+    `add_gsplats_from_data(..., normalize_amplitudes=False,
+    **luxar.gsplats.exposure.data_unit_display_attrs(stats, amplitudes=amps))`.
+  - **Normalising on insertion** (the Python adders' DEFAULT):
+    `add_gsplats_from_data` / `add_gsplats_from_file` / a graft scale a robust
+    p99.9 to 1.0 (one factor for the whole structure, a no-op on data already in
+    range). A child inserted directly into a `kind=lod` / `kind=partition` group
+    defaults to no normalisation so its exposure stays shared with its siblings.
+    The data-unit attrs are refused while normalising.
 - **`opacity` is the exposure lever, and with normalised amplitudes it lives in
   its natural range.** That is the point of normalising: against raw counts
   `opacity` has to carry a ~1/500 factor on a `[0,1]` control, which is

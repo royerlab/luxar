@@ -90,6 +90,8 @@ const uniformOf =
  *   from the node's blending mode.
  * - `uProjectionMode`, `uRayIntegralFactor`: the gsplat amplitude the draw
  *   emits (sum projection's ray-integral boost vs the plain peak).
+ * - `uDisplayGain`: the gsplat `display_gain` folded into that amplitude, so a
+ *   Layers-panel Brightness edit moves pickability with visibility.
  */
 export const PICK_SYNC_INPUTS: readonly PickSyncInput[] = [
   { pick: 'uDensityDrop', read: (visual) => getDensityDrop(visual) },
@@ -106,6 +108,7 @@ export const PICK_SYNC_INPUTS: readonly PickSyncInput[] = [
   { pick: 'uVolumetric', read: (_visual, mode) => (isVolumetricMode(mode) ? 1 : 0) },
   { pick: 'uProjectionMode', read: uniformOf('uProjectionMode') },
   { pick: 'uRayIntegralFactor', read: uniformOf('uRayIntegralFactor') },
+  { pick: 'uDisplayGain', read: uniformOf('uDisplayGain') },
 ];
 
 /** The first material of a (possibly multi-material) slot. */

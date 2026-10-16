@@ -5,15 +5,17 @@ This module provides GPU-accelerated Gaussian splatting for NVIDIA GPUs
 using custom CUDA kernels. It supports 2D-8D volumetric rendering with
 splat-centric rasterization and optimized gradient computation.
 
-When the CUDA backend is not compiled, it falls back to the PyTorch
-reference implementation transparently.
+The kernels reach the GPU one of two ways (see :mod:`.backend`): the
+ahead-of-time extension built by ``make build-cuda``, or -- with no build
+step at all -- runtime compilation through NVRTC on first use, cached on
+disk. When neither is usable, fitting falls back to the PyTorch reference
+implementation. ``LUXAR_CUDA_BACKEND=aot|nvrtc|torch`` forces a choice.
 """
 
 from __future__ import annotations
 
 # Backend availability check
 CUDA_AVAILABLE = False
-CUDA_BACKEND_AVAILABLE = False
 
 try:
     import torch
@@ -22,37 +24,12 @@ try:
 except ImportError:
     pass
 
-# Import CUDA extension when available
-# The extension may be built in-place in this directory
-import sys  # noqa: E402
-from pathlib import Path  # noqa: E402
-
-_cuda_dir = Path(__file__).parent
-if str(_cuda_dir) not in sys.path:
-    sys.path.insert(0, str(_cuda_dir))
-
-try:
-    import cuda_splatting_backend  # type: ignore[import-not-found]  # noqa: F401
-
-    CUDA_BACKEND_AVAILABLE = True
-except ImportError:
-    if CUDA_AVAILABLE:
-        import warnings
-
-        from arbol import aprint
-
-        aprint(
-            "WARNING: CUDA GPU detected but splatting backend is not compiled. "
-            "Custom CUDA kernels unavailable — GPU fitting will use slower PyTorch fallback. "
-            "Build with: make build-cuda"
-        )
-        warnings.warn(
-            "CUDA splatting backend not compiled. Custom CUDA kernels unavailable. "
-            "GPU fitting will use slower PyTorch fallback. "
-            "Build with: make build-cuda",
-            UserWarning,
-            stacklevel=2,
-        )
+from luxar.gsplats.models.gsplats.cuda.backend import (  # noqa: E402
+    AOT_BACKEND_AVAILABLE,
+    SplattingBackend,
+    get_splatting_backend,
+    splatting_backend_unavailable_reason,
+)
 
 # Import public API
 from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (  # noqa: E402
@@ -62,8 +39,11 @@ from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (  # noqa: E402
 )
 
 __all__ = [
+    "AOT_BACKEND_AVAILABLE",
     "CUDA_AVAILABLE",
-    "CUDA_BACKEND_AVAILABLE",
+    "SplattingBackend",
+    "get_splatting_backend",
+    "splatting_backend_unavailable_reason",
     "GaussianSplatModelCUDA",
     "CUDASplatFunction",
     "cholesky_to_conic",

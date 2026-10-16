@@ -37,6 +37,10 @@ from luxar.gsplats.fitting.preprocessing import (
     resolve_volume_norm_range_denoised,
 )
 from luxar.gsplats.fitting.results import stamp_voxels_per_splat
+from luxar.gsplats.fitting.splat_hygiene import (
+    aggregate_min_extent_stats,
+    format_min_extent_line,
+)
 from luxar.gsplats.fitting.validation import _validate_floor
 from luxar.gsplats.gsplat_data import GSplatData
 from luxar.gsplats.merged_quality import stamp_merged_quality
@@ -866,7 +870,11 @@ def _stamp_merge_normalization(
     # __init__, which is still executing when this module is first imported.
     from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
 
-    target.update(agreed_normalization_stats([r.stats for r in sources]))
+    target.update(
+        agreed_normalization_stats(
+            [r.stats for r in sources], [r.n_splats for r in sources]
+        )
+    )
     if applied_floor is not None:
         target["floor"] = applied_floor
     if floor_strategy is not None:
@@ -1028,6 +1036,22 @@ def _aggregate_relocation_diagnostics(
                 break
 
 
+def _carry_agreed_voxel_size(
+    stats: dict[str, Any], results: Sequence[GSplatData]
+) -> None:
+    """Carry the tiles' physical ``voxel_size`` stamp onto the merged root.
+
+    Every tile of one fit emits the same frame, so the stamp is carried only when
+    every tile that recorded one agrees; empty tiles (no stats) abstain. Without
+    it ``compare``/``render`` could not map a physical tiled fit back to voxels.
+    """
+    from luxar.gsplats.scoring_grid import agreed_voxel_size
+
+    agreed = agreed_voxel_size([getattr(r, "stats", None) for r in results])
+    if agreed is not None:
+        stats["voxel_size"] = agreed
+
+
 def _merged_fit_stats(
     results: Sequence[GSplatData],
     *,
@@ -1066,7 +1090,21 @@ def _merged_fit_stats(
     )
     stamp_voxels_per_splat(stats, delivered_splats)
     _aggregate_relocation_diagnostics(stats, results)
+    _carry_agreed_voxel_size(stats, results)
+    aggregate_min_extent_stats([result.stats or {} for result in results], stats)
     return stats
+
+
+def _report_merged_min_extent(stats: dict[str, Any], *, verbose: bool) -> None:
+    """Print the merged speck-pruning record.
+
+    Each tile/box pruned its own specks (``min_extent`` rides in the per-tile
+    fit kwargs) and recorded them; :func:`_merged_fit_stats` summed those.
+    """
+    if verbose:
+        line = format_min_extent_line(stats)
+        if line:
+            aprint(line)
 
 
 def fit_tiled(
@@ -1586,6 +1624,7 @@ def merge_tile_results(
             image_min=fit_image_min(node.meta),
             stats=fit_stats,
         )
+        _report_merged_min_extent(fit_stats, verbose=verbose)
         node.meta["fit_stats"] = fit_stats
         if verbose:
             lod_note = f", per-part recipe={recipe}" if recipe else ""
@@ -1650,6 +1689,7 @@ def merge_tile_results(
         verbose=verbose,
         image_min=fit_image_min(merged.stats),
     )
+    _report_merged_min_extent(merged.stats, verbose=verbose)
 
     return merged
 

@@ -41,18 +41,73 @@ CUDA Dispatch Layer  [cuda_splatting.cu]
 └──────────────────────────────────────────────┘
 ```
 
+## Kernel backends: AOT extension, NVRTC, or PyTorch
+
+The same device code (`src/kernels_core.cuh` and the headers it includes)
+reaches the GPU one of two ways; `backend.py` picks, in this order:
+
+1. **`aot`**: the ahead-of-time torch extension `cuda_splatting_backend*.so`,
+   built by `make build-cuda` (needs `nvcc` and a C++ compiler). Preferred when
+   it imports, so dev and HPC installs that built it behave as before.
+2. **`nvrtc`**: runtime compilation, the path a plain `pip install
+   "luxar[gsplats]"` takes on Linux. `nvrtc_backend.py` compiles the kernels for
+   the exact GPU with NVRTC (the CUDA runtime compiler in torch's NVIDIA wheels:
+   `nvidia/cu13/lib` for CUDA 13, `nvidia/cuda_nvrtc/lib` for CUDA 12), loads
+   them into torch's primary context through the driver API, and launches on
+   torch's current stream. It is all `ctypes` (machinery in
+   `luxar/gsplats/_nvrtc.py`): no `nvcc`, no C++ compiler, no new dependency,
+   and no torch C++ ABI to match. Kernels compile per dimensionality on first
+   use (the four 3D kernels take well under a second) and are cached under
+   `$XDG_CACHE_HOME/luxar/cuda/nvrtc-<version>/sm_<arch>/` (default
+   `~/.cache`); the key hashes every header, so editing a kernel recompiles. A
+   corrupt or unwritable cache only costs a recompile. (NVRTC 13 also keeps
+   its own copy in the CUDA compute cache, `~/.nv/ComputeCache`, governed by
+   `CUDA_CACHE_PATH` / `CUDA_CACHE_DISABLE`; measure a truly cold compile with
+   `CUDA_CACHE_DISABLE=1`.) A GPU newer than the
+   NVRTC gets PTX for the highest architecture NVRTC knows, which the driver
+   JIT-compiles. `src/rtc_compat.cuh` stands in for the toolkit headers NVRTC
+   lacks (fixed-width ints and a storage-only `__half`), behind
+   `#ifdef __CUDACC_RTC__`; the nvcc build never sees it.
+3. **`torch`**: no custom kernels; the PyTorch reference renderer.
+
+`LUXAR_CUDA_BACKEND=aot|nvrtc|torch` forces one; a forced kernel backend that
+cannot run raises rather than falling back (in fitting and NLM denoising too),
+so a benchmark cannot silently measure the wrong path. One exception: NLM still
+falls back to PyTorch (with a warning) when the requested patch/search sizes are
+unsupported by the kernel or exceed the card's shared memory, or on out-of-memory,
+because those are limits of the parameters or the GPU rather than a broken backend.
+The choice is logged once per process. libnvrtc is searched in torch's NVIDIA wheels, then `$CONDA_PREFIX/lib` and
+`torch/lib`, then the system; set `LUXAR_NVRTC_LIBRARY=/path/to/libnvrtc.so` to
+use a specific one. A kernel that fails to build is remembered for the process,
+so a render loop does not retry the compile on every call. The NLM
+denoising kernels (`preprocessing/cuda/`) follow the same order and override.
+
+`cholesky_to_conic` is wrapped in `torch.compile`, which compiles at the
+first call (and its backward graph later, inside `torch.autograd.grad`). On a
+machine with no working C compiler or Triton either step fails; the wrapper
+then runs the helper eagerly for the rest of the process (one
+`RuntimeWarning`). Only compile-stack failures (Dynamo/Inductor/Triton errors,
+a missing or failing compiler process) trigger this: out-of-memory and other
+errors propagate unchanged.
+
 ## Requirements
 
-- CUDA 11.8+ (12.8+ recommended; 13.x for Blackwell). On Ubuntu, install it from
+- NVIDIA GPU; the AOT build targets Compute Capability 7.5+ (Turing → Blackwell) by default
+- PyTorch 2.2+ with CUDA support
+- For the NVRTC path: Linux and the `libnvrtc` that CUDA builds of torch install.
+  The oldest GPU it can compile for is whatever that NVRTC targets: sm_75 for
+  CUDA 13's NVRTC; CUDA 12's reaches older cards (untested here).
+- For the AOT extension only: CUDA toolkit 11.8+ (12.8+ recommended; 13.x for
+  Blackwell) with `nvcc` and a C++20 compiler. On Ubuntu, install it from
   NVIDIA's apt repository (`cuda-keyring`), not the distro `nvidia-cuda-toolkit`
   package, which is CUDA 12.0 on 24.04 — `make check-cuda-deps` prints the exact
   commands for your architecture (x86_64 or sbsa/aarch64). The toolkit's major
   version must match `torch.version.cuda`.
-- NVIDIA GPU with Compute Capability 7.5+ (Turing, Ampere, Ada, Hopper, Blackwell)
-- PyTorch 2.2+ with CUDA support
-- CUB library (bundled with CUDA Toolkit)
 
 ## Installation
+
+Nothing to do for the NVRTC path. The rest of this section is about the
+optional AOT extension.
 
 ### Recommended: Using Make (from project root)
 
@@ -150,6 +205,10 @@ make benchmark-cuda
 
 # Run specific test file
 hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/cuda/tests/test_cuda_forward.py -v
+
+# The suite runs against whichever kernel backend resolves (tests/conftest.py);
+# pin one to test it specifically:
+LUXAR_CUDA_BACKEND=nvrtc hatch run pytest packages/luxar/src/luxar/gsplats/models/gsplats/cuda/tests
 ```
 
 ### Verification status (audit A15-03)
@@ -189,8 +248,11 @@ cuda/
 │   ├── math_utils.cuh                     # Mahalanobis distance, Gaussian intensity, shift params
 │   ├── voxel_utils.cuh                    # Voxel coordinate conversion utilities
 │   ├── reduction_utils.cuh                # Warp reduction, gradient helpers
-│   └── dtype_traits.cuh                   # DTypeTraits for FP16/FP32 load abstraction
+│   ├── dtype_traits.cuh                   # DTypeTraits for FP16/FP32 load abstraction
+│   └── rtc_compat.cuh                     # NVRTC-only stand-ins for toolkit headers
 ├── gsplat_model_cuda.py                   # Python model class (GaussianSplatModelCUDA)
+├── backend.py                             # Kernel backend selection (aot → nvrtc → torch)
+├── nvrtc_backend.py                       # NVRTC runtime-compiled backend (host glue port)
 ├── build.py                               # Build script (torch.utils.cpp_extension)
 ├── benchmark.py                           # Performance benchmarks
 ├── __init__.py
@@ -206,7 +268,9 @@ cuda/
 │   ├── test_cuda_nd.py                    # nD (4D-8D) tests
 │   ├── test_cuda_fp16.py                  # FP16 mode tests
 │   ├── test_cuda_performance.py           # Performance benchmarks
-│   └── test_cuda_kernel_safety.py         # Kernel safety/numerical-invariant regression tests
+│   ├── test_cuda_kernel_safety.py         # Kernel safety/numerical-invariant regression tests
+│   ├── test_nvrtc_parity.py               # NVRTC vs PyTorch reference and vs AOT (GPU)
+│   └── test_backend_selection.py          # Backend order, env override, torch.compile fallback (CPU)
 ├── OPTIMIZATION_REPORT.md                 # CUDA optimization results
 └── README.md                              # This file
 ```

@@ -14,13 +14,8 @@ from .conftest import Tolerances, seed_all
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
 
-# Check if CUDA backend is compiled
-try:
-    import cuda_splatting_backend  # noqa: F401
-
-    CUDA_BACKEND_AVAILABLE = True
-except ImportError:
-    CUDA_BACKEND_AVAILABLE = False
+# Resolved kernel backend (AOT extension or NVRTC); honors LUXAR_CUDA_BACKEND.
+from .conftest import CUDA_BACKEND_AVAILABLE, cuda_splatting_backend  # noqa: E402, F401
 
 pytestmark = pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
 
@@ -40,7 +35,6 @@ class TestCUDAVsPyTorchReference:
         This test uses the CUDA backend directly (not through the model class)
         to compare with the PyTorch rendering_core output.
         """
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -129,7 +123,6 @@ class TestCUDAVsPyTorchReference:
 
     def test_direct_cuda_vs_pytorch_2d(self):
         """Direct comparison of CUDA and PyTorch outputs for 2D image."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -214,7 +207,6 @@ class TestCUDAVsPyTorchReference:
 
     def test_single_centered_splat_matches(self):
         """Test single centered splat produces identical peak location and value."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -293,7 +285,6 @@ class TestCUDAVsPyTorchComprehensive:
     @pytest.mark.parametrize("dim", [2, 3])
     def test_forward_isotropic_splats(self, dim: int):
         """Test forward pass with isotropic (spherical) splats for 2D/3D."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -356,7 +347,6 @@ class TestCUDAVsPyTorchComprehensive:
 
     def test_forward_isotropic_splats_4d(self):
         """Test 4D forward pass with isotropic splats."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -407,7 +397,6 @@ class TestCUDAVsPyTorchComprehensive:
     @pytest.mark.parametrize("dim", [2, 3])
     def test_forward_anisotropic_splats(self, dim: int):
         """Test forward pass with anisotropic (ellipsoidal) splats."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -463,7 +452,6 @@ class TestCUDAVsPyTorchComprehensive:
 
     def test_forward_anisotropic_splats_4d(self):
         """Test 4D anisotropic splats (may have issues)."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -510,7 +498,6 @@ class TestCUDAVsPyTorchComprehensive:
     @pytest.mark.parametrize("dim", [2, 3])
     def test_forward_elongated_splats(self, dim: int):
         """Test forward pass with highly elongated splats (aspect ratio > 5:1)."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -567,7 +554,6 @@ class TestCUDAVsPyTorchComprehensive:
 
     def test_forward_elongated_splats_4d(self):
         """Test 4D elongated splats (may have issues)."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -621,7 +607,6 @@ class TestCUDAVsPyTorchComprehensive:
     @pytest.mark.parametrize("size_category", ["tiny", "small", "medium", "large"])
     def test_forward_various_sizes(self, dim: int, size_category: str):
         """Test forward pass with various splat sizes."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -944,7 +929,6 @@ class TestCUDAVsPyTorchComprehensive:
     @pytest.mark.parametrize("dim", [2, 3])
     def test_single_splat_at_center(self, dim: int):
         """Test single splat at volume center matches between CUDA and PyTorch."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -996,7 +980,6 @@ class TestCUDAVsPyTorchComprehensive:
 
     def test_single_splat_at_center_4d(self):
         """Test single splat at 4D volume center (may have issues)."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -1043,7 +1026,6 @@ class TestCUDAVsPyTorchComprehensive:
     @pytest.mark.parametrize("dim", [2, 3])
     def test_many_overlapping_splats(self, dim: int):
         """Test many overlapping splats sum correctly."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,
@@ -1098,7 +1080,6 @@ class TestCUDAVsPyTorchComprehensive:
     @pytest.mark.parametrize("dim", [2, 3])
     def test_splats_at_boundaries(self, dim: int):
         """Test splats positioned at volume boundaries."""
-        import cuda_splatting_backend  # noqa: F401
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             cholesky_to_conic,

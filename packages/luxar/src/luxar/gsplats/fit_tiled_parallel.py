@@ -119,6 +119,16 @@ def _tile_handoff_args(
     return args
 
 
+def _optional_float_args(*pairs: "tuple[str, Optional[float]]") -> list[str]:
+    """``[flag, value, ...]`` for every pair whose value is not ``None``."""
+    return [
+        part
+        for flag, value in pairs
+        if value is not None
+        for part in (flag, str(value))
+    ]
+
+
 def build_worker_cmd(
     argv0: list[str],
     input_path: str | Path,
@@ -157,6 +167,10 @@ def build_worker_cmd(
     allow_empty_tile: bool = False,
     fold_tile_slivers: bool = True,
     tile_seed_count: Optional[int] = None,
+    voxel_size: "Optional[Sequence[float]]" = None,
+    region: Optional[str] = None,
+    min_extent: Optional[float] = None,
+    reseed_sigma: Optional[float] = None,
 ) -> list[str]:
     """Build the ``luxar gsplat fit --tile i/M`` argv for one worker.
 
@@ -169,7 +183,10 @@ def build_worker_cmd(
     makes a 0-splat tile
     write an ``.empty`` marker (and exit 0) instead of erroring on save.  The
     tiling driver flags ``--tiling``, ``--jobs`` and the parent's ``--compress``
-    are intentionally **never** forwarded.
+    are intentionally **never** forwarded. ``voxel_size`` (the parent's resolved
+    spacing, ``--voxel-size`` or ``--physical``) and ``region`` (the ``--region``
+    crop spec) make every worker read the same crop and fit in the same frame;
+    the parent applies the crop offset once, at the merged save.
     """
     cmd = [
         *argv0,
@@ -249,8 +266,26 @@ def build_worker_cmd(
             cmd += ["--denoise-2d"]
     if allow_empty_tile:
         cmd += ["--allow-empty-tile"]
+    # Speck pruning runs inside each worker (per tile); forward explicit values
+    # only, so an unset flag resolves through the same preset/config merge.
+    cmd += _optional_float_args(
+        ("--min-extent", min_extent), ("--reseed-sigma", reseed_sigma)
+    )
     cmd += _tile_handoff_args(fold_tile_slivers, tile_seed_count)
+    cmd += _frame_args(voxel_size, region)
     return cmd
+
+
+def _frame_args(
+    voxel_size: "Optional[Sequence[float]]", region: Optional[str]
+) -> list[str]:
+    """``--voxel-size`` / ``--worker-region`` worker argv (empty when unset)."""
+    args: list[str] = []
+    if voxel_size is not None:
+        args += ["--voxel-size", ",".join(f"{float(v):.17g}" for v in voxel_size)]
+    if region is not None:
+        args += ["--worker-region", region]
+    return args
 
 
 def resolve_jobs(

@@ -14,13 +14,8 @@ from .conftest import Tolerances
 # Check CUDA availability
 CUDA_AVAILABLE = torch.cuda.is_available()
 
-# Check if CUDA backend is compiled
-try:
-    import cuda_splatting_backend  # noqa: F401
-
-    CUDA_BACKEND_AVAILABLE = True
-except ImportError:
-    CUDA_BACKEND_AVAILABLE = False
+# Resolved kernel backend (AOT extension or NVRTC); honors LUXAR_CUDA_BACKEND.
+from .conftest import CUDA_BACKEND_AVAILABLE, cuda_splatting_backend  # noqa: E402, F401
 
 pytestmark = pytest.mark.skipif(not CUDA_AVAILABLE, reason="CUDA not available")
 
@@ -35,11 +30,10 @@ class TestCUDABackendAvailability:
     @pytest.mark.skipif(not CUDA_BACKEND_AVAILABLE, reason="CUDA backend not compiled")
     def test_backend_import(self):
         """Verify CUDA backend can be imported and has required functions."""
-        import cuda_splatting_backend  # noqa: F401
 
         assert hasattr(cuda_splatting_backend, "forward")
         assert hasattr(cuda_splatting_backend, "backward")
-        assert hasattr(cuda_splatting_backend, "__version__")
+        assert cuda_splatting_backend.name in ("aot", "nvrtc")
 
 
 class TestCholeskyToConic:
@@ -274,29 +268,18 @@ class TestCUDAKernelActivation:
         """Verify the CUDA kernels are called, not PyTorch fallback.
 
         This is critical because the code can silently fall back to PyTorch
-        if CUDA_BACKEND_AVAILABLE is False in the module, resulting in
+        no kernel backend resolves (get_splatting_backend() is None), resulting in
         significantly slower performance.
         """
         from luxar.gsplats.models.gsplats.cuda import gsplat_model_cuda
 
-        # Verify the module-level flag is True (this is what the forward() uses)
-        assert gsplat_model_cuda.CUDA_BACKEND_AVAILABLE, (
-            "CUDA_BACKEND_AVAILABLE is False in gsplat_model_cuda module. "
-            "This means the forward() will use PyTorch fallback, not CUDA kernels!"
+        # The resolver forward() consults must return a kernel backend.
+        backend = gsplat_model_cuda.get_splatting_backend()
+        assert backend is not None, (
+            "get_splatting_backend() returned None: forward() will use the "
+            "PyTorch fallback, not CUDA kernels!"
         )
-
-        # Verify cuda_splatting_backend is importable
-        try:
-            import cuda_splatting_backend  # noqa: F401
-
-            assert hasattr(cuda_splatting_backend, "forward"), (
-                "cuda_splatting_backend missing 'forward' function"
-            )
-            assert hasattr(cuda_splatting_backend, "backward"), (
-                "cuda_splatting_backend missing 'backward' function"
-            )
-        except ImportError as e:
-            pytest.fail(f"cuda_splatting_backend cannot be imported: {e}")
+        assert callable(backend.forward) and callable(backend.backward)
 
     @pytest.mark.skipif(not CUDA_BACKEND_AVAILABLE, reason="CUDA backend not compiled")
     def test_cuda_forward_faster_than_cpu(self):
@@ -387,16 +370,14 @@ class TestCUDAKernelActivation:
         import time
 
         from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
-            CUDA_BACKEND_AVAILABLE as MODULE_CUDA_AVAILABLE,
-        )
-        from luxar.gsplats.models.gsplats.cuda.gsplat_model_cuda import (
             GaussianSplatModelCUDA,
+            get_splatting_backend,
         )
         from luxar.gsplats.models.gsplats.gsplat_model import GaussianSplatModel
 
         # Skip if module flag is False (would just use fallback anyway)
-        if not MODULE_CUDA_AVAILABLE:
-            pytest.skip("CUDA_BACKEND_AVAILABLE is False in the module")
+        if get_splatting_backend() is None:
+            pytest.skip("no CUDA kernel backend resolves in gsplat_model_cuda")
 
         np.random.seed(42)
         N, d = 200, 3

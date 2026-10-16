@@ -29,6 +29,7 @@ import * as THREE from 'three';
 import { config } from '../../../config';
 import {
   createRendererCapabilities,
+  probeUnmaskedGpuRenderer,
   type Renderer,
   type RendererCapabilities,
 } from '../../../rendering/renderer-capabilities';
@@ -37,8 +38,19 @@ import { configureSortedIndexChunkedApply } from '../../../rendering/element-sto
 import { installUploadCounters } from '../../../rendering/upload-counters';
 import { installElementTextureRowUploads } from '../../../rendering/element-texture-row-upload';
 import { configureRenderObjectEviction } from '../../../data/scene-loader/commit/invalidate-render-object';
-import { configureHDRRenderer, logHDRCapabilities } from '../../../utils/hdr/hdr-detection';
+import {
+  configureHDRRenderer,
+  detectDisplayCapabilities,
+  logHDRCapabilities,
+} from '../../../utils/hdr/hdr-detection';
+import { resolveHdrHeadroom } from '../../../utils/hdr/hdr-headroom';
+import { platformName } from '../../../utils/platform';
 import { log, Modules } from '../../../utils/log';
+import {
+  clampHdrHeadroom,
+  DEFAULT_HDR_HEADROOM,
+  type HdrOutputState,
+} from '../../../types/hdr-output';
 import { notifier } from '../../../utils/cross-layer/notifier';
 
 /**
@@ -282,6 +294,111 @@ export interface CreateWebGPUOptions {
    * push through on a degenerate adapter.
    */
   rendererOverride?: 'webgl' | 'webgpu';
+  /** PROTOTYPE: request extended-range (HDR) output (`?hdr`); gated by `planHdrOutput`. */
+  hdr?: boolean;
+  /** Pinned HDR headroom (`?hdr=<n>`); omitted = resolved per display. */
+  hdrHeadroom?: number;
+}
+
+/**
+ * Whether this browser honours `toneMapping: { mode: 'extended' }` on an
+ * `rgba16float` canvas. Probed on a throwaway 1x1 canvas with the device the
+ * renderer will use, before the renderer exists (three configures the real
+ * canvas lazily, at the first frame). An unknown dictionary member is dropped
+ * silently, so the configuration is read back; a browser without
+ * `getConfiguration()` cannot be verified and counts as unsupported, and one
+ * that rejects the format throws here, harmlessly.
+ */
+function supportsExtendedToneMapping(device: unknown): boolean {
+  try {
+    const probe = document.createElement('canvas');
+    probe.width = probe.height = 1;
+    const ctx = probe.getContext('webgpu') as {
+      configure(config: Record<string, unknown>): void;
+      unconfigure?: () => void;
+      getConfiguration?: () => { toneMapping?: { mode?: string } } | null;
+    } | null;
+    if (!ctx || device === undefined) return false;
+    ctx.configure({ device, format: 'rgba16float', toneMapping: { mode: 'extended' } });
+    const mode = ctx.getConfiguration?.()?.toneMapping?.mode;
+    ctx.unconfigure?.();
+    return mode === 'extended';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Decide, before the renderer exists, whether the HDR output requested by
+ * `?hdr` can be honoured, and with which starting headroom. Undefined means
+ * ordinary SDR output.
+ *
+ * Needs native WebGPU: only `GPUCanvasContext.configure` takes the
+ * `toneMapping: { mode: 'extended' }` that lets canvas values above 1.0 reach
+ * the display, and three only asks for it with `outputType: HalfFloatType`
+ * (an `rgba16float` canvas). Its WebGL2 backend has no such switch, so no
+ * adapter (three would fall back to it) means no HDR. And the display must
+ * report `(dynamic-range: high)`: on an SDR display an extended canvas just
+ * clips at 1.0, which is strictly worse than the SDR tone curve.
+ */
+function planHdrOutput(options: CreateWebGPUOptions, device: unknown): HdrOutputState | undefined {
+  if (options.hdr !== true) return undefined;
+  const blocker = hdrOutputBlocker(options, device);
+  if (blocker !== null) {
+    log.info(Modules.HDR, `${blocker}; using an SDR canvas.`);
+    return undefined;
+  }
+  const pinned = options.hdrHeadroom !== undefined;
+  // Only the Apple-silicon rule reads the GPU string, and only when nothing
+  // pinned the headroom, so its throwaway WebGL2 context is rarely paid.
+  const gpuRenderer = !pinned && platformName() === 'macOS' ? probeUnmaskedGpuRenderer() : null;
+  const headroom = pinned
+    ? clampHdrHeadroom(options.hdrHeadroom ?? DEFAULT_HDR_HEADROOM)
+    : resolveHdrHeadroom(gpuRenderer);
+  return { headroom, pinned, gpuRenderer };
+}
+
+/** Why requested HDR output cannot be honoured, or null when it can. */
+function hdrOutputBlocker(options: CreateWebGPUOptions, device: unknown): string | null {
+  if (options.hdrHeadroom !== undefined && clampHdrHeadroom(options.hdrHeadroom) <= 1) {
+    return 'Headroom pinned to 1x (no range above SDR white)';
+  }
+  if (options.webgpuForceWebGL === true || device === undefined) {
+    return 'HDR output needs a native WebGPU device';
+  }
+  if (!detectDisplayCapabilities().hdr) {
+    return 'Display does not report HDR (dynamic-range: high)';
+  }
+  // Probed BEFORE the renderer exists: `outputType` commits the real canvas to
+  // rgba16float, so a browser that cannot do extended tone mapping must never
+  // get one (it would pay double swapchain bandwidth — measured +0.22 ms/frame
+  // at 4K — or fail to configure the format at its first frame).
+  if (!supportsExtendedToneMapping(device)) return 'Canvas extended tone mapping unavailable';
+  return null;
+}
+
+/**
+ * After `init()`: keep the HDR plan only if three really runs its WebGPU
+ * backend; otherwise fall back to SDR tone mapping (values stay in [0, 1]).
+ * A defensive check — the plan already required a native device, which three
+ * uses as given.
+ */
+function confirmHdrOutput(
+  renderer: Renderer,
+  plan: HdrOutputState | undefined
+): HdrOutputState | undefined {
+  if (plan === undefined) return undefined;
+  const backend = (renderer as { backend?: { isWebGPUBackend?: boolean } }).backend;
+  if (backend?.isWebGPUBackend !== true) {
+    log.info(Modules.HDR, 'WebGPURenderer runs its WebGL2 backend; using SDR output.');
+    return undefined;
+  }
+  log.info(
+    Modules.HDR,
+    `HDR output: rgba16float extended-range canvas, headroom ${plan.headroom.toFixed(2)}x SDR white` +
+      (plan.pinned ? ' (pinned)' : '')
+  );
+  return plan;
 }
 
 /**
@@ -419,6 +536,7 @@ export async function createWebGPURenderer(
   // WebGPU by the time we get here, so this await costs the WebGPU path one
   // chunk fetch and the default path nothing.
   const { WebGPURenderer } = await import('three/webgpu');
+  const hdrPlan = planHdrOutput(options, device);
 
   const gpuRenderer = new WebGPURenderer({
     canvas,
@@ -426,12 +544,18 @@ export async function createWebGPURenderer(
     alpha: config.webgl.context.alpha,
     ...(webgpuForceWebGL ? { forceWebGL: true } : device !== undefined ? { device } : {}),
     ...(perfTimestamp ? { trackTimestamp: true } : {}),
+    // rgba16float canvas + `toneMapping.mode = 'extended'` (WebGPUBackend).
+    ...(hdrPlan !== undefined ? { outputType: THREE.HalfFloatType } : {}),
   } as ConstructorParameters<typeof WebGPURenderer>[0]);
   await gpuRenderer.init();
   // After init(): the backend's device / WebGL2 context exists only now.
   installUploadCounters(gpuRenderer);
 
-  const capabilities = createRendererCapabilities(gpuRenderer);
+  const hdrOutput = confirmHdrOutput(gpuRenderer, hdrPlan);
+  const capabilities: RendererCapabilities = {
+    ...createRendererCapabilities(gpuRenderer),
+    ...(hdrOutput !== undefined ? { hdrOutput } : {}),
+  };
   configureRendererBackend(gpuRenderer, capabilities);
   log.info(Modules.RENDERER, `Rendering API: ${capabilities.apiSurface}`);
 

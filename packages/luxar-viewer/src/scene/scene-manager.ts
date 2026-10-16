@@ -83,6 +83,8 @@ import {
   setControlType as cameraModeSetControlType,
 } from './scene-manager/camera/camera-mode';
 import { sceneDimsManager } from './scene-dims-manager';
+import { resolveViewAxisPose } from './scene-manager/camera/view-axis';
+import type { ViewAxis } from '../types/view-axis';
 import { WebGLContextRecovery } from './scene-manager/render-pipeline/webgl-context-recovery';
 import { reduceGpuByteBudgetForContextLoss } from '../rendering/gpu-byte-budget';
 import {
@@ -230,6 +232,16 @@ export class SceneManager extends THREE.EventDispatcher<{
    * so author-oriented scenes reset to THEIR horizon, not world Y.
    */
   private sceneUp: THREE.Vector3 = DEFAULT_SCENE_UP.clone();
+
+  /**
+   * Axis-aligned opening view in force for this scene: the session override
+   * (`?viewAxis=`) else the authored `viewer_config.camera.view_axis`, else
+   * null (the historical look-along-−Z framing). Resolved in loadSceneData.
+   */
+  private sceneViewAxis: ViewAxis | null = null;
+
+  /** Session `?viewAxis=` override; beats the scene's authored preset. */
+  private viewAxisOverride: ViewAxis | null = null;
 
   /** Resize debouncing with requestAnimationFrame for smooth resizing */
   private resizer = new ResizeOrchestrator();
@@ -442,6 +454,9 @@ export class SceneManager extends THREE.EventDispatcher<{
    * bench. Off by default; flipped via `?perfTimestamp` URL param.
    */
   private perfTimestamp = false;
+  /** HDR output requested (`?hdr`) and its optional pinned headroom; WebGPU only. */
+  private hdr = false;
+  private hdrHeadroom: number | undefined;
   /** WebGL-only blend-variant warm-up (`?noBlendWarmup` disables). */
   private blendWarmup = true;
 
@@ -476,6 +491,9 @@ export class SceneManager extends THREE.EventDispatcher<{
      * `?perfTimestamp` URL flag set by the perf bench.
      */
     perfTimestamp?: boolean;
+    /** HDR output from `LuxarAppOptions.hdr` / `hdrHeadroom` (`?hdr[=n]`). WebGPU only. */
+    hdr?: boolean;
+    hdrHeadroom?: number;
     /**
      * WebGL-only blend warm-up. When true, classic `THREE.WebGLRenderer`
      * sessions pre-compile each DISTINCT blend-mode program variant a
@@ -484,12 +502,21 @@ export class SceneManager extends THREE.EventDispatcher<{
      * link cost on the click path.
      */
     blendWarmup?: boolean;
+    /**
+     * Session axis-preset override (`?viewAxis=xy|xz|yz`), beating each
+     * scene's authored `viewer_config.camera.view_axis`. Threaded from
+     * `LuxarAppOptions.viewAxis`.
+     */
+    viewAxis?: ViewAxis | null;
   }): Promise<void> {
     this.canvasElement = options.canvas;
+    this.viewAxisOverride = options.viewAxis ?? null;
     this.debug = options.debug ?? false;
     this.rendererOverride = options.renderer;
     this.webgpuForceWebGL = options.webgpuForceWebGL ?? false;
     this.perfTimestamp = options.perfTimestamp ?? false;
+    this.hdr = options.hdr ?? false;
+    this.hdrHeadroom = options.hdrHeadroom;
     this.blendWarmup = options.blendWarmup ?? true;
     await this.setupRenderer();
     this.setupContextLossHandling(); // Setup context loss recovery
@@ -574,6 +601,8 @@ export class SceneManager extends THREE.EventDispatcher<{
       debug: this.debug,
       webgpuForceWebGL: this.webgpuForceWebGL,
       perfTimestamp: this.perfTimestamp,
+      hdr: this.hdr,
+      hdrHeadroom: this.hdrHeadroom,
       rendererOverride: this.rendererOverride,
     });
     if (result.fallback) {
@@ -954,6 +983,7 @@ export class SceneManager extends THREE.EventDispatcher<{
     // origin, this auto-frame): world +Y unless the author set one.
     this.sceneUp.copy(appliedUp ?? DEFAULT_SCENE_UP);
     const camOverrides = viewerConfig ? extractCameraOverrides(viewerConfig) : {};
+    this.sceneViewAxis = this.resolveSceneViewAxis(camOverrides.viewAxis);
     const hasAuthorTarget = !!(camOverrides.target || camOverrides.targetNode);
 
     // Auto-frame camera to fit scene contents, unless the zarr author specified
@@ -983,6 +1013,24 @@ export class SceneManager extends THREE.EventDispatcher<{
     if (fovOverride !== undefined && (options.applyViewerConfigFov || validFovOverride)) {
       this.setFov(fovOverride);
     }
+  }
+
+  /** The session override, else the scene's authored preset, else none. */
+  private resolveSceneViewAxis(authored: ViewAxis | undefined): ViewAxis | null {
+    return this.viewAxisOverride ?? authored ?? null;
+  }
+
+  /**
+   * The up vector and (for an axis preset) view direction every fit/reset
+   * squares to. Without a preset — or one whose letters cannot form a plane —
+   * this is the scene up alone, the historical framing.
+   */
+  private framingOrientation(): { up: THREE.Vector3; viewDirection?: THREE.Vector3 } {
+    if (!this.sceneViewAxis) return { up: this.sceneUp };
+    const dims = sceneDimsManager.getDims();
+    const names = dims ? dims.displayed.map((i) => dims.metadata?.[i]?.name ?? '') : [];
+    const pose = resolveViewAxisPose(this.sceneViewAxis, this.sceneUp, names);
+    return pose ? { up: pose.up, viewDirection: pose.forward } : { up: this.sceneUp };
   }
 
   /**
@@ -1115,7 +1163,8 @@ export class SceneManager extends THREE.EventDispatcher<{
       log.info(Modules.SCENE_MANAGER, 'Recentered to authored camera (viewer_config)');
       return;
     }
-    const center = centerCameraOnScene(this.scene, this.camera, this.controls, this.sceneUp);
+    const { up, viewDirection } = this.framingOrientation();
+    const center = centerCameraOnScene(this.scene, this.camera, this.controls, up, viewDirection);
     if (center) this.lastBoundingBoxCenter.copy(center);
   }
 
@@ -1127,7 +1176,8 @@ export class SceneManager extends THREE.EventDispatcher<{
   public fitCameraToObject(obj: THREE.Object3D): boolean {
     let framed = false;
     this.commitCameraChange(() => {
-      framed = frameCameraOnObject(obj, this.camera, this.controls, this.sceneUp) !== null;
+      const { up, viewDirection } = this.framingOrientation();
+      framed = frameCameraOnObject(obj, this.camera, this.controls, up, viewDirection) !== null;
     });
     return framed;
   }
@@ -1196,7 +1246,8 @@ export class SceneManager extends THREE.EventDispatcher<{
    * {@link toggleCentering} switches back to the bounding box.
    */
   public centerOnOrigin(): void {
-    this.commitCameraChange(() => centerOnOrigin(this.camera, this.controls, this.sceneUp));
+    const { up, viewDirection } = this.framingOrientation();
+    this.commitCameraChange(() => centerOnOrigin(this.camera, this.controls, up, viewDirection));
     this.isCenteredOnBoundingBox = false;
   }
 
@@ -1403,12 +1454,13 @@ export class SceneManager extends THREE.EventDispatcher<{
    *   the bounding box center.
    */
   private autoFrameCamera(preserveTarget: boolean = false): void {
+    const { up, viewDirection } = this.framingOrientation();
     const result = autoFrameCamera(
       this.camera,
       this.controls,
       this.getSceneBoundsFromMetadata(),
       preserveTarget,
-      this.sceneUp
+      { up, viewDirection }
     );
     if (result.framed && result.center) {
       this.isCenteredOnBoundingBox = !preserveTarget;

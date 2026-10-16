@@ -25,6 +25,19 @@ __all__ = [
 ]
 
 
+class RegionRankError(ValueError):
+    """A ``region`` whose span count does not match the axes it would crop.
+
+    A ``ValueError`` (so existing callers keep catching it), distinct so a CLI
+    can report it as a usage error naming the volume's rank.
+    """
+
+    def __init__(self, n_spans: int, n_axes: int, what: str) -> None:
+        self.n_spans = n_spans
+        self.n_axes = n_axes
+        super().__init__(f"region has {n_spans} axes but {what} {n_axes}")
+
+
 def decode_flat_channel_index(
     channel: int, channel_shape: Tuple[int, ...]
 ) -> Tuple[int, ...]:
@@ -243,9 +256,10 @@ def _apply_axes_spec(
     spatial_indices = [i for i, kind in enumerate(kinds) if kind == "s"]
     if region is not None:
         if len(region) != len(spatial_indices):
-            raise ValueError(
-                f"region has {len(region)} axes but --axes {axes!r} names "
-                f"{len(spatial_indices)} spatial axes"
+            raise RegionRankError(
+                len(region),
+                len(spatial_indices),
+                f"--axes {axes!r} names this many spatial axes:",
             )
         for axis, span in zip(spatial_indices, region, strict=True):
             index[axis] = span
@@ -283,12 +297,61 @@ def _record_source_dtype(info: Optional[dict], volume: Any) -> None:
         info["source_dtype"] = str(np.dtype(src_dtype))
 
 
+def _read_tiff_meta(path: Path, info: Optional[dict]) -> Any:
+    """The TIFF's recorded voxel spacing, read only when a caller asked for info."""
+    if info is None:
+        return None
+    from ._tiff_metadata import read_tiff_voxel_metadata
+
+    return read_tiff_voxel_metadata(path)
+
+
+def _record_tiff_voxel_size(
+    info: Optional[dict], meta: Any, axes: Optional[str], ndim: int
+) -> None:
+    """Record OME/ImageJ voxel spacing for the RETURNED axes into ``info``.
+
+    Populates ``axes`` (lowercase names, array order), ``voxel_size`` in
+    micrometres plus ``voxel_unit="um"`` (when every unit is a known length),
+    ``source_voxel_size`` / ``source_voxel_units`` (as recorded) and
+    ``voxel_size_source`` (``"ome"``/``"imagej"``). Nothing is recorded unless
+    every returned axis has a spacing. With an explicit ``axes`` spec the kept
+    spatial labels name the axes; otherwise the series' own axis letters do,
+    minus the size-1 axes the positional path squeezes away.
+    """
+    if info is None or meta is None:
+        return
+    from ._tiff_metadata import voxel_info_for_axes
+
+    labels = _spatial_axis_names(axes) if axes is not None else None
+    recorded = voxel_info_for_axes(meta, labels, ndim)
+    if recorded is not None:
+        info.update(recorded)
+
+
+def _spatial_axis_names(axes: str) -> List[str]:
+    """Kept spatial labels from a validated axis spec, in returned array order."""
+    aliases = {"depth": "z", "height": "y", "width": "x"}
+    labels = [a.strip().lower() for a in axes.split(",") if a.strip()]
+    return [aliases.get(label, label) for label in labels if _axis_kind(label) == "s"]
+
+
+def _record_explicit_axes(info: Optional[dict], axes: Optional[str]) -> None:
+    """Expose the kept column names to callers that request loader metadata."""
+    if info is not None and axes is not None:
+        info["axes"] = _spatial_axis_names(axes)
+
+
 def _slice_eager_region(
     volume: Any, path: Path, region: Optional[Tuple[slice, ...]]
 ) -> Any:
     """Apply ``region`` only when the reader could not do it lazily."""
     if region is None or is_zarr_path(path):
         return volume
+    if len(region) != volume.ndim:
+        # numpy would silently crop only the leading axes (too few spans) or
+        # raise a bare IndexError (too many).
+        raise RegionRankError(len(region), volume.ndim, "the volume's rank is")
     return np.asarray(volume[region], dtype=np.float32)
 
 
@@ -300,14 +363,47 @@ def _squeezed_region_spans(
         return (slice(None),) * len(shape)
     surviving_axes = [axis for axis, size in enumerate(shape) if size != 1]
     if len(region) != len(surviving_axes):
-        raise ValueError(
-            f"region has {len(region)} axes but positional loading keeps "
-            f"{len(surviving_axes)} axes after squeezing shape {shape}"
+        raise RegionRankError(
+            len(region),
+            len(surviving_axes),
+            f"after squeezing, positional loading of shape {shape} keeps",
         )
     spans = [slice(None)] * len(shape)
     for axis, span in zip(surviving_axes, region, strict=True):
         spans[axis] = span
     return tuple(spans)
+
+
+def _reject_inapplicable_selection(
+    path: Path,
+    channel: Optional[int],
+    timepoint: Optional[int],
+    axes: Optional[str],
+) -> None:
+    """Refuse a channel/timepoint index that a non-zarr input would silently drop.
+
+    Only a zarr store has discoverable axes (OME-NGFF metadata, or the
+    positional TCZYX heuristic over its rank). A TIFF / NumPy / imageio array is
+    loaded whole and squeezed, so without an explicit ``axes`` spec an index has
+    nothing to select: the old behaviour fitted (or scored) EVERY channel stacked
+    as an extra spatial axis, or the wrong timepoint, with no warning. With
+    ``axes`` the index is applied by :func:`_apply_axes_spec`, as for zarr.
+    """
+    if axes is not None or (channel is None and timepoint is None):
+        return
+    if is_zarr_path(path):
+        return
+    given = ", ".join(
+        f"{name}={value}"
+        for name, value in (("channel", channel), ("timepoint", timepoint))
+        if value is not None
+    )
+    raise ValueError(
+        f"Cannot apply {given} to {path.name}: a {path.suffix or 'non-zarr'} file "
+        "has no discoverable channel/time axes, so the index would be ignored. "
+        "Name every dimension with an axes spec (CLI: --axes, e.g. 'c,z,y,x' or "
+        "'t,z,y,x') to select by index, or drop the index to load the whole array."
+    )
 
 
 def load_volume(
@@ -345,6 +441,15 @@ def load_volume(
             axes are dropped and spatial axes are kept in the given order.
         info: Optional dict, populated with ``source_dtype`` — the element type
             of the array AS STORED, captured before the float32 cast below.
+            With explicit ``axes``, it also receives the kept spatial labels in
+            array order (e.g. ``["x", "y", "z"]``). For an OME-TIFF or a
+            calibrated ImageJ TIFF it also receives the recorded voxel spacing
+            of the RETURNED axes, only when every returned axis has one:
+            ``axes`` (when not already supplied), ``voxel_size`` in MICROMETRES with
+            ``voxel_unit="um"`` (nm/mm/Å/... converted; omitted when a unit is
+            unknown), the values and units as recorded in ``source_voxel_size``
+            / ``source_voxel_units``, and ``voxel_size_source``
+            (``"ome"``/``"imagej"``).
             This is the only place it is knowable: the returned array is always
             float32, so a consumer that wants to quote a size (e.g. the
             denominator of a compression ratio) would otherwise describe the
@@ -362,6 +467,8 @@ def load_volume(
         ValueError: On an invalid key or a sub-2D volume.
     """
     suffix = path.suffix.lower()
+    tiff_meta = None
+    _reject_inapplicable_selection(path, channel, timepoint, axes)
 
     if suffix == ".npy":
         aprint(f"Loading NumPy array: {path.name}")
@@ -406,6 +513,7 @@ def load_volume(
             ) from exc
         aprint(f"Loading TIFF: {path.name}")
         volume = tifffile.imread(str(path))
+        tiff_meta = _read_tiff_meta(path, info)
 
     else:
         try:
@@ -446,6 +554,8 @@ def load_volume(
             f"Volume must be at least 2D after squeezing, got {volume.ndim}D "
             f"with shape {volume.shape}"
         )
+    _record_tiff_voxel_size(info, tiff_meta, axes, volume.ndim)
+    _record_explicit_axes(info, axes)
 
     assert isinstance(volume, np.ndarray)
     aprint(f"  Shape: {volume.shape}, dtype: float32")

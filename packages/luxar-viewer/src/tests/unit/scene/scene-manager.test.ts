@@ -1089,6 +1089,62 @@ describe('SceneManager', () => {
       expect(spies.autoAdjustClippingPlanes).toHaveBeenCalledTimes(1);
     });
 
+    it('frames along the authored camera.view_axis, with the authored up picking y-down', async () => {
+      const spies = installSpies({
+        viewerConfig: { camera: { view_axis: 'xy', up: [0, -1, 0] } },
+      });
+      spies.applyZarrViewerConfig.mockImplementation(() => ({
+        positionApplied: false,
+        appliedUp: new THREE.Vector3(0, -1, 0),
+      }));
+      const internals = sceneManager as unknown as {
+        framingOrientation(): { up: THREE.Vector3; viewDirection?: THREE.Vector3 };
+      };
+      let orientation: { up: THREE.Vector3; viewDirection?: THREE.Vector3 } | undefined;
+      spies.autoFrameCamera.mockImplementation(() => {
+        orientation = internals.framingOrientation();
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr');
+
+      // The image convention: look along +Z with y pointing down on screen.
+      expect(orientation?.viewDirection?.z).toBeCloseTo(1);
+      expect(orientation?.up.y).toBeCloseTo(-1);
+    });
+
+    it('lets the ?viewAxis override beat the authored camera.view_axis', async () => {
+      (sceneManager as unknown as { viewAxisOverride: string | null }).viewAxisOverride = 'yz';
+      const spies = installSpies({ viewerConfig: { camera: { view_axis: 'xy' } } });
+      const internals = sceneManager as unknown as {
+        framingOrientation(): { up: THREE.Vector3; viewDirection?: THREE.Vector3 };
+      };
+      let orientation: { up: THREE.Vector3; viewDirection?: THREE.Vector3 } | undefined;
+      spies.autoFrameCamera.mockImplementation(() => {
+        orientation = internals.framingOrientation();
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr');
+
+      // yz with the default up: +Y right, +Z up, looking along -X.
+      expect(orientation?.viewDirection?.x).toBeCloseTo(-1);
+      expect(orientation?.up.z).toBeCloseTo(1);
+    });
+
+    it('keeps the historical framing when no preset is authored', async () => {
+      const spies = installSpies({ viewerConfig: { camera: { target: [1, 2, 3] } } });
+      const internals = sceneManager as unknown as {
+        framingOrientation(): { up: THREE.Vector3; viewDirection?: THREE.Vector3 };
+      };
+      let orientation: { up: THREE.Vector3; viewDirection?: THREE.Vector3 } | undefined;
+      spies.autoFrameCamera.mockImplementation(() => {
+        orientation = internals.framingOrientation();
+      });
+
+      await sceneManager.loadSceneData('http://example.com/data.zarr');
+
+      expect(orientation?.viewDirection).toBeUndefined();
+    });
+
     it('calls autoFrameCamera(true) when author set target/targetNode but no position', async () => {
       const spies = installSpies({
         positionApplied: false,

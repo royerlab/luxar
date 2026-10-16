@@ -26,7 +26,10 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence, Tuple
 import numpy as np
 
 from luxar.gsplats.fit_basis import fit_image_min
-from luxar.gsplats.fit_tiled_gsplats import _aggregate_relocation_diagnostics
+from luxar.gsplats.fit_tiled_gsplats import (
+    _aggregate_relocation_diagnostics,
+    _report_merged_min_extent,
+)
 from luxar.gsplats.merged_quality import (
     announce_unscored_merge,
     resolve_merged_reference,
@@ -97,9 +100,11 @@ def _planned_merge_stats(
         stats["parallel_jobs"] = int(parallel_jobs)
         stats["elapsed_seconds"] = float(elapsed)
     from luxar.gsplats.fitting.scale_population import sum_population_counts
+    from luxar.gsplats.fitting.splat_hygiene import aggregate_min_extent_stats
 
     _aggregate_relocation_diagnostics(stats, regions)
     sum_population_counts([region.stats for region in regions], stats, delivered_splats)
+    aggregate_min_extent_stats([region.stats or {} for region in regions], stats)
     return stats
 
 
@@ -109,7 +114,12 @@ def _stamp_planned_normalization(
     """Carry unanimous box normalization provenance onto a merge root."""
     from luxar.gsplats.io.save_gsplats import agreed_normalization_stats
 
-    target.update(agreed_normalization_stats([region.stats for region in regions]))
+    target.update(
+        agreed_normalization_stats(
+            [region.stats for region in regions],
+            [region.n_splats for region in regions],
+        )
+    )
 
 
 def _content_fit_frame(
@@ -757,6 +767,7 @@ def fit_planned(
             grid_scale=grid_scale,
             stats=fit_stats,
         )
+        _report_merged_min_extent(fit_stats, verbose=verbose)
         result.meta["fit_stats"] = fit_stats
         return result
 
@@ -785,6 +796,7 @@ def fit_planned(
         image_min=fit_image_min(merged.stats),
         grid_scale=grid_scale,
     )
+    _report_merged_min_extent(merged.stats, verbose=verbose)
     return merged
 
 

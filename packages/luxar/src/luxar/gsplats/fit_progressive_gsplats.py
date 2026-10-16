@@ -74,6 +74,13 @@ from luxar.gsplats.fitting.results import (
     lift_source_grid_stats,
     stamp_voxels_per_splat,
 )
+from luxar.gsplats.fitting.splat_hygiene import (
+    DEFAULT_MIN_EXTENT_MAX_MASS_SHARE,
+    DEFAULT_MIN_EXTENT_VOX,
+    fitted_voxel_unit,
+    validate_max_mass_share,
+    validate_min_extent,
+)
 from luxar.gsplats.gsplat_data import AdditiveSubLOD, GSplatData
 from luxar.typing_utils.constants import DEFAULT_TRUNCATION_RADIUS
 
@@ -151,27 +158,33 @@ def _compute_foreground_psnr_chunked(
     rendered_gpu: torch.Tensor,
     original_np: np.ndarray,
     chunk_voxels: int = 50_000_000,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, float, float]:
     """Foreground PSNR, chunked like :func:`_compute_psnr_chunked`.
 
     The progressive fitter works on volumes too large to hold several copies of,
     so it cannot call :func:`~luxar.gsplats.metrics.compute_foreground_psnr`
     directly: that one masks the whole volume at once (a full-size mask plus two
     boolean-indexed copies), on top of the target and the render already
-    resident. Chunking bounds those to ``chunk_voxels``. Same definition: error
-    averaged over ``original > otsu`` only, ``data_range`` from the whole volume.
+    resident. Chunking bounds those to ``chunk_voxels``. The foreground field
+    and threshold use the same smoothed, capped Otsu rule as ``compare``.
 
     ``rendered_gpu`` follows :func:`_compute_psnr_chunked`'s signature, but the
     fitter calls this one with its CPU-cached render (the GPU copy is already
     freed by then), so in practice the work happens on the host.
 
-    Returns ``(psnr_db, threshold, foreground_fraction)``.
+    Returns ``(full_psnr, robust_psnr, threshold, fraction, robust_range)``.
     """
-    from .metrics import otsu_threshold
+    from .metrics import default_foreground, robust_peak
 
     flat_original = original_np.ravel()
-    # A view when already float32, so this does not double peak RAM.
-    threshold = otsu_threshold(torch.from_numpy(flat_original))
+    target = torch.from_numpy(original_np)
+    peak = robust_peak(target)
+    field, threshold = default_foreground(target, peak)
+    flat_field = field.reshape(-1)
+    full_range = float(original_np.max()) - float(original_np.min())
+    robust_range = peak - float(original_np.min())
+    if not robust_range > 0.0:
+        robust_range = full_range
 
     n = flat_original.size
     flat_rendered = rendered_gpu.reshape(-1)
@@ -180,7 +193,7 @@ def _compute_foreground_psnr_chunked(
     for i in range(0, n, chunk_voxels):
         end = min(i + chunk_voxels, n)
         chunk_orig = torch.from_numpy(flat_original[i:end]).to(rendered_gpu.device)
-        mask = chunk_orig > threshold
+        mask = (flat_field[i:end] > threshold).to(rendered_gpu.device)
         count = int(mask.sum().item())
         if count:
             sse += (
@@ -191,23 +204,24 @@ def _compute_foreground_psnr_chunked(
 
     fraction = n_fg / max(n, 1)
     if n_fg == 0:
-        return float("nan"), threshold, fraction
+        return float("nan"), float("nan"), threshold, fraction, robust_range
 
     mse = sse / n_fg
-    if mse == 0.0:
-        return float("inf"), threshold, fraction
+    from .metrics import _psnr_from
 
-    data_range = float(original_np.max()) - float(original_np.min())
-    if data_range == 0.0:
-        return float("inf"), threshold, fraction
-
-    return 10.0 * math.log10(data_range**2 / mse), threshold, fraction
+    return (
+        _psnr_from(full_range, mse),
+        _psnr_from(robust_range, mse),
+        threshold,
+        fraction,
+        robust_range,
+    )
 
 
 def _final_foreground_score(
     cached_rendered_np: Optional[np.ndarray],
     V_original: np.ndarray,
-) -> tuple[float, float, float]:
+) -> tuple[float, float, float, float, float]:
     """Foreground score for the last completed pass, or ``nan`` if there was none.
 
     Taken once at the end rather than per pass: only the final value is
@@ -216,23 +230,27 @@ def _final_foreground_score(
     on which pass they describe.
     """
     if cached_rendered_np is None:  # no pass completed — nothing was rendered
-        return float("nan"), float("nan"), 0.0
+        return float("nan"), float("nan"), float("nan"), 0.0, float("nan")
     return _compute_foreground_psnr_chunked(
         torch.from_numpy(cached_rendered_np), V_original
     )
 
 
+def _robust_psnr(psnr: float, V_original: np.ndarray, robust_range: float) -> float:
+    """Re-reference a full-range PSNR to the robust peak (same MSE, other peak)."""
+    full_range = float(V_original.max()) - float(V_original.min())
+    if full_range > 0.0 and robust_range > 0.0:
+        return psnr + 20.0 * math.log10(robust_range / full_range)
+    return psnr
+
+
 def _closing_cull(
     final_result: GSplatData,
-    V_original: np.ndarray,
     cull_retention: float,
     *,
     verbose: bool,
-    device: Optional[str],
-    voxel_size: Any,
-    output_space: str,
-) -> GSplatData:
-    """The fit's closing cumulative trim, then a re-score of the saved set."""
+) -> "tuple[GSplatData, int]":
+    """The fit's closing cumulative trim; the caller re-scores the saved set."""
     from luxar.gsplats._data.filtering import (
         measured_stats_snapshot,
         restore_measured_stats,
@@ -255,7 +273,45 @@ def _closing_cull(
             f"{n_before} -> {final_result.n_splats} splats "
             f"(removed {n_removed}, {100.0 * n_removed / n_before:.1f}%)"
         )
-    if n_removed > 0 and final_result.n_splats > 0:
+    return final_result, n_removed
+
+
+def _closing_reductions(
+    final_result: GSplatData,
+    V_original: np.ndarray,
+    *,
+    min_extent_vox: float,
+    max_mass_share: float,
+    cull_retention: float | None,
+    unit: np.ndarray,
+    verbose: bool,
+    device: Optional[str],
+    voxel_size: Any,
+    output_space: str,
+) -> GSplatData:
+    """Speck pruning, the cumulative cull, then one re-score of the saved set."""
+    from luxar.gsplats.fit_gsplats import prune_min_extent
+
+    removed = 0
+    if min_extent_vox > 0 and final_result.n_splats > 0:
+        final_result, n_pruned = prune_min_extent(
+            final_result,
+            min_extent_vox,
+            unit,
+            verbose=verbose,
+            max_mass_share=max_mass_share,
+        )
+        removed += n_pruned
+    if (
+        cull_retention is not None
+        and 0 < cull_retention < 1.0
+        and final_result.n_splats > 0
+    ):
+        final_result, n_culled = _closing_cull(
+            final_result, cull_retention, verbose=verbose
+        )
+        removed += n_culled
+    if removed > 0 and final_result.n_splats > 0:
         _rescore_progressive_after_cull(
             final_result,
             V_original,
@@ -265,6 +321,20 @@ def _closing_cull(
             output_space=output_space,
         )
     return final_result
+
+
+def _drop_inert_reseed_sigma(kwargs: dict[str, Any], enable_dynamic_ops: bool) -> None:
+    """Warn once (not per pass) when a reseed sigma is set but nothing relocates.
+
+    Progressive passes run without relocation by default, so the sigma would
+    silently do nothing; it is dropped from the per-pass kwargs after the note.
+    """
+    if kwargs.get("relocation_reseed_sigma_vox") is not None and not enable_dynamic_ops:
+        aprint(
+            "⚠ relocation_reseed_sigma_vox / --reseed-sigma has no effect: "
+            "progressive passes run without relocation (dynamic ops off)"
+        )
+        kwargs.pop("relocation_reseed_sigma_vox")
 
 
 def _rescore_progressive_after_cull(
@@ -287,10 +357,14 @@ def _rescore_progressive_after_cull(
 
     def score(rendered: torch.Tensor) -> dict[str, float]:
         psnr = _compute_psnr_chunked(rendered, V_original)
-        fg, threshold, fraction = _compute_foreground_psnr_chunked(rendered, V_original)
+        fg, fg_robust, threshold, fraction, robust_range = (
+            _compute_foreground_psnr_chunked(rendered, V_original)
+        )
         return {
             "psnr_db": psnr,
+            "psnr_robust_db": _robust_psnr(psnr, V_original, robust_range),
             "foreground_psnr_db": fg,
+            "foreground_psnr_robust_db": fg_robust,
             "foreground_threshold": threshold,
             "foreground_fraction": fraction,
         }
@@ -318,6 +392,8 @@ def fit_progressive_gaussian_splats(
     ] = 10.0,  # Intentionally higher than single-pass (1.0)
     enable_dynamic_ops: bool = False,
     cull_retention: float | None = 0.999,
+    min_extent: float | None = DEFAULT_MIN_EXTENT_VOX,
+    min_extent_max_mass_share: float = DEFAULT_MIN_EXTENT_MAX_MASS_SHARE,
     on_pass_complete: Optional[Callable[[int, AdditiveSubLOD, float], None]] = None,
     device: Optional[str] = None,
     verbose: bool = True,
@@ -360,6 +436,14 @@ def fit_progressive_gaussian_splats(
         Post-fit cumulative culling on the final accumulated result.  Keeps the
         top splats that account for this fraction of total amplitude (0--1).
         Set to ``None`` to disable.
+    min_extent : float or None, default=0.6
+        Speck pruning on the final accumulated result (before the cull): drop
+        splats whose geometric-mean spatial sigma is below this many voxels.
+        Never applied per pass. See
+        :func:`~luxar.gsplats.fit_gsplats.fit_gaussian_splats`. ``0`` disables.
+    min_extent_max_mass_share : float, default=0.02
+        Keep the splats (and print a note) when pruning would remove more than
+        this share of the fitted brightness.
     on_pass_complete : callable, optional
         Callback invoked after each pass:
         ``on_pass_complete(pass_index, lod_data, cumulative_psnr)``.
@@ -417,6 +501,10 @@ def fit_progressive_gaussian_splats(
     kwargs.pop("seeds", None)  # progressive computes seeds_this_pass per pass
     kwargs.pop("seed_method", None)  # progressive sets auto/peaks per pass
     kwargs.pop("cull_retention", None)  # per-pass culling disabled; final cull at end
+    # Speck pruning likewise runs once, on the accumulated result.
+    min_extent_vox = validate_min_extent(min_extent)
+    max_mass_share = validate_max_mass_share(min_extent_max_mass_share)
+    _drop_inert_reseed_sigma(kwargs, enable_dynamic_ops)
     # Background floor / DC-offset suppression: subtract ONCE from the volume up
     # front (like calibrate()), then run EVERY pass with floor='none'. The
     # residual chain (target = clip(V - render, 0)) is built against this
@@ -615,6 +703,7 @@ def fit_progressive_gaussian_splats(
             asymmetric_penalty=pass_asymmetric_penalty,
             enable_dynamic_ops=pass_enable_dynamic,
             cull_retention=None,  # Disable per-pass; final cull at end of progressive
+            min_extent=0.0,  # Pruned once, on the accumulated result
             seed_method=pass_seed_method,
             device=device,
             verbose=verbose,
@@ -699,9 +788,10 @@ def fit_progressive_gaussian_splats(
         pass_i += 1
 
     # Score the foreground before the last pass's render is freed.
-    fg_psnr, fg_threshold, fg_fraction = _final_foreground_score(
-        cached_rendered_np, V_original
+    fg_psnr, fg_psnr_robust, fg_threshold, fg_fraction, robust_range = (
+        _final_foreground_score(cached_rendered_np, V_original)
     )
+    psnr_robust = _robust_psnr(prev_psnr, V_original, robust_range)
 
     # Free cached render (CPU numpy) from the last pass
     del cached_rendered_np
@@ -722,7 +812,9 @@ def fit_progressive_gaussian_splats(
         "n_splats": total_splats,
         "time_seconds": total_time,
         "psnr_db": prev_psnr,
+        "psnr_robust_db": psnr_robust,
         "foreground_psnr_db": fg_psnr,
+        "foreground_psnr_robust_db": fg_psnr_robust,
         "foreground_threshold": fg_threshold,
         "foreground_fraction": fg_fraction,
         "stop_reason": stop_reason,
@@ -821,22 +913,29 @@ def fit_progressive_gaussian_splats(
             aprint(
                 f"Converted output to physical coordinates (voxel_size={vs.tolist()})"
             )
+        from luxar.gsplats.scoring_grid import physical_voxel_size_stamp
 
-    # Post-fit cumulative culling on the full accumulated result
-    if (
-        cull_retention is not None
-        and 0 < cull_retention < 1.0
-        and final_result.n_splats > 0
-    ):
-        final_result = _closing_cull(
-            final_result,
-            V_original,
-            cull_retention,
-            verbose=verbose,
-            device=device,
+        final_result.stats.update(physical_voxel_size_stamp(vs, "real", d))
+
+    # Closing reductions on the full accumulated result: speck pruning, then
+    # the cumulative cull, then ONE re-score of the saved set.
+    final_result = _closing_reductions(
+        final_result,
+        V_original,
+        min_extent_vox=min_extent_vox,
+        max_mass_share=max_mass_share,
+        cull_retention=cull_retention,
+        unit=fitted_voxel_unit(
+            V.ndim,
             voxel_size=caller_voxel_size,
             output_space=caller_output_space,
-        )
+            downscale=kwargs.get("downscale"),
+        ),
+        verbose=verbose,
+        device=device,
+        voxel_size=caller_voxel_size,
+        output_space=caller_output_space,
+    )
 
     # Density is quoted against the splats actually DELIVERED, so it is stamped
     # here rather than beside the other source-grid stamps above: the post-fit
