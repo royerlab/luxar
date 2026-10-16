@@ -281,6 +281,7 @@ def volume_refine_splats(
         # Identity-preserving: no cull and no splat relocation/birth/death, so
         # the output rows correspond 1:1 to the seed's and colors carry over.
         cull_retention=1.0,
+        min_extent=0.0,
         enable_dynamic_ops=False,
         sort_splats_enabled=False,
     )

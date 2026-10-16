@@ -8,6 +8,7 @@ from typing import Optional
 import typer
 from arbol import aprint
 
+from luxar.cli.gsplat_ops.fitting.fit_utils import validate_hygiene_flags
 from luxar.utils.lod_methods import GSPLAT_ADDITIVE_CHOICES_HELP
 
 from .help_text import BATCH_PROGRESSIVE_HELP
@@ -194,6 +195,18 @@ def run_batch_submit(
         "When omitted, each tile uses its fitting preset's default, which is "
         "0.999 (near-lossless) for every preset. Set to 0 to keep every "
         "splat.",
+    ),
+    batch_min_extent: Optional[float] = typer.Option(
+        None,
+        "--min-extent",
+        help="Drop sub-voxel specks per tile: splats whose geometric-mean spatial "
+        "sigma is below this many fitted voxels (default: 0.6; 0 keeps them).",
+    ),
+    batch_reseed_sigma: Optional[float] = typer.Option(
+        None,
+        "--reseed-sigma",
+        help="Sigma (voxels) a relocated splat is reseeded at (default: 0.5).",
+        rich_help_panel="Advanced",
     ),
     # Denoising
     batch_denoise: bool = typer.Option(
@@ -513,6 +526,7 @@ def run_batch_submit(
         luxar gsplat batch-fit submit keller.zarr.zip out/ -p gpu --tile-size 128 \\
             --axes time,camera,channel,z,y,x
     """
+    validate_hygiene_flags(batch_min_extent, batch_reseed_sigma)
     if partition is None:
         aprint("Error: --partition is required")
         raise typer.Exit(1)
@@ -546,6 +560,8 @@ def run_batch_submit(
             batch_psnr_patience=batch_psnr_patience,
             batch_max_passes=batch_max_passes,
             batch_cull_retention=batch_cull_retention,
+            batch_min_extent=batch_min_extent,
+            batch_reseed_sigma=batch_reseed_sigma,
             batch_denoise=batch_denoise,
             batch_denoise_h=batch_denoise_h,
             batch_denoise_2d=batch_denoise_2d,

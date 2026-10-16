@@ -24,6 +24,7 @@ from .fit_utils import (
     resolve_denoise_h,
     resolve_floor_with_calibration,
     validate_and_build_recipe,
+    validate_hygiene_flags,
     warn_ignored_density_flags,
 )
 from .fit_utils import (
@@ -623,6 +624,25 @@ def run_fit_volume(
         f"all). Details: {FIT_CLI_DOCS_URL}",
         rich_help_panel="Advanced",
     ),
+    # Speck pruning (post-fit)
+    min_extent: Optional[float] = typer.Option(
+        None,
+        "--min-extent",
+        help="After the fit, drop sub-voxel 'specks': splats whose geometric-mean "
+        "spatial sigma is below this many fitted voxels (default: 0.6; 0 keeps "
+        "them). Measured on nine fits: 8-70% fewer splats, held-out PSNR "
+        "within -0.07 dB. Skipped (with a note) when it would remove >2% of "
+        "the brightness. The removed count and brightness share are reported "
+        "and stored.",
+    ),
+    reseed_sigma: Optional[float] = typer.Option(
+        None,
+        "--reseed-sigma",
+        help="Sigma (voxels) a relocated splat is reseeded at (default: 0.5). "
+        "0.75-1.0 leaves no specks and fits up to 2x faster; held-out PSNR "
+        "moved -0.02 to +0.41 dB across seven measured fits. Opt-in.",
+        rich_help_panel="Advanced",
+    ),
     # Denoising
     denoise: bool = typer.Option(
         False,
@@ -712,6 +732,7 @@ def run_fit_volume(
     if not input_path.exists():
         aprint(f"Error: Input file not found: {input_path}")
         raise typer.Exit(1)
+    validate_hygiene_flags(min_extent, reseed_sigma)
     parsed_norm_range = _parse_norm_range(norm_range)
     parsed_voxel_size = _parse_voxel_size(voxel_size)
     parsed_tile_region, parsed_tile_volume_shape = _parse_tile_worker_metadata(
@@ -831,6 +852,8 @@ def run_fit_volume(
                 psnr_patience=psnr_patience,
                 max_passes=max_passes,
                 cull_retention=cull_retention,
+                min_extent=min_extent,
+                reseed_sigma=reseed_sigma,
                 denoise=denoise,
                 denoise_h=denoise_h,
                 denoise_2d=denoise_2d,
@@ -900,6 +923,8 @@ def run_fit_volume(
                     voxel_size=parsed_voxel_size,
                     physical_coordinates=physical_coordinates,
                     cull_retention=cull_retention,
+                    min_extent=min_extent,
+                    reseed_sigma=reseed_sigma,
                     device=device,
                     jobs=jobs,
                     keep_boxes=keep_tiles,

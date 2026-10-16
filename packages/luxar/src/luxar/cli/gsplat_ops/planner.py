@@ -353,6 +353,8 @@ def run_content_fit(
     voxel_size: "Optional[tuple[float, ...]]" = None,
     physical_coordinates: bool = False,
     cull_retention: Optional[float] = None,
+    min_extent: Optional[float] = None,
+    reseed_sigma: Optional[float] = None,
     device: Optional[str] = None,
     jobs: str = "1",
     keep_boxes: bool = False,
@@ -427,6 +429,8 @@ def run_content_fit(
                 "voxel_size": voxel_size,
                 # `0.0` ("keep every splat") is not None, so it still wins here.
                 "cull_retention": cull_retention,
+                "min_extent": min_extent,
+                "relocation_reseed_sigma_vox": reseed_sigma,
             },
             # Pin content tiling's baseline beneath the preset layer. Every
             # preset (including the default one) sets cull_retention too, so
@@ -710,6 +714,8 @@ def run_content_fit(
                 loss=loss,
                 lr=lr,
                 cull_retention=cull_retention,
+                min_extent=min_extent,
+                reseed_sigma=reseed_sigma,
                 device=device,
                 channel=channel,
                 timepoint=timepoint,
