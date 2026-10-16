@@ -1,16 +1,22 @@
 # HDR display detection + color conversion
 
-Display-side HDR capability probes plus the linear-sRGB → BT.2020 PQ
-I420P10 pipeline used for 10-bit WebCodecs video capture. Renderer-side
-probes (float-texture extension, color-buffer bit depth) deliberately
-live in `rendering/renderer-capabilities.ts` — the single seam where raw
-GL is allowed — so this folder stays pure helpers over an
-`HDRCapabilities` snapshot.
+Display-side HDR capability probes, the per-display headroom resolver for
+true HDR canvas output (PROTOTYPE, WebGPU only), and the linear-sRGB →
+BT.2020 PQ I420P10 pipeline used for 10-bit WebCodecs video capture.
+Renderer-side probes (float-texture extension, color-buffer bit depth,
+the unmasked GPU string) deliberately live in
+`rendering/renderer-capabilities.ts` — the single seam where raw GL is
+allowed — so nothing here touches GL. Most of the folder is pure helpers
+over an `HDRCapabilities` snapshot; the exception is
+`hdr-headroom.ts`, whose `HdrHeadroomController` is stateful (Window
+Management permission API, `localStorage`, display-change listeners).
 
-| File                      | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `hdr-detection.ts`        | `HDRCapabilities` interface + `detectDisplayCapabilities()` (P3 / Rec2020 / dynamic-range / 10-bit `matchMedia` probes), `configureHDRRenderer(renderer, caps)` (logs only — never touches `outputColorSpace` or `toneMapping`; `PostProcessingManager` owns both), `logHDRCapabilities(caps)`, `isHDRDisplay(caps)`, `getOptimalRenderTargetType(caps)` (returns `THREE.HalfFloatType` when float textures are available, else `THREE.UnsignedByteType`).    |
-| `hdr-color-conversion.ts` | `rgbaFloatToI420P10(rgba, width, height)` — converts linear sRGB float RGBA (from WebGL `readPixels`) to BT.2020 PQ YCbCr I420P10 `Uint16Array`. Pipeline: sRGB→BT.2020 linear (3×3 matrix), linear→PQ (SMPTE ST 2084, scene-referred 1.0 = SDR white ≈ 100 nits), RGB→YCbCr (BT.2020 NCL), 10-bit limited-range quantization (Y: 64–940, Cb/Cr: 64–960, centered at 512), 4:2:0 chroma subsampling, planar `Uint16Array` layout (Y plane, U plane, V plane). |
+| File                      | Role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hdr-detection.ts`        | `HDRCapabilities` interface + `detectDisplayCapabilities()` (P3 / Rec2020 / dynamic-range / 10-bit `matchMedia` probes), `configureHDRRenderer(renderer, caps)` (logs only — never touches `outputColorSpace` or `toneMapping`; `PostProcessingManager` owns both), `HDR_DISPLAY_QUERY` (the `(dynamic-range: high)` media query, shared with the headroom controller), `logHDRCapabilities(caps)`, `isHDRDisplay(caps)`, `getOptimalRenderTargetType(caps)` (returns `THREE.HalfFloatType` when float textures are available, else `THREE.UnsignedByteType`).                                                                                                                                              |
+| `hdr-color-conversion.ts` | `rgbaFloatToI420P10(rgba, width, height)` — converts linear sRGB float RGBA (from WebGL `readPixels`) to BT.2020 PQ YCbCr I420P10 `Uint16Array`. Pipeline: sRGB→BT.2020 linear (3×3 matrix), linear→PQ (SMPTE ST 2084, scene-referred 1.0 = SDR white ≈ 100 nits), RGB→YCbCr (BT.2020 NCL), 10-bit limited-range quantization (Y: 64–940, Cb/Cr: 64–960, centered at 512), 4:2:0 chroma subsampling, planar `Uint16Array` layout (Y plane, U plane, V plane).                                                                                                                                                                                                                                               |
+| `display-identity.ts`     | Identifies the display the window is on, for headroom purposes. `DisplaySignals` (platform via `platformName()`, WebGL unmasked GPU string, screen size + DPR, and with the Window Management permission the ScreenDetailed `label` / `isInternal`), `identifyDisplay(signals)` (model table: an Apple-silicon Pro/Max/Ultra chip on a MacBook-shaped screen, or a 14" MacBook Pro scaled size, is Liquid Retina XDR → 3x; seed table of external monitors by EDID label), `measuredHeadroom(screen)` (reads the ScreenDetailed `hdrHeadroom` in stops, else the legacy linear `highDynamicRangeHeadroom`), `collectDisplaySignals`, `displayKey(signals)` (`label:<EDID name>` or `screen:<w>x<h>@<dpr>`). |
+| `hdr-headroom.ts`         | Headroom (how far above SDR white the display can go) resolved per display: URL pin > hand-set per display (`localStorage` `luxar.hdrHeadroom`, a JSON map keyed by `displayKey`) > measured > model guess > default 2x, or 1x `'sdr'` while the window is on a display that stops reporting HDR. `resolveHdrHeadroom(gpuRenderer)` is the synchronous best effort used at renderer construction; `HdrHeadroomController` (`start`, `detect`, `setManual`, `current`, `canMeasure`, `dispose`) follows display and brightness changes live and reports each `HdrHeadroomResolution` (`value`, `source`, `display`); `isHeadroomLocked(source)` is true for `url` / `sdr`.                                   |
 
 `floatTextures` and `colorDepth` on the snapshot from
 `detectDisplayCapabilities()` are placeholder defaults
@@ -47,6 +53,12 @@ const rtType = getOptimalRenderTargetType(caps); // HalfFloatType | UnsignedByte
 // HDR video capture path: linear-sRGB float RGBA → I420P10 for WebCodecs
 const i420p10 = rgbaFloatToI420P10(floatRGBA, width, height);
 ```
+
+`hdr-headroom.ts` imports `cross-layer/event-group`, `log`,
+`storage-keys`, `hdr-detection`, `display-identity` and
+`types/hdr-output`; `display-identity.ts` imports `platform`. Consumers
+of the headroom resolver: `renderer-setup.ts` (`resolveHdrHeadroom`) and
+`ui/rendering-controls/setup/hdr-setup.ts` (`HdrHeadroomController`).
 
 Consumers: `hdr-detection.ts` is consumed by
 `rendering/renderer-capabilities.ts` (which calls

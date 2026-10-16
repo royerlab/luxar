@@ -197,14 +197,26 @@ export class MegaShaderMaterial extends THREE.ShaderMaterial {
   }
 
   /**
+   * Deliberate no-op. HDR output is WebGPU-only (see
+   * `MegaShaderConfig.hdrOutputPeak`): WebGL has no extended-range canvas to
+   * present to, so this material always tone-maps to `[0, 1]`. The method
+   * exists so callers can drive either backend's mega-shader the same way.
+   */
+  setHdrPeak(_value: number): void {
+    // Intentionally empty; see the doc comment.
+  }
+
+  /** Always 1 — see {@link setHdrPeak}. */
+  getHdrPeak(): number {
+    return 1;
+  }
+
+  /**
    * Read back the current tone-mapping mode as a THREE constant.
    * Note: `THREE.NoToneMapping` is aliased to `LinearToneMapping` on
    * set (to clamp to [0,1] matching old behavior), so this getter
    * returns `LinearToneMapping` for either input.
    */
-  /** HDR output is WebGPU-only (see `MegaShaderConfig.hdrOutputPeak`): no-op. */
-  setHdrPeak(_value: number): void {}
-
   getToneMapping(): THREE.ToneMapping {
     return toneMappingFromLuxarMode(Number(this.defines.LUXAR_TONE_MAPPING_MODE));
   }

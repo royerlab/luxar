@@ -10,6 +10,7 @@
  * context of its compat backend).
  */
 import * as THREE from 'three';
+import type { HdrOutputState } from '../types/hdr-output';
 import type { WebGPURenderer } from 'three/webgpu';
 
 import { detectDisplayCapabilities, type HDRCapabilities } from '../utils/hdr/hdr-detection';
@@ -107,9 +108,9 @@ export interface RendererCapabilities {
   /**
    * PROTOTYPE (`?hdr`): set only when the canvas is an extended-range
    * `rgba16float` WebGPU canvas. The final pass then tone-maps to
-   * `[0, hdrOutputPeak]` instead of `[0, 1]`, 1.0 staying SDR white.
+   * `[0, headroom]` instead of `[0, 1]`, 1.0 staying SDR white.
    */
-  readonly hdrOutputPeak?: number;
+  readonly hdrOutput?: HdrOutputState;
   /** Maximum MSAA sample count the GPU supports (0 if unsupported). */
   readonly maxMSAASamples: number;
   /**
@@ -338,4 +339,24 @@ export function createRendererCapabilities(
     maxRenderbufferSize,
     pointSizeRange: [1, 1024],
   };
+}
+
+/**
+ * The WebGL unmasked renderer string (e.g. `ANGLE (Apple, ANGLE Metal
+ * Renderer: Apple M4 Max, …)`), or null. Used only to identify the display
+ * for HDR output (`?hdr`): WebGPU's `adapter.info` comes back empty in
+ * Chrome, so a throwaway WebGL2 context is opened and released at once.
+ * Lives here because this module is the one seam allowed raw GL.
+ */
+export function probeUnmaskedGpuRenderer(): string | null {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2');
+    if (!gl) return null;
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const renderer: unknown = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : null;
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    return typeof renderer === 'string' ? renderer : null;
+  } catch {
+    return null; // No WebGL (or blocked): the GPU just stays unknown.
+  }
 }

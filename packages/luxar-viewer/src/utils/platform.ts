@@ -21,3 +21,16 @@
 export function isMacPlatform(): boolean {
   return typeof navigator !== 'undefined' && navigator.platform.startsWith('Mac');
 }
+
+/**
+ * The OS name, as UA client hints spell it (`'macOS'`, `'Windows'`, `'Linux'`,
+ * …), falling back to `'macOS'` via {@link isMacPlatform} and otherwise to the
+ * raw `navigator.platform`. Empty outside the browser.
+ */
+export function platformName(): string {
+  if (typeof navigator === 'undefined') return '';
+  const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
+  if (uaData?.platform) return uaData.platform;
+  if (typeof navigator.platform !== 'string') return '';
+  return isMacPlatform() ? 'macOS' : navigator.platform;
+}

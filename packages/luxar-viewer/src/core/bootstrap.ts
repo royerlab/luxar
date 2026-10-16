@@ -17,7 +17,6 @@
  */
 
 import { LuxarApp, type LuxarAppOptions } from './app';
-import { resolveHdrHeadroom } from '../utils/hdr/hdr-headroom';
 import { parseBookmark, restoreBookmark } from './app/bookmark-state';
 import { dataSourceDocumentTitle, setDocumentTitle } from './document-title';
 import { config } from '../config';
@@ -134,7 +133,12 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
   // `?workers=` / `?prefetch=` beat the stored values for this session only:
   // a launcher on a dedicated display machine sets them without rewriting that
   // machine's saved preferences.
-  applyUrlPerformanceOverrides(urlParams.workers, urlParams.prefetch, urlParams.renderer);
+  applyUrlPerformanceOverrides(
+    urlParams.workers,
+    urlParams.prefetch,
+    urlParams.renderer,
+    urlParams.hdr
+  );
 
   if (urlParams.opfsReadConcurrency !== null) {
     config.cache.opfsReadConcurrency = urlParams.opfsReadConcurrency;
@@ -320,7 +324,11 @@ export async function bootstrapStandalone(opts: BootstrapOptions): Promise<Luxar
       (userSettings.advanced.renderer !== 'auto' ? userSettings.advanced.renderer : undefined),
     webgpuForceWebGL: urlParams.webgpuForceWebGL,
     perfTimestamp: urlParams.perfTimestamp,
-    hdrPeak: urlParams.hdr ? resolveHdrHeadroom(urlParams.hdrHeadroom) : undefined,
+    // HDR output: on by default (it still needs WebGPU + an HDR display and
+    // falls back to SDR otherwise); `?hdr=off` or Settings › Advanced turns
+    // it off, and `?hdr=<n>` pins the headroom.
+    hdr: (urlParams.hdr ?? userSettings.advanced.hdrOutput) !== 'off',
+    hdrHeadroom: urlParams.hdrHeadroom ?? undefined,
     // `?renderAlways` (render every tick) and the debug-only `?renderAudit`.
     renderAlways: urlParams.renderAlways,
     renderAudit: urlParams.renderAudit,

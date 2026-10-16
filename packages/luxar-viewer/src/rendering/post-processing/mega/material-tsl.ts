@@ -213,6 +213,11 @@ export class MegaShaderTSLMaterial extends NodeMaterial {
     this.uniforms.uHdrPeak.value = Math.max(1, value);
   }
 
+  /** The headroom the HDR branch tone-maps to (1 when HDR output is off). */
+  getHdrPeak(): number {
+    return this.uniforms.uHdrPeak.value as number;
+  }
+
   getToneMapping(): THREE.ToneMapping {
     return toneMappingFromLuxarMode(this.toneMappingMode);
   }

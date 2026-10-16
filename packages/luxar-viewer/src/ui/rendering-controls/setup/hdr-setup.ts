@@ -6,6 +6,11 @@
  * - Offset: global additive brightness shift (lift/lower composited image)
  * - Gamma: global midtone curve adjustment
  * - Tone mapping selector (None, Linear, Reinhard, Cineon, ACES, AgX, Neutral)
+ *
+ * and, only while the canvas is an extended-range HDR canvas (PROTOTYPE,
+ * WebGPU), the display controls:
+ * - Headroom: how far above SDR white the display can go, per display
+ * - Detect Display: measure it live (Window Management API, when available)
  */
 
 import type { SetupContext, SetupResult } from '../types';
@@ -15,11 +20,13 @@ import {
 } from '../../../rendering/post-processing/tone-mapping';
 import { FOLDER_ICONS } from '../folder-icons';
 import {
-  HDR_HEADROOM_MAX,
-  HDR_HEADROOM_MIN,
   HdrHeadroomController,
+  isHeadroomLocked,
+  type HdrDetectOutcome,
   type HdrHeadroomResolution,
 } from '../../../utils/hdr/hdr-headroom';
+import { HDR_HEADROOM_MAX, HDR_HEADROOM_MIN } from '../../../types/hdr-output';
+import { showToast } from '../../toast';
 
 /**
  * Set up HDR controls in the rendering controls GUI.
@@ -43,7 +50,8 @@ export function setupHDRControls(context: SetupContext): SetupResult {
       '1. Exposure — scales brightness like a camera (in log2 stops)\n' +
       '2. Offset — adds/subtracts a flat brightness value\n' +
       '3. Gamma — reshapes the midtone curve (contrast)\n' +
-      '4. Tone Mapping — compresses HDR values to fit the display'
+      '4. Tone Mapping — compresses HDR values to fit the display\n' +
+      "5. Headroom — the display's range above SDR white (HDR displays, WebGPU)"
   );
 
   // Exposure: log2 stops (-10 to +10)
@@ -133,7 +141,7 @@ export function setupHDRControls(context: SetupContext): SetupResult {
   );
 
   // Display headroom — only while the canvas is an extended-range HDR
-  // canvas (PROTOTYPE, `?hdr` on WebGPU). Not part of the per-scene
+  // canvas (PROTOTYPE, WebGPU on an HDR display). Not part of the per-scene
   // settings: it describes the DISPLAY, so the controller resolves it per
   // display (URL > hand-set > measured > model guess > default) and follows
   // the window across displays and brightness changes.
@@ -148,24 +156,45 @@ export function setupHDRControls(context: SetupContext): SetupResult {
 }
 
 const SOURCE_TEXT: Record<HdrHeadroomResolution['source'], string> = {
-  url: 'set by the ?hdr=<n> URL parameter',
-  manual: 'set by hand for this display (Detect re-measures)',
+  url: 'pinned by the launch URL',
+  manual: 'set by hand for this display (Detect Display re-measures)',
   measured: 'measured live from the display',
   model: 'conservative guess for the identified display model',
   default: 'conservative default (display not identified)',
   sdr: 'this display is in SDR mode',
 };
 
-/** Headroom slider + Detect button, driven by an {@link HdrHeadroomController}. */
+const DETECT_TOAST: Record<HdrDetectOutcome, string> = {
+  measured: 'Display headroom measured',
+  unmeasurable: 'This browser does not report display headroom',
+  denied: 'Display access not granted; keeping the current headroom',
+};
+
+/**
+ * Lock or unlock a slider the way the Settings popover locks a URL-pinned
+ * control (`addUrlAware`): greyed, non-interactive, inputs disabled.
+ */
+function setControllerLocked(domElement: HTMLElement, locked: boolean): void {
+  domElement.style.pointerEvents = locked ? 'none' : '';
+  domElement.style.opacity = locked ? '0.6' : '';
+  domElement.querySelectorAll<HTMLInputElement>('input').forEach((input) => {
+    input.disabled = locked;
+  });
+}
+
+/** Headroom slider + Detect Display button, driven by an {@link HdrHeadroomController}. */
 function setupHeadroomControls(
   hdrFolder: ReturnType<SetupContext['gui']['addFolder']>,
   postProcessing: SetupContext['postProcessing'],
   triggerAnimation: () => void
 ): () => void {
+  const hdrOutput = postProcessing.getHdrOutputState();
   const state = {
     headroom: postProcessing.getHdrHeadroom(),
     detect: (): void => {
-      void controller.detect();
+      void controller.detect().then((outcome) => {
+        showToast(DETECT_TOAST[outcome]);
+      });
     },
   };
   const headroomControl = hdrFolder
@@ -174,25 +203,36 @@ function setupHeadroomControls(
     .onChange((value: number) => {
       controller.setManual(value);
     });
-  const controller = new HdrHeadroomController((r) => {
-    postProcessing.setHdrHeadroom(r.value);
-    headroomControl.setValue(r.value);
-    headroomControl.domElement.setAttribute(
-      'title',
-      'Headroom: how far above SDR white the display can go (HDR output)\n' +
-        `• Now ${r.value.toFixed(2)}x — ${SOURCE_TEXT[r.source]}\n` +
-        `• Display: ${r.display}\n` +
-        '• Drag to override for this display; past the real headroom the OS clips highlights'
-    );
-    triggerAnimation();
-  });
+  const controller = new HdrHeadroomController(
+    (r) => {
+      postProcessing.setHdrHeadroom(r.value);
+      headroomControl.setValue(r.value);
+      setControllerLocked(headroomControl.domElement, isHeadroomLocked(r.source));
+      headroomControl.domElement.setAttribute(
+        'title',
+        'Headroom: how far above SDR white the display can go (HDR output)\n' +
+          `• Now ${r.value.toFixed(2)}x — ${SOURCE_TEXT[r.source]}\n` +
+          `• Display: ${r.display}\n` +
+          '• Drag to override for this display; past the real headroom the OS clips highlights'
+      );
+      triggerAnimation();
+    },
+    {
+      pinned: hdrOutput?.pinned ? hdrOutput.headroom : null,
+      gpuRenderer: hdrOutput?.gpuRenderer ?? null,
+    }
+  );
   if (controller.canMeasure()) {
-    const detectControl = hdrFolder.add(state, 'detect').name('Detect Display');
-    detectControl.domElement.setAttribute(
-      'title',
-      "Measure this display's live HDR headroom (asks permission to see your displays;\n" +
-        'needs chrome://flags "Experimental Web Platform features" in Chrome 155)'
-    );
+    hdrFolder
+      .add(state, 'detect')
+      .name('Detect Display')
+      .domElement.setAttribute(
+        'title',
+        "Detect Display: measure this display's live HDR headroom\n" +
+          '• Asks permission to see your displays\n' +
+          '• Needs a browser that reports headroom (Chrome: Experimental Web Platform features)\n' +
+          '• Clears a hand-set value for this display once a measurement is available'
+      );
   }
   void controller.start();
   return () => controller.dispose();

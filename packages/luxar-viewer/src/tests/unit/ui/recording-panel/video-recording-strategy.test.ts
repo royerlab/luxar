@@ -143,6 +143,25 @@ describe('VideoRecordingStrategy', () => {
       await recordingPromise;
     });
 
+    it('films the SDR curve: holds it for the recording and releases it with the capture', async () => {
+      // An 8-bit MediaRecorder capture clips an HDR canvas above SDR white.
+      vi.spyOn((panel as any).session, 'showConfirmationDialog').mockResolvedValue(true);
+      const canvas = mockSceneManager.renderer.domElement;
+      (canvas as any).captureStream = vi.fn(() => ({ getTracks: vi.fn(() => []) }));
+      const release = vi.fn();
+      mockSceneManager.postProcessing.holdSdrOutput.mockReturnValue(release);
+
+      const recordingPromise = panel.startVideoRecording();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(mockSceneManager.postProcessing.holdSdrOutput).toHaveBeenCalledTimes(1);
+      expect(release).not.toHaveBeenCalled();
+
+      panel.stopVideoRecording();
+      mockMediaRecorder.onstop();
+      await recordingPromise;
+      expect(release).toHaveBeenCalledTimes(1);
+    });
+
     it('ignores stopVideoRecording when not recording', () => {
       panel.stopVideoRecording();
       expect(mockMediaRecorder.stop).not.toHaveBeenCalled();

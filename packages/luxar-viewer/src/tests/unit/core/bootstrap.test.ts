@@ -163,7 +163,7 @@ const EMPTY_PARAMS: UrlParams = {
   renderer: null,
   webgpuForceWebGL: false,
   perfTimestamp: false,
-  hdr: false,
+  hdr: null,
   hdrHeadroom: null,
   renderAlways: false,
   renderAudit: false,

@@ -4,7 +4,7 @@
  *
  * Resolved per DISPLAY, best source first:
  *
- *   url       `?hdr=<n>` pins it for the session
+ *   url       pinned by `?hdr=<n>` / `LuxarAppOptions.hdrHeadroom`
  *   manual    a value set with the Headroom slider, remembered per display
  *   measured  the browser's live `ScreenDetailed` headroom (see display-identity)
  *   model     a conservative guess from the identified display model
@@ -18,7 +18,9 @@
  * @module utils/hdr/hdr-headroom
  */
 
-import { getParam, URL_PARAM_KEYS } from '../../config/url-params';
+import { DEFAULT_HDR_HEADROOM, clampHdrHeadroom } from '../../types/hdr-output';
+import { EventGroup } from '../cross-layer/event-group';
+import { log, Modules } from '../log';
 import { StorageKeys } from '../storage-keys';
 import {
   collectDisplaySignals,
@@ -27,18 +29,7 @@ import {
   measuredHeadroom,
   type DisplaySignals,
 } from './display-identity';
-
-/**
- * Fallback headroom when nothing identifies the display: 2x SDR white (one
- * stop). Deliberately conservative — overshooting makes the OS clip the
- * brightest detail, undershooting only leaves headroom unused. DisplayHDR 400
- * monitors at a ~200-240 nit SDR white have about 1.7-2x.
- */
-export const DEFAULT_HDR_HEADROOM = 2;
-
-/** Slider range for the headroom control. */
-export const HDR_HEADROOM_MIN = 1;
-export const HDR_HEADROOM_MAX = 16;
+import { HDR_DISPLAY_QUERY } from './hdr-detection';
 
 /** Where a resolved headroom came from. */
 export type HdrHeadroomSource = 'url' | 'manual' | 'measured' | 'model' | 'default' | 'sdr';
@@ -51,8 +42,9 @@ export interface HdrHeadroomResolution {
   readonly display: string;
 }
 
-function clampHeadroom(value: number): number {
-  return Math.min(HDR_HEADROOM_MAX, Math.max(HDR_HEADROOM_MIN, value));
+/** True when the slider must not edit the value (pinned, or an SDR display). */
+export function isHeadroomLocked(source: HdrHeadroomSource): boolean {
+  return source === 'url' || source === 'sdr';
 }
 
 // ---------------------------------------------------------------------------
@@ -64,14 +56,15 @@ function sanitizeManualMap(parsed: unknown): Record<string, number> {
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
   const out: Record<string, number> = {};
   for (const [k, v] of Object.entries(parsed)) {
-    if (typeof v === 'number' && Number.isFinite(v) && v > 0) out[k] = clampHeadroom(v);
+    if (typeof v === 'number' && Number.isFinite(v) && v > 0) out[k] = clampHdrHeadroom(v);
   }
   return out;
 }
 
 function loadManualMap(): Record<string, number> {
   try {
-    const raw = globalThis.localStorage?.getItem(StorageKeys.hdrHeadroom);
+    if (typeof localStorage === 'undefined') return {};
+    const raw = localStorage.getItem(StorageKeys.hdrHeadroom);
     return raw ? sanitizeManualMap(JSON.parse(raw)) : {};
   } catch {
     return {};
@@ -80,7 +73,8 @@ function loadManualMap(): Record<string, number> {
 
 function saveManualMap(map: Record<string, number>): void {
   try {
-    globalThis.localStorage?.setItem(StorageKeys.hdrHeadroom, JSON.stringify(map));
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(StorageKeys.hdrHeadroom, JSON.stringify(map));
   } catch {
     // Storage disabled (private mode, sandboxed iframe): per-session only.
   }
@@ -95,7 +89,21 @@ export function loadManualHeadroom(key: string): number | null {
 export function storeManualHeadroom(key: string, value: number | null): void {
   const map = loadManualMap();
   if (value === null) delete map[key];
-  else map[key] = clampHeadroom(value);
+  else map[key] = clampHdrHeadroom(value);
+  saveManualMap(map);
+}
+
+/**
+ * Once the display label is known, carry a value hand-set under the
+ * geometry key (before the permission) over to the label key, so granting
+ * the permission does not forget it.
+ */
+function migrateManualHeadroom(fromKey: string, toKey: string): void {
+  if (fromKey === toKey) return;
+  const map = loadManualMap();
+  if (map[fromKey] === undefined || map[toKey] !== undefined) return;
+  map[toKey] = map[fromKey];
+  delete map[fromKey];
   saveManualMap(map);
 }
 
@@ -103,49 +111,43 @@ export function storeManualHeadroom(key: string, value: number | null): void {
 // Resolution
 // ---------------------------------------------------------------------------
 
-/** The explicit `?hdr=<n>` value, or null for a bare `?hdr` / no flag. */
-export function urlHdrHeadroom(search?: string): number | null {
-  const raw = search ?? (typeof window !== 'undefined' ? window.location.search : '');
-  const value = getParam(new URLSearchParams(raw), URL_PARAM_KEYS.hdr);
-  if (value === null) return null;
-  const n = Number.parseFloat(value);
-  return Number.isFinite(n) && n > 0 ? clampHeadroom(n) : null;
-}
-
 function displayReportsHdr(): boolean {
-  return typeof window !== 'undefined' && window.matchMedia('(dynamic-range: high)').matches;
+  return typeof window !== 'undefined' && window.matchMedia(HDR_DISPLAY_QUERY).matches;
 }
 
 /**
  * Resolve the headroom for the display described by `signals`.
- * `measured` is the live `ScreenDetailed` headroom when available.
+ * `measured` is the live `ScreenDetailed` headroom when available; `pinned`
+ * the `?hdr=<n>` / `LuxarAppOptions.hdrHeadroom` value, already clamped.
  */
 export function resolveHdrHeadroomFor(
   signals: DisplaySignals,
   measured: number | null,
-  urlValue: number | null
+  pinned: number | null
 ): HdrHeadroomResolution {
   const guess = identifyDisplay(signals);
   const display = guess?.name ?? signals.label ?? 'unidentified display';
-  if (urlValue !== null) return { value: urlValue, source: 'url', display };
+  if (pinned !== null) return { value: pinned, source: 'url', display };
   if (!displayReportsHdr()) return { value: 1, source: 'sdr', display };
   const manual = loadManualHeadroom(displayKey(signals));
   if (manual !== null) return { value: manual, source: 'manual', display };
-  if (measured !== null) return { value: clampHeadroom(measured), source: 'measured', display };
+  if (measured !== null) {
+    return { value: clampHdrHeadroom(measured), source: 'measured', display };
+  }
   if (guess !== null) return { value: guess.headroom, source: 'model', display };
   return { value: DEFAULT_HDR_HEADROOM, source: 'default', display };
 }
 
 /**
  * Synchronous best effort for renderer construction (no permission query):
- * URL, then the hand-set value for this screen's geometry, then the model
- * guess, then the default. The controller refines it once the UI is up.
+ * the hand-set value for this screen's geometry, then the model guess, then
+ * the default. The controller refines it once the UI is up.
  */
-export function resolveHdrHeadroom(urlValue: number | null): number {
+export function resolveHdrHeadroom(gpuRenderer: string | null): number {
   try {
-    return resolveHdrHeadroomFor(collectDisplaySignals(), null, urlValue).value;
+    return resolveHdrHeadroomFor(collectDisplaySignals(gpuRenderer), null, null).value;
   } catch {
-    return urlValue ?? DEFAULT_HDR_HEADROOM;
+    return DEFAULT_HDR_HEADROOM;
   }
 }
 
@@ -153,12 +155,14 @@ export function resolveHdrHeadroom(urlValue: number | null): number {
 // Controller
 // ---------------------------------------------------------------------------
 
-/** The Window Management API surface used here (Chromium). */
-interface ScreenDetailedLike extends EventTarget {
+/** The slice of the Window Management API's `ScreenDetailed` used here (Chromium). */
+export interface ScreenDetailedLike extends EventTarget {
   readonly label?: string;
   readonly isInternal?: boolean;
 }
-interface ScreenDetailsLike extends EventTarget {
+
+/** The slice of the Window Management API's `ScreenDetails` used here (Chromium). */
+export interface ScreenDetailsLike extends EventTarget {
   readonly currentScreen: ScreenDetailedLike;
 }
 type GetScreenDetails = () => Promise<ScreenDetailsLike>;
@@ -171,7 +175,7 @@ function getScreenDetailsFn(): GetScreenDetails | null {
 /**
  * `window.screen` as an event target. Chromium fires `change` on it when the
  * window moves to another display (part of the Window Management API); the
- * DOM lib types `Screen` without EventTarget.
+ * DOM lib types `Screen` without EventTarget, and jsdom's is not one.
  */
 function screenEvents(): EventTarget | null {
   const target = window.screen as unknown as Partial<EventTarget> | undefined;
@@ -189,17 +193,27 @@ async function windowManagementGranted(): Promise<boolean> {
   }
 }
 
+/** What the renderer setup decided, handed to the controller explicitly. */
+export interface HdrHeadroomControllerOptions {
+  /** Pinned headroom (`?hdr=<n>` / `LuxarAppOptions.hdrHeadroom`), or null. */
+  readonly pinned: number | null;
+  /** WebGL unmasked renderer string from the renderer setup, or null. */
+  readonly gpuRenderer: string | null;
+}
+
+/** Outcome of an explicit "Detect Display" request. */
+export type HdrDetectOutcome = 'measured' | 'unmeasurable' | 'denied';
+
 /**
  * Keeps the HDR headroom right for whatever display the window is on.
  * `apply` receives every changed resolution (value or provenance).
  */
 export class HdrHeadroomController {
+  private readonly events = new EventGroup();
   private details: ScreenDetailsLike | null = null;
-  private watchedScreen: ScreenDetailedLike | null = null;
+  private stopWatchingScreen: (() => void) | null = null;
   private last: HdrHeadroomResolution | null = null;
   private disposed = false;
-  private readonly urlValue: number | null;
-  private readonly hdrQuery: MediaQueryList;
   private readonly onChange = (): void => {
     this.resolve();
   };
@@ -210,16 +224,14 @@ export class HdrHeadroomController {
 
   constructor(
     private readonly apply: (r: HdrHeadroomResolution) => void,
-    urlValue: number | null = urlHdrHeadroom()
-  ) {
-    this.urlValue = urlValue;
-    this.hdrQuery = window.matchMedia('(dynamic-range: high)');
-  }
+    private readonly options: HdrHeadroomControllerOptions
+  ) {}
 
   /** Resolve now, then attach to screen details if the permission is already granted. */
   async start(): Promise<void> {
-    screenEvents()?.addEventListener('change', this.onChange);
-    this.hdrQuery.addEventListener('change', this.onChange);
+    const screenTarget = screenEvents();
+    if (screenTarget) this.events.on(screenTarget, 'change', this.onChange);
+    this.events.on(window.matchMedia(HDR_DISPLAY_QUERY), 'change', this.onChange);
     this.resolve();
     if (getScreenDetailsFn() !== null && (await windowManagementGranted())) {
       await this.attachScreenDetails();
@@ -227,20 +239,29 @@ export class HdrHeadroomController {
   }
 
   /**
-   * User-initiated (may show the permission prompt): measure the display,
-   * forget any hand-set value for it, and re-resolve.
+   * User-initiated (may show the permission prompt): measure the display
+   * and, only when a measurement is available, forget any hand-set value for
+   * it so the measurement takes over.
    */
-  async detect(): Promise<HdrHeadroomResolution> {
+  async detect(): Promise<HdrDetectOutcome> {
     if (this.details === null) await this.attachScreenDetails();
+    if (this.details === null) return 'denied';
+    if (measuredHeadroom(this.details.currentScreen) === null) return 'unmeasurable';
     storeManualHeadroom(displayKey(this.signals()), null);
-    this.last = null;
-    return this.resolve();
+    this.resolve();
+    return 'measured';
   }
 
   /** The user moved the slider: remember it for the current display. */
   setManual(value: number): void {
+    if (this.last !== null && isHeadroomLocked(this.last.source)) return;
     storeManualHeadroom(displayKey(this.signals()), value);
     this.resolve();
+  }
+
+  /** The current resolution (null before {@link start}). */
+  current(): HdrHeadroomResolution | null {
+    return this.last;
   }
 
   /** True when the browser can measure headroom (API present; may need permission). */
@@ -249,40 +270,43 @@ export class HdrHeadroomController {
   }
 
   dispose(): void {
+    if (this.disposed) return;
     this.disposed = true;
-    screenEvents()?.removeEventListener('change', this.onChange);
-    this.hdrQuery.removeEventListener('change', this.onChange);
-    this.details?.removeEventListener('currentscreenchange', this.onScreenSwitch);
-    this.watchedScreen?.removeEventListener('hdrheadroomchange', this.onChange);
+    this.events.dispose();
   }
 
   private async attachScreenDetails(): Promise<void> {
     const getDetails = getScreenDetailsFn();
     if (getDetails === null) return;
+    const geometryKey = displayKey(this.signals());
     try {
       this.details = await getDetails();
     } catch {
-      return; // Permission denied: stay on the model guess.
+      log.info(Modules.HDR, 'Display details unavailable (permission not granted)');
+      return;
     }
     if (this.disposed) return;
-    this.details.addEventListener('currentscreenchange', this.onScreenSwitch);
+    migrateManualHeadroom(geometryKey, displayKey(this.signals()));
+    this.events.on(this.details, 'currentscreenchange', this.onScreenSwitch);
     this.watchCurrentScreen();
     this.resolve();
   }
 
   private watchCurrentScreen(): void {
-    this.watchedScreen?.removeEventListener('hdrheadroomchange', this.onChange);
-    this.watchedScreen = this.details?.currentScreen ?? null;
-    this.watchedScreen?.addEventListener('hdrheadroomchange', this.onChange);
+    this.stopWatchingScreen?.();
+    const screen = this.details?.currentScreen;
+    this.stopWatchingScreen = screen
+      ? this.events.on(screen, 'hdrheadroomchange', this.onChange)
+      : null;
   }
 
   private signals(): DisplaySignals {
-    return collectDisplaySignals(this.details?.currentScreen ?? null);
+    return collectDisplaySignals(this.options.gpuRenderer, this.details?.currentScreen ?? null);
   }
 
   private resolve(): HdrHeadroomResolution {
     const measured = measuredHeadroom(this.details?.currentScreen ?? null);
-    const r = resolveHdrHeadroomFor(this.signals(), measured, this.urlValue);
+    const r = resolveHdrHeadroomFor(this.signals(), measured, this.options.pinned);
     const changed =
       this.last === null ||
       Math.abs(this.last.value - r.value) > 1e-3 ||
@@ -290,6 +314,7 @@ export class HdrHeadroomController {
       this.last.display !== r.display;
     if (changed && !this.disposed) {
       this.last = r;
+      log.info(Modules.HDR, `Headroom ${r.value.toFixed(2)}x (${r.source}) for ${r.display}`);
       this.apply(r);
     }
     return r;

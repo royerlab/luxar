@@ -4,7 +4,9 @@
  *
  * The mega-shader fuses post-processing into a single pass. The TSL
  * port mirrors the GLSL operation order so the two backends produce
- * pixel-identical output for any given configuration:
+ * pixel-identical output for any given configuration — except the
+ * WebGPU-only HDR output branch (`hdrOutput`, PROTOTYPE), which WebGL
+ * cannot present and so has no GLSL twin:
  *
  *   1. Sample HDR scene (+ optional bloom)
  *   2. Lens distortion (chromatic + radial), per-channel sampling
@@ -97,7 +99,7 @@ export interface MegaTSLConfig {
   /**
    * PROTOTYPE (`?hdr`): tone-map for an extended-range canvas, reading the
    * live headroom from the `uHdrPeak` uniform — see
-   * {@link applyHdrToneMapping}. False = ordinary `[0, 1]` output.
+   * `applyHdrToneMapping`. False = ordinary `[0, 1]` output.
    */
   readonly hdrOutput?: boolean;
 }
@@ -422,6 +424,15 @@ export function megaWebGPUFactory(
   // Optional inputs — declared at factory time only when the feature
   // is enabled, so unused uniforms don't end up in the compiled
   // shader.
+  // HDR output headroom (WebGPU-only): the capture modes stay on the SDR
+  // curve, since they feed 8-bit/EXR exports, not the extended-range canvas.
+  const uHdrPeak =
+    config.hdrOutput && !config.captureLinearLDR && uniforms.uHdrPeak
+      ? uniform((uniforms.uHdrPeak.value as number) ?? 1.0).onUpdate(
+          () => (uniforms.uHdrPeak?.value as number) ?? 1.0,
+          'render'
+        )
+      : null;
   const uBloomTexture =
     config.useBloom && uniforms.uBloomTexture
       ? texture((uniforms.uBloomTexture.value as THREE.Texture | null) ?? new THREE.Texture())
@@ -614,14 +625,9 @@ export function megaWebGPUFactory(
     color.assign(max(color.add(vec3(uGlobalOffset)), vec3(0.0)));
     color.assign((color as TSLNode).pow(invGamma));
 
-    // (5) Tone mapping — see {@link applyToneMapping}.
-    // HDR output keeps the capture modes on the SDR curve: they feed
-    // 8-bit/EXR exports, not the extended-range canvas.
-    if (config.hdrOutput && !config.captureLinearLDR) {
-      const uHdrPeak = uniform((uniforms.uHdrPeak?.value as number) ?? 1.0).onUpdate(
-        () => (uniforms.uHdrPeak?.value as number) ?? 1.0,
-        'render'
-      );
+    // (5) Tone mapping — see {@link applyToneMapping}; with HDR output,
+    // `applyHdrToneMapping`.
+    if (uHdrPeak) {
       color.assign(applyHdrToneMapping(color, toneMappingMode, uHdrPeak));
     } else {
       color.assign(applyToneMapping(color, toneMappingMode));

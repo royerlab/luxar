@@ -83,6 +83,12 @@ export interface UserSettings {
      * `types/line-primitive.ts` for the measured rule.
      */
     linePrimitivePolicy: LinePrimitivePolicy;
+    /**
+     * HDR output → reload (the canvas format is fixed when the renderer is
+     * built). 'auto' = extended-range output whenever the WebGPU renderer
+     * runs on a display that reports HDR, SDR otherwise; 'off' = always SDR.
+     */
+    hdrOutput: 'auto' | 'off';
   };
 }
 
@@ -124,6 +130,7 @@ const BUILTIN_LIVE_DEFAULTS = Object.freeze({
 let urlWorkerCount: number | null = null;
 let urlPrefetch: number | null = null;
 let urlRenderer: 'webgl' | 'webgpu' | null = null;
+let urlHdrOutput: 'auto' | 'off' | null = null;
 
 /** Defaults derived from the built-in config, via the module-load snapshot
  *  above (so later live-config mutation cannot make the defaults drift). */
@@ -150,6 +157,7 @@ export function defaultUserSettings(): UserSettings {
     advanced: {
       renderer: 'auto',
       linePrimitivePolicy: 'auto',
+      hdrOutput: 'auto',
     },
   };
 }
@@ -243,6 +251,7 @@ function sanitizeUserSettings(raw: unknown): UserSettings {
         LINE_PRIMITIVE_POLICIES,
         d.advanced.linePrimitivePolicy
       ),
+      hdrOutput: enumOrDefault(advanced.hdrOutput, ['auto', 'off'], d.advanced.hdrOutput),
     },
   };
 }
@@ -303,11 +312,14 @@ export function applyLiveConfigOverrides(settings: UserSettings): void {
 export function applyUrlPerformanceOverrides(
   workers: number | null,
   prefetch: number | null,
-  renderer: 'webgl' | 'webgpu' | null = null
+  renderer: 'webgl' | 'webgpu' | null = null,
+  hdrOutput: 'auto' | 'off' | null = null
 ): void {
-  // The renderer is applied by bootstrap (it picks the backend before any of
-  // this); it is only recorded here so the Settings popover can say so.
+  // The renderer and HDR output are applied by bootstrap (they pick the
+  // backend and canvas before any of this); they are only recorded here so
+  // the Settings popover can say so.
   urlRenderer = renderer;
+  urlHdrOutput = hdrOutput;
   const clamp = (v: number, r: { min: number; max: number }): number =>
     Math.round(Math.min(r.max, Math.max(r.min, v)));
   urlWorkerCount = workers === null ? null : clamp(workers, USER_SETTINGS_RANGES.workerCount);
@@ -322,8 +334,14 @@ export function urlSessionOverrides(): {
   workers: number | null;
   prefetch: number | null;
   renderer: 'webgl' | 'webgpu' | null;
+  hdrOutput: 'auto' | 'off' | null;
 } {
-  return { workers: urlWorkerCount, prefetch: urlPrefetch, renderer: urlRenderer };
+  return {
+    workers: urlWorkerCount,
+    prefetch: urlPrefetch,
+    renderer: urlRenderer,
+    hdrOutput: urlHdrOutput,
+  };
 }
 
 /**
@@ -337,6 +355,7 @@ export function describeUrlSessionOverrides(): string | null {
   }
   if (urlPrefetch !== null) parts.push(`prefetch ${urlPrefetch}`);
   if (urlRenderer !== null) parts.push(urlRenderer === 'webgpu' ? 'WebGPU' : 'WebGL');
+  if (urlHdrOutput !== null) parts.push(urlHdrOutput === 'off' ? 'HDR off' : 'HDR on');
   return parts.length ? `This page: ${parts.join(', ')} (from its URL)` : null;
 }
 
@@ -360,6 +379,7 @@ function reloadKey(s: UserSettings): string {
     s.caching.budgetMode === 'custom' ? s.caching.budgetMB : null,
     s.advanced.renderer,
     s.advanced.linePrimitivePolicy,
+    s.advanced.hdrOutput,
   ]);
 }
 

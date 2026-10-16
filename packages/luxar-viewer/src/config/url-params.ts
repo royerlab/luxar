@@ -24,6 +24,7 @@
 import { parseLineJoinStyle, type LineJoinStyle } from '../types/line-join';
 import { parseLinePrimitive, type LinePrimitive } from '../types/line-primitive';
 import { ENVIRONMENT_RESOLUTION_MAX, ENVIRONMENT_RESOLUTION_MIN } from '../types/environment';
+import { clampHdrHeadroom } from '../types/hdr-output';
 import type { InputProfileOverride } from '../utils/input-capabilities';
 import { log, Modules } from '../utils/log';
 
@@ -602,15 +603,19 @@ export interface UrlParams {
    */
   perfTimestamp: boolean;
   /**
-   * `?hdr[=headroom]` — PROTOTYPE, WebGPU only: present to an extended-range
-   * (`rgba16float`, tone-mapping mode `extended`) canvas so highlights use the
-   * display's HDR headroom.
+   * `?hdr[=<headroom>|off]` — PROTOTYPE, WebGPU only. HDR output (an
+   * extended-range `rgba16float` canvas, tone-mapping mode `extended`) is on
+   * by default in WebGPU sessions on HDR displays; the URL overrides the
+   * Settings › Advanced › HDR Output preference for this page load: `off`
+   * forces SDR, anything else (bare `?hdr`, `?hdr=4`) forces `'auto'`.
+   * Null when absent.
    */
-  hdr: boolean;
+  hdr: 'auto' | 'off' | null;
   /**
-   * The explicit `?hdr=<headroom>` value (multiple of SDR white, > 0), or
-   * null for a bare `?hdr` / no flag — the stored or default headroom then
-   * applies (`utils/hdr/hdr-headroom.ts`).
+   * The explicit `?hdr=<headroom>` value (multiple of SDR white), clamped to
+   * `[HDR_HEADROOM_MIN, HDR_HEADROOM_MAX]`; it pins the headroom for the
+   * session. Null for a bare `?hdr` / no flag — the headroom is then resolved
+   * per display (`utils/hdr/hdr-headroom.ts`).
    */
   hdrHeadroom: number | null;
   /**
@@ -800,8 +805,8 @@ export function readUrlParams(
     renderer: normalizeRendererParam(get(K.renderer)),
     webgpuForceWebGL: has(K.webgpuForceWebgl),
     perfTimestamp: has(K.perfTimestamp),
-    hdr: has(K.hdr),
-    hdrHeadroom: parsePositiveFloat(get(K.hdr)),
+    hdr: parseHdrMode(get(K.hdr), has(K.hdr)),
+    hdrHeadroom: clampHdrHeadroomParam(parsePositiveFloat(get(K.hdr))),
     renderAlways: has(K.renderAlways),
     renderAudit: has(K.renderAudit),
     gpuBudgetMB: parseNonNegativeInt(get(K.gpuBudgetMB)),
@@ -817,6 +822,16 @@ export function readUrlParams(
     probe: trimmedParam(params, K.probe),
     envResolution: clampEnvironmentResolution(parseNonNegativeInt(get(K.envResolution))),
   };
+}
+
+function parseHdrMode(raw: string | null, present: boolean): 'auto' | 'off' | null {
+  if (!present) return null;
+  const value = raw?.trim().toLowerCase();
+  return value === 'off' || value === '0' || value === 'false' ? 'off' : 'auto';
+}
+
+function clampHdrHeadroomParam(value: number | null): number | null {
+  return value === null ? null : clampHdrHeadroom(value);
 }
 
 function clampEnvironmentResolution(value: number | null): number | null {

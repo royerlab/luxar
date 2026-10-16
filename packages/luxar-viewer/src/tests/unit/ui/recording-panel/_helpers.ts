@@ -40,6 +40,8 @@ export function createMockSceneManager(): any {
     resizeLocked: false,
     postProcessing: {
       render: vi.fn(),
+      // HDR canvas: a live recording holds the SDR curve; returns its release.
+      holdSdrOutput: vi.fn(() => vi.fn()),
       renderToImageData: vi.fn().mockResolvedValue(new ImageData(4, 4)),
       captureHDRAsEXR: vi.fn().mockResolvedValue(new Uint8Array([0x76, 0x2f, 0x31, 0x01])),
       resize: vi.fn(),

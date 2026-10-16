@@ -5,12 +5,13 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DisplaySignals } from '../../../../utils/hdr/display-identity';
+import { DEFAULT_HDR_HEADROOM } from '../../../../types/hdr-output';
 import {
-  DEFAULT_HDR_HEADROOM,
+  HdrHeadroomController,
   loadManualHeadroom,
   resolveHdrHeadroomFor,
   storeManualHeadroom,
-  urlHdrHeadroom,
+  type HdrHeadroomResolution,
 } from '../../../../utils/hdr/hdr-headroom';
 
 const XDR: DisplaySignals = {
@@ -90,11 +91,111 @@ describe('manual headroom persistence', () => {
   });
 });
 
-describe('urlHdrHeadroom', () => {
-  it('reads an explicit ?hdr=<n>, null for a bare flag', () => {
-    expect(urlHdrHeadroom('?hdr=4')).toBe(4);
-    expect(urlHdrHeadroom('?hdr')).toBeNull();
-    expect(urlHdrHeadroom('?renderer=webgpu')).toBeNull();
-    expect(urlHdrHeadroom('?hdr=99')).toBe(16);
+/** A matchMedia stub whose `(dynamic-range: high)` answer the test controls. */
+function stubMatchMedia(state: { hdr: boolean }): EventTarget {
+  const target = new EventTarget();
+  vi.spyOn(window, 'matchMedia').mockImplementation(
+    (q: string) =>
+      Object.assign(target, {
+        matches: state.hdr && q.includes('dynamic-range: high'),
+        media: q,
+      }) as unknown as MediaQueryList
+  );
+  return target;
+}
+
+/** A Window Management API stub: one screen, optional measured headroom. */
+function stubScreenDetails(screen: { label: string; hdrHeadroom?: number }, granted: boolean) {
+  const currentScreen = Object.assign(new EventTarget(), { isInternal: true, ...screen });
+  const details = Object.assign(new EventTarget(), { currentScreen });
+  const getScreenDetails = vi.fn(() =>
+    granted ? Promise.resolve(details) : Promise.reject(new Error('denied'))
+  );
+  vi.stubGlobal('getScreenDetails', getScreenDetails);
+  Object.assign(window, { getScreenDetails });
+  return { currentScreen, getScreenDetails };
+}
+
+describe('HdrHeadroomController', () => {
+  let applied: HdrHeadroomResolution[];
+  const apply = (r: HdrHeadroomResolution): void => {
+    applied.push(r);
+  };
+
+  beforeEach(() => {
+    localStorage.clear();
+    applied = [];
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    delete (window as { getScreenDetails?: unknown }).getScreenDetails;
+  });
+
+  it('a URL pin wins and the slider cannot override or persist past it', async () => {
+    stubMatchMedia({ hdr: true });
+    const c = new HdrHeadroomController(apply, { pinned: 4, gpuRenderer: null });
+    await c.start();
+    c.setManual(9);
+    expect(applied.map((r) => [r.value, r.source])).toEqual([[4, 'url']]);
+    expect(localStorage.getItem('luxar.hdrHeadroom')).toBeNull();
+    c.dispose();
+  });
+
+  it('drops to 1x when the window lands on an SDR display, and refuses edits there', async () => {
+    const state = { hdr: true };
+    const query = stubMatchMedia(state);
+    const c = new HdrHeadroomController(apply, { pinned: null, gpuRenderer: null });
+    await c.start();
+    state.hdr = false;
+    query.dispatchEvent(new Event('change'));
+    c.setManual(5);
+    expect(applied.map((r) => r.source)).toEqual(['default', 'sdr']);
+    expect(c.current()?.value).toBe(1);
+    c.dispose();
+  });
+
+  it('Detect with the permission denied keeps the hand-set value', async () => {
+    stubMatchMedia({ hdr: true });
+    stubScreenDetails({ label: 'Built-in Retina Display', hdrHeadroom: 2 }, false);
+    const c = new HdrHeadroomController(apply, { pinned: null, gpuRenderer: null });
+    await c.start();
+    c.setManual(5);
+    expect(await c.detect()).toBe('denied');
+    expect(c.current()).toMatchObject({ value: 5, source: 'manual' });
+    c.dispose();
+  });
+
+  it('Detect measures, migrates the geometry-keyed value, then lets the measurement win', async () => {
+    stubMatchMedia({ hdr: true });
+    const { currentScreen } = stubScreenDetails(
+      { label: 'Built-in Retina Display', hdrHeadroom: Math.log2(6) },
+      true
+    );
+    const c = new HdrHeadroomController(apply, { pinned: null, gpuRenderer: null });
+    await c.start(); // permission not granted yet: geometry key
+    c.setManual(5);
+    expect(await c.detect()).toBe('measured');
+    expect(c.current()).toMatchObject({ source: 'measured' });
+    expect(c.current()?.value).toBeCloseTo(6);
+    expect(loadManualHeadroom('label:Built-in Retina Display')).toBeNull();
+
+    // Brightness change: the live headroom follows.
+    Object.assign(currentScreen, { hdrHeadroom: Math.log2(3) });
+    currentScreen.dispatchEvent(new Event('hdrheadroomchange'));
+    expect(c.current()?.value).toBeCloseTo(3);
+    c.dispose();
+  });
+
+  it('dispose detaches every listener (and is idempotent)', async () => {
+    const state = { hdr: true };
+    const query = stubMatchMedia(state);
+    const c = new HdrHeadroomController(apply, { pinned: null, gpuRenderer: null });
+    await c.start();
+    c.dispose();
+    c.dispose();
+    state.hdr = false;
+    query.dispatchEvent(new Event('change'));
+    expect(applied).toHaveLength(1);
   });
 });

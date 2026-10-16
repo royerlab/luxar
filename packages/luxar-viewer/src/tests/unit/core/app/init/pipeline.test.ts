@@ -608,6 +608,9 @@ describe('runInitPipeline', () => {
         renderer: 'webgpu',
         webgpuForceWebGL: false,
         perfTimestamp: true,
+        // HDR output is on by default (it falls back to SDR where unavailable).
+        hdr: true,
+        hdrHeadroom: undefined,
         blendWarmup: false,
       });
     });

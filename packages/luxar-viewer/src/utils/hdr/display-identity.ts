@@ -10,7 +10,7 @@
  *    a MacBook Pro: 2.667 and 6.35, and log2(6.35) = 2.667). Behind
  *    `--enable-experimental-web-platform-features` as of Chrome 155, and only
  *    after the `window-management` permission, which prompts — so it is used
- *    when already granted, or after an explicit "Detect display" click.
+ *    when already granted, or after an explicit "Detect Display" click.
  * 2. **Model knowledge.** Without a measurement, identify the panel from what
  *    the page can see: the display `label` (the monitor's EDID model name,
  *    e.g. `M28U`; permission-gated too), the GPU (WebGL's unmasked renderer
@@ -22,6 +22,8 @@
  *
  * @module utils/hdr/display-identity
  */
+
+import { platformName } from '../platform';
 
 /** What the page can observe about the display the window is on. */
 export interface DisplaySignals {
@@ -135,39 +137,18 @@ export function measuredHeadroom(screen: unknown): number | null {
   return null;
 }
 
-let cachedGpuRenderer: string | null | undefined;
-
-/** WebGL unmasked renderer string (cached; a throwaway context, released at once). */
-function probeGpuRenderer(): string | null {
-  if (cachedGpuRenderer !== undefined) return cachedGpuRenderer;
-  cachedGpuRenderer = null;
-  try {
-    const gl = document.createElement('canvas').getContext('webgl2');
-    if (gl) {
-      const ext = gl.getExtension('WEBGL_debug_renderer_info');
-      const renderer: unknown = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : null;
-      cachedGpuRenderer = typeof renderer === 'string' ? renderer : null;
-      gl.getExtension('WEBGL_lose_context')?.loseContext();
-    }
-  } catch {
-    // No WebGL (or blocked): the GPU just stays unknown.
-  }
-  return cachedGpuRenderer;
-}
-
-function platformName(): string {
-  const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
-  if (uaData?.platform) return uaData.platform;
-  return /Mac/.test(navigator.platform) ? 'macOS' : navigator.platform;
-}
-
-/** Signals for the window's current screen; `detailed` adds label/isInternal. */
+/**
+ * Signals for the window's current screen. `gpuRenderer` comes from the
+ * renderer setup (`probeUnmaskedGpuRenderer`); `detailed` (a `ScreenDetailed`)
+ * adds label/isInternal.
+ */
 export function collectDisplaySignals(
+  gpuRenderer: string | null,
   detailed: { label?: unknown; isInternal?: unknown } | null = null
 ): DisplaySignals {
   return {
     platform: platformName(),
-    gpuRenderer: probeGpuRenderer(),
+    gpuRenderer,
     width: window.screen.width,
     height: window.screen.height,
     dpr: window.devicePixelRatio,

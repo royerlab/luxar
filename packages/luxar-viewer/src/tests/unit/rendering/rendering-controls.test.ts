@@ -190,6 +190,7 @@ describe('RenderingControls', () => {
       setMSAASamples: vi.fn(),
       setToneMapping: vi.fn(),
       isHdrOutputActive: vi.fn(() => false),
+      getHdrOutputState: vi.fn(() => undefined),
       getHdrHeadroom: vi.fn(() => 1),
       setHdrHeadroom: vi.fn(),
       setDetectorNoiseEnabled: vi.fn(),

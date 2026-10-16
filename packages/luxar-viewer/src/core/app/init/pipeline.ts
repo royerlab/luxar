@@ -182,7 +182,8 @@ export async function runInitPipeline(
     renderer: ports.options.renderer,
     webgpuForceWebGL: ports.options.webgpuForceWebGL,
     perfTimestamp: ports.options.perfTimestamp,
-    hdrPeak: ports.options.hdrPeak,
+    hdr: ports.options.hdr ?? true,
+    hdrHeadroom: ports.options.hdrHeadroom,
     // Mobile GPUs can spend 50-300 ms linking each blend variant, and Safari
     // before 18.2 has no requestIdleCallback to hide that work. Resolve the
     // device default here so direct LuxarApp embedders get the same protection

@@ -442,8 +442,9 @@ export class SceneManager extends THREE.EventDispatcher<{
    * bench. Off by default; flipped via `?perfTimestamp` URL param.
    */
   private perfTimestamp = false;
-  /** Requested HDR output peak (`?hdr`); WebGPU only. */
-  private hdrPeak: number | undefined;
+  /** HDR output requested (`?hdr`) and its optional pinned headroom; WebGPU only. */
+  private hdr = false;
+  private hdrHeadroom: number | undefined;
   /** WebGL-only blend-variant warm-up (`?noBlendWarmup` disables). */
   private blendWarmup = true;
 
@@ -478,8 +479,9 @@ export class SceneManager extends THREE.EventDispatcher<{
      * `?perfTimestamp` URL flag set by the perf bench.
      */
     perfTimestamp?: boolean;
-    /** HDR output peak from `LuxarAppOptions.hdrPeak` (`?hdr`). WebGPU only. */
-    hdrPeak?: number;
+    /** HDR output from `LuxarAppOptions.hdr` / `hdrHeadroom` (`?hdr[=n]`). WebGPU only. */
+    hdr?: boolean;
+    hdrHeadroom?: number;
     /**
      * WebGL-only blend warm-up. When true, classic `THREE.WebGLRenderer`
      * sessions pre-compile each DISTINCT blend-mode program variant a
@@ -494,7 +496,8 @@ export class SceneManager extends THREE.EventDispatcher<{
     this.rendererOverride = options.renderer;
     this.webgpuForceWebGL = options.webgpuForceWebGL ?? false;
     this.perfTimestamp = options.perfTimestamp ?? false;
-    this.hdrPeak = options.hdrPeak;
+    this.hdr = options.hdr ?? false;
+    this.hdrHeadroom = options.hdrHeadroom;
     this.blendWarmup = options.blendWarmup ?? true;
     await this.setupRenderer();
     this.setupContextLossHandling(); // Setup context loss recovery
@@ -579,7 +582,8 @@ export class SceneManager extends THREE.EventDispatcher<{
       debug: this.debug,
       webgpuForceWebGL: this.webgpuForceWebGL,
       perfTimestamp: this.perfTimestamp,
-      hdrPeak: this.hdrPeak,
+      hdr: this.hdr,
+      hdrHeadroom: this.hdrHeadroom,
       rendererOverride: this.rendererOverride,
     });
     if (result.fallback) {

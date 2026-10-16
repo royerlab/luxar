@@ -73,6 +73,7 @@ interface ContextStubs {
   postProcessing: {
     setToneMapping: ReturnType<typeof vi.fn>;
     isHdrOutputActive: ReturnType<typeof vi.fn>;
+    getHdrOutputState: ReturnType<typeof vi.fn>;
     getHdrHeadroom: ReturnType<typeof vi.fn>;
     setHdrHeadroom: ReturnType<typeof vi.fn>;
   };
@@ -94,6 +95,7 @@ function makeContext(): ContextStubs {
   const postProcessing = {
     setToneMapping: vi.fn(),
     isHdrOutputActive: vi.fn(() => false),
+    getHdrOutputState: vi.fn(() => undefined),
     getHdrHeadroom: vi.fn(() => 1),
     setHdrHeadroom: vi.fn(),
   };
@@ -238,6 +240,24 @@ describe('setupHDRControls', () => {
       // jsdom identifies no display: the conservative default.
       expect(stubs.postProcessing.setHdrHeadroom).toHaveBeenCalledWith(2);
       expect(result.cleanup).toBeTypeOf('function');
+      result.cleanup?.();
+    });
+
+    it('locks the slider while the launch URL pins the headroom', () => {
+      stubs.postProcessing.isHdrOutputActive.mockReturnValue(true);
+      stubs.postProcessing.getHdrOutputState.mockReturnValue({
+        headroom: 4,
+        pinned: true,
+        gpuRenderer: null,
+      });
+      const result = setupHDRControls(stubs.context);
+      const slider = stubs.folder.controllers[4];
+
+      expect(stubs.postProcessing.setHdrHeadroom).toHaveBeenLastCalledWith(4);
+      expect(slider.domElement.style.pointerEvents).toBe('none');
+      slider._onChangeFn?.(9);
+      expect(stubs.postProcessing.setHdrHeadroom).not.toHaveBeenCalledWith(9);
+      expect(localStorage.getItem('luxar.hdrHeadroom')).toBeNull();
       result.cleanup?.();
     });
 

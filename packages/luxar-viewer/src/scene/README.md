@@ -83,6 +83,8 @@ class SceneManager extends THREE.EventDispatcher {
     renderer?: 'webgl' | 'webgpu';
     webgpuForceWebGL?: boolean;
     perfTimestamp?: boolean;
+    hdr?: boolean; // HDR canvas output request (WebGPU only)
+    hdrHeadroom?: number; // pinned headroom; omitted = per display
   }): Promise<void>;
   loadSceneData(
     src: string,

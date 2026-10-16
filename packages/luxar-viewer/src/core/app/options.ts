@@ -133,12 +133,21 @@ export interface LuxarAppOptions {
   perfTimestamp?: boolean;
 
   /**
-   * PROTOTYPE, WebGPU only: extended-range (HDR) canvas output with this
-   * peak, as a multiple of SDR white. Mirrors the `?hdr[=peak]` URL flag.
-   * Ignored under `WebGLRenderer`, the forceWebGL backend, and on displays
-   * that do not report `(dynamic-range: high)`.
+   * PROTOTYPE, WebGPU only: extended-range (HDR) canvas output. Default
+   * `true`: used whenever the WebGPU renderer runs natively on a display
+   * that reports `(dynamic-range: high)`, with an SDR canvas otherwise (a
+   * WebGL session, the forceWebGL backend, an SDR display, or a browser that
+   * ignores the extended tone-mapping mode). `false` = always SDR. The
+   * standalone viewer derives it from `?hdr=off` and Settings › Advanced.
    */
-  hdrPeak?: number;
+  hdr?: boolean;
+
+  /**
+   * Pin the HDR headroom (multiple of SDR white) for the session; mirrors
+   * `?hdr=<n>`. Omitted, the headroom is resolved per display. Only read
+   * when `hdr` is set.
+   */
+  hdrHeadroom?: number;
 
   /**
    * Render every loop tick, as the loop did before render-on-change (the

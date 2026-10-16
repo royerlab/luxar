@@ -17,6 +17,18 @@ compact mode mapping (`LuxarToneMappingMode`, `luxarToneMappingMode`,
 | `shader.glsl.ts`  | GLSL3 vertex + fragment + `MEGA_SOURCE: ShaderSource`. **Picking-parity contract**: the `applyDistortion` helper (Brown-Conrady radial + intrinsic matrix) is byte-equivalent to `picking/picking-system/lens-distortion.ts` — do not edit without updating the picking port |
 | `shader.tsl.ts`   | TSL/WebGPU factory (`megaWebGPUFactory`) and the `MegaTSLConfig` toggle interface — referenced by `material-tsl.ts` and by `shader.glsl.ts` (for the WebGPU branch of `MEGA_SOURCE`)                                                                                         |
 
+**WebGPU-only HDR output branch (PROTOTYPE).** When the canvas is an
+extended-range `rgba16float` canvas, `shader.tsl.ts` swaps the final tone
+mapping for `applyHdrToneMapping`: SDR-identical below a knee (0.5; 0.8 for
+Neutral), then a value- and slope-matched exponential shoulder up to the live
+`uHdrPeak` uniform (the display headroom, a multiple of SDR white); Linear and
+None clamp at the headroom. It has no GLSL twin, since WebGL has no
+extended-range canvas: `MegaShaderMaterial.setHdrPeak` is a documented no-op
+and `getHdrPeak()` is always 1. Capture modes (`captureLinearLDR`) never get
+the branch, and a peak of 1 selects the exact SDR path (a uniform write, no
+rebuild), which is how 8-bit captures and live recordings stay SDR (see
+`../README.md`).
+
 Consumers: `material-manager/factories.ts` (instantiates the two material
 classes via the `MEGA_SHADER_FACTORIES` `{ glsl, tsl }` map), the
 post-processing orchestrator (`post-processing-manager.ts` holds the active
