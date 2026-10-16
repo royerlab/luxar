@@ -458,6 +458,63 @@ function lacksRequiredNativeDevice(
 }
 
 /**
+ * What three hands `renderer.onError` for an uncaptured WebGPU error
+ * (`device.onuncapturederror` in `WebGPUBackend.init`): the error class name
+ * (`GPUValidationError`, `GPUOutOfMemoryError`, `GPUInternalError`) and its
+ * message. `@types/three` 0.185 declares the parameter as a plain `string`,
+ * which the r185 runtime never passes; the handler accepts both.
+ */
+export interface UncapturedGpuErrorInfo {
+  api: string;
+  type: string;
+  message: string;
+  originalEvent?: unknown;
+}
+
+/** Identical errors logged in full before the router goes quiet on that message. */
+export const GPU_ERROR_REPEAT_LIMIT = 3;
+/** Distinct messages tracked; past this every new message is suppressed too. */
+export const GPU_ERROR_DISTINCT_LIMIT = 32;
+
+/**
+ * Build the `renderer.onError` handler: each uncaptured GPU error goes to
+ * `log.error(Modules.RENDERER, …)` instead of three's bare console `error()`.
+ *
+ * A validation error raised by a pipeline or bind group usually fires on EVERY
+ * frame, which would bury the console at 60 lines a second. So the first
+ * {@link GPU_ERROR_REPEAT_LIMIT} occurrences of each distinct message are
+ * logged, followed by one note that further copies are suppressed; after
+ * {@link GPU_ERROR_DISTINCT_LIMIT} distinct messages a single note stops all
+ * further reporting. The first occurrence is what carries the information;
+ * an occurrence count is not worth the console it costs.
+ */
+export function createUncapturedGpuErrorHandler(): (info: UncapturedGpuErrorInfo | string) => void {
+  const seen = new Map<string, number>();
+  let saturated = false;
+  return (info) => {
+    const text =
+      typeof info === 'string' ? info : `Uncaptured ${info.api} ${info.type}: ${info.message}`;
+    const count = (seen.get(text) ?? 0) + 1;
+    if (count === 1 && seen.size >= GPU_ERROR_DISTINCT_LIMIT) {
+      if (!saturated) {
+        saturated = true;
+        log.error(
+          Modules.RENDERER,
+          `${GPU_ERROR_DISTINCT_LIMIT} distinct GPU errors reported; suppressing all further GPU errors`
+        );
+      }
+      return;
+    }
+    seen.set(text, count);
+    if (count <= GPU_ERROR_REPEAT_LIMIT) {
+      log.error(Modules.RENDERER, text);
+    } else if (count === GPU_ERROR_REPEAT_LIMIT + 1) {
+      log.error(Modules.RENDERER, `Suppressing further repeats of: ${text}`);
+    }
+  };
+}
+
+/**
  * Result of `createWebGPURenderer`. Either a successful WebGPU
  * renderer + capabilities pair OR a signal that the caller should fall
  * back to `createWebGLRenderer`: the adapter was below the spec minimum,
@@ -609,6 +666,10 @@ export async function createWebGPURenderer(
     // rgba16float canvas + `toneMapping.mode = 'extended'` (WebGPUBackend).
     ...(hdrPlan !== undefined ? { outputType: THREE.HalfFloatType } : {}),
   } as ConstructorParameters<typeof WebGPURenderer>[0]);
+  // Before init(): three wires `device.onuncapturederror` to this callback
+  // there. Only the native backend ever calls it; the WebGL2 bridge has no
+  // uncaptured-error channel.
+  gpuRenderer.onError = createUncapturedGpuErrorHandler();
   await gpuRenderer.init();
   // After init(): the backend's device / WebGL2 context exists only now.
   installUploadCounters(gpuRenderer);

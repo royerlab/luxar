@@ -57,10 +57,14 @@ vi.mock('../../../../../utils/hdr/hdr-detection', () => ({
 import * as THREE from 'three';
 // Imports MUST come after vi.mock to honour the mocks.
 import {
+  createUncapturedGpuErrorHandler,
   createWebGPURenderer,
   forwardedAdapterLimits,
+  GPU_ERROR_DISTINCT_LIMIT,
+  GPU_ERROR_REPEAT_LIMIT,
   selectBackend,
 } from '../../../../../scene/scene-manager/render-pipeline/renderer-setup';
+import { log, Modules } from '../../../../../utils/log';
 
 describe('selectBackend', () => {
   const originalEnv = { ...import.meta.env };
@@ -274,6 +278,23 @@ describe('createWebGPURenderer', () => {
     });
   });
 
+  it('routes uncaptured GPU errors through log.error, set before init()', async () => {
+    const adapter = makeAdapter({ maxVertexBuffers: 16 });
+    stubNavigatorGpu(vi.fn().mockResolvedValue(adapter));
+    const error = vi.spyOn(log, 'error').mockImplementation(() => {});
+
+    const result = await createWebGPURenderer(makeCanvas(), {});
+    if (result.fallback) throw new Error('expected a renderer');
+    const onError = (result.renderer as unknown as { onError: (info: unknown) => void }).onError;
+    expect(typeof onError).toBe('function');
+    onError({ api: 'WebGPU', type: 'GPUValidationError', message: 'bad bind group' });
+    expect(error).toHaveBeenCalledWith(
+      Modules.RENDERER,
+      'Uncaptured WebGPU GPUValidationError: bad bind group'
+    );
+    error.mockRestore();
+  });
+
   it('requestDevice failure recovers silently: renderer constructed without device option', async () => {
     const adapter = makeAdapter({
       maxVertexBuffers: 16,
@@ -442,5 +463,53 @@ describe('createWebGPURenderer', () => {
       expect(outputType()).toBeUndefined();
       expect(result).not.toHaveProperty('capabilities.hdrOutput');
     });
+  });
+});
+
+describe('createUncapturedGpuErrorHandler', () => {
+  const info = (message: string) => ({ api: 'WebGPU', type: 'GPUValidationError', message });
+
+  function messages(spy: { mock: { calls: unknown[][] } }): string[] {
+    return spy.mock.calls.map((call) => String(call[1]));
+  }
+
+  it('logs the first repeats of a message, one suppression note, then nothing', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => {});
+    const handle = createUncapturedGpuErrorHandler();
+    for (let frame = 0; frame < 100; frame++) handle(info('per-frame failure'));
+    const text = 'Uncaptured WebGPU GPUValidationError: per-frame failure';
+    expect(messages(error)).toEqual([
+      ...Array<string>(GPU_ERROR_REPEAT_LIMIT).fill(text),
+      `Suppressing further repeats of: ${text}`,
+    ]);
+    expect(error.mock.calls.every((call) => call[0] === Modules.RENDERER)).toBe(true);
+    error.mockRestore();
+  });
+
+  it('counts each distinct message separately', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => {});
+    const handle = createUncapturedGpuErrorHandler();
+    handle(info('a'));
+    handle(info('b'));
+    handle(info('a'));
+    expect(messages(error)).toHaveLength(3);
+    error.mockRestore();
+  });
+
+  it('stops tracking new messages past the distinct limit with one note', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => {});
+    const handle = createUncapturedGpuErrorHandler();
+    for (let i = 0; i < GPU_ERROR_DISTINCT_LIMIT + 10; i++) handle(info(`message ${i}`));
+    const logged = messages(error);
+    expect(logged).toHaveLength(GPU_ERROR_DISTINCT_LIMIT + 1);
+    expect(logged.at(-1)).toContain('suppressing all further GPU errors');
+    error.mockRestore();
+  });
+
+  it('accepts the plain-string shape @types/three declares', () => {
+    const error = vi.spyOn(log, 'error').mockImplementation(() => {});
+    createUncapturedGpuErrorHandler()('raw message');
+    expect(error).toHaveBeenCalledWith(Modules.RENDERER, 'raw message');
+    error.mockRestore();
   });
 });
