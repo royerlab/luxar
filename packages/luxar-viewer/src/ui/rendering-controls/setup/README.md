@@ -13,7 +13,7 @@ Splitting setup this way keeps each builder under a few hundred lines and keeps 
 ```
 setup/
 ├── camera-setup.ts            # Camera (FOV presets, FOV slider, clipping planes)
-├── hdr-setup.ts               # HDR (exposure, offset, gamma, tone mapping)
+├── hdr-setup.ts               # HDR (exposure, offset, gamma, tone mapping; display headroom on HDR output)
 ├── anti-aliasing-setup.ts     # Anti-Aliasing (SSAA, FXAA, MSAA)
 ├── post-processing-setup.ts   # Post-Processing (bloom, detector noise, vignette, chromatic lens)
 ├── performance-setup.ts       # Performance (high-DPR + adaptive DPR + FPS/DPR readouts) — hosted in a rail popover
@@ -68,6 +68,15 @@ Creates the **HDR** folder with global Exposure–Offset–Gamma (EOG) plus the 
 | Offset       | -1.0 to 1.0    | `sceneManager.updateGlobalOffset(v)` |
 | Gamma        | 0.1 to 10.0    | `sceneManager.updateGlobalGamma(v)`  |
 | Tone Mapping | seven options  | `postProcessing.setToneMapping(...)` |
+
+Two more controls appear only while `postProcessing.isHdrOutputActive()` (PROTOTYPE: WebGPU renderer on an HDR display, extended-range canvas):
+
+| Control        | Range   | Wired to                                                                                                                           |
+| -------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Headroom       | 1 to 16 | `HdrHeadroomController.setManual(v)` → `postProcessing.setHdrHeadroom(...)`; locked when pinned by `?hdr=<n>` or on an SDR display |
+| Detect Display | button  | `HdrHeadroomController.detect()` (only when the browser has `getScreenDetails`); shows a toast with the outcome                    |
+
+Headroom is not part of the per-scene settings: it describes the display, so the controller resolves it per display and follows display and brightness changes. In that case the builder returns a `cleanup` (disposing the controller), which `RenderingControls` runs on dispose.
 
 The tone-mapping dropdown maps display names (`None`, `Linear`, `Reinhard`, `Cineon`, `ACES`, `AgX`, `Neutral`) to the matching `THREE.*ToneMapping` enum values. EOG is applied inside the mega-shader fragment immediately before the tone-mapping operator.
 

@@ -296,6 +296,24 @@ export function buildSettingsPopover(host: HTMLElement, ctx: SettingsPopoverCont
       },
       commit
     );
+    // HDR output (PROTOTYPE). 'Auto' presents an extended-range canvas when
+    // the WebGPU renderer runs on an HDR display and falls back to SDR
+    // otherwise; 'Off' forces SDR. Reload-gated like Renderer — the canvas
+    // format is fixed when the renderer is built.
+    addUrlAware(
+      (t) =>
+        advFolder.add(t, 'hdrOutput', {
+          Auto: 'auto',
+          Off: 'off',
+        }) as unknown as UrlAwareController,
+      {
+        saved: settings.advanced as unknown as Record<string, unknown>,
+        key: 'hdrOutput',
+        urlValue: urlSessionOverrides().hdrOutput,
+        label: 'HDR Output',
+      },
+      commit
+    );
     // Line primitive policy (#1352 follow-up). 'Auto' sizes the whole
     // scene before material build (capsule, except very large scenes → quad);
     // the forced values exist for A/B checks and taste. Reload-gated

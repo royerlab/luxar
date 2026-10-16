@@ -4,7 +4,9 @@
  *
  * The mega-shader fuses post-processing into a single pass. The TSL
  * port mirrors the GLSL operation order so the two backends produce
- * pixel-identical output for any given configuration:
+ * pixel-identical output for any given configuration — except the
+ * WebGPU-only HDR output branch (`hdrOutput`, PROTOTYPE), which WebGL
+ * cannot present and so has no GLSL twin:
  *
  *   1. Sample HDR scene (+ optional bloom)
  *   2. Lens distortion (chromatic + radial), per-channel sampling
@@ -45,7 +47,10 @@ import {
   floatBitsToUint,
   dot,
   max,
+  exp,
   exp2,
+  min,
+  select,
   log,
   sqrt,
   clamp,
@@ -91,6 +96,12 @@ export interface MegaTSLConfig {
   readonly captureRawHDR?: boolean;
   /** Skip ONLY the final sRGB encoding step. */
   readonly captureLinearLDR?: boolean;
+  /**
+   * PROTOTYPE (`?hdr`): tone-map for an extended-range canvas, reading the
+   * live headroom from the `uHdrPeak` uniform — see
+   * `applyHdrToneMapping`. False = ordinary `[0, 1]` output.
+   */
+  readonly hdrOutput?: boolean;
 }
 
 /**
@@ -119,6 +130,54 @@ function applyToneMapping(color: TSLNode, mode: LuxarToneMappingMode): TSLNode {
     case 6:
       return neutralToneMapping(color, exposureOne);
   }
+}
+
+/**
+ * Scene-linear level below which HDR output reproduces the SDR operator
+ * exactly (by construction, whatever the knee). Neutral only starts
+ * compressing once its peak, less a black-level offset of at most 0.04, passes
+ * 0.76 — so up to ~0.8 on grey — hence its higher knee: a lower one would roll
+ * off a range SDR still shows linearly (verified never darker than SDR).
+ */
+function hdrKnee(mode: LuxarToneMappingMode): number {
+  return mode === 6 ? 0.8 : 0.5;
+}
+
+/**
+ * Tone mapping for an extended-range (HDR) canvas, where 1.0 is SDR white and
+ * the display can show up to `peak` (the headroom).
+ *
+ * Below the knee `L_k` (on the brightest channel L) the SDR operator's output
+ * is used UNCHANGED, so shadows and midtones look exactly as in SDR. Above it
+ * the operator's own grey curve T is replaced by an exponential shoulder H
+ * that matches T in value and slope at the knee and approaches `peak`:
+ *
+ *     H(L) = peak − (peak − T(L_k)) · exp(−T'(L_k) · (L − L_k) / (peak − T(L_k)))
+ *
+ * and the pixel is the SDR result scaled by H(L)/T(L). So hue handling stays
+ * the operator's own, the curve is C1 at the knee (no contour line, which a
+ * hard `max(SDR, stretched)` produces — a 2.4x slope jump for ACES at peak 4),
+ * monotone, and never darker than SDR (checked numerically for every mode at
+ * peaks 1.25-8). Linear/None become a clamp at `peak`, keeping `None` an exact
+ * passthrough. A peak <= 1 falls back to the SDR path.
+ */
+function applyHdrToneMapping(color: TSLNode, mode: LuxarToneMappingMode, peak: TSLNode): TSLNode {
+  if (mode === 1) return clamp(color, vec3(0.0), vec3(peak));
+  // `.toVar()`: both select() arms read these; an un-hoisted shared node is
+  // emitted only inside the first arm and reads unset in the other.
+  const sdr: TSLNode = vec3(applyToneMapping(color, mode)).toVar();
+  const knee = hdrKnee(mode);
+  const h = 1e-3;
+  const grey = (l: TSLNode): TSLNode => vec3(applyToneMapping(vec3(l), mode)).x;
+  const yKnee = grey(float(knee));
+  const slope = grey(float(knee + h))
+    .sub(grey(float(knee - h)))
+    .div(2 * h);
+  const room = max(peak.sub(yKnee), float(1e-4));
+  const L: TSLNode = max(color.r, max(color.g, color.b)).toVar();
+  const shoulder = peak.sub(room.mul(exp(slope.negate().mul(L.sub(knee)).div(room))));
+  const extended = min(sdr.mul(shoulder.div(max(grey(L), float(1e-6)))), vec3(peak));
+  return select(L.greaterThan(knee).and(peak.greaterThan(1.0)), extended, sdr);
 }
 
 /**
@@ -366,6 +425,15 @@ export function megaWebGPUFactory(
   // Optional inputs — declared at factory time only when the feature
   // is enabled, so unused uniforms don't end up in the compiled
   // shader.
+  // HDR output headroom (WebGPU-only): the capture modes stay on the SDR
+  // curve, since they feed 8-bit/EXR exports, not the extended-range canvas.
+  const uHdrPeak =
+    config.hdrOutput && !config.captureLinearLDR && uniforms.uHdrPeak
+      ? uniform((uniforms.uHdrPeak.value as number) ?? 1.0).onUpdate(
+          () => (uniforms.uHdrPeak?.value as number) ?? 1.0,
+          'render'
+        )
+      : null;
   const uBloomTexture =
     config.useBloom && uniforms.uBloomTexture
       ? texture((uniforms.uBloomTexture.value as THREE.Texture | null) ?? new THREE.Texture())
@@ -558,8 +626,13 @@ export function megaWebGPUFactory(
     color.assign(max(color.add(vec3(uGlobalOffset)), vec3(0.0)));
     color.assign((color as TSLNode).pow(invGamma));
 
-    // (5) Tone mapping — see {@link applyToneMapping}.
-    color.assign(applyToneMapping(color, toneMappingMode));
+    // (5) Tone mapping — see {@link applyToneMapping}; with HDR output,
+    // `applyHdrToneMapping`.
+    if (uHdrPeak) {
+      color.assign(applyHdrToneMapping(color, toneMappingMode, uHdrPeak));
+    } else {
+      color.assign(applyToneMapping(color, toneMappingMode));
+    }
 
     // (6) Vignette: multiplicative darkening, preserves color ratios.
     if (config.useVignette && uVignetteDarkness && uVignetteOffset) {

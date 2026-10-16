@@ -273,6 +273,11 @@ def calibrate(
         V = np.clip(V.astype(np.float32, copy=False) - applied_floor, 0.0, None)
     # V is already floor-subtracted; the per-K fits must not subtract again.
     fit_kwargs["floor"] = "none"
+    # Measure the UNPRUNED K: speck pruning (`min_extent`, default on in the fit
+    # config cal inherits) would make K* / `k_values_effective` /
+    # `saturation_cap` post-prune counts, and a content fit sized from them
+    # would then prune again (~K*(1-p)^2).
+    fit_kwargs["min_extent"] = 0.0
 
     if keep_fits is not None:
         keep_fits = Path(keep_fits)
