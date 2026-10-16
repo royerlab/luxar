@@ -39,7 +39,10 @@ vi.mock('../../../../../rendering/post-processing/hdr/pixel-utils', async (impor
 });
 
 import * as THREE from 'three';
-import { captureHDRPixels } from '../../../../../rendering/post-processing/post-processing-manager/capture';
+import {
+  captureHDRPixels,
+  renderToImageData,
+} from '../../../../../rendering/post-processing/post-processing-manager/capture';
 
 function makeCtx() {
   const flags = { raw: false, linear: false, noise: true, vignette: true, lens: true };
@@ -146,5 +149,48 @@ describe('captureHDRPixels', () => {
 
     await expect(captureHDRPixels(ctx, 'hdr-effects-pre-tone')).rejects.toThrow('pipeline failed');
     expect(flags).toEqual({ raw: false, linear: false, noise: true, vignette: true, lens: true });
+  });
+});
+
+describe('renderToImageData on an HDR canvas', () => {
+  beforeEach(() => {
+    readback.resolve = null;
+    readback.stateAtIssue = null;
+  });
+
+  it('renders the 8-bit frame on the SDR curve, restoring the headroom before the transfer', async () => {
+    // An 8-bit export clips above SDR white: the frame must be tone-mapped with
+    // peak 1, and the live headroom must be back before any loop frame draws.
+    const peak = { value: 3 };
+    const peakDuringPipeline: number[] = [];
+    pipeline.runPipeline.mockImplementationOnce(() => peakDuringPipeline.push(peak.value));
+    readback.snapshot = () => ({ peak: peak.value });
+    const ctx = {
+      renderer: {},
+      capabilities: { apiSurface: 'webgpu' },
+      megaShader: {
+        getHdrPeak: () => peak.value,
+        setHdrPeak: (v: number) => (peak.value = v),
+      },
+      pipelineCtx: {},
+    };
+    vi.stubGlobal(
+      'ImageData',
+      class {
+        constructor(
+          readonly data: Uint8ClampedArray,
+          readonly width: number,
+          readonly height: number
+        ) {}
+      }
+    );
+
+    const done = renderToImageData(ctx as never, { width: 1, height: 1 }, false);
+    expect(peakDuringPipeline).toEqual([1]);
+    expect(readback.stateAtIssue).toEqual({ peak: 3 });
+    readback.resolve?.({ pixels: new Uint8Array(4), width: 1, height: 1 });
+    await done;
+    expect(peak.value).toBe(3);
+    vi.unstubAllGlobals();
   });
 });

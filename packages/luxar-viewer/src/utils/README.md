@@ -25,6 +25,7 @@ Cross-cutting utility functions and helpers used throughout the Luxar viewer. Th
 
 - **Console Interception**: Ring buffer system for capturing all browser console output (opt-in patching)
 - **HDR Display Detection**: CSS-media-query probes plus pure decision logic over an `HDRCapabilities` snapshot
+- **HDR Headroom**: Per-display headroom resolution (URL pin, hand-set, measured, model guess) for the WebGPU HDR canvas output
 - **HDR Color Conversion**: Linear sRGB to BT.2020 PQ I420P10 pipeline for 10-bit WebCodecs video encoding
 - **Structured Logging**: `[emoji] [Module] message` format with a fixed `Modules` registry
 - **Typed Event Bus**: Cross-layer pub/sub with per-event payload typing and optional last-payload replay
@@ -60,7 +61,7 @@ utils/
 ├── long-press.ts            # attachLongPress(el, …) — touch long-press → secondary action, single opener across platforms
 ├── lod-child-failure.ts     # Lazy-child failure latch and clear with status invalidation
 ├── object-visibility.ts     # isEffectivelyVisible (ancestor-aware scene-graph visibility)
-├── platform.ts              # isMacPlatform()
+├── platform.ts              # isMacPlatform(), platformName()
 ├── result.ts                # Result<T, E> + ok/err/isOk/isErr/match/mapOk/mapErr/unwrap/tryAsync
 ├── schedule-frame.ts        # scheduleFrame(): rAF with a timer fallback that keeps hidden tabs moving
 ├── scene-graph-index.ts     # findObjectByName / attachSceneGraphIndex / detachSceneGraphIndex — self-maintaining path→Object3D map (exact getObjectByName semantics, O(1) for unique names, epoch-invalidated miss memo)
@@ -75,13 +76,15 @@ utils/
 ├── dom/                     # Pure DOM focus predicates
 │   └── focus.ts             # Typing-surface and scene-canvas focus checks
 └── hdr/                     # HDR display + color-conversion pipeline
+    ├── display-identity.ts      # Display model identification + measured headroom (Window Management)
     ├── hdr-color-conversion.ts  # Linear sRGB → BT.2020 PQ I420P10 (Uint16 planar)
+    ├── hdr-headroom.ts          # Per-display HDR headroom resolver + HdrHeadroomController
     └── hdr-detection.ts         # CSS-media-query HDR/gamut probes + decision helpers
 ```
 
 Geometry-byte accounting (`estimateGeometryBytes` / `invalidateCachedByteSize`) used to live here as `geometry-utils.ts`; it has moved to its only consumer at `rendering/gpu-buffer-pool/geometry-bytes.ts` (re-exported by `rendering/gpu-buffer-pool.ts` for the existing test import path).
 
-Each module is focused on a specific domain with minimal dependencies. The intra-`utils/` imports are `cross-layer/event-group.ts`, `cross-layer/notifier.ts`, and `hdr/hdr-detection.ts` → `log.ts`; `hdr/hdr-color-conversion.ts` and `wheel-delta.ts` → `clamp.ts`; `lod-child-failure.ts` → `failed-loads-version.ts`; `console-interceptor.ts` → `format-error.ts`; `hover-template.ts` → `escape-html.ts`; and `long-press.ts` → `input-capabilities.ts`. Outside `utils/`, `console-interceptor.ts` and `fetch-concurrency.ts` tally into `profiling/perf-counters.ts`, `json-rpc.ts` reads `config/control-contract.ts`, and `cross-layer/notifier.ts` takes a type from `types/`.
+Each module is focused on a specific domain with minimal dependencies. The intra-`utils/` imports are `cross-layer/event-group.ts`, `cross-layer/notifier.ts`, and `hdr/hdr-detection.ts` → `log.ts`; `hdr/hdr-headroom.ts` → `cross-layer/event-group.ts`, `log.ts`, `storage-keys.ts`, `hdr/hdr-detection.ts` and `hdr/display-identity.ts`; `hdr/display-identity.ts` → `platform.ts`; `hdr/hdr-color-conversion.ts` and `wheel-delta.ts` → `clamp.ts`; `lod-child-failure.ts` → `failed-loads-version.ts`; `console-interceptor.ts` → `format-error.ts`; `hover-template.ts` → `escape-html.ts`; and `long-press.ts` → `input-capabilities.ts`. Outside `utils/`, `console-interceptor.ts` and `fetch-concurrency.ts` tally into `profiling/perf-counters.ts`, `json-rpc.ts` reads `config/control-contract.ts`, `cross-layer/notifier.ts` takes a type from `types/`, and `hdr/hdr-headroom.ts` takes its bounds and defaults from `types/hdr-output.ts`.
 
 ## Modules
 
@@ -117,8 +120,13 @@ Display-side capability detection via CSS media queries plus pure decision logic
 - `detectDisplayCapabilities()` — Build an `HDRCapabilities` from `window.matchMedia` (P3, Rec2020, dynamic-range, 10-bit color)
 - `configureHDRRenderer(_renderer, capabilities)` — Logs detected capabilities only. It deliberately does NOT touch `outputColorSpace` or `toneMapping` — `PostProcessingManager` owns those (mega-shader applies tone mapping internally; host pins `outputColorSpace = SRGB`, `toneMapping = NoToneMapping`)
 - `logHDRCapabilities(capabilities)` — Pretty-print a capabilities snapshot
+- `HDR_DISPLAY_QUERY` — The `'(dynamic-range: high)'` media query string, shared with `hdr/hdr-headroom.ts`
 - `isHDRDisplay(capabilities)` — True iff HDR + deep color + float textures + (P3 or Rec2020)
 - `getOptimalRenderTargetType(capabilities)` — Returns `THREE.HalfFloatType` when float textures exist, else `UnsignedByteType`
+
+### hdr-headroom.ts / display-identity.ts - HDR Output Headroom
+
+PROTOTYPE (WebGPU only). When the canvas is an extended-range `rgba16float` canvas, the headroom (how far above SDR white the display can go) is resolved per display by `HdrHeadroomController`: URL pin (`?hdr=<n>`) > hand-set per display (`StorageKeys.hdrHeadroom`, a JSON map keyed by `displayKey`) > measured (the Window Management API's ScreenDetailed `hdrHeadroom`, permission-gated) > model guess (`identifyDisplay`) > default 2x; 1x `'sdr'` while the window is on a display that stops reporting HDR. `resolveHdrHeadroom(gpuRenderer)` is the synchronous best effort used when the renderer is built. See `hdr/README.md`.
 
 ### hdr-color-conversion.ts - HDR Color Conversion
 
@@ -261,6 +269,7 @@ The fetch gate is not built on `AsyncGate` on purpose: per-origin widths, width 
 ### platform.ts - Platform Detection
 
 - `isMacPlatform()` — `navigator.platform.startsWith('Mac')`; returns `false` in non-browser contexts. Centralized so tests can stub one export.
+- `platformName()` — OS name as UA client hints spell it (`'macOS'`, `'Windows'`, `'Linux'`, …), falling back to `'macOS'` via `isMacPlatform()`, else the raw `navigator.platform`; empty outside the browser. Feeds `hdr/display-identity.ts`.
 
 ### result.ts - Result<T, E>
 

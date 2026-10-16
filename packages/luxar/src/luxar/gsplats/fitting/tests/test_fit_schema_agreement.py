@@ -220,6 +220,11 @@ def test_fit_parameters_omit_only_parameters_handled_elsewhere() -> None:
         "device",
         "dynamic_config",
         "enable_dynamic_ops",
+        # Wrapper-handled: post-fit speck pruning, and the reseed sigma the
+        # wrapper folds into `dynamic_config` before building the fitter.
+        "min_extent",
+        "min_extent_max_mass_share",
+        "relocation_reseed_sigma_vox",
         "use_cuda",
         "use_metal",
     }

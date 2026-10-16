@@ -40,7 +40,8 @@ function listProductionSources(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-const CALL_RE = /localStorage\s*\.\s*(getItem|setItem|removeItem)\s*\(\s*([^,)]*)/g;
+// `\??` so an optional-chained `localStorage?.getItem(...)` is seen too.
+const CALL_RE = /localStorage\s*\??\.\s*(getItem|setItem|removeItem)\s*\(\s*([^,)]*)/g;
 
 /** Offending `localStorage.<op>(<arg>` snippets in `source`; empty when clean. */
 export function findUnregisteredStorageKeyUses(source: string): string[] {

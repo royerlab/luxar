@@ -59,6 +59,12 @@ export interface HDRCapabilities {
 }
 
 /**
+ * The media query a display matches when it can show more than SDR white
+ * (`(dynamic-range: high)`). One spelling for every HDR check.
+ */
+export const HDR_DISPLAY_QUERY = '(dynamic-range: high)';
+
+/**
  * Detect *display-side* HDR / wide-gamut capabilities via CSS media
  * queries. Renderer-side probes (float-texture extension, color
  * buffer bit depth) are NOT done here — they live in
@@ -73,7 +79,7 @@ export function detectDisplayCapabilities(): HDRCapabilities {
   // Check CSS media queries for display capabilities
   const p3Gamut = window.matchMedia('(color-gamut: p3)').matches;
   const rec2020Gamut = window.matchMedia('(color-gamut: rec2020)').matches;
-  const hdr = window.matchMedia('(dynamic-range: high)').matches;
+  const hdr = window.matchMedia(HDR_DISPLAY_QUERY).matches;
 
   // Check for deep color support (10-bit or higher).
   // Per CSS Media Queries Level 4, `(color: N)` matches if the device uses

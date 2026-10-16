@@ -25,7 +25,7 @@ rendering-controls/
 
 ### `types.ts`
 
-Defines `SetupContext` and `SetupResult` — the shared call-shape used by every builder in `setup/`. `SetupContext` carries the `GUI`, the live `RenderingSettings`, the `PostProcessingManager`, the `SceneManager`, the optional `AnimationController`, and the `saveSettings` / `triggerAnimation` / `updateClippingControlsState` / `updateNavigationControls` callbacks. `SetupResult` returns `{ controllers, folders?, shadowObjects? }`; the parent class merges every builder's `controllers` map into one combined `RenderingControllers`.
+Defines `SetupContext` and `SetupResult` — the shared call-shape used by every builder in `setup/`. `SetupContext` carries the `GUI`, the live `RenderingSettings`, the `PostProcessingManager`, the `SceneManager`, the optional `AnimationController`, and the `saveSettings` / `triggerAnimation` / `updateClippingControlsState` / `updateNavigationControls` callbacks. `SetupResult` returns `{ controllers, folders?, shadowObjects?, cleanup? }`; the parent class merges every builder's `controllers` map into one combined `RenderingControllers` and collects each `cleanup` teardown (`hdr-setup.ts` returns one for its headroom controller) to run on `dispose()`.
 
 ### `apply-settings.ts`
 

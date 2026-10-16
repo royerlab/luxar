@@ -72,6 +72,11 @@ export const ASYNC_OPERATIONS: readonly AsyncOperation[] = [
 
   // ── Covered by their own tests ───────────────────────────────────────────
   {
+    id: 'HDR headroom controller (screen details, display listeners)',
+    symbols: ['utils/hdr/hdr-headroom.ts#HdrHeadroomController'],
+    tests: ['utils/hdr/hdr-headroom.test.ts'],
+  },
+  {
     id: 'depth-sort coordinator (late commits after release)',
     symbols: ['rendering/depth-sort-coordinator.ts#DepthSortCoordinator'],
     tests: [
