@@ -598,6 +598,30 @@ export interface GSplatTSLNodes {
   readonly uScalarScale?: TSLNode;
 }
 
+/** The per-splat values the vertex prologue fetches from the splat texture. */
+interface GSplatFetchTSL {
+  readonly aCenter: TSLNode;
+  readonly aAmplitude: TSLNode;
+  readonly aCholesky01: TSLNode;
+  readonly aCholesky23: TSLNode;
+  readonly aCholesky45: TSLNode;
+  readonly aColor: TSLNode;
+  readonly aAlpha: TSLNode;
+  readonly aLabelIndex: TSLNode;
+}
+
+/** The camera-space centre stage of the vertex graph (see `projectSplatCentre`). */
+interface GSplatCentreTSL {
+  readonly centerCam: TSLNode;
+  readonly centerClip: TSLNode;
+  readonly invW: TSLNode;
+  readonly SigmaCam: TSLNode;
+  readonly isOrtho: TSLNode;
+  readonly nearFade: TSLNode;
+  /** The near or coverage fade rejects the splat. */
+  readonly rejected: TSLNode;
+}
+
 /**
  * GSplat material TSL factory.
  *
@@ -673,14 +697,26 @@ export function gsplatWebGPUFactory(
 
   // Varyings are declared up front and `.assign()`ed inside the vertex
   // body (the TSL pattern for Fn-traced vertex stages).
-  const vColor: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
-  const vAmplitude2D: TSLNode = varying(float(0.0));
+  // Every per-splat value is constant across the quad's four vertices, so it
+  // travels `flat` — the GLSL twin's `flat` qualifiers on the same fields.
+  // Without it the rasterizer interpolates 12 constant components per
+  // fragment. vClipZW stays interpolated: the glass partition reads the
+  // fragment's own depth from it (glass-partition-tsl.ts).
+  const vColor: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0))).setInterpolation(
+    'flat'
+  );
+  const vAmplitude2D: TSLNode = varying(float(0.0)).setInterpolation('flat');
   const vClipZW: TSLNode = clipDepthVarying();
-  const vAlpha: TSLNode = varying(float(1.0));
-  const vL2D: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0)));
-  const vCenterScreen: TSLNode = varying(vec2(float(0.0), float(0.0)));
+  const vAlpha: TSLNode = varying(float(1.0)).setInterpolation('flat');
+  const vL2D: TSLNode = varying(vec3(float(0.0), float(0.0), float(0.0))).setInterpolation('flat');
+  const vCenterScreen: TSLNode = varying(vec2(float(0.0), float(0.0))).setInterpolation('flat');
 
-  const vertexBody = Fn(() => {
+  // ---- Vertex stages ----
+  // Plain graph builders called inside the vertex Fn below, in the scope of
+  // the If() that guards each one (see the early-out note there).
+
+  /** The splat-texture fetch prologue: the splat's per-element values. */
+  const fetchSplat = (): GSplatFetchTSL => {
     // === Splat-texture fetch prologue ===
     // Four textureLoad reads reconstruct the per-splat values into the
     // exact local names the math below has always used — zero changes
@@ -717,7 +753,21 @@ export function gsplatWebGPUFactory(
     // Per-splat opacity (texel3.y; the writer stamps 1.0 for RGB data).
     const aAlpha: TSLNode = splatT3.y.toVar();
     const aLabelIndex: TSLNode = splatT3.z.toVar();
+    return {
+      aCenter,
+      aAmplitude,
+      aCholesky01,
+      aCholesky23,
+      aCholesky45,
+      aColor,
+      aAlpha,
+      aLabelIndex,
+    };
+  };
 
+  /** Camera-space centre, Σ_cam and the two fades that can reject the splat. */
+  const projectSplatCentre = (splat: GSplatFetchTSL): GSplatCentreTSL => {
+    const { aCenter, aCholesky01, aCholesky23, aCholesky45 } = splat;
     // Centre in camera space.
     const centerCam4: TSLNode = modelViewMatrix.mul(vec4(aCenter, 1.0)).toVar();
     const centerCam: TSLNode = vec3(centerCam4).toVar();
@@ -768,7 +818,54 @@ export function gsplatWebGPUFactory(
     const coverageFadeReject: TSLNode = coverageFade.lessThan(0.01);
 
     const nearFade: TSLNode = min(depthFade, coverageFade).toVar();
+    return {
+      centerCam,
+      centerClip,
+      invW,
+      SigmaCam,
+      isOrtho,
+      nearFade,
+      rejected: depthFadeReject.or(coverageFadeReject),
+    };
+  };
 
+  /** Per-instance colour (LUT, attribute or categorical label colour). */
+  const splatColor = (splat: GSplatFetchTSL): TSLNode => {
+    const { aAmplitude, aColor, aLabelIndex } = splat;
+    // Per-instance colour (LUT or attribute). aAmplitude doubles as
+    // the colormap scalar — matches the GLSL `(aAmplitude - uScalarMin)`
+    // path. In colormap mode the display range (uScalarMin/uScalarScale)
+    // and gamma operate on the scalar VALUE before the LUT lookup.
+    let perInstanceColor: TSLNode;
+    if (config.useColormap && uColormapTex && uScalarMin && uScalarScale) {
+      const tt0 = clamp(aAmplitude.sub(uScalarMin).mul(uScalarScale), 0.0, 1.0);
+      // gammaOne skips the pre-LUT pow() when gamma == 1.0.
+      const tt = config.gammaOne ? tt0 : tt0.pow(uInvGamma); // gamma on the value, pre-LUT
+      perInstanceColor = uColormapTex.sample(vec2(tt, 0.5)).rgb;
+    } else {
+      perInstanceColor = aColor;
+    }
+
+    const categoricalColor = vec3(
+      fract(aLabelIndex.mul(0.61803398875)),
+      fract(aLabelIndex.mul(0.38196601125)),
+      fract(aLabelIndex.mul(0.75487766625))
+    )
+      .mul(0.75)
+      .add(0.25);
+    const useLabelColor = int(uLabelColorMode).equal(int(1)).and(aLabelIndex.greaterThan(0.0));
+    return useLabelColor.select(categoricalColor, perInstanceColor);
+  };
+
+  /**
+   * The rest of the vertex stage for a splat that survived the early
+   * rejects: projected covariance, amplitude, footprint, quad. Assigns the
+   * varyings and returns the clip position (still the reject when the
+   * covariance is invalid or the footprint is culled).
+   */
+  const emitVisibleSplat = (splat: GSplatFetchTSL, centre: GSplatCentreTSL): TSLNode => {
+    const { aAmplitude, aAlpha } = splat;
+    const { centerCam, centerClip, invW, SigmaCam, isOrtho, nearFade } = centre;
     // Σ_2D = J · Σ_cam · Jᵀ with the general projection Jacobian (GLSL twin:
     // gsplatProjectedCovariance; reduces to the classic perspective / ortho
     // Jacobians, projection-math.ts).
@@ -928,44 +1025,11 @@ export function gsplatWebGPUFactory(
       .or(invalidFloatTSL(Sigma2D10))
       .or(invalidFloatTSL(Sigma2D11));
     const validClipPos: TSLNode = vec4(ndcXY, ndcZ, float(1.0));
-    const rejectClipPos: TSLNode = vec4(float(0.0), float(0.0), float(-2.0), float(1.0));
-    // behindCamera is subsumed by depthFadeReject (perspective fade = 0
-    // behind the camera; ortho behind-camera falls to NDC clipping).
-    const labelRejected: TSLNode = int(uLabelFilterIndex)
-      .greaterThan(int(0))
-      .and(int(aLabelIndex.add(0.5)).notEqual(int(uLabelFilterIndex)));
-    const rejected: TSLNode = depthFadeReject
-      .or(coverageFadeReject)
-      .or(invalidAmp)
-      .or(invalidCov)
-      .or(labelRejected)
-      .or(densityDropped)
-      .or(footprintCulled);
+    // The density, label, near and coverage rejects already returned
+    // early (enclosing If blocks); what is left can only be judged here.
+    const rejected: TSLNode = invalidAmp.or(invalidCov).or(footprintCulled);
 
-    // Per-instance colour (LUT or attribute). aAmplitude doubles as
-    // the colormap scalar — matches the GLSL `(aAmplitude - uScalarMin)`
-    // path. In colormap mode the display range (uScalarMin/uScalarScale)
-    // and gamma operate on the scalar VALUE before the LUT lookup.
-    let perInstanceColor: TSLNode;
-    if (config.useColormap && uColormapTex && uScalarMin && uScalarScale) {
-      const tt0 = clamp(aAmplitude.sub(uScalarMin).mul(uScalarScale), 0.0, 1.0);
-      // gammaOne skips the pre-LUT pow() when gamma == 1.0.
-      const tt = config.gammaOne ? tt0 : tt0.pow(uInvGamma); // gamma on the value, pre-LUT
-      perInstanceColor = uColormapTex.sample(vec2(tt, 0.5)).rgb;
-    } else {
-      perInstanceColor = aColor;
-    }
-
-    // Assign varyings (declared outside the Fn; see above).
-    const categoricalColor = vec3(
-      fract(aLabelIndex.mul(0.61803398875)),
-      fract(aLabelIndex.mul(0.38196601125)),
-      fract(aLabelIndex.mul(0.75487766625))
-    )
-      .mul(0.75)
-      .add(0.25);
-    const useLabelColor = int(uLabelColorMode).equal(int(1)).and(aLabelIndex.greaterThan(0.0));
-    vColor.assign(useLabelColor.select(categoricalColor, perInstanceColor));
+    vColor.assign(splatColor(splat));
     // Sanitized like the GLSL twin: NaN/Inf route to the 1.0 opaque
     // identity, finite values clamp to [0, 1] (alpha is load-bearing and
     // feeds optical depth under volumetric).
@@ -974,7 +1038,34 @@ export function gsplatWebGPUFactory(
     vL2D.assign(vL2DVal);
     vCenterScreen.assign(vCenterScreenVal);
 
-    const clipOut: TSLNode = rejected.select(rejectClipPos, validClipPos).toVar();
+    return rejected.select(vec4(float(0.0), float(0.0), float(-2.0), float(1.0)), validClipPos);
+  };
+
+  const vertexBody = Fn(() => {
+    // EARLY-OUT structure (GLSL twin: the `return`s in shader-glsl.ts main()).
+    // A rejected splat routes to behind-camera (z = -2) and the rasterizer
+    // drops it, so every reject that can be decided early skips the work
+    // after it: density thinning before any texel fetch, the label filter
+    // right after the fetch, the near + coverage fades before the covariance
+    // projection. TSL has no early `return` from a vertex Fn, so each stage
+    // nests in an If() and the clip position defaults to the reject. Every
+    // value read past a block boundary is a `.toVar()` emitted before it (the
+    // lazy-emission rule in the block comment above).
+    const clipOut: TSLNode = vec4(float(0.0), float(0.0), float(-2.0), float(1.0)).toVar();
+    If(densityDropped.not(), () => {
+      const splat = fetchSplat();
+      const labelRejected: TSLNode = int(uLabelFilterIndex)
+        .greaterThan(int(0))
+        .and(int(splat.aLabelIndex.add(0.5)).notEqual(int(uLabelFilterIndex)));
+      If(labelRejected.not(), () => {
+        const centre = projectSplatCentre(splat);
+        // behindCamera is subsumed by the near fade (perspective fade = 0
+        // behind the camera; ortho behind-camera falls to NDC clipping).
+        If(centre.rejected.not(), () => {
+          clipOut.assign(emitVisibleSplat(splat, centre));
+        });
+      });
+    });
     vClipZW.assign(clipOut.zw);
     return clipOut;
   });
@@ -986,35 +1077,10 @@ export function gsplatWebGPUFactory(
 
   // Fragment uses `screenCoordinate` (= gl_FragCoord.xy in TSL) to
   // recover pixel position relative to the splat centre.
-  const fragmentNode = Fn(() => {
-    // Refraction split partition FIRST: a fragment on the wrong side of the glass
-    // costs nothing further (glass-partition-tsl.ts; GLSL twin at the top of main()).
-    glassPartitionGuardTSL(nodes, vClipZW);
-    // `screenCoordinate` is TOP-LEFT-origin on BOTH backends (three
-    // normalizes: the WebGL fallback emits `size.y - gl_FragCoord.y`,
-    // native WGSL's position builtin is already top-left), but
-    // vCenterScreen is BOTTOM-LEFT window coords (it feeds y-up NDC in
-    // the vertex). Un-flip back to bottom-left so `d` matches the GLSL
-    // reference (`gl_FragCoord.xy - vCenterScreen`) exactly — without
-    // this the Gaussian is evaluated around a center MIRRORED about the
-    // horizontal midline, so off-center splats discard their whole quad
-    // (invisible) and midline-crossing quads show garbage edges. The
-    // centered, mirror-symmetric parity fixtures are blind to a y-flip;
-    // the off-center parity variant exists to catch exactly this.
-    // The un-flip term MUST be `screenSize` (the bound render target's
-    // size — exactly what the builder's flip used), NOT the app-stamped
-    // uResolution: they differ whenever the target isn't
-    // drawing-buffer-sized (e.g. SSAA multiplied), and only screenSize
-    // reconstructs gl_FragCoord.y byte-identically to the GLSL twin in
-    // every configuration.
-    const fragCoordBL: TSLNode = vec2(screenCoordinate.x, screenSize.y.sub(screenCoordinate.y));
-    const d: TSLNode = vec2(fragCoordBL.sub(vCenterScreen));
-    // Forward substitution: solve L · y = d.
-    const y0: TSLNode = d.x.mul(vL2D.x);
-    const y1: TSLNode = d.y.sub(vL2D.y.mul(y0)).mul(vL2D.z);
-    const mahalSq: TSLNode = y0.mul(y0).add(y1.mul(y1));
-    Discard(mahalSq.greaterThan(uTruncateSq));
-
+  // The fragment past the truncation test, as a plain graph builder: called
+  // inside the fragment Fn's If, so its statements emit in that scope. Every
+  // mode returns its final RGBA (the discards it carries emit in place).
+  const shadeSplatFragment = (mahalSq: TSLNode): TSLNode => {
     // Shifted Gaussian intensity.
     const rawIntensity: TSLNode = vAmplitude2D
       .mul(uInvOneMinusC)
@@ -1123,6 +1189,48 @@ export function gsplatWebGPUFactory(
     // consumed, not ignored), and max compares premultiplied RGB
     // contributions directly. Mirrors the GLSL twin's #else branch.
     return vec4(finalColor, float(1.0));
+  };
+
+  const fragmentNode = Fn(() => {
+    // Refraction split partition FIRST: a fragment on the wrong side of the glass
+    // costs nothing further (glass-partition-tsl.ts; GLSL twin at the top of main()).
+    glassPartitionGuardTSL(nodes, vClipZW);
+    // `screenCoordinate` is TOP-LEFT-origin on BOTH backends (three
+    // normalizes: the WebGL fallback emits `size.y - gl_FragCoord.y`,
+    // native WGSL's position builtin is already top-left), but
+    // vCenterScreen is BOTTOM-LEFT window coords (it feeds y-up NDC in
+    // the vertex). Un-flip back to bottom-left so `d` matches the GLSL
+    // reference (`gl_FragCoord.xy - vCenterScreen`) exactly — without
+    // this the Gaussian is evaluated around a center MIRRORED about the
+    // horizontal midline, so off-center splats discard their whole quad
+    // (invisible) and midline-crossing quads show garbage edges. The
+    // centered, mirror-symmetric parity fixtures are blind to a y-flip;
+    // the off-center parity variant exists to catch exactly this.
+    // The un-flip term MUST be `screenSize` (the bound render target's
+    // size — exactly what the builder's flip used), NOT the app-stamped
+    // uResolution: they differ whenever the target isn't
+    // drawing-buffer-sized (e.g. SSAA multiplied), and only screenSize
+    // reconstructs gl_FragCoord.y byte-identically to the GLSL twin in
+    // every configuration.
+    const fragCoordBL: TSLNode = vec2(screenCoordinate.x, screenSize.y.sub(screenCoordinate.y));
+    const d: TSLNode = vec2(fragCoordBL.sub(vCenterScreen));
+    // Forward substitution: solve L · y = d.
+    const y0: TSLNode = d.x.mul(vL2D.x);
+    const y1: TSLNode = d.y.sub(vL2D.y.mul(y0)).mul(vL2D.z);
+    const mahalSq: TSLNode = y0.mul(y0).add(y1.mul(y1)).toVar();
+    // WGSL `discard` only DEMOTES the invocation to a helper, which keeps
+    // executing to the end of the shader. So the work past the truncation
+    // test runs in the Else, and a fragment outside the ellipse (about a
+    // fifth of every quad) does nothing but discard. The later discards guard
+    // only a few multiplies and stay flat. The test is the old `>` (a NaN
+    // distance is still kept, as before), so no fragment changes side.
+    const outColor: TSLNode = vec4(float(0.0), float(0.0), float(0.0), float(0.0)).toVar();
+    If(mahalSq.greaterThan(uTruncateSq), () => {
+      Discard();
+    }).Else(() => {
+      outColor.assign(shadeSplatFragment(mahalSq));
+    });
+    return outColor;
   });
 
   const material = outMaterial ?? new NodeMaterial();
