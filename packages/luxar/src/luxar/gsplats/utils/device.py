@@ -22,6 +22,7 @@ from typing import Literal, Optional
 
 import torch
 
+from . import CPU_THREADS_ENV as CPU_THREADS_ENV
 from .worker_memory import (
     cuda_worker_count,
     task_working_set_bytes,
@@ -242,10 +243,6 @@ def _effective_cpu_count() -> int:
         except OSError:
             pass
     return max(1, os.cpu_count() or 1)
-
-
-#: Thread count of the native CPU splatting kernels.
-CPU_THREADS_ENV = "LUXAR_CPU_THREADS"
 
 
 def _linux_physical_cores() -> Optional[int]:

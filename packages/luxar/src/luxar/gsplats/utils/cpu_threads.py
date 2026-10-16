@@ -14,7 +14,7 @@ command — but only when torch still has one thread:
 
 * ``LUXAR_CPU_THREADS=N`` (N >= 1) always wins: torch runs N threads.
 * ``LUXAR_CPU_THREADS=0`` disables the adjustment (torch is left alone). The
-  test suite sets this so its single-thread pin survives CLI-level tests.
+  test suite sets this so its single-thread pin survives single-process CLI tests.
 * If torch already runs more than one thread (including when an OMP/MKL export
   took effect), it is left alone. An OMP-only export may leave torch at one
   thread under the hatch MKL pin; in that case the CLI still widens it. To
@@ -35,7 +35,7 @@ import os
 from contextlib import contextmanager
 from typing import Iterator, Mapping, Optional
 
-from .device import CPU_THREADS_ENV, physical_core_count
+from . import CPU_THREADS_ENV
 
 #: Upper bound on the automatic width. Measured on an M4 Max: 4 and 8 threads
 #: tie, 16 is slower than 4 (system time dominates), so more never helps.
@@ -44,6 +44,8 @@ AUTO_CPU_THREADS_CAP = 8
 
 def physical_cpu_count() -> int:
     """Physical cores available to both torch and the native CPU kernels."""
+    from .device import physical_core_count
+
     return physical_core_count()
 
 

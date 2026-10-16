@@ -1152,7 +1152,7 @@ fitter = GaussianSplatFitter(device="cpu")  # Force CPU
 
 ### CPU threads:
 
-On CPU, `luxar gsplat fit` and `luxar gsplat cal` raise torch to `min(physical cores, 8)` threads for the command when torch still has one thread (the hatch env pins one; scaling stops near 8). An OMP/MKL export that already raised torch's count is left alone; `LUXAR_CPU_THREADS=N` overrides it, `LUXAR_CPU_THREADS=0` disables it, and library calls from Python are never changed (`utils/cpu_threads.py`).
+On CPU, `luxar gsplat fit` and `luxar gsplat cal` raise torch to `min(physical cores, 8)` threads for the command when torch still has one thread (the hatch env pins one; scaling stops near 8). An OMP/MKL export that already raised torch's count is left alone; `LUXAR_CPU_THREADS=N` overrides it and also sets native kernel threads. `LUXAR_CPU_THREADS=0` leaves torch alone while the kernels use physical cores. Library calls from Python never change torch's setting (`utils/cpu_threads.py`). Multi-worker fits set a per-worker share for both unless a nonzero value was supplied.
 
 ### Apple Silicon Performance Notes:
 
@@ -1202,7 +1202,7 @@ See [metal/README.md](models/gsplats/metal/README.md) for detailed installation 
 
 ### Native CPU Backend
 
-On the CPU, 3D fits run on fused numba kernels (`GaussianSplatModelCPUNative`): the same numbers as the PyTorch renderer, many times faster (see [cpu/README.md](models/gsplats/cpu/README.md) for measurements). `numba` ships in the `gsplats` extra and compiles the kernels on first use (cached afterwards); without it, CPU fits use the PyTorch renderer. `LUXAR_CPU_BACKEND=auto|native|torch` forces a choice and `LUXAR_CPU_THREADS` sets the thread count (default: physical cores).
+On the CPU, 3D fits run on fused numba kernels (`GaussianSplatModelCPUNative`): the same numbers as the PyTorch renderer, many times faster (see [cpu/README.md](models/gsplats/cpu/README.md) for measurements). `numba` ships in the `gsplats` extra and compiles the kernels on first use (cached afterwards); without it, CPU fits use the PyTorch renderer. `LUXAR_CPU_BACKEND=auto|native|torch` forces a choice. The kernels use physical cores by default; `LUXAR_CPU_THREADS=N` sets both their width and CLI torch's width as described above.
 
 ## Package Structure
 
