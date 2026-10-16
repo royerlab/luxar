@@ -264,6 +264,12 @@ ordering_methods: ["morton", "hilbert", "none"]
 #   Python: typing_utils/constants.py::LINE_JOIN_STYLES   TS: types/line-join.ts
 line_join_styles: ["none", "miter"]
 
+# `viewer_config.camera.view_axis`: axis-aligned opening view, horizontal axis
+# first (the letters are scene DIMENSION names). See VIEWER_GUIDE.md.
+#   Python: core/viewer_config.py::VALID_VIEW_AXES
+#   TS:     types/view-axis.ts::parseViewAxis (and the `?viewAxis=` URL override)
+view_axes: ["xy", "xz", "yz"]
+
 # `line_type` attr on a lines node (how `vertices` + `segments` are interpreted).
 #   Python: core/lines.py::LineType   TS: types/lines.ts::LineType
 line_types: ["segments", "polyline", "loop", "indexed"]

@@ -192,6 +192,8 @@ export async function runInitPipeline(
     // device default here so direct LuxarApp embedders get the same protection
     // as the standalone bootstrap; an explicit false remains the opt-out.
     blendWarmup: ports.options.blendWarmup !== false && getInputProfile().deviceClass !== 'mobile',
+    // `?viewAxis=` (or an embedder's option): beats the scene's authored preset.
+    viewAxis: ports.options.viewAxis,
   });
 
   // Initialize animation controller with HDR post-processing.

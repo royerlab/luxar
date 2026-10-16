@@ -214,6 +214,7 @@ describe('readUrlParams', () => {
       bakeEnv: false, // the `luxar env bake` driver's one-shot (opt-in via ?bakeEnv)
       probe: null,
       envResolution: null,
+      viewAxis: null,
     });
   });
 
@@ -313,6 +314,19 @@ describe('readUrlParams', () => {
     // Flag-only form parses as NaN → null.
     expect(readUrlParams('?dpr').dpr).toBeNull();
     expect(readUrlParams('').dpr).toBeNull();
+  });
+
+  it('parses viewAxis (the axis preset), leaving the ?view= bookmark alone', () => {
+    expect(readUrlParams('?viewAxis=xy').viewAxis).toBe('xy');
+    expect(readUrlParams('?viewAxis=XZ').viewAxis).toBe('xz');
+    expect(readUrlParams('?viewAxis=yz').viewAxis).toBe('yz');
+    expect(readUrlParams('?viewAxis=zx').viewAxis).toBeNull();
+    expect(readUrlParams('?viewAxis').viewAxis).toBeNull();
+    expect(readUrlParams('').viewAxis).toBeNull();
+    // `view` is the bookmark parameter: an axis-looking value stays a bookmark.
+    const both = readUrlParams('?view=xz&viewAxis=yz');
+    expect(both.view).toBe('xz');
+    expect(both.viewAxis).toBe('yz');
   });
 
   it('parses lineJoin, distinguishing "no override" from an explicit none', () => {

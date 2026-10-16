@@ -179,6 +179,7 @@ const EMPTY_PARAMS: UrlParams = {
   bakeEnv: false,
   probe: null,
   envResolution: null,
+  viewAxis: null,
 };
 
 /** URLs the stubbed `fetch` was asked for (bootstrap's root-document prefetch). */

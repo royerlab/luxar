@@ -921,6 +921,14 @@ def merge_datasets(
     sigma: float = typer.Option(
         0.0, "--sigma", help="Sigma in new dimension for --as-dimension (0=discrete)"
     ),
+    dimension_name: str = typer.Option(
+        "t",
+        "--dimension-name",
+        help="Name recorded for the --as-dimension axis in the output's "
+        "dimension_metadata (with the inputs' agreed spatial axis names, so "
+        "`gsplat convert` opens a merged timelapse of fits in the image "
+        "convention)",
+    ),
     channel_colors: Optional[str] = typer.Option(
         None,
         "--channel-colors",
@@ -969,6 +977,7 @@ def merge_datasets(
         channel_colors=channel_colors,
         compress=compress,
         encoding=encoding,
+        dimension_name=dimension_name,
     )
 
 

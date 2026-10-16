@@ -1,5 +1,6 @@
 import type { LoaderConfig } from '../../data/data-loader-types';
 import type { AppFactories } from './factories';
+import type { ViewAxis } from '../../types/view-axis';
 
 /**
  * Init-time options for {@link LuxarApp.init}.
@@ -258,6 +259,14 @@ export interface LuxarAppOptions {
    * `ui/overlay-text-scale.ts`.
    */
   textScale?: number;
+
+  /**
+   * Axis-aligned opening view for the session (`'xy'` | `'xz'` | `'yz'`),
+   * beating the scene's authored `viewer_config.camera.view_axis`. Undefined ⇒
+   * the authored preset. Mirrors `UrlParams.viewAxis` (`?viewAxis=xz`). See
+   * `scene/scene-manager/camera/view-axis.ts`.
+   */
+  viewAxis?: ViewAxis;
 
   /**
    * Allow a picked element's authored `link` to be opened on left-click

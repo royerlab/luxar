@@ -423,6 +423,11 @@ GATE_INPUTS: list[tuple[str, str, str]] = [
         "presets and defaults",
     ),
     (
+        "packages/luxar-viewer/src/types/zarr.ts",
+        "py",
+        "test_viewer_config.py parses ZarrCameraConfig keys",
+    ),
+    (
         "packages/luxar-viewer/src/config/sections/rendering-controls/data.ts",
         "py",
         "test_demos_cinematic_mode.py parses its default FOV",

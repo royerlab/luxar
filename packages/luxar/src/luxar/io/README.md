@@ -595,6 +595,15 @@ sources fed to gsplat fitting/calibration), independent of the compiled
   `source_dtype`, the element type the array was **stored** in — the return is
   always float32, so this is the last point at which it is knowable, and it is
   the honest denominator of any size/compression figure quoted about the result.
+  For an OME-TIFF (`PhysicalSizeX/Y/Z` + units, default `µm`) or a calibrated
+  ImageJ TIFF (`spacing` + `unit`, in-plane size from `X/YResolution`) the same
+  dict also receives the recorded spacing of the RETURNED axes in array order,
+  only when every returned axis has one: `axes` (`["z", "y", "x"]`),
+  `voxel_size` normalized to MICROMETRES with `voxel_unit: "um"` (nm, mm, Å, …
+  converted, so a mixed-unit OME file yields comparable numbers; omitted when a
+  unit is not a known length), the original values and units in
+  `source_voxel_size` / `source_voxel_units`, and `voxel_size_source`
+  (`"ome"` / `"imagej"`). Parsed by the private `_tiff_metadata` module.
 - `ome_zarr.discover_ome_zarr_shape(path, ...)` → `OMEZarrInfo` — discovers the
   T/C/Z/Y/X layout, voxel size, unit, and resolution levels from NGFF
   `multiscales` (with custom-`axes` and shape-heuristic fallbacks). Both

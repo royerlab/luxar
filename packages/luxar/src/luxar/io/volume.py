@@ -283,6 +283,51 @@ def _record_source_dtype(info: Optional[dict], volume: Any) -> None:
         info["source_dtype"] = str(np.dtype(src_dtype))
 
 
+def _read_tiff_meta(path: Path, info: Optional[dict]) -> Any:
+    """The TIFF's recorded voxel spacing, read only when a caller asked for info."""
+    if info is None:
+        return None
+    from ._tiff_metadata import read_tiff_voxel_metadata
+
+    return read_tiff_voxel_metadata(path)
+
+
+def _record_tiff_voxel_size(
+    info: Optional[dict], meta: Any, axes: Optional[str], ndim: int
+) -> None:
+    """Record OME/ImageJ voxel spacing for the RETURNED axes into ``info``.
+
+    Populates ``axes`` (lowercase names, array order), ``voxel_size`` in
+    micrometres plus ``voxel_unit="um"`` (when every unit is a known length),
+    ``source_voxel_size`` / ``source_voxel_units`` (as recorded) and
+    ``voxel_size_source`` (``"ome"``/``"imagej"``). Nothing is recorded unless
+    every returned axis has a spacing. With an explicit ``axes`` spec the kept
+    spatial labels name the axes; otherwise the series' own axis letters do,
+    minus the size-1 axes the positional path squeezes away.
+    """
+    if info is None or meta is None:
+        return
+    from ._tiff_metadata import voxel_info_for_axes
+
+    labels = _spatial_axis_names(axes) if axes is not None else None
+    recorded = voxel_info_for_axes(meta, labels, ndim)
+    if recorded is not None:
+        info.update(recorded)
+
+
+def _spatial_axis_names(axes: str) -> List[str]:
+    """Kept spatial labels from a validated axis spec, in returned array order."""
+    aliases = {"depth": "z", "height": "y", "width": "x"}
+    labels = [a.strip().lower() for a in axes.split(",") if a.strip()]
+    return [aliases.get(label, label) for label in labels if _axis_kind(label) == "s"]
+
+
+def _record_explicit_axes(info: Optional[dict], axes: Optional[str]) -> None:
+    """Expose the kept column names to callers that request loader metadata."""
+    if info is not None and axes is not None:
+        info["axes"] = _spatial_axis_names(axes)
+
+
 def _slice_eager_region(
     volume: Any, path: Path, region: Optional[Tuple[slice, ...]]
 ) -> Any:
@@ -345,6 +390,15 @@ def load_volume(
             axes are dropped and spatial axes are kept in the given order.
         info: Optional dict, populated with ``source_dtype`` — the element type
             of the array AS STORED, captured before the float32 cast below.
+            With explicit ``axes``, it also receives the kept spatial labels in
+            array order (e.g. ``["x", "y", "z"]``). For an OME-TIFF or a
+            calibrated ImageJ TIFF it also receives the recorded voxel spacing
+            of the RETURNED axes, only when every returned axis has one:
+            ``axes`` (when not already supplied), ``voxel_size`` in MICROMETRES with
+            ``voxel_unit="um"`` (nm/mm/Å/... converted; omitted when a unit is
+            unknown), the values and units as recorded in ``source_voxel_size``
+            / ``source_voxel_units``, and ``voxel_size_source``
+            (``"ome"``/``"imagej"``).
             This is the only place it is knowable: the returned array is always
             float32, so a consumer that wants to quote a size (e.g. the
             denominator of a compression ratio) would otherwise describe the
@@ -362,6 +416,7 @@ def load_volume(
         ValueError: On an invalid key or a sub-2D volume.
     """
     suffix = path.suffix.lower()
+    tiff_meta = None
 
     if suffix == ".npy":
         aprint(f"Loading NumPy array: {path.name}")
@@ -406,6 +461,7 @@ def load_volume(
             ) from exc
         aprint(f"Loading TIFF: {path.name}")
         volume = tifffile.imread(str(path))
+        tiff_meta = _read_tiff_meta(path, info)
 
     else:
         try:
@@ -446,6 +502,8 @@ def load_volume(
             f"Volume must be at least 2D after squeezing, got {volume.ndim}D "
             f"with shape {volume.shape}"
         )
+    _record_tiff_voxel_size(info, tiff_meta, axes, volume.ndim)
+    _record_explicit_axes(info, axes)
 
     assert isinstance(volume, np.ndarray)
     aprint(f"  Shape: {volume.shape}, dtype: float32")

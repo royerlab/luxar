@@ -183,9 +183,13 @@ class TestSaveGsplats:
         data.stats["source_dtype"] = "uint8"
         path = tmp_path / "fit-output.gsplats.zarr"
 
-        save_fit_output(data, path, compress=None, verbose=False)
+        names = [{"name": "x"}, {"name": "y"}, {"name": "z"}]
+        save_fit_output(
+            data, path, compress=None, verbose=False, dimension_metadata=names
+        )
 
         root = zarr.open_group(str(path), mode="r")
+        assert root.attrs["dimension_metadata"] == names
         assert root["amplitudes"].dtype == np.uint8
         assert root["amplitudes"].attrs["encoding"]["name"] == "geolog_scalar_uint8"
 
@@ -202,9 +206,13 @@ class TestSaveGsplats:
         )
         path = tmp_path / "fit-tree-output.gsplats.zarr"
 
-        save_fit_output(tree, path, compress=None, verbose=False)
+        names = [{"name": "x"}, {"name": "y"}, {"name": "z"}]
+        save_fit_output(
+            tree, path, compress=None, verbose=False, dimension_metadata=names
+        )
 
         root = zarr.open_group(str(path), mode="r")
+        assert root.attrs["dimension_metadata"] == names
         assert root["part_0/amplitudes"].dtype == np.uint8
         assert (
             root["part_0/amplitudes"].attrs["encoding"]["name"] == "geolog_scalar_uint8"
