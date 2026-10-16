@@ -41,9 +41,6 @@
     "packages/luxar/src/luxar/cli/gsplat_ops/fitting/recipe_args.py::build_fit_recipe_params": [
       11
     ],
-    "packages/luxar/src/luxar/cli/gsplat_ops/inspect_commands.py::compare_quality": [
-      11
-    ],
     "packages/luxar/src/luxar/cli/gsplat_ops/planner.py::run_content_fit": [
       28
     ],
@@ -299,7 +296,7 @@
     "packages/luxar/src/luxar/gsplats/_data/filtering.py::filter_by": [
       35
     ],
-    "packages/luxar/src/luxar/gsplats/_data/transforms.py::transform": [
+    "packages/luxar/src/luxar/gsplats/_data/transforms.py::_transform_geometry": [
       11
     ],
     "packages/luxar/src/luxar/gsplats/batch/env_capture.py::detect_preemptible_gpu_partition": [
@@ -357,7 +354,7 @@
       16
     ],
     "packages/luxar/src/luxar/gsplats/fitting/initialization.py::initialize_optimization": [
-      25
+      20
     ],
     "packages/luxar/src/luxar/gsplats/fitting/optimization.py::run_optimization_loop": [
       37

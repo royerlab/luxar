@@ -14,13 +14,13 @@ def pytest_configure() -> None:
     if os.environ.get("LUXAR_REQUIRE_CUDA") != "1":
         return
 
-    from luxar.gsplats.preprocessing.cuda import NLM_CUDA_AVAILABLE
+    from luxar.gsplats.preprocessing import cuda as nlm_cuda
 
     if not torch.cuda.is_available():
         raise pytest.UsageError(
             "LUXAR_REQUIRE_CUDA=1 but PyTorch cannot access a CUDA device"
         )
-    if not NLM_CUDA_AVAILABLE:
+    if not nlm_cuda.nlm_cuda_available():
         raise pytest.UsageError(
             "LUXAR_REQUIRE_CUDA=1 but the NLM CUDA backend is unavailable"
         )

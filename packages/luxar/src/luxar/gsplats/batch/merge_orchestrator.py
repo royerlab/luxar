@@ -236,6 +236,7 @@ def _merge_fitting_info(
     fitting_info: Dict[str, Any] = {"part_provenance": part_provenance}
     if source_dtype is not None:
         fitting_info["source_dtype"] = source_dtype
+    _carry_spatial_voxel_size(part_stats, fitting_info)
     # The shared intensity basis. Every task fits against the plan's one
     # `norm_range`, so the parts agree on it — but the streaming writer has no
     # root node whose stats would carry it, and without it `gsplat convert`
@@ -259,6 +260,24 @@ def _merge_fitting_info(
 
     aggregate_min_extent_stats(part_stats, fitting_info)
     return fitting_info
+
+
+def _carry_spatial_voxel_size(
+    stats_list: Sequence[Dict[str, Any]], dest: Dict[str, Any]
+) -> None:
+    """Carry the tiles' physical ``voxel_size`` onto a stacked part / the root.
+
+    Each tile was fitted in 3-D, so its stamp names the SPATIAL columns only;
+    the stacked time column a timelapse merge appends last has no spacing, and
+    readers pad it with 1.0 (``scoring_grid.stored_voxel_size``). Without this
+    a physical timelapse merge carried no stamp at all and ``compare``/``render``
+    could not map it back to voxels.
+    """
+    from luxar.gsplats.scoring_grid import agreed_voxel_size
+
+    agreed = agreed_voxel_size(stats_list)
+    if agreed is not None:
+        dest["voxel_size"] = agreed
 
 
 def _copy_or_resave_tile(
@@ -427,6 +446,7 @@ def _build_part_for_tile(
 
     if part.n_splats == 0:
         return None
+    _carry_spatial_voxel_size(tile_stats, part.stats)
     sum_population_counts(tile_stats, part.stats, part.n_splats)
     finish_population_stats(part.stats)
     # Each tile pruned its own specks (`min_extent`); carry the summed record.

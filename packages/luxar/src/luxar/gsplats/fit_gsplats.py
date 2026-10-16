@@ -615,6 +615,15 @@ def fit_gaussian_splats(
         # Fit and extract results
         result = fitter.fit(parameters)
 
+    # Record the spacing the centers were multiplied by, so `compare`/`render`
+    # can put physical-unit splats back on the voxel grid they were fitted on.
+    if result.stats:
+        from luxar.gsplats.scoring_grid import physical_voxel_size_stamp
+
+        result.stats.update(
+            physical_voxel_size_stamp(voxel_size, output_space, int(V.ndim))
+        )
+
     # Explicitly release the fitter and its GPU resources (optimizer state,
     # model weights, preprocessed V_tensor) before post-fit operations.
     # Also clear the rendering grid cache which accumulates GPU tensors
@@ -891,8 +900,10 @@ def _post_fit_cull(
 _RESCORED_QUALITY_KEYS = (
     "mse",
     "psnr_db",
+    "psnr_robust_db",
     "ssim",
     "foreground_psnr_db",
+    "foreground_psnr_robust_db",
     "foreground_threshold",
     "foreground_fraction",
 )
@@ -945,7 +956,7 @@ def _rescore_saved_model(
 
     from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
 
-    pre_psnr = result.stats.get("psnr_db")
+    pre_stats = dict(result.stats)
     scored = _voxel_space_view(result, voxel_size, output_space)
     try:
         dev = str(resolve_torch_device(device))
@@ -974,24 +985,41 @@ def _rescore_saved_model(
     result.stats.update(quality)
     result.stats.pop("quality_error", None)
     if verbose:
-        new_psnr = quality.get("psnr_db")
-        delta = (
-            f" ({new_psnr - pre_psnr:+.2f} dB vs fitted)"
-            if pre_psnr is not None and new_psnr is not None
-            else ""
-        )
-        extra = "".join(
-            f", {label}={quality[key]:{fmt}}"
-            for key, label, fmt in (("ssim", "SSIM", ".4f"), ("mse", "MSE", ".2e"))
-            if key in quality
-        )
-        aprint(
-            f"Quality (saved model, after post-fit pruning/cull): "
-            f"PSNR={new_psnr:.1f} dB{delta}, "
-            f"foreground PSNR={quality.get('foreground_psnr_db', float('nan')):.1f} dB"
-            f"{extra}"
-        )
+        aprint(_post_cull_quality_line(quality, pre_stats))
     return True
+
+
+def _post_cull_quality_line(quality: dict[str, float], pre: dict[str, Any]) -> str:
+    """The post-cull summary, headlined like the fit's own (robust peak first).
+
+    A scorer that reports no robust figure falls back to the full-range one.
+    """
+    key = "psnr_robust_db" if "psnr_robust_db" in quality else "psnr_db"
+    new_psnr = quality[key]
+    pre_psnr = pre.get(key)
+    delta = (
+        f" ({new_psnr - pre_psnr:+.2f} dB vs fitted)" if pre_psnr is not None else ""
+    )
+    fg_key = (
+        "foreground_psnr_robust_db"
+        if "foreground_psnr_robust_db" in quality
+        else "foreground_psnr_db"
+    )
+    peak = (
+        f" robust peak ({quality['psnr_db']:.1f} dB full range)"
+        if key == "psnr_robust_db"
+        else ""
+    )
+    extra = "".join(
+        f", {label}={quality[k]:{fmt}}"
+        for k, label, fmt in (("ssim", "SSIM", ".4f"), ("mse", "MSE", ".2e"))
+        if k in quality
+    )
+    return (
+        f"Quality (saved model, after post-fit pruning/cull): "
+        f"PSNR={new_psnr:.1f} dB{peak}{delta}, "
+        f"foreground PSNR={quality.get(fg_key, float('nan')):.1f} dB{extra}"
+    )
 
 
 def _default_fit_scorer(

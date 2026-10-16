@@ -99,6 +99,14 @@ def render_to_file(
         "-t",
         help="Truncation radius in sigma. Defaults to dataset's stored value.",
     ),
+    voxel_size: Optional[str] = typer.Option(
+        None,
+        "--voxel-size",
+        help="Spacing the splat centers are scaled by, one value or one per axis. "
+        "Normally read from the dataset's voxel_size stamp (a physical-output "
+        "fit records it); pass it for a physical store without the stamp, or "
+        "'1' to render in the store's own units.",
+    ),
 ) -> None:
     """Render Gaussian splats back to a volume.
 
@@ -112,7 +120,12 @@ def render_to_file(
     (``clip(V - image_min, 0, None)``, where ``image_min`` is reported by
     ``luxar gsplat info``), or use ``luxar gsplat compare``, which does it for you.
 
-    If --shape is not given, it is auto-computed from the bounding box.
+    The render is on VOXEL indices: a physical-output fit (one that records
+    a voxel_size) is divided back onto the grid it was fitted on. Without
+    --shape, a fit renders on its own source grid (fitting/source_shape), so
+    the output lines up voxel-for-voxel with the fitted volume; any other store
+    renders on the bounding box of its centers, starting at the lowest center
+    (the origin is printed).
 
     Examples:
         luxar gsplat render fitted.gsplats.zarr rendered.npy
@@ -125,6 +138,7 @@ def render_to_file(
         shape=shape,
         device=device,
         truncate=truncate,
+        voxel_size=voxel_size,
     )
 
 
@@ -209,6 +223,27 @@ def calibrate_command(
         "(e.g. 'z,c,y,x'). Time/channel axes are sliced and dropped; --channel "
         "is a flat row-major index across all channel-like axes, and more than "
         "one time axis is rejected. Spatial axes stay in the given order.",
+    ),
+    voxel_size: Optional[str] = typer.Option(
+        None,
+        "--voxel-size",
+        help="Physical voxel spacing Z,Y,X in micrometres (array axis order), "
+        "as for `fit`. Each K is fitted with it (so K* matches a physical fit) "
+        "and scored on the voxel grid; K* is a count either way. Takes "
+        "precedence over --physical.",
+    ),
+    physical: bool = typer.Option(
+        False,
+        "--physical",
+        help="Use the voxel size the file records (OME-Zarr NGFF, OME-TIFF, "
+        "ImageJ), as `fit --physical` does. Warns when there is none.",
+    ),
+    region: Optional[str] = typer.Option(
+        None,
+        "--region",
+        help="Calibrate on a crop: z0:z1,y0:y1,x0:x1 (numpy-style voxel spans; "
+        "empty = whole axis). K* is then the budget for THAT crop: pass it to "
+        "`fit --region` with the same spans. Excludes --auto-region.",
     ),
     # Regime-robust extensions (all opt-in; defaults preserve manuscript behaviour)
     k_star_metric: str = typer.Option(
@@ -361,6 +396,9 @@ def calibrate_command(
         pdf_report=pdf_report,
         keep_fits=keep_fits,
         quiet=quiet,
+        voxel_size=voxel_size,
+        physical=physical,
+        region_spec=region,
     )
 
 

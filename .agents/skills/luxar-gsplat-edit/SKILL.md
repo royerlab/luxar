@@ -238,22 +238,33 @@ Before scoring a stacked or transformed archive, read "Scoring a STACKED or
 TRANSFORMED archive" in the `luxar-gsplat-pipeline` skill; `compare --timepoint`
 slices the reference, not the splat archive.
 
-### `render --shape` is in the SPLATS' coordinate space, not the volume's
+### Physical-unit fits: `render`/`compare` map them back to voxels
 
 If the fit was run with a physical `voxel_size`, the centres are in **microns**, not
-voxel indices. Rendering into the source volume's voxel shape then packs the whole
-reconstruction into a corner (a 0.44 um/voxel stack renders into the first ~44% of
-each axis) — and it fails *silently*: you get a plausible-looking array, and metrics
-that read as catastrophic reconstruction failure rather than as a units bug.
+voxel indices. Rendered into the source volume's voxel shape as-is, the whole
+reconstruction packs into a corner (a 0.44 um/voxel stack fills the first ~44% of
+each axis), and the metrics read as a catastrophic fit rather than a units bug.
 
-Check first — `centers.max(0)` against the shape — and convert with `transform`,
-which rescales the centres and the covariance together:
+A fit records the spacing it applied as `fitting/voxel_size`, and `render` /
+`compare` divide it back out automatically (they print `voxel_size=[...]`). A
+physical store without the stamp (fitted before it existed, or authored
+elsewhere) triggers a warning that most centres miss the grid: pass
+`--voxel-size Z,Y,X`. A scale or rotation (CLI `gsplat transform`, or a
+non-translation `GSplatData.transform`) drops the stamp, since it no longer
+describes the new coordinates; a translation keeps it. A stale stamp: pass
+`--voxel-size 1`.
+
+To convert in Python instead, use `transform`, which rescales the centres and
+the covariance together; `transform` drops the stamp itself (it is only
+present with `include_stats=True`):
 
 ```python
 # Sigma = L L^T scales as the SQUARE of the length unit, so the Cholesky factor
 # rescales along with the centres. transform() does both, per axis, and keeps
 # amplitudes, colours and any LOD structure. vox is microns per voxel (Z, Y, X).
+g = GSplatData.load("fit.gsplats.zarr")  # keeps image_min (the scoring basis)
 g_vox = g.transform(np.diag(1.0 / np.asarray(vox, dtype=np.float64)))
+g_vox.save("fit_vox.gsplats.zarr")  # `compare` still scores on the fit's basis
 ```
 
 Do not hand-roll it as `cholesky_factors / vox`: the factors are packed

@@ -176,6 +176,31 @@ def _restamp_tree_after_intensity(
     return refresh_reduction_lod_tree(node, source)
 
 
+def _drop_stale_frame_stamp(
+    stats: "Optional[dict]", scale_factors: Optional[str], has_rotation: bool
+) -> None:
+    """Drop the fit's frame stamp (``voxel_size`` & co.) on a scale or rotation.
+
+    The stamp says "divide the centers by this to get voxel indices". After a
+    scale or rotation that is no longer true, and left in place ``compare`` /
+    ``render`` would divide the NEW coordinates by the OLD spacing. A pure
+    translate/center keeps it, as ``GSplatData.transform`` does: the spacing is
+    unchanged (only the origin moved, which the off-grid warning reports).
+    """
+    if (scale_factors is None and not has_rotation) or not stats:
+        return
+    from luxar.gsplats.scoring_grid import FRAME_STAMP_KEYS, drop_frame_stamp
+
+    dropped = [key for key in FRAME_STAMP_KEYS if key in stats]
+    if isinstance(stats.get("config"), dict) and "voxel_size" in stats["config"]:
+        dropped.append("config.voxel_size")
+    retained = drop_frame_stamp(stats)
+    stats.clear()
+    stats.update(retained)
+    if dropped:
+        aprint(f"Dropped the fit's frame stamp ({', '.join(dropped)}): the frame moved")
+
+
 def run_transform_dataset(
     *,
     input_path: Path,
@@ -286,6 +311,7 @@ def run_transform_dataset(
                 matrix_shaped = is_matrix_shaped(node)
                 shape_desc = "leaf/matrix" if matrix_shaped else type(node).__name__
                 aprint(f"Loaded {total_splats(node):,} splats ({d}D, {shape_desc})")
+            _drop_stale_frame_stamp(stats, scale_factors, has_rotation)
 
             transforms_applied: list[str] = []
 
