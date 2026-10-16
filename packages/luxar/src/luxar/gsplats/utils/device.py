@@ -85,30 +85,22 @@ def cpu_fallback_hint(platform: Optional[str] = None) -> str:
     )
 
 
-_CPU_WARNING_PRINTED = False
+_CPU_WARNING_ISSUED = False
 
 
 def warn_cpu_fitting(stacklevel: int = 3) -> None:
-    """Warn, once per process, that Gaussian splat fitting is running on CPU.
-
-    The fitter and the model initializer both reach a CPU fallback during one
-    fit (and a tiled fit reaches it once per tile), so the console line is
-    printed only the first time. The ``UserWarning`` is always issued; Python's
-    own warning filter already shows it once per call site.
-    """
-    global _CPU_WARNING_PRINTED
+    """Warn once per process that Gaussian splat fitting is running on CPU."""
+    global _CPU_WARNING_ISSUED
     import warnings
 
+    if _CPU_WARNING_ISSUED:
+        return
     message = (
         "Gaussian splat fitting is running on CPU, which can be orders of "
         "magnitude SLOWER than a GPU. " + cpu_fallback_hint()
     )
-    if not _CPU_WARNING_PRINTED:
-        from arbol import aprint
-
-        aprint(f"WARNING: {message}")
-        _CPU_WARNING_PRINTED = True
     warnings.warn(message, UserWarning, stacklevel=stacklevel)
+    _CPU_WARNING_ISSUED = True
 
 
 def is_mps_available() -> bool:

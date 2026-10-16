@@ -37,12 +37,8 @@ if TYPE_CHECKING:
 def _parallel_staging_dir(output: Path, token: str) -> Path:
     """Per-invocation staging dir for the parallel content-box fit.
 
-    ``fit_planned_parallel`` clean-slates (``rmtree`` + ``mkdir``) whatever
-    ``tmp_dir`` it is handed, so a directory derived only from the output
-    path would let two concurrent ``fit -j`` runs to the SAME output delete
-    each other's in-progress boxes. Appending a unique per-invocation
-    ``token`` gives each invocation its own dir, so it only ever cleans its
-    OWN boxes.
+    When the stable checkpoint for an output is busy, a concurrent fit uses
+    this private directory so the two runs cannot write the same boxes.
     """
     return output.parent / f".{output.name}.boxes.{token}"
 
@@ -824,10 +820,8 @@ def _fit_content_boxes(
             fit_planned_parallel,
         )
 
-        # `fit_options` carries the CLI values VERBATIM (`preset` included, not
-        # `preset or "standard"`): the sequential path hands `load_fit_config`
-        # the CLI value as-is, and a defaulted preset would layer its own
-        # n_iters/cull_retention on every box (#1637). `config` likewise, since
+        # Forward the CLI preset verbatim: the sequential path and workers both
+        # resolve its default in `load_fit_config`. Forward `config` too, since
         # `truncate:` lives only in a YAML --config (#1637).
         builder = _default_worker_cmd_builder(
             input_path,
@@ -859,11 +853,6 @@ def _fit_content_boxes(
     fk = dict(box_fit_kwargs)  # already carries the one resolved floor level
     fk.pop("verbose", None)
     with section(f"Fitting {fitplan.n_boxes} boxes"):
-
-        def _prog(i: int, n: int, msg: str) -> None:
-            if verbose:
-                aprint(f"  [{i + 1}/{n}] {msg}")
-
         return fit_planned(
             vol,
             fitplan,
@@ -871,7 +860,6 @@ def _fit_content_boxes(
             partition=partition,
             recipe=recipe,
             recipe_params=recipe_params,
-            progress_callback=_prog,
             verbose=verbose,
             checkpoint=checkpoint,
             **fk,
