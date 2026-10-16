@@ -1428,7 +1428,69 @@ def test_a_real_fit_scores_the_saved_post_cull_model(voxel_size) -> None:
         )
         quality = compute_quality_metrics(rendered, ref)
     assert result.stats["psnr_db"] == pytest.approx(quality["psnr_db"], abs=1e-6)
+    assert result.stats["psnr_robust_db"] == pytest.approx(
+        quality["psnr_robust_db"], rel=0, abs=1e-7
+    )
+    assert result.stats["foreground_psnr_robust_db"] == pytest.approx(
+        quality["foreground_psnr_robust_db"], rel=0, abs=1e-7
+    )
     assert result.stats["ssim"] == pytest.approx(quality["ssim"], abs=1e-6)
+
+
+def test_post_cull_rescore_refreshes_robust_scores() -> None:
+    """A saved model must replace stale fit scores with its own render's scores."""
+    torch = pytest.importorskip("torch")
+    from luxar.gsplats.fit_gsplats import _rescore_saved_model
+    from luxar.gsplats.fit_progressive_gsplats import (
+        _compute_foreground_psnr_chunked,
+        _compute_psnr_chunked,
+        _rescore_progressive_after_cull,
+        _robust_psnr,
+    )
+    from luxar.gsplats.metrics import compute_quality_metrics
+    from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
+
+    V = np.zeros((16, 16), dtype=np.float32)
+    V[4:8, 4:8] = 1.0
+    V[10:13, 9:12] = 0.6
+
+    def saved_model() -> GSplatData:
+        return GSplatData(
+            centers=np.array([[6.0, 6.0], [11.0, 10.0]], dtype=np.float32),
+            amplitudes=np.array([1.0, 0.6], dtype=np.float32),
+            cholesky_factors=np.array(
+                [[1.5, 0.0, 1.5], [1.0, 0.0, 1.0]], dtype=np.float32
+            ),
+            stats={"psnr_robust_db": -123.0, "foreground_psnr_robust_db": -123.0},
+        )
+
+    standard = saved_model()
+    with torch.no_grad():
+        rendered = render_to_volume_tensor(standard, shape=V.shape, device="cpu")
+        expected = compute_quality_metrics(rendered, torch.from_numpy(V))
+    assert _rescore_saved_model(
+        standard, V, verbose=False, device="cpu", voxel_size=None, output_space="real"
+    )
+    for key in ("psnr_robust_db", "foreground_psnr_robust_db"):
+        assert standard.stats[key] == pytest.approx(expected[key], rel=0, abs=1e-6)
+
+    progressive = saved_model()
+    psnr = _compute_psnr_chunked(rendered, V)
+    _, fg_robust, _, _, robust_range = _compute_foreground_psnr_chunked(rendered, V)
+    _rescore_progressive_after_cull(
+        progressive,
+        V,
+        verbose=False,
+        device="cpu",
+        voxel_size=None,
+        output_space="real",
+    )
+    assert progressive.stats["psnr_robust_db"] == pytest.approx(
+        _robust_psnr(psnr, V, robust_range), rel=0, abs=1e-6
+    )
+    assert progressive.stats["foreground_psnr_robust_db"] == pytest.approx(
+        fg_robust, rel=0, abs=1e-6
+    )
 
 
 def test_a_failed_post_cull_rescore_keeps_the_pre_cull_score(
@@ -1474,7 +1536,9 @@ def test_a_progressive_fit_scores_its_saved_post_cull_model() -> None:
     """The progressive fitter's overall PSNR is re-measured after its closing cull."""
     torch = pytest.importorskip("torch")
     from luxar.gsplats.fit_progressive_gsplats import (
+        _compute_foreground_psnr_chunked,
         _compute_psnr_chunked,
+        _robust_psnr,
         fit_progressive_gaussian_splats,
     )
     from luxar.gsplats.rendering.volume_rendering import render_to_volume_tensor
@@ -1498,10 +1562,38 @@ def test_a_progressive_fit_scores_its_saved_post_cull_model() -> None:
         rendered = render_to_volume_tensor(
             result, shape=V.shape, device="cpu", truncate=result.truncation_radius
         )
-    assert result.stats["psnr_db"] == pytest.approx(
-        _compute_psnr_chunked(rendered, V), abs=1e-6
+    psnr = _compute_psnr_chunked(rendered, V)
+    _, fg_robust, _, _, robust_range = _compute_foreground_psnr_chunked(rendered, V)
+    assert result.stats["psnr_db"] == pytest.approx(psnr, abs=1e-6)
+    assert result.stats["psnr_robust_db"] == pytest.approx(
+        _robust_psnr(psnr, V, robust_range), abs=1e-6
+    )
+    assert result.stats["foreground_psnr_robust_db"] == pytest.approx(
+        fg_robust, abs=1e-6
     )
     assert "quality_error" not in result.stats
+
+
+def test_post_cull_quality_line_uses_robust_headline_and_full_range_fallback() -> None:
+    from luxar.gsplats.fit_gsplats import _post_cull_quality_line
+
+    pre = {"psnr_db": 30.0, "psnr_robust_db": 25.0}
+    quality = {
+        "psnr_db": 29.0,
+        "psnr_robust_db": 24.0,
+        "foreground_psnr_db": 20.0,
+        "foreground_psnr_robust_db": 15.0,
+    }
+    assert _post_cull_quality_line(quality, pre) == (
+        "Quality (saved model, after post-fit cull): PSNR=24.0 dB robust peak "
+        "(29.0 dB full range) (-1.00 dB vs fitted), foreground PSNR=15.0 dB"
+    )
+    assert _post_cull_quality_line(
+        {"psnr_db": 29.0, "foreground_psnr_db": 20.0}, pre
+    ) == (
+        "Quality (saved model, after post-fit cull): PSNR=29.0 dB "
+        "(-1.00 dB vs fitted), foreground PSNR=20.0 dB"
+    )
 
 
 @pytest.mark.slow
