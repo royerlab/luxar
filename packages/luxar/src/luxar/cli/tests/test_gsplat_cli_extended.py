@@ -943,20 +943,28 @@ class TestFitCommand:
     ) -> None:
         import torch
 
+        from luxar.gsplats.utils import cpu_threads
+
         previous = torch.get_num_threads()
         target = 2 if previous != 2 else 3
         monkeypatch.setenv("LUXAR_CPU_THREADS", str(target))
-        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         config = tmp_path / "cpu.yaml"
         config.write_text("use_cuda: false\nuse_metal: false\n")
         calls: list[int] = []
+        thread_options: list[dict[str, Any]] = []
         real_set = torch.set_num_threads
+        real_context = cpu_threads.cpu_threads_for
+
+        def spy_context(device: str | None, **kwargs: Any) -> Any:
+            thread_options.append(kwargs)
+            return real_context(device, **kwargs)
 
         def spy(n: int) -> None:
             calls.append(n)
             real_set(n)
 
         monkeypatch.setattr(torch, "set_num_threads", spy)
+        monkeypatch.setattr(cpu_threads, "cpu_threads_for", spy_context)
         result = runner.invoke(
             app,
             [
@@ -975,6 +983,9 @@ class TestFitCommand:
             ],
         )
         assert result.exit_code == 0, f"fit failed: {result.stdout}"
+        assert len(thread_options) == 1
+        assert thread_options[0]["use_cuda"] is False
+        assert thread_options[0]["use_metal"] is False
         assert calls == [target, previous]
         assert f"CPU: using {target} threads" in result.stdout
 
@@ -4110,18 +4121,26 @@ class TestCalibrateCommand:
     ) -> None:
         import torch
 
+        from luxar.gsplats.utils import cpu_threads
+
         previous = torch.get_num_threads()
         target = 2 if previous != 2 else 3
         monkeypatch.setenv("LUXAR_CPU_THREADS", str(target))
-        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
         calls: list[int] = []
+        thread_options: list[dict[str, Any]] = []
         real_set = torch.set_num_threads
+        real_context = cpu_threads.cpu_threads_for
+
+        def spy_context(device: str | None, **kwargs: Any) -> Any:
+            thread_options.append(kwargs)
+            return real_context(device, **kwargs)
 
         def spy(n: int) -> None:
             calls.append(n)
             real_set(n)
 
         monkeypatch.setattr(torch, "set_num_threads", spy)
+        monkeypatch.setattr(cpu_threads, "cpu_threads_for", spy_context)
         result = runner.invoke(
             app,
             [
@@ -4141,6 +4160,9 @@ class TestCalibrateCommand:
             ],
         )
         assert result.exit_code == 0, f"cal failed: {result.stdout}"
+        assert len(thread_options) == 1
+        assert thread_options[0]["use_cuda"] is False
+        assert thread_options[0]["use_metal"] is False
         assert calls == [target, previous]
         assert torch.get_num_threads() == previous
         assert f"CPU: using {target} threads" in result.stdout
